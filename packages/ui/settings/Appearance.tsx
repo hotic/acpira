@@ -12,7 +12,7 @@ export function AppearancePage({ settings, appearance, on }: { settings: Setting
   const desktop = useDesktop();
   return (
     <>
-      <Section>
+      <Section title={t('settings.group.ui')} desc={t('settings.group.ui.desc')}>
         {/* The desktop app keeps its column on the left and folds it from the title row instead; what it offers is the
             window's layout, the conversation or the files in the middle */}
         {desktop
@@ -36,7 +36,7 @@ export function AppearancePage({ settings, appearance, on }: { settings: Setting
         </Field>
       </Section>
 
-      <Section title={t('settings.text.title')}>
+      <Section title={t('settings.text.title')} desc={t('settings.text.desc')}>
         <Field label={t('settings.uiFontSize')} desc={t('settings.uiFontSize.desc')}>
           <NumberField value={settings.uiFontSize} min={UI_FONT_SIZE.min} max={UI_FONT_SIZE.max} step={1} unit={t('settings.fontSize.unit')} label={t('settings.uiFontSize')} onCommit={v => on.setSetting('uiFontSize', v)} />
         </Field>

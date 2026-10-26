@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Plus, Trash2, Users } from 'lucide-react';
+import { Plus, Users } from 'lucide-react';
 import type { AgentId, AgentInfo, ConfigControl } from '@acpira/shared/transcript';
 import type { SettingsView } from '@acpira/shared/settings';
 import { effortLabel, SIDEKICK_EFFORT_CATEGORY } from '@acpira/shared/composerControls';
@@ -9,10 +9,10 @@ import {
   type RelayMode, type SubagentDuty, type SubagentGroup, type SubagentPersona,
 } from '@acpira/shared/subagents';
 import { AgentMark } from '../chat/AgentMark';
-import { Button, ChipTag } from '../ui/Button';
+import { Button } from '../ui/Button';
 import { StableText } from '../ui/StableText';
 import { t } from '../i18n';
-import { FactRow, Field, Group, ItemRow, PageCrumb, PageHeader, Section, SectionAction, Select, Switch, TextBox, type Option } from './controls';
+import { DangerAction, DialogBody, Field, FormField, FormGrid, FormRows, ItemRow, Note, Section, SectionAction, Select, SettingsDialog, Switch, TextBox, type Option } from './controls';
 import type { SettingsPage } from './Nav';
 import type { SettingsHandlers } from './SettingsShell';
 
@@ -88,43 +88,40 @@ export function SubagentsPage({ page, onPage, onReplace, settings, agents, contr
     onPage({ kind: 'subagents', persona: id });
   };
   const group = useGroupList(groups, list, on, page.group, onPage, toList);
-  if (current) {
-    const update = (patch: Partial<SubagentPersona>) => save(list.map(p => (p.id === current.id ? { ...p, ...patch } : p)));
-    return <PersonaDetail persona={current} agents={usable} controls={controls[current.agent]} shapes={shapes?.[current.agent]} onList={() => onPage({ kind: 'subagents' })}
-      onChange={update} onDelete={() => { toList(); save(list.filter(p => p.id !== current.id)); }} />;
-  }
-  if (group.current) {
-    const g = group.current;
-    return <GroupDetail group={g} personas={list} agents={agents} onList={() => onPage({ kind: 'subagents' })}
-      onChange={patch => group.save(groups.map(x => (x.id === g.id ? { ...x, ...patch } : x)))}
-      onDelete={() => { toList(); group.save(groups.filter(x => x.id !== g.id)); }} />;
-  }
+  const update = (id: string, patch: Partial<SubagentPersona>) => save(list.map(p => (p.id === id ? { ...p, ...patch } : p)));
+  const saveGroups = (next: SubagentGroup[]) => group.save(next);
+  // A dialog's close is a step back to the lists on the trail
+  const close = () => toList();
   return <>
-    <PageHeader title={t('settings.nav.subagents')} />
-    <Section cards title={t('subagents.page.list')} count={list.length} desc={t('subagents.page.listDesc')}
-      action={<SectionAction icon={<Plus strokeWidth={1.5} />} disabled={full || adding !== undefined} onClick={add}>{t('subagents.page.add')}</SectionAction>}>
-      {list.length === 0
-        ? <p className="m-0 py-pad text-2 text-fg-2">{t('subagents.page.empty')}</p>
-        : <Group>
-          {list.map(p => (
-            <ItemRow key={p.id} dim={!p.enabled} bigLead onClick={() => onPage({ kind: 'subagents', persona: p.id })}
-              lead={<AgentMark id={p.agent} name={p.name} />} title={p.name} desc={metaOf(p, agents, controls[p.agent])} />
-          ))}
-        </Group>}
+    <Section title={t('subagents.page.list')} count={list.length} desc={t('subagents.page.listDesc')}
+      action={<SectionAction icon={<Plus />} disabled={full || adding !== undefined} onClick={add}>{t('subagents.page.add')}</SectionAction>}>
+      {list.length === 0 && <Note>{t('subagents.page.empty')}</Note>}
+      {list.map(p => (
+        <ItemRow key={p.id} onEdit={() => onPage({ kind: 'subagents', persona: p.id })} editLabel={p.name}
+          lead={<AgentMark id={p.agent} name={p.name} />} title={p.name} desc={metaOf(p, agents, controls[p.agent])}
+          trailing={<Switch checked={p.enabled} label={t('subagents.page.enabledNamed', { name: p.name })} onChange={enabled => update(p.id, { enabled })} />} />
+      ))}
     </Section>
     {/* A group needs subagents to hold, so it can be added only once there is one; without the save handler (no host
         to merge into the file) the list is shown but not edited */}
-    <Section cards title={t('subagents.groups.list')} count={groups.length} desc={t('subagents.groups.listDesc')}
-      action={on.saveSubagentGroups && <SectionAction icon={<Plus strokeWidth={1.5} />} disabled={!group.canAdd} onClick={group.add}>{t('subagents.page.add')}</SectionAction>}>
-      {groups.length === 0
-        ? <p className="m-0 py-pad text-2 text-fg-2">{t('subagents.groups.empty')}</p>
-        : <Group>
-          {groups.map(g => (
-            <ItemRow key={g.id} dim={!g.enabled} bigLead onClick={on.saveSubagentGroups ? () => onPage({ kind: 'subagents', group: g.id }) : undefined}
-              lead={<Users strokeWidth={1.5} />} title={g.name} desc={membersOf(g, list)} />
-          ))}
-        </Group>}
+    <Section title={t('subagents.groups.list')} count={groups.length} desc={t('subagents.groups.listDesc')}
+      action={on.saveSubagentGroups && <SectionAction icon={<Plus />} disabled={!group.canAdd} onClick={group.add}>{t('subagents.page.add')}</SectionAction>}>
+      {groups.length === 0 && <Note>{t('subagents.groups.empty')}</Note>}
+      {groups.map(g => (
+        <ItemRow key={g.id} onEdit={on.saveSubagentGroups ? () => onPage({ kind: 'subagents', group: g.id }) : undefined} editLabel={g.name}
+          lead={<Users />} title={g.name} desc={membersOf(g, list)}
+          trailing={on.saveSubagentGroups && <Switch checked={g.enabled} label={t('subagents.page.enabledNamed', { name: g.name })}
+            onChange={enabled => saveGroups(groups.map(x => (x.id === g.id ? { ...x, enabled } : x)))} />} />
+      ))}
     </Section>
+    {current && <PersonaDialog persona={current} agents={usable} controls={controls[current.agent]} shapes={shapes?.[current.agent]} onClose={close}
+      onChange={patch => update(current.id, patch)} onDelete={() => { toList(); save(list.filter(p => p.id !== current.id)); }} />}
+    {group.current && (() => {
+      const g = group.current;
+      return <GroupDialog group={g} personas={list} agents={agents} onClose={close}
+        onChange={patch => saveGroups(groups.map(x => (x.id === g.id ? { ...x, ...patch } : x)))}
+        onDelete={() => { toList(); saveGroups(groups.filter(x => x.id !== g.id)); }} />;
+    })()}
   </>;
 }
 
@@ -162,54 +159,59 @@ function membersOf(g: SubagentGroup, personas: SubagentPersona[]): string {
   return names.length ? names.join(t('common.listSep')) : t('subagents.groups.noMembers');
 }
 
-// One group: its name and when to summon it, then every subagent with a switch for membership (members join at the
-// end, and once the group is full the others' switches wait until one leaves)
-function GroupDetail({ group: g, personas, agents, onList, onChange, onDelete }: {
+// One group in a dialog: its name and when to summon it on the form, then every subagent with a switch for membership
+// (members join at the end, and once the group is full the others' switches wait until one leaves)
+function GroupDialog({ group: g, personas, agents, onClose, onChange, onDelete }: {
   group: SubagentGroup;
   personas: SubagentPersona[];
   agents: AgentInfo[];
-  // The heading's way up to the lists, a step on the trail like any link
-  onList: () => void;
+  onClose: () => void;
   onChange: (patch: Partial<SubagentGroup>) => void;
   onDelete: () => void;
 }) {
   const full = g.members.length >= GROUP_MEMBERS_MAX;
   const toggle = (id: string, member: boolean) => onChange({ members: member ? [...g.members, id] : g.members.filter(m => m !== id) });
-  return <>
-    <PageHeader title={<PageCrumb parent={t('settings.nav.subagents')} onParent={onList}>{g.name}</PageCrumb>}
-      action={<Switch checked={g.enabled} label={t('subagents.page.enabled')} onChange={enabled => onChange({ enabled })} />} />
-    <Section>
-      <Field label={t('subagents.page.name')} desc={t('subagents.groups.nameDesc')}>
-        <TextBox value={g.name} label={t('subagents.page.name')} onCommit={name => name.trim() && onChange({ name })} />
-      </Field>
-      <Field stack label={t('subagents.page.when')} desc={t('subagents.groups.whenDesc')}>
-        <TextBox multiline value={g.when} label={t('subagents.page.when')} placeholder={t('subagents.groups.whenPlaceholder')}
-          onCommit={when => onChange({ when })} />
-      </Field>
-    </Section>
-    <Section cards title={t('subagents.groups.members')} count={g.members.length} desc={t('subagents.groups.membersDesc', { n: GROUP_MEMBERS_MAX })}>
-      <Group>
-        {personas.map(p => {
-          const member = g.members.includes(p.id);
-          return <ItemRow key={p.id} dim={!p.enabled} bigLead lead={<AgentMark id={p.agent} name={p.name} />} title={p.name}
-            desc={agents.find(a => a.id === p.agent)?.name ?? p.agent}
-            trailing={<Switch checked={member} disabled={!member && full} label={p.name} onChange={on => toggle(p.id, on)} />} />;
-        })}
-      </Group>
-    </Section>
-    <div className="flex justify-end">
-      <Button onClick={onDelete}><Trash2 className="size-icon" strokeWidth={1.5} />{t('subagents.page.delete')}</Button>
-    </div>
-  </>;
+  return (
+    <SettingsDialog icon={<Users />} title={g.name} sub={t('subagents.groups.kind')} onClose={onClose}
+      control={<Switch checked={g.enabled} label={t('subagents.page.enabled')} onChange={enabled => onChange({ enabled })} />}
+      footer={<>
+        <DangerAction onClick={onDelete}>{t('subagents.page.delete')}</DangerAction>
+        <span className="flex-1" />
+        <Button variant="primary" onClick={onClose}>{t('common.done')}</Button>
+      </>}>
+      <DialogBody className="p-0">
+        <FormGrid>
+          <FormField label={t('subagents.page.name')} hint={t('subagents.groups.nameDesc')} className="col-span-full">
+            <TextBox value={g.name} label={t('subagents.page.name')} className="w-full" onCommit={name => name.trim() && onChange({ name })} />
+          </FormField>
+          <FormField label={t('subagents.page.when')} hint={t('subagents.groups.whenDesc')} className="col-span-full">
+            <TextBox multiline value={g.when} label={t('subagents.page.when')} placeholder={t('subagents.groups.whenPlaceholder')}
+              onCommit={when => onChange({ when })} />
+          </FormField>
+        </FormGrid>
+        <div className="flex flex-col px-pad pb-pad">
+          <Section title={t('subagents.groups.members')} count={g.members.length} desc={t('subagents.groups.membersDesc', { n: GROUP_MEMBERS_MAX })}>
+            {personas.map(p => {
+              const member = g.members.includes(p.id);
+              return <ItemRow key={p.id} lead={<AgentMark id={p.agent} name={p.name} />} title={p.name}
+                desc={agents.find(a => a.id === p.agent)?.name ?? p.agent}
+                trailing={<Switch checked={member} disabled={!member && full} label={p.name} onChange={on => toggle(p.id, on)} />} />;
+            })}
+          </Section>
+        </div>
+      </DialogBody>
+    </SettingsDialog>
+  );
 }
 
-function PersonaDetail({ persona: p, agents, controls, shapes, onList, onChange, onDelete }: {
+// One subagent in a dialog: the switch in its head, the fields on the form (each edit is saved as it is made), then how
+// its read-only access works and the handoff switch as rows. The footer deletes it or closes
+function PersonaDialog({ persona: p, agents, controls, shapes, onClose, onChange, onDelete }: {
   persona: SubagentPersona;
   agents: AgentInfo[];
   controls?: ConfigControl[];
   shapes?: ModelShapes;
-  // The heading's way up to the lists, a step on the trail like any link
-  onList: () => void;
+  onClose: () => void;
   onChange: (patch: Partial<SubagentPersona>) => void;
   onDelete: () => void;
 }) {
@@ -227,66 +229,74 @@ function PersonaDetail({ persona: p, agents, controls, shapes, onList, onChange,
   const readOnly = READ_ONLY[p.agent];
   const readOnlyText = readOnly ? t('subagents.page.readOnlyMode', { mode: readOnly })
     : readOnly === null ? t('subagents.page.readOnlyNone') : t('subagents.page.readOnlyUnknown');
-  return <>
-    <PageHeader title={<PageCrumb parent={t('settings.nav.subagents')} onParent={onList}>{p.name}</PageCrumb>}
-      action={<Switch checked={p.enabled} label={t('subagents.page.enabled')} onChange={enabled => onChange({ enabled })} />} />
-    <Section>
-      <Field label={t('subagents.page.name')} desc={t('subagents.page.nameDesc')}>
-        <TextBox value={p.name} label={t('subagents.page.name')} onCommit={name => name.trim() && onChange({ name })} />
-      </Field>
-      <Field label={t('subagents.page.agent')}>
-        <Select label={t('subagents.page.agent')} value={p.agent}
-          options={agents.map(a => ({ value: a.id, label: a.name, icon: <AgentMark id={a.id} name={a.name} />, disabled: a.available === false }))}
-          onChange={agent => onChange({ agent, model: undefined, effort: undefined })} />
-      </Field>
-      {/* The model list is the CLI's latest session's; until it is in, only the default (and a stored value) show */}
-      {/* Capped: Devin's Fusion pairs (`Fusion (<lead> + <sidekick>)`) would otherwise size the field past the row and
-          wrap it under its label; a longer name truncates, its list row keeps the full name as a tooltip */}
-      <Field label={t('subagents.page.model')} desc={controls === undefined ? t('settings.loading') : undefined}>
-        <Select label={t('subagents.page.model')} value={p.model ?? DEFAULT} className="max-w-pop-md"
-          options={choices(modelControl, p.model).map(o => ({ ...o, hint: o.label }))}
-          onChange={v => onChange({ model: v || undefined, effort: effortAfter(effortFor(controls, shapes, v || undefined), p.effort) })} />
-      </Field>
-      {/* The levels are the picked model's own; a model no session has run yet has none to list */}
-      {(effortControl || p.effort || (effortControl === undefined && p.model)) && (
-        <Field label={t('subagents.page.effort')} desc={effortControl === undefined && p.model ? t('subagents.page.effortUnknown') : undefined}>
-          <Select label={t('subagents.page.effort')} value={p.effort ?? DEFAULT} options={choices(effortControl ?? undefined, p.effort, true)}
-            onChange={v => onChange({ effort: v || undefined })} />
-        </Field>
-      )}
-      <Field label={t('subagents.page.duty')} desc={<StableText current={p.duty ?? 'general'} items={DUTIES.map(d => ({ key: d, text: t(`subagents.page.duty${DUTY_KEY[d]}Desc`) }))} />}>
-        <Select<SubagentDuty> label={t('subagents.page.duty')} value={p.duty ?? 'general'}
-          options={DUTIES.map(d => ({ value: d, label: t(`subagents.page.duty${DUTY_KEY[d]}`) }))}
-          onChange={duty => onChange(pickDuty(p, duty))} />
-      </Field>
-      <Field label={t('subagents.page.mode')} desc={<StableText current={p.mode} items={MODES.map(m => ({ key: m, text: t(`subagents.page.${m}Desc`) }))} />}>
-        <Select<RelayMode> label={t('subagents.page.mode')} value={p.mode}
-          options={MODES.map(m => ({ value: m, label: t(`subagents.page.${m}`) }))}
-          onChange={mode => onChange({ mode })} />
-      </Field>
-      {p.mode === 'consult' && (
-        <FactRow label={t('subagents.page.readOnly')}>
-          <span className={readOnly === null ? 'text-warn' : 'text-fg-2'}>{readOnlyText}</span>
-        </FactRow>
-      )}
-      {/* Every new conversation starts with the handoff pack; a call can still pass `changes` either way */}
-      <Field label={t('subagents.page.changes')} desc={t('subagents.page.changesDesc')}>
-        <Switch checked={p.changes === true} label={t('subagents.page.changes')} onChange={on => onChange({ changes: on || undefined })} />
-      </Field>
-      {/* Free text for the model, listed next to the persona in ask_agent's description; no keyword triggers it */}
-      <Field stack label={t('subagents.page.when')} desc={t('subagents.page.whenDesc')}>
-        <TextBox multiline value={p.when} label={t('subagents.page.when')} placeholder={t('subagents.page.whenPlaceholder')}
-          onCommit={when => onChange({ when })} />
-      </Field>
-    </Section>
-    {/* Appended to every task; a duty fills it with its preset, which stays the user's to edit or clear */}
-    <Section title={t('subagents.page.brief')} desc={t('subagents.page.briefDesc')}>
-      <Field stack><TextBox multiline value={p.brief ?? ''} label={t('subagents.page.brief')} onCommit={brief => onChange({ brief: brief.trim() || undefined })} /></Field>
-    </Section>
-    <div className="flex justify-end">
-      <Button onClick={onDelete}><Trash2 className="size-icon" strokeWidth={1.5} />{t('subagents.page.delete')}</Button>
-    </div>
-  </>;
+  const hintLine = 'text-3 text-fg-3';
+  return (
+    <SettingsDialog icon={<AgentMark id={p.agent} name={p.name} />} title={p.name} sub={t('subagents.page.kind')} onClose={onClose}
+      control={<Switch checked={p.enabled} label={t('subagents.page.enabled')} onChange={enabled => onChange({ enabled })} />}
+      footer={<>
+        <DangerAction onClick={onDelete}>{t('subagents.page.delete')}</DangerAction>
+        <span className="flex-1" />
+        <Button variant="primary" onClick={onClose}>{t('common.done')}</Button>
+      </>}>
+      <div className="scroll-thin flex min-h-0 flex-col overflow-y-auto">
+        <FormGrid>
+          <FormField label={t('subagents.page.name')} hint={t('subagents.page.nameDesc')} className="col-span-full">
+            <TextBox value={p.name} label={t('subagents.page.name')} className="w-full" onCommit={name => name.trim() && onChange({ name })} />
+          </FormField>
+          <FormField label={t('subagents.page.agent')}>
+            <Select label={t('subagents.page.agent')} value={p.agent} className="w-full"
+              options={agents.map(a => ({ value: a.id, label: a.name, icon: <AgentMark id={a.id} name={a.name} />, disabled: a.available === false }))}
+              onChange={agent => onChange({ agent, model: undefined, effort: undefined })} />
+          </FormField>
+          {/* The model list is the CLI's latest session's; until it is in, only the default (and a stored value) show.
+              A long name (Devin's Fusion pairs) truncates, its list row keeps the full name as a tooltip */}
+          <FormField label={t('subagents.page.model')} hint={controls === undefined ? t('settings.loading') : undefined}>
+            <Select label={t('subagents.page.model')} value={p.model ?? DEFAULT} className="w-full"
+              options={choices(modelControl, p.model).map(o => ({ ...o, hint: o.label }))}
+              onChange={v => onChange({ model: v || undefined, effort: effortAfter(effortFor(controls, shapes, v || undefined), p.effort) })} />
+          </FormField>
+          {/* The levels are the picked model's own; a model no session has run yet has none to list */}
+          {(effortControl || p.effort || (effortControl === undefined && p.model)) && (
+            <FormField label={t('subagents.page.effort')} hint={effortControl === undefined && p.model ? t('subagents.page.effortUnknown') : undefined}>
+              <Select label={t('subagents.page.effort')} value={p.effort ?? DEFAULT} options={choices(effortControl ?? undefined, p.effort, true)} className="w-full"
+                onChange={v => onChange({ effort: v || undefined })} />
+            </FormField>
+          )}
+          <FormField label={t('subagents.page.duty')}>
+            <Select<SubagentDuty> label={t('subagents.page.duty')} value={p.duty ?? 'general'} className="w-full"
+              options={DUTIES.map(d => ({ value: d, label: t(`subagents.page.duty${DUTY_KEY[d]}`), description: t(`subagents.page.duty${DUTY_KEY[d]}Desc`) }))}
+              onChange={duty => onChange(pickDuty(p, duty))} />
+          </FormField>
+          <FormField label={t('subagents.page.mode')} className="col-span-full">
+            <Select<RelayMode> label={t('subagents.page.mode')} value={p.mode} className="w-full"
+              options={MODES.map(m => ({ value: m, label: t(`subagents.page.${m}`) }))}
+              onChange={mode => onChange({ mode })} />
+            {/* Every mode's consequence laid out, so a pick never moves the fields below */}
+            <StableText className={hintLine} current={p.mode} items={MODES.map(m => ({ key: m, text: t(`subagents.page.${m}Desc`) }))} />
+          </FormField>
+          {/* Free text for the model, listed next to the persona in ask_agent's description; no keyword triggers it */}
+          <FormField label={t('subagents.page.when')} hint={t('subagents.page.whenDesc')} className="col-span-full">
+            <TextBox multiline value={p.when} label={t('subagents.page.when')} placeholder={t('subagents.page.whenPlaceholder')}
+              onCommit={when => onChange({ when })} />
+          </FormField>
+          {/* Appended to every task; a duty fills it with its preset, which stays the user's to edit or clear */}
+          <FormField label={t('subagents.page.brief')} hint={t('subagents.page.briefDesc')} className="col-span-full">
+            <TextBox multiline value={p.brief ?? ''} label={t('subagents.page.brief')} placeholder={t('subagents.page.briefPlaceholder')}
+              onCommit={brief => onChange({ brief: brief.trim() || undefined })} />
+          </FormField>
+        </FormGrid>
+        <FormRows>
+          {p.mode === 'consult' && (
+            <Field label={t('subagents.page.readOnly')} desc={<span className={readOnly === null ? 'text-warn' : undefined}>{readOnlyText}</span>} />
+          )}
+          {/* Every new conversation starts with the handoff pack; a call can still pass `changes` either way */}
+          <Field label={t('subagents.page.changes')} desc={t('subagents.page.changesDesc')}>
+            <Switch checked={p.changes === true} label={t('subagents.page.changes')} onChange={on => onChange({ changes: on || undefined })} />
+          </Field>
+        </FormRows>
+      </div>
+    </SettingsDialog>
+  );
 }
 
 function modelControlOf(controls: ConfigControl[] | undefined): ConfigControl | undefined {
@@ -311,21 +321,18 @@ function effortAfter(next: ConfigControl | null | undefined, effort: string | un
   return next?.options.some(o => o.id === effort) ? effort : undefined;
 }
 
-// The row's second line: the CLI, its model one step fainter, then its reasoning effort, duty and mode as tags. Tone tells
-// the parts apart, with no separator glyph between them, so they sit half a gap apart and the tags use the small badge
-// of the chat's subagent rows; the model gives up width first. The model reads as the CLI names it (Codex
-// `gpt-6-astra` → "6 Astra"), as in the detail page's select; the stored value shows only until the CLI's latest
-// session lists it
-function metaOf(p: SubagentPersona, agents: AgentInfo[], controls: ConfigControl[] | undefined): ReactNode {
+// The row's second line: the CLI, its model, then its reasoning effort, duty and mode, in words. The model reads as the
+// CLI names it (Codex `gpt-6-astra` → "6 Astra"), as in the dialog's select; the stored value shows only until the
+// CLI's latest session lists it
+function metaOf(p: SubagentPersona, agents: AgentInfo[], controls: ConfigControl[] | undefined): string {
   const cli = agents.find(a => a.id === p.agent)?.name ?? p.agent;
   const model = p.model && (modelControlOf(controls)?.options.find(o => o.id === p.model)?.name ?? p.model);
-  return <span className="flex min-w-0 items-center gap-gap-half">
-    <span className="shrink-0">{cli}</span>
-    {model && <span className="min-w-0 truncate text-fg-3/70">{model}</span>}
-    {p.effort && <ChipTag small>{effortLabel({ id: p.effort, name: p.effort })}</ChipTag>}
-    {p.duty && p.duty !== 'general' && <ChipTag small>{t(`subagents.page.duty${DUTY_KEY[p.duty]}`)}</ChipTag>}
-    <ChipTag small>{t(`subagents.page.${p.mode}`)}</ChipTag>
-  </span>;
+  return [
+    cli, model,
+    p.effort && effortLabel({ id: p.effort, name: p.effort }),
+    p.duty && p.duty !== 'general' && t(`subagents.page.duty${DUTY_KEY[p.duty]}`),
+    t(`subagents.page.${p.mode}`),
+  ].filter(Boolean).join(t('common.metaSep'));
 }
 
 function uniqueName(base: string, list: { name: string }[]): string {

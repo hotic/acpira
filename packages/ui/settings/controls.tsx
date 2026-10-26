@@ -1,8 +1,10 @@
 import { createContext, useContext, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
-import { BookText, Brain, ChevronRight, Combine, ExternalLink, Image as ImageIcon, Search, X, Zap } from 'lucide-react';
+import { ArrowUpRight, Check, ChevronRight, ChevronsUpDown, Search, Trash2, X } from 'lucide-react';
+import { Radio } from '@base-ui/react/radio';
+import { RadioGroup } from '@base-ui/react/radio-group';
 import { cn } from '../ui/cn';
 import { Card } from '../ui/Card';
-import { Chip, IconButton } from '../ui/Button';
+import { IconButton } from '../ui/Button';
 import { Dialog } from '../ui/Dialog';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
@@ -12,11 +14,16 @@ import { Switch as SwitchPrimitive } from '../ui/Switch';
 import { t } from '../i18n';
 
 // Settings use a navigation column beside one content column. Page and section headings belong to the content.
+// The system (settled 2026-10-26, lab/settings-all.preview.tsx): card heads carry no icon (title, count, one fg-3 line,
+// one quiet action); rows sit on the text edge, with an icon column only when every row of the list has its own icon;
+// three text roles (titles fg-1, secondary fg-3, actions fg-2); no chevrons, a clickable row lights up instead; every
+// control of the right column shares one width; whatever a row opens opens in a dialog, whose groups are filled blocks
 
+// The page title: larger and heavier than a card title, so the page reads as one level above its cards
 export function PageHeader({ title, action }: { title: ReactNode; action?: ReactNode }) {
   return (
-    <header className="flex min-h-ctl items-center gap-pad">
-      <h1 className="m-0 min-w-0 flex-1 text-(length:--text-h) leading-(--text-h-lh) font-medium text-fg-1 [overflow-wrap:anywhere]">{title}</h1>
+    <header className="flex min-h-ctl items-center gap-pad pb-1">
+      <h1 className="m-0 min-w-0 flex-1 text-(length:--text-page) leading-(--text-page-lh) font-semibold text-fg-1 [overflow-wrap:anywhere]">{title}</h1>
       {action && <div className="flex shrink-0 items-center">{action}</div>}
     </header>
   );
@@ -53,31 +60,35 @@ export function SectionHead({ children, count, action, className }: { children: 
 }
 
 export function Count({ n, className }: { n: number; className?: string }) {
-  return <span className={cn('shrink-0 text-2 font-normal text-fg-2 tabular-nums', className)}>{n}</span>;
+  return <span className={cn('shrink-0 text-2 font-normal text-fg-3 tabular-nums', className)}>{n}</span>;
 }
 
 export interface SectionProps {
   title?: ReactNode;
   desc?: ReactNode;
   count?: number;
-  // A mark before the title column (a source's glyph), sized to the two-line header
-  lead?: ReactNode;
   // A small status mark between the title and the count (a Dot with its label)
   status?: ReactNode;
-  // One small action (a quiet Chip / IconButton), at the right of the title line
+  // One small action (a SectionAction), at the right of the title line
   action?: ReactNode;
   // Children are already Cards (several groups), not rows to be wrapped in one Group
   cards?: boolean;
-  children: ReactNode;
+  children?: ReactNode;
 }
 
-// Section copy shares the card's outer edge; only content inside the card receives its inset.
+// Copy outside a card (a page's footnote): the secondary role, on the card's outer edge
 export function SectionDescription({ children }: { children: ReactNode }) {
-  return <p className="m-0 text-2 text-fg-2 [overflow-wrap:anywhere]">{children}</p>;
+  return <p className="m-0 text-3 text-fg-3 [overflow-wrap:anywhere]">{children}</p>;
 }
 
 // Titled subgroups own one surface. Their lists inherit it and use separators instead of nested cards.
 const InsetGroupContext = createContext(false);
+// Inside a SettingsDialog every card becomes a filled block (bg-chip, rounded, no border), like the tab strip and the
+// search box above it: bordered cards in a dialog read as boxes stacked on boxes. Its inner padding is the search box's,
+// so the search glass, the rows' icons and their titles share one line
+const DialogContext = createContext(false);
+export const useInDialog = () => useContext(DialogContext);
+const block = 'flex flex-col overflow-hidden rounded-lg bg-chip px-3';
 
 // The rules inside a card run from card edge to card edge, like a clickable row's hover fill (`rowHover`): a hovered row is
 // a closed cell between two rules. Inset rules left the fill spilling past their ends and running into the rule above.
@@ -96,10 +107,20 @@ const settingRow = 'min-h-(--setting-row) py-(--setting-row-pad) text-2 data-[de
 function useSettingRow() {
   return cn(settingRow, !useContext(GroupContext) && 'px-pad');
 }
+// A title over its second line: the two lines a few pixels apart, touching they read as crowded
+const stack = 'flex min-w-0 flex-col gap-y-(--stack-gap)';
+// The secondary role: every second line, count and caption
+const second = 'text-3 text-fg-3';
 
-export function Section({ title, desc, count, lead, status, action, cards, children }: SectionProps) {
+// A card (a block inside a dialog) holding the given content
+function Surface({ className, children }: { className?: string; children: ReactNode }) {
+  if (useContext(DialogContext)) return <section className={cn(block, className)}>{children}</section>;
+  return <Card className={cn('acp-section-panel flex flex-col overflow-hidden px-pad shadow-none', className)}>{children}</Card>;
+}
+
+export function Section({ title, desc, count, status, action, cards, children }: SectionProps) {
   const inset = title !== undefined || !!action;
-  const hasContent = children !== null && children !== undefined;
+  const hasContent = children !== null && children !== undefined && children !== false;
   const content = cards ? <div className={cn('flex flex-col', !inset && 'gap-pad')}>{children}</div> : <Group>{children}</Group>;
   if (!inset) return (
     <div className="flex flex-col gap-2">
@@ -108,129 +129,167 @@ export function Section({ title, desc, count, lead, status, action, cards, child
     </div>
   );
   return (
-    <Card className="acp-section-panel flex flex-col overflow-hidden px-pad shadow-none">
-      <ListHead title={title} desc={desc} count={count} lead={lead} status={status} action={action} />
+    <Surface>
+      <ListHead title={title} desc={desc} count={count} status={status} action={action} />
       {hasContent && <InsetGroupContext.Provider value={true}>
         <div className={topRule}>{content}</div>
       </InsetGroupContext.Provider>}
-    </Card>
+    </Surface>
   );
 }
 
-// The head of a titled list: an optional lead mark, the title with its status and count, an optional second line, and
-// the actions at the right. A Section card's header, and a group header inside a shared card (the model lists' groups).
-// Without a lead the actions wrap under the copy when narrow; with one the row stays on one line (the copy shrinks), so
-// the mark never ends up alone above its title
-export function ListHead({ title, desc, count, lead, status, action }: Pick<SectionProps, 'title' | 'desc' | 'count' | 'lead' | 'status' | 'action'>) {
+// The head of a titled list: the title with its status and count, an optional second line, and the action at the right.
+// A Section card's head, and a group head inside a shared card. No icon: a head mark left the column under it empty
+// on every setting row (studied 2026-10-26)
+export function ListHead({ title, desc, count, status, action }: Pick<SectionProps, 'title' | 'desc' | 'count' | 'status' | 'action'>) {
   return (
-    <div className={cn(settingRow, 'flex items-center gap-gap', !lead && 'flex-wrap')} data-detail={!!desc || undefined}>
-      {lead && <span className="flex size-lead shrink-0 items-center justify-center text-fg-2 [&_svg]:size-lead">{lead}</span>}
-      <div className={cn('min-w-0', lead ? 'flex-1' : 'flex-[1_1_var(--setting-header-copy)]')}>
-        <h3 className="m-0 flex items-baseline gap-2 text-2 font-normal text-fg-1">
+    <div className={cn(settingRow, 'flex flex-wrap items-center gap-gap')} data-detail={!!desc || undefined}>
+      <div className={cn(stack, 'flex-[1_1_var(--setting-header-copy)]')}>
+        <h3 className="m-0 flex items-baseline gap-2 text-2 font-medium text-fg-1">
           <span className="min-w-0 [overflow-wrap:anywhere]">{title}</span>
           {status}
           {count !== undefined && <Count n={count} />}
         </h3>
-        {desc && <SectionDescription>{desc}</SectionDescription>}
+        {desc && <div className={cn(second, '[overflow-wrap:anywhere]')}>{desc}</div>}
       </div>
       {action}
     </div>
   );
 }
 
-// A search field in the shared box style; `className` sizes it in its row
-export function SearchBox({ value, onChange, label, className }: { value: string; onChange: (v: string) => void; label: string; className?: string }) {
+// The one search field: a box whose glass sits in a slot as wide as a row's icon column, so inside a dialog the glass,
+// the rows' icons and their titles line up. `className` sizes it in its row; `children` sit at its right end
+export function SearchBox({ value, onChange, label, className, autoFocus }: { value: string; onChange: (v: string) => void; label: string; className?: string; autoFocus?: boolean }) {
   return (
-    <div className={cn('flex h-ctl min-w-0 items-center gap-2 rounded-md border border-line bg-chip px-3 focus-within:border-line-strong', className)}>
-      <Search className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} aria-hidden />
-      <input type="search" value={value} onChange={e => onChange(e.target.value)} aria-label={label} placeholder={label}
+    <div className={cn('flex h-ctl min-w-0 items-center gap-gap rounded-md border border-line bg-chip px-3 focus-within:border-line-strong', className)}>
+      <span className="flex w-lead shrink-0 items-center justify-center"><Search className="size-icon text-fg-3" strokeWidth={1.75} aria-hidden /></span>
+      <input type="search" value={value} onChange={e => onChange(e.target.value)} aria-label={label} placeholder={label} autoFocus={autoFocus}
         className="min-w-0 flex-1 border-0 bg-transparent text-2 text-fg-1 outline-none placeholder:text-fg-3" />
     </div>
   );
 }
 
-// The first row inside a model list's card, the same on every agent's page: the search field, then an optional control
-// (the master switch) at the right edge, where the rows' switches sit
-export function SearchRow({ value, onChange, children }: { value: string; onChange: (v: string) => void; children?: ReactNode }) {
+// A search field with an optional control at its right (a list's master switch, an add button)
+export function SearchRow({ value, onChange, label, children }: { value: string; onChange: (v: string) => void; label?: string; children?: ReactNode }) {
   return (
-    <div className="flex min-w-0 items-center gap-gap py-pad-y">
-      <SearchBox value={value} onChange={onChange} label={t('settings.models.search')} className="flex-1" />
+    <div className="flex min-w-0 items-center gap-gap">
+      <SearchBox value={value} onChange={onChange} label={label ?? t('settings.models.search')} className="flex-1" />
       {children && <div className="flex shrink-0 items-center gap-2">{children}</div>}
     </div>
   );
 }
 
-// The badges a model row can carry, in their column order. Each is one muted icon in a fixed slot (no words beside it);
-// the words are its label and tooltip
-export type ModelTagKind = 'thinking' | 'fusion' | 'fast' | 'image' | 'long';
-const MODEL_TAG_ORDER: ModelTagKind[] = ['thinking', 'fusion', 'fast', 'image', 'long'];
-const MODEL_TAG_ICON: Record<ModelTagKind, ReactNode> = {
-  thinking: <Brain strokeWidth={1.75} />,
-  fusion: <Combine strokeWidth={1.75} />,
-  fast: <Zap strokeWidth={1.75} />,
-  image: <ImageIcon strokeWidth={1.75} />,
-  long: <BookText strokeWidth={1.75} />,
-};
-// A row's badges: kind → its words
-export type ModelTags = Partial<Record<ModelTagKind, string>>;
-
-// One model on one compact line, shared by the built-in agent's sources and the other agents' visibility lists: mark,
-// name (an optional marker after it), the badges packed against the row's own controls on the right, then those
-// controls. The full description is the name's tooltip. `onOpen` makes the name a button stretched over the whole row
-// (the controls stay above it) that opens the row's editor; its hover lights the row from card edge to card edge
-export function ModelLine({ lead, name, marker, hint, tags, dim, trailing, onOpen, open, openLabel }: {
-  lead: ReactNode; name: string; marker?: ReactNode; hint?: string; tags: ModelTags; dim?: boolean; trailing: ReactNode;
-  onOpen?: () => void; open?: boolean; openLabel?: string;
-}) {
-  const label = <><span className="min-w-0 truncate">{name}</span>{marker}</>;
-  const kinds = MODEL_TAG_ORDER.filter(k => tags[k]);
-  return (
-    <ItemRow lead={lead} dim={dim}
-      className={cn(onOpen && 'relative isolate before:pointer-events-none before:absolute before:inset-y-0 before:-inset-x-pad before:-z-10 before:transition-colors has-[[data-model-open]:hover]:before:bg-hover has-[[data-model-open]:focus-visible]:before:bg-hover',
-        onOpen && open && 'before:bg-hover')}
-      title={onOpen
-        ? <button type="button" data-model-open onClick={onOpen} aria-haspopup="dialog" aria-expanded={open} aria-label={openLabel} title={hint}
-            className="flex w-full min-w-0 items-baseline gap-2 text-left outline-none after:absolute after:inset-y-0 after:-inset-x-pad">{label}</button>
-        : <span className="flex min-w-0 items-baseline gap-2" title={hint}>{label}</span>}
-      trailing={<span className="relative flex items-center gap-gap">
-        {kinds.length > 0 && <span className="flex items-center gap-1.5 text-fg-3">
-          {kinds.map(k => <span key={k} role="img" aria-label={tags[k]} title={tags[k]} className="flex size-icon items-center justify-center [&_svg]:size-icon">{MODEL_TAG_ICON[k]}</span>)}
-        </span>}
-        {trailing}
-      </span>} />
-  );
-}
-
-// A small text action for a Section's title line: quiet Chip, no caret. Its box (and hover fill) ends on the cards' right edge
-// like the page header's action, rather than overhanging it
+// A card head's one action: a quiet icon + word. Its own padding hangs past the cards' right edge, so its words end on
+// the rows' text edge
 export function SectionAction({ icon, onClick, children, title, disabled }: { icon?: ReactNode; onClick: () => void; children: ReactNode; title?: string; disabled?: boolean }) {
-  return <Chip caret={false} icon={icon} onClick={onClick} title={title} disabled={disabled} className="shrink-0">{children}</Chip>;
+  return (
+    <button type="button" onClick={onClick} title={title} disabled={disabled}
+      className="-mr-2 flex h-ctl-sm shrink-0 items-center gap-1 rounded-md px-2 text-2 whitespace-nowrap text-fg-2 transition-colors enabled:hover:bg-hover enabled:hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1 disabled:opacity-50 [&_svg]:size-icon [&_svg]:stroke-[1.75]">
+      {icon}{children}
+    </button>
+  );
 }
 
 export function Group({ className, children, embedded = false }: { className?: string; children: ReactNode; embedded?: boolean }) {
   const inheritedInset = useContext(InsetGroupContext);
+  const dialog = useContext(DialogContext);
   const inset = embedded || inheritedInset;
-  const Container = inset ? 'div' : Card;
+  const list = cn('flex flex-col', rowRules, className);
   return <GroupContext.Provider value={true}>
-    <Container className={cn('flex flex-col', rowRules, !inset && 'overflow-hidden px-pad shadow-none', className)}>{children}</Container>
+    {inset ? <div className={list}>{children}</div>
+      : dialog ? <section className={cn(block, rowRules, className)}>{children}</section>
+      : <Card className={cn(list, 'overflow-hidden px-pad shadow-none')}>{children}</Card>}
   </GroupContext.Provider>;
 }
 
-// The settings pages' dialog frame, used by the add-model list, the source form and the model editor (the TextPeek /
-// SubagentGraph overlay): a scrim over the settings shell, a titled box with a close button, the body, and an optional
-// footer bar. A click on the scrim closes. It shares the menus' z-30 layer: a select inside portals its list after it
-// into the same layer and so paints above it
-export function SettingsDialog({ title, onClose, footer, children }: { title: string; onClose: () => void; footer?: ReactNode; children: ReactNode }) {
+// A segmented tab strip (a dialog's tabs, the Shared page's lists): one filled track, the current tab lit
+export function Tabs<V extends string>({ items, value, onChange, label }: {
+  items: { value: V; label: string; count?: number }[];
+  value: V;
+  onChange: (v: V) => void;
+  label: string;
+}) {
+  const move = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
+    const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+    if (!step) return;
+    e.preventDefault();
+    const next = items[(i + step + items.length) % items.length]!;
+    onChange(next.value);
+    (e.currentTarget.parentElement?.children[items.indexOf(next)] as HTMLElement | undefined)?.focus();
+  };
+  return (
+    <div role="tablist" aria-label={label} className="flex h-ctl shrink-0 [scrollbar-width:none] items-center gap-0.5 overflow-x-auto rounded-lg bg-chip p-0.5">
+      {items.map((it, i) => {
+        const on = it.value === value;
+        return (
+          <button key={it.value} type="button" role="tab" aria-selected={on} tabIndex={on ? 0 : -1} onClick={() => onChange(it.value)} onKeyDown={e => move(e, i)}
+            className={cn('flex h-full min-w-max flex-1 items-center justify-center gap-1.5 rounded-md px-2 text-2 whitespace-nowrap outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg-2',
+              on ? 'bg-active text-fg-1' : 'text-fg-2 hover:text-fg-1')}>
+            {it.label}
+            {it.count !== undefined && <span className="text-fg-3 tabular-nums">{it.count}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// A segmented single choice (a radio group drawn like the tab strip): `w-(--ctl-w)` as a row's control, or a line of
+// its own
+export function Segmented<V extends string>({ items, value, onChange, label, className }: {
+  items: { value: V; label: ReactNode }[];
+  value: V;
+  onChange: (v: V) => void;
+  label: string;
+  className?: string;
+}) {
+  return (
+    <RadioGroup value={value} onValueChange={v => onChange(v as V)} aria-label={label}
+      className={cn('flex h-ctl min-w-0 shrink-0 items-center gap-0.5 rounded-lg bg-chip p-0.5', className)}>
+      {items.map(it => (
+        <Radio.Root key={it.value} value={it.value} render={<button type="button" />} nativeButton
+          onKeyDownCapture={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.click(); } }}
+          className={cn('inline-flex h-full min-w-max flex-1 items-center justify-center gap-1.5 rounded-md px-2 text-2 whitespace-nowrap outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg-2 [&_svg]:size-icon',
+            it.value === value ? 'bg-active text-fg-1' : 'text-fg-2 hover:text-fg-1')}>
+          {it.label}
+        </Radio.Root>
+      ))}
+    </RadioGroup>
+  );
+}
+
+// The settings pages' dialog frame: a scrim over the settings shell, a head (an optional mark, the title with a fg-3
+// subtitle, an optional control such as the item's switch, close), the body, and an optional footer. A click on the
+// scrim closes. Inside, Sections and Groups render as filled blocks. `tall` gives a tabbed dialog one fixed height, so
+// switching tabs never resizes it. It shares the menus' z-30 layer: a select inside portals its list after it into the
+// same layer and so paints above it; a dialog opened from a dialog paints above the one it came from
+export function SettingsDialog({ title, sub, icon, control, wide, tall, onClose, footer, children }: {
+  title: string;
+  sub?: ReactNode;
+  icon?: ReactNode;
+  control?: ReactNode;
+  wide?: boolean;
+  tall?: boolean;
+  onClose: () => void;
+  footer?: ReactNode;
+  children: ReactNode;
+}) {
   const scrim = (e: MouseEvent) => { if (e.target === e.currentTarget) onClose(); };
   return <Dialog.Root open onOpenChange={next => { if (!next) onClose(); }}>
     <Dialog.Portal>
       <Dialog.Popup onClick={scrim} className="absolute inset-0 z-30 flex items-center justify-center bg-scrim p-pad">
-        <div className="flex max-h-full w-pop-xl max-w-full flex-col overflow-hidden rounded-lg border border-line bg-bg-1 shadow-pop">
+        <div className={cn('flex max-h-full max-w-full flex-col overflow-hidden rounded-lg border border-line bg-bg-1 shadow-pop', wide ? 'w-(--dialog-w-wide)' : 'w-(--dialog-w)', tall && 'h-(--dialog-h)')}>
           <header className="flex shrink-0 items-center gap-gap border-b border-line py-gap pr-gap pl-pad">
-            <Dialog.Title className="m-0 min-w-0 flex-1 truncate text-2 font-medium text-fg-1">{title}</Dialog.Title>
+            {icon && <span className="flex size-lead shrink-0 items-center justify-center text-fg-2 [&>svg]:size-lead [&>svg]:stroke-[1.5]">{icon}</span>}
+            <span className="flex min-w-0 flex-1 items-baseline gap-2">
+              {/* The title keeps its words; the subtitle gives way first */}
+              <Dialog.Title className="m-0 min-w-0 max-w-full shrink-0 truncate text-2 font-medium text-fg-1">{title}</Dialog.Title>
+              {sub && <span className="min-w-0 truncate text-2 text-fg-3">{sub}</span>}
+            </span>
+            {control}
             <IconButton size="sm" title={t('common.close')} aria-label={t('common.close')} onClick={onClose} className="text-fg-2"><X strokeWidth={1.5} /></IconButton>
           </header>
-          {children}
+          <DialogContext.Provider value={true}>{children}</DialogContext.Provider>
           {footer && <div className="flex shrink-0 items-center gap-2 border-t border-line px-pad py-gap">{footer}</div>}
         </div>
       </Dialog.Popup>
@@ -238,54 +297,85 @@ export function SettingsDialog({ title, onClose, footer, children }: { title: st
   </Dialog.Root>;
 }
 
+// A dialog's content column: tab strip, search box and blocks stacked on one outer edge, scrolling as one
+export function DialogBody({ children, className }: { children: ReactNode; className?: string }) {
+  // Blocks keep their height and the body scrolls; a shrinking block would clip its own rows instead
+  return <div className={cn('scroll-thin flex min-h-0 flex-1 flex-col gap-gap overflow-y-auto p-pad [&>*]:shrink-0', className)}>{children}</div>;
+}
+
+// A dialog footer's destructive action, on the left: quiet until hovered, its words on the body's text edge
+export function DangerAction({ onClick, children, disabled, title, icon = <Trash2 strokeWidth={1.75} /> }: { onClick: () => void; children: ReactNode; disabled?: boolean; title?: string; icon?: ReactNode }) {
+  return (
+    <button type="button" onClick={onClick} disabled={disabled} title={title}
+      className="-ml-2 flex h-ctl shrink-0 items-center gap-1.5 rounded-md px-2 text-2 text-fg-2 transition-colors enabled:hover:bg-hover enabled:hover:text-danger focus-visible:bg-hover focus-visible:text-danger disabled:opacity-50 [&_svg]:size-icon">
+      {icon}{children}
+    </button>
+  );
+}
+
+// A footer's note (where a file lives, what is picked): the secondary role, taking the room between the actions
+export function FooterNote({ children, className }: { children: ReactNode; className?: string }) {
+  return <span className={cn('min-w-0 flex-1 truncate text-3 text-fg-3', className)}>{children}</span>;
+}
+
 // A dialog form's field: its label above the control (the source form, the model editor); `hint` is the label's tooltip
 export function FormField({ label, hint, children, className }: { label: string; hint?: string; children: ReactNode; className?: string }) {
   return (
     <div className={cn('flex min-w-0 flex-col gap-1', className)}>
-      <span className="text-3 text-fg-2" title={hint}>{label}</span>
+      <span className="text-3 text-fg-3" title={hint}>{label}</span>
       {children}
     </div>
   );
 }
 
+// A dialog form: fields two to a line where the dialog is wide enough, one where it is not; `FormField className="col-span-full"`
+// takes a whole line
+export function FormGrid({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={cn('grid grid-cols-[repeat(auto-fit,minmax(var(--setting-header-copy),1fr))] gap-3 p-pad', className)}>{children}</div>;
+}
+
+// Setting rows under a dialog's form, bare (no block): they start on the form labels' edge, a rule above the first
+export function FormRows({ children }: { children: ReactNode }) {
+  return <GroupContext.Provider value={true}><div className={cn('relative flex flex-col px-pad before:pointer-events-none before:absolute before:top-0 before:inset-x-0 before:h-px before:bg-line', rowRules)}>{children}</div></GroupContext.Provider>;
+}
+
 // One setting: label + description on the left, the control on the right. `stack` puts the control under the text (wide controls)
-export function Field({ label, desc, htmlFor, stack, children }: { label?: ReactNode; desc?: ReactNode; htmlFor?: string; stack?: boolean; children?: ReactNode }) {
+export function Field({ label, desc, htmlFor, stack: stacked, children }: { label?: ReactNode; desc?: ReactNode; htmlFor?: string; stack?: boolean; children?: ReactNode }) {
   return (
-    <div className={cn(useSettingRow(), 'flex flex-wrap gap-pad', stack ? 'flex-col' : 'items-center')} data-detail={!!desc || undefined}>
-      <div className={cn('min-w-0', stack ? 'w-full' : 'flex-[1_1_var(--setting-header-copy)]')}>
+    <div className={cn(useSettingRow(), 'flex flex-wrap gap-x-pad gap-y-2', stacked ? 'flex-col' : 'items-center')} data-detail={!!desc || undefined}>
+      <div className={cn(stack, stacked ? 'w-full' : 'flex-[1_1_var(--setting-header-copy)]')}>
         {label !== undefined && <label htmlFor={htmlFor} className="block text-2 text-fg-1">{label}</label>}
-        {desc && <div className="text-2 text-fg-2 [overflow-wrap:anywhere]">{desc}</div>}
+        {desc && <div className={cn(second, '[overflow-wrap:anywhere]')}>{desc}</div>}
       </div>
       {/* max-w-full: once the row wraps, a long Select label truncates inside the card instead of overflowing it */}
-      {children !== undefined && <div className={cn('flex max-w-full shrink-0 items-center gap-2', stack && 'w-full min-w-0')}>{children}</div>}
+      {children !== undefined && <div className={cn('flex max-w-full shrink-0 items-center gap-2', stacked && 'w-full min-w-0')}>{children}</div>}
     </div>
   );
 }
 
-// A fact about the agent: name on the left, value at the right edge.
-export function FactRow({ label, children }: { label: ReactNode; children: ReactNode }) {
+// A fact: its name as the row's title, the value as its second line
+export function FactRow({ label, children, title }: { label: ReactNode; children: ReactNode; title?: string }) {
   return (
-    <div className={cn(useSettingRow(), 'flex items-center gap-pad')}>
-      <span className="shrink-0 text-2 text-fg-2">{label}</span>
-      <span className="flex min-w-0 flex-1 items-center justify-end gap-1.5 text-right text-2 text-fg-1">{children}</span>
+    <div className={cn(useSettingRow(), stack, 'justify-center')} data-detail>
+      <span className="text-2 text-fg-1">{label}</span>
+      <span className={cn(second, 'flex min-w-0 items-center gap-1.5')} title={title}>{children}</span>
     </div>
   );
 }
 
 // A faint single-line row inside a Group (empty states, notes)
 export function Note({ children, shimmer }: { children: ReactNode; shimmer?: boolean }) {
-  return <div className={cn(useSettingRow(), 'flex items-center text-fg-2')}><Shimmer active={!!shimmer}>{children}</Shimmer></div>;
+  return <div className={cn(useSettingRow(), 'flex items-center text-fg-3')}><Shimmer active={!!shimmer}>{children}</Shimmer></div>;
 }
 
 // description: a caption under the label in the list only (the field shows the label alone)
 export interface Option<V extends string> { value: V; label: string; icon?: ReactNode; hint?: string; disabled?: boolean; description?: string }
 
-// Dropdown select: a bordered Chip that opens the shared Menu; radio semantics, the current value gets the check.
-// Sized like NumberField (--ctl tall, --r-md) so the two form controls line up in a column. The field is as wide as its
-// longest option (every label sits stacked in one grid cell, only the current one visible), so a pick never resizes it,
-// and its list is exactly the field's width, like a native select. A className width (w-full in a form dialog) wins;
-// the list follows it. The list is painted in the field's own material (`fieldTone`), and the field keeps its resting
-// fill while open, so the two read as one control instead of a lighter field over a darker menu
+// Dropdown select: a bordered field that opens the shared Menu; radio semantics, the current value gets the check.
+// Every control of the right column shares one width (--ctl-w), so a column of selects, number fields and text boxes
+// lines up; a label longer than that truncates, its list row keeps it whole. A className width (w-full in a form
+// dialog) wins; the list follows it. The list is painted in the field's own material (`fieldTone`), and the field
+// keeps its resting fill while open, so the two read as one control instead of a lighter field over a darker menu
 export function Select<V extends string>({ options, value, onChange, label, className }: { options: Option<V>[]; value: V; onChange: (v: V) => void; label: string; className?: string }) {
   const cur = options.find(o => o.value === value);
   // Rows with a caption get the model panels' two-line padding, all of them so the list keeps one rhythm
@@ -293,16 +383,17 @@ export function Select<V extends string>({ options, value, onChange, label, clas
   const trigger = useRef<HTMLButtonElement>(null);
   const [tone, setTone] = useState<CSSProperties>();
   return <DropdownMenu.Root onOpenChange={open => { if (open) setTone(fieldTone(trigger.current)); }}>
-    <DropdownMenu.Trigger render={<Chip ref={trigger} aria-label={label} icon={cur?.icon}
-      className={cn('h-ctl min-w-(--ctl-w) max-w-full gap-2 rounded-md border border-line bg-hover px-3 text-2 text-fg-1 hover:border-line-strong hover:bg-active data-[popup-open]:border-line-strong data-[popup-open]:bg-hover', className)}>
-      {/* pe-1: a list row's chrome (popup border and padding, row padding, check) is a few px wider than the field's
-          (border, padding, caret), so the longest label still fits its row unclipped */}
-      <StableText className="pe-1" itemClassName="truncate" current={value}
+    <DropdownMenu.Trigger render={<button ref={trigger} type="button" aria-label={label}
+      className={cn('flex h-ctl w-(--ctl-w) max-w-full min-w-0 items-center gap-2 rounded-md border border-line bg-hover px-3 text-left text-2 text-fg-1 transition-colors hover:border-line-strong hover:bg-active data-[popup-open]:border-line-strong data-[popup-open]:bg-hover', className)}>
+      {cur?.icon && <span className="flex shrink-0 items-center [&_svg]:size-icon">{cur.icon}</span>}
+      {/* Every label laid out in one cell, only the current one visible: a pick never moves the caret */}
+      <StableText className="min-w-0 flex-1" itemClassName="truncate" current={value}
         items={[...options.map(o => ({ key: o.value, text: o.label })), ...(cur ? [] : [{ key: value, text: value }])]} />
-    </Chip>} />
+      <ChevronsUpDown className="size-icon shrink-0 text-fg-3" strokeWidth={1.75} aria-hidden />
+    </button>} />
     <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="start" width="anchor"><DropdownMenu.Popup style={tone}>
       <DropdownMenu.RadioGroup value={value} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
-        {options.map(o => <DropdownMenu.RadioItem key={o.value} value={o.value} title={o.hint} disabled={o.disabled} onClick={() => onChange(o.value)} className={twoLine ? 'min-h-0 py-1.5' : undefined}>
+        {options.map(o => <DropdownMenu.RadioItem key={o.value} value={o.value} title={o.hint ?? o.label} disabled={o.disabled} onClick={() => onChange(o.value)} className={twoLine ? 'min-h-0 py-1.5' : undefined}>
           <OptionContent icon={o.icon} description={o.description} descriptionClassName="text-fg-3/70" checked={o.value === value} checkSlot={!!cur}>{o.label}</OptionContent>
         </DropdownMenu.RadioItem>)}
       </DropdownMenu.RadioGroup>
@@ -342,34 +433,57 @@ export function Switch({ checked, onChange, label, disabled }: { checked: boolea
   return <SwitchPrimitive checked={checked} aria-label={label} disabled={disabled} onCheckedChange={onChange} />;
 }
 
-// Numeric field committing on blur / Enter; shows `unit` after the box. Local text state so half-typed values don't round-trip through the host.
-// Out-of-range input snaps back to the current value rather than being clamped, so a typo never silently lands on a bound
-export function NumberField({ value, onCommit, min, max, step, unit, label }: { value: number; onCommit: (v: number) => void; min?: number; max?: number; step?: number; unit?: string; label: string }) {
+// Numeric field committing on blur / Enter, read like a select: the value and its unit on the left, a stepper at the
+// right end where a select has its caret. Local text state so half-typed values don't round-trip through the host.
+// Out-of-range input snaps back to the current value rather than being clamped, so a typo never silently lands on a
+// bound; the stepper stops at the bounds
+export function NumberField({ value, onCommit, min, max, step = 1, unit, label }: { value: number; onCommit: (v: number) => void; min?: number; max?: number; step?: number; unit?: string; label: string }) {
   const [text, setText] = useState(String(value));
   useEffect(() => { setText(String(value)); }, [value]);
   const commit = () => {
     const n = Number(text);
-    if (!Number.isFinite(n) || (min !== undefined && n < min) || (max !== undefined && n > max)) { setText(String(value)); return; }
+    if (!text.trim() || !Number.isFinite(n) || (min !== undefined && n < min) || (max !== undefined && n > max)) { setText(String(value)); return; }
+    if (n !== value) onCommit(n);
+  };
+  const bump = (dir: 1 | -1) => {
+    const base = Number(text);
+    let n = (Number.isFinite(base) ? base : value) + dir * step;
+    if (min !== undefined) n = Math.max(min, n);
+    if (max !== undefined) n = Math.min(max, n);
+    setText(String(n));
     if (n !== value) onCommit(n);
   };
   const onKey = (e: KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setText(String(value)); };
+  const half = 'absolute inset-x-0 h-1/2 rounded-sm outline-none transition-colors hover:bg-hover';
   return (
-    <label className="inline-flex h-ctl items-center gap-2 rounded-md border border-line bg-hover px-3 text-2 text-fg-1 transition-colors focus-within:bg-active">
-      <input
-        type="number"
-        inputMode="numeric"
-        aria-label={label}
-        value={text}
-        min={min}
-        max={max}
-        step={step}
-        onChange={e => setText(e.target.value)}
-        onBlur={commit}
-        onKeyDown={onKey}
-        className="w-(--num-w) min-w-0 bg-transparent text-right tabular-nums outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-      />
-      {unit && <span className="text-2 text-fg-2">{unit}</span>}
-    </label>
+    <div className="flex h-ctl w-(--ctl-w) max-w-full items-center gap-2 rounded-md border border-line bg-hover pr-1 pl-3 text-2 text-fg-1 transition-colors focus-within:bg-active hover:border-line-strong">
+      <label className="flex min-w-0 flex-1 cursor-text items-baseline gap-1 tabular-nums">
+        {/* The input is as wide as its text (a hidden copy sizes the cell), so the unit follows the number */}
+        <span className="inline-grid min-w-0">
+          <span aria-hidden className="invisible col-start-1 row-start-1 whitespace-pre">{text || ' '}</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            aria-label={label}
+            value={text}
+            min={min}
+            max={max}
+            step={step}
+            onChange={e => setText(e.target.value)}
+            onBlur={commit}
+            onKeyDown={onKey}
+            className="col-start-1 row-start-1 w-full min-w-0 bg-transparent outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          />
+        </span>
+        {unit && <span className="shrink-0 text-fg-3">{unit}</span>}
+      </label>
+      {/* The arrow keys step the field too, so the halves stay out of the tab order */}
+      <span className="relative flex size-ctl-sm shrink-0 items-center justify-center text-fg-3">
+        <ChevronsUpDown className="size-icon" strokeWidth={1.75} aria-hidden />
+        <button type="button" tabIndex={-1} aria-label={t('settings.number.up', { name: label })} onClick={() => bump(1)} className={cn(half, 'top-0')} />
+        <button type="button" tabIndex={-1} aria-label={t('settings.number.down', { name: label })} onClick={() => bump(-1)} className={cn(half, 'bottom-0')} />
+      </span>
+    </div>
   );
 }
 
@@ -379,6 +493,32 @@ export function Dot({ ok, warn, label }: { ok: boolean; warn?: boolean; label?: 
   const tone = ok ? 'bg-ok' : warn ? 'bg-warn' : 'bg-fg-3';
   if (label) return <span role="img" aria-label={label} title={label} className={cn('inline-block size-(--dot) shrink-0 self-center rounded-full', tone)} />;
   return <span aria-hidden className={cn('inline-block size-(--dot) shrink-0 rounded-full', tone)} />;
+}
+
+// A dot and its words, as a row's status value
+export function Status({ ok, warn, children }: { ok?: boolean; warn?: boolean; children: ReactNode }) {
+  return <span className="flex min-w-0 items-center gap-1.5 text-2 text-fg-2"><Dot ok={!!ok} warn={warn} /><span className="truncate">{children}</span></span>;
+}
+
+// A quiet value at a row's right edge (a size, a state)
+export function Meta({ children, title }: { children: ReactNode; title?: string }) {
+  return <span className="shrink-0 text-2 text-fg-3 tabular-nums" title={title}>{children}</span>;
+}
+
+// A Command list (the add-model and add-host pickers) drawn as a dialog block: the list is the block and its items are
+// setting rows, the highlight running from edge to edge. Its rules stay inside the list: one past its sides would make
+// the scrolling list scroll sideways
+export const blockList = 'overflow-hidden rounded-lg bg-chip [&>*+*]:relative [&>*+*]:after:pointer-events-none [&>*+*]:after:absolute [&>*+*]:after:top-0 [&>*+*]:after:inset-x-0 [&>*+*]:after:h-px [&>*+*]:after:bg-line';
+export const blockItem = 'min-h-(--setting-row-detail) gap-gap rounded-none px-3 py-(--setting-row-pad)';
+export function PickContent({ lead, title, desc, checked }: { lead?: ReactNode; title: ReactNode; desc?: ReactNode; checked?: boolean }) {
+  return <>
+    {lead && <span className="flex size-lead shrink-0 items-center justify-center text-fg-2 [&>svg]:size-lead [&>svg]:stroke-[1.5]">{lead}</span>}
+    <span className={cn(stack, 'flex-1')}>
+      <span className="truncate text-2 text-fg-1">{title}</span>
+      {desc && <span className={cn(second, 'truncate')}>{desc}</span>}
+    </span>
+    <span className="flex size-icon shrink-0 items-center justify-center">{checked && <Check className="size-icon text-fg-1" strokeWidth={2} />}</span>
+  </>;
 }
 
 // Path display lives in a DOM-free module so the shared test suites can load it; re-exported for the pages
@@ -392,76 +532,79 @@ export interface ItemRowProps {
   // A line under title / desc spanning the text column (quota bars); not truncated
   extra?: ReactNode;
   trailing?: ReactNode;
-  // The row opens something (a file, a folder, a page): a click anywhere on it but its own controls opens, and a ↗ glyph
-  // stays at the right edge as the cue and the keyboard stop
+  // The row opens something outside the settings (a file, a folder, a page): a click anywhere on it but its own controls
+  // opens, and a ↗ glyph stays at the right edge as the cue and the keyboard stop
   onOpen?: () => void;
   // Keep metadata aligned in lists containing both openable and missing files.
   reserveOpen?: boolean;
-  // The whole row is the button (navigation): a chevron at the right edge
+  // The row opens its dialog: a click anywhere on it but its own controls; the row lights up, no glyph
+  onEdit?: () => void;
+  editLabel?: string;
+  // The whole row is the button
   onClick?: () => void;
   // Greyed out as a whole (disabled server, missing file)
   dim?: boolean;
-  // A lead mark that fills the whole lead slot instead of the one-line icon size, for rows whose desc makes them two lines tall
-  bigLead?: boolean;
   className?: string;
 }
 
 // Full-width hover fill for a clickable row inside an inset Group: the row keeps the group's width (its text stays on the
 // inset), while `::before` paints (and takes pointer hits) from card edge to card edge, between the rules above and below.
-// One rule for every card: a row lights up only when a click anywhere on it does something (navigation, open, a row-shaped
+// One rule for every card: a row lights up only when a click anywhere on it does something (a dialog, open, a row-shaped
 // text button); rows that merely hold controls or information stay still
 export const rowHover = 'relative isolate before:absolute before:inset-y-0 before:-inset-x-pad before:-z-10 before:transition-colors enabled:hover:before:bg-hover focus-visible:before:bg-hover';
-// The same fill for an open row, which is a div (it may hold buttons of its own)
-const openHover = 'relative isolate cursor-pointer before:absolute before:inset-y-0 before:-inset-x-pad before:-z-10 before:transition-colors hover:before:bg-hover';
-const OWN_CONTROL = 'button, a, input, textarea, select, label, [role="switch"], [role="checkbox"]';
+// The same fill for a row that is a div (it may hold buttons of its own)
+const divHover = 'relative isolate cursor-pointer before:absolute before:inset-y-0 before:-inset-x-pad before:-z-10 before:transition-colors hover:before:bg-hover has-[[data-row-key]:focus-visible]:before:bg-hover';
+const OWN_CONTROL = 'button:not([data-row-key]), a, input, textarea, select, label, [role="switch"], [role="checkbox"], [role="menu"]';
 
-export function ItemRow({ lead, title, desc, extra, trailing, onOpen, reserveOpen, onClick, dim, bigLead, className }: ItemRowProps) {
+export function ItemRow({ lead, title, desc, extra, trailing, onOpen, reserveOpen, onEdit, editLabel, onClick, dim, className }: ItemRowProps) {
   const Tag = onClick ? 'button' : 'div';
-  const opens = !onClick && onOpen;
-  // A click on one of the row's own controls (remove, adopt, …) stays theirs; anywhere else on the row opens
-  const openFrom = opens ? (e: MouseEvent<HTMLElement>) => {
+  const press = !onClick ? onEdit ?? onOpen : undefined;
+  // A click on one of the row's own controls (a switch, remove, …) stays theirs; anywhere else on the row opens
+  const pressFrom = press ? (e: MouseEvent<HTMLElement>) => {
     const hit = (e.target as Element).closest(OWN_CONTROL);
-    if (!hit || !e.currentTarget.contains(hit)) onOpen();
+    if (!hit || !e.currentTarget.contains(hit)) press();
   } : undefined;
   return (
     <Tag
-      {...(onClick ? { type: 'button' as const, onClick } : { onClick: openFrom })}
+      {...(onClick ? { type: 'button' as const, onClick } : { onClick: pressFrom })}
       data-detail={!!desc || undefined}
       className={cn(
         useSettingRow(), 'group/row flex w-full items-center gap-gap text-left',
         onClick && rowHover,
-        opens && openHover,
+        press && divHover,
         className,
       )}
     >
-      {lead !== undefined && <span className={cn('flex size-lead shrink-0 items-center justify-center text-fg-2', bigLead ? '[&_svg]:size-lead' : '[&_svg]:size-icon', dim && 'opacity-60')}>{lead}</span>}
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span className={cn('truncate text-2', dim ? 'text-fg-2' : 'text-fg-1')}>{title}</span>
-        {desc && <span className="truncate text-2 text-fg-2">{desc}</span>}
+      {/* The row's own key stop when the row opens a dialog: a zero-size button over the title */}
+      {onEdit && !onClick && <button type="button" data-row-key onClick={onEdit} aria-label={editLabel} aria-haspopup="dialog" className="sr-only focus-visible:not-sr-only focus-visible:absolute focus-visible:inset-0 focus-visible:outline-none" />}
+      {lead !== undefined && <span className={cn('flex size-lead shrink-0 items-center justify-center text-fg-2 [&>svg]:size-lead [&>svg]:stroke-[1.5]', dim && 'opacity-60')}>{lead}</span>}
+      <span className={cn(stack, 'flex-1')}>
+        <span className={cn('truncate text-2', dim ? 'text-fg-3' : 'text-fg-1')}>{title}</span>
+        {desc && <span className={cn(second, 'truncate')}>{desc}</span>}
         {extra}
       </span>
-      {trailing && <span className="flex shrink-0 items-center gap-2">{trailing}</span>}
+      {/* At most half the row, so a long marker (a skill's conflict) truncates instead of squeezing the title away */}
+      {trailing && <span className="relative flex min-w-0 max-w-1/2 shrink-0 items-center gap-2">{trailing}</span>}
       {(onOpen || reserveOpen) && (
         // Zero height: the button overflows the slot evenly, so reserving it never makes the row taller than its neighbours
         <span className="-mr-1.5 flex h-0 w-ctl shrink-0 items-center justify-center" aria-hidden={!onOpen || undefined}>
           {/* Always shown as the row's cue; the pointer goes through to the row, the keyboard still stops here */}
           {onOpen && <IconButton title={t('common.open')} aria-label={t('common.open')} onClick={onOpen}
-            className={opens ? 'pointer-events-none text-fg-3 group-hover/row:text-fg-2' : 'text-fg-2 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100'}>
-            <ExternalLink strokeWidth={1.5} />
+            className={!onEdit ? 'pointer-events-none text-fg-3 group-hover/row:text-fg-2' : 'text-fg-3 hover:text-fg-1'}>
+            <ArrowUpRight strokeWidth={1.75} />
           </IconButton>}
         </span>
       )}
-      {onClick && <ChevronRight className="-mr-1 size-icon shrink-0 text-fg-2" strokeWidth={1.5} />}
     </Tag>
   );
 }
 
-// Paths use the same UI face and size as setting values; the full path stays in the tooltip.
+// Paths take the role of the line they sit in; the full path stays in the tooltip
 export function PathText({ path, env, onOpen, className }: { path: string; env: { home: string; cwd: string }; onOpen?: (path: string) => void; className?: string }) {
   const text = shortPath(path, env);
-  if (!onOpen) return <span title={path} className={cn('truncate text-2 text-fg-2', className)}>{text}</span>;
+  if (!onOpen) return <span title={path} className={cn('truncate', className)}>{text}</span>;
   return (
-    <button type="button" title={path} onClick={() => onOpen(path)} className={cn('min-w-0 truncate rounded-sm text-2 text-fg-2 underline decoration-line-strong underline-offset-2 transition-colors hover:text-fg-1 hover:decoration-fg-3 focus-visible:text-fg-1', className)}>
+    <button type="button" title={path} onClick={() => onOpen(path)} className={cn('min-w-0 truncate rounded-sm underline decoration-line-strong underline-offset-2 transition-colors hover:text-fg-1 hover:decoration-fg-3 focus-visible:text-fg-1', className)}>
       {text}
     </button>
   );
@@ -471,26 +614,26 @@ export function PathText({ path, env, onOpen, className }: { path: string; env: 
 // The group's last row: its hover fill runs to the card edges (the card clips the corners) instead of floating inside the inset
 export function SourceLink({ path, env, onOpen }: { path: string; env: { home: string; cwd: string }; onOpen: (path: string) => void }) {
   return (
-    <button type="button" title={path} onClick={() => onOpen(path)} className={cn(settingRow, '-mx-pad flex items-center gap-gap self-stretch px-pad text-left text-fg-2 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:text-fg-1 focus-visible:bg-hover')}>
+    <button type="button" title={path} onClick={() => onOpen(path)} className={cn(settingRow, '-mx-pad flex items-center gap-gap self-stretch px-pad text-left text-fg-3 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:text-fg-1 focus-visible:bg-hover')}>
       <span className="min-w-0 flex-1 truncate">{shortPath(path, env)}</span>
-      <ExternalLink className="size-icon shrink-0" strokeWidth={1.5} />
+      <ArrowUpRight className="size-icon shrink-0" strokeWidth={1.75} />
     </button>
   );
 }
 
 // Local text until blur (or Enter on a one-line box), so half-typed values never round-trip through the host
-export function TextBox({ value, label, placeholder, multiline, onCommit }: {
-  value: string; label: string; placeholder?: string; multiline?: boolean; onCommit: (v: string) => void;
+export function TextBox({ value, label, placeholder, multiline, onCommit, className }: {
+  value: string; label: string; placeholder?: string; multiline?: boolean; onCommit: (v: string) => void; className?: string;
 }) {
   const [text, setText] = useState(value);
   useEffect(() => setText(value), [value]);
   const commit = () => { if (text !== value) onCommit(text); };
-  const cls = 'w-full min-w-0 rounded-md border border-line bg-hover px-3 text-2 text-fg-1 outline-none transition-colors placeholder:text-fg-3 focus:bg-active';
+  const cls = 'w-full min-w-0 rounded-md border border-line bg-hover px-3 text-2 text-fg-1 outline-none transition-colors placeholder:text-fg-3 hover:border-line-strong focus:bg-active';
   return multiline
     // Grows with its text; no manual resize handle (it could be dragged to cut a line in half)
     ? <textarea aria-label={label} placeholder={placeholder} value={text} onChange={e => setText(e.target.value)} onBlur={commit}
-      className={`${cls} resize-none py-(--setting-row-pad) [field-sizing:content]`} />
+      className={cn(cls, 'min-h-(--setting-row-detail) resize-none py-2 [field-sizing:content]', className)} />
     : <input aria-label={label} placeholder={placeholder} value={text} onChange={e => setText(e.target.value)} onBlur={commit}
       onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setText(value); }}
-      className={`${cls} h-ctl w-(--ctl-w)`} />;
+      className={cn(cls, 'h-ctl w-(--ctl-w)', className)} />;
 }

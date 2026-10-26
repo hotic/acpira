@@ -1,19 +1,21 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { FileText, FolderOpen, GitBranch, Globe, Layers, Link2, Plus, Server, ShieldCheck, Sparkles, Trash2, X } from 'lucide-react';
+import { FileText, Layers, Link2, Plus, Trash2, X } from 'lucide-react';
 import type { AgentId, AgentInfo } from '@acpira/shared/transcript';
-import type { McpTransport } from '@acpira/shared/inventory';
 import type { Choice, PlanItem, PrivateSkill, Reach, ReachState, SharedAction, SharedMcp, SharedPrompt, SharedScope, SharedSkill, SharedView } from '@acpira/shared/sharedConfig';
 import type { MsgKey } from '@acpira/shared/i18n';
 import { Button, IconButton } from '../ui/Button';
-import { RadioPills } from '../ui/Field';
 import { cn } from '../ui/cn';
 import { t, useLocale } from '../i18n';
 import { AgentMark } from '../chat/AgentMark';
-import { inputBox, ItemRow, Note, PathText, Section, SectionAction, SectionDescription, Switch, pathSep, shortPath } from './controls';
+import {
+  DialogBody, Field, FooterNote, FormField, FormGrid, inputBox, ItemRow, Note, PathText, Section, SectionAction, SectionDescription, Select,
+  SettingsDialog, Switch, Tabs, pathSep, shortPath,
+} from './controls';
 import type { SettingsHandlers } from './SettingsShell';
 
 // The Shared tab: one set of skills, MCP servers and prompts in open files, reaching every agent.
-// Everything shown is derived by the sidecar from the files; this page only renders it and sends actions back
+// Everything shown is derived by the sidecar from the files; this page only renders it and sends actions back.
+// The two decisions that need a list (linking the user level, turning overwrite on) open as dialogs
 
 export interface SharedState {
   view: SharedView;
@@ -44,6 +46,8 @@ export function SharedPage({ state, agents, on }: SharedPageProps) {
   const names = (ids: AgentId[]) => ids.map(id => agents.find(a => a.id === id)?.name ?? id).join(t('common.listSep'));
   const env = { home: view.home, cwd: view.root ?? '' };
   const ctx: Ctx = { view, busy, act, names, env, open: on.openPath };
+  const hasPlace = (s: SharedScope) => s === 'global' || !!view.root;
+  const count = (xs: { scope: SharedScope }[]) => xs.filter(x => hasPlace(x.scope)).length;
 
   return (
     <>
@@ -51,9 +55,9 @@ export function SharedPage({ state, agents, on }: SharedPageProps) {
       <UserCard ctx={ctx} />
       {view.root && <ProjectCard ctx={ctx} />}
 
-      <RadioPills<Tab> label={t('settings.shared.tabs')} value={tab} onChange={setTab} options={[
-        { value: 'skills', label: t('settings.shared.tab.skills') },
-        { value: 'mcp', label: t('settings.shared.tab.mcp') },
+      <Tabs<Tab> label={t('settings.shared.tabs')} value={tab} onChange={setTab} items={[
+        { value: 'skills', label: t('settings.shared.tab.skills'), count: count(view.skills) },
+        { value: 'mcp', label: t('settings.shared.tab.mcp'), count: count(view.mcp) },
         { value: 'prompts', label: t('settings.shared.tab.prompts') },
       ]} />
 
@@ -88,7 +92,7 @@ function Attention({ reach, names }: { reach: Reach[]; names: Ctx['names'] }) {
   const conflict = reachLine(reach, 'conflict', names);
   const rest = reachLine(reach, 'missing', names) ?? reachLine(reach, 'untrusted', names);
   if (!conflict && !rest) return null;
-  return <span className={cn('truncate text-2', conflict ? 'text-warn' : 'text-fg-2')}>{conflict ?? rest}</span>;
+  return <span className={cn('truncate text-2', conflict ? 'text-warn' : 'text-fg-3')}>{conflict ?? rest}</span>;
 }
 
 // A one-line text input with confirm / cancel, for a new skill's name
@@ -100,20 +104,17 @@ function NameForm({ label, onSubmit, onCancel, busy }: { label: string; onSubmit
       <input autoFocus value={name} onChange={e => setName(e.target.value)} aria-label={label} placeholder={label}
         onKeyDown={e => { if (e.key === 'Enter' && ok) onSubmit(name.trim()); if (e.key === 'Escape') onCancel(); }}
         className={cn(inputBox, 'h-ctl flex-[1_1_var(--setting-header-copy)]')} />
-      <Button variant="primary" disabled={!ok || busy} onClick={() => onSubmit(name.trim())}>{t('settings.shared.create')}</Button>
       <Button onClick={onCancel}>{t('settings.shared.cancel')}</Button>
+      <Button variant="primary" disabled={!ok || busy} onClick={() => onSubmit(name.trim())}>{t('settings.shared.create')}</Button>
     </div>
   );
 }
 
-// A row explanation that wraps instead of truncating; these sentences are the point of the row
-const Explain = ({ children }: { children: ReactNode }) => <span className="text-2 text-fg-2 [overflow-wrap:anywhere]">{children}</span>;
-
-// User level: nothing is linked until the panel says so; afterwards new skills follow when auto is on.
-// Overwrite replaces both: every link point stays wired to ~/.agents, and the panel and its undo step aside
+// User level: nothing is linked until the link dialog says so; afterwards new skills follow when auto is on.
+// Overwrite replaces both: every link point stays wired to ~/.agents, and the link dialog and its undo step aside
 function UserCard({ ctx }: { ctx: Ctx }) {
   const { view, act, busy } = ctx;
-  const [panel, setPanel] = useState(false);
+  const [linking, setLinking] = useState(false);
   // Turning overwrite on first shows what the agents' own files would lose, when there is anything
   const [takeover, setTakeover] = useState(false);
   // A missing prompt link waits for a shared prompt to exist, so it is not counted as ready
@@ -121,26 +122,21 @@ function UserCard({ ctx }: { ctx: Ctx }) {
   const skillConflicts = view.plan.filter(p => p.kind === 'skill' && p.state === 'conflict').length;
   // Skills in the agents' own user-level folders, which overwrite moves into ~/.agents/skills (or backs up when taken)
   const privateSkills = view.privateSkills.filter(s => s.scope === 'global').length;
-  // The panels close once their submit has been applied (the plan they were built from is gone)
-  useEffect(() => { if (!view.plan.length) setPanel(false); }, [view.plan.length]);
+  // The dialogs close once their submit has been applied (the plan they were built from is gone)
+  useEffect(() => { if (!view.plan.length) setLinking(false); }, [view.plan.length]);
   useEffect(() => { if (view.overwrite) setTakeover(false); }, [view.overwrite]);
   const desc = view.overwrite
     ? t('settings.shared.user.overwrite')
     : view.plan.length
       ? t('settings.shared.user.pending', { n: todo || view.plan.length })
       : view.userLinked ? (view.auto ? t('settings.shared.user.auto') : t('settings.shared.user.done')) : t('settings.shared.user.none');
-  const action = !panel && !takeover && !view.overwrite && (
-    <div className="flex shrink-0 items-center gap-1">
-      {view.userLinked && <SectionAction onClick={() => { if (!busy) act({ kind: 'unlink' }); }}>{t('settings.shared.unlink')}</SectionAction>}
-      {view.plan.length > 0 && <Button variant="primary" disabled={busy} onClick={() => setPanel(true)}>{t('settings.shared.link')}</Button>}
-    </div>
-  );
+  const action = !view.overwrite && (view.plan.length > 0
+    ? <SectionAction icon={<Link2 />} disabled={busy} onClick={() => setLinking(true)}>{t('settings.shared.linkN', { n: todo || view.plan.length })}</SectionAction>
+    : view.userLinked && <SectionAction icon={<X />} disabled={busy} onClick={() => act({ kind: 'unlink' })}>{t('settings.shared.unlink')}</SectionAction>);
   const turn = (on: boolean) => {
     if (!on) {
-      setTakeover(false);
       if (view.overwrite) act({ kind: 'overwrite', on: false });
     } else if (view.takeover.length || skillConflicts || privateSkills) {
-      setPanel(false);
       setTakeover(true);
     } else {
       act({ kind: 'overwrite', on: true, merge: [] });
@@ -148,62 +144,65 @@ function UserCard({ ctx }: { ctx: Ctx }) {
   };
   return (
     <Section title={t('settings.shared.user')} desc={desc} action={action}>
-      <ItemRow lead={<Layers strokeWidth={1.5} />} title={t('settings.shared.overwrite')} extra={<Explain>{t('settings.shared.overwrite.desc')}</Explain>}
-        trailing={<Switch checked={view.overwrite || takeover} disabled={busy} label={t('settings.shared.overwrite')} onChange={turn} />} />
-      {takeover && <TakeoverPanel ctx={ctx} skillConflicts={skillConflicts} privateSkills={privateSkills} onClose={() => setTakeover(false)} />}
-      {panel && <LinkPanel ctx={ctx} onClose={() => setPanel(false)} />}
+      <Field label={t('settings.shared.overwrite')} desc={t('settings.shared.overwrite.desc')}>
+        <Switch checked={view.overwrite || takeover} disabled={busy} label={t('settings.shared.overwrite')} onChange={turn} />
+      </Field>
+      {takeover && <TakeoverDialog ctx={ctx} skillConflicts={skillConflicts} privateSkills={privateSkills} onClose={() => setTakeover(false)} />}
+      {linking && <LinkDialog ctx={ctx} onClose={() => setLinking(false)} />}
     </Section>
   );
 }
 
 // Before overwrite replaces the agents' own global prompts: the lines only they have, each file's switched on by
-// default, so nothing disappears into the backups unseen
-function TakeoverPanel({ ctx, skillConflicts, privateSkills, onClose }: { ctx: Ctx; skillConflicts: number; privateSkills: number; onClose: () => void }) {
+// default (appended to the shared prompt), so nothing disappears into the backups unseen; then what happens to the
+// agents' own skills
+function TakeoverDialog({ ctx, skillConflicts, privateSkills, onClose }: { ctx: Ctx; skillConflicts: number; privateSkills: number; onClose: () => void }) {
   const { view, act, busy, names, env } = ctx;
-  // Only the switches turned off are remembered, so a file that shows up while the panel is open starts switched on too
+  // Only the switches turned off are remembered, so a file that shows up while the dialog is open starts switched on too
   const [skip, setSkip] = useState<Record<string, boolean>>({});
   const merging = (path: string) => !skip[path];
   const submit = () => act({ kind: 'overwrite', on: true, merge: view.takeover.filter(x => merging(x.path)).map(x => x.path) });
   return (
-    <>
-      {view.takeover.length > 0 && (
-        <div className="flex flex-col">
-          <Note><span className="text-fg-1">{t('settings.shared.takeover.title')}</span></Note>
-          <Explain>{t('settings.shared.takeover.desc')}</Explain>
-          {view.takeover.map(x => {
-            const who = names([x.agent]);
-            return (
-              <ItemRow key={x.path} className="items-start"
-                lead={<AgentMark id={x.agent} name={who} />}
-                title={who}
-                desc={<PathText path={x.path} env={env} onOpen={() => ctx.open(x.path)} />}
-                extra={<pre className="scroll-thin m-0 max-h-code-output overflow-auto pt-1 font-mono text-mono whitespace-pre-wrap text-fg-2 [overflow-wrap:anywhere]">{x.unique}</pre>}
-                trailing={<Switch checked={merging(x.path)} label={t('settings.shared.takeover.merge', { agent: who })}
-                  onChange={on => setSkip(m => ({ ...m, [x.path]: !on }))} />}
-              />
-            );
-          })}
-        </div>
-      )}
-      {/* Footnotes above the buttons, in one block: a group child of its own would get a divider above and below */}
-      <div className="flex flex-wrap items-center justify-end gap-2 py-(--setting-row-pad)">
-        <span className="min-w-0 basis-full text-2 text-fg-3 [overflow-wrap:anywhere]">
-          {privateSkills > 0 && <>{t('settings.shared.takeover.private', { n: privateSkills })}<br /></>}
-          {skillConflicts > 0 && <>{t('settings.shared.takeover.skills', { n: skillConflicts })}<br /></>}
-          {t('settings.shared.plan.backup')}
-        </span>
+    <SettingsDialog wide icon={<Layers />} title={t('settings.shared.overwrite')} onClose={onClose}
+      footer={<>
+        <FooterNote>{t('settings.shared.plan.backup')}</FooterNote>
         <Button onClick={onClose}>{t('settings.shared.cancel')}</Button>
         <Button variant="primary" disabled={busy} onClick={submit}>{t('settings.shared.takeover.submit')}</Button>
-      </div>
-    </>
+      </>}>
+      <DialogBody>
+        {view.takeover.length > 0 && (
+          <Section title={t('settings.shared.takeover.title')} count={view.takeover.length} desc={t('settings.shared.takeover.desc')}>
+            {view.takeover.map(x => {
+              const who = names([x.agent]);
+              return (
+                <ItemRow key={x.path} className="items-start"
+                  lead={<AgentMark id={x.agent} name={who} />}
+                  title={who}
+                  desc={<PathText path={x.path} env={env} onOpen={() => ctx.open(x.path)} />}
+                  extra={<pre className="scroll-thin m-0 max-h-code-output overflow-auto pt-1 font-mono text-mono whitespace-pre-wrap text-fg-3 [overflow-wrap:anywhere]">{x.unique}</pre>}
+                  trailing={<Switch checked={merging(x.path)} label={t('settings.shared.takeover.merge', { agent: who })}
+                    onChange={on => setSkip(m => ({ ...m, [x.path]: !on }))} />}
+                />
+              );
+            })}
+          </Section>
+        )}
+        {(privateSkills > 0 || skillConflicts > 0) && (
+          <Section title={t('settings.shared.takeover.skillsTitle')}>
+            {privateSkills > 0 && <Note>{t('settings.shared.takeover.private', { n: privateSkills })}</Note>}
+            {skillConflicts > 0 && <Note>{t('settings.shared.takeover.skills', { n: skillConflicts })}</Note>}
+          </Section>
+        )}
+      </DialogBody>
+    </SettingsDialog>
   );
 }
 
 // Only one version can become the shared one: per skill name, and one for the global prompt
 const groupOf = (p: PlanItem) => (p.kind === 'prompt' ? 'prompt' : `skill:${p.name}`);
 
-// The user-level link panel: a switch per missing link point, a choice per conflict, and the auto switch
-function LinkPanel({ ctx, onClose }: { ctx: Ctx; onClose: () => void }) {
+// The user-level link dialog: a switch per missing link point, a choice per conflict, and the auto switch
+function LinkDialog({ ctx, onClose }: { ctx: Ctx; onClose: () => void }) {
   const { view, act, busy, names, env } = ctx;
   // The group titles below are cached with the language they were built in
   const locale = useLocale();
@@ -232,64 +231,62 @@ function LinkPanel({ ctx, onClose }: { ctx: Ctx; onClose: () => void }) {
   const row = (p: PlanItem) => {
     const blocked = p.kind === 'prompt' && !promptSource;
     const who = names([p.agent]);
-    // A prompt row is titled by its agent already
     const conflict = p.state === 'conflict';
     const sep = t('common.metaSep');
-    // A conflict's path is a link to the agent's own copy, which the editor can compare with the shared one;
-    // a link in the text instead of the row's hover button leaves the choice below the full width
+    // A conflict's path is a link to the agent's own copy, which the editor can compare with the shared one
     const path = conflict
       ? <PathText path={p.at} env={env} onOpen={() => ctx.open(p.kind === 'skill' ? `${p.at}/SKILL.md` : p.at)} />
       : shortPath(p.at, env);
-    const desc = <>{p.kind === 'skill' && `${who}${sep}`}{path}{p.skipped && `${sep}${t('settings.shared.plan.skipped')}`}</>;
     const c = effective(p);
+    // A prompt row is titled by its agent already; a conflict's line says what the current pick will do
+    const desc = <>{p.kind === 'skill' && `${who}${sep}`}{path}{p.skipped && `${sep}${t('settings.shared.plan.skipped')}`}</>;
     return (
       <ItemRow key={p.at}
-        // A conflict row is several lines tall; its mark stays beside the name
-        className={conflict ? 'items-start' : undefined}
         lead={<AgentMark id={p.agent} name={who} />}
         title={p.kind === 'prompt' ? who : p.name}
         desc={desc}
-        // Under the text rather than beside it, so a narrow sidebar keeps the name and path readable;
-        // the line below says what the current pick will do, which is what the pill labels alone could not
-        extra={conflict ? <div className="flex flex-col gap-1 pt-1">
-          <RadioPills<Choice> label={t('settings.shared.plan.choose', { name: p.name, agent: who })} value={c} onChange={next => choose(p, next)} options={[
+        extra={conflict && c !== 'link' ? <span className="text-3 text-fg-3 [overflow-wrap:anywhere]">{t(`settings.shared.plan.effect.${c}` as MsgKey, { agent: who })}</span> : undefined}
+        trailing={conflict
+          ? <Select<Choice> label={t('settings.shared.plan.choose', { name: p.name, agent: who })} value={c} onChange={next => choose(p, next)} options={[
             { value: 'keep_shared', label: t('settings.shared.plan.useShared'), disabled: blocked },
             { value: 'keep_private', label: t('settings.shared.plan.useThis', { agent: who }) },
             { value: 'skip', label: t('settings.shared.plan.skip') },
           ]} />
-          {c !== 'link' && <Explain>{t(`settings.shared.plan.effect.${c}` as MsgKey, { agent: who })}</Explain>}
-        </div> : undefined}
-        trailing={conflict ? undefined : <Switch checked={c === 'link'} disabled={blocked} label={t('settings.shared.plan.toggle', { name: p.name, agent: who })}
-          onChange={on => choose(p, on ? 'link' : 'skip')} />}
+          : <Switch checked={c === 'link'} disabled={blocked} label={t('settings.shared.plan.toggle', { name: p.name, agent: who })}
+            onChange={on => choose(p, on ? 'link' : 'skip')} />}
       />
     );
   };
 
   return (
-    <>
-      {groups.map(g => (
-        <div key={g.title} className="flex flex-col">
-          <Note><span className="text-fg-1">{g.title}</span></Note>
-          {/* Why the prompt switches are off comes before them, not after */}
-          {g.items[0]?.kind === 'prompt' && !promptSource && <Explain>{t('settings.shared.plan.noShared')}</Explain>}
-          {g.items.map(row)}
-        </div>
-      ))}
-      <ItemRow title={t('settings.shared.plan.auto')} extra={<Explain>{t('settings.shared.plan.auto.desc')}</Explain>}
-        trailing={<Switch checked={auto} label={t('settings.shared.plan.auto')} onChange={setAuto} />} />
-      <div className="flex flex-wrap items-center justify-end gap-2 py-(--setting-row-pad)">
-        {/* A line of its own, so the path is not broken up beside the buttons */}
-        <span className="min-w-0 basis-full text-2 text-fg-3 [overflow-wrap:anywhere]">{t('settings.shared.plan.backup')}</span>
+    <SettingsDialog wide icon={<Link2 />} title={t('settings.shared.linkN', { n: count })} onClose={onClose}
+      footer={<>
+        <FooterNote>{t('settings.shared.plan.backup')}</FooterNote>
         <Button onClick={onClose}>{t('settings.shared.cancel')}</Button>
         <Button variant="primary" disabled={busy} onClick={() => act({ kind: 'link', picks, auto })}>
           {count ? t('settings.shared.plan.submit', { n: count }) : t('settings.shared.plan.save')}
         </Button>
-      </div>
-    </>
+      </>}>
+      <DialogBody>
+        {groups.map(g => (
+          <Section key={g.title} title={g.title} count={g.items.length}
+            // Why the prompt switches are off comes before them, not after
+            desc={g.items[0]?.kind === 'prompt' && !promptSource ? t('settings.shared.plan.noShared') : undefined}>
+            {g.items.map(row)}
+          </Section>
+        ))}
+        <Section>
+          <Field label={t('settings.shared.plan.auto')} desc={t('settings.shared.plan.auto.desc')}>
+            <Switch checked={auto} label={t('settings.shared.plan.auto')} onChange={setAuto} />
+          </Field>
+        </Section>
+      </DialogBody>
+    </SettingsDialog>
   );
 }
 
-// Project level: Claude's links come on their own; sharing them with the team, Pi's trust and Claude's CLAUDE.md
+// Project level: Claude's links come on their own; sharing them with the team, Pi's trust and Claude's CLAUDE.md.
+// Pi's trust and Claude's import are one-way: the files they write are the user's to undo
 function ProjectCard({ ctx }: { ctx: Ctx }) {
   const { view, act, busy, names } = ctx;
   const project = view.prompts.find(p => p.scope === 'project');
@@ -298,21 +295,23 @@ function ProjectCard({ ctx }: { ctx: Ctx }) {
   const run = (a: SharedAction) => { if (!busy) act(a); };
   return (
     <Section title={t('settings.shared.project')} desc={shortPath(view.root!, { home: view.home, cwd: '' })}>
-      <ItemRow lead={<Link2 strokeWidth={1.5} />} title={t('settings.shared.projectAuto')} extra={<Explain>{t('settings.shared.projectAuto.desc')}</Explain>}
-        trailing={<Switch checked={view.projectAuto} disabled={busy} label={t('settings.shared.projectAuto')} onChange={on => act({ kind: 'projectAuto', on })} />} />
+      <Field label={t('settings.shared.projectAuto')} desc={t('settings.shared.projectAuto.desc')}>
+        <Switch checked={view.projectAuto} disabled={busy} label={t('settings.shared.projectAuto')} onChange={on => act({ kind: 'projectAuto', on })} />
+      </Field>
       {view.projectLinked && (
-        <ItemRow lead={<GitBranch strokeWidth={1.5} />} title={t('settings.shared.projectShare')}
-          extra={<Explain>{view.projectShared ? t('settings.shared.projectShare.on') : t('settings.shared.projectShare.off')}</Explain>}
-          trailing={<Switch checked={view.projectShared} disabled={busy} label={t('settings.shared.projectShare')} onChange={share => act({ kind: 'shareProject', share })} />} />
+        <Field label={t('settings.shared.projectShare')} desc={view.projectShared ? t('settings.shared.projectShare.on') : t('settings.shared.projectShare.off')}>
+          <Switch checked={view.projectShared} disabled={busy} label={t('settings.shared.projectShare')} onChange={share => act({ kind: 'shareProject', share })} />
+        </Field>
       )}
       {view.piUntrusted && (
-        <ItemRow lead={<AgentMark id="pi" name={names(['pi'])} />} title={t('settings.shared.piTrust')} extra={<Explain>{t('settings.shared.piTrust.desc')}</Explain>}
-          trailing={<SectionAction icon={<ShieldCheck strokeWidth={1.75} />} onClick={() => run({ kind: 'trustPi' })}>{t('settings.shared.piTrust.action')}</SectionAction>} />
+        <Field label={t('settings.shared.piTrust')} desc={t('settings.shared.piTrust.desc')}>
+          <Button disabled={busy} onClick={() => run({ kind: 'trustPi' })}>{t('settings.shared.piTrust.action')}</Button>
+        </Field>
       )}
       {claudeBlocked && (
-        <ItemRow lead={<AgentMark id="claude" name={names(['claude'])} />} title={t('settings.shared.claudeBlocked')}
-          extra={<Explain>{t('settings.shared.claudeImport.desc')}</Explain>}
-          trailing={<SectionAction onClick={() => run({ kind: 'claudeImport' })}>{t('settings.shared.claudeImport')}</SectionAction>} />
+        <Field label={t('settings.shared.claudeBlocked')} desc={t('settings.shared.claudeImport.desc')}>
+          <Button disabled={busy} onClick={() => run({ kind: 'claudeImport' })}>{t('settings.shared.claudeImport')}</Button>
+        </Field>
       )}
     </Section>
   );
@@ -326,14 +325,9 @@ function SkillsTab({ ctx }: { ctx: Ctx }) {
       {SCOPES.map(scope => {
         const skills = view.skills.filter(s => s.scope === scope);
         const hasPlace = scope === 'global' || !!view.root;
-        const actions = hasPlace && (
-          <div className="flex shrink-0 items-center gap-1">
-            <SectionAction icon={<Plus strokeWidth={1.75} />} onClick={() => setCreating(scope)}>{t('settings.shared.new')}</SectionAction>
-            <SectionAction icon={<FolderOpen strokeWidth={1.75} />} onClick={() => act({ kind: 'open', scope, target: 'skills' })}>{t('settings.shared.openFolder')}</SectionAction>
-          </div>
-        );
         return (
-          <Section key={scope} title={scopeTitle(scope)} count={hasPlace ? skills.length : undefined} desc={scopeDesc(scope, view, '.agents/skills')} action={actions}>
+          <Section key={scope} title={scopeTitle(scope)} count={hasPlace ? skills.length : undefined} desc={scopeDesc(scope, view, '.agents/skills')}
+            action={hasPlace && <SectionAction icon={<Plus />} disabled={creating === scope} onClick={() => setCreating(scope)}>{t('settings.shared.new')}</SectionAction>}>
             {creating === scope && <NameForm label={t('settings.shared.skillName')} busy={busy}
               onCancel={() => setCreating(undefined)}
               onSubmit={name => { setCreating(undefined); act({ kind: 'createSkill', scope, name }); }} />}
@@ -389,10 +383,9 @@ function RemoveButton({ name, busy, onRemove }: { name: string; busy: boolean; o
 
 function SkillRow({ skill, ctx }: { skill: SharedSkill; ctx: Ctx }) {
   const { act, busy, names, env, open } = ctx;
-  const covered = [reachLine(skill.reach, 'native', names), reachLine(skill.reach, 'linked', names)].filter(Boolean).join(' · ');
+  const covered = [reachLine(skill.reach, 'native', names), reachLine(skill.reach, 'linked', names)].filter(Boolean).join(t('common.metaSep'));
   return (
     <ItemRow
-      lead={<Sparkles strokeWidth={1.5} />}
       title={<span title={covered || undefined}>{skill.name}</span>}
       desc={skill.description ?? shortPath(skill.path, env)}
       trailing={<>
@@ -410,27 +403,21 @@ function PrivateRow({ skill, ctx }: { skill: PrivateSkill; ctx: Ctx }) {
   const resolve = (keep: 'shared' | 'private') => act({ kind: 'resolveSkill', path: skill.path, keep });
   const note = skill.matches === 'same' ? t('settings.shared.private.same') : skill.matches === 'differs' ? t('settings.shared.private.differs') : undefined;
   const buttons = skill.matches === 'unique'
-    ? <SectionAction onClick={() => resolve('private')}>{t('settings.shared.adopt')}</SectionAction>
+    ? <Button onClick={() => resolve('private')}>{t('settings.shared.adopt')}</Button>
     : skill.matches === 'differs'
-      ? <><SectionAction onClick={() => resolve('private')}>{t('settings.shared.useThis')}</SectionAction><SectionAction onClick={() => resolve('shared')}>{t('settings.shared.keepShared')}</SectionAction></>
-      : <SectionAction onClick={() => resolve('shared')}>{t('settings.shared.dropCopy')}</SectionAction>;
+      ? <><Button onClick={() => resolve('shared')}>{t('settings.shared.keepShared')}</Button><Button onClick={() => resolve('private')}>{t('settings.shared.useThis')}</Button></>
+      : <Button onClick={() => resolve('shared')}>{t('settings.shared.dropCopy')}</Button>;
   return (
     <ItemRow
       lead={<AgentMark id={skill.agent} name={names([skill.agent])} />}
       title={skill.name}
       desc={[names([skill.agent]), scopeTitle(skill.scope), note ?? shortPath(skill.path, env)].join(t('common.metaSep'))}
-      extra={<Actions busy={busy}>{buttons}</Actions>}
+      extra={<fieldset disabled={busy} className="flex flex-wrap items-center gap-1 pt-1">{buttons}</fieldset>}
       trailing={<RemoveButton name={skill.name} busy={busy} onRemove={() => act({ kind: 'removeSkill', path: skill.path })} />}
       onOpen={() => open(skill.path)}
     />
   );
 }
-
-const TRANSPORT_ICON: Record<McpTransport, ReactNode> = {
-  stdio: <Server strokeWidth={1.5} />,
-  http: <Globe strokeWidth={1.5} />,
-  sse: <Globe strokeWidth={1.5} />,
-};
 
 function McpTab({ ctx }: { ctx: Ctx }) {
   const { view, act } = ctx;
@@ -440,68 +427,66 @@ function McpTab({ ctx }: { ctx: Ctx }) {
       {SCOPES.map(scope => {
         const servers = view.mcp.filter(m => m.scope === scope);
         const hasPlace = scope === 'global' || !!view.root;
-        const actions = hasPlace && (
-          <div className="flex shrink-0 items-center gap-1">
-            <SectionAction icon={<Plus strokeWidth={1.75} />} onClick={() => setAdding(scope)}>{t('settings.shared.add')}</SectionAction>
-            <SectionAction icon={<FileText strokeWidth={1.75} />} onClick={() => act({ kind: 'open', scope, target: 'mcp' })}>{t('settings.shared.mcp.edit')}</SectionAction>
-          </div>
-        );
         return (
-          <Section key={scope} title={scopeTitle(scope)} count={hasPlace ? servers.length : undefined} desc={scopeDesc(scope, view, scope === 'project' ? '.mcp.json' : '.agents/mcp.json')} action={actions}>
-            {adding === scope && <McpForm busy={ctx.busy} onCancel={() => setAdding(undefined)}
-              onSubmit={(json, name) => { setAdding(undefined); act({ kind: 'addMcp', scope, json, name }); }} />}
+          <Section key={scope} title={scopeTitle(scope)} count={hasPlace ? servers.length : undefined} desc={scopeDesc(scope, view, scope === 'project' ? '.mcp.json' : '.agents/mcp.json')}
+            action={hasPlace && <SectionAction icon={<Plus />} onClick={() => setAdding(scope)}>{t('settings.shared.add')}</SectionAction>}>
             {!hasPlace && <Note>{t('settings.shared.noProject')}</Note>}
-            {hasPlace && !servers.length && adding !== scope && <Note>{t('settings.shared.mcp.none')}</Note>}
+            {hasPlace && !servers.length && <Note>{t('settings.shared.mcp.none')}</Note>}
             {servers.map(m => <McpRow key={m.name} server={m} ctx={ctx} />)}
           </Section>
         );
       })}
+      {adding && <McpDialog scope={adding} desc={scopeDesc(adding, view, adding === 'project' ? '.mcp.json' : '.agents/mcp.json')} busy={ctx.busy} onClose={() => setAdding(undefined)}
+        onSubmit={(json, name) => { act({ kind: 'addMcp', scope: adding, json, name }); setAdding(undefined); }} />}
     </>
   );
 }
 
 // Paste box: the whole JSON goes to the sidecar, which accepts the common shapes and refuses a name already taken
-function McpForm({ busy, onSubmit, onCancel }: { busy: boolean; onSubmit: (json: string, name?: string) => void; onCancel: () => void }) {
+function McpDialog({ desc, busy, onSubmit, onClose }: { scope: SharedScope; desc?: string; busy: boolean; onSubmit: (json: string, name?: string) => void; onClose: () => void }) {
   const [json, setJson] = useState('');
   const [name, setName] = useState('');
-  const submit = () => onSubmit(json, name.trim() || undefined);
   return (
-    <div className="flex flex-col gap-2 py-(--setting-row-pad)">
-      <SectionDescription>{t('settings.shared.mcp.paste')}</SectionDescription>
-      <textarea autoFocus value={json} onChange={e => setJson(e.target.value)} aria-label={t('settings.shared.mcp.paste')} spellCheck={false}
-        onKeyDown={e => { if (e.key === 'Escape') onCancel(); }}
-        className={cn(inputBox, 'field-sizing-content min-h-(--setting-row-detail) resize-none py-(--setting-row-pad) font-mono text-mono')} />
-      <div className="flex flex-wrap items-center gap-2">
-        <input value={name} onChange={e => setName(e.target.value)} aria-label={t('settings.shared.mcp.name')} placeholder={t('settings.shared.mcp.name')}
-          className={cn(inputBox, 'h-ctl flex-[1_1_var(--setting-header-copy)]')} />
-        <Button variant="primary" disabled={!json.trim() || busy} onClick={submit}>{t('settings.shared.add')}</Button>
-        <Button onClick={onCancel}>{t('settings.shared.cancel')}</Button>
-      </div>
-    </div>
+    <SettingsDialog title={t('settings.shared.mcp.addTitle')} sub={desc} onClose={onClose}
+      footer={<>
+        <span className="flex-1" />
+        <Button onClick={onClose}>{t('settings.shared.cancel')}</Button>
+        <Button variant="primary" disabled={!json.trim() || busy} onClick={() => onSubmit(json, name.trim() || undefined)}>{t('settings.shared.add')}</Button>
+      </>}>
+      <FormGrid>
+        <FormField label={t('settings.shared.mcp.paste')} className="col-span-full">
+          <textarea autoFocus value={json} onChange={e => setJson(e.target.value)} aria-label={t('settings.shared.mcp.paste')} spellCheck={false}
+            className={cn(inputBox, 'field-sizing-content min-h-(--prompt-editor-min) max-h-(--prompt-editor-max) resize-none py-2 font-mono text-mono')} />
+        </FormField>
+        <FormField label={t('settings.shared.mcp.name')} className="col-span-full">
+          <input value={name} onChange={e => setName(e.target.value)} aria-label={t('settings.shared.mcp.name')} placeholder={t('settings.shared.mcp.namePlaceholder')}
+            className={cn(inputBox, 'h-ctl w-full')} />
+        </FormField>
+      </FormGrid>
+    </SettingsDialog>
   );
 }
 
 function McpRow({ server: m, ctx }: { server: SharedMcp; ctx: Ctx }) {
   const { act, busy, names } = ctx;
+  const sep = t('common.metaSep');
   const notes = [
     m.shadowed && t('settings.shared.mcp.shadowed'),
     m.unsupported.length > 0 && t('settings.shared.mcp.unsupported', { agents: names(m.unsupported) }),
     m.native.length > 0 && t('settings.shared.mcp.native', { agents: names(m.native) }),
-  ].filter(Boolean).join(t('common.metaSep'));
+  ].filter(Boolean).join(sep);
   return (
     <ItemRow
-      lead={TRANSPORT_ICON[m.transport]}
       title={m.name}
-      desc={[m.transport, m.target].join(t('common.metaSep'))}
-      extra={notes && <span className="truncate text-2 text-fg-3">{notes}</span>}
-      dim={!m.enabled || m.shadowed}
+      desc={<span title={notes || undefined}>{[m.target, notes].filter(Boolean).join(sep)}</span>}
+      onOpen={() => act({ kind: 'open', scope: m.scope, target: 'mcp' })}
       trailing={<>
         <IconButton title={t('common.remove')} aria-label={t('common.removeNamed', { name: m.name })} disabled={busy}
           onClick={() => act({ kind: 'removeMcp', scope: m.scope, name: m.name })}
           className="text-fg-2 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100">
           <X strokeWidth={1.5} />
         </IconButton>
-        <Switch checked={m.enabled} disabled={busy} label={t('settings.shared.mcp.toggle', { name: m.name })}
+        <Switch checked={m.enabled && !m.shadowed} disabled={busy || m.shadowed} label={t('settings.shared.mcp.toggle', { name: m.name })}
           onChange={enabled => act({ kind: 'toggleMcp', scope: m.scope, name: m.name, enabled })} />
       </>}
     />
@@ -518,7 +503,7 @@ function PromptsTab({ ctx }: { ctx: Ctx }) {
         return (
           <Section key={scope} title={scopeTitle(scope)}
             desc={scope === 'project' ? t('settings.shared.prompt.projectDesc') : t('settings.shared.prompt.globalDesc')}
-            action={prompt && <SectionAction icon={<FileText strokeWidth={1.75} />} onClick={() => act({ kind: 'open', scope, target: 'prompt' })}>{t('settings.shared.prompt.open')}</SectionAction>}>
+            action={prompt && <SectionAction icon={<FileText />} onClick={() => act({ kind: 'open', scope, target: 'prompt' })}>{t('settings.shared.prompt.open')}</SectionAction>}>
             {!prompt ? <Note>{t('settings.shared.noProject')}</Note> : <PromptCard prompt={prompt} ctx={ctx} />}
             {/* The user-level prompt is edited here once Acpira owns it (overwrite); the project's AGENTS.md always */}
             {prompt && (scope === 'project' || view.overwrite) && <PromptEditor key={prompt.path} prompt={prompt} ctx={ctx} />}
@@ -530,15 +515,10 @@ function PromptsTab({ ctx }: { ctx: Ctx }) {
   );
 }
 
-// Decision buttons under a row's text, so a narrow sidebar does not squeeze the name; the chips' own inset lines them up with it
-function Actions({ busy, children }: { busy: boolean; children: ReactNode }) {
-  return <fieldset disabled={busy} className="-ml-1.5 flex flex-wrap items-center gap-1 pt-1">{children}</fieldset>;
-}
-
 // The first lines of a prompt file, kept to a few lines of faint text
 function Preview({ text }: { text: string }) {
   if (!text) return null;
-  return <span className="line-clamp-3 whitespace-pre-wrap text-2 text-fg-3 [overflow-wrap:anywhere]">{text}</span>;
+  return <span className="line-clamp-3 whitespace-pre-wrap text-3 text-fg-3 [overflow-wrap:anywhere]">{text}</span>;
 }
 
 function PromptCard({ prompt, ctx }: { prompt: SharedPrompt; ctx: Ctx }) {
@@ -547,17 +527,12 @@ function PromptCard({ prompt, ctx }: { prompt: SharedPrompt; ctx: Ctx }) {
   // The editor below shows the whole text; the preview would only repeat its first lines
   const editing = prompt.scope === 'project' || view.overwrite;
   return (
-    <>
-      <ItemRow
-        lead={<FileText strokeWidth={1.5} />}
-        title={shortPath(prompt.path, env)}
-        desc={prompt.exists ? undefined : t('settings.shared.prompt.missing')}
-        extra={prompt.exists && !editing ? <Preview text={prompt.preview} /> : undefined}
-        dim={!prompt.exists}
-        onOpen={prompt.exists ? () => open(prompt.path) : undefined}
-      />
-      {lines.length > 0 && <Note><span className="whitespace-pre-line [overflow-wrap:anywhere]">{lines.join('\n')}</span></Note>}
-    </>
+    <ItemRow
+      title={shortPath(prompt.path, env)}
+      desc={prompt.exists ? (lines.length ? <span title={lines.join('\n')}>{lines.join(t('common.listSep'))}</span> : undefined) : t('settings.shared.prompt.missing')}
+      extra={prompt.exists && !editing ? <Preview text={prompt.preview} /> : undefined}
+      onOpen={prompt.exists ? () => open(prompt.path) : undefined}
+    />
   );
 }
 

@@ -1,11 +1,11 @@
 import type { ReactNode } from 'react';
+import { CodeXml, MessagesSquare, RefreshCw, Tag } from 'lucide-react';
 import type { UpdateState } from '@acpira/shared/protocol';
 import { formatBytes } from '@acpira/shared/storage';
-import { MarkSvg } from '../chat/marks';
 import { getLocale, t } from '../i18n';
 import { Button } from '../ui/Button';
 import { Shimmer } from '../ui/Shimmer';
-import { Field, Group, ItemRow, Switch } from './controls';
+import { Field, ItemRow, Section, SectionAction, Switch } from './controls';
 
 export interface UpdateHandlers {
   // download: fetch a newer version now even with automatic downloads off
@@ -22,56 +22,55 @@ const RELEASES_URL = `${REPO_URL}/releases`;
 // The phases with work under way: the status line shimmers and the check button waits
 const BUSY = new Set<UpdateState['phase']>(['checking', 'downloading', 'staging', 'applying']);
 
-// Desktop only: About Acpira, at the rail's foot. The first card is the app: its version, where its updates stand (HostMsg
-// updateState, rust/crates/acpira-desktop/src/update/) with the one next step, and the automatic download switch. An
-// install that cannot replace itself (a dmg, App Translocation, a folder it cannot write, a development build) says why
-// and links to the release page instead. The second card links out: help, release notes, source
+// Desktop only: About Acpira, at the rail's foot. The first card is the app: its version as the head, where its updates
+// stand (HostMsg updateState, rust/crates/acpira-desktop/src/update/) as the second line with the one next step as the
+// head's action, then the automatic download switch. An install that cannot replace itself (a dmg, App Translocation,
+// a folder it cannot write, a development build) says why and links to the release page instead. The second card links
+// out to the repository: help, release notes, source
 export function AboutPage({ state, on }: { state: UpdateState | undefined; on: UpdateHandlers }) {
   return <>
-    {state && <Group>
-      <VersionRow state={state} on={on} />
-      <Field label={t('settings.update.auto')} desc={t('settings.update.auto.desc')}>
-        <Switch checked={state.auto} disabled={!!state.manual} onChange={on.setAuto} label={t('settings.update.auto')} />
-      </Field>
-    </Group>}
-    <Group>
-      <ItemRow title={t('desktop.help')} onOpen={() => on.openExternal(HELP_URL)} />
-      <ItemRow title={t('settings.about.releaseNotes')} onOpen={() => on.openExternal(RELEASES_URL)} />
-      <ItemRow title={t('settings.about.source')} onOpen={() => on.openExternal(REPO_URL)} />
-    </Group>
+    {state && <VersionCard state={state} on={on} />}
+    <Section title="GitHub" desc={REPO_URL.replace(/^https:\/\//, '')}>
+      <ItemRow lead={<MessagesSquare />} title={t('desktop.help')} desc="Issues" onOpen={() => on.openExternal(HELP_URL)} />
+      <ItemRow lead={<Tag />} title={t('settings.about.releaseNotes')} desc="Releases" onOpen={() => on.openExternal(RELEASES_URL)} />
+      <ItemRow lead={<CodeXml />} title={t('settings.about.source')} desc={t('settings.about.sourceDesc')} onOpen={() => on.openExternal(REPO_URL)} />
+    </Section>
   </>;
 }
 
-function VersionRow({ state, on }: { state: UpdateState; on: UpdateHandlers }) {
+function VersionCard({ state, on }: { state: UpdateState; on: UpdateHandlers }) {
   const busy = BUSY.has(state.phase);
   const manual = state.manual;
   // A build without the release key never checks: there is nothing to start
   const canCheck = manual !== 'unconfigured' && manual !== 'notBundled';
   let action: ReactNode;
   if (state.phase === 'ready') action = <Button variant="primary" onClick={on.install}>{t('settings.update.restart')}</Button>;
-  else if (manual && (state.version || !canCheck)) action = <Button onClick={() => on.openExternal(state.releaseUrl)}>{t('settings.update.openRelease')}</Button>;
-  else if (state.phase === 'available' || (state.phase === 'failed' && state.version)) action = <Button onClick={() => on.check(true)}>{t('settings.update.download')}</Button>;
-  // While a download or the install runs the status line is the whole story; a check in flight keeps its button, waiting
-  else if (state.phase === 'checking' || !busy) action = <Button disabled={busy} onClick={() => on.check()} className="disabled:opacity-50">{t('settings.update.check')}</Button>;
+  else if (manual && (state.version || !canCheck)) action = <SectionAction onClick={() => on.openExternal(state.releaseUrl)}>{t('settings.update.openRelease')}</SectionAction>;
+  else if (state.phase === 'available' || (state.phase === 'failed' && state.version)) action = <Button variant="primary" onClick={() => on.check(true)}>{t('settings.update.download')}</Button>;
+  // While a download or the install runs the status line is the whole story; a check in flight keeps its action, waiting
+  else if (state.phase === 'checking' || !busy) action = <SectionAction icon={<RefreshCw className={busy ? 'animate-spin live-spin' : undefined} />} disabled={busy} onClick={() => on.check()}>{t('settings.update.check')}</SectionAction>;
   const pct = state.total ? Math.min(100, Math.round(((state.done ?? 0) / state.total) * 100)) : 0;
   // An install that never checks has no status of its own: its reason says it all
   const status = manual && state.phase === 'idle' ? undefined : statusLine(state);
+  const note = 'text-3 text-fg-3 [overflow-wrap:anywhere]';
   return (
-    <ItemRow bigLead
-      lead={<span className="flex size-lead items-center justify-center text-fg-1"><MarkSvg id="acpira" name="Acpira" /></span>}
-      title={t('settings.update.version', { version: state.current })}
-      desc={status && <Shimmer active={busy}>{status}</Shimmer>}
-      extra={<>
-        {manual && <span className="text-2 text-fg-2 [overflow-wrap:anywhere]">{t(`settings.update.manual.${manual}` as const)}</span>}
-        {state.phase === 'failed' && state.error && <span className="text-2 text-fg-2 [overflow-wrap:anywhere]">{state.error}</span>}
-        {state.phase === 'downloading' && (
-          <span role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={status}
-            className="mt-2 block h-(--quota-track) overflow-hidden rounded-full bg-active">
-            <span className="block h-full rounded-full bg-fg-3 transition-[width] duration-(--quota-fill-duration) ease-out" style={{ width: `${pct}%` }} />
-          </span>
-        )}
-      </>}
-      trailing={action} />
+    <Section title={t('settings.update.version', { version: state.current })} desc={status && <Shimmer active={busy}>{status}</Shimmer>} action={action}>
+      {(manual || (state.phase === 'failed' && state.error) || state.phase === 'downloading') && (
+        <div className="flex flex-col gap-1 py-(--setting-row-pad)">
+          {manual && <span className={note}>{t(`settings.update.manual.${manual}` as const)}</span>}
+          {state.phase === 'failed' && state.error && <span className={note}>{state.error}</span>}
+          {state.phase === 'downloading' && (
+            <span role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={status}
+              className="block h-(--quota-track) overflow-hidden rounded-full bg-active">
+              <span className="block h-full rounded-full bg-fg-3 transition-[width] duration-(--quota-fill-duration) ease-out" style={{ width: `${pct}%` }} />
+            </span>
+          )}
+        </div>
+      )}
+      <Field label={t('settings.update.auto')} desc={t('settings.update.auto.desc')}>
+        <Switch checked={state.auto} disabled={!!manual} onChange={on.setAuto} label={t('settings.update.auto')} />
+      </Field>
+    </Section>
   );
 }
 

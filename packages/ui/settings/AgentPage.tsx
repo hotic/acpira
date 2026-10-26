@@ -1,15 +1,14 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { BookOpen, Ban, Check, ChevronDown, ChevronUp, CircleAlert, Copy, Download, Eye, EyeOff, FileText, Globe, KeyRound, LoaderCircle, LockKeyhole, Plus, Server, SlidersHorizontal, Sparkles, SquareTerminal, X } from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Ban, Check, ChevronDown, ChevronUp, CircleAlert, Copy, Download, Eye, EyeOff, LoaderCircle, LockKeyhole, Plus, RefreshCw, Settings2, SquareTerminal, X } from 'lucide-react';
 import type { AccountInfo, AgentInfo, ConfigControl } from '@acpira/shared/transcript';
 import type { AgentInstallProgress } from '@acpira/shared/protocol';
-import type { AgentHealthStage, AgentInventory, InventoryFile, InventoryMcp, InventorySkill, McpTransport } from '@acpira/shared/inventory';
+import type { AgentHealthStage, AgentInventory, InventoryFile, InventoryMcp, InventoryScope, InventorySkill } from '@acpira/shared/inventory';
 import type { MsgKey } from '@acpira/shared/i18n';
 import { PLAN_AUTO_APPROVE_AGENTS, type SettingsView } from '@acpira/shared/settings';
 import { familyLabel, isReasoningControl } from '@acpira/shared/composerControls';
 import { familyHidden, groupModels, setFamilyVisible, variantLabel, type ModelFamily } from '@acpira/shared/models';
 import { filterModels, MODEL_PREVIEW_LIMIT, prioritizeModels, setModelsVisible } from '@acpira/shared/modelCatalog';
-import { Button, Chip, IconButton } from '../ui/Button';
-import { Card } from '../ui/Card';
+import { Button, IconButton } from '../ui/Button';
 import { AccountLabel } from '../ui/AccountLabel';
 import { LocalAccountQuota, SavedAccountQuota } from '../ui/LocalAccountQuota';
 import { Shimmer } from '../ui/Shimmer';
@@ -18,17 +17,29 @@ import { cn } from '../ui/cn';
 import { Collapsible } from '../ui/Collapsible';
 import { useScrollFade } from '../ui/useScrollFade';
 import { t } from '../i18n';
+import { AgentMark } from '../chat/AgentMark';
 import { ModelMark } from '../chat/ModelMark';
-import { Count, Dot, FactRow, Field, Group, ItemRow, ListHead, ModelLine, Note, PathText, SearchRow, Section, SectionAction, SectionDescription, SectionHead, Select, SourceLink, Switch, TextBox, shortPath, topRule, type ModelTags } from './controls';
+import {
+  DialogBody, Dot, FactRow, Field, Group, ItemRow, Meta, Note, PathText, SearchRow, Section, SectionAction, Select, SettingsDialog,
+  Switch, Tabs, TextBox, pathSep, shortPath,
+} from './controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 import { ProvidersSection, type ProvidersState } from './ProvidersSection';
 import { APPROVAL_LEVELS, approvalOf, BUILTIN_AGENT_ID, COMPACTION_STRATEGIES, compactionOf, usableModels, WEB_SEARCH_BACKENDS, webSearchOf, type ApprovalLevel, type CompactionStrategy, type WebSearchBackend } from '@acpira/shared/providers';
 
-type AgentSection = 'models' | 'mcp' | 'skills' | 'rules' | 'config';
-// What the CLI's own files declare; shared resources live on the Shared page, so these fold away by default
-const NATIVE: AgentSection[] = ['mcp', 'skills', 'rules', 'config'];
+// One agent's settings, opened from its tile on the Plugins page as a tabbed dialog. A CLI agent: Overview (runtime facts,
+// install, permissions, its config files), Models (the option families shown in the composer menus), Accounts (when it
+// has an account layer), then its prompts, skills and MCP servers grouped by where they come from (the shared ~/.agents,
+// this project, the agent's own files). The built-in agent: its model sources and its behaviour, plus those lists when
+// it has any. Everything read from the CLI's own files is read-only here: rows open the file, Acpira never writes it
+export type AgentTab = 'overview' | 'models' | 'accounts' | 'prompts' | 'skills' | 'mcp' | 'sources' | 'behavior';
 
-export interface AgentPageProps {
+const TAB_LABEL: Record<AgentTab, MsgKey> = {
+  overview: 'settings.agentTab.overview', models: 'settings.agentTab.models', accounts: 'settings.agentTab.accounts', prompts: 'settings.agentTab.prompts',
+  skills: 'settings.agentTab.skills', mcp: 'settings.agentTab.mcp', sources: 'settings.agentTab.sources', behavior: 'settings.agentTab.behavior',
+};
+
+export interface AgentSettingsProps {
   agent: AgentInfo;
   // Accounts of this agent only
   accounts: AccountInfo[];
@@ -37,19 +48,87 @@ export interface AgentPageProps {
   inventory?: AgentInventory;
   // The select-type configOptions this agent offered in its latest session; undefined until one has been opened
   controls?: ConfigControl[];
-  // The built-in agent's model sources (only its page shows them)
+  // The built-in agent's model sources (only its dialog shows them)
   providers?: ProvidersState;
   settings: SettingsView;
   env: SettingsEnv;
   on: SettingsHandlers;
+  // The shared resources' own page (a shared card's head action)
+  onShared?: () => void;
 }
 
-// One agent: a card of facts (the page heading carries the name), accounts when it has an account layer, then five stacked sections: the option families
-// shown in the composer menus, and the extension inventory. Everything read from the CLI's own files is read-only here — rows open the file,
-// Acpira never writes it. Only the option families have switches
-export function AgentPage({ agent, accounts, install, inventory, controls, providers, settings, env, on }: AgentPageProps) {
+// Reasoning levels belong to the current model's picker, not agent-wide visibility settings; a boolean's synthetic
+// Off/On pair is not a family either
+const modelControlsOf = (controls?: ConfigControl[]) => controls?.filter(c => !isReasoningControl(c) && c.type !== 'boolean');
+
+// The tabs an agent's dialog offers, with their counts once known. The built-in agent shows its prompts, skills and MCP
+// tabs only when it has something there
+export function agentTabs(agent: AgentInfo, inventory: AgentInventory | undefined, accounts: AccountInfo[], controls?: ConfigControl[]): { value: AgentTab; label: string; count?: number }[] {
+  const tab = (value: AgentTab, count?: number) => ({ value, label: t(TAB_LABEL[value]), count });
+  const lists = [
+    tab('prompts', inventory?.rules.filter(r => r.exists).length),
+    tab('skills', inventory?.skills.length),
+    tab('mcp', inventory?.mcp.length),
+  ];
+  if (agent.id === BUILTIN_AGENT_ID) return [tab('sources'), tab('behavior'), ...lists.filter(l => (l.count ?? 0) > 0)];
+  const models = modelControlsOf(controls)?.reduce((n, c) => n + groupModels(c.options).length, 0);
+  return [
+    tab('overview'),
+    tab('models', models),
+    ...(agent.accounts || agent.localAccount ? [tab('accounts', agent.accounts ? accounts.length : undefined)] : []),
+    ...lists,
+  ];
+}
+
+// The dialog: the agent's mark and name, its version (or that it is not installed) as the subtitle, its switch; the
+// tab strip over the tab's blocks; a footer with the refresh and Done. One fixed height, so a tab switch never resizes it
+export function AgentDialog(p: AgentSettingsProps & {
+  enabled: boolean;
+  // The last agent on cannot be switched off
+  last: boolean;
+  onEnabled: (on: boolean) => void;
+  // The refresh is in flight: the button spins and ignores clicks
+  busy?: boolean;
+  onClose: () => void;
+}) {
+  const { agent, inventory } = p;
+  const tabs = agentTabs(agent, inventory, p.accounts, p.controls);
+  const [tab, setTab] = useState<AgentTab>(tabs[0]!.value);
+  // A tab that went away (the built-in agent's skills emptied) falls back to the first
+  const shown = tabs.some(x => x.value === tab) ? tab : tabs[0]!.value;
+  const version = inventory?.runtime?.version ?? inventory?.adapter?.adapter?.version;
+  const sub = agent.id === BUILTIN_AGENT_ID ? t('settings.plugins.bundled') : agent.available === false ? t('settings.plugins.notInstalled') : version;
+  const refresh = t('settings.agent.refresh');
+  return (
+    <SettingsDialog wide tall icon={<AgentMark id={agent.id} name={agent.name} />} title={agent.name} sub={sub} onClose={p.onClose}
+      control={<Switch checked={p.enabled} disabled={p.last && p.enabled} onChange={p.onEnabled} label={t('settings.agent.enabled', { agent: agent.name })} />}
+      footer={<>
+        <SectionActionLeft icon={<RefreshCw strokeWidth={1.75} className={cn(p.busy && 'animate-spin live-spin')} />} disabled={p.busy} onClick={() => p.on.refreshAgent(agent.id)}>{refresh}</SectionActionLeft>
+        <span className="flex-1" />
+        <Button variant="primary" onClick={p.onClose}>{t('common.done')}</Button>
+      </>}>
+      <DialogBody>
+        <Tabs label={t('settings.agent.title', { agent: agent.name })} items={tabs} value={shown} onChange={setTab} />
+        <AgentSettings {...p} tab={shown} />
+      </DialogBody>
+    </SettingsDialog>
+  );
+}
+
+// A footer's quiet action on its left edge (Refresh), its words on the body's text edge
+function SectionActionLeft({ icon, onClick, disabled, children }: { icon: ReactNode; onClick: () => void; disabled?: boolean; children: ReactNode }) {
+  return (
+    <button type="button" onClick={onClick} disabled={disabled}
+      className="-ml-2 flex h-ctl shrink-0 items-center gap-1.5 rounded-md px-2 text-2 text-fg-2 transition-colors enabled:hover:bg-hover enabled:hover:text-fg-1 focus-visible:bg-hover disabled:opacity-60 [&_svg]:size-icon">
+      {icon}{children}
+    </button>
+  );
+}
+
+// One tab's blocks. The reads it needs run while the dialog is open: the inventory once, the quotas every minute
+export function AgentSettings({ agent, accounts, install, inventory, controls, providers, settings, env, on, onShared, tab }: AgentSettingsProps & { tab: AgentTab }) {
   useEffect(() => { if (!inventory) on.refreshInventory(agent.id); }, [agent.id, inventory, on]);
-  // Re-read when the page opens and whenever the set of accounts changes (a login finishes while this page is already open)
+  // Re-read when the dialog opens and whenever the set of accounts changes (a login finishes while it is open)
   const accountKey = accounts.map(a => a.id).join();
   const hasQuota = !!(agent.accounts || agent.localAccount);
   useEffect(() => {
@@ -58,114 +137,92 @@ export function AgentPage({ agent, accounts, install, inventory, controls, provi
     const timer = setInterval(() => on.refreshQuota?.(agent.id), 60_000);
     return () => clearInterval(timer);
   }, [agent.id, hasQuota, accountKey, on]);
+  // The built-in agent's behaviour lives in the same file as its sources
+  useEffect(() => { if (agent.id === BUILTIN_AGENT_ID && !providers) on.providers?.(); }, [agent.id, providers, on]);
 
-  // Reasoning levels belong to the current model's picker, not agent-wide visibility settings; a boolean's synthetic Off/On pair is not a family either.
-  const modelControls = controls?.filter(c => !isReasoningControl(c) && c.type !== 'boolean');
-  const counts: Record<AgentSection, number> = {
-    models: modelControls?.reduce((n, c) => n + groupModels(c.options).length, 0) ?? 0,
-    mcp: inventory?.mcp.length ?? 0,
-    skills: inventory?.skills.length ?? 0,
-    rules: inventory?.rules.filter(r => r.exists).length ?? 0,
-    config: inventory?.config.filter(c => c.exists).length ?? 0,
-  };
-  // The native lists title their own cards, so the label sits inside the surface rather than as a third line of copy above it
-  const head = (id: AgentSection): CardHead => ({ title: t(`settings.tab.${id}` as const), count: inventory ? counts[id] : undefined });
-  const sections: Record<AgentSection, ReactNode> = {
-    models: <ModelsSection key={agent.id} agent={agent} controls={modelControls} settings={settings} on={on} />,
-    mcp: <McpSection head={head('mcp')} inventory={inventory} env={env} on={on} />,
-    skills: <SkillsSection head={head('skills')} agent={agent} inventory={inventory} env={env} on={on} />,
-    rules: <FilesSection head={head('rules')} kind="rules" agent={agent} files={inventory?.rules} env={env} on={on} />,
-    config: <FilesSection head={head('config')} kind="config" agent={agent} files={inventory?.config} env={env} on={on} />,
-  };
-
-  const block = (id: AgentSection) => (
-    <div className="flex flex-col gap-2">
-      <SectionHead count={inventory ? counts[id] : undefined}>{t(`settings.tab.${id}` as const)}</SectionHead>
-      <div className="flex flex-col gap-pad">{sections[id]}</div>
-    </div>
-  );
-
-  return (
-    <>
+  const sources = { agent, inventory, env, on, onShared };
+  switch (tab) {
+    case 'overview': return <>
+      {agent.install && agent.available === false && <InstallSection agent={agent} install={install} env={env} on={on} />}
       <AgentFacts agent={agent} inventory={inventory} env={env} />
-      {agent.install && <InstallSection agent={agent} install={install} env={env} on={on} />}
-
-      {agent.localAccount && <div className="flex flex-col gap-2">
-        <SectionHead>{t('quota.officialAccount')}</SectionHead>
-        <Section desc={t('quota.local.desc')}>
-          <ItemRow lead={<KeyRound strokeWidth={1.5} />}
-            title={<AccountLabel label={agent.localAccount.label} detail={agent.localAccount.detail} />}
-            extra={<LocalAccountQuota account={agent.localAccount} />} />
-        </Section>
-      </div>}
-
-      {agent.accounts && (
-        <div className="flex flex-col gap-2">
-          <SectionHead action={<SectionAction icon={<Plus strokeWidth={1.75} />} onClick={() => on.addAccount(agent.id)}>{t('settings.agent.addAccount')}</SectionAction>}>
-            {t('settings.agent.accounts')}
-          </SectionHead>
-          <Section desc={t('settings.agent.accounts.desc')}>
-            {agent.credentialsLocked && <ItemRow lead={<LockKeyhole strokeWidth={1.5} />} title={t('notice.locked.short')}
-              trailing={on.unlockCredentials && <SectionAction onClick={() => on.unlockCredentials?.(agent.id)}>{t('notice.unlock')}</SectionAction>} />}
-            {accounts.length === 0 && <Note>{t('settings.agent.accounts.none')}</Note>}
-            {accounts.map(a => (
-              <ItemRow
-                key={a.id}
-                lead={<KeyRound strokeWidth={1.5} />}
-                title={<AccountLabel label={a.label} detail={a.detail} />}
-                extra={(a.quota || a.quotaIssue) && <SavedAccountQuota account={a} />}
-                trailing={
-                  <IconButton title={t('common.remove')} aria-label={t('common.removeNamed', { name: a.label })} onClick={() => on.removeAccount(a.id)} className="-mr-1.5 text-fg-2 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100">
-                    <X strokeWidth={1.5} />
-                  </IconButton>
-                }
-              />
-            ))}
-          </Section>
-        </div>
-      )}
-
-      {agent.id === BUILTIN_AGENT_ID && <ProvidersSection state={providers} on={on} />}
-      {agent.id === BUILTIN_AGENT_ID && <FastModelSection state={providers} on={on} />}
-      {agent.id === BUILTIN_AGENT_ID && <CompactionSection state={providers} on={on} />}
-      {agent.id === BUILTIN_AGENT_ID && <RawModeSection state={providers} on={on} />}
-      {agent.id === BUILTIN_AGENT_ID && <WebSearchSection state={providers} on={on} />}
-      {agent.id === BUILTIN_AGENT_ID && <ApprovalSection state={providers} on={on} />}
-
+      {agent.install && agent.available !== false && <InstallSection agent={agent} install={install} env={env} on={on} />}
       {PLAN_AUTO_APPROVE_AGENTS.includes(agent.id) && <PermissionsSection agent={agent} settings={settings} on={on} />}
-
-      {/* The built-in agent's models are its sources' models, edited above */}
-      {agent.id !== BUILTIN_AGENT_ID && block('models')}
-      <NativeBlock agent={agent} count={inventory ? NATIVE.reduce((n, id) => n + counts[id], 0) : undefined}>
-        {NATIVE.map(id => <Fragment key={id}>{sections[id]}</Fragment>)}
-      </NativeBlock>
-    </>
-  );
+      <ConfigSection agent={agent} files={inventory?.config} env={env} on={on} />
+    </>;
+    case 'models': return <ModelsSection agent={agent} controls={modelControlsOf(controls)} settings={settings} on={on} />;
+    case 'accounts': return <AccountsTab agent={agent} accounts={accounts} on={on} />;
+    case 'prompts': return <PromptsTab {...sources} />;
+    case 'skills': return <SkillsTab {...sources} />;
+    case 'mcp': return <McpTab {...sources} />;
+    case 'sources': return <ProvidersSection state={providers} on={on} />;
+    case 'behavior': return <BehaviorTab state={providers} on={on} />;
+  }
 }
 
-// The agent's own MCP servers, skills, rules and config files under one heading, always laid out in full: one titled card
-// each, like the account and model sections. Their labels used to be bare text lines between the copy, which read as one paragraph
-function NativeBlock({ agent, count, children }: { agent: AgentInfo; count?: number; children: ReactNode }) {
-  return (
-    <div className="flex flex-col gap-2">
-      <SectionHead count={count}>{t('settings.agent.native', { agent: agent.name })}</SectionHead>
-      <SectionDescription>{t('settings.agent.native.desc', { agent: agent.name })}</SectionDescription>
-      <div className="flex flex-col gap-pad">{children}</div>
-    </div>
-  );
+function AccountsTab({ agent, accounts, on }: { agent: AgentInfo; accounts: AccountInfo[]; on: SettingsHandlers }) {
+  return <>
+    {agent.localAccount && <Section title={t('quota.officialAccount')} desc={t('quota.local.desc')}>
+      <ItemRow title={<AccountLabel label={agent.localAccount.label} detail={agent.localAccount.detail} />}
+        extra={<LocalAccountQuota account={agent.localAccount} />} />
+    </Section>}
+    {agent.accounts && (
+      <Section title={t('settings.agent.accounts')} count={accounts.length} desc={t('settings.agent.accounts.desc')}
+        action={<SectionAction icon={<Plus />} onClick={() => on.addAccount(agent.id)}>{t('settings.agent.addAccount')}</SectionAction>}>
+        {agent.credentialsLocked && <ItemRow lead={<LockKeyhole />} title={t('notice.locked.short')}
+          trailing={on.unlockCredentials && <SectionAction onClick={() => on.unlockCredentials?.(agent.id)}>{t('notice.unlock')}</SectionAction>} />}
+        {accounts.length === 0 && <Note>{t('settings.agent.accounts.none')}</Note>}
+        {accounts.map(a => (
+          <ItemRow
+            key={a.id}
+            title={<AccountLabel label={a.label} detail={a.detail} />}
+            extra={(a.quota || a.quotaIssue) && <SavedAccountQuota account={a} />}
+            trailing={
+              <IconButton title={t('common.remove')} aria-label={t('common.removeNamed', { name: a.label })} onClick={() => on.removeAccount(a.id)} className="-mr-1.5 text-fg-2 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100">
+                <X strokeWidth={1.5} />
+              </IconButton>
+            }
+          />
+        ))}
+      </Section>
+    )}
+  </>;
 }
 
-// A native list's card title and count (no count before the first scan)
-interface CardHead { title: string; count?: number }
+// The built-in agent's behaviour, one list: the fast model, how it compacts, how much it asks, where it searches the
+// web (with that backend's key); Raw mode's system prompt in a block of its own. Each pick shows at once and gives way
+// to the file's once the host answers with a new view
+function BehaviorTab({ state, on }: { state?: ProvidersState; on: SettingsHandlers }) {
+  if (!state) return <Group><Note shimmer>{t('settings.loading')}</Note></Group>;
+  return <>
+    <Group>
+      <FastModelField state={state} on={on} />
+      <CompactionField state={state} on={on} />
+      <ApprovalField state={state} on={on} />
+      <WebSearchFields state={state} on={on} />
+    </Group>
+    <Section title={t('settings.agent.raw')} desc={t('settings.agent.rawPrompt.desc')}>
+      <div className="flex py-(--setting-row-pad)">
+        <TextBox multiline value={state.view.rawSystemPrompt ?? ''} label={t('settings.agent.rawPrompt')} placeholder={t('settings.agent.rawPrompt.placeholder')}
+          onCommit={text => on.providerAction?.({ kind: 'rawSystemPrompt', text: text.trim() ? text : undefined })} />
+      </div>
+    </Section>
+  </>;
+}
 
-// The built-in agent's fast model (`fastModel` in providers.json): a cheap model for side jobs such as naming a session
-// from its first message. A pick no longer usable reads as off, as the agent treats it
-function FastModelSection({ state, on }: { state?: ProvidersState; on: SettingsHandlers }) {
-  const [picked, setPicked] = useState<string>();
-  useEffect(() => { setPicked(undefined); }, [state?.view, state?.error]);
-  const models = usableModels(state?.view);
-  const stored = state?.view.fastModel ?? '';
-  const value = picked ?? (models.some(m => m.pick === stored) ? stored : '');
+// A pick that shows at once and gives way to the file's once the host answers with a new view
+function usePick<V>(state: ProvidersState, stored: V): [V, (v: V) => boolean] {
+  const [picked, setPicked] = useState<V>();
+  useEffect(() => { setPicked(undefined); }, [state.view, state.error]);
+  const value = picked ?? stored;
+  return [value, v => { if (v === value) return false; setPicked(v); return true; }];
+}
+
+// The fast model (`fastModel` in providers.json): a cheap model for side jobs such as naming a session from its first
+// message. A pick no longer usable reads as off, as the agent treats it
+function FastModelField({ state, on }: { state: ProvidersState; on: SettingsHandlers }) {
+  const models = usableModels(state.view);
+  const stored = state.view.fastModel ?? '';
+  const [value, pick] = usePick(state, models.some(m => m.pick === stored) ? stored : '');
   const options = [
     { value: '', label: t('settings.agent.fastModel.off'), icon: <Ban strokeWidth={1.5} /> },
     // The model on the row, its source as the caption: two sources may offer the same model
@@ -177,78 +234,54 @@ function FastModelSection({ state, on }: { state?: ProvidersState; on: SettingsH
       hint: m.pick,
     })),
   ];
-  const pick = (v: string) => {
-    if (v === value) return;
-    setPicked(v);
-    on.providerAction?.({ kind: 'fastModel', pick: v || undefined });
-  };
   return (
-    <div className="flex flex-col gap-2">
-      <SectionHead>{t('settings.agent.quickTasks')}</SectionHead>
-      <Section>
-        <Field label={t('settings.agent.fastModel')} desc={t('settings.agent.fastModel.desc')}>
-          {state
-            ? <Select options={options} value={value} onChange={pick} label={t('settings.agent.fastModel')} />
-            : <Shimmer active>{t('settings.loading')}</Shimmer>}
-        </Field>
-      </Section>
-    </div>
+    <Field label={t('settings.agent.fastModel')} desc={t('settings.agent.fastModel.desc')}>
+      <Select options={options} value={value} label={t('settings.agent.fastModel')}
+        onChange={v => { if (pick(v)) on.providerAction?.({ kind: 'fastModel', pick: v || undefined }); }} />
+    </Field>
   );
 }
 
-// How the built-in agent compacts its history (`compaction` in providers.json): a summary a model writes, or chunks of
-// the finished turns that keep the user's messages and the final replies, with no model call
+// How the history is compacted (`compaction`): a summary a model writes, or chunks of the finished turns that keep the
+// user's messages and the final replies, with no model call
 const COMPACTION_KEYS: Record<CompactionStrategy, { label: MsgKey; desc: MsgKey }> = {
   summary: { label: 'settings.agent.compaction.summary', desc: 'settings.agent.compaction.summary.desc' },
   chunk: { label: 'settings.agent.compaction.chunk', desc: 'settings.agent.compaction.chunk.desc' },
 };
 
-function CompactionSection({ state, on }: { state?: ProvidersState; on: SettingsHandlers }) {
-  // The picked strategy shows at once and gives way to the file's once the host answers with a new view
-  const [picked, setPicked] = useState<CompactionStrategy>();
-  useEffect(() => { setPicked(undefined); }, [state?.view, state?.error]);
-  const strategy = picked ?? compactionOf(state?.view);
-  const pick = (v: CompactionStrategy) => {
-    if (v === strategy) return;
-    setPicked(v);
-    on.providerAction?.({ kind: 'compaction', strategy: v });
-  };
+function CompactionField({ state, on }: { state: ProvidersState; on: SettingsHandlers }) {
+  const [strategy, pick] = usePick(state, compactionOf(state.view));
   return (
-    <div className="flex flex-col gap-2">
-      <SectionHead>{t('settings.agent.context')}</SectionHead>
-      <Section>
-        {/* Both descriptions are laid out, so a pick never changes the picker row's height */}
-        <Field label={t('settings.agent.compaction')} desc={<StableText current={strategy} items={COMPACTION_STRATEGIES.map(v => ({ key: v, text: t(COMPACTION_KEYS[v].desc) }))} />}>
-          {state
-            ? <Select options={COMPACTION_STRATEGIES.map(v => ({ value: v, label: t(COMPACTION_KEYS[v].label) }))} value={strategy} onChange={pick} label={t('settings.agent.compaction')} />
-            : <Shimmer active>{t('settings.loading')}</Shimmer>}
-        </Field>
-      </Section>
-    </div>
+    // Both descriptions are laid out, so a pick never changes the row's height
+    <Field label={t('settings.agent.compaction')} desc={<StableText current={strategy} items={COMPACTION_STRATEGIES.map(v => ({ key: v, text: t(COMPACTION_KEYS[v].desc) }))} />}>
+      <Select options={COMPACTION_STRATEGIES.map(v => ({ value: v, label: t(COMPACTION_KEYS[v].label) }))} value={strategy} label={t('settings.agent.compaction')}
+        onChange={v => { if (pick(v)) on.providerAction?.({ kind: 'compaction', strategy: v }); }} />
+    </Field>
   );
 }
 
-// The system prompt of the built-in agent's Raw mode (`rawSystemPrompt` in providers.json), committed on blur. Raw mode
-// sends nothing else of the agent's own, so an empty box means no system prompt at all
-function RawModeSection({ state, on }: { state?: ProvidersState; on: SettingsHandlers }) {
+// The approval level: a setting of the agent in providers.json, not a composer control, so the composer shows only the
+// mode chip. Read at the start of every turn; Plan mode's limits hold under any level
+const APPROVAL_KEYS: Record<ApprovalLevel, { label: MsgKey; desc: MsgKey }> = {
+  ask: { label: 'settings.agent.approval.ask', desc: 'settings.agent.approval.ask.desc' },
+  'auto-edit': { label: 'settings.agent.approval.autoEdit', desc: 'settings.agent.approval.autoEdit.desc' },
+  full: { label: 'settings.agent.approval.full', desc: 'settings.agent.approval.full.desc' },
+};
+
+function ApprovalField({ state, on }: { state: ProvidersState; on: SettingsHandlers }) {
+  const [level, pick] = usePick(state, approvalOf(state.view));
   return (
-    <div className="flex flex-col gap-2">
-      <SectionHead>{t('settings.agent.raw')}</SectionHead>
-      <Section>
-        <Field stack label={t('settings.agent.rawPrompt')} desc={t('settings.agent.rawPrompt.desc')}>
-          {state
-            ? <TextBox multiline value={state.view.rawSystemPrompt ?? ''} label={t('settings.agent.rawPrompt')} placeholder={t('settings.agent.rawPrompt.placeholder')}
-              onCommit={text => on.providerAction?.({ kind: 'rawSystemPrompt', text: text.trim() ? text : undefined })} />
-            : <Shimmer active>{t('settings.loading')}</Shimmer>}
-        </Field>
-      </Section>
-    </div>
+    // Every level's description is laid out, so a pick never changes the row's height
+    <Field label={t('settings.agent.approval')} desc={<StableText current={level} items={APPROVAL_LEVELS.map(v => ({ key: v, text: t(APPROVAL_KEYS[v].desc) }))} />}>
+      <Select options={APPROVAL_LEVELS.map(v => ({ value: v, label: t(APPROVAL_KEYS[v].label) }))} value={level} label={t('settings.agent.approval')}
+        onChange={v => { if (pick(v)) on.providerAction?.({ kind: 'approval', level: v }); }} />
+    </Field>
   );
 }
 
-// The built-in agent's websearch backend (`webSearch` in providers.json): the free hosted endpoints, Jina Search with the
-// user's key, or DeepSeek's Search API. Picking a keyed backend adds its key row under the picker (DeepSeek's only when
-// it goes to DeepSeek's own API); a key goes to secrets.json and never comes back
+// The websearch backend (`webSearch`): the free hosted endpoints, Jina Search with the user's key, or DeepSeek's Search
+// API. Picking a keyed backend adds its key row under the picker (DeepSeek's only when it goes to DeepSeek's own API);
+// a key goes to secrets.json and never comes back
 const WEB_SEARCH_KEYS: Record<WebSearchBackend, { label: MsgKey; desc: MsgKey }> = {
   default: { label: 'settings.agent.webSearch.default', desc: 'settings.agent.webSearch.default.desc' },
   jina: { label: 'settings.agent.webSearch.jina', desc: 'settings.agent.webSearch.jina.desc' },
@@ -261,59 +294,39 @@ const WEB_KEY_FIELDS: Record<Exclude<WebSearchBackend, 'default'>, { label: MsgK
   deepseek: { label: 'settings.agent.webSearch.deepseekKey', placeholder: 'settings.agent.webSearch.deepseekKey.placeholder' },
 };
 
-function WebSearchSection({ state, on }: { state?: ProvidersState; on: SettingsHandlers }) {
-  // The picked backend shows at once and gives way to the file's once the host answers with a new view
-  const [picked, setPicked] = useState<WebSearchBackend>();
-  useEffect(() => { setPicked(undefined); }, [state?.view, state?.error]);
-  const backend = picked ?? webSearchOf(state?.view);
-  const pick = (v: WebSearchBackend) => {
-    if (v === backend) return;
-    setPicked(v);
-    on.providerAction?.({ kind: 'webSearch', backend: v });
-  };
-  return (
-    <div className="flex flex-col gap-2">
-      <SectionHead>{t('settings.agent.web')}</SectionHead>
-      <Section>
-        {/* Both descriptions are laid out, so a pick never changes the picker row's height */}
-        <Field label={t('settings.agent.webSearch')} desc={<StableText current={backend} items={WEB_SEARCH_BACKENDS.map(v => ({ key: v, text: t(WEB_SEARCH_KEYS[v].desc) }))} />}>
-          {state
-            ? <Select options={WEB_SEARCH_BACKENDS.map(v => ({ value: v, label: t(WEB_SEARCH_KEYS[v].label) }))} value={backend} onChange={pick} label={t('settings.agent.webSearch')} />
-            : <Shimmer active>{t('settings.loading')}</Shimmer>}
-        </Field>
-        {state && backend === 'jina' && <WebKeyField backend="jina" stored={!!state.view.webKeys?.includes('jina')} on={on} />}
-        {state && backend === 'deepseek' && <DeepSeekRows state={state} on={on} />}
-      </Section>
-    </div>
-  );
+function WebSearchFields({ state, on }: { state: ProvidersState; on: SettingsHandlers }) {
+  const [backend, pick] = usePick(state, webSearchOf(state.view));
+  return <>
+    {/* Every description is laid out, so a pick never changes the picker row's height */}
+    <Field label={t('settings.agent.webSearch')} desc={<StableText current={backend} items={WEB_SEARCH_BACKENDS.map(v => ({ key: v, text: t(WEB_SEARCH_KEYS[v].desc) }))} />}>
+      <Select options={WEB_SEARCH_BACKENDS.map(v => ({ value: v, label: t(WEB_SEARCH_KEYS[v].label) }))} value={backend} label={t('settings.agent.webSearch')}
+        onChange={v => { if (pick(v)) on.providerAction?.({ kind: 'webSearch', backend: v }); }} />
+    </Field>
+    {backend === 'jina' && <WebKeyField backend="jina" stored={!!state.view.webKeys?.includes('jina')} on={on} />}
+    {backend === 'deepseek' && <DeepSeekRows state={state} on={on} />}
+  </>;
 }
 
 // Where DeepSeek's search goes: DeepSeek's own API (with the key row below) or a model source that serves the same
 // /v1/tools/search, such as a gateway, whose address and key are used. Sources with a key are offered, plus the one
 // already picked
 function DeepSeekRows({ state, on }: { state: ProvidersState; on: SettingsHandlers }) {
-  const [picked, setPicked] = useState<string>();
-  useEffect(() => { setPicked(undefined); }, [state.view]);
-  const via = picked ?? state.view.webSearchVia ?? '';
+  const [via, pick] = usePick(state, state.view.webSearchVia ?? '');
   const sources = state.view.providers.filter(p => p.hasKey || p.id === via);
-  const pick = (v: string) => {
-    if (v === via) return;
-    setPicked(v);
-    on.providerAction?.({ kind: 'webSearch', backend: 'deepseek', via: v });
-  };
   const options = [{ value: '', label: t('settings.agent.webSearch.via.official') }, ...sources.map(p => ({ value: p.id, label: p.name || p.id }))];
   return (
     <>
       <Field label={t('settings.agent.webSearch.via')} desc={t('settings.agent.webSearch.via.desc')}>
-        <Select options={options} value={via} onChange={pick} label={t('settings.agent.webSearch.via')} />
+        <Select options={options} value={via} label={t('settings.agent.webSearch.via')}
+          onChange={v => { if (pick(v)) on.providerAction?.({ kind: 'webSearch', backend: 'deepseek', via: v }); }} />
       </Field>
       {via === '' && <WebKeyField backend="deepseek" stored={!!state.view.webKeys?.includes('deepseek')} on={on} />}
     </>
   );
 }
 
-// A keyed backend's key: typed, then saved with the button or Enter. The box empties once sent; the status line says
-// whether one is stored, which is all the page ever learns about it
+// A keyed backend's key, in the right column like any control: typed, then saved with the check or Enter. The box
+// empties once sent; the second line says whether one is stored, which is all the page ever learns about it
 function WebKeyField({ backend, stored, on }: { backend: Exclude<WebSearchBackend, 'default'>; stored: boolean; on: SettingsHandlers }) {
   const [key, setKey] = useState('');
   const [show, setShow] = useState(false);
@@ -325,58 +338,23 @@ function WebKeyField({ backend, stored, on }: { backend: Exclude<WebSearchBacken
     setShow(false);
   };
   const eyeLabel = show ? t('settings.providers.hideKey') : t('settings.providers.showKey');
+  const label = t(WEB_KEY_FIELDS[backend].label);
   return (
-    <Field stack label={t(WEB_KEY_FIELDS[backend].label)} desc={
-      <span className="inline-flex items-center gap-2">
-        <Dot ok={stored} warn={!stored} />
-        {stored ? t('settings.providers.keySaved') : t('settings.agent.webSearch.noKey')}
-      </span>
-    }>
-      {/* The visibility toggle sits inside the box, as in the model source form */}
-      <div className="flex h-ctl min-w-0 flex-1 items-center rounded-md border border-line bg-chip pl-3 focus-within:border-line-strong">
+    <Field label={label} desc={<span className="inline-flex items-center gap-1.5"><Dot ok={stored} warn={!stored} />{stored ? t('settings.providers.keySaved') : t('settings.agent.webSearch.noKey')}</span>}>
+      {/* The visibility toggle and the save check sit inside the box, so it keeps the column's width */}
+      <div className="flex h-ctl w-(--ctl-w) max-w-full min-w-0 items-center rounded-md border border-line bg-hover pl-3 transition-colors focus-within:bg-active hover:border-line-strong">
         <input type={show ? 'text' : 'password'} autoComplete="off" spellCheck={false} value={key} onChange={e => setKey(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') save(); }}
-          aria-label={t(WEB_KEY_FIELDS[backend].label)} placeholder={stored ? t('settings.providers.keyKept') : t(WEB_KEY_FIELDS[backend].placeholder)}
+          aria-label={label} placeholder={stored ? t('settings.providers.keyKept') : t(WEB_KEY_FIELDS[backend].placeholder)}
           className="min-w-0 flex-1 border-0 bg-transparent text-2 text-fg-1 outline-none placeholder:text-fg-3" />
-        <IconButton title={eyeLabel} aria-label={eyeLabel} aria-pressed={show} onClick={() => setShow(v => !v)} className="text-fg-2">
+        <IconButton size="sm" title={eyeLabel} aria-label={eyeLabel} aria-pressed={show} onClick={() => setShow(v => !v)} className="text-fg-3">
           {show ? <EyeOff strokeWidth={1.5} /> : <Eye strokeWidth={1.5} />}
         </IconButton>
+        <IconButton size="sm" title={t('settings.providers.save')} aria-label={t('settings.providers.save')} disabled={!key.trim()} onClick={save} className="mr-0.5 text-fg-2 disabled:opacity-40">
+          <Check strokeWidth={1.75} />
+        </IconButton>
       </div>
-      <Button disabled={!key.trim()} onClick={save}>{t('settings.providers.save')}</Button>
     </Field>
-  );
-}
-
-// The built-in agent's approval level: a setting of the agent in providers.json, not a composer control, so the
-// composer shows only the mode chip. Read at the start of every turn; Plan mode's limits hold under any level
-const APPROVAL_KEYS: Record<ApprovalLevel, { label: MsgKey; desc: MsgKey }> = {
-  ask: { label: 'settings.agent.approval.ask', desc: 'settings.agent.approval.ask.desc' },
-  'auto-edit': { label: 'settings.agent.approval.autoEdit', desc: 'settings.agent.approval.autoEdit.desc' },
-  full: { label: 'settings.agent.approval.full', desc: 'settings.agent.approval.full.desc' },
-};
-
-function ApprovalSection({ state, on }: { state?: ProvidersState; on: SettingsHandlers }) {
-  // The picked level shows at once and gives way to the file's once the host answers with a new view
-  const [picked, setPicked] = useState<ApprovalLevel>();
-  useEffect(() => { setPicked(undefined); }, [state?.view, state?.error]);
-  const level = picked ?? approvalOf(state?.view);
-  const pick = (v: ApprovalLevel) => {
-    if (v === level) return;
-    setPicked(v);
-    on.providerAction?.({ kind: 'approval', level: v });
-  };
-  return (
-    <div className="flex flex-col gap-2">
-      <SectionHead>{t('settings.agent.permissions')}</SectionHead>
-      <Section>
-        {/* Every level's description is laid out, so a pick never changes the card's height */}
-        <Field label={t('settings.agent.approval')} desc={<StableText current={level} items={APPROVAL_LEVELS.map(v => ({ key: v, text: t(APPROVAL_KEYS[v].desc) }))} />}>
-          {state
-            ? <Select options={APPROVAL_LEVELS.map(v => ({ value: v, label: t(APPROVAL_KEYS[v].label) }))} value={level} onChange={pick} label={t('settings.agent.approval')} />
-            : <Shimmer active>{t('settings.loading')}</Shimmer>}
-        </Field>
-      </Section>
-    </div>
   );
 }
 
@@ -387,18 +365,15 @@ function PermissionsSection({ agent, settings, on }: { agent: AgentInfo; setting
     ? [...settings.planAutoApprove, agent.id]
     : settings.planAutoApprove.filter(id => id !== agent.id));
   return (
-    <div className="flex flex-col gap-2">
-      <SectionHead>{t('settings.agent.permissions')}</SectionHead>
-      <Section>
-        <Field label={t('settings.planAutoApprove')} desc={t('settings.planAutoApprove.desc', { agent: agent.name })}>
-          <Switch checked={enabled} onChange={toggle} label={t('settings.planAutoApprove')} />
-        </Field>
-      </Section>
-    </div>
+    <Section title={t('settings.agent.permissions')} desc={t('settings.agent.permissions.desc')}>
+      <Field label={t('settings.planAutoApprove')} desc={t('settings.planAutoApprove.desc', { agent: agent.name })}>
+        <Switch checked={enabled} onChange={toggle} label={t('settings.planAutoApprove')} />
+      </Field>
+    </Section>
   );
 }
 
-// Facts card: executable (with install state), version, adapter / engine for npm-packaged adapters, and the latest
+// Runtime card: executable (with install state), version, adapter / engine for npm-packaged adapters, and the latest
 // launch outcome. Only paths may truncate; the words around them keep their width
 const HEALTH_LABEL: Record<AgentHealthStage, MsgKey> = {
   ready: 'settings.health.ready',
@@ -415,6 +390,7 @@ function AgentFacts({ agent, inventory: live, env }: { agent: AgentInfo; invento
   if (live && (settled?.inventory !== live || settled.searched !== agent.searched)) setSettled({ inventory: live, searched: agent.searched });
   const inventory = live ?? settled?.inventory;
   const searched = live ? agent.searched : settled?.searched ?? agent.searched;
+  const sep = t('common.metaSep');
   const version = inventory?.runtime?.version ? t('settings.agent.version', { name: inventory.runtime.name ?? agent.name, version: inventory.runtime.version }) : undefined;
   const adapter = inventory?.adapter?.adapter;
   const engine = inventory?.adapter?.engine;
@@ -429,38 +405,36 @@ function AgentFacts({ agent, inventory: live, env }: { agent: AgentInfo; invento
   const engineText = engine
     ? engine.override
       ? t('settings.fact.engineOverride', { name: engine.name, env: engine.overrideEnv ?? '', path: engine.override })
-      : `${engine.version ? t('settings.agent.version', { name: engine.name, version: engine.version }) : engine.name} · ${engine.nativeMissing ? t('settings.fact.nativeMissing', { package: engine.nativeMissing }) : t('settings.fact.bundled')}`
+      : `${engine.version ? t('settings.agent.version', { name: engine.name, version: engine.version }) : engine.name}${sep}${engine.nativeMissing ? t('settings.fact.nativeMissing', { package: engine.nativeMissing }) : t('settings.fact.bundled')}`
     : undefined;
   return (
-    <Group>
+    <Section title={t('settings.agent.runtime')} desc={t('settings.agent.runtime.desc')}>
       <FactRow label={t('settings.fact.binary')}>
         {live === undefined
-          ? <Shimmer className="font-sans text-2">{t('settings.agent.probing')}</Shimmer>
+          ? <Shimmer className="font-sans">{t('settings.agent.probing')}</Shimmer>
           : live.binary
             ? <><Dot ok /><PathText path={live.binary} env={env} /></>
-            : <><Dot ok={false} /><span className="truncate font-sans text-2 text-fg-2" title={missingExecutable}>{missingExecutable}</span></>}
+            : <><Dot ok={false} /><span className="truncate" title={missingExecutable}>{missingExecutable}</span></>}
       </FactRow>
       {!inventory?.binary && searched?.length ? <SearchedDirs dirs={searched} env={env} /> : null}
-      {adapterText && <FactRow label={t('settings.fact.adapter')}><span className="truncate" title={adapter?.root}>{adapterText}</span></FactRow>}
+      {adapterText && <FactRow label={t('settings.fact.adapter')} title={adapter?.root}><span className="truncate">{adapterText}</span></FactRow>}
       {engineText && (
-        <FactRow label={t('settings.fact.engine')}>
+        <FactRow label={t('settings.fact.engine')} title={engine?.nativeMissing ? t('settings.fact.nativeMissingHint', { package: engine.nativeMissing }) : engine?.override}>
           {engine?.nativeMissing && <Dot ok={false} />}
-          <span className="truncate" title={engine?.nativeMissing ? t('settings.fact.nativeMissingHint', { package: engine.nativeMissing }) : engine?.override}>{engineText}</span>
+          <span className="truncate">{engineText}</span>
         </FactRow>
       )}
-      <FactRow label={t('settings.fact.version')}>{version ?? <span className="text-fg-2">{t('settings.fact.noLive')}</span>}</FactRow>
+      <FactRow label={t('settings.fact.version')}>{version ?? t('settings.fact.noLive')}</FactRow>
       {/* Always a row, like Version: the first probe's reply only replaces its text. A row that appeared with the reply
           grew the card and pushed the page down about a third of a second after it opened (reported 2026-10-14 on the
           README's built-in agent clip) */}
-      <FactRow label={t('settings.fact.status')}>
+      <FactRow label={t('settings.fact.status')} title={health ? [health.at, health.error].filter(Boolean).join('\n') : undefined}>
         {health ? <>
           <Dot ok={health.stage === 'ready'} />
-          <span className="truncate" title={[health.at, health.error].filter(Boolean).join('\n')}>
-            {t(HEALTH_LABEL[health.stage])}{health.error && health.stage !== 'ready' ? ` · ${health.error}` : ''}
-          </span>
-        </> : <span className="text-fg-2">{t('settings.fact.noLive')}</span>}
+          <span className="truncate">{t(HEALTH_LABEL[health.stage])}{health.error && health.stage !== 'ready' ? `${sep}${health.error}` : ''}</span>
+        </> : t('settings.fact.noLive')}
       </FactRow>
-    </Group>
+    </Section>
   );
 }
 
@@ -468,8 +442,8 @@ function AgentFacts({ agent, inventory: live, env }: { agent: AgentInfo; invento
 function SearchedDirs({ dirs, env }: { dirs: string[]; env: SettingsEnv }) {
   const title = `${dirs.join('\n')}\n\n${t('settings.agent.searchedHint')}`;
   return (
-    <FactRow label={t('settings.fact.searched')}>
-      <span className="truncate text-2 text-fg-2" title={title}>{dirs.map(d => shortPath(d, env)).join('  ')}</span>
+    <FactRow label={t('settings.fact.searched')} title={title}>
+      <span className="truncate">{dirs.map(d => shortPath(d, env)).join('  ')}</span>
     </FactRow>
   );
 }
@@ -481,30 +455,26 @@ function InstallSection({ agent, install, env, on }: { agent: AgentInfo; install
   const { command, docs } = agent.install!;
   const running = install?.status === 'running';
   const action = command && (running
-    ? <SectionAction icon={<X strokeWidth={1.75} />} onClick={() => on.cancelInstall?.(agent.id)} disabled={!on.cancelInstall}>{t('settings.install.cancel')}</SectionAction>
-    : <SectionAction icon={<Download strokeWidth={1.75} />} onClick={() => on.installAgent(agent.id)}>{t('settings.install.run')}</SectionAction>);
+    ? <SectionAction icon={<X />} onClick={() => on.cancelInstall?.(agent.id)} disabled={!on.cancelInstall}>{t('settings.install.cancel')}</SectionAction>
+    : <SectionAction icon={<Download />} onClick={() => on.installAgent(agent.id)}>{t('settings.install.run')}</SectionAction>);
   return (
-    <div className="flex flex-col gap-2">
-      <SectionHead action={action}>{t('settings.install.title', { agent: agent.name })}</SectionHead>
-      <Section desc={command ? t('settings.install.desc') : undefined}>
-        {command && install && <InstallProgressRow install={install} env={env} />}
-        {command && (
-          <ItemRow
-            lead={<SquareTerminal strokeWidth={1.5} />}
-            title={<span className="font-mono text-mono text-fg-1" title={command}>{command}</span>}
-            trailing={<>
-              {on.installInTerminal && (
-                <IconButton title={t('settings.install.terminal')} aria-label={t('settings.install.terminal')} onClick={() => on.installInTerminal?.(agent.id)} disabled={running} className="text-fg-2">
-                  <SquareTerminal strokeWidth={1.5} />
-                </IconButton>
-              )}
-              <CopyButton text={command} />
-            </>}
-          />
-        )}
-        {docs && <ItemRow lead={<BookOpen strokeWidth={1.5} />} title={t('settings.install.docs')} desc={hostOf(docs)} onOpen={() => on.openExternal(docs)} />}
-      </Section>
-    </div>
+    <Section title={t('settings.install.title', { agent: agent.name })} desc={command ? t('settings.install.desc') : undefined} action={action}>
+      {command && install && <InstallProgressRow install={install} env={env} />}
+      {command && (
+        <ItemRow
+          title={<span className="font-mono text-mono text-fg-1" title={command}>{command}</span>}
+          trailing={<>
+            {on.installInTerminal && (
+              <IconButton title={t('settings.install.terminal')} aria-label={t('settings.install.terminal')} onClick={() => on.installInTerminal?.(agent.id)} disabled={running} className="text-fg-2">
+                <SquareTerminal strokeWidth={1.5} />
+              </IconButton>
+            )}
+            <CopyButton text={command} />
+          </>}
+        />
+      )}
+      {docs && <ItemRow title={t('settings.install.docs')} desc={hostOf(docs)} onOpen={() => on.openExternal(docs)} />}
+    </Section>
   );
 }
 
@@ -538,7 +508,7 @@ function InstallProgressRow({ install, env }: { install: AgentInstallProgress; e
   const facts = [
     install.proxy && t('settings.install.proxy', { proxy: install.proxy }),
     install.prefix && t('settings.install.prefix', { dir: shortPath(install.prefix, env) }),
-  ].filter(Boolean).join(' · ');
+  ].filter(Boolean).join(t('common.metaSep'));
   const log = status !== 'success' && install.log.length > 0;
   const newest = running ? newestLine(install.log) : undefined;
   return (
@@ -549,8 +519,8 @@ function InstallProgressRow({ install, env }: { install: AgentInstallProgress; e
         lead={lead}
         title={<span className="flex min-w-0 items-baseline gap-2">
           {running ? <Shimmer className="shrink-0 font-sans text-2">{label}</Shimmer> : <span className={cn('shrink-0 text-2', status === 'failed' ? 'text-danger' : 'text-fg-1')}>{label}</span>}
-          {newest ? <span className="min-w-0 truncate font-mono text-mono text-fg-2" title={newest}>{newest}</span>
-            : status === 'success' && facts && <span className="min-w-0 truncate text-2 text-fg-2" title={facts}>{facts}</span>}
+          {newest ? <span className="min-w-0 truncate font-mono text-mono text-fg-3" title={newest}>{newest}</span>
+            : status === 'success' && facts && <span className="min-w-0 truncate text-2 text-fg-3" title={facts}>{facts}</span>}
         </span>}
         extra={install.error && <p className="m-0 pt-1 text-2 text-danger [overflow-wrap:anywhere]">{install.error}</p>}
         // One text line tall: the button overflows into the row's padding, so the row keeps its height when a success
@@ -565,7 +535,7 @@ function InstallProgressRow({ install, env }: { install: AgentInstallProgress; e
       />
       {log && <Collapsible.Panel>
         <div className="flex flex-col gap-2 pb-(--setting-row-pad) pl-indent">
-          {facts && <p className="m-0 text-2 text-fg-2 [overflow-wrap:anywhere]">{facts}</p>}
+          {facts && <p className="m-0 text-3 text-fg-3 [overflow-wrap:anywhere]">{facts}</p>}
           <InstallLog lines={install.log} fixed={running} />
         </div>
       </Collapsible.Panel>}
@@ -631,10 +601,9 @@ function hostOf(url: string): string {
 }
 
 // Option families with a show / hide switch each; reasoning controls are excluded by the caller.
-// The lists only ever come over ACP, so before the first session there is nothing to show. The family in use can be switched off too —
-// the composer keeps the current value reachable on its own (visibleOptions). The layout matches the built-in agent's
-// sources: the search toolbar (with the master switch) above the card, group headers with a mark, title, count and the
-// group's sources, compact rows with badges
+// The lists only ever come over ACP, so before the first session there is nothing to show. The family in use can be
+// switched off too — the composer keeps the current value reachable on its own (visibleOptions). The search field with
+// the master switch on top, then one block per group (its sources as the second line), rows with what the family spans
 function ModelsSection({ agent, controls, settings, on }: { agent: AgentInfo; controls?: ConfigControl[]; settings: SettingsView; on: SettingsHandlers }) {
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState(false);
@@ -668,17 +637,19 @@ function ModelsSection({ agent, controls, settings, on }: { agent: AgentInfo; co
     remaining -= families.length;
     return { ...catalog, families, found };
   });
-  // What the family spans in words — its effort levels, Fast / 1M — the row's tooltip after the source
+  const sep = t('common.metaSep');
+  // What the family spans in words — its effort levels, Fast / 1M — the row's second line
   const summary = (f: ModelFamily) => {
     if (f.variants.length === 1) return f.variants[0]!.name === f.name ? undefined : variantLabel(f.variants[0]!, f, { standard: t('composer.standard') });
     // Fusion is one row for all 210 pairs: the switch hides the whole feature, so the line says what it spans
     const fusion = f.fusion && t('composer.fusionSummary', { leads: f.fusion.leads.length, sidekicks: f.fusion.sidekicks.length });
-    const parts = [fusion, f.efforts.filter(Boolean).join(' / '), f.hasFast && 'Fast', f.hasLong && '1M'].filter(Boolean);
-    return parts.join(t('common.metaSep'));
+    const levels = f.efforts.filter(Boolean);
+    const parts = [fusion, levels.length > 0 && `${t('settings.providers.model.thinking')} ${levels.join(' / ')}`, f.hasFast && 'Fast', f.hasLong && t('settings.providers.model.ctx', { n: '1M' })].filter(Boolean);
+    return parts.join(sep);
   };
-  if (controls === undefined) return <Section desc={t('settings.models.desc', { agent: agent.name })}><Note shimmer>{t('settings.loading')}</Note></Section>;
-  if (!controls.length) return <Section desc={t('settings.models.desc', { agent: agent.name })}><Note>{t('settings.models.none', { agent: agent.name })}</Note></Section>;
-  // One header + rows block per group, flattened so only the blocks after the first draw a separator
+  if (controls === undefined) return <Section desc={t('settings.models.desc')}><Note shimmer>{t('settings.loading')}</Note></Section>;
+  if (!controls.length) return <Section desc={t('settings.models.desc')}><Note>{t('settings.models.none', { agent: agent.name })}</Note></Section>;
+  // One block per group
   const groups = visible.flatMap(({ control: c, families, found }) => {
     if (!families.length) return [];
     // Translate standard categories; preserve names supplied by custom controls.
@@ -696,145 +667,124 @@ function ModelsSection({ agent, controls, settings, on }: { agent: AgentInfo; co
       const keep = (f: ModelFamily) => g.kind === null || f.sourceKind === g.kind;
       const rows = families.filter(keep);
       const sources = [...new Set(rows.map(f => f.source).filter((s): s is string => !!s))];
-      const mark = g.key === 'custom' ? <Globe strokeWidth={1.5} />
-        : c.category === 'model' ? <ModelMark family={agent.name} brand={agent.id} /> : <Sparkles strokeWidth={1.5} />;
-      return { control: c, key: `${c.id}:${g.key}`, title: g.title, count: found.filter(keep).length, rows, sources, mark };
+      return { control: c, key: `${c.id}:${g.key}`, title: g.title, count: found.filter(keep).length, rows, sources };
     }).filter(g => g.rows.length);
   });
   return (
-    <div className="flex flex-col gap-2">
-      <SectionDescription>{t('settings.models.desc', { agent: agent.name })}</SectionDescription>
-      <Card className="flex flex-col px-pad shadow-none">
-        <SearchRow value={query} onChange={setQuery}>
-          <span className="sr-only" aria-live="polite">{t('settings.models.enabled', { count: enabled, total })}</span>
-          <span className="flex" title={t('settings.models.enabled', { count: enabled, total })}>
-            <Switch checked={total > 0 && enabled === total} disabled={total === 0} onChange={toggleAll} label={t('settings.models.all')} />
-          </span>
-        </SearchRow>
-        {groups.map(g => {
-          const off = hidden[g.control.id] ?? [];
-          return (
-            <div key={g.key} className={topRule}>
-              <ListHead lead={g.mark} title={g.title} count={g.count}
-                desc={g.sources.length > 0 && <span className="block truncate">{g.sources.join(t('common.metaSep'))}</span>} />
-              <Group embedded>
-                {g.rows.map(f => {
-                  const shown = !familyHidden(f, off);
-                  const name = familyLabel(g.control, f);
-                  return (
-                    <ModelLine
-                      key={f.key}
-                      lead={<ModelMark family={name} brand={f.brand} />}
-                      name={name}
-                      hint={[f.source, summary(f)].filter(Boolean).join(t('common.metaSep')) || undefined}
-                      tags={familyTags(f)}
-                      dim={!shown}
-                      trailing={<Switch checked={shown} onChange={v => toggle(g.control, f, v)} label={`${name}${t('common.metaSep')}${f.source ?? g.control.name}`} />}
-                    />
-                  );
-                })}
-              </Group>
-            </div>
-          );
-        })}
-        {searching && matched === 0 && <Group embedded className={topRule}><Note>{t('settings.models.noResults')}</Note></Group>}
-        {!searching && total > MODEL_PREVIEW_LIMIT && <div className={cn('py-(--setting-row-pad)', topRule)}>
-          <Chip caret={false} aria-expanded={expanded} onClick={() => setExpanded(value => !value)}
-            icon={expanded ? <ChevronUp /> : <ChevronDown />}>
-            {expanded ? t('settings.models.showLess') : t('settings.models.showMore')}
-          </Chip>
-        </div>}
-      </Card>
-    </div>
+    <>
+      <SearchRow value={query} onChange={setQuery}>
+        <span className="sr-only" aria-live="polite">{t('settings.models.enabled', { count: enabled, total })}</span>
+        <span className="flex items-center gap-2 text-2 text-fg-2" title={t('settings.models.enabled', { count: enabled, total })}>
+          {t('settings.models.all')}
+          <Switch checked={total > 0 && enabled === total} disabled={total === 0} onChange={toggleAll} label={t('settings.models.all')} />
+        </span>
+      </SearchRow>
+      {groups.map(g => {
+        const off = hidden[g.control.id] ?? [];
+        return (
+          <Section key={g.key} title={g.title} count={g.count} desc={g.sources.length > 0 ? g.sources.join(sep) : undefined}>
+            {g.rows.map(f => {
+              const shown = !familyHidden(f, off);
+              const name = familyLabel(g.control, f);
+              return (
+                <ItemRow key={f.key} title={name} desc={summary(f) || f.source}
+                  trailing={<Switch checked={shown} onChange={v => toggle(g.control, f, v)} label={`${name}${sep}${f.source ?? g.control.name}`} />} />
+              );
+            })}
+          </Section>
+        );
+      })}
+      {searching && matched === 0 && <Group><Note>{t('settings.models.noResults')}</Note></Group>}
+      {!searching && total > MODEL_PREVIEW_LIMIT && (
+        <button type="button" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}
+          className="-ml-2 flex h-ctl items-center gap-1.5 self-start rounded-md px-2 text-2 text-fg-2 transition-colors hover:bg-hover hover:text-fg-1 [&_svg]:size-icon">
+          {expanded ? <ChevronUp strokeWidth={1.75} /> : <ChevronDown strokeWidth={1.75} />}
+          {expanded ? t('settings.models.showLess') : t('settings.models.showMore')}
+        </button>
+      )}
+    </>
   );
 }
 
-// A family's badges on its compact row: a Fusion's pair count, thinking (it has effort levels), Fast, 1M, and the source
-// when the group mixes several (otherwise the group header already names it). The levels themselves are in the tooltip
-function familyTags(f: ModelFamily): ModelTags {
-  const tags: ModelTags = {};
-  const levels = f.efforts.filter(Boolean);
-  if (f.fusion) tags.fusion = t('composer.fusionSummary', { leads: f.fusion.leads.length, sidekicks: f.fusion.sidekicks.length });
-  else if (levels.length) tags.thinking = `${t('settings.providers.model.thinking')}${t('common.metaSep')}${levels.join(' / ')}`;
-  if (f.hasFast) tags.fast = 'Fast';
-  if (f.hasLong) tags.long = t('settings.providers.model.ctx', { n: '1M' });
-  return tags;
+// Where an item of the agent's lists comes from: the shared ~/.agents (linked or read natively), this project, or the
+// agent's own files. Read off the path, which is all the inventory carries
+type Origin = 'shared' | 'project' | 'own';
+const ORIGINS: Origin[] = ['shared', 'project', 'own'];
+
+function originOf(path: string, scope: InventoryScope, env: SettingsEnv): Origin {
+  const sep = pathSep(env.home);
+  const shared = `${env.home}${sep}.agents`;
+  if (path === shared || path.startsWith(`${shared}/`) || path.startsWith(`${shared}\\`)) return 'shared';
+  return scope === 'project' ? 'project' : 'own';
 }
 
-const TRANSPORT_ICON: Record<McpTransport, ReactNode> = {
-  stdio: <Server strokeWidth={1.5} />,
-  http: <Globe strokeWidth={1.5} />,
-  sse: <Globe strokeWidth={1.5} />,
-};
+interface SourcesProps { agent: AgentInfo; inventory?: AgentInventory; env: SettingsEnv; on: SettingsHandlers; onShared?: () => void }
 
-const dirName = (p: string) => p.slice(0, Math.max(0, p.lastIndexOf('/')));
-
-// Rows grouped by the file / directory they came from: one card per source, its path as the head row
-function Grouped<T>({ items, sourceOf, row, env, on, empty, loading }: { items: T[] | undefined; sourceOf: (x: T) => string; row: (x: T) => ReactNode; env: SettingsEnv; on: SettingsHandlers; empty: string; loading: boolean }) {
-  const bySource = useMemo(() => {
-    const m = new Map<string, T[]>();
-    for (const x of items ?? []) (m.get(sourceOf(x)) ?? m.set(sourceOf(x), []).get(sourceOf(x))!).push(x);
-    return [...m.entries()];
-  }, [items, sourceOf]);
-  if (loading) return <Note shimmer>{t('settings.loading')}</Note>;
-  if (bySource.length === 0) return <Note>{empty}</Note>;
-  // Stacked groups separate with a line, like the rows inside them.
-  return <>{bySource.map(([source, list], i) => <Group key={source} className={i > 0 ? topRule : undefined}>{list.map(row)}<SourceLink path={source} env={env} onOpen={on.openPath} /></Group>)}</>;
-}
-
-// Does the list come as several cards (so the Section must not wrap them in one)?
-const asCards = (n: number | undefined) => (n ?? 0) > 0;
-
-// The MCP servers the CLI reads from its own files (read-only). Injecting servers over ACP is not offered yet: the wire supports it, the UI does not
-function McpSection({ head, inventory, env, on }: { head: CardHead; inventory?: AgentInventory; env: SettingsEnv; on: SettingsHandlers }) {
-  const row = (m: InventoryMcp) => (
-    <ItemRow
-      key={`${m.source}:${m.name}`}
-      lead={TRANSPORT_ICON[m.transport]}
-      title={m.name}
-      desc={[m.enabled ? '' : t('settings.mcp.disabled'), m.transport, m.target].filter(Boolean).join(t('common.metaSep'))}
-      dim={!m.enabled}
-    />
-  );
-  return (
-    <Section {...head} cards={asCards(inventory?.mcp.length)}>
-      <Grouped items={inventory?.mcp} sourceOf={m => m.source} row={row} env={env} on={on} empty={t('settings.mcp.none')} loading={!inventory} />
+// One card per origin, in a fixed order: the head names the origin, counts its items and says where they live; the
+// shared card's action leads to the Shared page, where those are edited
+function ByOrigin<T>({ items, origin, place, row, empty, ...p }: SourcesProps & {
+  items: T[] | undefined;
+  origin: (x: T) => Origin;
+  // Where an item lives, for the head's second line (deduplicated)
+  place: (x: T) => string;
+  row: (x: T) => ReactNode;
+  empty: string;
+}) {
+  const groups = useMemo(() => ORIGINS.map(o => [o, (items ?? []).filter(x => origin(x) === o)] as const).filter(([, xs]) => xs.length > 0), [items, origin]);
+  if (!items) return <Group><Note shimmer>{t('settings.loading')}</Note></Group>;
+  if (!groups.length) return <Group><Note>{empty}</Note></Group>;
+  const title = (o: Origin) => o === 'shared' ? t('settings.origin.shared') : o === 'project' ? t('settings.origin.project') : t('settings.origin.own', { agent: p.agent.name });
+  return <>{groups.map(([o, xs]) => (
+    <Section key={o} title={title(o)} count={xs.length}
+      desc={[...new Set(xs.map(place))].map(path => shortPath(path, p.env)).join(t('common.listSep'))}
+      action={o === 'shared' && p.onShared && <SectionAction icon={<Settings2 />} onClick={p.onShared}>{t('settings.origin.sharedAction')}</SectionAction>}>
+      {xs.map(row)}
     </Section>
-  );
+  ))}</>;
 }
 
-// Skills grouped by the directory they were found in (…/skills/<name>/SKILL.md → …/skills)
+const dirName = (p: string) => p.slice(0, Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'), 0));
+const baseName = (p: string) => p.slice(Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')) + 1);
+
+// The prompt and rule files the agent reads; missing candidates stay listed, so where one would go stays visible
+function PromptsTab(p: SourcesProps) {
+  const files = useMemo(() => p.inventory && [...p.inventory.rules].sort((a, b) => Number(b.exists) - Number(a.exists)), [p.inventory]);
+  const origin = useCallback((f: InventoryFile) => originOf(f.path, f.scope, p.env), [p.env]);
+  return <ByOrigin {...p} items={files} origin={origin} place={f => dirName(f.path)} empty={t('settings.rules.none')}
+    row={f => <ItemRow key={f.path} title={baseName(f.path)} desc={f.exists ? shortPath(f.path, p.env) : t('settings.file.notCreated', { path: shortPath(f.path, p.env) })}
+      trailing={f.exists ? <Meta>{fmtSize(f.size ?? 0)}</Meta> : undefined} reserveOpen
+      onOpen={f.exists ? () => p.on.openPath(f.path) : undefined} />} />;
+}
+
+// Skills grouped by where they were found (…/skills/<name>/SKILL.md → …/skills); a row opens its SKILL.md
 const skillsRoot = (s: InventorySkill) => dirName(dirName(s.path));
 
-function SkillsSection({ head, agent, inventory, env, on }: { head: CardHead; agent: AgentInfo; inventory?: AgentInventory; env: SettingsEnv; on: SettingsHandlers }) {
-  const row = (s: InventorySkill) => (
-    <ItemRow key={s.path} lead={<Sparkles strokeWidth={1.5} />} title={s.name} desc={s.description ?? shortPath(s.path, env)} onOpen={() => on.openPath(s.path)} />
-  );
-  return (
-    <Section {...head} desc={t('settings.skills.desc', { agent: agent.name })} cards={asCards(inventory?.skills.length)}>
-      <Grouped items={inventory?.skills} sourceOf={skillsRoot} row={row} env={env} on={on} empty={t('settings.skills.none')} loading={!inventory} />
-    </Section>
-  );
+function SkillsTab(p: SourcesProps) {
+  const origin = useCallback((s: InventorySkill) => originOf(s.path, s.scope, p.env), [p.env]);
+  return <ByOrigin {...p} items={p.inventory?.skills} origin={origin} place={skillsRoot} empty={t('settings.skills.none')}
+    row={s => <ItemRow key={s.path} title={s.name} desc={s.description ?? shortPath(s.path, p.env)} onOpen={() => p.on.openPath(s.path)} />} />;
 }
 
-// Rules and config share one shape: files that may or may not exist; existing ones first, missing ones dimmed so the candidate locations stay visible
-function FilesSection({ head, kind, agent, files, env, on }: { head: CardHead; kind: 'rules' | 'config'; agent: AgentInfo; files?: InventoryFile[]; env: SettingsEnv; on: SettingsHandlers }) {
+// The MCP servers the CLI reads from its own files (read-only). Injecting servers over ACP is not offered yet: the wire
+// supports it, the UI does not
+function McpTab(p: SourcesProps) {
+  const origin = useCallback((m: InventoryMcp) => originOf(m.source, m.scope, p.env), [p.env]);
+  return <ByOrigin {...p} items={p.inventory?.mcp} origin={origin} place={m => m.source} empty={t('settings.mcp.none')}
+    row={m => <ItemRow key={`${m.source}:${m.name}`} title={m.name}
+      desc={m.enabled ? m.target : `${t('settings.mcp.disabled')}${t('common.metaSep')}${m.target}`} onOpen={() => p.on.openPath(m.source)} />} />;
+}
+
+// The CLI's own configuration files: read-only, a row opens the file in the editor
+function ConfigSection({ agent, files, env, on }: { agent: AgentInfo; files?: InventoryFile[]; env: SettingsEnv; on: SettingsHandlers }) {
   const sorted = useMemo(() => [...(files ?? [])].sort((a, b) => Number(b.exists) - Number(a.exists)), [files]);
-  const Icon = kind === 'rules' ? FileText : SlidersHorizontal;
   return (
-    <Section {...head} desc={kind === 'rules' ? t('settings.rules.desc') : t('settings.config.desc', { agent: agent.name })}>
+    <Section title={t('settings.agent.configFiles')} count={files ? files.filter(f => f.exists).length : undefined} desc={t('settings.config.desc', { agent: agent.name })}>
       {!files && <Note shimmer>{t('settings.loading')}</Note>}
-      {files && sorted.length === 0 && <Note>{t(kind === 'rules' ? 'settings.rules.none' : 'settings.config.none')}</Note>}
+      {files && sorted.length === 0 && <Note>{t('settings.config.none')}</Note>}
       {sorted.map(f => (
-        <ItemRow
-          key={f.path}
-          lead={<Icon strokeWidth={1.5} />}
-          title={shortPath(f.path, env)}
-          dim={!f.exists}
-          reserveOpen
-          trailing={f.exists ? <span className="text-2 text-fg-2 tabular-nums">{fmtSize(f.size ?? 0)}</span> : <span className="text-2 text-fg-2">{t('settings.file.missing')}</span>}
-          onOpen={f.exists ? () => on.openPath(f.path) : undefined}
-        />
+        <ItemRow key={f.path} title={baseName(f.path)} desc={shortPath(dirName(f.path), env)} reserveOpen
+          trailing={<Meta>{f.exists ? fmtSize(f.size ?? 0) : t('settings.file.missing')}</Meta>}
+          onOpen={f.exists ? () => on.openPath(f.path) : undefined} />
       ))}
     </Section>
   );

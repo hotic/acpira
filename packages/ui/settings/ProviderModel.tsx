@@ -1,5 +1,5 @@
 import { useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
-import { ChevronDown, LoaderCircle } from 'lucide-react';
+import { Brain, ChevronDown, LoaderCircle } from 'lucide-react';
 import { effortLabel } from '@acpira/shared/composerControls';
 import type { ProbeOutcome, ProviderModel, Thinking } from '@acpira/shared/providers';
 import { Button, IconButton } from '../ui/Button';
@@ -7,8 +7,7 @@ import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
 import { cn } from '../ui/cn';
 import { t } from '../i18n';
-import { ModelMark } from '../chat/ModelMark';
-import { fieldTone, FormField, inputBox, ModelLine, SettingsDialog, Select, Switch, type ModelTags } from './controls';
+import { DangerAction, Field, fieldTone, FormField, FormGrid, FormRows, inputBox, ItemRow, SettingsDialog, Select, Switch } from './controls';
 
 // Token counts as the page writes them, in whichever base gives the round number: 128000 → 128k, 131072 → 128k,
 // 1000000 → 1M, 1048576 → 1M, 393216 → 384k
@@ -48,8 +47,8 @@ export function modelSummary(m: ProviderModel): string {
   ].filter(Boolean).join(t('common.metaSep'));
 }
 
-// One model of a source on one compact line: mark, name, badges (context, thinking, images),
-// then the enable switch. The id and the summary are the name's tooltip; a click on the row opens the editor in a dialog
+// One model of a source as a row: its name over what it offers (window, output limit, levels, image input), then the
+// enable switch; the id is the name's tooltip, and a click anywhere on the row but the switch opens its editor
 export function ModelRow({ model, open, dim, onToggleOpen, onChange, onRemove, onTest, test }: {
   model: ProviderModel;
   open: boolean;
@@ -65,29 +64,12 @@ export function ModelRow({ model, open, dim, onToggleOpen, onChange, onRemove, o
   const label = t('settings.providers.model.edit', { name });
   return (
     <>
-      <ModelLine
-        lead={<ModelMark family={model.id} />}
-        name={name}
-        hint={[model.id, modelSummary(model)].filter(Boolean).join(t('common.metaSep'))}
-        tags={modelTags(model)}
-        dim={dim || !model.enabled}
-        onOpen={onToggleOpen} open={open} openLabel={label}
-        trailing={<Switch checked={model.enabled} onChange={enabled => onChange({ ...model, enabled })} label={name} />}
-      />
+      <ItemRow title={<span title={model.id}>{name}</span>} desc={modelSummary(model) || model.id} dim={dim}
+        onEdit={onToggleOpen} editLabel={label}
+        trailing={<Switch checked={model.enabled} onChange={enabled => onChange({ ...model, enabled })} label={name} />} />
       {open && <ModelEditor model={model} title={label} onSave={m => { onChange(m); onToggleOpen(); }} onCancel={onToggleOpen} onRemove={onRemove} onTest={onTest} test={test} />}
     </>
   );
-}
-
-// A model row's badges: thinking, image input, a long (1M and up) context window; the exact window is in the tooltip
-export function modelTags(m: ProviderModel): ModelTags {
-  const tags: ModelTags = {};
-  if (m.efforts.length) tags.thinking = t('settings.providers.model.levels', { count: m.efforts.length });
-  else if (m.thinking === 'on') tags.thinking = t('settings.providers.model.thinking');
-  if (m.fast) tags.fast = t('settings.providers.model.fast');
-  if (m.input.includes('image')) tags.image = t('settings.providers.model.image');
-  if ((m.context ?? 0) >= 1_000_000) tags.long = t('settings.providers.model.ctx', { n: fmtTokens(m.context!) });
-  return tags;
 }
 
 // The add list's second line: the id when the name differs, then the summary
@@ -145,12 +127,11 @@ function ThinkingLevels({ levels, onChange }: { levels: string[]; onChange: (lev
   );
 }
 
-// The model's fields in a dialog, laid out like the source form: each label above its control. Only what a source
-// commonly gets wrong is here: the name, the two token limits, thinking levels, image input and Fast; the rarer settings
-// (family, sampling, tool rounds) stay in providers.json and are kept as they are. Values the endpoint did not report
-// (catalogue or defaults) are named in a note at the top, so they can be checked against the provider's docs; saving
-// clears that list. Test sits on the last line with its hint, which its result replaces, like the source form's Check;
-// the footer holds Remove apart from Cancel and Save
+// The model's fields in a dialog, laid out like the source form: the name and the two token limits on the form, then
+// rows for thinking (its levels under it), image input, Fast and Test. Only what a source commonly gets wrong is here;
+// the rarer settings (family, sampling, tool rounds) stay in providers.json and are kept as they are. Values the
+// endpoint did not report (catalogue or defaults) are named in a note at the top, so they can be checked against the
+// provider's docs; saving clears that list. The footer holds Remove apart from Cancel and Save
 export function ModelEditor({ model, title, onSave, onCancel, onRemove, onTest, test }: {
   model: ProviderModel;
   title: string;
@@ -186,65 +167,57 @@ export function ModelEditor({ model, title, onSave, onCancel, onRemove, onTest, 
   const outcome = test?.outcome;
   const levelsHint = t(levels.length ? 'settings.providers.model.efforts.hint' : 'settings.providers.model.efforts.none');
   return (
-    <SettingsDialog title={title} onClose={onCancel}
+    <SettingsDialog icon={<Brain />} title={title} onClose={onCancel}
       footer={<>
-        <Button tone="danger" onClick={onRemove}>{t('settings.providers.model.remove')}</Button>
+        <DangerAction onClick={onRemove}>{t('settings.providers.model.remove')}</DangerAction>
         <span className="flex-1" />
         <Button onClick={onCancel}>{t('settings.providers.cancel')}</Button>
         <Button variant="primary" disabled={!ok} onClick={() => onSave(draft())}>{t('settings.providers.save')}</Button>
       </>}>
-      <div className="scroll-thin flex min-h-0 flex-col gap-3 overflow-y-auto p-pad" onKeyDown={keys}>
-        {model.estimated.length > 0 && <p className="m-0 text-3 text-fg-3">
+      <div className="scroll-thin flex min-h-0 flex-col overflow-y-auto" onKeyDown={keys}>
+        {model.estimated.length > 0 && <p className="m-0 px-pad pt-pad text-3 text-fg-3">
           {t('settings.providers.unconfirmed.hint', { fields: model.estimated.join(', ') })}
         </p>}
-        <FormField label={t('settings.providers.model.name')}>
-          <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder={model.id} aria-label={t('settings.providers.model.name')}
-            className={cn(inputBox, 'h-ctl w-full')} />
-        </FormField>
-        {/* The two limits side by side, each under its own label; they stack when the dialog is narrow */}
-        <div className="flex flex-wrap gap-3">
-          <FormField label={t('settings.providers.model.context')} className="min-w-(--ctl-w) flex-1">
+        <FormGrid>
+          <FormField label={t('settings.providers.model.name')} className="col-span-full">
+            <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder={model.id} aria-label={t('settings.providers.model.name')}
+              className={cn(inputBox, 'h-ctl w-full')} />
+          </FormField>
+          <FormField label={t('settings.providers.model.context')}>
             <TokenField value={context} onChange={setContext} quick={CONTEXT_QUICK} label={t('settings.providers.model.context')} />
           </FormField>
-          <FormField label={t('settings.providers.model.output')} className="min-w-(--ctl-w) flex-1">
+          <FormField label={t('settings.providers.model.output')}>
             <TokenField value={output} onChange={setOutput} quick={OUTPUT_QUICK} label={t('settings.providers.model.output')} />
           </FormField>
-        </div>
-        {/* Thinking: a switch on its label's line; switched on, the levels row and what it means follow. Switching off
-            keeps the levels in the dialog, so switching back restores them; they are dropped only on save */}
-        <div className="flex flex-col gap-1">
-          <div className="flex min-h-ctl items-center justify-between gap-2">
-            <span className="text-3 text-fg-2">{t('settings.providers.model.thinking')}</span>
-            <Switch checked={thinking !== 'off'} onChange={on => setThinking(on ? 'auto' : 'off')} label={t('settings.providers.model.thinking')} />
+        </FormGrid>
+        <FormRows>
+          {/* Thinking: switched on, the levels follow under the row. Switching off keeps the levels in the dialog, so
+              switching back restores them; they are dropped only on save. With no level lit the switch alone sends
+              nothing (thinking stays `auto`), so the hint says so rather than implying thinking is on */}
+          <div className="flex flex-col">
+            <Field label={t('settings.providers.model.thinking')} desc={thinking !== 'off' ? levelsHint : undefined}>
+              <Switch checked={thinking !== 'off'} onChange={on => setThinking(on ? 'auto' : 'off')} label={t('settings.providers.model.thinking')} />
+            </Field>
+            {thinking !== 'off' && <div className="pb-(--setting-row-pad)"><ThinkingLevels levels={levels} onChange={setLevels} /></div>}
           </div>
-          {thinking !== 'off' && <>
-            <ThinkingLevels levels={levels} onChange={setLevels} />
-            {/* One line: a longer translation truncates and keeps the whole sentence as its tooltip. With no level lit the
-                switch alone sends nothing (thinking stays `auto`), so the hint says so rather than implying thinking is on */}
-            <span className="truncate text-3 text-fg-3" title={levelsHint}>{levelsHint}</span>
-          </>}
-        </div>
-        {/* A switch reads on one line: the label on the left, the switch at the end */}
-        <div className="flex min-h-ctl items-center justify-between gap-2">
-          <span className="text-3 text-fg-2">{t('settings.providers.model.images')}</span>
-          <Switch checked={images} onChange={setImages} label={t('settings.providers.model.images')} />
-        </div>
-        {/* Fast is three-way (automatic, offered, not offered), so a select on the label's line; the long hint is the label's tooltip */}
-        <div className="flex min-h-ctl items-center justify-between gap-2">
-          <span className="text-3 text-fg-2" title={t('settings.providers.model.fast.hint')}>{t('settings.providers.model.fast')}</span>
-          <Select options={fastOptions} value={fast} onChange={setFast} label={t('settings.providers.model.fast')} />
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button disabled={!ok || test?.pending} title={t('settings.providers.model.test.hint')} onClick={() => onTest(draft())}>
-            {test?.pending && <LoaderCircle strokeWidth={1.5} className="size-icon animate-spin live-spin" />}
-            {t('settings.providers.model.test')}
-          </Button>
-          <span className={cn('min-w-0 flex-1 text-3 [overflow-wrap:anywhere]', outcome?.kind === 'failed' ? 'text-danger' : outcome?.kind === 'test' ? 'text-ok' : 'text-fg-3')}>
-            {outcome?.kind === 'failed' ? outcome.error
-              : outcome?.kind === 'test' ? t('settings.providers.model.testOk', { ms: outcome.ms, text: outcome.text.trim() || '—' })
-              : t('settings.providers.model.test.hint')}
-          </span>
-        </div>
+          <Field label={t('settings.providers.model.images')} desc={t('settings.providers.model.images.desc')}>
+            <Switch checked={images} onChange={setImages} label={t('settings.providers.model.images')} />
+          </Field>
+          {/* Fast is three-way (automatic, offered, not offered), so a select */}
+          <Field label={t('settings.providers.model.fast')} desc={t('settings.providers.model.fast.hint')}>
+            <Select options={fastOptions} value={fast} onChange={setFast} label={t('settings.providers.model.fast')} />
+          </Field>
+          {/* The test's answer replaces the row's hint, in its own colour */}
+          <Field label={t('settings.providers.model.test')}
+            desc={outcome?.kind === 'failed' ? <span className="text-danger">{outcome.error}</span>
+              : outcome?.kind === 'test' ? <span className="text-ok">{t('settings.providers.model.testOk', { ms: outcome.ms, text: outcome.text.trim() || '—' })}</span>
+              : t('settings.providers.model.test.hint')}>
+            <Button disabled={!ok || test?.pending} onClick={() => onTest(draft())}>
+              {test?.pending && <LoaderCircle strokeWidth={1.5} className="size-icon animate-spin live-spin" />}
+              {t('settings.providers.model.test.send')}
+            </Button>
+          </Field>
+        </FormRows>
       </div>
     </SettingsDialog>
   );
