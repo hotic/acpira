@@ -50,8 +50,36 @@ pub fn terminal_script(r: &TerminalRequest) -> String {
   format!("{}\n", lines.join("\n"))
 }
 
-/// The terminal command for a script on Linux: the Debian alternative most desktops provide, then plain xterm
-const LINUX_TERMINALS: [(&str, &str); 2] = [("x-terminal-emulator", "-e"), ("xterm", "-e")];
+/// Linux terminal emulators: the binary, the argument after which the program and its arguments follow, and the desktop
+/// (an XDG_CURRENT_DESKTOP entry) whose own terminal it is
+const LINUX_TERMINALS: [(&str, &str, &str); 8] = [
+  // Debian's alternative: the distribution's or the user's choice where it exists
+  ("x-terminal-emulator", "-e", ""),
+  // GNOME Console (GNOME 42 and later), Ptyxis (Fedora 41, Ubuntu 25.10), GNOME Terminal
+  ("kgx", "--", "GNOME"),
+  ("ptyxis", "--", "GNOME"),
+  ("gnome-terminal", "--", "GNOME"),
+  ("konsole", "-e", "KDE"),
+  ("xfce4-terminal", "-x", "XFCE"),
+  ("mate-terminal", "-x", "MATE"),
+  ("xterm", "-e", ""),
+];
+
+/// The order the terminals are tried in under `desktop` (XDG_CURRENT_DESKTOP, colon-separated): Debian's alternative,
+/// then the desktop's own terminal, then the others, xterm last
+fn linux_terminals(desktop: &str) -> Vec<(&'static str, &'static str)> {
+  let ours = |d: &str| !d.is_empty() && desktop.split(':').any(|c| c.eq_ignore_ascii_case(d));
+  let (mut first, mut rest) = (Vec::new(), Vec::new());
+  for (bin, sep, d) in LINUX_TERMINALS {
+    if bin == "x-terminal-emulator" || ours(d) { first.push((bin, sep)) } else { rest.push((bin, sep)) }
+  }
+  first.extend(rest);
+  first
+}
+
+/// What a Linux terminal runs: the script, then a prompt that keeps the window on its output until Enter (Linux
+/// terminals close with their program, macOS's Terminal keeps the window). The script's path is `$0`
+const LINUX_KEEP_OPEN: &str = r#"sh "$0"; printf '\n%s' '[Press Enter to close]'; read -r _"#;
 
 pub fn run_in_terminal(r: &TerminalRequest, log: &dyn Fn(&str)) {
   if cfg!(windows) {
@@ -81,9 +109,9 @@ pub fn run_in_terminal(r: &TerminalRequest, log: &dyn Fn(&str)) {
     }
     return;
   }
-  for (bin, flag) in LINUX_TERMINALS {
+  for (bin, flag) in linux_terminals(&std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default()) {
     let mut cmd = Command::new(bin);
-    cmd.arg(flag).arg("sh").arg(&file).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    cmd.arg(flag).args(["sh", "-c", LINUX_KEEP_OPEN]).arg(&file).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     crate::process::detach(&mut cmd);
     if let Ok(c) = cmd.spawn() {
       crate::process::reap(c);
@@ -160,5 +188,36 @@ mod tests {
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(text.strip_prefix("\u{1b}]0;t\u{7}").unwrap_or(&text), "it's|two words|${HOME}");
     assert!(!sub.exists());
+  }
+
+  #[test]
+  fn linux_tries_the_desktops_own_terminal_after_debians_alternative() {
+    let bins = |desktop| linux_terminals(desktop).into_iter().map(|(bin, _)| bin).collect::<Vec<_>>();
+    assert_eq!(bins("KDE")[..3], ["x-terminal-emulator", "konsole", "kgx"]);
+    assert_eq!(bins("ubuntu:GNOME")[..4], ["x-terminal-emulator", "kgx", "ptyxis", "gnome-terminal"]);
+    assert_eq!(bins("XFCE")[1], "xfce4-terminal");
+    let none = bins("");
+    assert_eq!((none.len(), none.first(), none.last()), (LINUX_TERMINALS.len(), Some(&"x-terminal-emulator"), Some(&"xterm")));
+  }
+
+  // The keep-open wrapper runs the script with its path as $0 and then waits for a line
+  #[cfg(unix)]
+  #[test]
+  fn the_linux_wrapper_runs_the_script_then_waits_for_enter() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("run.sh");
+    std::fs::write(&file, "echo ran\n").unwrap();
+    let mut child = Command::new("sh")
+      .args(["-c", LINUX_KEEP_OPEN])
+      .arg(&file)
+      .stdin(Stdio::piped())
+      .stdout(Stdio::piped())
+      .spawn()
+      .unwrap();
+    use std::io::Write;
+    child.stdin.take().unwrap().write_all(b"\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "ran\n\n[Press Enter to close]");
   }
 }

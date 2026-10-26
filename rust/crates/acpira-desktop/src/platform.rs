@@ -126,7 +126,7 @@ fn write_plan(markdown: &str) -> std::io::Result<PathBuf> {
 /// The system's own openers: `open` on macOS, `xdg-open` on Linux, the shell API on Windows (ShellExecuteExW, and
 /// SHOpenFolderAndSelectItems to reveal: `explorer` reports failure through an exit status it also gives on success)
 pub mod system {
-  #[cfg(not(windows))]
+  #[cfg(target_os = "macos")]
   fn run(program: &str, args: &[&str]) -> Result<(), String> {
     use std::process::{Command, Stdio};
     let out = Command::new(program)
@@ -141,6 +141,36 @@ pub mod system {
     }
     let err = String::from_utf8_lossy(&out.stderr).trim().to_owned();
     Err(if err.is_empty() { format!("{program} failed ({})", out.status) } else { err })
+  }
+
+  /// Linux: xdg-open hands the target to the desktop (gio, kde-open), which starts the application with xdg-open's
+  /// standard streams, or on a bare session runs the application itself and waits for it. A piped stream read to its end
+  /// would wait as long as that application runs (a browser held the app's main thread so under KDE, 2026-10-26), so the
+  /// streams go nowhere and the exit status is waited for a moment only; still running, the opener is left to run
+  #[cfg(all(unix, not(target_os = "macos")))]
+  fn run(program: &str, args: &[&str]) -> Result<(), String> {
+    run_for(program, args, std::time::Duration::from_secs(1))
+  }
+
+  #[cfg(all(unix, not(target_os = "macos")))]
+  pub(crate) fn run_for(program: &str, args: &[&str], wait: std::time::Duration) -> Result<(), String> {
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+    let mut cmd = Command::new(program);
+    cmd.args(args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    crate::process::detach(&mut cmd);
+    let mut child = cmd.spawn().map_err(|e| format!("{program}: {e}"))?;
+    let until = Instant::now() + wait;
+    while Instant::now() < until {
+      match child.try_wait() {
+        Ok(Some(status)) if status.success() => return Ok(()),
+        Ok(Some(status)) => return Err(format!("{program} failed ({status})")),
+        Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+        Err(e) => return Err(format!("{program}: {e}")),
+      }
+    }
+    crate::process::reap(child);
+    Ok(())
   }
 
   pub fn open_external(url: &str) -> Result<(), String> {
@@ -400,5 +430,20 @@ mod tests {
     };
     assert_eq!(Value::Object(hello_settings(own.clone(), false, ide, &|_| {})), json!({ "sessionScope": "all", "defaultAgent": "kimi" }));
     assert_eq!(Value::Object(hello_settings(own, true, ide, &|_| {})), json!({ "sessionScope": "all" }));
+  }
+
+  // Linux's opener returns at the opener's own exit although what it started keeps running with its streams, reports a
+  // failing exit, and leaves an opener still running after the wait to run
+  #[cfg(all(unix, not(target_os = "macos")))]
+  #[test]
+  fn the_linux_opener_never_waits_on_what_it_started() {
+    use std::time::{Duration, Instant};
+    let t = Instant::now();
+    assert_eq!(system::run_for("sh", &["-c", "sleep 3 & exit 0"], Duration::from_secs(5)), Ok(()));
+    assert!(t.elapsed() < Duration::from_secs(2));
+    assert!(system::run_for("sh", &["-c", "exit 3"], Duration::from_secs(5)).is_err_and(|e| e.contains('3')));
+    let t = Instant::now();
+    assert_eq!(system::run_for("sh", &["-c", "sleep 3"], Duration::from_millis(300)), Ok(()));
+    assert!(t.elapsed() < Duration::from_secs(2));
   }
 }
