@@ -17,8 +17,8 @@ fn encode(path: &str, windows: bool) -> String {
   let path = if windows {
     let path = path.replace('\\', "/");
     // canonicalize() returns extended-length paths on Windows; the prefix is not part of a file URL.
-    if path.get(..8).is_some_and(|p| p.eq_ignore_ascii_case("//?/UNC/")) {
-      format!("//{}", &path[8..])
+    if let Some((_, unc)) = path.split_at_checked(8).filter(|(p, _)| p.eq_ignore_ascii_case("//?/UNC/")) {
+      format!("//{unc}")
     } else {
       path.strip_prefix("//?/").unwrap_or(&path).to_owned()
     }
@@ -52,8 +52,7 @@ fn decode(uri: &str, windows: bool) -> Option<String> {
   }
   let rest = uri.get(5..)?.split(['?', '#']).next()?;
   let (host, path) = if let Some(rest) = rest.strip_prefix("//") {
-    let i = rest.find('/')?;
-    (&rest[..i], &rest[i..])
+    rest.find('/').and_then(|i| rest.split_at_checked(i))?
   } else {
     ("", rest)
   };

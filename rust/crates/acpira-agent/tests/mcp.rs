@@ -2,6 +2,7 @@
 //! a read-only tool runs without a card and one that changes things asks, a result's images go back to a model that
 //! takes images, the server's instructions and an unreachable server are told in the first user message. The server
 //! here is a streamable HTTP one on a local port
+#![allow(clippy::unwrap_used, reason = "test code")]
 
 mod support;
 

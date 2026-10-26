@@ -165,6 +165,7 @@ pub async fn read_shell_path(shell: &str, timeout: Duration) -> Option<String> {
   // A new session without a controlling terminal: an interactive shell otherwise tries to take over the terminal the
   // sidecar was started from (the harness) and stops on SIGTTOU / SIGTTIN until the timeout
   #[cfg(unix)]
+  // SAFETY: the hook runs in the forked child before exec and only calls setsid, which is async-signal-safe
   unsafe {
     cmd.pre_exec(|| {
       libc::setsid();
@@ -179,6 +180,7 @@ pub async fn read_shell_path(shell: &str, timeout: Duration) -> Option<String> {
       // The shell leads its own session: take down whatever its rc files started along with it
       #[cfg(unix)]
       if let Some(pid) = pid.and_then(|p| i32::try_from(p).ok()) {
+        // SAFETY: kill takes plain integers; the negated pid names the session group this call started
         unsafe { libc::kill(-pid, libc::SIGKILL) };
       }
       let _ = pid;
@@ -189,9 +191,9 @@ pub async fn read_shell_path(shell: &str, timeout: Duration) -> Option<String> {
 
 /// The text between the last pair of markers
 pub fn parse_marked(stdout: &str) -> Option<String> {
-  let end = stdout.rfind(MARK)?;
-  let start = stdout[..end].rfind(MARK)? + MARK.len();
-  let path = stdout[start..end].trim();
+  let (before, _) = stdout.rsplit_once(MARK)?;
+  let (_, path) = before.rsplit_once(MARK)?;
+  let path = path.trim();
   (!path.is_empty()).then(|| path.to_owned())
 }
 

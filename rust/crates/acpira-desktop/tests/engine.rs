@@ -3,6 +3,7 @@
 //! session. Skipped without the repository's node_modules (the fake agent is bundled with esbuild)
 
 #![cfg(unix)]
+#![allow(clippy::unwrap_used, reason = "test code")]
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};

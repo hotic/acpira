@@ -7,8 +7,8 @@ use regex::Regex;
 use crate::transcript::{ConfigControl, SessionOption};
 
 static REASONING_IDS: LazyLock<Regex> =
-  LazyLock::new(|| Regex::new(r"^(reasoning_effort|thought_level|thinking|thinking_level)$").unwrap());
-static STRIP: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:reasoning|thinking|effort|level)").unwrap());
+  LazyLock::new(|| crate::re::compile(r"^(reasoning_effort|thought_level|thinking|thinking_level)$"));
+static STRIP: LazyLock<Regex> = LazyLock::new(|| crate::re::compile(r"(?:reasoning|thinking|effort|level)"));
 
 pub(crate) fn compact(value: &str) -> String {
   STRIP

@@ -1,7 +1,7 @@
 //! An in-process ACP client for the agent: the agent runs on a `tokio::io::duplex` pair, the client records every
 //! `session/update` and answers permission requests with a scripted choice, and `elicitation/create` forms with a
 //! scripted response
-#![allow(dead_code)]
+#![allow(dead_code, reason = "each test crate uses only part of the support module")]
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

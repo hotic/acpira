@@ -45,7 +45,7 @@ pub fn slice16(s: &str, n: usize) -> String {
     }
     end = i + c.len_utf8();
   }
-  if end >= s.len() { s.to_owned() } else { s[..end].to_owned() }
+  if end >= s.len() { s.to_owned() } else { s.get(..end).unwrap_or(s).to_owned() }
 }
 
 /// UTF-16 length, the unit JS lengths are counted in

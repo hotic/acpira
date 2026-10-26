@@ -100,6 +100,7 @@ fn current_agent_turn(s: &mut NormalizeState) -> usize {
   s.turns.len() - 1
 }
 
+#[expect(clippy::expect_used, reason = "callers pass the index current_agent_turn just returned")]
 fn agent(s: &mut NormalizeState, i: usize) -> &mut AgentTurn {
   s.turns[i].as_agent_mut().expect("agent turn")
 }
@@ -526,7 +527,7 @@ fn clear_retry(s: &mut NormalizeState) {
   }
 }
 
-static ATTEMPT_OF: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\battempt (\d+) of (\d+)\b").unwrap());
+static ATTEMPT_OF: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)\battempt (\d+) of (\d+)\b"));
 
 /// claude-agent-acp 0.81.0 words its api_retry title "Reconnecting to Claude, attempt N of M." / "Retrying Claude, …"
 fn retry_of_failure(f: &SessionFailure) -> TurnRetry {
@@ -734,6 +735,11 @@ fn block_by_task(turns: &[Turn], task_id: &str) -> Option<(usize, usize)> {
   None
 }
 
+#[expect(
+  clippy::expect_used,
+  clippy::unreachable,
+  reason = "every locator comes from find_tool / block_by_task on the same turns, which only point at tool rows"
+)]
 fn tool_at(turns: &mut [Turn], (ti, bi): (usize, usize)) -> &mut ToolCallBlock {
   match &mut turns[ti].as_agent_mut().expect("agent turn").blocks[bi] {
     AgentBlock::ToolCall(tc) => tc,
@@ -763,7 +769,9 @@ fn attach_async_task(s: &mut NormalizeState, mut loc: (usize, usize), task_id: &
   {
     let synthesized = tool_at(&mut s.turns, prev).id == format!("async:{task_id}");
     if synthesized {
-      s.turns[prev.0].as_agent_mut().unwrap().blocks.remove(prev.1);
+      if let Some(t) = s.turns[prev.0].as_agent_mut() {
+        t.blocks.remove(prev.1);
+      }
       if prev.0 == loc.0 && prev.1 < loc.1 {
         loc.1 -= 1;
       }
@@ -1113,20 +1121,20 @@ pub fn verb_of(kind: ToolKind) -> String {
   t(verb_key(kind))
 }
 
-static TODO_TITLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^todo([_\s-]?(write|update|read|list))?$").unwrap());
+static TODO_TITLE: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)^todo([_\s-]?(write|update|read|list))?$"));
 static ASK_TITLE: LazyLock<Regex> =
-  LazyLock::new(|| Regex::new(r"(?i)^(ask_?user_?questions?|ask(ed|ing)?\s+(the\s+)?(user\s+)?(\d+\s+)?questions?\b)").unwrap());
-static SHELL_WAIT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(get_output|read(ing)?\s+shell(\s+output)?)$").unwrap());
-static SHELL_KILL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(kill_shell|kill(ing)?\s+shell)$").unwrap());
+  LazyLock::new(|| acpira_shared::re::compile(r"(?i)^(ask_?user_?questions?|ask(ed|ing)?\s+(the\s+)?(user\s+)?(\d+\s+)?questions?\b)"));
+static SHELL_WAIT: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)^(get_output|read(ing)?\s+shell(\s+output)?)$"));
+static SHELL_KILL: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)^(kill_shell|kill(ing)?\s+shell)$"));
 /// Image generation tools by name: codex-acp's "Image generation" title, Grok's `image_gen` / `image_edit` (`x.ai/tool` name)
 static IMAGE_GEN: LazyLock<Regex> =
-  LazyLock::new(|| Regex::new(r"(?i)^(image[_\s-]?gen(eration)?|generate[_\s-]?image|image[_\s-]?edit)$").unwrap());
+  LazyLock::new(|| acpira_shared::re::compile(r"(?i)^(image[_\s-]?gen(eration)?|generate[_\s-]?image|image[_\s-]?edit)$"));
 /// Grok's display titles for the same tools (`imagine: <prompt>` / `imagine-edit: <prompt>`; source strings, not yet seen on the wire)
-static IMAGE_GEN_TITLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^imagine(-edit)?:\s").unwrap());
+static IMAGE_GEN_TITLE: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)^imagine(-edit)?:\s"));
 /// An absolute image path (POSIX, `C:\`, or file://) inside a tool's text result; group 1 is the path. The leading boundary keeps
 /// a relative `images/1.jpg` from matching as `/1.jpg`
 static SAVED_IMAGE_PATH: LazyLock<Regex> = LazyLock::new(|| {
-  Regex::new(r#"(?i)(?:^|[\s"'`(<\[=:])((?:file://|[A-Za-z]:[\\/]|/)[^\s"'`<>()\[\]]*?\.(?:png|jpe?g|gif|webp))\b"#).unwrap()
+  acpira_shared::re::compile(r#"(?i)(?:^|[\s"'`(<\[=:])((?:file://|[A-Za-z]:[\\/]|/)[^\s"'`<>()\[\]]*?\.(?:png|jpe?g|gif|webp))\b"#)
 });
 pub const IMAGE_GEN_VERB: &str = "verb.imagegen";
 /// A web search keeps the plain search verb as its key: the `fetch` kind (globe icon) tells it from a local search,
@@ -1134,10 +1142,10 @@ pub const IMAGE_GEN_VERB: &str = "verb.imagegen";
 pub const WEB_SEARCH_VERB: &str = "verb.search";
 /// A web search by title: the placeholder "Web search" (claude-agent-acp 0.83, codex-acp 1.13) and codex-acp's
 /// "Web search: <query>"; group 1 is the query
-static WEB_SEARCH_TITLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^web[ _]?search(?::\s*(.*))?$").unwrap());
+static WEB_SEARCH_TITLE: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)^web[ _]?search(?::\s*(.*))?$"));
 /// claude-agent-acp 0.83's WebSearch once its input is complete: `Search "<query>"` (counted only on a `fetch` row,
 /// since a grep could be titled the same); group 1 is the query
-static CLAUDE_SEARCH_TITLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"^Search "(.+)"$"#).unwrap());
+static CLAUDE_SEARCH_TITLE: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r#"^Search "(.+)"$"#));
 
 enum WebTool {
   Search,
@@ -1203,13 +1211,13 @@ static KIND_BY_TITLE: LazyLock<Vec<(Regex, ToolKind)>> = LazyLock::new(|| {
     (r"(?i)^(web_?fetch|fetch|browse|curl)(_[a-z]+)*$", ToolKind::Fetch),
   ]
   .into_iter()
-  .map(|(r, k)| (Regex::new(r).unwrap(), k))
+  .map(|(r, k)| (acpira_shared::re::compile(r), k))
   .collect()
 });
 static STRIP_VERB: LazyLock<Regex> = LazyLock::new(|| {
-  Regex::new(r"(?i)^(read(ing)?|edit(ing)?|write|writing|search(ing)?|run(ning)?|execute|executing|fetch(ing)?|delete|deleting|move|moving|list(ing)?)\s+(file|files|directory|command)?\s*").unwrap()
+  acpira_shared::re::compile(r"(?i)^(read(ing)?|edit(ing)?|write|writing|search(ing)?|run(ning)?|execute|executing|fetch(ing)?|delete|deleting|move|moving|list(ing)?)\s+(file|files|directory|command)?\s*")
 });
-static DATA_URL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)^data:([\w.+-]+/[\w.+-]+)?;base64,(.+)$").unwrap());
+static DATA_URL: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?s)^data:([\w.+-]+/[\w.+-]+)?;base64,(.+)$"));
 
 fn shell_verb(meta: Option<&Map<String, Value>>, title: Option<&str>) -> Option<&'static str> {
   match meta.and_then(|m| m.get("cognition.ai/inferenceToolName")).and_then(Value::as_str) {
@@ -1391,9 +1399,10 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
   {
     b.status = st;
   }
-  if meta.and_then(|m| m.get("cognition.ai/background")) == Some(&Value::Bool(true)) {
+  if let Some(m) = meta
+    && m.get("cognition.ai/background") == Some(&Value::Bool(true))
+  {
     b.background = Some(true);
-    let m = meta.unwrap();
     if let (Some(ctx), Some(shell_id)) = (ctx.as_deref_mut(), m.get("cognition.ai/backgroundShellId").and_then(Value::as_str)) {
       let command = m.get("cognition.ai/backgroundCommand").and_then(Value::as_str).filter(|c| !c.is_empty()).map(str::to_owned);
       ctx.shells.insert(shell_id.to_owned(), command.or_else(|| b.target.clone()).unwrap_or_else(|| shell_id.to_owned()));
@@ -1740,7 +1749,7 @@ fn json_strings<'a>(v: &'a Value, out: &mut Vec<&'a str>) {
 
 /// A Markdown image (`![alt](src)`, `![alt](<src with spaces>)`, optional `"title"`); group 1 or 2 is the source as written
 static MARKDOWN_IMAGE: LazyLock<Regex> =
-  LazyLock::new(|| Regex::new(r#"!\[[^\]\n]*\]\(\s*(?:<([^>\n]+)>|([^\s()]+))(?:\s+"[^"\n]*")?\s*\)"#).unwrap());
+  LazyLock::new(|| acpira_shared::re::compile(r#"!\[[^\]\n]*\]\(\s*(?:<([^>\n]+)>|([^\s()]+))(?:\s+"[^"\n]*")?\s*\)"#));
 /// How far back a new chunk's scan starts: an image whose `)` arrives in the chunk may have opened in an earlier one
 const MARKDOWN_IMAGE_LOOKBACK: usize = 1024;
 
@@ -1754,7 +1763,7 @@ fn resolve_markdown_images(b: &mut TextBlock, from: usize, ctx: &ToolCtx) {
     start -= 1;
   }
   let found: Vec<String> = MARKDOWN_IMAGE
-    .captures_iter(&b.markdown[start..])
+    .captures_iter(b.markdown.get(start..).unwrap_or_default())
     .filter_map(|m| m.get(1).or_else(|| m.get(2)).map(|x| x.as_str().trim().to_owned()))
     .collect();
   for src in found {
@@ -1784,12 +1793,12 @@ fn markdown_image_path(src: &str, cwd: Option<&str>) -> Option<String> {
   }
   Some(std::path::Path::new(cwd?).join(path).to_string_lossy().into_owned())
 }
-static URL_SCHEME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z][A-Za-z0-9+.-]*:").unwrap());
+static URL_SCHEME: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"^[A-Za-z][A-Za-z0-9+.-]*:"));
 
 /// Acpira's own MCP tool (`acpira mcp`, see `host_mcp.rs`) as each adapter names it: claude-agent-acp
 /// `mcp__acpira__show_image`, codex-acp `mcp.acpira.show_image` (+ rawInput `{ server, tool, arguments }`), OpenCode
 /// `acpira_show_image`, and a bare `show_image` from adapters that drop the server prefix
-static SHOW_IMAGE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(?:^|acpira[_.:/-]{1,2})show_image$").unwrap());
+static SHOW_IMAGE: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)(?:^|acpira[_.:/-]{1,2})show_image$"));
 pub const SHOW_IMAGE_VERB: &str = "verb.showImage";
 
 fn is_show_image_call(u: &Value, title: Option<&str>, raw: Option<&Map<String, Value>>) -> bool {
@@ -1798,7 +1807,7 @@ fn is_show_image_call(u: &Value, title: Option<&str>, raw: Option<&Map<String, V
 }
 
 /// Acpira's `show_widget`, in the same namings as show_image
-static SHOW_WIDGET: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(?:^|acpira[_.:/-]{1,2})show_widget$").unwrap());
+static SHOW_WIDGET: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)(?:^|acpira[_.:/-]{1,2})show_widget$"));
 pub const SHOW_WIDGET_VERB: &str = "verb.showWidget";
 
 fn is_show_widget_call(u: &Value, title: Option<&str>, raw: Option<&Map<String, Value>>) -> bool {
@@ -1807,7 +1816,7 @@ fn is_show_widget_call(u: &Value, title: Option<&str>, raw: Option<&Map<String, 
 }
 
 /// Acpira's session tools (`host_mcp.rs` search_sessions / read_session), in the same namings as show_image
-static SESSION_TOOL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(?:^|acpira[_.:/-]{1,2})(search_sessions|read_session)$").unwrap());
+static SESSION_TOOL: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)(?:^|acpira[_.:/-]{1,2})(search_sessions|read_session)$"));
 pub const SEARCH_SESSIONS_VERB: &str = "verb.searchSessions";
 pub const READ_SESSION_VERB: &str = "verb.readSession";
 
@@ -1845,8 +1854,8 @@ fn show_image_args(raw: Option<&Map<String, Value>>) -> Option<&Map<String, Valu
 }
 
 /// claude-agent-acp's `mcp__<server>__<tool>` and codex-acp's `mcp.<server>.<tool>`
-static CLAUDE_MCP: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^mcp__([A-Za-z0-9-][A-Za-z0-9_-]*?)__(.+)$").unwrap());
-static CODEX_MCP: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^mcp\.([^.\s]+)\.(\S+)$").unwrap());
+static CLAUDE_MCP: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"^mcp__([A-Za-z0-9-][A-Za-z0-9_-]*?)__(.+)$"));
+static CODEX_MCP: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"^mcp\.([^.\s]+)\.(\S+)$"));
 
 /// An MCP tool call: the server's name as configured, the tool's own name, and its title when the agent knows it
 struct McpCall {

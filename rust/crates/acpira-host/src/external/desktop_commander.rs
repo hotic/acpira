@@ -56,6 +56,6 @@ async fn commander_process() -> Option<bool> {
   if !out.status.success() {
     return None;
   }
-  let re = regex::Regex::new(r"(?:^|\s)desktop-commander\s+remote(?:\s|$)").unwrap();
+  let re = acpira_shared::re::compile(r"(?:^|\s)desktop-commander\s+remote(?:\s|$)");
   Some(String::from_utf8_lossy(&out.stdout).lines().any(|l| l.contains("/desktop-commander/") || re.is_match(l)))
 }

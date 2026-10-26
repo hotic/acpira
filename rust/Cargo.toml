@@ -8,6 +8,22 @@ edition = "2024"
 license = "MIT"
 publish = false
 
+# Run-time code returns errors instead of panicking, so a panic is a bug of the build rather than of its input; the gate
+# runs clippy with -D warnings, which makes these errors. Tests are exempt through clippy.toml (integration-test crates
+# with a crate-level allow); a panic that is a bug of the build is `#[expect(clippy::…, reason = "…")]` on the smallest
+# item. `indexing_slicing` stays off: serde_json reads, which never panic, are most of what it reports
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+string_slice = "warn"
+unreachable = "warn"
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+undocumented_unsafe_blocks = "warn"
+allow_attributes_without_reason = "warn"
+
 [workspace.dependencies]
 acpira-shared = { path = "crates/acpira-shared" }
 acpira-rpc = { path = "crates/acpira-rpc" }

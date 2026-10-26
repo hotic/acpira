@@ -50,8 +50,9 @@ pub fn main(args: &[String], version: &str) -> i32 {
   let num = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).and_then(|v| v.parse::<u64>().ok());
   let mut login_path = false;
   if !args.iter().any(|a| a == "--no-login-path") {
-    let current = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("tokio runtime");
-    if let Some(path) = current.block_on(login_shell_path()) {
+    // Without a runtime the login PATH is skipped, as when the shell gives none
+    let current = tokio::runtime::Builder::new_current_thread().enable_all().build().ok();
+    if let Some(path) = current.and_then(|rt| rt.block_on(login_shell_path())) {
       // SAFETY: no other thread exists yet (the multi-threaded runtime starts below)
       unsafe { std::env::set_var("PATH", path) };
       login_path = true;
@@ -64,7 +65,13 @@ pub fn main(args: &[String], version: &str) -> i32 {
     login_path,
     digest: args.iter().position(|a| a == "--digest").and_then(|i| args.get(i + 1)).cloned().unwrap_or_default(),
   };
-  let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("tokio runtime");
+  let rt = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+    Ok(rt) => rt,
+    Err(e) => {
+      eprintln!("acpira remote: cannot start the runtime: {e}");
+      return 1;
+    }
+  };
   let code = rt.block_on(serve(tokio::io::stdin(), tokio::io::stdout(), opts));
   kill_all_groups();
   stop_all_jobs();

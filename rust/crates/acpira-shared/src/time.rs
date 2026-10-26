@@ -20,13 +20,13 @@ pub fn ms_of_iso(s: &str) -> Option<i64> {
   }
   let n = |r: std::ops::Range<usize>| s.get(r)?.parse::<i64>().ok();
   let (y, mo, d, h, mi, se) = (n(0..4)?, n(5..7)?, n(8..10)?, n(11..13)?, n(14..16)?, n(17..19)?);
-  let rest = &s[19..];
+  let rest = s.get(19..)?;
   let (frac, tail) = match rest.strip_prefix('.') {
     Some(r) => {
       let digits = r.bytes().take_while(u8::is_ascii_digit).count();
-      let f = &r[..digits];
-      let ms = format!("{:0<3}", &f[..f.len().min(3)]).parse::<i64>().ok()?;
-      (ms, &r[digits..])
+      let (f, tail) = r.split_at_checked(digits)?;
+      let ms = format!("{:0<3}", f.get(..3).unwrap_or(f)).parse::<i64>().ok()?;
+      (ms, tail)
     }
     None => (0, rest),
   };

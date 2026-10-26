@@ -15,8 +15,8 @@ pub enum Marker {
 }
 
 static PI_ATTEMPT: LazyLock<Regex> =
-  LazyLock::new(|| Regex::new(r"^Retrying(?: \(attempt (\d+)/(\d+), waiting (\d+)s\))?(?:\.{3}|…)$").unwrap());
-static PI_FINISHED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^Retry finished, resuming\.$").unwrap());
+  LazyLock::new(|| acpira_shared::re::compile(r"^Retrying(?: \(attempt (\d+)/(\d+), waiting (\d+)s\))?(?:\.{3}|…)$"));
+static PI_FINISHED: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"^Retry finished, resuming\.$"));
 
 pub fn marker(agent: &str, chunk: &str) -> Option<Marker> {
   if agent != "pi" {

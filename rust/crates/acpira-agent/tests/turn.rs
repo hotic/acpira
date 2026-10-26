@@ -1,5 +1,6 @@
 //! Whole turns against the scripted model: streaming, tools with permission cards, rejection, cancellation, the output
 //! budget, and a byte-stable request prefix between calls
+#![allow(clippy::unwrap_used, clippy::string_slice, reason = "test code")]
 
 mod support;
 

@@ -9,12 +9,12 @@ use acpira_shared::transcript::{AgentBlock, PlanDocStatus, PlanDocumentBlock, To
 
 use crate::json::str_of;
 
-static FRONT_MATTER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^---\r?\n(?s:.*?)\r?\n---\r?\n").unwrap());
-static HEADING: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^#\s+(.+)$").unwrap());
-static SAVED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^Plan saved to: (.+)\r?\n\r?\n((?s:.*))").unwrap());
-static EXIT_TITLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(exit_plan_mode|ExitPlanMode)$").unwrap());
+static FRONT_MATTER: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"^---\r?\n(?s:.*?)\r?\n---\r?\n"));
+static HEADING: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?m)^#\s+(.+)$"));
+static SAVED: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"^Plan saved to: (.+)\r?\n\r?\n((?s:.*))"));
+static EXIT_TITLE: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"^(exit_plan_mode|ExitPlanMode)$"));
 static KNOWN_PATH: LazyLock<Regex> =
-  LazyLock::new(|| Regex::new(r"/(?:\.grok/sessions/.*/plan\.md|\.kimi-code/sessions/.*/plans/[^/]+\.md)$").unwrap());
+  LazyLock::new(|| acpira_shared::re::compile(r"/(?:\.grok/sessions/.*/plan\.md|\.kimi-code/sessions/.*/plans/[^/]+\.md)$"));
 
 pub fn plan_documents(turns: &[Turn]) -> Vec<&PlanDocumentBlock> {
   turns

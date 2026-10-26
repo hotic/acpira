@@ -176,11 +176,16 @@ async fn run_command(store: &Arc<ChatGptBridgeStore>, args: &Args, id: &str, cwd
   };
   #[cfg(unix)]
   let pid = child.id();
+  let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
+    let _ = child.start_kill();
+    store.accept(id, &args.event(json!({ "type": "tool_end", "callId": call_id, "status": "failed", "detail": "no output pipes" }))?).await?;
+    return Ok(1);
+  };
   // Raw bytes for the passthrough, text decoded per stream so a character split across two reads stays whole in the mirror
   let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(bool, Vec<u8>, String)>();
   for (is_err, mut pipe) in [
-    (false, Box::new(child.stdout.take().unwrap()) as Box<dyn tokio::io::AsyncRead + Unpin + Send>),
-    (true, Box::new(child.stderr.take().unwrap())),
+    (false, Box::new(stdout) as Box<dyn tokio::io::AsyncRead + Unpin + Send>),
+    (true, Box::new(stderr)),
   ] {
     let tx = tx.clone();
     tokio::spawn(async move {
@@ -363,8 +368,8 @@ async fn file_operation(store: &Arc<ChatGptBridgeStore>, args: &Args, id: &str, 
     )
     .await?;
   let result: Result<()> = async {
-    if action == "write" {
-      let content = content.clone().unwrap();
+    // `content` is read exactly when the action is a write
+    if let Some(content) = content.clone() {
       with_file_lock(&path, || async {
         let info = match tokio::fs::metadata(&path).await {
           Ok(m) => Some(m),

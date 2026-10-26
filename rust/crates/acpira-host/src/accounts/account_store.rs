@@ -250,7 +250,6 @@ impl AccountStore {
 
   /// Same label under the same agent counts as the same account: re-login swaps the secret
   pub async fn add(&self, agent: &str, draft: AccountDraft) -> Result<AccountInfo> {
-    let mut added = None;
     let vault = self.vault.clone();
     let _q = self.queue.lock().await;
     with_file_lock(&self.file, || async {
@@ -277,16 +276,15 @@ impl AccountStore {
         }
       };
       vault.store(&account_secret_key(&items[idx].id), &draft.secret).await?;
-      added = Some(items[idx].info());
+      let added = items[idx].info();
       if let Some(dir) = self.file.parent() {
         fs::create_dir_all(dir).await?;
       }
       write_atomic(&self.file, serde_json::to_string_pretty(&items)?.as_bytes(), Some(0o600)).await?;
       *self.items.lock() = items;
-      Ok(())
+      Ok(added)
     })
-    .await?;
-    Ok(added.expect("set inside the lock"))
+    .await
   }
 
   pub async fn remove(&self, id: &str) -> Result<()> {

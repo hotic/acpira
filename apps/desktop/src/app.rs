@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use acpira_desktop::browser::{BrowserHistory, BrowserPage, browser_look, normalize_preview_url, origin_of};
@@ -23,6 +23,7 @@ use acpira_desktop::window_state::{Bounds, Placement, WindowEntry, WindowStateSt
 use acpira_desktop::wire::Initial;
 use acpira_shared::i18n::{Language, Locale, resolve_locale, translate};
 use acpira_shared::sidecar::{BrowserOpened, BrowserReuse, ToastOpen};
+use parking_lot::Mutex;
 use serde_json::{Value, json};
 use tauri::{AppHandle, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
@@ -37,6 +38,10 @@ static APP: OnceLock<Arc<App>> = OnceLock::new();
 const UPDATE_FIRST_CHECK: Duration = Duration::from_secs(60);
 const UPDATE_EVERY: Duration = Duration::from_secs(6 * 3600);
 
+#[expect(
+  clippy::expect_used,
+  reason = "set in App::init during setup, before any window, menu, listener or callback that calls this exists"
+)]
 pub fn app() -> &'static Arc<App> {
   APP.get().expect("the app is set up")
 }
@@ -260,10 +265,10 @@ impl App {
         app.refresh_menu();
       }
       if keys.iter().any(|k| acpira_desktop::browser::affects_look(k)) {
-        for b in app.browsers.lock().unwrap().iter() {
+        for b in app.browsers.lock().iter() {
           b.relay.post_look();
         }
-        for w in app.windows.lock().unwrap().iter() {
+        for w in app.windows.lock().iter() {
           w.post_browser_look();
         }
       }
@@ -326,7 +331,7 @@ impl App {
   /// page used last with a restart button. Main thread
   fn update_changed(&self, s: UpdateState) {
     self.broadcast(json!({ "type": "updateState", "state": s }));
-    let before = std::mem::replace(&mut *self.update_phase.lock().unwrap(), s.phase);
+    let before = std::mem::replace(&mut *self.update_phase.lock(), s.phase);
     if (before == Phase::Ready) != (s.phase == Phase::Ready) {
       self.refresh_menu();
     }
@@ -373,6 +378,7 @@ impl App {
     self.handle.exit(0);
   }
 
+  #[expect(clippy::expect_used, reason = "set in App::init right after APP, before any window or callback that calls this exists")]
   pub fn client(&self) -> &SidecarClient {
     self.client.get().expect("the client is made at init")
   }
@@ -404,7 +410,7 @@ impl App {
     let data_home = self.paths.data_home.clone();
     let commands = move || {
       let over = std::env::var("ACPIRA_SIDECAR_BIN").ok();
-      let env = app().login_env.lock().unwrap().clone().unwrap_or_default();
+      let env = app().login_env.lock().clone().unwrap_or_default();
       sidecar_commands(&LocateOpts { candidates: &engines, override_bin: over.as_deref() })
         .into_iter()
         .map(|mut c: SidecarCommand| {
@@ -505,31 +511,31 @@ impl App {
     std::thread::spawn(|| {
       let env = acpira_desktop::login_env::resolve_login_env(&log, None);
       let a = app();
-      *a.login_env.lock().unwrap() = env;
+      *a.login_env.lock() = env;
       a.client().start();
     });
   }
 
   pub fn windows(&self) -> Vec<Arc<ChatWindow>> {
-    self.windows.lock().unwrap().clone()
+    self.windows.lock().clone()
   }
 
   pub fn window_by_label(&self, label: &str) -> Option<Arc<ChatWindow>> {
-    self.windows.lock().unwrap().iter().find(|w| w.label == label).cloned()
+    self.windows.lock().iter().find(|w| w.label == label).cloned()
   }
 
   pub fn browser_by_label(&self, label: &str) -> Option<Arc<BrowserPanelWindow>> {
-    self.browsers.lock().unwrap().iter().find(|w| w.label == label).cloned()
+    self.browsers.lock().iter().find(|w| w.label == label).cloned()
   }
 
   pub fn focused_window(&self) -> Option<Arc<ChatWindow>> {
-    let last = self.last_focused.lock().unwrap().clone();
-    let windows = self.windows.lock().unwrap();
+    let last = self.last_focused.lock().clone();
+    let windows = self.windows.lock();
     last.and_then(|l| windows.iter().find(|w| w.label == l).cloned()).or_else(|| windows.first().cloned())
   }
 
   pub fn on_focus(&self, w: &ChatWindow) {
-    *self.last_focused.lock().unwrap() = Some(w.label.clone());
+    *self.last_focused.lock() = Some(w.label.clone());
     self.client().event(json!({ "type": "windowFocus" }));
   }
 
@@ -538,12 +544,12 @@ impl App {
     if let Some(u) = self.updater() {
       w.post(json!({ "type": "updateState", "state": u.state() }));
     }
-    if let Some(menus) = self.page_menu.lock().unwrap().clone() {
+    if let Some(menus) = self.page_menu.lock().clone() {
       w.post(json!({ "type": "desktopMenu", "menus": menus }));
       w.post(json!({ "type": "windowState", "maximized": w.window.is_maximized().unwrap_or(false) }));
     }
     if self.share_context() {
-      for m in self.context.lock().unwrap().replay() {
+      for m in self.context.lock().replay() {
         w.post(m);
       }
     }
@@ -630,9 +636,9 @@ impl App {
     };
     self.prepare(&window);
     let w = Arc::new(ChatWindow::new(window.clone(), initial, how.watch));
-    self.windows.lock().unwrap().push(w.clone());
+    self.windows.lock().push(w.clone());
     {
-      let mut last = self.last_focused.lock().unwrap();
+      let mut last = self.last_focused.lock();
       if last.is_none() {
         *last = Some(label.clone());
       }
@@ -690,25 +696,25 @@ impl App {
   pub fn window_closed(&self, label: &str) {
     if let Some(b) = self.browser_by_label(label) {
       b.relay.dispose();
-      self.browsers.lock().unwrap().retain(|x| x.label != label);
+      self.browsers.lock().retain(|x| x.label != label);
       return;
     }
     let Some(w) = self.window_by_label(label) else { return };
     self.client().detach(&w.view_id);
     w.dispose();
-    self.windows.lock().unwrap().retain(|x| x.label != label);
+    self.windows.lock().retain(|x| x.label != label);
     {
-      let mut last = self.last_focused.lock().unwrap();
+      let mut last = self.last_focused.lock();
       if last.as_deref() == Some(label) {
         *last = None;
       }
     }
     // A window closed by hand lends its place to the next new one; at quit every window stays in the list
-    let entry = self.known.lock().unwrap().remove(label);
+    let entry = self.known.lock().remove(label);
     if !self.quitting.load(Ordering::SeqCst)
       && let Some(e) = entry
     {
-      self.windows_state.lock().unwrap().last = Some(e);
+      self.windows_state.lock().last = Some(e);
     }
     self.save_windows();
   }
@@ -721,7 +727,7 @@ impl App {
     if let Some(w) = self.window_by_label(label)
       && let Some(e) = self.entry_of(&w)
     {
-      self.known.lock().unwrap().insert(label.to_owned(), e);
+      self.known.lock().insert(label.to_owned(), e);
     }
   }
 
@@ -731,7 +737,7 @@ impl App {
     let scale = win.scale_factor().ok()?;
     let bounds = if maximized || win.is_fullscreen().unwrap_or(false) || win.is_minimized().unwrap_or(false) {
       // Not the normal bounds: keep the ones saved before
-      self.known.lock().unwrap().get(&w.label).and_then(|e| e.bounds)
+      self.known.lock().get(&w.label).and_then(|e| e.bounds)
     } else {
       let pos = win.outer_position().ok()?.to_logical::<f64>(scale);
       let size = win.inner_size().ok()?.to_logical::<f64>(scale);
@@ -749,11 +755,11 @@ impl App {
       .iter()
       .filter_map(|w| {
         let e = self.entry_of(w)?;
-        self.known.lock().unwrap().insert(w.label.clone(), e.clone());
+        self.known.lock().insert(w.label.clone(), e.clone());
         Some(e)
       })
       .collect();
-    let mut state = self.windows_state.lock().unwrap();
+    let mut state = self.windows_state.lock();
     state.windows = entries;
     self.window_store.write(&state);
   }
@@ -793,19 +799,19 @@ impl App {
   }
 
   fn place_of_last(&self) -> ChatWindowOpen {
-    let last = self.windows_state.lock().unwrap().last.clone();
+    let last = self.windows_state.lock().last.clone();
     self.place_of(last.as_ref())
   }
 
   /// The windows open at the last quit come back; links that launched the app show their sessions after that
   pub fn restore(self: &Arc<Self>) {
-    let state = self.windows_state.lock().unwrap().clone();
+    let state = self.windows_state.lock().clone();
     let restore = if state.windows.is_empty() { vec![state.last.clone().unwrap_or_default()] } else { state.windows.clone() };
     for e in &restore {
       let initial = Some(e.session.clone().map(Initial::Session).unwrap_or(Initial::MostRecent));
       self.open(initial, self.place_of(Some(e)));
     }
-    let links = self.pending_links.lock().unwrap().take().unwrap_or_default();
+    let links = self.pending_links.lock().take().unwrap_or_default();
     for l in links {
       self.take_link(&l);
     }
@@ -829,7 +835,7 @@ impl App {
   /// session this machine's store has (or a window shows), else the page says the link came from elsewhere
   pub fn take_link(self: &Arc<Self>, url: &str) {
     {
-      let mut pending = self.pending_links.lock().unwrap();
+      let mut pending = self.pending_links.lock();
       if let Some(p) = pending.as_mut() {
         p.push(url.to_owned());
         return;
@@ -911,20 +917,20 @@ impl App {
 
   /// The menu the pages draw changed (menu.rs install, Windows)
   pub fn set_page_menu(&self, menus: Value) {
-    *self.page_menu.lock().unwrap() = Some(menus.clone());
+    *self.page_menu.lock() = Some(menus.clone());
     self.broadcast(json!({ "type": "desktopMenu", "menus": menus }));
   }
 
   /// The page menu's top-level titles (the smoke's menuBar outside macOS)
   #[cfg(feature = "smoke")]
   pub fn page_menu_titles(&self) -> Option<Vec<String>> {
-    let menus = self.page_menu.lock().unwrap().clone()?;
+    let menus = self.page_menu.lock().clone()?;
     Some(menus.as_array()?.iter().filter_map(|m| m["label"].as_str().map(str::to_owned)).collect())
   }
 
   /// A window was resized: its page shows the caption's maximize or restore glyph (Windows)
   pub fn window_resized(&self, label: &str) {
-    if self.page_menu.lock().unwrap().is_none() {
+    if self.page_menu.lock().is_none() {
       return;
     }
     if let Some(w) = self.window_by_label(label) {
@@ -974,13 +980,13 @@ impl App {
       return Ok(None);
     }
     let owner = page_owner(panel_id, p.owner.as_deref());
-    let m = self.context.lock().unwrap().set(acpira_desktop::context_api::ContextPayload { owner: Some(owner), ..p });
+    let m = self.context.lock().set(acpira_desktop::context_api::ContextPayload { owner: Some(owner), ..p });
     self.publish_context(m);
     Ok(Some(self.share_context()))
   }
 
   pub fn leave_page(&self, panel_id: &str) {
-    let gone = self.context.lock().unwrap().release_page(panel_id);
+    let gone = self.context.lock().release_page(panel_id);
     for m in gone {
       self.publish_context(Some(m));
     }
@@ -988,7 +994,7 @@ impl App {
 
   pub fn visited(&self, page: BrowserPage) {
     self.history.visited(page);
-    for b in self.browsers.lock().unwrap().iter() {
+    for b in self.browsers.lock().iter() {
       b.relay.post_history();
     }
     for w in self.windows() {
@@ -1003,7 +1009,6 @@ impl App {
     let shown = self
       .browsers
       .lock()
-      .unwrap()
       .iter()
       .find(|b| match &origin {
         Some(o) => b.target().and_then(|t| origin_of(&t)).as_ref() == Some(o) && b.folder().as_deref() == folder,
@@ -1053,7 +1058,7 @@ impl App {
     };
     self.prepare(&window);
     let b = Arc::new(BrowserPanelWindow::new(window.clone(), folder.map(str::to_owned), focus));
-    self.browsers.lock().unwrap().push(b.clone());
+    self.browsers.lock().push(b.clone());
     if cfg!(target_os = "macos") {
       let _ = window.navigate(page_url("browser"));
     }
@@ -1118,7 +1123,7 @@ impl App {
       true
     });
     let Some(w) = self.open(None, ChatWindowOpen { watch: Some(watch), ..Default::default() }) else { return };
-    let msg = serde_json::value::RawValue::from_string(r#"{"type":"connectChatgpt"}"#.into()).expect("valid JSON");
+    let Ok(msg) = serde_json::value::RawValue::from_string(r#"{"type":"connectChatgpt"}"#.into()) else { return };
     self.client().send(&w.view_id, msg);
   }
 
@@ -1132,7 +1137,7 @@ impl App {
     for w in self.windows() {
       w.set_theme(dark);
     }
-    for b in self.browsers.lock().unwrap().iter() {
+    for b in self.browsers.lock().iter() {
       b.set_theme(dark);
     }
   }
@@ -1194,7 +1199,7 @@ pub fn pick_folder(w: Arc<ChatWindow>) {
     Mutex::new(std::env::split_paths(&raw).map(|p| p.to_string_lossy().into_owned()).filter(|p| !p.is_empty()).collect())
   });
   let next = {
-    let mut s = scripted.lock().unwrap();
+    let mut s = scripted.lock();
     (!s.is_empty()).then(|| s.remove(0))
   };
   if let Some(path) = next {
@@ -1258,7 +1263,7 @@ impl Platform for App {
   fn open_in_editor(&self, editor: Editor, target: &FileTarget) -> bool {
     // The login shell's PATH finds an editor's command line; an app started from the Dock has almost none of its own
     let mut env: HashMap<String, String> = std::env::vars().collect();
-    env.extend(self.login_env.lock().unwrap().clone().unwrap_or_default());
+    env.extend(self.login_env.lock().clone().unwrap_or_default());
     acpira_desktop::editors::open_in_editor(editor, target, &env, &self.paths.home, &log)
   }
 
@@ -1291,6 +1296,7 @@ pub fn page_font() -> Option<String> {
 /// (Alt+Left, the mouse's back button), so it starts on the page itself. The page's first command (acpira_attach) runs on
 /// the main thread: a window opened there is registered before it can arrive, one opened elsewhere right after `build`
 /// returns, well before the bundle has loaded
+#[expect(clippy::expect_used, reason = "APP_ORIGIN is a constant absolute URL")]
 fn first_url(host: &str) -> WebviewUrl {
   let url = if cfg!(target_os = "macos") { format!("{APP_ORIGIN}/blank").parse().expect("the blank URL parses") } else { page_url(host) };
   WebviewUrl::CustomProtocol(url)

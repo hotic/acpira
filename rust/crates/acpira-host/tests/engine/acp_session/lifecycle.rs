@@ -188,6 +188,7 @@ async fn a_lock_held_by_another_sidecars_agent_can_be_taken_over() {
   let dir = tempfile::Builder::new().prefix("acpira-locked-").tempdir().unwrap();
   let h = Harness::new(&fake, json!({}));
   let record = ran_once(&h, dir.path().to_str().unwrap()).await;
+  // SAFETY: signal 0 only checks that the process exists
   let alive = |pid: u32| unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
 
   let mut stranger = Command::new("sleep").arg("30").spawn().unwrap();

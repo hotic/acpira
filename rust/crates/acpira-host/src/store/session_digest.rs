@@ -111,7 +111,7 @@ pub fn cut(s: &str, max: usize) -> String {
   while end > 0 && !s.is_char_boundary(end) {
     end -= 1;
   }
-  format!("{}…", &s[..end])
+  format!("{}…", s.get(..end).unwrap_or_default())
 }
 
 /// One line of text, whitespace collapsed, cut to `max` bytes
@@ -593,7 +593,7 @@ pub fn range(r: &SessionRecord, meta: &DigestMeta, from: u32, to: Option<u32>, o
     let body = round_text(round, &r.cwd, full);
     let start = if round.n == from { forward_boundary(&body, offset) } else { 0 };
     let lead = if start > 0 { format!("\n(turn {} continued from byte {start})\n", round.n) } else { "\n".to_owned() };
-    let rest = &body[start..];
+    let rest = body.get(start..).unwrap_or_default();
     if out.len() + lead.len() + rest.len() > budget {
       if round.n == from {
         // A turn larger than a page: as much as fits, ending on a line when one ends late enough, and where it goes on
@@ -603,11 +603,12 @@ pub fn range(r: &SessionRecord, meta: &DigestMeta, from: u32, to: Option<u32>, o
         while !rest.is_char_boundary(end) {
           end -= 1;
         }
-        if let Some(nl) = rest[..end].rfind('\n').filter(|&nl| nl > end / 2) {
+        let (head, _) = rest.split_at_checked(end).unwrap_or((rest, ""));
+        if let Some(nl) = head.rfind('\n').filter(|&nl| nl > end / 2) {
           end = nl + 1;
         }
         out.push_str(&lead);
-        out.push_str(&rest[..end]);
+        out.push_str(rest.get(..end).unwrap_or(head));
         let at = start + end;
         out.push_str(&format!("\n\n(turn {} is cut here, {at} of {} bytes)\n", round.n, body.len()));
         next = Some((round.n, at));
@@ -697,8 +698,8 @@ pub fn grep(r: &SessionRecord, query: &str, limit: usize) -> String {
 /// original's char positions (session_search::fold)
 fn context(text: &str, folded: &str, pos: usize, len: usize) -> String {
   let chars: Vec<char> = text.chars().collect();
-  let at = folded[..pos].chars().count();
-  let n = folded[pos..pos + len].chars().count();
+  let at = folded.get(..pos).unwrap_or_default().chars().count();
+  let n = folded.get(pos..pos + len).unwrap_or_default().chars().count();
   let start = at.saturating_sub(40);
   let end = (at + n + 80).min(chars.len());
   let mut s = String::new();

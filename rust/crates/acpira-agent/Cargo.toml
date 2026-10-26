@@ -34,3 +34,6 @@ libc.workspace = true
 [dev-dependencies]
 acpira-agent = { path = ".", features = ["mock"] }
 tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -6,13 +6,13 @@ use regex::Regex;
 
 use crate::transcript::{CommandOption, CommandReceipt, SessionControls, SlashCommand, Turn, TurnSettings, TurnStop};
 
-static NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^/(\$?[\p{L}\p{N}][\p{L}\p{N}_.:-]*)").unwrap());
+static NAME: LazyLock<Regex> = LazyLock::new(|| crate::re::compile(r"^/(\$?[\p{L}\p{N}][\p{L}\p{N}_.:-]*)"));
 
 /// A command candidate must be a leading token followed by whitespace or the end
 pub fn command_name(text: &str) -> Option<&str> {
   let c = NAME.captures(text)?;
   let m = c.get(1)?;
-  let rest = &text[m.end()..];
+  let rest = text.get(m.end()..)?;
   if rest.is_empty() || rest.starts_with(char::is_whitespace) { Some(m.as_str()) } else { None }
 }
 

@@ -256,6 +256,7 @@ impl BlobGate {
   fn create(h: &Harness, sid: &str) -> BlobGate {
     let path = h.dir.path().join("sessions").join(sid).join(Self::NAME);
     let c = std::ffi::CString::new(path.to_string_lossy().as_bytes()).unwrap();
+    // SAFETY: `c` is a NUL-terminated path that outlives the call
     assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
     BlobGate { path }
   }

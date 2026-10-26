@@ -1,6 +1,7 @@
 //! Steering (`_session/steering`) against the scripted model: a message sent while a turn runs reaches the model with
 //! the turn's next call, behind the tool round in flight or behind a reply that would have ended the turn; one no call
 //! carried stays in the history for the next turn, and a turn that takes no messages hands it back
+#![allow(clippy::unwrap_used, reason = "test code")]
 
 mod support;
 

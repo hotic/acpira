@@ -293,6 +293,10 @@ impl AcpSession {
       return Ok(blocked);
     }
     let mut a = req.clone();
+    // Writing a key into an array or scalar would panic: the agent's params must be an object
+    if !a.is_object() && !a.is_null() {
+      return Err(RpcError::new(-32602, "remoteTool params must be an object"));
+    }
     // The host's folder is the session's, whatever the agent sent
     a["cwd"] = json!(folder.path);
     let (sid, call_id) = (req.get("sessionId").cloned().unwrap_or(Value::Null), req.get("callId").cloned().unwrap_or(Value::Null));
@@ -321,7 +325,8 @@ impl AcpSession {
           }
         }
         Some(Event::Done(Ok(mut value))) => {
-          if !spills.is_empty() {
+          // Only an object (or nothing) can take the key; the host's answer is not trusted to be one
+          if !spills.is_empty() && (value.is_object() || value.is_null()) {
             value["spills"] = spills.iter().map(|(name, b)| json!({ "name": name, "text": String::from_utf8_lossy(b) })).collect();
           }
           return Ok(value);

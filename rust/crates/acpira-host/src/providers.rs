@@ -303,7 +303,15 @@ fn unique_id(file: &ProvidersFile, p: &Provider) -> String {
   if !taken(base) {
     return base.to_owned();
   }
-  (2..).map(|n| format!("{base}-{n}")).find(|id| !taken(id)).expect("an unused suffix exists")
+  // The list is finite, so some suffix is free
+  let mut n = 2;
+  loop {
+    let id = format!("{base}-{n}");
+    if !taken(&id) {
+      return id;
+    }
+    n += 1;
+  }
 }
 
 #[cfg(test)]

@@ -79,7 +79,7 @@ pub fn tail(text: &str, max_lines: usize, max_bytes: usize) -> String {
       while !line.is_char_boundary(start) {
         start += 1;
       }
-      return line[start..].to_owned();
+      return line.get(start..).unwrap_or_default().to_owned();
     }
     if kept.len() >= max_lines || bytes + line.len() + 1 > max_bytes {
       break;
@@ -100,7 +100,7 @@ pub fn cut(s: &str, max: usize) -> &str {
   while !s.is_char_boundary(end) {
     end -= 1;
   }
-  &s[..end]
+  s.get(..end).unwrap_or_default()
 }
 
 #[cfg(test)]

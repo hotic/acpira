@@ -1,5 +1,6 @@
 //! A stream that goes silent is given up after the idle limit and retried. Its own test binary, since the limit is
 //! read once per process from `ACPIRA_AGENT_STREAM_IDLE_SECS`
+#![allow(clippy::unwrap_used, reason = "test code")]
 
 mod support;
 

@@ -445,7 +445,7 @@ fn cut_lines(text: &str, max: usize) -> String {
     return text.to_owned();
   }
   let head = crate::budget::cut(text, max);
-  let head = head.rfind('\n').map_or(head, |n| &head[..n + 1]);
+  let head = head.rfind('\n').and_then(|n| head.get(..n + 1)).unwrap_or(head);
   let shown = head.lines().count();
   let total = text.lines().count();
   format!("{head}[{} more lines not shown; read the file from line {} for the rest]", total - shown, shown + 1)
@@ -462,7 +462,7 @@ fn edges(text: &str, edge: usize) -> String {
   while !text.is_char_boundary(from) {
     from += 1;
   }
-  let tail = &text[from..];
+  let tail = text.get(from..).unwrap_or_default();
   format!("{head}\n[{} characters of this message left out]\n{tail}", text.len() - head.len() - tail.len())
 }
 
@@ -670,8 +670,8 @@ pub fn summary_prompt(head: &[Item], previous: Option<&str>, room: usize, words:
     while !transcript.is_char_boundary(at) {
       at += 1;
     }
-    let at = transcript[at..].find('\n').map_or(at, |n| at + n + 1);
-    transcript = format!("{OMITTED}{}", &transcript[at..]);
+    let at = transcript.get(at..).and_then(|t| t.find('\n')).map_or(at, |n| at + n + 1);
+    transcript = format!("{OMITTED}{}", transcript.get(at..).unwrap_or_default());
   }
   let length = format!("Keep the <summary> block within about {words} words.");
   let prompt = match previous {
@@ -686,15 +686,18 @@ pub fn summary_prompt(head: &[Item], previous: Option<&str>, room: usize, words:
 pub fn summary_text(reply: &str) -> String {
   let rest = match tag(reply, "<analysis>", 0, false) {
     Some(open) => match tag(reply, "</analysis>", open, false) {
-      Some(close) => format!("{}{}", &reply[..open], &reply[close + "</analysis>".len()..]),
-      None => reply[..open].to_owned(),
+      Some(close) => format!("{}{}", reply.get(..open).unwrap_or_default(), reply.get(close + "</analysis>".len()..).unwrap_or_default()),
+      None => reply.get(..open).unwrap_or_default().to_owned(),
     },
     None => reply.to_owned(),
   };
-  let inner = tag(&rest, "<summary>", 0, false).map(|open| {
+  let inner = tag(&rest, "<summary>", 0, false).and_then(|open| {
     let body = open + "<summary>".len();
     // The last closing tag: the summary can quote one of its own (an HTML `<details><summary>`)
-    tag(&rest, "</summary>", body, true).map_or(&rest[body..], |close| &rest[body..close])
+    match tag(&rest, "</summary>", body, true) {
+      Some(close) => rest.get(body..close),
+      None => rest.get(body..),
+    }
   });
   inner.unwrap_or(&rest).trim().to_owned()
 }
@@ -710,7 +713,10 @@ fn tag(s: &str, name: &str, from: usize, last: bool) -> Option<usize> {
     (at >= from && l.trim() == name).then(|| at + l.find(name).unwrap_or(0))
   });
   let alone = if last { lines.last() } else { lines.next() };
-  alone.or_else(|| if last { s[from..].rfind(name) } else { s[from..].find(name) }.map(|i| from + i))
+  alone.or_else(|| {
+    let s = s.get(from..)?;
+    if last { s.rfind(name) } else { s.find(name) }.map(|i| from + i)
+  })
 }
 
 /// A model a summary can be written with, thinking the way it would in a session: Claude Code compacts with the
@@ -950,6 +956,7 @@ async fn summarize(http: ureq::Agent, endpoint: Endpoint, request: Request) -> R
 }
 
 #[cfg(test)]
+#[allow(clippy::string_slice, reason = "test code")]
 mod tests {
   use super::*;
   use crate::llm::ToolCall;

@@ -13,6 +13,7 @@ use anyhow::{Result, anyhow};
 use regex::Regex;
 use serde_json::{Value, json};
 
+use acpira_shared::re;
 use acpira_shared::num::Num;
 use acpira_shared::transcript::{AccountQuota, QuotaWindow};
 
@@ -265,8 +266,8 @@ async fn changed_credentials(path: &Path, before: Option<&CredentialStamp>) -> O
   read_credentials(path).await
 }
 
-static TOML_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"((?:[^"\\]|\\.)*)"\s*$"#).unwrap());
-static UNESCAPE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\(.)").unwrap());
+static TOML_LINE: LazyLock<Regex> = LazyLock::new(|| re::compile(r#"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"((?:[^"\\]|\\.)*)"\s*$"#));
+static UNESCAPE: LazyLock<Regex> = LazyLock::new(|| re::compile(r"\\(.)"));
 
 /// Only flat toml with one `key = "value"` per line, the shape of Devin's credentials file
 pub async fn read_credentials(file: &Path) -> Option<AccountCredential> {

@@ -158,7 +158,7 @@ fn head_within(text: &str, budget: u64) -> &str {
   for (i, c) in text.char_indices() {
     q += quarters(c);
     if q > budget * 4 {
-      return &text[..i];
+      return text.get(..i).unwrap_or_default();
     }
   }
   text
@@ -170,7 +170,7 @@ fn tail_within(text: &str, budget: u64) -> &str {
   for (i, c) in text.char_indices().rev() {
     q += quarters(c);
     if q > budget * 4 {
-      return &text[i + c.len_utf8()..];
+      return text.get(i + c.len_utf8()..).unwrap_or_default();
     }
   }
   text
@@ -346,8 +346,9 @@ fn transcript_with_starts(region: &[Item]) -> (Vec<Line>, Vec<usize>) {
       let mut rest = line;
       loop {
         let cut = if rest.len() <= LINE_CHARS { rest.len() } else { crate::budget::cut(rest, LINE_CHARS).len() };
-        lines.push(Line { n: lines.len(), source, text: rest[..cut].to_owned() });
-        rest = &rest[cut..];
+        let (head, tail) = rest.split_at_checked(cut).unwrap_or((rest, ""));
+        lines.push(Line { n: lines.len(), source, text: head.to_owned() });
+        rest = tail;
         if rest.is_empty() {
           break;
         }
@@ -422,7 +423,7 @@ fn own_result(output: &str) -> &str {
 fn then_run_output<'a>(output: &'a str, command: &str) -> Option<&'a str> {
   let marker = format!("\n\n$ {command}\n");
   let at = output.rfind(&marker)?;
-  let rest = &output[at + marker.len()..];
+  let rest = output.get(at + marker.len()..)?;
   (!rest.starts_with("Not run: ")).then_some(rest)
 }
 
@@ -1044,7 +1045,8 @@ pub fn run(server: &Server, session: &Session, reason: Reason, limits: &Limits) 
   let budget = Budget::for_window(limits.usable);
   let index_tokens = (limits.usable / INDEX_SHARE).clamp(500, INDEX_TOKENS);
   let mut chunks = st.chunks.clone();
-  let partial = chunks.last().filter(|c| c.status == Status::Partial && c.to == base).cloned();
+  // Ordinals read back from the session file: a chunk ending before it starts is not one to continue
+  let partial = chunks.last().filter(|c| c.status == Status::Partial && c.to == base && c.from <= c.to).cloned();
   let starts: Vec<usize> = (base..logged).filter(|&k| opens_turn(&raw[k])).collect();
   // The running turn's first item: the latest prompt, or the turn folded earlier when none came after it
   let running = match reason {

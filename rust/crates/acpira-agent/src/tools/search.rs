@@ -129,7 +129,11 @@ pub fn grep(pattern: &str, path: &Path, include: Option<&str>, context: usize, c
     Ok(r) => r,
     Err(e) => return Output::error(format!("Invalid regular expression: {e}")),
   };
-  let include = include.map(|g| Glob::new(g).expect("checked in prepare"));
+  // Checked in prepare already
+  let include = match include.map(Glob::new).transpose() {
+    Ok(g) => g,
+    Err(e) => return Output::error(e),
+  };
   // A single file is searched as itself; its shown path is relative to the session folder
   let (base, files, cut) = if path.is_file() {
     (path.parent().unwrap_or(path).to_path_buf(), vec![path.file_name().unwrap_or_default().to_string_lossy().into_owned()], false)
@@ -222,7 +226,11 @@ pub fn glob(pattern: &str, path: &Path, ctx: &Ctx) -> Output {
   if let Some(e) = missing(path) {
     return e;
   }
-  let g = Glob::new(pattern).expect("checked in prepare");
+  // Checked in prepare already
+  let g = match Glob::new(pattern) {
+    Ok(g) => g,
+    Err(e) => return Output::error(e),
+  };
   let (files, _) = files::list(path, MAX_FILES);
   let mut hits: Vec<(std::time::SystemTime, String)> = files
     .iter()

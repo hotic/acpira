@@ -1,6 +1,7 @@
 //! Model discovery against recorded list shapes (OpenAI ids only, OpenRouter, Anthropic, Gemini, LM Studio, Ollama) and
 //! against the scripted server: the three metadata tiers, `estimated`, Anthropic pages and headers, the free check, the
 //! paid test call and the local probe
+#![allow(clippy::unwrap_used, reason = "test code")]
 
 use serde_json::{Value, json};
 

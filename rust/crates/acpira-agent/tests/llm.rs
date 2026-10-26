@@ -1,4 +1,5 @@
 //! The model clients against the mock server: what goes on the wire and what comes back
+#![allow(clippy::unwrap_used, reason = "test code")]
 
 use serde_json::json;
 

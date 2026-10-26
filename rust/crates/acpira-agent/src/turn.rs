@@ -1006,7 +1006,7 @@ fn retry_notice(source: &str, e: &LlmError, next: u32) -> Value {
 }
 
 /// One `request` event per model call (a retried call has one per attempt, `attempt` from 2 on)
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, reason = "one argument per field of the request event, gathered from different points of the call")]
 fn log_request(
   session: &Session,
   s: &Setup,
@@ -1385,7 +1385,8 @@ async fn run_tools(
     if i > start {
       let mut handles = vec![];
       for p in &prepared[start..i] {
-        let Ok(action) = p.action.clone() else { unreachable!() };
+        // The loop above took only calls whose action prepared
+        let Ok(action) = p.action.clone() else { continue };
         let ctx = ctx_for(server, session, &p.acp);
         server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": p.acp, "status": "in_progress" }));
         // An MCP call waits on its server; the rest read files or the network on a blocking thread
@@ -1468,8 +1469,8 @@ async fn run_tools(
     // A write of what the file already holds is no change to check
     let unchanged = matches!(&action, Action::Write { files } if files.iter().all(tools::edit::Change::unchanged));
     let out = run_action(server, session, action, ctx_for(server, session, &p.acp)).await;
-    let command = match &p.riders.then_run {
-      Some(Ok(command)) => command,
+    let (command, line) = match &p.riders.then_run {
+      Some(Ok(command @ Action::Bash { command: line, .. })) => (command, line),
       _ => {
         finish(server, session, p, out, todo, p.riders.refused());
         continue;
@@ -1480,14 +1481,13 @@ async fn run_tools(
       finish(server, session, p, out, todo, p.riders.skipped(why));
       continue;
     }
-    let Action::Bash { command: line, .. } = command else { unreachable!("then_run prepares a bash action") };
     // The change is made: its row completes now, the command gets a row of its own, and the call's one result waits
     // for both (a turn cancelled meanwhile still tells the model the change was made)
     let images = images_of(p, &out);
     let (model, is_error) = report(server, session, &p.acp, out);
     let cut = format!("then_run `{line}` was cancelled by the user before it finished.");
     session.state.lock().landed.push((p.call.id.clone(), joined(todo.as_deref(), &model, Some(&cut))));
-    let (section, stop) = ride_command(server, session, rules, command).await;
+    let (section, stop) = ride_command(server, session, rules, command, line).await;
     session.state.lock().landed.retain(|(id, _)| *id != p.call.id);
     rejected |= stop;
     record(session, p, joined(todo.as_deref(), &model, Some(&section)), is_error, images);
@@ -1706,9 +1706,9 @@ fn ride_todo(server: &Arc<Server>, session: &Arc<Session>, rules: &Rules, riders
 
 /// The command an edit or a write carries (`then_run`), once the change is made: on a command row of its own, under
 /// the rules a `bash` call would be, with its own card when they ask. The section for the call's result, and whether
-/// the user rejected the command, which ends the turn after the round as a rejected call does
-async fn ride_command(server: &Arc<Server>, session: &Arc<Session>, rules: &Rules, action: &Action) -> (String, bool) {
-  let Action::Bash { command, .. } = action else { unreachable!("then_run prepares a bash action") };
+/// the user rejected the command, which ends the turn after the round as a rejected call does. `command` is the
+/// command line of `action`, a `bash` one
+async fn ride_command(server: &Arc<Server>, session: &Arc<Session>, rules: &Rules, action: &Action, command: &str) -> (String, bool) {
   let acp = session.next_tool_id();
   let raw_input = json!({ "command": command });
   server.update(&session.id, json!({ "sessionUpdate": "tool_call", "toolCallId": acp, "title": command, "kind": "execute", "status": "pending", "rawInput": raw_input }));

@@ -84,6 +84,7 @@ async fn kill_escalates_to_sigkill_when_the_cli_ignores_the_polite_signal() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_native_release_is_killed_with_its_whole_process_group() {
   let fake = fake_or_skip!();
+  // SAFETY: signal 0 only checks that the process exists
   let alive = |pid: i32| unsafe { libc::kill(pid, 0) == 0 };
   for grouped in [true, false] {
     let (mut def, _) = fake_def(&fake);
@@ -105,6 +106,7 @@ async fn a_native_release_is_killed_with_its_whole_process_group() {
     } else {
       tokio::time::sleep(Duration::from_millis(300)).await;
       assert!(alive(helper) && !zombie(helper), "without a group the helper is out of reach");
+      // SAFETY: kill has no memory preconditions; `helper` is this test's own child, checked alive just above
       unsafe { libc::kill(helper, libc::SIGKILL) };
     }
   }
@@ -116,6 +118,7 @@ async fn a_native_release_is_killed_with_its_whole_process_group() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_native_release_that_crashes_leaves_no_helper_behind() {
   let fake = fake_or_skip!();
+  // SAFETY: signal 0 only checks that the process exists
   let alive = |pid: i32| unsafe { libc::kill(pid, 0) == 0 };
   let (mut def, _) = fake_def(&fake);
   def.release = Some(&acpira_host::acp::agents::native_release::ANTIGRAVITY);

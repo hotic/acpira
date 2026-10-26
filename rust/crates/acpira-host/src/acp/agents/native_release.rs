@@ -349,7 +349,7 @@ fn write_atomic_sync(path: &Path, data: &[u8]) -> Result<()> {
 /// One installer per agent directory at a time, across processes: an OS lock on `install.lock` (flock / LockFileEx),
 /// which the OS releases when the holder exits however it ends. The file itself stays: deleting it would let a second
 /// installer lock a fresh inode while the first still holds the old one
-struct InstallLock(#[allow(dead_code)] std::fs::File);
+struct InstallLock(#[allow(dead_code, reason = "held only for the OS lock, which closing the file releases")] std::fs::File);
 
 impl InstallLock {
   fn take(path: &Path) -> Result<InstallLock> {

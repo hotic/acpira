@@ -134,7 +134,7 @@ fn entry_of(stamp: Stamp, raw: &[u8]) -> Entry {
 /// folded copy. The match always sits near the start, even at the end of a long message, since the row cuts the tail
 fn snippet(message: &str, folded: &str, pos: usize, term: &str) -> String {
   let chars: Vec<char> = message.chars().collect();
-  let at = folded[..pos].chars().count();
+  let at = folded.get(..pos).unwrap_or_default().chars().count();
   let term_len = term.chars().count();
   let mut start = at;
   let mut width = 0;
@@ -317,7 +317,7 @@ mod tests {
     let s = hit_of("a", &e, &terms_of("NEEDLE")).unwrap().snippet;
     assert!(s.starts_with('…') && s.ends_with('…'));
     assert_eq!(s.chars().count(), SNIPPET_LEN + 2);
-    assert_eq!(s[..s.find("needle").unwrap()].trim_start_matches('…').chars().count(), SNIPPET_BEFORE);
+    assert_eq!(s.split_once("needle").unwrap().0.trim_start_matches('…').chars().count(), SNIPPET_BEFORE);
   }
 
   #[test]

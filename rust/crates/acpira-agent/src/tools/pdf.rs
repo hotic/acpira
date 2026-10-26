@@ -99,7 +99,7 @@ fn clean(raw: &str) -> Option<String> {
     }
     blank = 0;
     let body = line.trim_start();
-    out.push_str(&line[..line.len() - body.len()]);
+    out.push_str(line.strip_suffix(body).unwrap_or_default());
     let mut space = false;
     for c in body.chars() {
       if c == ' ' {

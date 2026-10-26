@@ -4,8 +4,8 @@
 //! DevTools protocol, so this is how a script drives the real app
 
 use std::collections::HashMap;
-use std::sync::Mutex;
 
+use parking_lot::Mutex;
 #[cfg(feature = "smoke")]
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
@@ -56,7 +56,7 @@ static PENDING: Mutex<Option<HashMap<u64, Answer>>> = Mutex::new(None);
 /// The page's answer to an `eval`
 #[tauri::command]
 pub fn acpira_smoke_result(id: u64, ok: bool, value: String) {
-  if let Some(tx) = PENDING.lock().unwrap().as_mut().and_then(|p| p.remove(&id)) {
+  if let Some(tx) = PENDING.lock().as_mut().and_then(|p| p.remove(&id)) {
     let _ = tx.send((ok, value));
   }
 }
@@ -164,7 +164,7 @@ async fn run(cmd: Value) -> (bool, Value) {
       let Some(w) = window(&cmd) else { return (false, json!("no such window")) };
       let id = SEQ.fetch_add(1, Ordering::SeqCst) + 1;
       let (tx, rx) = oneshot::channel();
-      PENDING.lock().unwrap().get_or_insert_with(HashMap::new).insert(id, tx);
+      PENDING.lock().get_or_insert_with(HashMap::new).insert(id, tx);
       let js = cmd["js"].as_str().unwrap_or("undefined");
       let script = format!(
         "(async () => {{ let ok = true, value; try {{ value = JSON.stringify(await ({js}) ?? null); }} catch (e) {{ ok = false; value = String(e && e.stack || e); }} window.__TAURI_INTERNALS__.invoke('acpira_smoke_result', {{ id: {id}, ok, value }}); }})()"

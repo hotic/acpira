@@ -1,6 +1,7 @@
 //! The `question` tool against the scripted model: the questions go out as an `elicitation/create` form tied to the
 //! tool call, the answers come back to the model as lines, closing the card ends the turn, and a client without form
 //! support gets the model to ask in plain text
+#![allow(clippy::unwrap_used, reason = "test code")]
 
 mod support;
 

@@ -93,6 +93,7 @@ fn forward(pipe: &Path, args: &[String]) -> std::io::Result<()> {
   let mut pid = 0u32;
   // SAFETY: a connected pipe handle this process owns
   if unsafe { windows_sys::Win32::System::Pipes::GetNamedPipeServerProcessId(file.as_raw_handle(), &mut pid) } != 0 {
+    // SAFETY: plain value arguments; an unknown pid only makes the call fail
     unsafe { windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(pid) };
   }
   hand_over(file, args)

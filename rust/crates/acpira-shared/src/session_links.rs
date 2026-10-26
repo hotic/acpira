@@ -18,18 +18,16 @@ pub fn session_link(id: &str) -> String {
 // Surrounding `<…>` or backticks are what models and chat clients wrap links in
 fn unwrap(input: &str) -> &str {
   let s = input.trim();
-  if s.len() >= 2 && ((s.starts_with('<') && s.ends_with('>')) || (s.starts_with('`') && s.ends_with('`'))) {
-    return s[1..s.len() - 1].trim();
-  }
-  s
+  let inner = s.strip_prefix('<').and_then(|x| x.strip_suffix('>')).or_else(|| s.strip_prefix('`').and_then(|x| x.strip_suffix('`')));
+  inner.map_or(s, str::trim)
 }
 
 /// The session a link points at: `acpira://session/<id>`, or any `scheme://…/session/<id>` with "acpira" before the path's
 /// end; query, fragment and one trailing slash are ignored. Bare ids are not links
 pub fn session_id_of_link(href: &str) -> Option<String> {
   let mut s = unwrap(href);
-  if let Some(cut) = s.find(['?', '#']) {
-    s = &s[..cut];
+  if let Some((before, _)) = s.split_once(['?', '#']) {
+    s = before;
   }
   let s = s.strip_suffix('/').unwrap_or(s);
   let (scheme, rest) = s.split_once("://")?;
@@ -38,18 +36,15 @@ pub fn session_id_of_link(href: &str) -> Option<String> {
     return None;
   }
   let scheme = scheme.to_ascii_lowercase();
-  let (authority, path) = match rest.find('/') {
-    Some(i) => (&rest[..i], &rest[i..]),
-    None => (rest, ""),
-  };
+  let (authority, path) = rest.find('/').and_then(|i| rest.split_at_checked(i)).unwrap_or((rest, ""));
   if scheme == "acpira" && authority.eq_ignore_ascii_case("session") {
     let id = path.get(1..).unwrap_or("");
     return is_session_id(id).then(|| id.to_string());
   }
   // `/session/` must sit in the path, and "acpira" anywhere before it (scheme, authority or an earlier path segment)
   let at = path.rfind("/session/")?;
-  let id = &path[at + "/session/".len()..];
-  let before = format!("{scheme}://{authority}{}", &path[..at]).to_lowercase();
+  let id = path.get(at + "/session/".len()..)?;
+  let before = format!("{scheme}://{authority}{}", path.get(..at)?).to_lowercase();
   (is_session_id(id) && before.contains("acpira")).then(|| id.to_string())
 }
 

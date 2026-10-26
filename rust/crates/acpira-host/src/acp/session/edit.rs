@@ -441,17 +441,18 @@ impl AcpSession {
     selections.sort_by_key(|(id, _)| !Self::is_model_id(controls, id));
     let mut settled: HashSet<String> = HashSet::new();
     for (config_id, value) in &selections {
-      let ctl = controls.options.iter().find(|c| &c.id == config_id).cloned();
-      if !ctl.as_ref().is_some_and(|c| c.options.iter().any(|o| &o.id == value)) {
-        if Self::is_model_id(controls, config_id) {
-          return Err(anyhow!(tp("history.optionUnavailable", &[("name", config_id)])));
+      let ctl = match controls.options.iter().find(|c| &c.id == config_id).cloned() {
+        Some(ctl) if ctl.options.iter().any(|o| &o.id == value) => ctl,
+        ctl => {
+          if Self::is_model_id(controls, config_id) {
+            return Err(anyhow!(tp("history.optionUnavailable", &[("name", config_id)])));
+          }
+          let keep = ctl.and_then(|c| c.value).unwrap_or_else(|| "no control".into());
+          self.log(&format!("edit: {config_id}={value} is not offered after the model switch; keeping {keep}"));
+          settled.insert(config_id.clone());
+          continue;
         }
-        let keep = ctl.and_then(|c| c.value).unwrap_or_else(|| "no control".into());
-        self.log(&format!("edit: {config_id}={value} is not offered after the model switch; keeping {keep}"));
-        settled.insert(config_id.clone());
-        continue;
-      }
-      let ctl = ctl.expect("checked");
+      };
       if ctl.value.as_ref() == Some(value) {
         continue;
       }
@@ -552,7 +553,7 @@ impl AcpSession {
     let mut ultracode_before = None;
     let result: Result<()> = async {
       let idx = edit.turn_index as usize;
-      let prefix: Vec<Turn> = self.core.lock().state.turns[..idx].to_vec();
+      let prefix: Vec<Turn> = self.core.lock().state.turns.get(..idx).ok_or_else(|| anyhow!(t("history.stale")))?.to_vec();
       let attachments = user.attachments.clone().unwrap_or_default();
       let kept: Vec<Attachment> = edit.retained_attachments.iter().map(|i| attachments[*i as usize].clone()).collect();
       let restored = restore_drafts(&self.id, &kept, &self.deps.blobs).await?;

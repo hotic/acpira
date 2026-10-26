@@ -169,6 +169,7 @@ fn layout(n: u32, w: u32, h: u32) -> (u32, u32, u32, u32) {
 /// A GIF of solid frames, one colour each, shown `delay_cs` hundredths of a second apiece: test material for the
 /// engine's suites as well as this module's
 #[cfg(any(test, feature = "mock"))]
+#[expect(clippy::unwrap_used, reason = "test material: encoding a few solid frames into a Vec cannot fail")]
 pub fn solid_gif(w: u16, h: u16, colours: &[[u8; 3]], delay_cs: u16) -> Vec<u8> {
   let mut out = vec![];
   {

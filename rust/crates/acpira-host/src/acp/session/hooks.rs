@@ -350,6 +350,7 @@ impl AcpSession {
     if matches!(origin, Origin::User | Origin::Goal)
       && let Some(cfg) = cfg.as_ref()
       && let Some(hook) = cfg.before_prompt.as_ref()
+      && let Some(h) = host.as_ref()
     {
       let first = first_of(&self.core.lock());
       let payload = json!({
@@ -362,7 +363,7 @@ impl AcpSession {
         "attachments": attachments,
         "first": first,
       });
-      match host.as_ref().expect("hooks were loaded from a host").run_prompt(hook, &cfg.root, &payload, &self.hook_env()).await {
+      match h.run_prompt(hook, &cfg.root, &payload, &self.hook_env()).await {
         PromptVerdict::Block(reason) => return Err(reason),
         // A slash command must stay the prompt's only text, or the agent no longer reads it as one
         PromptVerdict::Pass(Some(_)) if command_name(text).is_some() => self.log("hooks: beforePrompt context left out of a slash command"),
@@ -402,8 +403,11 @@ impl AcpSession {
       (first_of(&c), !carried)
     };
     let Some(cfg) = cfg else { return Ok(TurnContext { lead: vec![], tail }) };
-    if fresh && cfg.tracks_changes() {
-      let snap = host.as_ref().expect("hooks were loaded from a host").snapshot(&cfg.watch).await;
+    if fresh
+      && cfg.tracks_changes()
+      && let Some(h) = host.as_ref()
+    {
+      let snap = h.snapshot(&cfg.watch).await;
       self.core.lock().hooks.before = Some(snap);
     }
     let lead = match (&host, first) {
@@ -504,7 +508,7 @@ impl AcpSession {
   }
 
   /// `extra`: keys added to the payload (the audit's attribution)
-  #[allow(clippy::too_many_arguments)]
+  #[allow(clippy::too_many_arguments, reason = "the gate's inputs and the audit's attribution travel together")]
   async fn run_before_edit(&self, host: &HookHost, cfg: &HooksConfig, hook: &Hook, kind: ToolKind, files: &[String], raw_input: Option<Value>, phase: &str, extra: Value) -> Verdict {
     let read = read_inputs(&self.core.lock().state.turns);
     // The tool's own input, with the first file under the key Claude Code's Edit uses, so scripts that read one path work
@@ -811,7 +815,7 @@ mod tests {
   #[test]
   fn only_known_tools_keep_the_snapshot_out() {
     let reach = |b: AgentBlock, f: &dyn Fn(&mut ToolCallBlock)| {
-      let AgentBlock::ToolCall(mut tc) = b else { unreachable!() };
+      let AgentBlock::ToolCall(mut tc) = b else { panic!("not a tool call") };
       f(&mut tc);
       row_reach(&tc)
     };
@@ -831,7 +835,7 @@ mod tests {
 
   #[test]
   fn an_edit_names_its_locations_and_diff_sources_once() {
-    let AgentBlock::ToolCall(mut tc) = tool(ToolKind::Edit, None, &["/w/a.kt"]) else { unreachable!() };
+    let AgentBlock::ToolCall(mut tc) = tool(ToolKind::Edit, None, &["/w/a.kt"]) else { panic!("not a tool call") };
     tc.content = Some(ToolContent::Diff { lines: vec![], source: Some(DiffSource { path: "/w/a.kt".into(), ..Default::default() }) });
     tc.contents = Some(vec![ToolContent::Diff { lines: vec![], source: Some(DiffSource { path: "/w/b.kt".into(), ..Default::default() }) }]);
     assert_eq!(edit_paths(&tc), ["/w/a.kt", "/w/b.kt"]);

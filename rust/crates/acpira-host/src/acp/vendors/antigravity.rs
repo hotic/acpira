@@ -22,7 +22,7 @@ pub enum ReplyError {
 /// Where the failure starts in the last text block, and what it is. None = an ordinary reply
 pub fn reply_error(text: &str) -> Option<(usize, ReplyError)> {
   let at = TAIL.find_iter(text).last()?.start();
-  let tail = text[at..].trim();
+  let tail = text.get(at..)?.trim();
   if let Some(m) = MCP.captures(tail) {
     let reason = m.get(2).map(|r| r.as_str().trim().to_owned()).filter(|r| !r.is_empty());
     return Some((at, ReplyError::McpFailed { server: m[1].to_owned(), reason }));
@@ -42,15 +42,14 @@ const EXECUTION: &str = "Agent execution error: ";
 
 /// The start of every failure text `prompt` sends, each at the start of a line
 static TAIL: LazyLock<Regex> = LazyLock::new(|| {
-  Regex::new(
+  acpira_shared::re::compile(
     r"(?m)^(?:Agent execution error: |The MCP server '[A-Za-z0-9_-]+' failed to initialize|Usage Limit Reached\n\nYou have reached your current quota|Browser automation could not start \(|Agent connection was lost and could not be re-established: )",
   )
-  .unwrap()
 });
 static MCP: LazyLock<Regex> = LazyLock::new(|| {
-  Regex::new(r"(?s)^The MCP server '([A-Za-z0-9_-]+)' failed to initialize(?:: (.+?))?\. Fix the MCP server, or remove it from your configuration").unwrap()
+  acpira_shared::re::compile(r"(?s)^The MCP server '([A-Za-z0-9_-]+)' failed to initialize(?:: (.+?))?\. Fix the MCP server, or remove it from your configuration")
 });
-static WRAPPED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"(?s)^Agent execution terminated due to error\. \("(.*)"\)\s*$"#).unwrap());
+static WRAPPED: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r#"(?s)^Agent execution terminated due to error\. \("(.*)"\)\s*$"#));
 
 #[cfg(test)]
 mod tests {
@@ -85,7 +84,7 @@ mod tests {
   fn the_failure_is_found_after_streamed_output_and_plain_replies_are_left_alone() {
     let text = "Looking at the file now.\n\nUsage Limit Reached\n\nYou have reached your current quota for this period.";
     let (at, e) = reply_error(text).unwrap();
-    assert_eq!(&text[..at], "Looking at the file now.\n\n");
+    assert_eq!(text.get(..at), Some("Looking at the file now.\n\n"));
     assert_eq!(e, ReplyError::Other("Usage Limit Reached\n\nYou have reached your current quota for this period.".into()));
     assert!(reply_error("The error said: Agent execution error: inline, mid-sentence").is_none());
     assert!(reply_error("All done.").is_none());

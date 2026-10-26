@@ -22,6 +22,8 @@ pub const VERSION: &str = "2023-06-01";
 const DEFAULT_MAX_TOKENS: u64 = 16_384;
 /// The smallest thinking budget the API takes, and the room kept for the answer after it
 const MIN_BUDGET: u64 = 1024;
+/// More content blocks than one reply plausibly numbers; a stream index past it is a broken stream
+const MAX_BLOCKS: usize = 4096;
 
 /// What a replayed message must have come from: blocks signed by one model are not valid for another
 pub fn origin(url: &str, model: &str) -> String {
@@ -48,8 +50,8 @@ pub fn body(req: &Request, family: &Family, origin: &str) -> Value {
       // A message steered into the turn goes behind the round's tool results in their message, which is where Claude Code
       // puts one (the results must come first). The API would join two user messages itself; compatible servers, made
       // for Claude Code's traffic, may not. Those results were never sent without it, so no sent prefix changes
-      Item::User(parts) => match messages.last_mut().filter(|m| item.is_steer() && is_tool_results(m)) {
-        Some(results) => results["content"].as_array_mut().unwrap().extend(user_blocks(parts)),
+      Item::User(parts) => match messages.last_mut().filter(|m| item.is_steer() && is_tool_results(m)).and_then(|m| m.get_mut("content")).and_then(Value::as_array_mut) {
+        Some(results) => results.extend(user_blocks(parts)),
         None => messages.push(json!({ "role": "user", "content": user_blocks(parts) })),
       },
       Item::Assistant { text, tool_calls, native, .. } => {
@@ -98,8 +100,8 @@ pub fn body(req: &Request, family: &Family, origin: &str) -> Value {
           block["is_error"] = Value::Bool(true);
         }
         // Results of one round share the user message that follows the calls
-        match messages.last_mut() {
-          Some(m) if is_tool_results(m) => m["content"].as_array_mut().unwrap().push(block),
+        match messages.last_mut().filter(|m| is_tool_results(m)).and_then(|m| m.get_mut("content")).and_then(Value::as_array_mut) {
+          Some(results) => results.push(block),
           _ => messages.push(json!({ "role": "user", "content": [block] })),
         }
       }
@@ -267,6 +269,10 @@ impl Assembler {
           _ => {}
         }
         if self.blocks.len() <= index {
+          // The index comes from the stream: a broken one is an error, not an allocation that size
+          if index >= MAX_BLOCKS {
+            return Err(LlmError::Protocol(format!("content block {index} is out of range")));
+          }
           self.blocks.resize(index + 1, Value::Null);
         }
         self.blocks[index] = block;

@@ -293,7 +293,8 @@ impl Jobs {
     let mut b = job.buf.lock();
     let start = b.read.max(b.dropped) - b.dropped;
     let skipped = b.dropped.saturating_sub(b.read);
-    let fresh = if job.tty.is_some() { overstrike(&b.text[start..]) } else { b.text[start..].to_owned() };
+    let unread = b.text.get(start..).unwrap_or_default();
+    let fresh = if job.tty.is_some() { overstrike(unread) } else { unread.to_owned() };
     b.read = b.dropped + b.text.len();
     let status = match b.exit {
       None => format!("[job {id} is still running: {}]", job.command),

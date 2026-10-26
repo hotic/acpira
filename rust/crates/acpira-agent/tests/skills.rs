@@ -1,5 +1,6 @@
 //! Skills as slash commands: advertised with /compact on session/new and on a reopen, expanded behind a prompt that
 //! names one anywhere in its text, and loaded by the model through the `skill` tool
+#![allow(clippy::unwrap_used, reason = "test code")]
 
 mod support;
 

@@ -48,7 +48,7 @@ impl Probe {
 
 /// The folder, relative to the host's home, a build lives in
 pub fn build_dir(version: &str, digest: &str) -> String {
-  format!(".acpira/remote/bin/{version}-{}", &digest[..digest.len().min(DIGEST_DIR)])
+  format!(".acpira/remote/bin/{version}-{}", digest.get(..DIGEST_DIR).unwrap_or(digest))
 }
 
 /// The probe script (POSIX sh). It cannot know the digest to look for before it knows the platform, so it lists this
@@ -185,7 +185,7 @@ pub async fn prepare(platform: &str, path: &Path, cache: &Path) -> Result<Artifa
     let bytes = std::fs::read(&path2)?;
     let digest = crate::util::sha256_hex(&bytes);
     std::fs::create_dir_all(&cache2)?;
-    let gz = cache2.join(format!("{platform2}-{}.gz", &digest[..DIGEST_DIR]));
+    let gz = cache2.join(format!("{platform2}-{}.gz", digest.get(..DIGEST_DIR).unwrap_or(&digest)));
     if !gz.exists() {
       let tmp = cache2.join(format!(".{}.tmp", crate::util::random_hex(6)));
       let mut enc = flate2::write::GzEncoder::new(std::fs::File::create(&tmp)?, flate2::Compression::new(6));

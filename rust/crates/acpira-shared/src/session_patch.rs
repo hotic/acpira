@@ -51,6 +51,7 @@ impl ViewPartsData {
   }
 }
 
+#[expect(clippy::expect_used, reason = "only the protocol's own types come here; one that cannot serialize is a bug of the build")]
 pub fn raw<T: Serialize + ?Sized>(v: &T) -> Box<RawValue> {
   serde_json::value::to_raw_value(v).expect("serializable")
 }
@@ -85,12 +86,12 @@ fn splice_blocks(head: &RawValue, blocks: &[Box<RawValue>]) -> Option<Box<RawVal
 pub fn splice_array(head: &RawValue, key: &str, items: &[Box<RawValue>]) -> Option<Box<RawValue>> {
   let mark = format!("\"{key}\":[]");
   let h = head.get();
-  let at = h.find(&mark)?;
-  if h[at + mark.len()..].contains(&mark) {
+  let (before, after) = h.split_once(&mark)?;
+  if after.contains(&mark) {
     return None;
   }
   let mut out = String::with_capacity(h.len() + items.iter().map(|b| b.get().len() + 1).sum::<usize>());
-  out.push_str(&h[..at]);
+  out.push_str(before);
   out.push('"');
   out.push_str(key);
   out.push_str("\":[");
@@ -101,7 +102,7 @@ pub fn splice_array(head: &RawValue, key: &str, items: &[Box<RawValue>]) -> Opti
     out.push_str(b.get());
   }
   out.push(']');
-  out.push_str(&h[at + mark.len()..]);
+  out.push_str(after);
   RawValue::from_string(out).ok()
 }
 

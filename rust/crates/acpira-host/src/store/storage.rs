@@ -415,7 +415,7 @@ fn backup_time(name: &str) -> Option<SystemTime> {
   if b.len() < 24 || !name.is_ascii() || b[10] != b'T' {
     return None;
   }
-  let iso = format!("{}T{}:{}:{}.{}Z", &name[..10], &name[11..13], &name[14..16], &name[17..19], &name[20..23]);
+  let iso = format!("{}T{}:{}:{}.{}Z", name.get(..10)?, name.get(11..13)?, name.get(14..16)?, name.get(17..19)?, name.get(20..23)?);
   let ms = acpira_shared::time::ms_of_iso(&iso)?;
   Some(SystemTime::UNIX_EPOCH + Duration::from_millis(u64::try_from(ms).ok()?))
 }

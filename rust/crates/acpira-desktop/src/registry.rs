@@ -69,6 +69,7 @@ fn read(key: &str, name: Option<&str>) -> Option<String> {
     return None;
   }
   let mut buf = vec![0u16; (size as usize).div_ceil(2)];
+  // SAFETY: `buf` holds at least the `size` bytes the first call measured, and `size` says so
   let err = unsafe {
     RegGetValueW(HKEY_CURRENT_USER, key.as_ptr(), name_ptr, RRF_RT_REG_SZ, std::ptr::null_mut(), buf.as_mut_ptr().cast(), &mut size)
   };
@@ -106,6 +107,7 @@ fn write(key: &str, name: Option<&str>, data: &str) -> std::io::Result<()> {
   let name_ptr = name_w.as_ref().map_or(std::ptr::null(), |n| n.as_ptr());
   // SAFETY: a REG_SZ of the string's UTF-16 bytes, its NUL included
   let err = unsafe { RegSetValueExW(hkey, name_ptr, 0, REG_SZ, data_w.as_ptr().cast(), (data_w.len() * 2) as u32) };
+  // SAFETY: `hkey` was opened above and is closed once
   unsafe { RegCloseKey(hkey) };
   if err != 0 {
     return Err(std::io::Error::from_raw_os_error(err as i32));
@@ -137,6 +139,7 @@ mod tests {
     assert_eq!(ensure(&entries).unwrap(), 0);
     assert_eq!(read(&key, Some("x")).as_deref(), Some("b"));
     let w = wide(&key);
+    // SAFETY: `w` is a NUL-terminated key name that outlives the call
     unsafe { windows_sys::Win32::System::Registry::RegDeleteTreeW(windows_sys::Win32::System::Registry::HKEY_CURRENT_USER, w.as_ptr()) };
   }
 }

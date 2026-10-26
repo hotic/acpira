@@ -386,14 +386,16 @@ pub fn make_delta(old_root: &Path, new_root: &Path, from: &str, to: &str, out: &
       chosen = Some((Op::Patch, p, Some(r.to_owned())));
     }
     // A patch under half the file is kept without trying a plain copy; otherwise the smaller of the two
-    let good_patch = chosen.as_ref().is_some_and(|(_, p, _)| (p.len() as u64) < e.size / 2);
-    if !good_patch {
-      let a = add_bytes(&bytes, level).map_err(|x| io_err(&e.path, x))?;
-      if chosen.as_ref().is_none_or(|(_, p, _)| a.len() <= p.len()) {
-        chosen = Some((Op::Add, a, None));
+    let (op, bytes, src) = match chosen {
+      Some(patch) if (patch.1.len() as u64) < e.size / 2 => patch,
+      patch => {
+        let a = add_bytes(&bytes, level).map_err(|x| io_err(&e.path, x))?;
+        match patch {
+          Some(patch) if patch.1.len() < a.len() => patch,
+          _ => (Op::Add, a, None),
+        }
       }
-    }
-    let (op, bytes, src) = chosen.expect("an op was chosen");
+    };
     match op {
       Op::Patch => stats.patch += 1,
       _ => stats.add += 1,

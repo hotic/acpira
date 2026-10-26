@@ -3,12 +3,12 @@
 //! own; Quit is too, so the windows' places are saved before the app goes
 
 use std::collections::HashMap;
-use std::sync::Mutex;
 
 #[cfg(target_os = "macos")]
 use acpira_desktop::menu::SubmenuRole;
 use acpira_desktop::menu::{Command, Entry, Stock, UpdateItem, build_menu, shell_command};
 use acpira_desktop::wire::Initial;
+use parking_lot::Mutex;
 use tauri::menu::{AboutMetadata, CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Manager, Wry};
 
@@ -114,7 +114,7 @@ const ZOOM_STEPS: [f64; 15] = [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 
 
 fn zoom(h: &AppHandle, how: i32) {
   let Some(w) = focused_webview(h) else { return };
-  let mut zoom = ZOOM.lock().unwrap();
+  let mut zoom = ZOOM.lock();
   let map = zoom.get_or_insert_with(HashMap::new);
   let cur = *map.get(w.label()).unwrap_or(&1.0);
   let next = match how {
@@ -166,7 +166,7 @@ pub fn window_control(window: &tauri::WebviewWindow, op: &str) {
 
 /// A menu item was chosen. Main thread
 pub fn on_event(h: &AppHandle, id: &str) {
-  let a = app();
+  let Some(a) = crate::app::try_app() else { return };
   if id == QUIT_ID {
     a.before_quit();
     h.exit(0);

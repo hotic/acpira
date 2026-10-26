@@ -9,10 +9,11 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use acpira_shared::sidecar::PlatformRequest;
+use parking_lot::Mutex;
 use serde_json::value::RawValue;
 use serde_json::{Map, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -125,8 +126,7 @@ enum ConnKind {
   /// A child over stdio, ended by pid
   Child { pid: u32, exited: watch::Receiver<bool> },
   /// The persistent engine's socket: the sender stops its reader, which reports the connection closed
-  // Only Unix builds reach the persistent engine
-  #[cfg_attr(not(unix), allow(dead_code))]
+  #[cfg_attr(not(unix), allow(dead_code, reason = "only Unix builds reach the persistent engine"))]
   Socket { close: Option<oneshot::Sender<()>>, done: watch::Receiver<bool> },
 }
 
@@ -212,13 +212,13 @@ impl SidecarClient {
   }
 
   pub fn current(&self) -> (SidecarState, Option<String>) {
-    let s = self.inner.st.lock().unwrap();
+    let s = self.inner.st.lock();
     (s.state, s.detail.clone())
   }
 
   /// The engine's sessions directory, as its helloOk said
   pub fn sessions_dir(&self) -> Option<String> {
-    self.inner.st.lock().unwrap().sessions_dir.clone()
+    self.inner.st.lock().sessions_dir.clone()
   }
 
   pub fn start(&self) {
@@ -228,7 +228,7 @@ impl SidecarClient {
   /// Retry after Failed: the consecutive-failure counter and the engine choice start over
   pub fn retry(&self) {
     {
-      let mut s = self.inner.st.lock().unwrap();
+      let mut s = self.inner.st.lock();
       if s.disposed || s.live() {
         return;
       }
@@ -240,7 +240,7 @@ impl SidecarClient {
 
   pub fn attach(&self, view: Arc<dyn ShellView>) {
     let (state, detail) = {
-      let mut s = self.inner.st.lock().unwrap();
+      let mut s = self.inner.st.lock();
       let a = Attached { view: view.clone(), last_session: None };
       if s.ready {
         let env = attach_envelope(&a);
@@ -253,7 +253,7 @@ impl SidecarClient {
   }
 
   pub fn detach(&self, view_id: &str) {
-    let mut s = self.inner.st.lock().unwrap();
+    let mut s = self.inner.st.lock();
     let before = s.views.len();
     s.views.retain(|a| a.view.view_id() != view_id);
     if s.views.len() == before {
@@ -268,7 +268,7 @@ impl SidecarClient {
 
   /// A page message for a view (relayed verbatim)
   pub fn send(&self, view_id: &str, message: Box<RawValue>) {
-    let mut s = self.inner.st.lock().unwrap();
+    let mut s = self.inner.st.lock();
     if !s.views.iter().any(|a| a.view.view_id() == view_id) {
       return;
     }
@@ -278,7 +278,7 @@ impl SidecarClient {
   /// Facts about the shell changed (settings, focus). Before helloOk the event waits too: the hello already in flight may
   /// predate it, and replaying a snapshot the next hello also carries is harmless
   pub fn event(&self, event: Value) {
-    self.inner.st.lock().unwrap().post(Outgoing::PlatformEvent { event });
+    self.inner.st.lock().post(Outgoing::PlatformEvent { event });
   }
 
   /// Keeps a page open through the engine's preview proxy for this panel; again with another url navigates it. The
@@ -286,7 +286,7 @@ impl SidecarClient {
   pub fn preview(&self, lease: PreviewLease) -> PreviewHandle {
     let lease = Arc::new(lease);
     let (seq, answer) = {
-      let mut s = self.inner.st.lock().unwrap();
+      let mut s = self.inner.st.lock();
       s.lease_seq += 1;
       let seq = s.lease_seq;
       s.previews.retain(|(_, l)| l.panel_id != lease.panel_id);
@@ -304,7 +304,7 @@ impl SidecarClient {
   /// running and the next launch picks them up
   pub async fn dispose(&self) {
     let conn = {
-      let mut s = self.inner.st.lock().unwrap();
+      let mut s = self.inner.st.lock();
       if s.disposed {
         return;
       }
@@ -342,7 +342,7 @@ impl SidecarClient {
 
   #[cfg(all(test, unix))]
   fn current_generation(&self) -> u64 {
-    self.inner.st.lock().unwrap().generation
+    self.inner.st.lock().generation
   }
 }
 
@@ -356,7 +356,7 @@ pub struct PreviewHandle {
 impl PreviewHandle {
   pub fn release(&self) {
     let Some(inner) = self.client.upgrade() else { return };
-    let mut s = inner.st.lock().unwrap();
+    let mut s = inner.st.lock();
     let Some(i) = s.previews.iter().position(|(q, l)| *q == self.seq && l.panel_id == self.panel_id) else { return };
     s.previews.remove(i);
     s.preview_latest.remove(&self.panel_id);
@@ -447,7 +447,7 @@ impl Inner {
     let candidates = (self.opts.commands)();
     let mut after = After::default();
     let (generation, cmd, endpoint) = {
-      let mut s = self.st.lock().unwrap();
+      let mut s = self.st.lock();
       if s.disposed || s.live() {
         return;
       }
@@ -484,7 +484,7 @@ impl Inner {
   async fn connect(self: Arc<Self>, generation: u64, cmd: SidecarCommand, ep: EngineEndpoint, total: usize) {
     let me = self.clone();
     let cancelled = move || {
-      let s = me.st.lock().unwrap();
+      let s = me.st.lock();
       s.generation != generation || s.disposed
     };
     let log = self.opts.log.clone();
@@ -494,7 +494,7 @@ impl Inner {
       Ok(s) => s,
       Err(e) => {
         {
-          let mut s = self.st.lock().unwrap();
+          let mut s = self.st.lock();
           if s.generation != generation {
             return;
           }
@@ -509,7 +509,7 @@ impl Inner {
     let (close_tx, close_rx) = oneshot::channel::<()>();
     let (done_tx, done_rx) = watch::channel(false);
     {
-      let mut s = self.st.lock().unwrap();
+      let mut s = self.st.lock();
       if s.generation != generation || s.disposed {
         return;
       }
@@ -543,7 +543,7 @@ impl Inner {
       }
       let _ = done_tx.send(true);
       {
-        let mut s = me.st.lock().unwrap();
+        let mut s = me.st.lock();
         if s.generation == generation {
           s.conn = None;
         }
@@ -555,7 +555,7 @@ impl Inner {
   #[cfg(not(any(unix, windows)))]
   async fn connect(self: Arc<Self>, generation: u64, cmd: SidecarCommand, _ep: EngineEndpoint, total: usize) {
     {
-      self.st.lock().unwrap().connecting = false;
+      self.st.lock().connecting = false;
     }
     self.spawn_failed(generation, &cmd, "the persistent engine needs Unix domain sockets or named pipes", total);
   }
@@ -584,12 +584,15 @@ impl Inner {
       }
     };
     let pid = child.id().unwrap_or(0);
-    let (mut stdin, stdout, stderr) =
-      (child.stdin.take().expect("piped"), child.stdout.take().expect("piped"), child.stderr.take().expect("piped"));
+    let (Some(mut stdin), Some(stdout), Some(stderr)) = (child.stdin.take(), child.stdout.take(), child.stderr.take()) else {
+      let _ = child.start_kill();
+      self.spawn_failed(generation, &cmd, "stdio was not piped", total);
+      return;
+    };
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
     let (exit_tx, exit_rx) = watch::channel(false);
     {
-      let mut s = self.st.lock().unwrap();
+      let mut s = self.st.lock();
       if s.generation != generation || s.disposed {
         drop(s);
         let _ = child.start_kill();
@@ -632,7 +635,7 @@ impl Inner {
       };
       let _ = exit_tx.send(true);
       {
-        let mut s = me.st.lock().unwrap();
+        let mut s = me.st.lock();
         if s.generation == generation {
           s.conn = None;
         }
@@ -645,7 +648,7 @@ impl Inner {
     if line.trim().is_empty() {
       return;
     }
-    if self.st.lock().unwrap().generation != generation {
+    if self.st.lock().generation != generation {
       return;
     }
     let m: Incoming = match serde_json::from_str(line) {
@@ -658,7 +661,7 @@ impl Inner {
     let mut after = After::default();
     match m.kind.as_str() {
       "helloOk" => {
-        let mut s = self.st.lock().unwrap();
+        let mut s = self.st.lock();
         if s.generation != generation {
           return;
         }
@@ -691,7 +694,7 @@ impl Inner {
       "helloReject" => {
         let reason = m.reason.unwrap_or_default();
         self.log(&format!("sidecar rejected hello: {reason}"));
-        let mut s = self.st.lock().unwrap();
+        let mut s = self.st.lock();
         let socket = matches!(s.conn.as_ref().map(|c| &c.kind), Some(ConnKind::Socket { .. }));
         let close = |s: &mut State| {
           if let Some(Conn { kind: ConnKind::Socket { close, .. }, .. }) = s.conn.as_mut()
@@ -719,7 +722,7 @@ impl Inner {
         let (Some(view_id), Some(raw)) = (m.view_id, m.message) else { return };
         let msg = HostMessage::from_raw(raw);
         let view = {
-          let mut s = self.st.lock().unwrap();
+          let mut s = self.st.lock();
           let Some(a) = s.views.iter_mut().find(|a| a.view.view_id() == view_id) else { return };
           if let Some(id) = &msg.session {
             a.last_session = Some(id.clone());
@@ -737,7 +740,7 @@ impl Inner {
       }
       "previewOpened" => {
         let Some(request_id) = m.request_id else { return };
-        let mut s = self.st.lock().unwrap();
+        let mut s = self.st.lock();
         let Some((panel, url)) = s.preview_asks.remove(&request_id) else { return };
         let Some(lease) = s.previews.iter().find(|(_, l)| l.panel_id == panel).map(|(_, l)| l.clone()) else { return };
         if lease.url != url || s.preview_latest.get(&panel) != Some(&request_id) {
@@ -771,7 +774,7 @@ impl Inner {
         request_id.map(|id| Outgoing::PlatformResponse { request_id: id, result: None, error: Some(e) })
       }
     };
-    let s = self.st.lock().unwrap();
+    let s = self.st.lock();
     if let Some(r) = reply
       && s.generation == generation
     {
@@ -782,7 +785,7 @@ impl Inner {
   fn spawn_failed(self: &Arc<Self>, generation: u64, cmd: &SidecarCommand, err: &str, total: usize) {
     let mut after = After::default();
     {
-      let mut s = self.st.lock().unwrap();
+      let mut s = self.st.lock();
       if s.generation != generation {
         return;
       }
@@ -801,7 +804,7 @@ impl Inner {
   fn on_exit(self: &Arc<Self>, generation: u64, code: &str, total: usize) {
     let mut after = After::default();
     {
-      let mut s = self.st.lock().unwrap();
+      let mut s = self.st.lock();
       if s.generation != generation {
         return;
       }
@@ -829,7 +832,7 @@ impl Inner {
           let me = self.clone();
           s.timer = Some(self.rt.spawn(async move {
             tokio::time::sleep(delay).await;
-            me.st.lock().unwrap().timer = None;
+            me.st.lock().timer = None;
             Inner::start(&me);
           }));
         }
@@ -863,6 +866,7 @@ async fn stop_child(tx: mpsc::UnboundedSender<String>, pid: u32, mut exited: wat
   let _ = pid;
 }
 
-// The scripted engine listens on a Unix socket
-#[cfg(all(test, unix))]
+// The scripted engine listens on a Unix socket (`cfg(test)` on its own so clippy's test exemptions see it)
+#[cfg(test)]
+#[cfg(unix)]
 mod tests;

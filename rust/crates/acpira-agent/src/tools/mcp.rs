@@ -40,11 +40,12 @@ fn output(r: &crate::mcp::CallResult, images: bool, ctx: &Ctx) -> Output {
   let mut omitted = 0usize;
   for (i, (mime, data)) in r.images.iter().enumerate() {
     // The card shows every image; the model gets the first few that fit
-    content.push(json!({ "type": "content", "content": { "type": "image", "data": data, "mimeType": mime } }));
+    let mut block = json!({ "type": "content", "content": { "type": "image", "data": data, "mimeType": mime } });
     if !images || i >= MAX_IMAGES || data.len() > MAX_IMAGE_BYTES {
       omitted += 1;
-      content.last_mut().unwrap()["_meta"] = json!({ "acpira/notForModel": true });
+      block["_meta"] = json!({ "acpira/notForModel": true });
     }
+    content.push(block);
   }
   if omitted > 0 {
     let why = if images { "too many or too large to send" } else { "this model does not accept images" };

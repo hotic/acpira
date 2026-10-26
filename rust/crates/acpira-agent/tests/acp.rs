@@ -1,4 +1,5 @@
 //! The ACP surface without a model: handshake, modes and the config options built from providers.json
+#![allow(clippy::unwrap_used, reason = "test code")]
 
 mod support;
 

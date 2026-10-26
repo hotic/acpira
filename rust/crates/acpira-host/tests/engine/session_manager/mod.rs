@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use acpira_host::accounts::local::LocalAccounts;
 use acpira_host::acp::agents::registry::AgentRegistry;
 use acpira_host::acp::session::{AcpSession, CompactionPolicy, SessionDeps};
-#[allow(unused_imports)]
+#[allow(unused_imports, reason = "the submodules reach it through `use super::*`")]
 use std::path::PathBuf;
 use acpira_host::session_manager::{Attention, ManagerDeps, SessionManager, Viewer};
 use acpira_host::store::transcript_store::TranscriptStore;

@@ -323,7 +323,8 @@ mod tests {
 }
 
 // Run on a Windows machine (cross-built test binary); PowerShell is the shell there
-#[cfg(all(test, windows))]
+#[cfg(test)]
+#[cfg(windows)]
 mod windows_tests {
   use super::*;
   use std::sync::Arc;

@@ -1,6 +1,7 @@
 //! Chunk compaction (`compaction: "chunk"` in providers.json) against the scripted model: `/compact` folds finished
 //! turns without a model call, the history tools read the folded output back, a reopen renders the same view, a long
 //! turn folds its earlier steps into a work-state index while it runs, and an overflow falls back to the summary
+#![allow(clippy::unwrap_used, reason = "test code")]
 
 mod support;
 

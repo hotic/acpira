@@ -215,9 +215,11 @@ pub fn apply(content: &str, e: &Edit) -> Result<String, String> {
     }
   }
   // Trailing whitespace differs: match line by line ignoring it, and only a unique match
-  if let Some((start, end)) = unique_trimmed_match(content, &e.old) {
+  if let Some((start, end)) = unique_trimmed_match(content, &e.old)
+    && let (Some(head), Some(tail)) = (content.get(..start), content.get(end..))
+  {
     let new = if content.contains("\r\n") && !e.new.contains("\r\n") { e.new.replace('\n', "\r\n") } else { e.new.clone() };
-    return Ok(format!("{}{}{}", &content[..start], new, &content[end..]));
+    return Ok(format!("{head}{new}{tail}"));
   }
   Err("old_string not found; read the file again and copy the exact text".into())
 }

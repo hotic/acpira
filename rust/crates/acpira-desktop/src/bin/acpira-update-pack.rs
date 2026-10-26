@@ -283,7 +283,8 @@ fn merge(args: &[String]) -> Result<(), String> {
     }
   }
   std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
-  write_manifest(&out, &merged.expect("at least one input"), seed.as_ref())
+  let Some(merged) = merged else { return Err("no manifest to merge".to_owned()) };
+  write_manifest(&out, &merged, seed.as_ref())
 }
 
 #[cfg(test)]

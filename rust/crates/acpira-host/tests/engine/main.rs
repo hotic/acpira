@@ -1,7 +1,7 @@
 //! Engine tests, one module per former TS suite (test/<name>.test.ts), built into a single test binary
 
-// `[x.clone()]` reads better than `slice::from_ref(&x)` on the expected side of an assertion
-#![allow(clippy::cloned_ref_to_slice_refs)]
+#![allow(clippy::cloned_ref_to_slice_refs, reason = "`[x.clone()]` reads better than `slice::from_ref(&x)` on the expected side of an assertion")]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::string_slice, reason = "test code")]
 
 mod support;
 

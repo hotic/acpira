@@ -4125,7 +4125,8 @@ fn remote_view(
   last: Option<acpira_shared::session_patch::LastTurnParts>,
 ) -> Option<(ViewParts, HostMsg)> {
   let mut v: Value = serde_json::from_str(head.get()).ok()?;
-  v["rev"] = Value::from(rev);
+  // The head comes from another engine: not an object gives None instead of a panic in `IndexMut`
+  v.as_object_mut()?.insert("rev".to_owned(), Value::from(rev));
   let running = v["running"].as_bool().unwrap_or(false);
   let head = serde_json::value::to_raw_value(&v).ok()?;
   let whole = crate::bus::splice(&head, "turns", &turns)?;

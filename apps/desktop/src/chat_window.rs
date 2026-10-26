@@ -5,12 +5,13 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use acpira_desktop::browser::{answering, normalize_preview_url, origin_of};
 use acpira_desktop::client::{ShellView, SidecarState};
 use acpira_desktop::page::APP_ORIGIN;
 use acpira_desktop::wire::{HostMessage, Initial};
+use parking_lot::Mutex;
 use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use tauri::WebviewWindow;
@@ -40,6 +41,7 @@ pub struct ChatWindow {
   pub maximized: AtomicBool,
 }
 
+#[expect(clippy::expect_used, reason = "APP_ORIGIN is a constant absolute URL and every host passed is one of the shell's own names")]
 pub fn page_url(host: &str) -> tauri::Url {
   format!("{APP_ORIGIN}/index.html?host={host}").parse().expect("the app page URL parses")
 }
@@ -63,7 +65,7 @@ impl ChatWindow {
   }
 
   pub fn session_id(&self) -> Option<String> {
-    self.shown.lock().unwrap().clone()
+    self.shown.lock().clone()
   }
 
   /// True once the page has its init state (a chime or a toast can show now)
@@ -141,13 +143,13 @@ impl ChatWindow {
         }
       }
       "panelBrowser" => {
-        let relay = self.tabs.lock().unwrap().get(&tab).cloned();
+        let relay = self.tabs.lock().get(&tab).cloned();
         if let Some(r) = relay {
           r.on_page_message(m["msg"].clone());
         }
       }
       "panelBrowserClose" => {
-        let relay = self.tabs.lock().unwrap().remove(&tab);
+        let relay = self.tabs.lock().remove(&tab);
         if let Some(r) = relay {
           r.dispose();
         }
@@ -166,7 +168,7 @@ impl ChatWindow {
   }
 
   fn tab(self: &Arc<Self>, tab: &str) -> Arc<BrowserRelay> {
-    let mut tabs = self.tabs.lock().unwrap();
+    let mut tabs = self.tabs.lock();
     if let Some(r) = tabs.get(tab) {
       return r.clone();
     }
@@ -185,7 +187,7 @@ impl ChatWindow {
   }
 
   fn close_tabs(&self) {
-    let tabs: Vec<_> = self.tabs.lock().unwrap().drain().map(|(_, r)| r).collect();
+    let tabs: Vec<_> = self.tabs.lock().drain().map(|(_, r)| r).collect();
     for r in tabs {
       r.dispose();
     }
@@ -198,7 +200,6 @@ impl ChatWindow {
     let at = self
       .tabs
       .lock()
-      .unwrap()
       .iter()
       .find(|(_, r)| r.target().and_then(|t| origin_of(&t)) == origin && r.folder().as_deref() == folder)
       .map(|(k, r)| (k.clone(), r.clone()));
@@ -215,13 +216,13 @@ impl ChatWindow {
   }
 
   pub fn post_browser_look(&self) {
-    for r in self.tabs.lock().unwrap().values() {
+    for r in self.tabs.lock().values() {
       r.post_look();
     }
   }
 
   pub fn post_browser_history(&self) {
-    for r in self.tabs.lock().unwrap().values() {
+    for r in self.tabs.lock().values() {
       r.post_history();
     }
   }
@@ -232,7 +233,7 @@ impl ChatWindow {
     if self.ready() {
       self.transport.send(json);
     } else {
-      self.shell_queue.lock().unwrap().push(json);
+      self.shell_queue.lock().push(json);
     }
   }
 
@@ -282,13 +283,13 @@ impl ShellView for ChatWindow {
   fn on_host_message(&self, m: HostMessage) {
     let before = self.session_id();
     if let Some(id) = &m.session {
-      *self.shown.lock().unwrap() = Some(id.clone());
+      *self.shown.lock() = Some(id.clone());
     }
     if m.kind == "noSession" {
-      *self.shown.lock().unwrap() = None;
+      *self.shown.lock() = None;
     }
     {
-      let mut watch = self.watch.lock().unwrap();
+      let mut watch = self.watch.lock();
       if let Some(w) = watch.as_mut()
         && w(&m)
       {
@@ -305,7 +306,7 @@ impl ShellView for ChatWindow {
       return;
     }
     self.page_ready.store(true, Ordering::SeqCst);
-    for q in self.shell_queue.lock().unwrap().drain(..) {
+    for q in self.shell_queue.lock().drain(..) {
       self.transport.send(q);
     }
     app.on_page_ready(self);

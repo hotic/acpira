@@ -1,6 +1,6 @@
 //! Assertion helpers with the vitest semantics the suites were written against
 
-#![allow(dead_code)]
+#![allow(dead_code, reason = "each suite uses only some of the helpers")]
 
 use serde::Serialize;
 use serde_json::Value;

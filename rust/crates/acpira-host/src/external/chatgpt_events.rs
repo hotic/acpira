@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
+use acpira_shared::re;
 use acpira_shared::transcript::*;
 
 use crate::acp::transcript::diff::diff_lines;
@@ -52,8 +53,8 @@ pub fn chatgpt_session_id(key: &str) -> Result<String> {
   Ok(format!("chatgpt-{}", digest.iter().take(16).map(|b| format!("{b:02x}")).collect::<String>()))
 }
 
-static ID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^chatgpt-[a-f0-9]{32}$").unwrap());
-static TOKEN_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[\w.-]{1,160}$").unwrap());
+static ID_RE: LazyLock<Regex> = LazyLock::new(|| re::compile(r"^chatgpt-[a-f0-9]{32}$"));
+static TOKEN_RE: LazyLock<Regex> = LazyLock::new(|| re::compile(r"^[\w.-]{1,160}$"));
 
 pub fn is_chatgpt_id(id: &str) -> bool {
   ID_RE.is_match(id)
@@ -159,7 +160,7 @@ pub fn apply_chatgpt_event(record: &ChatGptRecord, value: &Value, now: i64) -> R
     bail!("This mirror was deleted; refusing to recreate it");
   }
   let digest: String = Sha256::digest(serde_json::to_string(&e)?.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
-  let id = e["id"].as_str().unwrap().to_owned();
+  let id = text(&e, "id")?.to_owned();
   if let Some(prev) = record.receipts.get(&id) {
     if prev.as_str() != Some(digest.as_str()) {
       bail!("Event ID was reused with different content");
@@ -171,11 +172,13 @@ pub fn apply_chatgpt_event(record: &ChatGptRecord, value: &Value, now: i64) -> R
   }
   let mut r = record.clone();
   let at = iso_of_ms(now);
-  let turn_id = e["turnId"].as_str().unwrap().to_owned();
+  let turn_id = text(&e, "turnId")?.to_owned();
   let s = |k: &str| e.get(k).and_then(Value::as_str).map(str::to_owned);
-  match e["type"].as_str().unwrap() {
+  // The fields `parse_chatgpt_event` checked for this event type
+  let need = |k: &str| text(&e, k).map(str::to_owned);
+  match text(&e, "type")? {
     "turn_start" => {
-      let text = s("text").unwrap();
+      let text = need("text")?;
       if let Some(existing) = r.turns.iter().find_map(|t| t.as_user().filter(|u| u.id.as_deref() == Some(turn_id.as_str()))) {
         if existing.text != text {
           bail!("Turn ID reused with different text");
@@ -215,14 +218,14 @@ pub fn apply_chatgpt_event(record: &ChatGptRecord, value: &Value, now: i64) -> R
       let late_turn = index.filter(|i| matches!(r.turns.get(i + 1), Some(Turn::Agent(_)))).map(|i| i + 1);
       let active_id = r.active_turn_id.clone();
       let turn: &mut AgentTurn = match late_turn {
-        Some(i) => r.turns[i].as_agent_mut().unwrap(),
+        Some(i) => r.turns.get_mut(i).and_then(Turn::as_agent_mut).ok_or_else(|| anyhow!("Turn is not active; open it with turn_start first"))?,
         None => active_turn(&mut r, &turn_id)?,
       };
       match kind {
         "message" => {
-          let message_id = s("messageId").unwrap();
+          let message_id = need("messageId")?;
           let phase = if s("phase").as_deref() == Some("final") { TextPhase::Final } else { TextPhase::Commentary };
-          let text = s("text").unwrap();
+          let text = need("text")?;
           match turn.blocks.iter_mut().find_map(|b| match b {
             AgentBlock::Text(t) if t.id.as_deref() == Some(message_id.as_str()) => Some(t),
             _ => None,
@@ -237,7 +240,7 @@ pub fn apply_chatgpt_event(record: &ChatGptRecord, value: &Value, now: i64) -> R
           }
         }
         "tool_start" => {
-          let call_id = s("callId").unwrap();
+          let call_id = need("callId")?;
           if turn.blocks.iter().any(|b| matches!(b, AgentBlock::ToolCall(tc) if tc.id == call_id)) {
             bail!("Tool call ID already exists");
           }
@@ -246,8 +249,8 @@ pub fn apply_chatgpt_event(record: &ChatGptRecord, value: &Value, now: i64) -> R
             Some(v) => format!("Input:\n{}\n\nOutput:\n", crate::json::pretty(v)),
           };
           turn.blocks.push(AgentBlock::ToolCall(ToolCallBlock {
-            kind: e.get("kind").and_then(Value::as_str).and_then(ToolKind::parse).unwrap(),
-            verb: s("name").unwrap(),
+            kind: e.get("kind").and_then(Value::as_str).and_then(ToolKind::parse).ok_or_else(|| anyhow!("Invalid tool name or kind"))?,
+            verb: need("name")?,
             target: s("target"),
             target_mono: Some(true),
             status: ToolStatus::InProgress,
@@ -257,7 +260,7 @@ pub fn apply_chatgpt_event(record: &ChatGptRecord, value: &Value, now: i64) -> R
           }));
         }
         "tool_output" => {
-          let b = tool(turn, &s("callId").unwrap())?;
+          let b = tool(turn, &need("callId")?)?;
           if b.status != ToolStatus::InProgress {
             bail!("Tool is already settled");
           }
@@ -266,7 +269,7 @@ pub fn apply_chatgpt_event(record: &ChatGptRecord, value: &Value, now: i64) -> R
             _ => String::new(),
           };
           if len16(&previous) < OUTPUT_LIMIT {
-            let joined = previous + &s("text").unwrap();
+            let joined = previous + &need("text")?;
             let text = if len16(&joined) > OUTPUT_LIMIT {
               format!("{}\n[Output truncated at 256,000 characters]", slice16(&joined, OUTPUT_LIMIT))
             } else {
@@ -276,11 +279,11 @@ pub fn apply_chatgpt_event(record: &ChatGptRecord, value: &Value, now: i64) -> R
           }
         }
         "tool_end" => {
-          let b = tool(turn, &s("callId").unwrap())?;
+          let b = tool(turn, &need("callId")?)?;
           if b.status != ToolStatus::InProgress {
             bail!("Tool is already settled");
           }
-          let status = ToolStatus::parse(&s("status").unwrap()).unwrap();
+          let status = ToolStatus::parse(&need("status")?).ok_or_else(|| anyhow!("Invalid tool status"))?;
           b.status = status;
           b.ended_at = Some(now);
           b.meta = s("detail");
@@ -288,11 +291,8 @@ pub fn apply_chatgpt_event(record: &ChatGptRecord, value: &Value, now: i64) -> R
             if status != ToolStatus::Completed {
               bail!("A failed tool cannot claim an applied diff");
             }
-            let (path, old, new) = (
-              d["path"].as_str().unwrap().to_owned(),
-              d["oldText"].as_str().unwrap().to_owned(),
-              d["newText"].as_str().unwrap().to_owned(),
-            );
+            let d = d.as_object().ok_or_else(|| anyhow!("Expected an event object"))?;
+            let (path, old, new) = (text(d, "path")?.to_owned(), text(d, "oldText")?.to_owned(), text(d, "newText")?.to_owned());
             b.content = Some(ToolContent::Diff {
               lines: diff_lines(&old, &new),
               source: Some(DiffSource { path: path.clone(), old_text: old, new_text: new, omitted: false }),
@@ -301,7 +301,7 @@ pub fn apply_chatgpt_event(record: &ChatGptRecord, value: &Value, now: i64) -> R
           }
         }
         "turn_end" => {
-          let stop = TurnStop::parse(&s("stop").unwrap()).unwrap();
+          let stop = TurnStop::parse(&need("stop")?).ok_or_else(|| anyhow!("Invalid turn stop"))?;
           if let Some(existing) = turn.stop {
             if existing != stop {
               bail!("Conflicting turn completion receipt");
@@ -327,7 +327,7 @@ pub fn apply_chatgpt_event(record: &ChatGptRecord, value: &Value, now: i64) -> R
             return Ok(None);
           }
         }
-        _ => unreachable!("validated"),
+        _ => bail!("Unsupported ChatGPT bridge event"),
       }
     }
   }

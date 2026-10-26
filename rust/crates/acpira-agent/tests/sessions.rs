@@ -1,5 +1,6 @@
 //! Sessions on disk: a turn's history, controls and request records survive the agent process, and come back through
 //! `session/list`, `session/resume` (no replay) and `session/load` (replayed as updates)
+#![allow(clippy::unwrap_used, clippy::panic, reason = "test code")]
 
 mod support;
 

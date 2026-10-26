@@ -5,9 +5,10 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use parking_lot::Mutex;
 use serde::Serialize;
 
 use super::delta;
@@ -147,12 +148,12 @@ impl Updater {
   }
 
   pub fn state(&self) -> UpdateState {
-    self.state.lock().unwrap().clone()
+    self.state.lock().clone()
   }
 
   fn set(&self, f: impl FnOnce(&mut UpdateState)) {
     let snap = {
-      let mut s = self.state.lock().unwrap();
+      let mut s = self.state.lock();
       f(&mut s);
       s.clone()
     };
@@ -174,7 +175,7 @@ impl Updater {
   }
 
   pub fn staged(&self) -> Option<Staged> {
-    self.staged.lock().unwrap().clone()
+    self.staged.lock().clone()
   }
 
   /// The automatic download switch; turned on while a version waits, that version is fetched now
@@ -338,7 +339,7 @@ impl Updater {
     }
     let path = layout.staged_item(&app);
     self.log(&format!("{version} is staged at {}", path.display()));
-    *self.staged.lock().unwrap() = Some(Staged { version, path, dir });
+    *self.staged.lock() = Some(Staged { version, path, dir });
     self.set(|s| {
       s.phase = Phase::Ready;
       s.done = None;
@@ -392,7 +393,7 @@ impl Updater {
   /// Puts the staged bundle in the installed one's place (at quit, or before a restart) and deletes the old one; a
   /// running exe is only moved aside, and deleted on a later start. Returns the version now installed
   pub fn apply(&self) -> Result<String, String> {
-    let staged = self.staged.lock().unwrap().take().ok_or("no update is ready")?;
+    let staged = self.staged.lock().take().ok_or("no update is ready")?;
     let installed = self.env.installed.clone().ok_or("not running from an app bundle")?;
     self.set(|s| s.phase = Phase::Applying);
     let placed = match Layout::of(&installed) {
@@ -403,7 +404,7 @@ impl Updater {
     if let Err(e) = placed {
       let msg = format!("could not replace {}: {e}", installed.display());
       self.log(&msg);
-      *self.staged.lock().unwrap() = Some(staged);
+      *self.staged.lock() = Some(staged);
       self.set(|s| {
         s.phase = Phase::Failed;
         s.error = Some(msg.clone());
@@ -543,10 +544,10 @@ mod tests {
       os_version: Some("26.0".into()),
       manual: None,
       proxy: Box::new(|| None),
-      log: Arc::new(move |line| l.lock().unwrap().push(line.to_owned())),
+      log: Arc::new(move |line| l.lock().push(line.to_owned())),
     };
     let u = Updater::new(env, true, move |s| {
-      let mut v = w.lock().unwrap();
+      let mut v = w.lock();
       if v.last() != Some(&s.phase) {
         v.push(s.phase);
       }
@@ -563,10 +564,10 @@ mod tests {
     let r = release(d.path(), &installed, &new, false);
     let (u, seen, lines) = updater(d.path(), installed.clone(), r.url.clone(), "1.0.0");
     u.run(true).unwrap();
-    assert!(!lines.lock().unwrap().iter().any(|l| l.contains("did not apply")), "{:?}", lines.lock().unwrap());
+    assert!(!lines.lock().iter().any(|l| l.contains("did not apply")), "{:?}", lines.lock());
     let s = u.state();
     assert_eq!((s.phase, s.version.as_deref(), s.notes.as_deref()), (Phase::Ready, Some("1.1.0"), Some("Fixes")));
-    assert_eq!(*seen.lock().unwrap(), [Phase::Checking, Phase::Available, Phase::Downloading, Phase::Staging, Phase::Ready]);
+    assert_eq!(*seen.lock(), [Phase::Checking, Phase::Available, Phase::Downloading, Phase::Staging, Phase::Ready]);
     let staged = u.staged().unwrap();
     delta::verify_tree(&staged.path, &delta::scan(&new).unwrap()).unwrap();
     // Nothing of the download is left beside the staged bundle
@@ -616,7 +617,7 @@ mod tests {
     });
     let (u, _, lines) = updater(d.path(), installed.clone(), format!("{}/desktop-update.json", srv.base), "1.0.0");
     u.run(true).unwrap();
-    assert!(!lines.lock().unwrap().iter().any(|l| l.contains("did not apply")), "{:?}", lines.lock().unwrap());
+    assert!(!lines.lock().iter().any(|l| l.contains("did not apply")), "{:?}", lines.lock());
     let staged = u.staged().unwrap();
     assert!(staged.path.ends_with("Acpira/Acpira.exe"), "{}", staged.path.display());
     assert_eq!(u.apply().unwrap(), "1.1.0");
@@ -655,9 +656,9 @@ mod tests {
     u.run(true).unwrap();
     assert_eq!(u.state().phase, Phase::Ready);
     assert!(
-      lines.lock().unwrap().iter().any(|l| l.contains("did not apply") && l.contains("is not the one 1.0.0 shipped")),
+      lines.lock().iter().any(|l| l.contains("did not apply") && l.contains("is not the one 1.0.0 shipped")),
       "{:?}",
-      lines.lock().unwrap()
+      lines.lock()
     );
     delta::verify_tree(&u.staged().unwrap().path, &delta::scan(&new).unwrap()).unwrap();
   }

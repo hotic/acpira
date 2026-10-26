@@ -19,11 +19,10 @@ pub fn normalize_preview_url(input: &str) -> Option<String> {
     return None;
   }
   let digits = s.chars().take_while(char::is_ascii_digit).count();
-  if (1..=5).contains(&digits) && matches!(s[digits..].chars().next(), None | Some('/')) {
+  if (1..=5).contains(&digits) && matches!(s.chars().nth(digits), None | Some('/')) {
     s = format!("localhost:{s}");
   }
-  let has_scheme = s.find("://").is_some_and(|i| {
-    let scheme = &s[..i];
+  let has_scheme = s.split_once("://").is_some_and(|(scheme, _)| {
     scheme.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) && scheme.chars().all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c))
   });
   if !has_scheme {

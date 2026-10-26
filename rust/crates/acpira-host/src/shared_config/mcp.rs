@@ -11,6 +11,7 @@ use anyhow::{Result, anyhow, bail};
 use regex::Regex;
 use serde_json::{Map, Value, json};
 
+use acpira_shared::re;
 use acpira_shared::inventory::{McpCaps, McpTransport};
 use acpira_shared::shared_config::SharedScope;
 
@@ -139,7 +140,7 @@ pub fn supports(agent: &str, transport: McpTransport, caps: Option<McpCaps>) -> 
   }
 }
 
-static VAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\$\{(?:env:)?([A-Za-z_][A-Za-z0-9_]*)\}").unwrap());
+static VAR: LazyLock<Regex> = LazyLock::new(|| re::compile(r"\$\{(?:env:)?([A-Za-z_][A-Za-z0-9_]*)\}"));
 
 /// `${VAR}` / `${env:VAR}` from the sidecar's environment; an unset variable becomes empty
 pub fn expand_vars(s: &str) -> String {
@@ -347,6 +348,8 @@ mod tests {
     .unwrap();
     let project_command = std::env::current_exe().unwrap();
     add(&p.mcp_file(SharedScope::Project).unwrap(), &json!({ "command": project_command }).to_string(), Some("dup")).unwrap();
+    // SAFETY: test-only and the name is unique to this test; a parallel test reading the environment at that moment is
+    // the accepted risk of setting it in a test process
     unsafe { std::env::set_var("ACPIRA_TEST_MCP_ARG", "v1") };
     let caps = Some(McpCaps { http: true, sse: false });
     let (sent, log) = session_servers(&p, "codex", caps).await;

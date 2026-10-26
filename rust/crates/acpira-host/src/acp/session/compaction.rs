@@ -17,13 +17,13 @@ use crate::i18n::t;
 use crate::json::str_of;
 use crate::util::js_num;
 
-static COMPACT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^/compact(?:\s|$)").unwrap());
-static TOKENS_AFTER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"- Tokens after:\s*([\d,]+)").unwrap());
+static COMPACT: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"^/compact(?:\s|$)"));
+static TOKENS_AFTER: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"- Tokens after:\s*([\d,]+)"));
 static DEVIN_DONE: LazyLock<Regex> = LazyLock::new(|| {
-  Regex::new(r"Context compacted|Nothing to compact\.|(?:Force compaction|Compaction) failed:|Compaction cancel(?:ed|led)\.").unwrap()
+  acpira_shared::re::compile(r"Context compacted|Nothing to compact\.|(?:Force compaction|Compaction) failed:|Compaction cancel(?:ed|led)\.")
 });
 static KIMI_DONE: LazyLock<Regex> = LazyLock::new(|| {
-  Regex::new(r"Compaction completed\.|Compaction cancelled\.|Compaction is blocked by the current turn;|/compact failed:").unwrap()
+  acpira_shared::re::compile(r"Compaction completed\.|Compaction cancelled\.|Compaction is blocked by the current turn;|/compact failed:")
 });
 
 /// The session's compaction bookkeeping
@@ -190,7 +190,7 @@ fn tail16(s: &str, n: usize) -> String {
   let mut units = 0;
   for (i, c) in s.char_indices() {
     if units >= skip {
-      return s[i..].to_owned();
+      return s.get(i..).unwrap_or_default().to_owned();
     }
     units += c.len_utf16();
   }

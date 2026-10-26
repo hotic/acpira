@@ -123,7 +123,7 @@ impl LocalAccounts {
     let mut entries: Vec<(&String, &Value)> =
       auth.iter().filter(|(k, _)| k.starts_with("https://auth.x.ai::") || *k == "https://accounts.x.ai/sign-in").collect();
     entries.sort_by_key(|(k, _)| !k.starts_with("https://auth.x.ai::"));
-    let Some(cred) = entries.iter().map(|(_, v)| obj(Some(v))).find(|v| s(v.get("key")).is_some()) else {
+    let Some((cred, key)) = entries.iter().map(|(_, v)| obj(Some(v))).find_map(|v| s(v.get("key")).map(|key| (v, key))) else {
       return Ok(account("Grok Build", LocalAccountStatus::LoginRequired));
     };
     let label = s(cred.get("email")).unwrap_or_else(|| "Grok Build".into());
@@ -133,7 +133,7 @@ impl LocalAccounts {
       return Ok(LocalAccountInfo { label, detail: None, status: LocalAccountStatus::Expired, quota: None });
     }
     let headers =
-      vec![("Authorization".into(), format!("Bearer {}", s(cred.get("key")).unwrap())), ("x-xai-token-auth".into(), "xai-grok-cli".into())];
+      vec![("Authorization".into(), format!("Bearer {key}")), ("x-xai-token-auth".into(), "xai-grok-cli".into())];
     let (billing, settings) = tokio::join!(
       self.request("https://cli-chat-proxy.grok.com/v1/billing?format=credits", headers.clone()),
       self.request("https://cli-chat-proxy.grok.com/v1/settings", headers)
@@ -188,7 +188,8 @@ impl LocalAccounts {
         ("User-Agent".into(), format!("Acpira/{version}")),
       ]);
     }
-    headers.push(("Authorization".into(), format!("Bearer {}", token.unwrap())));
+    let Some(token) = token else { return Ok(account("Kimi Code", LocalAccountStatus::LoginRequired)) };
+    headers.push(("Authorization".into(), format!("Bearer {token}")));
     let payload = self.request("https://api.kimi.com/coding/v1/usages", headers).await?;
     let payload = Value::Object(payload);
     let quota = parse_kimi_quota(&payload);
@@ -313,9 +314,11 @@ fn os_facts() -> (String, String, String) {
   .to_owned();
   #[cfg(unix)]
   {
-    // SAFETY: uname fills the struct; fields are NUL-terminated
+    // SAFETY: libc::utsname is plain char arrays, for which all-zero bytes are valid
     let mut u: libc::utsname = unsafe { std::mem::zeroed() };
+    // SAFETY: uname fills the struct it is given
     if unsafe { libc::uname(&mut u) } == 0 {
+      // SAFETY: uname leaves every field NUL-terminated within its array
       let field = |f: &[libc::c_char]| unsafe { std::ffi::CStr::from_ptr(f.as_ptr()) }.to_string_lossy().into_owned();
       return (field(&u.sysname), field(&u.release), arch);
     }

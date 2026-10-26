@@ -12,16 +12,16 @@ pub use crate::win::*;
 /// always maximizes or restores
 pub enum TitleDoubleClick {
   Zoom,
-  #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+  #[cfg_attr(not(target_os = "macos"), allow(dead_code, reason = "only macOS reads it"))]
   Minimize,
-  #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+  #[cfg_attr(not(target_os = "macos"), allow(dead_code, reason = "only macOS reads it"))]
   Nothing,
 }
 
 pub type Log = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
 
 /// A request id carries its session: `session:<id>:<unique>`
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code, reason = "only macOS reads it"))]
 pub fn session_of_request(id: &str) -> Option<&str> {
   id.strip_prefix("session:")?.rsplit_once(':').map(|(s, _)| s).filter(|s| !s.is_empty())
 }

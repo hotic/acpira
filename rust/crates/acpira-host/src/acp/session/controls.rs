@@ -221,8 +221,8 @@ impl AcpSession {
             .controls
             .options
             .iter()
-            .filter(|o| is_reasoning_control(o) && o.value.is_some() && !c.picks.values.contains_key(&o.id))
-            .map(|o| (o.id.clone(), o.value.clone().unwrap()))
+            .filter(|o| is_reasoning_control(o) && !c.picks.values.contains_key(&o.id))
+            .filter_map(|o| Some((o.id.clone(), o.value.clone()?)))
             .collect();
           for (id, v) in reasoning {
             c.picks.seq += 1;

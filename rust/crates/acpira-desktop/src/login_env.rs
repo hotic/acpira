@@ -22,17 +22,16 @@ pub fn parse_env_output(out: &str) -> Option<HashMap<String, String>> {
     return None;
   }
   let mut env = HashMap::new();
-  for pair in out[start + MARK.len()..end].split('\0') {
-    let Some(eq) = pair.find('=') else { continue };
-    if eq == 0 {
+  for pair in out.get(start + MARK.len()..end)?.split('\0') {
+    let Some((key, value)) = pair.split_once('=') else { continue };
+    if key.is_empty() {
       continue;
     }
-    let key = &pair[..eq];
     // ELECTRON_*: what an Electron-launched app would add, kept out for the same reason
     if TRANSIENT.contains(&key) || key.starts_with("ELECTRON_") {
       continue;
     }
-    env.insert(key.to_owned(), pair[eq + 1..].to_owned());
+    env.insert(key.to_owned(), value.to_owned());
   }
   Some(env)
 }

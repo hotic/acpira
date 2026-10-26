@@ -39,3 +39,6 @@ windows-sys.workspace = true
 # The scripted model server for the built-in agent's engine tests
 acpira-agent = { workspace = true, features = ["mock"] }
 tempfile.workspace = true
+
+[lints]
+workspace = true
