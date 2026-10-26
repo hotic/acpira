@@ -93,14 +93,25 @@ fn boundary(c: char) -> bool {
   c.is_whitespace() || matches!(c, ',' | '.' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '，' | '。' | '！' | '？' | '；' | '：' | '）' | '」' | '』')
 }
 
+/// What may sit right before a `/` for it to start a skill: whitespace, or CJK text and its full-width punctuation, which
+/// Chinese / Japanese / Korean prose writes without spaces (`然后/release`). The same ranges as `SIGIL_LEAD` in the
+/// webview's `chat/slashCommands.ts`, so whatever the composer paints is what gets expanded
+fn sigil_lead(c: char) -> bool {
+  c.is_whitespace()
+    || matches!(c,
+      '\u{1100}'..='\u{11ff}' | '\u{2e80}'..='\u{2fdf}' | '\u{3000}'..='\u{30ff}' | '\u{3130}'..='\u{318f}'
+      | '\u{31f0}'..='\u{31ff}' | '\u{3400}'..='\u{4dbf}' | '\u{4e00}'..='\u{9fff}' | '\u{ac00}'..='\u{d7af}'
+      | '\u{f900}'..='\u{faff}' | '\u{ff00}'..='\u{ffef}' | '\u{20000}'..='\u{323af}')
+}
+
 /// The skills a text calls up, each once in order of first mention, with the rest of its line as the arguments. A
-/// `/name` counts at the start or after whitespace and ends at whitespace, punctuation or the end, the same boundary
-/// the composer paints; the longest name wins where one is a prefix of another
+/// `/name` counts at the start or after whitespace / CJK text (`sigil_lead`) and ends at whitespace, punctuation or the
+/// end, the same boundary the composer paints; the longest name wins where one is a prefix of another
 pub fn mentioned<'a>(text: &str, skills: &'a [Skill]) -> Vec<(&'a Skill, String)> {
   let mut out: Vec<(&Skill, String)> = vec![];
   let mut prev: Option<char> = None;
   for (i, c) in text.char_indices() {
-    let leading = c == '/' && prev.is_none_or(char::is_whitespace);
+    let leading = c == '/' && prev.is_none_or(sigil_lead);
     prev = Some(c);
     if !leading {
       continue;
@@ -174,6 +185,9 @@ mod tests {
     let m = mentioned("/dig-deep\nsecond line", &skills);
     assert_eq!((m[0].0.name.as_str(), m[0].1.as_str()), ("dig-deep", ""));
     assert!(mentioned("a/release", &skills).is_empty());
+    // CJK prose writes no space before the slash
+    let m = mentioned("然后/release 1.2", &skills);
+    assert_eq!((m[0].0.name.as_str(), m[0].1.as_str()), ("release", "1.2"));
     let text = expansion(&mentioned("/release 1.2", &skills));
     assert!(text.contains("<skill name=\"release\" path=") && text.contains("\nTag 1.2 and push.\n</skill>"), "{text}");
     assert_eq!(skills[1].body, "no frontmatter");

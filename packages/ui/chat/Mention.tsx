@@ -6,6 +6,7 @@ import { t } from '../i18n';
 import { AgentMark } from './AgentMark';
 import { CompletionList } from './Completion';
 import { personaOfHit, type MentionPersona } from './personaHits';
+import { SIGIL_LEAD } from './slashCommands';
 
 export { PERSONA_SCHEME, personaHits, personaOfHit, type MentionPersona } from './personaHits';
 
@@ -22,9 +23,11 @@ export interface MentionSpan {
   query: string;
 }
 
-// The @ must sit at the start or after whitespace, and the query runs up to the caret without whitespace; anything else is a plain @ (emails, decorators)
+// The @ must sit at the start, after whitespace or after CJK text (`SIGIL_LEAD`), and the query runs up to the caret without
+// whitespace; anything else is a plain @ (emails, decorators)
+const MENTION_TOKEN = new RegExp(`${SIGIL_LEAD}@([^\\s@]*)$`, 'u');
 export function mentionAt(text: string, caret: number): MentionSpan | undefined {
-  const m = /(^|\s)@([^\s@]*)$/.exec(text.slice(0, caret));
+  const m = MENTION_TOKEN.exec(text.slice(0, caret));
   return m ? { start: caret - m[2]!.length - 1, query: m[2]! } : undefined;
 }
 

@@ -4,16 +4,32 @@ import type { SlashCommand } from '@acpira/shared/transcript';
 
 // Pure helpers behind the / command completion (Slash.tsx renders them; a lowercase `slash.ts` would clash with it on a case-insensitive disk); kept DOM-free so the host tsconfig can type-check their tests
 
-// A / command token under the caret: the `/` sits at the start or after whitespace and the query runs up to the caret without
-// whitespace (the same shape as the `@` mention). `query` is what has been typed after the slash, `start` the index of the `/`.
-// A `/` inside a word (`a/b`, `https://`) is plain text
+// What may sit right before an `@` / `/` sigil for it to count: whitespace, or CJK text and its full-width punctuation,
+// which Chinese / Japanese / Korean prose writes without spaces (`问问@GPT`, `然后/review`), so a sigil typed into the
+// middle of an existing sentence still opens its list. Latin letters, digits and ASCII punctuation keep `a@b.com`,
+// `a/b` and `https://` plain. Rust `skills::sigil_lead` in the built-in agent uses the same ranges
+const LEAD_CLASS = String.raw`[\s\u1100-\u11ff\u2e80-\u2fdf\u3000-\u30ff\u3130-\u318f\u31f0-\u31ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef\u{20000}-\u{323af}]`;
+// `(^|lead)`, captured so a match can tell where its sigil starts
+export const SIGIL_LEAD = `(^|${LEAD_CLASS})`;
+const LEAD_BEFORE = new RegExp(`${LEAD_CLASS}$`, 'u');
+
+// Whether a sigil at `index` in `text` counts: at the start, or after a character `SIGIL_LEAD` accepts
+export function sigilLeads(text: string, index: number): boolean {
+  return index === 0 || LEAD_BEFORE.test(text.slice(Math.max(0, index - 2), index));
+}
+
+// A / command token under the caret: the `/` sits at the start, after whitespace or after CJK text (`SIGIL_LEAD`), and the
+// query runs up to the caret without whitespace (the same shape as the `@` mention). `query` is what has been typed after
+// the slash, `start` the index of the `/`. A `/` inside a Latin word (`a/b`, `https://`) is plain text
 export interface SlashSpan {
   start: number;
   query: string;
 }
 
+const SLASH_TOKEN = new RegExp(String.raw`${SIGIL_LEAD}\/(\S*)$`, 'u');
+
 export function commandAt(text: string, caret: number): SlashSpan | undefined {
-  const m = /(^|\s)\/(\S*)$/.exec(text.slice(0, caret));
+  const m = SLASH_TOKEN.exec(text.slice(0, caret));
   return m ? { start: caret - m[2]!.length - 1, query: m[2]! } : undefined;
 }
 
@@ -65,12 +81,14 @@ export interface CommandMark {
 }
 
 // Every token in the text that names an advertised command, for the composer mirror to paint: `/` at the start or after
-// whitespace, the name running to whitespace or the end — the same boundary rules as `commandName`, so `a/b`, `/tmp/x`
-// and partial names stay plain. A mid-sentence command gets the same pill as a leading one, like Cursor's composer
+// whitespace / CJK text (`SIGIL_LEAD`), the name running to whitespace or the end — the same boundary rules as `commandName`,
+// so `a/b`, `/tmp/x` and partial names stay plain. A mid-sentence command gets the same pill as a leading one, like Cursor's composer
+const COMMAND_TOKEN = new RegExp(String.raw`${SIGIL_LEAD}\/(\$?[\p{L}\p{N}][\p{L}\p{N}_.:-]*)(?=\s|$)`, 'gu');
+
 export function commandMarks(commands: readonly SlashCommand[], text: string): CommandMark[] {
   if (!commands.length || !text.includes('/')) return [];
   const marks: CommandMark[] = [];
-  for (const m of text.matchAll(/(^|\s)\/(\$?[\p{L}\p{N}][\p{L}\p{N}_.:-]*)(?=\s|$)/gu))
+  for (const m of text.matchAll(COMMAND_TOKEN))
     if (commands.some(c => c.name === m[2])) marks.push({ start: m.index + m[1]!.length, name: m[2]! });
   return marks;
 }
@@ -79,15 +97,15 @@ export function commandMarks(commands: readonly SlashCommand[], text: string): C
 const NAME_TAIL = /[\p{L}\p{N}_.:/@-]/u;
 
 // Every `@name` token naming a persona the ask_agent tool can summon (settings → Subagents), painted like a command. The `@`
-// sits at the start or after whitespace, like the mention list's trigger; the name must match exactly and end at whitespace,
-// the end or punctuation, so `@审查，` lights up while `@审查员` (a different name) does not. Persona names may contain
+// sits at the start or after whitespace / CJK text, like the mention list's trigger; the name must match exactly and end at
+// whitespace, the end or punctuation, so `@审查，` lights up while `@审查员` (a different name) does not. Persona names may contain
 // spaces, so the names are tried longest first instead of tokenising the text
 export function summonMarks(names: readonly string[], text: string): CommandMark[] {
   if (!names.length || !text.includes('@')) return [];
   const sorted = [...new Set(names)].filter(Boolean).sort((a, b) => b.length - a.length);
   const marks: CommandMark[] = [];
   for (let i = text.indexOf('@'); i >= 0; i = text.indexOf('@', i + 1)) {
-    if (i > 0 && !/\s/.test(text[i - 1]!)) continue;
+    if (!sigilLeads(text, i)) continue;
     const name = sorted.find(n => text.startsWith(n, i + 1) && !NAME_TAIL.test(text[i + 1 + n.length] ?? ''));
     if (name) { marks.push({ start: i, name, sigil: '@' }); i += name.length; }
   }
