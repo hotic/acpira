@@ -6,6 +6,7 @@ import com.github.hotic.acpira.web.BrowserView
 import com.google.gson.JsonObject
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.DumbAware
@@ -27,13 +28,17 @@ class AcpiraToolWindowFactory : ToolWindowFactory, DumbAware {
         toolWindow.setTitleActions(listOf(object : DumbAwareAction("Open in Editor", "Start a conversation in an editor tab", AllIcons.Actions.OpenNewTab) {
             override fun actionPerformed(e: AnActionEvent) { AcpiraEditors.open(project, null) }
         }))
+        // The gear's Safe Mode: unload every plugin, or load them again
+        toolWindow.setAdditionalGearActions(DefaultActionGroup(object : DumbAwareAction("Safe Mode", "Unload every Acpira plugin, or load them again", null) {
+            override fun actionPerformed(e: AnActionEvent) { project.service<AcpiraConnection>().safeMode(null) }
+        }))
         lateinit var browser: BrowserView
         JcefProbe.mount(root, toolWindow.disposable) { provider ->
             browser = provider.create(project, "sidebar", JsonObject().apply { addProperty("mostRecent", true) }, toolWindow.disposable, { state, detail ->
                 ApplicationManager.getApplication().invokeLater {
                     if (project.isDisposed) return@invokeLater
                     when (state) {
-                        SidecarState.FAILED -> JcefProbe.swap(root, StatusPanel.message("Acpira could not reach its backend.", detail ?: "See the IDE log.") { project.service<AcpiraConnection>().retry() })
+                        SidecarState.FAILED -> JcefProbe.swap(root, StatusPanel.message("Acpira could not reach its backend.", detail ?: "See the IDE log.", { project.service<AcpiraConnection>().retry() }, { project.service<AcpiraConnection>().safeMode(true) }))
                         else -> if (browser.component.parent !== root) JcefProbe.swap(root, browser.component)
                     }
                 }

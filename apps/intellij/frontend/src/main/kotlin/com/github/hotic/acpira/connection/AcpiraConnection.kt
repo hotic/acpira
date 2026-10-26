@@ -163,6 +163,22 @@ class AcpiraConnection(private val project: Project, val cs: CoroutineScope) {
         cs.launch { runCatching { AcpiraBackendApi.getInstance().retry(project.projectId()) }.onFailure { Acpira.LOG.warn("backend retry failed", it) } }
     }
 
+    // Safe mode on the backend machine, told in a notification (the sidecar may be the thing that is down)
+    fun safeMode(on: Boolean?) {
+        cs.launch {
+            val result = runCatching { AcpiraBackendApi.getInstance().safeMode(project.projectId(), on) }
+                .getOrElse { com.github.hotic.acpira.rpc.SafeModeResult(false, it.message ?: it.toString()) }
+            val text = when {
+                result.error != null -> "Could not switch safe mode: ${result.error}"
+                result.on -> "Safe mode is on: plugins are unloaded in every Acpira window."
+                else -> "Safe mode is off: enabled plugins load again."
+            }
+            com.intellij.notification.NotificationGroupManager.getInstance().getNotificationGroup(Acpira.NOTIFICATION_GROUP)
+                .createNotification(text, if (result.error != null) com.intellij.notification.NotificationType.ERROR else com.intellij.notification.NotificationType.INFORMATION)
+                .notify(project)
+        }
+    }
+
     fun windowFocus() {
         cs.launch { runCatching { AcpiraBackendApi.getInstance().windowFocus(project.projectId()) }.onFailure { Acpira.LOG.warn("backend focus event failed", it) } }
     }

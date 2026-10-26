@@ -3,6 +3,8 @@
 package com.github.hotic.acpira.backend
 
 import com.github.hotic.acpira.rpc.ResolvedPath
+import com.github.hotic.acpira.rpc.SafeModeResult
+import com.github.hotic.acpira.sidecar.SafeMode
 import com.intellij.ide.vfs.rpcId
 import com.intellij.openapi.vfs.LocalFileSystem
 import kotlinx.coroutines.Dispatchers
@@ -68,6 +70,14 @@ class AcpiraBackendApiImpl : AcpiraBackendApi {
 
     override suspend fun retry(projectId: ProjectId) {
         service(projectId).retry()
+    }
+
+    override suspend fun safeMode(projectId: ProjectId, on: Boolean?): SafeModeResult = withContext(Dispatchers.IO) {
+        val on = on ?: !SafeMode.isOn(SafeMode.home())
+        val error = SafeMode.set(on)
+        // An engine that had failed (a plugin breaking it) starts again without the plugins; a no-op while it runs
+        if (error == null && on) service(projectId).retry()
+        SafeModeResult(if (error == null) on else !on, error)
     }
 
     override suspend fun windowFocus(projectId: ProjectId) {

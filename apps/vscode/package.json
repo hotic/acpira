@@ -110,6 +110,11 @@
         "category": "Acpira"
       },
       {
+        "command": "acpira.safeMode",
+        "title": "%acpira.cmd.safeMode%",
+        "category": "Acpira"
+      },
+      {
         "command": "acpira.addSelection",
         "title": "%acpira.cmd.addSelection%",
         "category": "Acpira",

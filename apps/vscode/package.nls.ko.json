@@ -18,5 +18,6 @@
   "acpira.cmd.addSelection": "채팅에 추가",
   "acpira.cmd.contextSet": "공유 컨텍스트 설정(확장용)",
   "acpira.cmd.contextAdd": "채팅에 컨텍스트 추가(확장용)",
-  "acpira.cmd.connectChatgpt": "ChatGPT 세션 연결"
+  "acpira.cmd.connectChatgpt": "ChatGPT 세션 연결",
+  "acpira.cmd.safeMode": "안전 모드 전환(플러그인 내리기)"
 }

@@ -14,6 +14,7 @@ import { setHostLocale, t } from './i18n';
 import { SidecarClient } from '@acpira/engine-client/SidecarClient';
 import { engineEndpoint } from '@acpira/engine-client/engine';
 import { sidecarCommands } from '@acpira/engine-client/sidecarLocator';
+import { safeModeOn, setSafeMode } from '@acpira/engine-client/safeMode';
 import { acpiraHome, migrateOnce } from './store/dataDir';
 import { EDITOR_VIEW_TYPE, fileColumn, VscodePlatform } from './vscodePlatform';
 import { editorSelectionOf } from './editorSelection';
@@ -60,13 +61,29 @@ export async function activate(context: vscode.ExtensionContext) {
     log: line => log.info(line),
     onState: (state, detail) => {
       if (state !== 'failed') return;
-      const retry = t('host.sidecarRetry'), show = t('host.showLog');
-      void vscode.window.showErrorMessage(t('host.sidecarFailed', { detail: detail ?? '' }), retry, show).then(pick => {
+      const retry = t('host.sidecarRetry'), show = t('host.showLog'), safe = t('host.safeMode');
+      // A plugin that keeps the engine from working: safe mode unloads them all, then the engine starts again
+      const picks = safeModeOn(home) ? [retry, show] : [retry, safe, show];
+      void vscode.window.showErrorMessage(t('host.sidecarFailed', { detail: detail ?? '' }), ...picks).then(async pick => {
         if (pick === retry) sidecar.retry();
         else if (pick === show) log.show();
+        else if (pick === safe && await switchSafeMode(true)) sidecar.retry();
       });
     },
   });
+  // Safe mode through the engine binary itself, so it works while the engine is stuck; every engine follows within a second
+  const switchSafeMode = async (on: boolean): Promise<boolean> => {
+    const binary = sidecarCommands({ root: resources.fsPath, env: process.env })[0]?.command;
+    if (!binary) return false;
+    try {
+      await setSafeMode(binary, home, on);
+      void vscode.window.showInformationMessage(t(on ? 'host.safeModeOn' : 'host.safeModeOff'));
+      return true;
+    } catch (e) {
+      void vscode.window.showErrorMessage(t('host.safeModeFailed', { error: e instanceof Error ? e.message : String(e) }));
+      return false;
+    }
+  };
 
   // Every webview (the sidebar, each editor tab) is its own view in the sidecar, so tabs show different sessions side by side
   const sessionsDir = join(home, 'sessions');
@@ -437,6 +454,7 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('acpira.openView', () => vscode.commands.executeCommand(`${VIEW_ID}.focus`)),
     vscode.commands.registerCommand('acpira.newSession', () => withSidebar(b => b.send({ type: 'newSession' }))),
     vscode.commands.registerCommand('acpira.showLog', () => log.show()),
+    vscode.commands.registerCommand('acpira.safeMode', () => switchSafeMode(!safeModeOn(home))),
     // A new tab bound to a fresh ChatGPT mirror; its connection prompt goes to the clipboard as soon as the tab shows it
     vscode.commands.registerCommand('acpira.connectChatgpt', () => {
       let copied = false;

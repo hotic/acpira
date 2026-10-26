@@ -18,5 +18,6 @@
   "acpira.cmd.addSelection": "添加到对话",
   "acpira.cmd.contextSet": "设置共享上下文（供扩展调用）",
   "acpira.cmd.contextAdd": "添加上下文到对话（供扩展调用）",
-  "acpira.cmd.connectChatgpt": "连接 ChatGPT 会话"
+  "acpira.cmd.connectChatgpt": "连接 ChatGPT 会话",
+  "acpira.cmd.safeMode": "切换安全模式（卸载插件）"
 }

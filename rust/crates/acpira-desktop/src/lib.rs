@@ -18,6 +18,7 @@ pub mod page;
 pub mod platform;
 pub mod process;
 pub mod registry;
+pub mod safe_mode;
 pub mod settings;
 pub mod shared_settings;
 pub mod single_instance;

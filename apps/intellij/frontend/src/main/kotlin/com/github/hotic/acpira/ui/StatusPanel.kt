@@ -5,6 +5,7 @@ import com.intellij.ui.components.JBPanel
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.FlowLayout
+import javax.swing.Box
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
@@ -14,13 +15,18 @@ import javax.swing.SwingConstants
 object StatusPanel {
     const val JCEF_HINT = "Choose a JetBrains Runtime with JCEF (Help → Find Action → Choose Boot Java Runtime for the IDE) and restart."
 
-    fun message(title: String, detail: String, retry: (() -> Unit)? = null): JComponent {
+    // `safeMode`: a second button that unloads the plugins (one of them may be what keeps the sidecar from working)
+    fun message(title: String, detail: String, retry: (() -> Unit)? = null, safeMode: (() -> Unit)? = null): JComponent {
         val panel = JBPanel<JBPanel<*>>(BorderLayout()).apply { border = JBUI.Borders.empty(16) }
         val text = JBLabel("<html><b>$title</b><br><br>$detail</html>", SwingConstants.LEFT).apply { setAllowAutoWrapping(true); setCopyable(true) }
         panel.add(text, BorderLayout.NORTH)
         if (retry != null) {
             val actions = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply { border = JBUI.Borders.emptyTop(12) }
             actions.add(JButton("Retry").apply { addActionListener { retry() } })
+            if (safeMode != null) {
+                actions.add(Box.createHorizontalStrut(JBUI.scale(8)))
+                actions.add(JButton("Safe Mode").apply { toolTipText = "Unload every plugin and start again"; addActionListener { safeMode() } })
+            }
             panel.add(actions, BorderLayout.CENTER)
         }
         return panel

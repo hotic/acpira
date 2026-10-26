@@ -188,6 +188,7 @@ pub fn on_event(h: &AppHandle, id: &str) {
     }
     Command::RestartToUpdate => a.restart_to_update(),
     Command::ShowLog => a.show_log(),
+    Command::SafeMode => a.toggle_safe_mode(),
     Command::Help => {
       let _ = acpira_desktop::platform::system::open_external(crate::app::HELP_URL);
     }

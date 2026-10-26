@@ -20,6 +20,8 @@ pub enum Command {
   Layout(&'static str),
   ConnectChatgpt,
   ShowLog,
+  /// Help › Safe Mode: unload every plugin, or load them again
+  SafeMode,
   Help,
   Reload,
   DevTools,
@@ -61,7 +63,7 @@ impl Command {
   }
 }
 
-const ALL: [Command; 21] = [
+const ALL: [Command; 22] = [
   Command::NewSession,
   Command::NewWindow,
   Command::OpenFolder,
@@ -71,6 +73,7 @@ const ALL: [Command; 21] = [
   Command::ToolPanel,
   Command::ConnectChatgpt,
   Command::ShowLog,
+  Command::SafeMode,
   Command::Help,
   Command::Reload,
   Command::DevTools,
@@ -235,7 +238,11 @@ pub fn build_menu(t: Translate, app: &str, layout: &str, mac: bool, update: Opti
     vec![stock(Stock::Minimize, "desktop.menu.minimize"), stock(Stock::CloseWindow, "desktop.menu.closeWindow")]
   };
   bar.push(Entry::Submenu { label: t("desktop.menu.window", &[]), role: Some(SubmenuRole::Window), items: window });
-  let mut help = vec![item(Command::Help, "desktop.help", None), item(Command::ShowLog, "desktop.menu.showLog", None)];
+  let mut help = vec![
+    item(Command::Help, "desktop.help", None),
+    item(Command::ShowLog, "desktop.menu.showLog", None),
+    item(Command::SafeMode, "host.safeMode", None),
+  ];
   if !mac && let Some(u) = update_item {
     help.extend([sep(), u]);
   }
