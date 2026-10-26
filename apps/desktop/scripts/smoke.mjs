@@ -3,7 +3,10 @@
 // in a build with the `smoke` feature: page scripts, window size, menu items, links). WKWebView has no DevTools protocol,
 // so clicks and keys are DOM events the page script dispatches; native menus, input methods, Finder drags and system
 // dialogs are on the hand-check list in docs/dev/desktop.md instead. On Windows the run takes `--app Acpira.exe` (a
-// cross-built `--features smoke` exe) and skips the macOS-only steps: the drag pasteboard and screenshots.
+// cross-built `--features smoke` exe) and skips the macOS-only steps: the drag pasteboard and screenshots. On Linux it
+// runs on whatever display DISPLAY names (Xvfb with a window manager in a container: maximize needs one), with the
+// debug build, an installed package's /usr/bin/Acpira or an extracted AppImage's AppRun (`--appimage-extract`, of a
+// `package-linux.mjs --smoke` build) as --app, and skips the drag pasteboard and the update.
 //
 // The run stays in the background: the app takes no focus, shows no Dock icon and keeps its windows behind every other
 // window (ACPIRA_DESKTOP_BACKGROUND), so it never interrupts whoever is using the Mac.
@@ -45,6 +48,8 @@ const packToolArg = option('--pack-tool') && resolve(option('--pack-tool'));
 let engine = option('--engine') ?? process.env.ACPIRA_SIDECAR_BIN?.trim();
 
 const WIN = process.platform === 'win32';
+const MAC = process.platform === 'darwin';
+const LINUX = process.platform === 'linux';
 // The app protocol's origin as the page sees it (acpira_desktop::page::app_origin)
 const ORIGIN = WIN ? 'http://acpira-app.localhost' : 'acpira-app://localhost';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -101,7 +106,10 @@ async function main() {
         engine = join(REPO, 'rust', 'target', 'debug', 'acpira');
       }
     }
-    const agentsBin = engine ?? join(dirname(bin), 'acpira-engine');
+    // The engine beside the shell (macOS bundle); a Linux package's in <prefix>/libexec/acpira, which is usr/ in an
+    // extracted AppImage
+    const linuxEngine = prefix => join(prefix, 'libexec', 'acpira', 'acpira-engine');
+    const agentsBin = engine ?? (basename(bin) === 'AppRun' ? linuxEngine(join(dirname(bin), 'usr')) : LINUX ? linuxEngine(dirname(dirname(bin))) : join(dirname(bin), 'acpira-engine'));
 
     for (const d of [home, data, user, alpha, beta, ...(shotDir ? [shotDir] : [])]) mkdirSync(d, { recursive: true });
     for (const [dir, file] of [[alpha, 'alpha-notes.md'], [beta, 'beta-notes.md']]) {
@@ -120,6 +128,9 @@ async function main() {
       ...process.env, HOME: home,
       // Windows keeps per-user data under these, VS Code's settings (the shared settings' seed) among them
       ...(WIN ? { USERPROFILE: home, APPDATA: join(home, 'AppData', 'Roaming'), LOCALAPPDATA: join(home, 'AppData', 'Local') } : {}),
+      // Linux: the XDG directories a session may set away from HOME (the app's dirs, WebKitGTK's, GTK's settings);
+      // DISPLAY, the session bus and XDG_RUNTIME_DIR stay, they are the display and the desktop the run talks to
+      ...(LINUX ? { XDG_CONFIG_HOME: join(home, '.config'), XDG_CACHE_HOME: join(home, '.cache'), XDG_DATA_HOME: join(home, '.local', 'share'), XDG_STATE_HOME: join(home, '.local', 'state') } : {}),
       ACPIRA_HOME: data, ACPIRA_DESKTOP_USER_DATA: user, ACPIRA_DESKTOP_PICK: [alpha, beta].join(delimiter),
       ACPIRA_DESKTOP_HOOK: hookPath, ACPIRA_DESKTOP_BACKGROUND: '1',
     };
@@ -212,8 +223,8 @@ async function main() {
 
     // A Finder drag's paths come from the system's drag pasteboard (WKWebView gives a dropped file's name, not its path).
     // The pasteboard is written only while no mouse button is down, so a drag of whoever uses the Mac is never touched.
-    // Windows hands a drop's paths over in the drop itself (a hand check)
-    const wrote = WIN ? 'windows' : execFileSync('osascript', ['-l', 'JavaScript', '-e', `ObjC.import('AppKit');
+    // Windows hands a drop's paths over in the drop itself, Linux in the drag's data as WebKitGTK receives it (hand checks)
+    const wrote = !MAC ? 'not macOS' : execFileSync('osascript', ['-l', 'JavaScript', '-e', `ObjC.import('AppKit');
       if (Number($.NSEvent.pressedMouseButtons) !== 0) 'busy'; else {
         const pb = $.NSPasteboard.pasteboardWithName('Apple CFPasteboard drag');
         pb.clearContents;
@@ -230,7 +241,7 @@ async function main() {
       })()`);
       if (resolved !== alpha) fail(`pathForFile answered ${resolved}`);
       say('a Finder drag\'s folder path reaches the page through the drag pasteboard');
-    } else if (!WIN) say('note: a mouse button was down, the drag pasteboard check was skipped');
+    } else if (MAC) say('note: a mouse button was down, the drag pasteboard check was skipped');
 
     // The tool panel: closed at first, its toggle clear of the chat header's buttons; the tree, a folder easing open, a
     // file in the viewer, and a browser tab whose frame talks through this page
@@ -349,16 +360,17 @@ async function main() {
     if (!existsSync(join(data, 'sessions', `${b}.json`))) fail('removing a project deleted its session');
     say('a removed project leaves the column, its session stays');
 
-    // Windows: no system title bar and no menu bar; the page draws the caption (maximize turns into restore and back) and
-    // the menu, whose items go back to the shell as menuCommand
-    if (process.platform === 'win32') {
+    // Windows and Linux: no system title bar and no menu bar; the page draws the caption (maximize turns into restore and
+    // back, its label with the glyph) and the menu, whose items go back to the shell as menuCommand
+    if (!MAC) {
       const max = `document.querySelector('[data-window-caption] [data-op="maximize"]')`;
       await page.waitFor('the caption', `document.querySelectorAll('[data-window-caption] button').length === 3`);
-      const glyph = await page.eval(`${max}.textContent`);
+      const label = await page.eval(`${max}.title`);
       await page.press('maximize', max);
-      await page.waitFor('the restore glyph', `${max}.textContent !== ${JSON.stringify(glyph)}`);
+      await page.waitFor('the restore button', `${max}.title !== ${JSON.stringify(label)}`);
+      if (shotDir) { await sleep(300); await page.shot(join(shotDir, 'maximized.png')); }
       await page.press('restore', max);
-      await page.waitFor('the maximize glyph again', `${max}.textContent === ${JSON.stringify(glyph)}`);
+      await page.waitFor('the maximize button again', `${max}.title === ${JSON.stringify(label)}`);
       const menus = `['File', 'Edit', 'View', 'Help'].every(l => [...document.querySelectorAll('[role="menuitem"]')].some(e => e.textContent.trim() === l))`;
       await page.press('the menu button', `document.querySelector('[data-app-menus]')`);
       await page.waitFor('the four menus', menus);
@@ -367,8 +379,8 @@ async function main() {
       say('the page draws the caption (maximize, restore) and the menu (File, Edit, View, Help)');
     }
 
-    // A second window from the menu bar (the page's menu on Windows), then closed: the window list follows
-    if (process.platform === 'win32') await page.eval(`window.__acpiraApi.postMessage({ type: 'menuCommand', id: 'NewWindow' })`);
+    // A second window from the menu bar (the page's menu on Windows and Linux), then closed: the window list follows
+    if (!MAC) await page.eval(`window.__acpiraApi.postMessage({ type: 'menuCommand', id: 'NewWindow' })`);
     else await page.call({ op: 'menu', item: 'NewWindow' });
     let windows = [];
     await waitUntil('two windows, both shown', async () => {

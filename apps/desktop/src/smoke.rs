@@ -166,8 +166,9 @@ async fn run(cmd: Value) -> (bool, Value) {
       let (tx, rx) = oneshot::channel();
       PENDING.lock().get_or_insert_with(HashMap::new).insert(id, tx);
       let js = cmd["js"].as_str().unwrap_or("undefined");
+      // A failure answers with the error and its stack: WebKit's stack leaves the message out, V8's starts with it
       let script = format!(
-        "(async () => {{ let ok = true, value; try {{ value = JSON.stringify(await ({js}) ?? null); }} catch (e) {{ ok = false; value = String(e && e.stack || e); }} window.__TAURI_INTERNALS__.invoke('acpira_smoke_result', {{ id: {id}, ok, value }}); }})()"
+        "(async () => {{ let ok = true, value; try {{ value = JSON.stringify(await ({js}) ?? null); }} catch (e) {{ ok = false; value = String(e); if (e && e.stack && !String(e.stack).includes(value)) value += '\\n' + e.stack; }} window.__TAURI_INTERNALS__.invoke('acpira_smoke_result', {{ id: {id}, ok, value }}); }})()"
       );
       if w.window.eval(script).is_err() {
         return (false, json!("eval failed"));
@@ -260,7 +261,16 @@ async fn run(cmd: Value) -> (bool, Value) {
           std::process::Command::new("screencapture").args(["-x", "-o", "-l", &n.to_string(), &path]).status().is_ok_and(|s| s.success());
         (ok, json!(path))
       }
-      #[cfg(not(target_os = "macos"))]
+      #[cfg(target_os = "linux")]
+      {
+        let saved = on_main(move || crate::linux::screenshot(&w.window, &path).map(|()| path)).await;
+        match saved {
+          Some(Ok(path)) => (true, json!(path)),
+          Some(Err(e)) => (false, json!(e)),
+          None => (false, json!("the app is quitting")),
+        }
+      }
+      #[cfg(windows)]
       {
         let _ = w;
         (false, json!(format!("no screenshots on this platform yet: {path}")))

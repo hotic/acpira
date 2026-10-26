@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name={{name}}
+Comment=Chat with coding agent CLIs over ACP
+Exec={{exec}} %u
+Icon={{icon}}
+Terminal=false
+Categories={{categories}}
+MimeType=x-scheme-handler/acpira;
+StartupWMClass=Acpira
+StartupNotify=true

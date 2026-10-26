@@ -42,6 +42,15 @@ objc2-foundation = { version = "0.3", features = ["NSString", "NSUserDefaults", 
 objc2-user-notifications = { version = "0.3", features = ["UNUserNotificationCenter", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSound", "UNNotificationTrigger", "UNNotificationSettings", "block2"] }
 block2 = "0.6"
 
+# Linux: Tauri's own Linux defaults, which `default-features = false` above drops: X11 window handles (the folder dialog's
+# parent) and the XDG portal's colour scheme in tao (a window's theme and its ThemeChanged events). rfd needs a backend
+# there: GTK 3, which the shell links already, rather than the portal (ashpd and zbus; no message dialogs). gtk for
+# src/linux.rs, at the version tao and wry link
+[target.'cfg(target_os = "linux")'.dependencies]
+tauri = { version = "2.12", default-features = false, features = ["wry", "devtools", "x11", "dbus"] }
+rfd = { version = "0.15", default-features = false, features = ["tokio", "gtk3"] }
+gtk = "0.18"
+
 # Windows ships one exe: the engine's command line runs inside it (main.rs dispatches by the first argument), with the
 # engine crates at the versions rust/Cargo.lock locks (test/desktopLock.test.ts). Win32 for src/win.rs: the version tauri
 # and wry already link
