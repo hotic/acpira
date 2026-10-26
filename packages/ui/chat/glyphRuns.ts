@@ -4,9 +4,11 @@
 // block is the streaming tail: a long paragraph or table in the tail was hundreds of spans re-created and re-matched
 // (an attribute substring selector) on each 32 ms reveal tick, which WKWebView paid for in frame time (lab/tauri-shell
 // bench, 2026-10-25). The pacing (streamMotion.ts) has no stagger, so every glyph of one pass starts its fade together:
-// one span per pass and text node draws the same thing. Runs whose fade has finished turn back into plain text nodes in
-// place, each at the index it always had, so React never moves a fading span onto another run's text (which would show
-// as a jump in that run's opacity). Only the runs still fading are elements.
+// one span per pass and text node draws the same thing. A run whose fade has finished keeps its span and only loses the
+// class: the block's elements are only ever appended while it is live, and React keeps each run on the span it started
+// on (keys go by position among the spans). Unwrapping finished runs into text nodes removed a node from the paragraph
+// on most passes, and WebKit answers a removal by laying the whole paragraph out again and parking the old layout until
+// an idle frame of a focused window: ~150 MB a minute while one long paragraph streamed (docs/dev/desktop.md, page memory).
 //
 // Characters are counted as streamdown counts them (text, plus one for an image or rule), skipping code, SVG and math.
 
@@ -100,9 +102,10 @@ export function applyGlyphRuns(state: GlyphRunState, tree: HastRoot, now: number
           const next = runs[i + 1]?.start;
           const to = next === undefined || next - start >= value.length ? value.length : safeCut(value, Math.max(from + 1, next - start));
           const piece = value.slice(from, to);
-          out.push(fading(i) && !WHITESPACE.test(piece)
-            ? { type: 'element', tagName: 'span', properties: { className: [GLYPH_CLASS] }, children: [{ type: 'text', value: piece }] } as HastElement
-            : { type: 'text', value: piece } as HastText);
+          // Finished runs stay spans without the class (see the top of the file); whitespace never fades
+          out.push(WHITESPACE.test(piece)
+            ? { type: 'text', value: piece } as HastText
+            : { type: 'element', tagName: 'span', properties: fading(i) ? { className: [GLYPH_CLASS] } : {}, children: [{ type: 'text', value: piece }] } as HastElement);
           from = to;
           i++;
         }

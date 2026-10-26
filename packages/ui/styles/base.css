@@ -70,6 +70,12 @@
 }
 .acp-shell pre code {
   font: inherit; color: inherit; background: transparent; padding: 0; border-radius: 0;
+  /* A block, so CodeBlock's lines (.code-line) are blocks inside a block rather than blocks split out of an inline box.
+     As wide as its longest line and carrying the <pre>'s end padding itself: neither WebKit nor Blink adds a scroller's
+     end padding after block children, so a long line scrolled to its end would touch the card's edge. The negative
+     margin hands that padding back while the code fits, so a short block never scrolls */
+  display: block; width: max-content; min-width: 100%; box-sizing: content-box;
+  padding-inline-end: var(--pad); margin-inline-end: calc(-1 * var(--pad));
 }
 .acp-shell kbd {
   font-family: var(--font-mono); font-size: var(--text-mono); color: var(--fg-2);

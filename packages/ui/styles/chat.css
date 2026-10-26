@@ -116,8 +116,10 @@
   .diff-scroll[data-scrolled-x] .diff-gutter { position: sticky; left: 0; z-index: 1; background: var(--diff-row-bg); }
   .diff-scroll[data-scrolled-x] .diff-hunk > span { position: sticky; left: 0; }
   /* Shiki tokens carry both theme colours; diffs and fenced code blocks pick by the active theme */
-  :is(.diff-source, .code-syntax) > span { color: var(--syntax-dark, var(--fg-1)); }
-  [data-theme="light"] :is(.diff-source, .code-syntax) > span { color: var(--syntax-light, var(--fg-1)); }
+  :is(.diff-source, .code-syntax, .code-line) > span { color: var(--syntax-dark, var(--fg-1)); }
+  [data-theme="light"] :is(.diff-source, .code-syntax, .code-line) > span { color: var(--syntax-light, var(--fg-1)); }
+  /* A fenced code block's source line (CodeBlock.tsx): a block of its own, so a streamed line is laid out alone */
+  .code-line { display: block; }
 
   /* Tool output (ToolOutput in Terminal.tsx) wraps; each line is its own block so a wrapped continuation hangs under the
      line's start and a long `key: value` report stays scannable */

@@ -79,7 +79,9 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 // replay) and motion-off show at once; `draining` stays true until the visible text catches up.
 // `resume`: the text was already on screen before this mount (a session reopened while its turn still streams), so
 // it shows at once and only what arrives afterwards is paced; the next chunk measures the rate from scratch
-export function useSmoothText(text: string, streaming: boolean, pace: StreamPace | false = STREAM_PACE, resume = false) {
+// `skip`: this render's growth was written while the reader was away (the catch-up after switching back to a session),
+// so it shows at once in this very render and the rate is measured from scratch again, like `resume`
+export function useSmoothText(text: string, streaming: boolean, pace: StreamPace | false = STREAM_PACE, resume = false, skip = false) {
   const { motion } = useAppearance();
   const off = !pace || motion === 'none' || BENCH_NO_PACE;
   const [count, setCount] = useState(() => (streaming && !off && !resume ? 0 : text.length));
@@ -91,7 +93,13 @@ export function useSmoothText(text: string, streaming: boolean, pace: StreamPace
     const added = text.length - s.target.length;
     s.target = text;
     s.streaming = streaming;
-    if (off || !appended) { s.pos = text.length; s.speed = 0; setCount(text.length); return; }
+    if (off || !appended || skip) {
+      s.pos = text.length;
+      s.speed = 0;
+      if (skip) s.at = 0;
+      setCount(text.length);
+      return;
+    }
     if (added <= 0 || !pace) return;
     const now = performance.now();
     if (!s.at) {
@@ -103,8 +111,8 @@ export function useSmoothText(text: string, streaming: boolean, pace: StreamPace
       s.throughput += (added / gap - s.throughput) * (1 - Math.exp(-gap / pace.windowMs));
     }
     s.at = now;
-  }, [text, streaming, off, pace]);
-  const pending = !off && count < text.length;
+  }, [text, streaming, off, pace, skip]);
+  const pending = !off && !skip && count < text.length;
   useEffect(() => {
     if (!pending || !pace) return;
     let last = performance.now();
@@ -125,7 +133,7 @@ export function useSmoothText(text: string, streaming: boolean, pace: StreamPace
     }, pace.tickMs);
     return () => clearInterval(timer);
   }, [pending, pace]);
-  return { text: off ? text : text.slice(0, Math.min(count, text.length)), draining: pending };
+  return { text: off || skip ? text : text.slice(0, Math.min(count, text.length)), draining: pending };
 }
 
 export function useStreamMotion(streaming: boolean, config: StreamMotion = STREAM_MOTION) {
