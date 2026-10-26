@@ -15,7 +15,7 @@ pub const NAME_MAX: usize = 24;
 pub const TOOL_TIMEOUT_SECS: f64 = 45.0;
 
 const KEYS: &[&str] = &["schema", "id", "version", "name", "description", "requires", "layer", "check", "contributes"];
-const CONTRIBUTION_KEYS: &[&str] = &["tools", "mcp", "hooks", "theme", "prompts", "agent", "runtime"];
+const CONTRIBUTION_KEYS: &[&str] = &["tools", "mcp", "hooks", "theme", "prompts", "agent", "runtime", "skills", "commands"];
 
 /// The hooks a plugin's resident process may declare (`contributes.runtime.hooks`, docs/dev/plugins.md, Runtime). The
 /// engine calls only those it implements; a name it does not know yet is a note, so a plugin written for a newer
@@ -34,6 +34,7 @@ pub const RUNTIME_HOOKS: &[&str] = &[
   "compaction",
   "shell",
   "tools",
+  "command",
 ];
 /// The event families a resident process may subscribe to; `<family>.*` takes every event of one, `*` all of them
 /// except the streamed deltas, which are asked for by name (`text.delta`, `thought.delta`)
@@ -87,6 +88,27 @@ pub struct Contributes {
   /// A resident process: the hooks it answers and the events it hears
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub runtime: Option<RuntimeDef>,
+  /// A folder of skills (`<name>/SKILL.md`), relative to the plugin: every agent is offered them
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub skills: Option<String>,
+  /// Slash commands every session lists: a prompt template, or the runtime's `command` hook
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub commands: Vec<CommandDef>,
+}
+
+/// `contributes.commands[]`: `/name` in the composer of every session. `prompt` is sent in its place with `$ARGUMENTS`
+/// replaced by what follows the name (appended when the template has no `$ARGUMENTS`); without one the runtime's
+/// `command` hook answers
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandDef {
+  pub name: String,
+  #[serde(default)]
+  pub description: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub hint: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub prompt: Option<String>,
 }
 
 /// `contributes.runtime`: a process the engine keeps running while the plugin is in effect, spoken to over ndjson
@@ -145,6 +167,12 @@ impl Contributes {
     if self.runtime.is_some() {
       out.push("runtime");
     }
+    if self.skills.is_some() {
+      out.push("skills");
+    }
+    if !self.commands.is_empty() {
+      out.push("commands");
+    }
     out
   }
 }
@@ -200,7 +228,7 @@ impl Manifest {
     match self.contributes.kinds().first().copied() {
       Some("agent") => "agents",
       Some("theme") => "interface",
-      Some("hooks") => "automation",
+      Some("hooks" | "runtime") => "automation",
       _ => "tools",
     }
   }
@@ -221,6 +249,12 @@ pub fn valid_id(id: &str) -> bool {
 pub fn valid_tool_name(name: &str) -> bool {
   let b = name.as_bytes();
   !b.is_empty() && b.len() <= NAME_MAX && b[0].is_ascii_lowercase() && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'_')
+}
+
+/// `[a-z][a-z0-9_-]*`, at most `NAME_MAX`
+pub fn valid_command_name(name: &str) -> bool {
+  let b = name.as_bytes();
+  !b.is_empty() && b.len() <= NAME_MAX && b[0].is_ascii_lowercase() && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'_' || *c == b'-')
 }
 
 /// What the static check found: errors keep the plugin from being activated, notes are shown beside it
@@ -339,6 +373,25 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
     && !inside(dir, p).is_some_and(|d| d.is_dir())
   {
     err(findings, format!("prompts folder `{p}` not found in the plugin"));
+  }
+  if let Some(p) = &m.contributes.skills
+    && !inside(dir, p).is_some_and(|d| d.is_dir())
+  {
+    err(findings, format!("skills folder `{p}` not found in the plugin"));
+  }
+  let mut names = std::collections::HashSet::new();
+  let hooked = m.contributes.runtime.as_ref().is_some_and(|r| r.hooks.iter().any(|h| h == "command"));
+  for c in &m.contributes.commands {
+    let at = format!("command `/{}`", c.name);
+    if !valid_command_name(&c.name) {
+      err(findings, format!("{at}: the name must be lowercase letters, digits, `-` and `_`, starting with a letter, at most {NAME_MAX} characters"));
+    }
+    if !names.insert(c.name.as_str()) {
+      err(findings, format!("{at} is declared twice"));
+    }
+    if c.prompt.as_deref().is_none_or(|p| p.trim().is_empty()) && !hooked {
+      err(findings, format!("{at}: needs a `prompt`, or a runtime that answers the `command` hook"));
+    }
   }
   if let Some(agent) = &m.contributes.agent {
     match agent.get("command").and_then(Value::as_str).filter(|c| !c.trim().is_empty()) {
@@ -508,6 +561,28 @@ mod tests {
     check(&m, "other", dir.path(), &|_| false, &mut f);
     let text = f.text();
     for needle in ["id `Bad_Id`", "folder's name", "requires `nope`", "tool `Go`: the name", "declared twice", "a description is needed", "type object", "`../escape.sh`", "`command` is empty", "`--ctl-w`", "`--bg-0`", "missing.css", "Acpira's own", "unknown key `extra`", "unknown contribution `widgets`"] {
+      assert!(text.contains(needle), "{needle} missing in\n{text}");
+    }
+  }
+
+  #[test]
+  fn commands_need_a_prompt_or_the_command_hook_and_skills_a_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("skills")).unwrap();
+    std::fs::write(dir.path().join("run.mjs"), "").unwrap();
+    let base = |commands: Value, runtime: Value, skills: &str| {
+      json!({ "schema": 1, "id": "cmds", "version": "0.1.0", "description": "x", "contributes": { "commands": commands, "runtime": runtime, "skills": skills } })
+    };
+    let ok = base(json!([{ "name": "review", "prompt": "Review $ARGUMENTS" }, { "name": "ping-me" }]), json!({ "command": ["node", "run.mjs"], "hooks": ["command"] }), "skills");
+    let (m, mut f) = manifest(ok);
+    check(&m, "cmds", dir.path(), &|p| p == "node", &mut f);
+    assert!(f.ok(), "{f:?}");
+    assert_eq!(m.contributes.kinds(), ["runtime", "skills", "commands"]);
+    let bad = base(json!([{ "name": "Review" }, { "name": "x", "prompt": "a" }, { "name": "x", "prompt": "b" }]), json!({ "command": ["node", "run.mjs"], "events": ["turn.*"] }), "nope");
+    let (m, mut f) = manifest(bad);
+    check(&m, "cmds", dir.path(), &|p| p == "node", &mut f);
+    let text = f.text();
+    for needle in ["command `/Review`: the name", "needs a `prompt`", "`/x` is declared twice", "skills folder `nope`"] {
       assert!(text.contains(needle), "{needle} missing in\n{text}");
     }
   }

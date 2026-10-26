@@ -36,6 +36,11 @@ impl AcpSession {
     if !layers.is_empty() {
       req["_meta"][acpira_agent::acp::LAYERS_META] = json!(layers);
     }
+    // Its skills too, which it lists and loads like the user's own
+    let skills = self.deps.plugin_runtime.as_ref().map(|rt| rt.contributed().skills.clone()).unwrap_or_default();
+    if !skills.is_empty() {
+      req["_meta"][acpira_agent::acp::SKILLS_META] = json!(skills);
+    }
   }
 
   /// Params for session/new, resume and load (and an edit's fresh session): the shared MCP servers for this agent and

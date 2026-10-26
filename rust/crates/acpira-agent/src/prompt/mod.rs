@@ -61,6 +61,9 @@ pub struct Places {
   /// The prompt folders of the engine's plugins in effect when the session opened (`acp.rs` `LAYERS_META`): between
   /// the user's overrides and the project's, read from this disk
   pub layers: Vec<PathBuf>,
+  /// The skill folders of the engine's plugins in effect when the session opened (`acp.rs` `SKILLS_META`): between the
+  /// user's skills and the project's, read from this disk
+  pub skill_layers: Vec<PathBuf>,
 }
 
 /// A session folder's prompt files as its SSH host read them (`gather`, run there by the engine's helper at session
@@ -111,12 +114,12 @@ impl HostFiles {
 
 impl Places {
   pub fn new(cwd: &Path, home: Option<&Path>) -> Places {
-    Places { cwd: cwd.to_path_buf(), home: home.map(Path::to_path_buf), root: project_root(cwd, home), host: None, layers: vec![] }
+    Places { cwd: cwd.to_path_buf(), home: home.map(Path::to_path_buf), root: project_root(cwd, home), host: None, layers: vec![], skill_layers: vec![] }
   }
 
   /// A folder on an SSH host, read from what the host sent
   pub fn on_host(cwd: &Path, files: Arc<HostFiles>) -> Places {
-    Places { cwd: cwd.to_path_buf(), home: files.home.clone(), root: files.root.clone(), host: Some(files), layers: vec![] }
+    Places { cwd: cwd.to_path_buf(), home: files.home.clone(), root: files.root.clone(), host: Some(files), layers: vec![], skill_layers: vec![] }
   }
 
   /// With the plugins' prompt folders
@@ -125,9 +128,15 @@ impl Places {
     self
   }
 
-  /// Whether `path` is in a plugin's prompt folder, which is always on this disk
+  /// With the plugins' skill folders
+  pub fn with_skill_layers(mut self, skills: Vec<PathBuf>) -> Places {
+    self.skill_layers = skills;
+    self
+  }
+
+  /// Whether `path` is in a plugin's prompt or skill folder, which is always on this disk
   fn in_layer(&self, path: &Path) -> bool {
-    self.layers.iter().any(|l| path.starts_with(l))
+    self.layers.iter().chain(&self.skill_layers).any(|l| path.starts_with(l))
   }
 
   /// A file's text

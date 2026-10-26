@@ -4,7 +4,7 @@
 export type PluginLayer = 'agents' | 'tools' | 'interface' | 'automation';
 export const PLUGIN_LAYERS: readonly PluginLayer[] = ['agents', 'tools', 'interface', 'automation'];
 
-export type PluginContribution = 'tools' | 'mcp' | 'hooks' | 'theme' | 'prompts' | 'agent' | 'runtime';
+export type PluginContribution = 'tools' | 'mcp' | 'hooks' | 'theme' | 'prompts' | 'agent' | 'runtime' | 'skills' | 'commands';
 
 // Who made a change: user (a page), session (a card in a session, with its agent and model) or cli
 export interface PluginProvenance {

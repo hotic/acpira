@@ -127,6 +127,8 @@ impl AcpSession {
     let subagents = if c.tree.is_empty() { None } else { Some(c.tree.summaries()) };
     let picked = (!c.picks.values.is_empty()).then(|| picked_controls(&c));
     let queued = queue_snapshot(&c);
+    // The plugins' slash commands join the agent's own in the menu
+    let merged = self.plugin_commands(&c.state.commands);
     let head = ViewRef {
       id: &self.id,
       agent: &self.agent,
@@ -143,7 +145,7 @@ impl AcpSession {
       controls: picked.as_ref().unwrap_or(&c.state.controls),
       model_shapes: shapes.as_ref(),
       usage: c.state.usage.as_ref(),
-      commands: &c.state.commands,
+      commands: merged.as_deref().unwrap_or(&c.state.commands),
       queued,
       can_steer: self.can_steer_of(&c),
       goal: c.state.goal.as_ref(),
