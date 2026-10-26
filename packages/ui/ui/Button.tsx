@@ -140,7 +140,7 @@ export function Chip({ className, children, variant = 'quiet', caret = true, ico
         {meta && <span className="text-fg-3"> {meta}</span>}
       </span>}
       {tags && <span className="flex h-4 min-w-0 flex-wrap items-center gap-0.5 overflow-hidden">{tags}</span>}
-      {trail && <span className="flex shrink-0 items-center gap-1">{trail}</span>}
+      {trail}
       {caret && <ChevronDown className={cn('size-3 shrink-0 text-fg-3', CARET_TURN, narrow && '@max-sm:hidden')} strokeWidth={1.75} />}
     </button>
   );

@@ -181,6 +181,27 @@
   }
   .pair-side[data-on] .pair-name { grid-template-columns: 1fr; flex-grow: 1; margin-inline-start: 0; opacity: 1; transition-delay: 0s, 0s, 0s, calc(var(--dur) / 2); }
   .pair-name > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  /* The level badge at the end of a PairSwitch side, and the sidekick's trail on the model chip (ModelPicker.tsx):
+     both unfold through a 0fr → 1fr grid track and fade in when a model with a level / a sidekick is picked, and fold
+     back on --dur-close --ease-close (matching the panel's effort section) when cleared to None */
+  .pair-level {
+    display: grid; grid-template-columns: 0fr; flex-shrink: 0; min-width: 0; margin-inline-start: calc(var(--spacing) * -1.5); opacity: 0;
+    transition: grid-template-columns var(--dur-close) var(--ease-close), margin var(--dur-close) var(--ease-close), opacity var(--dur);
+  }
+  .pair-level[data-open] {
+    grid-template-columns: 1fr; margin-inline-start: 0; opacity: 1;
+    transition: grid-template-columns var(--dur-open) ease-out, margin var(--dur-open) ease-out, opacity var(--dur) ease-out calc(var(--dur) / 2);
+  }
+  .pair-level > span { display: flex; min-width: 0; overflow: hidden; }
+  .chip-trail {
+    display: grid; grid-template-columns: 0fr; flex-shrink: 0; min-width: 0; margin-inline-start: calc(var(--spacing) * -1); opacity: 0;
+    transition: grid-template-columns var(--dur-close) var(--ease-close), margin var(--dur-close) var(--ease-close), opacity var(--dur);
+  }
+  .chip-trail[data-open] {
+    grid-template-columns: 1fr; margin-inline-start: 0; opacity: 1;
+    transition: grid-template-columns var(--dur-open) ease-out, margin var(--dur-open) ease-out, opacity var(--dur) ease-out calc(var(--dur) / 2);
+  }
+  .chip-trail > span { display: flex; align-items: center; gap: var(--spacing); min-width: 0; overflow: hidden; white-space: nowrap; }
 
   /* The goal head's controls (chat/Goal.tsx GoalHead): folded to nothing beside the elapsed time, they unfold through
      their grid track (0fr → 1fr) and fade in after the room opens while the line is hovered or holds focus, so the time
