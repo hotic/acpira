@@ -17,7 +17,7 @@ smoke = []
 [build-dependencies]
 tauri-build = { version = "2.7", features = [] }
 # build.rs packs the page bundle into the Windows exe; the version acpira-desktop links
-zstd = "0.13"
+zstd = { version = "0.13", default-features = false }
 
 [dependencies]
 acpira-desktop = { path = "../../rust/crates/acpira-desktop" }
@@ -32,8 +32,9 @@ tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "io-util", 
 uuid = { version = "1.24", features = ["v4"] }
 parking_lot = "0.12"
 rfd = { version = "0.15", default-features = false, features = ["tokio"] }
-# The page bundle's packed files (the Windows exe's embedded ones, src/serve.rs)
-zstd = "0.13"
+# The page bundle's packed files (the Windows exe's embedded ones, src/serve.rs). No default features: they add the
+# decoders of zstd's pre-1.0 formats (~110 KB) and the dictionary builder, as in rust/Cargo.toml
+zstd = { version = "0.13", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
@@ -50,13 +51,15 @@ acpira-host = { path = "../../rust/crates/acpira-host" }
 webview2-com = "0.39"
 windows = { version = "0.62", features = ["Data_Xml_Dom", "UI_Notifications", "Win32_Foundation", "Win32_Globalization", "Win32_System_Com", "Win32_System_Console", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
-# Fat LTO: ~0.9 MB (6%) smaller than thin for ~15 s more on a clean build (zig cross-build, 2026-10-25)
+# Fat LTO: ~0.9 MB (6%) smaller than thin for ~15 s more on a clean build (zig cross-build, 2026-10-25). A panic aborts,
+# as in the engine's profiles (rust/Cargo.toml): the Windows exe 42.5 → 26.3 MB, the macOS shell 1.8 MB smaller
 [profile.release]
 lto = "fat"
 strip = "symbols"
 codegen-units = 1
+panic = "abort"
 
-# The engine's panic lints (rust/Cargo.toml [workspace.lints])
+# The engine's panic lints (rust/Cargo.toml [workspace.lints]), for the same reason: a release build aborts on a panic
 [lints.clippy]
 unwrap_used = "warn"
 expect_used = "warn"

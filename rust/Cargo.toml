@@ -8,7 +8,7 @@ edition = "2024"
 license = "MIT"
 publish = false
 
-# Run-time code returns errors instead of panicking, so a panic is a bug of the build rather than of its input; the gate
+# Optimized builds abort on a panic (the profiles below), so run-time code returns errors instead of panicking; the gate
 # runs clippy with -D warnings, which makes these errors. Tests are exempt through clippy.toml (integration-test crates
 # with a crate-level allow); a panic that is a bug of the build is `#[expect(clippy::…, reason = "…")]` on the smallest
 # item. `indexing_slicing` stays off: serde_json reads, which never panic, are most of what it reports
@@ -68,13 +68,18 @@ zstd = { version = "0.13", default-features = false }
 junction = "1.2"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_Registry", "Win32_System_Environment", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp", "Win32_Storage_FileSystem"] }
 
+# A panic aborts the process in every optimized build (the dist engine 5 MB smaller on darwin-arm64, the Windows desktop
+# exe 16 MB, 2026-10-26): run-time code returns errors instead of panicking (the panic lints in [workspace.lints]), the
+# shells restart an engine that ends, and the built-in agent parses PDFs in a child process (tools/pdf.rs). Tests and
+# debug builds keep unwinding
 [profile.release]
 lto = "thin"
 strip = "symbols"
+panic = "abort"
 
 # Shipped engines (scripts/release/build-sidecar.mjs in CI, with --all or --dist): whole-program LTO in one codegen unit
 # is ~35% smaller (33 → 22 MB on darwin-arm64, 2026-10-25) for ~4x the build time, which day-to-day `--release` builds
-# (pnpm harness, probes) do not pay. panic = "abort" would save 5 MB more but is out: tools/pdf.rs catches pdf-extract panics
+# (pnpm harness, probes) do not pay
 [profile.dist]
 inherits = "release"
 lto = "fat"
