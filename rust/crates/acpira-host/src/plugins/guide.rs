@@ -12,7 +12,7 @@ A plugin is a folder `{root}/<id>/` holding a `plugin.json` and its files. It ex
 
 ## Starting point
 
-`{exe} plugin new <id> --kind runtime,tool --home {home}` writes `{root}/<id>/` with a working example of each kind asked for (`runtime`, `tool`, `command`, `skill`, `provider`, `theme`), which passes the check as written; edit it from there. A runtime folder gets the SDK `acpira-plugin.mjs` (one file, no dependencies, Node 18+) copied in; for a folder written by hand, copy `{root}/.sdk/acpira-plugin.mjs`. With the SDK a resident process is:
+`{exe} plugin new <id> --kind runtime,tool --lang node --home {home}` (or `--lang python`) writes `{root}/<id>/` with a working example of each kind asked for (`runtime`, `tool`, `command`, `skill`, `provider`, `theme`), which passes the check as written; edit it from there. A runtime folder gets the SDK copied in: `acpira-plugin.mjs` (Node 18+) or `acpira_plugin.py` (Python 3.8+, the same calls with `@p.hook`, `@p.on`, `@p.method` and `p.run()`), one file without dependencies each; for a folder written by hand, copy it from `{root}/.sdk/`. With the SDK a resident process is:
 
 ```js
 import { plugin } from './acpira-plugin.mjs';

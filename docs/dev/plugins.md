@@ -103,12 +103,12 @@ What each kind does and when it takes effect:
 
 ## SDK
 
-`plugins/sdk.mjs` is the runtime side in one ES module without dependencies (Node 18+), shipped inside the binary (`plugins/sdk.rs`). `acpira plugin new <id> [--kind runtime,tool,command,skill,provider,theme]` writes a folder that passes the static check as written, a working example of each kind, and copies the SDK in as `acpira-plugin.mjs`, so the copy is frozen with the plugin and an engine upgrade never changes its code. The engine also keeps `<plugins>/.sdk/acpira-plugin.mjs` current at start (written only when it differs; `.sdk` is no valid id, so it is never read as a plugin) for folders written by hand. `plugin_guide` names both with this engine's binary and home.
+`plugins/sdk.mjs` (one ES module, Node 18+) and `plugins/sdk.py` (one module, standard library, Python 3.8+) are the runtime side without dependencies, shipped inside the binary (`plugins/sdk.rs`); the Python one has the same calls with decorators (`@p.hook`, `@p.on`, `@p.method`) and runs handlers on worker threads so one may wait on the engine. `acpira plugin new <id> [--kind runtime,tool,command,skill,provider,theme] [--lang node|python]` writes a folder that passes the static check as written, a working example of each kind, and copies the SDK in as `acpira-plugin.mjs` or `acpira_plugin.py`, so the copy is frozen with the plugin and an engine upgrade never changes its code. The engine also keeps both in `<plugins>/.sdk/` current at start (written only when it differs; `.sdk` is no valid id, so it is never read as a plugin) for folders written by hand. `plugin_guide` names both with this engine's binary and home.
 
 - `plugin()` answers `initialize` with the hooks it registered (narrowing the manifest's, never widening), routes `hook/<name>`, `rpc/<name>` and `event` to `hook()`, `method()` and `on()` (exact names, `family.*`, `*`; deltas only by name), aborts a handler's `signal` on `$/cancel_request` without answering, runs `onClose()` handlers on `shutdown` or a closed stdin and exits.
 - `console.log` / `info` / `debug` go to stderr, the engine log, since stdout is the wire (`keepConsole` leaves them).
 - Engine calls: `storage`, `session` (`send` is `session/act` with a send message), `ui` (`toast`, `ask`, `post`, `composer`), `model.generate`, `providers.set`, `call` (`plugin/call`), `log`, `request` for anything else; an error answer rejects with the engine's message.
-- Tested by running a scaffolded folder unchanged (`runtime.rs` `a_scaffolded_runtime_answers_hooks_events_and_methods_through_the_sdk`). No Python SDK yet.
+- Tested by running a scaffolded folder of each language unchanged (`runtime.rs` `a_scaffolded_runtime_answers_hooks_events_and_methods_through_the_sdk`; Python where `python3` is on PATH).
 
 ## Events
 
