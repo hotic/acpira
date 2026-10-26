@@ -274,6 +274,49 @@ impl AcpSession {
     vec![("ACPIRA_SESSION_ID", self.id.clone()), ("ACPIRA_AGENT", self.agent.clone())]
   }
 
+  /// Run a hook of `src`, one of `cfg`'s sources: a plugin's in its frozen copy with its folders added, the project's
+  /// where the project's hooks run
+  async fn run_source(&self, host: &HookHost, cfg: &HooksConfig, src: &HooksConfig, hook: &Hook, payload: &Value) -> Verdict {
+    let mut env = self.hook_env();
+    match &src.plugin {
+      Some(p) => {
+        let env: Vec<(&str, String)> = env.drain(..).chain(p.env.iter().map(|(k, v)| (k.as_str(), v.clone()))).collect();
+        crate::hooks::run::run_in(hook, &p.dir, &cfg.root, payload, &env).await
+      }
+      None => host.run(hook, &cfg.root, payload, &env).await,
+    }
+  }
+
+  /// `run_source` for `beforePrompt`
+  async fn run_prompt_source(&self, host: &HookHost, cfg: &HooksConfig, src: &HooksConfig, hook: &Hook, payload: &Value) -> PromptVerdict {
+    let mut env = self.hook_env();
+    match &src.plugin {
+      Some(p) => {
+        let env: Vec<(&str, String)> = env.drain(..).chain(p.env.iter().map(|(k, v)| (k.as_str(), v.clone()))).collect();
+        crate::hooks::run::run_prompt_in(hook, &p.dir, &cfg.root, payload, &env).await
+      }
+      None => host.run_prompt(hook, &cfg.root, payload, &env).await,
+    }
+  }
+
+  /// The plugins' hooks chained after the project's: only for a session on this machine, since a plugin's hook runs in
+  /// its frozen copy here. Where the project declares none (or its file is broken), they chain onto an empty config
+  fn with_plugin_hooks(&self, host: &HookHost, project: Option<HooksConfig>) -> Option<HooksConfig> {
+    let plugins = match (host, &self.deps.plugin_hooks) {
+      (HookHost::Local, Some(f)) => f(),
+      _ => vec![],
+    };
+    if plugins.is_empty() {
+      return project;
+    }
+    let mut cfg = project.unwrap_or_else(|| {
+      let folder = self.hook_folder();
+      HooksConfig::empty(&crate::shared_config::project_root(&folder).unwrap_or_else(|| PathBuf::from(&folder)))
+    });
+    cfg.chained = plugins;
+    Some(cfg)
+  }
+
   /// Where the project's hooks are read and run: here, or on the SSH host the session's folder is on. None: the host
   /// cannot be reached now, so no hook can run there (nor can the agent's writes)
   pub(crate) async fn hook_host(&self) -> Option<HookHost> {
@@ -295,6 +338,12 @@ impl AcpSession {
 
   /// The project's hooks, read again (an edited file applies from the next turn); a broken file is reported once
   async fn load_hooks(&self, host: &HookHost) -> Option<Arc<HooksConfig>> {
+    let project = self.load_project_hooks(host).await;
+    self.with_plugin_hooks(host, project).map(Arc::new)
+  }
+
+  /// The project's own hooks file
+  async fn load_project_hooks(&self, host: &HookHost) -> Option<HooksConfig> {
     match host.load(&self.hook_folder()).await {
       None => None,
       Some(Ok(cfg)) => {
@@ -312,7 +361,7 @@ impl AcpSession {
             self.notify(&tp("host.hooksUnknownKeys", &[("keys", &keys)]));
           }
         }
-        Some(Arc::new(cfg))
+        Some(cfg)
       }
       Some(Err(e)) => {
         let fresh = {
@@ -349,7 +398,7 @@ impl AcpSession {
     // Only what the user (or their goal) asks for; Acpira's own follow-ups and continues are not prompts of theirs
     if matches!(origin, Origin::User | Origin::Goal)
       && let Some(cfg) = cfg.as_ref()
-      && let Some(hook) = cfg.before_prompt.as_ref()
+      && cfg.sources().any(|s| s.before_prompt.is_some())
       && let Some(h) = host.as_ref()
     {
       let first = first_of(&self.core.lock());
@@ -363,19 +412,24 @@ impl AcpSession {
         "attachments": attachments,
         "first": first,
       });
-      match h.run_prompt(hook, &cfg.root, &payload, &self.hook_env()).await {
-        PromptVerdict::Block(reason) => return Err(reason),
-        // A slash command must stay the prompt's only text, or the agent no longer reads it as one
-        PromptVerdict::Pass(Some(_)) if command_name(text).is_some() => self.log("hooks: beforePrompt context left out of a slash command"),
-        PromptVerdict::Pass(Some(context)) => {
-          self.log(&format!("hooks: beforePrompt context ({} bytes)", context.len()));
-          tail.push(json!({ "type": "text", "text": format!("<workspace-hook-context hook=\"beforePrompt\">\n{context}\n</workspace-hook-context>") }));
-        }
-        PromptVerdict::Pass(None) => {}
-        // No turn to hold a notice row yet: the warning is a toast
-        PromptVerdict::Broken(e) => {
-          self.log(&format!("hooks: `{}` broken: {e}", hook.run));
-          self.notify(&format!("{}\n{e}", tp("host.hookBroken", &[("hook", &hook.run)])));
+      // The project's hook, then each plugin's; the first block keeps the prompt back, and their contexts ride along in order
+      for src in cfg.sources() {
+        let Some(hook) = src.before_prompt.as_ref() else { continue };
+        match self.run_prompt_source(h, cfg, src, hook, &payload).await {
+          PromptVerdict::Block(reason) => return Err(reason),
+          // A slash command must stay the prompt's only text, or the agent no longer reads it as one
+          PromptVerdict::Pass(Some(_)) if command_name(text).is_some() => self.log("hooks: beforePrompt context left out of a slash command"),
+          PromptVerdict::Pass(Some(context)) => {
+            self.log(&format!("hooks: beforePrompt context ({} bytes)", context.len()));
+            let from = src.plugin.as_ref().map(|p| format!(" plugin=\"{}\"", p.id)).unwrap_or_default();
+            tail.push(json!({ "type": "text", "text": format!("<workspace-hook-context hook=\"beforePrompt\"{from}>\n{context}\n</workspace-hook-context>") }));
+          }
+          PromptVerdict::Pass(None) => {}
+          // No turn to hold a notice row yet: the warning is a toast
+          PromptVerdict::Broken(e) => {
+            self.log(&format!("hooks: `{}` broken: {e}", hook.run));
+            self.notify(&format!("{}\n{e}", tp("host.hookBroken", &[("hook", &hook.run)])));
+          }
         }
       }
     }
@@ -443,7 +497,7 @@ impl AcpSession {
   async fn context_blocks(&self, host: &HookHost, cfg: &HooksConfig) -> Vec<Value> {
     let embedded = self.caps(&self.core.lock()).embedded_context;
     let mut blocks = vec![];
-    for path in &cfg.context {
+    for path in cfg.sources().flat_map(|s| s.context.iter()) {
       let Some(mut text) = host.read_text(path).await else {
         self.log(&format!("hooks: context file {} unreadable", path.display()));
         self.notify(&tp("host.hookContextMissing", &[("path", &path_text(path))]));
@@ -479,19 +533,31 @@ impl AcpSession {
       Some(c) => c,
       None => self.load_hooks(&host).await?,
     };
-    let hook = cfg.before_edit.as_ref()?;
+    let hooks: Vec<(&HooksConfig, &Hook)> = cfg.sources().filter_map(|s| s.before_edit.as_ref().map(|h| (s, h))).collect();
+    if hooks.is_empty() {
+      return None;
+    }
     let files: Vec<String> = paths.iter().map(|p| path_text(&self.absolute(p))).collect();
-    let verdict = self.run_before_edit(&host, &cfg, hook, kind, &files, raw_input, "permission", json!({})).await;
-    let reason = match verdict {
-      Verdict::Block(r) => r,
-      Verdict::Pass => {
+    // The first deny rejects the edit; the row counts as asked only when every hook passed it
+    let (mut blocked, mut all_passed) = (None, true);
+    for (src, hook) in hooks {
+      match self.run_before_edit(&host, &cfg, src, hook, kind, &files, raw_input.clone(), "permission", json!({})).await {
+        Verdict::Block(r) => {
+          blocked = Some(r);
+          break;
+        }
+        Verdict::Pass => {}
+        Verdict::Broken(e) => {
+          all_passed = false;
+          self.hook_broken(hook, &e);
+        }
+      }
+    }
+    let Some(reason) = blocked else {
+      if all_passed {
         self.core.lock().hooks.asked.insert(tool_call_id.to_owned());
-        return None;
       }
-      Verdict::Broken(e) => {
-        self.hook_broken(hook, &e);
-        return None;
-      }
+      return None;
     };
     let file = files.first().cloned().unwrap_or_default();
     self.log(&format!("hooks: edit of {file} rejected"));
@@ -509,7 +575,7 @@ impl AcpSession {
 
   /// `extra`: keys added to the payload (the audit's attribution)
   #[allow(clippy::too_many_arguments, reason = "the gate's inputs and the audit's attribution travel together")]
-  async fn run_before_edit(&self, host: &HookHost, cfg: &HooksConfig, hook: &Hook, kind: ToolKind, files: &[String], raw_input: Option<Value>, phase: &str, extra: Value) -> Verdict {
+  async fn run_before_edit(&self, host: &HookHost, cfg: &HooksConfig, src: &HooksConfig, hook: &Hook, kind: ToolKind, files: &[String], raw_input: Option<Value>, phase: &str, extra: Value) -> Verdict {
     let read = read_inputs(&self.core.lock().state.turns);
     // The tool's own input, with the first file under the key Claude Code's Edit uses, so scripts that read one path work
     let mut input = raw_input.filter(Value::is_object).unwrap_or_else(|| json!({}));
@@ -530,7 +596,7 @@ impl AcpSession {
     if let (Some(p), Value::Object(extra)) = (payload.as_object_mut(), extra) {
       p.extend(extra);
     }
-    host.run(hook, &cfg.root, &payload, &self.hook_env()).await
+    self.run_source(host, cfg, src, hook, &payload).await
   }
 
   fn hook_broken(&self, hook: &Hook, error: &str) {
@@ -609,7 +675,7 @@ impl AcpSession {
     let GateJob { cfg, before, tools } = job;
     let Some(host) = self.hook_host().await else {
       // The host went away since the turn started: no hook can run there now; say so instead of passing in silence
-      if let Some(hook) = cfg.before_edit.as_ref().or(cfg.after_turn.as_ref()) {
+      if let Some(hook) = cfg.sources().find_map(|s| s.before_edit.as_ref().or(s.after_turn.as_ref())) {
         self.hook_broken(hook, "the SSH host could not be reached, so the gate did not run");
       }
       let reasons = std::mem::take(&mut self.core.lock().hooks.denied);
@@ -658,15 +724,16 @@ impl AcpSession {
     let turn: Vec<String> = turn.iter().map(|(p, _)| path_text(p)).collect();
     self.log(&format!("hooks: gate after turn ({} changed, {} tool calls reaching {:?}, round {round})", turn.len(), turn_tools.len(), tools.reach));
     // Edits made without a permission request get the beforeEdit check now
-    if let Some(hook) = cfg.before_edit.as_ref().filter(|_| !audit.is_empty()) {
+    // Every source's hook runs; each block adds its reason
+    for (src, hook) in cfg.sources().filter_map(|s| s.before_edit.as_ref().map(|h| (s, h))).filter(|_| !audit.is_empty()) {
       let extra = json!({ "turn_tools": turn_tools, "file_sources": audit_sources });
-      match self.run_before_edit(&host, &cfg, hook, ToolKind::Edit, &audit, None, "audit", extra).await {
+      match self.run_before_edit(&host, &cfg, src, hook, ToolKind::Edit, &audit, None, "audit", extra).await {
         Verdict::Block(r) => reasons.push(r),
         Verdict::Pass => {}
         Verdict::Broken(e) => self.hook_broken(hook, &e),
       }
     }
-    if let Some(hook) = cfg.after_turn.as_ref() {
+    if cfg.sources().any(|s| s.after_turn.is_some()) {
       let payload = json!({
         "hook_event_name": "Stop",
         "session_id": self.id,
@@ -680,10 +747,12 @@ impl AcpSession {
         "file_sources": session_sources,
         "read_files": read_inputs(&self.core.lock().state.turns),
       });
-      match host.run(hook, &cfg.root, &payload, &self.hook_env()).await {
-        Verdict::Block(r) => reasons.push(r),
-        Verdict::Pass => {}
-        Verdict::Broken(e) => self.hook_broken(hook, &e),
+      for (src, hook) in cfg.sources().filter_map(|s| s.after_turn.as_ref().map(|h| (s, h))) {
+        match self.run_source(&host, &cfg, src, hook, &payload).await {
+          Verdict::Block(r) => reasons.push(r),
+          Verdict::Pass => {}
+          Verdict::Broken(e) => self.hook_broken(hook, &e),
+        }
       }
     }
     self.gate_decided(&cfg, reasons).await;

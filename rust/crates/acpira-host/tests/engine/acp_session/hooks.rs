@@ -643,3 +643,61 @@ async fn the_gate_waits_for_summoned_children_and_covers_what_they_wrote_meanwhi
   let after = p.payloads("after.log");
   assert!(after[0]["turn_files"].as_array().unwrap().iter().any(|f| f.as_str().unwrap().replace('\\', "/").ends_with("child.txt")), "{after:?}");
 }
+
+/// A plugin's hooks as `plugins::host` hands them over: parsed in its folder, run there with its folders in the env.
+/// `p.cjs` adds context naming where it ran; `no.cjs` blocks every turn
+fn plugin_hooks(dir: &Path) -> acpira_host::hooks::HooksConfig {
+  std::fs::write(
+    dir.join("p.cjs"),
+    r#"
+const fs = require('fs'), path = require('path');
+const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+if (input.prompt.includes('wish:')) process.stdout.write(`plugin ran in ${path.basename(process.cwd())} for ${path.basename(process.env.ACPIRA_PROJECT_DIR)} with ${path.basename(process.env.ACPIRA_PLUGIN_DIR)}`);
+"#,
+  )
+  .unwrap();
+  std::fs::write(dir.join("no.cjs"), "require('fs').readFileSync(0); process.stderr.write('plugin says no'); process.exit(2);").unwrap();
+  let mut cfg = acpira_host::hooks::parse(dir, r#"{ "beforePrompt": "node p.cjs", "afterTurn": "node no.cjs" }"#).unwrap();
+  cfg.plugin = Some(acpira_host::hooks::PluginSource { id: "demo".into(), dir: dir.to_path_buf(), env: vec![("ACPIRA_PLUGIN_DIR".into(), dir.to_string_lossy().into_owned())] });
+  cfg
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugin_s_hooks_run_after_the_project_s_in_its_own_folder() {
+  let fake = fake_or_skip!();
+  if !git_or_skip() {
+    return;
+  }
+  let p = Project::new(json!({ "beforePrompt": "prompt.cjs" }));
+  let plugin = tempfile::tempdir().unwrap();
+  let plugin_dir = acpira_host::platform::paths::canonical_for_cli(plugin.path()).unwrap();
+  let cfg = plugin_hooks(&plugin_dir);
+  let mut h = Harness::new(&fake, json!({}));
+  h.deps.plugin_hooks = Some(Arc::new(move || vec![cfg.clone()]));
+  let s = started(&h, &p.cwd()).await;
+  prompt(&s, "echo-text wish:a bigger chest").await;
+  // Both contexts ride along, the project's first; the plugin's ran in its folder for the project
+  let reply = view(&s)["turns"][1]["blocks"][0]["markdown"].as_str().unwrap().to_owned();
+  let (project_at, plugin_at) = (reply.find("read wish-to-blocks first"), reply.find("<workspace-hook-context hook=\"beforePrompt\" plugin=\"demo\">"));
+  assert!(project_at.is_some() && plugin_at.is_some() && project_at < plugin_at, "{reply}");
+  let name = |d: &Path| d.file_name().unwrap().to_string_lossy().into_owned();
+  assert!(reply.contains(&format!("plugin ran in {} for {} with {}", name(&plugin_dir), name(&p.root), name(&plugin_dir))), "{reply}");
+  // The project gates nothing after a turn, the plugin does: its block goes back to the agent and the gate gives up
+  until(|| count(&h, "hooks: gate gave up") == 1, 30_000).await;
+  let n = notices(&view(&s));
+  assert!(n.iter().all(|x| x["details"] == "plugin says no"), "{n:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugin_s_hooks_run_where_the_project_declares_none() {
+  let fake = fake_or_skip!();
+  let folder = tempfile::tempdir().unwrap();
+  let plugin = tempfile::tempdir().unwrap();
+  let cfg = plugin_hooks(plugin.path());
+  let mut h = Harness::new(&fake, json!({}));
+  h.deps.plugin_hooks = Some(Arc::new(move || vec![cfg.clone()]));
+  let s = started(&h, &folder.path().to_string_lossy()).await;
+  prompt(&s, "echo-text wish:x").await;
+  let reply = view(&s)["turns"][1]["blocks"][0]["markdown"].as_str().unwrap().to_owned();
+  assert!(reply.contains("plugin ran in"), "{reply}");
+}

@@ -97,7 +97,12 @@ fn shell(command: &str) -> tokio::process::Command {
 
 /// Run `hook` in `root` with `payload` on stdin. `env` adds variables (the session and agent ids)
 pub async fn run(hook: &Hook, root: &Path, payload: &Value, env: &[(&str, String)]) -> Verdict {
-  match output(hook, root, payload, env).await {
+  run_in(hook, root, root, payload, env).await
+}
+
+/// `run` in `dir` for the project at `root` (a plugin's hook runs in its frozen copy)
+pub async fn run_in(hook: &Hook, dir: &Path, root: &Path, payload: &Value, env: &[(&str, String)]) -> Verdict {
+  match output_in(hook, dir, root, payload, env).await {
     Ok((code, stdout, stderr)) => verdict_of(code, &stdout, &stderr),
     Err(e) => Verdict::Broken(e),
   }
@@ -105,7 +110,12 @@ pub async fn run(hook: &Hook, root: &Path, payload: &Value, env: &[(&str, String
 
 /// `run` for `beforePrompt`, whose pass may carry context
 pub async fn run_prompt(hook: &Hook, root: &Path, payload: &Value, env: &[(&str, String)]) -> PromptVerdict {
-  match output(hook, root, payload, env).await {
+  run_prompt_in(hook, root, root, payload, env).await
+}
+
+/// `run_prompt` in `dir` for the project at `root`
+pub async fn run_prompt_in(hook: &Hook, dir: &Path, root: &Path, payload: &Value, env: &[(&str, String)]) -> PromptVerdict {
+  match output_in(hook, dir, root, payload, env).await {
     Ok((code, stdout, stderr)) => prompt_verdict_of(code, &stdout, &stderr),
     Err(e) => PromptVerdict::Broken(e),
   }
@@ -113,9 +123,13 @@ pub async fn run_prompt(hook: &Hook, root: &Path, payload: &Value, env: &[(&str,
 
 /// The finished hook's exit code, stdout and stderr; Err: it could not start, failed to run or timed out
 pub(crate) async fn output(hook: &Hook, root: &Path, payload: &Value, env: &[(&str, String)]) -> Result<(Option<i32>, String, String), String> {
+  output_in(hook, root, root, payload, env).await
+}
+
+async fn output_in(hook: &Hook, dir: &Path, root: &Path, payload: &Value, env: &[(&str, String)]) -> Result<(Option<i32>, String, String), String> {
   let mut cmd = shell(&hook.run);
   cmd
-    .current_dir(root)
+    .current_dir(dir)
     .env("ACPIRA_PROJECT_DIR", root)
     // Scripts written for Claude Code find the project the same way
     .env("CLAUDE_PROJECT_DIR", root);

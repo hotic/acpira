@@ -215,6 +215,8 @@ pub struct ManagerDeps {
   pub scope: Arc<dyn Fn() -> String + Send + Sync>,
   /// Shared MCP servers handed to every session (`shared_config::mcp_provider`); None in tests that do not need them
   pub shared_mcp: Option<crate::shared_config::McpProvider>,
+  /// The plugins' hooks (`plugins::host`), handed to every session; None in tests that do not need them
+  pub plugin_hooks: Option<crate::hooks::PluginHooks>,
   /// Acpira's own MCP server (`acpira mcp`) for every session request; None without a known executable
   pub host_mcp: Option<crate::host_mcp::HostMcp>,
   /// ACPIRA_HOME: cross-engine session leases live under its `run/leases` (`store::session_lease`)
@@ -1999,6 +2001,7 @@ impl SessionManager {
         shapes_me.upgrade().and_then(|m| m.state.lock().prefs.model_shapes.as_ref().and_then(|s| s.get(agent).cloned()))
       })),
       shared_mcp: self.deps.shared_mcp.clone(),
+      plugin_hooks: self.deps.plugin_hooks.clone(),
       claim: Some(Arc::new(move |id: &str| claim_me.upgrade().map_or(Ok(0), |m| m.claim_turn(id)))),
       remote: self.deps.remote.clone(),
     }

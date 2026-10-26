@@ -239,6 +239,27 @@ impl PluginHost {
     run::call(&tool, &plugin.dir, &self.store.data_dir(&plugin.id), arguments, ctx).await
   }
 
+  /// The hooks of the plugins in effect, in id order, each running in its frozen copy
+  pub fn hook_configs(&self) -> Vec<crate::hooks::HooksConfig> {
+    self.reload();
+    let mut out = vec![];
+    for a in &self.loaded().active {
+      let Some(hooks) = &a.manifest.contributes.hooks else { continue };
+      // Checked when it was enabled; a version that no longer parses is left out with a log line
+      match crate::hooks::parse(&a.dir, &hooks.to_string()) {
+        Ok(mut cfg) => {
+          let data = self.store.data_dir(&a.id);
+          let _ = std::fs::create_dir_all(&data);
+          let env = vec![("ACPIRA_PLUGIN_DIR".to_owned(), a.dir.to_string_lossy().into_owned()), ("ACPIRA_PLUGIN_DATA".to_owned(), data.to_string_lossy().into_owned())];
+          cfg.plugin = Some(crate::hooks::PluginSource { id: a.id.clone(), dir: a.dir.clone(), env });
+          out.push(cfg);
+        }
+        Err(e) => (self.log)(&format!("plugins: {} hooks: {e}", a.id)),
+      }
+    }
+    out
+  }
+
   /// The MCP servers of the plugins in effect, for a new local session
   pub fn mcp_servers(&self) -> Vec<crate::shared_config::mcp::SharedServer> {
     self.reload();
