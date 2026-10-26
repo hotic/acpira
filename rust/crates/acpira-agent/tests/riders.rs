@@ -1,6 +1,7 @@
 //! Calls that do more than their own tool's work, through whole turns against the scripted model: a to-do list riding
 //! on another call (`todos`), a command run after a change (`then_run`), one edit across several files. Each rider shows
 //! as a row of its own and asks like its own tool would; the model gets one result for the call
+#![allow(clippy::unwrap_used, clippy::panic, reason = "test code")]
 
 mod support;
 
@@ -88,7 +89,7 @@ async fn a_to_do_list_riding_on_an_edit_shows_as_a_todo_row_of_its_own() {
   assert!(list_done < first("call-2"), "the list is set before the edit's row opens");
   // One result for the call, the list's note in front
   assert_eq!(message(&server, 1, 0), "To-do list updated (0 pending, 1 in progress, 1 completed).\n\nEdited a.txt.");
-  assert!(message(&server, 2, 0).starts_with("/"), "no note for an empty list: {}", message(&server, 2, 0));
+  assert!(!message(&server, 2, 0).starts_with("To-do list"), "no note for an empty list: {}", message(&server, 2, 0));
   assert_eq!(h.updates().iter().filter(|u| u["title"] == "todo").count(), 1);
   // A list that does not parse leaves the bar alone, and the call still runs
   server.push(mock::tools(&[("c3", "bash", json!({ "command": "echo ran", "todos": [{ "content": "x", "status": "someday" }] }))]));
