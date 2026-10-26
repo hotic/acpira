@@ -941,23 +941,36 @@ createInterface({ input: process.stdin }).on('close', () => process.exit(0)).on(
   #[tokio::test]
   async fn a_scaffolded_runtime_answers_hooks_events_and_methods_through_the_sdk() {
     let Some((root, rt)) = setup() else { return };
-    let dir = crate::plugins::sdk::scaffold(root.path(), "kit", &["runtime"]).unwrap();
-    let (m, _) = manifest::parse(&std::fs::read(dir.join(manifest::FILE)).unwrap()).unwrap();
-    rt.sync(&[Arc::new(Active { id: "kit".into(), hash: "h".into(), dir, manifest: m })]).await;
-    assert_eq!(rt.running(), ["kit"]);
+    let mut langs = vec![("kit", "node")];
+    if crate::plugins::host::on_path("python3") {
+      langs.push(("py-kit", "python"));
+    }
+    let mut active = vec![];
+    for (id, lang) in &langs {
+      let dir = crate::plugins::sdk::scaffold(root.path(), id, &["runtime"], lang).unwrap();
+      let (m, _) = manifest::parse(&std::fs::read(dir.join(manifest::FILE)).unwrap()).unwrap();
+      active.push(Arc::new(Active { id: (*id).into(), hash: "h".into(), dir, manifest: m }));
+    }
+    rt.sync(&active).await;
+    assert_eq!(rt.running().len(), langs.len(), "{:?}", rt.errors.read());
     let ctx = |text: &str| json!({ "session": "s", "agent": "a", "cwd": "/", "text": text });
-    let replies = rt.hook("prompt", &ctx("fix the TODO")).await;
-    assert_eq!(replies[0].result.as_ref().unwrap(), &json!({ "context": "List the TODOs you leave behind." }));
-    assert_eq!(rt.hook("prompt", &ctx("hello")).await[0].result.as_ref().unwrap(), &Value::Null);
+    for r in rt.hook("prompt", &ctx("fix the TODO")).await {
+      assert_eq!(r.result.as_ref().unwrap(), &json!({ "context": "List the TODOs you leave behind." }), "{}", r.plugin);
+    }
+    for r in rt.hook("prompt", &ctx("hello")).await {
+      assert_eq!(r.result.as_ref().unwrap(), &Value::Null, "{}", r.plugin);
+    }
     rt.emit("turn.ended", || json!({ "session": "s" }));
     rt.emit("turn.started", || json!({ "session": "s" }));
-    let ping = || rt.rpc("kit", "ping", json!({}), "page");
-    let t = Instant::now();
-    while ping().await.unwrap()["turns"] != 1 {
-      assert!(t.elapsed() < Duration::from_secs(5), "the event never counted");
-      tokio::time::sleep(Duration::from_millis(20)).await;
+    for (id, _) in &langs {
+      let ping = || rt.rpc(id, "ping", json!({}), "page");
+      let t = Instant::now();
+      while ping().await.unwrap()["turns"] != 1 {
+        assert!(t.elapsed() < Duration::from_secs(5), "{id}: the event never counted");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+      }
+      assert_eq!(ping().await.unwrap(), json!({ "pong": true, "turns": 1 }), "{id}");
     }
-    assert_eq!(ping().await.unwrap(), json!({ "pong": true, "turns": 1 }));
     rt.stop_all().await;
   }
 
