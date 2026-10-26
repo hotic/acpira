@@ -26,15 +26,20 @@ use acpira_shared::shared_config::SharedScope;
 use crate::acp::transport::rpc::BoxFuture;
 use crate::inventory::{ScanEnv, native_tail};
 
-/// What a session asks for when it builds session/new, load or resume: (agent, cwd, the agent's MCP caps) →
-/// (ACP `mcpServers`, a log line naming what was sent and skipped)
-pub type McpProvider = Arc<dyn Fn(String, String, Option<McpCaps>) -> BoxFuture<(Vec<Value>, Option<String>)> + Send + Sync>;
+/// What a session asks for when it builds session/new, load or resume: (agent, cwd, the agent's MCP caps, whether the
+/// agent runs on this machine) → (ACP `mcpServers`, a log line naming what was sent and skipped)
+pub type McpProvider = Arc<dyn Fn(String, String, Option<McpCaps>, bool) -> BoxFuture<(Vec<Value>, Option<String>)> + Send + Sync>;
 
-/// The provider over the shared files, for the home the shell reports
-pub fn mcp_provider(home: Arc<dyn Fn() -> String + Send + Sync>) -> McpProvider {
-  Arc::new(move |agent, cwd, caps| {
+/// The servers of the plugins in effect (`plugins::mcp`)
+pub type PluginServers = Arc<dyn Fn() -> Vec<mcp::SharedServer> + Send + Sync>;
+
+/// The provider over the shared files, for the home the shell reports, plus the plugins' servers for an agent on this
+/// machine (an agent on an SSH host cannot start a program of the frozen copy)
+pub fn mcp_provider(home: Arc<dyn Fn() -> String + Send + Sync>, plugins: Option<PluginServers>) -> McpProvider {
+  Arc::new(move |agent, cwd, caps, local| {
     let places = Places::new(&home(), &cwd);
-    Box::pin(async move { mcp::session_servers(&places, &agent, caps).await })
+    let extra = plugins.as_ref().filter(|_| local).map(|p| p()).unwrap_or_default();
+    Box::pin(async move { mcp::session_servers(&places, &agent, caps, extra).await })
   })
 }
 

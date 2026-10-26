@@ -11,7 +11,7 @@ use super::*;
 fn shared_harness(fake: &FakeAgent, home: &Path, native: &Path, log: &Path) -> Harness {
   let mut h = Harness::new(fake, json!({ "env": { "FAKE_MCP_TRACE": log, "FAKE_SESSION_DIR": native } }));
   let home = home.to_string_lossy().into_owned();
-  h.deps.shared_mcp = Some(mcp_provider(Arc::new(move || home.clone())));
+  h.deps.shared_mcp = Some(mcp_provider(Arc::new(move || home.clone()), None));
   h
 }
 
@@ -93,7 +93,7 @@ async fn a_server_antigravity_cannot_start_is_left_out_after_a_reconnect() {
   std::fs::write(home.join(".agents/mcp.json"), r#"{ "mcpServers": { "files": { "command": "/bin/cat" }, "hilfa": { "command": "/bin/cat" } } }"#).unwrap();
   let mut h = Harness::for_agent(&fake, "antigravity", json!({ "env": { "FAKE_MCP_TRACE": log, "FAKE_SESSION_DIR": native } }));
   let home_s = home.to_string_lossy().into_owned();
-  h.deps.shared_mcp = Some(mcp_provider(Arc::new(move || home_s.clone())));
+  h.deps.shared_mcp = Some(mcp_provider(Arc::new(move || home_s.clone()), None));
   let s = started(&h, "/tmp").await;
   let native_id = s.to_record().acp_session_id;
   let fix = "Fix the MCP server, or remove it from your configuration and start a new session, to continue.";

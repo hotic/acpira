@@ -181,6 +181,10 @@ impl HostRuntime {
     let cwd_p = platform.clone();
     let projects_p = platform.clone();
     let mcp_home = platform.clone();
+    let plugin_servers: crate::shared_config::PluginServers = {
+      let p = plugins.clone();
+      Arc::new(move || p.mcp_servers())
+    };
     let notify_p = platform.clone();
     let scope_p = platform.clone();
     let manager = SessionManager::new(
@@ -217,7 +221,7 @@ impl HostRuntime {
         lease_root: root.clone(),
         bus: true,
         remote: Some(connections.clone()),
-        shared_mcp: Some(crate::shared_config::mcp_provider(Arc::new(move || mcp_home.home()))),
+        shared_mcp: Some(crate::shared_config::mcp_provider(Arc::new(move || mcp_home.home()), Some(plugin_servers))),
         host_mcp,
         // Both switches are off by default (`notifySound` / `notifySystem`); read at each edge, so a change applies to the next one
         attention: Some(Arc::new(move |a: Attention| {

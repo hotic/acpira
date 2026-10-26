@@ -296,6 +296,11 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
       }
       if !entry.is_object() {
         err(findings, format!("mcp `{name}`: expected an entry of .mcp.json"));
+      } else if let Some(command) = entry.get("command").and_then(Value::as_str) {
+        let program = crate::plugins::mcp::strip_dir(command).to_owned();
+        command_exists(&[program], dir, which, &format!("mcp `{name}`"), findings);
+      } else if entry.get("url").and_then(Value::as_str).is_none() {
+        err(findings, format!("mcp `{name}`: needs a `command` or a `url`"));
       }
     }
   }

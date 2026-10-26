@@ -126,3 +126,71 @@ async fn a_session_lists_and_calls_plugin_tools_and_its_agent_asks_to_enable_one
   assert!(done(&op(&addr, &token, HubOp::PluginCall { name: "late_where".into(), arguments: json!({}) }).await).is_err());
   m.dispose().await;
 }
+
+/// A stdio MCP server in node: answers initialize and tools/list, or exits at once when `broken`
+fn write_mcp_plugin(root: &std::path::Path, id: &str, broken: bool) {
+  let dir = root.join(id);
+  std::fs::create_dir_all(&dir).unwrap();
+  let m = json!({ "schema": 1, "id": id, "version": "0.1.0", "description": "Rates",
+    "contributes": { "mcp": { "rates": { "command": "node", "args": ["${ACPIRA_PLUGIN_DIR}/srv.mjs"], "env": { "MODE": "x" } } } } });
+  std::fs::write(dir.join("plugin.json"), m.to_string()).unwrap();
+  let server = if broken {
+    "process.exit(3);".to_owned()
+  } else {
+    r#"import { createInterface } from 'node:readline';
+createInterface({ input: process.stdin }).on('line', (l) => {
+  const m = JSON.parse(l);
+  if (m.id === undefined) return;
+  const result = m.method === 'initialize'
+    ? { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'rates', version: '1' } }
+    : { tools: [{ name: 'rate', description: 'A rate', inputSchema: { type: 'object' } }] };
+  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result }) + '\n');
+});"#
+      .to_owned()
+  };
+  std::fs::write(dir.join("srv.mjs"), server).unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugin_s_mcp_server_is_checked_and_reaches_local_sessions_only() {
+  let _fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let root = dir.path().join("plugins");
+  let plugins = PluginHost::new(root.clone(), false, Arc::new(|_: &str| {}));
+  plugins.start().await;
+
+  // A server that does not answer is refused on the dynamic check
+  write_mcp_plugin(&root, "broken", true);
+  let err = plugins.action(PluginAction::Enable { id: "broken".into() }).await.unwrap_err().to_string();
+  assert!(err.contains("the check failed") && err.contains("mcp `rates`"), "{err}");
+  assert!(plugins.mcp_servers().is_empty());
+
+  // One that answers is enabled and runs from its frozen copy
+  write_mcp_plugin(&root, "rates", false);
+  plugins.action(PluginAction::Enable { id: "rates".into() }).await.unwrap();
+  let servers = plugins.mcp_servers();
+  assert_eq!(servers.len(), 1);
+  let frozen = plugins.loaded().active[0].dir.clone();
+  assert_eq!(servers[0].spec["args"], json!([frozen.join("srv.mjs").to_string_lossy()]));
+
+  // A new local session gets it after the shared servers; a session on an SSH host does not
+  let home = dir.path().join("home");
+  std::fs::create_dir_all(&home).unwrap();
+  let home_s = home.to_string_lossy().into_owned();
+  let p = plugins.clone();
+  let provider = acpira_host::shared_config::mcp_provider(Arc::new(move || home_s.clone()), Some(Arc::new(move || p.mcp_servers())));
+  let cwd = home.to_string_lossy().into_owned();
+  let (sent, _) = provider("grok".into(), cwd.clone(), None, true).await;
+  assert_eq!(sent.iter().map(|s| s["name"].as_str().unwrap()).collect::<Vec<_>>(), ["rates"]);
+  assert!(sent[0]["env"].as_array().unwrap().iter().any(|e| e["name"] == "ACPIRA_PLUGIN_DATA"));
+  assert!(provider("grok".into(), cwd.clone(), None, false).await.0.is_empty());
+
+  // A shared entry of the same name shadows it; safe mode takes it away
+  std::fs::create_dir_all(home.join(".agents")).unwrap();
+  std::fs::write(home.join(".agents/mcp.json"), r#"{ "mcpServers": { "rates": { "command": "/bin/true", "disabled": true } } }"#).unwrap();
+  assert!(provider("grok".into(), cwd.clone(), None, true).await.0.is_empty());
+  std::fs::remove_file(home.join(".agents/mcp.json")).unwrap();
+  plugins.action(PluginAction::SafeMode { on: true }).await.unwrap();
+  assert!(provider("grok".into(), cwd, None, true).await.0.is_empty());
+}

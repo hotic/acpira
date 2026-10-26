@@ -288,6 +288,17 @@ async fn connect(spec: &Spec, cwd: &Path) -> Result<Arc<Live>, String> {
   Ok(Arc::new(live))
 }
 
+/// Start the one server of an ACP `mcpServers` entry, list its tools and end it: how many tools it offers, or why it
+/// did not answer (the plugin host's check of a plugin's `mcp` contribution)
+pub async fn probe(entry: &Value, cwd: &Path) -> Result<usize, String> {
+  let (specs, skipped) = parse_specs(&json!([entry]));
+  let Some(spec) = specs.into_iter().next() else { return Err(skipped.join("; ")) };
+  let live = connect(&spec, cwd).await?;
+  let n = live.listed.lock().len();
+  live.transport.close();
+  Ok(n)
+}
+
 /// Every page of `tools/list`
 async fn list(transport: &Transport) -> Result<Vec<Value>, String> {
   let mut out = vec![];

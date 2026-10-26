@@ -32,7 +32,7 @@ pub struct SharedServer {
 }
 
 impl SharedServer {
-  fn from_spec(name: &str, spec: &Map<String, Value>) -> Self {
+  pub fn from_spec(name: &str, spec: &Map<String, Value>) -> Self {
     let str_of = |k: &str| spec.get(k).and_then(Value::as_str).filter(|s| !s.is_empty());
     let url = str_of("url").or_else(|| str_of("serverUrl")).or_else(|| str_of("httpUrl"));
     let transport = match str_of("type").or_else(|| str_of("transport")).map(str::to_lowercase).as_deref() {
@@ -188,15 +188,21 @@ pub async fn to_acp(s: &SharedServer, root: Option<&Path>) -> Result<Value> {
   }
 }
 
-/// What one session gets, and a log line naming what was left out (names only, never values)
-pub async fn session_servers(places: &Places, agent: &str, caps: Option<McpCaps>) -> (Vec<Value>, Option<String>) {
+/// What one session gets, and a log line naming what was left out (names only, never values). `plugins`: the servers of
+/// the plugins in effect, after the shared ones (any shared entry of the same name, even a disabled one, shadows them)
+pub async fn session_servers(places: &Places, agent: &str, caps: Option<McpCaps>, plugins: Vec<SharedServer>) -> (Vec<Value>, Option<String>) {
   if !takes_mcp(agent) {
     return (vec![], None);
   }
   // Blocking reads: an agent's own config (~/.claude.json) can run to megabytes
   let (p, a) = (places.clone(), agent.to_owned());
   let Ok((servers, native)) = tokio::task::spawn_blocking(move || {
-    let servers = all_servers(&p);
+    let mut servers = all_servers(&p);
+    let shared: HashSet<String> = servers.iter().map(|(_, s, _)| s.name.clone()).collect();
+    servers.extend(plugins.into_iter().map(|s| {
+      let shadowed = shared.contains(&s.name);
+      (SharedScope::Global, s, shadowed)
+    }));
     let native = if servers.is_empty() { HashSet::new() } else { native_names(&a, &p) };
     (servers, native)
   })
@@ -352,7 +358,7 @@ mod tests {
     // the accepted risk of setting it in a test process
     unsafe { std::env::set_var("ACPIRA_TEST_MCP_ARG", "v1") };
     let caps = Some(McpCaps { http: true, sse: false });
-    let (sent, log) = session_servers(&p, "codex", caps).await;
+    let (sent, log) = session_servers(&p, "codex", caps, vec![]).await;
     let names: Vec<&str> = sent.iter().map(|v| v["name"].as_str().unwrap()).collect();
     assert_eq!(names, ["dup", "docs", "web"]);
     assert_eq!(sent[0]["command"], json!(project_command));
@@ -364,18 +370,18 @@ mod tests {
     );
     assert!(log.unwrap().contains("old (transport not advertised)"));
     // Pi takes no client MCP; a name the agent's own config declares is skipped
-    assert!(session_servers(&p, "pi", caps).await.0.is_empty());
+    assert!(session_servers(&p, "pi", caps, vec![]).await.0.is_empty());
     std::fs::create_dir_all(p.home.join(".codex")).unwrap();
     std::fs::write(p.home.join(".codex/config.toml"), "[mcp_servers.docs]\ncommand = \"x\"\n").unwrap();
-    let (sent, _) = session_servers(&p, "codex", caps).await;
+    let (sent, _) = session_servers(&p, "codex", caps, vec![]).await;
     assert!(!sent.iter().any(|v| v["name"] == "docs"));
 
     // The project's servers live in `.mcp.json`: Claude loads that file itself, Grok gets them over ACP
     let root = p.root.clone().unwrap();
     assert!(root.join(".mcp.json").exists());
     let names = |v: &[Value]| v.iter().map(|x| x["name"].as_str().unwrap().to_owned()).collect::<Vec<_>>();
-    assert!(!names(&session_servers(&p, "claude", caps).await.0).contains(&"dup".to_owned()));
-    assert!(names(&session_servers(&p, "grok", caps).await.0).contains(&"dup".to_owned()));
+    assert!(!names(&session_servers(&p, "claude", caps, vec![]).await.0).contains(&"dup".to_owned()));
+    assert!(names(&session_servers(&p, "grok", caps, vec![]).await.0).contains(&"dup".to_owned()));
     // The legacy project file is still read, and edits go to the file holding the server
     std::fs::create_dir_all(root.join(".agents")).unwrap();
     std::fs::write(
