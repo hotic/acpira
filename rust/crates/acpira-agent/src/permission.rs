@@ -189,8 +189,9 @@ pub fn command_pattern(command: &str) -> String {
   }
 }
 
-/// Files that configure the agent itself: its model sources and keys, prompt overrides and the workspace hooks (in the
-/// session folder and at its project root). Edits
+/// Files that configure the agent itself: its model sources and keys, prompt overrides, the workspace hooks (in the
+/// session folder and at its project root) and the plugin state with its frozen copies (a plugin's source folder stays
+/// writable; it takes effect only through an activation the user confirms, `docs/dev/plugins.md`). Edits
 /// to them ask even under full access, so a model cannot widen its own permissions or reroute its own calls
 pub struct Guard {
   files: Vec<PathBuf>,
@@ -203,8 +204,10 @@ impl Guard {
       home.join(acpira_shared::providers::PROVIDERS_FILE),
       home.join("secrets.json"),
       cwd.join(".agents").join("hooks.json"),
+      home.join("plugins").join("state.json"),
+      home.join("plugins").join("changes.jsonl"),
     ];
-    let mut dirs = vec![home.join("agent").join("config"), cwd.join(".agents").join("acpira")];
+    let mut dirs = vec![home.join("agent").join("config"), cwd.join(".agents").join("acpira"), home.join("plugins").join(".versions")];
     // The project's own files when the session folder is below its root (`prompt::project_root`)
     if let Some(root) = crate::prompt::project_root(cwd, user_home).filter(|r| r != cwd) {
       dirs.push(root.join(".agents").join("acpira"));
@@ -351,6 +354,9 @@ mod tests {
   fn the_guard_covers_config_files_and_prompt_dirs() {
     let g = Guard::new(Path::new("/h/.acpira"), Path::new("/w"), Some(Path::new("/h")));
     assert!(g.protects(Path::new("/h/.acpira/providers.json")));
+    assert!(g.protects(Path::new("/h/.acpira/plugins/state.json")));
+    assert!(g.protects(Path::new("/h/.acpira/plugins/.versions/demo/abc/go.sh")));
+    assert!(!g.protects(Path::new("/h/.acpira/plugins/demo/go.sh")));
     assert!(g.protects(Path::new("/w/sub/../.agents/hooks.json")));
     assert!(g.protects(Path::new("/w/.agents/acpira/prompts/base.md")));
     assert!(g.protects(Path::new("/h/.agents/acpira/prompts/x.md")));

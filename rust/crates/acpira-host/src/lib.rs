@@ -23,6 +23,7 @@ pub mod model_catalog;
 pub mod net_proxy;
 pub mod node_files;
 pub mod platform;
+pub mod plugins;
 pub mod preview;
 pub mod project_files;
 pub mod providers;
