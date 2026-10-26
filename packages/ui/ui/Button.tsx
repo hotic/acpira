@@ -92,6 +92,8 @@ export interface ChipProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   // Small badges after the label (ChipTag: a model's effort / Ultra / Fast). The label keeps its full width; badges that do not fit
   // wrap onto a clipped second line, so the trailing ones give way first
   tags?: ReactNode;
+  // Content after the badges that never wraps away with them (the built-in agent's sidekick: + mark, name, level)
+  trail?: ReactNode;
   // What survives below the sm container tier (the toolbar of a 380 sidebar has ~324px): 'icon' keeps just the icon, 'text' keeps just the label;
   // the caret goes first either way (as in Devin's own composer, which has none). The title keeps the full name. Needs an @container ancestor.
   // 'icon-xl' keeps just the icon below the xl tier already: several live-context chips sharing the composer toolbar
@@ -101,7 +103,8 @@ export interface ChipProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 // A badge inside a Chip's `tags`: --text-4 on the active fill; `ultra` tints it, an icon (Fast's bolt) leads the text.
 // `short` replaces the text below the sm container tier, together with the caret going ('' keeps only the icon), so a
-// narrow toolbar shows [M] [⚡] instead of clipping the badges away. `small` is the quieter badge next to faint row text
+// narrow toolbar shows [M] [⚡] instead of clipping the badges away; a Chip carrying `data-compact` forces the short form at
+// any width (the model chip stepping down to fit, useFitStage). `small` is the quieter badge next to faint row text
 // (a summoned subagent's effort): a shorter box in the row's own faint tone
 export function ChipTag({ tone, icon, short, small, children }: { tone?: 'ultra'; icon?: ReactNode; short?: string; small?: boolean; children: ReactNode }) {
   const compact = short !== undefined;
@@ -109,8 +112,8 @@ export function ChipTag({ tone, icon, short, small, children }: { tone?: 'ultra'
     <span className={cn('inline-flex shrink-0 items-center gap-0.5 rounded-xs px-1 text-4 leading-none', small ? 'h-3.5' : 'h-4',
       tone === 'ultra' ? 'bg-ultra/15 text-ultra' : cn('bg-active', small ? 'text-fg-3' : 'text-fg-2'))}>
       {icon}
-      <span className={cn(TRIM_CAPS, compact && '@max-sm:hidden')}>{children}</span>
-      {short && <span className={cn(TRIM_CAPS, 'hidden @max-sm:inline')}>{short}</span>}
+      <span className={cn(TRIM_CAPS, compact && '@max-sm:hidden group-data-[compact]/chip:hidden')}>{children}</span>
+      {short && <span className={cn(TRIM_CAPS, 'hidden @max-sm:inline group-data-[compact]/chip:inline')}>{short}</span>}
     </span>
   );
 }
@@ -123,7 +126,7 @@ const TRIM_CAPS = '[text-box:trim-both_cap_alphabetic]';
 // triggers (SelectRow, the session list filter) so every dropdown arrow behaves alike
 export const CARET_TURN = 'transition-transform duration-(--dur-open) ease-out group-data-[open]/chip:rotate-180 group-data-[popup-open]/chip:rotate-180';
 
-export function Chip({ className, children, variant = 'quiet', caret = true, icon, meta, tags, narrow, ...rest }: ChipProps) {
+export function Chip({ className, children, variant = 'quiet', caret = true, icon, meta, tags, trail, narrow, ...rest }: ChipProps) {
   return (
     <button
       type="button"
@@ -131,11 +134,13 @@ export function Chip({ className, children, variant = 'quiet', caret = true, ico
       {...rest}
     >
       {icon && <span className={cn('flex shrink-0 items-center [&_svg]:size-icon', variant === 'quiet' && 'text-fg-3')}>{icon}</span>}
-      <span className={cn('truncate text-left', tags ? 'shrink-0' : 'grow', narrow === 'icon' && '@max-sm:hidden', narrow === 'icon-xl' && '@max-xl:hidden')}>
+      {/* A null label leaves just the icon (the model chip stepping down to its marks) */}
+      {children != null && <span className={cn('truncate text-left', tags ? 'shrink-0' : 'grow', narrow === 'icon' && '@max-sm:hidden', narrow === 'icon-xl' && '@max-xl:hidden')}>
         {children}
         {meta && <span className="text-fg-3"> {meta}</span>}
-      </span>
+      </span>}
       {tags && <span className="flex h-4 min-w-0 flex-wrap items-center gap-0.5 overflow-hidden">{tags}</span>}
+      {trail && <span className="flex shrink-0 items-center gap-1">{trail}</span>}
       {caret && <ChevronDown className={cn('size-3 shrink-0 text-fg-3', CARET_TURN, narrow && '@max-sm:hidden')} strokeWidth={1.75} />}
     </button>
   );

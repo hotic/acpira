@@ -1,8 +1,8 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { Zap } from 'lucide-react';
 import type { ConfigControl } from '@acpira/shared/transcript';
 import { findFusionVariant, findVariant, fusionLabel, groupModels, optionBrand, visibleOptions, type ModelFamily, type ModelVariant } from '@acpira/shared/models';
-import { chipTags, fastOn, fastValue, isFastControl, isUltraLevel, NO_SIDEKICK, presentReasoning, reasoningChip, reasoningVisible } from '@acpira/shared/composerControls';
+import { chipTags, fastOn, fastValue, isFastControl, isUltraLevel, levelShort, NO_SIDEKICK, presentReasoning, reasoningChip, reasoningVisible } from '@acpira/shared/composerControls';
 import { t } from '../i18n';
 import { Chip, ChipTag } from '../ui/Button';
 import { HeaderToggle, SegmentScale, SelectRow, SwitchRow } from '../ui/Field';
@@ -13,6 +13,7 @@ import { Command } from '../ui/Command';
 import { OptionContent } from '../ui/Panel';
 import { ModelMark } from './ModelMark';
 import { PairSwitch, PairViews, type PairRole } from './SidekickPair';
+import { useFitStage } from './useFitStage';
 import { Collapsible } from '../ui/Collapsible';
 
 // Only offer search once the option count passes this threshold; short lists are scannable at a glance
@@ -53,7 +54,7 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
   hidden?: string[];
   reasoning?: ConfigControl[];
   modelConfig?: ConfigControl[];
-  // The built-in agent's sidekick select and its effort: the panel's second side (PairSwitch), nothing on the chip
+  // The built-in agent's sidekick select and its effort: the panel's second side (PairSwitch); a picked one is spelled out on the chip
   sidekick?: ConfigControl;
   sidekickEffort?: ConfigControl;
   hiddenConfig?: Record<string, string[]>;
@@ -68,25 +69,60 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
   const curVar = cur?.variants.find(v => v.id === c.value);
   const tags = chipTags(cur, curVar, reasoning, modelConfig, t('composer.standard'));
   // A Fusion pair is too long for the chip: it reads "Fusion" plus the lead's badges and keeps the pair in the tooltip and the panel
-  const title = [cur?.name ?? c.name, curVar?.lead ? fusionLabel(curVar) : tags.map(tag => tag.label).join(' ')].filter(Boolean).join(' ');
+  // A picked sidekick is spelled out after the lead, `Opus 5.5 [High] + GPT-6 Luna [Medium]`, stepping down (CHIP_STAGES)
+  // when the toolbar has no room; without it the pair was only visible with the panel open (reported 2026-10-26)
+  const skPicked = sidekick?.options.find(o => o.id === sidekick.value && o.id !== NO_SIDEKICK);
+  const skLevel = skPicked && sidekickEffort ? reasoningChip(sidekickEffort) : undefined;
+  const skLabel = skPicked && [skPicked.name, skLevel].filter(Boolean).join(' ');
+  const fit = useFitStage<HTMLButtonElement, HTMLSpanElement>(!!skPicked);
+  const lead = [cur?.name ?? c.name, curVar?.lead ? fusionLabel(curVar) : tags.map(tag => tag.label).join(' ')].filter(Boolean).join(' ');
+  const title = skLabel ? `${lead} + ${skLabel}` : lead;
   // The chip follows every pick at once, also while the panel is open (effort / Fast keep it open): it used to hold its
   // content until close, which read as a pick that had not landed (reported 2026-10-16). The panel is end-aligned to the
   // chip's right edge, so a chip resizing leftwards does not move the panel
   const chip = { title, family: cur?.name ?? c.name, brand: cur?.brand, tags, name: cur?.name ?? c.options.find(o => o.id === c.value)?.name ?? c.name };
-  return (
+  const at = (stage: number, ref?: typeof fit.item) => {
+    const on = CHIP_STAGES[stage]!;
+    return <Chip ref={ref} narrow="text" title={chip.title} caret={on.caret} data-compact={on.compact ? '' : undefined} icon={<ModelMark family={chip.family} brand={chip.brand} />}
+      trail={skPicked && <SidekickTail name={skPicked.name} brand={optionBrand(skPicked)} named={on.names} level={on.levels ? skLevel : undefined} />}
+      tags={on.levels && chip.tags.length ? chip.tags.map(tag => <ChipTag key={tag.label} tone={tag.ultra ? 'ultra' : undefined} icon={tag.fast ? <FastIcon /> : undefined} short={tag.short}>{tag.label}</ChipTag>) : undefined}>
+      {on.names ? chip.name : null}
+    </Chip>;
+  };
+  return (<>
     <Popover.Root open={open} onOpenChange={setOpen} onOpenLifecycle={onOpenChange}>
-      <Popover.Trigger render={
-        <Chip narrow="text" title={chip.title} icon={<ModelMark family={chip.family} brand={chip.brand} />}
-          tags={chip.tags.length ? chip.tags.map(tag => <ChipTag key={tag.label} tone={tag.ultra ? 'ultra' : undefined} icon={tag.fast ? <FastIcon /> : undefined} short={tag.short}>{tag.label}</ChipTag>) : undefined}>
-          {chip.name}
-        </Chip>
-      } />
+      <Popover.Trigger render={at(skPicked ? fit.stage : 0, fit.item)} />
       <Popover.Portal><Popover.Positioner side="top" align="end" width="lg"><Popover.Popup palette="menu">
         <ModelPanel families={families} cur={cur} curVar={curVar} onSelect={onSelect} close={() => setOpen(false)}
           reasoning={reasoning} modelConfig={modelConfig} sidekick={sk} sidekickEffort={sidekickEffort} hiddenConfig={hiddenConfig} onSetConfig={onSetConfig} />
       </Popover.Popup></Popover.Positioner></Popover.Portal>
     </Popover.Root>
-  );
+    {/* Every stage laid out once, out of sight and out of the row's flow, for useFitStage to measure */}
+    {skPicked && <span inert aria-hidden className="pointer-events-none invisible absolute size-0 overflow-hidden">
+      <span ref={fit.box} className="flex w-max flex-col items-start">{CHIP_STAGES.map((_, i) => <Fragment key={i}>{at(i)}</Fragment>)}</span>
+    </span>}
+  </>);
+}
+
+// How the chip steps down with a sidekick, one step per stage while the toolbar is short of room. The two sides always step
+// together (both names or neither, both levels in the same form): both levels to their short form, then the caret, then both
+// names (the marks stay), then both levels
+const CHIP_STAGES = [
+  { compact: false, caret: true, names: true, levels: true },
+  { compact: true, caret: true, names: true, levels: true },
+  { compact: true, caret: false, names: true, levels: true },
+  { compact: true, caret: false, names: false, levels: true },
+  { compact: true, caret: false, names: false, levels: false },
+];
+
+// The sidekick's part of the model chip: + and its mark in the icon tone, then its name and level like the lead's
+function SidekickTail({ name, brand, named, level }: { name: string; brand?: string; named: boolean; level?: string }) {
+  return <>
+    <span className="text-fg-3">+</span>
+    <span className="flex shrink-0 items-center text-fg-3 [&_svg]:size-icon"><ModelMark family={name} brand={brand} /></span>
+    {named && <span className="whitespace-nowrap">{name}</span>}
+    {level && <ChipTag tone={isUltraLevel(level) ? 'ultra' : undefined} short={levelShort(level)}>{level}</ChipTag>}
+  </>;
 }
 
 function FastIcon() {

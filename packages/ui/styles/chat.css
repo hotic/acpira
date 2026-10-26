@@ -70,6 +70,8 @@
 
 /* Composer input field and send button: modeled on Libraries.dev's Studio panel */
 @utility composer-field {
+  /* The model chip's sidekick badge cuts its + out of the composer's surface, not the menu's */
+  --pair-plus-fg: var(--input-bg);
   --fg-1: var(--input-fg);
   --fg-strong: var(--input-fg);
   --fg-2: color-mix(in srgb, var(--input-fg) 78%, var(--input-bg));
@@ -212,7 +214,7 @@
     display: flex; align-items: center; justify-content: center; width: var(--pair-badge); height: var(--pair-badge);
     border-radius: 999px; background: currentColor;
   }
-  .pair-plus-badge > svg { width: calc(var(--pair-badge) - 1px); height: calc(var(--pair-badge) - 1px); color: var(--menu-bg, var(--bg-1)); }
+  .pair-plus-badge > svg { width: calc(var(--pair-badge) - 1px); height: calc(var(--pair-badge) - 1px); color: var(--pair-plus-fg, var(--menu-bg, var(--bg-1))); }
   /* The lead's body sets the panel's height and the sidekick's lies over it (its list scrolling in what is left), so neither a
      switch nor a pick moves the panel; the side taking over slides in from where its half of the switch sits. The side
      leaving fades out in half a --dur and the one taking over starts fading in after it, so the two lists never show through
