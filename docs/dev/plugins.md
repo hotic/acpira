@@ -176,12 +176,47 @@ Hooks into Acpira's own agent loop (`acpira-agent/src/plugin_hooks.rs`), declare
 | `context` | one model call: `system`, `items` (`index`, `role` `user` / `assistant` / `tool`, their text, tool calls and results; images without their data), `tools`, `options` (`model`, `maxTokens`, `temperature`, `topP`, `topK`, `effort`) | Any of them replaced for this call only. An item `{ "keep": i }` is item `i` unchanged; any other is built from its fields, which drops what a provider must get back verbatim (signed thinking) and a user message's images. Changing `system`, `tools` or earlier items defeats the provider's prompt cache from that point |
 | `model.request` | `model`, `url`, `headers: {}` | `headers` added to that call's HTTP request |
 | `tool.before` | `tool`, `arguments` | `arguments` replaces them; `block` refuses the call (the model reads `Refused by a plugin: …`); `result: { text, isError }` is the call's result and the tool never runs, without a permission card |
-| `shell` | `command`, `workdir`, `background` of a `bash` call | `command` replaces it, `env` sets variables in front of it (`export K='v'; `, PowerShell `$env:K='v'; `), `block` refuses it. A `then_run` rider's command is not asked |
+| `shell` | `command`, `workdir`, `background` of a `bash` call, and of the command an edit or a write carries in `then_run` (`shell_rider`) | `command` replaces it, `env` sets variables in front of it (`export K='v'; `, PowerShell `$env:K='v'; `), `block` refuses it (a refused `then_run` leaves the change made and tells the model why the command did not run) |
 | `websearch` | `query`, `count` | `text`: the results as the model reads them, instead of the configured backend |
-| `tool.after` | `tool`, `arguments`, `result: { text, isError }` | `result` replaces what the model reads; the card keeps what the tool returned |
+| `tool.after` | `tool`, `arguments` as the call ran (after `tool.before` and `shell`), `result: { text, isError }` | `result` replaces what the model reads; the card keeps what the tool returned |
 | `compaction` | `reason`, `previous` (the earlier summary or null), `items` (the history being summarized, as text), `words` | `summary`: taken as the summary and no model is called; the log records the writer as `plugin:<id>` |
 
 The Acpira MCP server's `tool.before` / `tool.after` are not asked for a built-in agent session: its own hooks see those calls too. A restarted agent process picks a session up again with session/load, so a plugin swaps the loop's code by `session/act` `{ "type": "reconnect" }` once a new binary is in place.
+
+## Parity with OpenCode
+
+Checked against OpenCode's V2 plugin interface (`@opencode/plugin` 2.1.4 on its `dev` branch, commit `ed74ec82`, read 2026-10-26; its published docs and the 1.18.15 CLI are still V1). "All agents" means every ACP agent Acpira drives; an external CLI's own loop is not Acpira's, so what happens inside it is reachable only through the ACP wire, Acpira's MCP tools and the agent's launch. Engine tests are under `rust/crates/acpira-host/tests/engine/` unless named otherwise.
+
+| OpenCode V2 | Acpira | Scope | Evidence |
+|---|---|---|---|
+| `setup`, hot reload, fall back to the last version | frozen snapshots, effect on enable, rollback, safe mode; a new runtime version takes over before the old one stops | all | `store.rs`, `host.rs` tests; `runtime.rs` `a_new_version_takes_over…` |
+| `tool.transform` add | script tools, MCP servers | all | `plugins.rs` `a_session_lists_and_calls_plugin_tools…`, `a_plugin_s_mcp_server…` |
+| `tool.transform` update / remove | the `tools` hook; Acpira's tool groups | built-in / all | `builtin_agent.rs` `a_plugin_reshapes_every_request…` |
+| `tool.execute.before` / `after` | `tool.before` / `tool.after` | built-in: every tool; external: Acpira's MCP tools | `a_plugin_reshapes_every_request…`, `plugin_hooks.rs` `a_plugin_changes_and_refuses_calls…` |
+| `agent.transform` | `agent.launch`, plus `agent` adds a whole agent (OpenCode cannot add one) | all | `plugin_hooks.rs` `a_plugin_rewrites_blocks_redirects…`, `host.rs` `an_agent_and_a_prompt_folder…` |
+| `provider` / `model` / `credential` | `providers` and `providers/set`; keys from the vault or `keyEnv`; per-call headers from `model.request` | built-in | `builtin_agent.rs` `a_plugins_model_sources_reach_the_picker…` |
+| `generate.text` | `model/generate` | all | `generate.rs` tests |
+| `ctx.session.*` | `session/list` / `get` / `act` | all | `plugins.rs` `a_plugin_reads_and_acts_on_sessions…` |
+| `prompt` (cannot block) | `prompt`: rewrite, context, attachments, block, redirect; `beforePrompt` | all | `a_plugin_rewrites_blocks_redirects…` |
+| `context` / `generate` / `model.request` | `context`, `model.request` | built-in | `a_plugin_reshapes_every_request…` |
+| `title` / `retry` | `title`, `retry` | all | `a_plugin_rewrites_blocks_redirects…` |
+| `session.compaction` | `compaction` | built-in | `a_plugin_reshapes_every_request…` |
+| `permission.evaluate` / `assert` / `reply` | `permission` (deny or ask, never approve); `ui/ask` | all | `a_plugin_rewrites_blocks_redirects…`, `a_plugin_reads_and_acts_on_sessions…` |
+| `shell.create.before` | `shell`, `then_run` included; for an external CLI only its launch environment | built-in / launch | `a_plugin_reshapes_every_request…`, `a_plugins_shell_hook_also_rewrites…` |
+| `mcp.transform` | `session.mcp`, `mcp` | all that take MCP over ACP | `a_plugin_rewrites_blocks_redirects…` |
+| `skill.transform` | `skills` | all (built-in lists them, others are told) | `plugin_hooks.rs` `a_plugins_commands_join_every_menu…` |
+| `command.transform` add | `commands`, the `command` hook | all | `a_plugins_commands_join_every_menu…` |
+| `reference` | hooks `context` files, `prompts` | all / built-in | `hooks.rs` `a_plugin_s_hooks_run…`, `builtin_agent.rs` `a_plugin_s_prompt_folder…` |
+| `event.subscribe` | `events` | all | `plugin_runtime.rs` `a_turn_s_events_reach_a_plugin_in_order`, `plugins.rs` `a_plugin_hears_sessions…` |
+| `storage` | `storage/*` and the data folder | all | `runtime.rs` `a_runtime_answers_only_what_it_declared…` |
+| `websearch` | `websearch` | built-in | `a_plugin_reshapes_every_request…` |
+| `rpc.register` | `methods`, `plugin/call`, `pluginCall` | all | `runtime.rs` `a_runtime_offers_its_declared_methods…`, `test/pluginRpc.test.ts` |
+| theme (read only) | `theme` registers tokens and a style sheet | interface | `host.rs` `a_theme_becomes_one_style_layer…` |
+| TUI slots, panels, routes, dialogs, key bindings, code block renderers, toasts and sounds | `ui/toast` only; the slots run in sandboxed frames that call `pluginCall` | interface | not built (the interface track) |
+| `vcs` / `worktree` backends | none | none | not planned |
+| `http.*` / `ws.*` raw transport | none: headers through `model.request`, the request itself never | none | by design |
+
+Beyond OpenCode: blocking a prompt and gating edits (`beforePrompt`, `beforeEdit`), the end-of-turn gate loop, one plugin for every agent, a whole new agent, registered themes, frozen versions with rollback and safe mode, the user's confirmation before any plugin code runs, and an SDK copy frozen with each plugin. Still behind: every interface row above, OAuth login flows for a source (a plugin keeps its token in `storage` and sends it through `model.request`) and the prompt cache a `context` hook breaks, which the page does not mark yet.
 
 ## Activation
 

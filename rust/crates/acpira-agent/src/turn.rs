@@ -1249,6 +1249,8 @@ struct Prepared {
   todo: Option<String>,
   /// A plugin answered the call before it ran (`plugin_hooks::Before::Answer`): this is its result, nothing runs
   preset: Option<Output>,
+  /// The arguments the call runs with, after the plugins' `tool.before` and `shell` hooks; None when they did not parse
+  ran_with: Option<Value>,
 }
 
 /// What a call of a built-in tool carries beside its own arguments, so a model that makes one call per reply needs no
@@ -1384,6 +1386,7 @@ async fn run_tools(
         None => prepare_call(server, session, n, &a, setup.images).await.map_err(|e| format!("{e}. Received arguments: {}", crate::budget::cut(&a.to_string(), 2000))),
       },
     };
+    let ran_with = args.as_ref().ok().cloned();
     let raw_input = args.unwrap_or_else(|_| Value::String(call.arguments.clone()));
     match &action {
       _ if rowless => {}
@@ -1400,7 +1403,7 @@ async fn run_tools(
         server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": acp, "rawInput": raw_input }));
       }
     }
-    prepared.push(Prepared { call: call.clone(), acp, action, note, meta, riders, todo, preset });
+    prepared.push(Prepared { call: call.clone(), acp, action, note, meta, riders, todo, preset, ran_with });
   }
 
   let mut rejected = false;
@@ -1751,10 +1754,24 @@ fn ride_todo(server: &Arc<Server>, session: &Arc<Session>, rules: &Rules, riders
 /// the user rejected the command, which ends the turn after the round as a rejected call does. `command` is the
 /// command line of `action`, a `bash` one
 async fn ride_command(server: &Arc<Server>, session: &Arc<Session>, rules: &Rules, action: &Action, command: &str) -> (String, bool) {
+  // The plugins' `shell` hook sees the command as it sees a `bash` call's
+  let (rewritten, refused) = match crate::plugin_hooks::shell_rider(server, session, action).await {
+    Ok(a) => (a, None),
+    Err(reason) => (action.clone(), Some(reason)),
+  };
+  let action = &rewritten;
+  let command = match action {
+    Action::Bash { command, .. } => command.as_str(),
+    _ => command,
+  };
   let acp = session.next_tool_id();
   let raw_input = json!({ "command": command });
   server.update(&session.id, json!({ "sessionUpdate": "tool_call", "toolCallId": acp, "title": command, "kind": "execute", "status": "pending", "rawInput": raw_input }));
   let header = format!("$ {command}");
+  if let Some(reason) = refused {
+    report(server, session, &acp, Output::error(reason.clone()));
+    return (format!("{header}\nNot run: {reason}"), false);
+  }
   match rules.decide(session, action) {
     Decision::Allow => {}
     Decision::Deny => {
@@ -1764,7 +1781,7 @@ async fn ride_command(server: &Arc<Server>, session: &Arc<Session>, rules: &Rule
     }
     Decision::Ask => {
       let call = ToolCall { id: acp.clone(), name: tools::BASH.into(), arguments: raw_input.to_string() };
-      let p = Prepared { call, acp: acp.clone(), action: Ok(action.clone()), note: None, meta: None, riders: Riders::default(), todo: None, preset: None };
+      let p = Prepared { call, acp: acp.clone(), action: Ok(action.clone()), note: None, meta: None, riders: Riders::default(), todo: None, preset: None, ran_with: None };
       match ask(server, session, rules, &p, action).await {
         Answer::Once => {}
         Answer::Always(pattern) => session.state.lock().allowed.push(Rule::new(permission::BASH, &pattern, Decision::Allow)),
@@ -1810,7 +1827,8 @@ fn images_of(p: &Prepared, out: &Output) -> Vec<crate::llm::Image> {
 /// Report a finished call on its row and add its result, with the riders' notes, to the history
 async fn finish(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, mut out: Output, front: Option<String>, back: Option<String>) {
   // The plugins' `tool.after` may change what the model reads (the card keeps what the tool returned)
-  if let Some((model, is_error)) = crate::plugin_hooks::after_call(server, session, &p.call.name, &p.call.arguments, &out.model, out.is_error).await {
+  let arguments = p.ran_with.clone().unwrap_or_else(|| serde_json::from_str(&p.call.arguments).unwrap_or_else(|_| Value::String(p.call.arguments.clone())));
+  if let Some((model, is_error)) = crate::plugin_hooks::after_call(server, session, &p.call.name, &arguments, &out.model, out.is_error).await {
     out.model = model;
     out.is_error = is_error;
   }
