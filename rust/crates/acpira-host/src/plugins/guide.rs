@@ -1,4 +1,4 @@
-//! What `plugin_guide` answers a model: the contract of docs/dev/plugins.md in short, three complete examples and
+//! What `plugin_guide` answers a model: the contract of docs/dev/plugins.md in short, how to start from `plugin new` and the SDK, three complete examples and
 //! the state of every plugin with what its last check found, so a model can write a plugin, enable it and fix it
 
 use crate::plugins::host::PluginHost;
@@ -9,6 +9,22 @@ use crate::plugins::store::{MAX_BYTES, MAX_FILES};
 const CONTRACT: &str = r##"# Acpira plugins
 
 A plugin is a folder `{root}/<id>/` holding a `plugin.json` and its files. It extends Acpira for every agent without a build or a restart. Writing the folder changes nothing: call `plugin_activate` with the id, the user confirms on a card, and the version you wrote is frozen (a later edit needs another `plugin_activate`). Plugins run with the user's rights, without a sandbox.
+
+## Starting point
+
+`{exe} plugin new <id> --kind runtime,tool --home {home}` writes `{root}/<id>/` with a working example of each kind asked for (`runtime`, `tool`, `command`, `skill`, `provider`, `theme`), which passes the check as written; edit it from there. A runtime folder gets the SDK `acpira-plugin.mjs` (one file, no dependencies, Node 18+) copied in; for a folder written by hand, copy `{root}/.sdk/acpira-plugin.mjs`. With the SDK a resident process is:
+
+```js
+import { plugin } from './acpira-plugin.mjs';
+const p = plugin();                       // console.log goes to Acpira's log, not the wire
+p.hook('prompt', ({ text }) => null);     // the fields to change, or null
+p.on('turn.ended', e => p.storage.set('last', e.data.session));
+p.method('ping', (params, { from }) => ({ pong: from }));
+// p.storage.get / set / delete / list, p.session.list / get / act / send, p.ui.toast / ask,
+// p.model.generate, p.providers.set, p.call(plugin, method, params), p.log, p.onClose
+```
+
+Every hook, event and method used must also be listed in `plugin.json`.
 
 ## plugin.json (schema 1)
 
@@ -113,8 +129,12 @@ createInterface({ input: process.stdin }).on('line', line => {
 /// The guide with this host's folder and limits, then the state of every plugin
 pub fn text(host: &PluginHost) -> String {
   let root = host.store().root().display().to_string();
+  // The engine's own binary, which serves `plugin new` too
+  let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "acpira".into());
   let mut out = CONTRACT
     .replace("{root}", &root)
+    .replace("{exe}", &exe)
+    .replace("{home}", &host.store().root().parent().map(|p| p.display().to_string()).unwrap_or_default())
     .replace("{name_max}", &NAME_MAX.to_string())
     .replace("{timeout}", &TOOL_TIMEOUT_SECS.to_string())
     .replace("{output_kb}", &(OUTPUT_MAX_BYTES / 1024).to_string())
@@ -161,7 +181,7 @@ mod tests {
     std::fs::write(tmp.path().join("broken/plugin.json"), r#"{"schema":1,"id":"broken","contributes":{}}"#).unwrap();
     let host = PluginHost::new(tmp.path().to_path_buf(), false, std::sync::Arc::new(|_| {}));
     let text = text(&host);
-    assert!(!text.contains("{root}") && !text.contains("{timeout}") && text.contains(&format!("{}/currency/plugin.json", tmp.path().display())));
+    assert!(!text.contains("{root}") && !text.contains("{exe}") && !text.contains("{home}") && !text.contains("{timeout}") && text.contains(&format!("{}/currency/plugin.json", tmp.path().display())));
     assert!(text.contains("- broken  (not enabled)") && text.contains("error: contributes nothing"), "{text}");
     assert!(text.contains("`--bg-0`"));
   }

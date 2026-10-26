@@ -893,6 +893,29 @@ createInterface({ input: process.stdin }).on('close', () => process.exit(0)).on(
   }
 
   #[tokio::test]
+  async fn a_scaffolded_runtime_answers_hooks_events_and_methods_through_the_sdk() {
+    let Some((root, rt)) = setup() else { return };
+    let dir = crate::plugins::sdk::scaffold(root.path(), "kit", &["runtime"]).unwrap();
+    let (m, _) = manifest::parse(&std::fs::read(dir.join(manifest::FILE)).unwrap()).unwrap();
+    rt.sync(&[Arc::new(Active { id: "kit".into(), hash: "h".into(), dir, manifest: m })]).await;
+    assert_eq!(rt.running(), ["kit"]);
+    let ctx = |text: &str| json!({ "session": "s", "agent": "a", "cwd": "/", "text": text });
+    let replies = rt.hook("prompt", &ctx("fix the TODO")).await;
+    assert_eq!(replies[0].result.as_ref().unwrap(), &json!({ "context": "List the TODOs you leave behind." }));
+    assert_eq!(rt.hook("prompt", &ctx("hello")).await[0].result.as_ref().unwrap(), &Value::Null);
+    rt.emit("turn.ended", || json!({ "session": "s" }));
+    rt.emit("turn.started", || json!({ "session": "s" }));
+    let ping = || rt.rpc("kit", "ping", json!({}), "page");
+    let t = Instant::now();
+    while ping().await.unwrap()["turns"] != 1 {
+      assert!(t.elapsed() < Duration::from_secs(5), "the event never counted");
+      tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(ping().await.unwrap(), json!({ "pong": true, "turns": 1 }));
+    rt.stop_all().await;
+  }
+
+  #[tokio::test]
   async fn a_runtime_answers_only_what_it_declared_and_keeps_its_store() {
     let Some((root, rt)) = setup() else { return };
     rt.sync(&[active(&root.path().join("a"), "h1", "")]).await;

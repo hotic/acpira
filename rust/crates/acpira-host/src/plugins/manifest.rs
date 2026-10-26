@@ -498,7 +498,8 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
       findings.notes.push(format!("runtime: hook `{h}` is not one this Acpira calls"));
     }
     for e in &rt.events {
-      let family = e.strip_suffix(".*").unwrap_or(e);
+      // `turn.*` and `turn.ended` both name the `turn` family; the names inside a family are not listed here
+      let family = e.strip_suffix(".*").unwrap_or(e).split('.').next().unwrap_or(e);
       if e != "*" && !RUNTIME_EVENTS.iter().any(|k| *k == e || k.split('.').next() == Some(family)) {
         findings.notes.push(format!("runtime: event `{e}` is not one this Acpira sends"));
       }

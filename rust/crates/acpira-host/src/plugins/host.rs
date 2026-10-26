@@ -187,6 +187,12 @@ impl PluginHost {
     if let Err(e) = self.store.reconcile().await {
       (self.log)(&format!("plugins: {e:#}"));
     }
+    // The SDK copy plugins written by hand take theirs from (`sdk.rs`); only when the plugins folder is there
+    if self.store.root().is_dir()
+      && let Err(e) = crate::plugins::sdk::install(self.store.root())
+    {
+      (self.log)(&format!("plugins: {e:#}"));
+    }
     self.reload();
   }
 
