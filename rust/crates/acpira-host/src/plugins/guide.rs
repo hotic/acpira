@@ -20,7 +20,7 @@ const p = plugin();                       // console.log goes to Acpira's log, n
 p.hook('prompt', ({ text }) => null);     // the fields to change, or null
 p.on('turn.ended', e => p.storage.set('last', e.data.session));
 p.method('ping', (params, { from }) => ({ pong: from }));
-// p.storage.get / set / delete / list, p.session.list / get / act / send, p.ui.toast / ask,
+// p.storage.get / set / delete / list, p.session.list / get / act / send, p.ui.toast / ask / post / composer,
 // p.model.generate, p.providers.set, p.call(plugin, method, params), p.log, p.onClose
 ```
 
@@ -40,6 +40,7 @@ Every hook, event and method used must also be listed in `plugin.json`.
   - `skills`: a folder of `<name>/SKILL.md` (frontmatter `name`, `description`). Acpira's own agent lists and loads them like the user's; every other agent is told of them on a session's first prompt. New sessions.
   - `commands`: `[{ "name", "description", "hint", "prompt" }]`, slash commands in every session's menu at once. `/name args` sends `prompt` with `$ARGUMENTS` replaced (appended without one); a command without `prompt` is answered by the runtime's `command` hook. An agent's own command of the same name wins.
   - `providers`: `[{ "id", "name", "format" (`openai-chat`, `openai-responses`, `anthropic`), "baseUrl", "headers", "keyEnv", "models": [{ "id", "name", "context" }] }]`, model sources for Acpira's own agent, listed after the user's in the model picker of new sessions. Never put a key in the file: `keyEnv` names the environment variable that holds it. A source id the user already has wins.
+  - `ui`: `[{ "id", "slot", "title", "html" }]`, an HTML file (at most 256 KB) shown in a sandboxed frame in a slot: `composer.above`, `composer.toolbar`, `session.panel`, `sidebar`, `statusbar`, `start`, `message.actions`, `panel.tab`, `page`. The frame talks to its plugin's runtime with `parent.postMessage({ acpira: 1, type: "call", id, method, params }, "*")` and hears `{ acpira: 1, type: "result" | "message", ... }`.
   - `runtime`: `{ "command" (argv), "hooks": [...], "events": [...], "methods": [...], "timeout" (s, at most 10) }`, a process Acpira keeps running while the plugin is on. See below.
 
 ## Resident process (`runtime`)
@@ -55,7 +56,7 @@ Every hook, event and method used must also be listed in `plugin.json`.
   - `command` `{ name, arguments }` → `{ text }` to send, or `{}` to send nothing.
   - Acpira's own agent only (answer with the fields to change): `tools` `{ tools }` per turn; `context` `{ system, items, tools, options }` per model call (`{ "keep": i }` keeps item i as it was); `model.request` → `{ headers }`; `tool.before` → `{ arguments }`, `{ block }` or `{ result: { text, isError } }`; `tool.after` → `{ result }`; `shell` `{ command }` → `{ command, env }`; `websearch` `{ query }` → `{ text }`; `compaction` `{ items, previous }` → `{ summary }`.
 - Events are notifications `event` `{ type, at, data }` for what `events` lists (`turn.*`, `tool.*`, `session.*`, `permission.*`, `files.changed`, `usage.updated`, `model.*`, `plugin.changed`, `*`; `text.delta` / `thought.delta` only by name).
-- Requests to Acpira: `storage/get|set|delete|list` (`{ key, value }`, 1 MB per plugin), `session/list`, `session/get` `{ session, turns }`, `session/act` `{ message }` (a page message such as `{ "type": "send", "sessionId", "text" }`, `renameSession`, `newSession`, `setMode`; never answering a permission or question card), `ui/toast` `{ text, level }`, `ui/ask` `{ session, questions, message }` (a question card naming the plugin), `model/generate` `{ prompt, system, model, maxTokens }` (one call through Acpira's own agent's models), `providers/set` `{ providers }` (replace the model sources this process contributes, shaped as `contributes.providers`), `plugin/call` `{ plugin, method, params }` (another plugin's method).
+- Requests to Acpira: `storage/get|set|delete|list` (`{ key, value }`, 1 MB per plugin), `session/list`, `session/get` `{ session, turns }`, `session/act` `{ message }` (a page message such as `{ "type": "send", "sessionId", "text" }`, `renameSession`, `newSession`, `setMode`; never answering a permission or question card), `ui/toast` `{ text, level }`, `ui/ask` `{ session, questions, message }` (a question card naming the plugin), `model/generate` `{ prompt, system, model, maxTokens }` (one call through Acpira's own agent's models), `providers/set` `{ providers }` (replace the model sources this process contributes, shaped as `contributes.providers`), `plugin/call` `{ plugin, method, params }` (another plugin's method), `ui/post` `{ message }` (to this plugin's frames), `ui/composer` `{ text, replace }` (into the composer on screen).
 - Methods you list in `methods` are called as `rpc/<name>` `{ params, from }` by pages and other plugins (`from`: `page` or the caller's id); answer like a hook.
 
 ## Script tools

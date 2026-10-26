@@ -46,6 +46,9 @@ const RESTART_MAX: Duration = Duration::from_secs(60);
 const STDERR_LINES_PER_MIN: u32 = 60;
 
 /// The engine's side of a call a process makes beyond the store (`session/*`, `ui/*`, …): plugin id, method, params
+/// A page of this engine taking a message from a plugin's process
+pub type PageFn = Arc<dyn Fn(acpira_shared::protocol::HostMsg) + Send + Sync>;
+
 pub type HostCall = Arc<dyn Fn(String, String, Value) -> BoxFuture<Result<Value, RpcError>> + Send + Sync>;
 
 /// One plugin to keep running: its frozen copy and what it declared
@@ -198,6 +201,9 @@ pub struct Runtimes {
   contributed: parking_lot::RwLock<Arc<Contributed>>,
   /// Model sources a process set with `providers/set`, by plugin; dropped when the plugin leaves
   live_providers: parking_lot::RwLock<BTreeMap<String, Vec<acpira_shared::providers::Provider>>>,
+  /// The pages that hear what a process sends them (`ui/post`, `ui/composer`): every bridge of this engine
+  pages: parking_lot::RwLock<Vec<(u64, PageFn)>>,
+  next_page: std::sync::atomic::AtomicU64,
   /// One writer of `plugins/providers.json` at a time: a load and a process's `providers/set` may race
   providers_write: parking_lot::Mutex<()>,
   /// Told when `contributed` changed (the session manager republishes the open sessions, whose menus list the commands)
@@ -224,6 +230,8 @@ impl Runtimes {
       contributed: Default::default(),
       live_providers: Default::default(),
       providers_write: Default::default(),
+      pages: Default::default(),
+      next_page: Default::default(),
       on_contributed: Default::default(),
       enabled: AtomicBool::new(false),
       sync: Default::default(),
@@ -306,6 +314,26 @@ impl Runtimes {
       (self.log)(&format!("plugin {plugin}: hook {hook}: {e}"));
     }
     Some(r)
+  }
+
+  /// Hear what the processes send the pages; the id unsubscribes
+  pub fn subscribe_pages(&self, f: PageFn) -> u64 {
+    let id = self.next_page.fetch_add(1, Ordering::Relaxed);
+    self.pages.write().push((id, f));
+    id
+  }
+
+  pub fn unsubscribe_pages(&self, id: u64) {
+    self.pages.write().retain(|(i, _)| *i != id);
+  }
+
+  /// Hand a message to every page; how many took it
+  fn to_pages(&self, msg: acpira_shared::protocol::HostMsg) -> usize {
+    let pages: Vec<PageFn> = self.pages.read().iter().map(|(_, f)| f.clone()).collect();
+    for f in &pages {
+      f(msg.clone());
+    }
+    pages.len()
   }
 
   /// Call a method `plugin`'s process offers (`runtime.methods`): `rpc/<method>` with `{ params, from }`, `from` being
@@ -667,6 +695,9 @@ pub async fn probe(id: &str, version: &str, hash: &str, dir: &Path, def: &Runtim
   Ok(())
 }
 
+/// Longest text a process may put into the composer
+const COMPOSER_MAX_CHARS: usize = 100_000;
+
 /// What a process may ask of the engine: its store, a log line, and whatever `HostCall` serves
 struct PluginInbound {
   id: String,
@@ -691,6 +722,21 @@ impl Inbound for PluginInbound {
       "storage/set" => key().and_then(|k| self.kv.set(&k, params.get("value").cloned().unwrap_or(Value::Null)).map(|()| json!({})).map_err(|e| RpcError::new(-32000, e))),
       "storage/delete" => key().and_then(|k| self.kv.delete(&k).map(|()| json!({})).map_err(|e| RpcError::new(-32000, e))),
       "storage/list" => Ok(json!({ "keys": self.kv.keys(params.get("prefix").and_then(Value::as_str).unwrap_or("")) })),
+      // To the plugin's own frames on every page of this engine, and text for the composer on screen
+      "ui/post" => match (params.get("message"), self.runtimes.upgrade()) {
+        (None, _) => Err(RpcError::new(-32602, "`message` is needed")),
+        (_, None) => Err(RpcError::new(-32000, "the engine is closing")),
+        (Some(message), Some(rt)) => Ok(json!({ "pages": rt.to_pages(acpira_shared::protocol::HostMsg::PluginPost { plugin: self.id.clone(), message: message.clone() }) })),
+      },
+      "ui/composer" => match (params.get("text").and_then(Value::as_str), self.runtimes.upgrade()) {
+        (None, _) => Err(RpcError::new(-32602, "`text` is needed")),
+        (_, None) => Err(RpcError::new(-32000, "the engine is closing")),
+        (Some(text), Some(rt)) => {
+          let replace = params.get("replace").and_then(Value::as_bool).unwrap_or(false);
+          let msg = acpira_shared::protocol::HostMsg::PluginComposer { plugin: self.id.clone(), text: text.chars().take(COMPOSER_MAX_CHARS).collect(), replace };
+          Ok(json!({ "pages": rt.to_pages(msg) }))
+        }
+      },
       // Another plugin's method: answered on its own task, since the callee may take its full time limit
       "plugin/call" => {
         let (Some(rt), Some(plugin), Some(name)) = (self.runtimes.upgrade(), params.get("plugin").and_then(Value::as_str), params.get("method").and_then(Value::as_str)) else {

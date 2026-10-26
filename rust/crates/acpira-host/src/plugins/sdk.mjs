@@ -153,6 +153,9 @@ export function plugin(options = {}) {
     ui: {
       toast: (text, level = 'info') => request('ui/toast', { text, level }),
       ask: params => request('ui/ask', params),
+      // To this plugin's frames on every page, and text into the composer on screen
+      post: message => request('ui/post', { message }),
+      composer: (text, replace = false) => request('ui/composer', { text, replace }),
     },
     model: {
       generate: params => request('model/generate', typeof params === 'string' ? { prompt: params } : params),

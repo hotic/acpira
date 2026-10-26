@@ -6,7 +6,7 @@ import type { HiddenMap, SettingKey, SettingsView } from './settings';
 import type { Locale } from './i18n';
 import type { AgentInventory } from './inventory';
 import type { SharedAction, SharedView } from './sharedConfig';
-import type { PluginAction, PluginsView } from './plugins';
+import type { PluginAction, PluginSlot, PluginsView } from './plugins';
 import type { StorageAction, StorageDetail, StorageOutcome, StorageView } from './storage';
 import type { ProbeOutcome, ProviderAction, ProviderProbe, ProvidersView } from './providers';
 import type { SessionPatch } from './sessionPatch';
@@ -283,6 +283,12 @@ export type HostMsg =
   // The plugins' theme layer: after init and whenever it changes; empty takes it away (docs/dev/plugins.md)
   | { type: 'pluginTheme'; css: string }
   | { type: 'plugins'; view: PluginsView; error?: string }
+  // The plugins' interface pieces: after every init and whenever they change; empty takes them away
+  | { type: 'pluginUi'; slots: PluginSlot[] }
+  // A message a plugin's process sends its frames (ui/post), for that plugin's frames only
+  | { type: 'pluginPost'; plugin: string; message: unknown }
+  // Text a plugin's process puts into the composer on screen (ui/composer): at the cursor, or in place of the draft
+  | { type: 'pluginComposer'; plugin: string; text: string; replace: boolean }
   // The answer to the pluginCall with the same id: the method's result, or why there is none
   | { type: 'pluginCalled'; id: string; result?: unknown; error?: string }
   // shapes: the agent's remembered per-model parameters (modelShapes.ts), so a model picked in settings shows its own efforts

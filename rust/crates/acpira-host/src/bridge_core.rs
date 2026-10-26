@@ -124,6 +124,10 @@ pub struct BridgeCore {
   /// The theme layer this page was sent last, and its subscription (from the first `ready` on)
   theme: parking_lot::Mutex<Option<String>>,
   theme_sub: parking_lot::Mutex<Option<u64>>,
+  /// The plugins' interface pieces this page was sent last (with the theme's subscription), and its subscription to
+  /// what their processes send pages
+  ui: parking_lot::Mutex<Option<Vec<acpira_shared::plugins::PluginSlot>>>,
+  pages_sub: parking_lot::Mutex<Option<u64>>,
   me: Weak<BridgeCore>,
 }
 
@@ -175,6 +179,8 @@ impl BridgeCore {
       plugins_sub: Default::default(),
       theme: Default::default(),
       theme_sub: Default::default(),
+      ui: Default::default(),
+      pages_sub: Default::default(),
       me: me.clone(),
     });
     let weak = core.me.clone();
@@ -279,14 +285,31 @@ impl BridgeCore {
         // A reloaded page lost its theme layer: it goes again after every init (a task of its own: `sent`'s guard above
         // keeps this future from crossing an await)
         *self.theme.lock() = None;
+        *self.ui.lock() = None;
         let me = self.clone();
-        tokio::spawn(async move { me.push_theme().await });
+        tokio::spawn(async move {
+          me.push_theme().await;
+          me.push_ui().await;
+        });
         let mut sub = self.theme_sub.lock();
         if sub.is_none() {
           let weak = self.me.clone();
           *sub = Some(self.plugins.subscribe(Arc::new(move || {
             if let Some(c) = weak.upgrade() {
-              tokio::spawn(async move { c.push_theme().await });
+              tokio::spawn(async move {
+                c.push_theme().await;
+                c.push_ui().await;
+              });
+            }
+          })));
+        }
+        drop(sub);
+        let mut pages = self.pages_sub.lock();
+        if pages.is_none() {
+          let weak = self.me.clone();
+          *pages = Some(self.plugins.runtimes().subscribe_pages(Arc::new(move |msg| {
+            if let Some(c) = weak.upgrade() {
+              c.post_now(msg);
             }
           })));
         }
@@ -790,6 +813,20 @@ impl BridgeCore {
     self.post_now(HostMsg::PluginTheme { css });
   }
 
+  /// Send the interface pieces when they differ from what the page has, like the theme layer
+  async fn push_ui(&self) {
+    let plugins = self.plugins.clone();
+    let Ok(slots) = tokio::task::spawn_blocking(move || plugins.ui_slots()).await else { return };
+    {
+      let mut last = self.ui.lock();
+      if last.as_ref() == Some(&slots) || (last.is_none() && slots.is_empty()) {
+        return;
+      }
+      *last = Some(slots.clone());
+    }
+    self.post_now(HostMsg::PluginUi { slots });
+  }
+
   async fn plugins_view(&self) -> acpira_shared::plugins::PluginsView {
     let plugins = self.plugins.clone();
     tokio::task::spawn_blocking(move || plugins.view()).await.unwrap_or_default()
@@ -809,6 +846,9 @@ impl BridgeCore {
     }
     if let Some(id) = self.theme_sub.lock().take() {
       self.plugins.unsubscribe(id);
+    }
+    if let Some(id) = self.pages_sub.lock().take() {
+      self.plugins.runtimes().unsubscribe_pages(id);
     }
     // Its terminals run on a while without it, for a reload to come back to
     self.terminals.detach_view(self.terminal_view);

@@ -4,7 +4,7 @@
 export type PluginLayer = 'agents' | 'tools' | 'interface' | 'automation';
 export const PLUGIN_LAYERS: readonly PluginLayer[] = ['agents', 'tools', 'interface', 'automation'];
 
-export type PluginContribution = 'tools' | 'mcp' | 'hooks' | 'theme' | 'prompts' | 'agent' | 'runtime' | 'skills' | 'commands' | 'providers';
+export type PluginContribution = 'tools' | 'mcp' | 'hooks' | 'theme' | 'prompts' | 'agent' | 'runtime' | 'skills' | 'commands' | 'providers' | 'ui';
 
 // Who made a change: user (a page), session (a card in a session, with its agent and model) or cli
 export interface PluginProvenance {
@@ -105,3 +105,21 @@ export type PluginAction =
   | { op: 'reveal'; id: string }
   | { op: 'safeMode'; on: boolean }
   | { op: 'toolGroup'; id: ToolGroupId; on: boolean };
+
+// The places of the page a plugin's interface may take (contributes.ui, docs/dev/plugins.md, Interface): above the
+// composer, in its toolbar, the session's side panel, the session list's side, the status bar, the start page, the
+// actions of a message, a tool panel tab and a page of its own
+export const PLUGIN_UI_SLOTS = ['composer.above', 'composer.toolbar', 'session.panel', 'sidebar', 'statusbar', 'start', 'message.actions', 'panel.tab', 'page'] as const;
+export type PluginUiSlot = (typeof PLUGIN_UI_SLOTS)[number];
+
+// One interface piece of a plugin in effect: the HTML runs in a sandboxed frame of its own, never in the page, and
+// talks to its plugin through the page (pluginCall, pluginPost)
+export interface PluginSlot {
+  plugin: string;
+  // Unique within the plugin
+  id: string;
+  slot: PluginUiSlot;
+  title: string;
+  // The document, read from the frozen copy
+  html: string;
+}
