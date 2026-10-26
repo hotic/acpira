@@ -3,7 +3,8 @@ import type { ExtraProps } from 'streamdown';
 import { vscodeApi } from '../vscodeApi';
 import { cn } from '../ui/cn';
 import { sessionIdOfLink } from '@acpira/shared/sessionLinks';
-import { OpenSessionContext, OpenToolFileContext, decodeFileHref, decodeSessionHref, parseCodeSessionLink, parseFileLink, parseWrappedLink } from './fileLinks';
+import { FileMenu } from './ImageMenu';
+import { OpenSessionContext, OpenToolFileContext, decodeFileHref, decodeSessionHref, parseCodeSessionLink, parseFileLink, parseWrappedLink, type FileLink } from './fileLinks';
 
 // Links in agent output: the webview cannot navigate, so clicks are forwarded to the host.
 // Workspace paths go through openFile, session links switch to that session; http(s)/mailto stay on openExternal.
@@ -24,18 +25,18 @@ function fileFromHref(href: string) {
 export function Link({ href, children, node: _node, ...rest }: ComponentProps<'a'> & ExtraProps) {
   const openFile = useContext(OpenToolFileContext);
   const openSession = useContext(OpenSessionContext);
-  return (
+  const session = href ? (decodeSessionHref(href) ?? sessionIdOfLink(href)) : undefined;
+  const file = href && !session ? fileFromHref(href) : undefined;
+  const anchor = (
     <a
       href={href}
       onClick={e => {
         e.preventDefault();
         if (!href) return;
-        const session = decodeSessionHref(href) ?? sessionIdOfLink(href);
         if (session) {
           openSession?.(session);
           return;
         }
-        const file = fileFromHref(href);
         if (file) {
           openFile?.(file.path, file.line);
           return;
@@ -49,6 +50,7 @@ export function Link({ href, children, node: _node, ...rest }: ComponentProps<'a
       {children}
     </a>
   );
+  return file && openFile ? <FileMenu path={file.path} line={file.line}>{anchor}</FileMenu> : anchor;
 }
 
 export function InlineFileCode({ children, className, node: _node, ...rest }: ComponentProps<'code'> & ExtraProps) {
@@ -62,20 +64,21 @@ export function InlineFileCode({ children, className, node: _node, ...rest }: Co
   const wrapped = openFile ? parseWrappedLink(text) : undefined;
   const file = wrapped?.file ?? (openFile ? parseFileLink(text) : undefined);
   if (!openFile || !file) return <code className={className} {...rest}>{children}</code>;
-  return <CodeLink className={className} title={file.path} label={wrapped ? wrapped.label : children} open={() => openFile(file.path, file.line)} rest={rest} />;
+  return <CodeLink className={className} title={file.path} label={wrapped ? wrapped.label : children} open={() => openFile(file.path, file.line)} file={file} rest={rest} />;
 }
 
-function CodeLink({ className, title, label, open, rest }: { className?: string; title?: string; label: ReactNode; open: () => void; rest: ComponentProps<'code'> }) {
+function CodeLink({ className, title, label, open, file, rest }: { className?: string; title?: string; label: ReactNode; open: () => void; file?: FileLink; rest: ComponentProps<'code'> }) {
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       open();
     }
   };
-  return (
+  const code = (
     <code role="link" tabIndex={0} title={title} className={cn('cursor-pointer hover:underline focus-visible:underline', className)}
       onClick={open} onKeyDown={onKeyDown} {...rest}>{label}</code>
   );
+  return file ? <FileMenu path={file.path} line={file.line}>{code}</FileMenu> : code;
 }
 
 function textOf(node: ReactNode): string {

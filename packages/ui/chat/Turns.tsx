@@ -28,6 +28,7 @@ import { AutoFoldContext, AutoFoldItem, AutoFoldStore } from './autoFold';
 import { useFollowing } from './useBottomFollow';
 import { Prose } from './Prose';
 import { AgentImage } from './AgentImage';
+import { FileMenu } from './ImageMenu';
 import { GeneratedImages, ImageInFoldContext } from './GeneratedImage';
 import { ShownWidget } from './AgentWidget';
 import { Permission } from './Permission';
@@ -149,7 +150,9 @@ function NoticeDetails({ text }: { text: string }) {
           <span key={i} className="flex min-w-0 items-center gap-gap text-fg-2">
             <FileText className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} />
             {open
-              ? <button type="button" title={file.path} onClick={open} className="min-w-0 cursor-pointer truncate text-left font-mono text-mono hover:text-fg-1 hover:underline focus-visible:underline">{item}</button>
+              ? <FileMenu path={file.path} line={file.line}>
+                  <button type="button" title={file.path} onClick={open} className="min-w-0 cursor-pointer truncate text-left font-mono text-mono hover:text-fg-1 hover:underline focus-visible:underline">{item}</button>
+                </FileMenu>
               : <span className="min-w-0 truncate font-mono text-mono">{item}</span>}
           </span>
         );

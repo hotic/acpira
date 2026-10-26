@@ -170,6 +170,17 @@ describe('sidecar runtime', () => {
     await until(() => opened().length === 2);
     expect(opened()[1]!.path).toBe(join(cwd, 'b.ts'));
     expect(opened()[1]!.line).toBeUndefined();
+    // Right-click "Reveal in Finder / Explorer" resolves relative to the session cwd and asks for revealInOS
+    s.view('V', { type: 'openFile', sessionId: id, path: 'src/shot.png', reveal: true });
+    await until(() => requests('revealInOS').length === 1);
+    expect(requests('revealInOS')[0]).toMatchObject({ path: resolve(cwd, 'src/shot.png') });
+    // Left-click on an image reference without a pre-saved blob stages the file into the session's blob store
+    writeFileSync(join(cwd, 's-open.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'));
+    s.view('V', { type: 'imageBlob', sessionId: id, path: 's-open.png', seq: 41 });
+    const staged = await s.hostMsg('V', 'imageBlob', m => m.seq === 41);
+    expect(staged.blob).toMatch(/\.png$/);
+    s.view('V', { type: 'imageBlob', sessionId: id, path: 'missing.png', seq: 42 });
+    expect(await s.hostMsg('V', 'imageBlob', m => m.seq === 42)).toEqual({ type: 'imageBlob', seq: 42 });
     s.view('V', { type: 'openFile', sessionId: 'someone-else', path: 'src/a.ts' });
     // A shell failure surfaces as an error toast, not an exception
     s.answers.openResolvedFile = () => { throw new Error('no editor'); };

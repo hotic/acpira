@@ -3468,6 +3468,10 @@ impl SessionManager {
     self.deps.store.blob_path(session_id, name)
   }
 
+  pub async fn save_blob(&self, session_id: &str, ext: &str, bytes: &[u8]) -> Option<String> {
+    self.deps.store.save_blob(session_id, ext, bytes).await.ok().map(|(name, _)| name)
+  }
+
   /// A record changed on disk without a live session: this host's copy wins for it
   fn replace_summary(&self, record: &SessionRecord) {
     {
@@ -3964,6 +3968,7 @@ fn session_id_of(m: &WebviewMsg) -> Option<String> {
     | W::EditQueued { session_id, .. }
     | W::OpenFile { session_id, .. }
     | W::OpenBlob { session_id, .. }
+    | W::ImageBlob { session_id, .. }
     | W::ImportNativeSession { session_id, .. } => Some(session_id.clone()),
     _ => None,
   }

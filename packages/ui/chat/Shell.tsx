@@ -46,6 +46,7 @@ import { lastTypedPrompt } from './goalText';
 import { heldPrompt } from './heldPrompt';
 import { compactingNow } from './usageBreakdown';
 import { BUILTIN_AGENT_ID } from '@acpira/shared/providers';
+import { imageMimeOf } from '@acpira/shared/attachments';
 import { launchable } from '@acpira/shared/agentOrder';
 import { parseRemoteFolder } from '@acpira/shared/remote';
 import { connectionOf, useFolderHost } from '../remote/api';
@@ -56,7 +57,8 @@ import { moveDraft } from './useComposerDraft';
 import { ProjectPick, StartPicker, usePresence } from './StartPage';
 import { AppMenu, NoProject, ShellToastItems, ShellToasts, TitleRow, TitleSpace, useSessionHistory, type QuickSettings } from './DesktopFrame';
 import type { SettingsPage } from '../settings/Nav';
-import { OpenToolFileContext, AsyncTaskStopContext, BlobUrlContext, DiffSourceContext, OpenBlobContext, OpenSessionContext, SessionTitleContext } from './fileLinks';
+import { Lightbox } from './Lightbox';
+import { OpenToolFileContext, AsyncTaskStopContext, BlobUrlContext, DiffSourceContext, OpenBlobContext, OpenSessionContext, SessionTitleContext, ToolFileActionsContext, resolveSessionPath, type ToolFileActions } from './fileLinks';
 import { TurnActionsContext } from './TurnActions';
 import { ForkBoundary } from './ForkBoundary';
 import { SubagentInspector } from './subagents/SubagentInspector';
@@ -86,7 +88,9 @@ export interface ShellHandlers {
   answer?: (sessionId: string, blockId: string, answers: QuestionAnswers, skip?: boolean) => void;
   buildPlan?: (sessionId: string, planId: string, model?: { configId: string; value: string }, optionId?: string) => void;
   openPlan?: (sessionId: string, planId: string) => void;
-  openFile?: (sessionId: string, path: string, line?: number) => void;
+  openFile?: (sessionId: string, path: string, line?: number, reveal?: boolean) => void;
+  // Stage a local/remote image file into the session's blob store for the Lightbox
+  imageBlob?: (sessionId: string, path: string) => Promise<string | undefined>;
   // An agent-emitted image's blob file opens in the editor by its store name (the host resolves the absolute path)
   openBlob?: (sessionId: string, name: string) => void;
   setMode: (id: string) => void;
@@ -792,19 +796,62 @@ export function Shell(p: ShellProps) {
     return titles;
   }, [p.sessions, locale]);
   const sessionTitle = useCallback((ref: string) => titlesRef.current.get(ref), []);
+  const [filePreview, setFilePreview] = useState<{ src: string; name?: string; mimeType?: string; path: string } | null>(null);
+  useEffect(() => { setFilePreview(null); }, [p.activeSessionId]);
+  const openInEditor = useMemo(() => p.activeSessionId && on.openFile
+    ? (path: string, line?: number) => on.openFile!(p.activeSessionId!, path, line) : undefined, [p.activeSessionId, on.openFile]);
+  const previewImage = useMemo(() => {
+    const sid = p.activeSessionId;
+    if (!sid || !blobUrl) return undefined;
+    return (path: string, blob?: string, mimeType?: string) => {
+      const name = path.split(/[\\/]/).pop() || t('common.image');
+      const mime = mimeType ?? imageMimeOf(path);
+      if (blob) {
+        setFilePreview({ src: blobUrl(blob), name, mimeType: mime, path });
+        return;
+      }
+      if (!on.imageBlob) {
+        on.openFile?.(sid, path);
+        return;
+      }
+      void on.imageBlob(sid, path).then(staged => {
+        if (staged) setFilePreview({ src: blobUrl(staged), name, mimeType: mime, path });
+        else on.openFile?.(sid, path);
+      });
+    };
+  }, [p.activeSessionId, blobUrl, on.imageBlob, on.openFile]);
   const openToolFile = useMemo(() => {
     const sid = p.activeSessionId;
-    if (!sid || (!on.openFile && !filePanelRoot)) return undefined;
+    if (!sid || (!on.openFile && !filePanelRoot && !previewImage)) return undefined;
     return (path: string, line?: number) => {
+      if (line === undefined && previewImage && imageMimeOf(path)) {
+        previewImage(path);
+        return;
+      }
       const rel = filePanelRoot ? projectPath(filePanelRoot, path) : undefined;
       if (filePanelRoot && rel !== undefined) { panel.openFile(filePanelRoot, rel, line); return; }
       const plan = filePanelRoot ? plansRef.current.find(b => b.path === path) : undefined;
       if (filePanelRoot && plan) { openPlanInPanel(filePanelRoot, plan, line); return; }
       on.openFile?.(sid, path, line);
     };
-  }, [p.activeSessionId, on.openFile, filePanelRoot]);
-  const openInEditor = useMemo(() => p.activeSessionId && on.openFile
-    ? (path: string, line?: number) => on.openFile!(p.activeSessionId!, path, line) : undefined, [p.activeSessionId, on.openFile]);
+  }, [p.activeSessionId, on.openFile, filePanelRoot, previewImage]);
+  const activeCwdRef = useRef<string | undefined>(undefined);
+  activeCwdRef.current = p.sessions.find(s => s.id === p.activeSessionId)?.cwd || p.cwd;
+  const homeRef = useRef(p.home);
+  homeRef.current = p.home;
+  const toolFileActions = useMemo<ToolFileActions | undefined>(() => {
+    const sid = p.activeSessionId;
+    if (!sid) return undefined;
+    return {
+      openInEditor,
+      revealInOS: on.openFile ? (path: string) => on.openFile!(sid, path, undefined, true) : undefined,
+      copyPath: (path: string) => {
+        const raw = activeCwdRef.current ? parseRemoteFolder(activeCwdRef.current)?.path ?? activeCwdRef.current : undefined;
+        copied(navigator.clipboard.writeText(resolveSessionPath(path, raw, homeRef.current)), t('session.project.copied'));
+      },
+      previewImage,
+    };
+  }, [p.activeSessionId, openInEditor, on.openFile, copied, previewImage]);
   const goalAction = useMemo(() => p.activeSessionId && on.goal
     ? (action: GoalAction) => on.goal!(p.activeSessionId!, action) : undefined, [p.activeSessionId, on.goal]);
   // "Set as goal" under the last prompt: only where the agent takes `set` and no goal is running yet
@@ -848,6 +895,7 @@ export function Shell(p: ShellProps) {
       <ShellLayerContext.Provider value={root}>
       <BlobUrlContext.Provider value={blobUrl}>
       <OpenBlobContext.Provider value={openBlob}>
+      <ToolFileActionsContext.Provider value={toolFileActions}>
       <AsyncTaskStopContext.Provider value={stopAsyncTask}>
       <DiffSourceContext.Provider value={fetchDiffSource}>
         <div
@@ -1110,10 +1158,21 @@ export function Shell(p: ShellProps) {
               : { open: canDock ? !columnHidden : drawerOpen, drawer: !canDock, onToggle: () => canDock ? hideColumn(!columnHidden) : drawerOpen ? closeDrawer() : openDrawer() }} />}
         </div>
         <SubagentGraph nodes={p.subagents ?? []} sessionTitle={p.title} open={graphOpen && !!p.subagents?.length} onOpenChange={setGraphOpen} onInspect={onInspect} selectedId={inspect?.id} />
+        {filePreview && (
+          <Lightbox
+            src={filePreview.src}
+            name={filePreview.name}
+            mimeType={filePreview.mimeType}
+            path={filePreview.path}
+            openInEditor={openInEditor ? () => openInEditor(filePreview.path) : undefined}
+            onClose={() => setFilePreview(null)}
+          />
+        )}
         {remotePick && <RemoteFolderDialog alias={remotePick} onClose={() => setRemotePick(undefined)}
           onAdd={folder => { setRemotePick(undefined); openProject(folder); }} />}
       </DiffSourceContext.Provider>
       </AsyncTaskStopContext.Provider>
+      </ToolFileActionsContext.Provider>
       </OpenBlobContext.Provider>
       </BlobUrlContext.Provider>
       </ShellLayerContext.Provider>

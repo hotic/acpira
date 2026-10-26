@@ -328,7 +328,7 @@ impl BridgeCore {
         self.post_now(HostMsg::ChatgptStatus { status });
       }
       W::OpenInEditor { session_id } => platform.open_in_editor(session_id.or_else(|| self.viewer.active_id())),
-      W::OpenFile { session_id, path, line } => {
+      W::OpenFile { session_id, path, line, reveal } => {
         // Tool references are relative to the session they came from; a view showing another session ignores them
         let Some(active) = self.viewer.active_id().filter(|a| *a == session_id) else { return Ok(()) };
         let Some(cwd) = manager.session_cwd(&active) else { return Ok(()) };
@@ -344,7 +344,12 @@ impl BridgeCore {
         };
         match resolved {
           Ok(p) => {
-            if let Err(e) = platform.open_resolved_file(&p, line.filter(|l| *l > 0)).await {
+            let res = if reveal {
+              platform.reveal_in_os(&p).await
+            } else {
+              platform.open_resolved_file(&p, line.filter(|l| *l > 0)).await
+            };
+            if let Err(e) = res {
               platform.toast("error", &e.to_string());
             }
           }
@@ -412,6 +417,27 @@ impl BridgeCore {
       W::DiffSource { session_id, tool_call_id, nth, subagent_id, seq } => {
         let source = manager.diff_source(&session_id, &tool_call_id, nth, subagent_id.as_deref());
         self.post_now(HostMsg::DiffSource { seq, source });
+      }
+      // Stage an image file into the session's blob store on demand when a file reference is clicked for preview
+      W::ImageBlob { session_id, path, seq } => {
+        let (core, root) = (self.clone(), manager.session_cwd(&session_id));
+        tokio::spawn(async move {
+          let blob = async {
+            let ws = core.workspace(root).await.ok()?;
+            let raw = if crate::platform::file_url::is_file_url(&path) {
+              std::path::PathBuf::from(file_url_to_path(&path)?)
+            } else {
+              resolve_open_path(&ws.path().to_string_lossy(), &path)
+            };
+            let resolved = if matches!(ws, crate::workspace::Workspace::Local(_)) { normalize(&raw) } else { raw };
+            let mime = acpira_shared::attachments::image_mime_of(&resolved.to_string_lossy())?;
+            let bytes = ws.read_file(&resolved, crate::limits::MAX_OUT_IMAGE_BYTES).await?;
+            let ext = acpira_shared::attachments::ext_of_mime(mime);
+            core.manager.save_blob(&session_id, ext, &bytes).await
+          }
+          .await;
+          core.post_now(HostMsg::ImageBlob { seq, blob });
+        });
       }
       // The desktop tool panel's reads (project_files.rs). Each is always answered, and runs on its own task: a git
       // status or a large file must not hold up the messages behind it

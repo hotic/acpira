@@ -1,6 +1,7 @@
 import { memo, useContext, useState, type ReactNode } from 'react';
 import { MessagesSquare } from 'lucide-react';
 import { splitSessionTarget } from '@acpira/shared/sessionLinks';
+import { toolImages } from '@acpira/shared/imageTools';
 import type { ToolCallBlock } from '@acpira/shared/transcript';
 import { Collapsible } from '../ui/Collapsible';
 import { Disclosure, DisclosureRow } from '../ui/Disclosure';
@@ -80,7 +81,7 @@ function useLead(kind: GroupKind) {
 function ReadEntry({ block }: { block: ToolCallBlock }) {
   const lead = useLead('read');
   const files = toolFiles(block);
-  if (files.length) return <ResultList items={files} kind="read" rail={false} />;
+  if (files.length) return <ResultList items={files} kind="read" rail={false} images={toolImages(block)} />;
   return <Row tone="action" dense lead={lead}><RowTarget mono className="text-fg-2"><Shimmer active={live(block)}>{block.target ?? toolVerb(block)}</Shimmer></RowTarget></Row>;
 }
 

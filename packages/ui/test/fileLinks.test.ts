@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeFileHref, decodeLocalImageSrc, decodeSessionHref, encodeFileHref, parseCodeSessionLink, parseFileLink, parseWrappedLink, rewriteFileHrefs, sameImageSource, toFileHref } from '../chat/fileLinks';
+import { decodeFileHref, decodeLocalImageSrc, decodeSessionHref, encodeFileHref, parseCodeSessionLink, parseFileLink, parseWrappedLink, resolveSessionPath, rewriteFileHrefs, sameImageSource, toFileHref } from '../chat/fileLinks';
 
 describe('parseFileLink', () => {
   it('keeps an encoded line-like filename literal and accepts UNC directories', () => {
@@ -133,5 +133,12 @@ describe('session links in replies', () => {
     expect(parseCodeSessionLink(' vscode://hotic.acpira/session/p2 ')).toEqual({ id: 'p2' });
     expect(parseCodeSessionLink('[a.ts](file:///repo/a.ts)')).toBeUndefined();
     expect(parseCodeSessionLink('p3')).toBeUndefined();
+  });
+
+  it('resolves relative and home-prefixed paths against the session folder', () => {
+    expect(resolveSessionPath('s-open.png', '/tmp/ios-design/r8', '/Users/spark')).toBe('/tmp/ios-design/r8/s-open.png');
+    expect(resolveSessionPath('./src/a.ts', '/repo/', '/Users/spark')).toBe('/repo/src/a.ts');
+    expect(resolveSessionPath('~/.agents/plans/p.md', '/repo', '/Users/spark')).toBe('/Users/spark/.agents/plans/p.md');
+    expect(resolveSessionPath('/tmp/abs.png', '/repo', '/Users/spark')).toBe('/tmp/abs.png');
   });
 });

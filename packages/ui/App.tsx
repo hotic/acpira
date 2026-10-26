@@ -95,6 +95,18 @@ const diffSource = (sessionId: string, toolCallId: string, nth: number, subagent
   post({ type: 'diffSource', sessionId, toolCallId, nth, ...(subagentId !== undefined ? { subagentId } : {}), seq });
 });
 
+// Stage an image file path into the session's blob store when a file reference is clicked for preview
+const IMAGE_BLOB_TIMEOUT = 10000;
+let imageBlobSeq = 0;
+const imageBlobWaits = new Map<number, (blob: string | undefined) => void>();
+const settleImageBlob = (seq: number, blob: string | undefined) => { imageBlobWaits.get(seq)?.(blob); imageBlobWaits.delete(seq); };
+const imageBlob = (sessionId: string, path: string) => new Promise<string | undefined>(resolve => {
+  const seq = ++imageBlobSeq;
+  imageBlobWaits.set(seq, resolve);
+  setTimeout(() => settleImageBlob(seq, undefined), IMAGE_BLOB_TIMEOUT);
+  post({ type: 'imageBlob', sessionId, path, seq });
+});
+
 // "Copy as Markdown": the engine renders the export's Markdown and always answers; an error or no answer rejects, so the copy
 // toast says it failed instead of leaving the clipboard's pending write hanging
 const SESSION_MARKDOWN_TIMEOUT = 15000;
@@ -322,6 +334,7 @@ export function App() {
         case 'files': settleFiles(m.seq, m.files); break;
         case 'sessionHits': settleSessions(m.seq, m.hits); break;
         case 'diffSource': settleDiff(m.seq, m.source); break;
+        case 'imageBlob': settleImageBlob(m.seq, m.blob); break;
         case 'projectDir': case 'projectStatus': case 'projectFile': case 'sessionChanges': settleProject(m); break;
         case 'terminalOutput': case 'terminalState': deliverTerminal(m); break;
         // SSH hosts: the pushed list, the ~/.ssh/config hosts and the remote folder picker's listings (remote/api.ts)
@@ -413,7 +426,8 @@ export function App() {
     answer: (sessionId, blockId, answers, skip) => post({ type: 'answer', sessionId, blockId, answers, ...(skip ? { skip } : {}) }),
     buildPlan: (sessionId, planId, model, optionId) => post({ type: 'buildPlan', sessionId, planId, model, optionId }),
     openPlan: (sessionId, planId) => post({ type: 'openPlan', sessionId, planId }),
-    openFile: (sessionId, path, line) => post({ type: 'openFile', sessionId, path, line }),
+    openFile: (sessionId, path, line, reveal) => post({ type: 'openFile', sessionId, path, ...(line !== undefined ? { line } : {}), ...(reveal ? { reveal } : {}) }),
+    imageBlob,
     openBlob: (sessionId, name) => post({ type: 'openBlob', sessionId, name }),
     setMode: id => post({ type: 'setMode', sessionId: activeId.current, id }),
     setConfig: (configId, value) => post({ type: 'setConfig', sessionId: activeId.current, configId, value }),
