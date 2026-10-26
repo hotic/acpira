@@ -216,7 +216,7 @@ async fn a_plugins_commands_join_every_menu_and_its_skills_reach_an_agent_that_d
   std::fs::create_dir_all(skills.join("demo")).unwrap();
   std::fs::write(skills.join("demo/SKILL.md"), "---\nname: demo\ndescription: Do demo things\n---\nSteps.\n").unwrap();
   let commands = vec![command("hooker", "review", Some("echo-text Please review $ARGUMENTS")), command("hooker", "ping", None), command("hooker", "quiet", None)];
-  rt.set_contributed(Contributed { commands: commands.clone(), skills: vec![skills.clone()] });
+  rt.set_contributed(Contributed { commands: commands.clone(), skills: vec![skills.clone()], ..Default::default() });
   let mut opts = Opts::fake(&fake);
   opts.plugin_runtime = Some(rt.clone());
   let m = Mgr::new(dir.path(), opts);
@@ -245,7 +245,7 @@ async fn a_plugins_commands_join_every_menu_and_its_skills_reach_an_agent_that_d
   // A command added while the session is open shows in its menu at once
   let mut more = commands;
   more.push(command("hooker", "later", Some("echo-text later")));
-  rt.set_contributed(Contributed { commands: more, skills: vec![skills] });
+  rt.set_contributed(Contributed { commands: more, skills: vec![skills], ..Default::default() });
   until(|| m.view_of(&id).is_some_and(|v| menu(&v).contains(&"later".to_owned())), 5000).await;
   m.dispose().await;
   rt.stop_all().await;

@@ -25,6 +25,20 @@ pub fn web_secret_key(backend: &str) -> String {
   format!("{WEB_SECRET_PREFIX}{backend}")
 }
 
+/// Model sources the plugins in effect contribute (`contributes.providers` and a process's `providers/set`): written
+/// by the engine on every plugin load, in `ProvidersFile`'s shape, and read by the agent beside `providers.json`. A
+/// source whose id the user's file already has is skipped
+pub fn plugin_providers_path(home: &std::path::Path) -> std::path::PathBuf {
+  home.join("plugins").join(PROVIDERS_FILE)
+}
+
+/// A plugin source's field naming the plugin it came from
+pub const PLUGIN_FIELD: &str = "plugin";
+
+/// A plugin source's field naming the environment variable that holds its API key (a key stored under
+/// `provider_secret_key` comes first)
+pub const KEY_ENV_FIELD: &str = "keyEnv";
+
 /// The search backends `ProvidersFile::web_search` takes, the default first: `default` (the free hosted endpoints, no
 /// key), `jina` (Jina Search with the user's key) and `deepseek` (DeepSeek's Search API, or a gateway serving the same
 /// `/v1/tools/search`, see `ProvidersFile::web_search_via`); a keyed pick has the other keyed backend and the free ones
