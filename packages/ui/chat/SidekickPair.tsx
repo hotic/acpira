@@ -1,9 +1,10 @@
-import type { ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { CircleFadingPlus, Plus } from 'lucide-react';
 import { isUltraLevel, levelShort } from '@acpira/shared/composerControls';
 import { t } from '../i18n';
 import { ChipTag } from '../ui/Button';
 import { cn } from '../ui/cn';
+import { cssTimeVar } from '../ui/cssTime';
 import { ModelMark } from './ModelMark';
 
 export type PairRole = 'lead' | 'sidekick';
@@ -28,6 +29,23 @@ function Side({ role, side, on, onClick }: { role: PairRole; side: PairSide; on:
   const roleName = t(role === 'lead' ? 'composer.lead' : 'composer.sidekick');
   const none = t('composer.sidekickNone');
   const title = t('composer.pairSide', { role: roleName, model: side.name ? [side.name, side.level].filter(Boolean).join(' ') : none });
+  const [lastLevel, setLastLevel] = useState(side.level);
+  if (side.level && side.level !== lastLevel) setLastLevel(side.level);
+  const level = side.level ?? lastLevel;
+  const showLevel = !!(side.name && side.level);
+  const iconRef = useRef<HTMLSpanElement>(null);
+  const nameRef = useRef<HTMLSpanElement>(null);
+  const prevName = useRef(side.name);
+  useLayoutEffect(() => {
+    if (prevName.current === side.name) return;
+    prevName.current = side.name;
+    const el = nameRef.current;
+    if (!el || el.closest('[data-motion="none"]') || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    const duration = cssTimeVar(el, '--dur', 150);
+    for (const target of [iconRef.current, el]) {
+      target?.animate([{ opacity: 0, transform: 'translateY(2px)' }, { opacity: 1, transform: 'none' }], { duration, easing: 'ease-out' });
+    }
+  }, [side.name]);
   let icon: ReactNode = side.name && <ModelMark family={side.name} brand={side.brand} />;
   if (role === 'sidekick') icon = side.name
     ? <SidekickMark name={side.name} brand={side.brand} />
@@ -37,11 +55,11 @@ function Side({ role, side, on, onClick }: { role: PairRole; side: PairSide; on:
     <button type="button" title={title} aria-label={title} aria-pressed={on} data-on={on ? '' : undefined} onClick={onClick}
       className={cn('pair-side flex h-ctl-sm min-w-0 items-center gap-1.5 rounded-sm px-2 text-left text-2 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg-2',
         on ? 'bg-active text-fg-1' : 'text-fg-2 hover:text-fg-1')}>
-      {icon}
-      <span className={cn('pair-name', !side.name && 'text-fg-3')}><span>{side.name ?? none}</span></span>
-      {side.name && side.level && <span className="flex shrink-0">
-        <ChipTag tone={isUltraLevel(side.level) ? 'ultra' : undefined}>{on ? side.level : levelShort(side.level)}</ChipTag>
-      </span>}
+      <span ref={iconRef} className="flex shrink-0">{icon}</span>
+      <span className={cn('pair-name', !side.name && 'text-fg-3')}><span ref={nameRef}>{side.name ?? none}</span></span>
+      <span className="pair-level" data-open={showLevel ? '' : undefined} aria-hidden={!showLevel || undefined}>
+        <span>{level && <ChipTag tone={isUltraLevel(level) ? 'ultra' : undefined}>{on ? level : levelShort(level)}</ChipTag>}</span>
+      </span>
     </button>
   );
 }

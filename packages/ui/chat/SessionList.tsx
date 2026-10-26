@@ -86,6 +86,7 @@ function FoldRows({ open, children }: { open: boolean; children: ReactNode }) {
     const el = ref.current;
     if (open && !was.current && el && !still(el)) {
       el.querySelectorAll<HTMLElement>(MOVING_ROWS).forEach((row, i) => {
+        if (row.getAnimations().some(a => a.id === 'flip')) return;
         row.animate([{ opacity: 0, translate: '0 -4px' }, { opacity: 1, translate: '0 0' }],
           { duration: 220, delay: Math.min(i, 10) * 18, easing: MOVE_EASE, fill: 'backwards' });
       });
@@ -567,22 +568,21 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
     // A filed session of this project being dragged needs somewhere to land even when nothing is loose
     const strip = !p.loose.length && !!heldSession && heldSession.cwd === p.cwd && !!categoryOf(heldSession, categories);
     const cut = desktop && !q && view.per ? view.per : p.loose.length;
-    // An active session past the cut joins the head on its own instead of stretching the head down to it
-    const late = p.loose.slice(cut).find(s => s.id === activeId);
-    const head = late ? [...p.loose.slice(0, cut), late] : p.loose.slice(0, cut);
+    const extra = more.get(p.cwd) ?? 0;
+    // An active session still folded behind "more" sits above it on its own instead of stretching the list down to it
+    const late = p.loose.slice(cut + extra).find(s => s.id === activeId);
     const rest = late ? p.loose.slice(cut).filter(s => s !== late) : p.loose.slice(cut);
-    const shown = Math.min(more.get(p.cwd) ?? 0, rest.length);
+    const shown = Math.min(extra, rest.length);
     return <>
       {/* Pinned first, outside the "more" cut and the loose drop zone (pinned rows never drag) */}
       {p.pinned.map(renderItem)}
       {(p.loose.length > 0 || strip) && (
         <div data-drop={`loose:${p.cwd}`} className={cn('flex flex-col rounded-lg transition-shadow', looseHot && FRAME)}>
-          {head.map(renderItem)}
-          {rest.length > 0 && <>
-            {/* One fold per page, so each click opens only the page it adds (a closed fold releases its rows) */}
-            {pages(rest).map((page, i) => <Fold key={i} open={shown > i * MORE_PAGE}>{page.map(renderItem)}</Fold>)}
-            <MoreRow open={shown >= rest.length} rest={rest.slice(shown)} nameOf={nameOf} onToggle={() => stepMore(p.cwd, rest.length)} />
-          </>}
+          {p.loose.slice(0, cut).map(renderItem)}
+          {/* One fold per page, so each click opens only the page it adds (a closed fold releases its rows) */}
+          {rest.length > 0 && pages(rest).map((page, i) => <Fold key={i} open={shown > i * MORE_PAGE}>{page.map(renderItem)}</Fold>)}
+          {late && renderItem(late)}
+          {rest.length > 0 && <MoreRow open={shown >= rest.length} rest={rest.slice(shown)} nameOf={nameOf} onToggle={() => stepMore(p.cwd, rest.length)} />}
           {strip && <div className="flex min-h-row items-center px-2 text-3 text-fg-3">{t('session.category.remove')}</div>}
         </div>
       )}
@@ -1011,12 +1011,12 @@ function MoreRow({ open, rest, nameOf, onToggle }: { open: boolean; rest: Sessio
   );
 }
 
-// Header of a project or a category. A project: the folder glyph (open or shut with the fold; hovered, it cross-fades into
-// the chevron), the heavier name, the "current" badge, then its actions. A category (`sub`): a quiet label with no glyph,
-// its chevron after the name. Hovered, the count / state cross-fade into the actions — "new category", "new session here"
-// and the "…" menu, which right-click opens too. Collapsed, both still show the most urgent state inside. A project on an
-// SSH host (`folder` is `ssh://…`) has the globe-badged folder and the host's name after its own; its connection shows
-// only when it is off the usual: the glyph breathes while connecting and turns amber when the connection failed
+// Header of a project or a category. A project: the folder glyph (open or shut with the fold), the heavier name, the
+// "current" badge, then its actions. A category (`sub`): a quiet label with no glyph, its chevron after the name. Hovered,
+// the count / state cross-fade into the actions — "new category", "new session here" and the "…" menu, which right-click
+// opens too. Collapsed, both still show the most urgent state inside. A project on an SSH host (`folder` is `ssh://…`) has
+// the globe-badged folder and the host's name after its own; its connection shows only when it is off the usual: the glyph
+// breathes while connecting and turns amber when the connection failed
 function GroupHeader({ project, sub, name, title, folder, badge, count, open, state, fresh, dragging, editing, onDragStart, onDragEnd, onToggle, onRename, onNewSession, newSessionLabel = t('session.category.newSession'), onNewCategory, menu }: {
   project?: boolean;
   sub?: boolean;
@@ -1063,9 +1063,6 @@ function GroupHeader({ project, sub, name, title, folder, badge, count, open, st
     (hostState === 'connecting' || hostState === 'error') && t(CONNECTION_STATE_NAME[hostState]),
     hostState === 'error' && host.view?.error?.message,
   ].filter(Boolean).join(t('common.metaSep'));
-  // The glyph a hover or an open menu hides in favour of the chevron. A pixel low: centred on the line box, the folder sat
-  // high beside the bold name's lowercase letters (the chevron stays centred)
-  const glyph = cn('translate-y-px', open ? 'opacity-100' : 'opacity-0', onToggle && 'group-hover:opacity-0 group-focus-visible:opacity-0 group-data-[menu-open]:opacity-0');
   const header = (
     <div
       ref={self}
@@ -1091,16 +1088,16 @@ function GroupHeader({ project, sub, name, title, folder, badge, count, open, st
       )}
     >
       {project && (
-        // The folder shuts and opens in place with the fold; hovered, it cross-fades into the chevron, which turns with it
-        <span title={hostTitle || undefined} className={cn('relative -mr-gap-half flex size-lead shrink-0 items-center justify-center text-fg-3 *:absolute *:size-icon *:transition-[opacity,rotate] *:duration-200', hostState === 'error' && 'text-warn')}>
+        // The folder shuts and opens in place with the fold. A pixel low: centred on the line box, the folder sat high
+        // beside the bold name's lowercase letters
+        <span title={hostTitle || undefined} className={cn('relative -mr-gap-half flex size-lead shrink-0 items-center justify-center text-fg-3 *:absolute *:size-icon *:translate-y-px *:transition-opacity *:duration-200', hostState === 'error' && 'text-warn')}>
           {host ? <>
-            <RemoteFolderIcon pulse={hostState === 'connecting'} className={cn(glyph, open ? 'opacity-0' : 'opacity-100')} />
-            <RemoteFolderIcon open pulse={hostState === 'connecting'} className={glyph} />
+            <RemoteFolderIcon pulse={hostState === 'connecting'} className={open ? 'opacity-0' : 'opacity-100'} />
+            <RemoteFolderIcon open pulse={hostState === 'connecting'} className={open ? 'opacity-100' : 'opacity-0'} />
           </> : <>
-            <Folder strokeWidth={1.5} className={cn(glyph, open ? 'opacity-0' : 'opacity-100')} />
-            <FolderOpen strokeWidth={1.5} className={glyph} />
+            <Folder strokeWidth={1.5} className={open ? 'opacity-0' : 'opacity-100'} />
+            <FolderOpen strokeWidth={1.5} className={open ? 'opacity-100' : 'opacity-0'} />
           </>}
-          {onToggle && <ChevronRight strokeWidth={1.5} className={cn('opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 group-data-[menu-open]:opacity-100', open && 'rotate-90')} />}
         </span>
       )}
       {editing && onRename

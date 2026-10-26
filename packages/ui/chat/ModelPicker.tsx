@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Zap } from 'lucide-react';
 import type { ConfigControl } from '@acpira/shared/transcript';
 import { findFusionVariant, findVariant, fusionLabel, groupModels, optionBrand, visibleOptions, type ModelFamily, type ModelVariant } from '@acpira/shared/models';
@@ -15,6 +15,7 @@ import { ModelMark } from './ModelMark';
 import { PairSwitch, PairViews, type PairRole } from './SidekickPair';
 import { useFitStage } from './useFitStage';
 import { Collapsible } from '../ui/Collapsible';
+import { cssTimeVar } from '../ui/cssTime';
 
 // Only offer search once the option count passes this threshold; short lists are scannable at a glance
 const SEARCH_FROM = 12;
@@ -75,6 +76,15 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
   const skLevel = skPicked && sidekickEffort ? reasoningChip(sidekickEffort) : undefined;
   const skLabel = skPicked && [skPicked.name, skLevel].filter(Boolean).join(' ');
   const fit = useFitStage<HTMLButtonElement, HTMLSpanElement>(!!skPicked);
+  // Keep the last picked sidekick, its level and its fit stage while the chip's trail folds back for None
+  const [lastSk, setLastSk] = useState(skPicked);
+  const [lastSkLevel, setLastSkLevel] = useState(skLevel);
+  const [lastStage, setLastStage] = useState(0);
+  if (skPicked && skPicked !== lastSk) setLastSk(skPicked);
+  if (skPicked && skLevel !== lastSkLevel) setLastSkLevel(skLevel);
+  if (skPicked && fit.stage !== lastStage) setLastStage(fit.stage);
+  const shownSk = skPicked ?? lastSk;
+  const shownSkLevel = skPicked ? skLevel : lastSkLevel;
   const lead = [cur?.name ?? c.name, curVar?.lead ? fusionLabel(curVar) : tags.map(tag => tag.label).join(' ')].filter(Boolean).join(' ');
   const title = skLabel ? `${lead} + ${skLabel}` : lead;
   // The chip follows every pick at once, also while the panel is open (effort / Fast keep it open): it used to hold its
@@ -83,8 +93,9 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
   const chip = { title, family: cur?.name ?? c.name, brand: cur?.brand, tags, name: cur?.name ?? c.options.find(o => o.id === c.value)?.name ?? c.name };
   const at = (stage: number, ref?: typeof fit.item) => {
     const on = CHIP_STAGES[stage]!;
+    const skOn = CHIP_STAGES[skPicked ? stage : lastStage]!;
     return <Chip ref={ref} narrow="text" title={chip.title} caret={on.caret} data-compact={on.compact ? '' : undefined} icon={<ModelMark family={chip.family} brand={chip.brand} />}
-      trail={skPicked && <SidekickTail name={skPicked.name} brand={optionBrand(skPicked)} named={on.names} level={on.levels ? skLevel : undefined} />}
+      trail={sidekick && <SidekickTail open={!!skPicked} name={shownSk?.name} brand={shownSk && optionBrand(shownSk)} named={skOn.names} level={skOn.levels ? shownSkLevel : undefined} animate={!!ref} />}
       tags={on.levels && chip.tags.length ? chip.tags.map(tag => <ChipTag key={tag.label} tone={tag.ultra ? 'ultra' : undefined} icon={tag.fast ? <FastIcon /> : undefined} short={tag.short}>{tag.label}</ChipTag>) : undefined}>
       {on.names ? chip.name : null}
     </Chip>;
@@ -115,14 +126,67 @@ const CHIP_STAGES = [
   { compact: true, caret: false, names: false, levels: false },
 ];
 
-// The sidekick's part of the model chip: + and its mark in the icon tone, then its name and level like the lead's
-function SidekickTail({ name, brand, named, level }: { name: string; brand?: string; named: boolean; level?: string }) {
-  return <>
-    <span className="text-fg-3">+</span>
-    <span className="flex shrink-0 items-center text-fg-3 [&_svg]:size-icon"><ModelMark family={name} brand={brand} /></span>
-    {named && <span className="whitespace-nowrap">{name}</span>}
-    {level && <ChipTag tone={isUltraLevel(level) ? 'ultra' : undefined} short={levelShort(level)}>{level}</ChipTag>}
-  </>;
+// The sidekick's part of the model chip: + and its mark in the icon tone, then its name and level like the lead's.
+// Unfolds when a sidekick is picked and folds back for None (matching the panel's effort section); switching between
+// two sidekicks or levels while open glides the width and fades the new model in place
+function SidekickTail({ open, name, brand, named, level, animate }: {
+  open: boolean; name?: string; brand?: string; named: boolean; level?: string; animate?: boolean;
+}) {
+  const body = useRef<HTMLSpanElement>(null);
+  const id = useRef<HTMLSpanElement>(null);
+  const width = useRef(0);
+  const run = useRef<Animation | null>(null);
+  const prev = useRef({ open, name, level, named });
+  useLayoutEffect(() => {
+    const el = body.current;
+    if (!el || !animate) return;
+    const observer = new ResizeObserver(() => {
+      if (!run.current) width.current = el.getBoundingClientRect().width;
+    });
+    observer.observe(el);
+    return () => { observer.disconnect(); run.current?.cancel(); run.current = null; };
+  }, [animate]);
+  useLayoutEffect(() => {
+    const was = prev.current;
+    prev.current = { open, name, level, named };
+    const el = body.current;
+    if (!el || !animate) return;
+    if (!open) {
+      run.current?.cancel();
+      run.current = null;
+      width.current = 0;
+      return;
+    }
+    const from = run.current ? el.getBoundingClientRect().width : width.current;
+    run.current?.cancel();
+    run.current = null;
+    const to = el.scrollWidth;
+    width.current = to;
+    if (!was.open || was.named !== named || (was.name === name && was.level === level)) return;
+    if (el.closest('[data-motion="none"]') || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    if (from > 0 && to > 0 && Math.abs(to - from) > 0.5) {
+      const anim = el.animate([{ width: `${from}px` }, { width: `${to}px` }], { duration: cssTimeVar(el, '--dur-open', 220), easing: 'ease-out' });
+      run.current = anim;
+      anim.onfinish = () => { if (run.current === anim) run.current = null; };
+    }
+    if (was.name !== name && id.current) {
+      id.current.animate([{ opacity: 0, transform: 'translateY(2px)' }, { opacity: 1, transform: 'none' }], { duration: cssTimeVar(el, '--dur', 150), easing: 'ease-out' });
+    }
+  }, [open, name, level, named, animate]);
+  return (
+    <span className="chip-trail" data-open={open ? '' : undefined} aria-hidden={!open || undefined}>
+      <span ref={body}>
+        {name && <>
+          <span className="text-fg-3">+</span>
+          <span ref={id} className="flex shrink-0 items-center gap-1">
+            <span className="flex shrink-0 items-center text-fg-3 [&_svg]:size-icon"><ModelMark family={name} brand={brand} /></span>
+            {named && <span className="whitespace-nowrap">{name}</span>}
+          </span>
+          {level && <ChipTag tone={isUltraLevel(level) ? 'ultra' : undefined} short={levelShort(level)}>{level}</ChipTag>}
+        </>}
+      </span>
+    </span>
+  );
 }
 
 function FastIcon() {
