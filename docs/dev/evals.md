@@ -1,6 +1,6 @@
 # Evaluation benches
 
-Scripts under `scripts/eval/` that measure orchestration choices against real CLIs and models: the review bench (what helps a summoned reviewer find real defects), the harness and Fusion comparison (`run.ts`, coding tasks with hidden tests; its first use is in `docs/dev/builtin-agent.md`, Harness comparison), and the evolve loop that tunes the strategy file between them. Every real run spends model calls or subscription quota; `--dry` runs swap the models for `test/fake-agent.ts` and spend nothing. The rule for reading results: quality first (a difference counts only beyond the noise measured by rerunning the same cell), time second, quota and cost recorded but not optimized.
+Scripts under `scripts/eval/` that measure orchestration choices against real CLIs and models: the review bench (what helps a summoned reviewer find real defects), the harness and Fusion comparison (`run.ts`, coding tasks with hidden tests; its first use is in `docs/dev/builtin-agent.md`, Harness comparison), the evolve loop that tunes the strategy file between them, and the extension race (how fast an agent extends Acpira with and without plugins). Every real run spends model calls or subscription quota; `--dry` runs swap the models for `test/fake-agent.ts` and spend nothing. The rule for reading results: quality first (a difference counts only beyond the noise measured by rerunning the same cell), time second, quota and cost recorded but not optimized.
 
 ## Shared pieces
 
@@ -173,3 +173,25 @@ The loop spent $308 at list price on the dev set and $41 on the held-out set, al
   - The final policy reports a third more findings that match no known bug, up to twice as many on the dev set.
   - Its brief describes the pack as present, but reviewer personas send none by default (Review bench results).
   - Its brief also skips builds and tests when dependencies are missing, which in the bench's work trees they always are.
+
+## Extension race
+
+`extend/run.ts` measures how quickly an agent can extend Acpira, and whether plugins (`docs/dev/plugins.md`) make that faster than today's ways. One task is built several ways (arms), each against a pinned engine, and every build is checked through the real engine. The check uses `test/fake-agent.ts`, so a verdict costs no model call. Tasks and their checks live in `extend/tasks.ts`.
+
+- **Groups.** `today` runs the engine from before plugins (`--engine-today`, a build of `--today-rev`, default `4fd49f76`). `plugins` runs this tree's engine (`--engine-plugins`, default the workspace debug build). A group without an engine binary is skipped.
+- **Arms.** `plugin` is an Acpira plugin, enabled through `plugin_activate` and its card (plugins group only). `mcp` is a server in the project's `.mcp.json`. `hooks` is the project's `.agents/hooks.json`. `source` changes a `git archive` of the group's revision and rebuilds it (`--with-source`, today group only).
+- **Tasks.**
+  - `fx-tool`: a currency conversion tool asking a local rate service. The check calls it and expects 300 for 2 USD to JPY.
+  - `warm-theme`: a warm gray palette. The check reads the theme layer the page was sent, or the built CSS for the source arm.
+  - `send-button`: a one-click prompt button beside send. Source only until P4's interface contributions; the check greps the built page.
+  - `lock-gate`: refuse edits of `*.lock` files. The check asks for a lock file write and a normal write; only the second may land.
+- **Recorded per run** (`results.jsonl`): build time, permission cards and questions with their open time, the rebuild of a source arm, the time from the prompt to the first passing check, files and lines changed (project, plugins folder and source tree, the plugins' bookkeeping left out). Plugin arms also record the one-step rollback: `acpira plugin disable`, after which the check must fail. Arms both groups offer are checked once more against the other group's engine.
+- **Dry run** (`--dry`): each arm's reference build is written in place of a model, then the fake agent sends the arm's prompt (a plugin arm activates through `plugin_activate`, its card answered `enable`). Any failing reference, rollback or carry-over check makes the dry run exit 1. Source arms have no reference build yet.
+- **Real run** (`--agent <id>`): the task's prompt goes to that agent, every permission card allowed and every other question skipped. It spends model calls, and none has been run yet.
+- Dry run, checked 2026-10-26 with both engines: all seven runs pass (plugin, mcp and hooks arms), each plugin arm fails its check after the rollback, and the mcp and hooks builds pass on the other engine too. The three source arms were skipped (no `--with-source`).
+
+```
+pnpm exec tsx scripts/eval/extend/run.ts --dry | --agent ID [--task fx-tool,lock-gate] [--arm plugin,mcp]
+  [--group today,plugins] [--engine-today PATH] [--engine-plugins PATH] [--today-rev REV] [--with-source]
+  [--reps N] [--timeout-min 30] [--out DIR]
+```

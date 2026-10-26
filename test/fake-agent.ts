@@ -798,13 +798,15 @@ const app = acp.agent({ name: 'fake-agent' })
     }
     // "mcp-call:<tool> <json arguments>" → start the session's `acpira` MCP server the way a CLI does, list its tools, call one,
     // and reply with JSON { tools, result } (or { error }). Only the first line counts (a summoned child's brief follows it).
+    // "mcp-call:<server>/<tool> …" calls a tool of another stdio server the session was handed (the extension race's checks).
     // "mcp-call-loop:…" → the same, and again on every automatic "(Acpira) …" prompt of that session afterwards
     if (text.startsWith('mcp-call-loop:')) loopCalls.set(sid, `mcp-call:${text.split('\n')[0]!.slice('mcp-call-loop:'.length)}`);
     const call = text.startsWith('mcp-call:') || text.startsWith('mcp-call-loop:') ? text.replace(/^mcp-call-loop:/, 'mcp-call:') : text.startsWith('(Acpira)') ? loopCalls.get(sid) : undefined;
     if (call) {
-      const [tool = '', ...rest] = call.split('\n')[0]!.slice('mcp-call:'.length).trim().split(' ');
-      const server = mcpBySession.get(sid)?.find(m => m.name === 'acpira' && 'command' in m) as Extract<acp.McpServer, { command: string }> | undefined;
-      const reply = server ? await callMcp(server, tool, JSON.parse(rest.join(' ') || '{}') as unknown).catch((e: unknown) => ({ error: String(e) })) : { error: 'no acpira MCP server' };
+      const [spec = '', ...rest] = call.split('\n')[0]!.slice('mcp-call:'.length).trim().split(' ');
+      const [name, tool] = spec.includes('/') ? [spec.slice(0, spec.indexOf('/')), spec.slice(spec.indexOf('/') + 1)] : ['acpira', spec];
+      const server = mcpBySession.get(sid)?.find(m => m.name === name && 'command' in m) as Extract<acp.McpServer, { command: string }> | undefined;
+      const reply = server ? await callMcp(server, tool, JSON.parse(rest.join(' ') || '{}') as unknown).catch((e: unknown) => ({ error: String(e) })) : { error: `no ${name} MCP server` };
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(reply) } });
       return { stopReason: 'end_turn' };
     }
