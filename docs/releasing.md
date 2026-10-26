@@ -40,6 +40,8 @@ One-time setup, besides the secrets:
 1. `cd rust && cargo run -p acpira-desktop --bin acpira-update-pack -- keygen`: the line on stdout is the secret seed (the `DESKTOP_UPDATE_KEY` secret, never in the repository or a log), the public key on stderr goes into `update::PUBLIC_KEYS` in `rust/crates/acpira-desktop/src/update/mod.rs`. A rotation lists the new key beside the old one for at least one release before the old one is dropped.
 2. Put the Developer ID team (the certificate's OU) into `update::TEAM_ID`. Until both constants are set a macOS build never checks for updates (its About page says so); a Windows build needs only the key.
 
+Done 2026-10-26: both constants are set (team `2DUQS6323W`); the seed is also kept in the release Mac's login keychain (generic password `acpira-desktop-update-key`), and `APPLE_CERTIFICATE` holds the Developer ID identity alone, checked by importing it into an empty keychain as the job does. The App Store Connect API key (`APPLE_API_KEY` / `APPLE_API_ISSUER` / `APPLE_API_KEY_P8`, App Manager role) went in the same day; its `.p8` is under `~/.appstoreconnect/private_keys/` on the release Mac.
+
 | Secret | Source |
 | --- | --- |
 | `APPLE_CERTIFICATE` | The Developer ID Application certificate with its private key, exported from Keychain Access as `.p12`, base64-encoded. |
