@@ -88,12 +88,18 @@ exec /bin/sh -c "$last"
 
   /// An engine with its own ACPIRA_HOME (`name`) reaching the lab's host
   pub(crate) fn engine(&self, name: &str) -> Arc<Connections> {
+    let bin = self.binary();
+    self.engine_with(name, Some(bin), fetch_releases_default())
+  }
+
+  /// An engine that carries `binary` for every platform (None: no build at all) and fetches builds from `releases`
+  fn engine_with(&self, name: &str, binary: Option<PathBuf>, releases: String) -> Arc<Connections> {
     let root = self.path().join(name);
     std::fs::create_dir_all(&root).unwrap();
-    let bin = self.binary();
     let opts = ConnectionsOpts {
       ssh: self.ssh(),
-      binary: Arc::new(move |_platform: &str| Some(bin.clone())),
+      binary: Arc::new(move |_platform: &str| binary.clone()),
+      releases,
       version: VERSION.into(),
       retry_base: Duration::from_millis(50),
       retry_max: Duration::from_millis(200),
@@ -101,6 +107,10 @@ exec /bin/sh -c "$last"
     };
     Connections::new(&root, &self.path().join("local-home"), Arc::new(|_: &str| {}), None, opts)
   }
+}
+
+fn fetch_releases_default() -> String {
+  ConnectionsOpts::default().releases
 }
 
 fn write_exec(path: &Path, text: &str) {
@@ -205,7 +215,7 @@ async fn a_new_build_goes_beside_the_old_one() {
   connected(&c).await;
   c.op(ConnectionOp::Disconnect { alias: ALIAS.into() }).await.unwrap();
   lab.set_binary("two");
-  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: false }).await.unwrap();
+  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: false, fetch_build: false }).await.unwrap();
   connected(&c).await;
   assert_eq!(lab.calls().iter().filter(|k| *k == "upload").count(), 2);
   assert_eq!(lab.builds().len(), 2, "an older engine elsewhere keeps its build");
@@ -239,7 +249,7 @@ async fn an_installed_copy_that_does_not_start_is_uploaded_again() {
   c.op(ConnectionOp::Disconnect { alias: ALIAS.into() }).await.unwrap();
   let installed = lab.host_home().join(".acpira/remote/bin").join(&lab.builds()[0]).join("acpira");
   write_exec(&installed, "#!/bin/sh\necho broken >&2\nexit 1\n");
-  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: false }).await.unwrap();
+  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: false, fetch_build: false }).await.unwrap();
   connected(&c).await;
   assert_eq!(lab.calls()[3..], ["probe", "start", "probe", "upload", "start"]);
 }
@@ -262,7 +272,7 @@ async fn another_machine_behind_the_alias_is_refused_until_confirmed() {
   connected(&c).await;
   c.op(ConnectionOp::Disconnect { alias: ALIAS.into() }).await.unwrap();
   lab.set_machine("machine-b");
-  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: false }).await.unwrap();
+  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: false, fetch_build: false }).await.unwrap();
   let v = until(&c, "the machine check", |v| v.state == ConnectionState::Error).await;
   assert_eq!(v.error.as_ref().map(|e| e.kind), Some(ConnectFailure::MachineChanged));
   // Final: no retry behind the user's back
@@ -271,7 +281,7 @@ async fn another_machine_behind_the_alias_is_refused_until_confirmed() {
   assert_eq!(lab.calls().len(), calls);
   assert!(c.client(ALIAS).is_none());
 
-  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: true }).await.unwrap();
+  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: true, fetch_build: false }).await.unwrap();
   connected(&c).await;
   let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(lab.path().join("engine/connections.json")).unwrap()).unwrap();
   assert_eq!(saved["hosts"][0]["machineId"], "machine-b");
@@ -326,4 +336,139 @@ async fn a_network_failure_retries_with_a_backoff() {
   let v = view(&c);
   assert!(v.disabled && v.state == ConnectionState::Off, "{v:?}");
   assert!(c.ensure(ALIAS, Duration::from_secs(1)).await.is_err());
+}
+
+/// A stored (uncompressed) zip of (name, data, unix mode) entries
+fn stored_zip(entries: &[(&str, &[u8], u32)]) -> Vec<u8> {
+  fn crc32(data: &[u8]) -> u32 {
+    let mut c = !0u32;
+    for &b in data {
+      c ^= u32::from(b);
+      for _ in 0..8 {
+        c = if c & 1 != 0 { (c >> 1) ^ 0xEDB8_8320 } else { c >> 1 };
+      }
+    }
+    !c
+  }
+  let (mut out, mut central) = (Vec::new(), Vec::new());
+  for (name, data, mode) in entries {
+    let offset = out.len() as u32;
+    let (crc, len, n) = (crc32(data), data.len() as u32, name.len() as u16);
+    out.extend_from_slice(&0x0403_4b50u32.to_le_bytes());
+    out.extend_from_slice(&[20, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    out.extend_from_slice(&crc.to_le_bytes());
+    out.extend_from_slice(&len.to_le_bytes());
+    out.extend_from_slice(&len.to_le_bytes());
+    out.extend_from_slice(&n.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(name.as_bytes());
+    out.extend_from_slice(data);
+    central.extend_from_slice(&0x0201_4b50u32.to_le_bytes());
+    // Made by unix (3), version 2.0
+    central.extend_from_slice(&[20, 3, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    central.extend_from_slice(&crc.to_le_bytes());
+    central.extend_from_slice(&len.to_le_bytes());
+    central.extend_from_slice(&len.to_le_bytes());
+    central.extend_from_slice(&n.to_le_bytes());
+    central.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0]);
+    central.extend_from_slice(&(mode << 16).to_le_bytes());
+    central.extend_from_slice(&offset.to_le_bytes());
+    central.extend_from_slice(name.as_bytes());
+  }
+  let (cd_offset, cd_len, count) = (out.len() as u32, central.len() as u32, entries.len() as u16);
+  out.extend_from_slice(&central);
+  out.extend_from_slice(&0x0605_4b50u32.to_le_bytes());
+  out.extend_from_slice(&[0, 0, 0, 0]);
+  out.extend_from_slice(&count.to_le_bytes());
+  out.extend_from_slice(&count.to_le_bytes());
+  out.extend_from_slice(&cd_len.to_le_bytes());
+  out.extend_from_slice(&cd_offset.to_le_bytes());
+  out.extend_from_slice(&0u16.to_le_bytes());
+  out
+}
+
+/// A release server on loopback: `GET <path>` answers the matching file, anything else 404; the paths asked are kept
+fn serve(files: Vec<(String, Vec<u8>)>) -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+  use std::io::{BufRead, BufReader, Write};
+  let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+  let base = format!("http://{}", listener.local_addr().unwrap());
+  let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
+  let log = asked.clone();
+  std::thread::spawn(move || {
+    for stream in listener.incoming().flatten() {
+      let mut reader = BufReader::new(stream.try_clone().unwrap());
+      let mut line = String::new();
+      if reader.read_line(&mut line).is_err() {
+        continue;
+      }
+      // Drain the headers
+      let mut h = String::new();
+      while reader.read_line(&mut h).is_ok_and(|n| n > 2) {
+        h.clear();
+      }
+      let path = line.split_whitespace().nth(1).unwrap_or_default().to_owned();
+      log.lock().unwrap().push(path.clone());
+      let mut stream = stream;
+      match files.iter().find(|(p, _)| *p == path) {
+        Some((_, body)) => {
+          let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+          let _ = stream.write_all(body);
+        }
+        None => {
+          let _ = write!(stream, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        }
+      }
+    }
+  });
+  (base, asked)
+}
+
+#[tokio::test]
+async fn a_missing_platform_build_is_fetched_from_the_release_when_asked() {
+  use sha2::{Digest, Sha256};
+  let lab = Lab::new();
+  let platform = acpira_host::remote::deploy::local_platform();
+  let wrapper = std::fs::read(lab.binary()).unwrap();
+  let inner = format!("acpira/sidecar/bin/{platform}/acpira");
+  let zip = stored_zip(&[("acpira/plugin.txt", b"other files of the archive", 0o100644), (&inner, &wrapper, 0o100755)]);
+  let name = format!("acpira-{VERSION}-{platform}.zip");
+  let digest: String = Sha256::digest(&zip).iter().map(|b| format!("{b:02x}")).collect();
+  let sums = format!("{}  acpira-{VERSION}-other.zip\n{digest}  {name}\n", "0".repeat(64));
+  let (base, asked) = serve(vec![(format!("/v{VERSION}/SHA256SUMS"), sums.into_bytes()), (format!("/v{VERSION}/{name}"), zip)]);
+  let c = lab.engine_with("engine", None, base.clone());
+  add(&c).await;
+
+  // No build here: the driver stops on `unsupported` at the probe and downloads nothing on its own
+  let v = until(&c, "the unsupported error", |v| v.state == ConnectionState::Error).await;
+  let e = v.error.unwrap();
+  assert_eq!((e.kind, e.step), (ConnectFailure::Unsupported, ConnectStep::Probe));
+  assert!(asked.lock().unwrap().is_empty());
+
+  // Asked to: fetch, check, unpack, then the usual upload and start
+  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: false, fetch_build: true }).await.unwrap();
+  connected(&c).await;
+  assert_eq!(*asked.lock().unwrap(), [format!("/v{VERSION}/SHA256SUMS"), format!("/v{VERSION}/{name}")]);
+  let fetched = lab.path().join("engine/run/remote/builds").join(VERSION).join(&platform).join("acpira");
+  use std::os::unix::fs::PermissionsExt;
+  assert_eq!(std::fs::metadata(&fetched).unwrap().permissions().mode() & 0o777, 0o755);
+  assert_eq!(lab.calls(), ["probe", "probe", "upload", "start"]);
+
+  // The fetched build is found from now on without asking again
+  c.op(ConnectionOp::Disconnect { alias: ALIAS.into() }).await.unwrap();
+  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: false, fetch_build: false }).await.unwrap();
+  connected(&c).await;
+  assert_eq!(asked.lock().unwrap().len(), 2);
+  c.dispose();
+
+  // A release without the build: a final `unsupported` at the fetch step, which names what is missing
+  let (base, _) = serve(vec![(format!("/v{VERSION}/SHA256SUMS"), format!("{}  acpira-{VERSION}-other.zip\n", "0".repeat(64)).into_bytes())]);
+  let lab = Lab::new();
+  let c = lab.engine_with("engine", None, base);
+  add(&c).await;
+  until(&c, "the unsupported error", |v| v.state == ConnectionState::Error).await;
+  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: false, fetch_build: true }).await.unwrap();
+  let v = until(&c, "the fetch error", |v| v.error.as_ref().is_some_and(|e| e.step == ConnectStep::Fetch)).await;
+  let e = v.error.unwrap();
+  assert_eq!(e.kind, ConnectFailure::Unsupported);
+  assert!(e.message.contains(&name), "{}", e.message);
 }

@@ -293,6 +293,20 @@ fn copy_hashed(from: &Path, to: &Path) -> Result<String> {
 
 /// Streams the body to `to` while hashing it; returns the hex SHA-256
 fn download(url: &str, to: &Path, say: &mut dyn FnMut(&str)) -> Result<String> {
+  let mut shown = 0;
+  download_progress(url, to, &mut |got, total| {
+    if let Some(t) = total.filter(|t| *t > 0) {
+      let pct = (got * 100 / t) as usize;
+      if pct >= shown + 10 {
+        shown = pct - pct % 10;
+        say(&format!("  {shown}% of {} MB", t / 1_000_000));
+      }
+    }
+  })
+}
+
+/// Download `url` into `to`, reporting (bytes so far, content length) after every chunk; the SHA-256 of what arrived
+pub(crate) fn download_progress(url: &str, to: &Path, progress: &mut dyn FnMut(u64, Option<u64>)) -> Result<String> {
   let agent: ureq::Agent = crate::net_proxy::ureq_config(
     ureq::Agent::config_builder()
       .timeout_connect(Some(std::time::Duration::from_secs(30)))
@@ -312,7 +326,6 @@ fn download(url: &str, to: &Path, say: &mut dyn FnMut(&str)) -> Result<String> {
   let mut hash = Sha256::new();
   let mut buf = vec![0u8; 1 << 16];
   let mut got: u64 = 0;
-  let mut shown = 0;
   loop {
     let n = reader.read(&mut buf).with_context(|| format!("download {url}"))?;
     if n == 0 {
@@ -321,13 +334,7 @@ fn download(url: &str, to: &Path, say: &mut dyn FnMut(&str)) -> Result<String> {
     file.write_all(&buf[..n])?;
     hash.update(&buf[..n]);
     got += n as u64;
-    if let Some(t) = total.filter(|t| *t > 0) {
-      let pct = (got * 100 / t) as usize;
-      if pct >= shown + 10 {
-        shown = pct - pct % 10;
-        say(&format!("  {shown}% of {} MB", t / 1_000_000));
-      }
-    }
+    progress(got, total);
   }
   file.sync_all()?;
   if let Some(t) = total

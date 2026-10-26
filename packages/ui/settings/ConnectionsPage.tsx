@@ -1,20 +1,20 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { ArrowUpRight, CircleAlert, Laptop, Link2, LoaderCircle, Plus, Server, SquareTerminal, Unplug, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ArrowUpRight, Laptop, Link2, Plus, Server, Unplug, X } from 'lucide-react';
 import type { MsgKey } from '@acpira/shared/i18n';
 import type { ChatGptIntegrationStatus } from '@acpira/shared/chatgptIntegration';
-import { isAlias, parseRemoteFolder, type ConnectFailure, type ConnectionState, type ConnectionView, type ConnectStep, type RunMode, type SshHost } from '@acpira/shared/remote';
+import { isAlias, parseRemoteFolder, type ConnectionState, type ConnectionView, type RunMode, type SshHost } from '@acpira/shared/remote';
 import { cn } from '../ui/cn';
 import { Button, IconButton } from '../ui/Button';
 import { Command } from '../ui/Command';
-import { Shimmer } from '../ui/Shimmer';
 import { StableText } from '../ui/StableText';
 import { t } from '../i18n';
 import { AgentMark } from '../chat/AgentMark';
 import { CONNECTION_STATE_NAME as STATE_NAME, connectionOp, listSshHosts, remoteProjectOp, useConnections, type SshHostList } from '../remote/api';
 import { RemoteFolderDialog } from '../remote/RemoteFolderDialog';
+import { ConnectStatus, hasConnectStatus, reconnect } from '../remote/ConnectStatus';
 import {
   blockItem, blockList, DangerAction, DialogBody, Dot, FactRow, Field, FooterNote, Group, ItemRow, Note, PickContent, Section, SectionAction,
-  SectionDescription, Segmented, SettingsDialog, Status, shortPath,
+  SectionDescription, Segmented, SettingsDialog, Status, shortPath, useSettingRow,
 } from './controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 
@@ -28,17 +28,6 @@ const MODE_NAME: Record<RunMode, MsgKey> = { local: 'connections.mode.local', re
 // One sentence per mode: where the sign-ins live and which agents work
 const MODE_EFFECT: Record<RunMode, MsgKey> = { local: 'connections.mode.localEffect', remote: 'connections.mode.remoteEffect' };
 const STATES: ConnectionState[] = ['off', 'connecting', 'connected', 'error'];
-const STEP_NAME: Record<ConnectStep, MsgKey> = {
-  ssh: 'connections.step.ssh', probe: 'connections.step.probe', upload: 'connections.step.upload', start: 'connections.step.start',
-};
-const STEP_FAILED: Record<ConnectStep, MsgKey> = {
-  ssh: 'connections.failed.ssh', probe: 'connections.failed.probe', upload: 'connections.failed.upload', start: 'connections.failed.start',
-};
-// What to do about a failure, in words; `other` has only the engine's own message
-const FIX: Partial<Record<ConnectFailure, MsgKey>> = {
-  hostKey: 'connections.fix.hostKey', keyLocked: 'connections.fix.keyLocked', denied: 'connections.fix.denied', network: 'connections.fix.network',
-  machineChanged: 'connections.fix.machineChanged', unsupported: 'connections.fix.unsupported', noSsh: 'connections.fix.noSsh',
-};
 
 // A host just added shows its dialog at once, as connecting, until the pushed list brings it; one the list never
 // brings (the engine refused the alias and said so in a toast) closes its dialog after this long
@@ -154,7 +143,7 @@ function AddHostDialog({ taken, onAdd, onClose }: { taken: string[]; onAdd: (ali
             {!listing && <Group><Note shimmer>{t('connections.reading')}</Note></Group>}
             {error && <Group><Note><span className="text-danger [overflow-wrap:anywhere]">{error}</span></Note></Group>}
             {listing && <Command.Empty>{t('connections.noHostMatch')}</Command.Empty>}
-            <Command.List searchable fill className={blockList}>
+            <Command.List searchable fill flush className={blockList}>
               {(h: HostPick) => {
                 const done = taken.includes(h.alias);
                 return <Command.Item key={h.typed ? `typed:${h.alias}` : h.alias} value={h} disabled={done} title={done ? t('connections.added') : undefined}
@@ -172,8 +161,8 @@ function AddHostDialog({ taken, onAdd, onClose }: { taken: string[]; onAdd: (ali
 }
 
 // One host in a dialog: the connection (its state, round trip and remote version, the one action that moves it on,
-// the progress while it runs or why it failed), where agents run, the host's projects; the footer removes the host
-// or opens ~/.ssh/config
+// the attempt's steps while it runs or why it failed), where agents run, the host's projects (browsable only while
+// connected); the footer removes the host
 function HostDialog({ view, env, projects, on, onClose }: { view: ConnectionView; env: SettingsEnv; projects?: string[]; on: SettingsHandlers; onClose: () => void }) {
   const { alias, state } = view;
   // The pick shows at once; the pushed list confirms it
@@ -184,35 +173,29 @@ function HostDialog({ view, env, projects, on, onClose }: { view: ConnectionView
   const folders = (projects ?? view.projects).filter(p => parseRemoteFolder(p)?.alias === alias);
   const action = state === 'connected' ? 'disconnect' : state === 'connecting' ? 'cancel' : 'connect';
   const ACTION: Record<typeof action, MsgKey> = { connect: 'connections.connect', disconnect: 'connections.disconnect', cancel: 'connections.cancel' };
-  // A switched-off host (another window, an older build) comes back on through add, which also connects
-  const connect = () => connectionOp(view.disabled ? { op: 'add', alias, mode } : { op: 'connect', alias });
   const live = state === 'connected';
   const sep = t('common.metaSep');
   const facts = live
     ? [view.rttMs !== undefined && t('connections.rttValue', { ms: view.rttMs }), view.remoteVersion && t('connections.remoteVersionValue', { version: view.remoteVersion })].filter(Boolean).join(sep)
     : view.identityFile ? t('connections.identityValue', { path: shortPath(view.identityFile, { home: env.home, cwd: '' }) }) : undefined;
-  const config = `${env.home}/.ssh/config`;
   return (
     <SettingsDialog wide icon={<Server />} title={alias} sub={view.address} onClose={onClose}
       footer={<>
         <DangerAction title={t('connections.removeHint')} onClick={() => { connectionOp({ op: 'remove', alias }); onClose(); }}>{t('connections.remove')}</DangerAction>
         <span className="flex-1" />
-        <button type="button" onClick={() => on.openPath(config)} className="flex min-w-0 items-center gap-1 truncate rounded-sm text-3 text-fg-3 transition-colors hover:text-fg-1">
-          {t('connections.editConfig')}<ArrowUpRight className="size-icon shrink-0" strokeWidth={1.75} />
-        </button>
         <Button variant="primary" onClick={onClose}>{t('common.done')}</Button>
       </>}>
       <DialogBody>
         <Section title={<span className="flex items-center gap-2"><StateDot state={state} /><StableText current={state} items={STATES.map(s => ({ key: s, text: t(STATE_NAME[s]) }))} /></span>} desc={facts || undefined}
           action={<SectionAction icon={action === 'connect' ? <Link2 /> : action === 'disconnect' ? <Unplug /> : <X />}
-            onClick={action === 'connect' ? connect : () => connectionOp({ op: 'disconnect', alias })}>{t(ACTION[action])}</SectionAction>}>
-          {(state === 'connecting' || (state === 'error' && view.error)) && <ConnectProgress view={view} env={env} on={on} onRetry={connect} />}
+            onClick={action === 'connect' ? () => reconnect({ ...view, mode }) : () => connectionOp({ op: 'disconnect', alias })}>{t(ACTION[action])}</SectionAction>}>
+          {hasConnectStatus(view) && <StatusRow view={view} onOpenConfig={() => on.openPath(`${env.home}/.ssh/config`)} />}
           <Field label={t('connections.mode.label')} desc={<ModeEffect mode={mode} />}>
             <ModeSegments compact value={mode} onChange={m => { setMode(m); connectionOp({ op: 'setMode', alias, mode: m }); }} />
           </Field>
         </Section>
         <Section title={t('connections.projects')} count={folders.length} desc={t('connections.projectsDesc')}
-          action={<SectionAction icon={<Plus />} onClick={() => setPicking(true)}>{t('connections.addFolder')}</SectionAction>}>
+          action={<SectionAction icon={<Plus />} disabled={!live} title={live ? undefined : t('connections.connectFirst')} onClick={() => setPicking(true)}>{t('connections.addFolder')}</SectionAction>}>
           {folders.length === 0 && <Note>{t('connections.noProjects')}</Note>}
           {folders.map(f => {
             const path = parseRemoteFolder(f)?.path ?? f;
@@ -270,41 +253,9 @@ function ChatGptDialog({ status, on, onClose }: { status?: ChatGptIntegrationSta
   );
 }
 
-// The connection's progress as one line updated in place (the agent install's row): the step under way and the newest
-// thing it said, an upload's megabytes. A failure stops on its step with what to do about it and the engine's own words,
-// then the actions that settle it: a host key or a locked key is answered in a terminal on this computer
-function ConnectProgress({ view, env, on, onRetry }: { view: ConnectionView; env: SettingsEnv; on: SettingsHandlers; onRetry: () => void }) {
-  const { alias, error } = view;
-  if (view.state === 'connecting' || !error) {
-    const step = view.step ?? 'ssh';
-    return <ItemRow lead={<LoaderCircle strokeWidth={1.5} className="animate-spin live-spin" />}
-      title={<span className="flex min-w-0 items-baseline gap-2">
-        <Shimmer className="shrink-0 font-sans text-2">{t(STEP_NAME[step])}</Shimmer>
-        {view.detail && <span className="min-w-0 truncate font-mono text-mono text-fg-2" title={view.detail}>{view.detail}</span>}
-      </span>} />;
-  }
-  const fix = FIX[error.kind];
-  const title = error.kind === 'machineChanged' ? t('connections.failed.machine') : t(STEP_FAILED[error.step]);
-  const terminal = <Button variant="primary" onClick={() => connectionOp({ op: 'openTerminal', alias })}><SquareTerminal className="size-icon" strokeWidth={1.5} />{t('connections.openTerminal')}</Button>;
-  const actions: ReactNode = error.kind === 'hostKey' || error.kind === 'keyLocked'
-    ? <>{terminal}<Button onClick={onRetry}>{t('common.retry')}</Button></>
-    : error.kind === 'machineChanged'
-      ? <><Button onClick={() => connectionOp({ op: 'disconnect', alias })}>{t('connections.cancel')}</Button>
-        <Button variant="primary" onClick={() => connectionOp({ op: 'connect', alias, acceptNewMachine: true })}>{t('connections.acceptMachine')}</Button></>
-      : error.kind === 'denied'
-        ? <><Button onClick={() => on.openPath(`${env.home}/.ssh/config`)}>{t('connections.editConfigShort')}</Button><Button variant="primary" onClick={onRetry}>{t('common.retry')}</Button></>
-        : <Button variant="primary" onClick={onRetry}>{t('common.retry')}</Button>;
-  return (
-    <div className="flex flex-col">
-      <ItemRow className="items-start" lead={<CircleAlert strokeWidth={1.5} className="text-danger" />}
-        title={<span className="text-2 text-danger">{title}</span>}
-        extra={<>
-          {fix && <p className="m-0 pt-1 text-2 text-fg-2 [overflow-wrap:anywhere]">{t(fix)}</p>}
-          {error.message && <p className="m-0 pt-1 font-mono text-mono whitespace-pre-wrap text-fg-3 [overflow-wrap:anywhere]">{error.message}</p>}
-        </>} />
-      <div className="flex flex-wrap justify-end gap-gap pb-(--setting-row-pad)">{actions}</div>
-    </div>
-  );
+// The connection attempt as a row of the section: the row's padding comes from inside the section's Group
+function StatusRow({ view, onOpenConfig }: { view: ConnectionView; onOpenConfig: () => void }) {
+  return <ConnectStatus view={view} className={useSettingRow()} onOpenConfig={onOpenConfig} />;
 }
 
 const baseName = (path: string) => path.split('/').filter(Boolean).pop() ?? path;

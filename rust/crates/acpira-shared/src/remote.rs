@@ -99,6 +99,8 @@ pub enum ConnectStep {
   Ssh,
   /// Platform, installed helper version, machine id
   Probe,
+  /// Downloading the helper build for the host's platform from the release (asked for after an `unsupported` failure)
+  Fetch,
   /// Uploading the helper binary
   Upload,
   /// Starting the long-lived helper and waiting for its handshake
@@ -197,8 +199,15 @@ pub enum ConnectionOp {
   Remove { alias: String },
   SetMode { alias: String, mode: RunMode },
   SetDisabled { alias: String, disabled: bool },
-  /// `accept_new_machine`: the alias now leads to another machine and the user confirmed it is the right one
-  Connect { alias: String, #[serde(default)] accept_new_machine: bool },
+  /// `accept_new_machine`: the alias now leads to another machine and the user confirmed it is the right one;
+  /// `fetch_build`: download the host's platform build from the release when this machine has none
+  Connect {
+    alias: String,
+    #[serde(default)]
+    accept_new_machine: bool,
+    #[serde(default)]
+    fetch_build: bool,
+  },
   Disconnect { alias: String },
   /// `ssh <alias>` in a terminal on this machine, to confirm a host key or unlock a key
   OpenTerminal { alias: String },

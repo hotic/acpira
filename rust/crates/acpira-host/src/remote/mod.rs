@@ -6,6 +6,7 @@
 pub mod client;
 pub mod connections;
 pub mod deploy;
+pub mod fetch;
 pub mod helper;
 pub mod peer;
 pub mod ssh;
