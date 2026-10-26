@@ -1123,7 +1123,7 @@ impl App {
   }
 
   pub fn show_log(&self) {
-    let _ = system::open_any(&self.log_file.to_string_lossy());
+    let _ = system::open_path(&self.log_file.to_string_lossy());
   }
 
   /// Help › Safe Mode: switched with the engine binary (so it works while the engine is stuck), told in a toast; on the
@@ -1337,7 +1337,7 @@ impl Platform for App {
   }
 
   fn open_path(&self, path: &str) -> Result<(), String> {
-    system::open_any(path)
+    system::open_path(path)
   }
 
   fn t(&self, key: &str, params: &[(&str, &str)]) -> String {
