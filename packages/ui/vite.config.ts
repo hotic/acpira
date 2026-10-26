@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { dirname } from 'node:path';
@@ -11,10 +11,21 @@ import { fileURLToPath } from 'node:url';
 // modulepreload helper is off: its injected <link> tags would carry no nonce
 const root = dirname(fileURLToPath(import.meta.url));
 
+// katex.min.css lists woff2, woff and ttf for every face. Every host webview (VS Code's Electron, JCEF, WKWebView) loads
+// woff2, so the two fallbacks are only dead weight in every package (~0.9 MB); with their url()s gone they are not emitted
+const katexWoff2Only: Plugin = {
+  name: 'acpira:katex-woff2-only',
+  enforce: 'pre',
+  transform(code, id) {
+    if (!/[\\/]katex[\\/]dist[\\/]katex(\.min)?\.css$/.test(id)) return;
+    return code.replace(/,url\([^)]+\.(?:woff|ttf)\) format\("(?:woff|truetype)"\)/g, '');
+  },
+};
+
 export default defineConfig({
   root,
   base: './',
-  plugins: [react(), tailwindcss()],
+  plugins: [katexWoff2Only, react(), tailwindcss()],
   build: {
     outDir: fileURLToPath(new URL('../../dist/webview', import.meta.url)),
     emptyOutDir: true,
