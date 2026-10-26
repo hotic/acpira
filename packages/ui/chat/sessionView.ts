@@ -9,6 +9,8 @@ export type ViewStatus = 'working' | 'waiting' | 'unread' | 'error' | 'backgroun
 export type ViewSince = 'all' | 'today' | 'week' | 'month';
 // Sessions an open project lists before its "more" row (desktop); 0 lists them all
 export type ViewPer = 5 | 10 | 0;
+// Where pinned sessions sit when grouped by project: one section above every project, or first inside their own project
+export type ViewPin = 'top' | 'project';
 
 export interface ListView {
   group: ViewGroup;
@@ -16,18 +18,20 @@ export interface ListView {
   per: ViewPer;
   // The session's model name at the row's end
   model: boolean;
+  pinned: ViewPin;
   status: ViewStatus[];
   agents: string[];
   since: ViewSince;
 }
 
-export const DEFAULT_VIEW: ListView = { group: 'project', order: 'updated', per: 5, model: false, status: [], agents: [], since: 'all' };
+export const DEFAULT_VIEW: ListView = { group: 'project', order: 'updated', per: 5, model: false, pinned: 'top', status: [], agents: [], since: 'all' };
 export const VIEW_KEY = 'sessionListView';
 export const VIEW_GROUPS: readonly ViewGroup[] = ['project', 'time', 'agent', 'none'];
 export const VIEW_ORDERS: readonly ViewOrder[] = ['updated', 'created', 'title'];
 export const VIEW_STATUSES: readonly ViewStatus[] = ['working', 'waiting', 'unread', 'error', 'background'];
 export const VIEW_SINCE: readonly ViewSince[] = ['all', 'today', 'week', 'month'];
 export const VIEW_PER: readonly ViewPer[] = [5, 10, 0];
+export const VIEW_PINS: readonly ViewPin[] = ['top', 'project'];
 
 const pick = <T>(allowed: readonly T[], v: unknown, fallback: T): T => (allowed.includes(v as T) ? v as T : fallback);
 const strings = (v: unknown, allowed?: readonly string[]) =>
@@ -41,6 +45,7 @@ export function readView(v: unknown): ListView {
     order: pick(VIEW_ORDERS, o.order, DEFAULT_VIEW.order),
     per: pick(VIEW_PER, o.per, DEFAULT_VIEW.per),
     model: o.model === true,
+    pinned: pick(VIEW_PINS, o.pinned, DEFAULT_VIEW.pinned),
     status: strings(o.status, VIEW_STATUSES) as ViewStatus[],
     agents: strings(o.agents),
     since: pick(VIEW_SINCE, o.since, DEFAULT_VIEW.since),
