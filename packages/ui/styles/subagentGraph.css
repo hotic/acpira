@@ -1,8 +1,11 @@
 @layer components {
   /* Summon graph (chat/subagents/SubagentGraph.tsx): a vertical tree of rows. Each nested list steps one lead + --gap in;
-     its elbow lines start under the parent's lead centre and stop a --gap short of the child's lead. */
+     its rounded elbows start under the parent's mark and run up to the child's. */
   .subagent-graph-scroll {
     --subagent-graph-elbow: calc(var(--lead) / 2 + var(--gap));
+    /* Twice the hairline, matched by the heavier marks below; Chromium floors fractional borders, so 1.5px would draw as 1px */
+    --subagent-graph-line: 2px;
+    --subagent-graph-check-scale: .85;
     min-height: 0;
     overflow: auto;
     overscroll-behavior: contain;
@@ -19,38 +22,55 @@
 
   .subagent-graph-tree li { position: relative; }
 
+  /* --pl is the indent a list gives its children; the elbows hang off it */
   .subagent-graph-tree ul {
+    --pl: var(--subagent-graph-elbow);
     margin-left: calc(var(--lead) / 2);
-    padding-left: var(--subagent-graph-elbow);
+    padding-left: var(--pl);
+  }
+  /* The top-level trunk drops from GitBranch's stem (x 6 of its 24 grid) instead of the lead's centre, keeping the
+     children where they were, and starts at the bottom of the stem's circle (y 21 of 24) */
+  .subagent-graph-tree > li > ul {
+    --stem: calc((var(--lead) - var(--icon)) / 2 + var(--icon) * 6 / 24);
+    --pl: calc(var(--subagent-graph-elbow) + var(--lead) / 2 - var(--stem) + var(--subagent-graph-line) / 2);
+    --stem-reach: calc(var(--row) / 2 - var(--icon) * 3 / 8);
+    margin-left: calc(var(--stem) - var(--subagent-graph-line) / 2);
   }
 
-  /* The trunk runs past every sibling but the last, which stops at its own elbow */
-  .subagent-graph-tree ul > li::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: calc(-1 * var(--subagent-graph-elbow));
-    border-left: 1px solid var(--line-strong);
-  }
-  .subagent-graph-tree ul > li:last-child::before { bottom: auto; height: calc(var(--row) / 2); }
-
+  /* One rounded elbow per child, running up to its mark; the trunk only continues past the siblings that follow */
+  .subagent-graph-tree ul > li::before,
   .subagent-graph-tree ul > li::after {
     content: '';
     position: absolute;
-    top: calc(var(--row) / 2);
-    left: calc(-1 * var(--subagent-graph-elbow));
-    width: calc(var(--subagent-graph-elbow) - var(--gap) / 2);
-    border-top: 1px solid var(--line-strong);
+    left: calc(-1 * var(--pl));
+    border-left: var(--subagent-graph-line) solid var(--line-strong);
   }
+  .subagent-graph-tree ul > li::before { top: 0; bottom: 0; }
+  .subagent-graph-tree ul > li:last-child::before { display: none; }
+  .subagent-graph-tree ul > li::after {
+    top: 0;
+    height: calc(var(--row) / 2);
+    width: calc(var(--pl) + var(--subagent-graph-line) / 2);
+    border-bottom: var(--subagent-graph-line) solid var(--line-strong);
+    border-bottom-left-radius: var(--radius-sm);
+  }
+  .subagent-graph-tree > li > ul > li:first-child::before { top: calc(-1 * var(--stem-reach)); }
+  .subagent-graph-tree > li > ul > li:first-child::after { top: calc(-1 * var(--stem-reach)); height: calc(var(--row) / 2 + var(--stem-reach)); }
 
   /* The inspected child stays marked while the graph is open over it */
   .subagent-graph-node[aria-current] { background: var(--active); color: var(--fg-1); }
-  /* Same mark size as the transcript row, the ✓ scaled back to a plain Check */
+  /* Same mark slot as the transcript row; the ✓ shrinks less than there, a size up to match the heavier icons */
   .subagent-graph-node > .row-lead { width: var(--subagent-mark); height: var(--subagent-mark); }
   .subagent-graph-node .subagent-mark {
     width: var(--subagent-mark);
     height: var(--subagent-mark);
-    --check-scale: var(--subagent-check-scale);
+    --check-scale: var(--subagent-graph-check-scale);
   }
+  /* The marks carry the line's weight: bare strokes (the ✓, X) need more than outlined icons to read as heavy, and the
+     running beads grow with them. Scoped here; transcript rows keep the plain icon weight. */
+  .subagent-graph-node > .row-lead { color: var(--fg-2); }
+  .subagent-graph-node .subagent-mark-check { stroke-width: 3.1; }
+  .subagent-graph-node .subagent-mark-bead { r: 1.4px; }
+  .subagent-graph-node > .row-lead > svg:not(.subagent-mark) { width: var(--icon-ctl); height: var(--icon-ctl); stroke-width: 2.1; }
+  .subagent-graph-node > .row-lead > svg.lucide-x { stroke-width: 2.7; }
 }
