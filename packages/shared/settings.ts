@@ -34,6 +34,11 @@ export const FILE_OPENER_NAMES: Record<Exclude<FileOpener, 'system'>, string> = 
 export type DesktopLayout = 'chat' | 'files';
 export const DESKTOP_LAYOUTS: DesktopLayout[] = ['chat', 'files'];
 
+// How the desktop tool panel scopes its open files, browser tabs and terminals (acpira.panelScope): one set per project
+// folder, one per conversation, or one shared across every project
+export type PanelScope = 'project' | 'session' | 'global';
+export const PANEL_SCOPES: PanelScope[] = ['project', 'session', 'global'];
+
 // Font size bounds (px); the type scale in tokens.css derives every size and line height from these two
 export const UI_FONT_SIZE = { min: 10, max: 20, default: 13 } as const;
 export const CODE_FONT_SIZE = { min: 9, max: 20, default: 12 } as const;
@@ -115,11 +120,17 @@ export interface SettingsView {
   openFilesWith: FileOpener;
   // Desktop app: the window's layout (DESKTOP_LAYOUTS)
   desktopLayout: DesktopLayout;
+  // Desktop app: how the tool panel scopes its open files, browser tabs and terminals (PANEL_SCOPES)
+  panelScope: PanelScope;
+  // Desktop app: whether the built-in File Tree, Terminal and Browser modules are enabled in the tool panel
+  panelFiles: boolean;
+  panelTerminal: boolean;
+  panelBrowser: boolean;
 }
 
 // Keys the webview may write back; the host maps them onto acpira.<key> at user scope
-export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing' | 'shareEditorSelection' | 'steerQueued' | 'notifySound' | 'notifySystem' | 'planAutoApprove' | 'subagents' | 'agentCpuCap' | 'proxy' | 'openFilesWith' | 'desktopLayout';
-export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing', 'shareEditorSelection', 'steerQueued', 'notifySound', 'notifySystem', 'planAutoApprove', 'subagents', 'agentCpuCap', 'proxy', 'openFilesWith', 'desktopLayout'];
+export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing' | 'shareEditorSelection' | 'steerQueued' | 'notifySound' | 'notifySystem' | 'planAutoApprove' | 'subagents' | 'agentCpuCap' | 'proxy' | 'openFilesWith' | 'desktopLayout' | 'panelScope' | 'panelFiles' | 'panelTerminal' | 'panelBrowser';
+export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing', 'shareEditorSelection', 'steerQueued', 'notifySound', 'notifySystem', 'planAutoApprove', 'subagents', 'agentCpuCap', 'proxy', 'openFilesWith', 'desktopLayout', 'panelScope', 'panelFiles', 'panelTerminal', 'panelBrowser'];
 
 // The settings each shell keeps in its own store, since they follow the window's shape: the session list's side and scope
 // (the desktop app always lists every project on the left) and sharing the editor selection (IDE shells only). Every
@@ -168,6 +179,10 @@ export const DEFAULT_SETTINGS: SettingsView = {
   proxy: DEFAULT_PROXY,
   openFilesWith: 'system',
   desktopLayout: 'chat',
+  panelScope: 'project',
+  panelFiles: true,
+  panelTerminal: true,
+  panelBrowser: true,
 };
 
 // A hand-edited settings.json or a forged webview message can send anything; fall back per key so the page never sees an illegal value
@@ -184,6 +199,9 @@ export function sanitizeSetting<K extends SettingKey>(key: K, value: unknown): S
     case 'steerQueued':
     case 'notifySound':
     case 'notifySystem':
+    case 'panelFiles':
+    case 'panelTerminal':
+    case 'panelBrowser':
       return (typeof value === 'boolean' ? value : fallback) as SettingsView[K];
     case 'compactAtTokens': {
       const n = typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : fallback as number;
@@ -211,6 +229,8 @@ export function sanitizeSetting<K extends SettingKey>(key: K, value: unknown): S
       return (oneOf(value, FILE_OPENERS) ?? fallback) as SettingsView[K];
     case 'desktopLayout':
       return (oneOf(value, DESKTOP_LAYOUTS) ?? fallback) as SettingsView[K];
+    case 'panelScope':
+      return (oneOf(value, PANEL_SCOPES) ?? fallback) as SettingsView[K];
     case 'agentOrder':
     case 'disabledAgents':
     case 'planAutoApprove':

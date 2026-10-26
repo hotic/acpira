@@ -181,15 +181,25 @@ export function FileTree(p: FileTreeProps) {
   const [hits, setHits] = useState<string[]>();
   const list = useRef<HTMLDivElement>(null);
   const asked = useRef(new Set<string>());
+  const sessionRef = useRef(p.sessionId);
+  sessionRef.current = p.sessionId;
 
   // The project folder itself, and every open folder not read yet in this mount. A listing equal to the shown one (the
   // cached one after a session switch, or an unchanged folder after a turn) leaves the tree alone
   const load = (dir: string) => {
     asked.current.add(dir);
     const root = p.root;
-    void project.dir(p.sessionId, dir).then(l => {
-      // A read nobody answered is shown but not kept: the next mount shows the last real listing
-      if (l.error !== 'timeout') lastRead.dirs.set(root, { ...lastRead.dirs.get(root), [dir]: l });
+    const sid = sessionRef.current;
+    void project.dir(sid, dir).then(l => {
+      // A read nobody answered, or one for an empty session the start page already replaced, is not kept; if the panel has
+      // moved on to another session in this project, ask that session instead of flashing an error
+      if (l.error === 'timeout' || l.error === 'noProject') {
+        asked.current.delete(dir);
+        if (sessionRef.current !== sid) load(dir);
+        else setDirs(d => (d[dir] ? d : { ...d, [dir]: l }));
+        return;
+      }
+      lastRead.dirs.set(root, { ...lastRead.dirs.get(root), [dir]: l });
       setDirs(d => (sameRead(d[dir], l) ? d : { ...d, [dir]: l }));
     });
   };
@@ -202,7 +212,7 @@ export function FileTree(p: FileTreeProps) {
       return () => clearTimeout(timer);
     }
     for (const dir of missing) load(dir);
-  }, [p.expanded]);
+  }, [p.expanded, p.sessionId]);
   // A turn ended: what is listed is read again (a listing stays shown until its fresh one arrives)
   useEffect(() => {
     if (!p.refresh) return;
@@ -275,18 +285,19 @@ export function FileTree(p: FileTreeProps) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-tree>
-      {/* The trailing inset is the tool panel's when the tree sits under its pinned toggle (panel.css --tree-filter-end) */}
-      <div className="flex min-h-row shrink-0 items-center border-b border-line py-gap-half pl-gap pr-[var(--tree-filter-end,var(--spacing-gap))]">
-        <label className="flex h-ctl-sm min-w-0 flex-1 items-center gap-1.5 rounded-md border border-line bg-chip px-2 text-3 focus-within:border-line-strong">
-          <Search strokeWidth={1.5} className="size-3 shrink-0 text-fg-3" />
+      {/* The side insets are the tool panel's when the tree sits in it (panel.css --tree-lead / --tree-trail): the filter, the
+          sections and the rows share its edge lines. The filter is as tall as the panel's tabs, so the two read as one block */}
+      <div className="flex min-h-row shrink-0 items-center border-b border-line py-gap-half pl-[var(--tree-lead,var(--spacing-gap))] pr-[var(--tree-trail,var(--spacing-gap))]">
+        <label className="flex h-ctl min-w-0 flex-1 items-center gap-1.5 rounded-md border border-line bg-chip px-2 text-2 focus-within:border-line-strong">
+          <Search strokeWidth={1.5} className="size-3.5 shrink-0 text-fg-3" />
           <input value={query} onChange={e => setQuery(e.target.value)} placeholder={t('panel.filter')} spellCheck={false}
             onKeyDown={e => { if (e.key === 'Escape' && query) { e.preventDefault(); e.stopPropagation(); setQuery(''); } }}
-            className="min-w-0 flex-1 border-0 bg-transparent text-3 text-fg-1 outline-none placeholder:text-fg-3" />
-          {query && <button type="button" onClick={() => setQuery('')} aria-label={t('panel.clear')} title={t('panel.clear')} className="text-fg-3 hover:text-fg-1"><X strokeWidth={1.5} className="size-3" /></button>}
+            className="min-w-0 flex-1 border-0 bg-transparent text-2 text-fg-1 outline-none placeholder:text-fg-3" />
+          {query && <button type="button" onClick={() => setQuery('')} aria-label={t('panel.clear')} title={t('panel.clear')} className="text-fg-3 hover:text-fg-1"><X strokeWidth={1.5} className="size-3.5" /></button>}
         </label>
       </div>
       {p.changes.length > 0 && (
-        <div className="shrink-0 px-gap-half pt-gap-half pb-gap" data-changes>
+        <div className="shrink-0 pt-gap-half pr-[var(--tree-trail,var(--spacing-gap-half))] pb-gap pl-[var(--tree-lead,var(--spacing-gap-half))]" data-changes>
           <div className={SECTION}>
             <button type="button" onClick={() => setChangesOpen(o => !o)} aria-expanded={changesOpen} className="flex items-center gap-1 hover:text-fg-1">
               {t('panel.changes')}<ChevronRight strokeWidth={1.5} className={cn('size-3 opacity-0 transition-[rotate,opacity] duration-(--dur-open) group-hover/section:opacity-100', changesOpen && 'rotate-90')} />
@@ -316,7 +327,7 @@ export function FileTree(p: FileTreeProps) {
           </Fold>
         </div>
       )}
-      <div className={cn(SECTION, 'mx-gap-half')}>
+      <div className={cn(SECTION, 'mr-[var(--tree-trail,var(--spacing-gap-half))] ml-[var(--tree-lead,var(--spacing-gap-half))]')}>
         <span className="truncate">{nameOf(p.root.replace(/\\/g, '/').replace(/\/+$/, ''))}</span>
         <span className="flex-1" />
         <span className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover/section:opacity-100 focus-within:opacity-100">
@@ -325,7 +336,7 @@ export function FileTree(p: FileTreeProps) {
           <IconButton size="sm" title={t('panel.collapseAll')} aria-label={t('panel.collapseAll')} onClick={() => p.setExpanded(() => [])}><ChevronsDownUp strokeWidth={1.5} /></IconButton>
         </span>
       </div>
-      <div ref={list} role="tree" aria-label={t('panel.tree')} className="scroll-thin relative min-h-0 flex-1 overflow-auto px-gap-half pb-gap">
+      <div ref={list} role="tree" aria-label={t('panel.tree')} className="scroll-thin relative min-h-0 flex-1 overflow-auto pr-[var(--tree-trail,var(--spacing-gap-half))] pb-gap pl-[var(--tree-lead,var(--spacing-gap-half))]">
         {matches
           ? matches.length ? <Matches nodes={matches} depth={0} ctx={ctx} /> : <div className="flex min-h-row items-center px-2 text-3 text-fg-3">{t('panel.noMatch', { query: query.trim() })}</div>
           : <Branch dir="" depth={0} ctx={ctx} />}

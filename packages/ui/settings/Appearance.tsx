@@ -1,4 +1,4 @@
-import { CODE_FONT_SIZE, DESKTOP_LAYOUTS, DIFF_MARKERS, SESSION_LIST_POSITIONS, THEMES, UI_FONT_SIZE, type SettingsView } from '@acpira/shared/settings';
+import { CODE_FONT_SIZE, DESKTOP_LAYOUTS, DIFF_MARKERS, PANEL_SCOPES, SESSION_LIST_POSITIONS, THEMES, UI_FONT_SIZE, type SettingsView } from '@acpira/shared/settings';
 import type { Appearance } from '../appearance';
 import { t } from '../i18n';
 import { useDesktop } from '../desktop';
@@ -16,9 +16,18 @@ export function AppearancePage({ settings, appearance, on }: { settings: Setting
         {/* The desktop app keeps its column on the left and folds it from the title row instead; what it offers is the
             window's layout, the conversation or the files in the middle */}
         {desktop
-          ? <Field label={t('settings.desktopLayout')} desc={t('settings.desktopLayout.desc')}>
-            <Select options={DESKTOP_LAYOUTS.map(v => ({ value: v, label: t(`settings.desktopLayout.${v}`) }))} value={settings.desktopLayout} onChange={v => on.setSetting('desktopLayout', v)} label={t('settings.desktopLayout')} />
-          </Field>
+          ? <>
+            {settings.panelFiles !== false && (
+              <Field label={t('settings.desktopLayout')} desc={t('settings.desktopLayout.desc')}>
+                <Select options={DESKTOP_LAYOUTS.map(v => ({ value: v, label: t(`settings.desktopLayout.${v}`) }))} value={settings.desktopLayout} onChange={v => on.setSetting('desktopLayout', v)} label={t('settings.desktopLayout')} />
+              </Field>
+            )}
+            {(settings.panelFiles !== false || settings.panelTerminal !== false || settings.panelBrowser !== false) && (
+              <Field label={t('settings.panelScope')} desc={t('settings.panelScope.desc')}>
+                <Select options={PANEL_SCOPES.map(v => ({ value: v, label: t(`settings.panelScope.${v}`) }))} value={settings.panelScope ?? 'project'} onChange={v => on.setSetting('panelScope', v)} label={t('settings.panelScope')} />
+              </Field>
+            )}
+          </>
           : <Field label={t('settings.sessionListPosition')} desc={t('settings.sessionListPosition.desc')}>
             <Select options={SESSION_LIST_POSITIONS.map(v => ({ value: v, label: t(`settings.sessionListPosition.${v}` as const) }))} value={settings.sessionListPosition} onChange={v => on.setSetting('sessionListPosition', v)} label={t('settings.sessionListPosition')} />
           </Field>}

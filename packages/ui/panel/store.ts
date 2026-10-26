@@ -1,11 +1,14 @@
 import { useSyncExternalStore } from 'react';
+import { PANEL_SCOPES, type PanelScope } from '@acpira/shared/settings';
 import { setWebviewState, webviewState } from '../vscodeApi';
 
-// The desktop tool panel's state, one per window: whether it is open, its tabs and the one shown, its width and the tree's,
-// and per project what the Files tab shows. The files layout (Shell's `desktopLayout: 'files'`) lays the same state out as
-// an explorer column and a stage of tabs, and adds the files open as tabs, the explorer's width and fold and the chat's width. Module state like the composer drafts, so a file link in the transcript, the
-// shell's open_browser and the menu bar all reach it without threading props. The tabs and widths survive a reload through
-// the webview state; the panel starts closed in a fresh window (it opens on a file link, ⌥⌘B, the toggle, open_browser)
+// The desktop tool panel's state, one per window: whether it is open, how it scopes its tabs and views (per project, per
+// session, or shared across all projects), its width and the tree's, and what each Files tab shows. The files layout
+// (Shell's `desktopLayout: 'files'`) lays the same state out as an explorer column and a stage of tabs, and adds the files
+// open as tabs, the explorer's width and fold and the chat's width. Module state like the composer drafts, so a file link in
+// the transcript, the shell's open_browser and the menu bar all reach it without threading props. The tabs and widths
+// survive a reload through the webview state; the panel starts closed in a fresh window (it opens on a file link, ⌥⌘B, the
+// toggle, open_browser)
 
 export interface LineRange { start: number; end: number }
 
@@ -28,12 +31,45 @@ export type PanelView = { path: string; line?: number; selection?: LineRange; te
 // The same file (or the review), wherever it is scrolled to
 export const sameView = (a: PanelView, b: PanelView) => (a === 'review' ? b === 'review' : b !== 'review' && a.path === b.path);
 
-interface Saved { open?: boolean; tabs?: PanelTab[]; tab?: string; width?: number; treeW?: number; explorerHidden?: boolean; explorerW?: number; chatW?: number }
+export interface PanelSlot {
+  tabs: PanelTab[];
+  tab: string;
+}
+
+export interface PanelModules {
+  files: boolean;
+  terminal: boolean;
+  browser: boolean;
+}
+
+interface Saved {
+  open?: boolean;
+  files?: boolean;
+  terminal?: boolean;
+  browser?: boolean;
+  scope?: PanelScope;
+  tabs?: PanelTab[];
+  tab?: string;
+  slots?: Record<string, { tabs?: PanelTab[]; tab?: string } | undefined>;
+  width?: number;
+  treeW?: number;
+  explorerHidden?: boolean;
+  explorerW?: number;
+  chatW?: number;
+}
 
 export interface PanelState {
   open: boolean;
+  // Which built-in tool panel modules are enabled (`acpira.panelFiles`, `acpira.panelTerminal`, `acpira.panelBrowser`)
+  files: boolean;
+  terminal: boolean;
+  browser: boolean;
+  scope: PanelScope;
+  sessionId?: string;
+  root?: string;
   tabs: PanelTab[];
   tab: string;
+  slots: Record<string, PanelSlot | undefined>;
   // The panel's and the tree's dragged widths (undefined: the token default)
   width?: number;
   treeW?: number;
@@ -41,7 +77,7 @@ export interface PanelState {
   // would show by default
   views: Record<string, PanelView | null | undefined>;
   expanded: Record<string, string[] | undefined>;
-  // The files layout: per project folder the views open as tabs on the stage, in tab order (a file without its scroll)
+  // The files layout: per project folder (or session in `session` scope) the views open as tabs on the stage, in tab order (a file without its scroll)
   opened: Record<string, PanelView[] | undefined>;
   // The files layout: the explorer column folded away, its and the chat's dragged widths (undefined: the token default)
   explorerHidden: boolean;
@@ -52,21 +88,96 @@ export interface PanelState {
 const KEY = 'toolPanel';
 export const FILES_TAB = 'files';
 const FILES: PanelTab = { id: FILES_TAB, kind: 'files' };
+const ALL_MODULES: PanelModules = { files: true, terminal: true, browser: true };
 
-// The key a Files tab keeps its view under: the first Files tab (which the files layout shows too) by the project folder
+function validTabs(raw: unknown, m: PanelModules = ALL_MODULES): PanelTab[] {
+  const list = Array.isArray(raw)
+    ? raw.filter((t): t is PanelTab => !!t && typeof t.id === 'string' && (
+        (m.browser && t.kind === 'browser')
+        || t.kind === 'new'
+        || (m.files && t.kind === 'files' && t.id !== FILES_TAB)
+        || (m.terminal && t.kind === 'terminal' && typeof t.cwd === 'string')
+      ))
+    : [];
+  if (m.files) return [FILES, ...list];
+  return list.length ? list : [{ id: nextId('new'), kind: 'new' }];
+}
+
+function validSlot(raw: { tabs?: PanelTab[]; tab?: string } | undefined, m: PanelModules = ALL_MODULES): PanelSlot {
+  const tabs = validTabs(raw?.tabs, m);
+  return { tabs, tab: tabs.some(t => t.id === raw?.tab) ? raw!.tab! : tabs[0]!.id };
+}
+
+function normalizeSlot(slot: PanelSlot, m: PanelModules): PanelSlot {
+  const kept = slot.tabs.filter(t => {
+    if (t.kind === 'files') return m.files && t.id !== FILES_TAB;
+    if (t.kind === 'terminal') return m.terminal;
+    if (t.kind === 'browser') return m.browser;
+    return !(m.files && slot.tabs.length === 1);
+  });
+  if (m.files) {
+    const tabs = [FILES, ...kept];
+    return { tabs, tab: tabs.some(t => t.id === slot.tab) ? slot.tab : FILES_TAB };
+  }
+  const tabs: PanelTab[] = kept.length ? kept : [{ id: nextId('new'), kind: 'new' }];
+  return { tabs, tab: tabs.some(t => t.id === slot.tab) ? slot.tab : tabs[0]!.id };
+}
+
+export function slotKeyOf(scope: PanelScope, sessionId?: string, root?: string): string {
+  if (scope === 'global') return '*';
+  if (scope === 'session') return sessionId ? `s:${sessionId}` : root ? `p:${root}` : '*';
+  return root ? `p:${root}` : sessionId ? `s:${sessionId}` : '*';
+}
+
+// The key under which open files (`views`, `opened`) are stored for `root`: per session in `session` scope, per project
+// folder in `project` and `global` scopes
+export function scopedRoot(root: string, sessionId?: string): string {
+  const s = current();
+  const sid = sessionId ?? s.sessionId;
+  return s.scope === 'session' && sid ? `${sid}\t${root}` : root;
+}
+
+// The key a Files tab keeps its view under: the first Files tab (which the files layout shows too) by the scoped root
 // alone, one opened from "+" by its id as well
-export const viewKey = (tab: string, root: string) => (tab === FILES_TAB ? root : `${tab}\n${root}`);
+export const viewKey = (tab: string, root: string, sessionId?: string) => {
+  const r = scopedRoot(root, sessionId);
+  return tab === FILES_TAB ? r : `${tab}\n${r}`;
+};
+
+// Every browser and terminal tab alive across all scopes, so switching projects or sessions hides background tabs in place
+// instead of unmounting their iframes or killing their shells
+export function allLiveTabs(s: PanelState = current()): PanelTab[] {
+  const byId = new Map<string, PanelTab>();
+  for (const t of s.tabs) if (t.kind === 'browser' || t.kind === 'terminal') byId.set(t.id, t);
+  for (const slot of Object.values(s.slots)) {
+    if (!slot) continue;
+    for (const t of slot.tabs) if ((t.kind === 'browser' || t.kind === 'terminal') && !byId.has(t.id)) byId.set(t.id, t);
+  }
+  return [...byId.values()];
+}
 
 function restore(): PanelState {
   const saved = webviewState(KEY) as Saved | undefined;
-  const tabs = Array.isArray(saved?.tabs)
-    ? saved.tabs.filter(t => t && typeof t.id === 'string' && (t.kind === 'browser' || t.kind === 'new' || (t.kind === 'files' && t.id !== FILES_TAB) || (t.kind === 'terminal' && typeof t.cwd === 'string')))
-    : [];
-  const all = [FILES, ...tabs];
+  const m: PanelModules = {
+    files: saved?.files !== false,
+    terminal: saved?.terminal !== false,
+    browser: saved?.browser !== false,
+  };
+  const scope: PanelScope = saved?.scope && PANEL_SCOPES.includes(saved.scope) ? saved.scope : 'project';
+  const main = validSlot({ tabs: saved?.tabs, tab: saved?.tab }, m);
+  const slots: Record<string, PanelSlot | undefined> = {};
+  if (saved?.slots && typeof saved.slots === 'object') {
+    for (const [k, v] of Object.entries(saved.slots)) {
+      if (v && typeof v === 'object') slots[k] = validSlot(v, m);
+    }
+  }
   return {
-    open: saved?.open === true,
-    tabs: all,
-    tab: all.some(t => t.id === saved?.tab) ? saved!.tab! : FILES.id,
+    open: saved?.open === true && (m.files || m.terminal || m.browser),
+    ...m,
+    scope,
+    tabs: main.tabs,
+    tab: main.tab,
+    slots,
     ...(typeof saved?.width === 'number' ? { width: saved.width } : {}),
     ...(typeof saved?.treeW === 'number' ? { treeW: saved.treeW } : {}),
     views: {},
@@ -82,10 +193,41 @@ let state: PanelState | undefined;
 const listeners = new Set<() => void>();
 const current = () => (state ??= restore());
 
+function persist(s: PanelState) {
+  const { open, files, terminal, browser, scope, tabs, tab, slots, width, treeW, explorerHidden, explorerW, chatW } = s;
+  const savedSlots: Record<string, { tabs?: PanelTab[]; tab?: string }> = {};
+  for (const [k, v] of Object.entries(slots)) {
+    if (!v) continue;
+    const rest = v.tabs.filter(t => t.id !== FILES_TAB);
+    if (rest.length || v.tab !== FILES_TAB) savedSlots[k] = { tabs: rest, tab: v.tab };
+  }
+  setWebviewState(KEY, {
+    open,
+    ...(files ? {} : { files: false }),
+    ...(terminal ? {} : { terminal: false }),
+    ...(browser ? {} : { browser: false }),
+    scope,
+    tabs: tabs.filter(t => t.id !== FILES_TAB),
+    tab,
+    ...(Object.keys(savedSlots).length ? { slots: savedSlots } : {}),
+    width,
+    treeW,
+    explorerHidden: explorerHidden || undefined,
+    explorerW,
+    chatW,
+  } satisfies Saved);
+}
+
 function update(next: Partial<PanelState>) {
-  state = { ...current(), ...next };
-  const { open, tabs, tab, width, treeW, explorerHidden, explorerW, chatW } = state;
-  setWebviewState(KEY, { open, tabs: tabs.filter(t => t.id !== FILES_TAB), tab, width, treeW, explorerHidden: explorerHidden || undefined, explorerW, chatW } satisfies Saved);
+  const prev = current();
+  const merged: PanelState = { ...prev, ...next };
+  // Keep the active slot's record in step whenever `tabs` or `tab` changes
+  if (next.tabs !== undefined || next.tab !== undefined) {
+    const key = slotKeyOf(merged.scope, merged.sessionId, merged.root);
+    merged.slots = { ...merged.slots, [key]: { tabs: merged.tabs, tab: merged.tab } };
+  }
+  state = merged;
+  persist(state);
   for (const l of listeners) l();
 }
 
@@ -115,17 +257,20 @@ function tabEntry(view: Exclude<PanelView, 'review'>): Exclude<PanelView, 'revie
   };
 }
 
+const openedKeyOf = (key: string) => (key.includes('\n') ? key.slice(key.indexOf('\n') + 1) : key);
+
 // `view` among the project's open tabs: a file opened again keeps its tab, a new one goes last
-function withOpened(s: PanelState, root: string, view: PanelView | null | undefined): Record<string, PanelView[] | undefined> {
+function withOpened(s: PanelState, rootKey: string, view: PanelView | null | undefined): Record<string, PanelView[] | undefined> {
   if (!view) return s.opened;
-  const list = s.opened[root] ?? [];
+  const r = openedKeyOf(rootKey);
+  const list = s.opened[r] ?? [];
   const entry = view === 'review' ? view : tabEntry(view);
   if (list.some(v => sameView(v, view))) {
     return view !== 'review' && view.text !== undefined
-      ? { ...s.opened, [root]: list.map(v => (sameView(v, view) ? entry : v)) }
+      ? { ...s.opened, [r]: list.map(v => (sameView(v, view) ? entry : v)) }
       : s.opened;
   }
-  return { ...s.opened, [root]: [...list, entry] };
+  return { ...s.opened, [r]: [...list, entry] };
 }
 
 let ids = 0;
@@ -136,39 +281,140 @@ const terminalId = () => (typeof crypto?.randomUUID === 'function' ? `terminal-$
 const originOf = (url: string | undefined) => { try { return url ? new URL(url).origin : undefined; } catch { return undefined; } };
 
 export const panel = {
-  toggle(open = !current().open) { update({ open }); },
+  toggle(open = !current().open) {
+    const s = current();
+    if (!s.files && !s.terminal && !s.browser) { if (s.open) update({ open: false }); return; }
+    update({ open });
+  },
   select(tab: string) { update({ tab, open: true }); },
+  // Binds the panel to the session and project folder currently on screen. Under `project` scope, switching sessions in the
+  // same project keeps the slot; switching to another project swaps to that project's tabs and active tab
+  setContext(sessionId: string | undefined, root: string | undefined) {
+    const s = current();
+    if (s.sessionId === sessionId && s.root === root) return;
+    const firstBind = s.sessionId === undefined && s.root === undefined;
+    const prevKey = slotKeyOf(s.scope, s.sessionId, s.root);
+    const nextKey = slotKeyOf(s.scope, sessionId, root);
+    const slots = { ...s.slots, [prevKey]: { tabs: s.tabs, tab: s.tab } };
+    if (nextKey === prevKey) {
+      state = { ...s, sessionId, root, slots };
+      return;
+    }
+    const existing = slots[nextKey];
+    const nextSlot = existing ? normalizeSlot(existing, s) : (firstBind ? { tabs: s.tabs, tab: s.tab } : normalizeSlot({ tabs: [], tab: '' }, s));
+    slots[nextKey] = nextSlot;
+    state = { ...s, sessionId, root, tabs: nextSlot.tabs, tab: nextSlot.tab, slots };
+    persist(state);
+    for (const l of listeners) l();
+  },
+  // Hot-plugs or unplugs the built-in File Tree, Terminal and Browser modules
+  setModules(next: Partial<PanelModules>) {
+    const s = current();
+    const m: PanelModules = {
+      files: next.files ?? s.files,
+      terminal: next.terminal ?? s.terminal,
+      browser: next.browser ?? s.browser,
+    };
+    if (s.files === m.files && s.terminal === m.terminal && s.browser === m.browser) return;
+    const main = normalizeSlot({ tabs: s.tabs, tab: s.tab }, m);
+    const slots: Record<string, PanelSlot | undefined> = {};
+    for (const [k, v] of Object.entries(s.slots)) {
+      if (v) slots[k] = normalizeSlot(v, m);
+    }
+    const key = slotKeyOf(s.scope, s.sessionId, s.root);
+    slots[key] = main;
+    const anyOn = m.files || m.terminal || m.browser;
+    state = { ...s, ...m, open: anyOn ? s.open : false, tabs: main.tabs, tab: main.tab, slots };
+    persist(state);
+    for (const l of listeners) l();
+  },
+  setFiles(files: boolean) { panel.setModules({ files }); },
+  // Changes how the panel scopes its tabs and open files (`project`, `session` or `global`). An unvisited target slot
+  // inherits the tabs currently on screen so switching the setting never blanks what the user is looking at
+  setScope(scope: PanelScope) {
+    const s = current();
+    if (!PANEL_SCOPES.includes(scope) || s.scope === scope) return;
+    const prevKey = slotKeyOf(s.scope, s.sessionId, s.root);
+    const nextKey = slotKeyOf(scope, s.sessionId, s.root);
+    const slots = { ...s.slots, [prevKey]: { tabs: s.tabs, tab: s.tab } };
+    const existing = slots[nextKey];
+    const nextSlot = existing && (existing.tabs.length > 1 || existing.tab !== FILES_TAB)
+      ? existing
+      : { tabs: s.tabs, tab: s.tab };
+    slots[nextKey] = nextSlot;
+    const views = { ...s.views };
+    const opened = { ...s.opened };
+    if (s.root && s.sessionId) {
+      const oldRoot = s.scope === 'session' ? `${s.sessionId}\t${s.root}` : s.root;
+      const newRoot = scope === 'session' ? `${s.sessionId}\t${s.root}` : s.root;
+      if (oldRoot !== newRoot) {
+        if (views[newRoot] === undefined && views[oldRoot] !== undefined) views[newRoot] = views[oldRoot];
+        if (opened[newRoot] === undefined && opened[oldRoot] !== undefined) opened[newRoot] = opened[oldRoot];
+      }
+    }
+    state = { ...s, scope, tabs: nextSlot.tabs, tab: nextSlot.tab, slots, views, opened };
+    persist(state);
+    for (const l of listeners) l();
+  },
+  // Carries an empty start-page session's panel state over when the user picks another agent on the start page
+  moveSession(fromId: string, toId: string) {
+    if (!fromId || !toId || fromId === toId) return;
+    const s = current();
+    const fromSlot = `s:${fromId}`, toSlot = `s:${toId}`;
+    const slots = { ...s.slots };
+    if (slots[fromSlot] && !slots[toSlot]) {
+      slots[toSlot] = slots[fromSlot];
+      delete slots[fromSlot];
+    }
+    const prefix = `${fromId}\t`;
+    const views = { ...s.views };
+    for (const [k, v] of Object.entries(views)) {
+      if (k.startsWith(prefix)) {
+        views[`${toId}\t${k.slice(prefix.length)}`] = v;
+      } else if (k.includes(`\n${prefix}`)) {
+        views[k.replace(`\n${prefix}`, `\n${toId}\t`)] = v;
+      }
+    }
+    const opened = { ...s.opened };
+    for (const [k, v] of Object.entries(opened)) {
+      if (k.startsWith(prefix)) opened[`${toId}\t${k.slice(prefix.length)}`] = v;
+    }
+    state = { ...s, ...(s.sessionId === fromId ? { sessionId: toId } : {}), slots, views, opened };
+  },
   // A file of `root` (relative path), from a file link, an edit row or a terminal: on the Files tab shown, else the first
   openFile(root: string, path: string, line?: number) {
     const s = current();
     const tab = s.tabs.find(t => t.id === s.tab)?.kind === 'files' ? s.tab : FILES_TAB;
     const key = viewKey(tab, root);
+    const r = scopedRoot(root);
     const view: PanelView = { path, ...(line !== undefined ? { line } : {}) };
-    update({ open: true, tab, views: { ...s.views, [key]: view }, opened: withOpened(s, key, view) });
+    update({ open: true, tab, views: { ...s.views, [key]: view }, opened: withOpened(s, r, view) });
   },
   // A plan whose file is outside `root` (or only in memory): shown in the viewer with its markdown text
   openPlan(root: string, view: { path: string; text?: string; planId?: string; line?: number }) {
     const s = current();
     const tab = s.tabs.find(t => t.id === s.tab)?.kind === 'files' ? s.tab : FILES_TAB;
     const key = viewKey(tab, root);
-    update({ open: true, tab, views: { ...s.views, [key]: view }, opened: withOpened(s, key, view) });
+    const r = scopedRoot(root);
+    update({ open: true, tab, views: { ...s.views, [key]: view }, opened: withOpened(s, r, view) });
   },
   // Keeps an open plan view's text in step when the agent revises the plan
   syncPlans(root: string, plans: { id: string; markdown: string }[]) {
     const s = current();
+    const r = scopedRoot(root);
     let changed = false;
     const views = { ...s.views };
     for (const [k, v] of Object.entries(views)) {
-      if (!v || v === 'review' || !v.planId || !(k === root || k.endsWith(`\n${root}`))) continue;
+      if (!v || v === 'review' || !v.planId || !(k === r || k.endsWith(`\n${r}`) || k === root || k.endsWith(`\n${root}`))) continue;
       const plan = plans.find(p => p.id === v.planId);
       if (plan && v.text !== plan.markdown) {
         views[k] = { ...v, text: plan.markdown };
         changed = true;
       }
     }
-    const list = s.opened[root];
+    const list = s.opened[r];
     const opened = list?.some(v => v !== 'review' && v.planId && plans.some(p => p.id === v.planId && p.markdown !== v.text))
-      ? { ...s.opened, [root]: list.map(v => {
+      ? { ...s.opened, [r]: list.map(v => {
           if (v === 'review' || !v.planId) return v;
           const plan = plans.find(p => p.id === v.planId);
           return plan && plan.markdown !== v.text ? { ...v, text: plan.markdown } : v;
@@ -200,12 +446,13 @@ export const panel = {
   // The files layout: a file's (or the review's) tab closed; the one shown passes to its neighbour, or the stage empties
   closeView(root: string, view: PanelView) {
     const s = current();
-    const list = s.opened[root] ?? [];
+    const r = scopedRoot(root);
+    const list = s.opened[r] ?? [];
     const at = list.findIndex(v => sameView(v, view));
     const rest = list.filter(v => !sameView(v, view));
-    const now = s.views[root];
+    const now = s.views[r];
     const next = now && sameView(now, view) ? rest[Math.min(Math.max(at, 0), rest.length - 1)] : now;
-    update({ views: { ...s.views, [root]: next }, opened: { ...s.opened, [root]: rest } });
+    update({ views: { ...s.views, [r]: next }, opened: { ...s.opened, [r]: rest } });
   },
   setExpanded(root: string, fn: (open: string[]) => string[]) {
     const s = current();
@@ -213,8 +460,14 @@ export const panel = {
   },
   // A new-tab page; its id, so the "+" that made it can keep the pointer from closing it
   newTab(): string {
+    const s = current();
+    if (!s.files && s.tabs.length === 1 && s.tabs[0]?.kind === 'new') {
+      const id = s.tabs[0].id;
+      update({ open: true, tab: id });
+      return id;
+    }
     const id = nextId('new');
-    update({ open: true, tabs: [...current().tabs, { id, kind: 'new' }], tab: id });
+    update({ open: true, tabs: [...s.tabs, { id, kind: 'new' }], tab: id });
     return id;
   },
   // A browser tab on `url`: the tab already on that site takes it, else a new one. The id of the tab, for the shell
@@ -242,9 +495,18 @@ export const panel = {
   // The engine named the process in a terminal's foreground
   terminalTitled(tab: string, title: string) {
     const s = current();
-    const at = s.tabs.find(t => t.id === tab);
-    if (!at || at.kind !== 'terminal' || at.title === title) return;
-    update({ tabs: s.tabs.map(t => (t.id === tab ? { ...at, title } : t)) });
+    let changed = false;
+    const mapTab = (t: PanelTab) => {
+      if (t.id !== tab || t.kind !== 'terminal' || t.title === title) return t;
+      changed = true;
+      return { ...t, title };
+    };
+    const tabs = s.tabs.map(mapTab);
+    const slots: Record<string, PanelSlot | undefined> = {};
+    for (const [k, slot] of Object.entries(s.slots)) {
+      if (slot) slots[k] = { ...slot, tabs: slot.tabs.map(mapTab) };
+    }
+    if (changed) update({ tabs, slots });
   },
   // The shell navigated a tab of this window itself (open_browser on a site a tab shows)
   showBrowser(tab: string, url: string) {
@@ -255,18 +517,32 @@ export const panel = {
   },
   titled(tab: string, url: string, title: string) {
     const s = current();
-    const at = s.tabs.find(t => t.id === tab);
-    if (!at || at.kind !== 'browser' || (at.url === url && at.title === title)) return;
-    update({ tabs: s.tabs.map(t => (t.id === tab ? { ...at, url, title } : t)) });
+    let changed = false;
+    const mapTab = (t: PanelTab) => {
+      if (t.id !== tab || t.kind !== 'browser' || (t.url === url && t.title === title)) return t;
+      changed = true;
+      return { ...t, url, title };
+    };
+    const tabs = s.tabs.map(mapTab);
+    const slots: Record<string, PanelSlot | undefined> = {};
+    for (const [k, slot] of Object.entries(s.slots)) {
+      if (slot) slots[k] = { ...slot, tabs: slot.tabs.map(mapTab) };
+    }
+    if (changed) update({ tabs, slots });
   },
   close(tab: string) {
     const s = current();
+    if (tab === FILES_TAB || (!s.files && s.tabs.length === 1 && s.tabs[0]?.kind === 'new')) return;
     const at = s.tabs.findIndex(t => t.id === tab);
-    if (at <= 0) return;
-    const tabs = s.tabs.filter(t => t.id !== tab);
+    if (at < 0) return;
+    const rawRest = s.tabs.filter(t => t.id !== tab);
+    const next = normalizeSlot({
+      tabs: rawRest,
+      tab: s.tab === tab ? (rawRest[Math.max(0, at - 1)]?.id ?? '') : s.tab,
+    }, s);
     // A Files tab's views go with it
     const views = Object.fromEntries(Object.entries(s.views).filter(([key]) => !key.startsWith(`${tab}\n`)));
-    update({ tabs, views, tab: s.tab === tab ? tabs[Math.max(0, at - 1)]!.id : s.tab });
+    update({ tabs: next.tabs, views, tab: next.tab });
   },
   setWidth(width: number | undefined) { update({ width }); },
   setTreeW(treeW: number | undefined) { update({ treeW }); },

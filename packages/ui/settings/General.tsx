@@ -1,7 +1,7 @@
 import { useEffect, useState, type KeyboardEvent } from 'react';
 import { useDesktop } from '../desktop';
 import type { AgentInfo } from '@acpira/shared/transcript';
-import { ACCOUNT_SWITCH_STRATEGIES, AGENT_CPU_CAP, AUTO_PROXY_URL, FILE_OPENER_NAMES, FILE_OPENERS, MIN_COMPACT_AT_TOKENS, proxyUrl, SESSION_SCOPES, type AccountSwitchStrategy, type FileOpener, type SessionScope, type SettingsView } from '@acpira/shared/settings';
+import { ACCOUNT_SWITCH_STRATEGIES, AGENT_CPU_CAP, AUTO_PROXY_URL, FILE_OPENER_NAMES, FILE_OPENERS, MIN_COMPACT_AT_TOKENS, PANEL_SCOPES, proxyUrl, SESSION_SCOPES, type AccountSwitchStrategy, type FileOpener, type PanelScope, type SessionScope, type SettingsView } from '@acpira/shared/settings';
 import { LANGUAGES, type Language } from '@acpira/shared/i18n';
 import { launchable, pickDefaultAgent } from '@acpira/shared/agentOrder';
 import { AgentMark } from '../chat/AgentMark';
@@ -38,9 +38,14 @@ export function General({ settings, agents, on }: { settings: SettingsView; agen
           <Select<SessionScope> options={scopes} value={settings.sessionScope} onChange={v => on.setSetting('sessionScope', v)} label={t('settings.sessionScope')} />
         </Field>}
         {/* IDE shells open files in their own editor; the desktop app asks the system or an editor's command line */}
-        {desktop && <Field label={t('settings.openFilesWith')} desc={t('settings.openFilesWith.desc')}>
-          <Select<FileOpener> options={fileOpeners} value={settings.openFilesWith} onChange={v => on.setSetting('openFilesWith', v)} label={t('settings.openFilesWith')} />
-        </Field>}
+        {desktop && <>
+          <Field label={t('settings.panelScope')} desc={t('settings.panelScope.desc')}>
+            <Select<PanelScope> options={PANEL_SCOPES.map(v => ({ value: v, label: t(`settings.panelScope.${v}`) }))} value={settings.panelScope ?? 'project'} onChange={v => on.setSetting('panelScope', v)} label={t('settings.panelScope')} />
+          </Field>
+          <Field label={t('settings.openFilesWith')} desc={t('settings.openFilesWith.desc')}>
+            <Select<FileOpener> options={fileOpeners} value={settings.openFilesWith} onChange={v => on.setSetting('openFilesWith', v)} label={t('settings.openFilesWith')} />
+          </Field>
+        </>}
       </Section>
 
       <Section title={t('settings.group.input')} desc={t('settings.group.input.desc')}>

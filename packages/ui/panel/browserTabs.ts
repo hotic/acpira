@@ -51,6 +51,41 @@ export function deliverToBrowserTab(tab: string, msg: BrowserHostMsg) {
 
 // The new-tab page's recent pages, as the shell last answered panelHistory
 export interface RecentPages { pages: BrowserPage[]; running: string[] }
+export const MAX_RECENT_PAGES = 5;
+
+function loopbackHost(raw: string): string {
+  try {
+    const u = new URL(raw);
+    const h = u.hostname === '127.0.0.1' || u.hostname === '[::1]' ? 'localhost' : u.hostname;
+    return u.port ? `${h}:${u.port}` : h;
+  } catch {
+    return raw;
+  }
+}
+
+function pageKey(page: BrowserPage): string {
+  const host = loopbackHost(page.url);
+  const title = page.title.trim();
+  if (title) return `${host}\n${title}`;
+  try { return `${host}\n${new URL(page.url).pathname}`; } catch { return page.url; }
+}
+
+// Collapses query-string or loopback-host variants that share the same title and port, keeping at most `limit` pages
+// (preferring a live URL when one of the duplicates is currently answering)
+export function dedupeRecentPages(pages: readonly BrowserPage[], running: ReadonlySet<string>, limit = MAX_RECENT_PAGES): BrowserPage[] {
+  const byKey = new Map<string, BrowserPage>();
+  for (const page of pages) {
+    const k = pageKey(page);
+    const prev = byKey.get(k);
+    if (!prev) {
+      if (byKey.size < limit) byKey.set(k, page);
+    } else if (!running.has(prev.url) && running.has(page.url)) {
+      byKey.set(k, page);
+    }
+  }
+  return [...byKey.values()];
+}
+
 let recent: RecentPages = { pages: [], running: [] };
 const recentListeners = new Set<() => void>();
 

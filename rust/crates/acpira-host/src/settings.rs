@@ -88,6 +88,10 @@ impl SettingsCenter {
       proxy: str_of("proxy"),
       open_files_with: str_of("openFilesWith"),
       desktop_layout: str_of("desktopLayout"),
+      panel_scope: str_of("panelScope"),
+      panel_files: self.read("panelFiles").as_bool().unwrap_or(true),
+      panel_terminal: self.read("panelTerminal").as_bool().unwrap_or(true),
+      panel_browser: self.read("panelBrowser").as_bool().unwrap_or(true),
     }
   }
 

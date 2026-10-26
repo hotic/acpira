@@ -4,8 +4,9 @@ import { Files, Globe, SquareTerminal, type LucideIcon } from 'lucide-react';
 import { t } from '../i18n';
 import { cn } from '../ui/cn';
 import { DiffStat } from '../chat/ToolCall';
-import { useRecentPages } from './browserTabs';
+import { dedupeRecentPages, useRecentPages } from './browserTabs';
 import { FileGlyph, dirOf, nameOf } from './files';
+import { usePanelValue } from './store';
 import { vscodeApi } from '../vscodeApi';
 
 // What "+" opens, picked 2026-10-23 among looks laid side by side: the panel's tools as squares, then the pages the
@@ -31,23 +32,27 @@ export function NewTab({ onPick, focus = true, changes }: {
 }) {
   const first = useRef<HTMLButtonElement>(null);
   const recent = useRecentPages();
+  const filesOn = usePanelValue(s => s.files);
+  const terminalOn = usePanelValue(s => s.terminal);
+  const browserOn = usePanelValue(s => s.browser);
   useEffect(() => {
     if (focus) first.current?.focus({ preventScroll: true });
     // Asked each time the page shows, so the dots say what runs now
-    vscodeApi().postMessage({ type: 'panelHistory' });
-  }, []);
+    if (browserOn) vscodeApi().postMessage({ type: 'panelHistory' });
+  }, [browserOn]);
   const tools: { Icon: LucideIcon; title: string; hint: string; pick: () => void }[] = [
-    { Icon: Files, title: t('panel.files'), hint: t('panel.filesHint'), pick: () => onPick({ kind: 'files' }) },
-    { Icon: SquareTerminal, title: t('panel.terminal'), hint: t('panel.terminalHint'), pick: () => onPick({ kind: 'terminal' }) },
-    { Icon: Globe, title: t('panel.browser'), hint: t('panel.browserHint'), pick: () => onPick({ kind: 'browser' }) },
+    ...(filesOn ? [{ Icon: Files, title: t('panel.files'), hint: t('panel.filesHint'), pick: () => onPick({ kind: 'files' }) }] : []),
+    ...(terminalOn ? [{ Icon: SquareTerminal, title: t('panel.terminal'), hint: t('panel.terminalHint'), pick: () => onPick({ kind: 'terminal' }) }] : []),
+    ...(browserOn ? [{ Icon: Globe, title: t('panel.browser'), hint: t('panel.browserHint'), pick: () => onPick({ kind: 'browser' }) }] : []),
   ];
   const running = new Set(recent.running);
-  const changed = changes?.files ?? [];
+  const pages = browserOn ? dedupeRecentPages(recent.pages, running) : [];
+  const changed = filesOn ? (changes?.files ?? []) : [];
   return (
     <div className="scroll-thin absolute inset-0 flex flex-col overflow-auto px-page" data-new-tab>
       <div className="min-h-page flex-1" />
       <div className="mx-auto flex w-full max-w-new-tab flex-col gap-page">
-        <div className="grid grid-cols-3 gap-gap">
+        <div className={cn('grid gap-gap', tools.length === 3 ? 'grid-cols-3' : tools.length === 2 ? 'grid-cols-2' : 'grid-cols-1')}>
           {tools.map((x, i) => (
             <button key={x.title} ref={i === 0 ? first : undefined} type="button" title={x.hint} onClick={x.pick}
               className="group/entry flex flex-col items-center justify-center gap-gap rounded-lg border border-line py-page text-2 text-fg-1 outline-none transition-colors hover:border-line-strong hover:bg-hover focus-visible:border-line-strong">
@@ -56,7 +61,7 @@ export function NewTab({ onPick, focus = true, changes }: {
             </button>
           ))}
         </div>
-        {(!!changed.length || recent.pages.length > 0) && (
+        {(!!changed.length || pages.length > 0) && (
           <section className="flex flex-col">
             {!!changed.length && <>
               <div className={LABEL}>{t('panel.changes')}</div>
@@ -69,8 +74,8 @@ export function NewTab({ onPick, focus = true, changes }: {
                 </button>
               ))}
             </>}
-            {recent.pages.length > 0 && <div className={cn(LABEL, !!changed.length && 'mt-gap')}>{t('panel.recent')}</div>}
-            {recent.pages.map(page => {
+            {pages.length > 0 && <div className={cn(LABEL, !!changed.length && 'mt-gap')}>{t('panel.recent')}</div>}
+            {pages.map(page => {
               const on = running.has(page.url);
               return (
                 <button key={page.url} type="button" title={page.url} onClick={() => onPick({ kind: 'browser', url: page.url })} className={ROW}>

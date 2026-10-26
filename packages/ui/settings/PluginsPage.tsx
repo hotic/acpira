@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
-import { BrainCircuit, Settings2 } from 'lucide-react';
+import { BrainCircuit, FolderTree, Globe, PanelsTopLeft, Settings2, SquareTerminal } from 'lucide-react';
 import type { AgentId, AgentInfo } from '@acpira/shared/transcript';
 import type { AgentInventory } from '@acpira/shared/inventory';
 import { moveAgent } from '@acpira/shared/agentOrder';
@@ -34,9 +34,16 @@ export interface PluginsPageProps {
   onOpen: (id: AgentId) => void;
   // Ask for an agent's inventory (its version for the tile's foot); a file scan, no process is started
   onInventory: (id: AgentId) => void;
+  // Built-in interface modules in the tool panel (`acpira.panelFiles`, `acpira.panelTerminal`, `acpira.panelBrowser`)
+  panelFiles?: boolean;
+  onPanelFiles?: (on: boolean) => void;
+  panelTerminal?: boolean;
+  onPanelTerminal?: (on: boolean) => void;
+  panelBrowser?: boolean;
+  onPanelBrowser?: (on: boolean) => void;
 }
 
-export function PluginsPage({ agents: all, inventories, onReorder, onDisabled, onOpen, onInventory }: PluginsPageProps) {
+export function PluginsPage({ agents: all, inventories, onReorder, onDisabled, onOpen, onInventory, panelFiles, onPanelFiles, panelTerminal, onPanelTerminal, panelBrowser, onPanelBrowser }: PluginsPageProps) {
   const agents = all.filter(a => !a.external);
   const [query, setQuery] = useState('');
   // The versions on the tiles' feet: every agent not scanned yet, once per visit
@@ -46,11 +53,26 @@ export function PluginsPage({ agents: all, inventories, onReorder, onDisabled, o
   });
   const q = query.trim().toLowerCase();
   const match = (a: AgentInfo) => !q || a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q);
+  const matchedAgents = agents.filter(match);
+  const builtinUi: { id: string; icon: ReactNode; name: string; desc: string; on: boolean; onToggle: (on: boolean) => void }[] = [
+    ...(onPanelFiles ? [{ id: 'files', icon: <FolderTree className="size-lead" strokeWidth={1.5} />, name: t('settings.plugins.files'), desc: t('settings.plugins.filesDesc'), on: panelFiles !== false, onToggle: onPanelFiles }] : []),
+    ...(onPanelTerminal ? [{ id: 'terminal', icon: <SquareTerminal className="size-lead" strokeWidth={1.5} />, name: t('settings.plugins.terminal'), desc: t('settings.plugins.terminalDesc'), on: panelTerminal !== false, onToggle: onPanelTerminal }] : []),
+    ...(onPanelBrowser ? [{ id: 'browser', icon: <Globe className="size-lead" strokeWidth={1.5} />, name: t('settings.plugins.browser'), desc: t('settings.plugins.browserDesc'), on: panelBrowser !== false, onToggle: onPanelBrowser }] : []),
+  ].filter(m => !q || m.name.toLowerCase().includes(q) || m.desc.toLowerCase().includes(q) || m.id.includes(q));
   return <>
     <SearchBox value={query} onChange={setQuery} label={t('settings.plugins.search')} />
-    <Layer icon={<BrainCircuit />} title={t('settings.plugins.agents')} count={agents.filter(match).length}>
-      <AgentTiles agents={all} inventories={inventories} filter={q ? match : undefined} onReorder={onReorder} onDisabled={onDisabled} onOpen={onOpen} />
-    </Layer>
+    {(!q || matchedAgents.length > 0) && (
+      <Layer icon={<BrainCircuit />} title={t('settings.plugins.agents')} count={matchedAgents.length}>
+        <AgentTiles agents={all} inventories={inventories} filter={q ? match : undefined} onReorder={onReorder} onDisabled={onDisabled} onOpen={onOpen} />
+      </Layer>
+    )}
+    {builtinUi.length > 0 && (
+      <Layer rule={!q || matchedAgents.length > 0} icon={<PanelsTopLeft />} title={t('settings.plugins.interface')} count={builtinUi.length}>
+        <div className="grid grid-cols-2 gap-gap @max-[600px]/settings-shell:grid-cols-1">
+          {builtinUi.map(m => <BuiltinTile key={m.id} {...m} />)}
+        </div>
+      </Layer>
+    )}
   </>;
 }
 
@@ -219,6 +241,42 @@ function AgentTile({ agent: a, on, last, dragging, inventory, onToggle, onOpen, 
             onClick={onOpen} onKeyDown={onKeyDown} className="text-fg-2">
             <Settings2 strokeWidth={1.75} />
           </IconButton>
+        </span>
+      </div>
+    </Card>
+  );
+}
+
+// One built-in interface module tile: same silhouette as an agent tile, switched in place without a restart
+function BuiltinTile({ id, icon, name, desc, on, onToggle }: {
+  id: string;
+  icon: ReactNode;
+  name: string;
+  desc: string;
+  on: boolean;
+  onToggle: (on: boolean) => void;
+}) {
+  return (
+    <Card onClick={e => { if (!(e.target as Element).closest('[data-no-drag]')) onToggle(!on); }}
+      data-plugin-tile={id}
+      className="flex h-full cursor-pointer flex-col shadow-none transition-[background-color,box-shadow] hover:bg-hover">
+      <div className="flex items-center gap-gap p-pad">
+        <span className={cn('flex size-(--tile-mark) shrink-0 items-center justify-center rounded-lg bg-active text-fg-1', !on && 'text-fg-3')}>
+          {icon}
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col gap-y-(--stack-gap)">
+          <span className={cn('truncate text-2 font-medium', on ? 'text-fg-1' : 'text-fg-2')}>{name}</span>
+          <span className="truncate text-3 text-fg-3">{desc}</span>
+        </span>
+        <span data-no-drag className="flex shrink-0 items-center">
+          <Switch checked={on} onCheckedChange={onToggle}
+            aria-label={t('settings.agent.enabled', { agent: name })}
+            title={t('settings.agent.enabled', { agent: name })} />
+        </span>
+      </div>
+      <div className="mt-auto flex h-(--tile-foot) items-center justify-between gap-gap border-t border-line px-pad">
+        <span className="flex min-w-0 items-baseline gap-2 text-3 text-fg-3">
+          <span className="shrink-0">{t('settings.plugins.bundled')}</span>
         </span>
       </div>
     </Card>

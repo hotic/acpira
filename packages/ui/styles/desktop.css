@@ -172,8 +172,9 @@
   [data-column-act] > span { min-width: 0; overflow: hidden; }
   /* A page switch (chat and settings replace each other in App): the canvas, the sheet and the pinned title row are the same
      on both and stay; what sits in the column or rail and on the sheet fades in as it mounts. The sheet's chat content sits
-     in a display: contents wrapper, so its children are named too */
-  .acp-shell[data-desktop] :is(
+     in a display: contents wrapper, so its children are named too. Excluded on BrowserPanel so its iframe is not held in a
+     fill-mode animation compositing layer */
+  .acp-shell[data-desktop]:not([data-browser-panel]) :is(
     [data-sheet] > :not(.contents, [data-sheet-dim]), [data-sheet] > .contents > *,
     [data-session-panel] > :not([role="separator"], [data-title-space]),
     [data-settings-rail] > :not([data-title-space])

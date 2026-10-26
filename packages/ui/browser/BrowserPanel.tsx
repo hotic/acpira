@@ -129,8 +129,13 @@ export function BrowserPanel() {
   // "Comment to chat" swapped the pick's toolbar for a comment field
   const [commenting, setCommenting] = useState(false);
   const morph = useMorph<HTMLDivElement>(commenting);
+  // Whether the current frame src has finished its initial load; before that the iframe uses the theme's background so dark
+  // mode never flashes a #fff wall while a page loads
+  const [loadedSrc, setLoadedSrc] = useState<string>();
   // Bumped to reload a page the picker is not in
   const [reloads, setReloads] = useState(0);
+  const frameKey = frame ? `${frame.src}#${reloads}` : undefined;
+  const loaded = frameKey !== undefined && loadedSrc === frameKey;
   const iframe = useRef<HTMLIFrameElement>(null);
   const root = useRef<HTMLDivElement>(null);
   const hellos = useRef(0);
@@ -243,6 +248,7 @@ export function BrowserPanel() {
 
   // A page without the picker (another site, a non-HTML response) never says hello: picking and history are off there
   const onLoad = () => {
+    if (frameKey) setLoadedSrc(frameKey);
     window.setTimeout(() => {
       setPickable(hellos.current !== checkedHellos.current);
       checkedHellos.current = hellos.current;
@@ -315,7 +321,7 @@ export function BrowserPanel() {
           {/* A tab of the desktop tool panel lies on the window canvas like the Files tab, and a page shown is a sheet on it
               (desktop.css [data-sheet]); a window or an editor tab of its own keeps the plain surface */}
           <div ref={root} className={cn('acp-shell relative flex h-full min-h-0 w-full flex-col overflow-hidden', !IN_PANEL && 'bg-bg-0')} data-theme={theme} data-surface-host="editor"
-            data-desktop={IN_PANEL || undefined} {...appearanceDataAttrs(appearance)} {...lookAttrs(shellLook)}>
+            data-desktop={IN_PANEL || undefined} data-browser-panel="" {...appearanceDataAttrs(appearance)} {...lookAttrs(shellLook)}>
             <div className={cn('flex shrink-0 items-center gap-1 px-pad py-gap-half', !IN_PANEL && 'border-b border-line')}>
               <IconButton size="sm" className={TOOL} title={t('browser.back')} aria-label={t('browser.back')} disabled={!pickable} onClick={() => toPicker({ type: 'history', go: -1 })}><ArrowLeft strokeWidth={1.5} /></IconButton>
               <IconButton size="sm" className={TOOL} title={t('browser.forward')} aria-label={t('browser.forward')} disabled={!pickable} onClick={() => toPicker({ type: 'history', go: 1 })}><ArrowRight strokeWidth={1.5} /></IconButton>
@@ -362,9 +368,9 @@ export function BrowserPanel() {
                   {error.error !== 'engine-too-old' && <Button onClick={() => post({ type: 'browserNavigate', url: error.target })}>{t('browser.retry')}</Button>}
                 </div>
               ) : frame ? (
-                // Pages expect an opaque canvas: one that paints nothing would show the editor theme through
-                <iframe key={`${frame.src}#${reloads}`} ref={iframe} src={frame.src} title={title || shown} onLoad={onLoad}
-                  className="absolute inset-0 size-full border-0 bg-web-page" />
+                // Pages expect an opaque canvas once loaded; while loading, follow the shell background so dark mode never flashes white
+                <iframe key={frameKey} ref={iframe} src={frame.src} title={title || shown} onLoad={onLoad}
+                  className={cn('absolute inset-0 size-full border-0', loaded ? 'bg-web-page' : 'bg-bg-0')} />
               ) : !shown && (
                 <div className="flex h-full flex-col items-center justify-center gap-1 px-page text-center">
                   <Globe strokeWidth={1} className="mb-gap size-ctl text-fg-3" />

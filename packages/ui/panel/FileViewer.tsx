@@ -14,7 +14,7 @@ import { Prose } from '../chat/Prose';
 import { OpenToolFileContext } from '../chat/fileLinks';
 import { requestCodeHighlight } from '../chat/diffHighlight';
 import { codeLanguage, type CodeToken } from '../chat/codeLanguage';
-import { project, shellResizeIdleIn, type FileRead } from './api';
+import { project, sameRead, shellResizeIdleIn, type FileRead } from './api';
 import type { LineRange } from './store';
 import { FileGlyph, dirOf, nameOf } from './files';
 
@@ -100,7 +100,7 @@ const HIGHLIGHT_MAX = 256 * 1024;
 
 // Syntax colours for the file and each hunk's removed lines, from the transcript's highlight worker
 function useHighlight(path: string, read: FileRead | undefined) {
-  const [colored, setColored] = useState<{ read: FileRead; after: CodeToken[][]; removed: CodeToken[][][] }>();
+  const [colored, setColored] = useState<{ path: string; read: FileRead; after: CodeToken[][]; removed: CodeToken[][][] }>();
   useEffect(() => {
     const text = read?.text;
     const language = codeLanguage(path);
@@ -115,13 +115,16 @@ function useHighlight(path: string, read: FileRead | undefined) {
         if (!live) return;
         const wait = shellResizeIdleIn();
         if (wait > 0) { timer = setTimeout(apply, wait); return; }
-        setColored({ read: read!, after, removed });
+        setColored({ path, read: read!, after, removed });
       };
       apply();
     }).catch(() => { /* plain text stays */ });
     return () => { live = false; if (timer !== undefined) clearTimeout(timer); };
-  }, [read]);
-  return colored?.read === read ? colored : undefined;
+  }, [path, read]);
+  if (!colored || colored.path !== path) return undefined;
+  if (colored.read === read) return colored;
+  // Keep the file's syntax colours while updated diff hunks are being highlighted, so the code never flashes plain text
+  return colored.read.text === read?.text ? { ...colored, removed: [] } : undefined;
 }
 
 function Code({ tokens, text, light }: { tokens?: CodeToken[]; text: string; light: boolean }) {
@@ -208,25 +211,41 @@ function CloseView({ onClose }: { onClose: () => void }) {
 
 export function FileViewer(p: FileViewerProps) {
   const light = useTheme() === 'light';
-  const [read, setRead] = useState<FileRead & { key: string }>();
-  const key = `${p.path}\n${p.base}`;
+  const [read, setRead] = useState<FileRead & { path: string; base: ProjectBase }>();
   const inline = useMemo<FileRead | undefined>(() => (p.text !== undefined ? { text: p.text, hunks: [] } : undefined), [p.text]);
+  const sessionRef = useRef(p.sessionId);
+  sessionRef.current = p.sessionId;
+  // Against `head` the file and its diff belong to the project, not to a conversation, so switching sessions does not
+  // re-read the file; against `session` the hunks are that conversation's own
+  const readTarget = p.base === 'session' ? `${p.path}\n${p.base}\n${p.sessionId}` : `${p.path}\n${p.base}`;
   useEffect(() => {
     if (p.text !== undefined) return;
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    void project.file(p.sessionId, p.path, p.base).then(r => {
-      const apply = () => {
-        if (!live) return;
-        const wait = shellResizeIdleIn();
-        if (wait > 0) { timer = setTimeout(apply, wait); return; }
-        setRead({ ...r, key });
-      };
-      apply();
-    });
+    const ask = (sid: string) => {
+      void project.file(sid, p.path, p.base).then(r => {
+        const apply = () => {
+          if (!live) return;
+          if ((r.error === 'noProject' || r.error === 'timeout') && sessionRef.current !== sid) {
+            ask(sessionRef.current);
+            return;
+          }
+          const wait = shellResizeIdleIn();
+          if (wait > 0) { timer = setTimeout(apply, wait); return; }
+          setRead(prev => {
+            if ((r.error === 'noProject' || r.error === 'timeout') && prev?.path === p.path && prev.text !== undefined) return prev;
+            if (prev && prev.path === p.path && prev.base === p.base && prev.text === r.text && prev.error === r.error && sameRead(prev.hunks, r.hunks)) return prev;
+            return { ...r, path: p.path, base: p.base };
+          });
+        };
+        apply();
+      });
+    };
+    ask(sessionRef.current);
     return () => { live = false; if (timer !== undefined) clearTimeout(timer); };
-  }, [p.sessionId, key, p.refresh, p.text !== undefined]);
-  const current = inline ?? (read?.key === key ? read : undefined);
+  }, [readTarget, p.refresh, p.text !== undefined]);
+  // Keep showing the file's text while its diff base switches between `session` and `head`, so the viewer never blanks
+  const current = inline ?? (read?.path === p.path ? read : undefined);
   const colored = useHighlight(p.path, current);
   const hunks = current?.hunks ?? [];
   const rows = useMemo(() => (current?.text !== undefined ? viewRows(current.text, current.hunks, colored?.after, colored?.removed) : []), [current, colored]);
@@ -267,8 +286,8 @@ export function FileViewer(p: FileViewerProps) {
   // A file opened at a line goes there, else to the change nearest its top
   const placed = useRef<string | undefined>(undefined);
   useLayoutEffect(() => {
-    if (!current || placed.current === `${key}\n${p.line ?? ''}`) return;
-    placed.current = `${key}\n${p.line ?? ''}`;
+    if (!current || placed.current === `${p.path}\n${p.line ?? ''}`) return;
+    placed.current = `${p.path}\n${p.line ?? ''}`;
     const target = p.selection?.start ?? p.line;
     if (target !== undefined) {
       centerRow(`[data-line="${target}"]`, false);

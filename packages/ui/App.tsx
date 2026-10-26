@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountAction, AgentInstallProgress, EditTurnRequest, FileHit, HostMsg, InitState, NativeSessionsState, SessionHit, WebviewMsg } from '@acpira/shared/protocol';
 import type { AccountInfo, AgentId, AgentInfo, ConfigControl, FullDiffSource, SessionCategories, SessionControls, SessionSummary, SessionView, Turn } from '@acpira/shared/transcript';
 import type { ModelShapes } from '@acpira/shared/modelShapes';
-import type { HiddenMap, SettingsView } from '@acpira/shared/settings';
+import type { HiddenMap, PanelScope, SettingKey, SettingsView } from '@acpira/shared/settings';
 import type { AgentInventory } from '@acpira/shared/inventory';
 import type { Locale } from '@acpira/shared/i18n';
 import { reuse, reuseById } from '@acpira/shared/reuse';
@@ -16,7 +16,7 @@ import { lookFromSettings, resolveTheme } from './look';
 import { useVsCodeTheme } from './useVsCodeTheme';
 import { settleProject } from './panel/api';
 import { deliverToBrowserTab, installBrowserTabs, setRecentPages } from './panel/browserTabs';
-import { panel } from './panel/store';
+import { panel, panelState } from './panel/store';
 import { deliverTerminal, startTerminals, terminalsConnected } from './panel/terminals';
 import { vscodeApi } from './vscodeApi';
 import { desktopShell, pushShellToast, runShellCommand, setDesktopMenu, setUpdateState, setWindowMaximized } from './desktop';
@@ -117,6 +117,19 @@ type InitEnv = Pick<InitState, 'host' | 'home' | 'cwd' | 'blobBase'>;
 
 const EMPTY_TURNS: Turn[] = [];
 const EMPTY_CONTROLS: SessionControls = { modes: [], options: [] };
+
+function syncPanelScope(incoming: SettingsView): SettingsView {
+  panel.setModules({
+    files: incoming.panelFiles !== false,
+    terminal: incoming.panelTerminal !== false,
+    browser: incoming.panelBrowser !== false,
+  });
+  if (incoming.panelScope) {
+    panel.setScope(incoming.panelScope);
+    return incoming;
+  }
+  return { ...incoming, panelScope: panelState().scope };
+}
 
 // Root of the real webview: consumes the whole state pushed by the host, posts actions back via postMessage unchanged.
 // The settings page is a local view swap over the chat (Codex-style), not a separate webview
@@ -228,7 +241,7 @@ export function App() {
           break;
         }
         // A sidecar that came back answers nothing it was asked before: pending controls requests go out again
-        case 'init': controlsAsked.current.clear(); setInit({ host: m.state.host, home: m.state.home, cwd: m.state.cwd, blobBase: m.state.blobBase }); setAppearance(m.state.appearance); lastAgents.current = m.state.agents; setAgents(m.state.agents); setSessions(m.state.sessions); setCategories(m.state.categories); setAccounts(m.state.accounts); setAccountActions(m.state.accountActions ?? []); setAgentInstalls(m.state.agentInstalls ?? []); setHidden(m.state.hidden); setSession(views.init(m.state.active)); setNoProject(!m.state.active); setSettings(m.state.settings); setLocale(m.state.locale); setLoc(m.state.locale); terminalsConnected(m.state.home); watchConnections(); break;
+        case 'init': controlsAsked.current.clear(); setInit({ host: m.state.host, home: m.state.home, cwd: m.state.cwd, blobBase: m.state.blobBase }); setAppearance(m.state.appearance); lastAgents.current = m.state.agents; setAgents(m.state.agents); setSessions(m.state.sessions); setCategories(m.state.categories); setAccounts(m.state.accounts); setAccountActions(m.state.accountActions ?? []); setAgentInstalls(m.state.agentInstalls ?? []); setHidden(m.state.hidden); setSession(views.init(m.state.active)); setNoProject(!m.state.active); setSettings(syncPanelScope(m.state.settings)); setLocale(m.state.locale); setLoc(m.state.locale); terminalsConnected(m.state.home); watchConnections(); break;
         case 'appearance': setAppearance(m.appearance); break;
         // An agent whose executable appeared or vanished has a stale inventory (binary path, version); drop it so the page rescans
         case 'agents': {
@@ -259,7 +272,15 @@ export function App() {
           if (m.command === 'settings') { setView('settings'); break; }
           if (m.command === 'about') { setPage({ kind: 'about' }); setView('settings'); break; }
           // The View menu's layout picks: written like the gear's, the page they reach stays up
-          if (m.command === 'layoutChat' || m.command === 'layoutFiles') { post({ type: 'setSetting', key: 'desktopLayout', value: m.command === 'layoutFiles' ? 'files' : 'chat' }); break; }
+          if (m.command === 'layoutChat' || m.command === 'layoutFiles') {
+            if (m.command === 'layoutFiles') {
+              panel.setFiles(true);
+              setSettings(s => (s ? { ...s, panelFiles: true, desktopLayout: 'files' } : s));
+              post({ type: 'setSetting', key: 'panelFiles', value: true });
+            }
+            post({ type: 'setSetting', key: 'desktopLayout', value: m.command === 'layoutFiles' ? 'files' : 'chat' });
+            break;
+          }
           setView('chat');
           runShellCommand(m.command);
           break;
@@ -282,7 +303,7 @@ export function App() {
           });
           break;
         }
-        case 'settings': setSettings(m.settings); setLocale(m.locale); setLoc(m.locale); break;
+        case 'settings': setSettings(syncPanelScope(m.settings)); setLocale(m.locale); setLoc(m.locale); break;
         case 'inventory': setInventories(inv => ({ ...inv, [m.agent]: m.inventory })); break;
         case 'shared': setShared({ view: m.view, error: m.error }); break;
         // A reply without the review lists (a plain refresh) keeps the ones already shown: a review always re-asks on open
@@ -310,6 +331,7 @@ export function App() {
         case 'panelHistory': setRecentPages({ pages: m.pages, running: m.running }); break;
         case 'panelOpenBrowser':
           setView('chat');
+          if (!panelState().browser) { if (m.url) post({ type: 'openExternal', url: m.url }); break; }
           if (!(m.tab && panel.showBrowser(m.tab, m.url))) panel.openBrowser(m.url);
           break;
         case 'sessionMarkdown': settleMarkdown(m.seq, m.markdown, m.error); break;
@@ -448,7 +470,14 @@ export function App() {
     refreshChatgpt: () => post({ type: 'chatgptStatus' }),
     connectChatgpt: () => { post({ type: 'connectChatgpt' }); setView('chat'); },
     openChatgpt: id => { post({ type: 'selectSession', id }); setView('chat'); },
-    setSetting: (key, value) => post({ type: 'setSetting', key, value }),
+    setSetting: (key, value) => {
+      if (key === 'panelScope') panel.setScope(value as PanelScope);
+      if (key === 'panelFiles') panel.setModules({ files: value as boolean });
+      if (key === 'panelTerminal') panel.setModules({ terminal: value as boolean });
+      if (key === 'panelBrowser') panel.setModules({ browser: value as boolean });
+      setSettings(s => (s ? { ...s, [key]: value } : s));
+      post({ type: 'setSetting', key, value });
+    },
     saveSubagents: (base, personas) => post({ type: 'setSetting', key: 'subagents', value: { base, personas } }),
     saveSubagentGroups: (base, groups) => post({ type: 'setSetting', key: 'subagents', value: { baseGroups: base, groups } }),
     setAppearance: (axis, value) => post({ type: 'setAppearance', axis, value }),
@@ -487,11 +516,24 @@ export function App() {
     setView('settings');
   }, []);
 
-  // Desktop: the gear menu's theme, language and layout switches write the same settings the settings page does
-  const quickTheme = settings?.theme, quickLanguage = settings?.language, quickLayout = settings?.desktopLayout;
+  // Desktop: the gear menu's theme, language, layout and panel-scope switches write the same settings the settings page does
+  const quickTheme = settings?.theme, quickLanguage = settings?.language, quickLayout = settings?.desktopLayout, quickScope = settings?.panelScope;
+  const quickFiles = settings?.panelFiles, quickTerminal = settings?.panelTerminal, quickBrowser = settings?.panelBrowser;
   const quickSettings = useMemo<QuickSettings | undefined>(() => desktop && quickTheme && quickLanguage
-    ? { theme: quickTheme, language: quickLanguage, layout: quickLayout ?? 'chat', set: (key, value) => post({ type: 'setSetting', key, value }) }
-    : undefined, [quickTheme, quickLanguage, quickLayout]);
+    ? {
+        theme: quickTheme,
+        language: quickLanguage,
+        layout: quickLayout ?? 'chat',
+        panelScope: quickScope ?? 'project',
+        panelFiles: quickFiles !== false,
+        anyPanelModule: quickFiles !== false || quickTerminal !== false || quickBrowser !== false,
+        set: (key, value) => {
+          if (key === 'panelScope') panel.setScope(value as PanelScope);
+          setSettings(s => (s ? { ...s, [key]: value } : s));
+          post({ type: 'setSetting', key, value });
+        },
+      }
+    : undefined, [quickTheme, quickLanguage, quickLayout, quickScope, quickFiles, quickTerminal, quickBrowser]);
 
   cwdRef.current = session?.cwd ?? init?.cwd ?? '';
   if (!init || !settings) return null;
@@ -579,6 +621,7 @@ export function App() {
       subagentTranscripts={subagentTranscripts}
       on={on}
       replayKey={session?.id}
+      catchingUp={!!session && views.catchingUp === session.id}
       onOpenSettings={openSettings}
       desktop={desktop}
       noProject={desktop && noProject}
