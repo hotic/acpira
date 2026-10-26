@@ -1659,7 +1659,14 @@ fn first<'a>(raw: &'a Map<String, Value>, keys: &[&str]) -> Option<&'a Value> {
 }
 
 fn read_range_from_raw(raw: &Map<String, Value>, locations: Option<&[Location]>) -> Option<ReadRange> {
-  let path = path_from_raw(Some(raw)).or_else(|| locations.filter(|l| l.len() == 1).map(|l| l[0].path.clone()))?;
+  let path = match path_from_raw(Some(raw)) {
+    // The built-in agent's input names the file relative to the session folder while its location is absolute: the
+    // range takes the location's spelling, which the webview matches it against
+    Some(p) => locations
+      .and_then(|l| l.iter().find(|loc| loc.path != p && std::path::Path::new(&loc.path).ends_with(&p)))
+      .map_or(p, |loc| loc.path.clone()),
+    None => locations.filter(|l| l.len() == 1).map(|l| l[0].path.clone())?,
+  };
   let start = positive(first(raw, &["line_offset", "start_line", "startLine", "offset"]))?;
   let count = positive(first(raw, &["n_lines", "limit", "line_count"]));
   let end = positive(first(raw, &["end_line", "endLine"])).or_else(|| count.map(|c| start + c - 1));

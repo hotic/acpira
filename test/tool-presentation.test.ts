@@ -75,6 +75,8 @@ describe('ACP tool presentation', () => {
     expect((agentTurn('read-partial').blocks as ToolCallBlock[]).map(toolFiles)).toEqual([
       ['/repo/a.ts:120'], ['/repo/a.ts'], ['/repo/a.ts'],
     ]);
+    // A relative input path with an absolute location still names the whole window
+    expect((agentTurn('read-relative-input').blocks as ToolCallBlock[]).map(toolFiles)).toEqual([['/repo/src/tools/read.rs:140–229']]);
   });
 
   it('renders stored verbs in the current UI language', () => {
