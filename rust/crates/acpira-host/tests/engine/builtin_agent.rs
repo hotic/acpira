@@ -866,3 +866,82 @@ async fn a_plugin_s_prompt_folder_reaches_the_built_in_agent_s_system_prompt() {
   let body = env.server.requests()[0].body.to_string();
   assert!(body.contains("PLUGIN-MARK"), "{body}");
 }
+
+/// Answers every hook of the built-in agent's loop and writes each call to calls.jsonl in its data folder
+const LOOPER: &str = r#"
+import { createInterface } from 'node:readline';
+import { appendFileSync, mkdirSync } from 'node:fs';
+const send = m => process.stdout.write(JSON.stringify(m) + '\n');
+let data = '';
+const answer = (method, p) => {
+  switch (method) {
+    case 'hook/tools': return { tools: p.tools.filter(t => t.name !== 'glob') };
+    case 'hook/context': return { system: p.system + '\nPLUGIN-RULE' };
+    case 'hook/model.request': return { headers: { 'x-plugin': 'on' } };
+    case 'hook/tool.before': return p.tool === 'read' ? { result: { text: 'READ-BY-PLUGIN' } } : null;
+    case 'hook/shell': return { command: 'echo "$PLUGIN_VAR"', env: { PLUGIN_VAR: "from 'plugin'" } };
+    case 'hook/tool.after': return p.tool === 'bash' ? { result: { text: 'AFTER:' + p.result.text } } : null;
+    case 'hook/websearch': return { text: 'RESULTS FOR ' + p.query };
+    case 'hook/compaction': return { summary: 'PLUGIN SUMMARY' };
+  }
+  return null;
+};
+createInterface({ input: process.stdin }).on('line', line => {
+  const m = JSON.parse(line);
+  if (m.method === 'initialize') { data = m.params.plugin.data; mkdirSync(data, { recursive: true }); return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: 1 } }); }
+  if (m.id === undefined) return;
+  appendFileSync(data + '/calls.jsonl', JSON.stringify({ method: m.method }) + '\n');
+  send({ jsonrpc: '2.0', id: m.id, result: answer(m.method, m.params) });
+}).on('close', () => process.exit(0));
+"#;
+
+/// The text of every `tool` message of a model call
+fn tool_results(body: &Value) -> Vec<String> {
+  body["messages"].as_array().unwrap().iter().filter(|m| m["role"] == "tool").map(|m| m["content"].as_str().map(str::to_owned).unwrap_or_else(|| m["content"].to_string())).collect()
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugin_reshapes_every_request_tool_call_and_summary_of_the_loop() {
+  if !acpira_host::plugins::host::on_path("node") {
+    return;
+  }
+  let mut env = Env::new();
+  let plugins = tempfile::tempdir().unwrap();
+  let hooks = ["tools", "context", "model.request", "tool.before", "tool.after", "shell", "websearch", "compaction"];
+  let rt = crate::acp_session::plugin_runtime::plugin(plugins.path(), "looper", LOOPER, &[], &hooks).await;
+  env.deps.plugin_runtime = Some(rt.clone());
+  let s = env.session().await;
+  env.server.push(mock::tools(&[("c1", "read", json!({ "path": "missing.txt" }))]));
+  env.server.push(mock::tools(&[("c2", "bash", json!({ "command": "echo hi" }))]));
+  env.server.push(mock::tools(&[("c3", "websearch", json!({ "query": "acpira" }))]));
+  env.server.push(mock::text("Done."));
+  let task = spawn_prompt(&s, "go");
+  let card = wait_block(&s, "permission").await;
+  let allow = card["options"].as_array().unwrap().iter().find(|o| o["kind"] == "allow_once").unwrap()["id"].clone();
+  s.resolve_permission(card["id"].as_str().unwrap(), allow.as_str().unwrap());
+  task.await.unwrap();
+  let reqs = env.server.requests();
+  assert_eq!(reqs.len(), 4);
+  // Every call: the plugin's rule in the system prompt, its header, and the tool it left out missing
+  for r in &reqs {
+    assert!(r.body["messages"][0]["content"].as_str().is_some_and(|c| c.ends_with("\nPLUGIN-RULE")), "{}", r.body["messages"][0]);
+    assert_eq!(r.header("x-plugin"), Some("on"));
+    let names: Vec<&str> = r.body["tools"].as_array().unwrap().iter().filter_map(|t| t["function"]["name"].as_str()).collect();
+    assert!(names.contains(&"read") && !names.contains(&"glob"), "{names:?}");
+  }
+  // The read answered by the plugin, the command run as it rewrote it with its variable and its result changed after,
+  // the search answered by its backend
+  let results = tool_results(&reqs[3].body);
+  assert_eq!(results[0], "READ-BY-PLUGIN");
+  assert!(results[1].starts_with("AFTER:") && results[1].contains("from 'plugin'"), "{results:?}");
+  assert_eq!(results[2], "RESULTS FOR acpira");
+  // /compact: the plugin writes the summary, no model is called, and the next call starts from it
+  s.prompt("/compact".into(), vec![], false, None, None).await;
+  assert_eq!(env.server.requests().len(), 4);
+  env.server.push(mock::text("Again."));
+  s.prompt("next".into(), vec![], false, None, None).await;
+  let reqs = env.server.requests();
+  assert!(reqs[4].body["messages"].to_string().contains("PLUGIN SUMMARY"), "{}", reqs[4].body["messages"]);
+  rt.stop_all().await;
+}

@@ -39,6 +39,14 @@ pub trait ClientHandlers: Send + Sync + 'static {
   fn on_remote_tool(&self, _req: Value, _cancel: Cancel) -> BoxFuture<Result<Value, RpcError>> {
     Box::pin(async { Err(RpcError::method_not_found(crate::acp::session::remote::TOOL)) })
   }
+  /// The built-in agent asks which of its loop's hooks the plugins declare (`acpira_agent::plugin_hooks::HOOKS`)
+  fn on_plugin_hooks(&self) -> BoxFuture<Result<Value, RpcError>> {
+    Box::pin(async { Ok(serde_json::json!({ "hooks": [] })) })
+  }
+  /// One of those hooks (`acpira_agent::plugin_hooks::HOOK`): the payload as the plugins left it
+  fn on_plugin_hook(&self, _req: Value) -> BoxFuture<Result<Value, RpcError>> {
+    Box::pin(async { Err(RpcError::method_not_found(acpira_agent::plugin_hooks::HOOK)) })
+  }
   fn on_stderr(&self, _line: &str) {}
   fn on_exit(&self, _code: Option<i32>, _signal: Option<String>) {}
 }
@@ -86,6 +94,8 @@ impl Inbound for Router {
       "session/request_permission" => h.on_permission(params, cancel),
       "elicitation/create" => h.on_elicitation(params, cancel),
       crate::acp::session::remote::TOOL => h.on_remote_tool(params, cancel),
+      acpira_agent::plugin_hooks::HOOKS => h.on_plugin_hooks(),
+      acpira_agent::plugin_hooks::HOOK => h.on_plugin_hook(params),
       GROK_ASK_QUESTION => match crate::acp::vendors::grok::parse_question(&params) {
         Ok(req) => h.on_grok_question(req, cancel),
         Err(e) => Box::pin(async move { Err(e) }),

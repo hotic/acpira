@@ -147,6 +147,19 @@ impl Utf8Tail {
 pub(crate) const UTF8_PRELUDE: &str = "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding; ";
 
 /// The command line under the shell, in a process group of its own, output piped, no stdin, pagers off
+/// Variables set in front of a command line, for the shell `command` runs it in: `export K='v'; ` (PowerShell
+/// `$env:K='v'; ` on Windows), the value quoted so it is taken as it is
+pub fn env_prefix(env: &[(String, String)]) -> String {
+  let mut out = String::new();
+  for (k, v) in env.iter().filter(|(k, _)| !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')) {
+    #[cfg(windows)]
+    out.push_str(&format!("$env:{k}='{}'; ", v.replace('\'', "''")));
+    #[cfg(not(windows))]
+    out.push_str(&format!("export {k}='{}'; ", v.replace('\'', "'\\''")));
+  }
+  out
+}
+
 pub(crate) fn command(command: &str, workdir: &Path) -> tokio::process::Command {
   #[cfg(windows)]
   let full = format!("{UTF8_PRELUDE}{command}");

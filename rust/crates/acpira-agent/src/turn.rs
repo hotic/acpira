@@ -530,6 +530,12 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
     st.sidekick_told = crate::acp::sidekick_of(&config, &st);
   }
   let mut s = setup(server, session, params, &offer.tools)?;
+  // Which of the plugins' hooks into this loop are declared, for this turn
+  crate::plugin_hooks::refresh(server, session).await;
+  // The `tools` hook: the turn's tool list with descriptions changed or tools left out
+  if let Some(out) = crate::plugin_hooks::ask(server, session, "tools", json!({ "tools": crate::plugin_hooks::tools_json(&s.specs) })).await {
+    crate::plugin_hooks::apply_tools(&mut s.specs, &out);
+  }
   let prompt = params.get("prompt").unwrap_or(&Value::Null);
   let text = prompt_text(prompt);
   // /compact summarizes the history and ends the turn; nothing of it enters the history
@@ -642,6 +648,15 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       cache_key: Some(session.id.clone()),
       fast: s.fast,
     };
+    // The `context` hook: this call's system prompt, messages, tools and options, for this call only; `model.request`
+    // adds headers to it
+    if let Some(out) = crate::plugin_hooks::ask(server, session, "context", crate::plugin_hooks::request_json(&request)).await {
+      crate::plugin_hooks::apply_request(&mut request, &out);
+    }
+    let mut endpoint = s.endpoint.clone();
+    if let Some(out) = crate::plugin_hooks::ask(server, session, "model.request", json!({ "model": request.model, "url": endpoint.url, "headers": {} })).await {
+      endpoint.headers.extend(crate::plugin_hooks::headers_of(&out));
+    }
     log_view(session, &s, &request);
     let mut input_estimate = approx(&request.system, &request.items, &request.tools);
     // Model tool-call id → ACP tool call id: providers reuse ids across calls, ACP needs them unique per session
@@ -655,7 +670,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       attempt += 1;
       let started = std::time::Instant::now();
       let mut unfinished = Unfinished { session, event: Some(request_event(&s)), started };
-      let mut rx = llm::stream(server.http.clone(), s.endpoint.clone(), request.clone());
+      let mut rx = llm::stream(server.http.clone(), endpoint.clone(), request.clone());
       let mut outcome = Err(LlmError::Protocol("the stream ended without a result".into()));
       let idle = stream_idle();
       loop {
@@ -1232,6 +1247,8 @@ struct Prepared {
   riders: Riders,
   /// The note the call's result starts with when it carried the to-do list (`todos`), set while preparing
   todo: Option<String>,
+  /// A plugin answered the call before it ran (`plugin_hooks::Before::Answer`): this is its result, nothing runs
+  preset: Option<Output>,
 }
 
 /// What a call of a built-in tool carries beside its own arguments, so a model that makes one call per reply needs no
@@ -1345,6 +1362,19 @@ async fn run_tools(
         (announce(), todo)
       }
     };
+    // The plugins may change the arguments, refuse the call or answer it themselves
+    let mut preset = None;
+    let args = match (&name, args) {
+      (Ok(n), Ok(a)) if !rowless => match crate::plugin_hooks::before_call(server, session, n, a).await {
+        crate::plugin_hooks::Before::Run(a) => Ok(a),
+        crate::plugin_hooks::Before::Block(reason) => Err(reason),
+        crate::plugin_hooks::Before::Answer(a, out) => {
+          preset = Some(out);
+          Ok(a)
+        }
+      },
+      (_, a) => a,
+    };
     // A bad argument goes back with what was received, so the model can see its own mistake
     let action = match (name, args.clone()) {
       (Err(e), _) | (Ok(_), Err(e)) => Err(e),
@@ -1370,7 +1400,7 @@ async fn run_tools(
         server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": acp, "rawInput": raw_input }));
       }
     }
-    prepared.push(Prepared { call: call.clone(), acp, action, note, meta, riders, todo });
+    prepared.push(Prepared { call: call.clone(), acp, action, note, meta, riders, todo, preset });
   }
 
   let mut rejected = false;
@@ -1387,6 +1417,12 @@ async fn run_tools(
       for p in &prepared[start..i] {
         // The loop above took only calls whose action prepared
         let Ok(action) = p.action.clone() else { continue };
+        // A plugin answered it already
+        if let Some(out) = &p.preset {
+          let out = Output { model: out.model.clone(), is_error: out.is_error, content: out.content.clone(), raw_output: out.raw_output.clone() };
+          handles.push(tokio::spawn(async move { out }));
+          continue;
+        }
         let ctx = ctx_for(server, session, &p.acp);
         server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": p.acp, "status": "in_progress" }));
         // An MCP call waits on its server; the rest read files or the network on a blocking thread
@@ -1401,35 +1437,41 @@ async fn run_tools(
       }
       for (p, h) in prepared[start..i].iter().zip(handles) {
         let out = h.await.unwrap_or_else(|e| Output::error(format!("The tool crashed: {e}")));
-        finish(server, session, p, out, p.todo.clone(), p.riders.refused());
+        finish(server, session, p, out, p.todo.clone(), p.riders.refused()).await;
       }
       continue;
     }
     let p = &prepared[i];
     i += 1;
     if rejected {
-      finish(server, session, p, Output::error("Skipped: the user rejected an earlier action in this round."), p.todo.clone(), None);
+      finish(server, session, p, Output::error("Skipped: the user rejected an earlier action in this round."), p.todo.clone(), None).await;
       continue;
     }
     // The list was set while preparing: it moves on whatever comes of the call itself
     let todo = p.todo.clone();
+    // A plugin answered it already: nothing runs, and nothing needs the user's permission
+    if let Some(out) = &p.preset {
+      let out = Output { model: out.model.clone(), is_error: out.is_error, content: out.content.clone(), raw_output: out.raw_output.clone() };
+      finish(server, session, p, out, todo, None).await;
+      continue;
+    }
     let action = match &p.action {
       Ok(a) => a.clone(),
       Err(e) => {
-        finish(server, session, p, Output::error(e.clone()), todo, p.riders.skipped("the change failed"));
+        finish(server, session, p, Output::error(e.clone()), todo, p.riders.skipped("the change failed")).await;
         continue;
       }
     };
     // A goal tool works on the session itself: no permission to ask, and the result is the model's alone
     if let Action::Goal(call) = &action {
-      finish(server, session, p, goal::run_tool(server, session, call), todo, None);
+      finish(server, session, p, goal::run_tool(server, session, call), todo, None).await;
       continue;
     }
     // The plan approval card is this call's permission
     if let Action::ExitPlan { plan } = &action {
       server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": p.acp, "status": "in_progress" }));
       let (out, approved) = exit_plan(server, session, p, plan.as_deref()).await;
-      finish(server, session, p, out, todo, p.riders.refused());
+      finish(server, session, p, out, todo, p.riders.refused()).await;
       match approved {
         Some(true) => switched = true,
         Some(false) => rejected = true,
@@ -1441,7 +1483,7 @@ async fn run_tools(
     if let Action::Question { questions } = &action {
       server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": p.acp, "status": "in_progress" }));
       let (out, dismissed) = question(server, session, p, questions).await;
-      finish(server, session, p, out, todo, p.riders.refused());
+      finish(server, session, p, out, todo, p.riders.refused()).await;
       rejected |= dismissed;
       continue;
     }
@@ -1449,7 +1491,7 @@ async fn run_tools(
       Decision::Allow => {}
       Decision::Deny => {
         let (key, target) = rules.denied(session, &action);
-        finish(server, session, p, Output::error(format!("Not allowed: the permission rules deny {key} on {target}. Do not retry it.")), todo, p.riders.skipped("the change was not allowed"));
+        finish(server, session, p, Output::error(format!("Not allowed: the permission rules deny {key} on {target}. Do not retry it.")), todo, p.riders.skipped("the change was not allowed")).await;
         continue;
       }
       Decision::Ask => match ask(server, session, rules, p, &action).await {
@@ -1460,7 +1502,7 @@ async fn run_tools(
         }
         Answer::Reject => {
           rejected = true;
-          finish(server, session, p, Output::error("The user rejected this action. Do not retry it; wait for the user's direction."), todo, None);
+          finish(server, session, p, Output::error("The user rejected this action. Do not retry it; wait for the user's direction."), todo, None).await;
           continue;
         }
       },
@@ -1472,13 +1514,13 @@ async fn run_tools(
     let (command, line) = match &p.riders.then_run {
       Some(Ok(command @ Action::Bash { command: line, .. })) => (command, line),
       _ => {
-        finish(server, session, p, out, todo, p.riders.refused());
+        finish(server, session, p, out, todo, p.riders.refused()).await;
         continue;
       }
     };
     if out.is_error || unchanged {
       let why = if out.is_error { "the change failed" } else { "the file already held this content" };
-      finish(server, session, p, out, todo, p.riders.skipped(why));
+      finish(server, session, p, out, todo, p.riders.skipped(why)).await;
       continue;
     }
     // The change is made: its row completes now, the command gets a row of its own, and the call's one result waits
@@ -1722,7 +1764,7 @@ async fn ride_command(server: &Arc<Server>, session: &Arc<Session>, rules: &Rule
     }
     Decision::Ask => {
       let call = ToolCall { id: acp.clone(), name: tools::BASH.into(), arguments: raw_input.to_string() };
-      let p = Prepared { call, acp: acp.clone(), action: Ok(action.clone()), note: None, meta: None, riders: Riders::default(), todo: None };
+      let p = Prepared { call, acp: acp.clone(), action: Ok(action.clone()), note: None, meta: None, riders: Riders::default(), todo: None, preset: None };
       match ask(server, session, rules, &p, action).await {
         Answer::Once => {}
         Answer::Always(pattern) => session.state.lock().allowed.push(Rule::new(permission::BASH, &pattern, Decision::Allow)),
@@ -1766,7 +1808,12 @@ fn images_of(p: &Prepared, out: &Output) -> Vec<crate::llm::Image> {
 }
 
 /// Report a finished call on its row and add its result, with the riders' notes, to the history
-fn finish(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, out: Output, front: Option<String>, back: Option<String>) {
+async fn finish(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, mut out: Output, front: Option<String>, back: Option<String>) {
+  // The plugins' `tool.after` may change what the model reads (the card keeps what the tool returned)
+  if let Some((model, is_error)) = crate::plugin_hooks::after_call(server, session, &p.call.name, &p.call.arguments, &out.model, out.is_error).await {
+    out.model = model;
+    out.is_error = is_error;
+  }
   let images = images_of(p, &out);
   // A call without a row (a goal tool's) only goes into the history
   let (model, is_error) = if p.acp.is_empty() { (out.model, out.is_error) } else { report(server, session, &p.acp, out) };

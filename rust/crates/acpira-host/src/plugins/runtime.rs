@@ -286,6 +286,14 @@ impl Runtimes {
     self.workers.read().keys().cloned().collect()
   }
 
+  /// Every hook some running process answers
+  pub fn declared(&self) -> Vec<String> {
+    let mut out: Vec<String> = self.workers.read().values().flat_map(|w| w.hooks.iter().cloned()).collect();
+    out.sort();
+    out.dedup();
+    out
+  }
+
   /// Whether any process answers `hook`: the one check a call site makes when no plugin asked in
   pub fn has_hook(&self, hook: &str) -> bool {
     self.workers.read().values().any(|w| w.answers(hook))

@@ -395,6 +395,10 @@ impl AcpSession {
   /// after, `{ result }` replaces the MCP result. The answer the MCP server reads (`after`: whether to ask again once
   /// the call is done)
   pub async fn plugin_tool(&self, phase: &str, name: &str, arguments: Value, result: Option<Value>) -> Value {
+    // The built-in agent asks its own `tool.before` / `tool.after` about every call, these included
+    if self.agent == crate::acp::agents::registry::SELF_AGENT_ID {
+      return json!({});
+    }
     let Some(rt) = self.deps.plugin_runtime.clone() else { return json!({}) };
     let after = rt.has_hook("tool.after");
     if phase == "before" {
@@ -428,6 +432,40 @@ impl AcpSession {
       })
       .await;
     json!({ "result": out["result"] })
+  }
+
+  /// The hooks into the built-in agent's own loop some plugin's process declares (`acpira_agent::plugin_hooks::NAMES`)
+  pub(crate) fn plugin_loop_hooks(&self) -> Vec<String> {
+    let Some(rt) = &self.deps.plugin_runtime else { return vec![] };
+    rt.declared().into_iter().filter(|h| acpira_agent::plugin_hooks::NAMES.contains(&h.as_str())).collect()
+  }
+
+  /// One hook of the built-in agent's loop: each answer's fields replace the payload's (`session`, `agent` and `cwd`
+  /// stay), `block` stops the chain with the plugin's name in front, and `by` names the last plugin that answered
+  pub(crate) async fn plugin_loop_hook(&self, hook: &str, payload: Value) -> Value {
+    let Some(rt) = self.deps.plugin_runtime.clone().filter(|rt| rt.has_hook(hook)) else { return payload };
+    let mut out = rt
+      .chain(hook, self.plugin_payload(payload), |plugin, answer, p| {
+        if let Some(reason) = text_of(&answer, "block") {
+          p["block"] = json!(format!("{plugin}: {}", clipped(reason)));
+          return false;
+        }
+        let Some(fields) = answer.as_object() else { return true };
+        for (k, v) in fields {
+          if !matches!(k.as_str(), "session" | "agent" | "cwd" | "by") {
+            p[k] = v.clone();
+          }
+        }
+        p["by"] = json!(plugin);
+        true
+      })
+      .await;
+    if let Some(o) = out.as_object_mut() {
+      for k in ["session", "agent", "cwd"] {
+        o.remove(k);
+      }
+    }
+    out
   }
 
   /// `session.mcp`: the MCP servers about to go out with session/new, load or resume. An answer `{ servers }` replaces
