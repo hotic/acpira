@@ -18,6 +18,8 @@
 //!   acpira quota [--json] [codex|claude|devin…]  the quota windows of each CLI's own login, read without storing anything
 //!   acpira install-agent <id> [--force] [--archive FILE]
 //!                                                download (or take FILE), verify and unpack an agent shipped as a native archive
+//!   acpira pdf-pages FIRST LIMIT MAX_BYTES        the built-in agent's PDF parser in a child process (the PDF on stdin,
+//!                                                the pages as JSON on stdout), so a parser panic ends only that child
 //!   acpira remote --stdio                       the helper an SSH host runs for another machine's engine (frames over stdio,
 //!                                                docs/dev/remote.md); ends on stdin EOF or a missed heartbeat
 //!   acpira --version
@@ -67,6 +69,7 @@ pub fn is_engine_command(first: Option<&str>) -> bool {
         | "model-catalog"
         | "handoff-pack"
         | "quota"
+        | "pdf-pages"
     )
   )
 }
@@ -88,6 +91,10 @@ pub fn run(args: Vec<String>) -> i32 {
   }
   if args.first().map(String::as_str) == Some("install-agent") {
     return install_agent(&args[1..]);
+  }
+  // The built-in agent's PDF parser in a process of its own (acpira_agent::tools::pdf::in_child)
+  if args.first().map(String::as_str) == Some(acpira_agent::tools::pdf::CHILD_COMMAND) {
+    return acpira_agent::tools::pdf::run_child(args.get(1..).unwrap_or_default());
   }
   let rt = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
     Ok(rt) => rt,

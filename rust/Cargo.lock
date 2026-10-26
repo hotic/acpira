@@ -62,6 +62,7 @@ dependencies = [
  "junction",
  "libc",
  "parking_lot",
+ "pdf-extract",
  "portable-pty",
  "regex",
  "same-file",

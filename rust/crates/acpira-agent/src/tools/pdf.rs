@@ -3,7 +3,13 @@
 //! asks for are parsed, and only until the call's budget is full. A page without text (a scan) or whose fonts carry no
 //! usable encoding is named as such, so the model turns to rendering the pages rather than trusting an empty read
 
+use std::io::{Read, Write};
+use std::path::Path;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
 use pdf_extract::{Document, PlainTextOutput, output_doc_page};
+use serde::{Deserialize, Serialize};
 
 /// What the format puts at the start of the file (a few bytes of junk before it are allowed, as readers do)
 pub fn is_pdf(bytes: &[u8]) -> bool {
@@ -11,7 +17,7 @@ pub fn is_pdf(bytes: &[u8]) -> bool {
 }
 
 /// The pages of one window
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Pages {
   /// Pages in the document
   pub total: usize,
@@ -25,10 +31,90 @@ pub struct Pages {
 pub const RENDER_HINT: &str = "render its pages to PNG with a command (pdftoppm -png -r 110, mutool draw, magick, or on macOS sips -s format png for \
                                the first page) and read the images";
 
-/// Pages `first` (1-based) on, at most `limit` of them, until their text passes `max_bytes`
+/// What a parser crash reads as
+const FAILED: &str = "the PDF parser failed on this file";
+
+/// The subcommand `run_child` answers (`acpira pdf-pages`, also the Windows desktop exe's)
+pub const CHILD_COMMAND: &str = "pdf-pages";
+
+/// How long a child may parse before it is ended (a large PDF takes seconds, a pathological one forever)
+const CHILD_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Pages `first` (1-based) on, at most `limit` of them, until their text passes `max_bytes`. pdf-extract unwraps on some
+/// malformed files, and a panic is a file that cannot be read, not a dead agent: where panics unwind (tests, development
+/// builds) it is caught here; shipped builds abort on a panic, so they parse in a child process of this binary, whose
+/// crash ends only the child
 pub fn pages(bytes: &[u8], first: usize, limit: usize, max_bytes: usize) -> Result<Pages, String> {
-  // pdf-extract unwraps on some malformed files: a panic is a file that cannot be read, not a dead agent
-  std::panic::catch_unwind(|| read_pages(bytes, first, limit, max_bytes)).unwrap_or_else(|_| Err("the PDF parser failed on this file".into()))
+  if cfg!(panic = "unwind") {
+    return std::panic::catch_unwind(|| read_pages(bytes, first, limit, max_bytes)).unwrap_or_else(|_| Err(FAILED.into()));
+  }
+  let exe = std::env::current_exe().map_err(|e| format!("the PDF parser cannot start: {e}"))?;
+  in_child(&exe, bytes, first, limit, max_bytes)
+}
+
+/// `pages` in a child: `<exe> pdf-pages FIRST LIMIT MAX_BYTES` with the PDF on stdin, the answer as JSON on stdout. A
+/// child that crashes, prints nothing usable or outlives `CHILD_TIMEOUT` reads as a file the parser failed on
+pub fn in_child(exe: &Path, bytes: &[u8], first: usize, limit: usize, max_bytes: usize) -> Result<Pages, String> {
+  let mut cmd = Command::new(exe);
+  cmd.args([CHILD_COMMAND, &first.to_string(), &limit.to_string(), &max_bytes.to_string()]);
+  cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+  #[cfg(windows)]
+  {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+  }
+  let mut child = cmd.spawn().map_err(|e| format!("the PDF parser cannot start: {e}"))?;
+  // Both pipes on threads of their own, so the wait below can give up on a child that stops reading or never answers
+  if let Some(mut stdin) = child.stdin.take() {
+    let input = bytes.to_vec();
+    std::thread::spawn(move || {
+      let _ = stdin.write_all(&input);
+    });
+  }
+  let reader = child.stdout.take().map(|mut out| {
+    std::thread::spawn(move || {
+      let mut answer = vec![];
+      let _ = out.read_to_end(&mut answer);
+      answer
+    })
+  });
+  let deadline = Instant::now() + CHILD_TIMEOUT;
+  let status = loop {
+    match child.try_wait() {
+      Ok(Some(status)) => break Some(status),
+      Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
+      _ => {
+        let _ = child.kill();
+        let _ = child.wait();
+        break None;
+      }
+    }
+  };
+  let answer = reader.and_then(|r| r.join().ok()).unwrap_or_default();
+  match status {
+    None => Err("the PDF parser took too long on this file".into()),
+    Some(s) if s.success() => serde_json::from_slice::<Result<Pages, String>>(&answer).unwrap_or_else(|_| Err(FAILED.into())),
+    Some(_) => Err(FAILED.into()),
+  }
+}
+
+/// The child side of `in_child`: `pdf-pages FIRST LIMIT MAX_BYTES`, the PDF on stdin; the exit code
+pub fn run_child(args: &[String]) -> i32 {
+  let num = |i: usize| args.get(i).and_then(|a| a.parse::<usize>().ok());
+  let (Some(first), Some(limit), Some(max_bytes)) = (num(0).filter(|f| *f >= 1), num(1), num(2)) else {
+    eprintln!("usage: acpira {CHILD_COMMAND} FIRST LIMIT MAX_BYTES < file.pdf");
+    return 2;
+  };
+  let mut bytes = vec![];
+  if std::io::stdin().read_to_end(&mut bytes).is_err() {
+    return 1;
+  }
+  let answer = read_pages(&bytes, first, limit, max_bytes);
+  match serde_json::to_vec(&answer) {
+    Ok(json) if std::io::stdout().write_all(&json).is_ok() => 0,
+    _ => 1,
+  }
 }
 
 fn read_pages(bytes: &[u8], first: usize, limit: usize, max_bytes: usize) -> Result<Pages, String> {
