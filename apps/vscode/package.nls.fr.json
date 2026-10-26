@@ -18,5 +18,6 @@
   "acpira.cmd.addSelection": "Ajouter au chat",
   "acpira.cmd.contextSet": "Définir le contexte partagé (pour les extensions)",
   "acpira.cmd.contextAdd": "Ajouter du contexte au chat (pour les extensions)",
-  "acpira.cmd.connectChatgpt": "Connecter une session ChatGPT"
+  "acpira.cmd.connectChatgpt": "Connecter une session ChatGPT",
+  "acpira.cmd.safeMode": "Basculer le mode sans échec (décharger les plugins)"
 }

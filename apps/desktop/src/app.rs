@@ -1126,6 +1126,30 @@ impl App {
     let _ = system::open_any(&self.log_file.to_string_lossy());
   }
 
+  /// Help › Safe Mode: switched with the engine binary (so it works while the engine is stuck), told in a toast; on the
+  /// way in an engine that had failed is started again
+  pub fn toggle_safe_mode(self: &Arc<Self>) {
+    let a = self.clone();
+    std::thread::spawn(move || {
+      let home = a.paths.data_home.clone();
+      let on = !acpira_desktop::safe_mode::is_on(&home);
+      let over = std::env::var("ACPIRA_SIDECAR_BIN").ok();
+      let binary = sidecar_commands(&LocateOpts { candidates: &a.paths.engines, override_bin: over.as_deref() }).into_iter().next().map(|c| c.command);
+      let Some(binary) = binary else { return };
+      match acpira_desktop::safe_mode::set(&binary, &home, on) {
+        Ok(()) => {
+          log(&format!("safe mode {}", if on { "on" } else { "off" }));
+          a.toast("info", &a.t(if on { "host.safeModeOn" } else { "host.safeModeOff" }, &[]), None);
+          // A no-op while the engine runs
+          if on {
+            a.client().retry();
+          }
+        }
+        Err(e) => a.toast("error", &a.t("host.safeModeFailed", &[("error", &e)]), None),
+      }
+    });
+  }
+
   /// The menu bar's page commands go to the chat used last (a new window when none is open)
   pub fn command(self: &Arc<Self>, c: &str) {
     let Some(w) = self.focused_window().or_else(|| self.open(Some(Initial::MostRecent), self.place_of_last())) else { return };

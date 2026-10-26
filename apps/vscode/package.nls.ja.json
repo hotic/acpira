@@ -18,5 +18,6 @@
   "acpira.cmd.addSelection": "チャットに追加",
   "acpira.cmd.contextSet": "共有コンテキストを設定（拡張機能用）",
   "acpira.cmd.contextAdd": "コンテキストをチャットに追加（拡張機能用）",
-  "acpira.cmd.connectChatgpt": "ChatGPT セッションに接続"
+  "acpira.cmd.connectChatgpt": "ChatGPT セッションに接続",
+  "acpira.cmd.safeMode": "セーフモードの切り替え（プラグインを外す）"
 }

@@ -34,6 +34,10 @@ sealed interface ViewEvent {
     data class State(val state: SidecarState, val detail: String?) : ViewEvent
 }
 
+// Whether safe mode is on after the switch, or why it did not switch
+@Serializable
+data class SafeModeResult(val on: Boolean, val error: String? = null)
+
 // Remote VFS handles do not preserve directory metadata on every Client implementation.
 @Serializable
 data class ResolvedPath(val id: VirtualFileId, val directory: Boolean)
@@ -47,6 +51,8 @@ interface AcpiraBackendApi : RemoteApi<Unit> {
     suspend fun blob(projectId: ProjectId, sessionId: String, name: String): Blob?
     suspend fun uiRequests(projectId: ProjectId): Flow<UiRequest>
     suspend fun resolveFile(projectId: ProjectId, path: String): ResolvedPath?
+    // Safe mode (docs/dev/plugins.md) switched on the backend machine, where the engine and the plugins are; `on` null toggles it
+    suspend fun safeMode(projectId: ProjectId, on: Boolean?): SafeModeResult
 
     companion object {
         suspend fun getInstance(): AcpiraBackendApi = RemoteApiProviderService.resolve(remoteApiDescriptor<AcpiraBackendApi>())

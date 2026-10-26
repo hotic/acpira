@@ -18,5 +18,6 @@
   "acpira.cmd.addSelection": "Zum Chat hinzufügen",
   "acpira.cmd.contextSet": "Geteilten Kontext setzen (für Erweiterungen)",
   "acpira.cmd.contextAdd": "Kontext zum Chat hinzufügen (für Erweiterungen)",
-  "acpira.cmd.connectChatgpt": "ChatGPT-Sitzung verbinden"
+  "acpira.cmd.connectChatgpt": "ChatGPT-Sitzung verbinden",
+  "acpira.cmd.safeMode": "Abgesicherten Modus umschalten (Plugins entladen)"
 }

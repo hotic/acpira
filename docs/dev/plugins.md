@@ -106,7 +106,11 @@ source folder → freeze (content-addressed copy) → static check → the user 
 - A switch stored in `state.json` (`safeMode`): on, every engine unloads the user's plugins at once (bus touch, the poll otherwise); it stays on across restarts until turned off. Built-in plugins are unaffected.
 - A flag alone would not do: the persistent engine's socket does not depend on the mode, so a shell reconnects to the engine it had, and a broken theme or hook never crashes the engine.
 - `--safe-mode` / `ACPIRA_SAFE_MODE=1` are for an engine whose plugin host cannot start; `helloOk` carries the mode.
-- Ways in, all outside the plugin page (which a broken theme may cover): `acpira safe-mode on|off`, the VS Code command palette, the desktop menu, an IntelliJ action, the shell's failure state.
+- Ways in, all outside the plugin page (which a broken theme may cover), and all through `acpira safe-mode on|off --home <home>` run with the shell's engine binary, so they work while the engine is stuck or down:
+  - VS Code: the command `acpira.safeMode` (toggles; `packages/engine-client/safeMode.ts`), and a Safe Mode button on the engine failure toast (turns it on, then retries; left out while it is on).
+  - Desktop: Help › Safe Mode (toggles, told in a toast; on also retries a failed engine; `acpira-desktop/src/safe_mode.rs`). The failure dialog has no room for a fourth button.
+  - IntelliJ: the tool window's gear › Safe Mode (toggles) and a Safe Mode button beside Retry on the backend failure panel (turns it on). In split mode the switch is the backend RPC `safeMode(projectId, on?)`, run where the engine and the plugins are (`backend/…/sidecar/SafeMode.kt`).
+  - None of these was clicked in a running IDE or app yet (2026-10-26): the gates compile and lint them, and the CLI was run on a temp home.
 
 ## Telling the model
 

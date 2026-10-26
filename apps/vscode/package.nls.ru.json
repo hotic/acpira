@@ -18,5 +18,6 @@
   "acpira.cmd.addSelection": "Добавить в чат",
   "acpira.cmd.contextSet": "Задать общий контекст (для расширений)",
   "acpira.cmd.contextAdd": "Добавить контекст в чат (для расширений)",
-  "acpira.cmd.connectChatgpt": "Подключить сессию ChatGPT"
+  "acpira.cmd.connectChatgpt": "Подключить сессию ChatGPT",
+  "acpira.cmd.safeMode": "Переключить безопасный режим (выгрузить плагины)"
 }

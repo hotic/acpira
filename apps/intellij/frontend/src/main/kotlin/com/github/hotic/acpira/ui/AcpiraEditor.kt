@@ -80,7 +80,7 @@ class AcpiraEditor(private val project: Project, private val file: AcpiraSession
             if (project.isDisposed) return@invokeLater
             val b = browser ?: return@invokeLater
             val next: JComponent = when (state) {
-                SidecarState.FAILED -> StatusPanel.message("Acpira could not reach its backend.", detail ?: "See the IDE log.") { project.service<AcpiraConnection>().retry() }
+                SidecarState.FAILED -> StatusPanel.message("Acpira could not reach its backend.", detail ?: "See the IDE log.", { project.service<AcpiraConnection>().retry() }, { project.service<AcpiraConnection>().safeMode(true) })
                 else -> b.component
             }
             JcefProbe.swap(root, next)
