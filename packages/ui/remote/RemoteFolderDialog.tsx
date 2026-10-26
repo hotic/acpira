@@ -6,12 +6,14 @@ import { Button } from '../ui/Button';
 import { Shimmer } from '../ui/Shimmer';
 import { t } from '../i18n';
 import { SettingsDialog } from '../settings/controls';
-import { browseRemote, type RemoteListing } from './api';
+import { browseRemote, connectionOp, useConnections, type RemoteListing } from './api';
+import { ConnectStatus } from './ConnectStatus';
 
 // A folder on an SSH host to add as a project: breadcrumbs over a list of fixed height (it never resizes the dialog while
 // a folder loads, fails or fills), starting in the host's home. A click on a folder goes into it; the footer adds the
-// folder the list shows. Opened from a host's settings page and from the session column's add menu. The engine connects
-// the host first when it has to, so the first listing may take a while
+// folder the list shows. Opened from a host's settings page (only while connected) and from the session column's add menu.
+// Nothing is listed until the host is connected: a host that is off is connected on opening, and until it is up the list's
+// place shows the attempt's steps or its failure (remote/ConnectStatus), with Retry
 export function RemoteFolderDialog({ alias, onAdd, onClose }: { alias: string; onAdd: (folder: string) => void; onClose: () => void }) {
   const [home, setHome] = useState<string>();
   // The folder shown; undefined until the first listing named the home
@@ -19,6 +21,13 @@ export function RemoteFolderDialog({ alias, onAdd, onClose }: { alias: string; o
   const [listing, setListing] = useState<RemoteListing>();
   const [loading, setLoading] = useState(true);
   const seq = useRef(0);
+  // The host's connection; a host the list does not know is left to the engine (browse connects it)
+  const view = useConnections()?.find(c => c.alias === alias);
+  const ready = !view || view.state === 'connected';
+  const off = view?.state === 'off' && !view.disabled;
+  useEffect(() => { if (off) connectionOp({ op: 'connect', alias }); }, [off, alias]);
+  const pathRef = useRef(path);
+  pathRef.current = path;
   const go = useCallback((to?: string) => {
     const mine = ++seq.current;
     setLoading(true);
@@ -31,7 +40,8 @@ export function RemoteFolderDialog({ alias, onAdd, onClose }: { alias: string; o
       if (to === undefined) setHome(r.path);
     });
   }, [alias]);
-  useEffect(() => { go(); }, [go]);
+  // Listed once connected, and again where it was after a dropped connection comes back
+  useEffect(() => { if (ready) go(pathRef.current); }, [ready, go]);
   // Folders only, hidden ones after the rest
   const dirs = (listing?.entries ?? []).filter(e => e.dir).sort((a, b) => Number(a.name.startsWith('.')) - Number(b.name.startsWith('.')));
   const error = listing?.error && (listing.error === 'timeout' ? t('connections.noAnswer') : listing.error);
@@ -41,16 +51,18 @@ export function RemoteFolderDialog({ alias, onAdd, onClose }: { alias: string; o
     <SettingsDialog title={t('connections.folderTitle', { host: alias })} onClose={onClose}
       footer={<>
         <span className="min-w-0 flex-1 truncate font-mono text-mono text-fg-3" title={path}>{path !== undefined ? shortRemote(path, home) : ''}</span>
-        <Button variant="primary" disabled={loading || !!error || !folder} onClick={() => { if (folder) onAdd(folder); }}>{t('connections.addAsProject')}</Button>
+        <Button variant="primary" disabled={!ready || loading || !!error || !folder} onClick={() => { if (folder) onAdd(folder); }}>{t('connections.addAsProject')}</Button>
       </>}>
       <div className="flex min-h-0 flex-col p-1">
         <Crumbs path={path} home={home} onGo={go} />
         <div className="my-1 h-px shrink-0 bg-line" />
         <div className="scroll-thin flex h-pop min-h-0 flex-col overflow-y-auto">
-          {loading && <div className="flex min-h-row shrink-0 items-center px-2 text-3 text-fg-3"><Shimmer active>{t('connections.loadingDir')}</Shimmer></div>}
-          {!loading && error && <div className="px-2 py-1 text-3 [overflow-wrap:anywhere]"><span className="text-danger">{error}</span></div>}
-          {!loading && !error && !dirs.length && <div className="flex min-h-row shrink-0 items-center px-2 text-3 text-fg-3">{t('connections.emptyDir')}</div>}
-          {!loading && !error && dirs.map(d => (
+          {!ready && view && <ConnectStatus retry className="px-2 py-1"
+            view={view.state === 'off' ? { ...view, state: 'connecting', step: 'ssh' } : view} />}
+          {ready && loading && <div className="flex min-h-row shrink-0 items-center px-2 text-3 text-fg-3"><Shimmer active>{t('connections.loadingDir')}</Shimmer></div>}
+          {ready && !loading && error && <div className="px-2 py-1 text-3 [overflow-wrap:anywhere]"><span className="text-danger">{error}</span></div>}
+          {ready && !loading && !error && !dirs.length && <div className="flex min-h-row shrink-0 items-center px-2 text-3 text-fg-3">{t('connections.emptyDir')}</div>}
+          {ready && !loading && !error && dirs.map(d => (
             <button key={d.name} type="button" title={join(d.name)} onClick={() => go(join(d.name))}
               className="group flex min-h-row shrink-0 items-center gap-gap rounded-md px-2 text-left text-2 text-fg-1 transition-colors hover:bg-hover focus-visible:bg-hover">
               <Folder className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} />

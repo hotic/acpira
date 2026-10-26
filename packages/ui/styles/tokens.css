@@ -402,6 +402,9 @@
   --storage-bar: 8px;
   --storage-gap: 2px;
   --storage-list: calc(var(--setting-row-detail) * 6);
+  /* A connection attempt's block (remote/ConnectStatus): a failure's title row with its buttons, a two-line fix and the
+     engine's words in two mono lines; the four steps of an attempt under way fit inside */
+  --connect-status: calc(var(--ctl) + var(--text-2-lh) * 2 + var(--text-mono-lh) * 2 + var(--stack-gap) * 3);
 }
 /* The sidebar's narrow column: a smaller page title */
 .acp-settings[data-surface-host="sidebar"] {

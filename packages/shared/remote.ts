@@ -53,8 +53,9 @@ export function formatRemoteFolder(alias: string, path: string): string | undefi
 /** How a host's sessions run by default: `local` keeps the agent loop and logins here and runs only the tools on the host; `remote` drives the host's own engine */
 export type RunMode = 'local' | 'remote';
 export type ConnectionState = 'off' | 'connecting' | 'connected' | 'error';
-/** The step a connection attempt is on: ssh itself, probing the host, uploading the helper, starting it */
-export type ConnectStep = 'ssh' | 'probe' | 'upload' | 'start';
+/** The step a connection attempt is on: ssh itself, probing the host, downloading the host's platform build from the
+ *  release (only when asked, `connect` with `fetchBuild`), uploading the helper, starting it */
+export type ConnectStep = 'ssh' | 'probe' | 'fetch' | 'upload' | 'start';
 export type ConnectFailure = 'hostKey' | 'keyLocked' | 'denied' | 'network' | 'machineChanged' | 'unsupported' | 'noSsh' | 'other';
 
 export interface ConnectionError { kind: ConnectFailure; step: ConnectStep; message: string }
@@ -90,8 +91,9 @@ export type ConnectionOp =
   | { op: 'remove'; alias: string }
   | { op: 'setMode'; alias: string; mode: RunMode }
   | { op: 'setDisabled'; alias: string; disabled: boolean }
-  // acceptNewMachine: the alias now leads to another machine and the user confirmed it is the right one
-  | { op: 'connect'; alias: string; acceptNewMachine?: boolean }
+  // acceptNewMachine: the alias now leads to another machine and the user confirmed it is the right one; fetchBuild:
+  // download the host's platform build from Acpira's release when this machine has none (after an `unsupported` failure)
+  | { op: 'connect'; alias: string; acceptNewMachine?: boolean; fetchBuild?: boolean }
   | { op: 'disconnect'; alias: string }
   // `ssh <alias>` in a terminal on this machine, to confirm a host key or unlock a key
   | { op: 'openTerminal'; alias: string };

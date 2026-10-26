@@ -44,6 +44,8 @@ pub struct ConnectionsOpts {
   pub client: ClientOpts,
   pub retry_base: Duration,
   pub retry_max: Duration,
+  /// Where a missing platform build is fetched from (`fetch::RELEASES`; a local server in tests)
+  pub releases: String,
 }
 
 impl Default for ConnectionsOpts {
@@ -55,6 +57,7 @@ impl Default for ConnectionsOpts {
       client: ClientOpts::default(),
       retry_base: Duration::from_secs(1),
       retry_max: Duration::from_secs(60),
+      releases: super::fetch::RELEASES.to_owned(),
     }
   }
 }
@@ -124,6 +127,8 @@ impl Failure {
 pub struct Connections {
   file: PathBuf,
   cache: PathBuf,
+  /// Platform builds fetched from a release (`fetch.rs`), under the upload cache
+  builds: PathBuf,
   home: PathBuf,
   opts: ConnectionsOpts,
   log: LogFn,
@@ -153,6 +158,7 @@ impl Connections {
     Arc::new_cyclic(|me| Connections {
       file,
       cache: root.join("run").join("remote"),
+      builds: root.join("run").join("remote").join("builds"),
       home: home.to_path_buf(),
       opts,
       log,
@@ -242,7 +248,7 @@ impl Connections {
         // A failure that stopped the driver: only this caller's own fresh attempt may answer it
         (ConnectionState::Error, false) | (ConnectionState::Off, _) if !started => {
           started = true;
-          self.connect(alias, false);
+          self.connect(alias, false, false);
         }
         (ConnectionState::Error, false) => {
           let e = error.map(|e| e.message).unwrap_or_default();
@@ -312,7 +318,7 @@ impl Connections {
             None => hosts.push(Saved { alias: a, mode, disabled: false, machine_id: None }),
           })
           .await?;
-        self.connect(&alias, false);
+        self.connect(&alias, false, false);
       }
       ConnectionOp::Remove { alias } => {
         self.stop(&alias, None);
@@ -330,12 +336,12 @@ impl Connections {
         let a = alias.clone();
         self.edit(move |hosts| hosts.iter_mut().filter(|h| h.alias == a).for_each(|h| h.disabled = disabled)).await?;
       }
-      ConnectionOp::Connect { alias, accept_new_machine } => {
+      ConnectionOp::Connect { alias, accept_new_machine, fetch_build } => {
         let disabled = self.hosts.lock().iter().find(|e| e.saved.alias == alias).map(|e| e.saved.disabled);
         match disabled {
           None => bail!("{alias} is not among the connections"),
           Some(true) => bail!("the connection to {alias} is turned off"),
-          Some(false) => self.connect(&alias, accept_new_machine),
+          Some(false) => self.connect(&alias, accept_new_machine, fetch_build),
         }
       }
       ConnectionOp::Disconnect { alias } => self.stop(&alias, None),
@@ -358,8 +364,9 @@ impl Connections {
     }
   }
 
-  /// Start a fresh driver for the host, replacing any running one
-  fn connect(&self, alias: &str, accept_new_machine: bool) {
+  /// Start a fresh driver for the host, replacing any running one. `fetch_build`: the user asked for the host's
+  /// platform build to be downloaded when this machine has none
+  fn connect(&self, alias: &str, accept_new_machine: bool, fetch_build: bool) {
     let Some(me) = self.me.upgrade() else { return };
     let mut hosts = self.hosts.lock();
     let Some(e) = hosts.iter_mut().find(|e| e.saved.alias == alias) else { return };
@@ -370,7 +377,7 @@ impl Connections {
     e.live.detail = None;
     e.live.error = None;
     let alias = alias.to_owned();
-    e.live.driver = Some(tokio::spawn(async move { me.drive(alias, generation, accept_new_machine).await }).abort_handle());
+    e.live.driver = Some(tokio::spawn(async move { me.drive(alias, generation, accept_new_machine, fetch_build).await }).abort_handle());
   }
 
   /// Stop the host's driver and channel; `error` leaves it in the error state instead of off
@@ -394,11 +401,11 @@ impl Connections {
     true
   }
 
-  async fn drive(self: Arc<Self>, alias: String, generation: u64, mut accept_new_machine: bool) {
+  async fn drive(self: Arc<Self>, alias: String, generation: u64, mut accept_new_machine: bool, fetch_build: bool) {
     let mut delay = self.opts.retry_base;
     let mut force_upload = false;
     loop {
-      match self.attempt(&alias, generation, accept_new_machine, force_upload).await {
+      match self.attempt(&alias, generation, accept_new_machine, force_upload, fetch_build).await {
         Ok(client) => {
           accept_new_machine = false;
           force_upload = false;
@@ -475,7 +482,7 @@ impl Connections {
     }
   }
 
-  async fn attempt(&self, alias: &str, generation: u64, accept_new_machine: bool, force_upload: bool) -> Result<RemoteClient, Failure> {
+  async fn attempt(&self, alias: &str, generation: u64, accept_new_machine: bool, force_upload: bool, fetch_build: bool) -> Result<RemoteClient, Failure> {
     use ConnectFailure as K;
     use ConnectStep as S;
     let stale = || Failure::new(K::Other, S::Ssh, "superseded");
@@ -538,8 +545,10 @@ impl Connections {
       }
     }
 
-    let Some(binary) = (self.opts.binary)(&probe.platform) else {
-      return Err(Failure::new(K::Unsupported, S::Probe, format!("no Acpira build for {} on this machine", probe.platform)));
+    let binary = match (self.opts.binary)(&probe.platform).or_else(|| super::fetch::installed(&self.builds, &version, &probe.platform)) {
+      Some(b) => b,
+      None if fetch_build => self.fetch_build(alias, generation, &version, &probe.platform).await?,
+      None => return Err(Failure::new(K::Unsupported, S::Probe, format!("no Acpira build for {} on this machine", probe.platform))),
     };
     let artifact =
       deploy::prepare(&probe.platform, &binary, &self.cache).await.map_err(|e| Failure::new(K::Unsupported, S::Probe, format!("{e:#}")))?;
@@ -589,6 +598,44 @@ impl Connections {
         let message = if line.is_empty() { e.message } else { format!("{}: {line}", e.message) };
         Err(Failure { kind, step: S::Start, message, used_installed })
       }
+    }
+  }
+
+  /// Download the release build for `platform` (step `fetch`, its megabytes as the detail). Any failure is final and
+  /// keeps the `unsupported` kind, so the page offers the download again with the reason beside it
+  async fn fetch_build(&self, alias: &str, generation: u64, version: &str, platform: &str) -> Result<PathBuf, Failure> {
+    use ConnectFailure as K;
+    use ConnectStep as S;
+    if !self.update(alias, generation, |l| {
+      l.step = Some(S::Fetch);
+      l.detail = None;
+    }) {
+      return Err(Failure::new(K::Other, S::Fetch, "superseded"));
+    }
+    let (me, a, base, builds, v, p) =
+      (self.me.clone(), alias.to_owned(), self.opts.releases.clone(), self.builds.clone(), version.to_owned(), platform.to_owned());
+    let joined = tokio::task::spawn_blocking(move || {
+      // One push per whole percent at most
+      let mut last = u64::MAX;
+      super::fetch::fetch(&base, &builds, &v, &p, &mut |got, total| {
+        let Some(total) = total.filter(|t| *t > 0) else { return };
+        let pct = got * 100 / total;
+        if pct != last
+          && let Some(me) = me.upgrade()
+        {
+          last = pct;
+          me.update(&a, generation, |l| l.detail = Some(progress_text(got, total)));
+        }
+      })
+    })
+    .await;
+    match joined {
+      Ok(Ok(path)) => {
+        (self.log)(&format!("remote: fetched the {platform} build of {version} into {}", path.display()));
+        Ok(path)
+      }
+      Ok(Err(e)) => Err(Failure::new(K::Unsupported, S::Fetch, format!("{e:#}"))),
+      Err(e) => Err(Failure::new(K::Unsupported, S::Fetch, format!("the download stopped: {e}"))),
     }
   }
 
