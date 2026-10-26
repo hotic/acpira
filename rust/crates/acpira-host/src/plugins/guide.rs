@@ -16,11 +16,11 @@ A plugin is a folder `{root}/<id>/` holding a `plugin.json` and its files. It ex
 - `requires`: programs that must be on PATH (`["python3"]`). `check` (optional): a self-test command run once the user confirmed; a non-zero exit cancels the activation.
 - `contributes`, one or more of:
   - `tools`: `[{ "name", "description", "input" (JSON Schema, type object), "command" (argv), "readOnly", "timeout" (s, at most {timeout}) }]`. Served by Acpira's MCP server to every agent as `<id>_<name>`. `name`: lowercase letters, digits and `_`, at most {name_max} characters.
-  - `mcp`: `{ "<server>": <entry> }`, the shape of `.mcp.json`'s `mcpServers`; new sessions get it.
-  - `hooks`: the shape of `.agents/hooks.json` (`beforePrompt`, `beforeEdit`, `afterTurn`), run in every project after the project's own hooks, from the next turn; not in sessions on an SSH host.
+  - `mcp`: `{ "<server>": <entry> }`, the shape of `.mcp.json`'s `mcpServers`; new sessions on this machine get it. A `command` naming a file of the plugin runs from the frozen copy; `${ACPIRA_PLUGIN_DIR}` and `${ACPIRA_PLUGIN_DATA}` are filled in in `command`, `args` and `env`. Activation starts each server once: it must answer `initialize` and `tools/list` within {timeout} s.
+  - `hooks`: the shape of `.agents/hooks.json` (`context`, `beforePrompt`, `beforeEdit`, `afterTurn`), run in every project after the project's own hooks, from the next turn; not in sessions on an SSH host. Commands run in the frozen copy (`ACPIRA_PROJECT_DIR` is still the project); `context` paths are the plugin's.
   - `theme`: `{ "tokens": { "--bg-0": "#1b1a18" }, "css": "theme.css" }`. Tokens a theme may set: {tokens}. Applied at once.
   - `prompts`: a folder of prompt sections for Acpira's own agent, the shape of `~/.agents/acpira/prompts/`; new sessions.
-  - `agent`: `{ "name", "command", "args", "env" }`, one more ACP agent; new sessions.
+  - `agent`: `{ "name", "command", "args", "env" }`, one more ACP agent under the plugin's id (an `agents.json` entry of that id wins); `command` and the placeholders as in `mcp`; new sessions.
 
 ## Script tools
 
