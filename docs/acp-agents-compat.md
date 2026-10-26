@@ -120,6 +120,21 @@ Consequences implemented: text attachments become marked-up `text` blocks when `
 | Pi | pi-acp 0.0.33 | none | **no** (the list is ignored) | verified |
 | Acpira (built-in) | acpira 1.10.2 (2026-10-14) | http | yes | verified |
 
+`tools/list_changed` (2026-10-26, `pnpm probe <agent> --list-changed`, no prompt): the marker server adds a tool and sends the notification 2 s after the first `tools/list`; the probe waits 10 s for a second `tools/list`.
+
+| Agent | Version | Lists again at once | Grade |
+|---|---|---|---|
+| Claude | claude-agent-acp 0.93.0 | yes | verified |
+| OpenCode | 1.18.15 | yes | verified |
+| DSH | deepseek-harness-acp 0.0.1 | yes | verified |
+| Codex | codex-acp 2.2.2 | no (next turn unverified) | verified |
+| Grok | 1.0.62 | no (next turn unverified) | verified |
+| Kimi | 2.2.0 | no (next turn unverified) | verified |
+| Devin | 3000.11.205 | no `tools/list` before a prompt | verified |
+| Acpira (built-in) | acpira 1.11.0 | no, at its next turn by design | verified (wire), source |
+| Antigravity | antigravity-acp 1.3.0 | server not launched | verified |
+| Pi | pi-acp 0.0.34 | server not launched | verified |
+
 Session tools (2026-10-16): with the relay env every agent that launches the server above is offered `search_sessions` / `read_session` (`host-architecture.md`, session links); Pi, which launches none, has no way to read another session yet. Unverified on every real CLI: whether the model finds the tools from a pasted link (Claude Code defers them behind ToolSearch, the server instructions name them), whether it reads the outline first, how the answers sit against Claude Code's MCP output warning, and whether Claude or Codex ask before the first call. The row namings are those recorded for `show_image`, not observed for these tools.
 
 Shared skills and prompts (the Shared tab's wiring, `agent_ext.rs` `AgentExt.shared`):

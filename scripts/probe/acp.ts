@@ -23,20 +23,23 @@ import { builtinAgent, builtinAgents, type BuiltinAgent } from '../lib/sidecarBi
 //   each property (or an empty string), so the turn can finish; without the flag the request is answered method-not-found, which shows what an agent does then
 // --mcp: hand a marker MCP server (`scripts/lib/mcp-marker.mjs`, stdio) over in session/new `mcpServers` and print the methods it
 //   received after --wait (default 5000 here), showing whether the agent launches client-provided servers; no prompt is needed
+// --list-changed: --mcp, and the marker server sends notifications/tools/list_changed 2 s after the agent first lists its tools;
+//   the summary says whether the agent listed again before --wait ran out (default 10000 here); no prompt is needed
 // --wait MS: keep the process alive that long after session/new (and after the prompt) before killing it, to catch notifications that arrive
 //   after the response — available_commands_update lands there for every CLI, and Kimi's usage_update is asynchronous too
 const argv = process.argv.slice(2);
 const doAuth = argv.includes('--auth');
 const importLocal = argv.includes('--import-local');
 const elicit = argv.includes('--elicit');
-const withMcp = argv.includes('--mcp');
+const listChanged = argv.includes('--list-changed');
+const withMcp = argv.includes('--mcp') || listChanged;
 const valued = (flag: string) => { const i = argv.indexOf(flag); return i >= 0 ? { idx: i + 1, value: argv[i + 1] } : undefined; };
 const keyEnv = valued('--api-key-env');
 const apiKey = keyEnv ? process.env[keyEnv.value ?? ''] : undefined;
 const imagePath = valued('--image')?.value;
 const linkPath = valued('--link')?.value;
 const embedPath = valued('--embed')?.value;
-const waitMs = Number(valued('--wait')?.value ?? (withMcp ? 5000 : 0));
+const waitMs = Number(valued('--wait')?.value ?? (listChanged ? 10000 : withMcp ? 5000 : 0));
 const cmdLine = valued('--cmd')?.value;
 const cwd = resolve(valued('--cwd')?.value ?? process.cwd());
 const logFile = valued('--log')?.value;
@@ -135,7 +138,7 @@ const mcpServers = withMcp
       name: 'acpira-probe',
       command: process.execPath,
       args: [fileURLToPath(new URL('../lib/mcp-marker.mjs', import.meta.url))],
-      env: [{ name: 'MCP_MARKER', value: mcpMarker }],
+      env: [{ name: 'MCP_MARKER', value: mcpMarker }, ...(listChanged ? [{ name: 'MCP_LIST_CHANGED_MS', value: '2000' }] : [])],
     }]
   : [];
 
@@ -182,6 +185,12 @@ try {
   if (withMcp) {
     const log = await readFile(mcpMarker, 'utf8').catch(() => '');
     console.log(`\n[mcp] ${log ? `marker server received:\n${log}` : 'marker server was never launched'}`);
+    if (listChanged) {
+      const lines = log.split('\n');
+      const sent = lines.indexOf('sent list_changed');
+      const again = sent >= 0 && lines.slice(sent + 1).includes('tools/list');
+      console.log(`[list_changed] ${sent < 0 ? 'never sent (the agent did not list tools)' : again ? 'listed again after the notification' : `not listed again within ${waitMs} ms`}`);
+    }
   }
 } catch (e) {
   console.error('session/new failed:', fail(e));
