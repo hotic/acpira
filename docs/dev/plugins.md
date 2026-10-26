@@ -153,6 +153,23 @@ What a runtime's `hooks` answer for every agent (`acp/session/plugin_hooks.rs`; 
 
 A default model or mode for new sessions needs no hook: on `session.created`, `session/act` with `setConfig` / `setMode`.
 
+## Built-in agent hooks
+
+Hooks into Acpira's own agent loop (`acpira-agent/src/plugin_hooks.rs`), declared in `runtime.hooks` like the others. The agent asks the engine which of them are declared once per turn (`_acpira/pluginHooks`) and sends `_acpira/pluginHook` `{ sessionId, hook, payload }` only for those, so a session no plugin hooks into costs one message per turn. The engine runs them like the other hooks with one rule for all of them (`AcpSession::plugin_loop_hook`): each answer's fields replace the payload's, `block` stops the chain, and the payload as the chain left it goes back. Nothing is written to the session log: a hook applies to the call it answered.
+
+| Hook | Payload | Answer |
+|---|---|---|
+| `tools` | `tools` (`name`, `description`, `parameters`), once per turn | `tools`: the turn's list in that order with descriptions or parameters changed; a tool left out is gone for the turn, a name the loop has no tool for is ignored (new tools come as script tools or MCP) |
+| `context` | one model call: `system`, `items` (`index`, `role` `user` / `assistant` / `tool`, their text, tool calls and results; images without their data), `tools`, `options` (`model`, `maxTokens`, `temperature`, `topP`, `topK`, `effort`) | Any of them replaced for this call only. An item `{ "keep": i }` is item `i` unchanged; any other is built from its fields, which drops what a provider must get back verbatim (signed thinking) and a user message's images. Changing `system`, `tools` or earlier items defeats the provider's prompt cache from that point |
+| `model.request` | `model`, `url`, `headers: {}` | `headers` added to that call's HTTP request |
+| `tool.before` | `tool`, `arguments` | `arguments` replaces them; `block` refuses the call (the model reads `Refused by a plugin: …`); `result: { text, isError }` is the call's result and the tool never runs, without a permission card |
+| `shell` | `command`, `workdir`, `background` of a `bash` call | `command` replaces it, `env` sets variables in front of it (`export K='v'; `, PowerShell `$env:K='v'; `), `block` refuses it. A `then_run` rider's command is not asked |
+| `websearch` | `query`, `count` | `text`: the results as the model reads them, instead of the configured backend |
+| `tool.after` | `tool`, `arguments`, `result: { text, isError }` | `result` replaces what the model reads; the card keeps what the tool returned |
+| `compaction` | `reason`, `previous` (the earlier summary or null), `items` (the history being summarized, as text), `words` | `summary`: taken as the summary and no model is called; the log records the writer as `plugin:<id>` |
+
+The Acpira MCP server's `tool.before` / `tool.after` are not asked for a built-in agent session: its own hooks see those calls too. A restarted agent process picks a session up again with session/load, so a plugin swaps the loop's code by `session/act` `{ "type": "reconnect" }` once a new binary is in place.
+
 ## Activation
 
 ```

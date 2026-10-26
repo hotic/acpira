@@ -94,6 +94,23 @@ impl ClientHandlers for SessionHandlers {
     })
   }
 
+  fn on_plugin_hooks(&self) -> BoxFuture<Result<Value, RpcError>> {
+    let s = self.live();
+    Box::pin(async move { Ok(json!({ "hooks": s.map(|s| s.plugin_loop_hooks()).unwrap_or_default() })) })
+  }
+
+  fn on_plugin_hook(&self, req: Value) -> BoxFuture<Result<Value, RpcError>> {
+    let s = self.live();
+    Box::pin(async move {
+      let hook = req.get("hook").and_then(Value::as_str).unwrap_or_default().to_owned();
+      let payload = req.get("payload").cloned().unwrap_or_else(|| json!({}));
+      match s {
+        Some(s) if acpira_agent::plugin_hooks::NAMES.contains(&hook.as_str()) => Ok(s.plugin_loop_hook(&hook, payload).await),
+        _ => Ok(payload),
+      }
+    })
+  }
+
   fn on_remote_tool(&self, req: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>> {
     let s = self.live();
     Box::pin(async move {

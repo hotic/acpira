@@ -25,6 +25,8 @@ pub const AGENT_NAME: &str = "acpira";
 /// What a session remembers between turns
 #[derive(Default)]
 pub struct SessionState {
+  /// The engine's plugin hooks into this loop declared at the start of the turn (`plugin_hooks::refresh`)
+  pub plugin_hooks: Vec<String>,
   pub mode: String,
   /// The mode the model was last told about (`modes::Mode::overlay`)
   pub announced: String,

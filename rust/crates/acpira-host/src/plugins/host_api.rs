@@ -39,6 +39,7 @@ pub const ACTIONS: &[&str] = &[
   "editQueued",
   "cancelSubagent",
   "stopAsyncTask",
+  "reconnect",
 ];
 
 /// Turns a `session/get` keeps when the caller names none

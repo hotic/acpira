@@ -831,7 +831,16 @@ pub async fn run(server: &Server, session: &Session, call: &Call<'_>, reason: Re
   let mut ev = json!({ "type": "compaction", "reason": reason.wire() });
   let mut result = Err(LlmError::Protocol("no model to write the summary with".into()));
   let words = summary_words(call.limit);
-  let requests: Vec<(Request, bool)> = call.writers.iter().map(|w| summary_request(w, head, previous.as_deref(), words)).collect();
+  // A plugin's `compaction` hook may write the summary itself, and no model is called
+  let written = plugin_summary(server, session, reason, head, previous.as_deref(), words).await;
+  let requests: Vec<(Request, bool)> = match &written {
+    Some(_) => vec![],
+    None => call.writers.iter().map(|w| summary_request(w, head, previous.as_deref(), words)).collect(),
+  };
+  if let Some((plugin, text)) = written {
+    ev["model"] = Value::String(format!("plugin:{plugin}"));
+    result = Ok((text, None));
+  }
   for (n, (writer, (request, cut))) in call.writers.iter().zip(requests.iter()).enumerate() {
     // A writer whose window would leave out the start of the transcript gives way to a later one that holds it all
     // (the session's model, whose window held the conversation): the start is where the task was set
@@ -901,6 +910,18 @@ pub async fn run(server: &Server, session: &Session, call: &Call<'_>, reason: Re
   session.store.append(ev);
   server.update(&session.id, json!({ "sessionUpdate": "compaction_update", "compactionId": id, "status": "completed" }));
   Ok(true)
+}
+
+/// A plugin's summary of `head` (`compaction` hook): its answer's `summary`, with the plugin that wrote it
+async fn plugin_summary(server: &Server, session: &Session, reason: Reason, head: &[Item], previous: Option<&str>, words: u64) -> Option<(String, String)> {
+  if !crate::plugin_hooks::has(session, "compaction") {
+    return None;
+  }
+  let items: Vec<Value> = head.iter().map(|i| Value::String(serialize(i, true))).collect();
+  let payload = json!({ "reason": reason.wire(), "previous": previous, "items": items, "words": words });
+  let out = crate::plugin_hooks::ask(server, session, "compaction", payload).await?;
+  let text = out.get("summary").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty())?.to_owned();
+  Some((out.get("by").and_then(Value::as_str).unwrap_or("plugin").to_owned(), text))
 }
 
 /// The summary call for one writer: the transcript cut to what its window takes beside the answer and the

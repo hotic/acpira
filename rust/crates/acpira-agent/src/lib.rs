@@ -11,6 +11,7 @@ pub mod compact;
 pub mod config;
 pub mod frames;
 pub mod generate;
+pub mod plugin_hooks;
 pub mod goal;
 pub mod llm;
 pub mod mcp;
