@@ -127,6 +127,9 @@ pub struct RuntimeDef {
   /// Event names or `<family>.*` / `*`; only these are ever sent
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub events: Vec<String>,
+  /// Methods the pages and other plugins may call (`plugin/call`, `pluginCall`), sent to the process as `rpc/<name>`
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub methods: Vec<String>,
   /// Seconds one hook call may take, at most `RUNTIME_TIMEOUT_SECS`
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub timeout: Option<f64>,
@@ -308,6 +311,12 @@ pub fn provider_of(raw: &Value, plugin: &str) -> Result<acpira_shared::providers
   Ok(p)
 }
 
+/// `[a-z][a-z0-9_.-]*`, at most 48 characters: a method a runtime offers (`rates.refresh`)
+pub fn valid_method_name(name: &str) -> bool {
+  let b = name.as_bytes();
+  !b.is_empty() && b.len() <= 48 && b[0].is_ascii_lowercase() && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || b"_.-".contains(c))
+}
+
 /// What the static check found: errors keep the plugin from being activated, notes are shown beside it
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -479,8 +488,11 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
   }
   if let Some(rt) = &m.contributes.runtime {
     command_exists(&rt.command, dir, which, "runtime", findings);
-    if rt.hooks.is_empty() && rt.events.is_empty() {
-      err(findings, "runtime: declares no `hooks` and no `events`, so it would never be called".into());
+    if rt.hooks.is_empty() && rt.events.is_empty() && rt.methods.is_empty() {
+      err(findings, "runtime: declares no `hooks`, `events` or `methods`, so it would never be called".into());
+    }
+    for name in rt.methods.iter().filter(|n| !valid_method_name(n)) {
+      err(findings, format!("runtime: method `{name}` must be lowercase letters, digits, `_`, `.` and `-`, starting with a letter, at most 48 characters"));
     }
     for h in rt.hooks.iter().filter(|h| !RUNTIME_HOOKS.contains(&h.as_str())) {
       findings.notes.push(format!("runtime: hook `{h}` is not one this Acpira calls"));

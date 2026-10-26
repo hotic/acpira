@@ -320,6 +320,14 @@ pub enum HostMsg {
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
   },
+  /// The answer to `PluginCall` with the same id: the method's result, or why there is none
+  PluginCalled {
+    id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+  },
   /// The built-in agent's model sources; `error` when the action that triggered this reply failed
   Providers {
     view: ProvidersView,
@@ -484,6 +492,7 @@ impl HostMsg {
       HostMsg::Storage { .. } => "storage",
       HostMsg::PluginTheme { .. } => "pluginTheme",
       HostMsg::Plugins { .. } => "plugins",
+      HostMsg::PluginCalled { .. } => "pluginCalled",
       HostMsg::Providers { .. } => "providers",
       HostMsg::ProviderProbed { .. } => "providerProbed",
       HostMsg::Controls { .. } => "controls",
@@ -909,6 +918,14 @@ pub enum WebviewMsg {
   Plugins,
   PluginAction {
     action: PluginAction,
+  },
+  /// Call a method a plugin's process offers (`runtime.methods`, docs/dev/plugins.md); answered by `PluginCalled`
+  PluginCall {
+    id: String,
+    plugin: String,
+    method: String,
+    #[serde(default)]
+    params: Value,
   },
   /// The built-in agent's model sources: read them, or apply an edit and get the view back
   Providers,
