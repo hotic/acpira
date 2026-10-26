@@ -880,7 +880,7 @@ const answer = (method, p) => {
     case 'hook/model.request': return { headers: { 'x-plugin': 'on' } };
     case 'hook/tool.before': return p.tool === 'read' ? { result: { text: 'READ-BY-PLUGIN' } } : null;
     case 'hook/shell': return { command: 'echo "$PLUGIN_VAR"', env: { PLUGIN_VAR: "from 'plugin'" } };
-    case 'hook/tool.after': return p.tool === 'bash' ? { result: { text: 'AFTER:' + p.result.text } } : null;
+    case 'hook/tool.after': return p.tool === 'bash' ? { result: { text: 'AFTER:' + (p.arguments.command.includes('PLUGIN_VAR') ? 'REWRITTEN:' : '') + p.result.text } } : null;
     case 'hook/websearch': return { text: 'RESULTS FOR ' + p.query };
     case 'hook/compaction': return { summary: 'PLUGIN SUMMARY' };
   }
@@ -949,6 +949,48 @@ async fn a_plugins_model_sources_reach_the_picker_and_serve_its_turns() {
   rt.stop_all().await;
 }
 
+/// Rewrites every command, an edit's `then_run` included
+const RIDER: &str = r#"
+import { createInterface } from 'node:readline';
+const send = m => process.stdout.write(JSON.stringify(m) + '\n');
+createInterface({ input: process.stdin }).on('line', line => {
+  const m = JSON.parse(line);
+  if (m.method === 'initialize') return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: 1 } });
+  if (m.method === 'hook/shell') return send({ jsonrpc: '2.0', id: m.id, result: m.params.command.includes('blocked') ? { block: 'no blocked commands' } : { command: 'echo rider-$PLUGIN_VAR', env: { PLUGIN_VAR: 'ok' } } });
+  if (m.id !== undefined) send({ jsonrpc: '2.0', id: m.id, result: null });
+}).on('close', () => process.exit(0));
+"#;
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugins_shell_hook_also_rewrites_and_refuses_an_edits_then_run_command() {
+  if !acpira_host::plugins::host::on_path("node") {
+    return;
+  }
+  let mut env = Env::new();
+  let path = env.root.path().join("providers.json");
+  let mut p: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+  p["approval"] = json!("full");
+  std::fs::write(path, p.to_string()).unwrap();
+  let plugins = tempfile::tempdir().unwrap();
+  let rt = crate::acp_session::plugin_runtime::plugin(plugins.path(), "rider", RIDER, &[], &["shell"]).await;
+  env.deps.plugin_runtime = Some(rt.clone());
+  let s = env.session().await;
+  env.server.push(mock::tools(&[
+    ("c1", "write", json!({ "path": "a.txt", "content": "x", "then_run": "echo original" })),
+    ("c2", "write", json!({ "path": "b.txt", "content": "y", "then_run": "echo blocked" })),
+  ]));
+  env.server.push(mock::text("Done."));
+  s.prompt("go".into(), vec![], false, None, None).await;
+  let reqs = env.server.requests();
+  let results = tool_results(&reqs[1].body);
+  assert!(results[0].contains("rider-ok") && !results[0].contains("echo original"), "{results:?}");
+  assert!(results[1].contains("Not run: Refused by a plugin: rider: no blocked commands"), "{results:?}");
+  // The change itself was made either way
+  assert!(env.cwd().join("a.txt").is_file() && env.cwd().join("b.txt").is_file());
+  rt.stop_all().await;
+}
+
 /// The text of every `tool` message of a model call
 fn tool_results(body: &Value) -> Vec<String> {
   body["messages"].as_array().unwrap().iter().filter(|m| m["role"] == "tool").map(|m| m["content"].as_str().map(str::to_owned).unwrap_or_else(|| m["content"].to_string())).collect()
@@ -988,7 +1030,8 @@ async fn a_plugin_reshapes_every_request_tool_call_and_summary_of_the_loop() {
   // the search answered by its backend
   let results = tool_results(&reqs[3].body);
   assert_eq!(results[0], "READ-BY-PLUGIN");
-  assert!(results[1].starts_with("AFTER:") && results[1].contains("from 'plugin'"), "{results:?}");
+  // tool.after sees the command as it ran, after the shell hook rewrote it
+  assert!(results[1].starts_with("AFTER:REWRITTEN:") && results[1].contains("from 'plugin'"), "{results:?}");
   assert_eq!(results[2], "RESULTS FOR acpira");
   // /compact: the plugin writes the summary, no model is called, and the next call starts from it
   s.prompt("/compact".into(), vec![], false, None, None).await;

@@ -212,14 +212,12 @@ pub async fn before_call(server: &Server, session: &Session, tool: &str, mut arg
   }
   if tool == crate::tools::BASH
     && let Some(command) = arguments.get("command").and_then(Value::as_str)
-    && let Some(out) = ask(server, session, "shell", json!({ "command": command, "workdir": arguments.get("workdir"), "background": arguments.get("background") })).await
   {
-    if let Some(reason) = blocked(&out) {
-      return Before::Block(format!("Refused by a plugin: {reason}"));
+    match shell(server, session, command, arguments.get("workdir").cloned(), arguments.get("background").cloned()).await {
+      Err(reason) => return Before::Block(reason),
+      Ok(Some(line)) => arguments["command"] = Value::String(line),
+      Ok(None) => {}
     }
-    let command = out.get("command").and_then(Value::as_str).unwrap_or(command).to_owned();
-    let env: Vec<(String, String)> = out.get("env").and_then(Value::as_object).into_iter().flatten().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_owned()))).collect();
-    arguments["command"] = Value::String(format!("{}{command}", crate::tools::bash::env_prefix(&env)));
   }
   if tool == crate::tools::WEBSEARCH
     && let Some(out) = ask(server, session, "websearch", json!({ "query": arguments.get("query"), "count": arguments.get("count") })).await
@@ -231,9 +229,32 @@ pub async fn before_call(server: &Server, session: &Session, tool: &str, mut arg
   Before::Run(arguments)
 }
 
-/// `tool.after`: `{ result: { text, isError } }` replaces what the model reads of a finished call
-pub async fn after_call(server: &Server, session: &Session, tool: &str, arguments: &str, text: &str, is_error: bool) -> Option<(String, bool)> {
-  let arguments: Value = serde_json::from_str(arguments).unwrap_or(Value::String(arguments.to_owned()));
+/// `shell`: the command line to run instead (its variables in front), None when no plugin changed it, or why it is
+/// refused
+async fn shell(server: &Server, session: &Session, command: &str, workdir: Option<Value>, background: Option<Value>) -> Result<Option<String>, String> {
+  let Some(out) = ask(server, session, "shell", json!({ "command": command, "workdir": workdir, "background": background })).await else { return Ok(None) };
+  if let Some(reason) = blocked(&out) {
+    return Err(format!("Refused by a plugin: {reason}"));
+  }
+  let line = out.get("command").and_then(Value::as_str).unwrap_or(command);
+  let env: Vec<(String, String)> = out.get("env").and_then(Value::as_object).into_iter().flatten().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_owned()))).collect();
+  Ok(Some(format!("{}{line}", crate::tools::bash::env_prefix(&env))).filter(|l| l != command))
+}
+
+/// The `shell` hook on an edit's `then_run` command, as on a `bash` call: the action to run, or why it is refused
+pub async fn shell_rider(server: &Server, session: &Session, action: &crate::tools::Action) -> Result<crate::tools::Action, String> {
+  let mut action = action.clone();
+  if let crate::tools::Action::Bash { command, workdir, background, .. } = &mut action
+    && let Some(line) = shell(server, session, command, Some(json!(workdir)), Some(json!(background))).await?
+  {
+    *command = line;
+  }
+  Ok(action)
+}
+
+/// `tool.after`: `{ result: { text, isError } }` replaces what the model reads of a finished call. `arguments` are the
+/// ones the call ran with, after the `tool.before` and `shell` hooks
+pub async fn after_call(server: &Server, session: &Session, tool: &str, arguments: &Value, text: &str, is_error: bool) -> Option<(String, bool)> {
   let out = ask(server, session, "tool.after", json!({ "tool": tool, "arguments": arguments, "result": { "text": text, "isError": is_error } })).await?;
   answered(&out).map(|o| (o.model, o.is_error))
 }
