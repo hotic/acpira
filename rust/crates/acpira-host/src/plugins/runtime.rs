@@ -308,6 +308,16 @@ impl Runtimes {
     Some(r)
   }
 
+  /// Call a method `plugin`'s process offers (`runtime.methods`): `rpc/<method>` with `{ params, from }`, `from` being
+  /// the calling plugin's id or `page`. Under the process's own time limit and failure count
+  pub async fn rpc(&self, plugin: &str, method: &str, params: Value, from: &str) -> Result<Value, String> {
+    let w = self.workers.read().get(plugin).cloned().ok_or_else(|| format!("plugin {plugin} has no running process"))?;
+    if !w.want.def.methods.iter().any(|m| m == method) {
+      return Err(format!("plugin {plugin} offers no method `{method}`"));
+    }
+    w.call(&format!("rpc/{method}"), json!({ "params": params, "from": from })).await
+  }
+
   pub fn set_redirect(&self, f: crate::acp::session::plugin_hooks::RedirectFn) {
     *self.redirect.write() = Some(f);
   }
@@ -511,6 +521,7 @@ impl Runtimes {
       "engine": { "name": "acpira", "version": env!("CARGO_PKG_VERSION") },
       "hooks": want.def.hooks,
       "events": want.def.events,
+      "methods": want.def.methods,
     });
     let answer = match tokio::time::timeout(INIT_TIMEOUT, conn.request("initialize", init)).await {
       Ok(Ok(v)) => v,
@@ -680,6 +691,14 @@ impl Inbound for PluginInbound {
       "storage/set" => key().and_then(|k| self.kv.set(&k, params.get("value").cloned().unwrap_or(Value::Null)).map(|()| json!({})).map_err(|e| RpcError::new(-32000, e))),
       "storage/delete" => key().and_then(|k| self.kv.delete(&k).map(|()| json!({})).map_err(|e| RpcError::new(-32000, e))),
       "storage/list" => Ok(json!({ "keys": self.kv.keys(params.get("prefix").and_then(Value::as_str).unwrap_or("")) })),
+      // Another plugin's method: answered on its own task, since the callee may take its full time limit
+      "plugin/call" => {
+        let (Some(rt), Some(plugin), Some(name)) = (self.runtimes.upgrade(), params.get("plugin").and_then(Value::as_str), params.get("method").and_then(Value::as_str)) else {
+          return Box::pin(async { Err(RpcError::new(-32602, "`plugin` and `method` are needed")) });
+        };
+        let (plugin, name, args, from) = (plugin.to_owned(), name.to_owned(), params.get("params").cloned().unwrap_or(Value::Null), self.id.clone());
+        return Box::pin(async move { rt.rpc(&plugin, &name, args, &from).await.map_err(|e| RpcError::new(-32000, e)) });
+      }
       "providers/set" => match (params.get("providers").and_then(Value::as_array), self.runtimes.upgrade()) {
         (None, _) => Err(RpcError::new(-32602, "`providers` must be an array")),
         (_, None) => Err(RpcError::new(-32000, "the engine is closing")),
@@ -827,6 +846,50 @@ rl.on('line', async line => {
     let rt = Runtimes::new(root.path().join(".data"), Arc::new(|_: &str| {}));
     rt.enable(None);
     Some((root, rt))
+  }
+
+  // Offers `rates.get`; on `rpc/relay` it calls another plugin's method through the engine and returns the answer
+  const RPC: &str = r#"
+import { createInterface } from 'node:readline';
+const send = m => process.stdout.write(JSON.stringify(m) + '\n');
+let next = 1000;
+const waits = new Map();
+const ask = (method, params) => new Promise(r => { const id = next++; waits.set(id, r); send({ jsonrpc: '2.0', id, method, params }); });
+createInterface({ input: process.stdin }).on('close', () => process.exit(0)).on('line', async line => {
+  const m = JSON.parse(line);
+  if (m.id !== undefined && !m.method) { waits.get(m.id)?.(m.error ? { error: m.error.message } : m.result); return; }
+  if (m.method === 'initialize') return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: 1 } });
+  if (m.method === 'rpc/rates.get') return send({ jsonrpc: '2.0', id: m.id, result: { eur: 0.92, from: m.params.from, asked: m.params.params } });
+  if (m.method === 'rpc/relay') return send({ jsonrpc: '2.0', id: m.id, result: await ask('plugin/call', m.params.params) });
+  if (m.id !== undefined) send({ jsonrpc: '2.0', id: m.id, error: { code: -32601, message: 'no ' + m.method } });
+});
+"#;
+
+  #[tokio::test]
+  async fn a_runtime_offers_its_declared_methods_to_pages_and_other_plugins() {
+    let Some((root, rt)) = setup() else { return };
+    let plugin = |id: &str, methods: &str| {
+      let dir = root.path().join(id);
+      std::fs::create_dir_all(&dir).unwrap();
+      std::fs::write(dir.join("rpc.mjs"), RPC).unwrap();
+      let json = format!(r#"{{ "schema": 1, "id": "{id}", "version": "1.0.0", "description": "d", "contributes": {{ "runtime": {{ "command": ["node", "rpc.mjs"], "methods": {methods} }} }} }}"#);
+      let (m, mut f) = manifest::parse(json.as_bytes()).unwrap();
+      manifest::check(&m, id, &dir, &|p| p == "node", &mut f);
+      assert!(f.ok(), "{f:?}");
+      Arc::new(Active { id: id.into(), hash: "h".into(), dir, manifest: m })
+    };
+    rt.sync(&[plugin("rates", r#"["rates.get"]"#), plugin("caller", r#"["relay"]"#)]).await;
+    let page = rt.rpc("rates", "rates.get", json!({ "to": "EUR" }), "page").await.unwrap();
+    assert_eq!(page, json!({ "eur": 0.92, "from": "page", "asked": { "to": "EUR" } }));
+    // Through the engine from another plugin, which is named as the caller
+    let relayed = rt.rpc("caller", "relay", json!({ "plugin": "rates", "method": "rates.get", "params": 1 }), "page").await.unwrap();
+    assert_eq!(relayed, json!({ "eur": 0.92, "from": "caller", "asked": 1 }));
+    // Only declared methods, only running plugins
+    assert!(rt.rpc("rates", "relay", json!({}), "page").await.unwrap_err().contains("no method `relay`"));
+    let refused = rt.rpc("caller", "relay", json!({ "plugin": "rates", "method": "secret" }), "page").await.unwrap();
+    assert!(refused["error"].as_str().is_some_and(|e| e.contains("no method `secret`")), "{refused}");
+    assert!(rt.rpc("gone", "x", json!({}), "page").await.unwrap_err().contains("no running process"));
+    rt.stop_all().await;
   }
 
   #[tokio::test]

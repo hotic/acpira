@@ -650,6 +650,17 @@ impl BridgeCore {
         let view = self.plugins_view().await;
         self.post_now(HostMsg::Plugins { view, error });
       }
+      // A plugin method may take its process's full time limit: off the message loop, answered by id
+      W::PluginCall { id, plugin, method, params } => {
+        let me = self.clone();
+        tokio::spawn(async move {
+          let (result, error) = match me.plugins.runtimes().rpc(&plugin, &method, params, "page").await {
+            Ok(v) => (Some(v), None),
+            Err(e) => (None, Some(e)),
+          };
+          me.post_now(HostMsg::PluginCalled { id, result, error });
+        });
+      }
       W::Providers => {
         let view = self.settings.providers_view().await;
         self.post_now(HostMsg::Providers { view, error: None });

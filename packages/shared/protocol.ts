@@ -283,6 +283,8 @@ export type HostMsg =
   // The plugins' theme layer: after init and whenever it changes; empty takes it away (docs/dev/plugins.md)
   | { type: 'pluginTheme'; css: string }
   | { type: 'plugins'; view: PluginsView; error?: string }
+  // The answer to the pluginCall with the same id: the method's result, or why there is none
+  | { type: 'pluginCalled'; id: string; result?: unknown; error?: string }
   // shapes: the agent's remembered per-model parameters (modelShapes.ts), so a model picked in settings shows its own efforts
   | { type: 'controls'; agent: AgentId; controls: ConfigControl[]; shapes?: ModelShapes }
   // The built-in agent's model sources; error when the action that triggered this reply failed
@@ -515,6 +517,8 @@ export type WebviewMsg =
   // The plugin page: read the view (and follow its changes from then on), or apply an action and get the view back
   | { type: 'plugins' }
   | { type: 'pluginAction'; action: PluginAction }
+  // Call a method a plugin's process offers (runtime.methods); answered by pluginCalled
+  | { type: 'pluginCall'; id: string; plugin: string; method: string; params?: unknown }
   // The built-in agent's model sources: read them, or apply an edit and get the view back
   | { type: 'providers' }
   | { type: 'providerAction'; action: ProviderAction }
