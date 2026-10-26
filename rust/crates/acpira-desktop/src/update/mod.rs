@@ -18,13 +18,12 @@ pub use swap::ManualReason;
 pub const MANIFEST_URL: &str = "https://github.com/hotic/acpira/releases/latest/download/desktop-update.json";
 /// Where an install that cannot update itself sends the user
 pub const RELEASE_URL: &str = "https://github.com/hotic/acpira/releases/latest";
-/// The Ed25519 public keys (hex) that may sign the manifest; two can be listed while one is rotated out. Empty until
-/// the release key exists (`acpira-update-pack keygen`, the seed in the `DESKTOP_UPDATE_KEY` secret): a build without
-/// a key never checks
-pub const PUBLIC_KEYS: &[&str] = &[];
-/// The Developer ID team the running and the staged macOS bundle must be signed by; empty until the certificate exists.
+/// The Ed25519 public keys (hex) that may sign the manifest; two can be listed while one is rotated out. The seed
+/// (`acpira-update-pack keygen`, 2026-10-26) is the `DESKTOP_UPDATE_KEY` secret; a build without a key never checks
+pub const PUBLIC_KEYS: &[&str] = &["c9893c9f2fc9ad1dde40dcc1d527e6547fc56f96ffe2aff46f9c9b1b8d179f8f"];
+/// The Developer ID team the running and the staged macOS bundle must be signed by (Developer ID Application: YE SHAO).
 /// Windows does not use it (stage.rs)
-pub const TEAM_ID: &str = "";
+pub const TEAM_ID: &str = "2DUQS6323W";
 
 impl Config {
   /// A release build's configuration

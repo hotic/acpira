@@ -75,7 +75,27 @@ if (!smoke && existsSync(join(bundle, 'dmg'))) {
     if (identity !== '-') {
       const s = spawnSync('codesign', ['--force', '--timestamp', '--sign', identity, dmg], { stdio: 'inherit' });
       if (s.status !== 0) process.exit(s.status ?? 1);
+      notarizeDmg(dmg);
     }
+  }
+}
+
+// The Tauri CLI notarizes the app only. Apple asks for the outermost container to be notarized too, so with the same
+// credentials the re-signed dmg goes through notarytool and gets its own stapled ticket (the app inside keeps its own)
+function notarizeDmg(dmg) {
+  const e = process.env;
+  let auth;
+  if (e.APPLE_API_KEY && e.APPLE_API_ISSUER && e.APPLE_API_KEY_PATH) {
+    auth = ['--key', e.APPLE_API_KEY_PATH, '--key-id', e.APPLE_API_KEY, '--issuer', e.APPLE_API_ISSUER];
+  } else if (e.APPLE_ID && e.APPLE_PASSWORD && e.APPLE_TEAM_ID) {
+    auth = ['--apple-id', e.APPLE_ID, '--password', e.APPLE_PASSWORD, '--team-id', e.APPLE_TEAM_ID];
+  } else {
+    console.log('no notarization credentials: the dmg is signed, not notarized');
+    return;
+  }
+  for (const args of [['notarytool', 'submit', dmg, ...auth, '--wait'], ['stapler', 'staple', dmg]]) {
+    const r = spawnSync('xcrun', args, { stdio: 'inherit' });
+    if (r.status !== 0) process.exit(r.status ?? 1);
   }
 }
 
