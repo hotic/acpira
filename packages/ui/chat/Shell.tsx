@@ -1069,7 +1069,8 @@ export function Shell(p: ShellProps) {
             {desktop && !canDock && <div data-sheet-dim aria-hidden="true" className="pointer-events-none absolute inset-0 z-40 bg-scrim/45" />}
           </div>
           {inspectNode !== undefined && canDockInspector && inspect !== undefined && p.activeSessionId !== undefined && (
-            <aside ref={inspectorPane} data-subagent-panel="docked" className={cn('relative flex w-subagent-pane shrink-0 flex-col border-l border-line bg-bg-0', files ? 'order-4' : 'order-last')}
+            // Desktop: its card (beside the sheet) or its place on the canvas (files layout) comes from desktop.css
+            <aside ref={inspectorPane} data-subagent-panel="docked" className={cn('relative flex w-subagent-pane shrink-0 flex-col', !desktop && 'border-l border-line bg-bg-0', files ? 'order-4' : 'order-last')}
               style={paneWidth !== undefined ? { width: `clamp(var(--subagent-pane-min), ${paneWidth}px, calc(100% - var(--subagent-main-min)))` } : undefined}>
               <InspectorSplitter width={paneWidth ?? paneBounds().initial} bounds={paneBounds}
                 onDrag={setDraggedPane}

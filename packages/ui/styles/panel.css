@@ -40,7 +40,7 @@
 /* While the panel is closed its toggle (ToolPanel.tsx, pinned at the window's top-right corner) sits at the end of the
    chat header's line, which leaves it the room. Unlayered like desktop.css's --sheet-lead rules so it beats the default.
    The files layout's toggle folds the session column instead (desktop.css) */
-.acp-shell[data-desktop]:not([data-layout="files"]):has(> [data-panel-toggle]):not(:has(> [data-tool-panel-wrap][data-shown])) [data-sheet-header] {
+.acp-shell[data-desktop]:not([data-layout="files"]):has(> [data-panel-toggle]):not(:has(> [data-tool-panel-wrap][data-shown])):not(:has(> [data-subagent-panel="docked"])) [data-sheet-header] {
   --sheet-trail: calc(var(--start-x) + var(--ctl) + var(--gap) + var(--caps-w, 0px));
 }
 /* The Files tab's tree sits at the panel's (and the window's) right edge, under the pinned toggle: its filter box ends where
