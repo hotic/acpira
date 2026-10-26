@@ -26,14 +26,11 @@ use acpira_shared::attachments::image_mime_of;
 
 use crate::limits::{MAX_OUT_IMAGE_BYTES, MAX_WIDGET_BYTES};
 
-/// Server name in `mcpServers`; adapters prefix the tool with it (`mcp__acpira__show_image`, `mcp.acpira.show_image`)
-pub const SERVER_NAME: &str = "acpira";
-pub const TOOL_NAME: &str = "show_image";
-pub const WIDGET_TOOL: &str = "show_widget";
-pub const HOOKS_TOOL: &str = "workspace_hooks";
-pub const BROWSER_TOOL: &str = "open_browser";
-pub const SEARCH_SESSIONS_TOOL: &str = "search_sessions";
-pub const READ_SESSION_TOOL: &str = "read_session";
+// The names live in acpira-shared, where the built-in agent's permission rules list them one by one
+pub use acpira_shared::host_tools::{
+  ASK_AGENT as ASK_TOOL, ASK_CALLER as CALLER_TOOL, OPEN_BROWSER as BROWSER_TOOL, READ_SESSION as READ_SESSION_TOOL, SEARCH_SESSIONS as SEARCH_SESSIONS_TOOL,
+  SERVER as SERVER_NAME, SHOW_IMAGE as TOOL_NAME, SHOW_WIDGET as WIDGET_TOOL, WORKSPACE_HOOKS as HOOKS_TOOL,
+};
 /// Answered when the client does not name a protocol version
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
@@ -79,8 +76,6 @@ const CALLER_DESCRIPTION: &str = "Ask the agent that summoned you a question and
 decision that blocks you and that you cannot reasonably make yourself; one question at a time, short and self-contained, with \
 `options` when there are clear choices. The user sees the question too and may answer first. When no answer comes in time the \
 result says so: go on with the most reasonable assumption and state it in your final reply.";
-
-pub const CALLER_TOOL: &str = "ask_caller";
 
 /// Appended to the instructions while the serving shell can show pages, so a deferred `open_browser` is still found
 const BROWSER_INSTRUCTIONS: &str = "When the user wants to see a web page (a local dev server, a tool's web UI), call open_browser \
@@ -412,8 +407,6 @@ pub fn run(version: &str) -> i32 {
   }
   0
 }
-
-pub const ASK_TOOL: &str = "ask_agent";
 
 /// The way back to the sidecar (`relay/hub.rs`), from the env the session put on this server's entry
 #[derive(Clone)]
@@ -1098,6 +1091,21 @@ mod tests {
     assert!(list["result"]["tools"][0]["description"].as_str().unwrap().contains("![caption](/abs/path.png)"));
     let unknown = call(json!({ "jsonrpc": "2.0", "id": 3, "method": "resources/list" }));
     assert_eq!(unknown["error"]["code"], -32601);
+  }
+
+  #[test]
+  fn every_tool_served_is_on_the_engine_s_list() {
+    // The built-in agent runs exactly these without a card; a tool missing here would ask, one listed but not served
+    // would leave a name a plugin could not take
+    let persona: acpira_shared::subagents::SubagentPersona =
+      serde_json::from_value(json!({ "id": "son-1", "name": "Son", "agent": "codex", "mode": "work" })).unwrap();
+    let mut tools = vec![tool_def(), widget_tool_def(), hooks_tool_def(), ask_tool_def(std::slice::from_ref(&persona), &[]), caller_tool_def(), browser_tool_def()];
+    tools.extend(session_tool_defs());
+    let mut names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+    names.sort_unstable();
+    let mut all = acpira_shared::host_tools::ALL.to_vec();
+    all.sort_unstable();
+    assert_eq!(names, all);
   }
 
   #[test]

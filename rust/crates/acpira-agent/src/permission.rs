@@ -43,8 +43,15 @@ pub const WEB_LOCAL: &str = "web-local";
 pub const MCP: &str = "mcp";
 /// The same for a tool its server marks `readOnlyHint`
 pub const MCP_READ: &str = "mcp-read";
-/// The engine's own MCP server (`acpira mcp`: show_image, workspace_hooks, ask_agent), allowed like a read
-pub const ENGINE_MCP: &str = "acpira/*";
+/// Stands for the engine's own MCP tools in a rule pattern (`acpira mcp`: show_image, workspace_hooks, ask_agent …),
+/// which run like a read. `engine_rules` and `Mode::rules` expand it to one `acpira/<tool>` rule per tool, so a tool a
+/// plugin adds to the same server is not covered and asks like any other MCP tool
+pub const ENGINE_MCP: &str = "{engine}";
+
+/// One rule per tool of the engine's own MCP server
+pub fn engine_rules(decision: Decision) -> impl Iterator<Item = Rule> {
+  acpira_shared::host_tools::ALL.iter().map(move |tool| Rule::new(MCP, &format!("{}/{tool}", acpira_shared::host_tools::SERVER), decision))
+}
 
 /// The approval level: how much runs without a card. A setting of the agent (`ProvidersFile::approval`, ids as in
 /// `APPROVAL_LEVELS`), read at the start of each turn
@@ -86,7 +93,7 @@ impl Approval {
 /// What every session starts from: reads, the to-do list, the public web, MCP tools their server marks read-only and the
 /// engine's own MCP tools run, the rest asks. The session's spilled outputs are always readable
 pub fn defaults(outputs: &Path) -> Vec<Rule> {
-  vec![
+  let mut rules = vec![
     Rule::new("*", "*", Decision::Ask),
     Rule::new(READ, "*", Decision::Allow),
     Rule::new(TODO, "*", Decision::Allow),
@@ -94,9 +101,10 @@ pub fn defaults(outputs: &Path) -> Vec<Rule> {
     Rule::new(JOB, "*", Decision::Allow),
     Rule::new(WEB, "*", Decision::Allow),
     Rule::new(MCP_READ, "*", Decision::Allow),
-    Rule::new(MCP, ENGINE_MCP, Decision::Allow),
-    Rule::new(READ, &format!("{}/*", slashed(outputs)), Decision::Allow),
-  ]
+  ];
+  rules.extend(engine_rules(Decision::Allow));
+  rules.push(Rule::new(READ, &format!("{}/*", slashed(outputs)), Decision::Allow));
+  rules
 }
 
 /// The last matching rule over the layers in order; ask when none matches. An allow rule narrower than `*` names one
@@ -316,6 +324,18 @@ mod tests {
     assert_eq!(ev(&[&defaults, &full, &session], BASH, "rm -rf x"), Decision::Deny);
     assert_eq!(ev(&[&defaults, &Approval::AutoEdit.rules()], BASH, "ls"), Decision::Ask);
     assert_eq!(ev(&[], "anything", "x"), Decision::Ask);
+  }
+
+  #[test]
+  fn only_the_engine_s_own_tools_run_without_a_card() {
+    let defaults = defaults(Path::new("/h/agent/sessions/s/outputs"));
+    for tool in acpira_shared::host_tools::ALL {
+      assert_eq!(evaluate(&[&defaults], MCP, &format!("acpira/{tool}")), Decision::Allow, "{tool}");
+    }
+    // A plugin's tool on the same server asks, unless the server marks it read-only
+    assert_eq!(evaluate(&[&defaults], MCP, "acpira/currency_convert"), Decision::Ask);
+    assert_eq!(evaluate(&[&defaults], MCP_READ, "acpira/currency_convert"), Decision::Allow);
+    assert_eq!(evaluate(&[&defaults], MCP, "acpira/show_image_too"), Decision::Ask);
   }
 
   #[test]

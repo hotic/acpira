@@ -115,7 +115,10 @@ impl Mode {
       .rules
       .iter()
       .filter(|(_, _, d)| !(approval == Approval::Full && *d == Decision::Ask))
-      .map(|(p, pattern, d)| Rule::new(p, &pattern.replace("{plan}", &plan), *d))
+      .flat_map(|(p, pattern, d)| match *pattern {
+        ENGINE_MCP => crate::permission::engine_rules(*d).collect(),
+        pattern => vec![Rule::new(p, &pattern.replace("{plan}", &plan), *d)],
+      })
       .collect()
   }
 }
@@ -134,6 +137,7 @@ mod tests {
       assert_eq!(ev(approval, EDIT, "src/a.rs"), Decision::Deny, "{approval:?}");
       assert_eq!(ev(approval, EDIT, "/h/agent/sessions/s/plan.md"), Decision::Allow, "{approval:?}");
       assert_eq!(ev(approval, MCP, "acpira/show_image"), Decision::Allow, "{approval:?}");
+      assert_eq!(ev(approval, MCP, "acpira/ask_agent"), Decision::Allow, "{approval:?}");
       assert_eq!(ev(approval, crate::permission::MCP_READ, "blockbench/list_outline"), Decision::Allow, "{approval:?}");
     }
     // The mode's ask rules hold under the lower levels and drop out under full access
@@ -141,6 +145,9 @@ mod tests {
     assert_eq!(ev(Approval::AutoEdit, BASH, "ls -la"), Decision::Ask);
     assert_eq!(ev(Approval::Full, BASH, "ls -la"), Decision::Allow);
     assert_eq!(ev(Approval::Full, MCP, "blockbench/remove_cube"), Decision::Allow);
+    // A plugin's tool on the engine's server is no exception to the mode
+    assert_eq!(ev(Approval::Ask, MCP, "acpira/currency_convert"), Decision::Ask);
+    assert_eq!(ev(Approval::AutoEdit, MCP, "acpira/currency_convert"), Decision::Ask);
     // A session "always allow" cannot widen them either
     let allowed = [Rule::new(BASH, "ls *", Decision::Allow)];
     assert_eq!(evaluate(&[&defaults, &allowed, &get(PLAN).rules(plan, cwd, Approval::Ask)], BASH, "ls -la"), Decision::Ask);
