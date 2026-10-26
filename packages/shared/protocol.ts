@@ -280,6 +280,8 @@ export type HostMsg =
   | { type: 'storage'; view: StorageView; outcome?: StorageOutcome; error?: string }
   // The plugin page, on request and on every change of the plugins (another engine's included); error when the action
   // that triggered this reply failed
+  // The plugins' theme layer: after init and whenever it changes; empty takes it away (docs/dev/plugins.md)
+  | { type: 'pluginTheme'; css: string }
   | { type: 'plugins'; view: PluginsView; error?: string }
   // shapes: the agent's remembered per-model parameters (modelShapes.ts), so a model picked in settings shows its own efforts
   | { type: 'controls'; agent: AgentId; controls: ConfigControl[]; shapes?: ModelShapes }

@@ -311,6 +311,8 @@ pub enum HostMsg {
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
   },
+  /// The plugins' theme layer (`docs/dev/plugins.md`): after init, and whenever it changes; empty takes it away
+  PluginTheme { css: String },
   /// The plugin page, on request and on every change of the plugins (another engine's included); `error` when the
   /// action that triggered this reply failed
   Plugins {
@@ -480,6 +482,7 @@ impl HostMsg {
       HostMsg::Inventory { .. } => "inventory",
       HostMsg::Shared { .. } => "shared",
       HostMsg::Storage { .. } => "storage",
+      HostMsg::PluginTheme { .. } => "pluginTheme",
       HostMsg::Plugins { .. } => "plugins",
       HostMsg::Providers { .. } => "providers",
       HostMsg::ProviderProbed { .. } => "providerProbed",

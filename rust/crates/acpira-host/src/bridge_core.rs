@@ -121,6 +121,9 @@ pub struct BridgeCore {
   /// The user's plugins; the page is subscribed from its first `plugins` request on
   plugins: Arc<crate::plugins::host::PluginHost>,
   plugins_sub: parking_lot::Mutex<Option<u64>>,
+  /// The theme layer this page was sent last, and its subscription (from the first `ready` on)
+  theme: parking_lot::Mutex<Option<String>>,
+  theme_sub: parking_lot::Mutex<Option<u64>>,
   me: Weak<BridgeCore>,
 }
 
@@ -170,6 +173,8 @@ impl BridgeCore {
       connections_sub: Default::default(),
       plugins,
       plugins_sub: Default::default(),
+      theme: Default::default(),
+      theme_sub: Default::default(),
       me: me.clone(),
     });
     let weak = core.me.clone();
@@ -271,6 +276,20 @@ impl BridgeCore {
         // A batched list may reach the page around init and lose to init's copy, and the manager does not repeat an
         // unchanged list: the batch gets the current one, ordered against every other list push
         manager.sessions_in_order(|sessions| self.queue(HostMsg::Sessions { sessions }));
+        // A reloaded page lost its theme layer: it goes again after every init (a task of its own: `sent`'s guard above
+        // keeps this future from crossing an await)
+        *self.theme.lock() = None;
+        let me = self.clone();
+        tokio::spawn(async move { me.push_theme().await });
+        let mut sub = self.theme_sub.lock();
+        if sub.is_none() {
+          let weak = self.me.clone();
+          *sub = Some(self.plugins.subscribe(Arc::new(move || {
+            if let Some(c) = weak.upgrade() {
+              tokio::spawn(async move { c.push_theme().await });
+            }
+          })));
+        }
       }
       // The page could not apply a patch of the session on screen: that session goes whole, the rest it keeps stay patchable
       W::Resync => {
@@ -746,6 +765,20 @@ impl BridgeCore {
   }
 
   /// The plugin page's view, built off the runtime threads (it reads and hashes the source folders)
+  /// Send the theme layer when it differs from what the page has (nothing for a page that never had one and gets none)
+  async fn push_theme(&self) {
+    let plugins = self.plugins.clone();
+    let Ok(css) = tokio::task::spawn_blocking(move || plugins.theme_css()).await else { return };
+    {
+      let mut last = self.theme.lock();
+      if last.as_deref() == Some(css.as_str()) || (last.is_none() && css.is_empty()) {
+        return;
+      }
+      *last = Some(css.clone());
+    }
+    self.post_now(HostMsg::PluginTheme { css });
+  }
+
   async fn plugins_view(&self) -> acpira_shared::plugins::PluginsView {
     let plugins = self.plugins.clone();
     tokio::task::spawn_blocking(move || plugins.view()).await.unwrap_or_default()
@@ -761,6 +794,9 @@ impl BridgeCore {
       self.connections.unsubscribe(id);
     }
     if let Some(id) = self.plugins_sub.lock().take() {
+      self.plugins.unsubscribe(id);
+    }
+    if let Some(id) = self.theme_sub.lock().take() {
       self.plugins.unsubscribe(id);
     }
     // Its terminals run on a while without it, for a reload to come back to
