@@ -21,6 +21,11 @@ const agent = typeof navigator === 'undefined' ? '' : navigator.userAgent;
 const told = typeof window === 'undefined' ? undefined : window.__acpira?.platform;
 export const macOS = told ? told === 'mac' : /Macintosh|Mac OS X/.test(agent);
 export const windowsOS = told ? told === 'win' : /Windows/.test(agent);
+// The desktop window's frame: macOS keeps the system's title bar buttons (the traffic lights) and its global menu bar;
+// Windows and Linux windows have no system title bar, so the page draws the caption's buttons and the menu
+// (chat/DesktopFrame.tsx), which desktop.css lays out under `data-caption`
+export const desktopOS = macOS ? 'mac' : windowsOS ? 'win' : 'linux';
+export const pageCaption = !macOS;
 export const shortcutLabel = (key: string) => (macOS ? `⌘${key}` : `Ctrl+${key}`);
 
 // The shell's toasts (HostMsg toast), kept here rather than in a page: whichever page is up shows them, the chat in its own

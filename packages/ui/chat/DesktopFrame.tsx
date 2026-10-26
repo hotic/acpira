@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, ArrowRight, Check, ChevronRight, CircleAlert, Columns3, FolderOpen, FolderPlus, Info, Languages, LifeBuoy, Menu, Palette, PanelLeft, Settings, Settings2, SunMoon } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, ChevronRight, CircleAlert, Columns3, Copy, FolderOpen, FolderPlus, Info, Languages, LifeBuoy, Menu, Minus, Palette, PanelLeft, Settings, Settings2, Square, SunMoon, X } from 'lucide-react';
 import { DESKTOP_LAYOUTS, THEMES, type DesktopLayout, type ThemeSetting } from '@acpira/shared/settings';
 import { LANGUAGES, type Language } from '@acpira/shared/i18n';
 import { t } from '../i18n';
@@ -8,7 +8,7 @@ import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
 import { Toast } from '../ui/Toast';
 import type { DesktopMenuEntry, WindowControl } from '@acpira/shared/protocol';
-import { dropShellToast, postMenuCommand, postUpdate, postWindowControl, shortcutLabel, useDesktopMenu, useShellToasts, useWindowMaximized, windowsOS } from '../desktop';
+import { dropShellToast, pageCaption, postMenuCommand, postUpdate, postWindowControl, shortcutLabel, useDesktopMenu, useShellToasts, useWindowMaximized, windowsOS } from '../desktop';
 import { vscodeApi } from '../vscodeApi';
 import type { SettingsPage } from '../settings/Nav';
 
@@ -76,13 +76,13 @@ export function TitleRow({ onBack, onForward, column }: {
           <PanelLeft strokeWidth={1.5} />
         </IconButton>
       )}
-      {windowsOS && <AppMenus />}
+      {pageCaption && <AppMenus />}
     </div>
-    {windowsOS && <WindowCaption />}
+    {pageCaption && <WindowCaption />}
   </>;
 }
 
-// The menu bar of a window without a global one (Windows): one button after the column's toggle, the menus as its
+// The menu bar of a window without a global one (Windows, Linux): one button after the column's toggle, the menus as its
 // submenus, as VS Code's compact menu (the column is too narrow for four labels beside back, forward and the toggle).
 // The shell sends the tree (desktopMenu) and runs what is picked (menuCommand); the Edit items act on the field that had
 // the focus before the menu opened. An item's shortcut works while the menu is closed too, except the page's own, which
@@ -180,20 +180,27 @@ function useMenuKeys(menus: { items: DesktopMenuEntry[] }[]) {
 
 // The window's minimize, maximize / restore and close, drawn as Windows 11 draws them (desktop.css .win-caption): the
 // window has no system title bar, so these stand in the top-right corner where its own buttons would, in the system's
-// glyph font. A drag of the title row and its double click stay the system's (init.js)
+// glyph font. Linux has no such font: the same buttons carry lucide's glyphs. A drag of the title row and its double
+// click stay the system's (init.js)
 const CAPTION_GLYPH = { minimize: '\uE921', maximize: '\uE922', restore: '\uE923', close: '\uE8BB' };
+const CAPTION_ICON = { minimize: Minus, maximize: Square, restore: Copy, close: X };
 function WindowCaption() {
   const maximized = useWindowMaximized();
-  const button = (op: WindowControl, label: string, glyph: string) => (
-    <button type="button" data-op={op} title={label} aria-label={label} onClick={() => postWindowControl(op)}>{glyph}</button>
-  );
+  const button = (op: WindowControl, label: string, glyph: keyof typeof CAPTION_GLYPH) => {
+    const Icon = CAPTION_ICON[glyph];
+    return (
+      <button type="button" data-op={op} title={label} aria-label={label} onClick={() => postWindowControl(op)}>
+        {windowsOS ? CAPTION_GLYPH[glyph] : <Icon strokeWidth={1.75} />}
+      </button>
+    );
+  };
   return (
     <div className="win-caption" data-window-caption>
-      {button('minimize', t('desktop.menu.minimize'), CAPTION_GLYPH.minimize)}
+      {button('minimize', t('desktop.menu.minimize'), 'minimize')}
       {maximized
-        ? button('maximize', t('desktop.window.restore'), CAPTION_GLYPH.restore)
-        : button('maximize', t('desktop.window.maximize'), CAPTION_GLYPH.maximize)}
-      {button('close', t('desktop.menu.closeWindow'), CAPTION_GLYPH.close)}
+        ? button('maximize', t('desktop.window.restore'), 'restore')
+        : button('maximize', t('desktop.window.maximize'), 'maximize')}
+      {button('close', t('desktop.menu.closeWindow'), 'close')}
     </div>
   );
 }

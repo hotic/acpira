@@ -34,23 +34,23 @@
 /* The lights span x 17-77 (14 pt each, 9 pt apart on macOS 27); the first button after them leaves a breath of about 15 px
    to its icon */
 .acp-shell[data-desktop][data-os="mac"] { --lights-w: 84px; }
-/* Windows (data-os="win"): no lights; the title row also holds the menu button (chat/DesktopFrame.tsx AppMenus). The
-   header line is the window's title bar (as Codex draws it there): it sits at the window's top on the canvas, the raised
+/* Windows and Linux (data-caption: the page draws the window's caption and menu): no lights; the title row also holds
+   the menu button (chat/DesktopFrame.tsx AppMenus). The header line is the window's title bar (as Codex draws it on Windows): it sits at the window's top on the canvas, the raised
    card begins under it (below), and the caption's three buttons (WindowCaption, 46 px each as Windows 11 draws them) take
    its top-right corner, so whatever ends the line there (the tool panel's toggle, its tabs, a bare header) moves left by
    --caps-w */
 .acp-shell[data-desktop] { --caps-w: 0px; --caption-w: 46px; }
-.acp-shell[data-desktop][data-os="win"] {
+.acp-shell[data-desktop][data-caption] {
   --title-top: 0px;
   --caps-w: calc(3 * var(--caption-w) + var(--gap) - var(--sheet-inset) - var(--start-x));
   --title-w: calc(var(--gap) + 4 * var(--ctl) + 6px + var(--gap));
 }
-.acp-shell[data-desktop][data-os="win"][data-narrow] :is([data-sheet-header], [data-stage-tabs], [data-settings-rail]) { --title-w: calc(var(--gap) + 2 * var(--ctl) + 2px + var(--gap)); }
+.acp-shell[data-desktop][data-caption][data-narrow] :is([data-sheet-header], [data-stage-tabs], [data-settings-rail]) { --title-w: calc(var(--gap) + 2 * var(--ctl) + 2px + var(--gap)); }
 /* A sheet header that ends at the window's edge leaves the caption its room; beside a shown tool panel it does not */
-.acp-shell[data-desktop][data-os="win"]:not([data-layout="files"]) [data-sheet-header] { --sheet-trail: calc(var(--start-x) + var(--caps-w)); }
-.acp-shell[data-desktop][data-os="win"]:not([data-layout="files"]):has(> [data-tool-panel-wrap][data-shown]) [data-sheet-header] { --sheet-trail: var(--start-x); }
-/* Windows: the stage's rule under its tabs gives way to its card's edge (the card under the title bar, below) */
-.acp-shell[data-desktop][data-os="win"] [data-stage-body] { --stage-rule: transparent; }
+.acp-shell[data-desktop][data-caption]:not([data-layout="files"]) [data-sheet-header] { --sheet-trail: calc(var(--start-x) + var(--caps-w)); }
+.acp-shell[data-desktop][data-caption]:not([data-layout="files"]):has(> [data-tool-panel-wrap][data-shown]) [data-sheet-header] { --sheet-trail: var(--start-x); }
+/* A page-drawn caption: the stage's rule under its tabs gives way to its card's edge (the card under the title bar, below) */
+.acp-shell[data-desktop][data-caption] [data-stage-body] { --stage-rule: transparent; }
 /* No column beside the sheet (hidden, or a drawer over a narrow window): its header starts after the pinned title row */
 .acp-shell[data-desktop]:not([data-column]) [data-sheet-header] { --sheet-lead: calc(var(--title-w) - var(--sheet-inset)); }
 /* The files layout (acpira.desktopLayout = files, panel/FilesLayout.tsx): the chat lies on the canvas between the stage and
@@ -159,30 +159,32 @@
   [data-start-top][data-closed] { grid-template-rows: 0fr; opacity: 0; translate: 0 6px; margin-bottom: calc(-1 * var(--dock-gap)); }
   [data-start-top] > div { min-height: 0; overflow: hidden; }
   [data-start-top] [data-picker] { margin: 0 var(--start-x) var(--gap); }
-  /* Windows: the raised card (the chat's sheet, the files layout's stage) begins under the title bar, its header line on
+  /* A page-drawn caption: the raised card (the chat's sheet, the files layout's stage) begins under the title bar, its header line on
      the canvas above it, so the caption in the corner never cuts into the card. The card is drawn by ::before; the element
      stays unclipped, as the card's rim is a shadow outside it. What paints to the stage's edges (a file, a terminal) is
      clipped to the card's corners instead */
-  .acp-shell[data-desktop][data-os="win"]:not([data-layout="files"]) [data-sheet],
-  .acp-shell[data-desktop][data-os="win"] [data-stage] { background: transparent; box-shadow: none; overflow: visible; isolation: isolate; }
-  .acp-shell[data-desktop][data-os="win"]:not([data-layout="files"]) [data-sheet]::before,
-  .acp-shell[data-desktop][data-os="win"] [data-stage]::before {
+  .acp-shell[data-desktop][data-caption]:not([data-layout="files"]) [data-sheet],
+  .acp-shell[data-desktop][data-caption] [data-stage] { background: transparent; box-shadow: none; overflow: visible; isolation: isolate; }
+  .acp-shell[data-desktop][data-caption]:not([data-layout="files"]) [data-sheet]::before,
+  .acp-shell[data-desktop][data-caption] [data-stage]::before {
     content: ""; position: absolute; inset: var(--hdr) 0 0; z-index: -1; pointer-events: none;
     border-radius: var(--r-lg); background: var(--bg-0);
     box-shadow: 0 0 0 1px var(--line-strong), 0 2px 10px rgb(0 0 0 / 0.18);
   }
-  .acp-shell[data-desktop][data-os="win"] [data-stage-body] { clip-path: inset(0 round var(--r-lg)); }
+  .acp-shell[data-desktop][data-caption] [data-stage-body] { clip-path: inset(0 round var(--r-lg)); }
   /* A sheet without a header (the settings page) starts its content under the title bar, on the card */
-  .acp-shell[data-desktop][data-os="win"] [data-sheet]:not(:has([data-sheet-header])) { padding-top: var(--hdr); }
-  /* The window's caption on Windows (chat/DesktopFrame.tsx WindowCaption): Windows 11's buttons in its glyph font, the
-     title bar's full height, a faint fill under the pointer and Close red, flush with the window's top-right corner (the
-     system rounds that corner, so the red does too) */
+  .acp-shell[data-desktop][data-caption] [data-sheet]:not(:has([data-sheet-header])) { padding-top: var(--hdr); }
+  /* The window's caption on Windows and Linux (chat/DesktopFrame.tsx WindowCaption): Windows 11's buttons in its glyph
+     font (lucide's glyphs on Linux, which has no such font), the title bar's full height, a faint fill under the pointer
+     and Close red, flush with the window's top-right corner (Windows rounds that corner, so the red does too) */
   .acp-shell[data-desktop] .win-caption { position: absolute; top: 0; right: 0; z-index: 50; display: flex; height: var(--hdr); }
   .acp-shell[data-desktop] .win-caption > button {
     display: flex; justify-content: center; align-items: center; width: var(--caption-w);
     font: 10px/10px "Segoe Fluent Icons", "Segoe MDL2 Assets"; color: var(--fg-1);
     transition: background-color 100ms linear, color 100ms linear;
   }
+  /* lucide draws in a 24-unit box with room around the shape: at 14 px its square spans Windows' 10 px glyph */
+  .acp-shell[data-desktop] .win-caption > button > svg { width: 14px; height: 14px; }
   .acp-shell[data-desktop] .win-caption > button:hover { background: color-mix(in srgb, var(--fg-1) 9%, transparent); }
   .acp-shell[data-desktop] .win-caption > button:active { background: color-mix(in srgb, var(--fg-1) 6%, transparent); }
   .acp-shell[data-desktop] .win-caption > button[data-op="close"]:hover { background: #c42b1c; color: #fff; }
