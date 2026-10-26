@@ -1677,7 +1677,7 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
   /// session one level deeper
   async fn relay_session_request(&self, proc: &AgentProcess, agent: &str, thread: &str, depth: u32) -> Value {
     let mut servers = match &self.deps.shared_mcp {
-      Some(provider) => provider(agent.to_owned(), self.process_cwd(), runtime_info_of(&proc.init).mcp).await.0,
+      Some(provider) => provider(agent.to_owned(), self.process_cwd(), runtime_info_of(&proc.init).mcp, self.remote_folder().is_none()).await.0,
       None => vec![],
     };
     // Past the depth limit the entry still leads back here (`ask_caller`, the session tools); the hub lists no personas

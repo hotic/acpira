@@ -37,7 +37,7 @@ impl AcpSession {
     let mut servers = match &self.deps.shared_mcp {
       Some(provider) => {
         // A folder on an SSH host has no project MCP file here: the user's own servers, then the host's project ones
-        let (servers, line) = provider(self.agent.clone(), self.process_cwd(), caps).await;
+        let (servers, line) = provider(self.agent.clone(), self.process_cwd(), caps, self.remote_folder().is_none()).await;
         if let Some(line) = line {
           self.log(&line);
         }

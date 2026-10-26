@@ -239,6 +239,12 @@ impl PluginHost {
     run::call(&tool, &plugin.dir, &self.store.data_dir(&plugin.id), arguments, ctx).await
   }
 
+  /// The MCP servers of the plugins in effect, for a new local session
+  pub fn mcp_servers(&self) -> Vec<crate::shared_config::mcp::SharedServer> {
+    self.reload();
+    crate::plugins::mcp::servers(&self.loaded().active, &|id| self.store.data_dir(id))
+  }
+
   // Activation
 
   /// Freeze the source folder of `id` and check it statically; nothing of the plugin runs
@@ -252,6 +258,9 @@ impl PluginHost {
     if let Some(check) = manifest.check.as_ref().filter(|c| !c.is_empty()) {
       let tool = ToolDef { name: "check".into(), description: String::new(), input: json!({}), command: check.clone(), read_only: true, timeout: Some(CHECK_TIMEOUT.as_secs_f64()) };
       run::call(&tool, &dir, &self.store.data_dir(id), &json!({}), &CallContext::default()).await.map_err(|e| anyhow!("the check failed: {e}"))?;
+    }
+    if let Some(mcp) = manifest.contributes.mcp.as_ref().filter(|m| !m.is_empty()) {
+      crate::plugins::mcp::check(mcp, &dir, &self.store.data_dir(id), CHECK_TIMEOUT).await.map_err(|e| anyhow!("the check failed: {e}"))?;
     }
     let change = self.store.enable(id, hash, provenance).await?;
     self.committed(&change);
