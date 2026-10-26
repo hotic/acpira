@@ -26,6 +26,7 @@ import { ContextRing } from './ContextUsage';
 import { useComposerDraft } from './useComposerDraft';
 import { contextDrafts, copiedSelection, markContextSent, markSelectionSent, sameContext, sameRange, selectionDraft, selectionKey, useEditorSelection, useLiveContexts, type LiveContext } from './editorContext';
 import { PromptInput } from './PromptInput';
+import { imeKey } from '../ui/ime';
 
 export interface ComposerProps {
   running: boolean;
@@ -282,7 +283,7 @@ export const Composer = memo(function Composer(p: ComposerProps) {
   const summons = useMemo(() => personas?.map(x => x.name) ?? [], [personas]);
   const marks = promptMarks(p.commands ?? [], summons, text);
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.nativeEvent.isComposing) return;
+    if (imeKey(e.nativeEvent)) return;
     if (slashOpen) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); slash.move(e.key === 'ArrowDown' ? 1 : -1); return; }
       if (e.key === 'Escape') { e.preventDefault(); setSlashDismissed(slashSpan!.start); return; }

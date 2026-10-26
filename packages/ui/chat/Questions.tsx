@@ -8,6 +8,7 @@ import { Disclosure } from '../ui/Disclosure';
 import { Row, RowLabel } from '../ui/Row';
 import { cn } from '../ui/cn';
 import { useScrollFade } from '../ui/useScrollFade';
+import { imeKey } from '../ui/ime';
 import { questionOptionIndex } from './questionKeys';
 
 export type OnAnswer = (blockId: string, answers: QuestionAnswers, skip?: boolean) => void;
@@ -79,7 +80,7 @@ export function Questions({ block, onAnswer, subtitle }: { block: QuestionBlock;
   };
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     // Composition and modified keys belong to the editor or the operating system.
-    if (e.nativeEvent.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (imeKey(e.nativeEvent) || e.metaKey || e.ctrlKey || e.altKey) return;
     const target = e.target as HTMLElement;
     const typing = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
     if (e.key === 'Escape') {

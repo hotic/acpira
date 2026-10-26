@@ -15,6 +15,7 @@ import { OptionContent, PanelHeader } from '../ui/Panel';
 import { useScrollFade } from '../ui/useScrollFade';
 import { Popover } from '../ui/Popover';
 import { Row } from '../ui/Row';
+import { imeKey } from '../ui/ime';
 import { dateFormat, t, useLocale } from '../i18n';
 import { macOS, shortcutLabel, useDesktop, windowsOS } from '../desktop';
 import { AgentMark } from './AgentMark';
@@ -1450,6 +1451,7 @@ function RenameInput({ initial, label = t('session.titleAria'), onDone }: { init
       onClick={e => e.stopPropagation()}
       onKeyDown={e => {
         e.stopPropagation();
+        if (imeKey(e.nativeEvent)) return;
         if (e.key === 'Enter') finish(value);
         if (e.key === 'Escape') finish(initial);
       }}
