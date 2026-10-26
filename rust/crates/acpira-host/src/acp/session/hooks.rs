@@ -74,6 +74,8 @@ pub(crate) struct HookState {
 pub(crate) struct TurnContext {
   pub lead: Vec<Value>,
   pub tail: Vec<Value>,
+  /// What the plugins' `prompt` hooks made of the prompt
+  pub plugins: crate::acp::session::plugin_hooks::PromptOutcome,
 }
 
 /// How a gate knows a file is the span's: an edit tool call named it, or only the work trees' snapshots differ. Ordered
@@ -433,6 +435,9 @@ impl AcpSession {
         }
       }
     }
+    // The plugins' processes, after the workspace's own hooks
+    let first = first_of(&self.core.lock());
+    let plugins = self.plugin_prompt(origin, text, attachments, first, &mut tail).await?;
     let (first, fresh) = {
       let mut c = self.core.lock();
       // A goal set or resumed from the dock is a request of the user's own, like a typed prompt; each of the goal's next
@@ -456,7 +461,7 @@ impl AcpSession {
       c.hooks.config = cfg.clone();
       (first_of(&c), !carried)
     };
-    let Some(cfg) = cfg else { return Ok(TurnContext { lead: vec![], tail }) };
+    let Some(cfg) = cfg else { return Ok(TurnContext { lead: vec![], tail, plugins }) };
     if fresh
       && cfg.tracks_changes()
       && let Some(h) = host.as_ref()
@@ -468,7 +473,7 @@ impl AcpSession {
       (Some(h), true) => self.context_blocks(h, &cfg).await,
       _ => vec![],
     };
-    Ok(TurnContext { lead, tail })
+    Ok(TurnContext { lead, tail, plugins })
   }
 
   /// `beforePrompt` blocked a prompt the session had claimed: the claim is undone, the user sees why next to the

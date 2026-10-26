@@ -652,6 +652,8 @@ export const ja = {
   'host.plugin.skip': "有効にしない",
   'host.plugin.by': "{agent} がこのプラグインを書き、有効化を求めています。",
   'host.plugin.asks': 'プラグイン {name} からの質問：',
+  'host.plugin.denied': 'プラグイン {name} がこのリクエストを拒否しました：{reason}',
+  'host.plugin.redirected': 'プラグイン {name} がこのメッセージを {agent} に送りました',
   'host.needApprovalFor': '承認が必要：{what}',
   'host.noPermissionOptions': '権限リクエストに選択肢がありません',
   'host.planOptionsStale': 'プランの承認オプションは無効になりました',

@@ -16,6 +16,7 @@ use crate::acp::transport::rpc::RpcError;
 use crate::acp::session::{AcpSession, Core};
 use crate::acp::session::errors::{auto_allow, permission_kind};
 use crate::acp::session::hooks::edit_paths;
+use crate::acp::session::plugin_hooks::PermVerdict;
 use crate::i18n::{t, tp};
 use crate::limits::PLAN_PREVIEW_MAX_BYTES;
 
@@ -165,7 +166,8 @@ impl AcpSession {
     if vendor.question_permission(&tool_call) {
       return Ok(self.on_permission_question(req, tool_call_id, cancel).await);
     }
-    let (target, epoch, plan_file, last_agent, captured, edit) = {
+    let judged = self.deps.plugin_runtime.as_ref().is_some_and(|rt| rt.has_hook("permission"));
+    let (target, epoch, plan_file, last_agent, captured, edit, row) = {
       let mut c = self.core.lock();
       let Some(target) = Self::target_for(&mut c, session_id.as_deref()) else {
         drop(c);
@@ -194,6 +196,15 @@ impl AcpSession {
           })
         })
       });
+      // The row as the plugins' `permission` hooks see it
+      let row = last_agent.filter(|_| judged).and_then(|i| {
+        state.turns[i].as_agent().and_then(|t| {
+          t.blocks.iter().find_map(|b| match b {
+            AgentBlock::ToolCall(tc) if tc.id == tool_call_id => Some(crate::acp::session::plugin_events::tool_view(tc)),
+            _ => None,
+          })
+        })
+      });
       let plan_id = capture_plan(&mut state.turns, &tool_call);
       let plan_file = plan_id.as_ref().and_then(|id| {
         plan_documents_mut(&mut state.turns)
@@ -203,7 +214,7 @@ impl AcpSession {
           .and_then(|p| p.path.clone())
           .map(|path| (id.clone(), path))
       });
-      (target, epoch, plan_file, last_agent, plan_id, edit)
+      (target, epoch, plan_file, last_agent, plan_id, edit, row)
     };
     // The workspace gate sees an announced edit before anyone approves it, yolo included
     if let Some((kind, paths)) = edit
@@ -211,6 +222,22 @@ impl AcpSession {
     {
       return Ok(rejected_permission(&req));
     }
+    // The plugins' processes judge it before yolo, a plan's auto-approval or a card: a denial rejects it, an ask insists
+    // on the card
+    let insist = if judged {
+      let auto = self.core.lock().perms.auto_approve;
+      match self.plugin_permission(&req, row, auto).await {
+        PermVerdict::Deny(plugin, reason) => {
+          self.log(&format!("plugin {plugin}: permission denied: {reason}"));
+          self.notify(&tp("host.plugin.denied", &[("name", &plugin), ("reason", &reason)]));
+          return Ok(rejected_permission(&req));
+        }
+        PermVerdict::Ask => true,
+        PermVerdict::Pass => false,
+      }
+    } else {
+      false
+    };
     // A resumed Devin session may send only the plan path: load that exact file before presenting approval
     if let Some((plan_id, path)) = plan_file
       && let Ok(meta) = tokio::fs::metadata(&path).await
@@ -246,11 +273,11 @@ impl AcpSession {
       // The root's yolo and plan auto-approval cover the root and its own native children; a summoned child answers to
       // its own round mode alone, so a consult or work child under a yolo root still gets cards
       let root = !summoned;
-      let auto = root && c.perms.auto_approve;
+      let auto = root && c.perms.auto_approve && !insist;
       // A summoned child in a bypass round: answered without a card, preferring the one-time allow so nothing lasting
       // lands in that CLI's own settings; a request with no plain allow still gets a card
       let bypass = matches!(&target, Target::Node(id) if c.tree.relay_bypass(id));
-      if bypass && let Some(id) = single_allow_once(&options).or_else(|| auto_allow(&options)) {
+      if bypass && !insist && let Some(id) = single_allow_once(&options).or_else(|| auto_allow(&options)) {
         return Ok(json!({ "outcome": { "outcome": "selected", "optionId": id } }));
       }
       let Some(state) = Self::target_state(&mut c, &target) else { return Ok(cancelled_permission()) };
@@ -278,6 +305,7 @@ impl AcpSession {
       // still get a card
       let in_plan = root && c.state.controls.mode_id.as_deref() == Some("plan");
       if plan_auto_on
+        && !insist
         && in_plan
         && captured.is_none()
         && tool_call.get("kind").and_then(Value::as_str) != Some("switch_mode")

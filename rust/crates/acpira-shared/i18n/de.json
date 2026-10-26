@@ -632,6 +632,8 @@
   "host.plugin.skip": "Nicht aktivieren",
   "host.plugin.by": "{agent} hat dieses Plugin geschrieben und bittet um Aktivierung.",
   "host.plugin.asks": "Das Plugin {name} fragt:",
+  "host.plugin.denied": "Das Plugin {name} hat diese Anfrage abgelehnt: {reason}",
+  "host.plugin.redirected": "Das Plugin {name} hat diese Nachricht an {agent} geschickt",
   "host.needApprovalFor": "Genehmigung erforderlich: {what}",
   "host.noPermissionOptions": "Die Berechtigungsanfrage hat keine Optionen",
   "host.planOptionsStale": "Die Genehmigungsoptionen des Plans sind nicht mehr gültig",

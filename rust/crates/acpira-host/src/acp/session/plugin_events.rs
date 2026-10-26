@@ -27,7 +27,7 @@ fn phase_of(status: ToolStatus) -> &'static str {
 }
 
 /// A tool row as an event shows it: what it is and where it points, not its output
-fn tool_view(tc: &ToolCallBlock) -> Value {
+pub(crate) fn tool_view(tc: &ToolCallBlock) -> Value {
   json!({
     "toolCallId": tc.id,
     "kind": tc.kind,

@@ -666,6 +666,8 @@ export const zhCN = {
   'host.plugin.skip': "不启用",
   'host.plugin.by': "{agent} 写了这个插件，请求启用。",
   'host.plugin.asks': '插件 {name} 在问：',
+  'host.plugin.denied': '插件 {name} 拒绝了这个请求：{reason}',
+  'host.plugin.redirected': '插件 {name} 把这条消息转给了 {agent}',
   'host.needApprovalFor': '需要批准：{what}',
   'host.noPermissionOptions': '权限请求没有选项',
   'host.planOptionsStale': '计划审批选项已失效',

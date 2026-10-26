@@ -257,6 +257,13 @@ impl RelayHub {
         };
         let _ = write.write_all(reply(r).as_bytes()).await;
       }
+      HubOp::ToolHook { phase, name, arguments, result } => {
+        let r = match session.upgrade() {
+          Some(s) => HubReply::Done(s.plugin_tool(&phase, &name, arguments, result).await.to_string()),
+          None => HubReply::Done("{}".into()),
+        };
+        let _ = write.write_all(reply(r).as_bytes()).await;
+      }
       HubOp::PluginGuide => {
         let r = match self.plugin_host() {
           Some(p) => HubReply::Done(crate::plugins::guide::text(&p)),
