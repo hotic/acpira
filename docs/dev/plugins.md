@@ -134,6 +134,22 @@ What a runtime may ask of the engine beyond its store (`plugins/host_api.rs`), r
 - `ui/ask` puts a question card into the session headed with the plugin's name (`host.plugin.asks`), so the user always sees who is asking; it is not a turn and the agent never sees it.
 - `model/generate` spends the user's own keys and is open to any runtime the user enabled; the card lists the runtime, not each call.
 
+## Hooks
+
+What a runtime's `hooks` answer for every agent (`acp/session/plugin_hooks.rs`; the call is `hook/<name>` with the payload below, the answer an object or null for no opinion). Every payload carries `session`, `agent` and `cwd`. Processes are asked in id order and each sees the payload as the ones before left it; a failed or late call counts as no opinion. Nothing a hook answers loosens what the user decided.
+
+| Hook | Payload | Answer |
+|---|---|---|
+| `prompt` | `origin` (`user`, `goal`), `text`, `attachments`, `first`, `command` (the slash command or null), `redirected` | `text` replaces what the agent reads (the bubble keeps the user's); `context` and `attachments` (`[{ name, text }]`) ride behind it (left out of a slash command); `block` keeps the prompt back with that reason, shown like a `beforePrompt` block; `redirect` (an agent id) sends it to a new session of that agent in the same folder, the windows on this session follow, and a redirected prompt is not sent on again. Asked after the workspace's `beforePrompt`; a queued prompt is redirected with its text only |
+| `permission` | `toolCall`, `options`, `row` (the tool row as events show it), `autoApprove` | `decision: "deny"` (with `reason`, shown in a toast) rejects without a card, also under yolo; `"ask"` shows the card even under yolo, a plan's auto-approval or a bypass round. Any other decision is no opinion: a plugin never approves |
+| `retry` | `error` (`message`, `code`, `kind`, `retryable`), `attempt`, `max` (5 per prompt of the user's) | `retry: true` with `delayMs` (2 s by default, 60 s at most) retries the failed turn the way the Retry button does, unless the user moved on meanwhile |
+| `title` | `title`, `source` (`prompt`: after the first prompt, `agent`: the agent titled it), `prompt` | `title` replaces it, unless it changed again meanwhile; announced as `session.renamed` |
+| `session.mcp` | `servers`: the ACP `mcpServers` about to go out with session/new, load or resume | `servers` replaces the list; Acpira's own server is never shown and always stays |
+| `agent.launch` | `command`, `args`, `env` (the definition's own; the account layer's variables are never shown); also for a summoned agent, on the parent session's behalf | `args` replaces the arguments; `env` sets (a string) or drops (null) the definition's variables. A session with this hook declared never takes a warm process |
+| `tool.before` / `tool.after` | `tool`, `arguments` (and `result`, the MCP result, after) | Around every call to Acpira's own MCP tools (`host_mcp.rs`, through the hub): `arguments` replaces the call's, `block` refuses it with that reason; after, `result` replaces what the agent reads. An external CLI's own tools never pass the engine; its permission requests are the `permission` hook's |
+
+A default model or mode for new sessions needs no hook: on `session.created`, `session/act` with `setConfig` / `setMode`.
+
 ## Activation
 
 ```

@@ -19,6 +19,7 @@ mod inventory;
 mod local_accounts;
 mod normalize;
 mod plans;
+mod plugin_hooks;
 mod plugins;
 mod preview;
 mod questions;

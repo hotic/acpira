@@ -155,6 +155,8 @@ pub struct Runtimes {
   errors: parking_lot::RwLock<BTreeMap<String, String>>,
   restarts: parking_lot::Mutex<HashMap<String, (u32, Instant)>>,
   host_call: parking_lot::RwLock<Option<HostCall>>,
+  /// Where a `prompt` hook's redirect starts its session (the session manager registers itself)
+  redirect: parking_lot::RwLock<Option<crate::acp::session::plugin_hooks::RedirectFn>>,
   /// Off until the composition root turns it on: `acpira plugin list` and the tests of other parts start no process
   enabled: AtomicBool,
   sync: tokio::sync::Mutex<()>,
@@ -171,6 +173,7 @@ impl Runtimes {
       errors: Default::default(),
       restarts: Default::default(),
       host_call: Default::default(),
+      redirect: Default::default(),
       enabled: AtomicBool::new(false),
       sync: Default::default(),
       data_root,
@@ -182,6 +185,14 @@ impl Runtimes {
   pub fn enable(&self, host_call: Option<HostCall>) {
     *self.host_call.write() = host_call;
     self.enabled.store(true, Ordering::Relaxed);
+  }
+
+  pub fn set_redirect(&self, f: crate::acp::session::plugin_hooks::RedirectFn) {
+    *self.redirect.write() = Some(f);
+  }
+
+  pub fn redirect(&self) -> Option<crate::acp::session::plugin_hooks::RedirectFn> {
+    self.redirect.read().clone()
   }
 
   pub fn enabled(&self) -> bool {
@@ -226,6 +237,25 @@ impl Runtimes {
       out.push(HookReply { plugin: w.want.id.clone(), result });
     }
     out
+  }
+
+  /// Ask every process that answers `hook` in id order, each seeing the payload as the ones before left it: `step` gets
+  /// the plugin and its answer (failed calls and null answers are skipped), folds it into the payload and returns false
+  /// to stop the chain. The payload as the chain ended
+  pub async fn chain(&self, hook: &str, mut payload: Value, mut step: impl FnMut(&str, Value, &mut Value) -> bool) -> Value {
+    let workers: Vec<Arc<Worker>> = self.workers.read().values().filter(|w| w.answers(hook)).cloned().collect();
+    for w in workers {
+      match w.call(&format!("hook/{hook}"), payload.clone()).await {
+        Ok(Value::Null) => {}
+        Ok(answer) => {
+          if !step(&w.want.id, answer, &mut payload) {
+            break;
+          }
+        }
+        Err(e) => (self.log)(&format!("plugin {}: hook {hook}: {e}", w.want.id)),
+      }
+    }
+    payload
   }
 
   /// Whether any process subscribed to `event`

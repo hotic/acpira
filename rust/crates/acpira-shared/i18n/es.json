@@ -632,6 +632,8 @@
   "host.plugin.skip": "No activar",
   "host.plugin.by": "{agent} escribió este plugin y pide activarlo.",
   "host.plugin.asks": "El plugin {name} pregunta:",
+  "host.plugin.denied": "El plugin {name} rechazó esta solicitud: {reason}",
+  "host.plugin.redirected": "El plugin {name} envió este mensaje a {agent}",
   "host.needApprovalFor": "Se necesita aprobación: {what}",
   "host.noPermissionOptions": "La solicitud de permiso no tiene opciones",
   "host.planOptionsStale": "Las opciones de aprobación del plan ya no son válidas",

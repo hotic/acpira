@@ -23,6 +23,7 @@ pub mod lifecycle;
 pub mod plan_build;
 pub mod plugin_card;
 pub mod plugin_events;
+pub mod plugin_hooks;
 pub mod prompt;
 pub mod queue;
 pub mod relay;
@@ -241,6 +242,7 @@ pub(crate) struct Core {
   pub hooks: crate::acp::session::hooks::HookState,
   /// What the plugins' processes were last told about each tool row (`plugin_events.rs`)
   pub plugin_events: crate::acp::session::plugin_events::EventState,
+  pub plugin_state: crate::acp::session::plugin_hooks::PluginState,
   /// The last encoded view for `(rev, status, running, model_shapes)`: selecting an unchanged live session reuses it without re-serializing
   pub cached_view: Option<(i64, SessionStatus, bool, Option<ModelShapes>, acpira_shared::protocol::RawJson, acpira_shared::session_patch::ViewParts)>,
 }
@@ -394,6 +396,7 @@ impl AcpSession {
           workflow_logs: Default::default(),
           hooks: Default::default(),
           plugin_events: Default::default(),
+          plugin_state: Default::default(),
           cached_view: None,
         }),
         deps,

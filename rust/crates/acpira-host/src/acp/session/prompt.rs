@@ -180,6 +180,16 @@ impl AcpSession {
         return;
       }
     };
+    if let Some((plugin, agent)) = context.plugins.redirect {
+      self.plugin_redirect(text, drafts, plugin, agent);
+      return;
+    }
+    // A plugin's rewrite reaches the agent; the bubble keeps what the user wrote
+    if let Some(rewritten) = context.plugins.text
+      && let Some(block) = staging.prepared.blocks.iter_mut().find(|b| b.get("type").and_then(Value::as_str) == Some("text") && b.get("text").and_then(Value::as_str) == Some(text.as_str()))
+    {
+      block["text"] = Value::String(rewritten);
+    }
     staging.prepared.blocks.splice(0..0, context.lead);
     staging.prepared.blocks.extend(context.tail);
     let Some(mut accepted) = self.accept(&text, origin, plan_id.as_deref(), staging) else { return };
@@ -187,8 +197,14 @@ impl AcpSession {
       return;
     }
     let turn_id = accepted.user_turn.id.clone();
+    let title_before = self.core.lock().state.title.clone();
     let turn = self.open_turn(&text, origin, plan_id.as_deref(), &mut accepted);
     self.emit_turn_started(origin, &text);
+    self.plugin_prompt_opened(origin);
+    // Titled after this prompt: a plugin may title it otherwise
+    if let Some(title) = self.core.lock().state.title.clone().filter(|t| title_before.as_ref() != Some(t)) {
+      self.plugin_title(title, "prompt", Some(text.clone()));
+    }
     let blocks = std::mem::take(&mut accepted.prepared.blocks);
     // From here on Claude Code has a transcript for this native session to resume
     self.core.lock().unprompted = false;
@@ -758,6 +774,10 @@ impl AcpSession {
     }
     // The gate flushes the queue (or sends its findings back) once it has decided
     if !auto && !compacting && settled.stop == TurnStop::EndTurn && self.hooks_after_turn() {
+      return;
+    }
+    // A plugin may try a failed turn again; it lets the session go on otherwise
+    if !auto && !compacting && self.plugin_retry(turn.agent_idx, turn.started_at, auto) {
       return;
     }
     self.after_prompt(auto, settled.stop);

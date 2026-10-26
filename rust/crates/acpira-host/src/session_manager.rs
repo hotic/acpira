@@ -520,6 +520,19 @@ impl SessionManager {
         }
       }));
     }
+    // A plugin's `prompt` hook sends a prompt to another agent: a new session for it, here
+    if let Some(rt) = &mgr.deps.plugin_runtime {
+      let me = mgr.me.clone();
+      rt.set_redirect(Arc::new(move |r| {
+        let me = me.clone();
+        Box::pin(async move {
+          match me.upgrade() {
+            Some(m) => m.redirect_prompt(r).await.map_err(|e| error_text(&e)),
+            None => Err("the engine is closing".into()),
+          }
+        })
+      }));
+    }
     let reg = mgr.registry();
     mgr.watch_registry(&reg);
     let weak = mgr.me.clone();
@@ -2011,6 +2024,28 @@ impl SessionManager {
       claim: Some(Arc::new(move |id: &str| claim_me.upgrade().map_or(Ok(0), |m| m.claim_turn(id)))),
       remote: self.deps.remote.clone(),
     }
+  }
+
+  /// A prompt a plugin sent elsewhere (`plugin_hooks::Redirect`): a new session of that agent in the same folder gets it,
+  /// and the windows that showed the source session move to it. The new session's id
+  async fn redirect_prompt(self: &Arc<Self>, r: crate::acp::session::plugin_hooks::Redirect) -> Result<String> {
+    if self.registry().get(&r.agent).is_err() {
+      return Err(anyhow!("no agent `{}`", r.agent));
+    }
+    let v = self.attach(None);
+    let made = self.new_session_for(&v, Some(r.agent.clone()), None, None, Some(r.cwd.clone())).await;
+    let id = v.active_id();
+    self.detach(&v);
+    made?;
+    let id = id.ok_or_else(|| anyhow!("no session started"))?;
+    let s = self.live_session(&id).ok_or_else(|| anyhow!("session {id} is gone"))?;
+    self.log(&format!("plugin {}: prompt of {} sent to {} ({id})", r.plugin, r.from, r.agent));
+    for w in self.viewers_on(&r.from, None) {
+      self.select_session_for(&w, &id).await;
+    }
+    s.mark_redirected();
+    tokio::spawn(async move { s.prompt(r.text, r.drafts, false, None, None).await });
+    Ok(id)
   }
 
   /// With no session (or a gone one) start a new one; otherwise bring its session live

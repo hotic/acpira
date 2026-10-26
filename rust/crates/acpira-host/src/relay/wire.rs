@@ -56,6 +56,17 @@ pub enum HubOp {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     wait_secs: Option<u64>,
   },
+  /// A call to one of this server's tools, before it runs (`phase: "before"`, answered `Done` with `{ arguments?,
+  /// block?, after }`) or after (`"after"` with its `result`, answered `Done` with `{ result? }`): the plugins'
+  /// `tool.before` / `tool.after` hooks (`AcpSession::plugin_tool`)
+  ToolHook {
+    phase: String,
+    name: String,
+    #[serde(default)]
+    arguments: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    result: Option<serde_json::Value>,
+  },
 }
 
 /// `search_sessions`' arguments (`session_library.rs`)

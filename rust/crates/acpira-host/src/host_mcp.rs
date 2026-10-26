@@ -208,7 +208,7 @@ pub fn without_server(mut req: Value) -> Value {
   req
 }
 
-fn is_host_entry(s: &Value) -> bool {
+pub fn is_host_entry(s: &Value) -> bool {
   s.get("name").and_then(Value::as_str) == Some(SERVER_NAME) && s.get("args").and_then(Value::as_array).is_some_and(|a| a.first().and_then(Value::as_str) == Some("mcp"))
 }
 
@@ -304,17 +304,69 @@ pub fn run_host_stdio() -> i32 {
 
 /// Serve MCP on stdin / stdout until stdin closes. `ask_agent` calls run on threads of their own (an agent may summon
 /// several children at once) and share stdout through a lock; everything else answers inline
+/// The server's stdout, and the calls whose results the plugins' `tool.after` hooks see before the client does
+struct Out {
+  stdout: parking_lot::Mutex<std::io::Stdout>,
+  /// By the call's JSON-RPC id: the tool and its arguments
+  after: parking_lot::Mutex<std::collections::HashMap<String, (String, Value)>>,
+  relay: Option<Relay>,
+}
+
+impl Out {
+  /// A call's response, as the `tool.after` hooks left it when one asked to see it
+  fn reviewed(&self, v: &Value) -> Option<Value> {
+    let id = v.get("id").filter(|_| v.get("result").is_some())?.to_string();
+    let (name, arguments) = self.after.lock().remove(&id)?;
+    let relay = self.relay.as_ref()?;
+    let answer = relay.tool_hook("after", &name, &arguments, v.get("result"));
+    let result = answer.get("result").filter(|r| r.is_object())?;
+    let mut next = v.clone();
+    next["result"] = result.clone();
+    Some(next)
+  }
+}
+
 pub fn run(version: &str) -> i32 {
   let relay = Relay::from_env();
-  let out = Arc::new(parking_lot::Mutex::new(std::io::stdout()));
-  let write = |out: &parking_lot::Mutex<std::io::Stdout>, v: &Value| {
-    let mut o = out.lock();
+  let out = Arc::new(Out { stdout: parking_lot::Mutex::new(std::io::stdout()), after: Default::default(), relay: relay.clone() });
+  let write = |out: &Out, v: &Value| {
+    let reviewed = out.reviewed(v);
+    let v = reviewed.as_ref().unwrap_or(v);
+    let mut o = out.stdout.lock();
     writeln!(o, "{v}").and_then(|_| o.flush()).is_ok()
   };
   for line in std::io::stdin().lock().lines() {
-    let Ok(line) = line else { break };
+    let Ok(mut line) = line else { break };
     if line.trim().is_empty() {
       continue;
+    }
+    // The plugins' `tool.before` hooks may refuse a call or change its arguments; a `tool.after` hook marks the call
+    // for its result
+    if let Some(relay) = &relay
+      && let Ok(mut msg) = serde_json::from_str::<Value>(&line)
+      && msg.get("method").and_then(Value::as_str) == Some("tools/call")
+      && let Some(id) = msg.get("id").cloned()
+      && let Some(name) = msg.pointer("/params/name").and_then(Value::as_str).map(str::to_owned)
+    {
+      let arguments = msg.pointer("/params/arguments").cloned().unwrap_or_else(|| json!({}));
+      let hook = relay.tool_hook("before", &name, &arguments, None);
+      if let Some(reason) = hook.get("block").and_then(Value::as_str) {
+        if !write(&out, &json!({ "jsonrpc": "2.0", "id": id, "result": tool_error(reason.to_owned()) })) {
+          break;
+        }
+        continue;
+      }
+      let arguments = match hook.get("arguments").filter(|a| a.is_object() && **a != arguments) {
+        Some(next) => {
+          msg["params"]["arguments"] = next.clone();
+          line = msg.to_string();
+          next.clone()
+        }
+        None => arguments,
+      };
+      if hook.get("after") == Some(&Value::Bool(true)) {
+        out.after.lock().insert(id.to_string(), (name, arguments));
+      }
     }
     let mut initialize = false;
     let mut features = crate::relay::wire::HostFeatures::default();
@@ -654,6 +706,21 @@ impl Relay {
       false
     });
     roster
+  }
+
+  /// The plugins' answer about a call to one of this server's tools (`HubOp::ToolHook`); `{}` when the hub cannot be
+  /// reached, so a call never waits on a missing engine
+  fn tool_hook(&self, phase: &str, name: &str, arguments: &Value, result: Option<&Value>) -> Value {
+    use crate::relay::wire::{HubOp, HubReply};
+    let op = HubOp::ToolHook { phase: phase.into(), name: name.into(), arguments: arguments.clone(), result: result.cloned() };
+    let mut out = json!({});
+    let _ = crate::relay::hub::call(&self.addr, &self.request(op), |r| {
+      if let HubReply::Done(text) = r {
+        out = serde_json::from_str(&text).unwrap_or_else(|_| json!({}));
+      }
+      false
+    });
+    out
   }
 
   /// The plugin tools in effect and the tool groups switched off; None when the hub cannot be reached

@@ -657,6 +657,8 @@ export const ru = {
   'host.plugin.skip': "Не включать",
   'host.plugin.by': "{agent} написал этот плагин и просит его включить.",
   'host.plugin.asks': 'Плагин {name} спрашивает:',
+  'host.plugin.denied': 'Плагин {name} отклонил этот запрос: {reason}',
+  'host.plugin.redirected': 'Плагин {name} отправил это сообщение в {agent}',
   'host.needApprovalFor': 'Требуется подтверждение: {what}',
   'host.noPermissionOptions': 'В запросе разрешения нет вариантов',
   'host.planOptionsStale': 'Варианты утверждения плана больше не действительны',

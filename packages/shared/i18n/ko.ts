@@ -647,6 +647,8 @@ export const ko = {
   'host.plugin.skip': "켜지 않기",
   'host.plugin.by': "{agent}이(가) 이 플러그인을 작성하고 켜 달라고 요청했습니다.",
   'host.plugin.asks': '플러그인 {name}의 질문:',
+  'host.plugin.denied': '플러그인 {name}이(가) 이 요청을 거절했습니다: {reason}',
+  'host.plugin.redirected': '플러그인 {name}이(가) 이 메시지를 {agent}(으)로 보냈습니다',
   'host.needApprovalFor': '승인 필요: {what}',
   'host.noPermissionOptions': '권한 요청에 선택지가 없습니다',
   'host.planOptionsStale': '플랜 승인 옵션이 더 이상 유효하지 않습니다',

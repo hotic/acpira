@@ -1561,6 +1561,8 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
       (Some(a), Some(h)) => h.spawn_env(r.persona.agent.clone(), a.clone()).await,
       _ => None,
     };
+    // A summoned agent starts the way the plugins' `agent.launch` hooks have it too, on the parent session's behalf
+    let def = crate::acp::session::plugin_hooks::plugin_launch(self.deps.plugin_runtime.as_ref(), &def, &self.id, &self.process_cwd()).await;
     self.log(&format!("relay {}: spawn {bin} {} for {}", short(thread), def.args.join(" "), r.persona.name));
     let proc = AgentProcess::spawn(&def, &bin, &self.process_cwd(), handlers, env.as_ref(), None).await?;
     // Registered before anything else can fail, so the close or a failed open always ends it

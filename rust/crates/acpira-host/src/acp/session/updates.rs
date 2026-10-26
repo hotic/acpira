@@ -215,11 +215,18 @@ impl AcpSession {
     // Claude's task-notification followups stream with no prompt on the wire: show them running only after routing
     // child updates. A nested tool from a detached child can look like ordinary content, but it must not reopen the root.
     self.open_autonomous(&mut c, &kind);
+    let title_before = (kind == "session_info_update").then(|| c.state.title.clone());
     if !apply_update(&mut c.state, &u) {
       return;
     }
     if !c.replaying {
       self.emit_update(&mut c, &kind, &u);
+      // The agent titled the session: a plugin may title it otherwise
+      if let Some(before) = title_before
+        && let Some(title) = c.state.title.clone().filter(|t| before.as_ref() != Some(t))
+      {
+        self.plugin_title(title, "agent", None);
+      }
     }
     if kind == "usage_update" {
       c.usage.notifications = true;

@@ -78,6 +78,8 @@ impl AcpSession {
     if crate::host_mcp::push_entry(&mut servers, entry) {
       self.log(&format!("shared MCP: left out the server named {}, which is Acpira's own", crate::host_mcp::SERVER_NAME));
     }
+    // The plugins' processes may change the list; Acpira's own server stays
+    let mut servers = self.plugin_mcp(servers).await;
     {
       let mut c = self.core.lock();
       if !c.mcp_skip.is_empty() {
@@ -201,6 +203,9 @@ impl AcpSession {
     let def = self.deps.registry.get(&self.agent)?.clone();
     self.check_remote_agent(&def.name)?;
     let dir = self.process_cwd();
+    // A plugin's `agent.launch` hook changes how this session's agent starts, so a warm process will not do
+    let launched = self.deps.plugin_runtime.as_ref().is_some_and(|rt| rt.has_hook("agent.launch"));
+    let def = if launched { crate::acp::session::plugin_hooks::plugin_launch(self.deps.plugin_runtime.as_ref(), &def, &self.id, &dir).await } else { def };
     let (gen_id, account) = {
       let mut c = self.core.lock();
       c.usage.reset_for_process();
@@ -214,8 +219,8 @@ impl AcpSession {
     let handlers: Arc<dyn ClientHandlers> = Arc::new(SessionHandlers { session: self.me.clone(), gen_id });
     let account_note = account.as_ref().map(|a| format!(" account {}", a.chars().take(8).collect::<String>())).unwrap_or_default();
     let borrowed = match &self.deps.pool {
-      Some(pool) => pool.take(&self.agent, &dir, account.as_deref(), handlers.clone()).await,
-      None => None,
+      Some(pool) if !launched => pool.take(&self.agent, &dir, account.as_deref(), handlers.clone()).await,
+      _ => None,
     };
     let proc = match borrowed {
       Some(p) => {
