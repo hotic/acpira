@@ -28,7 +28,7 @@ A plugin is a folder `{root}/<id>/` holding a `plugin.json` and its files. It ex
 - stdin: `{ "arguments": {...}, "workspace": "<session folder>", "session": "<id>" }`. stdout is the result. A non-zero exit is an error, its text the end of stderr.
 - Environment: `ACPIRA_PLUGIN_DIR` (the frozen copy, read-only), `ACPIRA_PLUGIN_DATA` (a writable folder of the plugin's own), `ACPIRA_WORKSPACE`.
 - Limits: {timeout} s, {output_kb} KB of output. The folder: at most {max_files} files and {max_mb} MB; `.git`, `__pycache__`, `node_modules` and `.venv` are left out, symbolic links refused. Dependencies go in `ACPIRA_PLUGIN_DATA`.
-- After activation: clients that list tools again (Claude Code, Acpira's own agent) see the tool in this session, others in a new one.
+- After activation: clients that list tools again (Claude Code, OpenCode, DeepSeek Harness at once, Acpira's own agent at its next turn) see the tool in this session, others in a new one.
 
 ## Examples
 
