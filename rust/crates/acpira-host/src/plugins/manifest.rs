@@ -385,7 +385,7 @@ pub const THEME_TOKENS: &[&str] = &[
 ];
 
 /// No way out of a declaration: a value cannot end it, open a block or start markup
-fn safe_css_value(v: &str) -> bool {
+pub fn safe_css_value(v: &str) -> bool {
   !v.trim().is_empty() && !v.contains([';', '{', '}', '<', '>']) && !v.contains("/*")
 }
 

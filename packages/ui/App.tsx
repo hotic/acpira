@@ -28,6 +28,7 @@ import { updateMainComposer } from './chat/useComposerDraft';
 import { playChime } from './effects/chime';
 import { probeUrl } from './probeUrl';
 import { isWidgetFrame } from './chat/AgentWidget';
+import { applyPluginTheme } from './pluginTheme';
 import type { SettingsPage } from './settings/Nav';
 import type { SharedState } from './settings/SharedPage';
 import type { StorageState } from './settings/StoragePage';
@@ -249,6 +250,7 @@ export function App() {
         case 'noSession': setNoProject(true); setSession(undefined); break;
         case 'pickedFolder': { const settle = folderPick.current; folderPick.current = undefined; settle?.(m.path); break; }
         case 'toast': pushShellToast(m); break;
+        case 'pluginTheme': applyPluginTheme(m.css); break;
         case 'updateState': setUpdateState(m.state); break;
         case 'desktopMenu': setDesktopMenu(m.menus); break;
         case 'windowState': setWindowMaximized(m.maximized); break;

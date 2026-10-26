@@ -21,6 +21,8 @@ use crate::store::transcript_store::LogFn;
 
 /// Longest a plugin's `check` may run once the user confirmed
 const CHECK_TIMEOUT: Duration = Duration::from_secs(45);
+/// The most of one plugin's theme style sheet a page gets
+const THEME_CSS_MAX_BYTES: usize = 64 * 1024;
 /// Changes the plugin page lists
 const CHANGES_SHOWN: usize = 30;
 /// `ACPIRA_SAFE_MODE=1` (or `--safe-mode`): the engine starts with every user plugin unloaded, whatever the switch says
@@ -255,6 +257,36 @@ impl PluginHost {
           out.push(cfg);
         }
         Err(e) => (self.log)(&format!("plugins: {} hooks: {e}", a.id)),
+      }
+    }
+    out
+  }
+
+  /// The style layer of the themes in effect, empty without one and in safe mode: each plugin's tokens on the page's
+  /// token roots (the same specificity as `tokens.css`, and later), then its style sheet, in id order
+  pub fn theme_css(&self) -> String {
+    self.reload();
+    let mut out = String::new();
+    for a in &self.loaded().active {
+      let Some(theme) = &a.manifest.contributes.theme else { continue };
+      out.push_str(&format!("/* Acpira plugin {} */\n", a.id));
+      // Checked when it was enabled; checked again here, since this text goes into every page
+      let tokens: Vec<String> = theme
+        .tokens
+        .iter()
+        .filter(|(k, _)| manifest::THEME_TOKENS.contains(&k.as_str()))
+        .filter_map(|(k, v)| v.as_str().filter(|v| manifest::safe_css_value(v)).map(|v| format!("  {k}: {v};")))
+        .collect();
+      if !tokens.is_empty() {
+        out.push_str(&format!(":root, .acp-shell, [data-theme] {{\n{}\n}}\n", tokens.join("\n")));
+      }
+      if let Some(css) = theme.css.as_deref().and_then(|c| manifest::inside(&a.dir, c)).and_then(|p| std::fs::read_to_string(p).ok()) {
+        let mut end = css.len().min(THEME_CSS_MAX_BYTES);
+        while !css.is_char_boundary(end) {
+          end -= 1;
+        }
+        out.push_str(css.get(..end).unwrap_or_default());
+        out.push('\n');
       }
     }
     out
@@ -496,6 +528,26 @@ mod tests {
     }
     std::fs::write(dir.join("plugin.json"), m.to_string()).unwrap();
     std::fs::write(dir.join("go.sh"), script).unwrap();
+  }
+
+  #[tokio::test]
+  async fn a_theme_becomes_one_style_layer_that_safe_mode_takes_away() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = host(tmp.path());
+    h.start().await;
+    assert_eq!(h.theme_css(), "");
+    let dir = tmp.path().join("warm");
+    std::fs::create_dir_all(&dir).unwrap();
+    let m = json!({ "schema": 1, "id": "warm", "version": "1", "description": "Warm",
+      "contributes": { "theme": { "tokens": { "--bg-0": "#1b1a18", "--brand": "oklch(70% 0.1 60)" }, "css": "theme.css" } } });
+    std::fs::write(dir.join("plugin.json"), m.to_string()).unwrap();
+    std::fs::write(dir.join("theme.css"), ".acp-shell { letter-spacing: 0.01em; }").unwrap();
+    h.action(PluginAction::Enable { id: "warm".into() }).await.unwrap();
+    let css = h.theme_css();
+    assert!(css.contains(":root, .acp-shell, [data-theme] {\n  --bg-0: #1b1a18;\n  --brand: oklch(70% 0.1 60);\n}"), "{css}");
+    assert!(css.trim_end().ends_with(".acp-shell { letter-spacing: 0.01em; }"), "{css}");
+    h.action(PluginAction::SafeMode { on: true }).await.unwrap();
+    assert_eq!(h.theme_css(), "");
   }
 
   #[tokio::test]
