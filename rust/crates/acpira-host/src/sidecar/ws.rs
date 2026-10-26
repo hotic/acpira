@@ -9,6 +9,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 
+/// The largest frame, and the largest message its fragments add up to: envelopes are kilobytes, a pasted image a few
+/// megabytes
+const MAX_FRAME: usize = 64 << 20;
+
 pub struct HarnessOpts {
   pub port: u16,
   /// Repository root: test/host-preview/* and dist/webview/* are served from it
@@ -264,8 +268,13 @@ async fn ws_session(stream: TcpStream, initial: Vec<u8>, on_wire: Arc<dyn Fn(WsW
         if buf.len() < 10 {
           break;
         }
-        len = u64::from_be_bytes(buf[2..10].try_into().unwrap()) as usize;
+        let Ok(wide) = <[u8; 8]>::try_from(&buf[2..10]) else { break 'outer };
+        len = usize::try_from(u64::from_be_bytes(wide)).unwrap_or(usize::MAX);
         off = 10;
+      }
+      // A forged length must not overflow the sums below or grow the buffers without end: the connection ends instead
+      if len > MAX_FRAME || fragments.len() + len > MAX_FRAME {
+        break 'outer;
       }
       let mask_len = if masked { 4 } else { 0 };
       if buf.len() < off + mask_len + len {
