@@ -53,6 +53,17 @@ describe('workbench drags', () => {
     expect(workbenchUris(transfer({ CodeFiles: JSON.stringify(['\\\\server\\share\\a b.ts']) }))).toEqual(['file://server/share/a%20b.ts']);
   });
 
+  it("takes the host's paths for a drag whose files the webview hides", async () => {
+    // A file manager's drag as WebKitGTK 2.50 shows it to the page: a uri-list that reads empty and no files
+    const dt = transfer({ 'text/uri-list': '', 'text/html': '' });
+    const { drafts, refused } = await collectDrafts(dt, '/w', ['/w/a b.ts', '/w/docs/']);
+    expect(drafts).toEqual([
+      { kind: 'file', uri: 'file:///w/a%20b.ts', name: 'a b.ts' },
+      { kind: 'file', uri: 'file:///w/docs', name: 'docs' },
+    ]);
+    expect(refused).toEqual([]);
+  });
+
   it('reports a drag of remote resources instead of dropping it silently', async () => {
     const dt = transfer({ 'text/uri-list': '', CodeEditors: JSON.stringify([{ resource: { scheme: 'sftp', path: '/srv/a.ts' } }]) });
     const { drafts, refused } = await collectDrafts(dt, '/w');
