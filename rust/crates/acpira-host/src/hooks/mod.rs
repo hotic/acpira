@@ -62,12 +62,49 @@ pub struct HooksConfig {
   pub watch: Vec<PathBuf>,
   /// Keys this version does not know (a newer Acpira's, or a typo): reported, while the known ones still apply
   pub unknown: Vec<String>,
+  /// Set on a plugin's hooks: where they run and what their environment adds. None for the project's own
+  pub plugin: Option<PluginSource>,
+  /// The hooks of the plugins in effect, run after the project's own in this order (`sources`); only the project's
+  /// `watch` and `rounds` count
+  pub chained: Vec<HooksConfig>,
 }
+
+/// Where a plugin's hooks run: its frozen copy, with its folders in the environment
+#[derive(Debug, Clone, PartialEq)]
+pub struct PluginSource {
+  pub id: String,
+  pub dir: PathBuf,
+  pub env: Vec<(String, String)>,
+}
+
+/// The hooks of the plugins in effect, for a session on this machine (`plugins::host`)
+pub type PluginHooks = std::sync::Arc<dyn Fn() -> Vec<HooksConfig> + Send + Sync>;
 
 impl HooksConfig {
   /// Whether turns need a before / after snapshot of the watched trees
   pub fn tracks_changes(&self) -> bool {
-    self.before_edit.is_some() || self.after_turn.is_some()
+    self.sources().any(|s| s.before_edit.is_some() || s.after_turn.is_some())
+  }
+
+  /// The project's own hooks, then each plugin's: every event runs them in this order, and the first block decides
+  pub fn sources(&self) -> impl Iterator<Item = &HooksConfig> {
+    std::iter::once(self).chain(self.chained.iter())
+  }
+
+  /// No hooks of its own, for the project at `root`: what plugin hooks chain onto where the project declares none
+  pub fn empty(root: &Path) -> HooksConfig {
+    HooksConfig {
+      root: root.to_path_buf(),
+      context: vec![],
+      before_prompt: None,
+      before_edit: None,
+      after_turn: None,
+      rounds: DEFAULT_ROUNDS,
+      watch: vec![root.to_path_buf()],
+      unknown: vec![],
+      plugin: None,
+      chained: vec![],
+    }
   }
 }
 
@@ -140,6 +177,8 @@ pub fn parse(root: &Path, text: &str) -> Result<HooksConfig, String> {
     rounds: rounds.unwrap_or(DEFAULT_ROUNDS),
     watch,
     unknown: raw.unknown.into_keys().collect(),
+    plugin: None,
+    chained: vec![],
   })
 }
 

@@ -139,6 +139,7 @@ impl Mgr {
         hidden: Arc::new(move || hidden.clone()),
         scope: Arc::new(move || scope.lock().unwrap().clone()),
         shared_mcp: None,
+        plugin_hooks: None,
         host_mcp: None,
         // Inside the test's own directory (record scans only look at `<id>.json`), shared by managers on one directory
         lease_root: dir.join("lease-home"),
@@ -250,6 +251,7 @@ async fn foreign_native_session(fake: &FakeAgent, native: &Path, store: &Arc<Tra
     pool: None,
     model_shapes: None,
     shared_mcp: None,
+    plugin_hooks: None,
     host_mcp: None,
     claim: None,
     remote: None,

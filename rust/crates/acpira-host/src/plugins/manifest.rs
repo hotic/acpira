@@ -284,10 +284,24 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
   {
     err(findings, "agent: `command` is needed".into());
   }
-  if let Some(hooks) = &m.contributes.hooks
-    && !hooks.is_object()
-  {
-    err(findings, "hooks: expected the object of .agents/hooks.json".into());
+  if let Some(hooks) = &m.contributes.hooks {
+    if !hooks.is_object() {
+      err(findings, "hooks: expected the object of .agents/hooks.json".into());
+    } else {
+      match crate::hooks::parse(dir, &hooks.to_string()) {
+        Err(e) => err(findings, format!("hooks: {e}")),
+        Ok(c) => {
+          if !c.unknown.is_empty() {
+            err(findings, format!("hooks: unknown keys {}", c.unknown.join(", ")));
+          }
+          for p in &c.context {
+            if !p.is_file() {
+              err(findings, format!("hooks: context file {} not found in the plugin", p.strip_prefix(dir).unwrap_or(p).display()));
+            }
+          }
+        }
+      }
+    }
   }
   if let Some(mcp) = &m.contributes.mcp {
     for (name, entry) in mcp {

@@ -185,6 +185,10 @@ impl HostRuntime {
       let p = plugins.clone();
       Arc::new(move || p.mcp_servers())
     };
+    let plugin_hooks: crate::hooks::PluginHooks = {
+      let p = plugins.clone();
+      Arc::new(move || p.hook_configs())
+    };
     let notify_p = platform.clone();
     let scope_p = platform.clone();
     let manager = SessionManager::new(
@@ -222,6 +226,7 @@ impl HostRuntime {
         bus: true,
         remote: Some(connections.clone()),
         shared_mcp: Some(crate::shared_config::mcp_provider(Arc::new(move || mcp_home.home()), Some(plugin_servers))),
+        plugin_hooks: Some(plugin_hooks),
         host_mcp,
         // Both switches are off by default (`notifySound` / `notifySystem`); read at each edge, so a change applies to the next one
         attention: Some(Arc::new(move |a: Attention| {
