@@ -111,9 +111,10 @@ fn item_json(index: usize, item: &Item) -> Value {
 }
 
 /// A `context` hook's answer applied to the call: `system`, `items`, `tools` and `options` replace theirs. An item
-/// `{ "keep": i }` is the call's item `i` unchanged; any other is built from its fields (an assistant message rebuilt
-/// so loses what its provider must get back verbatim, and a user message its images). A tool not in the call is
-/// dropped: the loop can only run its own tools
+/// `{ "keep": i }`, or one still exactly as it was sent (the payload's own items come back with every answer), is the
+/// call's item `i` unchanged; any other is built from its fields (an assistant message rebuilt so loses what its
+/// provider must get back verbatim, and a user message its images). A tool not in the call is dropped: the loop can
+/// only run its own tools. `options.model` is shown, not applied: the endpoint is picked before the hook
 pub fn apply_request(r: &mut Request, out: &Value) {
   if let Some(system) = out.get("system").and_then(Value::as_str) {
     r.system = system.to_owned();
@@ -145,6 +146,12 @@ pub fn apply_request(r: &mut Request, out: &Value) {
 fn item_of(v: &Value, old: &[Item]) -> Option<Item> {
   if let Some(i) = v.get("keep").and_then(Value::as_u64) {
     return old.get(i as usize).cloned();
+  }
+  if let Some(i) = v.get("index").and_then(Value::as_u64).map(|i| i as usize)
+    && let Some(item) = old.get(i)
+    && *v == item_json(i, item)
+  {
+    return Some(item.clone());
   }
   let text = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or_default().to_owned();
   match v.get("role").and_then(Value::as_str)? {
@@ -189,10 +196,11 @@ pub enum Before {
   Answer(Value, crate::tools::Output),
 }
 
-fn answered(out: &Value) -> Option<crate::tools::Output> {
+/// A `result` answer as a tool's output; `isError` left out keeps `was_error`
+fn answered(out: &Value, was_error: bool) -> Option<crate::tools::Output> {
   let r = out.get("result")?;
   let text = r.get("text").and_then(Value::as_str)?.to_owned();
-  let is_error = r.get("isError").and_then(Value::as_bool).unwrap_or(false);
+  let is_error = r.get("isError").and_then(Value::as_bool).unwrap_or(was_error);
   Some(crate::tools::Output { content: vec![crate::tools::text_content(&text)], model: text, is_error, raw_output: None })
 }
 
@@ -206,7 +214,7 @@ pub async fn before_call(server: &Server, session: &Session, tool: &str, mut arg
     if let Some(a) = out.get("arguments").filter(|a| a.is_object()) {
       arguments = a.clone();
     }
-    if let Some(output) = answered(&out) {
+    if let Some(output) = answered(&out, false) {
       return Before::Answer(arguments, output);
     }
   }
@@ -256,7 +264,7 @@ pub async fn shell_rider(server: &Server, session: &Session, action: &crate::too
 /// ones the call ran with, after the `tool.before` and `shell` hooks
 pub async fn after_call(server: &Server, session: &Session, tool: &str, arguments: &Value, text: &str, is_error: bool) -> Option<(String, bool)> {
   let out = ask(server, session, "tool.after", json!({ "tool": tool, "arguments": arguments, "result": { "text": text, "isError": is_error } })).await?;
-  answered(&out).map(|o| (o.model, o.is_error))
+  answered(&out, is_error).map(|o| (o.model, o.is_error))
 }
 
 #[cfg(test)]
@@ -303,5 +311,18 @@ mod tests {
     assert_eq!(r.items[1], Item::User(vec![Part::Text("remember: tabs".into())]));
     assert_eq!(r.tools.iter().map(|t| (t.name.as_str(), t.description.as_str())).collect::<Vec<_>>(), [("bash", "Run a shell command, never rm -rf")]);
     assert_eq!((r.max_tokens, r.sampling.temperature), (Some(512), Some(0.2)));
+  }
+
+  #[test]
+  fn items_that_come_back_as_they_were_sent_keep_what_the_hook_cannot_see() {
+    let mut original = request();
+    original.items[1] = Item::Assistant { text: "ok".into(), reasoning: "r".into(), tool_calls: vec![], native: Some(crate::llm::Native { origin: "x".into(), blocks: vec![json!({ "signature": "sig" })] }) };
+    let mut r = original.clone();
+    // The engine's merge hands the payload's own items back with an answer that changed only the system prompt
+    let mut answer = request_json(&r);
+    answer["system"] = json!("sys + rules");
+    apply_request(&mut r, &answer);
+    assert_eq!(r.items, original.items, "the image data and the signed reasoning survive");
+    assert_eq!(r.system, "sys + rules");
   }
 }

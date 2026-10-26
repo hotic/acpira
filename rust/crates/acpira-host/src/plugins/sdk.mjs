@@ -60,6 +60,9 @@ export function plugin(options = {}) {
   const close = async code => {
     if (closing) return;
     closing = true;
+    // Nothing answers any more: what waits on the engine fails now instead of hanging the close handlers
+    for (const w of waits.values()) w.reject(new Error('the engine closed the connection'));
+    waits.clear();
     for (const f of closers) {
       try { await f(); } catch (e) { console.error('acpira-plugin: on close:', e); }
     }

@@ -393,16 +393,17 @@ impl Server {
       Session { id: id.clone(), cwd: PathBuf::from(cwd), state: parking_lot::Mutex::new(state), store, tool_seq: AtomicU64::new(0), jobs: Default::default(), mcp, remote, layers };
     // The starting controls too: a reopen must not take a default that changed in the meantime
     session.save_state(&session.state.lock());
-    let remote = session.remote.clone();
+    let (remote, layers) = (session.remote.clone(), session.layers.clone());
     self.sessions.lock().insert(id.clone(), Arc::new(session));
-    self.announce_commands(&id, std::path::Path::new(cwd), remote.as_deref());
+    self.announce_commands(&id, std::path::Path::new(cwd), remote.as_deref(), layers);
     Ok(response)
   }
 
   /// The session's slash commands: `/compact` and the skills found now (`skills.rs`). Sent inside `session/new` /
   /// `load` / `resume` like Devin does, straight to the client: a replay would only repeat a stale list
-  fn announce_commands(&self, id: &str, cwd: &std::path::Path, remote: Option<&crate::remote::Remote>) {
-    let places = self.places(cwd, remote);
+  fn announce_commands(&self, id: &str, cwd: &std::path::Path, remote: Option<&crate::remote::Remote>, layers: Layers) {
+    // The plugins' skills too (`SKILLS_META`): they are the session's like the user's
+    let places = self.places_of(cwd, remote, layers);
     let commands = crate::skills::commands(&crate::skills::scan(&places));
     self.conn().notify("session/update", json!({ "sessionId": id, "update": { "sessionUpdate": "available_commands_update", "availableCommands": commands } }));
   }
@@ -440,7 +441,7 @@ impl Server {
         self.conn().notify("session/update", json!({ "sessionId": id, "update": u }));
       }
     }
-    self.announce_commands(id, &session.cwd, session.remote.as_deref());
+    self.announce_commands(id, &session.cwd, session.remote.as_deref(), session.layers.clone());
     // An unfinished goal, straight to the client like the commands: the replay carries none (`goal::publish`)
     let goal = session.state.lock().goal.clone();
     if let Some(g) = crate::goal::published(goal.as_ref()) {

@@ -452,8 +452,15 @@ impl AcpSession {
         }
         let Some(fields) = answer.as_object() else { return true };
         for (k, v) in fields {
-          if !matches!(k.as_str(), "session" | "agent" | "cwd" | "by") {
-            p[k] = v.clone();
+          match k.as_str() {
+            "session" | "agent" | "cwd" | "by" => {}
+            // Headers and variables add up across plugins: a later one replaces a name, never the whole set
+            "headers" | "env" if v.is_object() && p[k].is_object() => {
+              for (name, value) in v.as_object().into_iter().flatten() {
+                p[k][name] = value.clone();
+              }
+            }
+            _ => p[k] = v.clone(),
           }
         }
         p["by"] = json!(plugin);

@@ -249,6 +249,7 @@ rl.on('line', async line => {
   out.get = await ask('session/get', { session, turns: 1 });
   out.rename = await ask('session/act', { message: { type: 'renameSession', id: session, title: 'From a plugin' } });
   out.approve = await ask('session/act', { message: { type: 'permission', sessionId: session, blockId: 'perm-1', optionId: 'allow' } });
+  out.yolo = await ask('session/act', { message: { type: 'setMode', sessionId: session, id: 'yolo' } });
   out.toast = await ask('ui/toast', { text: 'hello from a plugin', level: 'warning' });
   out.ask = await ask('ui/ask', { session, message: 'Release now?', questions: [{ id: 'ship', text: 'Ship it?', kind: 'single', options: [{ id: 'yes', label: 'Yes' }, { id: 'no', label: 'No' }] }] });
   writeFileSync(data + '/results.json', JSON.stringify(out));
@@ -289,6 +290,8 @@ async fn a_plugin_reads_and_acts_on_sessions_through_the_engine_but_cannot_appro
   assert_eq!((r["get"]["session"]["turns"].as_array().unwrap().len(), r["get"]["session"]["turnsLeftOut"].as_u64()), (1, Some(3)), "{r}");
   assert!(r["rename"]["error"].is_null(), "{r}");
   assert!(r["approve"]["error"].as_str().unwrap().contains("`permission` is not an action a plugin may take"), "{r}");
+  // Nor may it switch the session to full access, which would answer its cards
+  assert!(r["yolo"]["error"].as_str().unwrap().contains("gives the agent full access"), "{r}");
   assert_eq!(toasts.lock().unwrap().as_slice(), ["warning: hello from a plugin"]);
   assert_eq!(r["ask"]["answers"]["ship"], "yes", "{r}");
   until(|| m.m.sessions().iter().any(|s| s.id == id && s.title == "From a plugin"), 5000).await;

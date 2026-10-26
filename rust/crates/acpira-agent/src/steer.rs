@@ -87,7 +87,7 @@ pub fn close(server: &Server, session: &Session) -> Option<(Item, Vec<Value>)> {
     return None;
   }
   let images = pick.and_then(|p| crate::turn::limits(&server.config.get(), &server.catalog.get(), &p)).is_some_and(|m| m.takes_images());
-  let places = server.places(&session.cwd, session.remote.as_deref());
+  let places = server.places_of(&session.cwd, session.remote.as_deref(), session.layers.clone());
   Some((item(&prompts, images, &skills::scan(&places)), prompts))
 }
 
