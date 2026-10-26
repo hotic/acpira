@@ -15,6 +15,7 @@ import { TurnActionsContext } from '../TurnActions';
 import { FollowContext, useBottomFollow } from '../useBottomFollow';
 import { DiffSourceContext } from '../fileLinks';
 import { receiptOnly, subagentTitle } from './subagentState';
+import { useDesktop } from '../../desktop';
 
 interface InspectorProps {
   node: SubagentSummary;
@@ -39,6 +40,7 @@ interface InspectorProps {
 // inside it controls the session except the declared cancel affordance.
 export function SubagentInspector(p: InspectorProps) {
   const { node, mode } = p;
+  const desktop = useDesktop();
   const root = useRef<HTMLDivElement>(null);
   // Captured at render time: child effects (the question card) run before ours and steal focus,
   // so by mount time activeElement is already inside this pane.
@@ -64,7 +66,13 @@ export function SubagentInspector(p: InspectorProps) {
       {/* Same shape as the main Header, which the overlay covers: back / close, the child's title, cancel on the right.
           Ancestry and the graph live behind the composer's subagent entry. The icon bites into the page margin like the
           Header's trailing icons, so the arrow sits on the column edge */}
-      <div className="flex h-hdr shrink-0 items-center gap-gap px-page shadow-[inset_0_-1px_0_0_var(--line)]">
+      {/* Desktop: the window's header line, without its rule, dragging the window like the sheet's header. The overlay is
+          that header (data-sheet-header: the title row's and the corner toggle's room); the docked pane's ends come from
+          desktop.css (--pane-lead / --pane-trail on the pane) */}
+      <div data-sheet-header={(desktop && mode === 'overlay') || undefined} data-drag-region={desktop || undefined}
+        className={cn('flex h-hdr shrink-0 items-center gap-gap',
+          !desktop ? 'px-page shadow-[inset_0_-1px_0_0_var(--line)]'
+            : mode === 'overlay' ? 'pr-(--sheet-trail) pl-(--sheet-lead)' : 'pr-(--pane-trail) pl-(--pane-lead)')}>
         <IconButton className="-ml-1.5" onClick={p.onClose} aria-label={t('subagents.back')} title={t('subagents.back')}>
           {mode === 'overlay' ? <ArrowLeft strokeWidth={1.5} /> : <X strokeWidth={1.5} />}
         </IconButton>

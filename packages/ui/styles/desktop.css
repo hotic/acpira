@@ -47,7 +47,7 @@
 }
 .acp-shell[data-desktop][data-caption][data-narrow] :is([data-sheet-header], [data-stage-tabs], [data-settings-rail]) { --title-w: calc(var(--gap) + 2 * var(--ctl) + 2px + var(--gap)); }
 /* A sheet header that ends at the window's edge leaves the caption its room; beside a shown tool panel it does not */
-.acp-shell[data-desktop][data-caption]:not([data-layout="files"]) [data-sheet-header] { --sheet-trail: calc(var(--start-x) + var(--caps-w)); }
+.acp-shell[data-desktop][data-caption]:not([data-layout="files"]):not(:has(> [data-subagent-panel="docked"])) [data-sheet-header] { --sheet-trail: calc(var(--start-x) + var(--caps-w)); }
 .acp-shell[data-desktop][data-caption]:not([data-layout="files"]):has(> [data-tool-panel-wrap][data-shown]) [data-sheet-header] { --sheet-trail: var(--start-x); }
 /* A page-drawn caption: the stage's rule under its tabs gives way to its card's edge (the card under the title bar, below) */
 .acp-shell[data-desktop][data-caption] [data-stage-body] { --stage-rule: transparent; }
@@ -58,8 +58,19 @@
    session column folds. Its palette counts from the canvas (palette.css), so cards and the composer keep their contrast
    and what paints the page's colour (sticky prompts, fades) paints the canvas */
 .acp-shell[data-desktop][data-layout="files"] [data-sheet-header] { --sheet-lead: var(--start-x); }
-.acp-shell[data-desktop][data-layout="files"]:not([data-column]) [data-sheet-header] { --sheet-trail: calc(var(--start-x) + var(--ctl) + var(--gap) + var(--caps-w)); }
-.acp-shell[data-desktop][data-layout="files"] > [data-sheet] { --bg-0: var(--canvas); }
+.acp-shell[data-desktop][data-layout="files"]:not([data-column]):not(:has(> [data-subagent-panel="docked"])) [data-sheet-header] { --sheet-trail: calc(var(--start-x) + var(--ctl) + var(--gap) + var(--caps-w)); }
+.acp-shell[data-desktop][data-layout="files"] > :is([data-sheet], [data-subagent-panel="docked"]) { --bg-0: var(--canvas); }
+/* The docked subagent pane (chat/Shell.tsx, data-subagent-panel="docked"): its header line starts and ends at the dock's
+   margin. When the pane ends the window's line (the tool panel closed, or the files layout's session column folded), the
+   room the sheet's header kept there for the pinned toggle and a page-drawn caption is the pane's (the rules above skip the
+   sheet's header then) */
+.acp-shell[data-desktop] > [data-subagent-panel="docked"] { --pane-lead: var(--start-x); --pane-trail: var(--start-x); }
+.acp-shell[data-desktop][data-caption]:not([data-layout="files"]) > [data-subagent-panel="docked"] { --pane-trail: calc(var(--start-x) + var(--caps-w)); }
+.acp-shell[data-desktop][data-caption]:not([data-layout="files"]):has(> [data-tool-panel-wrap][data-shown]) > [data-subagent-panel="docked"] { --pane-trail: var(--start-x); }
+.acp-shell[data-desktop]:not([data-layout="files"]):has(> [data-panel-toggle]):not(:has(> [data-tool-panel-wrap][data-shown])) > [data-subagent-panel="docked"],
+.acp-shell[data-desktop][data-layout="files"]:not([data-column]) > [data-subagent-panel="docked"] {
+  --pane-trail: calc(var(--start-x) + var(--ctl) + var(--gap) + var(--caps-w));
+}
 
 @layer components {
   .acp-shell[data-desktop] { background: var(--canvas); }
@@ -75,6 +86,30 @@
   /* The files layout's chat: flat on the canvas, the stage the one raised sheet; not clipped, so its resize edge reaches over
      the stage's rim */
   .acp-shell[data-desktop][data-layout="files"] > [data-sheet] { margin: var(--title-top) 0 var(--sheet-inset); border-radius: 0; background: transparent; box-shadow: none; overflow: visible; }
+  /* The docked subagent pane. Conversation layout: the right part of the chat's sheet, one card with a hairline between
+     (two cards side by side read as a crack). The sheet gives up its right inset and corners and clips its rim and shadow
+     at the joint; the pane's half of the card is drawn under it (::before, so its resize edge is not clipped), inset from
+     the window like the sheet, flush with a shown tool panel. A page-drawn caption starts both halves under the title bar */
+  .acp-shell[data-desktop]:not([data-layout="files"]):has(> [data-subagent-panel="docked"]) > [data-sheet] {
+    margin-right: 0; border-top-right-radius: 0; border-bottom-right-radius: 0; clip-path: inset(-24px 0 -24px -24px);
+  }
+  .acp-shell[data-desktop]:not([data-layout="files"]) > [data-subagent-panel="docked"] {
+    margin: var(--title-top) var(--sheet-inset) var(--sheet-inset) 0; isolation: isolate; z-index: 1;
+  }
+  .acp-shell[data-desktop]:not([data-layout="files"]):has(> [data-tool-panel-wrap][data-shown]) > [data-subagent-panel="docked"] { margin-right: 0; }
+  .acp-shell[data-desktop]:not([data-layout="files"]) > [data-subagent-panel="docked"]::before {
+    content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+    border-left: 1px solid var(--line); border-radius: 0 var(--r-lg) var(--r-lg) 0; background: var(--bg-0);
+    box-shadow: 0 0 0 1px var(--line-strong), 0 2px 10px rgb(0 0 0 / 0.18); clip-path: inset(-24px -24px -24px 0);
+  }
+  .acp-shell[data-desktop][data-caption]:not([data-layout="files"]) > [data-subagent-panel="docked"]::before { top: var(--hdr); }
+  .acp-shell[data-desktop][data-caption]:not([data-layout="files"]):has(> [data-subagent-panel="docked"]) > [data-sheet]::before {
+    border-top-right-radius: 0; border-bottom-right-radius: 0;
+  }
+  /* Files layout: flat on the canvas like the chat beside it, a hairline between them */
+  .acp-shell[data-desktop][data-layout="files"] > [data-subagent-panel="docked"] {
+    margin: var(--title-top) 0 var(--sheet-inset); border-left: 1px solid var(--line);
+  }
   /* Its session column at the window's right edge gives the stage room down to its narrowest */
   .acp-shell[data-desktop][data-layout="files"] > [data-session-panel]:not([data-column-hidden], [data-moving]) { min-width: var(--session-pane-min); }
   /* A narrow window's drawer (the column, undocked) lies over the sheet: it takes the canvas the docked column lies on,

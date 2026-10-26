@@ -27,7 +27,7 @@
    complete for fixed themes and hosts that do not publish these semantic roles.
    The desktop files layout's chat lies on the canvas with its own --bg-0 (desktop.css): its steps count from there. */
 .acp-shell:not([data-theme-fixed]),
-.acp-shell[data-layout="files"]:not([data-theme-fixed]) > [data-sheet] {
+.acp-shell[data-layout="files"]:not([data-theme-fixed]) > :is([data-sheet], [data-subagent-panel="docked"]) {
   --fg-2: var(--vscode-descriptionForeground, color-mix(in srgb, var(--fg-1) 78%, var(--bg-0)));
   --fg-3: color-mix(in srgb, var(--fg-1) 64%, var(--bg-0));
   --fg-strong: var(--fg-1);
@@ -72,7 +72,7 @@
 
 /* Both high-contrast schemes need visible boundaries even when neighboring fills match. */
 :is(.vscode-high-contrast, .vscode-high-contrast-light) .acp-shell:not([data-theme-fixed]),
-:is(.vscode-high-contrast, .vscode-high-contrast-light) .acp-shell[data-layout="files"]:not([data-theme-fixed]) > [data-sheet] {
+:is(.vscode-high-contrast, .vscode-high-contrast-light) .acp-shell[data-layout="files"]:not([data-theme-fixed]) > :is([data-sheet], [data-subagent-panel="docked"]) {
   --fg-2: var(--fg-1);
   --fg-3: var(--fg-1);
   --line: var(--vscode-contrastBorder, var(--fg-1));
