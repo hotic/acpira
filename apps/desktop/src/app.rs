@@ -83,6 +83,11 @@ impl Paths {
         res.join("picker.js"),
         vec![exe_dir.join("acpira-engine"), res.join("bin").join(acpira_desktop::locator::EXE)],
       )
+    } else if let Some(res) = linux_resources(&exe_dir) {
+      // A Linux package (deb, rpm, AppImage): the shell in <prefix>/bin, the engine in <prefix>/libexec/acpira, the page
+      // and the picker in <prefix>/lib/Acpira (scripts/package-linux.mjs)
+      let prefix = exe_dir.parent().unwrap_or(&exe_dir);
+      (res.join("webview"), res.join("picker.js"), vec![prefix.join("libexec").join("acpira").join("acpira-engine")])
     } else if cfg!(windows) && crate::embedded::has_page() {
       // Windows: one exe carries the page, the picker (written out for the engine, which reads it from a file) and the
       // engine, which is this exe run with an engine subcommand (main.rs)
@@ -124,6 +129,16 @@ impl Paths {
       };
     Paths { home: dirs.home, webview, picker, engines, data_home, user_data, logs, cache, webview_data }
   }
+}
+
+/// A Linux package's resources, Tauri's layout for deb, rpm and AppImage alike: <prefix>/lib/<productName> beside the
+/// <prefix>/bin that holds this exe
+fn linux_resources(exe_dir: &Path) -> Option<PathBuf> {
+  if !cfg!(target_os = "linux") {
+    return None;
+  }
+  let res = exe_dir.parent()?.join("lib").join("Acpira");
+  res.join("webview").is_dir().then_some(res)
 }
 
 /// The Electron app's profile (~/Library/Application Support/Acpira): a first launch starts from its settings, window
@@ -556,11 +571,18 @@ impl App {
   }
 
   /// Where WebView2 keeps its profile: Tauri's default (%LOCALAPPDATA%\<identifier>) unless a smoke run gave the app a
-  /// profile of its own; every webview of the process has to use the same one. WKWebView keeps its data in the system's
-  /// store whatever this says (Tauri only keys the webviews' shared context by it)
+  /// profile of its own; every webview of the process has to use the same one. WebKitGTK keeps its website data and its
+  /// cache there too, under the cache folder: the page keeps nothing in web storage. WKWebView keeps its data in the
+  /// system's store whatever this says (Tauri only keys the webviews' shared context by it)
   fn webview_data(&self) -> PathBuf {
     self.paths.webview_data.clone().unwrap_or_else(|| {
-      if cfg!(windows) { self.paths.logs.parent().map(Path::to_path_buf).unwrap_or_default() } else { self.paths.user_data.clone() }
+      if cfg!(windows) {
+        self.paths.logs.parent().map(Path::to_path_buf).unwrap_or_default()
+      } else if cfg!(target_os = "linux") {
+        self.paths.cache.join("webview")
+      } else {
+        self.paths.user_data.clone()
+      }
     })
   }
 
@@ -627,6 +649,12 @@ impl App {
     {
       b = b.decorations(false).shadow(true);
     }
+    // Linux the same way: Tauri's runtime resizes an undecorated GTK window from its edges, the title row moves it
+    // (init.js); there is no system shadow around it
+    #[cfg(target_os = "linux")]
+    {
+      b = b.decorations(false);
+    }
     let window = match b.build() {
       Ok(w) => w,
       Err(e) => {
@@ -656,11 +684,14 @@ impl App {
   }
 
   /// What every page's webview gets before its first real page: the frame-rate switch, background rendering for a
-  /// smoke run, and on Windows the clipboard and dropped paths (win::hook_webview)
+  /// smoke run, on Windows the clipboard and dropped paths (win::hook_webview), on Linux a drag's paths
+  /// (linux::hook_webview)
   fn prepare(&self, window: &WebviewWindow) {
     crate::os::unlock_frame_rate(window, log_arc());
     #[cfg(windows)]
     crate::win::hook_webview(window, log_arc());
+    #[cfg(target_os = "linux")]
+    crate::linux::hook_webview(window, log_arc());
     if self.background {
       crate::os::keep_rendering_in_background(window, log_arc());
     }
@@ -1207,8 +1238,14 @@ pub fn pick_folder(w: Arc<ChatWindow>) {
     return;
   }
   let window = w.window.clone();
+  // GTK's dialog would carry rfd's English title ("Select Folder"); the File menu's item names it in the app's language
+  #[cfg(target_os = "linux")]
+  let title = app().t("desktop.empty.open", &[]).trim_end_matches('…').to_owned();
   tauri::async_runtime::spawn(async move {
-    let picked = rfd::AsyncFileDialog::new().set_parent(&window).set_can_create_directories(true).pick_folder().await;
+    let dialog = rfd::AsyncFileDialog::new().set_parent(&window).set_can_create_directories(true);
+    #[cfg(target_os = "linux")]
+    let dialog = dialog.set_title(title);
+    let picked = dialog.pick_folder().await;
     match picked {
       Some(dir) => w.post(json!({ "type": "pickedFolder", "path": dir.path().to_string_lossy() })),
       None => w.post(json!({ "type": "pickedFolder" })),

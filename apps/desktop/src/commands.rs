@@ -72,7 +72,8 @@ pub fn acpira_clipboard() -> String {
   crate::os::clipboard_read()
 }
 
-/// The paths of a drag from Finder, read when it enters the page so `pathForFile` can answer at the drop. Main thread
+/// The paths of a drag from the OS, read when it enters the page: macOS's `pathForFile` matches them to the dropped files
+/// by name, Linux's page takes them as they are (init.js's dragPaths, linux.rs). Main thread
 #[tauri::command]
 pub fn acpira_drag_paths() -> Vec<String> {
   crate::os::drag_paths()

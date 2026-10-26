@@ -1,8 +1,8 @@
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { constants as zlibConstants, zstdCompressSync } from 'node:zlib';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { packPage } from './pack-page.mjs';
 
 // The macOS arm64 app and dmg through the Tauri CLI (tauri.conf.json): the page, the picker and the release engine must
 // already be built in the repository, and a stale one is called out rather than packaged silently. The engine goes in as
@@ -43,23 +43,8 @@ for (const [path] of inputs) {
 mkdirSync(join(shell, 'binaries'), { recursive: true });
 copyFileSync(join(repo, 'dist/sidecar/mac-arm64/acpira'), join(shell, 'binaries', `acpira-engine-${TRIPLE}`));
 
-// The page as the app ships it: dist/webview with every file under assets/ zstd-compressed beside its name (`x.js` →
-// `x.js.zst`, served decompressed by acpira_desktop::page::route), ~6.5 → ~1.8 MB on disk (2026-10-25). main.js and
-// main.css stay plain: the updater patches them from the installed copy nearly every release, and a compressed file
-// would turn that ~60 KB patch into ~650 KB. Chunk names carry a content hash, so a chunk only changes with its code
-const packed = join(shell, 'target', 'webview-packed');
-if (typeof zstdCompressSync !== 'function') {
-  console.error(`node ${process.version} has no zlib zstd: packaging needs Node 22.15 or later`);
-  process.exit(1);
-}
-rmSync(packed, { recursive: true, force: true });
-cpSync(join(repo, 'dist', 'webview'), packed, { recursive: true });
-for (const name of readdirSync(join(packed, 'assets'))) {
-  const file = join(packed, 'assets', name);
-  const params = { [zlibConstants.ZSTD_c_compressionLevel]: 19 };
-  writeFileSync(`${file}.zst`, zstdCompressSync(readFileSync(file), { params }));
-  rmSync(file);
-}
+// The page as the app ships it, its assets/ zstd-compressed (scripts/pack-page.mjs)
+packPage(repo, join(shell, 'target', 'webview-packed'));
 
 const identity = process.env.APPLE_SIGNING_IDENTITY?.trim() || '-';
 if (identity === '-') console.log('no APPLE_SIGNING_IDENTITY: signing ad hoc, the app runs on this Mac only');

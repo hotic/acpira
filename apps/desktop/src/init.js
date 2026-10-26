@@ -47,8 +47,11 @@
     .finally(() => { busy = false; flush(); });
 
   // WebView2 (Windows) hands a dropped File to the shell as a CoreWebView2File, whose path comes back here by id
-  // (win.rs); WKWebView has no such route, so the paths of a Finder drag are read as it enters the page
+  // (win.rs); WKWebView has no such route, so the paths of a Finder drag are read as it enters the page. WebKitGTK
+  // (Linux) shows the page no file of a drag at all, only a text/uri-list that reads empty: its paths come from the
+  // shell the same way, and the page takes them whole (dragPaths)
   const webview2 = window.chrome?.webview?.postMessageWithAdditionalObjects ? window.chrome.webview : null;
+  const linux = navigator.platform.startsWith('Linux');
   const dropWaiters = new Map();
   let dropSeq = 0;
   window.__acpiraDropPath = (id, path) => {
@@ -71,9 +74,13 @@
   });
   let dragPaths = [];
   document.addEventListener('dragenter', e => {
-    if (webview2 || !e.dataTransfer?.types.includes('Files')) return;
+    if (webview2) return;
+    // A drag without files (a session moved in the column) finds none left from an earlier one
+    if (!e.dataTransfer?.types.includes(linux ? 'text/uri-list' : 'Files')) { dragPaths = []; return; }
     T.invoke('acpira_drag_paths').then(paths => { dragPaths = paths; }, () => { dragPaths = []; });
   }, true);
+  // After the page's own handlers: the drop is over
+  addEventListener('drop', () => { dragPaths = []; });
 
   window.__acpiraApi = Object.freeze({
     postMessage: message => { queue.push(JSON.stringify(message)); flush(); },
@@ -90,6 +97,8 @@
     // from the system's drag pasteboard as it enters the page and matched by name at the drop; WebView2 answers through
     // the shell, a promise (packages/ui Shell's folder drop takes both)
     pathForFile: file => (webview2 ? askPath(file) : dragPaths.find(p => p.slice(p.lastIndexOf('/') + 1) === file.name)),
+    // Linux: the paths of the drag over the page, a folder's ending in '/', empty for a drag without files
+    ...(linux ? { dragPaths: () => dragPaths } : {}),
   });
 
   // The system appearance changed (the shell calls this): the page follows the body class (packages/ui/useVsCodeTheme.ts)
@@ -100,7 +109,9 @@
 
   // The title bar: the column's title row and the sheet's header (data-drag-region) move the window, their controls do
   // not (WebKit has no -webkit-app-region, so the press starts the drag here). A double click does what the system
-  // setting says (zoom, minimize or nothing), like a native title bar
+  // setting says (zoom, minimize or nothing), like a native title bar. On Linux the move starts once the pointer moves:
+  // a move begun on the press hands the pointer to the window manager, and the page never sees a double click's
+  // second press (WebKitGTK 2.50 under KWin, 2026-10-26)
   const CONTROLS = 'button, input, textarea, select, a, [role="button"], [contenteditable=""], [contenteditable="true"]';
   document.addEventListener('mousedown', e => {
     if (e.button !== 0 || !(e.target instanceof Element)) return;
@@ -110,6 +121,22 @@
     if (control && region.contains(control)) return;
     if (e.target.closest('[data-panel-toggle]') && control) return;
     e.preventDefault();
-    T.invoke('acpira_window', { op: e.detail === 2 ? 'titleDoubleClick' : 'drag' });
+    if (e.detail === 2 || !linux) {
+      T.invoke('acpira_window', { op: e.detail === 2 ? 'titleDoubleClick' : 'drag' });
+      return;
+    }
+    const [x, y] = [e.screenX, e.screenY];
+    const stop = () => {
+      removeEventListener('mousemove', move, true);
+      removeEventListener('mouseup', stop, true);
+    };
+    const move = m => {
+      if (!(m.buttons & 1)) return stop();
+      if (Math.abs(m.screenX - x) + Math.abs(m.screenY - y) < 4) return;
+      stop();
+      T.invoke('acpira_window', { op: 'drag' });
+    };
+    addEventListener('mousemove', move, true);
+    addEventListener('mouseup', stop, true);
   }, true);
 })();

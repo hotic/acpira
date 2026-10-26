@@ -1,7 +1,7 @@
-//! The Acpira desktop app in a Tauri shell (docs/dev/desktop.md): WKWebView (macOS) or WebView2 (Windows) windows running
-//! the webview bundle on the app protocol (acpira_desktop::page::APP_ORIGIN), the persistent engine behind them, and the
-//! system side of the IDE actions. The logic outside the windows lives in rust/crates/acpira-desktop, which the rust/
-//! workspace's gates test
+//! The Acpira desktop app in a Tauri shell (docs/dev/desktop.md): WKWebView (macOS), WebView2 (Windows) or WebKitGTK
+//! (Linux) windows running the webview bundle on the app protocol (acpira_desktop::page::APP_ORIGIN), the persistent
+//! engine behind them, and the system side of the IDE actions. The logic outside the windows lives in
+//! rust/crates/acpira-desktop, which the rust/ workspace's gates test
 // A GUI program on Windows: no console window comes up with it
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
@@ -10,6 +10,8 @@ mod browser;
 mod chat_window;
 mod commands;
 mod embedded;
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(target_os = "macos")]
 mod mac;
 mod menu;
@@ -106,6 +108,13 @@ fn main() {
       }
       let handle = tauri_app.handle().clone();
       let a = app::App::init(handle.clone(), paths, links);
+      // Linux: the colour scheme's changes, which reach no window as ThemeChanged there (linux::watch_theme)
+      #[cfg(target_os = "linux")]
+      linux::watch_theme(|| {
+        if let Some(a) = app::try_app() {
+          a.theme_changed();
+        }
+      });
       if let Some(p) = primary {
         let h = handle.clone();
         let listening = p.listen(move |args| {
