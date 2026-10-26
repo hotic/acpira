@@ -50,7 +50,7 @@ import { launchable } from '@acpira/shared/agentOrder';
 import { parseRemoteFolder } from '@acpira/shared/remote';
 import { connectionOf, useFolderHost } from '../remote/api';
 import { RemoteFolderDialog } from '../remote/RemoteFolderDialog';
-import { COLUMN_HIDDEN_KEY, DesktopContext, macOS, useShellCommands, useShellToasts, windowsOS } from '../desktop';
+import { COLUMN_HIDDEN_KEY, DesktopContext, desktopOS, macOS, pageCaption, useShellCommands, useShellToasts } from '../desktop';
 import { droppedPathResolver, setWebviewState, webviewState } from '../vscodeApi';
 import { moveDraft } from './useComposerDraft';
 import { ProjectPick, StartPicker, usePresence } from './StartPage';
@@ -848,7 +848,8 @@ export function Shell(p: ShellProps) {
           data-desktop={desktop || undefined}
           // The files layout (desktop.css, panel.css): explorer | stage | chat | session column
           data-layout={files ? 'files' : undefined}
-          data-os={desktop ? (macOS ? 'mac' : windowsOS ? 'win' : undefined) : undefined}
+          data-os={desktop ? desktopOS : undefined}
+          data-caption={desktop && pageCaption ? '' : undefined}
           // A docked column beside the chat, open: on its left, or at the window's right edge in the files layout
           data-column={(desktop && position === 'left' && canDock && !columnHidden) || undefined}
           data-column-moving={columnMoving || undefined}
