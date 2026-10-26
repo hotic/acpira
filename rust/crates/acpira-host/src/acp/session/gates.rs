@@ -597,7 +597,7 @@ impl AcpSession {
     }
   }
 
-  fn open_question(
+  pub(crate) fn open_question(
     &self,
     c: &mut Core,
     target: &Target,

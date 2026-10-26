@@ -337,13 +337,14 @@ impl Engine {
     true
   }
 
-  fn hello_ok(&self, request_id: String, sessions_dir: String) -> SidecarMsg {
+  fn hello_ok(&self, request_id: String, rt: &HostRuntime) -> SidecarMsg {
     SidecarMsg::HelloOk {
       request_id,
       protocol_version: SIDECAR_PROTOCOL_VERSION,
       sidecar: SidecarInfo { version: self.opts.version.clone(), pid: std::process::id() },
-      sessions_dir,
-      features: vec!["preview".into(), "projects".into(), "remote".into()],
+      sessions_dir: rt.sessions_dir.to_string_lossy().into_owned(),
+      features: vec!["preview".into(), "projects".into(), "remote".into(), "plugins".into()],
+      safe_mode: rt.plugins.loaded().safe_mode,
     }
   }
 }
@@ -492,7 +493,7 @@ impl Wire {
     if engine.inner.lock().wires.contains_key(&self.id) {
       // A second hello on the same wire is a shell bug, but a harmless one
       if let Some(rt) = engine.runtime() {
-        self.send(engine.hello_ok(m.request_id, rt.sessions_dir.to_string_lossy().into_owned()));
+        self.send(engine.hello_ok(m.request_id, &rt));
       }
       return Flow::Continue;
     }
@@ -569,7 +570,7 @@ impl Wire {
           let role = if self.peer { " (peer)" } else { "" };
           engine.log(&format!("wire {}{role} joined; {} connected", self.id, engine.wire_count()));
         }
-        self.send(engine.hello_ok(m.request_id, rt.sessions_dir.to_string_lossy().into_owned()));
+        self.send(engine.hello_ok(m.request_id, &rt));
         Flow::Continue
       }
       Err(e) => {

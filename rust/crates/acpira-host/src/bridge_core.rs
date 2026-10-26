@@ -118,6 +118,9 @@ pub struct BridgeCore {
   /// SSH hosts; the page is subscribed from its first `connections` request on
   connections: Arc<Connections>,
   connections_sub: parking_lot::Mutex<Option<u64>>,
+  /// The user's plugins; the page is subscribed from its first `plugins` request on
+  plugins: Arc<crate::plugins::host::PluginHost>,
+  plugins_sub: parking_lot::Mutex<Option<u64>>,
   me: Weak<BridgeCore>,
 }
 
@@ -134,6 +137,7 @@ impl BridgeCore {
     initial: Option<InitialView>,
     terminals: Arc<TerminalHub>,
     connections: Arc<Connections>,
+    plugins: Arc<crate::plugins::host::PluginHost>,
   ) -> Arc<BridgeCore> {
     let viewer = manager.attach(initial);
     // The page loads its bundle between attach and `ready`: a stored session it opens on is read and brought live meanwhile,
@@ -164,6 +168,8 @@ impl BridgeCore {
       terminals,
       connections,
       connections_sub: Default::default(),
+      plugins,
+      plugins_sub: Default::default(),
       me: me.clone(),
     });
     let weak = core.me.clone();
@@ -592,6 +598,39 @@ impl BridgeCore {
         let reply = self.manager.storage_action(action, &detail).await;
         self.post_now(HostMsg::Storage { view: reply.view, outcome: reply.outcome, error: reply.error });
       }
+      // The plugin page (plugins/host.rs): every change, another engine's included, sends the view again
+      W::Plugins => {
+        {
+          let mut sub = self.plugins_sub.lock();
+          if sub.is_none() {
+            let weak = self.me.clone();
+            *sub = Some(self.plugins.subscribe(Arc::new(move || {
+              if let Some(c) = weak.upgrade() {
+                tokio::spawn(async move {
+                  let view = c.plugins_view().await;
+                  c.post_now(HostMsg::Plugins { view, error: None });
+                });
+              }
+            })));
+          }
+        }
+        let view = self.plugins_view().await;
+        self.post_now(HostMsg::Plugins { view, error: None });
+      }
+      W::PluginAction { action } => {
+        let error = match self.plugins.action(action).await {
+          Ok(Some(dir)) => {
+            if let Err(e) = platform.reveal_in_os(&dir.to_string_lossy()).await {
+              platform.log(&format!("plugins: revealing {} failed: {e}", dir.display()));
+            }
+            None
+          }
+          Ok(None) => None,
+          Err(e) => Some(format!("{e:#}")),
+        };
+        let view = self.plugins_view().await;
+        self.post_now(HostMsg::Plugins { view, error });
+      }
       W::Providers => {
         let view = self.settings.providers_view().await;
         self.post_now(HostMsg::Providers { view, error: None });
@@ -706,6 +745,12 @@ impl BridgeCore {
     self.post_now(HostMsg::Appearance { appearance: (self.appearance)() });
   }
 
+  /// The plugin page's view, built off the runtime threads (it reads and hashes the source folders)
+  async fn plugins_view(&self) -> acpira_shared::plugins::PluginsView {
+    let plugins = self.plugins.clone();
+    tokio::task::spawn_blocking(move || plugins.view()).await.unwrap_or_default()
+  }
+
   pub fn dispose(&self) {
     *self.disposed.write() = true;
     self.batch.lock().clear();
@@ -714,6 +759,9 @@ impl BridgeCore {
     }
     if let Some(id) = self.connections_sub.lock().take() {
       self.connections.unsubscribe(id);
+    }
+    if let Some(id) = self.plugins_sub.lock().take() {
+      self.plugins.unsubscribe(id);
     }
     // Its terminals run on a while without it, for a reload to come back to
     self.terminals.detach_view(self.terminal_view);

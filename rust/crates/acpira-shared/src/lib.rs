@@ -21,6 +21,7 @@ pub mod num;
 pub mod proxy;
 pub mod re;
 pub mod plan_execution;
+pub mod plugins;
 pub mod protocol;
 pub mod providers;
 pub mod remote;

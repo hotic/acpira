@@ -118,15 +118,29 @@ pub(crate) async fn output(hook: &Hook, root: &Path, payload: &Value, env: &[(&s
     .current_dir(root)
     .env("ACPIRA_PROJECT_DIR", root)
     // Scripts written for Claude Code find the project the same way
-    .env("CLAUDE_PROJECT_DIR", root)
-    .stdin(Stdio::piped())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped())
-    .kill_on_drop(true);
+    .env("CLAUDE_PROJECT_DIR", root);
   for (k, v) in env {
     cmd.env(k, v);
   }
-  // A process group of its own: a timed-out hook's children go with it
+  let out = run_child(cmd, &hook.run, hook.timeout, payload.to_string().into_bytes(), OUTPUT_MAX_BYTES).await?;
+  Ok((out.code, clip(&out.stdout), clip(&out.stderr)))
+}
+
+/// A process that ran to its end
+pub(crate) struct Finished {
+  pub code: Option<i32>,
+  pub stdout: Vec<u8>,
+  pub stderr: Vec<u8>,
+  /// Stdout or stderr went past the cap; the rest was read and dropped
+  pub cut: bool,
+}
+
+/// Run `cmd` with `input` on stdin, in a process group of its own (a job object on Windows), and collect at most `cap`
+/// bytes of each output stream; past `timeout` the whole group is killed. `label` names it in errors. Shared by the
+/// hooks and the plugins' script tools (`plugins/run.rs`)
+pub(crate) async fn run_child(mut cmd: tokio::process::Command, label: &str, timeout: std::time::Duration, input: Vec<u8>, cap: usize) -> Result<Finished, String> {
+  cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+  // A process group of its own: a timed-out command's children go with it
   #[cfg(unix)]
   cmd.process_group(0);
   #[cfg(windows)]
@@ -135,37 +149,58 @@ pub(crate) async fn output(hook: &Hook, root: &Path, payload: &Value, env: &[(&s
   let spawned = cmd.spawn().map(|child| (child, ()));
   let (mut child, _job) = match spawned {
     Ok(c) => c,
-    Err(e) => return Err(format!("could not start `{}`: {e}", hook.run)),
+    Err(e) => return Err(format!("could not start `{label}`: {e}")),
   };
-  // The payload goes in while the output is read, both under the timeout: a hook that never reads a payload larger than
-  // the pipe buffer (or fills its stdout before reading) must not stall the write past it
+  // The input goes in while the output is read, both under the timeout: a command that never reads an input larger
+  // than the pipe buffer (or fills its stdout before reading) must not stall the write past it
   let stdin = child.stdin.take();
-  let input = payload.to_string().into_bytes();
   let feed = async move {
     if let Some(mut stdin) = stdin {
-      // A hook that never reads its stdin closes the pipe early: that is not a failure
+      // A command that never reads its stdin closes the pipe early: that is not a failure
       let _ = stdin.write_all(&input).await;
       let _ = stdin.shutdown().await;
     }
   };
+  let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
   #[cfg(unix)]
   let pid = child.id();
-  let finished = async move { tokio::join!(feed, child.wait_with_output()).1 };
-  match tokio::time::timeout(hook.timeout, finished).await {
-    Ok(Ok(out)) => Ok((out.status.code(), clip(&out.stdout), clip(&out.stderr))),
-    Ok(Err(e)) => Err(format!("`{}` failed: {e}", hook.run)),
+  let finished = async move {
+    let (_, out, err, status) = tokio::join!(feed, read_capped(stdout, cap), read_capped(stderr, cap), child.wait());
+    status.map(|s| Finished { code: s.code(), stdout: out.0, stderr: err.0, cut: out.1 || err.1 })
+  };
+  match tokio::time::timeout(timeout, finished).await {
+    Ok(Ok(out)) => Ok(out),
+    Ok(Err(e)) => Err(format!("`{label}` failed: {e}")),
     Err(_) => {
       // The future owned the child and dropped it (kill_on_drop); the group still holds its descendants
       #[cfg(unix)]
       if let Some(pid) = pid {
-        // SAFETY: signalling a process group this hook created
+        // SAFETY: signalling a process group this command created
         unsafe {
           libc::killpg(pid as i32, libc::SIGKILL);
         }
       }
-      Err(format!("`{}` timed out after {}s", hook.run, hook.timeout.as_secs_f64()))
+      Err(format!("`{label}` timed out after {}s", timeout.as_secs_f64()))
     }
   }
+}
+
+/// All of a stream, keeping the first `cap` bytes (true: there was more)
+async fn read_capped<R: tokio::io::AsyncRead + Unpin>(stream: Option<R>, cap: usize) -> (Vec<u8>, bool) {
+  use tokio::io::AsyncReadExt;
+  let Some(mut stream) = stream else { return (vec![], false) };
+  let (mut kept, mut cut, mut buf) = (Vec::new(), false, vec![0u8; 16 * 1024]);
+  loop {
+    match stream.read(&mut buf).await {
+      Ok(0) | Err(_) => break,
+      Ok(n) => {
+        let room = cap.saturating_sub(kept.len());
+        kept.extend_from_slice(&buf[..n.min(room)]);
+        cut |= n > room;
+      }
+    }
+  }
+  (kept, cut)
 }
 
 #[cfg(test)]

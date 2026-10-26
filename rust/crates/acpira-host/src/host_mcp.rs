@@ -67,6 +67,22 @@ a page goes on with offset). detail \"full\" adds \
 tool output and diffs. `session` takes a link (acpira://session/<id>, vscode://hotic.acpira/session/<id>), an id, or the \
 agent's own session id.";
 
+/// Appended with the relay env: the model learns that it may extend Acpira itself (`docs/dev/plugins.md`)
+const PLUGINS_INSTRUCTIONS: &str = "You can extend Acpira for every agent without a build or a restart: a plugin is a folder \
+under ~/.acpira/plugins/<id>/ with a plugin.json (script tools, MCP servers, hooks, a theme, prompt sections or an agent). \
+Call plugin_guide for the format and examples, write the folder, then call plugin_activate: the user confirms on a card.";
+
+const PLUGIN_GUIDE_DESCRIPTION: &str = "How to write an Acpira plugin (the plugin.json format, script tools, themes, hooks, \
+with complete examples) and the state of every plugin here, with what its last check found. Read it before writing or \
+fixing a plugin.";
+
+const PLUGIN_ACTIVATE_DESCRIPTION: &str = "Enable the plugin in ~/.acpira/plugins/<id>/ that you wrote or changed. It is \
+frozen and checked first; a problem comes back for you to fix, nothing is enabled. Otherwise the user decides on a card; \
+the answer says whether they enabled it and which tools it added. Call it again after every change: an edit alone takes \
+no effect.";
+
+pub use acpira_shared::host_tools::{PLUGIN_ACTIVATE, PLUGIN_GUIDE};
+
 /// Appended to the instructions of a summoned child's server, so a deferred `ask_caller` is still found
 const CALLER_INSTRUCTIONS: &str = "Another agent summoned you through Acpira and reads only your final reply. When a decision \
 only it can make blocks you (a choice between approaches it would care about, a missing requirement), ask it with ask_caller \
@@ -316,7 +332,8 @@ pub fn run(version: &str) -> i32 {
       {
         let mut tools = vec![tool_def(), widget_tool_def(), hooks_tool_def()];
         let roster = relay.roster();
-        relay.served(roster.as_ref());
+        let plugins = relay.plugins();
+        relay.served(listing_print(roster.as_ref(), plugins.as_ref()));
         tools.extend(roster.and_then(|(personas, groups)| (!personas.is_empty()).then(|| ask_tool_def(&personas, &groups))));
         let features = relay.features();
         if features.summoned {
@@ -326,9 +343,47 @@ pub fn run(version: &str) -> i32 {
           tools.push(browser_tool_def());
         }
         tools.extend(session_tool_defs());
+        // The tool groups the plugin page switched off leave every agent's list; the plugins' own tools join it
+        let (plugin_tools, off) = plugins.unwrap_or_default();
+        tools.retain(|t| t["name"].as_str().and_then(acpira_shared::host_tools::group_of).is_none_or(|g| !off.iter().any(|o| o == g)));
+        tools.extend([plugin_guide_def(), plugin_activate_def()]);
+        tools.extend(plugin_tools.into_iter().filter(|t| t["name"].as_str().is_some_and(|n| !acpira_shared::host_tools::is_engine_tool(n))));
         if !write(&out, &json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": tools } })) {
           break;
         }
+        continue;
+      }
+      // A tool of a group switched off since the client listed: refused, as the list no longer has it
+      if method == "tools/call"
+        && let Some(name) = msg.get("params").and_then(|p| p.get("name")).and_then(Value::as_str)
+        && let Some(group) = acpira_shared::host_tools::group_of(name)
+        && let Some(id) = msg.get("id").cloned()
+        && relay.plugins().is_some_and(|(_, off)| off.iter().any(|o| o == group))
+      {
+        let result = tool_error(format!("`{name}` was switched off on Acpira's plugin page."));
+        if !write(&out, &json!({ "jsonrpc": "2.0", "id": id, "result": result })) {
+          break;
+        }
+        continue;
+      }
+      // The plugin tools of the server itself, and every name that is not the engine's: a plugin's script tool
+      if method == "tools/call"
+        && let Some(name) = msg.get("params").and_then(|p| p.get("name")).and_then(Value::as_str)
+        && (name == PLUGIN_GUIDE || name == PLUGIN_ACTIVATE || !acpira_shared::host_tools::is_engine_tool(name))
+        && let Some(id) = msg.get("id").cloned()
+      {
+        let (relay, out, params, name) = (relay.clone(), out.clone(), msg.get("params").cloned().unwrap_or(Value::Null), name.to_owned());
+        std::thread::spawn(move || {
+          let mut progress = |progress: Value| {
+            write(&out, &progress);
+          };
+          let result = match name.as_str() {
+            PLUGIN_GUIDE => relay.answer(crate::relay::wire::HubOp::PluginGuide),
+            PLUGIN_ACTIVATE => relay.plugin_activate(&params, &mut progress),
+            _ => relay.answer(crate::relay::wire::HubOp::PluginCall { name, arguments: params.get("arguments").cloned().unwrap_or(json!({})) }),
+          };
+          write(&out, &json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+        });
         continue;
       }
       if method == "tools/call"
@@ -393,7 +448,7 @@ pub fn run(version: &str) -> i32 {
       if features.browser {
         extra.push_str(&format!("\n\n{BROWSER_INSTRUCTIONS}"));
       }
-      result["instructions"] = json!(format!("{INSTRUCTIONS}\n\n{RELAY_INSTRUCTIONS}{extra}\n\n{SESSIONS_INSTRUCTIONS}"));
+      result["instructions"] = json!(format!("{INSTRUCTIONS}\n\n{RELAY_INSTRUCTIONS}{extra}\n\n{SESSIONS_INSTRUCTIONS}\n\n{PLUGINS_INSTRUCTIONS}"));
       // ask_agent's agents follow the roster while the session runs (see `Relay::watch`)
       result["capabilities"]["tools"]["listChanged"] = json!(true);
     }
@@ -461,6 +516,17 @@ const ROSTER_POLL_FAILURES: u32 = 3;
 fn roster_fingerprint(personas: &[acpira_shared::subagents::SubagentPersona], groups: &[acpira_shared::subagents::SubagentGroup]) -> String {
   let personas: Vec<_> = personas.iter().filter(|p| p.id != acpira_shared::subagents::SIDEKICK_ID).collect();
   serde_json::to_string(&(personas, groups)).unwrap_or_default()
+}
+
+/// What a listing depends on besides the fixed tools: the roster (`roster_fingerprint`), the plugin tools in effect and
+/// the tool groups switched off. An unreachable hub offered none of them, which counts as empty
+fn listing_print(
+  roster: Option<&(Vec<acpira_shared::subagents::SubagentPersona>, Vec<acpira_shared::subagents::SubagentGroup>)>,
+  plugins: Option<&(Vec<Value>, Vec<String>)>,
+) -> String {
+  let roster = roster.map(|(p, g)| roster_fingerprint(p, g)).unwrap_or_else(|| roster_fingerprint(&[], &[]));
+  let plugins = plugins.map(|p| serde_json::to_string(p).unwrap_or_default()).unwrap_or_default();
+  format!("{roster}\n{plugins}")
 }
 
 /// Claude Code waits for an MCP tool call far longer than a child round takes, and so does the built-in agent (client
@@ -590,9 +656,32 @@ impl Relay {
     roster
   }
 
-  /// Note what a `tools/list` answer offered (an unreachable hub offered no ask_agent, which counts as an empty roster)
-  fn served(&self, roster: Option<&(Vec<acpira_shared::subagents::SubagentPersona>, Vec<acpira_shared::subagents::SubagentGroup>)>) {
-    let print = roster.map(|(p, g)| roster_fingerprint(p, g)).unwrap_or_else(|| roster_fingerprint(&[], &[]));
+  /// The plugin tools in effect and the tool groups switched off; None when the hub cannot be reached
+  fn plugins(&self) -> Option<(Vec<Value>, Vec<String>)> {
+    use crate::relay::wire::{HubOp, HubReply};
+    let mut out = None;
+    let _ = crate::relay::hub::call(&self.addr, &self.request(HubOp::Plugins), |r| {
+      if let HubReply::Plugins { tools, off } = r {
+        out = Some((tools, off));
+      }
+      false
+    });
+    out
+  }
+
+  /// `plugin_activate`: the hub freezes and checks the plugin, then waits for the user's card
+  fn plugin_activate(&self, params: &Value, progress: &mut dyn FnMut(Value)) -> Value {
+    use crate::relay::wire::HubOp;
+    let id = params.get("arguments").and_then(|a| a.get("id")).and_then(Value::as_str).map(str::trim).unwrap_or("");
+    if id.is_empty() {
+      return tool_error("Pass `id`: the plugin's folder name under ~/.acpira/plugins.".into());
+    }
+    let wait_secs = Some(self.wait_secs.load(std::sync::atomic::Ordering::Relaxed));
+    self.streamed(HubOp::PluginActivate { id: id.to_owned(), wait_secs }, params, progress)
+  }
+
+  /// Note what a `tools/list` answer offered (`listing_print`)
+  fn served(&self, print: String) {
     *self.watch.state.lock() = WatchState { served: Some(print), notified: None };
   }
 
@@ -609,7 +698,7 @@ impl Relay {
       let mut failures = 0;
       loop {
         std::thread::sleep(ROSTER_POLL);
-        let Some((personas, groups)) = relay.roster() else {
+        let Some(roster) = relay.roster() else {
           failures += 1;
           if failures >= ROSTER_POLL_FAILURES {
             return;
@@ -617,7 +706,7 @@ impl Relay {
           continue;
         };
         failures = 0;
-        let print = roster_fingerprint(&personas, &groups);
+        let print = listing_print(Some(&roster), relay.plugins().as_ref());
         // A listing already in flight may still be told once more; that costs the client one identical tools/list
         let notify = relay.watch.state.lock().poll(print);
         if notify && !send(&json!({ "jsonrpc": "2.0", "method": "notifications/tools/list_changed" })) {
@@ -680,7 +769,7 @@ impl Relay {
         end = Some(tool_error(text));
         false
       }
-      HubReply::Personas(_) | HubReply::Roster { .. } | HubReply::Features(_) => true,
+      HubReply::Personas(_) | HubReply::Roster { .. } | HubReply::Features(_) | HubReply::Plugins { .. } => true,
     });
     match (end, r) {
       (Some(v), _) => v,
@@ -831,6 +920,29 @@ whose user switched this on get it without asking.\n\nAgents:\n{}{}",
 }
 
 /// `ask_caller`, offered only to a summoned child's server
+fn plugin_guide_def() -> Value {
+  json!({
+    "name": PLUGIN_GUIDE,
+    "title": "Acpira plugin guide",
+    "description": PLUGIN_GUIDE_DESCRIPTION,
+    "inputSchema": { "type": "object", "properties": {} },
+    "annotations": { "readOnlyHint": true },
+  })
+}
+
+fn plugin_activate_def() -> Value {
+  json!({
+    "name": PLUGIN_ACTIVATE,
+    "title": "Enable an Acpira plugin",
+    "description": PLUGIN_ACTIVATE_DESCRIPTION,
+    "inputSchema": {
+      "type": "object",
+      "properties": { "id": { "type": "string", "description": "The plugin's folder name under ~/.acpira/plugins" } },
+      "required": ["id"],
+    },
+  })
+}
+
 fn caller_tool_def() -> Value {
   json!({
     "name": CALLER_TOOL,
@@ -1099,7 +1211,7 @@ mod tests {
     // would leave a name a plugin could not take
     let persona: acpira_shared::subagents::SubagentPersona =
       serde_json::from_value(json!({ "id": "son-1", "name": "Son", "agent": "codex", "mode": "work" })).unwrap();
-    let mut tools = vec![tool_def(), widget_tool_def(), hooks_tool_def(), ask_tool_def(std::slice::from_ref(&persona), &[]), caller_tool_def(), browser_tool_def()];
+    let mut tools = vec![tool_def(), widget_tool_def(), hooks_tool_def(), ask_tool_def(std::slice::from_ref(&persona), &[]), caller_tool_def(), browser_tool_def(), plugin_guide_def(), plugin_activate_def()];
     tools.extend(session_tool_defs());
     let mut names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     names.sort_unstable();
