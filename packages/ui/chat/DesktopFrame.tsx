@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, ArrowRight, ChevronRight, CircleAlert, Columns3, FolderOpen, FolderPlus, Info, Languages, LifeBuoy, Palette, PanelLeft, Settings, Settings2, SunMoon } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, ChevronRight, CircleAlert, Columns3, FolderOpen, FolderPlus, Info, Languages, LifeBuoy, Menu, Palette, PanelLeft, Settings, Settings2, SunMoon } from 'lucide-react';
 import { DESKTOP_LAYOUTS, THEMES, type DesktopLayout, type ThemeSetting } from '@acpira/shared/settings';
 import { LANGUAGES, type Language } from '@acpira/shared/i18n';
 import { t } from '../i18n';
@@ -7,7 +7,9 @@ import { Button, IconButton } from '../ui/Button';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
 import { Toast } from '../ui/Toast';
-import { dropShellToast, postUpdate, shortcutLabel, useShellToasts } from '../desktop';
+import type { DesktopMenuEntry, WindowControl } from '@acpira/shared/protocol';
+import { dropShellToast, postMenuCommand, postUpdate, postWindowControl, shortcutLabel, useDesktopMenu, useShellToasts, useWindowMaximized, windowsOS } from '../desktop';
+import { vscodeApi } from '../vscodeApi';
 import type { SettingsPage } from '../settings/Nav';
 
 // The desktop app's own frame around the shared Shell (desktop.css): the column's title row, its gear menu, and the
@@ -62,7 +64,7 @@ export function TitleRow({ onBack, onForward, column }: {
   column?: { open: boolean; drawer: boolean; onToggle: () => void };
 }) {
   const label = column && t(column.open ? 'desktop.hideSidebar' : 'desktop.showSidebar');
-  return (
+  return <>
     <div data-title-row data-drag-region className="absolute top-0 left-0 z-20 flex h-hdr items-center gap-0.5">
       {!column?.drawer && <>
         <IconButton title={`${t('desktop.back')} ${shortcutLabel('[')}`} aria-label={t('desktop.back')} disabled={!onBack} onClick={onBack} className={STEP}><ArrowLeft strokeWidth={1.5} /></IconButton>
@@ -74,6 +76,124 @@ export function TitleRow({ onBack, onForward, column }: {
           <PanelLeft strokeWidth={1.5} />
         </IconButton>
       )}
+      {windowsOS && <AppMenus />}
+    </div>
+    {windowsOS && <WindowCaption />}
+  </>;
+}
+
+// The menu bar of a window without a global one (Windows): one button after the column's toggle, the menus as its
+// submenus, as VS Code's compact menu (the column is too narrow for four labels beside back, forward and the toggle).
+// The shell sends the tree (desktopMenu) and runs what is picked (menuCommand); the Edit items act on the field that had
+// the focus before the menu opened. An item's shortcut works while the menu is closed too, except the page's own, which
+// its keys already run
+const EDIT: Record<string, string> = { 'edit.undo': 'undo', 'edit.redo': 'redo', 'edit.cut': 'cut', 'edit.copy': 'copy', 'edit.delete': 'delete', 'edit.selectAll': 'selectAll' };
+function AppMenus() {
+  const menus = useDesktopMenu();
+  const focused = useRef<Element | null>(null);
+  useMenuKeys(menus);
+  if (!menus.length) return null;
+  const run = (id: string) => {
+    const field = focused.current;
+    if (!id.startsWith('edit.')) { postMenuCommand(id); return; }
+    if (field instanceof HTMLElement) field.focus();
+    if (id === 'edit.paste') {
+      void vscodeApi().readClipboard?.().then(text => { if (text) document.execCommand('insertText', false, text); });
+      return;
+    }
+    const command = EDIT[id];
+    if (command) document.execCommand(command);
+  };
+  const entries = (items: DesktopMenuEntry[]) => items.map((e, i) => {
+    if (e.kind === 'separator') return <DropdownMenu.Separator key={i} className="my-1 h-px bg-line" />;
+    if (e.kind === 'submenu') return (
+      <DropdownMenu.SubmenuRoot key={i}>
+        <DropdownMenu.SubmenuTrigger>
+          <OptionContent>{e.label}</OptionContent>
+          <ChevronRight className="size-3 shrink-0 text-fg-3" strokeWidth={1.5} />
+        </DropdownMenu.SubmenuTrigger>
+        <DropdownMenu.Portal><DropdownMenu.Positioner side="inline-end" align="start" width="md"><DropdownMenu.Popup>
+          {entries(e.items)}
+        </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
+      </DropdownMenu.SubmenuRoot>
+    );
+    return (
+      <DropdownMenu.Item key={i} onClick={() => run(e.id)}>
+        <OptionContent icon={e.checked === undefined ? undefined : e.checked ? <Check strokeWidth={1.5} /> : <span />}>{e.label}</OptionContent>
+        {e.key && <span className="shrink-0 text-3 text-fg-3">{e.key}</span>}
+      </DropdownMenu.Item>
+    );
+  });
+  return (
+    <DropdownMenu.Root modal={false} onOpenChange={open => { if (open) focused.current = document.activeElement; }}>
+      <DropdownMenu.Trigger render={<IconButton data-app-menus title={t('desktop.menu.bar')} aria-label={t('desktop.menu.bar')} className="data-[popup-open]:bg-hover data-[popup-open]:text-fg-1"><Menu strokeWidth={1.5} /></IconButton>} />
+      <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="start" width="sm"><DropdownMenu.Popup>
+        {menus.map((m, i) => (
+          <DropdownMenu.SubmenuRoot key={i}>
+            <DropdownMenu.SubmenuTrigger>
+              <OptionContent>{m.label}</OptionContent>
+              <ChevronRight className="size-3 shrink-0 text-fg-3" strokeWidth={1.5} />
+            </DropdownMenu.SubmenuTrigger>
+            <DropdownMenu.Portal><DropdownMenu.Positioner side="inline-end" align="start" width="md"><DropdownMenu.Popup>
+              {entries(m.items)}
+            </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
+          </DropdownMenu.SubmenuRoot>
+        ))}
+      </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
+}
+
+// "Ctrl+Shift+N" as the key event it names
+function matches(key: string, e: KeyboardEvent): boolean {
+  const parts = key.split('+');
+  const name = parts.pop()!;
+  const mods = new Set(parts);
+  if (e.ctrlKey !== mods.has('Ctrl') || e.altKey !== mods.has('Alt') || e.shiftKey !== mods.has('Shift') || e.metaKey) return false;
+  return name.length === 1 ? e.key.toUpperCase() === name.toUpperCase() || e.code === `Digit${name}` : e.key === name;
+}
+
+// The shortcuts of the shell's own items (new window, reload, zoom …): the menu bar took them before the page on macOS,
+// here the page hands them to the shell
+function useMenuKeys(menus: { items: DesktopMenuEntry[] }[]) {
+  useEffect(() => {
+    const keyed: { id: string; key: string }[] = [];
+    const walk = (items: DesktopMenuEntry[]) => {
+      for (const e of items) {
+        if (e.kind === 'submenu') walk(e.items);
+        else if (e.kind === 'item' && e.key && !e.page) keyed.push({ id: e.id, key: e.key });
+      }
+    };
+    for (const m of menus) walk(m.items);
+    if (!keyed.length) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.isComposing || e.defaultPrevented) return;
+      const hit = keyed.find(k => matches(k.key, e));
+      if (!hit) return;
+      e.preventDefault();
+      postMenuCommand(hit.id);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menus]);
+}
+
+// The window's minimize, maximize / restore and close, drawn as Windows 11 draws them (desktop.css .win-caption): the
+// window has no system title bar, so these stand in the top-right corner where its own buttons would, in the system's
+// glyph font. A drag of the title row and its double click stay the system's (init.js)
+const CAPTION_GLYPH = { minimize: '\uE921', maximize: '\uE922', restore: '\uE923', close: '\uE8BB' };
+function WindowCaption() {
+  const maximized = useWindowMaximized();
+  const button = (op: WindowControl, label: string, glyph: string) => (
+    <button type="button" data-op={op} title={label} aria-label={label} onClick={() => postWindowControl(op)}>{glyph}</button>
+  );
+  return (
+    <div className="win-caption" data-window-caption>
+      {button('minimize', t('desktop.menu.minimize'), CAPTION_GLYPH.minimize)}
+      {maximized
+        ? button('maximize', t('desktop.window.restore'), CAPTION_GLYPH.restore)
+        : button('maximize', t('desktop.window.maximize'), CAPTION_GLYPH.maximize)}
+      {button('close', t('desktop.menu.closeWindow'), CAPTION_GLYPH.close)}
     </div>
   );
 }

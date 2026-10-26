@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useSyncExternalStore } from 'react';
-import type { HostMsg, ShellCommand, UpdateState, WebviewMsg } from '@acpira/shared/protocol';
+import type { DesktopMenu, HostMsg, ShellCommand, UpdateState, WebviewMsg, WindowControl } from '@acpira/shared/protocol';
 import { vscodeApi } from './vscodeApi';
 
 // The standalone desktop app (window.__acpira.shell === 'desktop', rust/crates/acpira-desktop/src/page.rs): its own window frame, the project
@@ -15,10 +15,12 @@ export const COLUMN_HIDDEN_KEY = 'desktopColumnHidden';
 // Read once: the shell injects it before the bundle runs
 export const desktopShell = () => typeof window !== 'undefined' && window.__acpira?.shell === 'desktop';
 
-// The OS the page runs on, for the platform's own words (Finder / File Explorer) and shortcut hints (⌘N / Ctrl+N)
+// The OS the page runs on, for the platform's own words (Finder / File Explorer), shortcut hints (⌘N / Ctrl+N) and the
+// window's frame. The desktop shell says so (page.rs `platform`); an IDE's webview is guessed from its user agent
 const agent = typeof navigator === 'undefined' ? '' : navigator.userAgent;
-export const macOS = /Macintosh|Mac OS X/.test(agent);
-export const windowsOS = /Windows/.test(agent);
+const told = typeof window === 'undefined' ? undefined : window.__acpira?.platform;
+export const macOS = told ? told === 'mac' : /Macintosh|Mac OS X/.test(agent);
+export const windowsOS = told ? told === 'win' : /Windows/.test(agent);
 export const shortcutLabel = (key: string) => (macOS ? `⌘${key}` : `Ctrl+${key}`);
 
 // The shell's toasts (HostMsg toast), kept here rather than in a page: whichever page is up shows them, the chat in its own
@@ -78,4 +80,33 @@ export function useShellCommands(run: ((command: ShellCommand) => void) | undefi
     for (const c of queuedCommands.splice(0)) run(c);
     return () => { if (commandSink === run) commandSink = undefined; };
   }, [run]);
+}
+
+// The menu bar a window without a global one draws in its title row (HostMsg desktopMenu, Windows), and whether the window
+// is maximized (HostMsg windowState: the caption's restore glyph). Kept here like the toasts, so both pages read them
+let desktopMenu: DesktopMenu[] = [];
+let maximized = false;
+const frameListeners = new Set<() => void>();
+const frameChanged = () => { for (const l of frameListeners) l(); };
+
+export function setDesktopMenu(menus: DesktopMenu[]) {
+  desktopMenu = menus;
+  frameChanged();
+}
+
+export function setWindowMaximized(on: boolean) {
+  maximized = on;
+  frameChanged();
+}
+
+const subscribeFrame = (l: () => void) => { frameListeners.add(l); return () => { frameListeners.delete(l); }; };
+export const useDesktopMenu = () => useSyncExternalStore(subscribeFrame, () => desktopMenu);
+export const useWindowMaximized = () => useSyncExternalStore(subscribeFrame, () => maximized);
+
+export function postMenuCommand(id: string) {
+  vscodeApi().postMessage({ type: 'menuCommand', id });
+}
+
+export function postWindowControl(op: WindowControl) {
+  vscodeApi().postMessage({ type: 'windowControl', op });
 }

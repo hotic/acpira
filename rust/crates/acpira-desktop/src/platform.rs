@@ -123,12 +123,12 @@ fn write_plan(markdown: &str) -> std::io::Result<PathBuf> {
   Ok(file)
 }
 
-/// The system's own openers on macOS (`open`), Linux (`xdg-open`) and Windows (`explorer`), for a shell that has nothing
-/// better at hand
+/// The system's own openers: `open` on macOS, `xdg-open` on Linux, the shell API on Windows (ShellExecuteExW, and
+/// SHOpenFolderAndSelectItems to reveal: `explorer` reports failure through an exit status it also gives on success)
 pub mod system {
-  use std::process::{Command, Stdio};
-
+  #[cfg(not(windows))]
   fn run(program: &str, args: &[&str]) -> Result<(), String> {
+    use std::process::{Command, Stdio};
     let out = Command::new(program)
       .args(args)
       .stdin(Stdio::null())
@@ -152,22 +152,87 @@ pub mod system {
 
   /// A file or a URL with the default application
   pub fn open_any(target: &str) -> Result<(), String> {
-    if cfg!(target_os = "macos") {
-      run("open", &[target])
-    } else if cfg!(windows) {
-      run("explorer", &[target])
-    } else {
-      run("xdg-open", &[target])
-    }
+    #[cfg(windows)]
+    return win::open(target);
+    #[cfg(not(windows))]
+    if cfg!(target_os = "macos") { run("open", &[target]) } else { run("xdg-open", &[target]) }
   }
 
   pub fn reveal(path: &str) -> Result<(), String> {
+    #[cfg(windows)]
+    return win::reveal(path);
+    #[cfg(not(windows))]
     if cfg!(target_os = "macos") {
       run("open", &["-R", path])
-    } else if cfg!(windows) {
-      run("explorer", &[&format!("/select,{path}")])
     } else {
       run("xdg-open", &[std::path::Path::new(path).parent().and_then(|p| p.to_str()).unwrap_or(path)])
+    }
+  }
+
+  #[cfg(windows)]
+  mod win {
+    use windows_sys::Win32::System::Com::{COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoUninitialize};
+    use windows_sys::Win32::UI::Shell::{
+      ILCreateFromPathW, ILFree, SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SHELLEXECUTEINFOW, SHOpenFolderAndSelectItems, ShellExecuteExW,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    fn wide(s: &str) -> Vec<u16> {
+      s.encode_utf16().chain(Some(0)).collect()
+    }
+
+    /// The shell API wants COM on the calling thread; a thread that already has it (the main one, which WebView2 set up)
+    /// keeps its own apartment
+    struct Com(bool);
+
+    impl Com {
+      fn init() -> Com {
+        // SAFETY: balanced by CoUninitialize in Drop when this call initialized COM (S_OK or S_FALSE)
+        let hr = unsafe { CoInitializeEx(std::ptr::null(), (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) as u32) };
+        Com(hr >= 0)
+      }
+    }
+
+    impl Drop for Com {
+      fn drop(&mut self) {
+        if self.0 {
+          unsafe { CoUninitialize() };
+        }
+      }
+    }
+
+    pub fn open(target: &str) -> Result<(), String> {
+      let _com = Com::init();
+      let (verb, file) = (wide("open"), wide(target));
+      // SAFETY: a zeroed SHELLEXECUTEINFOW is valid; the strings outlive the call
+      let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
+      info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+      // Synchronous (the call returns once the handler has the target), no error dialog: the page shows the error
+      info.fMask = SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
+      info.lpVerb = verb.as_ptr();
+      info.lpFile = file.as_ptr();
+      info.nShow = SW_SHOWNORMAL;
+      if unsafe { ShellExecuteExW(&mut info) } == 0 {
+        return Err(format!("{target}: {}", std::io::Error::last_os_error()));
+      }
+      Ok(())
+    }
+
+    /// An Explorer window on the item's folder with the item selected
+    pub fn reveal(path: &str) -> Result<(), String> {
+      let _com = Com::init();
+      let w = wide(&path.replace('/', "\\"));
+      // SAFETY: the item ID list is freed below; a null one means no such item
+      let pidl = unsafe { ILCreateFromPathW(w.as_ptr()) };
+      if pidl.is_null() {
+        return Err(format!("{path}: not found"));
+      }
+      let hr = unsafe { SHOpenFolderAndSelectItems(pidl, 0, std::ptr::null(), 0) };
+      unsafe { ILFree(pidl) };
+      if hr < 0 {
+        return Err(format!("{path}: {}", std::io::Error::from_raw_os_error(hr)));
+      }
+      Ok(())
     }
   }
 }

@@ -55,9 +55,10 @@ const LINUX_TERMINALS: [(&str, &str); 2] = [("x-terminal-emulator", "-e"), ("xte
 
 pub fn run_in_terminal(r: &TerminalRequest, log: &dyn Fn(&str)) {
   if cfg!(windows) {
+    // Standard handles left alone: the new console gives the program its own
     let mut cmd = Command::new(&r.command);
-    cmd.args(&r.args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-    crate::process::detach(&mut cmd);
+    cmd.args(&r.args);
+    crate::process::new_console(&mut cmd);
     match cmd.spawn() {
       Ok(c) => crate::process::reap(c),
       Err(e) => log(&format!("terminal failed: {e}")),

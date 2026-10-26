@@ -84,6 +84,7 @@ fn shell(command: &str) -> tokio::process::Command {
     let mut c = tokio::process::Command::new(std::env::var_os("ComSpec").unwrap_or_else(|| "cmd.exe".into()));
     // Shell source, not argv: CRT escaping would corrupt its quotes
     c.args(["/d", "/s", "/c"]).raw_arg(format!("\"{command}\""));
+    crate::platform::command::no_window(&mut c);
     c
   }
   #[cfg(not(windows))]

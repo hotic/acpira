@@ -1,6 +1,9 @@
 //! Where a new bundle is assembled and the checks it passes before it may replace the installed one: the manifest's
 //! file list (`delta::verify_tree`), then the Apple code signature with our identifier and team, then Gatekeeper's
-//! assessment (notarized). `codesign` / `spctl` run as child processes rather than through Security.framework bindings
+//! assessment (notarized). `codesign` / `spctl` run as child processes rather than through Security.framework bindings.
+//! A Windows exe passes the file list only: it is not Authenticode-signed yet, so the Ed25519-signed manifest and its
+//! per-file digests are the whole check there. Once it is signed, a `WinVerifyTrust` check of the staged exe against the
+//! running one's signer belongs beside `verify_signature`, run from the same place in `Updater::run`
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -15,15 +18,32 @@ pub fn same_volume(a: &Path, b: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
     matches!((std::fs::metadata(a), std::fs::metadata(b)), (Ok(x), Ok(y)) if x.dev() == y.dev())
   }
-  #[cfg(not(unix))]
+  #[cfg(windows)]
+  {
+    matches!((volume_of(a), volume_of(b)), (Some(x), Some(y)) if x.eq_ignore_ascii_case(&y))
+  }
+  #[cfg(not(any(unix, windows)))]
   {
     let _ = (a, b);
     true
   }
 }
 
+/// The mount point a path lives under (`C:\`, or a folder another volume is mounted on), from GetVolumePathNameW
+#[cfg(windows)]
+fn volume_of(p: &Path) -> Option<String> {
+  use std::os::windows::ffi::OsStrExt;
+  use windows_sys::Win32::Storage::FileSystem::GetVolumePathNameW;
+  let w: Vec<u16> = p.as_os_str().encode_wide().chain(Some(0)).collect();
+  let mut buf = vec![0u16; w.len().max(261) + 1];
+  // SAFETY: a NUL-terminated input and an output buffer of the length passed
+  let ok = unsafe { GetVolumePathNameW(w.as_ptr(), buf.as_mut_ptr(), buf.len() as u32) } != 0;
+  let n = buf.iter().position(|&c| c == 0)?;
+  ok.then(|| String::from_utf16_lossy(&buf[..n]))
+}
+
 /// The folder version `version` is assembled in: under the cache when the cache shares the install's volume, else
-/// beside the installed bundle (a hidden folder in its parent)
+/// beside the installed bundle or exe (a hidden folder in its parent), so putting it in place is a rename
 pub fn staging_dir(installed: &Path, cache: &Path, version: &str) -> PathBuf {
   let parent = installed.parent().unwrap_or(Path::new("/"));
   let _ = std::fs::create_dir_all(cache);

@@ -16,7 +16,7 @@ import { cn } from '../ui/cn';
 import { ShellLayerContext } from '../ui/Popover';
 import { useScrollReveal } from '../ui/useScrollReveal';
 import { LocaleContext, t } from '../i18n';
-import { COLUMN_HIDDEN_KEY, DesktopContext, macOS, postUpdate, useUpdateState } from '../desktop';
+import { COLUMN_HIDDEN_KEY, DesktopContext, macOS, postUpdate, windowsOS, useUpdateState } from '../desktop';
 import { AboutPage } from './AboutPage';
 import { webviewState } from '../vscodeApi';
 import { ShellToasts, TitleRow } from '../chat/DesktopFrame';
@@ -189,7 +189,7 @@ export function SettingsShell(p: SettingsShellProps) {
             {...lookAttrs(p.look)}
             // The chat's desktop frame: the lights' room, and the rail always beside the sheet
             data-desktop={desktop || undefined}
-            data-os={desktop && macOS ? 'mac' : undefined}
+            data-os={desktop ? (macOS ? 'mac' : windowsOS ? 'win' : undefined) : undefined}
             data-column={desktop || undefined}
           >
             <div className="flex min-h-0 flex-1">

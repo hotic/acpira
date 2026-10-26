@@ -1141,6 +1141,7 @@ async fn exec(a: &Value, id: u64, out: &Out, stdin_rx: Option<mpsc::UnboundedRec
     None => PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".into())),
   };
   let mut cmd = tokio::process::Command::new(program);
+  crate::platform::command::no_window(&mut cmd);
   cmd.args(rest).current_dir(&cwd).stdout(Stdio::piped()).stderr(Stdio::piped());
   let want_stdin = a.get("stdin").and_then(Value::as_bool).unwrap_or(false);
   cmd.stdin(if want_stdin { Stdio::piped() } else { Stdio::null() });

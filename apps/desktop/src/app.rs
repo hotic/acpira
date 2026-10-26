@@ -46,9 +46,12 @@ pub fn try_app() -> Option<&'static Arc<App>> {
   APP.get()
 }
 
-/// Where everything is: the page bundle and the picker script (the app bundle's resources, or the repository's dist/ in
-/// a checkout), the engine candidates, the data home shared with the IDE shells, and the app's own data and logs
+/// Where everything is: the page bundle and the picker script (the app bundle's resources, inside the Windows exe, or the
+/// repository's dist/ in a checkout), the engine candidates, the data home shared with the IDE shells,
+/// and the app's own data and logs (acpira_desktop::dirs)
 pub struct Paths {
+  /// The user's home (USERPROFILE on Windows), what the IDE settings and editor lookups start from
+  pub home: PathBuf,
   pub webview: PathBuf,
   pub picker: PathBuf,
   pub engines: Vec<PathBuf>,
@@ -57,28 +60,42 @@ pub struct Paths {
   pub logs: PathBuf,
   /// The app's cache (the updater's downloads and staged bundles under `updates/`)
   pub cache: PathBuf,
+  /// WebView2's profile when it is not Tauri's default (%LOCALAPPDATA%\<identifier>): a smoke run's own
+  pub webview_data: Option<PathBuf>,
 }
 
 impl Paths {
   pub fn resolve(identifier: &str) -> Paths {
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-    let exe = std::env::current_exe().ok().and_then(|e| e.canonicalize().ok()).unwrap_or_default();
-    let macos_dir = exe.parent().map(Path::to_path_buf).unwrap_or_default();
-    let bundled = macos_dir.ends_with("Contents/MacOS");
-    let (webview, picker, engines) = if bundled {
-      let res = macos_dir.parent().unwrap_or(&macos_dir).join("Resources");
+    let dirs = acpira_desktop::dirs::this_app(identifier);
+    let exe = acpira_desktop::dirs::this_exe().unwrap_or_default();
+    let exe_dir = exe.parent().map(Path::to_path_buf).unwrap_or_default();
+    let (webview, picker, engines) = if exe_dir.ends_with("Contents/MacOS") {
+      let res = exe_dir.parent().unwrap_or(&exe_dir).join("Resources");
       // scripts/package.mjs puts the engine beside the shell as acpira-engine (`acpira` and the shell's `Acpira` are one
       // name on a case-insensitive volume)
       (
         res.join("webview"),
         res.join("picker.js"),
-        vec![macos_dir.join("acpira-engine"), res.join("bin").join(acpira_desktop::locator::EXE)],
+        vec![exe_dir.join("acpira-engine"), res.join("bin").join(acpira_desktop::locator::EXE)],
       )
+    } else if cfg!(windows) && crate::embedded::has_page() {
+      // Windows: one exe carries the page, the picker (written out for the engine, which reads it from a file) and the
+      // engine, which is this exe run with an engine subcommand (main.rs)
+      let picker = crate::embedded::picker_file(&dirs.cache).unwrap_or_default();
+      (PathBuf::new(), picker, vec![exe.clone()])
     } else {
-      // A checkout: apps/desktop → the repository root holds dist/webview, dist/picker.js and the engine builds
-      let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-      let root = root.canonicalize().unwrap_or(root);
-      let mut engines = vec![];
+      // A checkout: the repository root holds dist/webview, dist/picker.js and the engine builds. It is the exe's first
+      // ancestor with a dist/webview (a build copied elsewhere with the checkout), else where this crate was built
+      let root = exe
+        .ancestors()
+        .find(|d| d.join("dist").join("webview").is_dir() && d.join("rust").is_dir())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| {
+          let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+          root.canonicalize().unwrap_or(root)
+        });
+      // The Windows exe is its own engine; a checkout's builds come after it
+      let mut engines = if cfg!(windows) { vec![exe.clone()] } else { vec![] };
       if let Some(dir) = acpira_desktop::locator::platform_dir() {
         engines.push(root.join("dist/sidecar").join(dir).join(acpira_desktop::locator::EXE));
       }
@@ -90,32 +107,28 @@ impl Paths {
       .map(|s| s.trim().to_owned())
       .filter(|s| !s.is_empty())
       .map(PathBuf::from)
-      .unwrap_or_else(|| home.join(".acpira"));
+      .unwrap_or_else(|| dirs.home.join(".acpira"));
     // Smoke runs and screenshots keep the app's own settings, window state and log out of the real profile
-    let (user_data, logs, cache) =
+    let (user_data, logs, cache, webview_data) =
       match std::env::var("ACPIRA_DESKTOP_USER_DATA").ok().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()) {
         Some(dir) => {
           let dir = PathBuf::from(dir);
-          (dir.clone(), dir.join("logs"), dir.join("cache"))
+          (dir.clone(), dir.join("logs"), dir.join("cache"), Some(dir.join("webview")))
         }
-        None => (
-          home.join("Library/Application Support").join(identifier),
-          home.join("Library/Logs").join(identifier),
-          home.join("Library/Caches").join(identifier),
-        ),
+        None => (dirs.user_data, dirs.logs, dirs.cache, None),
       };
-    Paths { webview, picker, engines, data_home, user_data, logs, cache }
+    Paths { home: dirs.home, webview, picker, engines, data_home, user_data, logs, cache, webview_data }
   }
 }
 
 /// The Electron app's profile (~/Library/Application Support/Acpira): a first launch starts from its settings, window
-/// places and browser history, so moving to this shell keeps them
-fn migrate_electron_profile(user_data: &Path, log: &dyn Fn(&str)) {
-  if std::env::var_os("ACPIRA_DESKTOP_USER_DATA").is_some() || user_data.join("settings.json").exists() {
+/// places and browser history, so moving to this shell keeps them. There was no Electron app outside macOS
+fn migrate_electron_profile(paths: &Paths, log: &dyn Fn(&str)) {
+  let user_data = &paths.user_data;
+  if !cfg!(target_os = "macos") || std::env::var_os("ACPIRA_DESKTOP_USER_DATA").is_some() || user_data.join("settings.json").exists() {
     return;
   }
-  let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else { return };
-  let old = home.join("Library/Application Support/Acpira");
+  let old = paths.home.join("Library/Application Support/Acpira");
   if !old.join("settings.json").is_file() {
     return;
   }
@@ -157,10 +170,13 @@ pub struct App {
   failure_shown: AtomicBool,
   window_seq: AtomicU64,
   pub background: bool,
-  notifier: OnceLock<Option<crate::mac::Notifier>>,
+  notifier: OnceLock<Option<crate::os::Notifier>>,
   updater: OnceLock<Arc<Updater>>,
   /// The updater's phase as the menu and the toast last saw it
   update_phase: Mutex<Phase>,
+  /// The menu bar as the page draws it where there is no global one (Windows; menu.rs install), sent to each page on
+  /// ready and on every change
+  page_menu: Mutex<Option<Value>>,
 }
 
 pub fn log(line: &str) {
@@ -182,7 +198,7 @@ fn log_arc() -> Arc<dyn Fn(&str) + Send + Sync> {
 
 impl App {
   pub fn init(handle: AppHandle, paths: Paths, links: Vec<String>) -> Arc<App> {
-    migrate_electron_profile(&paths.user_data, &log);
+    migrate_electron_profile(&paths, &log);
     let settings = Arc::new(SettingsStore::new(paths.user_data.join("settings.json")));
     let shared = SharedSettingsFile::new(&paths.data_home);
     let history = BrowserHistory { file: paths.user_data.join("browser-history.json") };
@@ -215,8 +231,10 @@ impl App {
       notifier: OnceLock::new(),
       updater: OnceLock::new(),
       update_phase: Mutex::new(Phase::Idle),
+      page_menu: Mutex::new(None),
     });
     let _ = APP.set(app.clone());
+    app.register_links();
     log(&format!(
       "acpira desktop {} (tauri) data {} profile {}",
       env!("CARGO_PKG_VERSION"),
@@ -253,11 +271,28 @@ impl App {
     app
   }
 
+  /// Windows: acpira:// links open this exe and toasts carry the app's name and icon (HKCU, rewritten when the exe moved
+  /// or was replaced). A smoke run, with a profile of its own, leaves the user's registry alone
+  fn register_links(&self) {
+    #[cfg(windows)]
+    if self.paths.webview_data.is_none()
+      && let Ok(exe) = std::env::current_exe()
+    {
+      match acpira_desktop::registry::ensure(&acpira_desktop::registry::link_handler(&exe)) {
+        Ok(0) => {}
+        Ok(n) => log(&format!("acpira:// links now open {} ({n} registry values)", exe.display())),
+        Err(e) => log(&format!("acpira:// link registration: {e}")),
+      }
+      crate::win::register_identity(&self.paths.cache, log_arc());
+    }
+  }
+
   /// The app's own updater (docs/dev/desktop.md "Updates"): a release build's configuration, or the smoke run's local
   /// release server; what keeps this install from replacing itself is known before any check
   fn make_updater(&self) -> Arc<Updater> {
-    let exe = std::env::current_exe().ok().and_then(|e| e.canonicalize().ok());
-    let installed = exe.as_deref().and_then(update::swap::bundle_of);
+    let exe = acpira_desktop::dirs::this_exe();
+    // The bundle on macOS, the packaged exe itself on Windows (none for a cargo build)
+    let installed = exe.as_deref().and_then(update::swap::install_of);
     let (config, manual) = crate::smoke::update_config(installed.as_deref())
       .unwrap_or_else(|| (update::Config::release(), update::install_blocker(installed.as_deref(), update::stage::signing_team)));
     let env = update::Env {
@@ -322,7 +357,8 @@ impl App {
   }
 
   /// Restart to update: the staged bundle takes the installed one's place, the app quits as usual (window places
-  /// saved, the engine left running its turns), and a helper starts the new bundle once this process is gone
+  /// saved, the engine left running its turns), and a helper starts the new bundle once this process is gone (on
+  /// Windows the new exe itself, which waits for this process before claiming the single instance)
   pub fn restart_to_update(&self) {
     let Some(u) = self.updater() else { return };
     let Some(installed) = u.installed().map(Path::to_path_buf) else { return };
@@ -347,7 +383,7 @@ impl App {
   }
 
   pub fn host_language(&self) -> String {
-    crate::mac::preferred_language().unwrap_or_else(|| "en".into())
+    crate::os::preferred_language().unwrap_or_else(|| "en".into())
   }
 
   pub fn locale(&self) -> Locale {
@@ -384,7 +420,7 @@ impl App {
       let paths = acpira_desktop::vscode_settings::ide_settings_paths(
         acpira_desktop::editors::this_platform(),
         &|k| std::env::var(k).ok(),
-        Path::new(&std::env::var("HOME").unwrap_or_default()),
+        &a.paths.home,
       );
       HelloPayload {
         client: json!({ "name": "acpira-desktop", "version": env!("CARGO_PKG_VERSION"), "capabilities": CAPABILITIES }),
@@ -412,7 +448,7 @@ impl App {
       })
     };
     let mut opts = ClientOpts::new(commands, hello, on_request, log_arc());
-    #[cfg(unix)]
+    // The persistent engine (a Unix socket, a named pipe on Windows); ACPIRA_ENGINE=stdio runs it attached instead
     {
       opts.engine = Box::new(move |cmd| {
         if std::env::var("ACPIRA_ENGINE").as_deref() == Ok("stdio") {
@@ -502,6 +538,10 @@ impl App {
     if let Some(u) = self.updater() {
       w.post(json!({ "type": "updateState", "state": u.state() }));
     }
+    if let Some(menus) = self.page_menu.lock().unwrap().clone() {
+      w.post(json!({ "type": "desktopMenu", "menus": menus }));
+      w.post(json!({ "type": "windowState", "maximized": w.window.is_maximized().unwrap_or(false) }));
+    }
     if self.share_context() {
       for m in self.context.lock().unwrap().replay() {
         w.post(m);
@@ -509,8 +549,28 @@ impl App {
     }
   }
 
+  /// Where WebView2 keeps its profile: Tauri's default (%LOCALAPPDATA%\<identifier>) unless a smoke run gave the app a
+  /// profile of its own; every webview of the process has to use the same one. WKWebView keeps its data in the system's
+  /// store whatever this says (Tauri only keys the webviews' shared context by it)
+  fn webview_data(&self) -> PathBuf {
+    self.paths.webview_data.clone().unwrap_or_else(|| {
+      if cfg!(windows) { self.paths.logs.parent().map(Path::to_path_buf).unwrap_or_default() } else { self.paths.user_data.clone() }
+    })
+  }
+
+  /// WebView2's browser arguments (the same for every webview of the process): wry's own (no mini menu, no SmartScreen
+  /// check of the app's pages) and, in a background run, rendering that goes on while other windows cover the app's
+  fn browser_args(&self) -> String {
+    let mut args = String::from("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection");
+    if self.background {
+      args.push_str(",CalculateNativeWinOcclusion --disable-backgrounding-occluded-windows --disable-renderer-backgrounding");
+      args.push_str(" --disable-background-timer-throttling");
+    }
+    args
+  }
+
   fn dark(&self) -> bool {
-    crate::mac::dark_mode()
+    crate::os::dark_mode()
   }
 
   fn next_label(&self, prefix: &str) -> String {
@@ -520,7 +580,7 @@ impl App {
   /// A new chat window on a session, the most recent one, or none (a fresh view)
   pub fn open(self: &Arc<Self>, initial: Option<Initial>, how: ChatWindowOpen) -> Option<Arc<ChatWindow>> {
     let label = self.next_label("chat");
-    let mut b = WebviewWindowBuilder::new(&self.handle, &label, WebviewUrl::CustomProtocol(format!("{APP_ORIGIN}/blank").parse().ok()?))
+    let mut b = WebviewWindowBuilder::new(&self.handle, &label, first_url("editor"))
       .title("Acpira")
       .inner_size(1180.0, 820.0)
       .min_inner_size(420.0, 360.0)
@@ -530,7 +590,9 @@ impl App {
       } else {
         tauri::window::Color(0xf8, 0xf8, 0xf8, 0xff)
       })
-      .initialization_script(crate::INIT_SCRIPT)
+      .initialization_script(crate::INIT_SCRIPT.as_str())
+      .data_directory(self.webview_data())
+      .additional_browser_args(&self.browser_args())
       // The page's own drag and drop: Tauri's handler would take every drag (Finder files, the session list's reordering)
       // away from the DOM; the page reads a dropped file itself and asks for its path (acpira_drag_paths)
       .disable_drag_drop_handler()
@@ -551,6 +613,13 @@ impl App {
       // trafficLightPosition, so (17, 32) here is Electron's (17, 23): the lights' centre on the header row's centre line
       b =
         b.title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true).traffic_light_position(tauri::LogicalPosition::new(17.0, 32.0));
+    }
+    // No system title bar either: the page draws the caption's buttons and the menu (chat/DesktopFrame.tsx WindowCaption,
+    // AppMenus). The system still gives the undecorated window its shadow, rounded corners and resize edges, and the
+    // title row's drag and double click are the system's own (init.js)
+    #[cfg(windows)]
+    {
+      b = b.decorations(false).shadow(true);
     }
     let window = match b.build() {
       Ok(w) => w,
@@ -573,17 +642,21 @@ impl App {
     }
     // Attach before the page loads: its `ready` must find the view
     self.client().attach(w.clone() as Arc<dyn ShellView>);
-    w.load();
+    if cfg!(target_os = "macos") {
+      w.load();
+    }
     self.schedule_save();
     Some(w)
   }
 
   /// What every page's webview gets before its first real page: the frame-rate switch, background rendering for a
-  /// smoke run
+  /// smoke run, and on Windows the clipboard and dropped paths (win::hook_webview)
   fn prepare(&self, window: &WebviewWindow) {
-    crate::mac::unlock_frame_rate(window, log_arc());
+    crate::os::unlock_frame_rate(window, log_arc());
+    #[cfg(windows)]
+    crate::win::hook_webview(window, log_arc());
     if self.background {
-      crate::mac::keep_rendering_in_background(window, log_arc());
+      crate::os::keep_rendering_in_background(window, log_arc());
     }
   }
 
@@ -595,9 +668,9 @@ impl App {
       return;
     }
     if self.background {
-      crate::mac::order_back(&window);
+      crate::os::order_back(&window);
     } else if self.browser_by_label(label).is_some_and(|b| !b.focus_on_show()) {
-      crate::mac::order_front(&window);
+      crate::os::order_front(&window);
     } else {
       let _ = window.show();
       let _ = window.set_focus();
@@ -763,7 +836,9 @@ impl App {
       }
     }
     let Some(id) = acpira_shared::session_links::session_id_of_link(url) else {
-      log(&format!("unhandled link: {url}"));
+      // Any other acpira:// link (a plain notification's click on Windows, `acpira://open`) brings the app forward
+      log(&format!("link without a session: {url}"));
+      self.second_instance(vec![]);
       return;
     };
     let sessions = self.client().sessions_dir().map(PathBuf::from).unwrap_or_else(|| self.paths.data_home.join("sessions"));
@@ -797,6 +872,7 @@ impl App {
   }
 
   /// The Dock icon clicked with no window open
+  #[cfg(target_os = "macos")]
   pub fn reopen(self: &Arc<Self>) {
     if self.windows().is_empty() {
       self.open(Some(Initial::MostRecent), self.place_of_last());
@@ -817,13 +893,13 @@ impl App {
     self.system_notification("Acpira", text, None);
   }
 
-  fn system_notification(&self, title: &str, body: &str, session: Option<&str>) {
+  pub(crate) fn system_notification(&self, title: &str, body: &str, session: Option<&str>) {
     // A background run (smoke) shows nothing on the screen: no banner, and no permission prompt for the first one
     if self.background {
       log(&format!("notification (background run, not shown): {title}: {body}"));
       return;
     }
-    let notifier = self.notifier.get_or_init(|| crate::mac::Notifier::new(crate::app::session_clicked, log_arc()));
+    let notifier = self.notifier.get_or_init(|| crate::os::Notifier::new(crate::app::session_clicked, log_arc()));
     if let Some(n) = notifier {
       n.show(title, body, session);
     }
@@ -831,6 +907,32 @@ impl App {
 
   fn share_context(&self) -> bool {
     self.settings.get("shareEditorSelection") != Some(Value::Bool(false))
+  }
+
+  /// The menu the pages draw changed (menu.rs install, Windows)
+  pub fn set_page_menu(&self, menus: Value) {
+    *self.page_menu.lock().unwrap() = Some(menus.clone());
+    self.broadcast(json!({ "type": "desktopMenu", "menus": menus }));
+  }
+
+  /// The page menu's top-level titles (the smoke's menuBar outside macOS)
+  #[cfg(feature = "smoke")]
+  pub fn page_menu_titles(&self) -> Option<Vec<String>> {
+    let menus = self.page_menu.lock().unwrap().clone()?;
+    Some(menus.as_array()?.iter().filter_map(|m| m["label"].as_str().map(str::to_owned)).collect())
+  }
+
+  /// A window was resized: its page shows the caption's maximize or restore glyph (Windows)
+  pub fn window_resized(&self, label: &str) {
+    if self.page_menu.lock().unwrap().is_none() {
+      return;
+    }
+    if let Some(w) = self.window_by_label(label) {
+      let maximized = w.window.is_maximized().unwrap_or(false);
+      if w.maximized.swap(maximized, std::sync::atomic::Ordering::SeqCst) != maximized {
+        w.post(json!({ "type": "windowState", "maximized": maximized }));
+      }
+    }
   }
 
   fn broadcast(&self, m: Value) {
@@ -919,7 +1021,7 @@ impl App {
     }
     let label = self.next_label("browser");
     let title = url.map(acpira_desktop::browser::host_of).unwrap_or_else(|| "Acpira".into());
-    let built = WebviewWindowBuilder::new(&self.handle, &label, WebviewUrl::CustomProtocol(format!("{APP_ORIGIN}/blank").parse().ok()?))
+    let built = WebviewWindowBuilder::new(&self.handle, &label, first_url("browser"))
       .title(title)
       .inner_size(1200.0, 860.0)
       .min_inner_size(480.0, 360.0)
@@ -930,7 +1032,9 @@ impl App {
       } else {
         tauri::window::Color(0xf8, 0xf8, 0xf8, 0xff)
       })
-      .initialization_script(crate::INIT_SCRIPT)
+      .initialization_script(crate::INIT_SCRIPT.as_str())
+      .data_directory(self.webview_data())
+      .additional_browser_args(&self.browser_args())
       // The page's own drag and drop: Tauri's handler would take every drag (Finder files, the session list's reordering)
       // away from the DOM; the page reads a dropped file itself and asks for its path (acpira_drag_paths)
       .disable_drag_drop_handler()
@@ -950,7 +1054,9 @@ impl App {
     self.prepare(&window);
     let b = Arc::new(BrowserPanelWindow::new(window.clone(), folder.map(str::to_owned), focus));
     self.browsers.lock().unwrap().push(b.clone());
-    let _ = window.navigate(page_url("browser"));
+    if cfg!(target_os = "macos") {
+      let _ = window.navigate(page_url("browser"));
+    }
     if let Some(u) = url {
       b.relay.navigate(u.to_owned());
     }
@@ -1003,7 +1109,7 @@ impl App {
       let a = app();
       let h = a.handle.clone();
       let _ = h.run_on_main_thread(move || {
-        crate::mac::clipboard_write(&prompt);
+        crate::os::clipboard_write(&prompt);
         let a = app();
         if let Some(w) = a.focused_window() {
           w.post(json!({ "type": "toast", "level": "info", "text": a.t("chatgpt.copied", &[]) }));
@@ -1062,8 +1168,10 @@ pub fn session_clicked(id: String) {
 /// The page never leaves the app: its own pages, and the loopback dev pages its browser frames show. Everything else
 /// is refused (links reach the system browser through the engine's allowlist, `openExternal`)
 fn allowed_navigation(url: &tauri::Url) -> bool {
+  if acpira_desktop::page::is_app_url(url.as_str(), APP_ORIGIN) {
+    return true;
+  }
   match url.scheme() {
-    "acpira-app" => url.host_str() == Some("localhost"),
     "about" => true,
     "http" => matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]")),
     _ => false,
@@ -1151,8 +1259,7 @@ impl Platform for App {
     // The login shell's PATH finds an editor's command line; an app started from the Dock has almost none of its own
     let mut env: HashMap<String, String> = std::env::vars().collect();
     env.extend(self.login_env.lock().unwrap().clone().unwrap_or_default());
-    let home = PathBuf::from(std::env::var("HOME").unwrap_or_default());
-    acpira_desktop::editors::open_in_editor(editor, target, &env, &home, &log)
+    acpira_desktop::editors::open_in_editor(editor, target, &env, &self.paths.home, &log)
   }
 
   fn open_external(&self, url: &str) -> Result<(), String> {
@@ -1177,4 +1284,14 @@ pub fn page_font() -> Option<String> {
   let font = APP.get()?.setting("appearance.font")?;
   let font = font.as_str()?;
   acpira_shared::appearance::AXES.iter().find(|(k, _)| *k == "font").is_some_and(|(_, opts)| opts.contains(&font)).then(|| font.to_owned())
+}
+
+/// Where a new window's webview starts. WebKit starts on the empty `/blank` so the frame-rate switch is set before the
+/// real page loads (the page is navigated to next); WebView2 has no such switch and would keep `/blank` as a back entry
+/// (Alt+Left, the mouse's back button), so it starts on the page itself. The page's first command (acpira_attach) runs on
+/// the main thread: a window opened there is registered before it can arrive, one opened elsewhere right after `build`
+/// returns, well before the bundle has loaded
+fn first_url(host: &str) -> WebviewUrl {
+  let url = if cfg!(target_os = "macos") { format!("{APP_ORIGIN}/blank").parse().expect("the blank URL parses") } else { page_url(host) };
+  WebviewUrl::CustomProtocol(url)
 }

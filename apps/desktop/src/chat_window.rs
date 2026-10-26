@@ -36,6 +36,8 @@ pub struct ChatWindow {
   watch: Mutex<Option<Watch>>,
   /// The tool panel's browser tabs by tab id; their pages are frames of this window's page, so a reload ends them all
   tabs: Mutex<HashMap<String, Arc<BrowserRelay>>>,
+  /// Maximized as the page's caption last heard (App::window_resized)
+  pub maximized: AtomicBool,
 }
 
 pub fn page_url(host: &str) -> tauri::Url {
@@ -52,6 +54,7 @@ impl ChatWindow {
       initial,
       initialized: AtomicBool::new(false),
       page_ready: AtomicBool::new(false),
+      maximized: AtomicBool::new(false),
       shell_queue: Mutex::new(vec![]),
       shown: Mutex::new(None),
       watch: Mutex::new(watch),
@@ -96,6 +99,20 @@ impl ChatWindow {
           "updateAuto" => app.set_update_auto(v["on"].as_bool() != Some(false)),
           _ => app.restart_to_update(),
         }
+      }
+      // The menu and the caption the page draws where the window has no system title bar (Windows). This runs inside
+      // WebView2's message callback on the main thread, where run_on_main_thread would run at once, and a window built
+      // or closed there hangs the webview: queued from another thread, it runs once the callback has returned
+      "menuCommand" | "windowControl" => {
+        let v: Value = serde_json::from_str(message.get()).unwrap_or_default();
+        let window = self.window.clone();
+        let (kind, arg) = (kind.clone(), v[if kind == "menuCommand" { "id" } else { "op" }].as_str().unwrap_or_default().to_owned());
+        std::thread::spawn(move || {
+          let w = window.clone();
+          let _ = window.run_on_main_thread(move || {
+            if kind == "menuCommand" { crate::menu::on_page_command(&w, &arg) } else { crate::menu::window_control(&w, &arg) }
+          });
+        });
       }
       "panelBrowserOpen" | "panelBrowser" | "panelBrowserClose" | "panelHistory" => {
         if let Ok(v) = serde_json::from_str::<Value>(message.get()) {
@@ -231,7 +248,7 @@ impl ChatWindow {
   /// Brought up with the keyboard; a background run only makes sure it shows, behind everything
   pub fn reveal(&self) {
     if crate::app::app().background {
-      crate::mac::order_back(&self.window);
+      crate::os::order_back(&self.window);
       return;
     }
     let _ = self.window.unminimize();

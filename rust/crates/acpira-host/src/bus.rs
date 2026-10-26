@@ -1,12 +1,13 @@
 //! Engine-to-engine push bus, Codex's model (one engine per shell, a router socket between them). Every engine keeps its
 //! own sessions; the one holding a session's lease (`store::session_lease`) owns it and pushes its view to the engines
 //! that show it read-only, which send their pages' actions on it back to the owner instead of asking for a takeover.
-//! Without the bus (an engine from before it, Windows, a router being re-elected) those engines keep polling the record
+//! Without the bus (an engine from before it, a router being re-elected) those engines keep polling the record
 //!
-//! Transport: `<home>/run/bus.sock`, one JSON object per line. The engine that locks `run/bus.lock` first serves the
-//! socket (the router) and every engine, the router's own included, connects to it as a client. When the router's engine
-//! ends, the others race for the lock again and reconnect; each client then announces its state afresh (the sessions it
-//! owns, the ones it subscribes to), and owners answer every new subscription with a whole view
+//! Transport: `<home>/run/bus.sock` (a named pipe named after the home on Windows), one JSON object per line. The
+//! engine that locks `run/bus.lock` first serves the socket (the router) and every engine, the router's own included,
+//! connects to it as a client. When the router's engine ends, the others race for the lock again and reconnect; each
+//! client then announces its state afresh (the sessions it owns, the ones it subscribes to), and owners answer every
+//! new subscription with a whole view
 //!
 //! What travels follows the sync model (docs/dev/host-architecture.md, "Sync model"): session facts from their owner
 //! (views, subagent transcripts, the list entries of the sessions it runs), and a `touch` whenever a user fact in the
@@ -30,7 +31,7 @@ use crate::store::transcript_store::LogFn;
 // Views of one session pushed within this window go out as one frame (a streamed reply changes many times a second)
 const BATCH: Duration = Duration::from_millis(16);
 // Between attempts to reach or become the router
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 const RETRY: Duration = Duration::from_millis(200);
 // A Unix socket path longer than this does not bind on macOS (104 bytes with the terminator)
 const SOCKET_PATH_MAX: usize = 100;
@@ -210,8 +211,8 @@ struct Stream {
   whole: bool,
 }
 
-// The socket, lock and log only serve the Unix socket transport; other platforms build the bus without one
-#[cfg_attr(not(unix), allow(dead_code))]
+// The socket, lock and log only serve the socket / pipe transport; other platforms build the bus without one
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 struct Inner {
   socket: PathBuf,
   lock: PathBuf,
@@ -265,7 +266,7 @@ impl Bus {
   /// Join the bus (becoming its router when nobody serves it) and keep rejoining until this bus is dropped
   pub fn start(&self, peer: Weak<dyn BusPeer>) {
     *self.inner.peer.lock() = Some(peer);
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
       let task = tokio::spawn(run(Arc::downgrade(&self.inner)));
       self.inner.tasks.lock().push(task.abort_handle());
@@ -401,7 +402,7 @@ impl Inner {
     self.send(&Frame { view: Some(frame), ..Frame::new("view", session) });
   }
 
-  #[cfg_attr(not(unix), allow(dead_code))]
+  #[cfg_attr(not(any(unix, windows)), allow(dead_code))]
   fn receive(self: &Arc<Self>, line: &str) {
     let f: Frame = match serde_json::from_str(line) {
       Ok(f) => f,
@@ -473,7 +474,7 @@ impl Inner {
     }
   }
 
-  #[cfg_attr(not(unix), allow(dead_code))]
+  #[cfg_attr(not(any(unix, windows)), allow(dead_code))]
   fn done(&self, f: Frame) {
     if let Some(tx) = f.id.and_then(|id| self.pending.lock().remove(&id)) {
       let _ = tx.send(f.error.map_or(Ok(()), Err));
@@ -481,7 +482,7 @@ impl Inner {
   }
 
   // Joined a router: announce everything afresh
-  #[cfg_attr(not(unix), allow(dead_code))]
+  #[cfg_attr(not(any(unix, windows)), allow(dead_code))]
   fn connected(&self, tx: mpsc::UnboundedSender<Arc<str>>) {
     *self.out.lock() = Some(tx);
     *self.announced.lock() = None;
@@ -518,21 +519,59 @@ impl Inner {
   }
 }
 
-/// `<root>/run/bus.sock` and its lock, or a short path under the temp dir when that would not bind
+/// `<root>/run/bus.sock` and its lock, or a short path under the temp dir when that would not bind. On Windows the socket
+/// is a named pipe whose name comes from the root (`\\.\pipe\acpira-bus-<hash>`), and the lock stays under `run/`
 fn paths(root: &Path) -> (PathBuf, PathBuf) {
   let run = root.join("run");
+  if cfg!(windows) {
+    return (PathBuf::from(format!(r"\\.\pipe\acpira-bus-{}", root_key(root))), run.join("bus.lock"));
+  }
   let socket = run.join("bus.sock");
   if socket.as_os_str().len() <= SOCKET_PATH_MAX {
     return (socket, run.join("bus.lock"));
   }
-  use sha2::Digest;
-  let digest = sha2::Sha256::digest(root.to_string_lossy().as_bytes());
-  let key: String = digest.iter().take(8).map(|b| format!("{b:02x}")).collect();
+  let key = root_key(root);
   let tmp = std::env::temp_dir();
   (tmp.join(format!("acpira-bus-{key}.sock")), tmp.join(format!("acpira-bus-{key}.lock")))
 }
 
+fn root_key(root: &Path) -> String {
+  use sha2::Digest;
+  let digest = sha2::Sha256::digest(root.to_string_lossy().as_bytes());
+  digest.iter().take(8).map(|b| format!("{b:02x}")).collect()
+}
+
+/// Reaching the router: connected, nobody serves it (elect one), or it is there but cannot be used now (try again)
+#[cfg(any(unix, windows))]
+enum Reach<S> {
+  Joined(S),
+  Absent,
+  #[cfg_attr(unix, allow(dead_code))]
+  Busy,
+}
+
 #[cfg(unix)]
+async fn reach(socket: &Path) -> Reach<tokio::net::UnixStream> {
+  match tokio::net::UnixStream::connect(socket).await {
+    Ok(s) => Reach::Joined(s),
+    Err(_) => Reach::Absent,
+  }
+}
+
+/// The router's pipe, trusted only when the process serving it runs as this user (another user could create the name
+/// first). Every instance taken for a moment (the router creates the next one right after each connection) is busy
+#[cfg(windows)]
+async fn reach(socket: &Path) -> Reach<tokio::net::windows::named_pipe::NamedPipeClient> {
+  const ERROR_PIPE_BUSY: i32 = 231;
+  match tokio::net::windows::named_pipe::ClientOptions::new().open(socket) {
+    Ok(pipe) if acpira_shared::win_pipe::served_by_this_user(&pipe) => Reach::Joined(pipe),
+    Ok(_) => Reach::Busy,
+    Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) => Reach::Busy,
+    Err(_) => Reach::Absent,
+  }
+}
+
+#[cfg(any(unix, windows))]
 async fn run(me: Weak<Inner>) {
   use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
   let mut said = false;
@@ -540,13 +579,13 @@ async fn run(me: Weak<Inner>) {
     let Some(inner) = me.upgrade() else { return };
     let (socket, lock, log) = (inner.socket.clone(), inner.lock.clone(), inner.log.clone());
     drop(inner);
-    match tokio::net::UnixStream::connect(&socket).await {
-      Ok(stream) => {
+    match reach(&socket).await {
+      Reach::Joined(stream) => {
         if !said {
           log(&format!("bus: joined {}", socket.display()));
           said = true;
         }
-        let (rd, mut wr) = stream.into_split();
+        let (rd, mut wr) = tokio::io::split(stream);
         let (tx, mut rx) = mpsc::unbounded_channel::<Arc<str>>();
         let writer = tokio::spawn(async move {
           while let Some(line) = rx.recv().await {
@@ -568,29 +607,44 @@ async fn run(me: Weak<Inner>) {
           inner.disconnected();
         }
       }
-      Err(_) => {
+      Reach::Absent => {
         if let Some(router) = elect(&socket, &lock) {
           let Some(inner) = me.upgrade() else { return };
           log(&format!("bus: routing on {}", socket.display()));
-          let task = tokio::spawn(route(router.0, router.1));
+          let task = tokio::spawn(route(router.0, router.1, socket));
           inner.tasks.lock().push(task.abort_handle());
           continue;
         }
       }
+      Reach::Busy => {}
     }
     tokio::time::sleep(RETRY).await;
   }
 }
 
+/// The router's lock: whoever holds it serves the bus
+#[cfg(any(unix, windows))]
+fn take_lock(lock: &Path) -> Option<std::fs::File> {
+  if let Some(dir) = lock.parent() {
+    let _ = std::fs::create_dir_all(dir);
+  }
+  let mut options = std::fs::OpenOptions::new();
+  options.create(true).truncate(false).read(true).write(true);
+  #[cfg(unix)]
+  std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+  let file = options.open(lock).ok()?;
+  file.try_lock().ok()?;
+  Some(file)
+}
+
 /// Become the router when nobody holds its lock: the lock lives as long as the listener (the router task)
 #[cfg(unix)]
 fn elect(socket: &Path, lock: &Path) -> Option<(std::fs::File, tokio::net::UnixListener)> {
-  use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+  use std::os::unix::fs::PermissionsExt;
   if let Some(dir) = socket.parent() {
     let _ = std::fs::create_dir_all(dir);
   }
-  let file = std::fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).mode(0o600).open(lock).ok()?;
-  file.try_lock().ok()?;
+  let file = take_lock(lock)?;
   // Holding the lock, a socket file left here belongs to a router that died
   let _ = std::fs::remove_file(socket);
   let listener = tokio::net::UnixListener::bind(socket).ok()?;
@@ -598,9 +652,57 @@ fn elect(socket: &Path, lock: &Path) -> Option<(std::fs::File, tokio::net::UnixL
   Some((file, listener))
 }
 
-#[cfg(unix)]
-async fn route(_lock: std::fs::File, listener: tokio::net::UnixListener) {
+/// The pipe's instances admit this user alone and no remote client; the first one claims the name, so a pipe of the
+/// same name that someone else created first makes the election fail rather than serve beside it
+#[cfg(windows)]
+fn pipe_instance(name: &Path, first: bool) -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
+  let sa = acpira_shared::win_pipe::OwnerOnly::new()?;
+  let mut options = tokio::net::windows::named_pipe::ServerOptions::new();
+  options.first_pipe_instance(first).reject_remote_clients(true);
+  // SAFETY: the security attributes outlive the call that copies them into the pipe
+  unsafe { options.create_with_security_attributes_raw(name, sa.as_ptr()) }
+}
+
+#[cfg(windows)]
+fn elect(socket: &Path, lock: &Path) -> Option<(std::fs::File, tokio::net::windows::named_pipe::NamedPipeServer)> {
+  let file = take_lock(lock)?;
+  let server = pipe_instance(socket, true).ok()?;
+  Some((file, server))
+}
+
+/// The router's side of one engine's connection, until it closes
+#[cfg(any(unix, windows))]
+fn serve_client<S>(router: &Arc<parking_lot::Mutex<Router>>, id: u64, stream: S, conns: &mut tokio::task::JoinSet<()>)
+where
+  S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + 'static,
+{
   use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+  let (rd, mut wr) = tokio::io::split(stream);
+  let (tx, mut rx) = mpsc::unbounded_channel::<Arc<str>>();
+  router.lock().join(id, tx);
+  let r = router.clone();
+  conns.spawn(async move {
+    let writer = tokio::spawn(async move {
+      while let Some(line) = rx.recv().await {
+        if wr.write_all(line.as_bytes()).await.is_err() || wr.write_all(b"\n").await.is_err() {
+          break;
+        }
+      }
+    });
+    let mut lines = BufReader::new(rd).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+      let Ok(f) = serde_json::from_str::<Frame>(&line) else { continue };
+      r.lock().handle(id, f, Arc::from(line));
+    }
+    r.lock().leave(id);
+    writer.abort();
+  });
+  // Reap finished connections
+  while conns.try_join_next().is_some() {}
+}
+
+#[cfg(unix)]
+async fn route(_lock: std::fs::File, listener: tokio::net::UnixListener, _socket: PathBuf) {
   let router = Arc::new(parking_lot::Mutex::new(Router::default()));
   let mut next = 0u64;
   // Connection tasks end with the router (its engine dropping the bus aborts this task, and the set aborts them)
@@ -608,34 +710,40 @@ async fn route(_lock: std::fs::File, listener: tokio::net::UnixListener) {
   loop {
     let Ok((stream, _)) = listener.accept().await else { continue };
     next += 1;
-    let id = next;
-    let (rd, mut wr) = stream.into_split();
-    let (tx, mut rx) = mpsc::unbounded_channel::<Arc<str>>();
-    router.lock().join(id, tx);
-    let r = router.clone();
-    conns.spawn(async move {
-      let writer = tokio::spawn(async move {
-        while let Some(line) = rx.recv().await {
-          if wr.write_all(line.as_bytes()).await.is_err() || wr.write_all(b"\n").await.is_err() {
-            break;
-          }
-        }
-      });
-      let mut lines = BufReader::new(rd).lines();
-      while let Ok(Some(line)) = lines.next_line().await {
-        let Ok(f) = serde_json::from_str::<Frame>(&line) else { continue };
-        r.lock().handle(id, f, Arc::from(line));
-      }
-      r.lock().leave(id);
-      writer.abort();
-    });
-    // Reap finished connections
-    while conns.try_join_next().is_some() {}
+    serve_client(&router, next, stream, &mut conns);
   }
 }
 
-// The router runs on the Unix socket only (its tests run everywhere)
-#[cfg_attr(not(unix), allow(dead_code))]
+/// A pipe instance serves one connection: the next one is created before the connected one is handed over, so an engine
+/// arriving meanwhile finds it
+#[cfg(windows)]
+async fn route(_lock: std::fs::File, mut server: tokio::net::windows::named_pipe::NamedPipeServer, socket: PathBuf) {
+  let router = Arc::new(parking_lot::Mutex::new(Router::default()));
+  let mut next = 0u64;
+  let mut conns = tokio::task::JoinSet::new();
+  loop {
+    if server.connect().await.is_err() {
+      // This instance broke before a client got it: replace it
+      match pipe_instance(&socket, false) {
+        Ok(s) => server = s,
+        Err(_) => tokio::time::sleep(RETRY).await,
+      }
+      continue;
+    }
+    let fresh = loop {
+      match pipe_instance(&socket, false) {
+        Ok(s) => break s,
+        Err(_) => tokio::time::sleep(RETRY).await,
+      }
+    };
+    let connected = std::mem::replace(&mut server, fresh);
+    next += 1;
+    serve_client(&router, next, connected, &mut conns);
+  }
+}
+
+// The router runs on Unix sockets and Windows named pipes (its tests run everywhere)
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 struct Client {
   tx: mpsc::UnboundedSender<Arc<str>>,
   owned: HashSet<String>,
@@ -647,12 +755,12 @@ struct Client {
 }
 
 #[derive(Default)]
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 struct Router {
   clients: HashMap<u64, Client>,
 }
 
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 impl Router {
   fn owner(&self, session: &str) -> Option<u64> {
     self.clients.iter().find(|(_, c)| c.owned.contains(session)).map(|(id, _)| *id)
@@ -921,6 +1029,7 @@ mod tests {
     r.handle(1, f, Arc::from("{}"));
   }
 
+  #[cfg(unix)]
   #[test]
   fn long_homes_get_a_short_socket_path() {
     let (s, l) = paths(Path::new("/h"));
@@ -929,6 +1038,15 @@ mod tests {
     let deep = PathBuf::from("/").join("x".repeat(120));
     let (s, _) = paths(&deep);
     assert!(s.as_os_str().len() <= SOCKET_PATH_MAX + 40 && s.starts_with(std::env::temp_dir()));
+  }
+
+  #[cfg(windows)]
+  #[test]
+  fn the_bus_is_a_pipe_named_after_the_home() {
+    let (s, l) = paths(Path::new(r"C:\h"));
+    assert!(s.to_string_lossy().starts_with(r"\\.\pipe\acpira-bus-"), "{}", s.display());
+    assert_ne!(s, paths(Path::new(r"C:\other")).0);
+    assert_eq!(l, Path::new(r"C:\h\run\bus.lock"));
   }
 
   #[test]

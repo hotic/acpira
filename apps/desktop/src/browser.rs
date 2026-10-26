@@ -208,7 +208,7 @@ impl BrowserPanelWindow {
 
   pub fn reveal(&self, focus: bool) {
     if crate::app::app().background {
-      crate::mac::order_back(&self.window);
+      crate::os::order_back(&self.window);
       return;
     }
     let _ = self.window.unminimize();
@@ -216,7 +216,7 @@ impl BrowserPanelWindow {
       let _ = self.window.show();
       let _ = self.window.set_focus();
     } else {
-      crate::mac::order_front(&self.window);
+      crate::os::order_front(&self.window);
     }
   }
 

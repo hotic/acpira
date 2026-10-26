@@ -52,14 +52,14 @@ pub fn acpira_window(webview: Webview, op: String) {
     "drag" => {
       let _ = window.start_dragging();
     }
-    "titleDoubleClick" => match crate::mac::title_double_click() {
-      crate::mac::TitleDoubleClick::Zoom => {
+    "titleDoubleClick" => match crate::os::title_double_click() {
+      crate::os::TitleDoubleClick::Zoom => {
         let _ = if window.is_maximized().unwrap_or(false) { window.unmaximize() } else { window.maximize() };
       }
-      crate::mac::TitleDoubleClick::Minimize => {
+      crate::os::TitleDoubleClick::Minimize => {
         let _ = window.minimize();
       }
-      crate::mac::TitleDoubleClick::Nothing => {}
+      crate::os::TitleDoubleClick::Nothing => {}
     },
     _ => {}
   }
@@ -69,11 +69,11 @@ pub fn acpira_window(webview: Webview, op: String) {
 /// runs on the main thread where AppKit wants it
 #[tauri::command]
 pub fn acpira_clipboard() -> String {
-  crate::mac::clipboard_read()
+  crate::os::clipboard_read()
 }
 
 /// The paths of a drag from Finder, read when it enters the page so `pathForFile` can answer at the drop. Main thread
 #[tauri::command]
 pub fn acpira_drag_paths() -> Vec<String> {
-  crate::mac::drag_paths()
+  crate::os::drag_paths()
 }

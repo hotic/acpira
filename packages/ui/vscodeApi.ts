@@ -6,7 +6,8 @@ export interface VsCodeApi {
   postMessage(msg: unknown): void;
   getState?(): unknown;
   setState?(state: unknown): void;
-  pathForFile?(file: File): string | undefined;
+  // The desktop app answers at once on macOS and through its shell on Windows (a promise)
+  pathForFile?(file: File): string | undefined | Promise<string | undefined>;
   readClipboard?(): Promise<string>;
 }
 
@@ -41,7 +42,7 @@ export function setWebviewState(key: string, value: unknown): void {
 
 // The OS path of a file or folder dropped on the page, where the host can tell (the desktop app's init script); undefined
 // without such a host, and without any host at all (LAB, tests)
-export function droppedPathResolver(): ((file: File) => string | undefined) | undefined {
+export function droppedPathResolver(): ((file: File) => string | undefined | Promise<string | undefined>) | undefined {
   const api = host();
   return api?.pathForFile && (file => api.pathForFile!(file));
 }

@@ -439,7 +439,17 @@ fn index_of<R: Read>(first: tar::Entry<'_, R>) -> Result<Index, String> {
   Ok(index)
 }
 
-/// Builds the new bundle in `dest` (which must not exist; its parent must) from the installed bundle and the delta.
+/// The installed file a delta op reads: `rel` under the installed bundle, or, when the install is one file (Windows'
+/// Acpira.exe, under whatever name it was saved), that file itself for its tree's only, top-level entry
+fn installed_file(installed: &Path, rel: &str) -> Result<PathBuf, String> {
+  let rel_path = safe_rel(rel)?;
+  if !fs::metadata(installed).is_ok_and(|m| m.is_file()) {
+    return Ok(installed.join(rel_path));
+  }
+  if rel_path.components().count() == 1 { Ok(installed.to_path_buf()) } else { Err(format!("the delta reads {rel}, which a one-file install lacks")) }
+}
+
+/// Builds the new bundle in `dest` (which must not exist; its parent must) from the installed bundle (or exe) and the delta.
 /// Fails, leaving `dest` for the caller to remove, when an installed file an op reads differs from the delta's `from`
 /// list; the caller then takes the full package. The result still has to pass `verify_tree`
 pub fn apply_delta(delta: &Path, installed: &Path, dest: &Path) -> Result<Index, String> {
@@ -457,7 +467,7 @@ pub fn apply_delta(delta: &Path, installed: &Path, dest: &Path) -> Result<Index,
       continue;
     }
     let want = from.get(src).filter(|e| e.link.is_none()).ok_or_else(|| format!("the delta reads {src}, which its from list lacks"))?;
-    let p = installed.join(safe_rel(src)?);
+    let p = installed_file(installed, src)?;
     let is_file = fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_file());
     let sha = if is_file { sha256_file(&p).ok() } else { None };
     if sha.as_deref() != Some(want.sha256.as_str()) {
@@ -471,7 +481,7 @@ pub fn apply_delta(delta: &Path, installed: &Path, dest: &Path) -> Result<Index,
       Op::Keep => {
         let src = f.from.as_deref().ok_or_else(|| format!("{}: keep without a source", f.entry.path))?;
         let out = out_path(dest, &f.entry.path)?;
-        clone_or_copy(&installed.join(safe_rel(src)?), &out)?;
+        clone_or_copy(&installed_file(installed, src)?, &out)?;
         set_mode(&out, f.entry.mode)?;
       }
       Op::Link => {
@@ -495,7 +505,7 @@ pub fn apply_delta(delta: &Path, installed: &Path, dest: &Path) -> Result<Index,
     let reader = BufReader::new(entry);
     let copied = if f.op == Op::Patch {
       let src = f.from.as_deref().ok_or_else(|| format!("{}: patch without a source", f.entry.path))?;
-      let reference = fs::read(installed.join(safe_rel(src)?)).map_err(|e| io_err(src, e))?;
+      let reference = fs::read(installed_file(installed, src)?).map_err(|e| io_err(src, e))?;
       let mut dec = zstd::stream::read::Decoder::with_ref_prefix(reader, &reference).map_err(|e| io_err(&f.entry.path, e))?;
       dec.window_log_max(WINDOW_LOG_MAX).map_err(|e| io_err(&f.entry.path, e))?;
       io::copy(&mut dec, &mut file)
@@ -612,6 +622,27 @@ mod tests {
     let out = d.path().join("c.app");
     apply_delta(&delta, &old2, &out).unwrap();
     verify_tree(&out, &scan(&new).unwrap()).unwrap();
+  }
+
+  #[test]
+  fn a_one_file_install_is_patched_from_the_exe_under_any_name() {
+    let d = tempfile::tempdir().unwrap();
+    let (old, new) = (d.path().join("old"), d.path().join("new"));
+    put(&old, "Acpira.exe", &binary(5, 200_000, &[]), 0o644);
+    put(&new, "Acpira.exe", &binary(5, 200_000, &[(7000, b"1.1.0")]), 0o644);
+    let delta = d.path().join("exe.delta");
+    let stats = make_delta(&old, &new, "1.0.0", "1.1.0", &delta, 3).unwrap();
+    assert_eq!(stats.patch, 1, "{stats:?}");
+    // The browser saved it under another name; the tree still holds Acpira.exe
+    let installed = d.path().join("Downloads/Acpira (1).exe");
+    fs::create_dir_all(installed.parent().unwrap()).unwrap();
+    fs::copy(old.join("Acpira.exe"), &installed).unwrap();
+    let out = d.path().join("staged");
+    apply_delta(&delta, &installed, &out).unwrap();
+    verify_tree(&out, &scan(&new).unwrap()).unwrap();
+    // Another build than the one 1.0.0 shipped is refused (the full package is taken)
+    fs::write(&installed, binary(6, 200_000, &[])).unwrap();
+    assert!(apply_delta(&delta, &installed, &d.path().join("again")).unwrap_err().contains("is not the one 1.0.0 shipped"));
   }
 
   // Checks permission bits, which Windows does not keep

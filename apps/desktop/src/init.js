@@ -3,7 +3,10 @@
 // of the app's own pages (the shell's initialization script); a browser tab of the tool panel is a frame and talks
 // through its parent instead (window.__acpiraBrowserTab, set by the page)
 (() => {
-  if (window.top !== window || location.protocol !== 'acpira-app:' || window.__acpiraApi) return;
+  // The app protocol's origin (the shell fills it in): acpira-app://localhost in WKWebView, http://acpira-app.localhost in
+  // WebView2. Any other page (a loopback dev page navigated to) gets no transport
+  const ORIGIN = '__ACPIRA_APP_ORIGIN__';
+  if (window.top !== window || `${location.protocol}//${location.host}` !== ORIGIN || window.__acpiraApi) return;
   const T = window.__TAURI_INTERNALS__;
   const STATE_KEY = 'acpira.webviewState';
   const encoder = new TextEncoder();
@@ -43,9 +46,32 @@
     .catch(e => console.error('acpira_attach failed', e))
     .finally(() => { busy = false; flush(); });
 
+  // WebView2 (Windows) hands a dropped File to the shell as a CoreWebView2File, whose path comes back here by id
+  // (win.rs); WKWebView has no such route, so the paths of a Finder drag are read as it enters the page
+  const webview2 = window.chrome?.webview?.postMessageWithAdditionalObjects ? window.chrome.webview : null;
+  const dropWaiters = new Map();
+  let dropSeq = 0;
+  window.__acpiraDropPath = (id, path) => {
+    const done = dropWaiters.get(id);
+    dropWaiters.delete(id);
+    done?.(path || undefined);
+  };
+  const askPath = file => new Promise(resolve => {
+    const id = ++dropSeq;
+    dropWaiters.set(id, resolve);
+    try {
+      webview2.postMessageWithAdditionalObjects(`acpira-drop:${id}`, [file]);
+    } catch {
+      // WebView2 refuses a File that is not on disk (one the page made, a drag from another app's memory): no path
+      dropWaiters.delete(id);
+      resolve(undefined);
+      return;
+    }
+    setTimeout(() => { if (dropWaiters.delete(id)) resolve(undefined); }, 5000);
+  });
   let dragPaths = [];
   document.addEventListener('dragenter', e => {
-    if (!e.dataTransfer?.types.includes('Files')) return;
+    if (webview2 || !e.dataTransfer?.types.includes('Files')) return;
     T.invoke('acpira_drag_paths').then(paths => { dragPaths = paths; }, () => { dragPaths = []; });
   }, true);
 
@@ -61,9 +87,9 @@
     // bubble), which a terminal's right-click paste must not show
     readClipboard: () => T.invoke('acpira_clipboard'),
     // A dropped file's path: WKWebView gives the page its name and bytes only, so the paths of a Finder drag are read
-    // from the system's drag pasteboard as it enters the page and matched by name at the drop (packages/ui Shell's
-    // folder drop calls this synchronously)
-    pathForFile: file => dragPaths.find(p => p.slice(p.lastIndexOf('/') + 1) === file.name),
+    // from the system's drag pasteboard as it enters the page and matched by name at the drop; WebView2 answers through
+    // the shell, a promise (packages/ui Shell's folder drop takes both)
+    pathForFile: file => (webview2 ? askPath(file) : dragPaths.find(p => p.slice(p.lastIndexOf('/') + 1) === file.name)),
   });
 
   // The system appearance changed (the shell calls this): the page follows the body class (packages/ui/useVsCodeTheme.ts)

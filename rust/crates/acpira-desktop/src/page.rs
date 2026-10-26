@@ -7,8 +7,36 @@ use std::path::{Path, PathBuf};
 
 use serde_json::json;
 
-/// WKWebView serves a custom scheme as `<scheme>://localhost` in Tauri's convention; a standard, secure origin
-pub const APP_ORIGIN: &str = "acpira-app://localhost";
+/// The app protocol's origin as the page sees it. WKWebView serves a custom scheme as `<scheme>://localhost` in Tauri's
+/// convention; WebView2 has no custom schemes, so wry serves it as `http://<scheme>.localhost` there (a secure context,
+/// being under .localhost). The protocol handler sees `acpira-app://localhost` on both: wry maps the request back
+pub const fn app_origin(windows: bool) -> &'static str {
+  if windows { "http://acpira-app.localhost" } else { "acpira-app://localhost" }
+}
+
+pub const APP_ORIGIN: &str = app_origin(cfg!(windows));
+
+/// The page's platform, for its window chrome (`window.__acpira.platform`): `mac`, `win` or `linux`
+pub const PLATFORM: &str = if cfg!(target_os = "macos") {
+  "mac"
+} else if cfg!(windows) {
+  "win"
+} else {
+  "linux"
+};
+
+/// The CSP source that admits the app's own resources: the scheme on macOS, the origin where it is plain http
+fn csp_source(origin: &str) -> String {
+  if origin.starts_with("http") { origin.to_owned() } else { format!("{}:", origin.split(':').next().unwrap_or(origin)) }
+}
+
+/// Whether a URL is on the app's own origin (the navigation allowlist): same scheme, host and port
+pub fn is_app_url(url: &str, origin: &str) -> bool {
+  match (url::Url::parse(url), url::Url::parse(origin)) {
+    (Ok(u), Ok(o)) => u.scheme() == o.scheme() && u.host_str() == o.host_str() && u.port_or_known_default() == o.port_or_known_default(),
+    _ => false,
+  }
+}
 pub const SESSION_LINK_BASE: &str = "acpira://session/";
 
 /// What VS Code provides around a webview: the --vscode-* roles tokens.css reads and the scheme class on body. Values
@@ -72,8 +100,14 @@ fn script_json(v: &serde_json::Value) -> String {
 }
 
 pub fn page_html(c: &PageConfig) -> String {
+  page_html_on(c, APP_ORIGIN, PLATFORM)
+}
+
+/// page_html for a given origin and platform (tests cover both shapes on one machine)
+pub fn page_html_on(c: &PageConfig, origin: &str, platform: &str) -> String {
   let nonce = uuid::Uuid::new_v4().simple().to_string();
-  let src = "acpira-app:";
+  let src = csp_source(origin);
+  let src = src.as_str();
   let mut csp = vec![
     "default-src 'none'".to_owned(),
     format!("img-src {src} https: data:"),
@@ -93,7 +127,7 @@ pub fn page_html(c: &PageConfig) -> String {
     // The tool panel's browser tabs are this app's own browser page, framed
     PageHost::Editor => csp.push(format!("frame-src {src}")),
   }
-  let mut config = json!({ "host": c.host.as_str(), "sessionLinkBase": SESSION_LINK_BASE, "shell": "desktop" });
+  let mut config = json!({ "host": c.host.as_str(), "sessionLinkBase": SESSION_LINK_BASE, "shell": "desktop", "platform": platform });
   if let Some(f) = &c.font {
     config["font"] = json!(f);
   }
@@ -110,13 +144,13 @@ pub fn page_html(c: &PageConfig) -> String {
 <meta http-equiv="Content-Security-Policy" content="{csp}">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Acpira</title>
-<link rel="stylesheet" href="{APP_ORIGIN}/webview/main.css">
-<link rel="stylesheet" href="{APP_ORIGIN}/desktop.css">
+<link rel="stylesheet" href="{origin}/webview/main.css">
+<link rel="stylesheet" href="{origin}/desktop.css">
 </head>
 <body class="{scheme}">
 <div id="root"></div>
 <script nonce="{nonce}">{boot}</script>
-<script type="module" nonce="{nonce}" src="{APP_ORIGIN}/webview/main.js"></script>
+<script type="module" nonce="{nonce}" src="{origin}/webview/main.js"></script>
 </body>
 </html>"#,
     lang = escape_attr(&c.locale),
@@ -135,7 +169,18 @@ pub enum Route {
   },
   Theme,
   File(PathBuf),
+  /// A bundle file the packaged app stores zstd-compressed beside its name (`<name>.zst`, apps/desktop/scripts/package.mjs
+  /// packs `assets/`); `mime` is the original name's. `unpack` reads it
+  Packed {
+    file: PathBuf,
+    mime: &'static str,
+  },
   NotFound,
+}
+
+/// The original bytes of a `Route::Packed` file
+pub fn unpack(file: &Path) -> std::io::Result<Vec<u8>> {
+  zstd::stream::decode_all(std::fs::File::open(file)?)
 }
 
 /// `path` and `query` of an acpira-app URL; `webview` holds the bundle, `blobs` the engine's sessions directory (where
@@ -160,7 +205,14 @@ pub fn route(path: &str, query: Option<&str>, webview: &Path, blobs: Option<&Pat
     return Route::Theme;
   }
   let file = if let Some(rest) = path.strip_prefix("/webview/") {
-    crate::confine::confine(webview, rest)
+    let plain = crate::confine::confine(webview, rest).filter(|f| f.is_file());
+    if plain.is_none()
+      && let Some(file) = crate::confine::confine(webview, &format!("{rest}.zst")).filter(|f| f.is_file())
+    {
+      let mime = mime(&file.with_extension(""));
+      return Route::Packed { file, mime };
+    }
+    plain
   } else if let (Some(rest), Some(root)) = (path.strip_prefix("/blobs/"), blobs) {
     crate::confine::confine(root, rest)
   } else {
@@ -205,8 +257,16 @@ mod tests {
     let html = page_html(&PageConfig { host: PageHost::Editor, locale: "zh-CN".into(), dark: true, font: Some("inter".into()), tab: None });
     assert!(html.contains(r#"<html lang="zh-CN">"#));
     assert!(html.contains(r#"<body class="vscode-dark">"#));
-    assert!(html.contains(r#"window.__acpira={"host":"editor","sessionLinkBase":"acpira://session/","shell":"desktop","font":"inter"}"#));
-    assert!(html.contains("frame-src acpira-app:") && html.contains("connect-src acpira-app: ipc: http://ipc.localhost"));
+    assert!(html.contains(&format!(
+      r#"window.__acpira={{"host":"editor","sessionLinkBase":"acpira://session/","shell":"desktop","platform":"{PLATFORM}","font":"inter"}}"#
+    )));
+    let mac = page_html_on(&PageConfig { host: PageHost::Editor, locale: "en".into(), dark: true, font: None, tab: None }, app_origin(false), "mac");
+    assert!(mac.contains("frame-src acpira-app:") && mac.contains("connect-src acpira-app: ipc: http://ipc.localhost"));
+    assert!(mac.contains(r#"src="acpira-app://localhost/webview/main.js""#));
+    // WebView2: the bundle comes from the http origin wry maps the scheme to
+    let win = page_html_on(&PageConfig { host: PageHost::Editor, locale: "en".into(), dark: true, font: None, tab: None }, app_origin(true), "win");
+    assert!(win.contains("frame-src http://acpira-app.localhost\"") && win.contains("img-src http://acpira-app.localhost https: data:"));
+    assert!(win.contains(r#"href="http://acpira-app.localhost/webview/main.css""#) && win.contains(r#""platform":"win""#));
     let nonce = html.split("'nonce-").nth(1).unwrap().split('\'').next().unwrap();
     assert_eq!(html.matches(&format!(r#"nonce="{nonce}""#)).count(), 2);
     let tab = page_html(&PageConfig { host: PageHost::Browser, locale: "en".into(), dark: false, font: None, tab: Some("t-1".into()) });
@@ -241,6 +301,32 @@ mod tests {
     assert_eq!(route("/blobs/b.png", None, &web, None), Route::NotFound);
     assert!(matches!(route("/blobs/b.png", None, &web, Some(&blobs)), Route::File(_)));
     assert_eq!(route("/other", None, &web, Some(&blobs)), Route::NotFound);
+    // A packed bundle file answers under its own name, with its own type; a plain file of that name wins
+    std::fs::write(web.join("assets/c-AbCd1234.js.zst"), zstd::encode_all(&b"export {}"[..], 3).unwrap()).unwrap();
+    let packed = route("/webview/assets/c-AbCd1234.js", None, &web, None);
+    let Route::Packed { file, mime: m } = &packed else { panic!("{packed:?}") };
+    assert_eq!((unpack(file).unwrap().as_slice(), *m), (&b"export {}"[..], "text/javascript; charset=utf-8"));
+    std::fs::write(web.join("assets/c-AbCd1234.js"), "").unwrap();
+    assert!(matches!(route("/webview/assets/c-AbCd1234.js", None, &web, None), Route::File(_)));
+    // No packed fallback outside the bundle, nor past its root
+    std::fs::write(blobs.join("x.png.zst"), "").unwrap();
+    assert_eq!(route("/blobs/x.png", None, &web, Some(&blobs)), Route::NotFound);
+    std::fs::write(d.path().join("secret2.zst"), "").unwrap();
+    assert_eq!(route("/webview/../secret2", None, &web, None), Route::NotFound);
     assert_eq!(mime(Path::new("a/B.PNG")), "image/png");
+  }
+
+  #[test]
+  fn only_the_app_origin_counts_as_the_app() {
+    for windows in [false, true] {
+      let o = app_origin(windows);
+      assert!(is_app_url(&format!("{o}/index.html?host=editor"), o));
+      assert!(is_app_url(&format!("{o}/blank"), o));
+    }
+    assert!(!is_app_url("http://acpira-app.localhost.evil.com/", app_origin(true)));
+    assert!(!is_app_url("http://acpira-app.localhost:8080/", app_origin(true)));
+    assert!(!is_app_url("https://acpira-app.localhost/", app_origin(true)));
+    assert!(!is_app_url("acpira-app://elsewhere/", app_origin(false)));
+    assert!(!is_app_url("http://localhost/", app_origin(true)));
   }
 }

@@ -19,7 +19,7 @@ import { deliverToBrowserTab, installBrowserTabs, setRecentPages } from './panel
 import { panel } from './panel/store';
 import { deliverTerminal, startTerminals, terminalsConnected } from './panel/terminals';
 import { vscodeApi } from './vscodeApi';
-import { desktopShell, pushShellToast, runShellCommand, setUpdateState } from './desktop';
+import { desktopShell, pushShellToast, runShellCommand, setDesktopMenu, setUpdateState, setWindowMaximized } from './desktop';
 import { deliverRemote, watchConnections } from './remote/api';
 import type { QuickSettings } from './chat/DesktopFrame';
 import { SettingsShell, type SettingsHandlers } from './settings/SettingsShell';
@@ -40,7 +40,7 @@ declare global {
   // `shell: 'desktop'`: the standalone desktop app (rust/crates/acpira-desktop/src/page.rs), which turns on the desktop layout
   // `tab`: a browser page shown as a tab of the desktop tool panel (rust/crates/acpira-desktop/src/page.rs), whose transport comes from the chat
   // `remote`: the page offers SSH hosts without being the desktop app (the browser harness, test/host-preview/shim.js)
-  interface Window { __acpira?: { host: 'sidebar' | 'editor' | 'browser'; font?: Appearance['font']; sessionLinkBase?: string; shell?: 'desktop'; tab?: string; remote?: boolean } }
+  interface Window { __acpira?: { host: 'sidebar' | 'editor' | 'browser'; font?: Appearance['font']; sessionLinkBase?: string; shell?: 'desktop'; platform?: 'mac' | 'win' | 'linux'; tab?: string; remote?: boolean } }
 }
 
 // Always through the memo: acquireVsCodeApi() throws when called twice, and other components (Link) reach the api via vscodeApi()
@@ -250,6 +250,8 @@ export function App() {
         case 'pickedFolder': { const settle = folderPick.current; folderPick.current = undefined; settle?.(m.path); break; }
         case 'toast': pushShellToast(m); break;
         case 'updateState': setUpdateState(m.state); break;
+        case 'desktopMenu': setDesktopMenu(m.menus); break;
+        case 'windowState': setWindowMaximized(m.maximized); break;
         // The menu bar: settings is this page's switch, the rest are the chat's shortcuts (queued while settings is up)
         case 'shellCommand':
           if (m.command === 'settings') { setView('settings'); break; }

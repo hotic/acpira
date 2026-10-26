@@ -15,7 +15,7 @@
     "targets": ["app", "dmg"],
     "category": "DeveloperTool",
     "copyright": "hotic",
-    "icon": ["icons/icon.icns", "icons/icon.png"],
+    "icon": ["icons/icon.icns", "icons/icon.ico", "icons/icon.png"],
     "resources": { "../../dist/webview/": "webview/", "../../dist/picker.js": "picker.js" },
     "macOS": {
       "minimumSystemVersion": "26.0",

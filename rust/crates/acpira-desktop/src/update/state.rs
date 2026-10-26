@@ -14,7 +14,7 @@ use super::delta;
 use super::fetch::{self, Policy};
 use super::manifest::{self, MAX_MANIFEST};
 use super::stage;
-use super::swap::{self, ManualReason};
+use super::swap::{self, Layout, ManualReason};
 
 /// A delta larger than this share of the full package is not worth it: the full package is taken instead
 const DELTA_MAX_SHARE: f64 = 0.6;
@@ -79,7 +79,7 @@ pub struct Config {
 /// Everything the updater needs from the shell
 pub struct Env {
   pub config: Config,
-  /// The installed `.app` (None: not running from a bundle)
+  /// The installed `.app`, or Windows' exe (None: a development build; `swap::install_of`)
   pub installed: Option<PathBuf>,
   /// The updater's own cache folder (downloads, and staged bundles when on the install's volume)
   pub cache: PathBuf,
@@ -92,7 +92,7 @@ pub struct Env {
   pub log: Arc<dyn Fn(&str) + Send + Sync>,
 }
 
-/// A bundle ready to take the installed one's place
+/// A bundle (or exe) ready to take the installed one's place
 #[derive(Debug, Clone)]
 pub struct Staged {
   pub version: String,
@@ -119,6 +119,10 @@ fn now_ms() -> i64 {
 impl Updater {
   pub fn new(env: Env, auto: bool, on_change: impl Fn(&UpdateState) + Send + Sync + 'static) -> Arc<Updater> {
     let manual = if env.config.keys.is_empty() { Some(ManualReason::Unconfigured) } else { env.manual };
+    // The exe an update moved aside is free once its process (and the engine it ran) are gone
+    if let Some(installed) = &env.installed {
+      swap::remove_aside(installed);
+    }
     let state = UpdateState {
       phase: Phase::Idle,
       current: env.current.clone(),
@@ -243,6 +247,9 @@ impl Updater {
       return Ok(());
     }
     let cfg = &self.env.config;
+    if let Some(installed) = &self.env.installed {
+      swap::remove_aside(installed);
+    }
     self.set(|s| {
       s.phase = Phase::Checking;
       s.error = None;
@@ -279,10 +286,20 @@ impl Updater {
       return Ok(());
     }
     let installed = self.env.installed.clone().ok_or("not running from an app bundle")?;
+    let layout = Layout::of(&installed);
+    // A one-file install takes a one-file tree: Acpira.exe and nothing else
+    let one_exe = |b: &manifest::PlatformBuild| matches!(b.files.as_slice(), [f] if f.path == swap::EXE_NAME && f.link.is_none());
+    if layout == Layout::Exe && !one_exe(&build) {
+      return Err(format!("the {version} build for this platform is not one {}", swap::EXE_NAME));
+    }
     let dir = stage::staging_dir(&installed, &self.env.cache, &version);
     self.prune(&version);
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let app = dir.join("Acpira.app");
+    if !dir.starts_with(&self.env.cache) {
+      swap::hide(&dir);
+    }
+    // The file tree the packages describe: the bundle itself, or a folder holding the exe
+    let app = layout.tree(&dir);
     remove_any(&app)?;
     let mut built = false;
     let delta = build.deltas.get(&self.env.current).filter(|d| d.size as f64 <= build.full.size as f64 * DELTA_MAX_SHARE);
@@ -312,14 +329,16 @@ impl Updater {
       }
       let _ = std::fs::remove_file(&file);
     }
+    // macOS only (Config::release); a Windows exe has passed its whole check with verify_tree (stage.rs)
     if let Some(req) = &cfg.requirement {
       stage::verify_signature(&app, req).inspect_err(|_| _ = remove_any(&app))?;
     }
     if cfg.notarized {
       stage::verify_notarized(&app).inspect_err(|_| _ = remove_any(&app))?;
     }
-    self.log(&format!("{version} is staged at {}", app.display()));
-    *self.staged.lock().unwrap() = Some(Staged { version, path: app, dir });
+    let path = layout.staged_item(&app);
+    self.log(&format!("{version} is staged at {}", path.display()));
+    *self.staged.lock().unwrap() = Some(Staged { version, path, dir });
     self.set(|s| {
       s.phase = Phase::Ready;
       s.done = None;
@@ -370,13 +389,18 @@ impl Updater {
     }
   }
 
-  /// Puts the staged bundle in the installed one's place (at quit, or before a restart) and deletes the old one.
-  /// Returns the version now installed
+  /// Puts the staged bundle in the installed one's place (at quit, or before a restart) and deletes the old one; a
+  /// running exe is only moved aside, and deleted on a later start. Returns the version now installed
   pub fn apply(&self) -> Result<String, String> {
     let staged = self.staged.lock().unwrap().take().ok_or("no update is ready")?;
     let installed = self.env.installed.clone().ok_or("not running from an app bundle")?;
     self.set(|s| s.phase = Phase::Applying);
-    if let Err(e) = swap::swap(&staged.path, &installed) {
+    let placed = match Layout::of(&installed) {
+      Layout::Bundle => swap::swap(&staged.path, &installed),
+      // Fails on Windows while this process runs from it; remove_aside tries again later
+      Layout::Exe => swap::replace_exe(&staged.path, &installed).map(|aside| _ = std::fs::remove_file(aside)),
+    };
+    if let Err(e) = placed {
       let msg = format!("could not replace {}: {e}", installed.display());
       self.log(&msg);
       *self.staged.lock().unwrap() = Some(staged);
@@ -386,7 +410,7 @@ impl Updater {
       });
       return Err(msg);
     }
-    // The old bundle now sits where the new one was assembled
+    // The old bundle now sits where the new one was assembled (an exe's tree is left empty)
     let _ = remove_any(&staged.dir);
     self.log(&format!("installed {}", staged.version));
     Ok(staged.version)
@@ -551,6 +575,73 @@ mod tests {
     delta::verify_tree(&installed, &delta::scan(&new).unwrap()).unwrap();
     assert!(!staged.dir.exists());
     assert!(u.apply().is_err());
+  }
+
+  #[test]
+  fn a_single_exe_install_is_patched_and_renamed_into_place() {
+    let d = tempfile::tempdir().unwrap();
+    // The browser saved the exe under another name; the release's tree holds Acpira.exe
+    let installed = d.path().join("Tools/Acpira (1).exe");
+    let (old, new) = (d.path().join("old"), d.path().join("new"));
+    bundle(&d.path().join("old-src"), "1.0.0");
+    bundle(&d.path().join("new-src"), "1.1.0");
+    for (src, tree) in [("old-src", &old), ("new-src", &new)] {
+      std::fs::create_dir_all(tree).unwrap();
+      std::fs::copy(d.path().join(src).join("Contents/MacOS/acpira-engine"), tree.join("Acpira.exe")).unwrap();
+    }
+    std::fs::create_dir_all(installed.parent().unwrap()).unwrap();
+    std::fs::copy(old.join("Acpira.exe"), &installed).unwrap();
+    let full = d.path().join("full.tar.zst");
+    let files = delta::pack_full(&new, &full, 3).unwrap();
+    let dpath = d.path().join("d.delta");
+    delta::make_delta(&old, &new, "1.0.0", "1.1.0", &dpath, 3).unwrap();
+    let (full_bytes, delta_bytes) = (std::fs::read(&full).unwrap(), std::fs::read(&dpath).unwrap());
+    let mut served = vec![("full.tar.zst".to_owned(), full_bytes.clone()), ("d.delta".to_owned(), delta_bytes.clone())];
+    let srv = serve_with_manifest(&mut served, |base| {
+      let exe = PlatformBuild {
+        full: asset(base, "full.tar.zst", &full_bytes),
+        files: files.clone(),
+        deltas: BTreeMap::from([("1.0.0".to_owned(), asset(base, "d.delta", &delta_bytes))]),
+      };
+      // One manifest for both platforms: this one's build is the exe, the other's a bundle it must not touch
+      let other = PlatformBuild { full: asset(base, "nothing", b""), files: vec![], deltas: BTreeMap::new() };
+      let m = Manifest {
+        schema: 1,
+        version: "1.1.0".into(),
+        notes: String::new(),
+        minimum_system_version: None,
+        platforms: BTreeMap::from([(manifest::platform_key().unwrap(), exe), ("plan9-x86_64".to_owned(), other)]),
+      };
+      serde_json::to_vec(&m).unwrap()
+    });
+    let (u, _, lines) = updater(d.path(), installed.clone(), format!("{}/desktop-update.json", srv.base), "1.0.0");
+    u.run(true).unwrap();
+    assert!(!lines.lock().unwrap().iter().any(|l| l.contains("did not apply")), "{:?}", lines.lock().unwrap());
+    let staged = u.staged().unwrap();
+    assert!(staged.path.ends_with("Acpira/Acpira.exe"), "{}", staged.path.display());
+    assert_eq!(u.apply().unwrap(), "1.1.0");
+    assert_eq!(std::fs::read(&installed).unwrap(), std::fs::read(new.join("Acpira.exe")).unwrap());
+    // Nothing left beside it here (on Windows the old exe stays until its process is gone) nor in the cache
+    assert_eq!(std::fs::read_dir(installed.parent().unwrap()).unwrap().count(), 1);
+    assert!(!staged.dir.exists());
+  }
+
+  #[test]
+  fn an_exe_install_refuses_a_build_that_is_not_one_exe() {
+    let d = tempfile::tempdir().unwrap();
+    let installed = d.path().join("Tools/Acpira.exe");
+    std::fs::create_dir_all(installed.parent().unwrap()).unwrap();
+    std::fs::write(&installed, b"MZ").unwrap();
+    let (old, new) = (d.path().join("old.app"), d.path().join("new.app"));
+    bundle(&old, "1.0.0");
+    bundle(&new, "1.1.0");
+    let r = release(d.path(), &old, &new, false);
+    let (u, _, _) = updater(d.path(), installed.clone(), r.url, "1.0.0");
+    u.cycle(true);
+    let s = u.state();
+    assert_eq!(s.phase, Phase::Failed);
+    assert!(s.error.unwrap().contains("not one Acpira.exe"));
+    assert_eq!(std::fs::read(&installed).unwrap(), b"MZ");
   }
 
   #[test]

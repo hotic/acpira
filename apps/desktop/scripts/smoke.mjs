@@ -1,27 +1,36 @@
 // End-to-end smoke of the Tauri desktop app (docs/dev/desktop.md): the real app on a temp ACPIRA_HOME, profile and HOME,
-// with test/fake-agent.ts as its only agent, driven through the app's smoke hook (a Unix socket in a build with the
-// `smoke` feature: page scripts, window size, menu items, links). WKWebView has no DevTools protocol, so clicks and keys
-// are DOM events the page script dispatches; native menus, input methods, Finder drags and system dialogs are on the
-// hand-check list in docs/dev/desktop.md instead.
+// with test/fake-agent.ts as its only agent, driven through the app's smoke hook (a Unix socket, a named pipe on Windows,
+// in a build with the `smoke` feature: page scripts, window size, menu items, links). WKWebView has no DevTools protocol,
+// so clicks and keys are DOM events the page script dispatches; native menus, input methods, Finder drags and system
+// dialogs are on the hand-check list in docs/dev/desktop.md instead. On Windows the run takes `--app Acpira.exe` (a
+// cross-built `--features smoke` exe) and skips the macOS-only steps: the drag pasteboard and screenshots.
 //
 // The run stays in the background: the app takes no focus, shows no Dock icon and keeps its windows behind every other
 // window (ACPIRA_DESKTOP_BACKGROUND), so it never interrupts whoever is using the Mac.
 //
-//   node scripts/smoke.mjs [--app <Acpira.app or its executable, built with --features smoke>] [--engine <acpira>] [--keep] [--shots DIR]
+//   node scripts/smoke.mjs [--app <Acpira.app or its executable, built with --features smoke>] [--engine <acpira>]
+//                          [--fake-agent <bundled fake-agent.mjs>] [--pack-tool <acpira-update-pack>] [--keep] [--shots DIR]
+//
+// --fake-agent takes test/fake-agent.ts already bundled (esbuild), for a machine without the repository's node_modules
+// (the Windows PC runs this script beside the exe and the bundle)
 //
 // With --app <Acpira.app> the run also updates the app: it runs a copy of the bundle, packs a re-signed copy with a marker
 // file as the next version (full package, a delta from this one, a manifest signed with a throwaway key), serves them
 // on the loopback, and checks Ready → the restart toast → a new process from the replaced bundle on the same session.
+// With --app <Acpira.exe> on Windows it does the same with a copy of the exe and a second copy with a marker appended
+// (a PE runs with bytes after its last section), when it has the pack tool: --pack-tool, else built from rust/ here
+// (a machine with only the exe and the fake agent needs a cross-built acpira-update-pack.exe; docs/dev/desktop.md).
 // Without --app it builds and runs the debug binary (`cargo build --features smoke`) on the workspace's debug engine.
 // Needs the repository's bundles (`pnpm build`). After the app quits the run waits out the engine's idle grace and checks
 // that no agent process is left. --keep leaves the temp folder (logs, records); a failure always does
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { connect } from 'node:net';
+import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildSync } from 'esbuild';
 
 const SHELL = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const REPO = resolve(SHELL, '..', '..');
@@ -31,22 +40,27 @@ const option = name => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 
 const appArg = option('--app');
 const keep = argv.includes('--keep');
 const shotDir = option('--shots') && resolve(option('--shots'));
+const fakeAgentArg = option('--fake-agent') && resolve(option('--fake-agent'));
+const packToolArg = option('--pack-tool') && resolve(option('--pack-tool'));
 let engine = option('--engine') ?? process.env.ACPIRA_SIDECAR_BIN?.trim();
 
+const WIN = process.platform === 'win32';
+// The app protocol's origin as the page sees it (acpira_desktop::page::app_origin)
+const ORIGIN = WIN ? 'http://acpira-app.localhost' : 'acpira-app://localhost';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const say = line => console.log(`smoke: ${line}`);
 class SmokeError extends Error {}
 const fail = message => { throw new SmokeError(message); };
 
-// A short base: the engine's socket path under the temp home has to stay below 100 bytes
-const root = realpathSync(mkdtempSync('/tmp/acpira-tsmoke-'));
+// A short base: the engine's socket path under the temp home has to stay below 100 bytes (Windows uses pipes)
+const root = realpathSync(mkdtempSync(WIN ? join(tmpdir(), 'acpira-tsmoke-') : '/tmp/acpira-tsmoke-'));
 const home = join(root, 'home');
 const data = join(root, 'data');
 const user = join(root, 'user');
 const alpha = join(root, 'smoke-alpha');
 const beta = join(root, 'smoke-beta');
 const fakeAgent = join(root, 'fake-agent.mjs');
-const hookPath = join(root, 'hook.sock');
+const hookPath = WIN ? `\\\\.\\pipe\\acpira-smoke-${process.pid}` : join(root, 'hook.sock');
 const logFile = join(root, 'app.log');
 const desktopLog = join(root, 'user', 'logs', 'desktop.log');
 let appLog = '';
@@ -57,20 +71,31 @@ let passed = false;
 
 async function main() {
   try {
-    for (const f of ['dist/webview/main.js', 'dist/picker.js']) if (!existsSync(join(REPO, f))) fail(`${f} is missing: run pnpm build in the repository root`);
+    // The Windows exe carries the page; everything else reads it from the repository's dist/
+    if (!(WIN && appArg)) for (const f of ['dist/webview/main.js', 'dist/picker.js']) if (!existsSync(join(REPO, f))) fail(`${f} is missing: run pnpm build in the repository root`);
 
     let bin;
     let release;
     if (appArg) {
       bin = appArg.endsWith('.app') ? join(appArg, 'Contents', 'MacOS', 'Acpira') : appArg;
       if (!existsSync(bin)) fail(`no executable at ${bin}`);
+      // The Windows exe is its own engine
+      if (WIN) engine ??= bin;
       if (appArg.endsWith('.app')) {
         release = await prepareUpdate(resolve(appArg));
         bin = join(release.installed, 'Contents', 'MacOS', 'Acpira');
+      } else if (WIN) {
+        release = await prepareExeUpdate(resolve(appArg));
+        // The run's copy is the app and its own engine: after the update the same path is the new exe
+        if (release) {
+          bin = release.installed;
+          if (!option('--engine')) engine = bin;
+        }
       }
     } else {
       execFileSync('cargo', ['build', '--quiet', '--features', 'smoke'], { cwd: SHELL, stdio: 'inherit' });
-      bin = join(SHELL, 'target', 'debug', 'acpira-desktop-tauri');
+      bin = join(SHELL, 'target', 'debug', WIN ? 'acpira-desktop-tauri.exe' : 'acpira-desktop-tauri');
+      if (WIN) engine ??= bin;
       if (!engine) {
         execFileSync('cargo', ['build', '--quiet', '--bin', 'acpira'], { cwd: join(REPO, 'rust'), stdio: 'inherit' });
         engine = join(REPO, 'rust', 'target', 'debug', 'acpira');
@@ -85,10 +110,17 @@ async function main() {
     }
     mkdirSync(join(alpha, 'docs'), { recursive: true });
     writeFileSync(join(alpha, 'docs', 'guide.md'), '# guide\n');
-    buildSync({ entryPoints: [join(REPO, 'test', 'fake-agent.ts')], outfile: fakeAgent, bundle: true, platform: 'node', format: 'esm', logLevel: 'warning' });
+    if (fakeAgentArg) writeFileSync(fakeAgent, readFileSync(fakeAgentArg));
+    else {
+      const { buildSync } = await import('esbuild');
+      buildSync({ entryPoints: [join(REPO, 'test', 'fake-agent.ts')], outfile: fakeAgent, bundle: true, platform: 'node', format: 'esm', logLevel: 'warning' });
+    }
 
     const env = {
-      ...process.env, HOME: home, ACPIRA_HOME: data, ACPIRA_DESKTOP_USER_DATA: user, ACPIRA_DESKTOP_PICK: [alpha, beta].join(delimiter),
+      ...process.env, HOME: home,
+      // Windows keeps per-user data under these, VS Code's settings (the shared settings' seed) among them
+      ...(WIN ? { USERPROFILE: home, APPDATA: join(home, 'AppData', 'Roaming'), LOCALAPPDATA: join(home, 'AppData', 'Local') } : {}),
+      ACPIRA_HOME: data, ACPIRA_DESKTOP_USER_DATA: user, ACPIRA_DESKTOP_PICK: [alpha, beta].join(delimiter),
       ACPIRA_DESKTOP_HOOK: hookPath, ACPIRA_DESKTOP_BACKGROUND: '1',
     };
     for (const k of ['ACPIRA_ENGINE', 'ACPIRA_SIDECAR_BIN', 'SSH_CONNECTION', 'SSH_CLIENT', 'SSH_TTY']) delete env[k];
@@ -117,14 +149,14 @@ async function main() {
 
     page = await Hook.connect(hookPath);
     await page.waitFor('the chat page', `!!document.querySelector('.acp-shell')`);
-    const origin = await page.eval('location.origin + " " + isSecureContext + " " + history.length');
-    if (origin !== 'acpira-app://localhost true 1') fail(`the page runs on ${origin} (expected acpira-app://localhost, a secure context, no back entry)`);
+    const origin = await page.eval('location.protocol + "//" + location.host + " " + isSecureContext + " " + history.length');
+    if (origin !== `${ORIGIN} true 1`) fail(`the page runs on ${origin} (expected ${ORIGIN}, a secure context, no back entry)`);
 
     await page.waitFor('the empty state', `document.body.innerText.includes('Open a folder to start')`);
     await sleep(1000);
     if (await page.eval(`document.querySelectorAll('[data-session]').length`)) fail('a session row showed on a fresh home');
     if (records().length) fail(`a fresh home wrote session records: ${records().join(', ')}`);
-    say('fresh home on acpira-app://localhost shows the empty state and starts no session');
+    say(`fresh home on ${ORIGIN} shows the empty state and starts no session`);
 
     await page.click('the empty state button', `[...document.querySelectorAll('button')].find(b => b.innerText.includes('Open folder'))`);
     await page.waitFor('the first project', `document.body.innerText.includes('smoke-alpha')`);
@@ -153,14 +185,35 @@ async function main() {
     if (!inAlpha.some(n => n.includes('alpha-notes.md')) || inAlpha.some(n => n.includes('beta-notes.md'))) fail(`@ search in smoke-alpha listed: ${inAlpha.join(' | ')}`);
     say('@ search in smoke-alpha lists only its own file');
 
+    // The packaged app keeps assets/ zstd-compressed (scripts/package.mjs): each answers under its own name with the
+    // page's original bytes and type
+    if (release?.kind === 'app') {
+      const assets = join(release.installed, 'Contents', 'Resources', 'webview', 'assets');
+      const packed = readdirSync(assets).filter(n => n.endsWith('.zst')).map(n => n.slice(0, -'.zst'.length));
+      if (!packed.length) fail('the bundle has no packed assets');
+      const got = await page.eval(`Promise.all(${JSON.stringify(packed)}.map(async n => {
+        const r = await fetch('acpira-app://localhost/webview/assets/' + n);
+        const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', await r.arrayBuffer()));
+        return [n, r.status, r.headers.get('content-type'), [...digest].map(b => b.toString(16).padStart(2, '0')).join('')];
+      }))`);
+      for (const [name, status, type, digest] of got) {
+        const want = createHash('sha256').update(readFileSync(join(REPO, 'dist', 'webview', 'assets', name))).digest('hex');
+        if (status !== 200 || digest !== want) fail(`packed ${name} answered ${status} (${type}) with other bytes than dist/webview`);
+      }
+      const types = new Set(got.map(([, , type]) => type));
+      if (!types.has('text/javascript; charset=utf-8') || !types.has('font/woff2')) fail(`packed asset types: ${[...types].join(', ')}`);
+      say(`${packed.length} packed assets answer with their original bytes (${types.size} types)`);
+    }
+
     // A link to a session this machine does not have: the page says so
     await page.call({ op: 'link', url: 'acpira://session/00000000-0000-4000-8000-000000000000' });
     await page.waitFor('the not-here toast', `document.body.innerText.includes("isn't stored here")`);
     say('a link to a session from elsewhere shows the toast');
 
     // A Finder drag's paths come from the system's drag pasteboard (WKWebView gives a dropped file's name, not its path).
-    // The pasteboard is written only while no mouse button is down, so a drag of whoever uses the Mac is never touched
-    const wrote = execFileSync('osascript', ['-l', 'JavaScript', '-e', `ObjC.import('AppKit');
+    // The pasteboard is written only while no mouse button is down, so a drag of whoever uses the Mac is never touched.
+    // Windows hands a drop's paths over in the drop itself (a hand check)
+    const wrote = WIN ? 'windows' : execFileSync('osascript', ['-l', 'JavaScript', '-e', `ObjC.import('AppKit');
       if (Number($.NSEvent.pressedMouseButtons) !== 0) 'busy'; else {
         const pb = $.NSPasteboard.pasteboardWithName('Apple CFPasteboard drag');
         pb.clearContents;
@@ -177,7 +230,7 @@ async function main() {
       })()`);
       if (resolved !== alpha) fail(`pathForFile answered ${resolved}`);
       say('a Finder drag\'s folder path reaches the page through the drag pasteboard');
-    } else say('note: a mouse button was down, the drag pasteboard check was skipped');
+    } else if (!WIN) say('note: a mouse button was down, the drag pasteboard check was skipped');
 
     // The tool panel: closed at first, its toggle clear of the chat header's buttons; the tree, a folder easing open, a
     // file in the viewer, and a browser tab whose frame talks through this page
@@ -223,15 +276,17 @@ async function main() {
     await page.press('the new tab button', `document.querySelector('[data-panel-tabs] button[aria-label="New tab"]')`);
     await page.press('the terminal tile', `[...document.querySelectorAll('[data-new-tab] button')].find(b => b.textContent.trim() === 'Terminal')`);
     await page.waitFor('the terminal taking the focus', `!!document.activeElement?.closest('[data-terminal] .xterm')`);
+    // PowerShell on Windows: its own pid, no newline (named parameters: 5.1 binds the positional ones the other way)
+    const line = WIN ? 'Set-Content -Path terminal.txt -Value $PID -NoNewline\\r' : 'printf %s $$ > terminal.txt\\r';
     await page.eval(`(() => {
       const t = document.activeElement;
-      t.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'printf %s $$ > terminal.txt\\r' }));
+      t.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: '${line}' }));
       return true;
     })()`);
     const marker = join(alpha, 'terminal.txt');
     await waitUntil('the typed line to run in the project folder', () => existsSync(marker) && /^\d+$/.test(readFileSync(marker, 'utf8')), 15_000);
     const shellPid = Number(readFileSync(marker, 'utf8'));
-    const terminalTab = `[...document.querySelectorAll('[data-panel-tabs] [role="tab"]')].find(t => /^(zsh|bash|sh|fish)$/.test(t.textContent.trim()))`;
+    const terminalTab = `[...document.querySelectorAll('[data-panel-tabs] [role="tab"]')].find(t => /^(zsh|bash|sh|fish|powershell|pwsh|cmd)$/i.test(t.textContent.trim()))`;
     await page.waitFor('the terminal tab named after its shell', `!!(${terminalTab})`);
     if (shotDir) { await sleep(300); await page.shot(join(shotDir, 'panel-terminal.png')); }
     await page.press('the terminal tab\'s close button', `(${terminalTab})?.querySelector('[aria-label="Close tab"]')`);
@@ -294,8 +349,27 @@ async function main() {
     if (!existsSync(join(data, 'sessions', `${b}.json`))) fail('removing a project deleted its session');
     say('a removed project leaves the column, its session stays');
 
-    // A second window from the menu bar, then closed: the window list follows
-    await page.call({ op: 'menu', item: 'NewWindow' });
+    // Windows: no system title bar and no menu bar; the page draws the caption (maximize turns into restore and back) and
+    // the menu, whose items go back to the shell as menuCommand
+    if (process.platform === 'win32') {
+      const max = `document.querySelector('[data-window-caption] [data-op="maximize"]')`;
+      await page.waitFor('the caption', `document.querySelectorAll('[data-window-caption] button').length === 3`);
+      const glyph = await page.eval(`${max}.textContent`);
+      await page.press('maximize', max);
+      await page.waitFor('the restore glyph', `${max}.textContent !== ${JSON.stringify(glyph)}`);
+      await page.press('restore', max);
+      await page.waitFor('the maximize glyph again', `${max}.textContent === ${JSON.stringify(glyph)}`);
+      const menus = `['File', 'Edit', 'View', 'Help'].every(l => [...document.querySelectorAll('[role="menuitem"]')].some(e => e.textContent.trim() === l))`;
+      await page.press('the menu button', `document.querySelector('[data-app-menus]')`);
+      await page.waitFor('the four menus', menus);
+      await page.press('the menu button again', `document.querySelector('[data-app-menus]')`);
+      await page.waitFor('the menu closed', `!document.querySelector('[role="menuitem"]')`);
+      say('the page draws the caption (maximize, restore) and the menu (File, Edit, View, Help)');
+    }
+
+    // A second window from the menu bar (the page's menu on Windows), then closed: the window list follows
+    if (process.platform === 'win32') await page.eval(`window.__acpiraApi.postMessage({ type: 'menuCommand', id: 'NewWindow' })`);
+    else await page.call({ op: 'menu', item: 'NewWindow' });
     let windows = [];
     await waitUntil('two windows, both shown', async () => {
       windows = await page.call({ op: 'windows' });
@@ -320,7 +394,7 @@ async function main() {
 
     // A relaunch within the engine's idle grace: the saved window comes back on its session, on the same engine process
     const before = appLog.length;
-    rmSync(hookPath, { force: true });
+    if (!WIN) rmSync(hookPath, { force: true });
     app = launch([]);
     app.stdout.on('data', collect);
     app.stderr.on('data', collect);
@@ -355,17 +429,22 @@ async function main() {
       await within('the old process to quit for the restart', relaunchExit, 15_000);
       app = undefined;
       page.close();
-      rmSync(hookPath, { force: true });
-      if (!existsSync(join(release.installed, 'Contents', 'Resources', 'smoke-update.txt'))) fail('the installed bundle was not replaced');
+      if (!WIN) rmSync(hookPath, { force: true });
+      if (!release.replaced()) fail(`the installed ${release.kind} was not replaced`);
       page = await Hook.connect(hookPath);
       await waitUntil('the updated app on the same session', async () => (await page.call({ op: 'windows' }).catch(() => []))[0]?.session === session, 30_000);
       await page.waitFor('its conversation after the update', `document.body.innerText.includes('hello world')`);
-      const updatedPid = processes().find(p => p.command.startsWith(bin))?.pid;
+      // Windows quotes the program in the command line it records
+      const updatedPid = processes().find(p => p.command.replace(/^"/, '').startsWith(bin) && !/ (serve|stdio)( |$)/.test(p.command))?.pid;
       if (!updatedPid || updatedPid === oldPid) fail(`no new process runs ${bin}`);
       const fresh = readFileSync(desktopLog, 'utf8').slice(logBefore);
       const newEngine = Number(/sidecar ready: pid (\d+)/.exec(fresh)?.[1]);
       if (newEngine) engines.push(newEngine);
       say(`updated to ${release.version} through the delta (${release.deltaKb} KB of ${release.fullKb} KB): process ${oldPid} → ${updatedPid} on session ${session}, engine ${newEngine || '?'}`);
+      if (release.kind === 'exe') {
+        // The old exe went aside; the engine it started may still run from it, so it is deleted on a later start
+        say(`the previous exe ${existsSync(`${bin}.old`) ? 'waits beside it as Acpira.exe.old' : 'is already gone'}`);
+      }
       await page.call({ op: 'quit' }).catch(() => {});
       page.close();
       page = undefined;
@@ -409,13 +488,56 @@ async function prepareUpdate(appPath) {
   execFileSync('ditto', [appPath, installed]);
   execFileSync('ditto', [appPath, next]);
   const current = execFileSync('plutil', ['-extract', 'CFBundleShortVersionString', 'raw', join(appPath, 'Contents', 'Info.plist')], { encoding: 'utf8' }).trim();
-  const parts = current.split('.').map(Number);
-  parts[parts.length - 1] += 1;
-  const version = parts.join('.');
+  const version = nextPatch(current);
   writeFileSync(join(next, 'Contents', 'Resources', 'smoke-update.txt'), `${version}\n`);
   execFileSync('codesign', ['--force', '--deep', '--sign', '-', next], { stdio: 'ignore' });
+  const marker = join(installed, 'Contents', 'Resources', 'smoke-update.txt');
+  const served = await serveRelease(packTool(), { installed, next, current, version, platform: 'darwin-aarch64', kind: 'app' });
+  return { ...served, kind: 'app', replaced: () => existsSync(marker) };
+}
+
+// The same for Windows' single exe: the run's copy (under the temp folder, which a smoke build does not refuse; see
+// smoke.rs update_config) and a copy with a marker appended as the next version; the exe carries no signature yet
+async function prepareExeUpdate(exePath) {
+  const pack = packTool();
+  if (!pack) {
+    say('no --pack-tool and no rust/ checkout to build one: the update step is skipped');
+    return undefined;
+  }
+  const installed = join(root, 'Programs', 'Acpira.exe');
+  const next = join(root, 'next', 'Acpira.exe');
+  for (const d of [dirname(installed), dirname(next)]) mkdirSync(d, { recursive: true });
+  copyFileSync(exePath, installed);
+  // The engine role answers --version with the release's version, the shell's too
+  const current = execFileSync(exePath, ['--version'], { encoding: 'utf8' }).trim();
+  const version = nextPatch(current);
+  writeFileSync(next, Buffer.concat([readFileSync(exePath), Buffer.from(`\nacpira-smoke-update ${version}\n`)]));
+  const want = sha256(next);
+  const served = await serveRelease(pack, { installed, next, current, version, platform: 'windows-x86_64', kind: 'exe' });
+  return { ...served, kind: 'exe', replaced: () => sha256(installed) === want };
+}
+
+function nextPatch(version) {
+  const parts = version.split('.').map(Number);
+  parts[parts.length - 1] += 1;
+  return parts.join('.');
+}
+
+function sha256(file) {
+  return createHash('sha256').update(readFileSync(file)).digest('hex');
+}
+
+// The update pack tool: --pack-tool, else the debug build from this checkout's rust/ (none without one)
+function packTool() {
+  if (packToolArg) return packToolArg;
+  if (!existsSync(join(REPO, 'rust', 'Cargo.toml'))) return undefined;
   execFileSync('cargo', ['build', '--quiet', '-p', 'acpira-desktop', '--bin', 'acpira-update-pack'], { cwd: join(REPO, 'rust'), stdio: 'inherit' });
-  const pack = join(REPO, 'rust', 'target', 'debug', 'acpira-update-pack');
+  return join(REPO, 'rust', 'target', 'debug', WIN ? 'acpira-update-pack.exe' : 'acpira-update-pack');
+}
+
+// Packs `installed` as version `current` and `next` as `version` (full package and a delta from `current`), signs the
+// manifest with a throwaway key and serves it all on the loopback
+async function serveRelease(pack, { installed, next, current, version, platform, kind }) {
   const keys = spawnSync(pack, ['keygen'], { encoding: 'utf8' });
   const seed = keys.stdout.trim();
   const publicKey = /([0-9a-f]{64})/.exec(keys.stderr)?.[1];
@@ -430,10 +552,11 @@ async function prepareUpdate(appPath) {
   await new Promise(r => server.listen(0, '127.0.0.1', r));
   server.unref();
   const base = `http://127.0.0.1:${server.address().port}`;
-  execFileSync(pack, ['pack', '--app', installed, '--version', current, '--base-url', base, '--out', join(files, 'base'), '--level', '3', '--unsigned'], { stdio: 'ignore' });
-  const packed = execFileSync(pack, ['pack', '--app', next, '--version', version, '--base-url', base, '--out', join(files, 'out'), '--level', '3',
-    '--prev', `${current}=${join(files, 'base', `Acpira-${current}-darwin-aarch64.app.tar.zst`)}`], { env: { ...process.env, DESKTOP_UPDATE_KEY: seed }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  const manifest = JSON.parse(readFileSync(join(files, 'out', 'desktop-update.json'), 'utf8')).platforms['darwin-aarch64'];
+  const common = ['--base-url', base, '--level', '3', '--platform', platform];
+  execFileSync(pack, ['pack', '--app', installed, '--version', current, '--out', join(files, 'base'), ...common, '--unsigned'], { stdio: 'ignore' });
+  const packed = execFileSync(pack, ['pack', '--app', next, '--version', version, '--out', join(files, 'out'), ...common,
+    '--prev', `${current}=${join(files, 'base', `Acpira-${current}-${platform}.${kind}.tar.zst`)}`], { env: { ...process.env, DESKTOP_UPDATE_KEY: seed }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const manifest = JSON.parse(readFileSync(join(files, 'out', 'desktop-update.json'), 'utf8')).platforms[platform];
   const delta = manifest.deltas[current];
   if (!delta) fail(`the pack tool listed no delta from ${current}: ${packed}`);
   say(`release ${version} packed: full ${Math.round(manifest.full.size / 1024)} KB, delta ${Math.round(delta.size / 1024)} KB, served on ${base}`);
@@ -486,6 +609,10 @@ function alive(pid) {
 }
 
 function processes() {
+  if (WIN) {
+    const raw = execFileSync('powershell.exe', ['-NoProfile', '-Command', 'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CommandLine | ConvertTo-Json -Compress'], { encoding: 'utf8', maxBuffer: 64 << 20 });
+    return JSON.parse(raw).map(p => ({ pid: p.ProcessId, ppid: p.ParentProcessId, command: p.CommandLine ?? '' }));
+  }
   return execFileSync('ps', ['-eo', 'pid,ppid,command'], { encoding: 'utf8' }).split('\n').slice(1).map(line => {
     const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
     return m ? { pid: Number(m[1]), ppid: Number(m[2]), command: m[3] } : undefined;
@@ -495,10 +622,16 @@ function processes() {
 // The app's smoke hook: one JSON command per line, one answer per command
 class Hook {
   static async connect(path) {
-    await waitUntil('the smoke hook', () => existsSync(path), 30_000);
-    const sock = connect(path);
-    await new Promise((res, rej) => { sock.once('connect', res); sock.once('error', rej); });
-    return new Hook(sock);
+    // A socket file shows up when the app listens; a pipe is only known by connecting to it
+    if (!WIN) await waitUntil('the smoke hook', () => existsSync(path), 30_000);
+    const end = Date.now() + 30_000;
+    for (;;) {
+      const sock = connect(path);
+      const ok = await new Promise(res => { sock.once('connect', () => res(true)); sock.once('error', () => res(false)); });
+      if (ok) return new Hook(sock);
+      if (Date.now() > end) fail('timed out waiting for the smoke hook');
+      await sleep(200);
+    }
   }
 
   constructor(sock) {

@@ -480,7 +480,7 @@ impl Inner {
     }
   }
 
-  #[cfg(unix)]
+  #[cfg(any(unix, windows))]
   async fn connect(self: Arc<Self>, generation: u64, cmd: SidecarCommand, ep: EngineEndpoint, total: usize) {
     let me = self.clone();
     let cancelled = move || {
@@ -504,7 +504,7 @@ impl Inner {
         return;
       }
     };
-    let (read, mut write) = stream.into_split();
+    let (read, mut write) = tokio::io::split(stream);
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
     let (close_tx, close_rx) = oneshot::channel::<()>();
     let (done_tx, done_rx) = watch::channel(false);
@@ -552,17 +552,18 @@ impl Inner {
     });
   }
 
-  #[cfg(not(unix))]
+  #[cfg(not(any(unix, windows)))]
   async fn connect(self: Arc<Self>, generation: u64, cmd: SidecarCommand, _ep: EngineEndpoint, total: usize) {
     {
       self.st.lock().unwrap().connecting = false;
     }
-    self.spawn_failed(generation, &cmd, "the persistent engine needs Unix domain sockets", total);
+    self.spawn_failed(generation, &cmd, "the persistent engine needs Unix domain sockets or named pipes", total);
   }
 
   fn spawn_child(self: &Arc<Self>, generation: u64, cmd: SidecarCommand, total: usize) {
     let mut c = tokio::process::Command::new(&cmd.command);
-    c.args(&cmd.args)
+    c.args(&cmd.attached_args)
+      .args(&cmd.args)
       .envs(&cmd.env)
       .stdin(std::process::Stdio::piped())
       .stdout(std::process::Stdio::piped())
@@ -570,6 +571,9 @@ impl Inner {
     if let Some(cwd) = (self.opts.cwd)() {
       c.current_dir(cwd);
     }
+    // The desktop app is a GUI program with no console: a console program it starts would get a window of its own
+    #[cfg(windows)]
+    c.creation_flags(crate::process::CREATE_NO_WINDOW);
     // Spawning needs the runtime's reactor
     let _guard = self.rt.enter();
     let mut child = match c.spawn() {

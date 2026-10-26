@@ -40,3 +40,38 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm exec vitest run packages/ui/test/fileLinks.test.ts apps/vscode/test/terminalLaunch.test.ts
       - run: pnpm build
+
+  # The desktop app's Windows exe (docs/dev/desktop.md, Windows): the shell's clippy with the smoke hook, one portable
+  # Acpira.exe with the page and the engine inside, and the end-to-end smoke against it (fake agent, background run)
+  desktop:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.99.1'
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            rust
+            apps/desktop
+          key: desktop
+      - uses: pnpm/action-setup@v6
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Shell clippy (Windows)
+        working-directory: apps/desktop
+        run: cargo clippy --locked --features smoke --all-targets -- -D warnings
+      - name: Package the smoke exe
+        working-directory: apps/desktop
+        run: node scripts/package-windows.mjs --smoke
+      - name: Desktop smoke
+        working-directory: apps/desktop
+        run: node scripts/smoke.mjs --app target/windows/Acpira.exe

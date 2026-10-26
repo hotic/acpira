@@ -140,7 +140,7 @@ export const ToolPanelDock = memo(function ToolPanelDock(p: ToolPanelDockProps) 
         )}
       </aside>
       {p.cwd && p.sessionId && (
-        <div data-panel-toggle className="pointer-events-none absolute top-0 right-0 z-40 flex h-[calc(var(--hdr)+var(--sheet-inset))] items-center pt-[var(--sheet-inset)] pr-[calc(var(--sheet-inset)+var(--start-x))]">
+        <div data-panel-toggle className="pointer-events-none absolute top-0 right-0 z-40 flex h-[calc(var(--hdr)+var(--title-top))] items-center pt-[var(--title-top)] pr-[calc(var(--sheet-inset)+var(--start-x)+var(--caps-w,0px))]">
           <IconButton className="pointer-events-auto" title={`${label} ${TOGGLE_KEY}`} aria-label={t('panel.label')} aria-pressed={shown} onClick={() => panel.toggle()}>
             <PanelRight strokeWidth={1.5} />
           </IconButton>
@@ -264,9 +264,9 @@ function ToolPanel(p: ToolPanelProps) {
   const s = usePanel();
   const fresh = useFreshTab();
   return (
-    <div className="flex min-h-0 flex-1 flex-col pt-[var(--sheet-inset)]" data-tool-panel>
+    <div className="flex min-h-0 flex-1 flex-col pt-[var(--title-top)]" data-tool-panel>
       {/* The tabs on the window's title line, the line moves the window; the pinned toggle sits at its end */}
-      <div data-drag-region data-panel-tabs className="flex h-hdr shrink-0 items-center gap-1 pr-[calc(var(--start-x)+var(--ctl)+var(--gap))] pl-[calc(var(--start-x)-var(--gap)*0.5)]">
+      <div data-drag-region data-panel-tabs className="flex h-hdr shrink-0 items-center gap-1 pr-[calc(var(--start-x)+var(--ctl)+var(--gap)+var(--caps-w,0px))] pl-[calc(var(--start-x)-var(--gap)*0.5)]">
         <div role="tablist" aria-label={t('panel.label')} className="flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none]">
           {s.tabs.map(tab => {
             const Icon = TAB_ICON[tab.kind];

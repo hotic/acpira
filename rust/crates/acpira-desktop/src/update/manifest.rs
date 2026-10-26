@@ -23,8 +23,33 @@ pub struct Manifest {
   pub notes: String,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub minimum_system_version: Option<String>,
-  /// By platform key (`darwin-aarch64`, the ACP Registry's names); one build per platform
+  /// By platform key (`darwin-aarch64`, `windows-x86_64`: the ACP Registry's names); one build per platform. A macOS
+  /// build's files are the `.app` bundle's, a Windows build's the one file `Acpira.exe`
   pub platforms: BTreeMap<String, PlatformBuild>,
+}
+
+impl Manifest {
+  /// Folds in the manifest another runner packed for the same release (the release workflow packs each platform where
+  /// it builds and signs the merged manifest once): the same schema and version, no platform twice. Notes are taken
+  /// from whichever has them; two different system minimums are refused, as one of them would not hold
+  pub fn merge(&mut self, other: Manifest) -> Result<(), String> {
+    if other.schema != self.schema || other.version != self.version {
+      return Err(format!("cannot merge {} (schema {}) into {} (schema {})", other.version, other.schema, self.version, self.schema));
+    }
+    if let Some(p) = other.platforms.keys().find(|p| self.platforms.contains_key(*p)) {
+      return Err(format!("{p} is in both manifests"));
+    }
+    match (&self.minimum_system_version, other.minimum_system_version) {
+      (Some(a), Some(b)) if *a != b => return Err(format!("minimum system versions differ: {a} and {b}")),
+      (None, b) => self.minimum_system_version = b,
+      _ => {}
+    }
+    if self.notes.is_empty() {
+      self.notes = other.notes;
+    }
+    self.platforms.extend(other.platforms);
+    Ok(())
+  }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -214,6 +239,47 @@ mod tests {
     assert!(verify(&bad_version, sign(&bad_version, &SEED).unwrap().as_bytes(), &keys).unwrap_err().contains("plain version"));
     let future = serde_json::to_vec(&serde_json::json!({ "schema": 2, "version": "9.0.0", "platforms": {} })).unwrap();
     assert!(verify(&future, sign(&future, &SEED).unwrap().as_bytes(), &keys).unwrap_err().contains("schema 2"));
+  }
+
+  fn build(path: &str) -> PlatformBuild {
+    PlatformBuild {
+      full: Asset { url: "https://github.com/f".into(), size: 1, sha256: "ab".into() },
+      files: vec![FileEntry { path: path.into(), size: 1, sha256: "ab".into(), mode: 0o644, link: None }],
+      deltas: BTreeMap::new(),
+    }
+  }
+
+  fn one(version: &str, platform: &str, path: &str) -> Manifest {
+    Manifest {
+      schema: SCHEMA,
+      version: version.into(),
+      notes: String::new(),
+      minimum_system_version: None,
+      platforms: BTreeMap::from([(platform.into(), build(path))]),
+    }
+  }
+
+  #[test]
+  fn one_release_merges_the_platforms_packed_on_separate_runners() {
+    let mut mac = one("1.11.0", "darwin-aarch64", "Contents/MacOS/Acpira");
+    mac.notes = "Fixes".into();
+    mac.minimum_system_version = Some("26.0".into());
+    let win = one("1.11.0", "windows-x86_64", "Acpira.exe");
+    let mut m = win.clone();
+    m.merge(mac.clone()).unwrap();
+    assert_eq!(m.platforms.keys().collect::<Vec<_>>(), ["darwin-aarch64", "windows-x86_64"]);
+    assert_eq!((m.notes.as_str(), m.minimum_system_version.as_deref()), ("Fixes", Some("26.0")));
+    assert_eq!(m.platforms["windows-x86_64"].files[0].path, "Acpira.exe");
+    // The merged bytes verify like any manifest, each platform reading its own build
+    let bytes = serde_json::to_vec(&m).unwrap();
+    let back = verify(&bytes, sign(&bytes, &SEED).unwrap().as_bytes(), &[public_key(&SEED).unwrap()]).unwrap();
+    assert_eq!(back, m);
+    // Another version, a platform twice, conflicting minimums
+    assert!(m.clone().merge(one("1.11.1", "linux-x86_64", "acpira")).unwrap_err().contains("1.11.1"));
+    assert!(m.clone().merge(win).unwrap_err().contains("windows-x86_64 is in both"));
+    let mut other_min = one("1.11.0", "linux-x86_64", "acpira");
+    other_min.minimum_system_version = Some("27.0".into());
+    assert!(m.clone().merge(other_min).unwrap_err().contains("differ"));
   }
 
   #[test]

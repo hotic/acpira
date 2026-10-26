@@ -50,7 +50,7 @@ import { launchable } from '@acpira/shared/agentOrder';
 import { parseRemoteFolder } from '@acpira/shared/remote';
 import { connectionOf, useFolderHost } from '../remote/api';
 import { RemoteFolderDialog } from '../remote/RemoteFolderDialog';
-import { COLUMN_HIDDEN_KEY, DesktopContext, macOS, useShellCommands, useShellToasts } from '../desktop';
+import { COLUMN_HIDDEN_KEY, DesktopContext, macOS, useShellCommands, useShellToasts, windowsOS } from '../desktop';
 import { droppedPathResolver, setWebviewState, webviewState } from '../vscodeApi';
 import { moveDraft } from './useComposerDraft';
 import { ProjectPick, StartPicker, usePresence } from './StartPage';
@@ -647,13 +647,16 @@ export function Shell(p: ShellProps) {
       if (!e.dataTransfer.types.includes('Files')) return;
       e.preventDefault();
       setFolderOver(false);
-      const dirs = [...e.dataTransfer.items].flatMap(item => {
+      // The entries are only readable during the drop; their paths may come later (the Windows shell answers async)
+      const asked = [...e.dataTransfer.items].flatMap(item => {
         const file = item.kind === 'file' && item.webkitGetAsEntry()?.isDirectory ? item.getAsFile() : null;
-        const path = file && pathForFile(file);
-        return path ? [path] : [];
+        return file ? [pathForFile(file)] : [];
       });
-      for (const dir of dirs) on.categoryOp?.({ op: 'addProject', cwd: dir });
-      if (dirs[0]) openProject(dirs[0]);
+      void Promise.all(asked).then(paths => {
+        const dirs = paths.filter((d): d is string => !!d);
+        for (const dir of dirs) on.categoryOp?.({ op: 'addProject', cwd: dir });
+        if (dirs[0]) openProject(dirs[0]);
+      });
     },
   };
 
@@ -845,7 +848,7 @@ export function Shell(p: ShellProps) {
           data-desktop={desktop || undefined}
           // The files layout (desktop.css, panel.css): explorer | stage | chat | session column
           data-layout={files ? 'files' : undefined}
-          data-os={desktop && macOS ? 'mac' : undefined}
+          data-os={desktop ? (macOS ? 'mac' : windowsOS ? 'win' : undefined) : undefined}
           // A docked column beside the chat, open: on its left, or at the window's right edge in the files layout
           data-column={(desktop && position === 'left' && canDock && !columnHidden) || undefined}
           data-column-moving={columnMoving || undefined}

@@ -9,6 +9,7 @@ pub mod agent_ext;
 pub mod agents_cli;
 pub mod bridge_core;
 pub mod bus;
+pub mod cli;
 pub mod external;
 pub mod file_rank;
 pub mod handoff;

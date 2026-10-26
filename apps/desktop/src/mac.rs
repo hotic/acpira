@@ -13,7 +13,7 @@ use objc2_user_notifications::{
   UNNotificationResponse, UNNotificationSound, UNUserNotificationCenter, UNUserNotificationCenterDelegate,
 };
 
-type Log = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
+use crate::os::{Log, TitleDoubleClick, session_of_request};
 
 /// WebKit keeps a page's rendering updates near 60 fps by default (on a 160 Hz display that lands at 80). The switch is
 /// the private feature PreferPageRenderingUpdatesNear60FPSEnabled; WKPreferences is shared with the live page, so turning
@@ -75,12 +75,6 @@ pub fn keep_rendering_in_background(window: &tauri::WebviewWindow, log: Log) {
 
 /// What a double click on a title bar does, as System Settings › Desktop & Dock says: zoom (the default), minimize or
 /// nothing
-pub enum TitleDoubleClick {
-  Zoom,
-  Minimize,
-  Nothing,
-}
-
 pub fn title_double_click() -> TitleDoubleClick {
   unsafe {
     let Some(cls) = AnyClass::get(c"NSUserDefaults") else { return TitleDoubleClick::Zoom };
@@ -304,11 +298,6 @@ define_class!(
   }
 );
 
-/// A request id carries its session: `session:<id>:<unique>`
-fn session_of_request(id: &str) -> Option<&str> {
-  id.strip_prefix("session:")?.rsplit_once(':').map(|(s, _)| s).filter(|s| !s.is_empty())
-}
-
 pub struct Notifier {
   center: Retained<UNUserNotificationCenter>,
   _delegate: Retained<NotificationDelegate>,
@@ -352,15 +341,5 @@ impl Notifier {
     };
     let request = UNNotificationRequest::requestWithIdentifier_content_trigger(&NSString::from_str(&id), &content, None);
     self.center.addNotificationRequest_withCompletionHandler(&request, None);
-  }
-}
-
-#[cfg(test)]
-mod tests {
-  #[test]
-  fn a_request_id_names_its_session() {
-    assert_eq!(super::session_of_request("session:abc-1:ff00"), Some("abc-1"));
-    assert_eq!(super::session_of_request("toast:ff00"), None);
-    assert_eq!(super::session_of_request("session::ff"), None);
   }
 }
