@@ -10,8 +10,8 @@ const view = (patch: Partial<ListView>): ListView => ({ ...DEFAULT_VIEW, ...patc
 describe('session list view', () => {
   it('reads a stored view value by value, falling back on anything it does not know', () => {
     expect(readView(undefined)).toEqual(DEFAULT_VIEW);
-    expect(readView({ group: 'time', order: 'nope', per: 10, model: 'yes', status: ['unread', 'bogus', 'unread'], agents: ['codex', 3], since: 'week' }))
-      .toEqual({ ...DEFAULT_VIEW, group: 'time', per: 10, status: ['unread'], agents: ['codex'], since: 'week' });
+    expect(readView({ group: 'time', order: 'nope', per: 10, model: 'yes', pinned: 'project', status: ['unread', 'bogus', 'unread'], agents: ['codex', 3], since: 'week' }))
+      .toEqual({ ...DEFAULT_VIEW, group: 'time', per: 10, pinned: 'project', status: ['unread'], agents: ['codex'], since: 'week' });
   });
 
   it('keeps sessions that match any pick of a kind and every kind picked', () => {

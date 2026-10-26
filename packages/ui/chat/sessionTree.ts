@@ -3,7 +3,8 @@ import type { SessionCategory, SessionSummary } from '@acpira/shared/transcript'
 // The session list as a tree: pinned sessions on top, then one node per project (the session's cwd), each holding its
 // user categories and the sessions filed nowhere ("loose"). Under the workspace scope there is a single node (the
 // window's project) and the list shows no project header; under "all" every project is a collapsible group, the
-// window's own first. A session sits in exactly one place: pinned, a category of its own project, or loose
+// window's own first. A session sits in exactly one place: pinned, a category of its own project, or loose. Grouped with
+// `pinInProject`, pinned sessions leave the top section and lead their own project instead
 
 export interface CategoryNode {
   category: SessionCategory;
@@ -18,7 +19,9 @@ export interface ProjectNode {
   open: boolean;
   categories: CategoryNode[];
   loose: SessionSummary[];
-  // Every non-pinned session of the project in view
+  // The project's pinned sessions, listed before everything else (only with `pinInProject`; otherwise empty)
+  pinned: SessionSummary[];
+  // Every session of the project in view (its pinned ones only when they are listed here)
   count: number;
 }
 
@@ -37,13 +40,17 @@ export interface TreeInput {
   // The window's project folder; absent (the LAB) every project is foreign
   workspace?: string;
   grouped: boolean;
-  // A search or channel filter is on: categories / projects without a match hide, the rest open
+  // A search or a view filter is on: categories / projects without a match hide
   filtering: boolean;
+  // A search is on: every group opens so each match is in sight (filters keep the user's folds). Defaults to `filtering`
+  expand?: boolean;
   // A project shell's registered folders (SessionCategories.projects, the desktop app): grouped, they lead in this order,
   // a folder without a session included, and any other folder a session ran in follows by latest activity
   registered?: string[];
   // Folders the project shell took off its list (SessionCategories.removedProjects): their sessions show only in a search
   removed?: string[];
+  // Grouped: pinned sessions sit first in their own project rather than in one section on top
+  pinInProject?: boolean;
 }
 
 // The category a session is filed under, if that category still exists and belongs to the session's project
@@ -52,27 +59,32 @@ export function categoryOf(s: SessionSummary, categories: SessionCategory[]): Se
   return categories.find(c => c.id === s.category && c.cwd === s.cwd);
 }
 
-export function buildSessionTree({ shown, categories, collapsedProjects, workspace, grouped, filtering, registered, removed }: TreeInput): SessionTree {
-  const pinned = shown.filter(s => s.pinned);
-  const rest = shown.filter(s => !s.pinned);
+export function buildSessionTree({ shown, categories, collapsedProjects, workspace, grouped, filtering, registered, removed, pinInProject, expand = filtering }: TreeInput): SessionTree {
+  // Pinning into projects only means something when there are project groups to pin into
+  const inProject = grouped && !!pinInProject;
+  const pinned = inProject ? [] : shown.filter(s => s.pinned);
+  const rest = inProject ? shown : shown.filter(s => !s.pinned);
   const node = (cwd: string, sessions: SessionSummary[]): ProjectNode => {
     const own = categories.filter(c => c.cwd === cwd);
     const filed = new Map(own.map(c => [c.id, [] as SessionSummary[]]));
     const loose: SessionSummary[] = [];
+    const pins: SessionSummary[] = [];
     for (const s of sessions) {
+      if (s.pinned) { pins.push(s); continue; }
       const c = categoryOf(s, own);
       if (c) filed.get(c.id)!.push(s);
       else loose.push(s);
     }
     const nodes = own
-      .map(c => ({ category: c, sessions: filed.get(c.id)!, open: filtering || !c.collapsed }))
+      .map(c => ({ category: c, sessions: filed.get(c.id)!, open: expand || !c.collapsed }))
       .filter(n => !filtering || n.sessions.length > 0);
     return {
       cwd,
       current: cwd === workspace,
-      open: filtering || !collapsedProjects.includes(cwd),
+      open: expand || !collapsedProjects.includes(cwd),
       categories: nodes,
       loose,
+      pinned: pins,
       count: sessions.length,
     };
   };

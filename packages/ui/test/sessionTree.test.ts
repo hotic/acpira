@@ -45,6 +45,30 @@ describe('session tree', () => {
     ]);
   });
 
+  it('a view filter hides empty groups but keeps the folds; only a search opens every group', () => {
+    const shown = [s('a', { category: 'ssh' }), s('b', { cwd: '/work/old' })];
+    const filtered = buildSessionTree({ ...base, shown, grouped: true, filtering: true, expand: false, collapsedProjects: ['/work/old'] });
+    expect(filtered.projects.map(p => [p.cwd, p.open, p.categories.map(n => [n.category.id, n.open])])).toEqual([
+      [WS, true, [['ssh', false]]],
+      ['/work/old', false, []],
+    ]);
+    const searched = buildSessionTree({ ...base, shown, grouped: true, filtering: true, collapsedProjects: ['/work/old'] });
+    expect(searched.projects.map(p => [p.open, p.categories.map(n => n.open)])).toEqual([[true, [true]], [true, []]]);
+  });
+
+  it('pinned into projects: each pinned session leads its own project, a project holding only pins still shows', () => {
+    const shown = [s('a', { pinned: true, category: 'ui' }), s('b'), s('c', { pinned: true, cwd: '/work/pins' })];
+    const tree = buildSessionTree({ ...base, shown, grouped: true, pinInProject: true });
+    expect(tree.pinned).toEqual([]);
+    expect(tree.projects.map(p => [p.cwd, p.pinned.map(x => x.id), p.loose.map(x => x.id), p.count])).toEqual([
+      [WS, ['a'], ['b'], 2],
+      ['/work/pins', ['c'], [], 1],
+      [OTHER, [], [], 0],
+    ]);
+    // Without project groups there is nothing to pin into: the section on top stays
+    expect(buildSessionTree({ ...base, shown, grouped: false, pinInProject: true }).pinned.map(x => x.id)).toEqual(['a', 'c']);
+  });
+
   it('a project shell lists its registered folders first, in their order and empty ones included, then the rest', () => {
     const shown = [s('a', { cwd: '/work/old', updatedAt: at(9) }), s('b', { cwd: '/work/new', updatedAt: at(2) }), s('c', { updatedAt: at(5) })];
     const tree = buildSessionTree({ ...base, categories: [], workspace: undefined, shown, grouped: true, registered: ['/work/old', '/work/empty', WS] });

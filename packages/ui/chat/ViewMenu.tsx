@@ -1,12 +1,12 @@
 import type { ReactNode } from 'react';
-import { ArrowDownWideNarrow, Calendar, ChevronRight, Circle, CircleDot, Clock, Eye, Folder, Layers, List, ListFilter, LoaderCircle, MailCheck } from 'lucide-react';
+import { ArrowDownWideNarrow, Calendar, ChevronRight, Circle, CircleDot, Clock, Eye, Folder, Layers, List, ListFilter, LoaderCircle, MailCheck, Pin } from 'lucide-react';
 import type { AgentInfo } from '@acpira/shared/transcript';
 import { cn } from '../ui/cn';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
 import { t } from '../i18n';
 import { AgentMark } from './AgentMark';
-import { clearFilters, filterCount, VIEW_GROUPS, VIEW_ORDERS, VIEW_PER, VIEW_SINCE, VIEW_STATUSES, type ListView, type ViewGroup, type ViewStatus } from './sessionView';
+import { clearFilters, filterCount, VIEW_GROUPS, VIEW_ORDERS, VIEW_PER, VIEW_PINS, VIEW_SINCE, VIEW_STATUSES, type ListView, type ViewGroup, type ViewStatus } from './sessionView';
 
 const separator = <DropdownMenu.Separator className="my-1 h-px bg-line" />;
 const GROUP_ICON: Record<ViewGroup, ReactNode> = {
@@ -54,6 +54,8 @@ export interface ViewMenuProps {
   // Desktop: the menu floats to the right of the column, over the chat, so a narrow column never squeezes it (Cursor's
   // placement); the per-project count applies there only. Elsewhere it hangs under its button, ending where it does
   desktop?: boolean;
+  // The list has project groups, so pinned sessions can sit inside them (offered while grouped by project)
+  pins?: boolean;
   onMarkAllRead?: () => void;
   // The trigger's own classes (a section label's action, or the filter row's)
   className?: string;
@@ -61,7 +63,7 @@ export interface ViewMenuProps {
 
 // The session list's view menu: grouping, ordering and what rows show, then the filters (status, channel,
 // date) with a reset, then "mark all as read". The trigger turns to the accent with a dot while any filter is on
-export function ViewMenu({ view, onChange, agents, desktop, onMarkAllRead, className }: ViewMenuProps) {
+export function ViewMenu({ view, onChange, agents, desktop, pins, onMarkAllRead, className }: ViewMenuProps) {
   const n = filterCount(view);
   const set = (patch: Partial<ListView>) => onChange({ ...view, ...patch });
   const side = desktop ? 'inline-end' : 'inline-start';
@@ -93,6 +95,12 @@ export function ViewMenu({ view, onChange, agents, desktop, onMarkAllRead, class
               </>}
               <Pick checked={view.model} onPick={() => set({ model: !view.model })}>{t('session.view.show.model')}</Pick>
             </Sub>
+            {/* Grouped by project: where pinned sessions sit, its own row so the Show submenu stays within one screen */}
+            {pins && view.group === 'project' && (
+              <Sub side={side} icon={<Pin strokeWidth={1.5} />} label={t('session.view.pinned')} value={t(`session.view.pinned.${view.pinned}`)}>
+                {VIEW_PINS.map(k => <Pick key={k} checked={view.pinned === k} onPick={() => set({ pinned: k })}>{t(`session.view.pinned.${k}`)}</Pick>)}
+              </Sub>
+            )}
             {separator}
             <div className="flex min-h-row items-center px-2 text-3 text-fg-3">
               <span className="min-w-0 flex-1 truncate">{t('session.view.filters')}</span>
