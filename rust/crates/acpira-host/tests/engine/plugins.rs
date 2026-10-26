@@ -194,3 +194,34 @@ async fn a_plugin_s_mcp_server_is_checked_and_reaches_local_sessions_only() {
   plugins.action(PluginAction::SafeMode { on: true }).await.unwrap();
   assert!(provider("grok".into(), cwd, None, true).await.0.is_empty());
 }
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugin_hears_sessions_made_renamed_and_deleted() {
+  let fake = fake_or_skip!();
+  if !acpira_host::plugins::host::on_path("node") {
+    return;
+  }
+  let dir = tempfile::tempdir().unwrap();
+  let plugins = tempfile::tempdir().unwrap();
+  let rt = crate::acp_session::plugin_runtime::recorder(plugins.path(), &["session.*"]).await;
+  let mut opts = Opts::fake(&fake);
+  opts.plugin_runtime = Some(rt.clone());
+  let m = Mgr::new(dir.path(), opts);
+  m.init().await;
+  m.new_session(None).await;
+  let id = m.active_id().unwrap();
+  m.handle(json!({ "type": "renameSession", "id": id, "title": "Chest wishes" })).await;
+  m.handle(json!({ "type": "deleteSession", "id": id })).await;
+  let heard = || crate::acp_session::plugin_runtime::heard(plugins.path());
+  until(|| heard().iter().any(|e| e["type"] == "session.deleted"), 5000).await;
+  let events = heard();
+  let of = |t: &str| events.iter().find(|e| e["type"] == t).unwrap_or_else(|| panic!("no {t} in {events:?}"))["data"].clone();
+  assert_eq!((of("session.created")["how"].as_str(), of("session.created")["session"].as_str()), (Some("new"), Some(id.as_str())));
+  assert_eq!(of("session.renamed")["title"], "Chest wishes");
+  assert_eq!(of("session.deleted")["session"], id.as_str());
+  // Only the family it asked for
+  assert!(events.iter().all(|e| e["type"].as_str().unwrap().starts_with("session.")), "{events:?}");
+  m.dispose().await;
+  rt.stop_all().await;
+}

@@ -218,6 +218,9 @@ impl AcpSession {
     if !apply_update(&mut c.state, &u) {
       return;
     }
+    if !c.replaying {
+      self.emit_update(&mut c, &kind, &u);
+    }
     if kind == "usage_update" {
       c.usage.notifications = true;
       c.usage.revision += 1;

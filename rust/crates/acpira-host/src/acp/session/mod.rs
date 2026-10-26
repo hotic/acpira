@@ -22,6 +22,7 @@ pub mod images;
 pub mod lifecycle;
 pub mod plan_build;
 pub mod plugin_card;
+pub mod plugin_events;
 pub mod prompt;
 pub mod queue;
 pub mod relay;
@@ -115,6 +116,8 @@ pub struct SessionDeps {
   pub plugin_hooks: Option<crate::hooks::PluginHooks>,
   /// The plugins' prompt folders, sent to the built-in agent when a session opens; None: no plugins (tests)
   pub plugin_prompts: Option<crate::hooks::PluginPrompts>,
+  /// The plugins' resident processes, which hear the session's events; None: no plugins (tests)
+  pub plugin_runtime: Option<std::sync::Arc<crate::plugins::runtime::Runtimes>>,
   /// The `mcpServers` entry of Acpira's own MCP server (`host_mcp.rs`), sent with session/new, load and resume
   pub host_mcp: Option<crate::host_mcp::HostMcp>,
   /// Takes the session's cross-engine lease for a turn about to start (`store::session_lease`) and returns its pin; Err:
@@ -236,6 +239,8 @@ pub(crate) struct Core {
   pub workflow_logs: crate::acp::session::workflow_logs::WorkflowLogs,
   /// The project's workspace hooks: the running turn's snapshot, rejected edits and the gate's rounds (`hooks.rs`)
   pub hooks: crate::acp::session::hooks::HookState,
+  /// What the plugins' processes were last told about each tool row (`plugin_events.rs`)
+  pub plugin_events: crate::acp::session::plugin_events::EventState,
   /// The last encoded view for `(rev, status, running, model_shapes)`: selecting an unchanged live session reuses it without re-serializing
   pub cached_view: Option<(i64, SessionStatus, bool, Option<ModelShapes>, acpira_shared::protocol::RawJson, acpira_shared::session_patch::ViewParts)>,
 }
@@ -388,6 +393,7 @@ impl AcpSession {
           ultracode,
           workflow_logs: Default::default(),
           hooks: Default::default(),
+          plugin_events: Default::default(),
           cached_view: None,
         }),
         deps,

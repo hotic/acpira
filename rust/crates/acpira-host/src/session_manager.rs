@@ -219,6 +219,7 @@ pub struct ManagerDeps {
   pub plugin_hooks: Option<crate::hooks::PluginHooks>,
   /// The plugins' prompt folders for the built-in agent's sessions; None in tests that do not need them
   pub plugin_prompts: Option<crate::hooks::PluginPrompts>,
+  pub plugin_runtime: Option<Arc<crate::plugins::runtime::Runtimes>>,
   /// Acpira's own MCP server (`acpira mcp`) for every session request; None without a known executable
   pub host_mcp: Option<crate::host_mcp::HostMcp>,
   /// ACPIRA_HOME: cross-engine session leases live under its `run/leases` (`store::session_lease`)
@@ -1430,6 +1431,7 @@ impl SessionManager {
     self.state.lock().live.insert(s.id.clone(), s.clone());
     self.set_active(v, Some(s.id.clone()));
     self.process_change(&s.id);
+    s.emit("session.created", || serde_json::json!({ "how": "import" }));
     s.start().await;
     // The agent restored the native context but replayed nothing: say what happened
     if s.status() == SessionStatus::Ready && s.turn_count() == 0 {
@@ -2005,6 +2007,7 @@ impl SessionManager {
       shared_mcp: self.deps.shared_mcp.clone(),
       plugin_hooks: self.deps.plugin_hooks.clone(),
       plugin_prompts: self.deps.plugin_prompts.clone(),
+      plugin_runtime: self.deps.plugin_runtime.clone(),
       claim: Some(Arc::new(move |id: &str| claim_me.upgrade().map_or(Ok(0), |m| m.claim_turn(id)))),
       remote: self.deps.remote.clone(),
     }
@@ -2089,6 +2092,7 @@ impl SessionManager {
       me.state.lock().live.insert(s.id.clone(), s.clone());
       me.set_active(&v, Some(s.id.clone()));
       me.process_change(&s.id);
+      s.emit("session.created", || serde_json::json!({ "how": "new" }));
       s.start().await;
       // A real session just read the current configOptions; the probe snapshot retires
       me.state.lock().probed.remove(&id);
@@ -2260,6 +2264,7 @@ impl SessionManager {
     s.hold_settings(&settings);
     self.state.lock().live.insert(id.to_owned(), s.clone());
     self.emit_session(&s);
+    s.emit("session.opened", || serde_json::json!({}));
     s.start().await;
     // Also on a failed start: it releases the hold and the prompts it queued
     s.adopt_controls(settings).await;
@@ -2910,6 +2915,13 @@ impl SessionManager {
   }
 
   /// Rename / pin: a live session mutates itself; one not loaded is patched on disk
+  /// An event for the plugins' processes that no live session carries (the session may not be open here)
+  fn plugin_event(&self, event: &str, data: impl FnOnce() -> Value) {
+    if let Some(rt) = &self.deps.plugin_runtime {
+      rt.emit(event, data);
+    }
+  }
+
   pub async fn rename_session(&self, id: &str, title: &str) -> Result<()> {
     if !is_session_id(id) {
       return Ok(());
@@ -2922,6 +2934,7 @@ impl SessionManager {
     if t.is_empty() {
       return Ok(());
     }
+    self.plugin_event("session.renamed", || serde_json::json!({ "session": id, "title": t }));
     if let Some(live) = self.live(id) {
       live.rename(&t);
       return self.save_now(live, hold).await;
@@ -3014,6 +3027,7 @@ impl SessionManager {
       return Ok(());
     }
     let _hold = self.hold_record(id).await?;
+    self.plugin_event("session.deleted", || serde_json::json!({ "session": id }));
     if let Some(c) = self.deps.chatgpt.clone().filter(|c| c.owns(id)) {
       c.delete(id).await?;
       self.rehome(id).await;
@@ -3277,6 +3291,7 @@ impl SessionManager {
     self.deps.store.flush(Arc::new(record.clone())).await?;
     self.drop_empty_current(v).await;
     let s = AcpSession::new(record, self.session_deps());
+    s.emit("session.created", || serde_json::json!({ "how": "fork", "forkedFrom": source_id }));
     // The target's controls the way new_session_for seeds them: its known controls with the remembered settings laid
     // over before the spawn (held, so a prompt sent while it spawns waits for them), adopted once it is up
     let last = target.as_ref().and_then(|id| self.last_settings(id));

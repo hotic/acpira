@@ -254,6 +254,7 @@ impl Harness {
       shared_mcp: None,
       plugin_hooks: None,
       plugin_prompts: None,
+      plugin_runtime: None,
       host_mcp: None,
       claim: None,
       remote: None,

@@ -142,7 +142,18 @@ impl AcpSession {
 
   // Permission gate
 
+  /// A permission request from the agent: the plugins hear it asked and answered around everything that decides it
   pub(crate) async fn on_permission(self: &Arc<Self>, req: Value, cancel: Cancel) -> Result<Value, RpcError> {
+    self.emit_permission_asked(&req);
+    let answer = self.decide_permission(req.clone(), cancel).await;
+    match &answer {
+      Ok(v) => self.emit_permission_replied(&req, v),
+      Err(e) => self.emit_permission_replied(&req, &json!({ "outcome": { "outcome": "error", "message": e.message } })),
+    }
+    answer
+  }
+
+  async fn decide_permission(self: &Arc<Self>, req: Value, cancel: Cancel) -> Result<Value, RpcError> {
     if cancel.is_cancelled() {
       return Ok(cancelled_permission());
     }

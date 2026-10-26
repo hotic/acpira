@@ -242,9 +242,9 @@ impl PluginHost {
 
   /// After a commit here: load it, tell the pages and the other engines
   fn committed(&self, change: &Option<Change>) {
-    if change.is_none() {
-      return;
-    }
+    let Some(c) = change else { return };
+    let (id, action) = (c.id.clone(), c.action.clone());
+    self.runtimes.emit("plugin.changed", || json!({ "id": id, "action": action }));
     // The commit wrote the file within this second: the stamp alone may not tell
     *self.stamp.lock() = None;
     self.reload();

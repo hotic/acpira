@@ -188,6 +188,7 @@ impl AcpSession {
     }
     let turn_id = accepted.user_turn.id.clone();
     let turn = self.open_turn(&text, origin, plan_id.as_deref(), &mut accepted);
+    self.emit_turn_started(origin, &text);
     let blocks = std::mem::take(&mut accepted.prepared.blocks);
     // From here on Claude Code has a transcript for this native session to resume
     self.core.lock().unprompted = false;
@@ -781,6 +782,7 @@ impl AcpSession {
     self.drain_terminal(c);
     let failed = error.is_some();
     let ended = !failed && stop == TurnStop::EndTurn;
+    self.emit_turn_ended(c, stop, error.as_ref());
     match error {
       Some(e) => fail_turn(&mut c.state, e),
       None => end_turn(&mut c.state, stop),

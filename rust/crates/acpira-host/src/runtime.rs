@@ -239,6 +239,7 @@ impl HostRuntime {
         shared_mcp: Some(crate::shared_config::mcp_provider(Arc::new(move || mcp_home.home()), Some(plugin_servers))),
         plugin_hooks: Some(plugin_hooks),
         plugin_prompts: Some(plugin_prompts),
+        plugin_runtime: Some(plugins.runtimes().clone()),
         host_mcp,
         // Both switches are off by default (`notifySound` / `notifySystem`); read at each edge, so a change applies to the next one
         attention: Some(Arc::new(move |a: Attention| {
