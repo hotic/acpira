@@ -44,15 +44,25 @@
   &[data-more-below] { --fade-bottom: var(--scroll-fade-size); }
 }
 
-/* The transcript fades only its lower edge, and only while Thread marks data-more-below (the reader left the bottom).
-   The second, fully opaque layer covers the scrollbar gutter, so the thumb keeps its full length; the bar stays visible
-   here, unlike scroll-fade. */
+/* The transcript fades only its lower edge, and only while Thread marks data-more-below (the reader left the bottom)
+   or the floating connecting row sits over the tail. The second, fully opaque layer covers the scrollbar gutter, so
+   the thumb keeps its full length; the bar stays visible here, unlike scroll-fade. */
 @utility thread-fade {
-  &[data-more-below] {
-    mask-image: linear-gradient(to bottom, #000 calc(100% - var(--scroll-fade-size)), transparent), linear-gradient(#000, #000);
+  &[data-more-below],
+  &:has(~ [data-plan-dock] [data-session-connecting]) {
+    --thread-fade-clear: 0px;
+    --thread-fade-span: var(--scroll-fade-size);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - var(--thread-fade-clear) - var(--thread-fade-span)), transparent calc(100% - var(--thread-fade-clear))), linear-gradient(#000, #000);
     mask-size: 100% 100%, var(--scrollbar) 100%;
     mask-position: 0 0, 100% 0;
     mask-repeat: no-repeat;
+  }
+  &:has(~ [data-plan-dock] [data-session-connecting]):not([data-more-below]) {
+    --thread-fade-clear: var(--gap);
+    --thread-fade-span: calc(var(--row) - var(--gap));
+  }
+  &[data-more-below]:has(~ [data-plan-dock] [data-session-connecting]) {
+    --thread-fade-clear: calc(var(--row) + var(--spacing-gap-half));
   }
 }
 

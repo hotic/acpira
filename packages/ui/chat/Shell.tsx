@@ -27,7 +27,7 @@ import { HistoryComposerContext, HistoryContext, HistoryMessage } from './Histor
 import { QuoteToolbar } from './QuoteToolbar';
 import { Composer, type ComposerProps } from './Composer';
 import type { MentionPersona } from './Mention';
-import { Notice } from './Notice';
+import { ConnectingNotice, Notice } from './Notice';
 import { ExternalSessionNotice } from './ExternalSessionNotice';
 import { Toast } from '../ui/Toast';
 import { writeClipboardLater } from '../ui/useCopied';
@@ -1039,13 +1039,15 @@ export function Shell(p: ShellProps) {
                     </HistoryContext.Provider>
                   </PlanDocumentContext.Provider>
                   <div
-                    ref={planDock}
                     data-plan-dock
                     className={cn('pointer-events-none absolute inset-x-0 bottom-0 z-10', wide && a.composer === 'island' && 'mx-auto w-full max-w-[calc(var(--content-w)+2*var(--page))]')}
                   >
-                    {/* The session goal heads the floating to-do card, so the dock keeps one silhouette */}
-                    <PlanBar key={`plan:${p.activeSessionId}`} turns={p.turns} running={p.running}
-                      goal={p.external ? undefined : p.goal} goalActions={p.goalActions} onGoalAction={goalAction} />
+                    {!p.external && <ConnectingNotice status={p.status} agent={p.agent} />}
+                    <div ref={planDock}>
+                      {/* The session goal heads the floating to-do card, so the dock keeps one silhouette */}
+                      <PlanBar key={`plan:${p.activeSessionId}`} turns={p.turns} running={p.running}
+                        goal={p.external ? undefined : p.goal} goalActions={p.goalActions} onGoalAction={goalAction} />
+                    </div>
                   </div>
                   {(toasts.length > 0 || (desktop && shellToasts.length > 0)) && (
                     <div ref={toastRef} className="pointer-events-none absolute inset-x-0 bottom-[calc(var(--gap)+var(--thread-dock-height,0px))] z-10 flex flex-col items-center gap-1 px-page">

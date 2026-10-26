@@ -61,7 +61,28 @@ interface Way {
 const glyph = 'size-icon shrink-0 text-fg-3';
 const rowIcon = (Icon: typeof UserRound) => <Icon strokeWidth={1.5} />;
 
-// A bar pinned above the composer while the session isn't ready: connecting / login required / error / read-only. Renders nothing when ready.
+// Floats over the thread's lower edge rather than taking a slot in DockStack, so opening a stored session never shrinks
+// the thread viewport or pushes its history up while the CLI starts
+export function ConnectingNotice({ status, agent }: { status: SessionStatus; agent: AgentInfo }) {
+  const late = useLate(status === 'starting');
+  // A warm agent answers within a few frames: the row only comes up once starting has taken a moment, so switching agents
+  // on the start page does not flash it (reported 2026-10-23)
+  if (status !== 'starting' || !late) return null;
+  const label = t('notice.connecting', { agent: agent.name });
+  // Match the composer's text inset. Only the connection glyph loops;
+  // the complete status fades in together and its label stays still.
+  return (
+    <div className="pointer-events-none px-dock pb-gap-half" data-session-connecting>
+      <RowEntranceContext.Provider value={false}>
+        <Row key={agent.id} lead={<span aria-hidden="true"><Orb kind="fetch" /></span>} className="px-pad fade-in" role="status" aria-live="polite" aria-atomic="true" title={label}>
+          <span className="truncate">{label}</span>
+        </Row>
+      </RowEntranceContext.Provider>
+    </div>
+  );
+}
+
+// A bar pinned above the composer while the session isn't ready: login required / error / read-only / closed. Renders nothing when ready or starting.
 // Every state shares chat/Alert's skeleton: glyph + title, then the one primary action, the other ways behind one menu
 // (a single other way stays a plain button), and retry as an icon when it is not the primary; one line of text below,
 // which progress and failure feedback replace instead of stacking more lines. Below the notice container tier the
@@ -72,23 +93,7 @@ const rowIcon = (Icon: typeof UserRound) => <Icon strokeWidth={1.5} />;
 // A locked credential store (the macOS keychain in an SSH session) keeps the saved logins unreadable, so importing or signing in again
 // would only duplicate them: unlocking is the one action then
 export function Notice({ status, error, agent, authMethods, accounts, accountId, accountAction, onLogin, onRetry, onNewSession, onSelectAccount, onAddAccount, onUnlock, onTakeOver }: NoticeProps) {
-  const late = useLate(status === 'starting');
-  if (status === 'ready') return null;
-  if (status === 'starting') {
-    // A warm agent answers within a few frames: the row only comes up once starting has taken a moment, so switching agents
-    // on the start page does not flash it (reported 2026-10-23)
-    if (!late) return null;
-    const label = t('notice.connecting', { agent: agent.name });
-    // Match the composer's text inset. Only the connection glyph loops;
-    // the complete status fades in together and its label stays still.
-    return <div className="relative -top-gap-half px-dock" data-session-connecting>
-      <RowEntranceContext.Provider value={false}>
-        <Row key={agent.id} lead={<span aria-hidden="true"><Orb kind="fetch" /></span>} className="px-pad fade-in" role="status" aria-live="polite" aria-atomic="true" title={label}>
-          <span className="truncate">{label}</span>
-        </Row>
-      </RowEntranceContext.Provider>
-    </div>;
-  }
+  if (status === 'ready' || status === 'starting') return null;
   const withAccounts = !!agent.accounts;
   const locked = status === 'auth_required' && withAccounts && !!agent.credentialsLocked;
   const action = status === 'auth_required' && accountAction?.agent === agent.id ? accountAction : undefined;

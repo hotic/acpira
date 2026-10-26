@@ -520,6 +520,8 @@
   --spacing-gap-half: calc(var(--gap) / 2);
   /* A docked list's right padding beside its stable thin gutter: padding and gutter together match the left padding (gap-half) */
   --spacing-list-gutter: max(0px, calc(var(--gap) / 2 - var(--scrollbar-thin)));
+  /* A dialog body's right padding beside its stable thin gutter: padding and gutter together match the left padding (pad) */
+  --spacing-dialog-gutter: max(0px, calc(var(--pad) - var(--scrollbar-thin)));
   --spacing-code-output: var(--code-output-max);
   --spacing-code-line: var(--code-output-line-height);
   /* Command card: compact padding around the command and its output, and the space after an open card */

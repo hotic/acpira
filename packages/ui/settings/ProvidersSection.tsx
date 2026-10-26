@@ -230,7 +230,7 @@ function AddModelDialog({ provider: p, busy, onAdd, onRemove, onClose }: {
           {fetch.pending && <Group><Note shimmer>{t('settings.providers.fetching')}</Note></Group>}
           {fetch.outcome?.kind === 'failed' && <Group><Note><span className="text-danger [overflow-wrap:anywhere]">{fetch.outcome.error}</span></Note></Group>}
           {!fetch.pending && <Command.Empty>{t('settings.providers.addModel.typeId')}</Command.Empty>}
-          <Command.List searchable fill className={blockList}>
+          <Command.List searchable fill flush className={blockList}>
             {(m: Pick) => <Command.Item key={m.typed ? `typed:${m.id}` : m.id} value={m} disabled={busy} className={blockItem}
               onClick={() => {
                 if (taken(m)) { onRemove(m.id); return; }

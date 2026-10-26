@@ -104,7 +104,8 @@ export const inputBox = 'min-w-0 rounded-md border border-line bg-chip px-3 text
 // Inside a Group (or as a section header) the surface owns the horizontal inset, so the row drops its own.
 const GroupContext = createContext(false);
 const settingRow = 'min-h-(--setting-row) py-(--setting-row-pad) text-2 data-[detail]:min-h-(--setting-row-detail)';
-function useSettingRow() {
+// A settings row's padding and leading: its own side padding only outside a Group (whose block pads it)
+export function useSettingRow() {
   return cn(settingRow, !useContext(GroupContext) && 'px-pad');
 }
 // A title over its second line: the two lines a few pixels apart, touching they read as crowded
@@ -277,7 +278,9 @@ export function SettingsDialog({ title, sub, icon, control, wide, tall, onClose,
   const scrim = (e: MouseEvent) => { if (e.target === e.currentTarget) onClose(); };
   return <Dialog.Root open onOpenChange={next => { if (!next) onClose(); }}>
     <Dialog.Portal>
-      <Dialog.Popup onClick={scrim} className="absolute inset-0 z-30 flex items-center justify-center bg-scrim p-pad">
+      {/* acp-settings: the settings measures (dialog widths, row leading) also where the dialog opens outside the
+          settings shell, such as the remote folder picker from the session column */}
+      <Dialog.Popup onClick={scrim} className="acp-settings absolute inset-0 z-30 flex items-center justify-center bg-scrim p-pad">
         <div className={cn('flex max-h-full max-w-full flex-col overflow-hidden rounded-lg border border-line bg-bg-1 shadow-pop', wide ? 'w-(--dialog-w-wide)' : 'w-(--dialog-w)', tall && 'h-(--dialog-h)')}>
           <header className="flex shrink-0 items-center gap-gap border-b border-line py-gap pr-gap pl-pad">
             {icon && <span className="flex size-lead shrink-0 items-center justify-center text-fg-2 [&>svg]:size-lead [&>svg]:stroke-[1.5]">{icon}</span>}
@@ -299,8 +302,12 @@ export function SettingsDialog({ title, sub, icon, control, wide, tall, onClose,
 
 // A dialog's content column: tab strip, search box and blocks stacked on one outer edge, scrolling as one
 export function DialogBody({ children, className }: { children: ReactNode; className?: string }) {
-  // Blocks keep their height and the body scrolls; a shrinking block would clip its own rows instead
-  return <div className={cn('scroll-thin flex min-h-0 flex-1 flex-col gap-gap overflow-y-auto p-pad [&>*]:shrink-0', className)}>{children}</div>;
+  // Blocks keep their height and the body scrolls; a shrinking block would clip its own rows instead.
+  // The thin gutter stays reserved (scroll-stable), so a filter that crosses the dialog height never shifts the
+  // column sideways; the right padding gives that gutter back, keeping both text edges at pad. A body marked
+  // overflow-hidden holds its own scroller and gets no gutter (the unlayered scroll-stable would beat overflow-hidden)
+  const scrolls = !/(^|\s)overflow-hidden(\s|$)/.test(className ?? '');
+  return <div className={cn('scroll-thin flex min-h-0 flex-1 flex-col gap-gap overflow-y-auto p-pad [&>*]:shrink-0', scrolls && 'scroll-stable pr-dialog-gutter', className)}>{children}</div>;
 }
 
 // A dialog footer's destructive action, on the left: quiet until hovered, its words on the body's text edge
@@ -433,16 +440,16 @@ export function Switch({ checked, onChange, label, disabled }: { checked: boolea
   return <SwitchPrimitive checked={checked} aria-label={label} disabled={disabled} onCheckedChange={onChange} />;
 }
 
-// Numeric field committing on blur / Enter, read like a select: the value and its unit on the left, a stepper at the
-// right end where a select has its caret. Local text state so half-typed values don't round-trip through the host.
-// Out-of-range input snaps back to the current value rather than being clamped, so a typo never silently lands on a
-// bound; the stepper stops at the bounds
+// Numeric input committing on blur / Enter: a plain text field at the control width, the unit at its trailing edge.
+// Local text state so half-typed values don't round-trip through the host; out-of-range input snaps back to the
+// current value rather than being clamped, so a typo never silently lands on a bound; ArrowUp / ArrowDown step within bounds
 export function NumberField({ value, onCommit, min, max, step = 1, unit, label }: { value: number; onCommit: (v: number) => void; min?: number; max?: number; step?: number; unit?: string; label: string }) {
   const [text, setText] = useState(String(value));
   useEffect(() => { setText(String(value)); }, [value]);
   const commit = () => {
     const n = Number(text);
     if (!text.trim() || !Number.isFinite(n) || (min !== undefined && n < min) || (max !== undefined && n > max)) { setText(String(value)); return; }
+    setText(String(n));
     if (n !== value) onCommit(n);
   };
   const bump = (dir: 1 | -1) => {
@@ -453,37 +460,26 @@ export function NumberField({ value, onCommit, min, max, step = 1, unit, label }
     setText(String(n));
     if (n !== value) onCommit(n);
   };
-  const onKey = (e: KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setText(String(value)); };
-  const half = 'absolute inset-x-0 h-1/2 rounded-sm outline-none transition-colors hover:bg-hover';
+  const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') e.currentTarget.blur();
+    else if (e.key === 'Escape') setText(String(value));
+    else if (e.key === 'ArrowUp') { e.preventDefault(); bump(1); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); bump(-1); }
+  };
   return (
-    <div className="flex h-ctl w-(--ctl-w) max-w-full items-center gap-2 rounded-md border border-line bg-hover pr-1 pl-3 text-2 text-fg-1 transition-colors focus-within:bg-active hover:border-line-strong">
-      <label className="flex min-w-0 flex-1 cursor-text items-baseline gap-1 tabular-nums">
-        {/* The input is as wide as its text (a hidden copy sizes the cell), so the unit follows the number */}
-        <span className="inline-grid min-w-0">
-          <span aria-hidden className="invisible col-start-1 row-start-1 whitespace-pre">{text || ' '}</span>
-          <input
-            type="number"
-            inputMode="numeric"
-            aria-label={label}
-            value={text}
-            min={min}
-            max={max}
-            step={step}
-            onChange={e => setText(e.target.value)}
-            onBlur={commit}
-            onKeyDown={onKey}
-            className="col-start-1 row-start-1 w-full min-w-0 bg-transparent outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-          />
-        </span>
-        {unit && <span className="shrink-0 text-fg-3">{unit}</span>}
-      </label>
-      {/* The arrow keys step the field too, so the halves stay out of the tab order */}
-      <span className="relative flex size-ctl-sm shrink-0 items-center justify-center text-fg-3">
-        <ChevronsUpDown className="size-icon" strokeWidth={1.75} aria-hidden />
-        <button type="button" tabIndex={-1} aria-label={t('settings.number.up', { name: label })} onClick={() => bump(1)} className={cn(half, 'top-0')} />
-        <button type="button" tabIndex={-1} aria-label={t('settings.number.down', { name: label })} onClick={() => bump(-1)} className={cn(half, 'bottom-0')} />
-      </span>
-    </div>
+    <label className="flex h-ctl w-(--ctl-w) max-w-full cursor-text items-center gap-1.5 rounded-md border border-line bg-hover px-3 text-2 text-fg-1 tabular-nums transition-colors hover:border-line-strong focus-within:border-line-strong focus-within:bg-active">
+      <input
+        type="text"
+        inputMode="numeric"
+        aria-label={label}
+        value={text}
+        onChange={e => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={onKey}
+        className="min-w-0 flex-1 bg-transparent outline-none"
+      />
+      {unit && <span className="shrink-0 select-none text-fg-3">{unit}</span>}
+    </label>
   );
 }
 
@@ -508,7 +504,7 @@ export function Meta({ children, title }: { children: ReactNode; title?: string 
 // A Command list (the add-model and add-host pickers) drawn as a dialog block: the list is the block and its items are
 // setting rows, the highlight running from edge to edge. Its rules stay inside the list: one past its sides would make
 // the scrolling list scroll sideways
-export const blockList = 'overflow-hidden rounded-lg bg-chip [&>*+*]:relative [&>*+*]:after:pointer-events-none [&>*+*]:after:absolute [&>*+*]:after:top-0 [&>*+*]:after:inset-x-0 [&>*+*]:after:h-px [&>*+*]:after:bg-line';
+export const blockList = 'rounded-lg bg-chip [&>*+*]:relative [&>*+*]:after:pointer-events-none [&>*+*]:after:absolute [&>*+*]:after:top-0 [&>*+*]:after:inset-x-0 [&>*+*]:after:h-px [&>*+*]:after:bg-line';
 export const blockItem = 'min-h-(--setting-row-detail) gap-gap rounded-none px-3 py-(--setting-row-pad)';
 export function PickContent({ lead, title, desc, checked }: { lead?: ReactNode; title: ReactNode; desc?: ReactNode; checked?: boolean }) {
   return <>
