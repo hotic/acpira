@@ -154,6 +154,7 @@ pub async fn spawn(cmd: &mut Command) -> io::Result<(Child, Arc<Job>)> {
 fn resume(pid: u32) -> io::Result<()> {
   // std / tokio exposes the process handle but not the primary thread handle. The suspended process has not run
   // user code yet; resume its owned threads through a snapshot without changing any other process's threads.
+  // SAFETY: a thread snapshot of the whole system, owned (and closed) by `own`
   let snapshot = own(unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) })?;
   let mut entry = THREADENTRY32 { dwSize: std::mem::size_of::<THREADENTRY32>() as u32, ..Default::default() };
   let mut resumed = false;

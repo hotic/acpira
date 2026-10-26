@@ -2,7 +2,7 @@
 //! same name; the TypeScript side stays the source for the webview, this crate is what the Rust host speaks
 
 // Wire enums mirror TS unions variant for variant; boxing large variants would only reshape the serde layer
-#![allow(clippy::large_enum_variant)]
+#![allow(clippy::large_enum_variant, reason = "wire enums mirror the TypeScript unions")]
 
 pub mod agent_order;
 pub mod appearance;
@@ -18,6 +18,7 @@ pub mod model_sources;
 pub mod models;
 pub mod num;
 pub mod proxy;
+pub mod re;
 pub mod plan_execution;
 pub mod protocol;
 pub mod providers;

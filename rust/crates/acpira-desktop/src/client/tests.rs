@@ -18,7 +18,7 @@ impl View {
   }
 
   fn kinds(&self) -> Vec<String> {
-    self.messages.lock().unwrap().iter().map(|m| m.kind.clone()).collect()
+    self.messages.lock().iter().map(|m| m.kind.clone()).collect()
   }
 }
 
@@ -36,10 +36,10 @@ impl ShellView for View {
     Some(format!("acpira-app://localhost/blobs/{}", self.id))
   }
   fn on_host_message(&self, m: HostMessage) {
-    self.messages.lock().unwrap().push(m);
+    self.messages.lock().push(m);
   }
   fn on_state(&self, state: SidecarState, _: Option<&str>) {
-    self.states.lock().unwrap().push(state);
+    self.states.lock().push(state);
   }
 }
 
@@ -114,7 +114,7 @@ fn client(ep: Option<EngineEndpoint>, commands: Vec<SidecarCommand>) -> (Sidecar
       settings: Map::new(),
     },
     move |req| {
-      r.lock().unwrap().push(req.clone());
+      r.lock().push(req.clone());
       Box::pin(async move {
         match req {
           PlatformRequest::OpenExternal { url } if url.contains("fail") => Err("refused".to_owned()),
@@ -122,7 +122,7 @@ fn client(ep: Option<EngineEndpoint>, commands: Vec<SidecarCommand>) -> (Sidecar
         }
       })
     },
-    Arc::new(move |line: &str| l.lock().unwrap().push(line.to_owned())),
+    Arc::new(move |line: &str| l.lock().push(line.to_owned())),
   );
   opts.backoff = Box::new(|_| Duration::from_millis(20));
   if let Some(ep) = ep {
@@ -167,7 +167,7 @@ async fn queues_until_the_handshake_then_sends_events_attaches_and_the_rest_in_t
   );
   assert_eq!(w.next().await, json!({ "type": "webviewMessage", "viewId": "V", "message": { "type": "ready" } }));
   until("ready", || c.current().0 == SidecarState::Ready).await;
-  assert_eq!(*v.states.lock().unwrap(), [SidecarState::Stopped, SidecarState::Starting, SidecarState::Ready]);
+  assert_eq!(*v.states.lock(), [SidecarState::Stopped, SidecarState::Starting, SidecarState::Ready]);
   assert_eq!(c.sessions_dir().as_deref(), Some("/s"));
   c.dispose().await;
 }
@@ -186,7 +186,7 @@ async fn a_reconnect_reattaches_on_the_last_session_and_replays_only_what_was_ne
   let push = json!({ "type": "session", "session": { "id": "S1", "turns": [] } });
   w.send(json!({ "type": "hostMessage", "viewId": "V", "message": push })).await;
   until("the session push", || v.kinds() == ["session"]).await;
-  assert_eq!(serde_json::from_str::<Value>(v.messages.lock().unwrap()[0].raw.get()).unwrap(), push);
+  assert_eq!(serde_json::from_str::<Value>(v.messages.lock()[0].raw.get()).unwrap(), push);
   c.send("V", raw(json!({ "type": "sent-before" })));
   assert_eq!(w.next().await["message"]["type"], "sent-before");
 
@@ -268,7 +268,7 @@ async fn preview_answers_for_a_superseded_open_are_dropped_and_leases_are_asked_
       url: url.into(),
       picker: "/picker.js".into(),
       folder: None,
-      on_opened: Box::new(move |r| a.lock().unwrap().push(r)),
+      on_opened: Box::new(move |r| a.lock().push(r)),
     }
   };
   let _first = c.preview(lease("http://127.0.0.1:3000/"));
@@ -279,9 +279,9 @@ async fn preview_answers_for_a_superseded_open_are_dropped_and_leases_are_asked_
   // The first open's answer comes late: the panel shows another page now
   w.send(json!({ "type": "previewOpened", "requestId": p1["requestId"], "url": "http://127.0.0.1:9/", "token": "t1" })).await;
   w.send(json!({ "type": "previewOpened", "requestId": p2["requestId"], "url": "http://127.0.0.1:9/b", "token": "t2" })).await;
-  until("one answer", || !answers.lock().unwrap().is_empty()).await;
+  until("one answer", || !answers.lock().is_empty()).await;
   tokio::time::sleep(Duration::from_millis(50)).await;
-  assert_eq!(*answers.lock().unwrap(), [PreviewAnswer::Opened { url: "http://127.0.0.1:9/b".into(), token: "t2".into() }]);
+  assert_eq!(*answers.lock(), [PreviewAnswer::Opened { url: "http://127.0.0.1:9/b".into(), token: "t2".into() }]);
 
   drop(w);
   let mut w = engine.accept().await;
@@ -289,8 +289,8 @@ async fn preview_answers_for_a_superseded_open_are_dropped_and_leases_are_asked_
   let again = w.next().await;
   assert_eq!((again["type"].as_str(), again["url"].as_str()), (Some("previewOpen"), Some("http://127.0.0.1:3000/b")));
   w.send(json!({ "type": "previewOpened", "requestId": again["requestId"], "error": "refused" })).await;
-  until("the refusal", || answers.lock().unwrap().len() == 2).await;
-  assert_eq!(answers.lock().unwrap()[1], PreviewAnswer::Error("refused".into()));
+  until("the refusal", || answers.lock().len() == 2).await;
+  assert_eq!(answers.lock()[1], PreviewAnswer::Error("refused".into()));
   second.release();
   assert_eq!(w.next().await, json!({ "type": "previewClose", "panelId": "P" }));
   c.dispose().await;
@@ -315,7 +315,7 @@ async fn platform_requests_are_answered_and_an_unknown_method_is_refused() {
   // A notification gets no answer
   w.send(json!({ "type": "platformRequest", "request": { "method": "toast", "level": "info", "text": "hi" } })).await;
   w.quiet().await;
-  assert_eq!(requests.lock().unwrap().len(), 3);
+  assert_eq!(requests.lock().len(), 3);
   c.dispose().await;
 }
 
@@ -342,7 +342,7 @@ async fn falls_through_the_candidates_gives_up_after_repeated_exits_and_starts_o
   until("failed", || c.current().0 == SidecarState::Failed).await;
   let (_, detail) = c.current();
   assert!(detail.unwrap_or_default().contains("keeps exiting"));
-  let l = logs.lock().unwrap().join("\n");
+  let l = logs.lock().join("\n");
   assert!(l.contains("could not start (binary /nonexistent/acpira)"), "{l}");
   assert!(l.contains("sidecar exited (3)"), "{l}");
   drop(l);

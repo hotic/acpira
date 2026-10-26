@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 acpira-shared.workspace = true
 libc.workspace = true
+parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 ring.workspace = true
@@ -27,3 +28,6 @@ windows-sys.workspace = true
 # The real engine in-process for the client's end-to-end test (tests/engine.rs)
 acpira-host = { path = "../acpira-host" }
 tempfile.workspace = true
+
+[lints]
+workspace = true

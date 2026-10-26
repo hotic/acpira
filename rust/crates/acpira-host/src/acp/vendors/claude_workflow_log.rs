@@ -72,7 +72,7 @@ pub fn project_dir_name(cwd: &str) -> String {
   }
   // `Math.abs(h).toString(36)` of the JS string hash `h = (h << 5) - h + unit | 0`
   let hash = units.iter().fold(0i32, |h, u| h.wrapping_shl(5).wrapping_sub(h).wrapping_add(*u as i32));
-  format!("{}-{}", &sanitized[..MAX_DIR_NAME], base36((hash as i64).unsigned_abs()))
+  format!("{}-{}", sanitized.get(..MAX_DIR_NAME).unwrap_or(&sanitized), base36((hash as i64).unsigned_abs()))
 }
 
 fn base36(mut n: u64) -> String {
@@ -86,7 +86,7 @@ fn base36(mut n: u64) -> String {
     n /= 36;
   }
   out.reverse();
-  String::from_utf8(out).expect("ascii")
+  out.into_iter().map(char::from).collect()
 }
 
 /// Ids that name files: nothing that could leave the directory
@@ -229,8 +229,8 @@ fn display_path(path: &str, cwd: &str) -> String {
   }
   match path.strip_prefix(cwd) {
     Some("") => ".".into(),
-    Some(rest) if rest.starts_with(['/', '\\']) => rest[1..].to_owned(),
-    _ => path.to_owned(),
+    Some(rest) => rest.strip_prefix(['/', '\\']).map_or_else(|| path.to_owned(), str::to_owned),
+    None => path.to_owned(),
   }
 }
 
@@ -717,7 +717,7 @@ mod tests {
     for u in units {
       h = ((h << 5) - h + u as i64) as i32 as i64;
     }
-    assert_eq!(name, format!("{}-{}", &format!("-{}", "a".repeat(250))[..200], base36(h.unsigned_abs())));
+    assert_eq!(name, format!("{}-{}", format!("-{}", "a".repeat(250)).get(..200).unwrap(), base36(h.unsigned_abs())));
   }
 
   #[test]
@@ -746,20 +746,20 @@ mod tests {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("agent-a.jsonl");
     let lines: Vec<&str> = FIXTURE.lines().collect();
-    std::fs::write(&path, format!("{}\n{}\n{}", lines[0], lines[2], &lines[3][..40])).unwrap();
+    std::fs::write(&path, format!("{}\n{}\n{}", lines[0], lines[2], lines[3].get(..40).unwrap())).unwrap();
     let mut cursor = LogCursor::new("/w");
     assert!(cursor.read(|| None).is_empty());
     assert!(!cursor.located());
     let first = cursor.read(|| Some(path.clone()));
     assert_eq!(kinds(&first), ["agent_thought_chunk"]);
     // Unchanged: nothing
-    assert!(cursor.read(|| unreachable!()).is_empty());
+    assert!(cursor.read(|| panic!("an unchanged log is not looked up again")).is_empty());
     let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
-    std::io::Write::write_all(&mut f, format!("{}\n{}\n", &lines[3][40..], lines[4]).as_bytes()).unwrap();
-    assert_eq!(kinds(&cursor.read(|| unreachable!())), ["tool_call", "tool_call_update"]);
+    std::io::Write::write_all(&mut f, format!("{}\n{}\n", lines[3].get(40..).unwrap(), lines[4]).as_bytes()).unwrap();
+    assert_eq!(kinds(&cursor.read(|| panic!("an unchanged log is not looked up again"))), ["tool_call", "tool_call_update"]);
     // Rewritten shorter: the cursor stops rather than re-reading from a wrong offset
     std::fs::write(&path, "{}\n").unwrap();
-    assert!(cursor.read(|| unreachable!()).is_empty());
+    assert!(cursor.read(|| panic!("an unchanged log is not looked up again")).is_empty());
     assert!(cursor.stopped);
   }
 }

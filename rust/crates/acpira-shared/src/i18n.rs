@@ -97,6 +97,7 @@ macro_rules! packed {
   };
 }
 
+#[expect(clippy::panic, reason = "build.rs packs the dictionaries into this binary; a bad one is a bug of the build, which every i18n test hits")]
 fn unpack(locale: Locale, packed: &[u8]) -> Dict {
   let json = miniz_oxide::inflate::decompress_to_vec(packed).unwrap_or_else(|e| panic!("{}.json: {e:?}", locale.tag()));
   serde_json::from_slice(&json).unwrap_or_else(|e| panic!("{}.json: {e}", locale.tag()))
@@ -163,13 +164,11 @@ pub fn translate(locale: Locale, key: &str, params: &[(&str, &str)]) -> String {
 fn fill(s: &str, params: &[(&str, &str)]) -> String {
   let mut out = String::with_capacity(s.len() + 16);
   let mut rest = s;
-  while let Some(open) = rest.find('{') {
-    out.push_str(&rest[..open]);
-    let tail = &rest[open + 1..];
-    let close = tail.find('}');
-    let name = close.map(|c| &tail[..c]).filter(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
-    match (name, close) {
-      (Some(n), Some(c)) => {
+  while let Some((before, tail)) = rest.split_once('{') {
+    out.push_str(before);
+    let name = tail.split_once('}').filter(|(n, _)| !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+    match name {
+      Some((n, after)) => {
         match params.iter().find(|(k, _)| *k == n) {
           Some((_, v)) => out.push_str(v),
           None => {
@@ -178,9 +177,9 @@ fn fill(s: &str, params: &[(&str, &str)]) -> String {
             out.push('}');
           }
         }
-        rest = &tail[c + 1..];
+        rest = after;
       }
-      _ => {
+      None => {
         out.push('{');
         rest = tail;
       }

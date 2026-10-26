@@ -1,7 +1,6 @@
 //! The Acpira host runtime. Each module mirrors the apps/vscode/src file of the same name
 
-// Dependency seams are closures (`Arc<dyn Fn(..) -> BoxFuture<..>>`) like the TS deps objects they mirror
-#![allow(clippy::type_complexity)]
+#![allow(clippy::type_complexity, reason = "dependency seams are closures (`Arc<dyn Fn(..) -> BoxFuture<..>>`) like the TS deps objects they mirror")]
 
 pub mod accounts;
 pub mod acp;

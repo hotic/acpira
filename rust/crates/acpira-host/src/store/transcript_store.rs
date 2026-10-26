@@ -692,7 +692,7 @@ impl TranscriptStore {
   }
 
   pub async fn save_blob(&self, session_id: &str, ext: &str, bytes: &[u8]) -> Result<(String, PathBuf)> {
-    let legal_ext = ext.len() > 1 && ext.starts_with('.') && ext[1..].chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    let legal_ext = ext.strip_prefix('.').is_some_and(|e| !e.is_empty() && e.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
     let illegal = || anyhow!(tp("host.blobIllegal", &[("path", &format!("{session_id}/*{ext}"))]));
     if !is_session_id(session_id) || !legal_ext {
       return Err(illegal());
@@ -1132,7 +1132,7 @@ mod tests {
     let dir = tempfile::tempdir().unwrap();
     let s = store(dir.path());
     let (name, path) = s.save_blob("s1", ".png", b"abc").await.unwrap();
-    assert_eq!(name, format!("{}.png", &"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"[..16]));
+    assert_eq!(name, format!("{}.png", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".get(..16).unwrap()));
     assert!(path.exists());
     assert_eq!(s.read_blob("s1", &name).await.unwrap(), b"abc");
     assert!(s.save_blob("../x", ".png", b"a").await.is_err());

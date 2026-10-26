@@ -30,6 +30,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["preserve_order", "raw_value"] }
 tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "io-util", "net", "process", "sync", "time", "fs"] }
 uuid = { version = "1.24", features = ["v4"] }
+parking_lot = "0.12"
 rfd = { version = "0.15", default-features = false, features = ["tokio"] }
 # The page bundle's packed files (the Windows exe's embedded ones, src/serve.rs)
 zstd = "0.13"
@@ -54,3 +55,16 @@ windows = { version = "0.62", features = ["Data_Xml_Dom", "UI_Notifications", "W
 lto = "fat"
 strip = "symbols"
 codegen-units = 1
+
+# The engine's panic lints (rust/Cargo.toml [workspace.lints])
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+string_slice = "warn"
+unreachable = "warn"
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+undocumented_unsafe_blocks = "warn"
+allow_attributes_without_reason = "warn"

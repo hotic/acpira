@@ -1,4 +1,5 @@
 //! Regressions from the review after v1.9.1 (commit 1ac9ddc); every model response comes from the local scripted server.
+#![allow(clippy::unwrap_used, reason = "test code")]
 mod support;
 
 use std::time::Duration;

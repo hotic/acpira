@@ -659,7 +659,8 @@ impl SubagentTree {
       {
         let pid = self.nodes[prior].id.clone();
         self.adopt_call_node(&pid, &session);
-        i = self.idx(&pid).expect("adopted node");
+        let Some(adopted) = self.idx(&pid) else { return };
+        i = adopted;
       }
       let nid = self.nodes[i].id.clone();
       self.nodes[i].peer.tool_call_id = Some(link.clone());
@@ -696,7 +697,7 @@ impl SubagentTree {
       self.orphans.insert(key.to_owned(), vec![]);
       self.orphan_order.push(key.to_owned());
     }
-    let list = self.orphans.get_mut(key).expect("inserted");
+    let Some(list) = self.orphans.get_mut(key) else { return };
     if list.len() >= ORPHAN_MAX_UPDATES {
       self.log_orphan_drop();
       return;
@@ -731,7 +732,7 @@ impl SubagentTree {
       && let Some(si) = self.idx(&stale_id)
     {
       let stale = self.nodes.remove(si);
-      let i = self.idx(id).expect("still present");
+      let Some(i) = self.idx(id) else { return };
       let n = &mut self.nodes[i];
       if stale.state.turns.len() > 1 || stale.state.turns.iter().any(|t| t.as_agent().is_some_and(|a| !a.blocks.is_empty())) {
         n.state = stale.state;
@@ -964,7 +965,7 @@ impl SubagentTree {
     if s(meta.and_then(|m| m.get("cognition.ai/inferenceToolName"))).as_deref() == Some("read_subagent") {
       let title =
         s(raw.and_then(|r| r.get("agent_id"))).and_then(|a| self.by(&self.by_agent, &a)).and_then(|i| self.nodes[i].title.clone());
-      let block = ctx.root_tool(&tool_call_id).expect("checked");
+      let Some(block) = ctx.root_tool(&tool_call_id) else { return };
       block.verb_key = Some("verb.awaitSubagent".into());
       block.verb = t("verb.awaitSubagent");
       if let Some(title) = title {
@@ -986,16 +987,19 @@ impl SubagentTree {
     if claude.and_then(|c| c.get("subagent")) == Some(&Value::Bool(true)) {
       let i = match n {
         Some(i) => i,
-        None => self.upsert_call_node(&tool_call_id, SubagentVisibility::Nested, ctx),
+        None => {
+          let Some(i) = self.upsert_call_node(&tool_call_id, SubagentVisibility::Nested, ctx) else { return };
+          i
+        }
       };
       self.nodes[i].dialect = Some(Dialect::Claude);
       n = Some(i);
     } else if n.is_none() && s(raw.and_then(|r| r.get("subagent_type"))).is_some() && s(raw.and_then(|r| r.get("prompt"))).is_some() {
-      n = Some(self.upsert_call_node(&tool_call_id, SubagentVisibility::Receipt, ctx));
+      n = self.upsert_call_node(&tool_call_id, SubagentVisibility::Receipt, ctx);
     }
     let Some(i) = n else { return };
     let id = self.nodes[i].id.clone();
-    let block = ctx.root_tool(&tool_call_id).expect("checked");
+    let Some(block) = ctx.root_tool(&tool_call_id) else { return };
     block.subagent_id = Some(id.clone());
     if self.nodes[i].visibility == SubagentVisibility::Session {
       seal_launch_receipt(block);
@@ -1033,7 +1037,7 @@ impl SubagentTree {
           }
           self.transition(&id, SubagentState::Running);
         } else {
-          let block = ctx.root_tool(&tool_call_id).expect("checked");
+          let Some(block) = ctx.root_tool(&tool_call_id) else { return };
           let result = result_text(u, block);
           if result.is_some() {
             self.nodes[i].result = result;
@@ -1219,9 +1223,9 @@ impl SubagentTree {
     self.bump(&id);
   }
 
-  fn upsert_call_node(&mut self, tool_call_id: &str, visibility: SubagentVisibility, ctx: &mut RouteCtx) -> usize {
+  fn upsert_call_node(&mut self, tool_call_id: &str, visibility: SubagentVisibility, ctx: &mut RouteCtx) -> Option<usize> {
     if let Some(i) = self.by(&self.by_tool, tool_call_id) {
-      return i;
+      return Some(i);
     }
     let node = self.new_node(
       visibility,
@@ -1234,7 +1238,8 @@ impl SubagentTree {
     self.by_tool.insert(tool_call_id.to_owned(), id.clone());
     self.nodes.push(node);
     self.replay_orphans(&format!("tool:{tool_call_id}"), &id, ctx);
-    self.idx(&id).expect("just pushed")
+    // None only if a replayed update took the new node out again
+    self.idx(&id)
   }
 
   /// End of the connection / turn
@@ -1561,7 +1566,7 @@ impl SubagentTree {
       let summary = SubagentSummary { core, permissions: (!permissions.is_empty()).then_some(permissions), question };
       n.cached = Some((n.rev, summary));
     }
-    self.nodes.iter().map(|n| n.cached.as_ref().expect("filled").1.clone()).collect()
+    self.nodes.iter().filter_map(|n| n.cached.as_ref().map(|c| c.1.clone())).collect()
   }
 
   pub fn transcript(&self, id: &str) -> Option<(&[Turn], i64, bool)> {

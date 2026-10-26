@@ -162,7 +162,7 @@ impl AcpSession {
         return Ok(cancelled_permission());
       };
       let epoch = c.perms.epoch;
-      let state = Self::target_state(&mut c, &target).expect("target resolved");
+      let Some(state) = Self::target_state(&mut c, &target) else { return Ok(cancelled_permission()) };
       let last_agent = matches!(state.turns.last(), Some(Turn::Agent(_))).then(|| state.turns.len() - 1);
       // The verb / command on the card come from the tool row; the request itself often carries only a title
       let existing = last_agent.and_then(|i| {
@@ -242,7 +242,7 @@ impl AcpSession {
       if bypass && let Some(id) = single_allow_once(&options).or_else(|| auto_allow(&options)) {
         return Ok(json!({ "outcome": { "outcome": "selected", "optionId": id } }));
       }
-      let state = Self::target_state(&mut c, &target).expect("target resolved");
+      let Some(state) = Self::target_state(&mut c, &target) else { return Ok(cancelled_permission()) };
       let plan = captured
         .as_ref()
         .and_then(|id| plan_documents_mut(&mut state.turns).into_iter().find(|p| &p.id == id))
@@ -277,7 +277,7 @@ impl AcpSession {
       }
       c.perms.seq += 1;
       let block_id = format!("perm-{}", c.perms.seq);
-      let state = Self::target_state(&mut c, &target).expect("target resolved");
+      let Some(state) = Self::target_state(&mut c, &target) else { return Ok(cancelled_permission()) };
       let tool = last_agent.and_then(|i| {
         state.turns.get(i).and_then(Turn::as_agent).and_then(|t| {
           t.blocks.iter().find_map(|b| match b {
@@ -627,12 +627,9 @@ impl AcpSession {
       answers: None,
     };
     if let Some(state) = Self::target_state(c, target)
-      && matches!(state.turns.last(), Some(Turn::Agent(_)))
+      && let Some(Turn::Agent(last)) = state.turns.last_mut()
     {
-      {
-        let Some(Turn::Agent(last)) = state.turns.last_mut() else { unreachable!() };
-        last.blocks.push(AgentBlock::Question(block));
-      }
+      last.blocks.push(AgentBlock::Question(block));
       let activity = activity_of(&state.turns);
       if let Some(Turn::Agent(last)) = state.turns.last_mut() {
         last.activity = activity;

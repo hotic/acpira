@@ -36,12 +36,12 @@ pub fn convert(html: &str, base: &str, plain: bool) -> Page {
   let bytes = html.as_bytes();
   while i < bytes.len() {
     if bytes[i] != b'<' {
-      let end = html[i..].find('<').map_or(html.len(), |n| i + n);
-      r.text(&decode_entities(&html[i..end]));
+      let end = html.get(i..).and_then(|t| t.find('<')).map_or(html.len(), |n| i + n);
+      r.text(&decode_entities(html.get(i..end).unwrap_or_default()));
       i = end;
       continue;
     }
-    let rest = &html[i..];
+    let Some(rest) = html.get(i..) else { break };
     if rest.starts_with("<!--") {
       i = rest.find("-->").map_or(html.len(), |n| i + n + 3);
     } else if rest.starts_with("<!") || rest.starts_with("<?") {
@@ -53,9 +53,9 @@ pub fn convert(html: &str, base: &str, plain: bool) -> Page {
       } else if RAW.contains(&tag.name.as_str()) && !tag.self_closing {
         // Raw text runs to the matching end tag, whatever it contains
         let close = format!("</{}", tag.name);
-        let end = find_ci(&html[i..], &close).map_or(html.len(), |n| i + n);
-        r.raw(&tag.name, &html[i..end]);
-        i = html[end..].find('>').map_or(html.len(), |n| end + n + 1);
+        let end = find_ci(html.get(i..).unwrap_or_default(), &close).map_or(html.len(), |n| i + n);
+        r.raw(&tag.name, html.get(i..end).unwrap_or_default());
+        i = html.get(end..).and_then(|t| t.find('>')).map_or(html.len(), |n| end + n + 1);
       } else {
         r.open(&tag);
         if tag.self_closing || VOID.contains(&tag.name.as_str()) {
@@ -102,7 +102,7 @@ fn parse_tag(s: &str) -> Option<Tag> {
   if i == start || !b[start].is_ascii_alphabetic() {
     return None;
   }
-  let name = s[start..i].to_ascii_lowercase();
+  let name = s.get(start..i)?.to_ascii_lowercase();
   let mut attrs = vec![];
   let mut self_closing = false;
   loop {
@@ -123,7 +123,7 @@ fn parse_tag(s: &str) -> Option<Tag> {
     while i < b.len() && !b[i].is_ascii_whitespace() && !matches!(b[i], b'=' | b'>' | b'/') {
       i += 1;
     }
-    let key = s[k0..i].to_ascii_lowercase();
+    let key = s.get(k0..i)?.to_ascii_lowercase();
     while i < b.len() && b[i].is_ascii_whitespace() {
       i += 1;
     }
@@ -135,8 +135,8 @@ fn parse_tag(s: &str) -> Option<Tag> {
       }
       match b.get(i) {
         Some(&q @ (b'"' | b'\'')) => {
-          let close = s[i + 1..].find(q as char)? + i + 1;
-          value = decode_entities(&s[i + 1..close]);
+          let close = s.get(i + 1..)?.find(q as char)? + i + 1;
+          value = decode_entities(s.get(i + 1..close)?);
           i = close + 1;
         }
         _ => {
@@ -144,7 +144,7 @@ fn parse_tag(s: &str) -> Option<Tag> {
           while i < b.len() && !b[i].is_ascii_whitespace() && b[i] != b'>' {
             i += 1;
           }
-          value = decode_entities(&s[v0..i]);
+          value = decode_entities(s.get(v0..i)?);
         }
       }
     }
@@ -430,9 +430,10 @@ impl Renderer {
       }
       "a" => {
         if let Some((target, start)) = self.links.pop() {
-          let inner = self.out[start.min(self.out.len())..].trim().to_owned();
+          // `start` can fall inside a character the output was rewritten with since; no link then
+          let inner = self.out.get(start.min(self.out.len())..).unwrap_or_default().trim().to_owned();
           if let Some(target) = target.filter(|_| !self.plain && !inner.is_empty() && !inner.contains('\n') && start <= self.out.len()) {
-            let lead = &self.out[start..];
+            let lead = self.out.get(start..).unwrap_or_default();
             let pad = lead.len() - lead.trim_start().len();
             self.out.truncate(start + pad);
             self.out.push_str(&format!("[{inner}]({target})"));
@@ -542,19 +543,20 @@ pub fn decode_entities(s: &str) -> String {
   let mut out = String::with_capacity(s.len());
   let mut rest = s;
   while let Some(at) = rest.find('&') {
-    out.push_str(&rest[..at]);
-    rest = &rest[at..];
-    let end = rest[1..].find(|c: char| !(c.is_ascii_alphanumeric() || c == '#')).map(|n| n + 1);
-    let decoded = end.filter(|e| *e > 1 && *e <= 32).and_then(|e| entity(&rest[1..e]).map(|c| (c, e)));
+    out.push_str(rest.get(..at).unwrap_or_default());
+    rest = rest.get(at..).unwrap_or_default();
+    let end = rest.get(1..).and_then(|t| t.find(|c: char| !(c.is_ascii_alphanumeric() || c == '#'))).map(|n| n + 1);
+    let decoded = end.filter(|e| *e > 1 && *e <= 32).and_then(|e| entity(rest.get(1..e)?).map(|c| (c, e)));
     match decoded {
       Some((c, e)) => {
         out.push(c);
         // The `;` is optional for the entities written without one (`&amp` in old markup)
-        rest = if rest[e..].starts_with(';') { &rest[e + 1..] } else { &rest[e..] };
+        let after = rest.get(e..).unwrap_or_default();
+        rest = after.strip_prefix(';').unwrap_or(after);
       }
       None => {
         out.push('&');
-        rest = &rest[1..];
+        rest = rest.get(1..).unwrap_or_default();
       }
     }
   }
@@ -662,5 +664,7 @@ mod tests {
   fn links_and_images_resolve_against_the_base() {
     let body = md(r#"<base href="https://cdn.example.org/a/"><a href="b.html">B</a> <a href="javascript:void(0)">J</a> <img alt="Logo" src="//img.example.org/l.png"><img src="x.png">"#);
     assert_eq!(body, "[B](https://cdn.example.org/a/b.html) J ![Logo](https://img.example.org/l.png)");
+    // An empty `<b>` dropped from around a link's start leaves that start inside the wide text written after it
+    assert!(md(r#"<p>文<b><a href="/x"></b>中文</a></p>"#).contains("中文"));
   }
 }

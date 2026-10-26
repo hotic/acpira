@@ -5,7 +5,7 @@ use serde_json::value::RawValue;
 use tauri::ipc::{Channel, InvokeBody, InvokeResponseBody, Request};
 use tauri::{Manager, Webview};
 
-use crate::app::{app, try_app};
+use crate::app::try_app;
 
 #[tauri::command]
 pub fn acpira_attach(webview: Webview, channel: Channel<InvokeResponseBody>) {
@@ -29,7 +29,7 @@ pub fn acpira_post(webview: Webview, request: Request<'_>) {
     crate::app::log("acpira_post: the page sent something other than a JSON array");
     return;
   };
-  let a = app();
+  let Some(a) = try_app() else { return };
   let label = webview.label();
   if let Some(w) = a.window_by_label(label) {
     for m in batch {

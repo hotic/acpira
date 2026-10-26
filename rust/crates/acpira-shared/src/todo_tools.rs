@@ -8,8 +8,8 @@ use serde_json::Value;
 use crate::transcript::{PlanEntry, PlanPriority, PlanStatus, ToolCallBlock};
 
 static RECEIPT: LazyLock<Regex> =
-  LazyLock::new(|| Regex::new(r"^Todo list updated\.\r?\nCurrent todo list:\r?\n((?s).*?)(?:\r?\n\r?\n|$)").unwrap());
-static ITEM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^  \[(pending|in_progress|completed|done)\] (.+)$").unwrap());
+  LazyLock::new(|| crate::re::compile(r"^Todo list updated\.\r?\nCurrent todo list:\r?\n((?s).*?)(?:\r?\n\r?\n|$)"));
+static ITEM: LazyLock<Regex> = LazyLock::new(|| crate::re::compile(r"^  \[(pending|in_progress|completed|done)\] (.+)$"));
 
 pub fn is_todo_tool(block: &ToolCallBlock) -> bool {
   block.verb_key.as_deref() == Some("verb.todo")

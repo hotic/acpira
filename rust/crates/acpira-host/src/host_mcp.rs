@@ -1032,8 +1032,8 @@ fn check_image(path: &str) -> Result<(), String> {
 /// `.html` / `.htm`: the files `show_widget` takes, stored as `text/html` blobs beside the session's images
 pub fn widget_mime_of(path: &str) -> Option<&'static str> {
   let tail = path.rsplit(['/', '\\']).next().unwrap_or(path);
-  let ext = tail.rfind('.').map(|dot| tail[dot..].to_ascii_lowercase())?;
-  matches!(ext.as_str(), ".html" | ".htm").then_some("text/html")
+  let ext = tail.rsplit_once('.').map(|(_, ext)| ext.to_ascii_lowercase())?;
+  matches!(ext.as_str(), "html" | "htm").then_some("text/html")
 }
 
 /// Validate the widget file; the host reads it into the session once the call completes

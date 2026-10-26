@@ -49,6 +49,7 @@ pub fn preferred_language() -> Option<String> {
   // SAFETY: the first call only measures; the second fills a buffer of the measured length
   unsafe { GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &mut count, None, &mut len) }.ok()?;
   let mut buf = vec![0u16; len as usize];
+  // SAFETY: `buf` holds the `len` characters the first call measured, and `len` says so
   unsafe { GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &mut count, Some(PWSTR(buf.as_mut_ptr())), &mut len) }.ok()?;
   // A list of NUL-terminated names ending in an empty one; the first is the user's choice
   let first = buf.split(|c| *c == 0).next()?;
@@ -218,6 +219,7 @@ impl Com {
 impl Drop for Com {
   fn drop(&mut self) {
     if self.0 {
+      // SAFETY: balances the CoInitializeEx that succeeded on this thread in init
       unsafe { windows::Win32::System::Com::CoUninitialize() };
     }
   }
@@ -289,8 +291,10 @@ pub fn hook_webview(window: &tauri::WebviewWindow, log: Log) {
         return Ok(());
       }
       let mut uri = PWSTR::null();
+      // SAFETY: as above; the string it fills is freed by take_pwstr
       unsafe { args.Uri(&mut uri)? };
       if acpira_desktop::page::is_app_url(&take_pwstr(uri), acpira_desktop::page::APP_ORIGIN) {
+        // SAFETY: as above
         unsafe { args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW)? };
       }
       Ok(())
@@ -304,12 +308,14 @@ pub fn hook_webview(window: &tauri::WebviewWindow, log: Log) {
         return Ok(());
       }
       let mut text = PWSTR::null();
+      // SAFETY: as above; the string it fills is freed by take_pwstr
       if unsafe { args.TryGetWebMessageAsString(&mut text) }.is_err() {
         return Ok(());
       }
       let Some(id) = take_pwstr(text).strip_prefix("acpira-drop:").and_then(|s| s.parse::<u64>().ok()) else { return Ok(()) };
       let path = dropped_path(&args).unwrap_or_default();
       let script = format!("window.__acpiraDropPath?.({id}, {})", serde_json::Value::String(path));
+      // SAFETY: as above; the script string outlives the call
       unsafe { sender.ExecuteScript(&windows::core::HSTRING::from(script), None)? };
       Ok(())
     }));

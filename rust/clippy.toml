@@ -1,0 +1,5 @@
+# Tests may unwrap, expect, panic and index: a failing test is the point (the panic lints in Cargo.toml are for run time)
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true

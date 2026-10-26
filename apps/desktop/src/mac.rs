@@ -20,6 +20,8 @@ use crate::os::{Log, TitleDoubleClick, session_of_request};
 /// it off applies to what loads next: call it before the real page loads. Private API: fine for a directly distributed
 /// app, not for the App Store; checked again on every macOS release (docs/dev/desktop.md)
 pub fn unlock_frame_rate(window: &tauri::WebviewWindow, log: Log) {
+  // SAFETY: `wv.inner()` is the live WKWebView; each private selector is checked with respondsToSelector: before it is
+  // sent, messages to nil return nil / 0, and the C string is null-checked before it is read
   let _ = window.with_webview(move |wv| unsafe {
     let wk = wv.inner() as *mut AnyObject;
     let config: *mut AnyObject = msg_send![wk, configuration];
@@ -52,6 +54,7 @@ pub fn unlock_frame_rate(window: &tauri::WebviewWindow, log: Log) {
 /// Smoke and bench runs: the window keeps rendering while other windows cover it and App Nap leaves the app's timers
 /// alone, so a run in the background never needs the window in front of whoever uses the Mac
 pub fn keep_rendering_in_background(window: &tauri::WebviewWindow, log: Log) {
+  // SAFETY: `wv.inner()` is the live WKWebView and the private selector is sent only when it responds to it
   let _ = window.with_webview(move |wv| unsafe {
     let wk = wv.inner() as *mut AnyObject;
     let sel = Sel::register(c"_setWindowOcclusionDetectionEnabled:");
@@ -63,6 +66,7 @@ pub fn keep_rendering_in_background(window: &tauri::WebviewWindow, log: Log) {
     }
   });
   static ACTIVITY: std::sync::Once = std::sync::Once::new();
+  // SAFETY: documented NSProcessInfo messages on the class looked up just before; retaining the token keeps it alive
   ACTIVITY.call_once(|| unsafe {
     let Some(info) = AnyClass::get(c"NSProcessInfo") else { return };
     let process: *mut AnyObject = msg_send![info, processInfo];
@@ -76,6 +80,7 @@ pub fn keep_rendering_in_background(window: &tauri::WebviewWindow, log: Log) {
 /// What a double click on a title bar does, as System Settings › Desktop & Dock says: zoom (the default), minimize or
 /// nothing
 pub fn title_double_click() -> TitleDoubleClick {
+  // SAFETY: documented NSUserDefaults / NSString messages; nil objects and a null C string are checked before use
   unsafe {
     let Some(cls) = AnyClass::get(c"NSUserDefaults") else { return TitleDoubleClick::Zoom };
     let defaults: *mut AnyObject = msg_send![cls, standardUserDefaults];
@@ -85,6 +90,9 @@ pub fn title_double_click() -> TitleDoubleClick {
       return TitleDoubleClick::Zoom;
     }
     let utf8: *const c_char = msg_send![value, UTF8String];
+    if utf8.is_null() {
+      return TitleDoubleClick::Zoom;
+    }
     match CStr::from_ptr(utf8).to_bytes() {
       b"Minimize" => TitleDoubleClick::Minimize,
       b"None" => TitleDoubleClick::Nothing,
@@ -96,6 +104,8 @@ pub fn title_double_click() -> TitleDoubleClick {
 /// The user's first preferred language as a BCP 47 tag ("zh-Hans-CN"), what the page and the engine resolve the UI
 /// language from (resolve_locale)
 pub fn preferred_language() -> Option<String> {
+  // SAFETY: documented NSLocale / NSArray / NSString messages (nil answers 0); the index is below the count and the C
+  // string is null-checked before it is read
   unsafe {
     let cls = AnyClass::get(c"NSLocale")?;
     let langs: *mut AnyObject = msg_send![cls, preferredLanguages];
@@ -111,6 +121,7 @@ pub fn preferred_language() -> Option<String> {
 
 /// Whether the system appearance is dark (NSApp's effective appearance)
 pub fn dark_mode() -> bool {
+  // SAFETY: documented NSApplication / NSAppearance messages; nil objects and a null C string are checked before use
   unsafe {
     let Some(cls) = AnyClass::get(c"NSApplication") else { return false };
     let app: *mut AnyObject = msg_send![cls, sharedApplication];
@@ -142,6 +153,7 @@ pub fn order_back(window: &tauri::WebviewWindow) {
 fn order(window: &tauri::WebviewWindow, back: bool) {
   let Ok(ns) = window.ns_window() else { return };
   let ns = ns as usize;
+  // SAFETY: the window's own NSWindow, messaged on the main thread with nil as the sender
   let _ = window.run_on_main_thread(move || unsafe {
     let w = ns as *mut AnyObject;
     let none: *mut AnyObject = std::ptr::null_mut();
@@ -157,10 +169,12 @@ fn order(window: &tauri::WebviewWindow, back: bool) {
 #[cfg(feature = "smoke")]
 pub fn window_number(window: &tauri::WebviewWindow) -> Option<isize> {
   let ns = window.ns_window().ok()? as *mut AnyObject;
+  // SAFETY: the window's own NSWindow; windowNumber takes no arguments
   Some(unsafe { msg_send![ns, windowNumber] })
 }
 
 fn pasteboard() -> Option<*mut AnyObject> {
+  // SAFETY: a documented class message on the class looked up just before; a nil answer is checked
   unsafe {
     let cls = AnyClass::get(c"NSPasteboard")?;
     let pb: *mut AnyObject = msg_send![cls, generalPasteboard];
@@ -173,6 +187,7 @@ const PASTEBOARD_STRING: &str = "public.utf8-plain-text";
 /// Main thread only
 pub fn clipboard_write(text: &str) {
   let Some(pb) = pasteboard() else { return };
+  // SAFETY: documented NSPasteboard messages on the non-nil general pasteboard, with NSStrings that outlive the calls
   unsafe {
     let _: isize = msg_send![pb, clearContents];
     let s = NSString::from_str(text);
@@ -184,6 +199,7 @@ pub fn clipboard_write(text: &str) {
 /// Main thread only
 pub fn clipboard_read() -> String {
   let Some(pb) = pasteboard() else { return String::new() };
+  // SAFETY: a documented NSPasteboard message on the non-nil general pasteboard; ns_string checks the answer for nil
   unsafe {
     let ty = NSString::from_str(PASTEBOARD_STRING);
     let s: *mut AnyObject = msg_send![pb, stringForType: &*ty];
@@ -195,7 +211,9 @@ fn ns_string(s: *mut AnyObject) -> Option<String> {
   if s.is_null() {
     return None;
   }
+  // SAFETY: `s` is a non-nil NSString
   let utf8: *const c_char = unsafe { msg_send![s, UTF8String] };
+  // SAFETY: a non-null UTF8String answer is a NUL-terminated C string that lives as long as `s`
   (!utf8.is_null()).then(|| unsafe { CStr::from_ptr(utf8) }.to_string_lossy().into_owned())
 }
 
@@ -203,6 +221,8 @@ fn ns_string(s: *mut AnyObject) -> Option<String> {
 /// a dropped file's name and bytes but not where it lives, which a folder dropped on the session column needs. Main
 /// thread only
 pub fn drag_paths() -> Vec<String> {
+  // SAFETY: documented NSPasteboard / NSArray / NSURL messages; every object is checked for nil before it is messaged
+  // further and the index stays below the count
   unsafe {
     let Some(cls) = AnyClass::get(c"NSPasteboard") else { return vec![] };
     let name = NSString::from_str("Apple CFPasteboard drag");
@@ -240,6 +260,7 @@ pub fn drag_paths() -> Vec<String> {
 /// An edit action through the responder chain (the focused page, its text field), for menu items with no stock
 /// equivalent: pasteAsPlainText:, delete:, startSpeaking:, stopSpeaking:. Main thread only
 pub fn send_action(selector: &CStr) {
+  // SAFETY: a documented NSApplication message with nil target and sender, which sends the action down the responder chain
   unsafe {
     let Some(cls) = AnyClass::get(c"NSApplication") else { return };
     let app: *mut AnyObject = msg_send![cls, sharedApplication];
@@ -250,6 +271,7 @@ pub fn send_action(selector: &CStr) {
 
 /// Whether the process runs from an app bundle: UNUserNotificationCenter aborts the process without one (a `cargo run`)
 pub fn bundled() -> bool {
+  // SAFETY: documented NSBundle messages on the class looked up just before; nil answers 0 / nil
   unsafe {
     let Some(cls) = AnyClass::get(c"NSBundle") else { return false };
     let main: *mut AnyObject = msg_send![cls, mainBundle];
@@ -303,8 +325,9 @@ pub struct Notifier {
   _delegate: Retained<NotificationDelegate>,
 }
 
-// The center and the delegate are only touched on the main thread (the shell dispatches there)
+// SAFETY: the center and the delegate are only touched on the main thread (the shell dispatches there)
 unsafe impl Send for Notifier {}
+// SAFETY: as for Send, every use is on the main thread
 unsafe impl Sync for Notifier {}
 
 impl Notifier {
@@ -316,6 +339,7 @@ impl Notifier {
     }
     let center = UNUserNotificationCenter::currentNotificationCenter();
     let delegate = NotificationDelegate::alloc().set_ivars(DelegateIvars { on_click: Box::new(on_click) });
+    // SAFETY: NSObject's init on the freshly allocated delegate whose ivars were just set
     let delegate: Retained<NotificationDelegate> = unsafe { msg_send![super(delegate), init] };
     center.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
     let l = log.clone();

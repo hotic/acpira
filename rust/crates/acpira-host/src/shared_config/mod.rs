@@ -138,7 +138,7 @@ pub fn project_root(cwd: &str) -> Option<PathBuf> {
 
 /// The first `n` non-empty lines of a prompt file, frontmatter skipped
 pub fn preview(text: &str, n: usize) -> String {
-  let body = match text.strip_prefix("---\n").and_then(|rest| rest.find("\n---").map(|end| &rest[end + 4..])) {
+  let body = match text.strip_prefix("---\n").and_then(|rest| rest.split_once("\n---").map(|(_, after)| after)) {
     Some(after) => after,
     None => text,
   };

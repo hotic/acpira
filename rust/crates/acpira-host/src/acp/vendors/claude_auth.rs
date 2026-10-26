@@ -44,7 +44,7 @@ pub async fn authenticated(def: &AgentDef, binary: &str, cwd: &str, account_env:
   let mut child = cmd.spawn()?;
   #[cfg(unix)]
   let mut group = ProbeGroup(child.id());
-  let mut stdout = child.stdout.take().expect("piped").take(OUTPUT_LIMIT + 1);
+  let mut stdout = child.stdout.take().ok_or_else(|| anyhow::anyhow!("Claude auth status stdout is not piped"))?.take(OUTPUT_LIMIT + 1);
   let mut output = Vec::new();
   tokio::time::timeout(PROBE_TIMEOUT, async {
     // Drain before reaping: a timed-out wrapper's PID still identifies its group while its native child owns stdout.
@@ -70,6 +70,7 @@ impl Drop for ProbeGroup {
   fn drop(&mut self) {
     if let Some(pid) = self.0.and_then(|p| i32::try_from(p).ok()) {
       // The unreaped leader owns this process group; cancellation/timeout must also terminate the wrapped CLI.
+      // SAFETY: kill takes plain integers; the negated pid names the group this probe's leader created
       unsafe { libc::kill(-pid, libc::SIGKILL) };
     }
   }

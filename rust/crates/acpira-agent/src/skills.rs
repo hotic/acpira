@@ -105,16 +105,16 @@ pub fn mentioned<'a>(text: &str, skills: &'a [Skill]) -> Vec<(&'a Skill, String)
     if !leading {
       continue;
     }
-    let rest = &text[i + 1..];
+    let rest = text.get(i + 1..).unwrap_or_default();
     let hit = skills
       .iter()
-      .filter(|s| rest.starts_with(s.name.as_str()) && rest[s.name.len()..].chars().next().is_none_or(boundary))
+      .filter(|s| rest.strip_prefix(s.name.as_str()).is_some_and(|after| after.chars().next().is_none_or(boundary)))
       .max_by_key(|s| s.name.len());
     let Some(skill) = hit else { continue };
     if out.iter().any(|(s, _)| s.name == skill.name) {
       continue;
     }
-    let after = &rest[skill.name.len()..];
+    let after = rest.strip_prefix(skill.name.as_str()).unwrap_or_default();
     let args = after.lines().next().unwrap_or("").trim().to_owned();
     out.push((skill, args));
   }

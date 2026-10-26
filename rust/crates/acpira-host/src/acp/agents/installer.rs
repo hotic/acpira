@@ -212,7 +212,7 @@ fn powershell(line: &str, proxy: Option<&str>) -> (String, Vec<String>) {
 // ---- output -------------------------------------------------------------------------------------------------------
 
 static ANSI: LazyLock<Regex> =
-  LazyLock::new(|| Regex::new(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]").expect("ansi"));
+  LazyLock::new(|| acpira_shared::re::compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]"));
 
 /// Printable text of one output line
 pub fn clean(s: &str) -> String {
@@ -461,6 +461,7 @@ async fn kill_group(pid: u32) {
     libc::killpg(pid as i32, libc::SIGTERM);
   }
   tokio::time::sleep(TERM_GRACE).await;
+  // SAFETY: the same process group; killpg takes plain integers and touches no memory of this process
   unsafe {
     libc::killpg(pid as i32, libc::SIGKILL);
   }
@@ -702,6 +703,7 @@ mod tests {
     std::fs::create_dir_all(locked.join("lib/node_modules")).unwrap();
     std::fs::set_permissions(locked.join("lib/node_modules"), std::fs::Permissions::from_mode(0o555)).unwrap();
     // root writes anywhere: the check is only meaningful for an ordinary user
+    // SAFETY: geteuid takes no arguments and cannot fail
     if unsafe { libc::geteuid() } != 0 {
       assert!(!prefix_writable(&locked));
     }

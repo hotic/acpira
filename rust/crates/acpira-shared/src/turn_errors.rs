@@ -7,7 +7,7 @@ use regex::Regex;
 use crate::transcript::TurnError;
 
 static TOO_LONG: LazyLock<Regex> = LazyLock::new(|| {
-  Regex::new(r"(?i)\bprompt (?:to the model )?(?:was|is) too long\b|\bcontext (?:length|window) (?:exceeded|limit exceeded)\b|\bmaximum context length\b").unwrap()
+  crate::re::compile(r"(?i)\bprompt (?:to the model )?(?:was|is) too long\b|\bcontext (?:length|window) (?:exceeded|limit exceeded)\b|\bmaximum context length\b")
 });
 
 pub fn is_context_length_error(error: Option<&TurnError>) -> bool {

@@ -6,7 +6,8 @@ use acpira_desktop::page::{PageConfig, Route, THEME_CSS, mime, page_html, route,
 use tauri::http::{Request, Response, StatusCode};
 
 fn respond(status: StatusCode, mime: &str, body: Vec<u8>) -> Response<Vec<u8>> {
-  Response::builder().status(status).header("content-type", mime).header("cache-control", "no-store").body(body).expect("a response")
+  // The status and headers are the shell's own constants; a builder error leaves an empty 200 rather than a panic
+  Response::builder().status(status).header("content-type", mime).header("cache-control", "no-store").body(body).unwrap_or_default()
 }
 
 pub fn handle(request: Request<Vec<u8>>, responder: tauri::UriSchemeResponder) {

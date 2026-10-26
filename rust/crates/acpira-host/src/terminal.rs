@@ -398,7 +398,7 @@ struct Term {
   killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
   /// A shell on an SSH host: its task, and the foreground name the helper last sent
   remote: Option<RemoteTerm>,
-  #[cfg_attr(not(unix), allow(dead_code))]
+  #[cfg_attr(not(unix), allow(dead_code, reason = "only Unix reads the shell's pid"))]
   pid: Option<u32>,
   reaped: Arc<AtomicBool>,
   /// Flow control resumed, or the terminal ended: the paused pump goes on
@@ -879,7 +879,7 @@ fn keep_tail(buf: &mut String, add: &str, max: usize) {
   while !buf.is_char_boundary(cut) {
     cut += 1;
   }
-  if let Some(nl) = buf[cut..].find('\n').filter(|&i| i < max / 16) {
+  if let Some(nl) = buf.get(cut..).and_then(|t| t.find('\n')).filter(|&i| i < max / 16) {
     cut += nl + 1;
   }
   buf.drain(..cut);

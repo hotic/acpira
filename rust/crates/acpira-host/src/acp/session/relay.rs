@@ -820,7 +820,7 @@ impl AcpSession {
   /// before any round starts), all started by this one call so their replies are delivered together. Refused whole
   /// when the members would not all fit beside the rounds already running. With `wait` the call answers once every
   /// member has (or the deadline came), all the replies in one answer
-  #[allow(clippy::too_many_arguments)]
+  #[allow(clippy::too_many_arguments, reason = "one round's whole brief, passed once per group call")]
   async fn relay_group(
     self: Arc<Self>,
     roster: Arc<Roster>,
@@ -2173,7 +2173,7 @@ fn names_ask_agent(u: &Value) -> bool {
 /// Whether a tool name is Acpira's `ask_agent` (bare, or the way an adapter prefixes its server)
 fn is_ask_name(x: &str) -> bool {
   static ASK: std::sync::LazyLock<regex::Regex> =
-    std::sync::LazyLock::new(|| regex::Regex::new(r"(?i)(?:^|acpira[_.:/-]{1,2})ask_agent$").unwrap());
+    std::sync::LazyLock::new(|| acpira_shared::re::compile(r"(?i)(?:^|acpira[_.:/-]{1,2})ask_agent$"));
   ASK.is_match(x.trim())
 }
 

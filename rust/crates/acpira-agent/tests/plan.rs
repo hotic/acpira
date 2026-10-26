@@ -1,6 +1,7 @@
 //! Plan mode against the scripted model: only the plan file is writable whatever the approval level, a command asks
 //! first up to full access, `exit_plan` puts the plan on the host's approval card, an approval switches to Agent mode
 //! inside the same turn, a refusal ends it
+#![allow(clippy::unwrap_used, reason = "test code")]
 
 mod support;
 

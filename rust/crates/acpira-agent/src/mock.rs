@@ -2,6 +2,13 @@
 //! each request takes the next scripted reply, and every request is recorded, so a test can check what the model was
 //! sent (prefix stability included). Plain blocking HTTP/1.1 on a loopback port, one thread per connection,
 //! `Connection: close` responses
+#![allow(
+  clippy::unwrap_used,
+  clippy::expect_used,
+  clippy::unreachable,
+  clippy::string_slice,
+  reason = "test material behind the `mock` feature, which only test builds enable"
+)]
 
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read, Write};

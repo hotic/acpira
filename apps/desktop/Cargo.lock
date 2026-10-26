@@ -31,6 +31,7 @@ version = "1.11.0"
 dependencies = [
  "acpira-shared",
  "libc",
+ "parking_lot",
  "ring",
  "serde",
  "serde_json",
@@ -55,6 +56,7 @@ dependencies = [
  "objc2",
  "objc2-foundation",
  "objc2-user-notifications",
+ "parking_lot",
  "rfd",
  "serde",
  "serde_json",

@@ -46,7 +46,7 @@ pub struct Target {
 pub fn parse_target(url: &str) -> Result<Target, String> {
   let rest = url
     .strip_prefix("http://")
-    .or_else(|| url.get(..7).filter(|p| p.eq_ignore_ascii_case("http://")).map(|_| &url[7..]))
+    .or_else(|| url.split_at_checked(7).filter(|(p, _)| p.eq_ignore_ascii_case("http://")).map(|(_, rest)| rest))
     .ok_or_else(|| format!("only http:// pages on this machine can be previewed: {url}"))?;
   let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
   let (authority, tail) = rest.split_at(end);

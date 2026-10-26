@@ -109,7 +109,8 @@ pub fn splice(head: &RawValue, key: &str, items: &[Box<RawValue>]) -> Option<Box
   splice_array(head, key, items).or_else(|| {
     let mut v: Value = serde_json::from_str(head.get()).ok()?;
     let parsed: Result<Vec<Value>, _> = items.iter().map(|i| serde_json::from_str(i.get())).collect();
-    v[key] = Value::Array(parsed.ok()?);
+    // A head that is not an object (another engine's frame) gives None instead of a panic in `IndexMut`
+    v.as_object_mut()?.insert(key.to_owned(), Value::Array(parsed.ok()?));
     serde_json::value::to_raw_value(&v).ok()
   })
 }
@@ -196,6 +197,7 @@ impl Frame {
     Frame { node: Some(node.into()), ..Frame::new(t, session) }
   }
 
+  #[expect(clippy::expect_used, reason = "a frame holds strings, numbers and JSON values, all with string keys, which always serialize")]
   fn line(&self) -> Arc<str> {
     Arc::from(serde_json::to_string(self).expect("serializable"))
   }
@@ -546,7 +548,7 @@ fn root_key(root: &Path) -> String {
 enum Reach<S> {
   Joined(S),
   Absent,
-  #[cfg_attr(unix, allow(dead_code))]
+  #[cfg_attr(unix, allow(dead_code, reason = "only the Windows pipe can be busy"))]
   Busy,
 }
 

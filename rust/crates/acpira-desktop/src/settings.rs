@@ -5,8 +5,7 @@
 //! that references it and would call an unreferenced file a leftover
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-
+use parking_lot::Mutex;
 use serde_json::{Map, Value};
 
 /// What a first launch starts with: the session column on the left over every project (the app has no workspace)
@@ -34,7 +33,7 @@ impl SettingsStore {
     let fresh = read.is_none();
     let store = SettingsStore { values: Mutex::new(read.unwrap_or_else(desktop_defaults)), file, listeners: Mutex::new(vec![]), fresh };
     if fresh {
-      store.save(&store.values.lock().unwrap());
+      store.save(&store.values.lock());
     }
     store
   }
@@ -44,17 +43,17 @@ impl SettingsStore {
   }
 
   pub fn snapshot(&self) -> Map<String, Value> {
-    self.values.lock().unwrap().clone()
+    self.values.lock().clone()
   }
 
   pub fn get(&self, key: &str) -> Option<Value> {
-    self.values.lock().unwrap().get(key).cloned()
+    self.values.lock().get(key).cloned()
   }
 
   /// None removes the key (back to the engine's default)
   pub fn set(&self, key: &str, value: Option<Value>) {
     let snap = {
-      let mut v = self.values.lock().unwrap();
+      let mut v = self.values.lock();
       match value {
         // JSON null is how a removal arrives over the wire (writeSetting with value undefined)
         None | Some(Value::Null) => {
@@ -77,7 +76,7 @@ impl SettingsStore {
     }
     let keys: Vec<String> = values.keys().cloned().collect();
     let snap = {
-      let mut v = self.values.lock().unwrap();
+      let mut v = self.values.lock();
       v.extend(values);
       self.save(&v);
       v.clone()
@@ -86,11 +85,11 @@ impl SettingsStore {
   }
 
   pub fn on_change(&self, listener: impl Fn(&[String], &Map<String, Value>) + Send + Sync + 'static) {
-    self.listeners.lock().unwrap().push(Box::new(listener));
+    self.listeners.lock().push(Box::new(listener));
   }
 
   fn notify(&self, keys: &[String], snap: &Map<String, Value>) {
-    for l in self.listeners.lock().unwrap().iter() {
+    for l in self.listeners.lock().iter() {
       l(keys, snap);
     }
   }
@@ -145,7 +144,7 @@ mod tests {
     let s = SettingsStore::new(&f);
     let seen = Arc::new(Mutex::new(Vec::<Vec<String>>::new()));
     let w = seen.clone();
-    s.on_change(move |keys, _| w.lock().unwrap().push(keys.to_vec()));
+    s.on_change(move |keys, _| w.lock().push(keys.to_vec()));
     s.set("defaultAgent", Some(json!("claude")));
     s.set("sessionScope", None);
     let mut m = Map::new();
@@ -154,7 +153,7 @@ mod tests {
     s.merge(m);
     s.merge(Map::new());
     assert_eq!(
-      *seen.lock().unwrap(),
+      *seen.lock(),
       vec![
         vec!["defaultAgent".to_owned()],
         vec!["sessionScope".to_owned()],

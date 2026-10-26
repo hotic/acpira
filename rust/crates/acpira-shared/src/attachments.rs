@@ -12,7 +12,7 @@ const IMAGE_MIME: [(&str, &str); 5] =
 pub fn image_mime_of(name: &str) -> Option<&'static str> {
   let tail = name.rsplit(['/', '\\']).next().unwrap_or(name);
   let dot = tail.rfind('.')?;
-  let ext = tail[dot..].to_lowercase();
+  let ext = tail.get(dot..)?.to_lowercase();
   if ext.len() < 2 {
     return None;
   }

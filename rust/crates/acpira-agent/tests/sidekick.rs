@@ -3,6 +3,7 @@
 //! message a pick lists acpira's tools again (the engine's ask_agent names the sidekick first); later the next
 //! message carries a `<sidekick>` note, unless acpira offered no ask_agent at all. The `acpira` server here is a
 //! streamable HTTP stand-in whose ask_agent description the test changes, as the engine's hub would
+#![allow(clippy::unwrap_used, clippy::panic, reason = "test code")]
 
 mod support;
 

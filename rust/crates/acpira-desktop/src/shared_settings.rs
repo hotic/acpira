@@ -5,10 +5,11 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use acpira_shared::settings::is_shared_setting;
+use parking_lot::Mutex;
 use serde_json::{Map, Value};
 
 pub struct SharedSettingsFile {
@@ -42,12 +43,12 @@ impl SharedSettingsFile {
   }
 
   pub fn exists(&self) -> bool {
-    self.values.lock().unwrap().is_some()
+    self.values.lock().is_some()
   }
 
   /// A shared key from the file once it exists; otherwise (and for the shell's own keys) the shell's value
   pub fn get(&self, key: &str, own: impl FnOnce(&str) -> Option<Value>) -> Option<Value> {
-    let v = self.values.lock().unwrap();
+    let v = self.values.lock();
     match v.as_ref() {
       Some(m) if is_shared_setting(key) => m.get(key).cloned(),
       _ => {
@@ -61,7 +62,8 @@ impl SharedSettingsFile {
   /// without reliable native watch events. `on_change` gets the keys whose value moved, on the poll thread
   pub fn watch(&self, interval: Duration, on_change: impl Fn(Vec<String>) + Send + 'static) {
     let (path, values, stop) = (self.path.clone(), self.values.clone(), self.stop.clone());
-    std::thread::Builder::new()
+    // Without a thread (the OS refused one) the values stay as read at start
+    let _ = std::thread::Builder::new()
       .name("shared-settings".into())
       .spawn(move || {
         let mut last = stamp(&path);
@@ -74,7 +76,7 @@ impl SharedSettingsFile {
           last = now;
           let after = read(&path);
           let keys = {
-            let mut v = values.lock().unwrap();
+            let mut v = values.lock();
             let before = v.clone().unwrap_or_default();
             let a = after.clone().unwrap_or_default();
             *v = after;
@@ -86,8 +88,7 @@ impl SharedSettingsFile {
             on_change(keys);
           }
         }
-      })
-      .expect("shared settings thread");
+      });
   }
 
   pub fn unwatch(&self) {

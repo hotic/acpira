@@ -874,7 +874,7 @@ impl AcpSession {
 fn take_reply_error(vendor: Vendor, turn: &mut AgentTurn) -> Option<ReplyError> {
   let Some(AgentBlock::Text(x)) = turn.blocks.last_mut() else { return None };
   let (at, e) = vendor.reply_error(&x.markdown)?;
-  let kept = x.markdown[..at].trim_end().to_owned();
+  let kept = x.markdown.get(..at)?.trim_end().to_owned();
   if kept.is_empty() {
     turn.blocks.pop();
   } else {

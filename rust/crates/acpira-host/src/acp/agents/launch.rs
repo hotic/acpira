@@ -52,6 +52,7 @@ async fn is_executable(p: &Path) -> bool {
   use std::os::unix::ffi::OsStrExt;
   let Ok(c) = std::ffi::CString::new(p.as_os_str().as_bytes()) else { return false };
   // access(2) X_OK, as fs.access(p, X_OK) does (a directory with the execute bit passes there too)
+  // SAFETY: `c` is a NUL-terminated CString the closure owns for the whole call
   tokio::task::spawn_blocking(move || unsafe { libc::access(c.as_ptr(), libc::X_OK) } == 0).await.unwrap_or(false)
 }
 

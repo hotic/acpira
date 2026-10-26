@@ -1,5 +1,6 @@
 //! Summary compaction against the scripted model: at the host's threshold inside a turn, on /compact, and after a
 //! provider refused a request as too long; the session log and a reopen keep the compacted view
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::string_slice, reason = "test code")]
 
 mod support;
 

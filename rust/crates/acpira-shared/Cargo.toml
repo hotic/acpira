@@ -17,3 +17,6 @@ windows-sys.workspace = true
 
 [build-dependencies]
 miniz_oxide.workspace = true
+
+[lints]
+workspace = true

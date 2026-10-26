@@ -425,6 +425,7 @@ impl AcpSession {
     )
   }
 
+  #[expect(clippy::expect_used, reason = "every session is built by Arc::new_cyclic and only reached through a live Arc, never from its Drop")]
   pub(crate) fn arc(&self) -> Arc<AcpSession> {
     self.me.upgrade().expect("session alive while in use")
   }

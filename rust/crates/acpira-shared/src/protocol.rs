@@ -132,15 +132,14 @@ pub struct SessionHit {
 
 /// Links in agent output open on the host side; only these schemes are ever handed to openExternal
 pub fn is_safe_external_url(url: &str) -> bool {
-  let Some(colon) = url.find(':') else { return false };
-  let scheme = url[..colon].trim().to_ascii_lowercase();
+  let Some((scheme, rest)) = url.split_once(':') else { return false };
+  let scheme = scheme.trim().to_ascii_lowercase();
   let valid = !scheme.is_empty()
     && scheme.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
     && scheme.chars().all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c));
   if !valid {
     return false;
   }
-  let rest = &url[colon + 1..];
   match scheme.as_str() {
     // new URL() rejects http(s) without a host
     "http" | "https" => rest.trim_start_matches(['/', '\\']).chars().next().is_some_and(|c| !c.is_whitespace() && c != '?' && c != '#'),
@@ -500,6 +499,7 @@ impl HostMsg {
 pub struct RawJson(pub std::sync::Arc<serde_json::value::RawValue>);
 
 impl RawJson {
+  #[expect(clippy::expect_used, reason = "only the protocol's own types come here; one that cannot serialize is a bug of the build")]
   pub fn new<T: Serialize>(v: &T) -> RawJson {
     RawJson(std::sync::Arc::from(serde_json::value::to_raw_value(v).expect("serializable")))
   }

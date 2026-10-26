@@ -138,6 +138,7 @@ impl HostMessage {
   }
 
   /// A message the shell makes itself (a toast, a chime, a menu command), peeked the same way
+  #[expect(clippy::expect_used, reason = "a serde_json::Value always serializes to valid JSON")]
   pub fn from_value(v: &Value) -> HostMessage {
     HostMessage::from_raw(RawValue::from_string(v.to_string()).expect("a JSON value serializes to valid JSON"))
   }

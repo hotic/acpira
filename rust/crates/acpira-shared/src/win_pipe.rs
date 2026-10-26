@@ -24,8 +24,9 @@ pub struct OwnerOnly {
   attributes: SECURITY_ATTRIBUTES,
 }
 
-// The descriptor is allocated once, never written after, and freed on drop
+// SAFETY: the descriptor is allocated once, never written after, and freed on drop, so moving it between threads is sound
 unsafe impl Send for OwnerOnly {}
+// SAFETY: as above; shared access only reads the attributes
 unsafe impl Sync for OwnerOnly {}
 
 impl OwnerOnly {
@@ -69,8 +70,10 @@ fn token_user(process: HANDLE) -> io::Result<Vec<u64>> {
   // SAFETY: measures, then fills a buffer of that size (u64-aligned for TOKEN_USER)
   unsafe { GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut len) };
   let mut buf = vec![0u64; (len as usize).div_ceil(8)];
+  // SAFETY: the buffer holds at least `len` bytes, the size measured above
   let ok = unsafe { GetTokenInformation(token, TokenUser, buf.as_mut_ptr().cast(), len, &mut len) };
   let err = io::Error::last_os_error();
+  // SAFETY: the token opened above, closed once
   unsafe { CloseHandle(token) };
   if ok == 0 {
     return Err(err);
@@ -92,8 +95,11 @@ pub fn current_user_sid_string() -> io::Result<String> {
   if unsafe { ConvertSidToStringSidW(sid_of(&me), &mut text) } == 0 {
     return Err(io::Error::last_os_error());
   }
+  // SAFETY: ConvertSidToStringSidW wrote a NUL-terminated string at `text`
   let len = (0..).take_while(|&i| unsafe { *text.add(i) } != 0).count();
+  // SAFETY: `len` units before that NUL, all initialized
   let s = String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(text, len) });
+  // SAFETY: LocalAlloc'd by ConvertSidToStringSidW, freed once
   unsafe { LocalFree(text.cast()) };
   Ok(s)
 }
@@ -112,8 +118,11 @@ pub fn served_by_this_user(pipe: &impl std::os::windows::io::AsRawHandle) -> boo
     return false;
   }
   let theirs = token_user(process);
+  // SAFETY: the handle opened above, closed once
   unsafe { CloseHandle(process) };
-  let (Ok(theirs), Ok(mine)) = (theirs, token_user(unsafe { GetCurrentProcess() })) else { return false };
+  // SAFETY: the pseudo handle of this process needs no closing
+  let mine = token_user(unsafe { GetCurrentProcess() });
+  let (Ok(theirs), Ok(mine)) = (theirs, mine) else { return false };
   // SAFETY: both SIDs point into live TOKEN_USER buffers
   unsafe { EqualSid(sid_of(&theirs), sid_of(&mine)) != 0 }
 }

@@ -196,6 +196,7 @@ pub mod system {
     impl Drop for Com {
       fn drop(&mut self) {
         if self.0 {
+          // SAFETY: balances the CoInitializeEx that succeeded on this thread in init
           unsafe { CoUninitialize() };
         }
       }
@@ -212,6 +213,7 @@ pub mod system {
       info.lpVerb = verb.as_ptr();
       info.lpFile = file.as_ptr();
       info.nShow = SW_SHOWNORMAL;
+      // SAFETY: `info` is initialized above and the strings it points at outlive the call
       if unsafe { ShellExecuteExW(&mut info) } == 0 {
         return Err(format!("{target}: {}", std::io::Error::last_os_error()));
       }
@@ -227,7 +229,9 @@ pub mod system {
       if pidl.is_null() {
         return Err(format!("{path}: not found"));
       }
+      // SAFETY: `pidl` is the non-null list created above; no child items are passed
       let hr = unsafe { SHOpenFolderAndSelectItems(pidl, 0, std::ptr::null(), 0) };
+      // SAFETY: `pidl` came from ILCreateFromPathW and is freed once
       unsafe { ILFree(pidl) };
       if hr < 0 {
         return Err(format!("{path}: {}", std::io::Error::from_raw_os_error(hr)));

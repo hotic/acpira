@@ -220,7 +220,7 @@ pub fn claude_plan(kind: &str, tier: Option<&str>) -> Option<String> {
   let multiplier = tier
     .and_then(|t| t.rsplit_once('_'))
     .map(|(_, last)| last)
-    .filter(|m| m.len() > 1 && m.ends_with('x') && m[..m.len() - 1].chars().all(|c| c.is_ascii_digit()));
+    .filter(|m| m.strip_suffix('x').is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())));
   Some(match multiplier {
     Some(m) => format!("{label} {m}"),
     None => label,

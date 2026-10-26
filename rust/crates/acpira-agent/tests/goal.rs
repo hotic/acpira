@@ -1,5 +1,6 @@
 //! Session goals (`goal.rs`) against the scripted model: the codex-acp goal extension on the wire, goal turns opened
 //! by `/goal …` prompts, the client's continuations, the tools the model marks the goal with, and what stops a goal
+#![allow(clippy::unwrap_used, reason = "test code")]
 
 mod support;
 

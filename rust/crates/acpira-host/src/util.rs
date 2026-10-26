@@ -66,7 +66,7 @@ pub fn clip(s: &str, n: usize) -> String {
 /// Whether a whitespace-free token reads as an absolute file path or file URL (`/a/b`, `~/a`, `C:\\a`, `file:///a`)
 fn is_abs_path(tok: &str) -> bool {
   let b = tok.as_bytes();
-  let unix = (tok.starts_with('/') || tok.starts_with("~/")) && tok[1..].contains('/');
+  let unix = (tok.starts_with('/') || tok.starts_with("~/")) && tok.get(1..).is_some_and(|t| t.contains('/'));
   let drive = b.len() > 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/');
   unix || drive || tok.starts_with("file://")
 }
@@ -119,14 +119,16 @@ pub fn local_stamp() -> String {
   #[cfg(unix)]
   {
     let t = secs as libc::time_t;
-    // SAFETY: localtime_r writes into the provided struct
+    // SAFETY: libc::tm is plain integers (and a nullable pointer on some targets), for which all-zero bytes are valid
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    // SAFETY: localtime_r writes into the provided struct
     if !unsafe { libc::localtime_r(&t, &mut tm) }.is_null() {
       return format!("{:04}{:02}{:02}-{:02}{:02}{:02}", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
     }
   }
   let iso = iso_of_ms(secs * 1000);
-  format!("{}{}{}-{}{}{}", &iso[0..4], &iso[5..7], &iso[8..10], &iso[11..13], &iso[14..16], &iso[17..19])
+  let part = |r: std::ops::Range<usize>| iso.get(r).unwrap_or_default();
+  format!("{}{}{}-{}{}{}", part(0..4), part(5..7), part(8..10), part(11..13), part(14..16), part(17..19))
 }
 
 /// SHA-1 (FIPS 180-4), for the WebSocket handshake only

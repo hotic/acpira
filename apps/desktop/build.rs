@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used, reason = "a build script fails the build by panicking")]
+
 use std::path::{Path, PathBuf};
 
 fn main() {

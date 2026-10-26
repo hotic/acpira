@@ -412,7 +412,7 @@ pub fn probe_at(http: &ureq::Agent, catalog: &Catalog, servers: &[(&'static str,
   let mut out = vec![];
   for &(preset, name, root) in servers {
     let base_url = format!("{root}/v1");
-    let provider: Provider = serde_json::from_value(json!({ "id": preset, "preset": preset, "baseUrl": base_url })).expect("a minimal provider parses");
+    let Ok(provider) = serde_json::from_value::<Provider>(json!({ "id": preset, "preset": preset, "baseUrl": base_url })) else { continue };
     if let Ok(models) = discover(http, &provider, None, catalog) {
       out.push(LocalServer { preset, name, base_url, models });
     }

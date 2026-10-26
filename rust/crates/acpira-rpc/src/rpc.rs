@@ -81,7 +81,7 @@ pub trait Inbound: Send + Sync + 'static {
 }
 
 /// Held by the caller of `request_ordered` while it applies the response; the reader reads the next message once it is dropped
-pub struct Handoff(#[allow(dead_code)] oneshot::Sender<()>);
+pub struct Handoff(#[allow(dead_code, reason = "held only for its drop, which wakes the reader")] oneshot::Sender<()>);
 
 // How long the reader waits for a Handoff; a caller holding one this long is a bug, and the wire must not stall on it
 const HANDOFF_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
@@ -248,7 +248,8 @@ impl Connection {
   /// state change is done (no awaits in between), then drop it
   pub async fn request_ordered(&self, method: &str, params: Value) -> Result<(Value, Handoff), RpcError> {
     let (v, h) = self.send_request(method, params, true).await?;
-    Ok((v, h.expect("an ordered reply carries its handoff")))
+    let h = h.ok_or_else(|| RpcError::internal("an ordered reply came without its handoff"))?;
+    Ok((v, h))
   }
 
   /// A request the caller may give up on: dropped before its answer, it sends `$/cancel_request` with the request's

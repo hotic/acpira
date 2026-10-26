@@ -1,6 +1,8 @@
 //! Packs the exported i18n dictionaries (i18n/*.json) DEFLATE-compressed into OUT_DIR, where src/i18n.rs embeds them.
 //! The nine JSON files are ~890 KB and both the engine and the desktop shell link this crate; packed they are ~240 KB
 
+#![allow(clippy::expect_used, clippy::panic, reason = "a build script fails the build by panicking")]
+
 use std::path::Path;
 use std::{env, fs};
 

@@ -16,7 +16,7 @@ use crate::acp::session::errors::rpc_of;
 use crate::acp::transport::process::KILL_GRACE;
 use crate::store::file_lock::pid_alive;
 
-static HOLDER_PID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bPID[:\s]+(\d+)").unwrap());
+static HOLDER_PID: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)\bPID[:\s]+(\d+)"));
 
 /// The holder pid a locked restore names: Devin words it `… already open in another process (PID 1411462) …`
 pub fn holder_pid(e: &anyhow::Error) -> Option<u32> {
@@ -112,6 +112,7 @@ pub async fn terminate(pid: u32) {
   if raw.is_null() {
     return;
   }
+  // SAFETY: a valid handle just returned by OpenProcess, owned from here on
   let handle = unsafe { OwnedHandle::from_raw_handle(raw) };
   if !held_by_sibling(pid).await {
     return;
@@ -121,6 +122,7 @@ pub async fn terminate(pid: u32) {
     return;
   }
   let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+  // SAFETY: a zero-timeout wait on the live handle owned above
   while unsafe { WaitForSingleObject(handle.as_raw_handle(), 0) } == WAIT_TIMEOUT && tokio::time::Instant::now() < deadline {
     tokio::time::sleep(Duration::from_millis(10)).await;
   }

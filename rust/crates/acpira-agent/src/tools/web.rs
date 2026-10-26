@@ -134,8 +134,8 @@ fn split(url: &str) -> Option<(&str, &str, &str)> {
     return None;
   }
   let end = after.find(['/', '?', '#']).unwrap_or(after.len());
-  let authority = &after[..end];
-  (!host_of(authority).is_empty()).then_some((scheme, authority, &after[end..]))
+  let (authority, rest) = after.split_at_checked(end)?;
+  (!host_of(authority).is_empty()).then_some((scheme, authority, rest))
 }
 
 /// The host of an authority, lowercase, without user info, port or IPv6 brackets
@@ -174,15 +174,13 @@ pub fn origin(url: &str) -> Option<String> {
 /// `href` made absolute against `base` (RFC 3986 reference resolution, without percent-encoding work)
 pub fn join(base: &str, href: &str) -> String {
   let href = href.trim();
-  let has_scheme = href.find(':').is_some_and(|i| {
-    let s = &href[..i];
+  let has_scheme = href.split_once(':').is_some_and(|(s, _)| {
     !s.is_empty() && s.starts_with(|c: char| c.is_ascii_alphabetic()) && s.chars().all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c))
   });
   let Some((scheme, authority, rest)) = split(base).filter(|_| !has_scheme) else {
     return href.to_owned();
   };
-  let path_end = rest.find(['?', '#']).unwrap_or(rest.len());
-  let path = &rest[..path_end];
+  let path = rest.split(['?', '#']).next().unwrap_or(rest);
   if let Some(net) = href.strip_prefix("//") {
     return format!("{scheme}://{net}");
   }
@@ -196,7 +194,7 @@ pub fn join(base: &str, href: &str) -> String {
   if href.starts_with('?') {
     return format!("{scheme}://{authority}{path}{href}");
   }
-  let dir = path.rfind('/').map_or("/", |i| &path[..=i]);
+  let dir = path.rfind('/').and_then(|i| path.get(..=i)).unwrap_or("/");
   format!("{scheme}://{authority}{}", remove_dots(&format!("{dir}{href}")))
 }
 
@@ -489,7 +487,7 @@ impl DeepSeekSearch {
 pub fn tools_search_url(base: &str) -> String {
   let base = base.trim().trim_end_matches('/');
   let root = match base.find("/v1/") {
-    Some(i) => &base[..i + 3],
+    Some(i) => base.get(..i + 3).unwrap_or(base),
     None => base,
   };
   if root.ends_with("/v1") { format!("{root}/tools/search") } else { format!("{root}/v1/tools/search") }
@@ -675,7 +673,7 @@ fn deepseek_results(body: &str, count: usize) -> Result<String, String> {
     out.push_str(&format!("## {}. [{}]({url})\n", i + 1, s("title").unwrap_or(url)));
     // RFC 3339 from DeepSeek, free text from a gateway's other backends
     if let Some(date) = s("date") {
-      let day = if date.len() > 10 && date.as_bytes()[4] == b'-' { &date[..10] } else { date };
+      let day = if date.len() > 10 && date.as_bytes()[4] == b'-' { date.get(..10).unwrap_or(date) } else { date };
       out.push_str(&format!("Published {day}\n"));
     }
     if let Some(text) = s("summary").or_else(|| s("snippet")) {
@@ -857,6 +855,9 @@ mod tests {
     let text = deepseek_results(&body.to_string(), 8).unwrap();
     assert!(text.starts_with("## 1. [Blog | Bun](https://bun.com/blog)\nPublished 2026-10-09\n\nxxx"), "{text}");
     assert!(text.contains(" …\n\n## 2. [J](https://j.dev)\nPublished Oct 1, 2026\n\nshort") && !text.contains("No link"), "{text}");
+    // A free-text date with a wide character across byte 10 stays whole
+    let body = json!({ "results": [{ "title": "D", "url": "https://d.dev", "date": "2026-10-1日", "snippet": "s" }] });
+    assert!(deepseek_results(&body.to_string(), 8).unwrap().contains("Published 2026-10-1日\n"));
     // An empty answer is how DeepSeek declines a query: it fails so the next backend is asked
     assert_eq!(deepseek_results(r#"{"results":[]}"#, 8).unwrap_err(), "no results");
   }

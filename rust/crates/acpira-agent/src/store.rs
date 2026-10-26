@@ -198,9 +198,10 @@ impl Store {
     if dry {
       return Ok(Some(mark));
     }
-    let mut out = text[..at].to_owned();
+    let Some((kept, from)) = text.split_at_checked(at) else { return Ok(None) };
+    let mut out = kept.to_owned();
     // A last line without its newline was cut short by a crash and is dropped with the rest
-    for line in text[at..].split_inclusive('\n').skip(1).filter(|l| l.ends_with('\n')) {
+    for line in from.split_inclusive('\n').skip(1).filter(|l| l.ends_with('\n')) {
       if !CONVERSATION_LINES.iter().any(|p| line.starts_with(p)) {
         out.push_str(line);
       }
@@ -440,7 +441,8 @@ pub fn load(path: &Path, only_summary: bool) -> std::io::Result<Loaded> {
         let budget = ev.get("budget").cloned().and_then(|b| serde_json::from_value(b).ok()).unwrap_or_default();
         crate::chunk::merge(&mut out.chunks, chunk_list(&ev));
         let rest = out.items.split_off(out.items.len().saturating_sub(tail));
-        let summary = out.summarized.then(|| out.items[0].clone());
+        // A `tail` from the file can reach past the summary item; the view then goes without it
+        let summary = out.items.first().filter(|_| out.summarized).cloned();
         let projection = crate::chunk::render(&out.chunks, budget);
         out.folded = projection.len();
         out.items = summary.into_iter().chain(projection).chain(rest).collect();

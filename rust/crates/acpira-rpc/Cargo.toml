@@ -10,3 +10,6 @@ publish.workspace = true
 parking_lot.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+
+[lints]
+workspace = true

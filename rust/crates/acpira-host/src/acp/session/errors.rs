@@ -26,18 +26,18 @@ pub fn rpc_of(e: &anyhow::Error) -> Option<&RpcError> {
   e.downcast_ref::<RpcError>()
 }
 
-static AUTH_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)auth").unwrap());
-static AUTH_WHY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)required|login|unauthor").unwrap());
-static AUTH_WORDS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)auth|credential|login|logged|unauthor").unwrap());
-static GLOG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^([IWEFD])\d{4} \d{2}:\d{2}:\d{2}\.\d+\s+\d+\s+[\w.-]+:\d+\]").unwrap());
+static AUTH_RE: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)auth"));
+static AUTH_WHY: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)required|login|unauthor"));
+static AUTH_WORDS: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)auth|credential|login|logged|unauthor"));
+static GLOG: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"^([IWEFD])\d{4} \d{2}:\d{2}:\d{2}\.\d+\s+\d+\s+[\w.-]+:\d+\]"));
 /// A sign-in link printed while the browser opens (antigravity-acp `Open the following link to authenticate …: <url>`)
-static SIGN_IN_LINK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(?:open|visit|go to)\b.*\bhttps?://").unwrap());
-static GONE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)session not found|no rollout found for thread id").unwrap());
-static LOCKED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)already active|in use|held by|locked").unwrap());
+static SIGN_IN_LINK: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)^(?:open|visit|go to)\b.*\bhttps?://"));
+static GONE: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)session not found|no rollout found for thread id"));
+static LOCKED: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)already active|in use|held by|locked"));
 /// Codex's per-thread writer lock (`thread <id> already has an active writer`), held by another live Codex process
-static WRITER_LOCKED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)already has an active writer").unwrap());
-static UNRESUMABLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)not resumable|cannot be resumed").unwrap());
-static RESTORE_FAILED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bcwd\b|working directory|absolute path|\bmcp\b").unwrap());
+static WRITER_LOCKED: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)already has an active writer"));
+static UNRESUMABLE: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)not resumable|cannot be resumed"));
+static RESTORE_FAILED: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)\bcwd\b|working directory|absolute path|\bmcp\b"));
 
 /// Which option auto-approval picks: allow_always, then allow_once, otherwise the first one
 pub fn best_allow(options: &[Value]) -> anyhow::Result<String> {
@@ -122,7 +122,8 @@ pub fn auth_hint_of(line: &str) -> Option<String> {
     if matches!(&m[1], "I" | "D") {
       return None;
     }
-    text = text[m.get(0).unwrap().end()..].trim();
+    let head = m.get(0).map_or("", |g| g.as_str());
+    text = text.strip_prefix(head).unwrap_or(text).trim();
   }
   if text.is_empty()
     || SIGN_IN_LINK.is_match(text)
@@ -145,7 +146,7 @@ pub fn auth_hint_of(line: &str) -> Option<String> {
 }
 
 static QUOTA_TEXT: LazyLock<Regex> =
-  LazyLock::new(|| Regex::new(r"(?i)usage (?:quota|limit) has been (?:exhausted|reached)|usage limit reached|^You've (?:hit|reached) your|out of usage").unwrap());
+  LazyLock::new(|| acpira_shared::re::compile(r"(?i)usage (?:quota|limit) has been (?:exhausted|reached)|usage limit reached|^You've (?:hit|reached) your|out of usage"));
 
 /// The account behind the session ran out of allowance, so another account can carry on: Devin's typed
 /// `resource_exhausted` (-32011), the AIR `quota_exhausted` failure codex-acp / claude-agent-acp send (category limit with no

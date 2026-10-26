@@ -33,7 +33,9 @@ impl AgentConfig {
   /// First writer wins, including an empty file: another IDE must never re-import its old overrides.
   /// A malformed existing file is preserved and reported, never replaced with migrated settings.
   pub async fn initialize(&self, legacy: Option<Value>) -> Result<()> {
-    fs::create_dir_all(self.path.parent().expect("config parent")).await?;
+    if let Some(parent) = self.path.parent() {
+      fs::create_dir_all(parent).await?;
+    }
     with_file_lock(&self.path, || async {
       match fs::metadata(&self.path).await {
         Ok(_) => {}

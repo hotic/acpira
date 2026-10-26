@@ -153,6 +153,7 @@ fn read_only_volume(p: &Path) -> bool {
   let Some(c) = c_path(p) else { return false };
   // SAFETY: statfs fills the zeroed struct for a valid path
   let mut s: libc::statfs = unsafe { std::mem::zeroed() };
+  // SAFETY: `c` is a NUL-terminated path that outlives the call and `s` is a statfs it may write
   unsafe { libc::statfs(c.as_ptr(), &mut s) == 0 && s.f_flags & libc::MNT_RDONLY as u32 != 0 }
 }
 
@@ -376,6 +377,7 @@ mod tests {
     {
       use std::os::unix::fs::PermissionsExt;
       // Root ignores permission bits; the check is meaningless there
+      // SAFETY: geteuid has no preconditions
       if unsafe { libc::geteuid() } != 0 {
         std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
         assert_eq!(location_blocker(&app), Some(ManualReason::NotWritable));

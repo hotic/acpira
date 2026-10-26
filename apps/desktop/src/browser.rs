@@ -4,10 +4,11 @@
 //! (ChatWindow) carries it. Same messages, same order as the VS Code shell's BrowserPanel
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Weak};
 
 use acpira_desktop::browser::{BrowserPage, host_of, normalize_preview_url};
 use acpira_desktop::client::{PreviewAnswer, PreviewHandle, PreviewLease};
+use parking_lot::Mutex;
 use serde_json::{Value, json};
 use tauri::WebviewWindow;
 
@@ -47,20 +48,20 @@ impl BrowserRelay {
   }
 
   pub fn target(&self) -> Option<String> {
-    self.target.lock().unwrap().clone()
+    self.target.lock().clone()
   }
 
   pub fn folder(&self) -> Option<String> {
-    self.folder.lock().unwrap().clone()
+    self.folder.lock().clone()
   }
 
   pub fn set_folder(&self, folder: Option<String>) {
-    *self.folder.lock().unwrap() = folder;
+    *self.folder.lock() = folder;
   }
 
   /// Another page through the same lease: the engine keeps the proxy while the site stays the same
   pub fn navigate(&self, url: String) {
-    *self.target.lock().unwrap() = Some(url.clone());
+    *self.target.lock() = Some(url.clone());
     let me = self.me.clone();
     let asked = url.clone();
     let app = crate::app::app();
@@ -76,7 +77,7 @@ impl BrowserRelay {
       }),
     };
     let handle = app.client().preview(lease);
-    *self.lease.lock().unwrap() = Some(handle);
+    *self.lease.lock() = Some(handle);
   }
 
   pub fn post_look(&self) {
@@ -105,7 +106,7 @@ impl BrowserRelay {
   // A frame or an error, which takes the place of the page shown so far
   fn post(&self, m: Value) {
     crate::app::app().leave_page(&self.panel_id);
-    *self.pending.lock().unwrap() = Some(m.clone());
+    *self.pending.lock() = Some(m.clone());
     if self.ready.load(Ordering::SeqCst) {
       (self.send)(m);
     }
@@ -120,7 +121,7 @@ impl BrowserRelay {
         self.ready.store(true, Ordering::SeqCst);
         self.post_look();
         self.post_history();
-        let pending = self.pending.lock().unwrap().clone();
+        let pending = self.pending.lock().clone();
         if let Some(p) = pending {
           (self.send)(p);
         }
@@ -163,7 +164,7 @@ impl BrowserRelay {
 
   pub fn dispose(&self) {
     crate::app::app().leave_page(&self.panel_id);
-    if let Some(h) = self.lease.lock().unwrap().take() {
+    if let Some(h) = self.lease.lock().take() {
       h.release();
     }
   }

@@ -205,9 +205,9 @@ impl AgentProcess {
       job,
       reaped: Arc::new(parking_lot::Mutex::new(false)),
     });
-    let stdin = child.stdin.take().expect("piped");
-    let stdout = child.stdout.take().expect("piped");
-    let stderr = child.stderr.take().expect("piped");
+    let stdin = child.stdin.take().ok_or_else(|| anyhow!("agent stdin is not piped"))?;
+    let stdout = child.stdout.take().ok_or_else(|| anyhow!("agent stdout is not piped"))?;
+    let stderr = child.stderr.take().ok_or_else(|| anyhow!("agent stderr is not piped"))?;
 
     let err_box = box_.clone();
     tokio::spawn(async move {

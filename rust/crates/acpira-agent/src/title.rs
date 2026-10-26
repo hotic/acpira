@@ -118,7 +118,8 @@ pub fn clean(raw: &str) -> Option<String> {
   let line = ["title:", "title：", "标题:", "标题：", "標題:", "標題："]
     .iter()
     .find(|p| lower.starts_with(*p))
-    .map_or(line, |p| &line[p.len()..]);
+    .and_then(|p| line.get(p.len()..))
+    .unwrap_or(line);
   const QUOTES: [char; 14] = ['"', '\'', '`', '*', '“', '”', '‘', '’', '「', '」', '『', '』', '《', '》'];
   const TRAILING: [char; 13] = ['.', '。', '!', '！', '?', '？', '…', ',', '，', ':', '：', ';', '；'];
   // Quotes and punctuation nest either way round (`"Fix it."`, `《标题》。`): peel until nothing changes

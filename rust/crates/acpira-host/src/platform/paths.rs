@@ -121,7 +121,8 @@ mod spelling_tests {
   }
 }
 
-#[cfg(all(test, windows))]
+#[cfg(test)]
+#[cfg(windows)]
 mod tests {
   use super::*;
 
@@ -139,9 +140,11 @@ mod tests {
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use windows_sys::Win32::Storage::FileSystem::GetShortPathNameW;
     let input: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    // SAFETY: a NUL-terminated path in; a null buffer only measures
     let len = unsafe { GetShortPathNameW(input.as_ptr(), std::ptr::null_mut(), 0) };
     assert_ne!(len, 0, "{}", std::io::Error::last_os_error());
     let mut output = vec![0u16; len as usize];
+    // SAFETY: the buffer holds `len` units, the size measured above
     let written = unsafe { GetShortPathNameW(input.as_ptr(), output.as_mut_ptr(), len) };
     assert!(written > 0 && written < len, "{}", std::io::Error::last_os_error());
     PathBuf::from(std::ffi::OsString::from_wide(&output[..written as usize]))

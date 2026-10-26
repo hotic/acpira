@@ -1,5 +1,6 @@
 //! The Fast switch: offered only for a model with a fast tier, sent as the format's own parameter, recorded in the
 //! session log, and kept across a reopen
+#![allow(clippy::unwrap_used, reason = "test code")]
 
 mod support;
 

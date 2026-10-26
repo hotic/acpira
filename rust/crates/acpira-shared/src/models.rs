@@ -10,7 +10,7 @@ use serde_json::json;
 use crate::transcript::SessionOption;
 
 pub const FUSION: &str = "Fusion";
-static FUSION_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^Fusion\s*\((.+?)\s+\+\s+(.+)\)$").unwrap());
+static FUSION_NAME: LazyLock<Regex> = LazyLock::new(|| crate::re::compile(r"(?i)^Fusion\s*\((.+?)\s+\+\s+(.+)\)$"));
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ParsedModel {
@@ -73,11 +73,11 @@ pub fn parse_model_name(name: &str) -> ParsedModel {
       break;
     }
   }
-  if t.len() > 1 && t.last().unwrap().eq_ignore_ascii_case("thinking") {
+  if t.len() > 1 && t.last().is_some_and(|s| s.eq_ignore_ascii_case("thinking")) {
     thinking = true;
     t.pop();
   }
-  let last = t.last().unwrap().to_lowercase();
+  let last = t.last().map(|s| s.to_lowercase()).unwrap_or_default();
   if let (true, Some(l)) = (t.len() > 1, level(&last)) {
     effort = l.into();
     t.pop();
@@ -168,8 +168,8 @@ pub fn group_models(options: &[SessionOption]) -> Vec<ModelFamily> {
   }
   order
     .into_iter()
-    .map(|k| {
-      let mut f = map.remove(&k).unwrap();
+    .filter_map(|k| {
+      let mut f = map.remove(&k)?;
       let fu = fusion.get(&k);
       let idx = |list: Option<&Vec<String>>, v: &Option<String>| -> i64 {
         match list {
@@ -185,7 +185,7 @@ pub fn group_models(options: &[SessionOption]) -> Vec<ModelFamily> {
           .then(a.fast.cmp(&b.fast))
           .then(a.long.cmp(&b.long))
       });
-      f
+      Some(f)
     })
     .collect()
 }

@@ -89,7 +89,13 @@ pub fn run(args: Vec<String>) -> i32 {
   if args.first().map(String::as_str) == Some("install-agent") {
     return install_agent(&args[1..]);
   }
-  let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("tokio runtime");
+  let rt = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+    Ok(rt) => rt,
+    Err(e) => {
+      stderr(&format!("cannot start the async runtime: {e}"));
+      return 1;
+    }
+  };
   let code = rt.block_on(async move {
     if args.first().map(String::as_str) == Some("bridge") {
       return chatgpt_cli::run(&args[1..]).await;
@@ -207,10 +213,17 @@ fn install_agent(args: &[String]) -> i32 {
 async fn shutdown_signal() {
   #[cfg(unix)]
   {
-    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("SIGTERM handler");
-    tokio::select! {
-      _ = term.recv() => {}
-      _ = tokio::signal::ctrl_c() => {}
+    // Without a SIGTERM handler (none can be installed) Ctrl-C still ends the agent
+    match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+      Ok(mut term) => {
+        tokio::select! {
+          _ = term.recv() => {}
+          _ = tokio::signal::ctrl_c() => {}
+        }
+      }
+      Err(_) => {
+        let _ = tokio::signal::ctrl_c().await;
+      }
     }
   }
   #[cfg(not(unix))]
@@ -448,7 +461,7 @@ async fn serve(args: &[String], home: PathBuf, exe: Option<String>) -> i32 {
     stderr(&format!("serve: {}: {e}", run.display()));
     return 1;
   }
-  let name = pipe[PIPE_PREFIX.len()..].replace(['\\', '/'], "_");
+  let name = pipe.strip_prefix(PIPE_PREFIX).unwrap_or(&pipe).replace(['\\', '/'], "_");
   let lock = match take_lock(&run.join(format!("{name}.lock"))).await {
     Ok(l) => l,
     Err(code) => return code,

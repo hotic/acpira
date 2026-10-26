@@ -140,9 +140,10 @@ impl RemoteClient {
   pub async fn start(mut cmd: Command, opts: ClientOpts) -> Result<RemoteClient, StartError> {
     cmd.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| StartError { message: format!("cannot start the connection: {e}"), stderr: String::new(), noise: vec![], exit_code: None })?;
-    let stdin = child.stdin.take().expect("piped stdin");
-    let stdout = child.stdout.take().expect("piped stdout");
-    let stderr_pipe = child.stderr.take().expect("piped stderr");
+    let (Some(stdin), Some(stdout), Some(stderr_pipe)) = (child.stdin.take(), child.stdout.take(), child.stderr.take()) else {
+      let _ = child.start_kill();
+      return Err(StartError { message: "cannot start the connection: no stdio pipes".to_owned(), stderr: String::new(), noise: vec![], exit_code: None });
+    };
     let stderr: Arc<Mutex<VecDeque<String>>> = Arc::default();
     {
       let stderr = stderr.clone();

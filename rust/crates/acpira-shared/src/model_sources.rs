@@ -41,11 +41,11 @@ pub fn apply_model_sources(agent: &str, controls: &mut [ConfigControl], configur
     for option in &mut control.options {
       match agent {
         "kimi" => {
-          let Some(slash) = option.id.find('/') else { continue };
-          if slash < 1 {
+          let Some((provider, _)) = option.id.split_once('/') else { continue };
+          if provider.is_empty() {
             continue;
           }
-          let provider = option.id[..slash].to_owned();
+          let provider = provider.to_owned();
           let kind = if provider == "kimi-code" { SourceKind::Official } else { SourceKind::Custom };
           option.source = Some(OptionSource { id: provider.clone(), name: provider, kind });
         }

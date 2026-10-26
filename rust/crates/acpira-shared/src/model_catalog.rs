@@ -58,8 +58,8 @@ pub fn option_level(option: &SessionOption) -> Option<Level> {
   parse_level(&option.id).or_else(|| parse_level(&option.name))
 }
 
-static DATED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"-(?:\d{8}|\d{4}-\d{2}-\d{2})$").unwrap());
-static DASHES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"-{2,}").unwrap());
+static DATED: LazyLock<Regex> = LazyLock::new(|| crate::re::compile(r"-(?:\d{8}|\d{4}-\d{2}-\d{2})$"));
+static DASHES: LazyLock<Regex> = LazyLock::new(|| crate::re::compile(r"-{2,}"));
 
 /// Identity key: the part after the last `/`, lowercase, `_` / space / `.` as `-`, without a date or `-latest` suffix
 pub fn model_key(value: &str) -> String {
@@ -159,7 +159,7 @@ impl CatalogFile {
     let head = serde_json::json!({ "format": self.format, "source": self.source, "etag": self.etag, "fetchedAt": self.fetched_at });
     let head = head.to_string();
     let lines: Vec<String> = self.models.iter().map(|m| serde_json::to_string(m).unwrap_or_default()).collect();
-    format!("{},\"models\":[\n{}\n]}}\n", &head[..head.len() - 1], lines.join(",\n"))
+    format!("{},\"models\":[\n{}\n]}}\n", head.strip_suffix('}').unwrap_or(&head), lines.join(",\n"))
   }
 
   /// The catalogue built into the binary

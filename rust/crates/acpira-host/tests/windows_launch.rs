@@ -1,6 +1,8 @@
 //! Native Windows smoke tests: resolve the installed entry, create the process, then complete ACP initialization.
 //! The fixture only uses Node's standard library; no installed agent, credentials, or model calls are involved.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test code")]
+
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;

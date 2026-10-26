@@ -164,16 +164,16 @@ impl ThinkSplit {
           }
         }
         ThinkState::Inside => {
-          if let Some(end) = self.held.find(CLOSE) {
-            reasoning.push_str(&self.held[..end]);
-            self.held = self.held[end + CLOSE.len()..].trim_start().to_owned();
+          if let Some((before, after)) = self.held.split_once(CLOSE) {
+            reasoning.push_str(before);
+            self.held = after.trim_start().to_owned();
             self.state = ThinkState::Text;
           } else {
             // Hold back a tail that could be the start of the closing tag
-            let keep = (1..CLOSE.len()).rev().find(|k| self.held.ends_with(&CLOSE[..*k])).unwrap_or(0);
-            let cut = self.held.len() - keep;
-            reasoning.push_str(&self.held[..cut]);
-            self.held = self.held[cut..].to_owned();
+            let keep = (1..CLOSE.len()).rev().find(|k| CLOSE.get(..*k).is_some_and(|p| self.held.ends_with(p))).unwrap_or(0);
+            let (head, tail) = self.held.split_at_checked(self.held.len() - keep).unwrap_or((&self.held, ""));
+            reasoning.push_str(head);
+            self.held = tail.to_owned();
             return (reasoning, text);
           }
         }

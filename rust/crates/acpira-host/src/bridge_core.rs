@@ -122,7 +122,7 @@ pub struct BridgeCore {
 }
 
 impl BridgeCore {
-  #[allow(clippy::too_many_arguments)]
+  #[allow(clippy::too_many_arguments, reason = "one argument per engine part the bridge wires together")]
   pub fn new(
     manager: Arc<SessionManager>,
     settings: Arc<SettingsCenter>,

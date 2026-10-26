@@ -76,7 +76,7 @@ pub fn markers(agent: &str, chunk: &str) -> Option<Vec<Marker>> {
   while !rest.is_empty() {
     let (len, marker) = table.iter().find_map(|(re, make)| re.find(rest).filter(|m| !m.is_empty()).map(|m| (m.end(), make(m.as_str()))))?;
     out.push(marker);
-    rest = rest[len..].trim_start();
+    rest = rest.get(len..).unwrap_or_default().trim_start();
   }
   (!out.is_empty()).then_some(out)
 }

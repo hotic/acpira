@@ -95,13 +95,19 @@ const SNIFF: usize = 64 * 1024;
 /// The most body bytes read at once, whatever a chunk header announces
 const PIECE: usize = 16 * 1024;
 
+/// A literal bytes pattern (`acpira_shared::re::compile` builds `str` ones only)
+#[expect(clippy::expect_used, reason = "the pattern is a source literal; an invalid one is a bug the proxy tests catch")]
+fn bytes_re(pattern: &'static str) -> Regex {
+  Regex::new(pattern).expect("a valid literal pattern")
+}
+
 /// Where the head is over: the held-back part then holds every meta CSP the page declares up front
-static HEAD_END: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)</head\s*>|<body[\s>]").unwrap());
-static HEAD_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)<head(?:\s[^>]*)?>").unwrap());
-static HTML_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)<html(?:\s[^>]*)?>").unwrap());
-static DOCTYPE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)<!doctype[^>]*>").unwrap());
+static HEAD_END: LazyLock<Regex> = LazyLock::new(|| bytes_re(r"(?i)</head\s*>|<body[\s>]"));
+static HEAD_TAG: LazyLock<Regex> = LazyLock::new(|| bytes_re(r"(?i)<head(?:\s[^>]*)?>"));
+static HTML_TAG: LazyLock<Regex> = LazyLock::new(|| bytes_re(r"(?i)<html(?:\s[^>]*)?>"));
+static DOCTYPE: LazyLock<Regex> = LazyLock::new(|| bytes_re(r"(?i)<!doctype[^>]*>"));
 static META_CSP: LazyLock<Regex> =
-  LazyLock::new(|| Regex::new(r#"(?i)<meta\b[^>]*http-equiv\s*=\s*["']?content-security-policy(?:-report-only)?["']?[^>]*>"#).unwrap());
+  LazyLock::new(|| bytes_re(r#"(?i)<meta\b[^>]*http-equiv\s*=\s*["']?content-security-policy(?:-report-only)?["']?[^>]*>"#));
 
 pub(super) async fn accept(listener: TcpListener, ctx: Arc<Ctx>, mut stop: watch::Receiver<bool>) {
   loop {
@@ -362,7 +368,7 @@ pub(super) fn inject(html: &[u8], token: &str) -> Vec<u8> {
 
 /// `http://localhost:5173/x` → `/x` when it points at the target (the Location a dev server writes), else None
 fn strip_origin<'a>(url: &'a str, origin: &str) -> Option<&'a str> {
-  let rest = url.get(..origin.len()).filter(|p| p.eq_ignore_ascii_case(origin)).map(|_| &url[origin.len()..])?;
+  let rest = url.split_at_checked(origin.len()).filter(|(p, _)| p.eq_ignore_ascii_case(origin)).map(|(_, rest)| rest)?;
   (rest.is_empty() || rest.starts_with(['/', '?', '#'])).then_some(rest)
 }
 

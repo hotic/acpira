@@ -166,10 +166,12 @@ impl AcpSession {
   }
 
   /// An owned view, for callers that inspect it (tests, plan lookups)
+  #[expect(clippy::expect_used, reason = "reads back this build's own serialization of the same type; its numbers all came from finite JSON numbers")]
   pub fn view(&self) -> SessionView {
     serde_json::from_str(self.view_json().0.get()).expect("view round trip")
   }
 
+  #[expect(clippy::expect_used, reason = "reads back this build's own serialization of the same type; its numbers all came from finite JSON numbers")]
   pub fn to_record(&self) -> SessionRecord {
     serde_json::from_slice(&self.record_json()).expect("record round trip")
   }

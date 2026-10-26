@@ -1,6 +1,7 @@
 //! Raw mode against the scripted model: the request carries the conversation alone (no tools, no composed prompt, no
 //! mode note, no skill expansion), the settings page's prompt is its only system prompt, Agent mode after it gets its
 //! prompt and tools back without a note, and a session that has used tools cannot enter it
+#![allow(clippy::unwrap_used, reason = "test code")]
 
 mod support;
 

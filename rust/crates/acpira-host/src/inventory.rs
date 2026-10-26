@@ -7,6 +7,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde_json::{Map, Value};
 
+use acpira_shared::re;
 use acpira_shared::inventory::*;
 
 use crate::agent_ext::{AgentExt, McpFormat};
@@ -197,10 +198,10 @@ pub fn parse_json_mcp(text: &str) -> Vec<McpEntry> {
     .collect()
 }
 
-static TOML_HEADER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"^\[\s*mcp_servers\.(?:"([^"]+)"|([^\]\s.]+))\s*\]$"#).unwrap());
-static TOML_KV: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^([A-Za-z_][\w-]*)\s*=\s*(.+?)\s*(?:#.*)?$").unwrap());
-static TOML_ARG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#""((?:[^"\\]|\\.)*)"|'([^']*)'"#).unwrap());
-static TOML_STR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"^"((?:[^"\\]|\\.)*)"|^'([^']*)'"#).unwrap());
+static TOML_HEADER: LazyLock<Regex> = LazyLock::new(|| re::compile(r#"^\[\s*mcp_servers\.(?:"([^"]+)"|([^\]\s.]+))\s*\]$"#));
+static TOML_KV: LazyLock<Regex> = LazyLock::new(|| re::compile(r"^([A-Za-z_][\w-]*)\s*=\s*(.+?)\s*(?:#.*)?$"));
+static TOML_ARG: LazyLock<Regex> = LazyLock::new(|| re::compile(r#""((?:[^"\\]|\\.)*)"|'([^']*)'"#));
+static TOML_STR: LazyLock<Regex> = LazyLock::new(|| re::compile(r#"^"((?:[^"\\]|\\.)*)"|^'([^']*)'"#));
 
 fn toml_string(v: &str) -> String {
   match TOML_STR.captures(v.trim()) {
@@ -242,9 +243,9 @@ pub fn parse_toml_mcp(text: &str) -> Vec<McpEntry> {
     }
     if line.starts_with('[') {
       flush(&mut cur, &mut out);
-      if let Some(m) = TOML_HEADER.captures(line) {
+      if let Some(name) = TOML_HEADER.captures(line).and_then(|m| m.get(1).or(m.get(2))) {
         cur = Some(Cur {
-          name: m.get(1).or(m.get(2)).unwrap().as_str().to_owned(),
+          name: name.as_str().to_owned(),
           command: None,
           args: vec![],
           url: None,
@@ -300,7 +301,7 @@ pub fn parse_opencode_mcp(text: &str) -> Vec<McpEntry> {
     .collect()
 }
 
-static TRAILING_COMMA: LazyLock<Regex> = LazyLock::new(|| Regex::new(r",(\s*[}\]])").unwrap());
+static TRAILING_COMMA: LazyLock<Regex> = LazyLock::new(|| re::compile(r",(\s*[}\]])"));
 
 /// JSON with `//` and `/* */` comments and trailing commas; strict JSON first
 pub fn parse_json_loose(text: &str) -> Option<Value> {
@@ -328,8 +329,8 @@ pub fn parse_json_loose(text: &str) -> Option<Value> {
       }
     } else if c == '/' && b.get(i + 1) == Some(&'*') {
       let rest: String = b[i + 2..].iter().collect();
-      i = match rest.find("*/") {
-        Some(end) => i + 2 + rest[..end].chars().count() + 2,
+      i = match rest.split_once("*/") {
+        Some((body, _)) => i + 2 + body.chars().count() + 2,
         None => b.len(),
       };
     } else {
@@ -373,9 +374,9 @@ pub fn locale_compare(a: &str, b: &str) -> std::cmp::Ordering {
   a.to_lowercase().cmp(&b.to_lowercase()).then_with(|| b.cmp(a))
 }
 
-static FRONT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^---\r?\n((?s:.*?))\r?\n---").unwrap());
-static FM_KV: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^([A-Za-z_][\w-]*):\s*(.*)$").unwrap());
-static QUOTED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"^"((?:[^"\\]|\\.)*)"$|^'([^']*)'$"#).unwrap());
+static FRONT: LazyLock<Regex> = LazyLock::new(|| re::compile(r"^---\r?\n((?s:.*?))\r?\n---"));
+static FM_KV: LazyLock<Regex> = LazyLock::new(|| re::compile(r"^([A-Za-z_][\w-]*):\s*(.*)$"));
+static QUOTED: LazyLock<Regex> = LazyLock::new(|| re::compile(r#"^"((?:[^"\\]|\\.)*)"$|^'([^']*)'$"#));
 
 /// (name, description) from `key: value` lines between the first two `---` fences
 pub fn parse_frontmatter(text: &str) -> (Option<String>, Option<String>) {

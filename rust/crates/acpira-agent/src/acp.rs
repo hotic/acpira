@@ -211,7 +211,9 @@ impl Server {
   }
 
   pub fn conn(&self) -> &Connection {
-    self.conn.get().expect("the connection is attached before the first message")
+    // `run_until` attaches it right after `Connection::start`; a message dispatched in that instant waits for it
+    // instead of panicking
+    self.conn.wait()
   }
 
   /// One `session/update` notification, recorded for a later replay

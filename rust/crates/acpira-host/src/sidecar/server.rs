@@ -472,7 +472,8 @@ impl Wire {
         }
         platform.on_event(event)
       }
-      ShellMsg::Hello(_) | ShellMsg::Shutdown => unreachable!("handled above"),
+      // Both returned at the top of this function
+      ShellMsg::Hello(_) | ShellMsg::Shutdown => {}
     }
     Flow::Continue
   }
