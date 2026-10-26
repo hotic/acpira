@@ -1076,6 +1076,58 @@
   ]
  },
  {
+  "name": "read-relative-input",
+  "steps": [
+   {
+    "at": 1000,
+    "update": {
+     "sessionUpdate": "tool_call",
+     "toolCallId": "rel",
+     "title": "Read read.rs",
+     "kind": "read",
+     "locations": [
+      {
+       "path": "/repo/src/tools/read.rs",
+       "line": 140
+      }
+     ],
+     "rawInput": {
+      "path": "src/tools/read.rs",
+      "offset": 140,
+      "limit": 90
+     }
+    },
+    "turns": [
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "tool_call",
+        "id": "rel",
+        "kind": "read",
+        "verb": "Read",
+        "target": "read.rs",
+        "targetMono": false,
+        "locations": [
+         {
+          "path": "/repo/src/tools/read.rs",
+          "line": 140
+         }
+        ],
+        "readRange": {
+         "path": "/repo/src/tools/read.rs",
+         "start": 140,
+         "end": 229
+        },
+        "status": "pending"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ {
   "name": "todo-label",
   "steps": [
    {

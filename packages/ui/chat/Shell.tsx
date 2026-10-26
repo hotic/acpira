@@ -1039,6 +1039,8 @@ export function Shell(p: ShellProps) {
             {/* The overlay inspector takes the whole column, header included, so the child's title replaces the session's */}
             {overlayInspect && inspect !== undefined && inspectNode !== undefined && p.activeSessionId !== undefined && (
               <div data-subagent-panel="overlay" className="absolute inset-0 z-20 flex flex-col bg-bg-0">
+                {/* Outside the thread's providers: file references in the child's rows open like the thread's own */}
+                <OpenToolFileContext.Provider value={openToolFile}>
                 <SubagentInspector
                   mode="overlay"
                   node={inspectNode}
@@ -1052,6 +1054,7 @@ export function Shell(p: ShellProps) {
                   blobUrl={blobUrl}
                   diffSource={fetchSubagentDiffSource}
                 />
+                </OpenToolFileContext.Provider>
               </div>
             )}
             {/* Desktop, narrow: the sheet dims as the list page slides over it, the dim moving with the sheet (its corners) */}
@@ -1064,6 +1067,7 @@ export function Shell(p: ShellProps) {
                 onDrag={setDraggedPane}
                 onCommit={w => { setDraggedPane(undefined); setPreferredPane(w); }}
                 onReset={() => { setDraggedPane(undefined); setPreferredPane(undefined); }} />
+              <OpenToolFileContext.Provider value={openToolFile}>
               <SubagentInspector
                 mode="docked"
                 node={inspectNode}
@@ -1075,6 +1079,7 @@ export function Shell(p: ShellProps) {
                 blobUrl={blobUrl}
                 diffSource={fetchSubagentDiffSource}
               />
+              </OpenToolFileContext.Provider>
             </aside>
           )}
           {panelRoot && (files
