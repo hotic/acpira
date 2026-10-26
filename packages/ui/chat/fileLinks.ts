@@ -7,6 +7,28 @@ export type FileLink = { path: string; line?: number };
 
 export const OpenToolFileContext = createContext<((path: string, line?: number) => void) | undefined>(undefined);
 
+// Right-click actions and image preview for file references in the transcript
+export interface ToolFileActions {
+  openInEditor?: (path: string, line?: number) => void;
+  revealInOS?: (path: string) => void;
+  copyPath?: (path: string) => void;
+  previewImage?: (path: string, blob?: string, mimeType?: string) => void;
+}
+
+export const ToolFileActionsContext = createContext<ToolFileActions | undefined>(undefined);
+
+// Resolve a file reference against the session's folder (and `~` to the user's home), matching `resolve_open_path` in `bridge_core.rs`
+export function resolveSessionPath(path: string, cwd?: string, home?: string): string {
+  if (/^file:/i.test(path)) return parseFileLink(path)?.path ?? path;
+  if (home && (path === '~' || path.startsWith('~/') || path.startsWith('~\\'))) {
+    return path === '~' ? home : `${home.replace(/[\\/]+$/, '')}/${path.slice(2)}`;
+  }
+  if (!cwd || /^(?:[A-Za-z]:[\\/]|\/|\\\\)/.test(path)) return path;
+  const sep = cwd.includes('\\') && !cwd.includes('/') ? '\\' : '/';
+  const clean = path.replace(/^\.[\\/]/, '');
+  return `${cwd.replace(/[\\/]+$/, '')}${sep}${clean}`;
+}
+
 // The whole files behind the `nth` diff of a tool call on the session on screen: page views carry diff sources without
 // their texts, a copy of the source asks for them
 export const DiffSourceContext = createContext<((toolCallId: string, nth: number) => Promise<FullDiffSource | undefined>) | undefined>(undefined);

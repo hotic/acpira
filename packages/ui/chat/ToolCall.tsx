@@ -1,9 +1,10 @@
 import { Check, FileText, Globe, Square, X } from 'lucide-react';
 import { memo, useContext, type ReactNode } from 'react';
-import type { AsyncTaskInfo, AsyncTaskState, ToolCallBlock } from '@acpira/shared/transcript';
+import type { AsyncTaskInfo, AsyncTaskState, ImageRef, ToolCallBlock } from '@acpira/shared/transcript';
 import type { MsgKey } from '@acpira/shared/i18n';
+import { imageMimeOf } from '@acpira/shared/attachments';
 import { toolTodoEntries } from '@acpira/shared/todoTools';
-import { isImageGenTool, isShowImageTool, isShowWidgetTool, toolTexts } from '@acpira/shared/imageTools';
+import { isImageGenTool, isShowImageTool, isShowWidgetTool, toolImages, toolTexts } from '@acpira/shared/imageTools';
 import { useAppearance } from '../appearance';
 import { Disclosure } from '../ui/Disclosure';
 import { EntranceOnce, Row, RowLabel, RowTarget } from '../ui/Row';
@@ -15,11 +16,12 @@ import { toolIcon } from './icons';
 import { PlanDetails } from './Plan';
 import { CodeSurface, DiffBlock } from './CodeBlock';
 import { AgentImage } from './AgentImage';
+import { FileMenu } from './ImageMenu';
 import { GeneratedImages, ImageInFoldContext } from './GeneratedImage';
 import { ShownWidget } from './AgentWidget';
 import { TerminalOutput, ToolOutput } from './Terminal';
 import { isWorkflowRun, toolTarget, toolVerb } from './folding';
-import { AsyncTaskStopContext, OpenToolFileContext, SessionTitleContext, WorkflowProgressContext } from './fileLinks';
+import { AsyncTaskStopContext, OpenToolFileContext, SessionTitleContext, ToolFileActionsContext, WorkflowProgressContext } from './fileLinks';
 import { isSessionTool, splitSessionTarget } from '@acpira/shared/sessionLinks';
 import { compactTokens } from './goalText';
 import { diffIndex, fileReference, toolFiles, visibleToolContents } from './toolDetails';
@@ -53,6 +55,7 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
   // Title-derived targets may be prose, and background wait / kill rows name another command, so both stay on the row
   const command = execute && block.targetMono && !block.verbKey && block.target?.trim() ? block.target : undefined;
   const files = toolFiles(block);
+  const images = block.kind === 'read' ? toolImages(block) : undefined;
   const visibleContent = visibleToolContents(block);
   const Icon = toolIcon(block);
   const todos = toolTodoEntries(block);
@@ -170,14 +173,14 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
   if (files.length === 1 && block.kind === 'read') {
     const { main, aside } = splitHit(files[0]!);
     return <Row tone="action" lead={lead} trailing={trailing} title={files[0]}>
-      {label}<FileRef hit={files[0]!} aside={aside}><RowTarget mono className="text-fg-2">{main}</RowTarget></FileRef>
+      {label}<FileRef hit={files[0]!} aside={aside} image={images?.[0]}><RowTarget mono className="text-fg-2">{main}</RowTarget></FileRef>
     </Row>;
   }
   // Read and search responses expose references only, including failures and empty results.
   if (files.length) return (
     <ConnectedRail endAtLastRow className="action-details flex flex-col">
       <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>
-      <EntranceOnce id={`${block.id}:files`}><ResultList items={files} kind={block.kind} /></EntranceOnce>
+      <EntranceOnce id={`${block.id}:files`}><ResultList items={files} kind={block.kind} images={images} /></EntranceOnce>
     </ConnectedRail>
   );
   // File-less responses must not fall through to the generic raw-output disclosure. A verbatim command is the exception
@@ -265,8 +268,10 @@ function TaskMeta({ task, script }: { task: AsyncTaskInfo | undefined; script?: 
 function TaskFile({ path, children }: { path: string; children: ReactNode }) {
   const openFile = useContext(OpenToolFileContext);
   return openFile
-    ? <button type="button" title={path} className="min-w-0 cursor-pointer text-left hover:underline focus-visible:underline"
-        onClick={() => openFile(path)}>{children}</button>
+    ? <FileMenu path={path}>
+        <button type="button" title={path} className="min-w-0 cursor-pointer text-left hover:underline focus-visible:underline"
+          onClick={() => openFile(path)}>{children}</button>
+      </FileMenu>
     : <span className="min-w-0" title={path}>{children}</span>;
 }
 
@@ -300,16 +305,19 @@ function ToolBody({ block, items, command }: { block: ToolCallBlock; items: Retu
 }
 
 // Result rows share the parent's connected icon rail, with a faint line/host suffix.
-export function ResultList({ items, kind, rail = true }: { items: string[]; kind: ToolCallBlock['kind']; rail?: boolean }) {
+export function ResultList({ items, kind, rail = true, images }: { items: string[]; kind: ToolCallBlock['kind']; rail?: boolean; images?: ImageRef[] }) {
   const Icon = kind === 'fetch' ? Globe : FileText;
   return (
     <div className={cn('flex flex-col', rail && 'tool-results')}>
-      {items.map(it => {
+      {items.map((it, i) => {
         const { main, aside } = splitHit(it);
         const lead = <Icon className="size-icon" strokeWidth={1.5} />;
         const target = <RowTarget mono={kind !== 'fetch'} className="text-fg-2">{main}</RowTarget>;
         if (kind === 'read' || kind === 'search') {
-          return <FileResultRow key={it} hit={it} lead={lead} aside={aside}>{target}</FileResultRow>;
+          const image = images?.length
+            ? (items.length === 1 && images.length === 1 ? images[0] : images.find(img => img.uri === it || (img.uri && main && img.uri.endsWith(`/${main}`))) ?? (images.length === items.length ? images[i] : undefined))
+            : undefined;
+          return <FileResultRow key={it} hit={it} lead={lead} aside={aside} image={image}>{target}</FileResultRow>;
         }
         return (
           <Row tone="action" key={it} dense lead={lead} trailing={aside} title={it}>
@@ -321,21 +329,31 @@ export function ResultList({ items, kind, rail = true }: { items: string[]; kind
   );
 }
 
-// File rows have one interaction: open the reference in the editor.
-function FileResultRow({ hit, lead, aside, children }: { hit: string; lead: ReactNode; aside?: string; children: ReactNode }) {
-  return <Row tone="action" dense lead={lead} title={hit}><FileRef hit={hit} aside={aside}>{children}</FileRef></Row>;
+// File rows preview an image in the Lightbox on left-click, or open the file in the editor; right-click offers file and path actions.
+function FileResultRow({ hit, lead, aside, image, children }: { hit: string; lead: ReactNode; aside?: string; image?: ImageRef; children: ReactNode }) {
+  return <Row tone="action" dense lead={lead} title={hit}><FileRef hit={hit} aside={aside} image={image}>{children}</FileRef></Row>;
 }
 
-export function FileRef({ hit, line, aside, children }: { hit: string; line?: number; aside?: string; children: ReactNode }) {
+export function FileRef({ hit, line, aside, image, children }: { hit: string; line?: number; aside?: string; image?: ImageRef; children: ReactNode }) {
   const openFile = useContext(OpenToolFileContext);
+  const actions = useContext(ToolFileActionsContext);
   const file = fileReference(hit);
+  const targetLine = line ?? file.line;
+  const isImg = targetLine === undefined && (!!image?.blob || !!imageMimeOf(file.path));
+  const onClick = isImg && actions?.previewImage
+    ? () => actions.previewImage!(file.path, image?.blob, image?.mimeType)
+    : openFile ? () => openFile(file.path, targetLine) : undefined;
   const asideEl = aside && <Aside>{aside}</Aside>;
-  return openFile ? <button type="button" title={hit} className="group/ref pointer-events-auto flex min-w-0 max-w-full items-baseline gap-1 cursor-pointer text-left"
-    onClick={() => openFile(file.path, line ?? file.line)}>
-    {/* Only the file name underlines on hover / focus; the line range beside it stays plain */}
-    <span className="flex min-w-0 group-hover/ref:underline group-focus-visible/ref:underline">{children}</span>{asideEl}
-  </button>
-    : <span className="flex min-w-0 items-baseline gap-1">{children}{asideEl}</span>;
+  if (!onClick) return <span className="flex min-w-0 items-baseline gap-1">{children}{asideEl}</span>;
+  return (
+    <FileMenu path={file.path} line={targetLine}>
+      <button type="button" title={hit} className="group/ref pointer-events-auto flex min-w-0 max-w-full items-baseline gap-1 cursor-pointer text-left"
+        onClick={onClick}>
+        {/* Only the file name underlines on hover / focus; the line range beside it stays plain */}
+        <span className="flex min-w-0 group-hover/ref:underline group-focus-visible/ref:underline">{children}</span>{asideEl}
+      </button>
+    </FileMenu>
+  );
 }
 
 // A faint note beside a target: a line range, a hit's line

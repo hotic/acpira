@@ -305,6 +305,8 @@ export type HostMsg =
   | { type: 'sessionHits'; seq: number; hits: SessionHit[] }
   // Reply to diffSource: the whole files behind one diff, absent when the session or the diff is gone
   | { type: 'diffSource'; seq: number; source?: FullDiffSource }
+  // Reply to imageBlob: the session blob name for an image file path, absent when unreadable
+  | { type: 'imageBlob'; seq: number; blob?: string }
   // Reply to sessionMarkdown: the session as Markdown, or why it could not be read
   | { type: 'sessionMarkdown'; seq: number; markdown?: string; error?: string }
   // Replies to the desktop tool panel's reads, each echoing its request's seq
@@ -426,6 +428,8 @@ export type WebviewMsg =
   // diff sources without their texts. Answered with a `diffSource` message echoing seq. subagentId names the subagent
   // transcript the diff was shown in (the inspector); absent, the session's own turns
   | { type: 'diffSource'; sessionId: string; toolCallId: string; nth: number; subagentId?: string; seq: number }
+  // Stage a local/remote image file path into the session's blob store for the Lightbox; answered with `imageBlob` echoing seq
+  | { type: 'imageBlob'; sessionId: string; path: string; seq: number }
   | { type: 'permission'; sessionId: string; blockId: string; optionId: string }
   // The question card was closed: `answers` holds the answered questions only (option ids / free text); skip tells the agent to go on with what it has
   | { type: 'answer'; sessionId: string; blockId: string; answers: QuestionAnswers; skip?: boolean }
@@ -509,8 +513,8 @@ export type WebviewMsg =
   // An appearance axis the page exposes (motion, autoExpand); host maps it onto acpira.appearance.<axis> and re-pushes the Appearance
   | { type: 'setAppearance'; axis: AxisKey; value: string }
   | { type: 'openPath'; path: string }
-  // Tool references resolve relative to the originating session and retain their line.
-  | { type: 'openFile'; sessionId: string; path: string; line?: number }
+  // Tool references resolve relative to the originating session and retain their line; `reveal` shows the file in the OS file manager
+  | { type: 'openFile'; sessionId: string; path: string; line?: number; reveal?: boolean }
   // A session blob (agent-produced image, parked attachment) by store name; the host resolves it under the session's blob dir
   | { type: 'openBlob'; sessionId: string; name: string }
   | { type: 'inventory'; agent: AgentId }

@@ -375,6 +375,12 @@ pub enum HostMsg {
     #[serde(skip_serializing_if = "Option::is_none")]
     source: Option<DiffSource>,
   },
+  /// Reply to imageBlob: the session blob name for an image file path, absent when unreadable
+  ImageBlob {
+    seq: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    blob: Option<String>,
+  },
   /// Reply to sessionMarkdown: the session as Markdown, or why it could not be read
   SessionMarkdown {
     seq: i64,
@@ -511,6 +517,7 @@ impl HostMsg {
       HostMsg::NativeSessions { .. } => "nativeSessions",
       HostMsg::SessionHits { .. } => "sessionHits",
       HostMsg::DiffSource { .. } => "diffSource",
+      HostMsg::ImageBlob { .. } => "imageBlob",
       HostMsg::SessionMarkdown { .. } => "sessionMarkdown",
       HostMsg::ProjectDir { .. } => "projectDir",
       HostMsg::ProjectStatus { .. } => "projectStatus",
@@ -596,6 +603,13 @@ pub enum WebviewMsg {
     nth: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     subagent_id: Option<String>,
+    #[serde(deserialize_with = "crate::num::lenient_i64")]
+    seq: i64,
+  },
+  /// Stage an image file path into the session's blob store for the Lightbox, answered with `imageBlob` echoing `seq`
+  ImageBlob {
+    session_id: String,
+    path: String,
     #[serde(deserialize_with = "crate::num::lenient_i64")]
     seq: i64,
   },
@@ -903,6 +917,8 @@ pub enum WebviewMsg {
     path: String,
     #[serde(default, deserialize_with = "crate::num::lenient_opt_i64")]
     line: Option<i64>,
+    #[serde(default)]
+    reveal: bool,
   },
   OpenBlob {
     session_id: String,

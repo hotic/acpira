@@ -13,10 +13,12 @@ const ZOOM_SPEED = 0.002;
 // does not fill a desktop window edge to edge; the wheel zooms it (drag to pan while zoomed, double-click to reset),
 // and a backdrop click or Esc closes it without a corner button. Right-click on the image opens the shell's image menu
 // (Copy image, plus Open in editor when the caller can open it) instead of the webview's native Cut / Copy / Paste
-export function Lightbox({ src, name, mimeType, openInEditor, onClose }: {
+export function Lightbox({ src, name, mimeType, path, line, openInEditor, onClose }: {
   src: string;
   name?: string;
   mimeType?: string;
+  path?: string;
+  line?: number;
   openInEditor?: () => void;
   onClose: () => void;
 }) {
@@ -90,7 +92,7 @@ export function Lightbox({ src, name, mimeType, openInEditor, onClose }: {
         onWheel={onWheel}
         className="absolute inset-0 z-40 flex items-center justify-center overflow-hidden bg-scrim p-page"
       >
-        <ImageMenu src={src} mimeType={mimeType} openInEditor={openInEditor}>
+        <ImageMenu src={src} mimeType={mimeType} path={path} line={line} openInEditor={openInEditor}>
           <img
             src={src}
             alt={name ?? t('common.image')}

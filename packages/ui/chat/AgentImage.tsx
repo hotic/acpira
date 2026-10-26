@@ -2,7 +2,7 @@ import { useContext, useState } from 'react';
 import { Image as ImageIcon } from 'lucide-react';
 import type { ImageRef } from '@acpira/shared/transcript';
 import { t } from '../i18n';
-import { ImageMenu } from './ImageMenu';
+import { FileMenu, ImageMenu } from './ImageMenu';
 import { Lightbox } from './Lightbox';
 import { BlobUrlContext, OpenBlobContext, OpenToolFileContext, parseFileLink } from './fileLinks';
 
@@ -24,7 +24,7 @@ export function AgentImage({ image, caption = true }: { image: ImageRef; caption
   return (
     <div className="flex min-w-0 flex-col items-start gap-1">
       {src ? (
-        <ImageMenu src={src} mimeType={image.mimeType} openInEditor={openInEditor}>
+        <ImageMenu src={src} mimeType={image.mimeType} path={file?.path} line={file?.line} openInEditor={openInEditor}>
           <button
             type="button"
             title={name}
@@ -50,12 +50,14 @@ export function AgentImage({ image, caption = true }: { image: ImageRef; caption
         </button>
       )}
       {caption && file && openFile && (
-        <button type="button" title={file.path} onClick={() => openFile(file.path, file.line)}
-          className="max-w-full truncate text-3 text-fg-3 underline-offset-2 outline-none hover:text-fg-2 hover:underline focus-visible:text-fg-1 focus-visible:underline">
-          {image.uri}
-        </button>
+        <FileMenu path={file.path} line={file.line}>
+          <button type="button" title={file.path} onClick={() => openFile(file.path, file.line)}
+            className="max-w-full truncate text-3 text-fg-3 underline-offset-2 outline-none hover:text-fg-2 hover:underline focus-visible:text-fg-1 focus-visible:underline">
+            {image.uri}
+          </button>
+        </FileMenu>
       )}
-      {preview && src && <Lightbox src={src} name={name} mimeType={image.mimeType} openInEditor={openInEditor} onClose={() => setPreview(false)} />}
+      {preview && src && <Lightbox src={src} name={name} mimeType={image.mimeType} path={file?.path} line={file?.line} openInEditor={openInEditor} onClose={() => setPreview(false)} />}
     </div>
   );
 }
