@@ -36,6 +36,13 @@ fn main() {
     win::attach_console(args.get(1).map(String::as_str));
     std::process::exit(acpira_host::cli::run(args[1..].to_vec()));
   }
+  // A panic aborts (Cargo.toml's release profile): its message goes to the app's log first, since a window process's
+  // stderr reaches no one on Windows or when started from the Dock
+  let default_hook = std::panic::take_hook();
+  std::panic::set_hook(Box::new(move |info| {
+    app::log(&format!("panic: {info}"));
+    default_hook(info);
+  }));
   // An exe the updater restarted (Windows) waits for the one it replaces to exit, which still holds the single instance
   // SAFETY: no other thread exists yet
   unsafe { acpira_desktop::update::swap::wait_for_predecessor() };
