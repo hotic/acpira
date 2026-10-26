@@ -77,6 +77,9 @@ impl HostRuntime {
       crate::plugins::host::PluginHost::safe_mode_from_env(),
       log.clone(),
     );
+    // Resident plugin processes run in the engine only (not in `acpira plugin …`); each engine runs its own, for the
+    // sessions it owns
+    plugins.runtimes().enable(None);
     plugins.start().await;
     let plugin_agents = plugins.agent_entries();
     let self_agent = bridge_exe.clone().map(|exe| (exe, root.clone()));
@@ -503,6 +506,7 @@ impl HostRuntime {
     self.terminals.dispose();
     self.connections.dispose();
     self.manager.dispose().await;
+    self.plugins.runtimes().stop_all().await;
   }
 }
 

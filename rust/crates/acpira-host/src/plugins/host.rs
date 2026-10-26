@@ -100,11 +100,14 @@ pub struct PluginHost {
   touch: parking_lot::RwLock<Option<Listener>>,
   log: LogFn,
   last_error: parking_lot::Mutex<Option<String>>,
+  /// The resident processes of the plugins in effect (`contributes.runtime`)
+  runtimes: Arc<crate::plugins::runtime::Runtimes>,
 }
 
 impl PluginHost {
   /// `root` is `~/.acpira/plugins`
   pub fn new(root: PathBuf, forced_safe: bool, log: LogFn) -> Arc<PluginHost> {
+    let runtimes = crate::plugins::runtime::Runtimes::new(root.join(crate::plugins::store::DATA), log.clone());
     Arc::new(PluginHost {
       store: PluginStore::new(root),
       forced_safe,
@@ -115,7 +118,30 @@ impl PluginHost {
       touch: Default::default(),
       log,
       last_error: Default::default(),
+      runtimes,
     })
+  }
+
+  /// The resident processes; they start only once the composition root called `Runtimes::enable`
+  pub fn runtimes(&self) -> &Arc<crate::plugins::runtime::Runtimes> {
+    &self.runtimes
+  }
+
+  /// Start what the plugins in effect want running and stop the rest; off the caller's task
+  fn sync_runtimes(&self) {
+    if !self.runtimes.enabled() {
+      return;
+    }
+    let Ok(handle) = tokio::runtime::Handle::try_current() else { return };
+    let runtimes = self.runtimes.clone();
+    let active = self.loaded().active.clone();
+    handle.spawn(async move { runtimes.sync(&active).await });
+  }
+
+  /// Turn the resident processes on (the composition root) and start those already in effect
+  pub fn enable_runtimes(&self, host_call: Option<crate::plugins::runtime::HostCall>) {
+    self.runtimes.enable(host_call);
+    self.sync_runtimes();
   }
 
   /// Safe mode from the launch of this process: `--safe-mode` (`force_safe_mode`) or `ACPIRA_SAFE_MODE`
@@ -208,6 +234,7 @@ impl PluginHost {
     };
     *self.loaded.write() = Arc::new(next);
     if !same {
+      self.sync_runtimes();
       self.notify();
     }
     !same
@@ -350,6 +377,11 @@ impl PluginHost {
     if let Some(mcp) = manifest.contributes.mcp.as_ref().filter(|m| !m.is_empty()) {
       crate::plugins::mcp::check(mcp, &dir, &self.store.data_dir(id), CHECK_TIMEOUT).await.map_err(|e| anyhow!("the check failed: {e}"))?;
     }
+    // A runtime must start and answer `initialize` from the frozen copy before it is enabled
+    if let Some(rt) = &manifest.contributes.runtime {
+      let data_root = self.store.root().join(crate::plugins::store::DATA);
+      crate::plugins::runtime::probe(id, &manifest.version, hash, &dir, rt, &data_root, self.log.clone()).await.map_err(|e| anyhow!("the check failed: the runtime {e}"))?;
+    }
     let change = self.store.enable(id, hash, provenance).await?;
     self.committed(&change);
     Ok(change)
@@ -460,6 +492,9 @@ impl PluginHost {
     let m = from_source.as_ref().or(active.map(|a| &a.manifest));
     if let Some(e) = loaded.errors.get(id) {
       error = Some(e.clone());
+    }
+    if error.is_none() && active.is_some() {
+      error = self.runtimes.error(id);
     }
     let tools = m.map(|m| m.contributes.tools.iter().map(|t| manifest::served_name(id, &t.name)).collect()).unwrap_or_default();
     PluginInfo {

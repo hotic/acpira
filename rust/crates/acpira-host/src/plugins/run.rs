@@ -20,9 +20,10 @@ pub struct CallContext {
   pub session: String,
 }
 
-/// Run `tool` of the plugin frozen at `dir` with `arguments`: its stdout, or the error the model reads
-pub async fn call(tool: &ToolDef, dir: &Path, data: &Path, arguments: &Value, ctx: &CallContext) -> Result<String, String> {
-  let (program, args) = tool.command.split_first().ok_or("the tool has no command")?;
+/// A plugin command ready to spawn: the program resolved in the frozen copy `dir` or on PATH, run there with the
+/// plugin's folders in its environment. Shared by script tools, checks and resident processes
+pub async fn command(command: &[String], dir: &Path, data: &Path, workspace: &str) -> Result<tokio::process::Command, String> {
+  let (program, args) = command.split_first().ok_or("the command is empty")?;
   let resolved = match manifest::program_in(dir, program) {
     Some(p) => p.to_string_lossy().into_owned(),
     None if !program.contains(['/', '\\']) => {
@@ -51,9 +52,15 @@ pub async fn call(tool: &ToolDef, dir: &Path, data: &Path, arguments: &Value, ct
     .current_dir(dir)
     .env("ACPIRA_PLUGIN_DIR", dir)
     .env("ACPIRA_PLUGIN_DATA", data)
-    .env("ACPIRA_WORKSPACE", &ctx.workspace)
+    .env("ACPIRA_WORKSPACE", workspace)
     // The frozen copy is read-only: no cache files next to the scripts
     .env("PYTHONDONTWRITEBYTECODE", "1");
+  Ok(cmd)
+}
+
+/// Run `tool` of the plugin frozen at `dir` with `arguments`: its stdout, or the error the model reads
+pub async fn call(tool: &ToolDef, dir: &Path, data: &Path, arguments: &Value, ctx: &CallContext) -> Result<String, String> {
+  let cmd = command(&tool.command, dir, data, &ctx.workspace).await.map_err(|e| if tool.command.is_empty() { "the tool has no command".to_owned() } else { e })?;
   let input = json!({ "arguments": arguments, "workspace": ctx.workspace, "session": ctx.session }).to_string().into_bytes();
   let out = crate::hooks::run::run_child(cmd, &tool.command.join(" "), tool.timeout(), input, OUTPUT_MAX_BYTES).await?;
   let mut text = String::from_utf8_lossy(&out.stdout).into_owned();

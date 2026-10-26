@@ -15,7 +15,31 @@ pub const NAME_MAX: usize = 24;
 pub const TOOL_TIMEOUT_SECS: f64 = 45.0;
 
 const KEYS: &[&str] = &["schema", "id", "version", "name", "description", "requires", "layer", "check", "contributes"];
-const CONTRIBUTION_KEYS: &[&str] = &["tools", "mcp", "hooks", "theme", "prompts", "agent"];
+const CONTRIBUTION_KEYS: &[&str] = &["tools", "mcp", "hooks", "theme", "prompts", "agent", "runtime"];
+
+/// The hooks a plugin's resident process may declare (`contributes.runtime.hooks`, docs/dev/plugins.md, Runtime). The
+/// engine calls only those it implements; a name it does not know yet is a note, so a plugin written for a newer
+/// Acpira still loads
+pub const RUNTIME_HOOKS: &[&str] = &[
+  "prompt",
+  "permission",
+  "tool.before",
+  "tool.after",
+  "retry",
+  "title",
+  "session.mcp",
+  "agent.launch",
+  "context",
+  "model.request",
+  "compaction",
+  "shell",
+  "tools",
+];
+/// The event families a resident process may subscribe to; `<family>.*` takes every event of one, `*` all of them
+/// except the streamed deltas, which are asked for by name (`text.delta`, `thought.delta`)
+pub const RUNTIME_EVENTS: &[&str] = &["session", "turn", "tool", "permission", "prompt", "files", "model", "plugin", "usage", "text.delta", "thought.delta"];
+/// Longest one hook call may take before it counts as failed
+pub const RUNTIME_TIMEOUT_SECS: f64 = 10.0;
 pub const LAYERS: &[&str] = &["agents", "tools", "interface", "automation"];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -60,6 +84,40 @@ pub struct Contributes {
   /// One ACP agent, `agents.json`'s entry shape plus `name`
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub agent: Option<Value>,
+  /// A resident process: the hooks it answers and the events it hears
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub runtime: Option<RuntimeDef>,
+}
+
+/// `contributes.runtime`: a process the engine keeps running while the plugin is in effect, spoken to over ndjson
+/// JSON-RPC on its stdio (docs/dev/plugins.md, Runtime)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeDef {
+  pub command: Vec<String>,
+  /// Hook names from `RUNTIME_HOOKS`; only these are ever called
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub hooks: Vec<String>,
+  /// Event names or `<family>.*` / `*`; only these are ever sent
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub events: Vec<String>,
+  /// Seconds one hook call may take, at most `RUNTIME_TIMEOUT_SECS`
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub timeout: Option<f64>,
+}
+
+impl RuntimeDef {
+  pub fn timeout(&self) -> std::time::Duration {
+    let secs = self.timeout.filter(|t| t.is_finite() && *t > 0.0).unwrap_or(RUNTIME_TIMEOUT_SECS).min(RUNTIME_TIMEOUT_SECS);
+    std::time::Duration::from_secs_f64(secs)
+  }
+
+  /// Whether the process subscribed to `event` (`session.created`, `text.delta`)
+  pub fn hears(&self, event: &str) -> bool {
+    let family = event.split('.').next().unwrap_or(event);
+    let delta = event.ends_with(".delta");
+    self.events.iter().any(|e| e == event || (!delta && (e == "*" || e.strip_suffix(".*").is_some_and(|f| f == family))))
+  }
 }
 
 impl Contributes {
@@ -83,6 +141,9 @@ impl Contributes {
     }
     if self.agent.is_some() {
       out.push("agent");
+    }
+    if self.runtime.is_some() {
+      out.push("runtime");
     }
     out
   }
@@ -302,6 +363,24 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
           }
         }
       }
+    }
+  }
+  if let Some(rt) = &m.contributes.runtime {
+    command_exists(&rt.command, dir, which, "runtime", findings);
+    if rt.hooks.is_empty() && rt.events.is_empty() {
+      err(findings, "runtime: declares no `hooks` and no `events`, so it would never be called".into());
+    }
+    for h in rt.hooks.iter().filter(|h| !RUNTIME_HOOKS.contains(&h.as_str())) {
+      findings.notes.push(format!("runtime: hook `{h}` is not one this Acpira calls"));
+    }
+    for e in &rt.events {
+      let family = e.strip_suffix(".*").unwrap_or(e);
+      if e != "*" && !RUNTIME_EVENTS.iter().any(|k| *k == e || k.split('.').next() == Some(family)) {
+        findings.notes.push(format!("runtime: event `{e}` is not one this Acpira sends"));
+      }
+    }
+    if rt.timeout.is_some_and(|s| s > RUNTIME_TIMEOUT_SECS) {
+      findings.notes.push(format!("runtime: timeout cut to {RUNTIME_TIMEOUT_SECS} s"));
     }
   }
   if let Some(mcp) = &m.contributes.mcp {
