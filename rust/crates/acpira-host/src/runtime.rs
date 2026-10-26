@@ -49,6 +49,8 @@ pub struct HostRuntime {
   pub connections: Arc<crate::remote::connections::Connections>,
   /// The user's plugins (docs/dev/plugins.md)
   pub plugins: Arc<crate::plugins::host::PluginHost>,
+  /// The plugins' agents the registry was last built with (`registry_of`)
+  plugin_agents: parking_lot::Mutex<serde_json::Map<String, Value>>,
 }
 
 impl HostRuntime {
@@ -68,8 +70,17 @@ impl HostRuntime {
       platform.log(&format!("{}: {e}", agent_config.path().display()));
       platform.toast("error", &format!("{}: {e}", agent_config.path().display()));
     }
+    // Plugins: what state.json enables, loaded before the registry takes their agents and any session lists Acpira's
+    // MCP tools
+    let plugins = crate::plugins::host::PluginHost::new(
+      root.join(crate::plugins::DIR),
+      crate::plugins::host::PluginHost::safe_mode_from_env(),
+      log.clone(),
+    );
+    plugins.start().await;
+    let plugin_agents = plugins.agent_entries();
     let self_agent = bridge_exe.clone().map(|exe| (exe, root.clone()));
-    let registry = Arc::new(registry_of(&agent_config.snapshot(), self_agent.as_ref()));
+    let registry = Arc::new(registry_of(&agent_config.snapshot(), self_agent.as_ref(), &plugin_agents));
 
     // The manager is created below; the providers resolve their binaries through whatever registry is current then
     let mgr_slot: Arc<parking_lot::Mutex<Option<std::sync::Weak<SessionManager>>>> = Default::default();
@@ -143,13 +154,6 @@ impl HostRuntime {
         None
       }
     };
-    // Plugins: what state.json enables, loaded before any session lists Acpira's MCP tools
-    let plugins = crate::plugins::host::PluginHost::new(
-      root.join(crate::plugins::DIR),
-      crate::plugins::host::PluginHost::safe_mode_from_env(),
-      log.clone(),
-    );
-    plugins.start().await;
     if let Some(h) = &hub {
       h.set_plugins(Arc::downgrade(&plugins));
     }
@@ -189,6 +193,10 @@ impl HostRuntime {
       let p = plugins.clone();
       Arc::new(move || p.hook_configs())
     };
+    let plugin_prompts: crate::hooks::PluginPrompts = {
+      let p = plugins.clone();
+      Arc::new(move || p.prompt_layers())
+    };
     let notify_p = platform.clone();
     let scope_p = platform.clone();
     let manager = SessionManager::new(
@@ -227,6 +235,7 @@ impl HostRuntime {
         remote: Some(connections.clone()),
         shared_mcp: Some(crate::shared_config::mcp_provider(Arc::new(move || mcp_home.home()), Some(plugin_servers))),
         plugin_hooks: Some(plugin_hooks),
+        plugin_prompts: Some(plugin_prompts),
         host_mcp,
         // Both switches are off by default (`notifySound` / `notifySystem`); read at each edge, so a change applies to the next one
         attention: Some(Arc::new(move |a: Attention| {
@@ -294,6 +303,7 @@ impl HostRuntime {
       accounts,
       agent_config,
       self_agent,
+      plugin_agents: parking_lot::Mutex::new(plugin_agents),
       config_watch: Default::default(),
       bridges: Default::default(),
       terminals: crate::terminal::TerminalHub::new(),
@@ -384,8 +394,13 @@ impl HostRuntime {
   }
 
   async fn reload_agent_config(&self) -> Result<()> {
-    if self.agent_config.reload().await? {
-      self.manager.set_registry(Arc::new(registry_of(&self.agent_config.snapshot(), self.self_agent.as_ref())));
+    let changed = self.agent_config.reload().await?;
+    // The plugins' agents follow the same path: a plugin enabled or switched off rebuilds the registry
+    let plugin_agents = self.plugins.agent_entries();
+    let plugins_changed = *self.plugin_agents.lock() != plugin_agents;
+    if changed || plugins_changed {
+      self.manager.set_registry(Arc::new(registry_of(&self.agent_config.snapshot(), self.self_agent.as_ref(), &plugin_agents)));
+      *self.plugin_agents.lock() = plugin_agents;
     }
     Ok(())
   }
@@ -491,11 +506,37 @@ impl HostRuntime {
   }
 }
 
-/// The registry for an agents.json snapshot, with the built-in agent first when the engine binary is known
-fn registry_of(custom: &Value, self_agent: Option<&(String, PathBuf)>) -> AgentRegistry {
-  let registry = AgentRegistry::new(custom);
+/// The registry for an agents.json snapshot plus the plugins' agents (an agents.json entry of the same id wins), with
+/// the built-in agent first when the engine binary is known
+fn registry_of(custom: &Value, self_agent: Option<&(String, PathBuf)>, plugin_agents: &serde_json::Map<String, Value>) -> AgentRegistry {
+  let merged = if plugin_agents.is_empty() {
+    custom.clone()
+  } else {
+    let mut all = plugin_agents.clone();
+    for (id, v) in custom.as_object().into_iter().flatten() {
+      all.insert(id.clone(), v.clone());
+    }
+    Value::Object(all)
+  };
+  let registry = AgentRegistry::new(&merged);
   match self_agent {
     Some((exe, root)) => registry.with_self_agent(exe, root),
     None => registry,
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn a_plugin_agent_joins_the_registry_and_agents_json_wins_its_id() {
+    let plugins = serde_json::json!({ "pal": { "command": "/p/run.sh", "name": "Pal" }, "mate": { "command": "/p/mate" } });
+    let plugins = plugins.as_object().cloned().unwrap_or_default();
+    let custom = serde_json::json!({ "pal": { "command": "/mine/pal", "name": "My Pal" } });
+    let r = registry_of(&custom, None, &plugins);
+    assert_eq!(r.try_get("pal").map(|d| d.command.as_str()), Some("/mine/pal"));
+    assert_eq!(r.try_get("mate").map(|d| d.command.as_str()), Some("/p/mate"));
+    assert!(registry_of(&custom, None, &serde_json::Map::new()).try_get("mate").is_none());
   }
 }

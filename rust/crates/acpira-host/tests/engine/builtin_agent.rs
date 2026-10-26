@@ -55,6 +55,7 @@ impl Env {
       model_shapes: None,
       shared_mcp: None,
       plugin_hooks: None,
+      plugin_prompts: None,
       host_mcp: None,
       claim: None,
       remote: None,
@@ -848,4 +849,19 @@ rl.on('line', l => {
     task.await.unwrap();
     until(|| !running(), 5000).await;
   }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugin_s_prompt_folder_reaches_the_built_in_agent_s_system_prompt() {
+  let mut env = Env::new();
+  let layer = env.root.path().join("plugins/.versions/tone/abc/prompts");
+  std::fs::create_dir_all(&layer).unwrap();
+  std::fs::write(layer.join("base.md"), "## Answering\n- Answer like a pirate (PLUGIN-MARK).\n").unwrap();
+  let sent = layer.clone();
+  env.deps.plugin_prompts = Some(Arc::new(move || vec![sent.clone()]));
+  let s = env.session().await;
+  env.server.push(mock::text("Arr."));
+  run(&s, "hello").await;
+  let body = env.server.requests()[0].body.to_string();
+  assert!(body.contains("PLUGIN-MARK"), "{body}");
 }

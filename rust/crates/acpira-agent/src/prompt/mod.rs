@@ -58,6 +58,9 @@ pub struct Places {
   pub root: Option<PathBuf>,
   /// A folder on an SSH host: its files as the host read them, never this disk
   host: Option<Arc<HostFiles>>,
+  /// The prompt folders of the engine's plugins in effect when the session opened (`acp.rs` `LAYERS_META`): between
+  /// the user's overrides and the project's, read from this disk
+  pub layers: Vec<PathBuf>,
 }
 
 /// A session folder's prompt files as its SSH host read them (`gather`, run there by the engine's helper at session
@@ -108,26 +111,37 @@ impl HostFiles {
 
 impl Places {
   pub fn new(cwd: &Path, home: Option<&Path>) -> Places {
-    Places { cwd: cwd.to_path_buf(), home: home.map(Path::to_path_buf), root: project_root(cwd, home), host: None }
+    Places { cwd: cwd.to_path_buf(), home: home.map(Path::to_path_buf), root: project_root(cwd, home), host: None, layers: vec![] }
   }
 
   /// A folder on an SSH host, read from what the host sent
   pub fn on_host(cwd: &Path, files: Arc<HostFiles>) -> Places {
-    Places { cwd: cwd.to_path_buf(), home: files.home.clone(), root: files.root.clone(), host: Some(files) }
+    Places { cwd: cwd.to_path_buf(), home: files.home.clone(), root: files.root.clone(), host: Some(files), layers: vec![] }
+  }
+
+  /// With the plugins' prompt folders
+  pub fn with_layers(mut self, layers: Vec<PathBuf>) -> Places {
+    self.layers = layers;
+    self
+  }
+
+  /// Whether `path` is in a plugin's prompt folder, which is always on this disk
+  fn in_layer(&self, path: &Path) -> bool {
+    self.layers.iter().any(|l| path.starts_with(l))
   }
 
   /// A file's text
   pub(crate) fn read(&self, path: &Path) -> Option<String> {
     match &self.host {
-      Some(h) => h.files.iter().find(|f| f.path == path).map(|f| f.text.clone()),
-      None => std::fs::read_to_string(path).ok(),
+      Some(h) if !self.in_layer(path) => h.files.iter().find(|f| f.path == path).map(|f| f.text.clone()),
+      _ => std::fs::read_to_string(path).ok(),
     }
   }
 
   /// The folders (`dirs`) or files directly inside `dir`, sorted
   pub(crate) fn entries(&self, dir: &Path, dirs: bool) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = match &self.host {
-      Some(h) => h
+      Some(h) if !self.in_layer(dir) => h
         .files
         .iter()
         .filter_map(|f| {
@@ -137,7 +151,7 @@ impl Places {
           (nested == dirs).then(|| dir.join(first))
         })
         .collect(),
-      None => match std::fs::read_dir(dir) {
+      _ => match std::fs::read_dir(dir) {
         Ok(rd) => rd.flatten().map(|e| e.path()).filter(|p| p.is_dir() == dirs).collect(),
         Err(_) => vec![],
       },
@@ -147,12 +161,13 @@ impl Places {
     out
   }
 
-  /// Override directories, the later winning
+  /// Override directories, the later winning: the user's, the plugins', the project's
   fn prompt_dirs(&self) -> Vec<PathBuf> {
     let mut out = vec![];
     if let Some(h) = &self.home {
       out.push(h.join(".agents").join("acpira").join("prompts"));
     }
+    out.extend(self.layers.iter().cloned());
     if let Some(r) = self.root.as_ref().or(Some(&self.cwd)) {
       out.push(r.join(".agents").join("acpira").join("prompts"));
     }
@@ -382,5 +397,24 @@ mod tests {
     let sent = Arc::new(HostFiles::gather(&work, Some(&home)));
     std::fs::remove_dir_all(dir.path()).unwrap();
     assert_eq!(compose(&Places::on_host(&work, sent), Some((&p, &m))), c);
+  }
+
+  #[test]
+  fn a_plugin_s_prompt_folder_sits_between_the_user_s_and_the_project_s() {
+    let dir = tempfile::tempdir().unwrap();
+    let (home, work, layer) = (dir.path().join("home"), dir.path().join("work"), dir.path().join("plugin/prompts"));
+    std::fs::create_dir_all(work.join(".git")).unwrap();
+    for d in [home.join(".agents/acpira/prompts"), work.join(".agents/acpira/prompts"), layer.clone()] {
+      std::fs::create_dir_all(d).unwrap();
+    }
+    std::fs::write(home.join(".agents/acpira/prompts/base.md"), "## Answering\n- From the user.\n## Style\n- User style.\n").unwrap();
+    std::fs::write(layer.join("base.md"), "## Answering\n- From the plugin.\n## Style\n- Plugin style.\n").unwrap();
+    std::fs::write(work.join(".agents/acpira/prompts/base.md"), "## Style\n- Project style.\n").unwrap();
+    let c = compose(&Places::new(&work, Some(&home)).with_layers(vec![layer.clone()]), None);
+    assert!(c.text.contains("- From the plugin.") && !c.text.contains("- From the user."), "{}", c.text);
+    assert!(c.text.contains("- Project style.") && !c.text.contains("- Plugin style."), "{}", c.text);
+    // A folder on an SSH host still reads the plugin's folder from this disk
+    let sent = Arc::new(HostFiles::gather(&work, Some(&home)));
+    assert!(compose(&Places::on_host(&work, sent).with_layers(vec![layer]), None).text.contains("- From the plugin."));
   }
 }

@@ -315,7 +315,7 @@ fn setup(server: &Server, session: &Session, params: &Value, mcp: &[crate::mcp::
   let raw = mode.id == modes::RAW;
   // The prompt changes only when the model now matches another variant (a view change at a turn boundary). Raw mode
   // sends the settings page's text alone and leaves the session's composed prompt for the turn that switches back
-  let places = server.places(&session.cwd, session.remote.as_deref());
+  let places = server.places_of(&session.cwd, session.remote.as_deref(), session.layers.clone());
   let composed = if raw {
     prompt::raw(config.raw_system_prompt())
   } else {
