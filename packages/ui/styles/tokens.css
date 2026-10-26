@@ -380,13 +380,30 @@
   --prompt-editor-max: 70dvh;
   --text-h: calc(var(--ui-font-size) + 2px);
   --text-h-lh: calc(var(--ui-font-size) + 9px);
-  --ctl-w: 168px;
-  --num-w: 64px;
+  /* The page title: 20px at the default 13px, semibold (2026-10-26; 15px read flat over the cards, 24 too big) */
+  --text-page: calc(var(--ui-font-size) + 7px);
+  --text-page-lh: calc(var(--ui-font-size) + 13px);
+  /* A title over its second line: touching, the two read as crowded */
+  --stack-gap: 3px;
+  /* Every control of a row's right column (select, number, text box) shares this width */
+  --ctl-w: 176px;
   --dot: 6px;
+  /* Dialogs: the regular and the wide (tabbed, review list) width, and a tabbed dialog's fixed height */
+  --dialog-w: 520px;
+  --dialog-w-wide: 640px;
+  --dialog-h: 640px;
+  /* The Plugins page's tiles: the mark's square and the foot bar's height */
+  --tile-mark: 36px;
+  --tile-foot: 40px;
   /* Storage tab: the usage bar's height and the surface gap between its segments; a review list's fixed height */
   --storage-bar: 8px;
   --storage-gap: 2px;
   --storage-list: calc(var(--setting-row-detail) * 6);
+}
+/* The sidebar's narrow column: a smaller page title */
+.acp-settings[data-surface-host="sidebar"] {
+  --text-page: calc(var(--ui-font-size) + 4px);
+  --text-page-lh: calc(var(--ui-font-size) + 10px);
 }
 
 /* Tailwind theme mapping: class names → the tokens above */

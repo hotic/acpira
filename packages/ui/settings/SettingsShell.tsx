@@ -1,5 +1,4 @@
 import type { ChatGptIntegrationStatus } from '@acpira/shared/chatgptIntegration';
-import { ChatGptPage } from './ChatGptPage';
 import { useEffect, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { AccountInfo, AgentId, AgentInfo, ConfigControl } from '@acpira/shared/transcript';
@@ -24,7 +23,8 @@ import { usePreferredPaneWidth } from '../chat/subagents/InspectorSplitter';
 import { PageRail, samePage, type SettingsPage } from './Nav';
 import { General } from './General';
 import { AppearancePage } from './Appearance';
-import { AgentPage } from './AgentPage';
+import { AgentDialog } from './AgentPage';
+import { PluginsPage } from './PluginsPage';
 import { SharedPage, type SharedState } from './SharedPage';
 import { SubagentsPage } from './SubagentsPage';
 import { StoragePage, type StorageState } from './StoragePage';
@@ -132,26 +132,28 @@ export function SettingsShell(p: SettingsShellProps) {
   const agent = page.kind === 'agent' ? p.agents.find(a => a.id === page.id) : undefined;
   // Ids the rail does not show (a custom agent missing from agents.json for now) keep their saved order / off state
   const unlisted = (id: AgentId) => !p.agents.some(a => a.id === id);
-  const title = page.kind === 'chatgpt' ? 'ChatGPT' : agent ? t('settings.agent.title', { agent: agent.name }) : page.kind === 'appearance' ? t('settings.appearance.title')
+  // An agent's dialog sits on the Plugins page and ChatGPT's on Connections: the page behind keeps its title and action
+  const title = page.kind === 'agent' || page.kind === 'plugins' ? t('settings.nav.plugins') : page.kind === 'appearance' ? t('settings.appearance.title')
     : page.kind === 'shared' ? t('settings.shared.title') : page.kind === 'subagents' ? t('settings.nav.subagents')
-    : page.kind === 'storage' ? t('storage.title') : page.kind === 'connections' ? t('settings.nav.connections')
+    : page.kind === 'storage' ? t('storage.title') : page.kind === 'connections' || page.kind === 'chatgpt' ? t('settings.nav.connections')
     : page.kind === 'about' ? t('settings.about.title') : t('settings.general.title');
   const busy = !!agent && !!p.refreshing?.has(agent.id);
   // Header refresh clicks on the Storage tab: the only thing that replays its bar's fill
   const [storageRefresh, setStorageRefresh] = useState(0);
-  const action = (agent || page.kind === 'chatgpt' || page.kind === 'shared' || page.kind === 'storage') && (
-    <IconButton title={t('common.refresh')} aria-label={t('common.refresh')} aria-busy={busy || undefined} disabled={busy}
-      onClick={() => page.kind === 'chatgpt' ? p.on.refreshChatgpt?.() : page.kind === 'shared' ? p.on.shared?.()
-        : page.kind === 'storage' ? (setStorageRefresh(n => n + 1), p.on.storage?.())
-        : agent && p.on.refreshAgent(agent.id)}>
-      <RefreshCw strokeWidth={1.5} className={cn(busy && 'animate-spin live-spin')} />
+  const action = (page.kind === 'shared' || page.kind === 'storage') && (
+    <IconButton title={t('common.refresh')} aria-label={t('common.refresh')}
+      onClick={() => page.kind === 'shared' ? p.on.shared?.() : (setStorageRefresh(n => n + 1), p.on.storage?.())}>
+      <RefreshCw strokeWidth={1.5} />
     </IconButton>
   );
   const desktop = !!p.desktop;
   // The desktop updater's state for About (HostMsg updateState, kept in packages/ui/desktop.ts)
   const update = useUpdateState();
-  // SSH hosts are offered once the engine answered for them (remote/api.ts)
+  // SSH hosts are offered once the engine answered for them (remote/api.ts); ChatGPT lives on the same page
   const remote = useConnections() !== undefined;
+  const chatgpt = p.agents.some(a => a.id === 'chatgpt' && a.external);
+  // The agents on, for the dialog's switch: the last one cannot be switched off
+  const enabledAgents = p.agents.filter(a => !a.external && !a.disabled);
   // Desktop: the rail takes the chat column's width (the same stored value, clamped as Shell clamps it), so the sheet does not
   // jump sideways when the page switches
   const [columnWidth] = usePreferredPaneWidth('sessionPaneW');
@@ -194,17 +196,17 @@ export function SettingsShell(p: SettingsShellProps) {
             data-column={desktop || undefined}
           >
             <div className="flex min-h-0 flex-1">
-              <PageRail agents={p.agents} page={p.page} onPage={trail.go} onBack={p.onBack} desktop={desktop} width={desktop ? railWidth : undefined} opening={opening} remote={remote}
-                onReorder={ids => p.on.setSetting('agentOrder', [...ids, ...p.settings.agentOrder.filter(unlisted)])}
-                onDisabled={ids => p.on.setSetting('disabledAgents', [...ids, ...p.settings.disabledAgents.filter(unlisted)])} />
+              <PageRail page={p.page} onPage={trail.go} onBack={p.onBack} desktop={desktop} width={desktop ? railWidth : undefined} opening={opening} connections={remote || chatgpt} />
               <div data-sheet={desktop || undefined} className="relative flex min-w-0 flex-1 flex-col">
-              <main key={page.kind === 'agent' ? page.id : page.kind} className="min-h-0 min-w-0 flex-1 overflow-y-auto scroll-stable">
+              <main key={page.kind === 'agent' ? 'plugins' : page.kind === 'chatgpt' ? 'connections' : page.kind} className="min-h-0 min-w-0 flex-1 overflow-y-auto scroll-stable">
                 <Page>
-                  {/* Orchestration heads its own page: a drill-in's heading is the way back to the list */}
-                  {page.kind !== 'subagents' && <PageHeader title={title} action={action} />}
-                  {page.kind === 'chatgpt' && <ChatGptPage status={p.chatgptStatus} on={p.on} />}
+                  <PageHeader title={title} action={action} />
                   {page.kind === 'general' && <General settings={p.settings} agents={p.agents} on={p.on} />}
                   {page.kind === 'appearance' && <AppearancePage settings={p.settings} appearance={p.appearance} on={p.on} />}
+                  {(page.kind === 'plugins' || page.kind === 'agent') && <PluginsPage agents={p.agents} inventories={p.inventories}
+                    onReorder={ids => p.on.setSetting('agentOrder', [...ids, ...p.settings.agentOrder.filter(unlisted)])}
+                    onDisabled={ids => p.on.setSetting('disabledAgents', [...ids, ...p.settings.disabledAgents.filter(unlisted)])}
+                    onOpen={id => trail.go({ kind: 'agent', id })} onInventory={p.on.refreshInventory} />}
                   {page.kind === 'shared' && <SharedPage state={p.shared} agents={p.agents} on={p.on} />}
                   {page.kind === 'about' && <AboutPage state={update} on={{
                     check: download => postUpdate({ type: 'updateCheck', download }),
@@ -213,10 +215,11 @@ export function SettingsShell(p: SettingsShellProps) {
                     openExternal: p.on.openExternal,
                   }} />}
                   {page.kind === 'storage' && <StoragePage state={p.storage} agents={p.agents} env={p.env} on={p.on} refresh={storageRefresh} />}
-                  {page.kind === 'connections' && <ConnectionsPage env={p.env} projects={p.projects} on={p.on} />}
+                  {(page.kind === 'connections' || page.kind === 'chatgpt') && <ConnectionsPage env={p.env} projects={p.projects} on={p.on} remote={remote}
+                    chatgpt={chatgpt ? { status: p.chatgptStatus, open: page.kind === 'chatgpt', onOpen: () => trail.go({ kind: 'chatgpt' }), onClose: () => trail.replace({ kind: 'connections' }) } : undefined} />}
                   {page.kind === 'subagents' && <SubagentsPage page={page} onPage={trail.go} onReplace={trail.replace} settings={p.settings} agents={p.agents} controls={p.controls} shapes={p.modelShapes} on={p.on} />}
                   {agent && (
-                    <AgentPage
+                    <AgentDialog
                       key={agent.id}
                       agent={agent}
                       accounts={p.accounts.filter(a => a.agent === agent.id)}
@@ -227,6 +230,14 @@ export function SettingsShell(p: SettingsShellProps) {
                       settings={p.settings}
                       env={p.env}
                       on={p.on}
+                      busy={busy}
+                      enabled={!agent.disabled}
+                      last={enabledAgents.length === 1 && enabledAgents[0]!.id === agent.id}
+                      onEnabled={on => p.on.setSetting('disabledAgents', on
+                        ? p.settings.disabledAgents.filter(id => id !== agent.id)
+                        : [...new Set([...p.settings.disabledAgents, agent.id])])}
+                      onShared={() => trail.go({ kind: 'shared' })}
+                      onClose={() => trail.replace({ kind: 'plugins' })}
                     />
                   )}
                 </Page>

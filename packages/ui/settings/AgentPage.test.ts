@@ -7,7 +7,7 @@ import type { AgentInstallProgress } from '@acpira/shared/protocol';
 import { DEFAULT_SETTINGS } from '@acpira/shared/settings';
 import { newModel, type ProviderModel, type ProviderView } from '@acpira/shared/providers';
 import { setLocale, t } from '../i18n';
-import { AgentPage } from './AgentPage';
+import { AgentSettings, type AgentSettingsProps, type AgentTab } from './AgentPage';
 import { editTokens, fmtTokens, ModelEditor, parseTokens } from './ProviderModel';
 import type { ProvidersState } from './ProvidersSection';
 import type { SettingsHandlers } from './SettingsShell';
@@ -27,8 +27,11 @@ const handlers: SettingsHandlers = {
   installAgent: vi.fn(), openExternal: vi.fn(),
 };
 
+// One tab of the agent dialog, rendered in place (the dialog frame only adds the tab strip and footer)
+const page = (props: AgentSettingsProps, tab: AgentTab = 'overview') => createElement(AgentSettings, { ...props, tab });
+
 function renderAgent(agent: AgentInfo, extra: Partial<AgentInventory> = {}, install?: AgentInstallProgress, on: SettingsHandlers = handlers) {
-  return renderToStaticMarkup(createElement(AgentPage, {
+  return renderToStaticMarkup(page({
     agent, accounts: [], settings: DEFAULT_SETTINGS, env: { home: '/preview', cwd: '/preview/project' }, on, install,
     inventory: {
       agent: agent.id, binary: agent.available ? `/preview/bin/${agent.id}` : null,
@@ -46,7 +49,7 @@ describe('agent installation settings', () => {
     setLocale('zh-CN');
     const markup = renderAgent({ id, name: id, available: false, missing: [...missing], install: { command: 'npm install -g example-agent' } });
     expect(markup).toContain(`未找到 ${missing.join(', ')}`);
-    expect(markup).toContain(`>${t('settings.install.desc')}</p>`);
+    expect(markup).toContain(`>${t('settings.install.desc')}</div>`);
     expect(markup).not.toContain('。:');
     if (id === 'codex') expect(markup).not.toContain('>未找到 codex<');
   });
@@ -54,7 +57,7 @@ describe('agent installation settings', () => {
   it.each(['grok', 'kimi', 'devin'])('keeps quick installation available for an installed %s', id => {
     const markup = renderAgent({ id, name: id, available: true, install: { command: `install-${id}`, docs: `https://example.com/${id}` } });
     expect(markup).toContain(`Install ${id}`);
-    expect(markup).toContain('>Install</span></button>');
+    expect(markup).toContain('>Install</button>');
     expect(markup).toContain(`install-${id}`);
     expect(markup).toContain('Install guide');
     expect(handlers.installAgent).not.toHaveBeenCalled();
@@ -71,7 +74,7 @@ describe('agent installation settings', () => {
   it('keeps the facts card one height from the first probe to its reply', () => {
     const agent: AgentInfo = { id: 'acpira', name: 'Acpira', available: true };
     const rows = (markup: string) => markup.match(/>(Executable|Version|Status)</g);
-    const probing = renderToStaticMarkup(createElement(AgentPage, {
+    const probing = renderToStaticMarkup(page({
       agent, accounts: [], settings: DEFAULT_SETTINGS, env: { home: '/preview', cwd: '/preview/project' }, on: handlers,
     }));
     const replied = renderAgent(agent, { health: { stage: 'ready', at: '2026-10-14T00:00:00Z', source: 'probe' } });
@@ -99,13 +102,13 @@ describe('agent installation settings', () => {
     const markup = renderAgent({ id: 'custom-agent', name: 'Custom agent', available: false });
     expect(markup).toContain('Executable not detected');
     expect(markup).not.toContain('custom-agent not found');
-    expect(markup).not.toContain('>Install</span></button>');
+    expect(markup).not.toContain('>Install</button>');
   });
 
   it('shows a docs-only installation guide without offering an absent command', () => {
     const markup = renderAgent({ id: 'custom-agent', name: 'Custom agent', available: true, install: { docs: 'https://example.com/install' } });
     expect(markup).toContain('Install guide');
-    expect(markup).not.toContain('>Install</span></button>');
+    expect(markup).not.toContain('>Install</button>');
     expect(markup).not.toContain(t('settings.install.desc'));
   });
 });
@@ -125,8 +128,8 @@ describe('in-app agent install', () => {
     expect(markup).toMatch(/aria-label="Install log" aria-expanded="false"/);
     expect(markup).toContain('Proxy http://127.0.0.1:7890');
     expect(markup).toContain("installed to ~/.local");
-    expect(markup).toContain('>Cancel</span></button>');
-    expect(markup).not.toContain('>Install</span></button>');
+    expect(markup).toContain('>Cancel</button>');
+    expect(markup).not.toContain('>Install</button>');
     // The terminal fallback stays on the command row, disabled while the in-app run holds the install
     expect(markup).toMatch(/aria-label="Run in terminal"[^>]*disabled|disabled[^>]*aria-label="Run in terminal"/);
   });
@@ -137,7 +140,7 @@ describe('in-app agent install', () => {
     expect(failed).toContain('The installer exited with code 243.');
     expect(failed).toContain('npm ERR! EACCES');
     expect(failed).toMatch(/aria-label="Install log" aria-expanded="true"/);
-    expect(failed).toContain('>Install</span></button>');
+    expect(failed).toContain('>Install</button>');
     const done = renderAgent(agent, {}, { agent: 'codex', status: 'success', log: ['secret noise'], prefix: '/preview/.local' }, withTerminal);
     expect(done).toContain('Installed');
     expect(done).toContain("installed to ~/.local");
@@ -161,10 +164,10 @@ describe('built-in agent model sources', () => {
   ];
   const state: ProvidersState = { view: { providers: sources, families: ['generic', 'deepseek'] } };
   const builtin: AgentInfo = { id: 'acpira', name: 'Acpira', available: true };
-  const render = () => renderToStaticMarkup(createElement(AgentPage, {
+  const render = () => renderToStaticMarkup(page({
     agent: builtin, accounts: [], settings: DEFAULT_SETTINGS, env: { home: '/preview', cwd: '/preview/project' }, on: { ...handlers, providers: vi.fn(), providerProbe: vi.fn() },
     providers: state, controls: [],
-  }));
+  }, 'sources'));
 
   it('groups the models under their sources instead of the generic model list', () => {
     const markup = render();
@@ -176,9 +179,7 @@ describe('built-in agent model sources', () => {
     expect(markup).toContain(`aria-label="${t('settings.providers.off')}"`);
     expect(markup).toContain(`>${t('settings.providers.turnOn')}<`);
     expect(markup).toContain('DeepSeek V4 Flash');
-    // Compact rows: icon badges labelled in words, the full summary in the name's tooltip
-    expect(markup).toContain('aria-label="Context 1M"');
-    expect(markup).toContain(`aria-label="${t('settings.providers.model.image')}"`);
+    // Each model row's second line is its summary
     const sep = t('common.metaSep');
     expect(markup).toContain(['Context 1M', 'Output 384k', 'Levels: 3'].join(sep));
     expect(markup).toContain(['Context 256k', 'Images'].join(sep));
@@ -205,7 +206,8 @@ describe('built-in agent model sources', () => {
     // The fields the endpoint did not report are named at the top of the editor
     expect(markup).toContain('not reported by the endpoint: output.');
     expect(markup).toContain('HTTP 401: Invalid API key');
-    expect(markup).toContain(t('settings.providers.model.test.hint'));
+    // The test row's second line carries the outcome in place of the hint
+    expect(markup).not.toContain(t('settings.providers.model.test.hint'));
   });
 
   it('writes and reads token counts the way the quick values do', () => {

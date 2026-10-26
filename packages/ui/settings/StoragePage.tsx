@@ -1,6 +1,6 @@
 import { useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowDownWideNarrow, CalendarClock, Check, ChevronLeft, Trash2 } from 'lucide-react';
+import { Archive, ArrowDownWideNarrow, CalendarClock, Check, FileX, FolderOpen, ScrollText, Trash2 } from 'lucide-react';
 import {
   STORAGE_RESIDUE_KINDS, STORAGE_SEGMENTS, formatBytes,
   type StorageAction, type StorageBlock, type StorageDetail, type StorageOutcome, type StorageResidue, type StorageResidueKind, type StorageSegmentKind, type StorageSession, type StorageView,
@@ -8,13 +8,12 @@ import {
 import type { MsgKey } from '@acpira/shared/i18n';
 import type { AgentInfo } from '@acpira/shared/transcript';
 import { Button, IconButton } from '../ui/Button';
-import { RadioPills } from '../ui/Field';
 import { ShellLayerContext } from '../ui/Overlay';
 import { Shimmer } from '../ui/Shimmer';
 import { Toast } from '../ui/Toast';
 import { cn } from '../ui/cn';
 import { getLocale, t } from '../i18n';
-import { Count, Group, ItemRow, Note, rowHover, rowRules, Section, SourceLink, shortPath, topRule } from './controls';
+import { Count, DialogBody, FooterNote, Group, ItemRow, Meta, Note, rowHover, rowRules, Section, SectionAction, SectionDescription, Segmented, SettingsDialog, shortPath } from './controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 
 // Settings → Storage: what the data directory holds by owner, drawn as one bar, and the cleanups that are reviewed
@@ -65,14 +64,14 @@ export function StoragePage({ state, agents, env, on, refresh = 0 }: StoragePage
   const view = state?.view;
   const reveal = (path?: string) => on.storageAction?.({ kind: 'reveal', path });
   const error = state?.error && <Section><Note><span className="truncate text-danger" title={state.error}>{state.error}</span></Note></Section>;
-  const back = () => setOpen(undefined);
-  if (open === 'old' || open === 'slim') return <>{error}<SessionReview key={open} mode={open === 'slim' ? 'slim' : 'delete'} state={state} agents={agents} on={on} onBack={back} /></>;
-  if (open === 'residue') return <>{error}<ResidueReview state={state} env={env} on={on} onBack={back} /></>;
+  const close = () => setOpen(undefined);
   return <Measured on={on}>
     {error}
-    <Overview view={view} env={env} refresh={refresh} onReveal={() => reveal()} />
+    <Overview view={view} refresh={refresh} onReveal={() => reveal()} />
     <Cleanup view={view} onOpen={setOpen} />
     {view && view.other.length > 0 && <OtherFiles view={view} onReveal={reveal} />}
+    {(open === 'old' || open === 'slim') && <SessionReview key={open} mode={open === 'slim' ? 'slim' : 'delete'} state={state} agents={agents} on={on} onClose={close} />}
+    {open === 'residue' && <ResidueReview state={state} env={env} on={on} onClose={close} />}
   </Measured>;
 }
 
@@ -82,26 +81,19 @@ function Measured({ on, children }: { on: SettingsHandlers; children: ReactNode 
   return <>{children}</>;
 }
 
+// The three cleanups, each reviewed in a dialog before it runs; each row's own glyph, its size on the right once known
 function Cleanup({ view, onOpen }: { view?: StorageView; onOpen: (r: Review) => void }) {
   const reclaim = view?.segments.find(s => s.kind === 'reclaimable');
+  const sessions = view?.segments.find(s => s.kind === 'sessions');
   return (
-    <Section title={t('storage.cleanup')}>
-      <ItemRow title={t('storage.old.title')} desc={t('storage.old.entry')} onClick={() => onOpen('old')} />
-      <ItemRow title={t('storage.slim.title')} desc={t('storage.slim.entry')} onClick={() => onOpen('slim')} />
-      <ItemRow title={t('storage.residue.title')} onClick={() => onOpen('residue')}
-        desc={!reclaim ? t('storage.pending') : reclaim.bytes > 0 ? t('storage.residue.entry', { size: bytes(reclaim.bytes) }) : t('storage.residue.none')} />
+    <Section title={t('storage.cleanup')} desc={t('storage.cleanup.desc')}>
+      <ItemRow lead={<ScrollText />} title={t('storage.old.title')} desc={t('storage.old.entry')} onEdit={() => onOpen('old')} editLabel={t('storage.old.title')}
+        trailing={sessions && <Meta>{bytes(sessions.bytes)}</Meta>} />
+      <ItemRow lead={<Archive />} title={t('storage.slim.title')} desc={t('storage.slim.entry')} onEdit={() => onOpen('slim')} editLabel={t('storage.slim.title')} />
+      <ItemRow lead={<FileX />} title={t('storage.residue.title')} onEdit={() => onOpen('residue')} editLabel={t('storage.residue.title')}
+        desc={!reclaim ? t('storage.pending') : reclaim.bytes > 0 ? t('storage.residue.entryShort') : t('storage.residue.none')}
+        trailing={reclaim && reclaim.bytes > 0 && <Meta>{bytes(reclaim.bytes)}</Meta>} />
     </Section>
-  );
-}
-
-// A review subpage's head: back to the overview and the review's title
-function ReviewHead({ title, onBack, action }: { title: string; onBack: () => void; action?: ReactNode }) {
-  return (
-    <div className="flex min-h-ctl items-center gap-gap">
-      <IconButton title={t('settings.back')} aria-label={t('settings.back')} onClick={onBack}><ChevronLeft strokeWidth={1.5} /></IconButton>
-      <span className="min-w-0 flex-1 truncate text-2 font-medium text-fg-1">{title}</span>
-      {action}
-    </div>
   );
 }
 
@@ -115,7 +107,7 @@ function Tick({ on, disabled }: { on: boolean; disabled?: boolean }) {
   );
 }
 
-// One pickable row of a review list: tick, two text lines, the size at the right
+// One pickable row of a review list: the tick in the icon column, two text lines, the size at the right
 function PickRow({ on, disabled, title, meta, size, onToggle, nested }: {
   on: boolean;
   disabled?: boolean;
@@ -129,49 +121,49 @@ function PickRow({ on, disabled, title, meta, size, onToggle, nested }: {
   return (
     <button type="button" role="checkbox" aria-checked={on} disabled={disabled} onClick={onToggle}
       className={cn(rowHover, 'flex min-h-(--setting-row-detail) w-full items-center gap-gap py-(--setting-row-pad) text-left text-2', nested && 'pl-indent')}>
-      <Tick on={on} disabled={disabled} />
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span className={cn('truncate', disabled ? 'text-fg-2' : 'text-fg-1')}>{title}</span>
-        <span className="truncate text-fg-2">{meta}</span>
+      <span className="flex size-lead shrink-0 items-center justify-center"><Tick on={on} disabled={disabled} /></span>
+      <span className="flex min-w-0 flex-1 flex-col gap-y-(--stack-gap)">
+        <span className={cn('truncate', disabled ? 'text-fg-3' : 'text-fg-1')}>{title}</span>
+        <span className="truncate text-3 text-fg-3">{meta}</span>
       </span>
-      <span className="shrink-0 text-fg-2 tabular-nums">{size}</span>
+      <Meta>{size}</Meta>
     </button>
   );
 }
 
-// The review's fixed-height list: an async list never changes the page's height when it fills, empties or filters.
-// The scrollport reaches the card edges so row hovers and rules run full width and the scrollbar sits on the border
+// The review's fixed-height list, a dialog block that scrolls: an async list never changes the dialog's height when it
+// fills, empties or filters. Hovers and rules run from block edge to block edge; nothing scrolls sideways
 function ReviewList({ children, empty, loading }: { children: ReactNode; empty: string; loading: boolean }) {
   const hasRows = Array.isArray(children) ? children.length > 0 : !!children;
   return (
-    <div>
-      <div className="-mx-pad h-(--storage-list) overflow-y-auto overscroll-contain px-pad scroll-thin">
-        {loading ? <Note shimmer>{t('storage.scanning')}</Note> : hasRows ? <Group embedded>{children}</Group> : <Note>{empty}</Note>}
-      </div>
+    <div className="scroll-thin h-(--storage-list) shrink-0 overflow-x-hidden overflow-y-auto overscroll-contain rounded-lg bg-chip px-3">
+      {loading ? <Group embedded><Note shimmer>{t('storage.scanning')}</Note></Group> : hasRows ? <Group embedded>{children}</Group> : <Group embedded><Note>{empty}</Note></Group>}
     </div>
   );
 }
 
-// The review's last row: what is picked, and the one action
-function ReviewFooter({ n, size, all, onAll, action, disabled, onAction }: {
+// The review's footer: the tick that picks everything, what is picked, Cancel and the one action
+function ReviewFooter({ n, size, all, onAll, action, danger, disabled, onAction, onClose }: {
   n: number;
   size: number;
   all: boolean;
   onAll: () => void;
   action: string;
+  // Deleting reads as destructive; slimming and cleaning leftovers are the dialog's plain purpose
+  danger?: boolean;
   disabled: boolean;
   onAction: () => void;
+  onClose: () => void;
 }) {
-  return (
-    <div className={cn('flex min-h-(--setting-row) items-center gap-gap py-(--setting-row-pad) text-2', topRule)}>
-      <button type="button" role="checkbox" aria-checked={all} onClick={onAll} title={t('storage.selectAll')} aria-label={t('storage.selectAll')}
-        className="flex shrink-0 items-center self-stretch">
-        <Tick on={all} />
-      </button>
-      <span className="min-w-0 flex-1 truncate text-fg-2 tabular-nums">{t('storage.selected', { n, size: bytes(size) })}</span>
-      <Button variant="primary" disabled={disabled || n === 0} onClick={onAction}>{action}</Button>
-    </div>
-  );
+  return <>
+    <button type="button" role="checkbox" aria-checked={all} onClick={onAll} title={t('storage.selectAll')} aria-label={t('storage.selectAll')}
+      className="flex size-lead shrink-0 items-center justify-center">
+      <Tick on={all} />
+    </button>
+    <FooterNote className="tabular-nums">{t('storage.selected', { n, size: bytes(size) })}</FooterNote>
+    <Button onClick={onClose}>{t('settings.shared.cancel')}</Button>
+    <Button variant={danger ? 'secondary' : 'primary'} tone={danger ? 'danger' : undefined} disabled={disabled || n === 0} onClick={onAction}>{action}</Button>
+  </>;
 }
 
 // A toast at the bottom of the settings shell (the chat's toasts live in the chat shell); portalled into the shell
@@ -181,7 +173,8 @@ function ShellToast({ children }: { children: ReactNode }) {
   const [el, setEl] = useState<HTMLElement | null>(null);
   useEffect(() => setEl(layer?.current ?? null), [layer]);
   if (!el) return null;
-  return createPortal(<div className="pointer-events-none absolute inset-x-0 bottom-gap z-10 flex flex-col items-center gap-1 px-page">{children}</div>, el);
+  // Above the review dialogs (z-30), whose deletes it can undo
+  return createPortal(<div className="pointer-events-none absolute inset-x-0 bottom-gap z-40 flex flex-col items-center gap-1 px-page">{children}</div>, el);
 }
 
 // Deleted sessions stay restorable for 30 s on the engine side; the toast leaves a margin for the round trip
@@ -228,7 +221,7 @@ const MODE = {
 // The sessions of one age range, largest or oldest first; in the slim review the size is what slimming frees and a
 // session with nothing to drop is left out
 // The mode is fixed for the page's life (the parent keys it), so the effects below leave it out of their deps
-function SessionReview({ mode, state, agents, on, onBack }: { mode: SessionMode; state?: StorageState; agents: AgentInfo[]; on: SettingsHandlers; onBack: () => void }) {
+function SessionReview({ mode, state, agents, on, onClose }: { mode: SessionMode; state?: StorageState; agents: AgentInfo[]; on: SettingsHandlers; onClose: () => void }) {
   const m = MODE[mode];
   const detail: StorageDetail[] = [...m.detail];
   useEffect(() => { on.storage?.(detail); }, [on]);
@@ -275,36 +268,38 @@ function SessionReview({ mode, state, agents, on, onBack }: { mode: SessionMode;
       s.subagents ? t('storage.subagents', { n: s.subagents }) : undefined,
     ].filter(Boolean).join(t('common.metaSep'));
   };
-  return <>
-    <ReviewHead title={t(m.title)} onBack={onBack} action={
-      // One toggle for the order; its tooltip names the order shown
-      <IconButton title={t(sort === 'size' ? 'storage.sort.size' : 'storage.sort.age')} aria-label={t('storage.sort.label')}
-        onClick={() => setSort(sort === 'size' ? 'age' : 'size')}>
-        {sort === 'size' ? <ArrowDownWideNarrow strokeWidth={1.5} /> : <CalendarClock strokeWidth={1.5} />}
-      </IconButton>
-    } />
-    <Section desc={t(m.desc)}>
-      <div className="flex py-(--setting-row-pad)">
-        <RadioPills<Age> label={t('storage.age.label')} value={age} onChange={setAge}
-          options={AGES.map(a => ({ value: a, label: a === 'all' ? t('storage.age.all') : t('storage.age.days', { n: Number(a) }) }))} />
-      </div>
-      <ReviewList loading={!all} empty={t(m.empty)}>
-        {rows.map(s => {
-          const blocked = !!blockOf(s, mode);
-          return <PickRow key={s.id} on={!blocked && picked.has(s.id)} disabled={blocked} onToggle={() => toggle(s.id)}
-            title={s.title || t('storage.untitled')} meta={meta(s)} size={bytes(size(s))} />;
-        })}
-      </ReviewList>
-      <ReviewFooter n={chosen.length} size={chosen.reduce((a, s) => a + size(s), 0)} all={everything}
+  const sortLabel = t(sort === 'size' ? 'storage.sort.size' : 'storage.sort.age');
+  return (
+    <SettingsDialog wide icon={mode === 'slim' ? <Archive /> : <ScrollText />} title={t(m.title)} onClose={onClose}
+      footer={<ReviewFooter n={chosen.length} size={chosen.reduce((a, s) => a + size(s), 0)} all={everything}
         onAll={() => setPicked(everything ? new Set() : new Set(pickable.map(s => s.id)))}
-        action={t(m.action)} disabled={busy}
-        onAction={() => { setBusy(true); on.storageAction?.({ kind: m.kind, ids: chosen.map(s => s.id) }, detail); }} />
-    </Section>
-    {toast && <ShellToast>
-      <Toast key={toast.key} text={toast.text} ttl={toast.undo ? UNDO_TTL : undefined} onClose={() => setToast(undefined)}
-        onUndo={toast.undo && (() => { on.storageAction?.({ kind: 'restoreSessions', ids: toast.undo! }, detail); setToast(undefined); })} />
-    </ShellToast>}
-  </>;
+        action={t(m.action)} danger={mode === 'delete'} disabled={busy} onClose={onClose}
+        onAction={() => { setBusy(true); on.storageAction?.({ kind: m.kind, ids: chosen.map(s => s.id) }, detail); }} />}>
+      <DialogBody className="overflow-hidden">
+        {/* What the review does is a sentence, too long for the title bar */}
+        <SectionDescription>{t(m.desc)}</SectionDescription>
+        <div className="flex min-w-0 items-center gap-gap">
+          <Segmented<Age> label={t('storage.age.label')} value={age} onChange={setAge} className="min-w-0 flex-1"
+            items={AGES.map(a => ({ value: a, label: a === 'all' ? t('storage.age.all') : t('storage.age.days', { n: Number(a) }) }))} />
+          {/* One toggle for the order; its tooltip names the order shown */}
+          <IconButton title={sortLabel} aria-label={t('storage.sort.label')} onClick={() => setSort(sort === 'size' ? 'age' : 'size')} className="text-fg-2">
+            {sort === 'size' ? <ArrowDownWideNarrow strokeWidth={1.5} /> : <CalendarClock strokeWidth={1.5} />}
+          </IconButton>
+        </div>
+        <ReviewList loading={!all} empty={t(m.empty)}>
+          {rows.map(s => {
+            const blocked = !!blockOf(s, mode);
+            return <PickRow key={s.id} on={!blocked && picked.has(s.id)} disabled={blocked} onToggle={() => toggle(s.id)}
+              title={s.title || t('storage.untitled')} meta={meta(s)} size={bytes(size(s))} />;
+          })}
+        </ReviewList>
+      </DialogBody>
+      {toast && <ShellToast>
+        <Toast key={toast.key} text={toast.text} ttl={toast.undo ? UNDO_TTL : undefined} onClose={() => setToast(undefined)}
+          onUndo={toast.undo && (() => { on.storageAction?.({ kind: 'restoreSessions', ids: toast.undo! }, detail); setToast(undefined); })} />
+      </ShellToast>}
+    </SettingsDialog>
+  );
 }
 
 // A leftover's place: relative to the data directory when inside it, else the path shortened like other settings paths
@@ -331,7 +326,7 @@ const KIND_DESC: Record<StorageResidueKind, MsgKey> = {
 };
 
 // The leftovers by kind; the kinds nothing can miss start ticked. Removal is for good, so the page says so up front
-function ResidueReview({ state, env, on, onBack }: { state?: StorageState; env: SettingsEnv; on: SettingsHandlers; onBack: () => void }) {
+function ResidueReview({ state, env, on, onClose }: { state?: StorageState; env: SettingsEnv; on: SettingsHandlers; onClose: () => void }) {
   useEffect(() => { on.storage?.(['residue']); }, [on]);
   const list = state?.view.residue;
   const [picked, setPicked] = useState<ReadonlySet<string>>();
@@ -357,35 +352,37 @@ function ResidueReview({ state, env, on, onBack }: { state?: StorageState; env: 
   const groups = STORAGE_RESIDUE_KINDS.map(k => [k, (list ?? []).filter(r => r.kind === k)] as const).filter(([, rs]) => rs.length > 0);
   const kindAll = (rs: readonly StorageResidue[]) => rs.every(r => sel.has(r.id));
   const root = state?.view.root ?? '';
-  return <>
-    <ReviewHead title={t('storage.residue.title')} onBack={onBack} />
-    <Section desc={t('storage.residue.desc')}>
-      <ReviewList loading={!list} empty={t('storage.residue.none')}>
-        {groups.map(([k, rs]) => (
-          <div key={k} className={cn('flex flex-col', rowRules)}>
-            <PickRow on={kindAll(rs)} title={<>{t(KIND_LABEL[k])} <Count n={rs.length} /></>} meta={<span title={t(KIND_DESC[k])}>{t(KIND_DESC[k])}</span>}
-              size={bytes(rs.reduce((a, r) => a + r.bytes, 0))}
-              onToggle={() => set(kindAll(rs) ? [...sel].filter(id => !rs.some(r => r.id === id)) : [...sel, ...rs.map(r => r.id)])} />
-            {rs.map(r => (
-              <PickRow key={r.id} nested on={sel.has(r.id)} onToggle={() => toggle(r.id)}
-                title={<span title={r.path}>{inRoot(r.path, root, env)}</span>} meta={since(r.modifiedAt)} size={bytes(r.bytes)} />
-            ))}
-          </div>
-        ))}
-      </ReviewList>
-      <ReviewFooter n={chosen.length} size={chosen.reduce((a, r) => a + r.bytes, 0)} all={everything}
+  return (
+    <SettingsDialog wide icon={<FileX />} title={t('storage.residue.title')} onClose={onClose}
+      footer={<ReviewFooter n={chosen.length} size={chosen.reduce((a, r) => a + r.bytes, 0)} all={everything}
         onAll={() => set(everything ? [] : (list ?? []).map(r => r.id))}
-        action={t('storage.clean')} disabled={busy}
-        onAction={() => { setBusy(true); on.storageAction?.({ kind: 'cleanResidue', ids: chosen.map(r => r.id) }, ['residue']); }} />
-    </Section>
-    {toast && <ShellToast>
-      <Toast key={toast.key} text={toast.text} icon={<Trash2 className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} />} onClose={() => setToast(undefined)} />
-    </ShellToast>}
-  </>;
+        action={t('storage.clean')} disabled={busy} onClose={onClose}
+        onAction={() => { setBusy(true); on.storageAction?.({ kind: 'cleanResidue', ids: chosen.map(r => r.id) }, ['residue']); }} />}>
+      <DialogBody className="overflow-hidden">
+        <SectionDescription>{t('storage.residue.desc')}</SectionDescription>
+        <ReviewList loading={!list} empty={t('storage.residue.none')}>
+          {groups.map(([k, rs]) => (
+            <div key={k} className={cn('flex flex-col', rowRules)}>
+              <PickRow on={kindAll(rs)} title={<>{t(KIND_LABEL[k])} <Count n={rs.length} /></>} meta={<span title={t(KIND_DESC[k])}>{t(KIND_DESC[k])}</span>}
+                size={bytes(rs.reduce((a, r) => a + r.bytes, 0))}
+                onToggle={() => set(kindAll(rs) ? [...sel].filter(id => !rs.some(r => r.id === id)) : [...sel, ...rs.map(r => r.id)])} />
+              {rs.map(r => (
+                <PickRow key={r.id} nested on={sel.has(r.id)} onToggle={() => toggle(r.id)}
+                  title={<span title={r.path}>{inRoot(r.path, root, env)}</span>} meta={since(r.modifiedAt)} size={bytes(r.bytes)} />
+              ))}
+            </div>
+          ))}
+        </ReviewList>
+      </DialogBody>
+      {toast && <ShellToast>
+        <Toast key={toast.key} text={toast.text} icon={<Trash2 className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} />} onClose={() => setToast(undefined)} />
+      </ShellToast>}
+    </SettingsDialog>
+  );
 }
 
 // The total, the bar and its legend; before the first scan the same rows hold their place with a faint dash
-function Overview({ view, env, refresh, onReveal }: { view?: StorageView; env: SettingsEnv; refresh: number; onReveal: () => void }) {
+function Overview({ view, refresh, onReveal }: { view?: StorageView; refresh: number; onReveal: () => void }) {
   // The segments grow from zero when they mount; a new scan transitions them in place. Only a header Refresh click
   // arms the next scan to remount them so the fill plays again. Counting replies instead replayed the fill at random:
   // a reply still in flight from an earlier visit or a review subpage landed before this mount's own rescan
@@ -406,7 +403,8 @@ function Overview({ view, env, refresh, onReveal }: { view?: StorageView; env: S
   const active = hover && shown.some(s => s.kind === hover) ? hover : undefined;
   const summary = shown.map(s => `${t(LABEL[s.kind])} ${bytes(s.bytes)}`).join(t('common.listSep'));
   return (
-    <Section title={t('storage.overview')} desc={view ? t('storage.total', { size: bytes(view.total) }) : <Shimmer active>{t('storage.scanning')}</Shimmer>}>
+    <Section title={t('storage.overview')} desc={view ? t('storage.total', { size: bytes(view.total) }) : <Shimmer active>{t('storage.scanning')}</Shimmer>}
+      action={view && <SectionAction icon={<FolderOpen />} title={view.root} onClick={onReveal}>{t('storage.open')}</SectionAction>}>
       <div className="flex min-h-(--setting-row) items-center">
         <div role="img" aria-label={summary || t('storage.scanning')}
           className="flex h-(--storage-bar) w-full gap-(--storage-gap) overflow-hidden rounded-full bg-active">
@@ -425,11 +423,11 @@ function Overview({ view, env, refresh, onReveal }: { view?: StorageView; env: S
           // The legend is information: it answers no hover (only the bar does, dimming the other segments)
           <ItemRow key={k}
             lead={<span aria-hidden className={cn('size-(--dot) rounded-full', FILL[k])} />}
-            title={<>{t(LABEL[k])}{s && s.count > 0 && k !== 'other' && <> <Count n={s.count} /></>}</>}
-            trailing={<span className={cn('text-2 tabular-nums', s ? 'text-fg-1' : 'text-fg-3')}>{s ? bytes(s.bytes) : t('storage.pending')}</span>} />
+            title={t(LABEL[k])}
+            desc={k === 'other' ? t('storage.seg.other.desc') : s ? t('storage.items', { n: s.count }) : t('storage.pending')}
+            trailing={<Meta>{s ? bytes(s.bytes) : t('storage.pending')}</Meta>} />
         );
       })}
-      {view && <SourceLink path={view.root} env={env} onOpen={onReveal} />}
     </Section>
   );
 }
@@ -442,8 +440,7 @@ function OtherFiles({ view, onReveal }: { view: StorageView; onReveal: (path: st
   return (
     <Section title={t('storage.other')} desc={t('storage.otherDesc')} count={view.other.length}>
       {list.map(e => (
-        <ItemRow key={e.name} title={e.name} onOpen={() => onReveal(e.path)}
-          trailing={<span className="text-2 text-fg-2 tabular-nums">{bytes(e.bytes)}</span>} />
+        <ItemRow key={e.name} title={e.name} onOpen={() => onReveal(e.path)} trailing={<Meta>{bytes(e.bytes)}</Meta>} />
       ))}
       {rest > 0 && (
         <button type="button" onClick={() => setAll(v => !v)}

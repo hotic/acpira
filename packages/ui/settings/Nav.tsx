@@ -1,66 +1,58 @@
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
-import { ArrowLeft, HardDrive, Info, Layers, Network, Palette, Server, Settings2 } from 'lucide-react';
-import type { AgentId, AgentInfo } from '@acpira/shared/transcript';
-import { moveAgent } from '@acpira/shared/agentOrder';
+import { type CSSProperties, type ReactNode } from 'react';
+import { ArrowLeft, Blocks, HardDrive, Info, Layers, Network, Palette, SlidersHorizontal, Workflow } from 'lucide-react';
+import type { AgentInfo } from '@acpira/shared/transcript';
 import { cn } from '../ui/cn';
-import { Switch } from '../ui/Switch';
-import { AgentMark } from '../chat/AgentMark';
 import { TitleSpace } from '../chat/DesktopFrame';
 import { t } from '../i18n';
 
-// Orchestration carries the persona or group opened from its lists, so a drill-in is a page of its own in the back / forward trail
-export type SettingsPage = { kind: 'chatgpt' } | { kind: 'general' } | { kind: 'appearance' } | { kind: 'shared' } | { kind: 'connections' }
-  | { kind: 'subagents'; persona?: string; group?: string } | { kind: 'storage' } | { kind: 'about' } | { kind: 'agent'; id: AgentInfo['id'] };
+// Orchestration carries the persona or group opened from its lists, and an agent's page is the Plugins page with that
+// agent's dialog open (ChatGPT's the Connections page with its dialog), so an opened dialog is a step of its own in the
+// back / forward trail and the chat can open the settings straight at one
+export type SettingsPage = { kind: 'general' } | { kind: 'appearance' } | { kind: 'plugins' } | { kind: 'shared' } | { kind: 'connections' }
+  | { kind: 'subagents'; persona?: string; group?: string } | { kind: 'storage' } | { kind: 'about' }
+  | { kind: 'agent'; id: AgentInfo['id'] } | { kind: 'chatgpt' };
 
 // Two pages are the same place (a click on the page already shown adds nothing to the trail)
 export const samePage = (a: SettingsPage, b: SettingsPage) => JSON.stringify(a) === JSON.stringify(b);
 
-// Fixed pages first, then one page per agent; agent ids never collide with the fixed names
-const FIXED = ['general', 'appearance', 'shared', 'connections', 'subagents', 'storage', 'chatgpt', 'about'] as const;
-type FixedId = (typeof FIXED)[number];
-type PageId = FixedId | AgentInfo['id'];
-const isFixed = (id: PageId): id is FixedId => (FIXED as readonly string[]).includes(id);
-const pageId = (p: SettingsPage): PageId => (p.kind === 'agent' ? p.id : p.kind);
-const toPage = (id: PageId): SettingsPage => (isFixed(id) ? { kind: id } : { kind: 'agent', id });
+type RailId = 'general' | 'appearance' | 'plugins' | 'subagents' | 'shared' | 'connections' | 'storage' | 'about';
+// The rail entry a page lights: an agent's dialog sits on the Plugins page, ChatGPT's on Connections
+export const railOf = (p: SettingsPage): RailId => (p.kind === 'agent' ? 'plugins' : p.kind === 'chatgpt' ? 'connections' : p.kind);
 
 export interface PageRailProps {
-  agents: AgentInfo[];
   page: SettingsPage;
   onPage: (p: SettingsPage) => void;
   onBack: () => void;
-  // The agent rows' own order, as the full list of visible ids (stored as acpira.agentOrder)
-  onReorder: (ids: AgentId[]) => void;
-  // The row switches: every visible agent that is now off; an off agent leaves the new-session entry points (acpira.disabledAgents)
-  onDisabled: (ids: AgentId[]) => void;
   // Desktop: the rail lies on the window canvas under the window's pinned title row, whose back button returns to the chat
   desktop?: boolean;
   // Desktop: the rail's width as a CSS length (desktop.css reads it as --rail-w)
   width?: string;
   // Desktop: the chat's column was folded, so the rail opens from nothing as the page appears
   opening?: boolean;
-  // The page offers SSH hosts and the engine answered for them (remote/api.ts): the Connections entry shows
-  remote?: boolean;
+  // The Connections entry shows: SSH hosts are offered (the engine answered for them, remote/api.ts) or ChatGPT is set up
+  connections?: boolean;
 }
 
 // Full-width navigation on wide surfaces collapses to an icon rail in narrow webviews (the shell is the container).
 // Back navigation stays in this column and never consumes space beside the page heading.
 const navItem = 'flex h-ctl shrink-0 items-center gap-gap rounded-md px-2 text-2 transition-colors @max-[600px]/settings-shell:justify-center @max-[600px]/settings-shell:px-0';
-const tone = (active: boolean, dim?: boolean) => active ? 'text-fg-1' : dim ? 'text-fg-3' : 'text-fg-2 hover:text-fg-1 focus-visible:text-fg-1';
+const tone = (active: boolean) => active ? 'text-fg-1' : 'text-fg-2 hover:text-fg-1 focus-visible:text-fg-1';
 
 function RailIcon({ children }: { children: ReactNode }) {
-  return <span className="flex size-icon-ctl shrink-0 items-center justify-center [&_svg]:size-icon-ctl">{children}</span>;
+  return <span className="flex size-icon-ctl shrink-0 items-center justify-center [&_svg]:size-icon-ctl [&_svg]:stroke-[1.75]">{children}</span>;
 }
 
-export function PageRail({ agents, page, onPage, onBack, onReorder, onDisabled, desktop, width, opening, remote }: PageRailProps) {
-  const cur = pageId(page);
-  const item = (id: PageId, name: string, icon: ReactNode) => (
+// The fixed pages only: the agents moved to the Plugins page as tiles (their order and switches with them)
+export function PageRail({ page, onPage, onBack, desktop, width, opening, connections }: PageRailProps) {
+  const cur = railOf(page);
+  const item = (id: RailId, name: string, icon: ReactNode) => (
     <button
       key={id}
       type="button"
       title={name}
       aria-label={name}
       aria-current={cur === id ? 'page' : undefined}
-      onClick={() => onPage(toPage(id))}
+      onClick={() => onPage({ kind: id })}
       className={cn(navItem, tone(cur === id), cur === id ? 'bg-active' : 'hover:bg-hover focus-visible:bg-hover')}
     >
       <RailIcon>{icon}</RailIcon>
@@ -82,143 +74,17 @@ export function PageRail({ agents, page, onPage, onBack, onReorder, onDisabled, 
       {/* Desktop: the window's pinned title row is the way back (its back button, SettingsShell) */}
       {desktop ? <TitleSpace /> : back}
       <nav aria-label={t('settings.title')} className={cn('flex min-h-0 flex-col gap-1 overflow-y-auto', desktop && inset)}>
-        {item('general', t('settings.nav.general'), <Settings2 strokeWidth={1.5} />)}
-        {item('appearance', t('settings.nav.appearance'), <Palette strokeWidth={1.5} />)}
-        {item('shared', t('settings.nav.shared'), <Layers strokeWidth={1.5} />)}
-        {remote && item('connections', t('settings.nav.connections'), <Server strokeWidth={1.5} />)}
-        {item('subagents', t('settings.nav.subagents'), <Network strokeWidth={1.5} />)}
-        {item('storage', t('settings.nav.storage'), <HardDrive strokeWidth={1.5} />)}
-        <AgentRows agents={agents} cur={cur} onOpen={id => onPage(toPage(id))} onReorder={onReorder} onDisabled={onDisabled} />
-        {agents.some(a => a.id === 'chatgpt' && a.external) && item('chatgpt', 'ChatGPT', <AgentMark id="chatgpt" name="ChatGPT" />)}
+        {item('general', t('settings.nav.general'), <SlidersHorizontal />)}
+        {item('appearance', t('settings.nav.appearance'), <Palette />)}
+        {item('plugins', t('settings.nav.plugins'), <Blocks />)}
+        {item('subagents', t('settings.nav.subagents'), <Workflow />)}
+        {item('shared', t('settings.nav.shared'), <Layers />)}
+        {connections && item('connections', t('settings.nav.connections'), <Network />)}
+        {item('storage', t('settings.nav.storage'), <HardDrive />)}
       </nav>
       {/* Desktop: About (the version and its updates) at the rail's foot, where apps keep it; the IDE shells' extension is
           updated by their marketplace */}
-      {desktop && <div className={cn('mt-auto flex flex-col', inset)}>{item('about', t('settings.nav.about'), <Info strokeWidth={1.5} />)}</div>}
+      {desktop && <div className={cn('mt-auto flex flex-col', inset)}>{item('about', t('settings.nav.about'), <Info />)}</div>}
     </aside>
-  );
-}
-
-// Past this many pixels a press on a row becomes a drag; below it the press stays a click
-const DRAG_SLOP = 4;
-
-// The agent rows: drag a row (or Alt+↑ / Alt+↓ on it) to reorder, the switch at the end turns the agent on or off.
-// Both write through the host and come back as a rearranged list; until then the rows show the local result so nothing snaps back.
-// The icon rail keeps reordering but has no room for the switch
-function AgentRows({ agents: all, cur, onOpen, onReorder, onDisabled }: {
-  // The host's list as received (its identity changes only when the host pushes a new one)
-  agents: AgentInfo[];
-  cur: PageId;
-  onOpen: (id: AgentId) => void;
-  onReorder: (ids: AgentId[]) => void;
-  onDisabled: (ids: AgentId[]) => void;
-}) {
-  const agents = all.filter(a => !a.external);
-  const ids = agents.map(a => a.id);
-  const [pending, setPending] = useState<{ order?: AgentId[]; enabled?: Record<AgentId, boolean> }>({});
-  // A fresh list from the host supersedes whatever was shown optimistically
-  useEffect(() => setPending({}), [all]);
-  const [drag, setDrag] = useState<{ id: AgentId; order: AgentId[] }>();
-  const press = useRef<{ id: AgentId; y: number; mids: number[]; others: AgentId[] } | undefined>(undefined);
-  const swallowClick = useRef(false);
-  const list = useRef<HTMLDivElement>(null);
-
-  // The committed order (host list, or the local result waiting for it); a drag only previews over it
-  const settled = pending.order ?? ids;
-  const order = drag?.order ?? settled;
-  const byId = new Map(agents.map(a => [a.id, a]));
-  const shown = order.map(id => byId.get(id)).filter((a): a is AgentInfo => !!a);
-  const enabled = (a: AgentInfo) => pending.enabled?.[a.id] ?? !a.disabled;
-  const enabledCount = shown.filter(enabled).length;
-
-  const commit = (next: AgentId[]) => {
-    if (next.join('\n') === settled.join('\n')) return;
-    setPending(p => ({ ...p, order: next }));
-    onReorder(next);
-  };
-  // Built from what the rows show, so a second switch flipped before the host answered the first keeps both
-  const toggle = (id: AgentId, on: boolean) => {
-    setPending(p => ({ ...p, enabled: { ...p.enabled, [id]: on } }));
-    onDisabled(agents.filter(a => a.id === id ? !on : !enabled(a)).map(a => a.id));
-  };
-
-  const onPointerDown = (e: PointerEvent<HTMLDivElement>, id: AgentId) => {
-    if (e.button !== 0 || (e.target as Element).closest('[data-no-drag]')) return;
-    // Midlines of the other rows in the order on screen; the drop slot is how many of them sit above the pointer
-    const rows = [...(list.current?.querySelectorAll<HTMLElement>('[data-agent-row]') ?? [])];
-    const others = rows.filter(r => r.dataset.agentRow !== id);
-    press.current = { id, y: e.clientY, others: others.map(r => r.dataset.agentRow!), mids: others.map(r => { const b = r.getBoundingClientRect(); return b.top + b.height / 2; }) };
-  };
-  const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
-    const p = press.current;
-    if (!p || (!drag && Math.abs(e.clientY - p.y) < DRAG_SLOP)) return;
-    if (!drag) e.currentTarget.setPointerCapture(e.pointerId);
-    const slot = p.mids.filter(mid => mid < e.clientY).length;
-    const next = [...p.others];
-    next.splice(slot, 0, p.id);
-    if (next.join('\n') !== drag?.order.join('\n')) setDrag({ id: p.id, order: next });
-  };
-  const onPointerEnd = (e: PointerEvent<HTMLDivElement>, drop: boolean) => {
-    press.current = undefined;
-    if (!drag) return;
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
-    // The click that follows a drag's pointerup must not open the page
-    swallowClick.current = true;
-    setTimeout(() => { swallowClick.current = false; });
-    setDrag(undefined);
-    if (drop) commit(drag.order);
-  };
-  const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>, id: AgentId) => {
-    if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
-    e.preventDefault();
-    commit(moveAgent(order, id, order.indexOf(id) + (e.key === 'ArrowUp' ? -1 : 1)));
-  };
-
-  return (
-    <div ref={list} className="flex flex-col gap-1">
-      {shown.map(a => {
-        const active = cur === a.id;
-        const on = enabled(a);
-        const last = on && enabledCount === 1;
-        return (
-          <div
-            key={a.id}
-            data-agent-row={a.id}
-            onPointerDown={e => onPointerDown(e, a.id)}
-            onPointerMove={onPointerMove}
-            onPointerUp={e => onPointerEnd(e, true)}
-            onPointerCancel={e => onPointerEnd(e, false)}
-            onClickCapture={e => { if (swallowClick.current) { e.preventDefault(); e.stopPropagation(); } }}
-            className={cn(
-              'flex shrink-0 items-center rounded-md transition-colors',
-              drag?.id === a.id ? 'relative z-10 cursor-grabbing bg-active shadow-[0_1px_4px_var(--line-strong)]' : active ? 'bg-active' : 'hover:bg-hover',
-            )}
-          >
-            <button
-              type="button"
-              title={a.name}
-              aria-label={a.name}
-              aria-current={active ? 'page' : undefined}
-              aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-              onClick={() => onOpen(a.id)}
-              onKeyDown={e => onKeyDown(e, a.id)}
-              className={cn(navItem, 'min-w-0 flex-1 outline-none focus-visible:bg-hover', tone(active, a.available === false || !on))}
-            >
-              <RailIcon><AgentMark id={a.id} name={a.name} /></RailIcon>
-              <span className="min-w-0 truncate @max-[600px]/settings-shell:hidden">{a.name}</span>
-            </button>
-            <span data-no-drag className="flex shrink-0 items-center pr-2 @max-[600px]/settings-shell:hidden">
-              <Switch
-                skin="compact"
-                checked={on}
-                disabled={last}
-                onCheckedChange={v => toggle(a.id, v)}
-                aria-label={t('settings.agent.enabled', { agent: a.name })}
-                title={last ? t('settings.agent.lastEnabled') : t('settings.agent.enabled', { agent: a.name })}
-              />
-            </span>
-          </div>
-        );
-      })}
-    </div>
   );
 }

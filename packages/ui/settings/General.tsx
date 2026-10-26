@@ -26,7 +26,7 @@ export function General({ settings, agents, on }: { settings: SettingsView; agen
   const fileOpeners = FILE_OPENERS.map(o => ({ value: o, label: o === 'system' ? t('settings.openFilesWith.system') : FILE_OPENER_NAMES[o] }));
   return (
     <>
-      <Section>
+      <Section title={t('settings.group.basic')} desc={t('settings.group.basic.desc')}>
         <Field label={t('settings.language')} desc={t('settings.language.desc')}>
           <Select<Language> options={languages} value={settings.language} onChange={v => on.setSetting('language', v)} label={t('settings.language')} />
         </Field>
@@ -41,14 +41,36 @@ export function General({ settings, agents, on }: { settings: SettingsView; agen
         {desktop && <Field label={t('settings.openFilesWith')} desc={t('settings.openFilesWith.desc')}>
           <Select<FileOpener> options={fileOpeners} value={settings.openFilesWith} onChange={v => on.setSetting('openFilesWith', v)} label={t('settings.openFilesWith')} />
         </Field>}
-        <Field label={t('settings.accountSwitch')} desc={t('settings.accountSwitch.desc')}>
-          <Select<AccountSwitchStrategy> options={switchStrategies} value={settings.accountSwitch} onChange={v => on.setSetting('accountSwitch', v)} label={t('settings.accountSwitch')} />
-        </Field>
+      </Section>
+
+      <Section title={t('settings.group.input')} desc={t('settings.group.input.desc')}>
         <Field label={t('settings.shareEditorSelection')} desc={t('settings.shareEditorSelection.desc')}>
           <Switch checked={settings.shareEditorSelection} onChange={v => on.setSetting('shareEditorSelection', v)} label={t('settings.shareEditorSelection')} />
         </Field>
         <Field label={t('settings.steerQueued')} desc={t('settings.steerQueued.desc')}>
           <Switch checked={settings.steerQueued} onChange={v => on.setSetting('steerQueued', v)} label={t('settings.steerQueued')} />
+        </Field>
+      </Section>
+
+      <Section title={t('settings.compaction.title')} desc={t('settings.compaction.desc')}>
+        <Field label={t('settings.autoCompact')} desc={t('settings.autoCompact.desc')}>
+          <Switch checked={settings.autoCompact} onChange={v => on.setSetting('autoCompact', v)} label={t('settings.autoCompact')} />
+        </Field>
+        <Field label={t('settings.compactAt')} desc={t('settings.compactAt.desc')}>
+          <NumberField
+            value={Math.round(settings.compactAtTokens / K)}
+            min={MIN_COMPACT_AT_TOKENS / K}
+            step={10}
+            unit={t('settings.compactAt.unit')}
+            label={t('settings.compactAt')}
+            onCommit={v => on.setSetting('compactAtTokens', v * K)}
+          />
+        </Field>
+      </Section>
+
+      <Section title={t('settings.group.run')} desc={t('settings.group.run.desc')}>
+        <Field label={t('settings.accountSwitch')} desc={t('settings.accountSwitch.desc')}>
+          <Select<AccountSwitchStrategy> options={switchStrategies} value={settings.accountSwitch} onChange={v => on.setSetting('accountSwitch', v)} label={t('settings.accountSwitch')} />
         </Field>
         <Field label={t('settings.agentCpuCap')} desc={t('settings.agentCpuCap.desc')}>
           <NumberField
@@ -66,7 +88,7 @@ export function General({ settings, agents, on }: { settings: SettingsView; agen
         </Field>
       </Section>
 
-      <Section title={t('settings.notifications.title')}>
+      <Section title={t('settings.notifications.title')} desc={t('settings.notifications.desc')}>
         <Field label={t('settings.notifySound')} desc={t('settings.notifySound.desc')}>
           {/* Switching it on plays a preview: the user hears it, and the click lets the page's audio start later on its own.
               The setting is saved first, so the switch flips even if audio output is slow to come up */}
@@ -74,22 +96,6 @@ export function General({ settings, agents, on }: { settings: SettingsView; agen
         </Field>
         <Field label={t('settings.notifySystem')} desc={t('settings.notifySystem.desc')}>
           <Switch checked={settings.notifySystem} onChange={v => on.setSetting('notifySystem', v)} label={t('settings.notifySystem')} />
-        </Field>
-      </Section>
-
-      <Section title={t('settings.compaction.title')}>
-        <Field label={t('settings.autoCompact')} desc={t('settings.autoCompact.desc')}>
-          <Switch checked={settings.autoCompact} onChange={v => on.setSetting('autoCompact', v)} label={t('settings.autoCompact')} />
-        </Field>
-        <Field label={t('settings.compactAt')} desc={t('settings.compactAt.desc')}>
-          <NumberField
-            value={Math.round(settings.compactAtTokens / K)}
-            min={MIN_COMPACT_AT_TOKENS / K}
-            step={10}
-            unit={t('settings.compactAt.unit')}
-            label={t('settings.compactAt')}
-            onCommit={v => on.setSetting('compactAtTokens', v * K)}
-          />
         </Field>
       </Section>
     </>
@@ -130,9 +136,9 @@ function ProxyField({ value, onCommit }: { value: string; onCommit: (v: string) 
     if (e.key === 'Escape') setText(saved === 'custom' ? value : '');
   };
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-center justify-end gap-2">
       {choice === 'custom' && (
-        <label className="inline-flex h-ctl items-center rounded-md border border-line bg-hover px-3 text-2 text-fg-1 transition-colors focus-within:bg-active">
+        <label className="inline-flex h-ctl w-(--ctl-w) max-w-full items-center rounded-md border border-line bg-hover px-3 text-2 text-fg-1 transition-colors focus-within:bg-active hover:border-line-strong">
           <input
             aria-label={t('settings.proxy.url')}
             placeholder={AUTO_PROXY_URL}
@@ -141,7 +147,7 @@ function ProxyField({ value, onCommit }: { value: string; onCommit: (v: string) 
             onChange={e => setText(e.target.value)}
             onBlur={commit}
             onKeyDown={onKey}
-            className="w-(--ctl-w) min-w-0 bg-transparent font-mono text-mono outline-none placeholder:text-fg-3"
+            className="w-full min-w-0 bg-transparent font-mono text-mono outline-none placeholder:text-fg-3"
           />
         </label>
       )}
