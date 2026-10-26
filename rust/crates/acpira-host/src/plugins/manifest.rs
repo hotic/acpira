@@ -15,7 +15,7 @@ pub const NAME_MAX: usize = 24;
 pub const TOOL_TIMEOUT_SECS: f64 = 45.0;
 
 const KEYS: &[&str] = &["schema", "id", "version", "name", "description", "requires", "layer", "check", "contributes"];
-const CONTRIBUTION_KEYS: &[&str] = &["tools", "mcp", "hooks", "theme", "prompts", "agent", "runtime", "skills", "commands"];
+const CONTRIBUTION_KEYS: &[&str] = &["tools", "mcp", "hooks", "theme", "prompts", "agent", "runtime", "skills", "commands", "providers"];
 
 /// The hooks a plugin's resident process may declare (`contributes.runtime.hooks`, docs/dev/plugins.md, Runtime). The
 /// engine calls only those it implements; a name it does not know yet is a note, so a plugin written for a newer
@@ -94,6 +94,10 @@ pub struct Contributes {
   /// Slash commands every session lists: a prompt template, or the runtime's `command` hook
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub commands: Vec<CommandDef>,
+  /// Model sources for Acpira's built-in agent, `providers.json`'s source shape plus `keyEnv` (`provider_of`). Kept
+  /// raw so the check can name what is wrong with each
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub providers: Vec<Value>,
 }
 
 /// `contributes.commands[]`: `/name` in the composer of every session. `prompt` is sent in its place with `$ARGUMENTS`
@@ -173,6 +177,9 @@ impl Contributes {
     if !self.commands.is_empty() {
       out.push("commands");
     }
+    if !self.providers.is_empty() {
+      out.push("providers");
+    }
     out
   }
 }
@@ -226,7 +233,7 @@ impl Manifest {
       return LAYERS.iter().find(|x| **x == l).copied().unwrap_or("tools");
     }
     match self.contributes.kinds().first().copied() {
-      Some("agent") => "agents",
+      Some("agent" | "providers") => "agents",
       Some("theme") => "interface",
       Some("hooks" | "runtime") => "automation",
       _ => "tools",
@@ -255,6 +262,50 @@ pub fn valid_tool_name(name: &str) -> bool {
 pub fn valid_command_name(name: &str) -> bool {
   let b = name.as_bytes();
   !b.is_empty() && b.len() <= NAME_MAX && b[0].is_ascii_lowercase() && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'_' || *c == b'-')
+}
+
+/// An environment variable name: `[A-Z_][A-Z0-9_]*`
+fn valid_env_name(name: &str) -> bool {
+  let b = name.as_bytes();
+  !b.is_empty() && !b[0].is_ascii_digit() && b.iter().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || *c == b'_')
+}
+
+/// One contributed model source as the built-in agent reads it, tagged with `plugin`; the reason when it cannot be
+/// used. The id follows plugin ids' rules (no `/`, which would break `<provider>/<model>` picks), the format is one
+/// the agent speaks, and every model has an id. A key comes from the vault under the source's id or from the
+/// variable `keyEnv` names; the key itself never goes in the file
+pub fn provider_of(raw: &Value, plugin: &str) -> Result<acpira_shared::providers::Provider, String> {
+  use acpira_shared::providers::{KEY_ENV_FIELD, PLUGIN_FIELD, Provider};
+  let id = raw.get("id").and_then(Value::as_str).unwrap_or_default();
+  let at = format!("provider `{id}`");
+  if !valid_id(id) {
+    return Err(format!("{at}: the id must be lowercase letters, digits and `-`, at most {NAME_MAX} characters"));
+  }
+  for k in ["apiKey", "key"] {
+    if raw.get(k).is_some() {
+      return Err(format!("{at}: `{k}` is not allowed, name the variable that holds it in `{KEY_ENV_FIELD}`"));
+    }
+  }
+  let mut p: Provider = serde_json::from_value(raw.clone()).map_err(|e| format!("{at}: {e}"))?;
+  if p.api_format().is_none() {
+    return Err(format!("{at}: format `{}` is not openai-chat, openai-responses or anthropic", p.format));
+  }
+  if p.base_url.trim().is_empty() {
+    return Err(format!("{at}: `baseUrl` is needed"));
+  }
+  if p.models.is_empty() || p.models.iter().any(|m| m.id.trim().is_empty()) {
+    return Err(format!("{at}: `models` needs at least one model, each with an `id`"));
+  }
+  if let Some(env) = p.extra.get(KEY_ENV_FIELD)
+    && !env.as_str().is_some_and(valid_env_name)
+  {
+    return Err(format!("{at}: `{KEY_ENV_FIELD}` must be an environment variable name"));
+  }
+  if p.name.trim().is_empty() {
+    p.name = id.to_owned();
+  }
+  p.extra.insert(PLUGIN_FIELD.into(), Value::String(plugin.to_owned()));
+  Ok(p)
 }
 
 /// What the static check found: errors keep the plugin from being activated, notes are shown beside it
@@ -391,6 +442,14 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
     }
     if c.prompt.as_deref().is_none_or(|p| p.trim().is_empty()) && !hooked {
       err(findings, format!("{at}: needs a `prompt`, or a runtime that answers the `command` hook"));
+    }
+  }
+  let mut sources = std::collections::HashSet::new();
+  for raw in &m.contributes.providers {
+    match provider_of(raw, &m.id) {
+      Err(e) => err(findings, e),
+      Ok(p) if !sources.insert(p.id.clone()) => err(findings, format!("provider `{}` is declared twice", p.id)),
+      Ok(_) => {}
     }
   }
   if let Some(agent) = &m.contributes.agent {
@@ -583,6 +642,35 @@ mod tests {
     check(&m, "cmds", dir.path(), &|p| p == "node", &mut f);
     let text = f.text();
     for needle in ["command `/Review`: the name", "needs a `prompt`", "`/x` is declared twice", "skills folder `nope`"] {
+      assert!(text.contains(needle), "{needle} missing in\n{text}");
+    }
+  }
+
+  #[test]
+  fn providers_need_a_usable_source_and_never_a_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = |providers: Value| json!({ "schema": 1, "id": "gw", "version": "0.1.0", "description": "x", "contributes": { "providers": providers } });
+    let good = json!({ "id": "gw-claude", "format": "anthropic", "baseUrl": "http://gw:8080", "keyEnv": "GW_KEY", "models": [{ "id": "claude-x" }] });
+    let (m, mut f) = manifest(base(json!([good.clone()])));
+    check(&m, "gw", dir.path(), &|_| false, &mut f);
+    assert!(f.ok(), "{f:?}");
+    assert_eq!((m.contributes.kinds(), m.layer()), (vec!["providers"], "agents"));
+    let p = provider_of(&good, "gw").unwrap();
+    assert_eq!((p.name.as_str(), p.extra["plugin"].as_str(), p.extra["keyEnv"].as_str()), ("gw-claude", Some("gw"), Some("GW_KEY")));
+    let bad = base(json!([
+      good,
+      { "id": "gw-claude", "format": "anthropic", "baseUrl": "http://x", "models": [{ "id": "m" }] },
+      { "id": "a/b", "baseUrl": "http://x", "models": [{ "id": "m" }] },
+      { "id": "k", "baseUrl": "http://x", "apiKey": "sk-1", "models": [{ "id": "m" }] },
+      { "id": "f", "format": "gemini", "baseUrl": "http://x", "models": [{ "id": "m" }] },
+      { "id": "u", "models": [{ "id": "m" }] },
+      { "id": "n", "baseUrl": "http://x", "models": [] },
+      { "id": "e", "baseUrl": "http://x", "keyEnv": "lower", "models": [{ "id": "m" }] },
+    ]));
+    let (m, mut f) = manifest(bad);
+    check(&m, "gw", dir.path(), &|_| false, &mut f);
+    let text = f.text();
+    for needle in ["`gw-claude` is declared twice", "`a/b`: the id", "`apiKey` is not allowed", "format `gemini`", "`baseUrl` is needed", "at least one model", "environment variable name"] {
       assert!(text.contains(needle), "{needle} missing in\n{text}");
     }
   }

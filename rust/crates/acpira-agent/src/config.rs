@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use acpira_shared::providers::{PROVIDERS_FILE, Provider, ProviderModel, ProvidersFile, provider_secret_key, web_secret_key};
+use acpira_shared::providers::{KEY_ENV_FIELD, PROVIDERS_FILE, Provider, ProviderModel, ProvidersFile, plugin_providers_path, provider_secret_key, web_secret_key};
 
 use crate::permission::Approval;
 
@@ -76,11 +76,31 @@ impl Config {
   }
 }
 
+/// The plugins' sources (`plugins/providers.json`, written by the engine) after the user's own: an id the user's file
+/// has wins. A source's key is the vault's under its id, else the variable its `keyEnv` names. A broken file is
+/// skipped, never in the way of the user's sources
+fn merge_plugin_sources(config: &mut Config, path: &Path) {
+  let Ok(text) = std::fs::read_to_string(path) else { return };
+  let Ok(file) = ProvidersFile::parse(&text) else { return };
+  for p in file.providers {
+    if config.providers.providers.iter().any(|x| x.id == p.id) {
+      continue;
+    }
+    let secret = provider_secret_key(&p.id);
+    if !config.secrets.get(&secret).is_some_and(|k| !k.is_empty())
+      && let Some(key) = p.extra.get(KEY_ENV_FIELD).and_then(serde_json::Value::as_str).and_then(|v| std::env::var(v).ok()).filter(|k| !k.is_empty())
+    {
+      config.secrets.insert(secret, key);
+    }
+    config.providers.providers.push(p);
+  }
+}
+
 type Stamp = Option<(SystemTime, u64)>;
 
 pub struct ConfigCache {
   home: PathBuf,
-  state: parking_lot::Mutex<(Stamp, Stamp, Arc<Config>)>,
+  state: parking_lot::Mutex<([Stamp; 3], Arc<Config>)>,
 }
 
 fn stamp(path: &Path) -> Stamp {
@@ -90,22 +110,23 @@ fn stamp(path: &Path) -> Stamp {
 
 impl ConfigCache {
   pub fn new(home: PathBuf) -> Self {
-    ConfigCache { home, state: parking_lot::Mutex::new((None, None, Arc::new(Config::default()))) }
+    ConfigCache { home, state: parking_lot::Mutex::new(([None, None, None], Arc::new(Config::default()))) }
   }
 
   pub fn home(&self) -> &Path {
     &self.home
   }
 
-  /// The current configuration, re-read when either file changed since the last call
+  /// The current configuration, re-read when any of its files changed since the last call
   pub fn get(&self) -> Arc<Config> {
     let providers_path = self.home.join(PROVIDERS_FILE);
     let secrets_path = self.home.join(SECRETS_FILE);
-    let (p, s) = (stamp(&providers_path), stamp(&secrets_path));
+    let plugins_path = plugin_providers_path(&self.home);
+    let stamps = [stamp(&providers_path), stamp(&secrets_path), stamp(&plugins_path)];
     let mut st = self.state.lock();
-    // The initial state reads as "both absent", which is also the right answer when they are
-    if st.0 == p && st.1 == s {
-      return st.2.clone();
+    // The initial state reads as "all absent", which is also the right answer when they are
+    if st.0 == stamps {
+      return st.1.clone();
     }
     let mut config = Config::default();
     match std::fs::read_to_string(&providers_path) {
@@ -126,8 +147,9 @@ impl ConfigCache {
         .filter_map(|(k, v)| v.as_str().map(|v| (k, v.to_owned())))
         .collect();
     }
+    merge_plugin_sources(&mut config, &plugins_path);
     let config = Arc::new(config);
-    *st = (p, s, config.clone());
+    *st = (stamps, config.clone());
     config
   }
 }
@@ -178,5 +200,29 @@ mod tests {
     assert_eq!(cache.get().web_search().deepseek, None);
     std::fs::write(dir.path().join(PROVIDERS_FILE), "{ broken").unwrap();
     assert!(cache.get().error.is_some());
+  }
+
+  #[test]
+  fn plugin_sources_follow_the_users_and_take_their_key_from_the_environment() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = ConfigCache::new(dir.path().to_owned());
+    std::fs::write(dir.path().join(PROVIDERS_FILE), json!({ "version": 1, "providers": [{ "id": "ds", "baseUrl": "http://x", "models": [{ "id": "m" }] }] }).to_string()).unwrap();
+    let plugins = plugin_providers_path(dir.path());
+    std::fs::create_dir_all(plugins.parent().unwrap()).unwrap();
+    // PATH stands in for a key variable: always set, and no test has to change the process environment
+    let sources = json!({ "version": 1, "providers": [
+      { "id": "ds", "baseUrl": "http://plugin", "models": [{ "id": "other" }], "plugin": "gw" },
+      { "id": "gw", "format": "anthropic", "baseUrl": "http://gw", "keyEnv": "PATH", "models": [{ "id": "claude" }], "plugin": "gw" },
+    ] });
+    std::fs::write(&plugins, sources.to_string()).unwrap();
+    let c = cache.get();
+    assert_eq!(c.default_pick().as_deref(), Some("ds/m"));
+    assert!(c.find("ds/other").is_none(), "the user's `ds` wins");
+    assert!(c.find("gw/claude").is_some());
+    assert_eq!(c.api_key("gw"), std::env::var("PATH").ok().as_deref());
+    // The engine rewrites the file when a plugin leaves; a broken one is skipped
+    std::fs::write(&plugins, "{ broken").unwrap();
+    let c = cache.get();
+    assert!(c.find("gw/claude").is_none() && c.error.is_none());
   }
 }

@@ -895,6 +895,60 @@ createInterface({ input: process.stdin }).on('line', line => {
 }).on('close', () => process.exit(0));
 "#;
 
+/// Sets one model source from its process, the way a plugin that fetched a gateway's models would
+const SOURCER: &str = r#"
+import { createInterface } from 'node:readline';
+const send = m => process.stdout.write(JSON.stringify(m) + '\n');
+createInterface({ input: process.stdin }).on('line', line => {
+  const m = JSON.parse(line);
+  if (m.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: 1 } });
+    return send({ jsonrpc: '2.0', id: 'set', method: 'providers/set', params: { providers: [
+      { id: 'gw', name: 'Gateway', baseUrl: 'BASE_URL', keyEnv: 'PATH', models: [{ id: 'm2', name: 'Gateway Two' }] },
+    ] } });
+  }
+  if (m.method && m.id !== undefined) send({ jsonrpc: '2.0', id: m.id, result: null });
+}).on('close', () => process.exit(0));
+"#;
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugins_model_sources_reach_the_picker_and_serve_its_turns() {
+  if !acpira_host::plugins::host::on_path("node") {
+    return;
+  }
+  let mut env = Env::new();
+  // The user's own file is left without sources, so the plugin's model is the session's default
+  std::fs::write(env.root.path().join("providers.json"), json!({ "version": 1, "providers": [] }).to_string()).unwrap();
+  let plugins = env.root.path().join("plugins");
+  let script = SOURCER.replace("BASE_URL", &env.server.base_url());
+  let rt = crate::acp_session::plugin_runtime::plugin(&plugins, "sourcer", &script, &[], &[]).await;
+  // A manifest's source lands beside the process's, ahead of it (switched off here, so the default model is the process's)
+  let fixed = acpira_host::plugins::manifest::provider_of(&json!({ "id": "fixed", "baseUrl": "http://127.0.0.1:9", "enabled": false, "models": [{ "id": "f1" }] }), "fixed").unwrap();
+  rt.set_contributed(acpira_host::plugins::runtime::Contributed { providers: vec![fixed], ..Default::default() });
+  let file = acpira_shared::providers::plugin_providers_path(env.root.path());
+  until(|| std::fs::read_to_string(&file).is_ok_and(|t| t.contains("\"gw\"") && t.contains("\"fixed\"")), 10_000).await;
+  let written: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+  let ids: Vec<&str> = written["providers"].as_array().unwrap().iter().filter_map(|p| p["id"].as_str()).collect();
+  assert_eq!(ids, ["fixed", "gw"]);
+  assert!(!written.to_string().contains(&std::env::var("PATH").unwrap()), "the key stays out of the file");
+  env.deps.plugin_runtime = Some(rt.clone());
+  let s = env.session().await;
+  assert!(view(&s).to_string().contains("Gateway Two"), "the picker lists the plugin's model");
+  env.server.push(mock::text("Hi from the gateway."));
+  s.prompt("hello".into(), vec![], false, None, None).await;
+  let reqs = env.server.requests();
+  assert_eq!(reqs.len(), 1);
+  assert_eq!(reqs[0].body["model"], "m2");
+  assert_eq!(reqs[0].header("authorization").map(str::to_owned), std::env::var("PATH").ok().map(|k| format!("Bearer {k}")));
+  // The plugin leaving takes its sources along
+  rt.sync(&[]).await;
+  rt.set_contributed(Default::default());
+  let written: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+  assert_eq!(written["providers"], json!([]));
+  rt.stop_all().await;
+}
+
 /// The text of every `tool` message of a model call
 fn tool_results(body: &Value) -> Vec<String> {
   body["messages"].as_array().unwrap().iter().filter(|m| m["role"] == "tool").map(|m| m["content"].as_str().map(str::to_owned).unwrap_or_else(|| m["content"].to_string())).collect()

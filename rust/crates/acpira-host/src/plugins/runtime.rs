@@ -147,6 +147,8 @@ pub struct Contributed {
   pub commands: Vec<PluginCommand>,
   /// The plugins' `skills` folders, in plugin id order
   pub skills: Vec<PathBuf>,
+  /// `contributes.providers`, in plugin id order; an id taken by an earlier plugin is skipped
+  pub providers: Vec<acpira_shared::providers::Provider>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -166,6 +168,11 @@ impl Contributed {
       }
       if let Some(dir) = a.manifest.contributes.skills.as_deref().and_then(|p| crate::plugins::manifest::inside(&a.dir, p)).filter(|d| d.is_dir()) {
         out.skills.push(dir);
+      }
+      for p in a.manifest.contributes.providers.iter().filter_map(|raw| crate::plugins::manifest::provider_of(raw, &a.id).ok()) {
+        if !out.providers.iter().any(|x| x.id == p.id) {
+          out.providers.push(p);
+        }
       }
     }
     out
@@ -189,6 +196,10 @@ pub struct Runtimes {
   restarts: parking_lot::Mutex<HashMap<String, (u32, Instant)>>,
   host_call: parking_lot::RwLock<Option<HostCall>>,
   contributed: parking_lot::RwLock<Arc<Contributed>>,
+  /// Model sources a process set with `providers/set`, by plugin; dropped when the plugin leaves
+  live_providers: parking_lot::RwLock<BTreeMap<String, Vec<acpira_shared::providers::Provider>>>,
+  /// One writer of `plugins/providers.json` at a time: a load and a process's `providers/set` may race
+  providers_write: parking_lot::Mutex<()>,
   /// Told when `contributed` changed (the session manager republishes the open sessions, whose menus list the commands)
   on_contributed: parking_lot::RwLock<Option<Arc<dyn Fn() + Send + Sync>>>,
   /// Where a `prompt` hook's redirect starts its session (the session manager registers itself)
@@ -211,6 +222,8 @@ impl Runtimes {
       host_call: Default::default(),
       redirect: Default::default(),
       contributed: Default::default(),
+      live_providers: Default::default(),
+      providers_write: Default::default(),
       on_contributed: Default::default(),
       enabled: AtomicBool::new(false),
       sync: Default::default(),
@@ -230,12 +243,54 @@ impl Runtimes {
   }
 
   pub fn set_contributed(&self, next: Contributed) {
-    if **self.contributed.read() == next {
+    // Written even when nothing changed: the file may still hold what an earlier run left
+    let same = **self.contributed.read() == next;
+    *self.contributed.write() = Arc::new(next);
+    self.write_providers();
+    if same {
       return;
     }
-    *self.contributed.write() = Arc::new(next);
     if let Some(f) = self.on_contributed.read().clone() {
       f();
+    }
+  }
+
+  /// Replace what `plugin`'s process contributes as model sources (`providers/set`); every source is checked the way
+  /// the manifest's are
+  pub fn set_live_providers(&self, plugin: &str, raw: &[Value]) -> Result<usize, String> {
+    let list = raw.iter().map(|r| crate::plugins::manifest::provider_of(r, plugin)).collect::<Result<Vec<_>, _>>()?;
+    let n = list.len();
+    self.live_providers.write().insert(plugin.to_owned(), list);
+    self.write_providers();
+    Ok(n)
+  }
+
+  /// `plugins/providers.json` beside the plugin folders: the manifests' sources, then the processes', first id wins.
+  /// Only an engine writes it, and only when its content changes, so the agent's stamp check stays quiet
+  fn write_providers(&self) {
+    if !self.enabled() {
+      return;
+    }
+    let Some(dir) = self.data_root.parent() else { return };
+    let _one = self.providers_write.lock();
+    let mut providers = self.contributed.read().providers.clone();
+    for p in self.live_providers.read().values().flatten() {
+      if !providers.iter().any(|x| x.id == p.id) {
+        providers.push(p.clone());
+      }
+    }
+    let path = dir.join(acpira_shared::providers::PROVIDERS_FILE);
+    let file = acpira_shared::providers::ProvidersFile { version: acpira_shared::providers::PROVIDERS_VERSION, providers, ..Default::default() };
+    let Ok(text) = serde_json::to_string_pretty(&file) else { return };
+    let current = std::fs::read_to_string(&path).ok();
+    if current.as_deref() == Some(text.as_str()) || (current.is_none() && file.providers.is_empty()) {
+      return;
+    }
+    // tmp + rename, so an agent reading at the same moment sees the old file or the new one
+    let tmp = dir.join(format!(".{}.{}.tmp", acpira_shared::providers::PROVIDERS_FILE, std::process::id()));
+    if let Err(e) = std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&tmp, &text)).and_then(|()| std::fs::rename(&tmp, &path)) {
+      let _ = std::fs::remove_file(&tmp);
+      (self.log)(&format!("plugins: {}: {e}", path.display()));
     }
   }
 
@@ -395,6 +450,15 @@ impl Runtimes {
       }
     }
     let gone: Vec<String> = self.workers.read().keys().filter(|id| !wanted.iter().any(|w| &w.id == *id)).cloned().collect();
+    let dropped = {
+      let mut live = self.live_providers.write();
+      let before = live.len();
+      live.retain(|id, _| wanted.iter().any(|w| &w.id == id));
+      live.len() != before
+    };
+    if dropped {
+      self.write_providers();
+    }
     for id in gone {
       self.errors.write().remove(&id);
       self.restarts.lock().remove(&id);
@@ -616,6 +680,11 @@ impl Inbound for PluginInbound {
       "storage/set" => key().and_then(|k| self.kv.set(&k, params.get("value").cloned().unwrap_or(Value::Null)).map(|()| json!({})).map_err(|e| RpcError::new(-32000, e))),
       "storage/delete" => key().and_then(|k| self.kv.delete(&k).map(|()| json!({})).map_err(|e| RpcError::new(-32000, e))),
       "storage/list" => Ok(json!({ "keys": self.kv.keys(params.get("prefix").and_then(Value::as_str).unwrap_or("")) })),
+      "providers/set" => match (params.get("providers").and_then(Value::as_array), self.runtimes.upgrade()) {
+        (None, _) => Err(RpcError::new(-32602, "`providers` must be an array")),
+        (_, None) => Err(RpcError::new(-32000, "the engine is closing")),
+        (Some(list), Some(rt)) => rt.set_live_providers(&self.id, list).map(|n| json!({ "providers": n })).map_err(|e| RpcError::new(-32602, e)),
+      },
       _ => {
         let call = self.runtimes.upgrade().and_then(|rt| rt.host_call.read().clone());
         let id = self.id.clone();
