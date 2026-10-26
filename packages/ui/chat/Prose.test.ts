@@ -61,9 +61,12 @@ describe('markdown prose', () => {
   it('leaves an unlabelled fence uncoloured', () => {
     const commit = "fix(webview): keep a steered message inside the running turn's stream\n\n- the fold's clip no longer shaves it";
     const html = renderToStaticMarkup(createElement(CodeBlock, { code: commit }));
-    // Only the <code> body matters: the hover copy button beside it renders its own status span
+    // Only the <code> body matters: the hover copy button beside it renders its own status span. Every line is a span
+    // of its own (.code-line); a coloured token would be a span with a style
     const body = /<code[^>]*>[\s\S]*<\/code>/.exec(html)?.[0] ?? '';
-    expect(body).not.toContain('<span');
+    expect(body).not.toContain('style=');
+    // The lines' text is the source exactly, the blank line's newline included
+    expect(body.replace(/<[^>]+>/g, '').replace(/&#x27;/g, "'")).toBe(commit);
     expect(html).not.toContain('code-syntax');
     expect(html).toContain('aria-label="Copy code"');
     expect(html).toContain('turn&#x27;s stream');

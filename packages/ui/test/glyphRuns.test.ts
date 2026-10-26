@@ -5,11 +5,14 @@ type Node = { type: string; value?: string; tagName?: string; properties?: Recor
 const text = (value: string): Node => ({ type: 'text', value });
 const el = (tagName: string, children: Node[]): Node => ({ type: 'element', tagName, properties: {}, children });
 const tree = (...children: Node[]) => ({ type: 'root' as const, children: children as never[] });
-// The paragraph's children as [kind, text]: 'f' a fading span, 't' a plain text node
-const shape = (root: { children: Node[] }) => (root.children[0]!.children ?? []).map(n => n.type === 'text' ? ['t', n.value] : ((n.properties?.className as string[] | undefined) ?? []).includes(GLYPH_CLASS) ? ['f', n.children?.[0]?.value] : [n.tagName, undefined]);
+// The paragraph's children as [kind, text]: 'f' a fading span, 's' a run's span whose fade has finished, 't' a plain
+// text node
+const fadingNode = (n: Node) => ((n.properties?.className as string[] | undefined) ?? []).includes(GLYPH_CLASS);
+const shape = (root: { children: Node[] }) => (root.children[0]!.children ?? []).map(n =>
+  n.type === 'text' ? ['t', n.value] : fadingNode(n) ? ['f', n.children?.[0]?.value] : n.tagName === 'span' ? ['s', n.children?.[0]?.value] : [n.tagName, undefined]);
 
 describe('glyph runs', () => {
-  it('wraps each pass in one span and turns finished runs into text at the same index', () => {
+  it('wraps each pass in one span and keeps the span once its fade has finished', () => {
     const s = createGlyphRuns();
     const a = tree(el('p', [text('你好')]));
     applyGlyphRuns(s, a, 0, 200);
@@ -19,8 +22,21 @@ describe('glyph runs', () => {
     expect(shape(b)).toEqual([['f', '你好'], ['f', '世界']]);
     const c = tree(el('p', [text('你好世界！')]));
     applyGlyphRuns(s, c, 250, 200);
-    // The first run finished: plain text, still child 0, so the fading spans keep their indexes
-    expect(shape(c)).toEqual([['t', '你好'], ['f', '世界'], ['f', '！']]);
+    // The first run finished: its span only lost the class, so no element left the paragraph
+    expect(shape(c)).toEqual([['s', '你好'], ['f', '世界'], ['f', '！']]);
+  });
+
+  it('only appends to a live block: every pass keeps the nodes of the pass before in place', () => {
+    const s = createGlyphRuns();
+    let previous: string[] = [];
+    ['一', '一二', '一二 三', '一二 三四'].forEach((value, i) => {
+      const root = tree(el('p', [text(value)]));
+      applyGlyphRuns(s, root, i * 100, 150);
+      const nodes = ((root.children as Node[])[0]!.children ?? []).map(n => `${n.type}:${n.type === 'text' ? n.value : n.children?.[0]?.value}`);
+      expect(nodes.slice(0, previous.length)).toEqual(previous);
+      previous = nodes;
+    });
+    expect(previous).toEqual(['element:一', 'element:二', 'element: 三', 'element:四']);
   });
 
   it('splits across inline elements by character offset and leaves code alone', () => {
@@ -28,7 +44,7 @@ describe('glyph runs', () => {
     applyGlyphRuns(s, tree(el('p', [text('ab')])), 0, 200);
     const b = tree(el('p', [text('ab'), el('strong', [text('cd')])]), el('pre', [el('code', [text('x = 1')])]));
     applyGlyphRuns(s, b, 300, 200);
-    expect(shape(b)).toEqual([['t', 'ab'], ['strong', undefined]]);
+    expect(shape(b)).toEqual([['s', 'ab'], ['strong', undefined]]);
     const [p, pre] = b.children as Node[];
     expect(p!.children![1]!.children!.map(n => n.type)).toEqual(['element']);
     expect(pre!.children![0]!.children).toEqual([text('x = 1')]);
@@ -39,10 +55,10 @@ describe('glyph runs', () => {
     seedGlyphRuns(s);
     const a = tree(el('p', [text('already here')]));
     applyGlyphRuns(s, a, 0, 200);
-    expect(shape(a)).toEqual([['t', 'already here']]);
+    expect(shape(a)).toEqual([['s', 'already here']]);
     const b = tree(el('p', [text('already here, then')]));
     applyGlyphRuns(s, b, 10, 200);
-    expect(shape(b)).toEqual([['t', 'already here'], ['f', ', then']]);
+    expect(shape(b)).toEqual([['s', 'already here'], ['f', ', then']]);
   });
 
   it('keeps its runs when the rendered text shrinks for a pass', () => {

@@ -222,6 +222,9 @@ export interface ShellProps {
   onOpenSettings?: (page?: SettingsPage) => void;
   // For replaying the entrance animation: remounts the conversation when it changes
   replayKey?: number | string;
+  // The session on screen is a kept copy shown at once on a switch, and the host's reply with what happened while the
+  // reader was away has not landed yet: the thread shows that reply in place, without entrances or paced text
+  catchingUp?: boolean;
   // The desktop app (packages/ui/desktop.ts): its own window frame, the start page of an empty session, the project registry
   desktop?: boolean;
   // Mounted on the way back from the settings page, whose rail stood where the column does: a column the window keeps
@@ -971,7 +974,7 @@ export function Shell(p: ShellProps) {
                     <HistoryComposerContext.Provider value={history?.editing !== undefined ? composerProps : undefined}>
                       <OpenToolFileContext.Provider value={openToolFile}>
                         <TurnActionsContext.Provider value={turnActions}>
-                          <Thread key={p.activeSessionId} turns={held.turns} running={held.running} wide={wide} replayKey={p.replayKey} blobUrl={blobUrl} contentRef={contentRef} commands={p.commands} summons={summons}
+                          <Thread key={p.activeSessionId} turns={held.turns} running={held.running} wide={wide} replayKey={p.replayKey} catchingUp={p.catchingUp} blobUrl={blobUrl} contentRef={contentRef} commands={p.commands} summons={summons}
                             onSetGoal={setGoal} subagents={p.subagents} onInspect={onInspect} onFailureAction={failureAction}
                             forkedFrom={p.external ? undefined : p.forkedFrom} agents={p.agents} agentId={p.agent.id}
                             onPermission={onPermission} />
@@ -1119,6 +1122,7 @@ interface ThreadProps {
   running: boolean;
   wide: boolean;
   replayKey?: number | string;
+  catchingUp?: boolean;
   blobUrl?: (blob: string) => string;
   contentRef?: (el: HTMLDivElement | null) => void;
   // Advertised slash commands: sent user messages paint their `/name` tokens like the composer does
@@ -1215,7 +1219,7 @@ function useExchangeWindow(
 // Conversation flow: stick-to-bottom following happens on transcript changes (new content / streaming growth) and on async growth
 // (images, diagrams) until the user touches the thread; user actions like expand / collapse never touch the scroll position —
 // the toggle under the mouse stays put while the content below it moves. Scrolling away from the bottom releases the follow; scrolling back to the bottom restores it
-const Thread = memo(function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands, summons, subagents, forkedFrom, agents, agentId, onInspect, onPermission, onFailureAction, onSetGoal }: ThreadProps) {
+const Thread = memo(function Thread({ turns, running, wide, replayKey, catchingUp, blobUrl, contentRef, commands, summons, subagents, forkedFrom, agents, agentId, onInspect, onPermission, onFailureAction, onSetGoal }: ThreadProps) {
   useLocale();
   const ref = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
@@ -1231,9 +1235,12 @@ const Thread = memo(function Thread({ turns, running, wide, replayKey, blobUrl, 
     sync();
     return follow.subscribe(sync);
   }, [follow]);
-  // The transcript's first commit restores what the session already holds: its rows appear in place, without entrances
+  // The transcript's first commit restores what the session already holds: its rows appear in place, without entrances.
+  // A switch back to a kept session mounts the kept copy first, and the host's catch-up for the time away lands a round
+  // trip later: that commit is still quiet. The flag is read during render, before this effect of the same commit runs,
+  // so the commit in which `catchingUp` turns false still sees it set; anything after that animates as live output
   const opening = useRef(true);
-  useLayoutEffect(() => { opening.current = false; }, []);
+  useLayoutEffect(() => { opening.current = !!catchingUp; });
 
   // Group the session's subagent nodes by the turn that announced them; unchanged arrays keep their
   // reference so memoized turns do not re-render on an unrelated child update

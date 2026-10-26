@@ -51,6 +51,27 @@ describe('page session view cache', () => {
     expect(streamed !== 'stale' && streamed && ids(streamed)).toEqual(['a1', 'a2', 'a3']);
   });
 
+  // The thread shows the host's first reply after an optimistic switch in place: it holds what happened while away
+  it('marks a kept session as catching up from the click until the host replies for it', () => {
+    const v = new SessionViews();
+    v.whole(view('a', 3, [user('a1')]));
+    v.whole(view('b', 1, [user('b1')]));
+    expect(v.catchingUp).toBeUndefined();
+    v.select('a');
+    expect(v.catchingUp).toBe('a');
+    // a late patch of the session left behind does not end it
+    expect(v.patch(patch('b', 1, 2, 1, [user('b2')]))).toBe('stale');
+    expect(v.catchingUp).toBe('a');
+    v.patch(patch('a', 3, 4, 1, [user('a2')]));
+    expect(v.catchingUp).toBeUndefined();
+    // a whole view ends it too, and a session the page does not hold never starts it
+    v.select('b');
+    v.whole(view('b', 2, [user('b1'), user('b2')]));
+    expect(v.catchingUp).toBeUndefined();
+    expect(v.select('c')).toBeUndefined();
+    expect(v.catchingUp).toBeUndefined();
+  });
+
   it('a whole view of the session on screen is taken at a lower rev', () => {
     const v = new SessionViews();
     v.whole(view('a', 50, [user('old')]));

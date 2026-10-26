@@ -54,26 +54,38 @@ export function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   // so the button stays pinned to the top-right corner while long lines scroll sideways
   return <div className="group/code-output relative min-w-0">
     <OutputCopy text={code} label={t('code.copyCode')} />
-    <CodeSurface><code className={usable ? 'code-syntax' : undefined}>{usable ? syntaxChildren(code, usable, light) : code}</code></CodeSurface>
+    <CodeSurface><code className={usable ? 'code-syntax' : undefined}>{usable ? syntaxChildren(code, usable, light) : plainLines(code)}</code></CodeSurface>
   </div>;
+}
+
+// Every source line is a block of its own (`.code-line`). WebKit lays a block's inline content out again from scratch
+// when text changes in a block that also holds an inline box (a token span) or when a node leaves it, and parks the old
+// layout until an idle frame of a focused window (docs/dev/desktop.md, page memory). As one block, a fence that streams
+// was laid out again and parked whole on every reveal pass; as lines, only the line that grows is.
+// Each line but the last keeps its newline: a blank line then has a line's height, and a hand-made selection copies blank
+// lines (WebKit and Blink emit nothing for an empty block). The text is the source exactly, as when it was one text run
+const codeLine = (row: number, children: ReactNode, newline: boolean) =>
+  <span key={row} className="code-line">{children}{newline && '\n'}</span>;
+
+// `text` split into plain line blocks, numbered from `row`
+function plainLines(text: string, row = 0): ReactNode[] {
+  const lines = text.split('\n');
+  return lines.map((line, i) => codeLine(row + i, line, i < lines.length - 1));
 }
 
 // Coloured lines for the part of `code` that the last tokenized text covers. While a fence streams, the new text
 // extends the old one: its complete lines keep their colours and only the growing tail renders plain until the next pass
 function syntaxChildren(code: string, colored: Colored, light: boolean): ReactNode[] {
   const exact = colored.code === code;
-  if (!exact && !code.startsWith(colored.code)) return [code];
+  if (!exact && !code.startsWith(colored.code)) return plainLines(code);
   const tail = exact ? code.length : colored.code.lastIndexOf('\n') + 1;
   const keep = exact ? colored.lines.length : colored.code.slice(0, tail).split('\n').length - 1;
-  const out: ReactNode[] = [];
-  colored.lines.slice(0, keep).forEach((tokens, row) => {
-    if (row > 0) out.push('\n');
-    tokens.forEach((token, index) => {
-      const color = light ? token.light : token.dark;
-      out.push(color ? <span key={`${row}:${index}`} style={{ color }}>{token.text}</span> : token.text);
-    });
-  });
-  if (!exact) out.push((keep > 0 ? '\n' : '') + code.slice(tail));
+  // Kept lines are all followed by more text while the fence streams; when exact, the last one ends the source
+  const out: ReactNode[] = colored.lines.slice(0, keep).map((tokens, row) => codeLine(row, tokens.map((token, index) => {
+    const color = light ? token.light : token.dark;
+    return color ? <span key={index} style={{ color }}>{token.text}</span> : token.text;
+  }), !exact || row < keep - 1));
+  if (!exact) out.push(...plainLines(code.slice(tail), keep));
   return out;
 }
 

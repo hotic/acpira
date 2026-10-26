@@ -20,6 +20,9 @@ export class SessionViews {
   private views = new Map<string, SessionView>();
   // The session the user just switched away from optimistically, until the host's reply for the target session lands
   private leaving: string | undefined;
+  // The kept session put on screen by `select`, until the host's first reply for it lands. That reply carries what
+  // happened while the reader was away, which the thread shows in place instead of playing it as live output
+  catchingUp: string | undefined;
   current: SessionView | undefined;
 
   // `init`: the host starts its record of what the page holds over, so the page does too
@@ -27,6 +30,7 @@ export class SessionViews {
     const cur = this.current;
     this.views.clear();
     this.leaving = undefined;
+    this.catchingUp = undefined;
     this.current = undefined;
     return active ? this.show(adopt(cur, active)) : undefined;
   }
@@ -38,6 +42,7 @@ export class SessionViews {
     const kept = this.views.get(id);
     if (!kept) return undefined;
     this.leaving = this.current?.id;
+    this.catchingUp = id;
     this.current = kept;
     return kept;
   }
@@ -45,6 +50,7 @@ export class SessionViews {
   // A whole view, taken whatever its rev: the kept copy (on screen after an optimistic `select`, too) must not win on rev
   whole(next: SessionView): SessionView {
     this.leaving = undefined;
+    this.catchingUp = undefined;
     return this.show(adopt(this.current, next));
   }
 
@@ -59,6 +65,7 @@ export class SessionViews {
       return 'stale';
     }
     this.leaving = undefined;
+    if (p.id === this.catchingUp) this.catchingUp = undefined;
     const cur = this.current;
     const onScreen = cur?.id === p.id;
     const next = applySessionPatch(onScreen ? cur : this.views.get(p.id), p);

@@ -45,15 +45,20 @@ export const Prose = memo(function Prose({ block, motion = STREAM_MOTION, onBusy
   // replayed its last reply from the first character
   const quiet = useContext(QuietEntranceContext);
   const [resume] = useState(() => !!block.streaming && quiet.current);
-  const smooth = useSmoothText(block.markdown, !!block.streaming, motion.pace, resume);
+  // Text that grows in a quiet commit (switching back to a kept session, then the host's catch-up for the time away)
+  // was written while the reader looked elsewhere: it shows at once instead of being paced out again. A resumed block
+  // gets this too, since the catch-up lands after its mount
+  const caughtUp = quiet.current;
+  const smooth = useSmoothText(block.markdown, !!block.streaming, motion.pace, resume, caughtUp);
   // Still draining counts as streaming: the renderer keeps its streaming mode until the visible text catches up
   const streaming = !!block.streaming || smooth.draining;
   const { animated, animating } = useStreamMotion(streaming, motion);
   const busy = streaming || animating;
   const [blocks] = useState(() => createLiveBlocks(resume));
   blocks.runs = runsFit(motion);
-  // Only the first render seeds the block plugins; later text animates past what it rendered
-  useLayoutEffect(() => { blocks.resume = false; }, [blocks]);
+  if (caughtUp) blocks.resume = true;
+  // Only a resumed or caught-up render seeds the block plugins; later text animates past what it rendered
+  useLayoutEffect(() => { blocks.resume = false; });
   useEffect(() => { onBusy?.(busy); }, [busy, onBusy]);
   useEffect(() => () => onBusy?.(false), [onBusy]);
   // The turn heading already indicates waiting before the first visible words.
@@ -126,12 +131,18 @@ const settledPlugins = new WeakMap<object, BlockProps['rehypePlugins']>();
 const runPlugins = new WeakMap<object, { state: GlyphRunState; list: BlockProps['rehypePlugins'] }>();
 // A run is drawn as a fading span until its fade has surely ended (the CSS duration, --stream-char-duration, plus a frame or two)
 const RUN_FADE_MS = STREAM_DURATION_MS + 40;
+// Gives each block's glyph run plugin its own name (see glyphRunPlugins)
+let glyphRunPluginSeq = 0;
 
 function glyphRunPlugins(animatePlugin: NonNullable<BlockProps['animatePlugin']>, rehypePlugins: NonNullable<BlockProps['rehypePlugins']>) {
   let entry = runPlugins.get(animatePlugin);
   if (!entry) {
     const state = createGlyphRuns();
     const plugin = () => (tree: Parameters<typeof applyGlyphRuns>[1]) => applyGlyphRuns(state, tree, performance.now(), RUN_FADE_MS);
+    // streamdown (2.6) caches its unified processors by the plugins' function names, so one name for every block ran the
+    // first block's run state everywhere: a seeded resume never reached the state that drew, and a new block faded only
+    // past the character count of another one
+    Object.defineProperty(plugin, 'name', { value: `acpGlyphRuns${++glyphRunPluginSeq}` });
     entry = { state, list: rehypePlugins.map(p => (p === animatePlugin.rehypePlugin ? plugin : p)) };
     runPlugins.set(animatePlugin, entry);
   }
