@@ -1,5 +1,5 @@
 //! macOS pieces Tauri does not cover: WebKit's frame-rate switch, rendering while covered (smoke and bench runs), the
-//! title bar's double-click setting, the pasteboard, responder-chain edit actions and native notifications. Private
+//! title bar's double-click setting, mouse-wheel notches eased like Chromium's, the pasteboard, responder-chain edit actions and native notifications. Private
 //! WebKit API is looked up before every call and left at the default (with a log line) where it is missing
 
 use std::ffi::{CStr, c_char};
@@ -135,6 +135,336 @@ pub fn dark_mode() -> bool {
     }
     let utf8: *const c_char = msg_send![name, UTF8String];
     !utf8.is_null() && CStr::from_ptr(utf8).to_string_lossy().contains("Dark")
+  }
+}
+
+/// A mouse wheel's notch eased over a short stretch, as Chromium does, instead of WebKit's one-frame jump (WebKit moves a
+/// classic, non-precise notch of 3 lines, 120 px, in a single frame whatever its ScrollAnimatorEnabled says; measured
+/// 2026-10-26, docs/dev/desktop.md). A local monitor takes every notch, adds its distance (lines × WebKit's 40 px) to a
+/// target and hands it to the window as precise pixel scrolls without a phase (copies of the notch's own event, so the
+/// window and the point stay its), one per timer tick along an ease-out, so
+/// WebKit scrolls them on its scrolling thread like a trackpad's and the page sees ordinary wheel events. Without a
+/// phase there is no rubber band at the ends. Trackpads, Magic Mouse and smoothing tools that simulate a trackpad send
+/// precise or phased events already and pass untouched, as does a notch with ⌘, ⌃ or ⌥ held (zoom and the like).
+/// ACPIRA_WHEEL_SMOOTH=0 turns it off. Main thread
+pub fn smooth_wheel(log: Log) {
+  if std::env::var("ACPIRA_WHEEL_SMOOTH").is_ok_and(|v| v == "0") {
+    log("wheel: smoothing off (ACPIRA_WHEEL_SMOOTH=0)");
+    return;
+  }
+  let handler = block2::RcBlock::new(|event: *mut AnyObject| -> *mut AnyObject {
+    // SAFETY: AppKit hands the monitor a live NSEvent on the main thread; returning nil drops it
+    if unsafe { wheel::take(event) } { std::ptr::null_mut() } else { event }
+  });
+  let Some(cls) = AnyClass::get(c"NSEvent") else { return };
+  // NSEventMaskScrollWheel
+  let mask: u64 = 1 << 22;
+  // SAFETY: a class method taking a mask and a block; the monitor it returns is retained for the life of the app
+  unsafe {
+    let monitor: *mut AnyObject = msg_send![cls, addLocalMonitorForEventsMatchingMask: mask, handler: &*handler];
+    if monitor.is_null() {
+      log("wheel: no event monitor, notches stay WebKit's");
+      return;
+    }
+    let _: *mut AnyObject = msg_send![monitor, retain];
+  }
+}
+
+/// A classic wheel notch (`lines`, positive scrolls up) at a point of the window's content (top-left origin), put into
+/// the app's own event queue so it takes the path a mouse's notch takes, the monitor included (smoke and bench runs: a
+/// notch posted to the process is routed by the window server to whatever window is in front at that point). Main thread
+#[cfg(feature = "smoke")]
+pub fn post_wheel_notch(window: &tauri::WebviewWindow, x: f64, y: f64, lines: i32) -> bool {
+  let Ok(ns) = window.ns_window() else { return false };
+  wheel::post_notch(ns as *mut AnyObject, x, y, lines)
+}
+
+mod wheel {
+  use std::cell::RefCell;
+  use std::ffi::c_void;
+  use std::time::{Duration, Instant};
+
+  use objc2::encode::{Encoding, RefEncode};
+  use objc2::msg_send;
+  use objc2::rc::Retained;
+  use objc2::runtime::{AnyClass, AnyObject, Bool};
+
+  /// How long one notch takes to land (Chromium's own ease was ~200 ms, 13 frames at 60 Hz)
+  const DURATION: f64 = 0.2;
+  /// WebKit's Scrollbar::pixelsPerLineStep: what one line of a non-precise wheel delta scrolls
+  const LINE_PX: f64 = 40.0;
+  /// The tick: above any display's rate, so every frame gets its share
+  const TICK: f64 = 1.0 / 240.0;
+  // NSEventModifierFlagControl | Option | Command
+  const MODIFIERS: u64 = (1 << 18) | (1 << 19) | (1 << 20);
+  // kCGScrollWheelEventDeltaAxis1/2, …FixedPtDeltaAxis1/2, …PointDeltaAxis1/2, …IsContinuous
+  const DELTA: [u32; 2] = [11, 12];
+  const FIXED: [u32; 2] = [93, 94];
+  const POINT: [u32; 2] = [96, 97];
+  const CONTINUOUS: u32 = 88;
+
+  #[repr(C)]
+  pub struct CGEvent {
+    _private: [u8; 0],
+  }
+  // SAFETY: CGEventRef is a pointer to the opaque struct __CGEvent, which is how AppKit's method signatures encode it
+  unsafe impl RefEncode for CGEvent {
+    const ENCODING_REF: Encoding = Encoding::Pointer(&Encoding::Struct("__CGEvent", &[]));
+  }
+
+  #[link(name = "CoreGraphics", kind = "framework")]
+  unsafe extern "C" {
+    fn CGEventCreate(source: *const c_void) -> *mut CGEvent;
+    fn CGEventCreateCopy(event: *const CGEvent) -> *mut CGEvent;
+    fn CGEventGetTimestamp(event: *const CGEvent) -> u64;
+    fn CGEventSetTimestamp(event: *mut CGEvent, timestamp: u64);
+    fn CGEventSetIntegerValueField(event: *mut CGEvent, field: u32, value: i64);
+    fn CGEventSetDoubleValueField(event: *mut CGEvent, field: u32, value: f64);
+  }
+  #[link(name = "CoreFoundation", kind = "framework")]
+  unsafe extern "C" {
+    fn CFRelease(cf: *const c_void);
+  }
+
+  /// The pixels still on their way to one window, eased from where the last notch found them to the target
+  struct Glide {
+    window: Retained<AnyObject>,
+    // A copy of the last notch: every scroll handed over is a copy of it turned precise, so it keeps the notch's window,
+    // its point in the window and its modifier flags without composing them (an NSEvent made from a fresh CGEvent has
+    // no window, and AppKit drops it or hit-tests the window's corner)
+    template: *mut CGEvent,
+    start: Instant,
+    from: (f64, f64),
+    to: (f64, f64),
+    // Whole pixels handed over so far, per axis (the rounding remainder stays in the target)
+    sent: (i64, i64),
+    timer: Option<Retained<AnyObject>>,
+  }
+
+  impl Drop for Glide {
+    fn drop(&mut self) {
+      self.stop();
+      // SAFETY: the copy this glide owns
+      unsafe { CFRelease(self.template as *const c_void) };
+    }
+  }
+
+  thread_local! {
+    static GLIDE: RefCell<Option<Glide>> = const { RefCell::new(None) };
+  }
+
+  /// Takes a classic wheel notch into the glide (true: the monitor drops the original)
+  ///
+  /// # Safety
+  /// `event` is a live NSEvent; main thread
+  pub unsafe fn take(event: *mut AnyObject) -> bool {
+    // SAFETY: plain NSEvent getters on the live event
+    let (precise, phase, momentum, flags, window, dx, dy, cg) = unsafe {
+      let precise: Bool = msg_send![event, hasPreciseScrollingDeltas];
+      let phase: u64 = msg_send![event, phase];
+      let momentum: u64 = msg_send![event, momentumPhase];
+      let flags: u64 = msg_send![event, modifierFlags];
+      let window: *mut AnyObject = msg_send![event, window];
+      let dx: f64 = msg_send![event, scrollingDeltaX];
+      let dy: f64 = msg_send![event, scrollingDeltaY];
+      let cg: *mut CGEvent = msg_send![event, CGEvent];
+      (precise.as_bool(), phase, momentum, flags, window, dx, dy, cg)
+    };
+    if precise || phase != 0 || momentum != 0 || flags & MODIFIERS != 0 || window.is_null() || cg.is_null() || (dx == 0.0 && dy == 0.0) {
+      return false;
+    }
+    // SAFETY: the event's window, alive while the event is
+    let Some(window) = (unsafe { Retained::retain(window) }) else { return false };
+    // SAFETY: the event's own CGEvent, copied (the copy is owned by the glide from here on)
+    let template = unsafe { CGEventCreateCopy(cg) };
+    if template.is_null() {
+      return false;
+    }
+    let now = Instant::now();
+    GLIDE.with_borrow_mut(|glide| {
+      // A notch over another window lands what the last one still owed first
+      if glide.as_ref().is_some_and(|g| !std::ptr::eq(Retained::as_ptr(&g.window), Retained::as_ptr(&window)))
+        && let Some(mut old) = glide.take()
+      {
+        old.finish(now);
+      }
+      match glide {
+        Some(g) => {
+          // Retarget from where the glide is now: a quick second notch speeds the scroll up instead of queueing behind it
+          g.from = g.position(now);
+          g.to = (g.to.0 + dx * LINE_PX, g.to.1 + dy * LINE_PX);
+          g.start = now;
+          // SAFETY: the previous copy, owned by the glide
+          unsafe { CFRelease(g.template as *const c_void) };
+          g.template = template;
+        }
+        None => {
+          *glide = Some(Glide { window, template, start: now, from: (0.0, 0.0), to: (dx * LINE_PX, dy * LINE_PX), sent: (0, 0), timer: None });
+        }
+      }
+      let Some(g) = glide.as_mut() else { return };
+      if g.timer.is_none() {
+        g.timer = start_timer();
+      }
+      // No timer (the class went missing): everything lands at once rather than never
+      if g.timer.is_none() {
+        g.finish(now);
+        *glide = None;
+      }
+    });
+    true
+  }
+
+  impl Glide {
+    fn position(&self, now: Instant) -> (f64, f64) {
+      let t = (now.duration_since(self.start).as_secs_f64() / DURATION).min(1.0);
+      // Ease-out cubic: fast at the notch, settling at the target
+      let k = 1.0 - (1.0 - t).powi(3);
+      (self.from.0 + (self.to.0 - self.from.0) * k, self.from.1 + (self.to.1 - self.from.1) * k)
+    }
+
+    /// Hands over the pixels due by `now`; false once the target is reached
+    fn step(&mut self, now: Instant) -> bool {
+      let (x, y) = self.position(now);
+      let (x, y) = (x.round() as i64, y.round() as i64);
+      let (dx, dy) = (x - self.sent.0, y - self.sent.1);
+      if dx != 0 || dy != 0 {
+        self.sent = (x, y);
+        self.deliver([dy, dx]);
+      }
+      now.duration_since(self.start).as_secs_f64() < DURATION
+    }
+
+    /// Lands whatever is still owed in one go
+    fn finish(&mut self, now: Instant) {
+      self.start = now - Duration::from_secs_f64(DURATION);
+      self.step(now);
+      self.stop();
+    }
+
+    /// One precise scroll of `[vertical, horizontal]` pixels, to the window of the notch it came from
+    fn deliver(&self, px: [i64; 2]) {
+      let Some(cls) = AnyClass::get(c"NSEvent") else { return };
+      // SAFETY: CGEvent copies owned here and released below; NSEvent copies what it needs; the window is retained
+      unsafe {
+        let cg = CGEventCreateCopy(self.template);
+        if cg.is_null() {
+          return;
+        }
+        // What a pixel scroll carries, as CoreGraphics fills it for one (line delta ±1, fixed-point delta a tenth),
+        // stamped now so WebKit sees one ongoing scroll. The pixel delta goes last: setting the line delta recomputes
+        // it (to 8 px a line), and it is what NSEvent's scrollingDelta reads
+        CGEventSetIntegerValueField(cg, CONTINUOUS, 1);
+        for axis in 0..2 {
+          CGEventSetIntegerValueField(cg, DELTA[axis], px[axis].signum());
+          CGEventSetDoubleValueField(cg, FIXED[axis], px[axis] as f64 / 10.0);
+          CGEventSetIntegerValueField(cg, POINT[axis], px[axis]);
+        }
+        let clock = CGEventCreate(std::ptr::null());
+        if !clock.is_null() {
+          CGEventSetTimestamp(cg, CGEventGetTimestamp(clock));
+          CFRelease(clock as *const c_void);
+        }
+        let event: *mut AnyObject = msg_send![cls, eventWithCGEvent: cg];
+        if !event.is_null() {
+          let _: () = msg_send![&*self.window, sendEvent: event];
+        }
+        CFRelease(cg as *const c_void);
+      }
+    }
+
+    fn stop(&mut self) {
+      if let Some(timer) = self.timer.take() {
+        // SAFETY: the glide's own NSTimer
+        let _: () = unsafe { msg_send![&*timer, invalidate] };
+      }
+    }
+  }
+
+  /// A repeating timer in the run loop's common modes, so the glide goes on during a menu or a window drag
+  fn start_timer() -> Option<Retained<AnyObject>> {
+    let tick = block2::RcBlock::new(|_timer: *mut AnyObject| {
+      GLIDE.with_borrow_mut(|glide| {
+        let Some(g) = glide.as_mut() else { return };
+        if !g.step(Instant::now()) {
+          *glide = None;
+        }
+      });
+    });
+    let timer_cls = AnyClass::get(c"NSTimer")?;
+    let loop_cls = AnyClass::get(c"NSRunLoop")?;
+    // NSRunLoopCommonModes
+    let modes = objc2_foundation::NSString::from_str("kCFRunLoopCommonModes");
+    // SAFETY: documented NSTimer / NSRunLoop calls on the main thread; the timer is returned +0 and retained here
+    unsafe {
+      let timer: *mut AnyObject = msg_send![timer_cls, timerWithTimeInterval: TICK, repeats: Bool::YES, block: &*tick];
+      let timer = Retained::retain(timer)?;
+      let run_loop: *mut AnyObject = msg_send![loop_cls, mainRunLoop];
+      let _: () = msg_send![run_loop, addTimer: &*timer, forMode: &*modes];
+      Some(timer)
+    }
+  }
+
+  /// A classic notch at a window-relative point (top-left origin), into the app's event queue: the window comes from
+  /// field 51 and the point from CoreGraphics' private CGEventSetWindowLocation, looked up at run time (bench runs only)
+  #[cfg(feature = "smoke")]
+  pub fn post_notch(ns_window: *mut AnyObject, x: f64, y: f64, lines: i32) -> bool {
+    #[repr(C)]
+    struct CGPoint {
+      x: f64,
+      y: f64,
+    }
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+      fn CGEventCreateScrollWheelEvent2(source: *const c_void, units: u32, wheel_count: u32, wheel1: i32, wheel2: i32, wheel3: i32) -> *mut CGEvent;
+    }
+    unsafe extern "C" {
+      fn dlsym(handle: *mut c_void, symbol: *const std::ffi::c_char) -> *mut c_void;
+    }
+    // SAFETY: dlsym with RTLD_DEFAULT (-2) and a NUL-terminated name only looks the symbol up
+    let sym = unsafe { dlsym(-2isize as *mut c_void, c"CGEventSetWindowLocation".as_ptr()) };
+    let (Some(event_cls), Some(app_cls)) = (AnyClass::get(c"NSEvent"), AnyClass::get(c"NSApplication")) else { return false };
+    if sym.is_null() {
+      return false;
+    }
+    // SAFETY: the symbol has this C signature (void CGEventSetWindowLocation(CGEventRef, CGPoint))
+    let set_window_location: unsafe extern "C" fn(*mut CGEvent, CGPoint) = unsafe { std::mem::transmute(sym) };
+    // SAFETY: the window's own NSWindow; a fresh CGEvent released below; postEvent:atStart: keeps its own reference
+    unsafe {
+      let number: isize = msg_send![ns_window, windowNumber];
+      // kCGScrollEventUnitLine
+      let cg = CGEventCreateScrollWheelEvent2(std::ptr::null(), 1, 1, lines, 0, 0);
+      if cg.is_null() {
+        return false;
+      }
+      CGEventSetIntegerValueField(cg, 51, number as i64);
+      set_window_location(cg, CGPoint { x, y });
+      let event: *mut AnyObject = msg_send![event_cls, eventWithCGEvent: cg];
+      CFRelease(cg as *const c_void);
+      if event.is_null() {
+        return false;
+      }
+      let app: *mut AnyObject = msg_send![app_cls, sharedApplication];
+      let _: () = msg_send![app, postEvent: event, atStart: Bool::NO];
+    }
+    true
+  }
+
+  #[cfg(test)]
+  mod tests {
+    // The ease lands exactly on the target and never overshoots on the way
+    #[test]
+    fn the_ease_ends_on_the_target() {
+      let steps = 48;
+      let mut last = 0.0;
+      for i in 0..=steps {
+        let t = i as f64 / steps as f64;
+        let k = 1.0 - (1.0 - t).powi(3);
+        assert!(k >= last && k <= 1.0);
+        last = k;
+      }
+      assert_eq!(last, 1.0);
+    }
   }
 }
 

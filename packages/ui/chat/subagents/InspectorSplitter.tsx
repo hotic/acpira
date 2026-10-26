@@ -30,7 +30,7 @@ interface SplitterProps {
   // The pane's width as chosen (undefined: the default, `bounds().initial`)
   width: number | undefined;
   bounds: () => PaneBounds;
-  // Live width while dragging (not persisted) and the final width on release
+  // Live width while dragging (not persisted, at most once per frame) and the final width on release
   onDrag: (width: number) => void;
   onCommit: (width: number) => void;
   onReset: () => void;
@@ -56,17 +56,30 @@ export const InspectorSplitter = memo(function InspectorSplitter({ width: chosen
     const startX = e.clientX;
     // The pane as laid out: CSS may have clamped the chosen width to a narrow shell
     const startW = target.parentElement?.offsetWidth ?? width;
+    // Read once per drag: bounds() reads computed styles and widths, which per move forced a style recalc and a layout
+    // on top of the one the new width causes (a resize mid-drag is rare, and the release commits a clamped width anyway)
+    const b = bounds();
     let last = startW;
+    let shown = startW;
+    // One width per frame: pointer moves can outpace frames, and every applied width relays the shell out
+    let frame: number | undefined;
+    const apply = () => {
+      frame = undefined;
+      if (last === shown) return;
+      shown = last;
+      onDrag(last);
+    };
     setDragging(true);
     const move = (ev: globalThis.PointerEvent) => {
-      const b = bounds();
       last = clamp(startW + (startX - ev.clientX) * dir, b.min, b.max);
-      onDrag(last);
+      frame ??= requestAnimationFrame(apply);
     };
     const up = () => {
       target.removeEventListener('pointermove', move);
       target.removeEventListener('pointerup', up);
       target.removeEventListener('pointercancel', up);
+      // The last move lands before the commit, also when it returns to the starting width (nothing to commit)
+      if (frame !== undefined) { cancelAnimationFrame(frame); apply(); }
       setDragging(false);
       if (last !== startW) onCommit(last);
     };

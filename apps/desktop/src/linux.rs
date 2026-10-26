@@ -18,6 +18,9 @@ use crate::os::{Log, TitleDoubleClick};
 /// notification names as its sender, so the desktop shows the app's name and icon on it
 const DESKTOP_ENTRY: &str = "Acpira";
 
+/// Wheel notches: WebKitGTK has a smooth-scrolling setting of its own (not measured here)
+pub fn smooth_wheel(_log: Log) {}
+
 /// WebKitGTK renders at the display's rate already
 pub fn unlock_frame_rate(_window: &tauri::WebviewWindow, _log: Log) {}
 
