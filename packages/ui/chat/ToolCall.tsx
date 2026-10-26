@@ -235,11 +235,12 @@ function taskUsage(task: AsyncTaskInfo): string {
 
 function hasTaskMeta(task: AsyncTaskInfo, script?: string): boolean {
   const workflow = task.taskType === 'workflow';
-  return !!(task.summary || (!workflow && task.lastToolName) || taskUsage(task) || task.outputFilePath || script);
+  return !!(task.summary || (!workflow && task.lastToolName) || taskUsage(task) || (workflow && task.outputFilePath) || script);
 }
 
 // An AIR async task's own report, under its tool row: latest summary, the tool it was last on,
-// usage when the adapter reports it, and the output file as an ordinary file link.
+// and usage when the adapter reports it. A plain background task's output file stays hidden: the card already
+// shows the command, and the raw temp path was a full line of noise.
 // A workflow run's "last tool" is the label of whichever agent reported last, which its subagent rows already show, so
 // it gives way to the run's script and output as two short links
 function TaskMeta({ task, script }: { task: AsyncTaskInfo | undefined; script?: string }) {
@@ -257,17 +258,16 @@ function TaskMeta({ task, script }: { task: AsyncTaskInfo | undefined; script?: 
       {files.length > 0 && <span className="flex min-w-0 items-baseline gap-gap">
         {files.map(([key, path]) => <TaskFile key={key} path={path!}>{t(key)}</TaskFile>)}
       </span>}
-      {!workflow && task.outputFilePath && <TaskFile path={task.outputFilePath} truncate>{task.outputFilePath}</TaskFile>}
     </div>
   );
 }
 
-function TaskFile({ path, truncate, children }: { path: string; truncate?: boolean; children: ReactNode }) {
+function TaskFile({ path, children }: { path: string; children: ReactNode }) {
   const openFile = useContext(OpenToolFileContext);
   return openFile
-    ? <button type="button" title={path} className={cn('min-w-0 cursor-pointer text-left hover:underline focus-visible:underline', truncate && 'truncate')}
+    ? <button type="button" title={path} className="min-w-0 cursor-pointer text-left hover:underline focus-visible:underline"
         onClick={() => openFile(path)}>{children}</button>
-    : <span className={cn('min-w-0', truncate && 'truncate')} title={path}>{children}</span>;
+    : <span className="min-w-0" title={path}>{children}</span>;
 }
 
 function ToolBody({ block, items, command }: { block: ToolCallBlock; items: ReturnType<typeof visibleToolContents>; command?: string }) {
