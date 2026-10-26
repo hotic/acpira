@@ -285,12 +285,23 @@ struct Setup {
   images: bool,
   /// Raw mode (`modes::RAW`): no tools, no composed prompt, and no compaction but an explicit /compact
   raw: bool,
+  /// Tools the plugins' `tools` hook left out this turn: not offered, and not run when the model calls one anyway
+  withheld: Vec<String>,
+}
+
+/// The plugins' `tools` hook on a fresh setup: the turn's tool list with descriptions changed or tools left out
+async fn plugin_tools(server: &Arc<Server>, session: &Arc<Session>, s: &mut Setup) {
+  if let Some(out) = crate::plugin_hooks::ask(server, session, "tools", json!({ "tools": crate::plugin_hooks::tools_json(&s.specs) })).await {
+    let before: Vec<String> = s.specs.iter().map(|t| t.name.clone()).collect();
+    crate::plugin_hooks::apply_tools(&mut s.specs, &out);
+    s.withheld = before.into_iter().filter(|n| !s.specs.iter().any(|t| &t.name == n)).collect();
+  }
 }
 
 impl Setup {
   /// Every tool name of the turn, built-in first
   fn names(&self) -> Vec<&str> {
-    self.tools.iter().copied().chain(self.mcp.iter().map(|t| t.name.as_str())).collect()
+    self.tools.iter().copied().chain(self.mcp.iter().map(|t| t.name.as_str())).filter(|n| !self.withheld.iter().any(|w| w == n)).collect()
   }
 }
 
@@ -386,6 +397,7 @@ fn setup(server: &Server, session: &Session, params: &Value, mcp: &[crate::mcp::
     mcp: mcp.to_vec(),
     images,
     raw,
+    withheld: vec![],
   })
 }
 
@@ -532,10 +544,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
   let mut s = setup(server, session, params, &offer.tools)?;
   // Which of the plugins' hooks into this loop are declared, for this turn
   crate::plugin_hooks::refresh(server, session).await;
-  // The `tools` hook: the turn's tool list with descriptions changed or tools left out
-  if let Some(out) = crate::plugin_hooks::ask(server, session, "tools", json!({ "tools": crate::plugin_hooks::tools_json(&s.specs) })).await {
-    crate::plugin_hooks::apply_tools(&mut s.specs, &out);
-  }
+  plugin_tools(server, session, &mut s).await;
   let prompt = params.get("prompt").unwrap_or(&Value::Null);
   let text = prompt_text(prompt);
   // /compact summarizes the history and ends the turn; nothing of it enters the history
@@ -843,7 +852,10 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       // after a rejected card, where the message is the direction the model was told to wait for
       Flow::Stop => {}
       // The approved plan is carried out in this turn, with Agent mode's tools and rules
-      Flow::Switched => s = setup(server, session, params, &offer.tools)?,
+      Flow::Switched => {
+        s = setup(server, session, params, &offer.tools)?;
+        plugin_tools(server, session, &mut s).await;
+      }
     }
   }
 }
@@ -1529,6 +1541,13 @@ async fn run_tools(
     // The change is made: its row completes now, the command gets a row of its own, and the call's one result waits
     // for both (a turn cancelled meanwhile still tells the model the change was made)
     let images = images_of(p, &out);
+    let mut out = out;
+    let arguments = p.ran_with.clone().unwrap_or_else(|| serde_json::from_str(&p.call.arguments).unwrap_or_else(|_| Value::String(p.call.arguments.clone())));
+    // The change's own `tool.after`, as on a call without a command after it
+    if let Some((model, is_error)) = crate::plugin_hooks::after_call(server, session, &p.call.name, &arguments, &out.model, out.is_error).await {
+      out.model = model;
+      out.is_error = is_error;
+    }
     let (model, is_error) = report(server, session, &p.acp, out);
     let cut = format!("then_run `{line}` was cancelled by the user before it finished.");
     session.state.lock().landed.push((p.call.id.clone(), joined(todo.as_deref(), &model, Some(&cut))));
@@ -1626,7 +1645,7 @@ fn answered(text: String) -> Output {
 async fn prepare_call(server: &Arc<Server>, session: &Arc<Session>, name: &str, args: &Value, images: bool) -> Result<Action, String> {
   // Skills come from where the session's prompt files are, the host's included
   if name == tools::SKILL {
-    return tools::skill::prepare(args, &server.places(&session.cwd, session.remote.as_deref()));
+    return tools::skill::prepare(args, &server.places_of(&session.cwd, session.remote.as_deref(), session.layers.clone()));
   }
   if let Some(r) = &session.remote
     && crate::remote::Remote::prepares_there(name, args, &session.cwd, server.config.home())

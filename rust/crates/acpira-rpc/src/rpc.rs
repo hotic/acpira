@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
@@ -98,6 +98,8 @@ struct Shared {
   incoming: parking_lot::Mutex<HashMap<String, Cancel>>,
   closed: AtomicBool,
   close_signal: Cancel,
+  /// Lines queued for the writer and not written yet (`Connection::backlog`)
+  backlog: AtomicUsize,
 }
 
 #[derive(Clone)]
@@ -126,6 +128,7 @@ impl Connection {
       incoming: Default::default(),
       closed: AtomicBool::new(false),
       close_signal: Cancel::new(),
+      backlog: AtomicUsize::new(0),
     });
     let conn = Connection { out: tx, next_id: Arc::new(AtomicI64::new(0)), shared: shared.clone() };
 
@@ -133,7 +136,9 @@ impl Connection {
     tokio::spawn(async move {
       let mut w = writer;
       while let Some(line) = rx.recv().await {
-        if w.write_all(line.as_bytes()).await.is_err() || w.write_all(b"\n").await.is_err() || w.flush().await.is_err() {
+        let ok = w.write_all(line.as_bytes()).await.is_ok() && w.write_all(b"\n").await.is_ok() && w.flush().await.is_ok();
+        writer_shared.backlog.fetch_sub(1, Ordering::Relaxed);
+        if !ok {
           break;
         }
       }
@@ -236,8 +241,17 @@ impl Connection {
 
   fn send_line(&self, line: String) {
     if !self.shared.closed.load(Ordering::Acquire) {
-      let _ = self.out.send(line);
+      self.shared.backlog.fetch_add(1, Ordering::Relaxed);
+      if self.out.send(line).is_err() {
+        self.shared.backlog.fetch_sub(1, Ordering::Relaxed);
+      }
     }
+  }
+
+  /// Lines waiting for the peer to read them: a sender of optional traffic (events) holds back while this grows,
+  /// since the queue itself has no bound
+  pub fn backlog(&self) -> usize {
+    self.shared.backlog.load(Ordering::Relaxed)
   }
 
   pub async fn request(&self, method: &str, params: Value) -> Result<Value, RpcError> {
@@ -291,7 +305,9 @@ impl Connection {
       pending.insert(id, Waiter { tx, ordered });
     }
     let line = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }).to_string();
+    self.shared.backlog.fetch_add(1, Ordering::Relaxed);
     if self.out.send(line).is_err() {
+      self.shared.backlog.fetch_sub(1, Ordering::Relaxed);
       self.shared.pending.lock().remove(&id);
       return Err(RpcError::connection_closed());
     }

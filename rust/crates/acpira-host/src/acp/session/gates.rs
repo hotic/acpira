@@ -26,6 +26,8 @@ pub(crate) struct PendingPermission {
   pub options: Vec<Value>,
   pub plan_id: Option<String>,
   pub node_id: Option<String>,
+  /// A plugin's `permission` hook asked for a card: no later switch to yolo answers it
+  pub insist: bool,
 }
 
 pub(crate) enum QuestionReply {
@@ -379,7 +381,7 @@ impl AcpSession {
         Self::bump_target(&mut c, &target);
       }
       let (tx, rx) = oneshot::channel();
-      c.perms.pending.push(PendingPermission { tx, block_id: block_id.clone(), options, plan_id, node_id: target.node_id() });
+      c.perms.pending.push(PendingPermission { tx, block_id: block_id.clone(), options, plan_id, node_id: target.node_id(), insist });
       self.touch(&mut c);
       (rx, block_id)
     };
@@ -427,7 +429,7 @@ impl AcpSession {
   pub(crate) fn flush_permissions(&self, c: &mut Core) {
     let summoned = |p: &PendingPermission| p.node_id.as_deref().is_some_and(|id| c.tree.relay_thread_of(id).is_some());
     let pending: Vec<(String, String)> =
-      c.perms.pending.iter().filter(|p| !summoned(p)).filter_map(|p| auto_allow(&p.options).map(|o| (p.block_id.clone(), o))).collect();
+      c.perms.pending.iter().filter(|p| !summoned(p) && !p.insist).filter_map(|p| auto_allow(&p.options).map(|o| (p.block_id.clone(), o))).collect();
     for (block, option) in pending {
       self.resolve_permission_locked(c, &block, &option);
     }

@@ -29,6 +29,18 @@ fn modes_mirror_reasoning(controls: &SessionControls) -> bool {
 }
 
 impl AcpSession {
+  /// Whether picking `value` grants full access: a mode when `config_id` is None or names the mode select, yolo, a
+  /// known bypass mode or one the agent marks `full_access`. A plugin may not pick one (`plugins/host_api.rs`)
+  pub fn grants_full_access(&self, config_id: Option<&str>, value: &str) -> bool {
+    let c = self.core.lock();
+    let controls = &c.state.controls;
+    if config_id.is_some_and(|id| controls.mode_config_id.as_deref() != Some(id)) {
+      return false;
+    }
+    let select = controls.mode_config_id.as_deref().and_then(|cid| controls.options.iter().find(|o| o.id == cid)).map(|o| o.options.as_slice()).unwrap_or(&[]);
+    crate::acp::session::relay::BYPASS_MODES.contains(&value) || controls.modes.iter().chain(select).any(|m| m.id == value && m.kind.as_deref() == Some("full_access"))
+  }
+
   /// Controls from a start response (session/new / resume / load, an edit's fresh peer). Protocol modes are dropped for an
   /// `ignoreModes` agent and when they only mirror the reasoning select; true when they were
   pub(crate) fn protocol_controls(&self, controls: &mut SessionControls, modes: Option<&Value>, config_options: Option<&Value>) -> bool {

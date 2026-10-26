@@ -116,6 +116,18 @@ impl Api {
         }
         let msg: WebviewMsg = serde_json::from_value(message).map_err(|e| bad(format!("message: {e}")))?;
         let v = self.viewer(&m, plugin);
+        // Switching a session to full access would answer its cards: that stays the user's
+        let pick = match &msg {
+          WebviewMsg::SetMode { session_id, id } => Some((session_id.clone(), None, id.as_str())),
+          WebviewMsg::SetConfig { session_id, config_id, value } => Some((session_id.clone(), Some(config_id.as_str()), value.as_str())),
+          _ => None,
+        };
+        if let Some((sid, config, value)) = pick
+          && let Some(s) = sid.or_else(|| v.active_id()).and_then(|id| m.live_session(&id))
+          && s.grants_full_access(config, value)
+        {
+          return Err(bad(format!("`{value}` gives the agent full access; only the user may pick it")));
+        }
         m.handle_for(&v, msg).await;
         Ok(json!({ "active": v.active_id() }))
       }

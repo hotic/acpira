@@ -949,6 +949,68 @@ async fn a_plugins_model_sources_reach_the_picker_and_serve_its_turns() {
   rt.stop_all().await;
 }
 
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugins_skill_loads_through_the_built_in_agents_skill_tool() {
+  if !acpira_host::plugins::host::on_path("node") {
+    return;
+  }
+  let mut env = Env::new();
+  let plugins = tempfile::tempdir().unwrap();
+  let skills = plugins.path().join("kit/skills");
+  std::fs::create_dir_all(skills.join("tidy")).unwrap();
+  std::fs::write(skills.join("tidy/SKILL.md"), "---\nname: tidy\ndescription: Tidy a folder\n---\n\nPLUGIN SKILL BODY\n").unwrap();
+  let rt = crate::acp_session::plugin_runtime::plugin(plugins.path(), "kit", RIDER, &[], &["shell"]).await;
+  rt.set_contributed(acpira_host::plugins::runtime::Contributed { skills: vec![skills], ..Default::default() });
+  env.deps.plugin_runtime = Some(rt.clone());
+  let s = env.session().await;
+  env.server.push(mock::tools(&[("c1", "skill", json!({ "name": "tidy" }))]));
+  env.server.push(mock::text("Done."));
+  s.prompt("tidy up".into(), vec![], false, None, None).await;
+  let results = tool_results(&env.server.requests()[1].body);
+  assert!(results[0].contains("PLUGIN SKILL BODY"), "{results:?}");
+  // The session's slash commands list it too
+  assert!(view(&s).to_string().contains("tidy"), "the menu lists the plugin's skill");
+  rt.stop_all().await;
+}
+
+/// Leaves `bash` out of every turn's tools
+const NO_SHELL: &str = r#"
+import { createInterface } from 'node:readline';
+const send = m => process.stdout.write(JSON.stringify(m) + '\n');
+createInterface({ input: process.stdin }).on('line', line => {
+  const m = JSON.parse(line);
+  if (m.method === 'initialize') return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: 1 } });
+  if (m.method === 'hook/tools') return send({ jsonrpc: '2.0', id: m.id, result: { tools: m.params.tools.filter(t => t.name !== 'bash') } });
+  if (m.id !== undefined) send({ jsonrpc: '2.0', id: m.id, result: null });
+}).on('close', () => process.exit(0));
+"#;
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tool_the_tools_hook_left_out_does_not_run_when_the_model_calls_it() {
+  if !acpira_host::plugins::host::on_path("node") {
+    return;
+  }
+  let mut env = Env::new();
+  let path = env.root.path().join("providers.json");
+  let mut p: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+  p["approval"] = json!("full");
+  std::fs::write(path, p.to_string()).unwrap();
+  let plugins = tempfile::tempdir().unwrap();
+  let rt = crate::acp_session::plugin_runtime::plugin(plugins.path(), "noshell", NO_SHELL, &[], &["tools"]).await;
+  env.deps.plugin_runtime = Some(rt.clone());
+  let s = env.session().await;
+  env.server.push(mock::tools(&[("c1", "bash", json!({ "command": "touch ran.txt" }))]));
+  env.server.push(mock::text("Done."));
+  s.prompt("go".into(), vec![], false, None, None).await;
+  let reqs = env.server.requests();
+  let names: Vec<&str> = reqs[0].body["tools"].as_array().unwrap().iter().filter_map(|t| t["function"]["name"].as_str()).collect();
+  assert!(!names.contains(&"bash"), "{names:?}");
+  assert!(!env.cwd().join("ran.txt").exists(), "the left-out tool ran: {:?}", tool_results(&reqs[1].body));
+  rt.stop_all().await;
+}
+
 /// Rewrites every command, an edit's `then_run` included
 const RIDER: &str = r#"
 import { createInterface } from 'node:readline';

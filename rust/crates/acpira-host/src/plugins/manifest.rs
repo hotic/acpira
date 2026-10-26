@@ -34,11 +34,12 @@ pub const RUNTIME_HOOKS: &[&str] = &[
   "compaction",
   "shell",
   "tools",
+  "websearch",
   "command",
 ];
 /// The event families a resident process may subscribe to; `<family>.*` takes every event of one, `*` all of them
 /// except the streamed deltas, which are asked for by name (`text.delta`, `thought.delta`)
-pub const RUNTIME_EVENTS: &[&str] = &["session", "turn", "tool", "permission", "prompt", "files", "model", "plugin", "usage", "text.delta", "thought.delta"];
+pub const RUNTIME_EVENTS: &[&str] = &["session", "turn", "tool", "permission", "files", "model", "plugin", "usage", "text.delta", "thought.delta"];
 /// Longest one hook call may take before it counts as failed
 pub const RUNTIME_TIMEOUT_SECS: f64 = 10.0;
 pub const LAYERS: &[&str] = &["agents", "tools", "interface", "automation"];
@@ -311,6 +312,10 @@ pub fn provider_of(raw: &Value, plugin: &str) -> Result<acpira_shared::providers
     }
   }
   let mut p: Provider = serde_json::from_value(raw.clone()).map_err(|e| format!("{at}: {e}"))?;
+  // A credential in a header would land in the file like a key; a token goes through `model.request` instead
+  if let Some(h) = p.headers.keys().find(|h| matches!(h.to_ascii_lowercase().as_str(), "authorization" | "proxy-authorization" | "x-api-key" | "api-key" | "x-goog-api-key")) {
+    return Err(format!("{at}: header `{h}` is a credential; name its variable in `{KEY_ENV_FIELD}` or send it from the `model.request` hook"));
+  }
   if p.api_format().is_none() {
     return Err(format!("{at}: format `{}` is not openai-chat, openai-responses or anthropic", p.format));
   }
@@ -718,11 +723,12 @@ mod tests {
       { "id": "u", "models": [{ "id": "m" }] },
       { "id": "n", "baseUrl": "http://x", "models": [] },
       { "id": "e", "baseUrl": "http://x", "keyEnv": "lower", "models": [{ "id": "m" }] },
+      { "id": "h", "baseUrl": "http://x", "headers": { "Authorization": "Bearer sk" }, "models": [{ "id": "m" }] },
     ]));
     let (m, mut f) = manifest(bad);
     check(&m, "gw", dir.path(), &|_| false, &mut f);
     let text = f.text();
-    for needle in ["`gw-claude` is declared twice", "`a/b`: the id", "`apiKey` is not allowed", "format `gemini`", "`baseUrl` is needed", "at least one model", "environment variable name"] {
+    for needle in ["`gw-claude` is declared twice", "`a/b`: the id", "`apiKey` is not allowed", "format `gemini`", "`baseUrl` is needed", "at least one model", "environment variable name", "header `Authorization` is a credential"] {
       assert!(text.contains(needle), "{needle} missing in\n{text}");
     }
   }

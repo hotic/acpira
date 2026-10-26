@@ -59,7 +59,7 @@ changed files in full. Start from it, and open other files only for what it does
 const READ_ONLY_MODES: [&str; 3] = ["read-only", "plan", "ask"];
 /// Modes that skip the CLI's own approvals: Claude `bypassPermissions`, Codex `agent-full-access`, Devin `bypass`,
 /// Antigravity / Kimi `yolo`; a mode the agent marks `_meta.kind` `full_access` counts too
-const BYPASS_MODES: [&str; 4] = ["bypassPermissions", "agent-full-access", "bypass", "yolo"];
+pub(crate) const BYPASS_MODES: [&str; 4] = ["bypassPermissions", "agent-full-access", "bypass", "yolo"];
 const MODEL_KEYS: [&str; 1] = ["model"];
 const EFFORT_KEYS: [&str; 3] = ["thought_level", "reasoning_effort", "effort"];
 const MODE_KEYS: [&str; 1] = ["mode"];

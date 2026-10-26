@@ -206,6 +206,8 @@ impl Guard {
       cwd.join(".agents").join("hooks.json"),
       home.join("plugins").join("state.json"),
       home.join("plugins").join("changes.jsonl"),
+      // The engine writes the plugins' model sources; an edit here would reroute calls like providers.json
+      acpira_shared::providers::plugin_providers_path(home),
     ];
     let mut dirs = vec![home.join("agent").join("config"), cwd.join(".agents").join("acpira"), home.join("plugins").join(".versions")];
     // The project's own files when the session folder is below its root (`prompt::project_root`)
@@ -355,6 +357,7 @@ mod tests {
     let g = Guard::new(Path::new("/h/.acpira"), Path::new("/w"), Some(Path::new("/h")));
     assert!(g.protects(Path::new("/h/.acpira/providers.json")));
     assert!(g.protects(Path::new("/h/.acpira/plugins/state.json")));
+    assert!(g.protects(Path::new("/h/.acpira/plugins/providers.json")));
     assert!(g.protects(Path::new("/h/.acpira/plugins/.versions/demo/abc/go.sh")));
     assert!(!g.protects(Path::new("/h/.acpira/plugins/demo/go.sh")));
     assert!(g.protects(Path::new("/w/sub/../.agents/hooks.json")));

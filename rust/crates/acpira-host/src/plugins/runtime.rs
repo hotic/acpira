@@ -203,6 +203,7 @@ pub struct Runtimes {
   live_providers: parking_lot::RwLock<BTreeMap<String, Vec<acpira_shared::providers::Provider>>>,
   /// The pages that hear what a process sends them (`ui/post`, `ui/composer`): every bridge of this engine
   pages: parking_lot::RwLock<Vec<(u64, PageFn)>>,
+  kvs: parking_lot::Mutex<HashMap<String, Arc<Kv>>>,
   next_page: std::sync::atomic::AtomicU64,
   /// One writer of `plugins/providers.json` at a time: a load and a process's `providers/set` may race
   providers_write: parking_lot::Mutex<()>,
@@ -212,6 +213,8 @@ pub struct Runtimes {
   redirect: parking_lot::RwLock<Option<crate::acp::session::plugin_hooks::RedirectFn>>,
   /// Off until the composition root turns it on: `acpira plugin list` and the tests of other parts start no process
   enabled: AtomicBool,
+  /// The composition root promised `host_call` (`enable_before_host`): early calls wait for it
+  host_coming: AtomicBool,
   sync: tokio::sync::Mutex<()>,
   data_root: PathBuf,
   log: LogFn,
@@ -231,9 +234,11 @@ impl Runtimes {
       live_providers: Default::default(),
       providers_write: Default::default(),
       pages: Default::default(),
+      kvs: Default::default(),
       next_page: Default::default(),
       on_contributed: Default::default(),
       enabled: AtomicBool::new(false),
+      host_coming: AtomicBool::new(false),
       sync: Default::default(),
       data_root,
       log,
@@ -243,6 +248,13 @@ impl Runtimes {
   /// Let processes run; `host_call` serves what a process asks of the engine beyond its store
   pub fn enable(&self, host_call: Option<HostCall>) {
     *self.host_call.write() = host_call;
+    self.host_coming.store(false, Ordering::Relaxed);
+    self.enabled.store(true, Ordering::Relaxed);
+  }
+
+  /// Let processes run before the session API exists; `enable` with it follows, and calls made meanwhile wait for it
+  pub fn enable_before_host(&self) {
+    self.host_coming.store(true, Ordering::Relaxed);
     self.enabled.store(true, Ordering::Relaxed);
   }
 
@@ -268,7 +280,13 @@ impl Runtimes {
   pub fn set_live_providers(&self, plugin: &str, raw: &[Value]) -> Result<usize, String> {
     let list = raw.iter().map(|r| crate::plugins::manifest::provider_of(r, plugin)).collect::<Result<Vec<_>, _>>()?;
     let n = list.len();
+    // A process of a plugin that is no longer (or not yet) in effect, its old version or a check's, publishes nothing
+    let wanted = self.wanted.lock();
+    if !wanted.iter().any(|w| w.id == plugin) {
+      return Err(format!("plugin {plugin} is not in effect"));
+    }
     self.live_providers.write().insert(plugin.to_owned(), list);
+    drop(wanted);
     self.write_providers();
     Ok(n)
   }
@@ -282,7 +300,8 @@ impl Runtimes {
     let Some(dir) = self.data_root.parent() else { return };
     let _one = self.providers_write.lock();
     let mut providers = self.contributed.read().providers.clone();
-    for p in self.live_providers.read().values().flatten() {
+    let wanted: Vec<String> = self.wanted.lock().iter().map(|w| w.id.clone()).collect();
+    for p in self.live_providers.read().iter().filter(|(id, _)| wanted.contains(id)).flat_map(|(_, list)| list) {
       if !providers.iter().any(|x| x.id == p.id) {
         providers.push(p.clone());
       }
@@ -314,6 +333,11 @@ impl Runtimes {
       (self.log)(&format!("plugin {plugin}: hook {hook}: {e}"));
     }
     Some(r)
+  }
+
+  /// The plugin's store, one per plugin in this engine: an old and a new version running side by side share it
+  fn kv(&self, id: &str) -> Arc<Kv> {
+    self.kvs.lock().entry(id.to_owned()).or_insert_with(|| Arc::new(Kv::new(self.data_root.join(format!("{id}.kv.json"))))).clone()
   }
 
   /// Hear what the processes send the pages; the id unsubscribes
@@ -455,15 +479,21 @@ impl Runtimes {
         a.manifest.contributes.runtime.clone().map(|def| Want { id: a.id.clone(), version: a.manifest.version.clone(), hash: a.hash.clone(), dir: a.dir.clone(), def })
       })
       .collect();
-    *self.wanted.lock() = wanted.clone();
+    *self.wanted.lock() = wanted;
     if !self.enabled() {
       return;
     }
-    self.apply(wanted).await;
+    self.apply().await;
   }
 
-  async fn apply(self: &Arc<Self>, wanted: Vec<Want>) {
+  /// One pass at a time, on what is wanted when it gets the turn: a pass queued behind another never brings back a
+  /// plugin switched off meanwhile
+  async fn apply(self: &Arc<Self>) {
     let _one = self.sync.lock().await;
+    if !self.enabled() {
+      return;
+    }
+    let wanted = self.wanted.lock().clone();
     let mut stopped = vec![];
     for want in &wanted {
       let current = self.workers.read().get(&want.id).cloned();
@@ -476,6 +506,11 @@ impl Runtimes {
           if let Some(old) = self.workers.write().insert(want.id.clone(), worker) {
             stopped.push(old);
           }
+        }
+        // A new version that does not start leaves the running one in place; with none running, it is tried again
+        Err(e) if current.as_ref().is_some_and(|w| !w.conn.is_closed()) => {
+          (self.log)(&format!("plugin {}: version {} did not start, the running one stays: {e}", want.id, want.version));
+          self.errors.write().insert(want.id.clone(), format!("the new version did not start, the previous one keeps running: {e}"));
         }
         Err(e) => {
           (self.log)(&format!("plugin {}: the runtime did not start: {e}", want.id));
@@ -512,6 +547,8 @@ impl Runtimes {
   /// Stop every process (the engine is shutting down)
   pub async fn stop_all(&self) {
     self.enabled.store(false, Ordering::Relaxed);
+    // After a pass under way: it would otherwise put back a worker it was starting
+    let _one = self.sync.lock().await;
     let workers: Vec<Arc<Worker>> = std::mem::take(&mut *self.workers.write()).into_values().collect();
     for w in workers {
       w.stop().await;
@@ -533,7 +570,7 @@ impl Runtimes {
     let stdout = child.stdout.take().ok_or("stdout is not piped")?;
     let stderr = child.stderr.take().ok_or("stderr is not piped")?;
     self.pipe_stderr(&want.id, stderr);
-    let inbound: Arc<dyn Inbound> = Arc::new(PluginInbound { id: want.id.clone(), kv: Kv::new(self.data_root.join(format!("{}.kv.json", want.id))), runtimes: Arc::downgrade(self) });
+    let inbound: Arc<dyn Inbound> = Arc::new(PluginInbound { id: want.id.clone(), kv: self.kv(&want.id), runtimes: Arc::downgrade(self) });
     let log = self.log.clone();
     let id = want.id.clone();
     let conn = Connection::start(stdout, stdin, Arc::new(move || inbound.clone()), Arc::new(move |l: &str| log(&format!("plugin {id}: {l}"))));
@@ -597,6 +634,11 @@ impl Runtimes {
     let dropped = w.dropped.clone();
     tokio::spawn(async move {
       while let Some(mut ev) = rx.recv().await {
+        // A process that stops reading its stdin holds the events here, in the bounded queue, where the overflow is
+        // dropped and counted, instead of in the connection's unbounded one
+        while conn.backlog() > EVENT_BACKLOG && !conn.is_closed() {
+          tokio::time::sleep(Duration::from_millis(20)).await;
+        }
         if conn.is_closed() {
           break;
         }
@@ -656,9 +698,9 @@ impl Runtimes {
       if !me.enabled() || me.workers.read().contains_key(&id) {
         return;
       }
-      let wanted = me.wanted.lock().clone();
-      if wanted.iter().any(|w| w.id == id) {
-        me.apply(wanted).await;
+      let wanted = me.wanted.lock().iter().any(|w| w.id == id);
+      if wanted {
+        me.apply().await;
       }
     });
   }
@@ -695,13 +737,19 @@ pub async fn probe(id: &str, version: &str, hash: &str, dir: &Path, def: &Runtim
   Ok(())
 }
 
+/// Lines the connection to a process may hold unwritten before its events wait in their bounded queue
+const EVENT_BACKLOG: usize = 256;
+
+/// How long a call to the engine waits for the session API to come up (the engine starts processes first)
+const HOST_CALL_WAIT: Duration = Duration::from_secs(10);
+
 /// Longest text a process may put into the composer
 const COMPOSER_MAX_CHARS: usize = 100_000;
 
 /// What a process may ask of the engine: its store, a log line, and whatever `HostCall` serves
 struct PluginInbound {
   id: String,
-  kv: Kv,
+  kv: Arc<Kv>,
   runtimes: std::sync::Weak<Runtimes>,
 }
 
@@ -719,8 +767,24 @@ impl Inbound for PluginInbound {
     let key = || params.get("key").and_then(Value::as_str).map(str::to_owned).ok_or_else(|| RpcError::new(-32602, "`key` is needed"));
     let r = match method.as_str() {
       "storage/get" => key().map(|k| json!({ "value": self.kv.get(&k) })),
-      "storage/set" => key().and_then(|k| self.kv.set(&k, params.get("value").cloned().unwrap_or(Value::Null)).map(|()| json!({})).map_err(|e| RpcError::new(-32000, e))),
-      "storage/delete" => key().and_then(|k| self.kv.delete(&k).map(|()| json!({})).map_err(|e| RpcError::new(-32000, e))),
+      // Under the store's file lock, on what the file holds then (another engine may have written it)
+      "storage/set" | "storage/delete" => {
+        let (kv, value, set) = (self.kv.clone(), params.get("value").cloned().unwrap_or(Value::Null), method == "storage/set");
+        let key = key();
+        return Box::pin(async move {
+          let key = key?;
+          kv.change(move |m| {
+            if set {
+              m.insert(key, value);
+            } else {
+              m.remove(&key);
+            }
+          })
+          .await
+          .map(|()| json!({}))
+          .map_err(|e| RpcError::new(-32000, e))
+        });
+      }
       "storage/list" => Ok(json!({ "keys": self.kv.keys(params.get("prefix").and_then(Value::as_str).unwrap_or("")) })),
       // To the plugin's own frames on every page of this engine, and text for the composer on screen
       "ui/post" => match (params.get("message"), self.runtimes.upgrade()) {
@@ -751,12 +815,19 @@ impl Inbound for PluginInbound {
         (Some(list), Some(rt)) => rt.set_live_providers(&self.id, list).map(|n| json!({ "providers": n })).map_err(|e| RpcError::new(-32602, e)),
       },
       _ => {
-        let call = self.runtimes.upgrade().and_then(|rt| rt.host_call.read().clone());
-        let id = self.id.clone();
-        return match call {
-          Some(f) => f(id, method, params),
-          None => Box::pin(async move { Err(RpcError::method_not_found(&method)) }),
-        };
+        // The engine starts the processes before its session manager is up: a call that early waits for it a while
+        let (rt, id) = (self.runtimes.clone(), self.id.clone());
+        return Box::pin(async move {
+          let t = Instant::now();
+          loop {
+            let (call, coming) = rt.upgrade().map(|rt| (rt.host_call.read().clone(), rt.host_coming.load(Ordering::Relaxed))).unwrap_or((None, false));
+            match call {
+              Some(f) => return f(id, method, params).await,
+              None if coming && t.elapsed() < HOST_CALL_WAIT => tokio::time::sleep(Duration::from_millis(50)).await,
+              None => return Err(RpcError::method_not_found(&method)),
+            }
+          }
+        });
       }
     };
     Box::pin(async move { r })
@@ -766,18 +837,35 @@ impl Inbound for PluginInbound {
 /// A plugin's key-value store: one JSON object written tmp + rename on every change, at most `KV_MAX_BYTES`
 struct Kv {
   path: PathBuf,
-  map: parking_lot::Mutex<Option<Map<String, Value>>>,
+  /// What the file held at the stamp it had; read again once the stamp moves (another engine wrote it)
+  cache: parking_lot::Mutex<Option<(KvStamp, Map<String, Value>)>>,
+  seq: AtomicU64,
+}
+
+type KvStamp = Option<(std::time::SystemTime, u64)>;
+
+fn kv_stamp(path: &Path) -> KvStamp {
+  let m = std::fs::metadata(path).ok()?;
+  Some((m.modified().ok()?, m.len()))
 }
 
 impl Kv {
   fn new(path: PathBuf) -> Kv {
-    Kv { path, map: Default::default() }
+    Kv { path, cache: Default::default(), seq: AtomicU64::new(0) }
   }
 
-  fn with<T>(&self, f: impl FnOnce(&mut Map<String, Value>) -> T) -> T {
-    let mut guard = self.map.lock();
-    let map = guard.get_or_insert_with(|| std::fs::read(&self.path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default());
-    f(map)
+  fn with<T>(&self, f: impl FnOnce(&Map<String, Value>) -> T) -> T {
+    let stamp = kv_stamp(&self.path);
+    let mut guard = self.cache.lock();
+    if guard.as_ref().is_none_or(|(s, _)| *s != stamp) {
+      *guard = Some((stamp, self.read()));
+    }
+    let empty = Map::new();
+    f(guard.as_ref().map_or(&empty, |(_, m)| m))
+  }
+
+  fn read(&self) -> Map<String, Value> {
+    std::fs::read(&self.path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
   }
 
   fn get(&self, key: &str) -> Value {
@@ -788,34 +876,29 @@ impl Kv {
     self.with(|m| m.keys().filter(|k| k.starts_with(prefix)).cloned().collect())
   }
 
-  fn set(&self, key: &str, value: Value) -> Result<(), String> {
-    self.change(|m| {
-      m.insert(key.to_owned(), value);
-    })
-  }
-
-  fn delete(&self, key: &str) -> Result<(), String> {
-    self.change(|m| {
-      m.remove(key);
-    })
-  }
-
-  fn change(&self, f: impl FnOnce(&mut Map<String, Value>)) -> Result<(), String> {
-    self.with(|m| {
-      let mut next = m.clone();
+  /// Read, change and write the file under its lock (this engine's and the others'), so no writer loses another's key
+  async fn change(&self, f: impl FnOnce(&mut Map<String, Value>) + Send) -> Result<(), String> {
+    let path = self.path.clone();
+    crate::store::file_lock::with_file_lock(&path, || async {
+      let mut next = self.read();
       f(&mut next);
-      let bytes = serde_json::to_vec(&next).map_err(|e| e.to_string())?;
+      let bytes = serde_json::to_vec(&next)?;
       if bytes.len() > KV_MAX_BYTES {
-        return Err(format!("the store would hold {} KB, more than the {} KB a plugin may keep", bytes.len() / 1024, KV_MAX_BYTES / 1024));
+        anyhow::bail!("the store would hold {} KB, more than the {} KB a plugin may keep", bytes.len() / 1024, KV_MAX_BYTES / 1024);
       }
       if let Some(parent) = self.path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(parent)?;
       }
-      let tmp = self.path.with_extension(format!("tmp{}", std::process::id()));
-      std::fs::write(&tmp, &bytes).and_then(|()| std::fs::rename(&tmp, &self.path)).map_err(|e| e.to_string())?;
-      *m = next;
+      let tmp = self.path.with_extension(format!("tmp{}-{}", std::process::id(), self.seq.fetch_add(1, Ordering::Relaxed)));
+      if let Err(e) = std::fs::write(&tmp, &bytes).and_then(|()| std::fs::rename(&tmp, &self.path)) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.into());
+      }
+      *self.cache.lock() = Some((kv_stamp(&self.path), next));
       Ok(())
     })
+    .await
+    .map_err(|e| format!("{e:#}"))
   }
 }
 
@@ -1015,6 +1098,43 @@ createInterface({ input: process.stdin }).on('close', () => process.exit(0)).on(
     rt.sync(&[]).await;
     assert!(rt.running().is_empty());
     until(|| !alive(new), 3000).await;
+  }
+
+  #[tokio::test]
+  async fn a_new_version_that_does_not_start_leaves_the_running_one_serving() {
+    let Some((root, rt)) = setup() else { return };
+    rt.sync(&[active(&root.path().join("a"), "h1", "")]).await;
+    let old = rt.hook("prompt", &json!({})).await[0].result.as_ref().unwrap()["pid"].as_u64().unwrap();
+    // v2 speaks another protocol, so its initialize is refused
+    std::fs::write(root.path().join("b/plugin.mjs"), PLUGIN.replace("Number(process.env.PROTO ?? 1)", "2")).unwrap();
+    rt.sync(&[active(&root.path().join("b"), "h2", "")]).await;
+    let v = rt.hook("prompt", &json!({})).await[0].result.clone().unwrap();
+    assert_eq!((v["version"].as_str(), v["pid"].as_u64()), (Some("v1"), Some(old)));
+    assert!(rt.errors.read()["rt"].contains("previous one keeps running"));
+    rt.stop_all().await;
+  }
+
+  #[tokio::test]
+  async fn two_stores_on_one_file_keep_each_others_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("p.kv.json");
+    // Two engines: each its own store over the same file
+    let (a, b) = (Kv::new(path.clone()), Kv::new(path.clone()));
+    assert_eq!(b.get("x"), Value::Null);
+    a.change(|m| {
+      m.insert("x".into(), json!(1));
+    })
+    .await
+    .unwrap();
+    b.change(|m| {
+      m.insert("y".into(), json!(2));
+    })
+    .await
+    .unwrap();
+    assert_eq!((a.get("x"), a.get("y"), b.get("x")), (json!(1), json!(2), json!(1)));
+    let big = "x".repeat(KV_MAX_BYTES);
+    assert!(a.change(move |m| { m.insert("big".into(), json!(big)); }).await.unwrap_err().contains("more than"));
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().contains("tmp")).count(), 0);
   }
 
   #[tokio::test]
