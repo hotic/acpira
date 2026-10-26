@@ -113,6 +113,8 @@ pub struct SessionDeps {
   pub shared_mcp: Option<crate::shared_config::McpProvider>,
   /// The plugins' hooks, chained after the project's for a session on this machine; None: no plugins (tests)
   pub plugin_hooks: Option<crate::hooks::PluginHooks>,
+  /// The plugins' prompt folders, sent to the built-in agent when a session opens; None: no plugins (tests)
+  pub plugin_prompts: Option<crate::hooks::PluginPrompts>,
   /// The `mcpServers` entry of Acpira's own MCP server (`host_mcp.rs`), sent with session/new, load and resume
   pub host_mcp: Option<crate::host_mcp::HostMcp>,
   /// Takes the session's cross-engine lease for a turn about to start (`store::session_lease`) and returns its pin; Err:

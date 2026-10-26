@@ -26,6 +26,18 @@ use crate::util::now_iso;
 pub(super) const CLOSE_GRACE: Duration = Duration::from_secs(3);
 
 impl AcpSession {
+  /// The plugins' prompt folders for a built-in agent session (`acpira_agent::acp::LAYERS_META`), taken as it opens.
+  /// They are this machine's files, which the built-in agent reads here also for a folder on an SSH host
+  pub(crate) fn with_prompt_layers(&self, req: &mut Value, agent: &str) {
+    if agent != crate::acp::agents::registry::SELF_AGENT_ID {
+      return;
+    }
+    let layers = self.deps.plugin_prompts.as_ref().map(|f| f()).unwrap_or_default();
+    if !layers.is_empty() {
+      req["_meta"][acpira_agent::acp::LAYERS_META] = json!(layers);
+    }
+  }
+
   /// Params for session/new, resume and load (and an edit's fresh session): the shared MCP servers for this agent and
   /// cwd (`shared_config::mcp`, filtered by the process's `mcpCapabilities`) plus Acpira's own server (`host_mcp.rs`);
   /// Claude sessions also ask for summarized thinking (see `claude_thinking`), the raw workflow progress frames
@@ -75,6 +87,7 @@ impl AcpSession {
       c.mcp_sent = servers.iter().filter_map(|s| s.get("name").and_then(Value::as_str).map(str::to_owned)).collect();
     }
     req["mcpServers"] = json!(servers);
+    self.with_prompt_layers(&mut req, &self.agent);
     if let Some(id) = acp_id {
       req["sessionId"] = json!(id);
     }

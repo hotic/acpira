@@ -80,6 +80,9 @@ pub struct PluginSource {
 /// The hooks of the plugins in effect, for a session on this machine (`plugins::host`)
 pub type PluginHooks = std::sync::Arc<dyn Fn() -> Vec<HooksConfig> + Send + Sync>;
 
+/// The prompt folders of the plugins in effect, for the built-in agent's sessions (`plugins::host`)
+pub type PluginPrompts = std::sync::Arc<dyn Fn() -> Vec<PathBuf> + Send + Sync>;
+
 impl HooksConfig {
   /// Whether turns need a before / after snapshot of the watched trees
   pub fn tracks_changes(&self) -> bool {

@@ -1683,7 +1683,9 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
     // Past the depth limit the entry still leads back here (`ask_caller`, the session tools); the hub lists no personas
     let entry = self.deps.host_mcp.as_ref().and_then(|h| h.entry_for_session(agent, &self.arc(), Some(thread), depth));
     crate::host_mcp::push_entry(&mut servers, entry);
-    self.with_remote(json!({ "cwd": self.cwd, "mcpServers": servers })).await
+    let mut req = self.with_remote(json!({ "cwd": self.cwd, "mcpServers": servers })).await;
+    self.with_prompt_layers(&mut req, agent);
+    req
   }
 
   /// A root `ask_agent` row (after the normalizer applied it): tie it to its round's node, or remember it until the

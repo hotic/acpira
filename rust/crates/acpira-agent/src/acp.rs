@@ -106,6 +106,19 @@ pub struct Session {
   pub mcp: Arc<crate::mcp::Hub>,
   /// The SSH host the session's folder is on (`remote.rs`); its project tools run there
   pub remote: Option<Arc<crate::remote::Remote>>,
+  /// The plugins' prompt folders as the engine sent them when the session opened (`LAYERS_META`)
+  pub layers: Vec<PathBuf>,
+}
+
+/// `_meta` key of session/new, load and resume: the prompt folders of the engine's plugins in effect, one more override
+/// layer of the system prompt (`prompt::Places::layers`). Taken when the session opens, so a plugin enabled during the
+/// session changes nothing before the next one
+pub const LAYERS_META: &str = "acpira/promptLayers";
+
+/// The prompt folders a session request carries
+fn layers_of(params: &Value) -> Vec<PathBuf> {
+  let key = format!("/_meta/{}", LAYERS_META.replace('/', "~1"));
+  params.pointer(&key).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(PathBuf::from).collect()).unwrap_or_default()
 }
 
 impl Session {
@@ -182,13 +195,19 @@ impl Server {
   /// machine's: the same path here may hold another project, so nothing of it is read from this disk, only what the
   /// host sent when the session opened
   pub fn places(&self, cwd: &std::path::Path, remote: Option<&crate::remote::Remote>) -> crate::prompt::Places {
-    match remote {
+    self.places_of(cwd, remote, vec![])
+  }
+
+  /// `places` with the session's plugin prompt folders (`LAYERS_META`)
+  pub fn places_of(&self, cwd: &std::path::Path, remote: Option<&crate::remote::Remote>, layers: Vec<PathBuf>) -> crate::prompt::Places {
+    let places = match remote {
       Some(r) => match &r.files {
         Some(files) => crate::prompt::Places::on_host(cwd, files.clone()),
         None => crate::prompt::Places::on_host(cwd, Default::default()),
       },
       None => crate::prompt::Places::new(cwd, crate::turn::user_home().as_deref()),
-    }
+    };
+    places.with_layers(layers)
   }
 
   /// The folder processes of the session start in here (MCP servers): the session folder, or for a folder on an SSH
@@ -340,7 +359,8 @@ impl Server {
     let mut state = SessionState { mode: modes::AGENT.to_owned(), announced: modes::AGENT.to_owned(), ..Default::default() };
     state.model = config.default_pick();
     let remote = crate::remote::Remote::of(params);
-    let places = self.places(std::path::Path::new(cwd), remote.as_deref());
+    let layers = layers_of(params);
+    let places = self.places_of(std::path::Path::new(cwd), remote.as_deref(), layers.clone());
     state.prompt = crate::prompt::compose(&places, state.model.as_deref().and_then(|p| config.find(p)));
     state.effort = default_effort(&config, &catalog, state.model.as_deref());
     let response = json!({
@@ -354,7 +374,7 @@ impl Server {
       "text": state.prompt.text, "sampling": state.prompt.sampling, "thinking": state.prompt.thinking }));
     let mcp = crate::mcp::Hub::start(params.get("mcpServers").unwrap_or(&Value::Null), &self.process_dir(std::path::Path::new(cwd), remote.is_some()));
     let session =
-      Session { id: id.clone(), cwd: PathBuf::from(cwd), state: parking_lot::Mutex::new(state), store, tool_seq: AtomicU64::new(0), jobs: Default::default(), mcp, remote };
+      Session { id: id.clone(), cwd: PathBuf::from(cwd), state: parking_lot::Mutex::new(state), store, tool_seq: AtomicU64::new(0), jobs: Default::default(), mcp, remote, layers };
     // The starting controls too: a reopen must not take a default that changed in the meantime
     session.save_state(&session.state.lock());
     let remote = session.remote.clone();
@@ -390,7 +410,10 @@ impl Server {
           return Err(gone());
         }
         let cwd = params.get("cwd").and_then(Value::as_str).filter(|c| !c.is_empty()).map(PathBuf::from).unwrap_or(loaded.cwd.clone());
-        let session = Arc::new(self.revive(id, cwd, &loaded, path, params.get("mcpServers").unwrap_or(&Value::Null), crate::remote::Remote::of(params)));
+        let mut revived = self.revive(id, cwd, &loaded, path, params.get("mcpServers").unwrap_or(&Value::Null), crate::remote::Remote::of(params));
+        // The recorded prompt stays as it was; these apply when a model switch composes it again
+        revived.layers = layers_of(params);
+        let session = Arc::new(revived);
         self.sessions.lock().insert(id.to_owned(), session.clone());
         (session, loaded.updates)
       }
@@ -473,7 +496,7 @@ impl Server {
       .max()
       .unwrap_or(0);
     let mcp = crate::mcp::Hub::start(mcp_servers, &self.process_dir(&cwd, remote.is_some()));
-    Session { id: id.to_owned(), cwd, state: parking_lot::Mutex::new(st), store, tool_seq: AtomicU64::new(seq), jobs: Default::default(), mcp, remote }
+    Session { id: id.to_owned(), cwd, state: parking_lot::Mutex::new(st), store, tool_seq: AtomicU64::new(seq), jobs: Default::default(), mcp, remote, layers: vec![] }
   }
 
   /// `session/list`: this data root's sessions with at least one message, newest first, filtered by `cwd` when given

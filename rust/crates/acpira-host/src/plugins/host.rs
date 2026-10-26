@@ -292,6 +292,41 @@ impl PluginHost {
     out
   }
 
+  /// The prompt folders of the plugins in effect, in id order: one more override layer of the built-in agent's system
+  /// prompt, sent when a session opens (`acpira_agent::acp::LAYERS_META`)
+  pub fn prompt_layers(&self) -> Vec<PathBuf> {
+    self.reload();
+    self
+      .loaded()
+      .active
+      .iter()
+      .filter_map(|a| a.manifest.contributes.prompts.as_deref().and_then(|p| manifest::inside(&a.dir, p)))
+      .filter(|d| d.is_dir())
+      .collect()
+  }
+
+  /// The agents of the plugins in effect as `agents.json` entries under the plugin's id, run from the frozen copy
+  /// (`plugins::mcp::rewrite`); a built-in agent's id is never taken
+  pub fn agent_entries(&self) -> serde_json::Map<String, Value> {
+    self.reload();
+    let builtin: Vec<String> = crate::acp::agents::registry::builtin_agents().into_iter().map(|d| d.id).collect();
+    let mut out = serde_json::Map::new();
+    for a in &self.loaded().active {
+      let Some(spec) = a.manifest.contributes.agent.as_ref().and_then(Value::as_object) else { continue };
+      if builtin.contains(&a.id) || a.id == crate::acp::agents::registry::SELF_AGENT_ID {
+        continue;
+      }
+      let data = self.store.data_dir(&a.id);
+      let _ = std::fs::create_dir_all(&data);
+      let mut entry = crate::plugins::mcp::rewrite(spec, &a.dir, &data);
+      if !entry.contains_key("name") {
+        entry.insert("name".into(), json!(a.manifest.display_name()));
+      }
+      out.insert(a.id.clone(), Value::Object(entry));
+    }
+    out
+  }
+
   /// The MCP servers of the plugins in effect, for a new local session
   pub fn mcp_servers(&self) -> Vec<crate::shared_config::mcp::SharedServer> {
     self.reload();
@@ -528,6 +563,34 @@ mod tests {
     }
     std::fs::write(dir.join("plugin.json"), m.to_string()).unwrap();
     std::fs::write(dir.join("go.sh"), script).unwrap();
+  }
+
+  #[tokio::test]
+  async fn an_agent_and_a_prompt_folder_come_from_the_frozen_copy() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = host(tmp.path());
+    h.start().await;
+    for id in ["pal", "claude"] {
+      let dir = tmp.path().join(id);
+      std::fs::create_dir_all(dir.join("prompts")).unwrap();
+      std::fs::write(dir.join("prompts/base.md"), "## Style\n- Short.\n").unwrap();
+      std::fs::write(dir.join("run.sh"), "").unwrap();
+      let m = json!({ "schema": 1, "id": id, "version": "1", "description": "Pal",
+        "contributes": { "agent": { "command": "run.sh", "args": ["acp", "${ACPIRA_PLUGIN_DATA}"] }, "prompts": "prompts" } });
+      std::fs::write(dir.join("plugin.json"), m.to_string()).unwrap();
+      h.action(PluginAction::Enable { id: id.into() }).await.unwrap();
+    }
+    // A built-in agent's id is never taken; the other runs from its snapshot with the plugin's name
+    let agents = h.agent_entries();
+    assert_eq!(agents.keys().collect::<Vec<_>>(), ["pal"]);
+    let frozen = h.loaded().active.iter().find(|a| a.id == "pal").unwrap().dir.clone();
+    assert_eq!(agents["pal"]["command"], json!(frozen.join("run.sh").to_string_lossy()));
+    assert_eq!(agents["pal"]["name"], "pal");
+    assert_eq!(agents["pal"]["args"][1], json!(h.store().data_dir("pal").to_string_lossy()));
+    assert_eq!(h.prompt_layers().len(), 2);
+    assert!(h.prompt_layers().iter().all(|d| d.ends_with("prompts") && d.starts_with(tmp.path().join(".versions"))));
+    h.action(PluginAction::SafeMode { on: true }).await.unwrap();
+    assert!(h.agent_entries().is_empty() && h.prompt_layers().is_empty());
   }
 
   #[tokio::test]

@@ -279,10 +279,11 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
   {
     err(findings, format!("prompts folder `{p}` not found in the plugin"));
   }
-  if let Some(agent) = &m.contributes.agent
-    && agent.get("command").and_then(Value::as_str).is_none_or(|c| c.trim().is_empty())
-  {
-    err(findings, "agent: `command` is needed".into());
+  if let Some(agent) = &m.contributes.agent {
+    match agent.get("command").and_then(Value::as_str).filter(|c| !c.trim().is_empty()) {
+      None => err(findings, "agent: `command` is needed".into()),
+      Some(command) => command_exists(&[crate::plugins::mcp::strip_dir(command).to_owned()], dir, which, "agent", findings),
+    }
   }
   if let Some(hooks) = &m.contributes.hooks {
     if !hooks.is_object() {
