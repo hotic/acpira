@@ -17,7 +17,7 @@ import { FileGlyph, absPath, dirOf, markIndex, nameOf, relPath } from './files';
 import { FileTree, ancestors } from './FileTree';
 import { FileViewer, ReviewView, preferMarkdownPreview } from './FileViewer';
 import { NewTab, type TabPick } from './NewTab';
-import { FILES_TAB, panel, usePanel, viewKey, type LineRange, type PanelTab, type PanelView } from './store';
+import { FILES_TAB, allLiveTabs, panel, panelState, usePanel, viewKey, type LineRange, type PanelTab, type PanelView } from './store';
 import { TerminalFrame } from './TerminalFrame';
 
 // The desktop app's tool panel (picked in the LAB, lab/desk-panel.preview, 2026-10-23): right of the chat sheet on the
@@ -81,13 +81,22 @@ export interface ToolPanelDockProps {
   shareSelection?: boolean;
 }
 
+// The open panel's width as chosen, clamped to the room beside the chat
+const panelWidth = (w: number) => `clamp(var(--tool-panel-min), ${w}px, calc(100% - var(--tool-main-min)))`;
+const commitWidth = (w: number) => panel.setWidth(w);
+
 // The panel beside the sheet and its toggle pinned at the window's top-right corner
 export const ToolPanelDock = memo(function ToolPanelDock(p: ToolPanelDockProps) {
   const s = usePanel();
+  const anyEnabled = s.files || s.terminal || s.browser;
   const aside = useRef<HTMLElement>(null);
-  const shown = s.open && !!p.cwd && !!p.sessionId;
+  const shown = anyEnabled && s.open && !!p.cwd && !!p.sessionId;
   const [moving, setMoving] = useState(false);
-  const [dragW, setDragW] = useState<number>();
+  // A drag writes the width straight onto the aside: a state update per frame re-rendered the dock and every panel tab
+  // under it. The release commits it to the store, whose render writes the same value
+  const dragTo = useCallback((w: number) => { aside.current?.style.setProperty('width', panelWidth(w)); }, []);
+  // A drag that ended where it started committed nothing, so the default comes back through the style as well
+  const resetWidth = useCallback(() => { aside.current?.style.setProperty('width', 'var(--tool-panel-w)'); panel.setWidth(undefined); }, []);
   const bounds = useCallback((): PaneBounds => {
     const element = aside.current ?? document.documentElement;
     const px = (name: string) => Number.parseFloat(getComputedStyle(element).getPropertyValue(name));
@@ -120,23 +129,23 @@ export const ToolPanelDock = memo(function ToolPanelDock(p: ToolPanelDockProps) 
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
-  const width = dragW ?? s.width;
+  const width = s.width;
   // Mounted from the first opening on, so a closed panel keeps its browser pages and scroll positions
   const [opened, setOpened] = useState(shown);
   if (shown && !opened) setOpened(true);
+  if (!anyEnabled) return null;
   const label = shown ? t('panel.hide') : t('panel.show');
   return (
     <>
       <aside ref={aside} aria-label={t('panel.label')} inert={!shown} data-tool-panel-wrap data-moving={moving || undefined} data-shown={shown || undefined}
         // How it shrinks beside the chat lives in panel.css
         className={cn('relative flex min-h-0 flex-col', p.narrow ? cn('absolute inset-0 z-30', !shown && 'hidden') : 'order-last', !shown && 'overflow-hidden')}
-        style={p.narrow ? undefined : { width: shown ? (width !== undefined ? `clamp(var(--tool-panel-min), ${width}px, calc(100% - var(--tool-main-min)))` : 'var(--tool-panel-w)') : 0 }}>
+        style={p.narrow ? undefined : { width: shown ? (width !== undefined ? panelWidth(width) : 'var(--tool-panel-w)') : 0 }}>
         {shown && !p.narrow && !moving && (
-          <InspectorSplitter width={width} bounds={bounds} onDrag={setDragW}
-            onCommit={w => { setDragW(undefined); panel.setWidth(w); }} onReset={() => { setDragW(undefined); panel.setWidth(undefined); }} />
+          <InspectorSplitter width={width} bounds={bounds} onDrag={dragTo} onCommit={commitWidth} onReset={resetWidth} />
         )}
         {p.cwd && p.sessionId && opened && (
-          <ToolPanel key={p.sessionId} sessionId={p.sessionId} root={p.cwd} running={p.running} searchFiles={p.searchFiles} openEditor={p.openEditor} openPlan={p.openPlan} shareSelection={p.shareSelection} />
+          <ToolPanel sessionId={p.sessionId} root={p.cwd} running={p.running} panelShown={shown} searchFiles={p.searchFiles} openEditor={p.openEditor} openPlan={p.openPlan} shareSelection={p.shareSelection} />
         )}
       </aside>
       {p.cwd && p.sessionId && (
@@ -230,6 +239,7 @@ function filesTabFace(view: PanelView | null | undefined): { label: string; titl
 // layout's explorer), any other in the editor
 export function terminalPathOpener(root: string, openEditor?: (path: string, line?: number) => void, reveal?: (path: string) => void) {
   return (path: string, line?: number) => {
+    if (!panelState().files) { openEditor?.(path, line); return; }
     const rel = projectPath(root, path);
     if (rel === undefined) { openEditor?.(path, line); return; }
     reveal?.(rel);
@@ -254,6 +264,7 @@ interface ToolPanelProps {
   sessionId: string;
   root: string;
   running: boolean;
+  panelShown: boolean;
   searchFiles: (query: string) => Promise<FileHit[]>;
   openEditor?: (path: string, line?: number) => void;
   openPlan?: (planId: string) => void;
@@ -261,18 +272,22 @@ interface ToolPanelProps {
 }
 
 function ToolPanel(p: ToolPanelProps) {
+  panel.setContext(p.sessionId, p.root);
   const s = usePanel();
   const fresh = useFreshTab();
+  const livePages = allLiveTabs(s);
   return (
     <div className="flex min-h-0 flex-1 flex-col pt-[var(--title-top)]" data-tool-panel>
-      {/* The tabs on the window's title line, the line moves the window; the pinned toggle sits at its end */}
-      <div data-drag-region data-panel-tabs className="flex h-hdr shrink-0 items-center gap-1 pr-[calc(var(--start-x)+var(--ctl)+var(--gap)+var(--caps-w,0px))] pl-[calc(var(--start-x)-var(--gap)*0.5)]">
+      {/* The tabs on the window's title line, the line moves the window; the pinned toggle sits at its end. The first tab starts
+          on the Files tree's leading edge (panel.css --tree-lead), so the tab and the filter under it line up */}
+      <div data-drag-region data-panel-tabs className="flex h-hdr shrink-0 items-center gap-1 pr-[calc(var(--start-x)+var(--ctl)+var(--gap)+var(--caps-w,0px))] pl-[var(--start-x)]">
         <div role="tablist" aria-label={t('panel.label')} className="flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none]">
           {s.tabs.map(tab => {
             const Icon = TAB_ICON[tab.kind];
-            const face = tab.kind === 'files' ? filesTabFace(s.views[viewKey(tab.id, p.root)]) : { label: tabLabel(tab), title: tabTitle(tab) };
+            const face = tab.kind === 'files' ? filesTabFace(s.views[viewKey(tab.id, p.root, p.sessionId)]) : { label: tabLabel(tab), title: tabTitle(tab) };
+            const closable = tab.id !== FILES_TAB && !(!s.files && s.tabs.length === 1 && tab.kind === 'new');
             return (
-              <TabButton key={tab.id} label={face.label} title={face.title} on={tab.id === s.tab} closable={tab.id !== FILES_TAB} guard={fresh.guard(tab.id)}
+              <TabButton key={tab.id} label={face.label} title={face.title} on={tab.id === s.tab} closable={closable} guard={fresh.guard(tab.id)}
                 icon={className => (face.path ? <FileGlyph name={face.path} className={className} /> : <Icon strokeWidth={1.5} className={className} />)}
                 onSelect={() => panel.select(tab.id)} onClose={() => panel.close(tab.id)} />
             );
@@ -282,12 +297,16 @@ function ToolPanel(p: ToolPanelProps) {
       </div>
       <div className="relative min-h-0 flex-1">
         {s.tabs.map(tab => {
-          if (tab.kind === 'files') return <FilesTab key={tab.id} {...p} tab={tab.id} shown={s.tab === tab.id} />;
-          if (tab.kind === 'browser') return <BrowserFrame key={tab.id} tab={tab} shown={s.tab === tab.id} root={p.root} />;
-          if (tab.kind === 'terminal') return <TerminalFrame key={tab.id} tab={tab} shown={s.tab === tab.id} openPath={terminalPathOpener(p.root, p.openEditor)} />;
+          if (tab.kind === 'files') return s.files ? <FilesTab key={tab.id} {...p} tab={tab.id} shown={s.tab === tab.id} /> : null;
           if (tab.kind === 'new' && tab.id === s.tab) {
             return <NewTab key={tab.id} onPick={choice => pickNewTab(tab.id, choice, p.root)} />;
           }
+          return null;
+        })}
+        {livePages.map(tab => {
+          const active = p.panelShown && s.tabs.some(t => t.id === tab.id) && s.tab === tab.id;
+          if (tab.kind === 'browser') return s.browser ? <BrowserFrame key={tab.id} tab={tab} shown={active} root={p.root} /> : null;
+          if (tab.kind === 'terminal') return s.terminal ? <TerminalFrame key={tab.id} tab={tab} shown={active} openPath={terminalPathOpener(p.root, p.openEditor)} /> : null;
           return null;
         })}
       </div>
@@ -295,12 +314,24 @@ function ToolPanel(p: ToolPanelProps) {
   );
 }
 
+const BROWSER_SLEEP_MS = 10 * 60_000;
+
 // One browser tab: the browser page in a frame of this page's origin (panel/browserTabs.ts). The shell opens the tab's relay
 // as it mounts and navigates it each time the tab is asked to show a page (`nav`); it closes the relay when the tab goes.
 // `stage`: the tab sits on the files layout's stage, so the page keeps a window's plain surface (browser/BrowserPanel.tsx)
 // `root`: the session folder; one on an SSH host makes the tab show that host's dev servers
 export function BrowserFrame({ tab, shown, stage, root }: { tab: Extract<PanelTab, { kind: 'browser' }>; shown: boolean; stage?: boolean; root: string }) {
   const ref = useCallback((el: HTMLIFrameElement | null) => registerBrowserFrame(tab.id, el), [tab.id]);
+  // Out of sight for BROWSER_SLEEP_MS the tab drops its frame: the page it shows shares this page's WebContent process
+  // and main thread, and `display: none` stops its frames but not its timers or its memory. The relay stays open; shown
+  // again, the frame loads anew, says browserReady and the shell sends the page last asked for (in-page navigation and
+  // scroll are lost, as after a reload)
+  const [slept, setSlept] = useState(false);
+  useEffect(() => {
+    if (shown) { setSlept(false); return; }
+    const timer = setTimeout(() => setSlept(true), BROWSER_SLEEP_MS);
+    return () => clearTimeout(timer);
+  }, [shown]);
   const folder = parseRemoteFolder(root) ? root : undefined;
   useEffect(() => () => vscodeApi().postMessage({ type: 'panelBrowserClose', tab: tab.id }), [tab.id]);
   useEffect(() => {
@@ -308,7 +339,9 @@ export function BrowserFrame({ tab, shown, stage, root }: { tab: Extract<PanelTa
     // Only a new ask (or another host) navigates: the page naming its own address (titled) must not reload it
   }, [tab.id, tab.nav, folder]);
   const src = `${location.origin}/index.html?host=browser&tab=${encodeURIComponent(tab.id)}${stage ? '&stage' : ''}`;
-  return <iframe ref={ref} title={tab.title || t('panel.browser')} src={src} className={cn('absolute inset-0 size-full border-0 bg-transparent', !shown && 'invisible')} />;
+  if (slept && !shown) return null;
+  // `hidden` (display: none) when not shown so WebKit suspends the iframe's requestAnimationFrame and layer compositing while in the background
+  return <iframe ref={ref} title={tab.title || t('panel.browser')} src={src} aria-hidden={!shown || undefined} className={cn('absolute inset-0 size-full border-0 bg-transparent', !shown && 'hidden')} />;
 }
 
 interface ProjectFilesInput {
@@ -335,44 +368,65 @@ const NO_CHANGES: ProjectChange[] = [];
 // layout's explorer and stage both run on it
 export function useProjectFiles({ sessionId, root, running, shareSelection, shown, reviewByDefault, tab = FILES_TAB }: ProjectFilesInput) {
   const s = usePanel();
-  const key = viewKey(tab, root);
+  const key = viewKey(tab, root, sessionId);
   const [refresh, setRefresh] = useState(0);
-  const wasRunning = useRef(running);
+  const wasRunning = useRef({ sessionId, running });
   useEffect(() => {
-    if (wasRunning.current && !running) setRefresh(r => r + 1);
-    wasRunning.current = running;
-  }, [running]);
+    if (wasRunning.current.sessionId === sessionId && wasRunning.current.running && !running) setRefresh(r => r + 1);
+    wasRunning.current = { sessionId, running };
+  }, [sessionId, running]);
   const mounted = useRef(false);
   useEffect(() => {
     if (mounted.current && shown) setRefresh(r => r + 1);
     mounted.current = true;
   }, [shown]);
-  // Each kept with what it belongs to: the files layout keeps this hook across session switches, and until the new
+  // Each kept with what it belongs to: the panel keeps this hook across session switches, and until the new
   // session's answers arrive it shows the last ones read for that project and session, never the previous session's
   const [git, setGit] = useState(() => ({ root, status: lastRead.status.get(root) ?? NO_STATUS }));
   const [own, setOwn] = useState(() => ({ sessionId, files: lastRead.changes.get(sessionId) ?? NO_CHANGES }));
   const status = git.root === root ? git.status : lastRead.status.get(root) ?? NO_STATUS;
   const changes = own.sessionId === sessionId ? own.files : lastRead.changes.get(sessionId) ?? NO_CHANGES;
+  const sessionRef = useRef(sessionId);
+  sessionRef.current = sessionId;
+  // Project-wide git status belongs to `root`, so switching conversations inside the same project does not re-run `git status`
+  // unless `root` or `refresh` changed (or the initial read for an empty start-page session came back without a project root)
+  useEffect(() => {
+    let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const askStatus = (sid: string) => {
+      if (!live) return;
+      void project.status(sid).then(x => {
+        if (!live) return;
+        if (!x.root && !Object.keys(x.marks).length) {
+          if (sessionRef.current !== sid) askStatus(sessionRef.current);
+          return;
+        }
+        lastRead.status.set(root, x);
+        setGit(g => (g.root === root && sameRead(g.status, x) ? g : { root, status: x }));
+      });
+    };
+    const wait = lastRead.status.has(root) ? shellResizeIdleIn() : 0;
+    if (wait > 0) timer = setTimeout(() => askStatus(sessionRef.current), wait);
+    else askStatus(sessionRef.current);
+    return () => { live = false; if (timer !== undefined) clearTimeout(timer); };
+  }, [root, refresh]);
   useEffect(() => {
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const run = () => {
       if (!live) return;
-      // An answer equal to the shown one keeps the shown object, so a refresh that found nothing new re-renders nothing
-      void project.status(sessionId).then(x => {
-        lastRead.status.set(root, x);
-        if (live) setGit(g => (g.root === root && sameRead(g.status, x) ? g : { root, status: x }));
-      });
       void project.changes(sessionId).then(x => {
-        lastRead.changes.set(sessionId, x);
-        if (live) setOwn(o => (o.sessionId === sessionId && sameRead(o.files, x) ? o : { sessionId, files: x }));
+        if (!live) return;
+        const files = x.length ? x : NO_CHANGES;
+        lastRead.changes.set(sessionId, files);
+        setOwn(o => (o.sessionId === sessionId && sameRead(o.files, files) ? o : { sessionId, files }));
       });
     };
-    const wait = lastRead.status.has(root) ? shellResizeIdleIn() : 0;
+    const wait = lastRead.changes.has(sessionId) ? shellResizeIdleIn() : 0;
     if (wait > 0) timer = setTimeout(run, wait);
     else run();
     return () => { live = false; if (timer !== undefined) clearTimeout(timer); };
-  }, [sessionId, root, refresh]);
+  }, [sessionId, refresh]);
   const mark = useMemo(() => markIndex(status.marks), [status]);
   const changed = useMemo(() => new Set(changes.map(c => c.path)), [changes]);
   const picked = s.views[key];
@@ -461,7 +515,7 @@ function FilesTab({ sessionId, root, running, searchFiles, openEditor, openPlan,
           <InspectorSplitter width={treeW} bounds={treeBounds} onDrag={setDragW}
             onCommit={w => { setDragW(undefined); panel.setTreeW(w); }} onReset={() => { setDragW(undefined); panel.setTreeW(undefined); }} />
         )}
-        <FileTree sessionId={sessionId} root={root} refresh={f.refresh} mark={f.mark} changes={f.changes} active={f.file?.text === undefined ? f.file?.path : undefined} review={f.view === 'review'}
+        <FileTree key={root} sessionId={sessionId} root={root} refresh={f.refresh} mark={f.mark} changes={f.changes} active={f.file?.text === undefined ? f.file?.path : undefined} review={f.view === 'review'}
           expanded={f.expanded} setExpanded={f.setExpanded} onOpen={f.open} onReview={() => panel.setView(f.key, 'review')} onMention={f.mention} search={searchFiles} />
       </div>
     </div>

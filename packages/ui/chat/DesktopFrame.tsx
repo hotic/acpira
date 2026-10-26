@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, ArrowRight, Check, ChevronRight, CircleAlert, Columns3, Copy, FolderOpen, FolderPlus, Info, Languages, LifeBuoy, Menu, Minus, Palette, PanelLeft, Settings, Settings2, Square, SunMoon, X } from 'lucide-react';
-import { DESKTOP_LAYOUTS, THEMES, type DesktopLayout, type ThemeSetting } from '@acpira/shared/settings';
+import { ArrowLeft, ArrowRight, Check, ChevronRight, CircleAlert, Columns3, Copy, FolderOpen, FolderPlus, Info, Languages, LifeBuoy, Menu, Minus, Palette, PanelLeft, PanelRight, Settings, Settings2, Square, SunMoon, X } from 'lucide-react';
+import { DESKTOP_LAYOUTS, PANEL_SCOPES, THEMES, type DesktopLayout, type PanelScope, type ThemeSetting } from '@acpira/shared/settings';
 import { LANGUAGES, type Language } from '@acpira/shared/i18n';
 import { t } from '../i18n';
 import { Button, IconButton } from '../ui/Button';
@@ -221,7 +221,13 @@ export interface QuickSettings {
   theme: ThemeSetting;
   language: Language;
   layout: DesktopLayout;
-  set: <K extends 'theme' | 'language' | 'desktopLayout'>(key: K, value: K extends 'theme' ? ThemeSetting : K extends 'language' ? Language : DesktopLayout) => void;
+  panelScope?: PanelScope;
+  panelFiles?: boolean;
+  anyPanelModule?: boolean;
+  set: <K extends 'theme' | 'language' | 'desktopLayout' | 'panelScope'>(
+    key: K,
+    value: K extends 'theme' ? ThemeSetting : K extends 'language' ? Language : K extends 'desktopLayout' ? DesktopLayout : PanelScope,
+  ) => void;
 }
 
 // One quick setting: a row naming its current value that opens the choices beside the menu, the current one ticked
@@ -268,8 +274,14 @@ export function AppMenu({ onOpenSettings, onOpenExternal, quick }: { onOpenSetti
               labelOf={v => t(v === 'auto' ? 'settings.theme.system' : `settings.theme.${v}` as const)} onPick={v => quick.set('theme', v)} />
             <QuickChoice icon={<Languages strokeWidth={1.5} />} label={t('settings.language')} value={quick.language} options={LANGUAGES}
               labelOf={v => t(v === 'auto' ? 'settings.language.system' : `settings.language.${v}` as const)} onPick={v => quick.set('language', v)} />
-            <QuickChoice icon={<Columns3 strokeWidth={1.5} />} label={t('settings.desktopLayout')} value={quick.layout} options={DESKTOP_LAYOUTS}
-              labelOf={v => t(`settings.desktopLayout.${v}`)} onPick={v => quick.set('desktopLayout', v)} />
+            {quick.panelFiles !== false && (
+              <QuickChoice icon={<Columns3 strokeWidth={1.5} />} label={t('settings.desktopLayout')} value={quick.layout} options={DESKTOP_LAYOUTS}
+                labelOf={v => t(`settings.desktopLayout.${v}`)} onPick={v => quick.set('desktopLayout', v)} />
+            )}
+            {quick.anyPanelModule !== false && (
+              <QuickChoice icon={<PanelRight strokeWidth={1.5} />} label={t('settings.panelScope')} value={quick.panelScope ?? 'project'} options={PANEL_SCOPES}
+                labelOf={v => t(`settings.panelScope.${v}`)} onPick={v => quick.set('panelScope', v)} />
+            )}
           </>}
           {onOpenExternal && <>
             <DropdownMenu.Separator className="my-1 h-px bg-line" />

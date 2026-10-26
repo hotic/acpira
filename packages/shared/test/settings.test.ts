@@ -59,6 +59,22 @@ describe('sanitizeSetting (appearance)', () => {
     expect(isSharedSetting('desktopLayout')).toBe(true);
   });
 
+  it('the panel scope is project, session or global, project by default, and shared', () => {
+    expect(sanitizeSetting('panelScope', 'session')).toBe('session');
+    expect(sanitizeSetting('panelScope', 'global')).toBe('global');
+    for (const bad of ['workspace', 'Project', null, true]) expect(sanitizeSetting('panelScope', bad)).toBe('project');
+    expect(isSharedSetting('panelScope')).toBe(true);
+  });
+
+  it('panelFiles, panelTerminal and panelBrowser are shared boolean settings, true by default', () => {
+    for (const k of ['panelFiles', 'panelTerminal', 'panelBrowser'] as const) {
+      expect(DEFAULT_SETTINGS[k]).toBe(true);
+      expect(sanitizeSetting(k, false)).toBe(false);
+      expect(sanitizeSetting(k, 'no')).toBe(true);
+      expect(isSharedSetting(k)).toBe(true);
+    }
+  });
+
   it('sessionScope accepts workspace / all and defaults to workspace; a session is in a workspace when its cwd is that folder', () => {
     expect(sanitizeSetting('sessionScope', 'all')).toBe('all');
     expect(sanitizeSetting('sessionScope', 'workspace')).toBe('workspace');

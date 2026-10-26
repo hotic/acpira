@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AgentBlock, AgentTurn, PermissionBlock, Turn } from '@acpira/shared/transcript';
 import { pendingPlanReview, reviseOption } from '../chat/planReview';
 import { revisedPlanEnd, turnOutcome } from '../chat/turnOutcome';
-import { panel, panelState } from '../panel/store';
+import { allLiveTabs, FILES_TAB, panel, panelState, viewKey } from '../panel/store';
 
 const approval = (options: PermissionBlock['options'], planId?: string): PermissionBlock =>
   ({ type: 'permission', id: 'approval', planId, title: 'Approve Plan', options });
@@ -57,5 +57,44 @@ describe('desktop plan view', () => {
     panel.syncPlans(root, [{ id: 'plan-1', markdown: '# v2' }]);
     expect(panelState().views[root]).toEqual({ path: '/Users/dev/.claude/plans/fox.md', text: '# v2', planId: 'plan-1' });
     expect(panelState().opened[root]).toEqual([{ path: '/Users/dev/.claude/plans/fox.md', text: '# v2', planId: 'plan-1' }]);
+  });
+
+  it('scopes tabs and open files per project, per session or across all projects while keeping background pages alive', () => {
+    panel.setScope('project');
+    panel.setContext('s1', '/p/a');
+    panel.openFile('/p/a', 'src/a.ts');
+    const b1 = panel.openBrowser('http://localhost:5199/');
+    expect(panelState().tab).toBe(b1);
+
+    // Same project, another session: keeps the open file and browser tab
+    panel.setContext('s2', '/p/a');
+    expect(panelState().tab).toBe(b1);
+    expect(panelState().views[viewKey(FILES_TAB, '/p/a', 's2')]).toEqual({ path: 'src/a.ts' });
+
+    // Another project: gets its own tabs, while the first project's browser stays in allLiveTabs
+    panel.setContext('s3', '/p/b');
+    expect(panelState().tab).toBe(FILES_TAB);
+    expect(panelState().tabs.map(t => t.id)).toEqual([FILES_TAB]);
+    expect(allLiveTabs().map(t => t.id)).toContain(b1);
+
+    // Back to the first project: its browser tab is still selected
+    panel.setContext('s2', '/p/a');
+    expect(panelState().tab).toBe(b1);
+
+    // Per-session scope: each session in the same project has its own tabs and open file
+    panel.setScope('session');
+    panel.setContext('s4', '/p/a');
+    expect(panelState().tab).toBe(FILES_TAB);
+    panel.openFile('/p/a', 'src/s4.ts');
+    panel.setContext('s2', '/p/a');
+    expect(panelState().views[viewKey(FILES_TAB, '/p/a', 's2')]).toEqual({ path: 'src/a.ts' });
+    expect(panelState().views[viewKey(FILES_TAB, '/p/a', 's4')]).toEqual({ path: 'src/s4.ts' });
+
+    // Global scope: every project shares one tab bar
+    panel.setScope('global');
+    panel.select(b1);
+    panel.setContext('s3', '/p/b');
+    expect(panelState().tab).toBe(b1);
+    panel.setScope('project');
   });
 });

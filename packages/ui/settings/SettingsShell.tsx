@@ -206,7 +206,10 @@ export function SettingsShell(p: SettingsShellProps) {
                   {(page.kind === 'plugins' || page.kind === 'agent') && <PluginsPage agents={p.agents} inventories={p.inventories}
                     onReorder={ids => p.on.setSetting('agentOrder', [...ids, ...p.settings.agentOrder.filter(unlisted)])}
                     onDisabled={ids => p.on.setSetting('disabledAgents', [...ids, ...p.settings.disabledAgents.filter(unlisted)])}
-                    onOpen={id => trail.go({ kind: 'agent', id })} onInventory={p.on.refreshInventory} />}
+                    onOpen={id => trail.go({ kind: 'agent', id })} onInventory={p.on.refreshInventory}
+                    panelFiles={p.settings.panelFiles !== false} onPanelFiles={on => p.on.setSetting('panelFiles', on)}
+                    panelTerminal={p.settings.panelTerminal !== false} onPanelTerminal={on => p.on.setSetting('panelTerminal', on)}
+                    panelBrowser={p.settings.panelBrowser !== false} onPanelBrowser={on => p.on.setSetting('panelBrowser', on)} />}
                   {page.kind === 'shared' && <SharedPage state={p.shared} agents={p.agents} on={p.on} />}
                   {page.kind === 'about' && <AboutPage state={update} on={{
                     check: download => postUpdate({ type: 'updateCheck', download }),

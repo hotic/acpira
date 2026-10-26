@@ -23,8 +23,11 @@ pub const DEFAULT_FILE_OPENER: &str = "system";
 /// What the desktop app's window centres on: the conversation, or the files and pages of the session's project
 pub const DESKTOP_LAYOUTS: [&str; 2] = ["chat", "files"];
 pub const DEFAULT_DESKTOP_LAYOUT: &str = "chat";
+/// How the desktop tool panel scopes its open files, browser tabs and terminals
+pub const PANEL_SCOPES: [&str; 3] = ["project", "session", "global"];
+pub const DEFAULT_PANEL_SCOPE: &str = "project";
 
-pub const SETTING_KEYS: [&str; 25] = [
+pub const SETTING_KEYS: [&str; 29] = [
   "language",
   "defaultAgent",
   "agentOrder",
@@ -50,6 +53,10 @@ pub const SETTING_KEYS: [&str; 25] = [
   "proxy",
   "openFilesWith",
   "desktopLayout",
+  "panelScope",
+  "panelFiles",
+  "panelTerminal",
+  "panelBrowser",
 ];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -102,6 +109,16 @@ pub struct SettingsView {
   /// Desktop app: the window's layout (`DESKTOP_LAYOUTS`)
   #[serde(default = "default_desktop_layout")]
   pub desktop_layout: String,
+  /// Desktop app: how the tool panel scopes its open files, browser tabs and terminals (`PANEL_SCOPES`)
+  #[serde(default = "default_panel_scope")]
+  pub panel_scope: String,
+  /// Desktop app: whether the built-in File Tree, Terminal and Browser modules are enabled in the tool panel
+  #[serde(default = "default_panel_files")]
+  pub panel_files: bool,
+  #[serde(default = "default_panel_files")]
+  pub panel_terminal: bool,
+  #[serde(default = "default_panel_files")]
+  pub panel_browser: bool,
 }
 
 fn default_agent_cpu_cap() -> i64 {
@@ -118,6 +135,14 @@ fn default_file_opener() -> String {
 
 fn default_desktop_layout() -> String {
   DEFAULT_DESKTOP_LAYOUT.into()
+}
+
+fn default_panel_scope() -> String {
+  DEFAULT_PANEL_SCOPE.into()
+}
+
+fn default_panel_files() -> bool {
+  true
 }
 
 /// A proxy URL with a supported scheme and a host, trailing slash dropped; a bare `host:port` reads as `http://host:port`
@@ -200,7 +225,7 @@ pub fn sanitize_setting(key: &str, value: &Value) -> Value {
   match key {
     "language" => Value::from(one_of(value, &LANGUAGE_TAGS, "auto")),
     "defaultAgent" => Value::from(value.as_str().map(str::trim).filter(|s| !s.is_empty()).unwrap_or("acpira")),
-    "autoCompact" => Value::from(value.as_bool().unwrap_or(true)),
+    "autoCompact" | "panelFiles" | "panelTerminal" | "panelBrowser" => Value::from(value.as_bool().unwrap_or(true)),
     "fontSmoothing" => Value::from(value.as_bool().unwrap_or(false)),
     "shareEditorSelection" => Value::from(value.as_bool().unwrap_or(true)),
     "steerQueued" => Value::from(value.as_bool().unwrap_or(false)),
@@ -227,6 +252,7 @@ pub fn sanitize_setting(key: &str, value: &Value) -> Value {
     "accountSwitch" => Value::from(one_of(value, &ACCOUNT_SWITCH_STRATEGIES, DEFAULT_ACCOUNT_SWITCH)),
     "openFilesWith" => Value::from(one_of(value, &FILE_OPENERS, DEFAULT_FILE_OPENER)),
     "desktopLayout" => Value::from(one_of(value, &DESKTOP_LAYOUTS, DEFAULT_DESKTOP_LAYOUT)),
+    "panelScope" => Value::from(one_of(value, &PANEL_SCOPES, DEFAULT_PANEL_SCOPE)),
     "agentOrder" | "disabledAgents" | "planAutoApprove" => Value::from(id_list(value)),
     "subagents" => serde_json::to_value(crate::subagents::sanitize_personas(value)).unwrap_or(Value::Array(vec![])),
     _ => Value::Null,
@@ -284,5 +310,8 @@ mod tests {
       assert_eq!(sanitize_setting("desktopLayout", &bad), Value::from("chat"), "{bad}");
     }
     assert!(is_shared_setting("desktopLayout"));
+    assert_eq!(sanitize_setting("panelFiles", &Value::from(false)), Value::from(false));
+    assert_eq!(sanitize_setting("panelFiles", &Value::Null), Value::from(true));
+    assert!(is_shared_setting("panelFiles"));
   }
 }

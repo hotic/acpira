@@ -10,7 +10,7 @@ import { InspectorSplitter, clamp, type PaneBounds } from '../chat/subagents/Ins
 import { FileTree } from './FileTree';
 import { FileGlyph, nameOf } from './files';
 import { NewTab, type TabPick } from './NewTab';
-import { FILES_TAB, panel, sameView, usePanel } from './store';
+import { FILES_TAB, allLiveTabs, panel, sameView, scopedRoot, usePanel } from './store';
 import { TerminalFrame } from './TerminalFrame';
 import { BrowserFrame, MOVE_MS, TAB_ICON, TOGGLE_KEY, TabButton, ViewPane, pickNewTab, tabLabel, tabTitle, terminalPathOpener, useFreshTab, useProjectFiles } from './ToolPanel';
 
@@ -37,8 +37,9 @@ export interface FilesLayoutProps {
 }
 
 export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
-  const s = usePanel();
   const { root } = p;
+  panel.setContext(p.sessionId, root);
+  const s = usePanel();
   const f = useProjectFiles({ sessionId: p.sessionId, root, running: p.running, shareSelection: p.shareSelection, shown: true, reviewByDefault: false });
   const aside = useRef<HTMLElement>(null);
   const hidden = s.explorerHidden;
@@ -82,9 +83,11 @@ export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
   const onFiles = s.tabs.find(tab => tab.id === s.tab)?.kind === 'files';
   useEffect(() => { if (onFiles && s.tab !== FILES_TAB) panel.select(FILES_TAB); }, [onFiles, s.tab]);
   const shown = onFiles ? f.view : undefined;
-  const opened = s.opened[root] ?? [];
+  const r = scopedRoot(root, p.sessionId);
+  const opened = s.opened[r] ?? [];
   const views = f.view && !opened.some(v => sameView(v, f.view!)) ? [...opened, f.view] : opened;
   const pages = s.tabs.filter(tab => tab.kind !== 'files');
+  const livePages = allLiveTabs(s);
   const sessionsLabel = p.sessionsShown ? t('desktop.hideSessions') : t('desktop.showSessions');
   // A pick on the stage: Files unfolds the explorer (the project's tree) and gives the stage back to the files; a terminal
   // or a page in place of the new tab `tab` (none: the stage's empty state)
@@ -113,7 +116,7 @@ export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
           {/* One tree per project: its listings and filter belong to that root (the tree caches folders it was asked for, so
               a session in another project kept the last project's tree). A switch paints the project's cached tree */}
           <FileTree key={root} sessionId={p.sessionId} root={root} refresh={f.refresh} mark={f.mark} changes={f.changes} active={shown && shown !== 'review' && shown.text === undefined ? shown.path : undefined}
-            review={shown === 'review'} expanded={f.expanded} setExpanded={f.setExpanded} onOpen={f.open} onReview={() => panel.showView(root, 'review')}
+            review={shown === 'review'} expanded={f.expanded} setExpanded={f.setExpanded} onOpen={f.open} onReview={() => panel.showView(r, 'review')}
             onMention={f.mention} search={p.searchFiles} />
           {p.foot}
         </div>
@@ -125,9 +128,9 @@ export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
           <div role="tablist" aria-label={t('panel.label')} className="flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none]">
             {views.map(v => (v === 'review'
               ? <TabButton key="review" label={t('panel.allChanges')} on={!!shown && sameView(shown, v)} closable
-                  icon={className => <Layers strokeWidth={1.5} className={className} />} onSelect={() => panel.showView(root, v)} onClose={() => panel.closeView(root, v)} />
+                  icon={className => <Layers strokeWidth={1.5} className={className} />} onSelect={() => panel.showView(r, v)} onClose={() => panel.closeView(root, v)} />
               : <TabButton key={`file:${v.path}`} label={nameOf(v.path)} title={v.path} on={!!shown && sameView(shown, v)} closable
-                  icon={className => <FileGlyph name={v.path} className={className} />} onSelect={() => panel.showView(root, v)} onClose={() => panel.closeView(root, v)} />))}
+                  icon={className => <FileGlyph name={v.path} className={className} />} onSelect={() => panel.showView(r, v)} onClose={() => panel.closeView(root, v)} />))}
             {pages.map(tab => {
               const Icon = TAB_ICON[tab.kind];
               return (
@@ -136,7 +139,9 @@ export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
               );
             })}
           </div>
-          <IconButton title={t('panel.newTab')} aria-label={t('panel.newTab')} onClick={() => fresh.made(panel.newTab())}><Plus strokeWidth={1.5} /></IconButton>
+          {(s.terminal || s.browser) && (
+            <IconButton title={t('panel.newTab')} aria-label={t('panel.newTab')} onClick={() => fresh.made(panel.newTab())}><Plus strokeWidth={1.5} /></IconButton>
+          )}
         </div>
         <div data-stage-body className="relative min-h-0 flex-1 border-t border-[var(--stage-rule,var(--line))]">
           {onFiles && (shown
@@ -144,9 +149,13 @@ export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
             // Nothing open: what to open, this session's changed files first; the chat never moves back to the middle
             : <NewTab focus={false} changes={{ files: f.changes, onOpen: f.open }} onPick={choice => pick(choice)} />)}
           {pages.map(tab => {
-            if (tab.kind === 'browser') return <BrowserFrame key={tab.id} tab={tab} shown={s.tab === tab.id} stage root={root} />;
-            if (tab.kind === 'terminal') return <TerminalFrame key={tab.id} tab={tab} shown={s.tab === tab.id} openPath={terminalPathOpener(root, p.openEditor, f.reveal)} />;
             if (tab.kind === 'new' && tab.id === s.tab) return <NewTab key={tab.id} onPick={choice => pick(choice, tab.id)} />;
+            return null;
+          })}
+          {livePages.map(tab => {
+            const active = pages.some(t => t.id === tab.id) && s.tab === tab.id;
+            if (tab.kind === 'browser') return s.browser ? <BrowserFrame key={tab.id} tab={tab} shown={active} stage root={root} /> : null;
+            if (tab.kind === 'terminal') return s.terminal ? <TerminalFrame key={tab.id} tab={tab} shown={active} openPath={terminalPathOpener(root, p.openEditor, f.reveal)} /> : null;
             return null;
           })}
         </div>

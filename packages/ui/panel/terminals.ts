@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 import type { HostMsg, TerminalExit, WebviewMsg } from '@acpira/shared/protocol';
 import { t } from '../i18n';
 import { vscodeApi } from '../vscodeApi';
-import { onPanelChange, panel, panelState, type PanelTab } from './store';
+import { allLiveTabs, onPanelChange, panel, type PanelTab } from './store';
 import type { XtermView } from './xterm';
 
 // The page's side of the terminal tabs: one xterm view per terminal tab of the panel (module state, like the panel's),
@@ -64,7 +64,7 @@ export function startTerminals() {
 }
 
 function sync() {
-  const tabs = panelState().tabs.filter((tab): tab is TerminalTab => tab.kind === 'terminal');
+  const tabs = allLiveTabs().filter((tab): tab is TerminalTab => tab.kind === 'terminal');
   for (const tab of tabs) if (!entries.has(tab.id)) create(tab);
   for (const e of [...entries.values()]) {
     if (!tabs.some(tab => tab.id === e.id)) end(e);

@@ -23,10 +23,25 @@ export interface ShellLook {
   sessionListPosition: SettingsView['sessionListPosition'];
   // The desktop app's layout (Shell `desktop` only); absent, the conversation is the subject
   desktopLayout?: DesktopLayout;
+  // Whether the built-in File Tree, Terminal and Browser modules are enabled in the tool panel
+  panelFiles?: boolean;
+  panelTerminal?: boolean;
+  panelBrowser?: boolean;
 }
 
 export function lookFromSettings(s: SettingsView): ShellLook {
-  return { fixedTheme: s.theme !== 'auto', uiFontSize: s.uiFontSize, codeFontSize: s.codeFontSize, diffMarkers: s.diffMarkers, fontSmoothing: s.fontSmoothing, sessionListPosition: s.sessionListPosition, desktopLayout: s.desktopLayout };
+  return {
+    fixedTheme: s.theme !== 'auto',
+    uiFontSize: s.uiFontSize,
+    codeFontSize: s.codeFontSize,
+    diffMarkers: s.diffMarkers,
+    fontSmoothing: s.fontSmoothing,
+    sessionListPosition: s.sessionListPosition,
+    desktopLayout: s.desktopLayout,
+    panelFiles: s.panelFiles,
+    panelTerminal: s.panelTerminal,
+    panelBrowser: s.panelBrowser,
+  };
 }
 
 export function lookAttrs(look?: ShellLook) {

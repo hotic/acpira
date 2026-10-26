@@ -259,9 +259,11 @@ export function Shell(p: ShellProps) {
   const position = desktop ? 'left' : p.look?.sessionListPosition ?? (a.sessions === 'drawer' ? 'left' : 'hidden');
   const [canDock, setCanDock] = useState(false);
   // Desktop: what the window centres on (acpira.desktopLayout). The files layout (panel/FilesLayout.tsx) needs a project to
-  // show and room for its four columns (--files-layout-min); short of either the window keeps the conversation layout
+  // show, the built-in Files module enabled, and room for its four columns (--files-layout-min); short of any the window keeps the conversation layout
   const [canFiles, setCanFiles] = useState(false);
-  const filesLayout = desktop && p.look?.desktopLayout === 'files';
+  const filesOn = p.look?.panelFiles !== false;
+  const anyPanelModule = filesOn || p.look?.panelTerminal !== false || p.look?.panelBrowser !== false;
+  const filesLayout = desktop && filesOn && p.look?.desktopLayout === 'files';
   const files = filesLayout && canDock && canFiles && !p.noProject && !p.external && !!p.cwd && !!p.activeSessionId;
   // Desktop: the column folded away by its title row's button (kept across reloads); `columnMoving` lets its width ease
   // only while it folds, never under the drag that resizes it. The files layout docks it at the right edge, where the
@@ -447,7 +449,7 @@ export function Shell(p: ShellProps) {
   // Files layout: the title row's toggle folds the explorer, the pinned one at the top-right corner (⌥⌘B) the session column
   const explorerHidden = usePanelValue(s => s.explorerHidden);
   // Conversation layout: the tool panel docked open beside the chat (ToolPanelDock's own condition, wide window)
-  const panelDocked = usePanelValue(s => s.open) && desktop && canDock && !files && !p.noProject && !p.external && !!p.cwd && !!p.activeSessionId;
+  const panelDocked = usePanelValue(s => s.open && (s.files || s.terminal || s.browser)) && desktop && canDock && !files && !p.noProject && !p.external && !!p.cwd && !!p.activeSessionId;
   const toggleSessions = useCallback(() => hideColumn(!columnHidden), [hideColumn, columnHidden]);
   const [inspect, setInspect] = useState<{ id: string }>();
   const [graphOpen, setGraphOpen] = useState(false);
@@ -580,7 +582,10 @@ export function Shell(p: ShellProps) {
     on.newSession(agent, undefined, cwd);
   };
   if (carry.current && p.activeSessionId && carry.current !== p.activeSessionId) {
-    if (!p.turns.length) moveDraft(carry.current, p.activeSessionId);
+    if (!p.turns.length) {
+      moveDraft(carry.current, p.activeSessionId);
+      panel.moveSession(carry.current, p.activeSessionId);
+    }
     carry.current = undefined;
   }
   const start = usePresence(startPage);
@@ -744,23 +749,25 @@ export function Shell(p: ShellProps) {
   const plans = useStableList(useMemo(() => p.turns.flatMap(t => t.role === 'agent' ? t.blocks.filter((b): b is PlanDocumentBlock => b.type === 'plan_document') : []), [p.turns]));
   const plansRef = useRef(plans);
   plansRef.current = plans;
-  // Desktop: a file of the session's project (or a plan document) opens in the tool panel (panel/ToolPanel.tsx), anything else in the editor
-  const panelRoot = desktop && !p.noProject && !p.external ? p.cwd : undefined;
+  // Desktop: a file of the session's project (or a plan document) opens in the tool panel (panel/ToolPanel.tsx) when the
+  // built-in Files module is enabled, anything else in the editor
+  const panelRoot = desktop && anyPanelModule && !p.noProject && !p.external ? p.cwd : undefined;
+  const filePanelRoot = filesOn ? panelRoot : undefined;
   useEffect(() => {
-    if (panelRoot && plans.length) panel.syncPlans(panelRoot, plans);
-  }, [panelRoot, plans]);
+    if (filePanelRoot && plans.length) panel.syncPlans(filePanelRoot, plans);
+  }, [filePanelRoot, plans]);
   const openPlanInEditor = useMemo(() => p.activeSessionId && on.openPlan
     ? (id: string) => on.openPlan!(p.activeSessionId!, id) : undefined, [p.activeSessionId, on.openPlan]);
   const planDoc = useMemo(() => ({
     controls: p.controls, hidden: p.hidden?.[p.agent.id], running: p.running, ready: p.status === 'ready', theme: p.theme, permissions,
     build: p.activeSessionId && on.buildPlan ? (id: string, model?: { configId: string; value: string }, optionId?: string) => on.buildPlan!(p.activeSessionId!, id, model, optionId) : undefined,
-    open: p.activeSessionId && (panelRoot || on.openPlan)
+    open: p.activeSessionId && (filePanelRoot || on.openPlan)
       ? (plan: PlanDocumentBlock) => {
-          if (panelRoot) openPlanInPanel(panelRoot, plan);
+          if (filePanelRoot) openPlanInPanel(filePanelRoot, plan);
           else on.openPlan?.(p.activeSessionId!, plan.id);
         }
       : undefined,
-  }), [p.controls, p.hidden, p.agent.id, p.running, p.status, p.theme, permissions, p.activeSessionId, on.buildPlan, on.openPlan, panelRoot]);
+  }), [p.controls, p.hidden, p.agent.id, p.running, p.status, p.theme, permissions, p.activeSessionId, on.buildPlan, on.openPlan, filePanelRoot]);
   // Stable across stream pushes (every prompt card subscribes); the composer props go through their own context to the open editor
   const editable = !composerProps.disabled && !composerProps.running && !held.running;
   const history = useMemo(() => on.editTurn && p.activeSessionId ? {
@@ -787,15 +794,15 @@ export function Shell(p: ShellProps) {
   const sessionTitle = useCallback((ref: string) => titlesRef.current.get(ref), []);
   const openToolFile = useMemo(() => {
     const sid = p.activeSessionId;
-    if (!sid || (!on.openFile && !panelRoot)) return undefined;
+    if (!sid || (!on.openFile && !filePanelRoot)) return undefined;
     return (path: string, line?: number) => {
-      const rel = panelRoot ? projectPath(panelRoot, path) : undefined;
-      if (panelRoot && rel !== undefined) { panel.openFile(panelRoot, rel, line); return; }
-      const plan = panelRoot ? plansRef.current.find(b => b.path === path) : undefined;
-      if (panelRoot && plan) { openPlanInPanel(panelRoot, plan, line); return; }
+      const rel = filePanelRoot ? projectPath(filePanelRoot, path) : undefined;
+      if (filePanelRoot && rel !== undefined) { panel.openFile(filePanelRoot, rel, line); return; }
+      const plan = filePanelRoot ? plansRef.current.find(b => b.path === path) : undefined;
+      if (filePanelRoot && plan) { openPlanInPanel(filePanelRoot, plan, line); return; }
       on.openFile?.(sid, path, line);
     };
-  }, [p.activeSessionId, on.openFile, panelRoot]);
+  }, [p.activeSessionId, on.openFile, filePanelRoot]);
   const openInEditor = useMemo(() => p.activeSessionId && on.openFile
     ? (path: string, line?: number) => on.openFile!(p.activeSessionId!, path, line) : undefined, [p.activeSessionId, on.openFile]);
   const goalAction = useMemo(() => p.activeSessionId && on.goal
