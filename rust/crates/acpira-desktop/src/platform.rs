@@ -188,6 +188,27 @@ pub mod system {
     if cfg!(target_os = "macos") { run("open", &[target]) } else { run("xdg-open", &[target]) }
   }
 
+  /// A local file or folder with the default application. On macOS a file whose type no application claims (a CLI's
+  /// `.output`, `~/.ssh/config`) fails `open` with LSOpen -10814, so a regular file then goes to the default text editor
+  /// (`open -t`); the first error is kept when that fails too
+  pub fn open_path(path: &str) -> Result<(), String> {
+    let first = open_any(path);
+    if cfg!(target_os = "macos") && first.is_err() && std::path::Path::new(path).is_file() && open_text(path).is_ok() {
+      return Ok(());
+    }
+    first
+  }
+
+  #[cfg(target_os = "macos")]
+  fn open_text(path: &str) -> Result<(), String> {
+    run("open", &["-t", path])
+  }
+
+  #[cfg(not(target_os = "macos"))]
+  fn open_text(_path: &str) -> Result<(), String> {
+    Err("no text-editor fallback here".to_owned())
+  }
+
   pub fn reveal(path: &str) -> Result<(), String> {
     #[cfg(windows)]
     return win::reveal(path);
