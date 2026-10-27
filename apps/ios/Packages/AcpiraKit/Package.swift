@@ -28,7 +28,7 @@ let package = Package(
     .target(name: "AcpiraModels", swiftSettings: dialect),
     // Envelope client, session patches, transports
     .target(name: "AcpiraSync", dependencies: ["AcpiraModels"], swiftSettings: dialect),
-    // Tokens and motion parameters generated from the webview CSS, Metal ports of its WebGL effects
+    // Tokens and motion parameters from the webview CSS plus the phone's own sizes, the Lucide and vendor marks
     // Inter ships as a bundled resource (OFL), registered at launch
     .target(name: "AcpiraDesign", resources: [.copy("Fonts")], swiftSettings: dialect),
     // Markdown → block AST → native views, safe against half-streamed syntax
@@ -36,7 +36,7 @@ let package = Package(
     // Synthetic session views shared with the web reference page (lab/ios-reference), for previews, screenshots and tests
     .target(name: "AcpiraFixtures", dependencies: ["AcpiraModels"], resources: [.copy("synthetic")], swiftSettings: dialect),
     // Screens and components; main-actor by default, like the app target. The i18n tables are exported from the
-    // webview dictionaries by scripts/export-ios-i18n.ts, the syntax highlighter (shiki for JavaScriptCore, its grammars
+    // webview dictionaries by scripts/export/ios-i18n.ts, the syntax highlighter (shiki for JavaScriptCore, its grammars
     // and themes) by scripts/export/ios-shiki.ts
     .target(
       name: "AcpiraUI",

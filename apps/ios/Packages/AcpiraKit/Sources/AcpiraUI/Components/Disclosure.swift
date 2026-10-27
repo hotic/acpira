@@ -22,8 +22,8 @@ struct Reveal: ViewModifier, Animatable {
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { natural = $0 }
         .frame(height: progress >= 1 ? nil : natural * progress, alignment: .top)
         .clipped()
-        // The phone fades the body in over the first part of the reveal, as the system's disclosures do
-        .opacity(Reading.phone ? min(1, progress * 2) : 1)
+        // The body fades in over the first part of the reveal, as the system's disclosures do
+        .opacity(min(1, progress * 2))
     }
   }
 }

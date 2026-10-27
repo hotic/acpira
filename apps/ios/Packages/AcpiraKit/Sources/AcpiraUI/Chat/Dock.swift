@@ -248,67 +248,10 @@ struct AlertCard: View {
     case .max_turn_requests: t("alert.maxTurns.title")
     default: t("alert.error.title")
     }
-    if Reading.phone {
-      phone(stop: stop, title: title, message: message, copyable: copyable)
-    } else {
-    VStack(alignment: .leading, spacing: Metrics.s1_5) {
-      HStack(spacing: Metrics.s2) {
-        Icon(.triangleAlert, size: Metrics.icon, strokeWidth: 1.75).foregroundStyle(Palette.fg3)
-        Text(web: title)
-          .textStyle(TypeScale.text2, weight: .medium)
-          .foregroundStyle(Palette.fg1)
-          .fixedSize()
-        if !copyable.isEmpty {
-          Button {
-            UIPasteboardBridge.copy(copyable)
-            copied = true
-          } label: {
-            Text(web: copied ? t("alert.copied") : detail.isEmpty ? t("alert.copy") : t("alert.copyWith", ["detail": detail]))
-              .textStyle(TypeScale.text3)
-              .foregroundStyle(Palette.fg3)
-              .lineLimit(1)
-              .truncationMode(.tail)
-              .padding(.horizontal, Metrics.s1_5)
-              .padding(.vertical, Metrics.s0_5)
-          }
-          .buttonStyle(.plain)
-          .layoutPriority(-1)
-        }
-        Spacer(minLength: 0)
-        if stop == .error, err?.actions == nil || err?.actions?.contains(.retry) == true {
-          Button(web: t("common.retry"), action: onRetry)
-            .buttonStyle(AcpButtonStyle(.primary, fixed: true))
-        }
-        if stop == .max_tokens || stop == .max_turn_requests {
-          Button(web: t("alert.continue"), action: onContinue)
-            .buttonStyle(AcpButtonStyle(.primary, fixed: true))
-        }
-        IconButton(.x, label: t("common.close"), action: onDismiss)
-          // -my-1 -mr-1.5: the icon's box reaches into the card's padding
-          .padding(.vertical, -Metrics.s1)
-          .padding(.trailing, -Metrics.s1_5)
-      }
-      .frame(minHeight: Metrics.ctl)
-      if let message {
-        Text(web: message)
-          .textStyle(TypeScale.text3)
-          .foregroundStyle(Palette.fg2)
-          .fixedSize(horizontal: false, vertical: true)
-      }
-    }
-    .padding(.horizontal, Metrics.pad)
-    .padding(.vertical, Metrics.s2_5)
-    .modifier(CardSurface())
-    .task(id: copied) {
-      // "Copied" stands for a moment, then the label returns
-      guard copied else { return }
-      try? await Task.sleep(for: .milliseconds(1500))
-      copied = false
-    }
-    }
+    phone(stop: stop, title: title, message: message, copyable: copyable)
   }
 
-  /// Design study `scale=phone`: the card as a phone reads it, top to bottom. What happened and ✕ on the first line,
+  /// The card as a phone reads it, top to bottom. What happened and ✕ on the first line,
   /// the agent's words under it, then the actions on their own row: the copyable detail as a quiet
   /// button at the start, the way on (retry, carry on) as the one filled button at the end, where a thumb reaches
   private func phone(stop: TurnStop, title: String, message: String?, copyable: String) -> some View {

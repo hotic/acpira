@@ -7,78 +7,33 @@ import SwiftUI
 
 // MARK: - User message
 
-/// The `message` surface: rounded-lg, the opaque page colour under the translucent chip fill, an inset hairline
-struct MessageSurface: ViewModifier {
-  func body(content: Content) -> some View {
-    content
-      .background {
-        RoundedRectangle(cornerRadius: Metrics.rLg).fill(Palette.bg0)
-          .overlay(RoundedRectangle(cornerRadius: Metrics.rLg).fill(Palette.chip))
-      }
-      .overlay(RoundedRectangle(cornerRadius: Metrics.rLg).strokeBorder(Palette.conversationLine))
-  }
-}
-
-/// A sent prompt: attachments above the text inside one card, capped at five body lines and scrolling inside
+/// A sent prompt: a right-aligned bubble on the chip fill, no outline; attachments above it, also right-aligned. The
+/// bubble's right edge meets the prose's (the agent turn's --pad)
 struct UserMessageCard: View {
   let turn: UserTurn
-  @Environment(\.shellStyle) private var style
 
   var body: some View {
     if turn.auto != true {
-      if style.user == .bubble { bubble } else { card }
-    }
-  }
-
-  /// Design study: the prompt as a right-aligned bubble on the chip fill, no outline; attachments above it, also
-  /// right-aligned. The bubble's right edge meets the prose's (the agent turn's --pad)
-  private var bubble: some View {
-    let shown = turn.text.trimmingTrailingWhitespace()
-    let attachments = turn.attachments ?? []
-    let shape = RoundedRectangle(cornerRadius: style.shape == .round ? Metrics.rBubble : Metrics.rLg)
-    return VStack(alignment: .trailing, spacing: Metrics.s2) {
-      // At its own width, so the row sits on the bubble's right edge
-      if !attachments.isEmpty { TurnAttachments(attachments: attachments).fixedSize() }
-      if !shown.isEmpty {
-        Text(web: shown)
-          .textStyle(WebType.text1)
-          .foregroundStyle(Palette.fgStrong)
-          .lineLimit(Int(Metrics.userMessageMax / WebType.text1.lineHeight))
-          .fixedSize(horizontal: false, vertical: true)
-          .padding(.horizontal, Metrics.s3 + Metrics.s0_5)
-          .padding(.vertical, Metrics.s2_5)
-          .background(shape.fill(Palette.bg0).overlay(shape.fill(Palette.bubbleBg)))
-      }
-    }
-    .padding(.leading, Metrics.bubbleInset)
-    .padding(.horizontal, style.margin == .slim ? Metrics.pad : 0)
-    .frame(maxWidth: .infinity, alignment: .trailing)
-  }
-
-  private var card: some View {
-    let shown = turn.text.trimmingTrailingWhitespace()
-    let attachments = turn.attachments ?? []
-    return Group {
-      Scroller(.vertical) {
-        VStack(alignment: .leading, spacing: Metrics.gap) {
-          if !attachments.isEmpty { TurnAttachments(attachments: attachments) }
-          if !shown.isEmpty {
-            Text(web: shown)
-              .textStyle(WebType.text1)
-              .foregroundStyle(Palette.fg1)
-              .fixedSize(horizontal: false, vertical: true)
-              .frame(maxWidth: .infinity, alignment: .leading)
-          }
+      let shown = turn.text.trimmingTrailingWhitespace()
+      let attachments = turn.attachments ?? []
+      let shape = RoundedRectangle(cornerRadius: Metrics.rBubble)
+      VStack(alignment: .trailing, spacing: Metrics.s2) {
+        // At its own width, so the row sits on the bubble's right edge
+        if !attachments.isEmpty { TurnAttachments(attachments: attachments).fixedSize() }
+        if !shown.isEmpty {
+          Text(web: shown)
+            .textStyle(WebType.text1)
+            .foregroundStyle(Palette.fgStrong)
+            .lineLimit(Int(Metrics.userMessageMax / WebType.text1.lineHeight))
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, Metrics.s3 + Metrics.s0_5)
+            .padding(.vertical, Metrics.s2_5)
+            .background(shape.fill(Palette.bg0).overlay(shape.fill(Palette.bubbleBg)))
         }
-        .padding(.horizontal, Metrics.pad)
-        .padding(.vertical, Metrics.gap)
       }
-      .scrollBounceBehavior(.basedOnSize)
-      .scrollIndicators(.hidden)
-      // --user-message-max: five body lines (plus the card's own padding)
-      .frame(maxHeight: Metrics.userMessageMax + Metrics.gap * 2)
-      .fixedSize(horizontal: false, vertical: true)
-      .modifier(MessageSurface())
+      .padding(.leading, Metrics.bubbleInset)
+      .padding(.horizontal, Metrics.pad)
+      .frame(maxWidth: .infinity, alignment: .trailing)
     }
   }
 }

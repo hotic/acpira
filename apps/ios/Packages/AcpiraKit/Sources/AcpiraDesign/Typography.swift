@@ -78,25 +78,25 @@ public struct TextStyle: Hashable, Sendable {
 public enum TypeScale {
   private static let ui = Tokens.uiFont
   private static let code = Tokens.codeFont
-  // Each step has the phone's own size beside the desktop's (`Reading`, design study 2026-10-27): prose at iOS body
-  // size with CJK leading, rows a step under it, captions at subheadline, micro at footnote, code a point up
-  /// Body (prose, user cards): ui / ui + 9 under airy; phone 17 / 27
-  public static var text1: TextStyle { Reading.pick(TextStyle(size: ui, lineHeight: ui + 9), TextStyle(size: ui + 1, lineHeight: ui + 11)) }
-  /// Line (rows): ui / ui + 5; phone 16 / 22
-  public static var text2: TextStyle { Reading.pick(TextStyle(size: ui, lineHeight: ui + 5), TextStyle(size: ui, lineHeight: ui + 6)) }
-  /// Caption: ui − 1 / ui + 3; phone 15 / 20
-  public static var text3: TextStyle { Reading.pick(TextStyle(size: ui - 1, lineHeight: ui + 3), TextStyle(size: ui - 1, lineHeight: ui + 4)) }
-  /// Micro: ui − 2 / ui + 2; phone 13 / 18 (iOS footnote)
-  public static var text4: TextStyle { Reading.pick(TextStyle(size: ui - 2, lineHeight: ui + 2), TextStyle(size: ui - 3, lineHeight: ui + 2)) }
+  // The phone's own steps, not the desktop's: prose at iOS body size with CJK leading, rows a step under it, captions
+  // at subheadline, micro at footnote, code a point up
+  /// Body (prose, user cards): 17 / 27
+  public static let text1: TextStyle = TextStyle(size: ui + 1, lineHeight: ui + 11)
+  /// Line (rows): 16 / 22
+  public static let text2: TextStyle = TextStyle(size: ui, lineHeight: ui + 6)
+  /// Caption: 15 / 20
+  public static let text3: TextStyle = TextStyle(size: ui - 1, lineHeight: ui + 4)
+  /// Micro: 13 / 18 (iOS footnote)
+  public static let text4: TextStyle = TextStyle(size: ui - 3, lineHeight: ui + 2)
   /// The phone's own steps for system surfaces (sheets, forms): iOS body (17) and footnote (13) at the default size
   public static let body = TextStyle(size: ui + 1, lineHeight: ui + 6)
   public static let footnote = TextStyle(size: ui - 3, lineHeight: ui + 2)
   /// The phone composer's field: iOS body size (17), a step above the transcript's body
   public static let field = TextStyle(size: ui + 1, lineHeight: ui + 8)
-  /// The session list's large title (iOS large-title size), design study 2026-10-26
+  /// The session list's large title (iOS large-title size)
   public static let title = TextStyle(size: ui + 12, lineHeight: ui + 18)
-  /// Code: code / code + 6; phone 14 / 21
-  public static var mono: TextStyle { Reading.pick(TextStyle(size: code, lineHeight: code + 6, mono: true), TextStyle(size: code + 1, lineHeight: code + 8, mono: true)) }
+  /// Code: 14 / 21
+  public static let mono: TextStyle = TextStyle(size: code + 1, lineHeight: code + 8, mono: true)
   /// Command output lines (--code-output-line-height)
   public static var codeOutput: TextStyle { TextStyle(size: code, lineHeight: Metrics.codeOutputLine, mono: true) }
 }

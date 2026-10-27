@@ -5,7 +5,7 @@ import SwiftUI
 import UIKit
 #endif
 
-// Design study `chrome=system` (2026-10-26): liquid pickers after libraries.dev/gooey. A chip sits in the composer's
+// Liquid pickers after libraries.dev/gooey. A chip sits in the composer's
 // glass group; opening it pushes a column of beans out of it, each bean squeezing out of the one before (a telescope),
 // and closing pulls them back in, the outermost first. A bean may turn into a panel of choices: the tapped bean
 // stretches into the panel (its bottom-left corner stays put) and the other beans shrink into it, and a pick shrinks
@@ -592,8 +592,22 @@ struct LiquidControls: View {
   private func fold() { withAnimation(motion ? Motion.gooSpring : nil) { stage = 0 } }
 }
 
+/// One Fast toggle per panel, whatever its source: an embedded variant, a Fusion pair, or a native model_config control
+struct FastState {
+  var on: Bool
+  var disabled: Bool
+  var set: (Bool) -> Void
+}
+
+/// Devin's Standard / Fast select or an adapter boolean as one toggle
+func nativeFastState(_ c: ConfigControl, onChange: @escaping (String) -> Void) -> FastState {
+  let on = ComposerControls.fastOn(c)
+  let next = ComposerControls.fastValue(c, on: !on)
+  return FastState(on: on, disabled: !c.options.contains { $0.id == next }) { _ in onChange(next) }
+}
+
 /// What the composer's model chip offers, read from the session's controls: the model families, the reasoning levels
-/// with Fast, and the modes. The liquid chip and the system menu (`chips=menu`) both draw from it
+/// with Fast, and the modes
 struct ModelChoices {
   /// The reasoning levels on offer (the family's own scale, else the agent's thought_level) and Fast beside them
   typealias Effort = (levels: [(id: String, name: String)], value: String, pick: (String) -> Void, fast: FastState?)
@@ -736,5 +750,18 @@ struct GooCheck: View {
   var on: Bool
   var body: some View {
     Icon(.check, size: Metrics.icon, strokeWidth: 2).foregroundStyle(Palette.fgStrong).opacity(on ? 1 : 0)
+  }
+}
+
+/// The Fast bolt: outlined, filled in --fast while Fast is on
+struct FastGlyph: View {
+  var on: Bool
+  var size: CGFloat = Metrics.chevron
+  var body: some View {
+    ZStack {
+      if on { IconShape(icon: .zap).fill(Palette.fast) }
+      Icon(.zap, size: size, strokeWidth: 2).foregroundStyle(on ? Palette.fast : .primary)
+    }
+    .frame(width: size, height: size)
   }
 }

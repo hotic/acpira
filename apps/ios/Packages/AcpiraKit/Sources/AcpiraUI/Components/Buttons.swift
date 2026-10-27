@@ -13,7 +13,6 @@ public struct AcpButtonStyle: ButtonStyle {
   /// The plain `h-ctl` button (a menu trigger): one line, exactly --ctl tall. Without it the button is the answer
   /// form (`h-auto min-h-ctl py-gap-half`), whose label may wrap
   var fixed: Bool
-  @Environment(\.shellStyle) private var style
   public init(_ variant: ButtonVariant = .secondary, compact: Bool = false, fixed: Bool = false) {
     self.variant = variant; self.compact = compact; self.fixed = fixed
   }
@@ -30,10 +29,10 @@ public struct AcpButtonStyle: ButtonStyle {
       // h-auto min-h-ctl py-gap-half: the label's line box, the half gap and the hairline on each side
       .padding(.vertical, compact || fixed ? 0 : Metrics.gapHalf + Metrics.hairline)
       .frame(minHeight: compact ? Metrics.ctlSm : Metrics.ctl, maxHeight: fixed ? Metrics.ctl : nil)
-      // A capsule under the round shape language, like every other control there
-      .background(style.controlShape().fill(primary ? (pressed ? Palette.chipHover : Palette.active) : (pressed ? Palette.hover : .clear)))
-      .overlay(style.controlShape().stroke(primary ? Palette.lineStrong : Palette.line, lineWidth: Metrics.hairline))
-      .contentShape(style.controlShape())
+      // A capsule, like every other control on the phone
+      .background(Capsule().fill(primary ? (pressed ? Palette.chipHover : Palette.active) : (pressed ? Palette.hover : .clear)))
+      .overlay(Capsule().stroke(primary ? Palette.lineStrong : Palette.line, lineWidth: Metrics.hairline))
+      .contentShape(Capsule())
   }
 }
 
@@ -68,39 +67,18 @@ struct IconButtonStyle: ButtonStyle {
   /// The resting ink when it is not the context's fg-2 (a popup bar's fg-3); pressed, the popup's own tonal fills
   var ink: Color?
   @Environment(\.composerInk) private var composerInk
-  @Environment(\.shellStyle) private var style
   func makeBody(configuration: Configuration) -> some View {
     let lit = configuration.isPressed || open
     configuration.label
       .foregroundStyle(lit ? Palette.fg1 : ink ?? (composerInk ? Palette.cmpFg2 : Palette.fg2))
       .frame(width: side, height: side)
-      .background(style.controlShape().fill(open ? (ink == nil ? Palette.active : Palette.popActive)
+      .background(Capsule().fill(open ? (ink == nil ? Palette.active : Palette.popActive)
         : configuration.isPressed ? (ink == nil ? Palette.hover : Palette.popHover) : .clear))
-      .contentShape(style.controlShape())
+      .contentShape(Capsule())
   }
 }
 
 public enum ChipVariant { case quiet, solid }
-
-/// Toolbar selector: --ctl-sm tall, --r-sm, text-3; solid is the filled pill (the mode), quiet is text until pressed
-public struct ChipStyle: ButtonStyle {
-  var variant: ChipVariant
-  var open: Bool
-  @Environment(\.composerInk) private var composerInk
-  public init(_ variant: ChipVariant = .quiet, open: Bool = false) { self.variant = variant; self.open = open }
-  public func makeBody(configuration: Configuration) -> some View {
-    let lit = configuration.isPressed || open
-    let fill: Color = variant == .solid ? (lit ? Palette.chipHover : Palette.chip) : (open ? Palette.active : configuration.isPressed ? Palette.hover : .clear)
-    HStack(spacing: Metrics.s1) { configuration.label }
-      .textStyle(TypeScale.text3)
-      .foregroundStyle(variant == .solid || lit ? Palette.fg1 : composerInk ? Palette.cmpFg2 : Palette.fg2)
-      .lineLimit(1)
-      .padding(.horizontal, Metrics.s1_5)
-      .frame(height: Metrics.ctlSm)
-      .background(RoundedRectangle(cornerRadius: Metrics.rSm).fill(fill))
-      .contentShape(RoundedRectangle(cornerRadius: Metrics.rSm))
-  }
-}
 
 /// The chip's contents: an optional lead mark, the label with faint meta, badges, and the caret
 public struct ChipLabel<Mark: View, Tags: View>: View {
@@ -144,27 +122,6 @@ extension ChipLabel where Tags == EmptyView {
 extension ChipLabel where Mark == EmptyView, Tags == EmptyView {
   public init(_ text: String, variant: ChipVariant = .quiet, meta: String? = nil, caret: Bool = true) {
     self.init(text, variant: variant, meta: meta, caret: caret, mark: { EmptyView() }, tags: { EmptyView() })
-  }
-}
-
-/// A badge inside a chip: text-4 on the active fill; `ultra` tints it
-public struct ChipTag: View {
-  let text: String
-  var ultra: Bool
-  /// The Fast badge leads with its bolt, filled in --fast
-  var fast: Bool
-  @Environment(\.composerInk) private var composerInk
-  public init(_ text: String, ultra: Bool = false, fast: Bool = false) { self.text = text; self.ultra = ultra; self.fast = fast }
-  public var body: some View {
-    HStack(spacing: Metrics.s0_5) {
-      if fast { FastGlyph(on: true, size: Metrics.fastBadge) }
-      Text(web: text)
-    }
-      .font(TypeScale.text4.font())  // centred in a 16 pt pill, no line box
-      .foregroundStyle(ultra ? Palette.ultra : composerInk ? Palette.cmpFg2 : Palette.fg2)
-      .padding(.horizontal, Metrics.s1)
-      .frame(height: Metrics.s1 * 4)
-      .background(RoundedRectangle(cornerRadius: Metrics.rXs).fill(ultra ? Palette.ultra.opacity(0.15) : Palette.active))
   }
 }
 

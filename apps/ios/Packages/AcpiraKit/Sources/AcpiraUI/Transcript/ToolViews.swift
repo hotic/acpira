@@ -610,12 +610,12 @@ extension EnvironmentValues {
 }
 
 extension View {
-  /// A code card's scrolling body: cut at --code-output-max in the transcript, whole in the code sheet. On the phone
-  /// (design study `scale=phone`) the cut does not scroll, so no scroll view nests in the transcript's; a fade at the
-  /// cut shows there is more, and a tap opens the whole card. The cut is the webview's, so a card under it reads as
+  /// A code card's scrolling body: cut at --code-output-max in the transcript, whole in the code sheet. The cut does
+  /// not scroll, so no scroll view nests in the transcript's; a fade at the cut shows there is more, and a tap opens
+  /// the whole card. The cut is the webview's, so a card under it reads as
   /// the desktop's (a shorter phone cap sliced a seven-line diff through its last line)
   func codeCap(natural: CGFloat, inSheet: Bool) -> some View {
-    let preview = Reading.phone && !inSheet
+    let preview = !inSheet
     return frame(maxHeight: inSheet ? nil : WebMetrics.codeOutputMax)
       .fixedSize(horizontal: false, vertical: true)
       .scrollDisabled(preview)
@@ -628,8 +628,7 @@ extension View {
       }
   }
 
-  /// On the phone a tap on a code card opens the whole card in the code sheet; elsewhere (and inside the sheet) the
-  /// card stays as it is
+  /// A tap on a code card opens the whole card in the code sheet; inside the sheet the card stays as it is
   func codeViewer<Full: View>(title: String, copy: String, copyLabel: String, @ViewBuilder full: @escaping () -> Full) -> some View {
     modifier(CodeViewer(title: title, copy: copy, copyLabel: copyLabel, full: full))
   }
@@ -645,7 +644,7 @@ private struct CodeViewer<Full: View>: ViewModifier {
   @State private var shown = false
 
   func body(content: Content) -> some View {
-    if Reading.phone && !inSheet {
+    if !inSheet {
       content
         .contentShape(Rectangle())
         .onTapGesture { shown = true }
@@ -668,7 +667,7 @@ enum CodeSheetProbe {
   nonisolated(unsafe) static var claimed = false
 }
 
-/// The code sheet (design study `scale=phone`): one card whole, both ways scrollable, under a title naming it, the
+/// The code sheet: one card whole, both ways scrollable, under a title naming it, the
 /// system's close button and copy in its bar
 struct CodeSheet<Content: View>: View {
   var title: String
