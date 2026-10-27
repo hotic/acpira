@@ -29,6 +29,7 @@ import { playChime } from './effects/chime';
 import { probeUrl } from './probeUrl';
 import { isWidgetFrame } from './chat/AgentWidget';
 import { applyPluginTheme } from './pluginTheme';
+import { deliverPluginCalled, deliverPluginPost, setPluginSlots } from './pluginSlots';
 import type { SettingsPage } from './settings/Nav';
 import type { SharedState } from './settings/SharedPage';
 import type { StorageState } from './settings/StoragePage';
@@ -276,6 +277,10 @@ export function App() {
         case 'pickedFolder': { const settle = folderPick.current; folderPick.current = undefined; settle?.(m.path); break; }
         case 'toast': pushShellToast(m); break;
         case 'pluginTheme': applyPluginTheme(m.css); break;
+        // Plugins' interface pieces and their frames' traffic (pluginSlots.ts); the tool panel closes tabs of pieces gone
+        case 'pluginUi': setPluginSlots(m.slots); panel.syncPlugins(); break;
+        case 'pluginCalled': deliverPluginCalled(m); break;
+        case 'pluginPost': deliverPluginPost(m); break;
         case 'updateState': setUpdateState(m.state); break;
         case 'desktopMenu': setDesktopMenu(m.menus); break;
         case 'windowState': setWindowMaximized(m.maximized); break;

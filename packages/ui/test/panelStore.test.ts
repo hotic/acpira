@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { dedupeRecentPages } from '../panel/browserTabs';
-import { FILES_TAB, panel, panelState } from '../panel/store';
+import { FILES_TAB, anyModule, panel, panelState } from '../panel/store';
+import { setPluginSlots } from '../pluginSlots';
 
 describe('dedupeRecentPages', () => {
   it('collapses repeated titles on the same loopback port, prefers running URLs, and caps at 5', () => {
@@ -68,6 +69,47 @@ describe('panel.setFiles hot-plugging', () => {
     expect(panelState().open).toBe(false);
 
     // Restore default state
+    panel.setModules({ files: true, terminal: true, browser: true });
+  });
+});
+
+describe('plugin tab pieces', () => {
+  const piece = (id: string, title = id) => ({ plugin: 'notes', id, slot: 'panel.tab' as const, title, html: `<p>${id}</p>` });
+
+  it('open as tabs of their own, take the tab again when asked twice, and close when their plugin goes', () => {
+    panel.setModules({ files: true, terminal: true, browser: true });
+    panel.setContext('s-plugin', '/proj-plugin');
+    setPluginSlots([piece('board', 'Board')]);
+    const id = panel.openPlugin('notes', 'board', 'Board');
+    expect(panelState().tabs.find(t => t.id === id)).toMatchObject({ kind: 'plugin', plugin: 'notes', piece: 'board', title: 'Board' });
+    // The same piece again (from the new-tab page) takes the tab and drops the new-tab page it was picked on
+    const page = panel.newTab();
+    expect(panel.openPlugin('notes', 'board', 'Board', page)).toBe(id);
+    expect(panelState().tabs.map(t => t.id)).toEqual([FILES_TAB, id]);
+    expect(panelState().tab).toBe(id);
+    // A new title follows; the piece gone (switched off, safe mode) takes its tab away
+    setPluginSlots([piece('board', 'Kanban')]);
+    panel.syncPlugins();
+    expect(panelState().tabs.find(t => t.id === id)).toMatchObject({ title: 'Kanban' });
+    setPluginSlots([]);
+    panel.syncPlugins();
+    expect(panelState().tabs.map(t => t.kind)).toEqual(['files']);
+    expect(panelState().tab).toBe(FILES_TAB);
+  });
+
+  it('keep the panel usable with every built-in module switched off', () => {
+    panel.setContext('s-plugin-2', '/proj-plugin-2');
+    setPluginSlots([piece('board')]);
+    panel.setModules({ files: false, terminal: false, browser: false });
+    expect(anyModule(panelState())).toBe(true);
+    panel.toggle(true);
+    expect(panelState().open).toBe(true);
+    panel.openPlugin('notes', 'board', 'board', panelState().tabs[0]!.id);
+    expect(panelState().tabs.map(t => t.kind)).toEqual(['plugin']);
+    setPluginSlots([]);
+    panel.syncPlugins();
+    expect(anyModule(panelState())).toBe(false);
+    expect(panelState().open).toBe(false);
     panel.setModules({ files: true, terminal: true, browser: true });
   });
 });

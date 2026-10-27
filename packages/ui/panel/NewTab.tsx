@@ -1,11 +1,12 @@
 import { useEffect, useRef } from 'react';
 import type { ProjectChange } from '@acpira/shared/protocol';
-import { Files, Globe, SquareTerminal, type LucideIcon } from 'lucide-react';
+import { Globe } from 'lucide-react';
 import { t } from '../i18n';
 import { cn } from '../ui/cn';
 import { DiffStat } from '../chat/ToolCall';
 import { dedupeRecentPages, useRecentPages } from './browserTabs';
 import { FileGlyph, dirOf, nameOf } from './files';
+import { usePanelModules, type TabPick } from './modules';
 import { usePanelValue } from './store';
 import { vscodeApi } from '../vscodeApi';
 
@@ -15,9 +16,10 @@ import { vscodeApi } from '../vscodeApi';
 // with the files this session changed above the pages (lab/desk-ide.preview, 2026-10-24). Three tools since 2026-10-24,
 // in the order 文件, 终端, 浏览器: Files shows the session project's tree (the Files tab, the files layout's explorer) and
 // the page closes, Terminal turns it into a terminal the engine runs, Browser into a browser tab. Until 2026-10-24 Files
-// opened a quick open by name in place, which the owner rejected: the tile names the folder tree, not a search
+// opened a quick open by name in place, which the owner rejected: the tile names the folder tree, not a search. The tiles
+// are the panel's modules (panel/modules.ts), so a plugin's tab piece sits after the three built-in ones
 
-export type TabPick = { kind: 'browser'; url?: string } | { kind: 'terminal' } | { kind: 'files' };
+export type { TabPick } from './modules';
 
 const hostOf = (url: string) => { try { return new URL(url).host; } catch { return url; } };
 const LABEL = 'flex min-h-row items-center px-2 text-3 text-fg-3';
@@ -33,18 +35,13 @@ export function NewTab({ onPick, focus = true, changes }: {
   const first = useRef<HTMLButtonElement>(null);
   const recent = useRecentPages();
   const filesOn = usePanelValue(s => s.files);
-  const terminalOn = usePanelValue(s => s.terminal);
   const browserOn = usePanelValue(s => s.browser);
   useEffect(() => {
     if (focus) first.current?.focus({ preventScroll: true });
     // Asked each time the page shows, so the dots say what runs now
     if (browserOn) vscodeApi().postMessage({ type: 'panelHistory' });
   }, [browserOn]);
-  const tools: { Icon: LucideIcon; title: string; hint: string; pick: () => void }[] = [
-    ...(filesOn ? [{ Icon: Files, title: t('panel.files'), hint: t('panel.filesHint'), pick: () => onPick({ kind: 'files' }) }] : []),
-    ...(terminalOn ? [{ Icon: SquareTerminal, title: t('panel.terminal'), hint: t('panel.terminalHint'), pick: () => onPick({ kind: 'terminal' }) }] : []),
-    ...(browserOn ? [{ Icon: Globe, title: t('panel.browser'), hint: t('panel.browserHint'), pick: () => onPick({ kind: 'browser' }) }] : []),
-  ];
+  const tools = usePanelModules();
   const running = new Set(recent.running);
   const pages = browserOn ? dedupeRecentPages(recent.pages, running) : [];
   const changed = filesOn ? (changes?.files ?? []) : [];
@@ -52,12 +49,12 @@ export function NewTab({ onPick, focus = true, changes }: {
     <div className="scroll-thin absolute inset-0 flex flex-col overflow-auto px-page" data-new-tab>
       <div className="min-h-page flex-1" />
       <div className="mx-auto flex w-full max-w-new-tab flex-col gap-page">
-        <div className={cn('grid gap-gap', tools.length === 3 ? 'grid-cols-3' : tools.length === 2 ? 'grid-cols-2' : 'grid-cols-1')}>
+        <div className={cn('grid gap-gap', tools.length >= 3 ? 'grid-cols-3' : tools.length === 2 ? 'grid-cols-2' : 'grid-cols-1')}>
           {tools.map((x, i) => (
-            <button key={x.title} ref={i === 0 ? first : undefined} type="button" title={x.hint} onClick={x.pick}
+            <button key={x.id} ref={i === 0 ? first : undefined} type="button" title={x.hint} onClick={() => onPick(x.pick)}
               className="group/entry flex flex-col items-center justify-center gap-gap rounded-lg border border-line py-page text-2 text-fg-1 outline-none transition-colors hover:border-line-strong hover:bg-hover focus-visible:border-line-strong">
               <x.Icon strokeWidth={1.5} className="size-lead text-fg-3 transition-colors group-hover/entry:text-fg-1" />
-              {x.title}
+              <span className="max-w-full truncate px-pad">{x.title}</span>
             </button>
           ))}
         </div>

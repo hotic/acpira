@@ -12,6 +12,8 @@ import { FileGlyph, nameOf } from './files';
 import { NewTab, type TabPick } from './NewTab';
 import { FILES_TAB, allLiveTabs, panel, sameView, scopedRoot, usePanel } from './store';
 import { TerminalFrame } from './TerminalFrame';
+import { PluginFrame } from './PluginFrame';
+import { usePluginPieces } from '../pluginSlots';
 import { BrowserFrame, MOVE_MS, TAB_ICON, TOGGLE_KEY, TabButton, ViewPane, pickNewTab, tabLabel, tabTitle, terminalPathOpener, useFreshTab, useProjectFiles } from './ToolPanel';
 
 // The desktop app's files layout (acpira.desktopLayout = files, picked in the LAB, lab/desk-ide.preview, 2026-10-24): the
@@ -88,6 +90,7 @@ export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
   const views = f.view && !opened.some(v => sameView(v, f.view!)) ? [...opened, f.view] : opened;
   const pages = s.tabs.filter(tab => tab.kind !== 'files');
   const livePages = allLiveTabs(s);
+  const pluginTabs = usePluginPieces('panel.tab');
   const sessionsLabel = p.sessionsShown ? t('desktop.hideSessions') : t('desktop.showSessions');
   // A pick on the stage: Files unfolds the explorer (the project's tree) and gives the stage back to the files; a terminal
   // or a page in place of the new tab `tab` (none: the stage's empty state)
@@ -95,6 +98,7 @@ export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
     if (choice.kind !== 'files') {
       if (tab) pickNewTab(tab, choice, root);
       else if (choice.kind === 'terminal') panel.openTerminal(root);
+      else if (choice.kind === 'plugin') panel.openPlugin(choice.plugin, choice.piece, choice.title);
       else panel.openBrowser(choice.url);
       return;
     }
@@ -139,7 +143,7 @@ export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
               );
             })}
           </div>
-          {(s.terminal || s.browser) && (
+          {(s.terminal || s.browser || pluginTabs.length > 0) && (
             <IconButton title={t('panel.newTab')} aria-label={t('panel.newTab')} onClick={() => fresh.made(panel.newTab())}><Plus strokeWidth={1.5} /></IconButton>
           )}
         </div>
@@ -156,6 +160,7 @@ export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
             const active = pages.some(t => t.id === tab.id) && s.tab === tab.id;
             if (tab.kind === 'browser') return s.browser ? <BrowserFrame key={tab.id} tab={tab} shown={active} stage root={root} /> : null;
             if (tab.kind === 'terminal') return s.terminal ? <TerminalFrame key={tab.id} tab={tab} shown={active} openPath={terminalPathOpener(root, p.openEditor, f.reveal)} /> : null;
+            if (tab.kind === 'plugin') return <PluginFrame key={tab.id} plugin={tab.plugin} piece={tab.piece} shown={active} />;
             return null;
           })}
         </div>

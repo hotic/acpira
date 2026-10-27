@@ -63,6 +63,69 @@ body.vscode-light {
 .acp-shell :focus, .acp-shell :focus-visible { outline: none !important; }
 "#;
 
+/// The document a plugin's interface piece runs in (webview/panel/PluginFrame.tsx), framed with `sandbox="allow-scripts"`
+/// and no allow-same-origin, so its origin is opaque. Its policy allows inline code and nothing from the network; the
+/// page sends the piece's HTML, which replaces this document and keeps the `acpira` object: `call(method, params)` reaches
+/// the plugin's own methods, `on(fn)` hears what its runtime posts (`ui/post`). Not a boundary against the plugin itself,
+/// whose code runs with the user's rights anyway; it keeps the page's state and the session out of the piece's reach
+pub const PLUGIN_FRAME_HTML: &str = r#"<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:">
+</head>
+<body>
+<script>
+(function () {
+  var waits = {}, hearers = [], next = 0;
+  // The page's tokens on the root, first in the head so the piece's own styles win
+  function style(css) {
+    var el = document.getElementById('acpira-theme');
+    if (!el) { el = document.createElement('style'); el.id = 'acpira-theme'; document.head.insertBefore(el, document.head.firstChild); }
+    el.textContent = ':root{' + (css || '') + '}html,body{margin:0;background:transparent;color:var(--fg-1);font-family:var(--font);font-size:var(--ui-font-size)}';
+  }
+  function onMessage(e) {
+    if (e.source !== parent) return;
+    var m = e.data || {};
+    if (m.acpira === 'load') {
+      document.open();
+      document.write(m.html || '');
+      document.close();
+      style(m.css);
+      // document.open drops the window's listeners; the acpira object stays
+      window.addEventListener('message', onMessage);
+    } else if (m.acpira === 'theme') {
+      style(m.css);
+    } else if (m.acpira === 'result') {
+      var w = waits[m.id];
+      if (!w) return;
+      delete waits[m.id];
+      if (m.error !== undefined) w.reject(new Error(m.error)); else w.resolve(m.result);
+    } else if (m.acpira === 'post') {
+      hearers.slice().forEach(function (fn) { try { fn(m.message); } catch (err) { console.error(err); } });
+    }
+  }
+  window.acpira = {
+    call: function (method, params) {
+      return new Promise(function (resolve, reject) {
+        var id = ++next;
+        waits[id] = { resolve: resolve, reject: reject };
+        parent.postMessage({ acpira: 'call', id: id, method: method, params: params }, '*');
+      });
+    },
+    on: function (fn) {
+      hearers.push(fn);
+      return function () { hearers = hearers.filter(function (h) { return h !== fn; }); };
+    }
+  };
+  window.addEventListener('message', onMessage);
+  parent.postMessage({ acpira: 'ready' }, '*');
+})();
+</script>
+</body>
+</html>
+"#;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PageHost {
   Editor,
@@ -168,6 +231,7 @@ pub enum Route {
     tab: Option<String>,
   },
   Theme,
+  PluginFrame,
   File(PathBuf),
   /// A bundle file the packaged app stores zstd-compressed beside its name (`<name>.zst`, apps/desktop/scripts/package.mjs
   /// packs `assets/`); `mime` is the original name's. `unpack` reads it
@@ -203,6 +267,9 @@ pub fn route(path: &str, query: Option<&str>, webview: &Path, blobs: Option<&Pat
   }
   if path == "/desktop.css" {
     return Route::Theme;
+  }
+  if path == "/plugin-frame.html" {
+    return Route::PluginFrame;
   }
   let file = if let Some(rest) = path.strip_prefix("/webview/") {
     let plain = crate::confine::confine(webview, rest).filter(|f| f.is_file());
@@ -295,6 +362,7 @@ mod tests {
     );
     assert_eq!(route("/index.html", Some("host=browser&tab=%3Cx%3E"), &web, None), Route::Page { host: PageHost::Browser, tab: None });
     assert_eq!(route("/desktop.css", None, &web, None), Route::Theme);
+    assert_eq!(route("/plugin-frame.html", None, &web, None), Route::PluginFrame);
     assert!(matches!(route("/webview/main.js", None, &web, None), Route::File(f) if f.ends_with("main.js")));
     assert_eq!(route("/webview/../secret", None, &web, None), Route::NotFound);
     assert_eq!(route("/webview/assets", None, &web, None), Route::NotFound);

@@ -27,7 +27,7 @@
 // Needs the repository's bundles (`pnpm build`). After the app quits the run waits out the engine's idle grace and checks
 // that no agent process is left. --keep leaves the temp folder (logs, records); a failure always does
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { connect } from 'node:net';
@@ -303,6 +303,62 @@ async function main() {
     await page.press('the terminal tab\'s close button', `(${terminalTab})?.querySelector('[aria-label="Close tab"]')`);
     await waitUntil('the shell to end with its tab', () => !alive(shellPid), 5_000);
     say('a terminal tab runs a typed line in the project and its shell ends with the tab');
+
+    // A plugin's tab piece: enabled as the plugin page does, it joins the new tab's tiles after the built-in ones and runs
+    // in a sandboxed frame that reaches its own process, hears what the process posts, gets the page's tokens and has
+    // neither the page nor the network (the frame reports what it saw through a method of its plugin)
+    const plugin = join(data, 'plugins', 'smoke-board');
+    const report = join(root, 'frame-report.json');
+    mkdirSync(plugin, { recursive: true });
+    writeFileSync(join(plugin, 'board.mjs'), `
+import { createInterface } from 'node:readline';
+import { writeFileSync } from 'node:fs';
+const send = m => process.stdout.write(JSON.stringify(m) + '\\n');
+createInterface({ input: process.stdin }).on('close', () => process.exit(0)).on('line', line => {
+  const m = JSON.parse(line);
+  if (m.method === 'initialize') return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: 1 } });
+  if (m.method === 'rpc/board.hello') {
+    send({ jsonrpc: '2.0', id: 'post', method: 'ui/post', params: { message: { pushed: true } } });
+    return send({ jsonrpc: '2.0', id: m.id, result: { hello: 'board' } });
+  }
+  if (m.method === 'rpc/board.report') { writeFileSync(${JSON.stringify(report)}, JSON.stringify(m.params.params)); return send({ jsonrpc: '2.0', id: m.id, result: {} }); }
+  if (m.id !== undefined && m.method) send({ jsonrpc: '2.0', id: m.id, error: { code: -32601, message: 'no ' + m.method } });
+});
+`);
+    writeFileSync(join(plugin, 'board.html'), `<!doctype html><p>Smoke board</p><script>
+const seen = {};
+acpira.on(m => { seen.pushed = !!(m && m.pushed); });
+document.addEventListener('securitypolicyviolation', () => { seen.blocked = true; });
+(async () => {
+  try { void parent.document.body; seen.page = 'reachable'; } catch { seen.page = 'opaque'; }
+  seen.hello = (await acpira.call('board.hello')).hello;
+  await fetch('http://127.0.0.1:9/').then(() => { seen.network = 'open'; }, () => { seen.network = 'closed'; });
+  seen.fg = getComputedStyle(document.documentElement).getPropertyValue('--fg-1').trim();
+  await new Promise(r => setTimeout(r, 300));
+  await acpira.call('board.report', seen);
+})();
+</script>`);
+    writeFileSync(join(plugin, 'plugin.json'), JSON.stringify({
+      schema: 1, id: 'smoke-board', version: '1.0.0', description: 'Smoke board',
+      contributes: {
+        // A command is a file of the plugin or one on PATH, never an absolute path
+        runtime: { command: ['node', 'board.mjs'], methods: ['board.hello', 'board.report'] },
+        ui: [{ id: 'board', slot: 'panel.tab', title: 'Board', html: 'board.html' }],
+      },
+    }));
+    await page.eval(`window.__acpiraApi.postMessage({ type: 'pluginAction', action: { op: 'enable', id: 'smoke-board' } })`);
+    await page.press('the new tab button', `document.querySelector('[data-panel-tabs] button[aria-label="New tab"]')`);
+    const withBoard = await page.waitFor('the plugin\'s tile', `(() => { const t = [...document.querySelectorAll('[data-new-tab] .grid button')].map(b => b.textContent.trim()); return t.includes('Board') && t.join(','); })()`);
+    if (withBoard !== 'Files,Terminal,Browser,Board') fail(`the new tab's tiles read ${withBoard} with the plugin on`);
+    await page.press('the plugin\'s tile', `[...document.querySelectorAll('[data-new-tab] button')].find(b => b.textContent.trim() === 'Board')`);
+    await page.waitFor('the plugin\'s tab', `[...document.querySelectorAll('[data-panel-tabs] [role="tab"]')].some(t => t.textContent.trim() === 'Board') && !!document.querySelector('iframe[src$="/plugin-frame.html"][sandbox="allow-scripts"]')`);
+    await waitUntil('the frame\'s report', () => existsSync(report), 15_000);
+    const seen = JSON.parse(readFileSync(report, 'utf8'));
+    if (seen.hello !== 'board' || !seen.pushed || seen.page !== 'opaque' || seen.network !== 'closed' || !seen.blocked || !seen.fg) fail(`the plugin frame saw ${JSON.stringify(seen)}`);
+    if (shotDir) { await sleep(300); await page.shot(join(shotDir, 'panel-plugin.png')); }
+    await page.eval(`window.__acpiraApi.postMessage({ type: 'pluginAction', action: { op: 'disable', id: 'smoke-board' } })`);
+    await page.waitFor('the plugin\'s tab gone', `![...document.querySelectorAll('[data-panel-tabs] [role="tab"]')].some(t => t.textContent.trim() === 'Board') && !document.querySelector('iframe[src$="/plugin-frame.html"]')`);
+    say('a plugin\'s tab piece joins the new tab, runs sandboxed against its own process, and goes with its plugin');
     await page.press('the tool panel toggle', `document.querySelector('[data-panel-toggle] button')`);
     await page.waitFor('the tool panel closed', `!${panelShown}`);
 
@@ -485,7 +541,11 @@ async function main() {
   } finally {
     page?.close();
     if (app) { app.kill('SIGTERM'); await Promise.race([new Promise(r => app.once('exit', r)), sleep(5000)]); }
-    if (passed && !keep) rmSync(root, { recursive: true, force: true });
+    if (passed && !keep) {
+      // A confirmed plugin's frozen copy is read-only, folders included
+      writable(join(data, 'plugins'));
+      rmSync(root, { recursive: true, force: true });
+    }
     else say(`kept ${root}${passed ? '' : ' (its engine ends by itself within its 30 s idle grace)'}`);
   }
 }
@@ -600,6 +660,16 @@ async function mentions() {
   await page.type('[data-start-dock] textarea', '', true);
   await page.waitFor('an empty composer', `document.querySelector('[data-start-dock] textarea').value === ''`);
   return names;
+}
+
+function writable(dir) {
+  if (!existsSync(dir)) return;
+  chmodSync(dir, 0o755);
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) writable(p);
+    else if (e.isFile()) chmodSync(p, 0o644);
+  }
 }
 
 async function within(what, promise, timeout) {

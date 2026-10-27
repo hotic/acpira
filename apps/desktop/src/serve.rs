@@ -2,7 +2,7 @@
 //! (acpira_desktop::page::route). `/blank` is the empty document a new webview starts on, so WebKit's frame-rate switch is
 //! set before the real page loads
 
-use acpira_desktop::page::{PageConfig, Route, THEME_CSS, mime, page_html, route, unpack};
+use acpira_desktop::page::{PLUGIN_FRAME_HTML, PageConfig, Route, THEME_CSS, mime, page_html, route, unpack};
 use tauri::http::{Request, Response, StatusCode};
 
 fn respond(status: StatusCode, mime: &str, body: Vec<u8>) -> Response<Vec<u8>> {
@@ -56,6 +56,7 @@ pub fn handle(request: Request<Vec<u8>>, responder: tauri::UriSchemeResponder) {
       responder.respond(respond(StatusCode::OK, "text/html; charset=utf-8", html.into_bytes()));
     }
     Route::Theme => responder.respond(respond(StatusCode::OK, "text/css; charset=utf-8", THEME_CSS.as_bytes().to_vec())),
+    Route::PluginFrame => responder.respond(respond(StatusCode::OK, "text/html; charset=utf-8", PLUGIN_FRAME_HTML.as_bytes().to_vec())),
     Route::File(file) => {
       // Off the main thread: the bundle is megabytes, a blob can be more
       std::thread::spawn(move || match std::fs::read(&file) {
