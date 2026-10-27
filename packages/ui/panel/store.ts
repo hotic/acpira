@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { PANEL_SCOPES, type PanelScope } from '@acpira/shared/settings';
+import { pieceKey, pluginPieces } from '../pluginSlots';
 import { setWebviewState, webviewState } from '../vscodeApi';
 
 // The desktop tool panel's state, one per window: whether it is open, how it scopes its tabs and views (per project, per
@@ -22,7 +23,10 @@ export type PanelTab =
   | { id: string; kind: 'terminal'; cwd: string; title?: string }
   // `url` as asked for or as the page last named it (absent: an empty one on its address bar); `title` once the page named
   // itself; `nav` counts the openings asked of the shell, so a title naming the page's own address never reloads it
-  | { id: string; kind: 'browser'; url?: string; title?: string; nav?: number };
+  | { id: string; kind: 'browser'; url?: string; title?: string; nav?: number }
+  // A plugin's `panel.tab` piece (contributes.ui), in a sandboxed frame; `title` the piece's as last seen, for the tab
+  // while the plugin's pieces have not arrived yet
+  | { id: string; kind: 'plugin'; plugin: string; piece: string; title?: string };
 
 // What a Files tab shows: a file (scrolled to `line`, with `selection` picked; `text` / `planId` for a plan outside the
 // project folder), the session's whole review, or nothing (the tree takes the tab)
@@ -90,6 +94,10 @@ export const FILES_TAB = 'files';
 const FILES: PanelTab = { id: FILES_TAB, kind: 'files' };
 const ALL_MODULES: PanelModules = { files: true, terminal: true, browser: true };
 
+// Whether the panel has anything to show: a built-in module switched on or a plugin's tab piece in effect
+export const anyModule = (m: PanelModules) => m.files || m.terminal || m.browser || pluginPieces('panel.tab').length > 0;
+const isPluginTab = (t: PanelTab): t is Extract<PanelTab, { kind: 'plugin' }> => t.kind === 'plugin';
+
 function validTabs(raw: unknown, m: PanelModules = ALL_MODULES): PanelTab[] {
   const list = Array.isArray(raw)
     ? raw.filter((t): t is PanelTab => !!t && typeof t.id === 'string' && (
@@ -97,6 +105,7 @@ function validTabs(raw: unknown, m: PanelModules = ALL_MODULES): PanelTab[] {
         || t.kind === 'new'
         || (m.files && t.kind === 'files' && t.id !== FILES_TAB)
         || (m.terminal && t.kind === 'terminal' && typeof t.cwd === 'string')
+        || (t.kind === 'plugin' && typeof t.plugin === 'string' && typeof t.piece === 'string')
       ))
     : [];
   if (m.files) return [FILES, ...list];
@@ -113,6 +122,7 @@ function normalizeSlot(slot: PanelSlot, m: PanelModules): PanelSlot {
     if (t.kind === 'files') return m.files && t.id !== FILES_TAB;
     if (t.kind === 'terminal') return m.terminal;
     if (t.kind === 'browser') return m.browser;
+    if (t.kind === 'plugin') return true;
     return !(m.files && slot.tabs.length === 1);
   });
   if (m.files) {
@@ -144,14 +154,15 @@ export const viewKey = (tab: string, root: string, sessionId?: string) => {
   return tab === FILES_TAB ? r : `${tab}\n${r}`;
 };
 
-// Every browser and terminal tab alive across all scopes, so switching projects or sessions hides background tabs in place
-// instead of unmounting their iframes or killing their shells
+// Every browser, terminal and plugin tab alive across all scopes, so switching projects or sessions hides background tabs
+// in place instead of unmounting their iframes or killing their shells
+const live = (t: PanelTab) => t.kind === 'browser' || t.kind === 'terminal' || t.kind === 'plugin';
 export function allLiveTabs(s: PanelState = current()): PanelTab[] {
   const byId = new Map<string, PanelTab>();
-  for (const t of s.tabs) if (t.kind === 'browser' || t.kind === 'terminal') byId.set(t.id, t);
+  for (const t of s.tabs) if (live(t)) byId.set(t.id, t);
   for (const slot of Object.values(s.slots)) {
     if (!slot) continue;
-    for (const t of slot.tabs) if ((t.kind === 'browser' || t.kind === 'terminal') && !byId.has(t.id)) byId.set(t.id, t);
+    for (const t of slot.tabs) if (live(t) && !byId.has(t.id)) byId.set(t.id, t);
   }
   return [...byId.values()];
 }
@@ -172,7 +183,7 @@ function restore(): PanelState {
     }
   }
   return {
-    open: saved?.open === true && (m.files || m.terminal || m.browser),
+    open: saved?.open === true && (m.files || m.terminal || m.browser || main.tabs.some(isPluginTab)),
     ...m,
     scope,
     tabs: main.tabs,
@@ -283,7 +294,7 @@ const originOf = (url: string | undefined) => { try { return url ? new URL(url).
 export const panel = {
   toggle(open = !current().open) {
     const s = current();
-    if (!s.files && !s.terminal && !s.browser) { if (s.open) update({ open: false }); return; }
+    if (!anyModule(s)) { if (s.open) update({ open: false }); return; }
     update({ open });
   },
   select(tab: string) { update({ tab, open: true }); },
@@ -323,8 +334,7 @@ export const panel = {
     }
     const key = slotKeyOf(s.scope, s.sessionId, s.root);
     slots[key] = main;
-    const anyOn = m.files || m.terminal || m.browser;
-    state = { ...s, ...m, open: anyOn ? s.open : false, tabs: main.tabs, tab: main.tab, slots };
+    state = { ...s, ...m, open: anyModule(m) ? s.open : false, tabs: main.tabs, tab: main.tab, slots };
     persist(state);
     for (const l of listeners) l();
   },
@@ -491,6 +501,45 @@ export const panel = {
     const tabs = replace ? s.tabs.map(t => (t.id === replace ? tab : t)) : [...s.tabs, tab];
     update({ open: true, tabs, tab: tab.id });
     return tab.id;
+  },
+  // A plugin's tab piece: the tab already showing it takes the selection, else a new one (or the new-tab page `replace`)
+  openPlugin(plugin: string, piece: string, title: string, replace?: string): string {
+    const s = current();
+    const same = s.tabs.find(t => t.kind === 'plugin' && t.plugin === plugin && t.piece === piece);
+    if (same) {
+      update({ open: true, tab: same.id, tabs: replace ? s.tabs.filter(t => t.id !== replace) : s.tabs });
+      return same.id;
+    }
+    const tab: PanelTab = { id: nextId('plugin'), kind: 'plugin', plugin, piece, title };
+    const tabs = replace ? s.tabs.map(t => (t.id === replace ? tab : t)) : [...s.tabs, tab];
+    update({ open: true, tabs, tab: tab.id });
+    return tab.id;
+  },
+  // The plugins' pieces in effect changed: tabs of pieces gone close everywhere, the rest keep their piece's title
+  syncPlugins() {
+    const s = current();
+    const pieces = new Map(pluginPieces('panel.tab').map(p => [pieceKey(p.plugin, p.id), p]));
+    let changed = false;
+    const fix = (slot: PanelSlot): PanelSlot => {
+      if (!slot.tabs.some(isPluginTab)) return slot;
+      const tabs: PanelTab[] = [];
+      for (const t of slot.tabs) {
+        if (!isPluginTab(t)) { tabs.push(t); continue; }
+        const p = pieces.get(pieceKey(t.plugin, t.piece));
+        if (!p) { changed = true; continue; }
+        if (p.title && p.title !== t.title) { changed = true; tabs.push({ ...t, title: p.title }); } else tabs.push(t);
+      }
+      return tabs.length === slot.tabs.length && tabs.every((t, i) => t === slot.tabs[i]) ? slot : normalizeSlot({ tabs, tab: slot.tab }, s);
+    };
+    const main = fix({ tabs: s.tabs, tab: s.tab });
+    const slots: Record<string, PanelSlot | undefined> = {};
+    for (const [k, v] of Object.entries(s.slots)) if (v) slots[k] = fix(v);
+    if (!changed) return;
+    const key = slotKeyOf(s.scope, s.sessionId, s.root);
+    slots[key] = main;
+    state = { ...s, open: anyModule(s) ? s.open : false, tabs: main.tabs, tab: main.tab, slots };
+    persist(state);
+    for (const l of listeners) l();
   },
   // The engine named the process in a terminal's foreground
   terminalTitled(tab: string, title: string) {

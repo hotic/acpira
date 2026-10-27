@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import type { FileHit, ProjectBase, ProjectChange } from '@acpira/shared/protocol';
-import { Folder, Globe, LayoutGrid, PanelRight, Plus, SquareTerminal, X, type LucideIcon } from 'lucide-react';
+import { Folder, Globe, LayoutGrid, PanelRight, Plus, Puzzle, SquareTerminal, X, type LucideIcon } from 'lucide-react';
 import { parseRemoteFolder } from '@acpira/shared/remote';
 import { t } from '../i18n';
 import { IconButton } from '../ui/Button';
@@ -17,7 +17,9 @@ import { FileGlyph, absPath, dirOf, markIndex, nameOf, relPath } from './files';
 import { FileTree, ancestors } from './FileTree';
 import { FileViewer, ReviewView, preferMarkdownPreview } from './FileViewer';
 import { NewTab, type TabPick } from './NewTab';
-import { FILES_TAB, allLiveTabs, panel, panelState, usePanel, viewKey, type LineRange, type PanelTab, type PanelView } from './store';
+import { PluginFrame } from './PluginFrame';
+import { usePluginPieces } from '../pluginSlots';
+import { FILES_TAB, allLiveTabs, anyModule, panel, panelState, usePanel, viewKey, type LineRange, type PanelTab, type PanelView } from './store';
 import { TerminalFrame } from './TerminalFrame';
 
 // The desktop app's tool panel (picked in the LAB, lab/desk-panel.preview, 2026-10-23): right of the chat sheet on the
@@ -88,7 +90,9 @@ const commitWidth = (w: number) => panel.setWidth(w);
 // The panel beside the sheet and its toggle pinned at the window's top-right corner
 export const ToolPanelDock = memo(function ToolPanelDock(p: ToolPanelDockProps) {
   const s = usePanel();
-  const anyEnabled = s.files || s.terminal || s.browser;
+  // Re-rendered when a plugin's tab piece comes or goes, which can be all the panel has
+  usePluginPieces('panel.tab');
+  const anyEnabled = anyModule(s);
   const aside = useRef<HTMLElement>(null);
   const shown = anyEnabled && s.open && !!p.cwd && !!p.sessionId;
   const [moving, setMoving] = useState(false);
@@ -159,7 +163,7 @@ export const ToolPanelDock = memo(function ToolPanelDock(p: ToolPanelDockProps) 
   );
 });
 
-export const TAB_ICON: Record<PanelTab['kind'], LucideIcon> = { files: Folder, new: LayoutGrid, terminal: SquareTerminal, browser: Globe };
+export const TAB_ICON: Record<PanelTab['kind'], LucideIcon> = { files: Folder, new: LayoutGrid, terminal: SquareTerminal, browser: Globe, plugin: Puzzle };
 const hostOf = (url: string) => { try { return new URL(url).host; } catch { return url; } };
 export function tabLabel(tab: PanelTab): string {
   switch (tab.kind) {
@@ -168,10 +172,11 @@ export function tabLabel(tab: PanelTab): string {
     // The process in its foreground, as the engine names it (zsh, node, vim …)
     case 'terminal': return tab.title || t('panel.terminal');
     case 'browser': return tab.title || (tab.url ? hostOf(tab.url) : t('panel.browser'));
+    case 'plugin': return tab.title || tab.plugin;
   }
 }
-// A tab's tooltip: a terminal's folder, else its label
-export const tabTitle = (tab: PanelTab) => (tab.kind === 'terminal' ? `${tabLabel(tab)} — ${tab.cwd}` : undefined);
+// A tab's tooltip: a terminal's folder, a plugin piece's plugin, else its label
+export const tabTitle = (tab: PanelTab) => (tab.kind === 'terminal' ? `${tabLabel(tab)} — ${tab.cwd}` : tab.kind === 'plugin' ? `${tabLabel(tab)} — ${tab.plugin}` : undefined);
 
 const TAB = 'group/tab inline-flex h-ctl max-w-panel-tab shrink-0 items-center gap-1.5 rounded-md px-2 text-2 transition-colors';
 
@@ -223,10 +228,11 @@ export function TabButton({ label, title, icon, on, closable, guard, onSelect, o
 }
 
 // What "+" made becomes in its place: a Files tab of its own (the project's tree, like a browser tab each time and never
-// the file the first Files tab shows), a terminal in the project folder or a browser tab
+// the file the first Files tab shows), a terminal in the project folder, a browser tab or a plugin's piece
 export function pickNewTab(tab: string, choice: TabPick, root: string) {
   if (choice.kind === 'browser') panel.openBrowser(choice.url, tab);
   else if (choice.kind === 'terminal') panel.openTerminal(root, tab);
+  else if (choice.kind === 'plugin') panel.openPlugin(choice.plugin, choice.piece, choice.title, tab);
   else panel.openFiles(tab);
 }
 
@@ -307,6 +313,7 @@ function ToolPanel(p: ToolPanelProps) {
           const active = p.panelShown && s.tabs.some(t => t.id === tab.id) && s.tab === tab.id;
           if (tab.kind === 'browser') return s.browser ? <BrowserFrame key={tab.id} tab={tab} shown={active} root={p.root} /> : null;
           if (tab.kind === 'terminal') return s.terminal ? <TerminalFrame key={tab.id} tab={tab} shown={active} openPath={terminalPathOpener(p.root, p.openEditor)} /> : null;
+          if (tab.kind === 'plugin') return <PluginFrame key={tab.id} plugin={tab.plugin} piece={tab.piece} shown={active} />;
           return null;
         })}
       </div>

@@ -363,7 +363,20 @@ impl Runtimes {
   /// Call a method `plugin`'s process offers (`runtime.methods`): `rpc/<method>` with `{ params, from }`, `from` being
   /// the calling plugin's id or `page`. Under the process's own time limit and failure count
   pub async fn rpc(&self, plugin: &str, method: &str, params: Value, from: &str) -> Result<Value, String> {
-    let w = self.workers.read().get(plugin).cloned().ok_or_else(|| format!("plugin {plugin} has no running process"))?;
+    // A page frame opens as its plugin is enabled, and its first call may come before the process answered
+    // `initialize`: a wanted process (starting, or restarting after an exit) is waited for
+    let t = std::time::Instant::now();
+    let w = loop {
+      if let Some(w) = self.workers.read().get(plugin).cloned() {
+        break w;
+      }
+      let wanted = self.wanted.lock().iter().any(|w| w.id == plugin);
+      if !wanted || t.elapsed() >= START_WAIT {
+        let why = self.errors.read().get(plugin).map(|e| format!(": {e}")).unwrap_or_default();
+        return Err(format!("plugin {plugin} has no running process{why}"));
+      }
+      tokio::time::sleep(Duration::from_millis(50)).await;
+    };
     if !w.want.def.methods.iter().any(|m| m == method) {
       return Err(format!("plugin {plugin} offers no method `{method}`"));
     }
@@ -743,6 +756,9 @@ const EVENT_BACKLOG: usize = 256;
 /// How long a call to the engine waits for the session API to come up (the engine starts processes first)
 const HOST_CALL_WAIT: Duration = Duration::from_secs(10);
 
+/// How long a call to a plugin's method waits for its wanted process to start
+const START_WAIT: Duration = Duration::from_secs(10);
+
 /// Longest text a process may put into the composer
 const COMPOSER_MAX_CHARS: usize = 100_000;
 
@@ -993,6 +1009,27 @@ createInterface({ input: process.stdin }).on('close', () => process.exit(0)).on(
   if (m.id !== undefined) send({ jsonrpc: '2.0', id: m.id, error: { code: -32601, message: 'no ' + m.method } });
 });
 "#;
+
+  #[tokio::test]
+  async fn a_call_made_while_the_process_starts_waits_for_it() {
+    let Some((root, rt)) = setup() else { return };
+    let dir = root.path().join("rates");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("rpc.mjs"), RPC).unwrap();
+    let json = r#"{ "schema": 1, "id": "rates", "version": "1.0.0", "description": "d", "contributes": { "runtime": { "command": ["node", "rpc.mjs"], "methods": ["rates.get"] } } }"#;
+    let (m, _) = manifest::parse(json.as_bytes()).unwrap();
+    let active = Arc::new(Active { id: "rates".into(), hash: "h".into(), dir, manifest: m });
+    let syncing = { let rt = rt.clone(); tokio::spawn(async move { rt.sync(&[active]).await }) };
+    while !rt.wanted.lock().iter().any(|w| w.id == "rates") {
+      tokio::task::yield_now().await;
+    }
+    // Asked before the process answered initialize (a page frame opened with its plugin)
+    let page = rt.rpc("rates", "rates.get", json!({}), "page").await.unwrap();
+    assert_eq!(page["eur"], json!(0.92));
+    syncing.await.unwrap();
+    // A plugin nobody wants is refused at once
+    assert!(rt.rpc("gone", "x", json!({}), "page").await.unwrap_err().contains("no running process"));
+  }
 
   #[tokio::test]
   async fn a_runtime_offers_its_declared_methods_to_pages_and_other_plugins() {
