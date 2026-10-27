@@ -285,7 +285,8 @@ struct Setup {
   images: bool,
   /// Raw mode (`modes::RAW`): no tools, no composed prompt, and no compaction but an explicit /compact
   raw: bool,
-  /// Tools the plugins' `tools` hook left out this turn: not offered, and not run when the model calls one anyway
+  /// Tools a specialised agent's profile or the plugins' `tools` hook left out this turn: not offered, and not run when
+  /// the model calls one anyway
   withheld: Vec<String>,
 }
 
@@ -294,7 +295,8 @@ async fn plugin_tools(server: &Arc<Server>, session: &Arc<Session>, s: &mut Setu
   if let Some(out) = crate::plugin_hooks::ask(server, session, "tools", json!({ "tools": crate::plugin_hooks::tools_json(&s.specs) })).await {
     let before: Vec<String> = s.specs.iter().map(|t| t.name.clone()).collect();
     crate::plugin_hooks::apply_tools(&mut s.specs, &out);
-    s.withheld = before.into_iter().filter(|n| !s.specs.iter().any(|t| &t.name == n)).collect();
+    // On top of what a specialised agent's profile left out already
+    s.withheld.extend(before.into_iter().filter(|n| !s.specs.iter().any(|t| &t.name == n)));
   }
 }
 
@@ -373,6 +375,12 @@ fn setup(server: &Server, session: &Session, params: &Value, mcp: &[crate::mcp::
     specs.push(tools::skill::spec(&skills));
   }
   specs.extend(mcp.iter().map(crate::mcp::Tool::spec));
+  // A specialised agent offers only the tools its profile lists, the same set every turn (`profile.rs`)
+  let mut withheld = vec![];
+  if let Some(p) = &server.profile {
+    withheld = specs.iter().filter(|t| !p.allows(&t.name)).map(|t| t.name.clone()).collect();
+    specs.retain(|t| p.allows(&t.name));
+  }
   let images = model.takes_images();
   // Raw mode never compacts on its own: a summary in the history is the agent's text, so only /compact writes one
   let mut policy = Policy::from_prompt(params);
@@ -397,7 +405,7 @@ fn setup(server: &Server, session: &Session, params: &Value, mcp: &[crate::mcp::
     mcp: mcp.to_vec(),
     images,
     raw,
-    withheld: vec![],
+    withheld,
   })
 }
 

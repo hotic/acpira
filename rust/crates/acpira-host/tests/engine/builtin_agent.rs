@@ -1104,3 +1104,87 @@ async fn a_plugin_reshapes_every_request_tool_call_and_summary_of_the_loop() {
   assert!(reqs[4].body["messages"].to_string().contains("PLUGIN SUMMARY"), "{}", reqs[4].body["messages"]);
   rt.stop_all().await;
 }
+
+// A specialised agent's guard: refuses reading `secret.txt`, asked only in its own agent's sessions (`scope: agent`)
+const LEDGER_GUARD: &str = r#"
+import { createInterface } from 'node:readline';
+const send = m => process.stdout.write(JSON.stringify(m) + '\n');
+createInterface({ input: process.stdin }).on('line', line => {
+  const m = JSON.parse(line);
+  if (m.method === 'initialize') return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: 1 } });
+  if (m.method === 'hook/tool.before') {
+    const secret = String(m.params.arguments?.path ?? '').endsWith('secret.txt');
+    return send({ jsonrpc: '2.0', id: m.id, result: secret ? { block: `no secrets for ${m.params.agent}` } : null });
+  }
+  if (m.id !== undefined) send({ jsonrpc: '2.0', id: m.id, result: null });
+}).on('close', () => process.exit(0));
+"#;
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugins_specialised_agent_runs_its_own_prompt_tools_and_guard_and_leaves_the_general_agent_alone() {
+  if !acpira_host::plugins::host::on_path("node") {
+    return;
+  }
+  let mut env = Env::new();
+  let path = env.root.path().join("providers.json");
+  let mut p: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+  p["approval"] = json!("full");
+  std::fs::write(path, p.to_string()).unwrap();
+  std::fs::write(env.cwd().join("secret.txt"), "the vault code").unwrap();
+  // The plugin: Acpira's loop with its own prompt and only `read`, and a guard for its own sessions
+  let plugins = tempfile::tempdir().unwrap();
+  let dir = plugins.path().join("ledger");
+  std::fs::create_dir_all(&dir).unwrap();
+  std::fs::write(dir.join("plugin.mjs"), LEDGER_GUARD).unwrap();
+  std::fs::write(dir.join("prompt.md"), "You keep the ledger and nothing else.").unwrap();
+  let manifest = json!({ "schema": 1, "id": "ledger", "version": "1.0.0", "description": "Ledger keeper", "contributes": {
+    "agent": { "name": "Ledger", "builtin": { "prompt": "prompt.md", "tools": ["read"] } },
+    "runtime": { "command": ["node", "plugin.mjs"], "hooks": ["tool.before"], "scope": "agent" },
+  } });
+  std::fs::write(dir.join("plugin.json"), manifest.to_string()).unwrap();
+  let (m, mut f) = acpira_host::plugins::manifest::parse(manifest.to_string().as_bytes()).unwrap();
+  acpira_host::plugins::manifest::check(&m, "ledger", &dir, &|c| c == "node", &mut f);
+  assert!(f.ok(), "{f:?}");
+  let rt = acpira_host::plugins::runtime::Runtimes::new(plugins.path().join(".data"), Arc::new(|_: &str| {}));
+  rt.enable(None);
+  rt.sync(&[Arc::new(acpira_host::plugins::host::Active { id: "ledger".into(), hash: "h".into(), dir: dir.clone(), manifest: m })]).await;
+  env.deps.plugin_runtime = Some(rt.clone());
+  // What the engine's registry makes of the plugin's entry (`runtime.rs` registry_of)
+  let exe = env!("CARGO_BIN_EXE_acpira");
+  let root = env.root.path().to_string_lossy().into_owned();
+  let custom = json!({ "ledger": { "name": "Ledger", "command": exe, "args": ["agent", "--home", root, "--profile", dir], "subagents": false, "terminalAuth": false } });
+  env.deps.registry = Arc::new(AgentRegistry::new(&custom).with_self_agent(exe, env.root.path()));
+
+  let s = Disposing(AcpSession::fresh("ledger", &env.cwd().to_string_lossy(), env.deps.clone(), None));
+  s.start().await;
+  env.server.push(mock::tools(&[("c1", "bash", json!({ "command": "touch ran.txt" }))]));
+  env.server.push(mock::tools(&[("c2", "read", json!({ "path": "secret.txt" }))]));
+  env.server.push(mock::text("Done."));
+  s.prompt("go".into(), vec![], false, None, None).await;
+  let reqs = env.server.requests();
+  let system = reqs[0].body["messages"][0]["content"].as_str().unwrap_or_default().to_owned();
+  assert!(system.starts_with("You keep the ledger and nothing else."), "{system}");
+  assert!(!system.contains("AGENTS.md"), "{system}");
+  let names: Vec<&str> = reqs[0].body["tools"].as_array().unwrap().iter().filter_map(|t| t["function"]["name"].as_str()).collect();
+  assert_eq!(names, ["read"]);
+  // A tool outside the profile does not run when the model calls it anyway; the guard refuses its own agent's read
+  assert!(!env.cwd().join("ran.txt").exists(), "the left-out tool ran: {:?}", tool_results(&reqs[1].body));
+  let results = tool_results(&reqs[2].body).join("\n");
+  assert!(results.contains("no secrets for ledger") && !results.contains("the vault code"), "{results}");
+  // Its sessions offer Agent mode only
+  let modes: Vec<String> = view(&s)["controls"]["modes"].as_array().unwrap().iter().filter_map(|m| m["id"].as_str().map(str::to_owned)).collect();
+  assert_eq!(modes, ["agent"]);
+
+  // The general agent next to it: the full tool table, the built-in prompt, and the guard never asked
+  let g = env.session().await;
+  env.server.push(mock::tools(&[("c3", "read", json!({ "path": "secret.txt" }))]));
+  env.server.push(mock::text("Read."));
+  g.prompt("go".into(), vec![], false, None, None).await;
+  let reqs = env.server.requests();
+  let general = &reqs[reqs.len() - 2];
+  let names: Vec<&str> = general.body["tools"].as_array().unwrap().iter().filter_map(|t| t["function"]["name"].as_str()).collect();
+  assert!(names.contains(&"bash") && names.contains(&"write"), "{names:?}");
+  assert!(tool_results(&reqs[reqs.len() - 1].body).join("\n").contains("the vault code"));
+  rt.stop_all().await;
+}

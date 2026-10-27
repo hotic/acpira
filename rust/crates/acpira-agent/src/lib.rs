@@ -12,6 +12,7 @@ pub mod config;
 pub mod frames;
 pub mod generate;
 pub mod plugin_hooks;
+pub mod profile;
 pub mod goal;
 pub mod llm;
 pub mod mcp;
@@ -53,7 +54,16 @@ where
   R: AsyncRead + Unpin + Send + 'static,
   W: AsyncWrite + Unpin + Send + 'static,
 {
-  let server = acp::Server::new(home, version);
+  run_profile_until(reader, writer, home, version, None, stop).await
+}
+
+/// `run_until` as a plugin's specialised agent (`profile.rs`): every session takes its prompt, tools and model
+pub async fn run_profile_until<R, W>(reader: R, writer: W, home: PathBuf, version: &str, profile: Option<profile::Profile>, stop: impl Future<Output = ()>) -> i32
+where
+  R: AsyncRead + Unpin + Send + 'static,
+  W: AsyncWrite + Unpin + Send + 'static,
+{
+  let server = acp::Server::with_profile(home, version, profile);
   let handler: Arc<dyn Inbound> = Arc::new(acp::Handler(server.clone()));
   let conn = Connection::start(reader, writer, Arc::new(move || handler.clone()), Arc::new(|line: &str| eprintln!("[acpira agent] {line}")));
   server.attach(conn.clone());

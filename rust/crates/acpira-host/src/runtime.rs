@@ -520,7 +520,25 @@ fn registry_of(custom: &Value, self_agent: Option<&(String, PathBuf)>, plugin_ag
   let merged = if plugin_agents.is_empty() {
     custom.clone()
   } else {
-    let mut all = plugin_agents.clone();
+    let mut all = serde_json::Map::new();
+    for (id, entry) in plugin_agents {
+      match entry.get(crate::plugins::host::PROFILE_KEY).and_then(Value::as_str) {
+        // A specialised agent is this binary's own loop with the plugin's profile; without the binary there is none
+        Some(dir) => {
+          let Some((exe, root)) = self_agent else { continue };
+          all.insert(id.clone(), serde_json::json!({
+            "name": entry.get("name").cloned().unwrap_or_else(|| serde_json::json!(id)),
+            "command": exe,
+            "args": ["agent", "--home", root.to_string_lossy(), "--profile", dir],
+            "subagents": false,
+            "terminalAuth": false,
+          }));
+        }
+        None => {
+          all.insert(id.clone(), entry.clone());
+        }
+      }
+    }
     for (id, v) in custom.as_object().into_iter().flatten() {
       all.insert(id.clone(), v.clone());
     }
@@ -546,5 +564,18 @@ mod tests {
     assert_eq!(r.try_get("pal").map(|d| d.command.as_str()), Some("/mine/pal"));
     assert_eq!(r.try_get("mate").map(|d| d.command.as_str()), Some("/p/mate"));
     assert!(registry_of(&custom, None, &serde_json::Map::new()).try_get("mate").is_none());
+  }
+
+  #[test]
+  fn a_specialised_agent_is_the_engine_s_own_loop_with_its_profile_and_needs_the_engine_binary() {
+    let plugins = serde_json::json!({ "ledger": { "name": "Ledger", crate::plugins::host::PROFILE_KEY: "/v/ledger/abc" } });
+    let plugins = plugins.as_object().cloned().unwrap_or_default();
+    let engine = ("/x/acpira".to_owned(), PathBuf::from("/data"));
+    let r = registry_of(&serde_json::json!({}), Some(&engine), &plugins);
+    let d = r.try_get("ledger").expect("the profile agent");
+    assert_eq!((d.name.as_str(), d.command.as_str()), ("Ledger", "/x/acpira"));
+    assert_eq!(d.args, ["agent", "--home", "/data", "--profile", "/v/ledger/abc"]);
+    assert!(!d.subagents && !d.terminal_auth);
+    assert!(registry_of(&serde_json::json!({}), None, &plugins).try_get("ledger").is_none());
   }
 }

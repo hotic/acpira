@@ -18,7 +18,7 @@ pub const SDK_PY_FILE: &str = "acpira_plugin.py";
 pub const SDK_DIR: &str = ".sdk";
 
 /// What `acpira plugin new --kind` takes, the default first
-pub const KINDS: &[&str] = &["runtime", "tool", "command", "skill", "provider", "theme"];
+pub const KINDS: &[&str] = &["runtime", "tool", "command", "skill", "provider", "theme", "agent"];
 
 /// What `acpira plugin new --lang` takes for the runtime and the tool, the default first
 pub const LANGS: &[&str] = &["node", "python"];
@@ -102,6 +102,22 @@ print(f"Hello, {args['name']}!")
 
 const SKILL: &str = "---\nname: hello\ndescription: Say what the plugin is for. Replace this with when an agent should use the skill.\n---\n\nThe steps an agent follows.\n";
 
+/// The starting prompt of `--kind agent`: it replaces Acpira's own, so it says everything the agent is
+const AGENT_PROMPT: &str = "# {id}
+
+You are {id}, an assistant for one job: say here what it is, in one or two sentences.
+
+## What you do
+- The tasks you take, and the result each one ends with.
+
+## What you never do
+- Anything outside the job: say so in one line and stop.
+
+## How you work
+- Use only the tools you are given. When something needed is missing, ask with `question` instead of guessing.
+- Keep answers short and concrete.
+";
+
 /// The manifest and files of a new plugin `id` contributing `kinds`, its runtime and tool in `lang`
 pub fn files(id: &str, kinds: &[&str], lang: &str) -> Result<(Value, Vec<(&'static str, String)>)> {
   let py = match lang {
@@ -156,10 +172,28 @@ pub fn files(id: &str, kinds: &[&str], lang: &str) -> Result<(Value, Vec<(&'stat
       "theme" => {
         contributes.insert("theme".into(), json!({ "tokens": { "--bg-0": "#1b1a18" } }));
       }
+      // A specialised agent: Acpira's loop with this prompt and only these tools; the plugin's own tool when there is one
+      "agent" => {
+        let mut tools = vec![json!("read"), json!("grep"), json!("todo"), json!("question")];
+        if kinds.contains(&"tool") {
+          tools.push(json!("plugin:hello"));
+        }
+        if kinds.contains(&"skill") {
+          tools.push(json!("skill"));
+        }
+        contributes.insert("agent".into(), json!({ "name": id, "builtin": { "prompt": "prompt.md", "tools": tools } }));
+        files.push(("prompt.md", AGENT_PROMPT.replace("{id}", id)));
+      }
       other => bail!("`{other}` is not a kind: {}", KINDS.join(", ")),
     }
   }
   requires.dedup();
+  // With its own agent, the plugin's hooks guard that agent's sessions only
+  if kinds.contains(&"agent")
+    && let Some(rt) = contributes.get_mut("runtime")
+  {
+    rt["scope"] = json!(manifest::SCOPE_AGENT);
+  }
   let mut m = json!({ "schema": manifest::SCHEMA, "id": id, "version": "0.1.0", "name": id, "description": "Say in one line what this plugin does", "contributes": contributes });
   if !requires.is_empty() {
     m["requires"] = json!(requires);
@@ -201,7 +235,12 @@ mod tests {
     assert!(pf.ok() && pf.notes.is_empty(), "{pf:?}");
     assert_eq!(std::fs::read_to_string(py.join(SDK_PY_FILE)).unwrap(), SDK_PY);
     assert!(scaffold(tmp.path(), "rb", &["tool"], "ruby").unwrap_err().to_string().contains("not a language"));
-    assert_eq!(m.contributes.kinds(), ["tools", "theme", "runtime", "skills", "commands", "providers"]);
+    assert_eq!(m.contributes.kinds(), ["tools", "theme", "agent", "runtime", "skills", "commands", "providers"]);
+    // The agent lists the plugin's own tool and skill, and the runtime guards that agent alone
+    let agent = m.contributes.agent.as_ref().unwrap();
+    assert_eq!(agent["builtin"]["tools"], json!(["read", "grep", "todo", "question", "plugin:hello", "skill"]));
+    assert_eq!(m.contributes.runtime.as_ref().unwrap().scope.as_deref(), Some(manifest::SCOPE_AGENT));
+    assert!(acpira_agent::profile::Profile::load(&dir).unwrap().prompt.starts_with("# my-kit"));
     assert_eq!(std::fs::read_to_string(dir.join(SDK_FILE)).unwrap(), SDK);
     assert_eq!(m.contributes.providers[0]["keyEnv"], "MY_KIT_API_KEY");
     assert!(scaffold(tmp.path(), "my-kit", &["tool"], "node").unwrap_err().to_string().contains("exists already"));
