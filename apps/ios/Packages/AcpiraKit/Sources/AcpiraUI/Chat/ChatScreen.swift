@@ -29,12 +29,16 @@ struct ChatScreen: View {
   @Environment(\.initialDraft) private var initialDraft
 
   var body: some View {
-    if let session = model.views[id] {
-      screen(session)
-    } else {
-      // Deleted while on screen: the stack pops it on the same pass
-      Palette.bg0.ignoresSafeArea()
+    Group {
+      if let session = model.views[id] {
+        screen(session)
+      } else {
+        // Deleted while on screen (the stack pops it on the same pass), or the engine's view still on its way
+        Palette.bg0.ignoresSafeArea()
+      }
     }
+    // Coming on screen, pushed or popped back to, switches the engine's view to this session
+    .onAppear { model.open(id) }
   }
 
   private func screen(_ session: SessionView) -> some View {

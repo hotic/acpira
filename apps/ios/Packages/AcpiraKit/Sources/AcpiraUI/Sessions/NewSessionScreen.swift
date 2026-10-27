@@ -80,7 +80,8 @@ struct NewSessionScreen: View {
   /// The first prompt creates the session; its chat takes this screen's place in the stack
   private func start(_ prompt: String, _ attachments: [Attachment]) {
     guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty else { return }
-    let id = model.newSession(agent: draft.agent, cwd: draft.cwd, controls: draft.controls, text: prompt, attachments: attachments)
+    // With an engine the chat comes once the engine has made the session (AppModel+Engine.swift)
+    guard let id = model.newSession(agent: draft.agent, cwd: draft.cwd, controls: draft.controls, text: prompt, attachments: attachments) else { return }
     if model.path.isEmpty { model.path = [.chat(id)] } else { model.path[model.path.count - 1] = .chat(id) }
   }
 }

@@ -5,10 +5,11 @@ import Foundation
 import Observation
 import SwiftUI
 
-// The app's state until the engine connection lands: the fixture sessions loaded once, and a local stand-in for the
-// engine's session manager. Every control the screens offer acts on it (send, stop, queue, permissions, questions,
-// fork, pin, rename, delete, modes, models, accounts), and a sent prompt gets a demo reply streamed the way
-// `-replay` streams a fixture, so the app behaves like the product while the data stays synthetic.
+// The app's state. With `-engine PORT:TOKEN` it follows a live engine (EngineLink, AppModel+Engine.swift): the lists
+// and views come from its pushes and every control posts the engine's action. Without it the app is a demo on the
+// fixture sessions, with a local stand-in for the engine's session manager: every control acts on it (send, stop,
+// queue, permissions, questions, fork, pin, rename, delete, modes, models, accounts), and a sent prompt gets a demo
+// reply streamed the way `-replay` streams a fixture.
 
 /// Where the navigation stack can go
 public enum Route: Hashable {
@@ -48,11 +49,34 @@ final class AppModel {
   /// A session's export waiting for the share sheet
   var shared: ExportFile?
 
+  /// The live engine; nil in the demo
+  @ObservationIgnored let link: EngineLink?
   @ObservationIgnored private var runs: [String: Task<Void, Never>] = [:]
   @ObservationIgnored private let launched = Date()
   @ObservationIgnored private var serial = 0
 
-  init(options: LaunchOptions) {
+  convenience init(options: LaunchOptions) {
+    if let address = EngineAddress(options.engine) {
+      self.init(link: EngineLink(address: address, language: options.locale ?? Locale.preferredLanguages.first ?? "en"), options: options)
+    } else {
+      self.init(demo: options)
+    }
+  }
+
+  /// Follows a live engine: everything listed and shown comes from its pushes
+  init(link: EngineLink, options: LaunchOptions) {
+    self.link = link
+    agents = []
+    accounts = []
+    summaries = []
+    views = [:]
+    path = options.session.map { [.chat($0)] } ?? (options.screen == "new" ? [.new(agent: nil, cwd: nil)] : [])
+    settingsOpen = options.screen == "settings"
+    connect()
+  }
+
+  private init(demo options: LaunchOptions) {
+    link = nil
     let fixtures = Fixtures.sessionNames.compactMap { name in Fixtures.session(name).map { (name: name, view: $0) } }
     let showcase = fixtures.first { $0.name == "showcase" }?.view
     var views: [String: SessionView] = [:]
@@ -93,10 +117,11 @@ final class AppModel {
     return summaries.first { $0.title == title }?.id ?? "fx-\(name)"
   }
 
-  /// The fixtures' clock, running from launch: new sessions sort after the synthetic ones
+  /// The app's clock: the real one with an engine, else the fixtures' clock running from launch (new sessions sort
+  /// after the synthetic ones)
   var now: Date { Date().addingTimeInterval(clockOffset) }
   /// How far the fixtures' clock runs ahead of the real one
-  var clockOffset: TimeInterval { Fixtures.now.timeIntervalSince(launched) }
+  var clockOffset: TimeInterval { link == nil ? Fixtures.now.timeIntervalSince(launched) : 0 }
 
   func agent(_ id: AgentId) -> AgentInfo { agents.first { $0.id == id } ?? AgentInfo(id: id, name: id) }
 
@@ -145,12 +170,18 @@ final class AppModel {
   /// The controls a new session of `agent` starts with: those of its latest session, else the showcase's
   func controls(for agent: AgentId) -> SessionControls {
     let latest = summaries.filter { $0.agent == agent }.max { $0.updatedAt < $1.updatedAt }
-    return latest.flatMap { views[$0.id]?.controls } ?? Fixtures.session("showcase")?.controls ?? SessionControls()
+    let fallback = link == nil ? Fixtures.session("showcase")?.controls : nil
+    return latest.flatMap { views[$0.id]?.controls } ?? fallback ?? SessionControls()
   }
 
-  /// Starts a session with its first prompt and returns its id
+  /// Starts a session with its first prompt and returns its id; nil with an engine, which pushes the session it made
+  /// and the chat then takes the new-session screen's place
   @discardableResult
-  func newSession(agent: AgentId, cwd: String, controls: SessionControls, text: String, attachments: [Attachment]) -> String {
+  func newSession(agent: AgentId, cwd: String, controls: SessionControls, text: String, attachments: [Attachment]) -> String? {
+    if link != nil {
+      engineNewSession(agent: agent, cwd: cwd, text: text)
+      return nil
+    }
     serial += 1
     let id = "local-\(serial)"
     let stamp = now.iso
@@ -174,6 +205,11 @@ final class AppModel {
   /// Sends a prompt, or queues it while a turn runs
   func send(_ id: String, text: String, attachments: [Attachment]) {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    // Attachments go to the engine with P2's drafts; until then only the text does
+    if link != nil {
+      if !trimmed.isEmpty { post(.send(sessionId: id, text: trimmed)) }
+      return
+    }
     guard var view = views[id], !trimmed.isEmpty || !attachments.isEmpty else { return }
     if view.running {
       serial += 1
@@ -213,9 +249,9 @@ final class AppModel {
     }
   }
 
-  /// `-replay`: the session's last agent turn streams again
+  /// `-replay`: the session's last agent turn streams again (the demo only: an engine's views are its own)
   func replay(_ id: String) {
-    guard let view = views[id] else { return }
+    guard link == nil, let view = views[id] else { return }
     // The replayed turn's clock starts with the stream, a second from now
     let steps = Replay.steps(view, startedAt: now.addingTimeInterval(1).timeIntervalSince1970 * 1000)
     if let first = steps.first { apply(first, to: id) }
@@ -242,6 +278,7 @@ final class AppModel {
 
   /// Stop: the running turn ends cancelled, whatever was still streaming settles where it stood
   func stop(_ id: String) {
+    if post(.stop(sessionId: id)) { return }
     runs[id]?.cancel()
     runs[id] = nil
     guard var view = views[id] else { return }
@@ -278,6 +315,7 @@ final class AppModel {
 
   /// A permission answered: the card leaves the transcript, as the engine drops it once the agent has the outcome
   func choosePermission(_ id: String, block: String, option: String) {
+    if post(.permission(sessionId: id, blockId: block, optionId: option)) { return }
     guard var view = views[id] else { return }
     view.turns = view.turns.map { turn in
       guard case .agent(var agent) = turn else { return turn }
@@ -289,6 +327,7 @@ final class AppModel {
 
   /// A question answered or skipped: it closes, and its card leaves the dock
   func answer(_ id: String, question: String, answers: [String: QuestionAnswer], skipped: Bool) {
+    if post(.answer(sessionId: id, blockId: question, answers: skipped ? [:] : answers, skip: skipped ? true : nil)) { return }
     guard var view = views[id] else { return }
     view.turns = view.turns.map { turn in
       guard case .agent(var agent) = turn else { return turn }
@@ -307,6 +346,7 @@ final class AppModel {
 
   /// Send now (or steer): the running turn stops and the queued prompt goes at once
   func sendQueued(_ id: String, item: String) {
+    if post(.sendQueued(sessionId: id, id: item)) { return }
     guard let prompt = takeQueued(id, item) else { return }
     if views[id]?.running == true { stop(id) }
     startTurn(id, text: prompt.text, attachments: prompt.attachments ?? [])
@@ -315,6 +355,11 @@ final class AppModel {
   /// Takes a prompt out of the queue (edit puts its text back in the composer, remove drops it)
   @discardableResult
   func takeQueued(_ id: String, _ item: String) -> QueuedPrompt? {
+    if link != nil {
+      let prompt = views[id]?.queued?.first { $0.id == item }
+      post(.dequeue(sessionId: id, id: item))
+      return prompt
+    }
     guard var view = views[id], let at = view.queued?.firstIndex(where: { $0.id == item }) else { return nil }
     let prompt = view.queued?.remove(at: at)
     if view.queued?.isEmpty == true { view.queued = nil }
@@ -326,6 +371,7 @@ final class AppModel {
 
   /// Retry: the failed turn goes, its prompt runs again
   func retry(_ id: String) {
+    if post(.retry(sessionId: id)) { return }
     guard var view = views[id], case .agent? = view.turns.last else { return }
     view.turns.removeLast()
     guard case .user(let prompt)? = view.turns.last else { return }
@@ -340,15 +386,18 @@ final class AppModel {
   // MARK: - Controls
 
   func setMode(_ id: String, _ mode: String) {
+    if post(.setMode(sessionId: id, id: mode)) { return }
     views[id]?.controls.modeId = mode
   }
 
   func setConfig(_ id: String, _ control: String, _ value: String) {
+    if post(.setConfig(sessionId: id, configId: control, value: value)) { return }
     guard let at = views[id]?.controls.options.firstIndex(where: { $0.id == control }) else { return }
     views[id]?.controls.options[at].value = value
   }
 
   func selectAccount(_ id: String, _ account: String) {
+    if post(.selectAccount(sessionId: id, id: account)) { return }
     views[id]?.accountId = account
     if let at = summaries.firstIndex(where: { $0.id == id }) { summaries[at].accountId = account }
     if let label = accounts.first(where: { $0.id == account })?.label { show(t("mobile.account.switched", ["name": label]), icon: .userRound) }
@@ -359,13 +408,14 @@ final class AppModel {
   func togglePin(_ id: String) {
     guard let at = summaries.firstIndex(where: { $0.id == id }) else { return }
     let pinned = summaries[at].pinned != true
-    summaries[at].pinned = pinned ? true : nil
+    if !post(.pinSession(id: id, pinned: pinned)) { summaries[at].pinned = pinned ? true : nil }
     show(pinned ? t("mobile.pinned") : t("mobile.unpinned"), icon: pinned ? .pin : .pinOff)
   }
 
   func rename(_ id: String, to title: String) {
     let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return }
+    if post(.renameSession(id: id, title: trimmed)) { return }
     views[id]?.title = trimmed
     if let at = summaries.firstIndex(where: { $0.id == id }) { summaries[at].title = trimmed }
   }
@@ -374,6 +424,7 @@ final class AppModel {
     runs[id]?.cancel()
     runs[id] = nil
     let title = views[id]?.title ?? summaries.first { $0.id == id }?.title ?? ""
+    post(.deleteSession(id: id))
     summaries.removeAll { $0.id == id }
     projectPins.remove(id)
     views[id] = nil
@@ -384,6 +435,10 @@ final class AppModel {
   /// Fork from a turn: a new session holding the transcript up to and including that turn, opened over this one
   func fork(_ id: String, through turn: Int) {
     guard let source = views[id], source.turns.indices.contains(turn) else { return }
+    if link != nil {
+      engineFork(id, through: turn)
+      return
+    }
     serial += 1
     let forkId = "local-\(serial)"
     let stamp = now.iso
