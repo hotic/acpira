@@ -44,8 +44,11 @@ globalThis.acpiraShiki = {
     highlighter.loadLanguageSync(JSON.parse(grammarsJSON));
     loaded.add(lang);
   },
+  // The first lines of a language convert its grammar's patterns, which on a busy device passed shiki's default 500 ms
+  // per-line cap: the rest of the line came back as one token, and the app caches answers. The line-length cap still
+  // bounds the work per line
   tokenize(code, lang, theme) {
-    const lines = highlighter.codeToTokensBase(code, { lang, theme, tokenizeMaxLineLength: 20000 });
+    const lines = highlighter.codeToTokensBase(code, { lang, theme, tokenizeMaxLineLength: 20000, tokenizeTimeLimit: 5000 });
     return JSON.stringify(lines.map(line => line.map(t => [t.content, t.color ?? ''])));
   },
 };
