@@ -21,11 +21,8 @@ struct SessionListScreen: View {
   @State private var renaming: SessionSummary?
   @State private var newTitle = ""
   @State private var deleting: SessionSummary?
-  /// Design study `large`: the search field shows once the glass search button is tapped
-  @State private var searchOpen = false
   /// Open projects showing every session, past their latest few
   @State private var fullProjects: Set<String> = []
-  @Environment(\.shellStyle) private var style
   @Environment(\.now) private var now
 
   /// Sessions an open project shows before "N more" (the desktop view menu's default)
@@ -39,59 +36,32 @@ struct SessionListScreen: View {
     let byProject = view == .project && !searching
     let groups = groups(ordered, searching: searching, byProject: byProject)
     let onNew = { model.path.append(.new(agent: nil, cwd: model.projects.first ?? "")) }
-    VStack(spacing: 0) {
-      if style.listHeader == .bar && style.chrome == .custom {
-        ListHeader(title: t("mobile.home"), onNew: onNew, onSettings: { model.path.append(.settings) })
-        SearchField(query: $query)
-          .padding(.horizontal, Metrics.pad)
-          .padding(.bottom, Metrics.s2)
-      }
-      ScrollView(.vertical) {
-        LazyVStack(alignment: .leading, spacing: 0) {
-          if style.listHeader == .large || style.chrome == .system {
-            // Under system chrome the list has no bar: settings sits at the title row's end and comes up as a sheet
-            LargeTitle(title: t("mobile.home"), onSettings: style.chrome == .system ? { model.settingsOpen = true } : nil)
-            if searchOpen {
-              SearchField(query: $query, autofocus: true)
-                .padding(.horizontal, Metrics.pad)
-                .padding(.bottom, Metrics.s2)
-            }
-          }
-          if !searching && !model.summaries.isEmpty { ListViewMenu(view: $view) }
-          if ordered.isEmpty && !(byProject && !model.listedProjects.isEmpty) {
-            Text(web: searching ? t("session.noMatch") : t("session.noneWorkspace"))
-              .textStyle(TypeScale.text2).foregroundStyle(Palette.fg3)
-              .frame(maxWidth: .infinity, minHeight: Metrics.sheetRow)
-          }
-          ForEach(groups) { group($0, searching: searching) }
-          if byProject { ForEach(model.listedProjects, id: \.self) { projectGroup($0) } }
+    ScrollView(.vertical) {
+      LazyVStack(alignment: .leading, spacing: 0) {
+        // The list has no bar: settings sits at the title row's end and comes up as a sheet
+        LargeTitle(title: t("mobile.home")) { model.settingsOpen = true }
+        if !searching && !model.summaries.isEmpty { ListViewMenu(view: $view) }
+        if ordered.isEmpty && !(byProject && !model.listedProjects.isEmpty) {
+          Text(web: searching ? t("session.noMatch") : t("session.noneWorkspace"))
+            .textStyle(TypeScale.text2).foregroundStyle(Palette.fg3)
+            .frame(maxWidth: .infinity, minHeight: Metrics.sheetRow)
         }
-        .padding(.bottom, Metrics.msgGap)
-        .animation(Motion.ease, value: ordered.map(\.id))
-        .animation(Motion.ease, value: model.listedProjects)
-        .animation(Motion.ease, value: view)
+        ForEach(groups) { group($0, searching: searching) }
+        if byProject { ForEach(model.listedProjects, id: \.self) { projectGroup($0) } }
       }
-      .scrollIndicators(.hidden)
-      .safeAreaBar(edge: .top) {
-        if style.listHeader == .large && style.chrome == .custom {
-          ListGlassBar(newButton: style.listComposer == .none, searchOpen: searchOpen,
-                       onSearch: { withAnimation(Motion.ease) { searchOpen.toggle(); if !searchOpen { query = "" } } },
-                       onNew: onNew, onSettings: { model.path.append(.settings) })
-        }
-      }
-      .safeAreaBar(edge: .bottom) {
-        if style.listComposer == .pill { NewSessionBar(action: onNew) }
-      }
+      .padding(.bottom, Metrics.msgGap)
+      .animation(Motion.ease, value: ordered.map(\.id))
+      .animation(Motion.ease, value: model.listedProjects)
+      .animation(Motion.ease, value: view)
     }
+    .scrollIndicators(.hidden)
     .background(Palette.bg0)
-    .modifier(SystemListBar(on: style.chrome == .system, query: $query,
-                            newButton: style.listComposer == .none,
-                            onNew: onNew))
+    .modifier(SystemListBar(query: $query, onNew: onNew))
     // The large title is the list's first row; a pushed chat shows back without a word beside it
     .navigationTitle("")
     // Rows blur and dim gradually as they scroll up under the status bar
-    .topFade(style.chrome == .system, tail: 0)
-    .navigationBar(system: false)
+    .topFade(tail: 0)
+    .hiddenNavigationBar()
     .alert(t("common.rename"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
       TextField(text: $newTitle) { Text(web: t("session.titleAria")) }
       Button(t("mobile.cancel"), role: .cancel) {}
@@ -108,17 +78,15 @@ struct SessionListScreen: View {
   @ViewBuilder
   private func group(_ group: SessionGroup, searching: Bool) -> some View {
     if let caption = group.caption { Caption(text: caption) }
-    ListBlock {
     ForEach(Array(group.sessions.enumerated()), id: \.element.id) { i, s in
       row(s, place: projectName(s.cwd),
           // A caption already says "pinned"; one run without captions marks its pins
           pinGlyph: group.caption == nil && s.pinned == true,
           // A day caption already says when; pinned rows and search hits have none, so they keep the time
-          time: group.dated && style.rowMeta == .quiet ? nil : sessionTime(s.updatedAt, now: now),
-          // On cards rows part by hairlines; on the page captions part the runs and rows sit on space alone
-          divider: i < group.sessions.count - 1 && (style.listBlock == .card || group.caption == nil),
+          time: group.dated ? nil : sessionTime(s.updatedAt, now: now),
+          // Captions part the runs and rows sit on space alone; one run without captions parts by hairlines
+          divider: i < group.sessions.count - 1 && group.caption == nil,
           inProject: false)
-    }
     }
   }
 
@@ -133,24 +101,20 @@ struct SessionListScreen: View {
     let rows = !open ? [] : fullProjects.contains(cwd) || sessions.count <= Self.perProject + 1
       ? sessions : Array(sessions.prefix(Self.perProject))
     let more = open ? sessions.count - rows.count : 0
-    let card = style.listBlock == .card
-    ListBlock {
+    VStack(spacing: 0) {
       ProjectHeader(cwd: cwd, pinned: model.pinnedProjects.contains(cwd), open: open, sessions: all,
-                    divider: card && !rows.isEmpty,
                     onToggle: { withAnimation(Motion.ease) { model.toggleOpen(cwd) } },
                     onPin: { model.togglePinProject(cwd) },
                     onNew: { model.path.append(.new(agent: nil, cwd: cwd)) })
       ForEach(Array(rows.enumerated()), id: \.element.id) { i, s in
         // Inside its project a row names the agent; no caption says when, so every row keeps its time
         row(s, place: model.agent(s.agent).name, pinGlyph: model.projectPins.contains(s.id),
-            time: sessionTime(s.updatedAt, now: now), divider: card && (i < rows.count - 1 || more > 0), inProject: true)
+            time: sessionTime(s.updatedAt, now: now), divider: false, inProject: true)
       }
       if more > 0 {
         MoreRow(count: more) { _ = withAnimation(Motion.ease) { fullProjects.insert(cwd) } }
       }
     }
-    // Cards stand a step apart; on the page the headers part the groups
-    .padding(.top, card ? Metrics.s3 : 0)
   }
 
   /// One session with its menu: pinned to the list's top, and (inside a project's group) pinned within the project
@@ -171,10 +135,10 @@ struct SessionListScreen: View {
     }
   }
 
-  /// By time: pinned, then today / yesterday / this week / this month / older, captions over each (design study
-  /// `flat`: one run without captions). By project: the pinned run alone, the projects follow. A search: one run
+  /// By time: pinned, then today / yesterday / this week / this month / older, captions over each. By project: the
+  /// pinned run alone, the projects follow. A search: one run
   private func groups(_ sessions: [SessionSummary], searching: Bool, byProject: Bool) -> [SessionGroup] {
-    if searching || (!byProject && style.grouping == .flat) {
+    if searching {
       return [SessionGroup(id: "all", caption: nil, sessions: sessions)]
     }
     let top = sessions.filter { $0.pinned == true }
@@ -239,53 +203,17 @@ struct ListViewMenu: View {
   }
 }
 
-/// A group's caption (置顶, 今天 …); over a card it lines up with the rows' inner edge, as Settings does
+/// A group's caption (置顶, 今天 …)
 struct Caption: View {
   let text: String
-  @Environment(\.shellStyle) private var style
   var body: some View {
     Text(web: text, paragraph: false)
       .textStyle(TypeScale.text3, weight: .medium)
       .foregroundStyle(Palette.fg3)
-      .padding(.horizontal, style.listBlock == .card ? Metrics.pad * 2 : Metrics.pad)
+      .padding(.horizontal, Metrics.pad)
       .frame(maxWidth: .infinity, minHeight: Metrics.groupCaption, alignment: .bottomLeading)
       .padding(.bottom, Metrics.s1)
   }
-}
-
-/// One group's rows: straight on the page, or (`listBlock=card`) on a rounded card inset from the edges, the pressed
-/// fill clipped to it
-struct ListBlock<Content: View>: View {
-  @ViewBuilder var content: () -> Content
-  @Environment(\.shellStyle) private var style
-  var body: some View {
-    if style.listBlock == .card {
-      let shape = RoundedRectangle(cornerRadius: Metrics.rCardRound, style: .continuous)
-      VStack(spacing: 0) { content() }
-        .background(shape.fill(Palette.formRow))
-        .clipShape(shape)
-        .padding(.horizontal, Metrics.pad)
-    } else {
-      VStack(spacing: 0) { content() }
-    }
-  }
-}
-
-/// A Settings-style tile: a continuous rounded square a step off the card, its glyph in the body ink
-struct RowTile<Glyph: View>: View {
-  @ViewBuilder var glyph: () -> Glyph
-  var body: some View {
-    glyph()
-      .foregroundStyle(Palette.fgStrong)
-      .frame(width: Metrics.rowTile, height: Metrics.rowTile)
-      .background(RoundedRectangle(cornerRadius: Metrics.rRowTile, style: .continuous).fill(Palette.rowTile))
-      .frame(width: Metrics.mCtl)
-  }
-}
-
-extension ShellStyle.ListRow {
-  /// The lead column's width, shared by session and project rows so their text columns line up
-  var leadWidth: CGFloat { self == .tile || self == .big ? Metrics.mCtl : Metrics.lead }
 }
 
 func projectName(_ cwd: String) -> String {
@@ -306,37 +234,27 @@ func sessionTime(_ iso: String, now: Date = Date()) -> String {
 
 // MARK: - Pieces
 
-/// Design study `chrome=system`: the list's large title is its first row and the page has no navigation bar (a bar
-/// holding only settings read as an empty row over the title; settings sits at the title row's end). The system search
-/// field and new session ride the bottom bar
+/// The list's large title is its first row and the page has no navigation bar (a bar holding only settings read as an
+/// empty row over the title; settings sits at the title row's end). The system search field and new session ride the
+/// bottom bar (iOS 26 Mail / Notes)
 struct SystemListBar: ViewModifier {
-  var on: Bool
   @Binding var query: String
-  var newButton: Bool
   var onNew: () -> Void
 
   func body(content: Content) -> some View {
-    if on {
-      content
-        .navigationBarTitleDisplayModeInline()
-        // Settings alone at the top right; the bottom bar holds the search field and, under the thumb, new session
-        // (iOS 26 Mail / Notes)
-        .toolbar {
-          #if os(iOS)
-          DefaultToolbarItem(kind: .search, placement: .bottomBar)
-          if newButton {
-            ToolbarSpacer(.fixed, placement: .bottomBar)
-            ToolbarItem(placement: .bottomBar) {
-              Button(action: onNew) { Image(systemName: "square.and.pencil") }
-                .accessibilityLabel(Text(web: t("session.new")))
-            }
-          }
-          #endif
+    content
+      .navigationBarTitleDisplayModeInline()
+      .toolbar {
+        #if os(iOS)
+        DefaultToolbarItem(kind: .search, placement: .bottomBar)
+        ToolbarSpacer(.fixed, placement: .bottomBar)
+        ToolbarItem(placement: .bottomBar) {
+          Button(action: onNew) { Image(systemName: "square.and.pencil") }
+            .accessibilityLabel(Text(web: t("session.new")))
         }
-        .searchable(text: $query, prompt: Text(web: t("session.search")))
-    } else {
-      content
-    }
+        #endif
+      }
+      .searchable(text: $query, prompt: Text(web: t("session.search")))
   }
 }
 
@@ -348,31 +266,7 @@ struct SessionGroup: Identifiable {
   var dated = false
 }
 
-/// Design study `large`: settings as a glass circle on the left; search (and new session when the list has no
-/// bottom bar) in one glass group on the right. The list scrolls under them
-struct ListGlassBar: View {
-  var newButton: Bool
-  var searchOpen: Bool
-  var onSearch: () -> Void
-  var onNew: () -> Void
-  var onSettings: () -> Void
-
-  var body: some View {
-    HStack(spacing: Metrics.s3) {
-      GlassIconButton(icon: .settings2, label: t("session.settings"), action: onSettings)
-      Spacer(minLength: 0)
-      GlassGroup {
-        GlassGroupItem(icon: searchOpen ? .x : .search, label: t("session.search"), open: searchOpen, action: onSearch)
-        if newButton { GlassGroupItem(icon: .squarePen, label: t("session.new"), action: onNew) }
-      }
-    }
-    .padding(.horizontal, Metrics.pad)
-    .padding(.bottom, Metrics.s1)
-  }
-}
-
-/// Design study `large` (and system chrome): the list's iOS large title, with settings as a glass circle at the row's
-/// end when the page has no bar (system chrome)
+/// The list's iOS large title, with settings as a glass circle at the row's end (the page has no bar)
 struct LargeTitle: View {
   let title: String
   var onSettings: (() -> Void)?
@@ -390,78 +284,6 @@ struct LargeTitle: View {
       }
       .padding(.horizontal, Metrics.pad)
       .frame(maxWidth: .infinity, minHeight: Metrics.largeTitle, alignment: .leading)
-  }
-}
-
-/// Design study `pill`: a composer-shaped glass bar at the list's bottom; a tap opens the new-session screen
-struct NewSessionBar: View {
-  var action: () -> Void
-  @Environment(\.shellStyle) private var style
-
-  var body: some View {
-    let shape = RoundedRectangle(cornerRadius: style.shape == .round ? Metrics.rComposer : Metrics.rLg)
-    Button(action: action) {
-      HStack(spacing: Metrics.s2) {
-        Icon(.plus, size: Metrics.iconCtl + Metrics.s1, strokeWidth: 1.75)
-          .foregroundStyle(Palette.cmpFg2)
-          .frame(width: Metrics.mCtl, height: Metrics.mCtl)
-        Text(web: t("composer.placeholder"), paragraph: false)
-          .textStyle(TypeScale.field)
-          .foregroundStyle(Palette.fg3)
-          .frame(maxWidth: .infinity, alignment: .leading)
-      }
-      .padding(Metrics.s1_5)
-      .contentShape(shape)
-    }
-    .buttonStyle(.plain)
-    .glassEffect(GlassStyle.control.interactive(), in: shape)
-    .padding(.horizontal, Metrics.pad)
-    .padding(.bottom, Metrics.s2)
-    .accessibilityLabel(Text(web: t("session.new")))
-  }
-}
-
-/// The header bar (custom chrome `bar`): the list's title, then new session and settings
-struct ListHeader: View {
-  let title: String
-  var onNew: () -> Void
-  var onSettings: () -> Void
-
-  var body: some View {
-    HStack(spacing: Metrics.gap) {
-      Text(web: title).lineLimit(1).truncationMode(.tail)
-        .textStyle(TypeScale.field, weight: .semibold)
-        .foregroundStyle(Palette.fgStrong)
-      Spacer(minLength: 0)
-      HStack(spacing: Metrics.s0_5) {
-        IconButton(.squarePen, label: t("session.new"), action: onNew)
-        IconButton(.settings2, label: t("session.settings"), action: onSettings)
-      }
-      .padding(.trailing, -Metrics.s1_5)
-    }
-    .padding(.horizontal, Metrics.pad)
-    .frame(height: Metrics.hdr)
-  }
-}
-
-/// A filled search bar, as tall as the composer's controls
-struct SearchField: View {
-  @Binding var query: String
-  var autofocus = false
-  @FocusState private var focused: Bool
-  var body: some View {
-    HStack(spacing: Metrics.s2) {
-      Icon(.search, size: Metrics.iconCtl).foregroundStyle(Palette.fg3)
-      TextField(text: $query) { Text(web: t("session.search")).foregroundStyle(Palette.fg3) }
-        .focused($focused)
-        .textStyle(TypeScale.text2)
-        .foregroundStyle(Palette.fg1)
-        .submitLabel(.search)
-    }
-    .padding(.horizontal, Metrics.s3)
-    .frame(height: Metrics.mCtl)
-    .background(RoundedRectangle(cornerRadius: Metrics.rMd).fill(focused ? Palette.chipHover : Palette.chip))
-    .onAppear { if autofocus { focused = true } }
   }
 }
 
@@ -483,44 +305,14 @@ struct SessionRow<Pins: View>: View {
   /// The pin actions the row offers (the list's top; inside a project's group, the project's own too)
   @ViewBuilder var pins: () -> Pins
 
-  @Environment(\.shellStyle) private var style
-
-  /// Where the text column starts, so the hairline under the row starts there too
-  private var leadWidth: CGFloat { style.listRow.leadWidth }
-  /// Marks sit centred on both lines (a mark on the title line read as hanging off the block); a state dot keeps to
-  /// the title line
-  private var centred: Bool { style.listRow != .dot }
-
-  @ViewBuilder
-  private var lead: some View {
-    switch style.listRow {
-    case .tile:
-      RowTile { VendorMark(brand: session.agent, name: agentName, size: Metrics.rowTileMark, fit: true) }
-    case .mark:
-      // The bare mark, its ink fitted and centred (logos sit off-centre in their own boxes)
-      VendorMark(brand: session.agent, name: agentName, size: Metrics.rowMark, fit: true)
-        .foregroundStyle(Palette.fg2)
-        .frame(width: Metrics.lead, height: Metrics.lead)
-    case .big:
-      VendorMark(brand: session.agent, name: agentName, size: Metrics.rowMarkLg, fit: true)
-        .foregroundStyle(Palette.fg1)
-        .frame(width: Metrics.mCtl, height: Metrics.mCtl)
-    case .dot:
-      Group {
-        if let state = session.state, state != .unknown {
-          StateMark(state: state, unread: session.unread == true)
-        } else {
-          Circle().fill(Palette.lineStrong).frame(width: Metrics.rowDot, height: Metrics.rowDot)
-        }
-      }
-      .frame(width: Metrics.lead, height: TypeScale.field.lineHeight)
-    }
-  }
-
   var body: some View {
     Button(action: onSelect) {
-      HStack(alignment: centred ? .center : .top, spacing: Metrics.gap) {
-        lead
+      // Marks sit centred on both lines: a mark on the title line read as hanging off the block
+      HStack(alignment: .center, spacing: Metrics.gap) {
+        // The bare mark, its ink fitted and centred (logos sit off-centre in their own boxes)
+        VendorMark(brand: session.agent, name: agentName, size: Metrics.rowMark, fit: true)
+          .foregroundStyle(Palette.fg2)
+          .frame(width: Metrics.lead, height: Metrics.lead)
         VStack(alignment: .leading, spacing: Metrics.s0_5) {
           HStack(alignment: .firstTextBaseline, spacing: Metrics.s2) {
             if pinGlyph { Icon(.pin, size: Metrics.chevron).foregroundStyle(Palette.fg3) }
@@ -539,22 +331,19 @@ struct SessionRow<Pins: View>: View {
             .foregroundStyle(Palette.fg3)
         }
         // The state is its mark alone, as on the desktop (its meaning is the mark's accessibility label), in a column
-        // of its own centred on both lines like the lead. Every row keeps the slot, so the times above line up; a
-        // dot-led row already shows the state at its start
-        if style.listRow != .dot {
-          Group {
-            if let state = session.state, state != .unknown { StateMark(state: state, unread: session.unread == true) }
-          }
-          .frame(width: Metrics.stateSlot)
+        // of its own centred on both lines like the lead. Every row keeps the slot, so the times above line up
+        Group {
+          if let state = session.state, state != .unknown { StateMark(state: state, unread: session.unread == true) }
         }
+        .frame(width: Metrics.stateSlot)
       }
       .padding(.horizontal, Metrics.pad)
-      .padding(.vertical, centred ? 0 : Metrics.s3)
       .frame(minHeight: Metrics.sessionRow)
       .overlay(alignment: .bottom) {
         if divider {
+          // From the text column, under the lead
           Rectangle().fill(Palette.line).frame(height: Metrics.hairline)
-            .padding(.leading, Metrics.pad + leadWidth + Metrics.gap)
+            .padding(.leading, Metrics.pad + Metrics.lead + Metrics.gap)
         }
       }
       .contentShape(Rectangle())
@@ -576,34 +365,19 @@ struct ProjectHeader: View {
   let pinned: Bool
   let open: Bool
   let sessions: [SessionSummary]
-  var divider = false
   var onToggle: () -> Void
   var onPin: () -> Void
   var onNew: () -> Void
-  @Environment(\.shellStyle) private var style
-
-  /// The folder in the session marks' column, the system's filled folder so it weighs what the filled logos weigh:
-  /// on a tile, larger, or bare as the small mark. A pin never takes its place (it says "pinned", not "project")
-  @ViewBuilder
-  private var lead: some View {
-    switch style.listRow {
-    case .tile:
-      RowTile { folder(Metrics.rowTileMark) }
-    case .big:
-      folder(Metrics.rowMarkLg).foregroundStyle(Palette.fg1).frame(width: Metrics.mCtl)
-    default:
-      folder(Metrics.iconCtl).foregroundStyle(Palette.fg2).frame(width: Metrics.lead)
-    }
-  }
-
-  private func folder(_ size: CGFloat) -> some View {
-    Image(systemName: "folder.fill").resizable().scaledToFit().frame(width: size, height: size)
-  }
 
   var body: some View {
     Button(action: onToggle) {
       HStack(spacing: Metrics.gap) {
-        lead
+        // The folder in the session marks' column, the system's filled folder so it weighs what the filled logos
+        // weigh. A pin never takes its place (it says "pinned", not "project")
+        Image(systemName: "folder.fill").resizable().scaledToFit()
+          .frame(width: Metrics.iconCtl, height: Metrics.iconCtl)
+          .foregroundStyle(Palette.fg2)
+          .frame(width: Metrics.lead)
         HStack(spacing: Metrics.s1_5) {
           Text(web: projectName(cwd), paragraph: false).lineLimit(1).truncationMode(.tail)
             .textStyle(TypeScale.field, weight: .semibold)
@@ -621,12 +395,6 @@ struct ProjectHeader: View {
       }
       .padding(.horizontal, Metrics.pad)
       .frame(minHeight: Metrics.sheetRow)
-      .overlay(alignment: .bottom) {
-        if divider {
-          Rectangle().fill(Palette.line).frame(height: Metrics.hairline)
-            .padding(.leading, Metrics.pad + style.listRow.leadWidth + Metrics.gap)
-        }
-      }
       .contentShape(Rectangle())
     }
     .buttonStyle(ListRowStyle(active: false))
@@ -650,12 +418,11 @@ struct ProjectHeader: View {
 struct MoreRow: View {
   let count: Int
   var action: () -> Void
-  @Environment(\.shellStyle) private var style
 
   var body: some View {
     Button(action: action) {
       HStack(spacing: Metrics.gap) {
-        Color.clear.frame(width: style.listRow.leadWidth, height: Metrics.s1)
+        Color.clear.frame(width: Metrics.lead, height: Metrics.s1)
         Text(web: t("session.showMore", ["n": String(count)]), paragraph: false)
           .textStyle(TypeScale.text2).foregroundStyle(Palette.fg3)
         Spacer(minLength: 0)
@@ -769,7 +536,7 @@ struct StateMark: View {
 }
 
 extension View {
-  /// The screens draw their own header bar
+  /// No navigation bar: the list's large title is its first row
   func hiddenNavigationBar() -> some View {
     #if os(iOS)
     toolbar(.hidden, for: .navigationBar)

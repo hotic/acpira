@@ -9,7 +9,6 @@ import SwiftUI
 struct AgentMessage: View {
   let turn: AgentTurn
   var running: Bool
-  var actions = true
   /// The turn's entrance name (session and turn index): EntranceOnce ids repeat across turns
   var scope = ""
   /// The turn's place in the session (fork from here)
@@ -19,7 +18,7 @@ struct AgentMessage: View {
   var body: some View {
     VStack(alignment: .leading, spacing: Metrics.gap) {
       CodexMessage(turn: turn, running: running, onPermission: sessionActions.permission)
-      if actions && !running && turn.blocks.contains(where: { if case .notice = $0 { false } else { true } }) {
+      if !running && turn.blocks.contains(where: { if case .notice = $0 { false } else { true } }) {
         TurnActions(turn: turn, index: index)
       }
     }
@@ -62,7 +61,6 @@ struct CodexFold: View {
   @Environment(\.motionEnabled) private var motion
   @Environment(\.holdScroll) private var holdScroll
   @Environment(\.preOpen) private var preOpen
-  @Environment(\.shellStyle) private var style
 
   var body: some View {
     // A turn with no process worth a head (a plain reply, or only a compaction status) shows no head
@@ -102,33 +100,7 @@ struct CodexFold: View {
     let since = clockStart(turn)
     let elapsed = !running && turn.startedAt != nil && turn.endedAt != nil
       && (since == nil || turn.endedAt! - since! >= 500) ? elapsedLabel(turn) : nil
-    if !running && style.process == .quiet {
-      quietHead(open: open, label: label, elapsed: elapsed)
-    } else {
-      rowHead(open: open, running: running, activity: activity, outcome: outcome, label: label, elapsed: elapsed)
-    }
-  }
-
-  /// Design study: a finished turn's head as one caption ("Done 2m ›"), no lead glyph, in the quiet ink
-  private func quietHead(open: Bool, label: String, elapsed: String?) -> some View {
-    Button {
-      let next = !open
-      holdScroll()
-      withAnimation(foldAnimation(opening: next, motion: motion)) { manual = next }
-    } label: {
-      HStack(spacing: Metrics.s1_5) {
-        Text(web: [label, elapsed].compactMap { $0 }.joined(separator: " "), paragraph: false)
-          .lineLimit(1)
-        if !blocks.isEmpty {
-          FoldChevron(open: open)
-        }
-      }
-      .textStyle(WebType.text3)
-      .foregroundStyle(Palette.fg3)
-      .frame(minHeight: WebMetrics.processRow, alignment: .leading)
-      .contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
+    rowHead(open: open, running: running, activity: activity, outcome: outcome, label: label, elapsed: elapsed)
   }
 
   @ViewBuilder

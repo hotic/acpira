@@ -27,7 +27,6 @@ struct ChatScreen: View {
   @State private var accountOpen = false
   @Environment(\.initialPopup) private var initialPopup
   @Environment(\.initialDraft) private var initialDraft
-  @Environment(\.shellStyle) private var style
 
   var body: some View {
     if let session = model.views[id] {
@@ -42,21 +41,11 @@ struct ChatScreen: View {
     let agent = model.agent(session.agent)
     let pinned = model.summaries.first { $0.id == id }?.pinned == true
     return VStack(spacing: 0) {
-      if style.header == .bar && style.chrome == .custom {
-        ChatHeader(session: session, agent: agent, pinned: pinned, actions: headerActions(session, agent))
-      }
       Thread(session: session)
-        // Design study: glass buttons float over the thread, which scrolls under them with the system's edge blur
-        .safeAreaBar(edge: .top) {
-          if style.header != .bar && style.chrome == .custom {
-            FloatHeader(session: session, pinned: pinned, actions: headerActions(session, agent))
-          }
-        }
-      // The dock reaches down into the home indicator's band (Metrics.homeReach), leaving the thread more room; on
-      // a phone without the indicator it keeps the plain gap. Under system chrome it rests where the list's system
-      // bottom bar does (Metrics.barSink)
+      // The dock reaches down into the home indicator's band and rests where the list's system bottom bar does
+      // (Metrics.barSink), leaving the thread more room; on a phone without the indicator it keeps the plain gap
       Dock(session: session, draft: $draft, staged: $staged)
-        .padding(.bottom, keyboard ? Metrics.s2 : max(Metrics.s2, homeInset - (style.chrome == .system ? Metrics.barSink : Metrics.homeReach)))
+        .padding(.bottom, keyboard ? Metrics.s2 : max(Metrics.s2, homeInset - Metrics.barSink))
     }
     // The keyboard's safe area still lifts the dock; only the container's (the home indicator) is taken over
     .ignoresSafeArea(.container, edges: .bottom)
@@ -66,7 +55,7 @@ struct ChatScreen: View {
     .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.bottom } action: { if !keyboard { homeInset = $0 } }
     .modifier(KeyboardWatch(up: $keyboard))
     // The thread blurs and dims gradually as it scrolls up under the bar's glass buttons
-    .topFade(style.chrome == .system)
+    .topFade()
     .onAppear {
       if let initialDraft, draft.isEmpty { draft = initialDraft }
       // `-popup account`: the account sheet open on launch (screenshots); `-popup toast`: a moment later, the toast of
@@ -79,22 +68,14 @@ struct ChatScreen: View {
         }
       }
     }
-    // Composer menus and panels open above their chips, over the thread and the dock
-    .popupLayer()
     // The composer's liquid pickers, drawn over the whole screen so every piece takes taps
     .gooLayer()
-    .modifier(SystemChatBar(on: style.chrome == .system, title: style.header == .float ? "" : session.title,
-                            pinned: pinned, actions: headerActions(session, agent)))
+    .modifier(SystemChatBar(pinned: pinned, actions: headerActions(session, agent)))
     .background(Palette.bg0)
     .environment(\.agentAccent, Palette.accent(for: session.agent))
     .environment(\.sessionActions, sessionActions)
-    .pickerSheet(isPresented: style.chrome == .system ? .constant(false) : $accountOpen, title: t("common.account")) {
-      AccountPanel(agent: agent, accounts: model.accounts.filter { $0.agent == agent.id }, accountId: session.accountId,
-                   onSelect: { model.selectAccount(id, $0) },
-                   onAdd: { model.show(t("mobile.engineNeeded"), icon: .unplug) })
-    }
-    // Design study `chrome=system`: the accounts as a system sheet with a form
-    .sheet(isPresented: style.chrome == .system ? $accountOpen : .constant(false)) {
+    // The accounts as a system sheet with a form
+    .sheet(isPresented: $accountOpen) {
       NativeAccountSheet(agent: agent, accounts: model.accounts.filter { $0.agent == agent.id }, accountId: session.accountId,
                          onSelect: { model.selectAccount(id, $0) },
                          onAdd: { model.show(t("mobile.engineNeeded"), icon: .unplug) })
@@ -118,7 +99,7 @@ struct ChatScreen: View {
       pin: { model.togglePin(id) },
       rename: { newTitle = session.title; renaming = true },
       export: { model.export(id, json: $0) },
-      settings: { model.path.append(.settings) },
+      settings: { model.settingsOpen = true },
       delete: { deleting = true })
   }
 
@@ -157,109 +138,25 @@ struct HeaderActions {
   var delete: () -> Void = {}
 }
 
-/// The phone's header bar: back on the left; the title centred over the agent and the project; new session and the
-/// "…" menu (account, pin, rename, exports, settings, delete) on the right. The desktop's row of five icons (new,
-/// history, account, more, settings) folds into these three: history is the back button, the rest live in the menu
-struct ChatHeader: View {
-  let session: SessionView
-  var agent: AgentInfo
-  var pinned = false
-  var actions = HeaderActions()
-  @State private var menu = false
-  @Environment(\.initialPopup) private var initialPopup
-
-  var body: some View {
-    ZStack {
-      VStack(spacing: 0) {
-        Text(web: session.title, paragraph: false)
-          .textStyle(TypeScale.text2, weight: .semibold)
-          .foregroundStyle(Palette.fgStrong)
-        Text(web: [agent.name, folderName(session.cwd)].filter { !$0.isEmpty }.joined(separator: " · "), paragraph: false)
-          .textStyle(TypeScale.text3)
-          .foregroundStyle(Palette.fg3)
-      }
-      .lineLimit(1)
-      .truncationMode(.tail)
-      // Clear of the buttons on both sides, so the title stays centred on the screen
-      .padding(.horizontal, Metrics.ctl * 2 + Metrics.s0_5 + Metrics.s2)
-      HStack(spacing: Metrics.s0_5) {
-        IconButton(.chevronLeft, label: t("common.back"), action: actions.back)
-        Spacer(minLength: 0)
-        IconButton(.squarePen, label: t("session.new"), action: actions.new)
-        IconButton(.ellipsis, label: t("session.more"), open: menu) { menu.toggle() }
-          .popup(isPresented: $menu, side: .bottom, edge: .trailing, width: Metrics.popMd) {
-            SessionActionsMenu(pinned: pinned, actions: actions)
-          }
-      }
-      // The glyphs' edges, not their boxes, sit on the --pad line
-      .padding(.horizontal, Metrics.pad - Metrics.s1_5)
-    }
-    .frame(height: Metrics.hdr)
-    .overlay(alignment: .bottom) { Rectangle().fill(Palette.line).frame(height: Metrics.hairline) }
-    .onAppear { if initialPopup == "more" { menu = true } }
-  }
-}
-
-/// Design study header: glass back on the left, then (under `title`) the session's title; new session and the "…"
-/// menu share one glass group on the right. No bar and no hairline: the thread scrolls under the glass
-struct FloatHeader: View {
-  let session: SessionView
-  var pinned = false
-  var actions = HeaderActions()
-  @State private var menu = false
-  @Environment(\.shellStyle) private var style
-  @Environment(\.initialPopup) private var initialPopup
-
-  var body: some View {
-    HStack(spacing: Metrics.s3) {
-      GlassIconButton(icon: .chevronLeft, label: t("common.back"), action: actions.back)
-      if style.header == .title {
-        Text(web: session.title, paragraph: false)
-          .textStyle(TypeScale.field, weight: .semibold)
-          .foregroundStyle(Palette.fgStrong)
-          .lineLimit(1)
-          .truncationMode(.tail)
-      }
-      Spacer(minLength: 0)
-      GlassGroup {
-        GlassGroupItem(icon: .squarePen, label: t("session.new"), action: actions.new)
-        GlassGroupItem(icon: .ellipsis, label: t("session.more"), open: menu) { menu.toggle() }
-          .popup(isPresented: $menu, side: .bottom, edge: .trailing, width: Metrics.popMd) {
-            SessionActionsMenu(pinned: pinned, actions: actions)
-          }
-      }
-    }
-    .padding(.horizontal, Metrics.pad)
-    .padding(.bottom, Metrics.s1)
-    .onAppear { if initialPopup == "more" { menu = true } }
-  }
-}
-
-/// Design study `chrome=system`: the navigation bar itself, the system back button on the left, new session and the
-/// "…" menu as bar buttons on the right (the system groups them on one glass capsule); the title inline or none
+/// The chat's navigation bar: the system back button on the left, new session and the "…" menu as bar buttons on the
+/// right (the system groups them on one glass capsule), no title: the thread scrolls under the glass
 struct SystemChatBar: ViewModifier {
-  var on: Bool
-  var title: String
   var pinned: Bool
   var actions: HeaderActions
 
   func body(content: Content) -> some View {
-    if on {
-      content
-        .navigationTitle(title)
-        .navigationBarTitleDisplayModeInline()
-        .backWithoutTitle()
-        .toolbar {
-          ToolbarItemGroup(placement: .primaryAction) {
-            Button(action: actions.new) { Image(systemName: "square.and.pencil") }
-              .accessibilityLabel(Text(web: t("session.new")))
-            Menu { NativeSessionMenu(pinned: pinned, actions: actions) } label: { Image(systemName: "ellipsis") }
-              .accessibilityLabel(Text(web: t("session.more")))
-          }
+    content
+      .navigationTitle("")
+      .navigationBarTitleDisplayModeInline()
+      .backWithoutTitle()
+      .toolbar {
+        ToolbarItemGroup(placement: .primaryAction) {
+          Button(action: actions.new) { Image(systemName: "square.and.pencil") }
+            .accessibilityLabel(Text(web: t("session.new")))
+          Menu { NativeSessionMenu(pinned: pinned, actions: actions) } label: { Image(systemName: "ellipsis") }
+            .accessibilityLabel(Text(web: t("session.more")))
         }
-    } else {
-      content
-    }
+      }
   }
 }
 
@@ -333,22 +230,21 @@ struct ThreadContent: View {
   var lazy = true
   /// Folds opened in the last exchange before any tap (renders and previews)
   var preOpen: Set<PreOpen> = []
-  @Environment(\.shellStyle) private var style
 
   var body: some View {
     let groups = exchanges(session.turns)
     let activeAgent = session.turns.lastIndex { if case .agent = $0 { true } else { false } }
     Group {
       if lazy {
-        // Design study: a bubble does not stick (it would sit under the floating glass with the thread showing beside it)
-        LazyVStack(alignment: .leading, spacing: 0, pinnedViews: style.user == .card ? [.sectionHeaders] : []) {
+        // A prompt bubble does not stick (it would sit under the floating glass with the thread showing beside it)
+        LazyVStack(alignment: .leading, spacing: 0) {
           sections(groups, activeAgent)
         }
       } else {
         VStack(alignment: .leading, spacing: 0) { sections(groups, activeAgent) }
       }
     }
-    .padding(.horizontal, style.margin == .slim ? Metrics.s1 : Metrics.page)
+    .padding(.horizontal, Metrics.s1)
     .padding(.top, Metrics.padY)
     .padding(.bottom, WebMetrics.msgGap)
   }
@@ -363,7 +259,6 @@ struct ThreadContent: View {
         VStack(alignment: .leading, spacing: WebMetrics.msgGap) {
           ForEach(exchange.agents, id: \.index) { item in
             AgentMessage(turn: item.turn, running: session.running && item.index == activeAgent && item.turn.stop == nil,
-                         actions: showsActions(item.index, activeAgent),
                          scope: "\(session.id):\(item.index)", index: item.index)
           }
         }
@@ -378,17 +273,8 @@ struct ThreadContent: View {
     }
   }
 
-  /// Design study: the reply row under every turn, the last turn only, or none
-  private func showsActions(_ index: Int, _ active: Int?) -> Bool {
-    switch style.actions {
-    case .every: true
-    case .last: index == active
-    case .none: false
-    }
-  }
-
   private func endsWithActions(_ exchange: Exchange, running: Bool, active: Int?) -> Bool {
-    guard let last = exchange.agents.last, showsActions(last.index, active) else { return false }
+    guard let last = exchange.agents.last else { return false }
     let live = running && last.index == active && last.turn.stop == nil
     return !live && last.turn.blocks.contains { if case .notice = $0 { false } else { true } }
   }
@@ -396,8 +282,9 @@ struct ThreadContent: View {
 
 // MARK: - Full-length render
 
-/// The whole chat at phone width with the thread snapshot: header, every exchange, dock. Rendered to a PNG by
-/// `-render`, so a transcript longer than the screen compares against the LAB's full-page reference in one image
+/// The whole chat at phone width with the thread snapshot: every exchange, then the dock (the navigation bar is the
+/// system's and does not render here). Rendered to a PNG by `-render`, so a transcript longer than the screen compares
+/// against the LAB's full-page reference in one image
 public struct ChatPoster: View {
   let session: SessionView
   var width: CGFloat
@@ -409,7 +296,6 @@ public struct ChatPoster: View {
 
   public var body: some View {
     VStack(spacing: 0) {
-      ChatHeader(session: session, agent: Fixtures.agents.first { $0.id == session.agent } ?? AgentInfo(id: session.agent, name: session.agent))
       ThreadContent(session: session, lazy: false, preOpen: preOpen)
       PlanDock(session: session)
       Dock(session: session, draft: .constant(""), staged: .constant([]))

@@ -232,10 +232,9 @@ struct QuestionButtonStyle: ButtonStyle {
 
 /// The `card` surface under the tonal axis: rounded-lg, --card-line, --card-bg and the card shadow
 struct CardSurface: ViewModifier {
-  @Environment(\.shellStyle) private var style
   func body(content: Content) -> some View {
-    // Under the round shape language a card over the composer rounds like it
-    let shape = RoundedRectangle(cornerRadius: style.shape == .round ? Metrics.rCardRound : Metrics.rLg, style: .continuous)
+    // A card over the composer rounds like it
+    let shape = RoundedRectangle(cornerRadius: Metrics.rCardRound, style: .continuous)
     content
       // `border`: the 1 px card line sits outside the content box
       .padding(Metrics.hairline)

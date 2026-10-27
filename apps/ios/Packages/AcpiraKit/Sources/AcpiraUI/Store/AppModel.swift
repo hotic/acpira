@@ -15,9 +15,10 @@ public enum Route: Hashable {
   case chat(String)
   /// The new-session screen, preset to an agent and a project when it is opened from a session
   case new(agent: AgentId?, cwd: String?)
-  /// The settings as a page (custom chrome; under system chrome they come up as a sheet, `settingsOpen`)
-  case settings
 }
+
+/// agentOrder.ts launchable: the agents a new session can start with, the disabled ones left out
+func launchable(_ agents: [AgentInfo]) -> [AgentInfo] { agents.filter { $0.disabled != true } }
 
 /// A short confirmation floating over the screen (copied, pinned, forked …)
 struct Toast: Identifiable, Equatable {
@@ -42,7 +43,7 @@ final class AppModel {
   var projectPins: Set<String> = []
   /// Projects folded open in the by-project view
   var openProjects: Set<String> = []
-  /// The settings sheet (system chrome)
+  /// The settings sheet is up
   var settingsOpen = false
   /// A session's export waiting for the share sheet
   var shared: ExportFile?
@@ -448,27 +449,22 @@ extension EnvironmentValues {
 
 // MARK: - Toast
 
-/// The toast: a capsule under the status bar with the action's glyph and a few words; inverted (btn-1), or Liquid Glass
-/// under the system chrome, as the system's own bars and buttons around it
+/// The toast: a Liquid Glass capsule under the navigation bar with the action's glyph and a few words, as the system's
+/// own bars and buttons around it
 struct ToastView: View {
   let toast: Toast
-  @Environment(\.shellStyle) private var style
   var body: some View {
-    let glass = style.chrome == .system
     HStack(spacing: Metrics.s2) {
       Icon(toast.icon, size: Metrics.iconCtl, strokeWidth: 1.75)
       Text(web: toast.text, paragraph: false).lineLimit(1).truncationMode(.middle)
     }
     .textStyle(TypeScale.text2, weight: .medium)
-    .foregroundStyle(glass ? Palette.fgStrong : Palette.btn1Fg)
+    .foregroundStyle(Palette.fgStrong)
     .padding(.horizontal, Metrics.pad)
     .frame(height: Metrics.mCtl)
-    .background { if !glass { Capsule().fill(Palette.btn1Bg) } }
-    .glassEffect(glass ? .regular : .identity, in: Capsule())
-    // Glass casts its own shadow
-    .shadow(color: glass ? .clear : Palette.shadowWide, radius: Metrics.popShadowRadius, y: Metrics.popShadowY)
+    .glassEffect(.regular, in: Capsule())
     // Translucent, it would show the system bar's glass buttons through it: it drops in under the bar instead
-    .padding(.top, glass ? Metrics.navBar : 0)
+    .padding(.top, Metrics.navBar)
     .padding(.horizontal, Metrics.page)
     .accessibilityAddTraits(.updatesFrequently)
   }

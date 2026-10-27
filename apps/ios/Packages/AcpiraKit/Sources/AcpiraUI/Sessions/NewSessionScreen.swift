@@ -2,11 +2,10 @@ import AcpiraDesign
 import AcpiraModels
 import SwiftUI
 
-// A new session before its first prompt: the header, the agent's mark and the project in the middle of an empty
-// thread, and the composer. The two choices a session is born with (which agent CLI runs it and which folder it works
-// in) are made in the middle under system chrome (the bare mark rings itself with the other agents, a glass capsule
-// under the name opens the folders), and on a line under the composer otherwise. Sending the first prompt creates the
-// session and replaces this screen with its chat.
+// A new session before its first prompt: the agent's mark and the project in the middle of an empty thread, and the
+// composer. The two choices a session is born with (which agent CLI runs it and which folder it works in) are made in
+// the middle: the bare mark rings itself with the other agents, a glass capsule under the name opens the folders.
+// Sending the first prompt creates the session and replaces this screen with its chat.
 
 struct NewSessionScreen: View {
   @Environment(AppModel.self) private var model
@@ -16,9 +15,8 @@ struct NewSessionScreen: View {
   @State private var homeInset: CGFloat = 0
   /// The software keyboard is up: the system already lifts the composer over it, so it keeps only a small gap
   @State private var keyboard = false
-  /// The agent ring is out (system chrome): the page dims under it and a tap anywhere folds it
+  /// The agent ring is out: the page dims under it and a tap anywhere folds it
   @State private var ring = false
-  @Environment(\.shellStyle) private var style
 
   init(agent: AgentId, cwd: String, controls: SessionControls) {
     _draft = State(initialValue: SessionView(id: "draft", agent: agent, title: t("session.new"), cwd: cwd, controls: controls))
@@ -27,9 +25,6 @@ struct NewSessionScreen: View {
   var body: some View {
     let agent = model.agent(draft.agent)
     VStack(spacing: 0) {
-      if style.chrome == .custom {
-        NewSessionHeader { if !model.path.isEmpty { model.path.removeLast() } }
-      }
       // The hero sits at the page's optical centre (`heroRise`) and the composer lies over the page's bottom, so the
       // composer growing (the attach tray, a long prompt) never moves the hero
       GeometryReader { page in
@@ -41,7 +36,7 @@ struct NewSessionScreen: View {
               .onTapGesture { ring = false }
               .transition(.opacity)
           }
-          NewSessionHero(agent: agent, cwd: draft.cwd, picks: style.chrome == .system, agents: model.agents,
+          NewSessionHero(agent: agent, cwd: draft.cwd, agents: model.agents,
                          recent: model.projects, onAgent: pickAgent, onProject: { draft.cwd = $0 },
                          onAdd: { model.addProject($0); draft.cwd = $0 }, ring: $ring)
             .position(x: page.size.width / 2, y: page.size.height * Metrics.heroRise)
@@ -49,37 +44,24 @@ struct NewSessionScreen: View {
         // The dim lifts with an ease-in, held while the bubbles go home (the composer pickers' dim)
         .animation(ring ? .easeOut(duration: Motion.durOpen) : Motion.gooDimOut, value: ring)
       }
-        .overlay(alignment: .bottom) {
-          VStack(spacing: Metrics.s1) {
-            Composer(session: draft, text: $text, staged: $staged, onSend: start,
-                     onSetMode: { draft.controls.modeId = $0 }, onSetConfig: setConfig,
-                     placeholder: t("mobile.new.placeholder"))
-            // What the session is born with: the agent CLI and the folder (in the hero under system chrome)
-            if style.chrome == .custom {
-              HStack(spacing: Metrics.s1) {
-                AgentChip(agents: model.agents, current: draft.agent) { pickAgent($0) }
-                ProjectChip(cwd: draft.cwd, recent: model.projects, onSelect: { draft.cwd = $0 },
-                            onAdd: { model.addProject($0); draft.cwd = $0 })
-                Spacer(minLength: 0)
-              }
-              .padding(.horizontal, Metrics.s1)
-            }
-          }
+      .overlay(alignment: .bottom) {
+        Composer(session: draft, text: $text, staged: $staged, onSend: start,
+                 onSetMode: { draft.controls.modeId = $0 }, onSetConfig: setConfig,
+                 placeholder: t("mobile.new.placeholder"))
           .padding(.horizontal, Metrics.pad)
-          // Design study: under system chrome the composer rests where the list's system bottom bar does
-          .padding(.bottom, keyboard ? Metrics.s2 : max(Metrics.s2, homeInset - (style.chrome == .system ? Metrics.barSink : Metrics.homeReach)))
-        }
+          // The composer rests where the list's system bottom bar does
+          .padding(.bottom, keyboard ? Metrics.s2 : max(Metrics.s2, homeInset - Metrics.barSink))
+      }
     }
     .ignoresSafeArea(.container, edges: .bottom)
     // The bottom inset counts the keyboard while it is up, and padding by it lifted the composer a second keyboard's
     // height, over the hero to the header (ChatScreen's dock had the same trap); read it only with the keyboard down
     .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.bottom } action: { if !keyboard { homeInset = $0 } }
     .modifier(KeyboardWatch(up: $keyboard))
-    .popupLayer()
     // The composer's liquid pickers, drawn over the whole screen so every piece takes taps
     .gooLayer()
     .background(Palette.bg0)
-    .modifier(SystemTitle(on: style.chrome == .system, title: t("session.new")))
+    .modifier(SystemTitle(title: t("session.new")))
     .environment(\.agentAccent, Palette.accent(for: draft.agent))
     .environment(\.sessionActions, SessionActions(toast: { model.show($0, icon: $1) }))
   }
@@ -103,31 +85,11 @@ struct NewSessionScreen: View {
   }
 }
 
-/// The header: back, and the screen's name centred
-struct NewSessionHeader: View {
-  var onBack: () -> Void
-  var body: some View {
-    ZStack {
-      Text(web: t("session.new"), paragraph: false)
-        .textStyle(TypeScale.text2, weight: .semibold)
-        .foregroundStyle(Palette.fgStrong)
-      HStack(spacing: 0) {
-        IconButton(.chevronLeft, label: t("common.back"), action: onBack)
-        Spacer(minLength: 0)
-      }
-      .padding(.horizontal, Metrics.pad - Metrics.s1_5)
-    }
-    .frame(height: Metrics.hdr)
-  }
-}
-
-/// The empty thread's centre. Under system chrome (`picks`): the agent's bare mark, which rings itself with the other
-/// agents (AgentRing), its name, and the folder as a glass capsule opening the recent projects' system menu. Otherwise
-/// the mark on a tile, the name and the project's path, the choices living under the composer
+/// The empty thread's centre: the agent's bare mark, which rings itself with the other agents (AgentRing), its name,
+/// and the folder as a glass capsule opening the recent projects' system menu
 struct NewSessionHero: View {
   let agent: AgentInfo
   let cwd: String
-  var picks = false
   var agents: [AgentInfo] = []
   var recent: [String] = []
   var onAgent: (AgentId) -> Void = { _ in }
@@ -142,55 +104,41 @@ struct NewSessionHero: View {
 
   var body: some View {
     VStack(spacing: Metrics.s2) {
-      if picks {
-        AgentRing(agent: agent, agents: agents, open: $ring, veil: $veil, onSelect: onAgent)
-          .padding(.bottom, Metrics.s3)
-        VStack(spacing: Metrics.s3) {
-          name
-            // A new agent's name is a new text, swapped at once while hidden. A `.transaction` with no animation here
-            // also stopped the group's offset from reaching it, so the name jumped up as the ring opened
-            .id(agent.id)
-            .transition(.identity)
-          Menu {
-            NativeProjectMenu(cwd: cwd, recent: recent, onSelect: onProject, onAdd: { adding = true })
-          } label: {
-            HStack(spacing: Metrics.s1_5) {
-              Icon(.folder, size: Metrics.icon)
-              Text(web: folderName(cwd), paragraph: false).textStyle(TypeScale.text2)
-            }
-            .foregroundStyle(Palette.fg2)
-            .padding(.horizontal, Metrics.s3)
-            .padding(.vertical, Metrics.s1_5)
-            .glassEffect(GlassStyle.control.interactive(), in: Capsule())
-          }
-          .menuStyle(.button)
-          .buttonStyle(.plain)
-          .modifier(AddProjectAlert(isPresented: $adding, onAdd: onAdd))
-        }
-        // The name and the folder step back while the ring is out and rise back from under the drop once the picked
-        // mark has landed, or once the bubbles are home
-        .opacity(veil || ring ? 0 : 1)
-        .offset(y: veil || ring ? -Metrics.s3 : 0)
-        .animation(motion ? (veil || ring ? Motion.ringHeroAway : Motion.ringHeroBack) : nil, value: veil || ring)
-      } else {
-        VendorMark(brand: agent.id, name: agent.name, size: Metrics.heroMark)
-          .foregroundStyle(Palette.fg1)
-          .frame(width: Metrics.heroTile, height: Metrics.heroTile)
-          .background(RoundedRectangle(cornerRadius: Metrics.rLg).fill(Palette.chip))
-          .padding(.bottom, Metrics.s2)
+      AgentRing(agent: agent, agents: agents, open: $ring, veil: $veil, onSelect: onAgent)
+        .padding(.bottom, Metrics.s3)
+      VStack(spacing: Metrics.s3) {
         name
-        Text(web: cwd, paragraph: false)
-          .textStyle(TypeScale.text3)
-          .foregroundStyle(Palette.fg3)
-          .lineLimit(1)
-          .truncationMode(.head)
+          // A new agent's name is a new text, swapped at once while hidden. A `.transaction` with no animation here
+          // also stopped the group's offset from reaching it, so the name jumped up as the ring opened
+          .id(agent.id)
+          .transition(.identity)
+        Menu {
+          NativeProjectMenu(cwd: cwd, recent: recent, onSelect: onProject, onAdd: { adding = true })
+        } label: {
+          HStack(spacing: Metrics.s1_5) {
+            Icon(.folder, size: Metrics.icon)
+            Text(web: folderName(cwd), paragraph: false).textStyle(TypeScale.text2)
+          }
+          .foregroundStyle(Palette.fg2)
+          .padding(.horizontal, Metrics.s3)
+          .padding(.vertical, Metrics.s1_5)
+          .glassEffect(GlassStyle.control.interactive(), in: Capsule())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .modifier(AddProjectAlert(isPresented: $adding, onAdd: onAdd))
       }
+      // The name and the folder step back while the ring is out and rise back from under the drop once the picked
+      // mark has landed, or once the bubbles are home
+      .opacity(veil || ring ? 0 : 1)
+      .offset(y: veil || ring ? -Metrics.s3 : 0)
+      .animation(motion ? (veil || ring ? Motion.ringHeroAway : Motion.ringHeroBack) : nil, value: veil || ring)
     }
     .padding(.horizontal, Metrics.page)
     .task {
       // Screenshots and recordings: `-popup ring` puts the ring out a beat after the first frame (`-popup ring.pick`
       // then picks an agent, AgentRing)
-      guard picks, initialPopup == "ring" || initialPopup == "ring.pick" else { return }
+      guard initialPopup == "ring" || initialPopup == "ring.pick" else { return }
       try? await Task.sleep(for: .seconds(1.2))
       ring = true
     }
@@ -382,65 +330,6 @@ struct AgentRing: View {
     .offset(open && !flying ? spot : .zero)
     .animation(motion ? (flying ? Motion.ringFlight : Motion.ringSpring.delay(open ? outDelay : homeDelay)) : nil,
                value: open)
-  }
-}
-
-/// The agent CLI a new session runs: its mark and name, the agents in a sheet (one not installed stays listed, dimmed)
-struct AgentChip: View {
-  let agents: [AgentInfo]
-  let current: AgentId
-  var onSelect: (AgentId) -> Void
-  @State private var open = false
-  @Environment(\.initialPopup) private var initialPopup
-
-  @Environment(\.shellStyle) private var style
-
-  var body: some View {
-    let agent = agents.first { $0.id == current } ?? AgentInfo(id: current, name: current)
-    if style.chrome == .system {
-      Menu {
-        NativeAgentMenu(agents: agents, current: current, onSelect: onSelect)
-      } label: {
-        ChipLabel(agent.name) { VendorMark(brand: agent.id, name: agent.name) }
-      }
-      .menuStyle(.button)
-      .buttonStyle(ChipStyle())
-    } else {
-      Button { open.toggle() } label: {
-        ChipLabel(agent.name) {
-          VendorMark(brand: agent.id, name: agent.name)
-        }
-      }
-      .buttonStyle(ChipStyle(open: open))
-      .pickerSheet(isPresented: $open, title: t("common.agent"), current: current) {
-        AgentList(agents: agents, current: current, onSelect: onSelect)
-      }
-      .onAppear { if initialPopup == "agent" { open = true } }
-    }
-  }
-}
-
-/// The plus menu's agents (NewSessionMenu) as a sheet list with the current one checked
-struct AgentList: View {
-  let agents: [AgentInfo]
-  let current: AgentId
-  var onSelect: (AgentId) -> Void
-  @Environment(\.dismissPopup) private var dismiss
-
-  var body: some View {
-    PopupList(current: current) {
-      ForEach(launchable(agents)) { a in
-        MenuOption(a.name, description: a.available == false ? t("mobile.agent.notInstalled") : nil,
-                   checked: a.id == current, checkSlot: true) {
-          onSelect(a.id)
-          dismiss()
-        } mark: {
-          VendorMark(brand: a.id, name: a.name)
-        }
-        .disabled(a.available == false)
-        .id(a.id)
-      }
-    }
   }
 }
 

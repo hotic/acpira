@@ -16,8 +16,8 @@ public struct LaunchOptions: Sendable {
   public var screen: String
   /// `-render closed|open|all`: draw the fixture's full-length chat into tmp/acpira-render.png instead of the screens
   public var render: String?
-  /// `-popup model|attach|project|agent|ring|more|language`: open that menu or sheet, or put the new-session agent ring
-  /// out, on launch (screenshots of the panels)
+  /// `-popup attach|model|model.N|focus…|demo|ring|ring.pick|account|toast|code|fold:N|menu:X,Y`: open that picker,
+  /// sheet or fold, or play the liquid transitions, on launch (screenshots and recordings, docs/dev/ios.md)
   public var popup: String?
   /// `-replay`: the chat plays its last agent turn back as a live stream (motion recordings)
   public var replay = false
@@ -27,8 +27,6 @@ public struct LaunchOptions: Sendable {
   public var prompt: String?
   /// `-draft TEXT`: the chat's composer starts with this typed (screenshots of the lit send button)
   public var draft: String?
-  /// `-lab a` or `-lab header=float,…`: the design study's style for this launch (ShellStyle), over the stored one
-  public var lab: String?
 
   public static func current(_ arguments: [String] = ProcessInfo.processInfo.arguments) -> LaunchOptions {
     func value(_ flag: String) -> String? {
@@ -39,13 +37,24 @@ public struct LaunchOptions: Sendable {
     return LaunchOptions(fixture: value("-fixture") ?? "showcase", theme: theme, motion: value("-motion") != "none",
                          locale: value("-locale"), screen: value("-screen") ?? "chat", render: value("-render"),
                          popup: value("-popup"), replay: arguments.contains("-replay"), open: value("-open"),
-                         prompt: value("-prompt"), draft: value("-draft"), lab: value("-lab"))
+                         prompt: value("-prompt"), draft: value("-draft"))
   }
 }
 
-/// The app's root: the session list, pushing a chat or the new-session screen, the settings over it as a sheet (a page
-/// under custom chrome); the app model holds the stack, so a language switch (which rebuilds every screen) keeps the
-/// reader where they were
+extension EnvironmentValues {
+  /// `-popup NAME`: the menu, sheet or panel a screenshot opens on launch
+  @Entry var initialPopup: String? = nil
+  /// `-draft TEXT`: what the chat's composer starts with
+  @Entry var initialDraft: String? = nil
+  /// The time quota resets count down from: the real clock, or the fixtures' clock while the app shows fixtures
+  @Entry var now: Date = .now
+  /// Seconds the app's clock runs ahead of the real one: the fixtures' clock runs on from launch (`AppModel.now`), so a
+  /// live counter reads the time the demo turns are stamped with; 0 on the real clock
+  @Entry var clockOffset: TimeInterval = 0
+}
+
+/// The app's root: the session list, pushing a chat or the new-session screen, the settings over it as a sheet; the app
+/// model holds the stack, so a language switch (which rebuilds every screen) keeps the reader where they were
 public struct RootView: View {
   private let options: LaunchOptions
   @State private var model: AppModel
@@ -62,22 +71,14 @@ public struct RootView: View {
   }
 
   public var body: some View {
-    // The reading sizes are read straight from the tokens, so they are switched before anything draws; a change
-    // rebuilds the screens (the `.id` below)
-    let _ = Reading.phone = shellStyle.scale == .phone
     if let render = options.render {
-      RenderScreen(fixture: options.fixture, mode: render, scheme: options.theme ?? .dark, style: shellStyle)
+      RenderScreen(fixture: options.fixture, mode: render, scheme: options.theme ?? .dark)
         .preferredColorScheme(options.theme)
         .environment(\.motionEnabled, false)
     } else {
       screens
     }
   }
-
-  /// The design study's look: pinned by `-lab`, else the stored one (preset 丁 by default)
-  /// The look: preset 丁 (system chrome), picked on 2026-10-27. The settings' switcher is gone, so a code stored by it
-  /// (UserDefaults `acpira.lab.style`) is no longer read; `-lab` still pins another one for screenshots
-  private var shellStyle: ShellStyle { ShellStyle(code: options.lab ?? "d") }
 
   private var scheme: ColorScheme? {
     if let pinned = options.theme { return pinned }
@@ -87,15 +88,11 @@ public struct RootView: View {
   private var screens: some View {
     NavigationStack(path: Bindable(model).path) {
       SessionListScreen()
-        .navigationDestination(for: Route.self) { route in
-          destination(route).navigationBar(system: shellStyle.chrome == .system)
-        }
+        .navigationDestination(for: Route.self) { route in destination(route) }
     }
-    // A language switch redraws every screen with the new table (SettingsScreen switches the table first), a
-    // switch of reading sizes with the new tokens
-    .id("\(locale)|\(shellStyle.scale)")
+    // A language switch redraws every screen with the new table (the settings switch the table first)
+    .id(locale)
     .toastLayer(model)
-    // Design study: the style switcher (LabOverlay) is off now that a look is picked; `-lab` still pins one
     .sheet(item: Bindable(model).shared) { file in
       ShareSheet(url: file.url).presentationDetents([.medium, .large])
     }
@@ -104,7 +101,6 @@ public struct RootView: View {
     .environment(model)
     .preferredColorScheme(scheme)
     .environment(\.motionEnabled, options.motion && motion)
-    .environment(\.shellStyle, shellStyle)
     .environment(\.initialPopup, options.popup)
     .environment(\.initialDraft, options.draft)
     .environment(\.preOpen, PreOpen.folds(options.open))
@@ -113,8 +109,6 @@ public struct RootView: View {
     .environment(\.clockOffset, model.clockOffset)
     .tint(Palette.fg1)
     .task {
-      // `-screen settings` under custom chrome: its settings are a page
-      if shellStyle.chrome == .custom && model.settingsOpen { model.settingsOpen = false; model.path = [.settings] }
       #if DEBUG && canImport(UIKit)
       if let popup = options.popup, popup.hasPrefix("menu:") { await MenuProbe.open(popup) }
       #endif
@@ -133,8 +127,6 @@ public struct RootView: View {
       let start = agent ?? model.summaries.max { $0.updatedAt < $1.updatedAt }?.agent
         ?? launchable(model.agents).first { $0.available != false }?.id ?? ""
       NewSessionScreen(agent: start, cwd: cwd ?? model.projects.first ?? "", controls: model.controls(for: start))
-    case .settings:
-      SettingsScreen { if !model.path.isEmpty { model.path.removeLast() } }
     }
   }
 }
@@ -160,9 +152,6 @@ struct RenderScreen: View {
   let fixture: String
   let mode: String
   let scheme: ColorScheme
-  /// The live screens' look (`-lab`, preset 丁 by default): the renderer's content is its own hierarchy and
-  /// sees none of the root's environment
-  let style: ShellStyle
   @State private var done = false
 
   var body: some View {
@@ -174,7 +163,6 @@ struct RenderScreen: View {
           .environment(\.colorScheme, scheme)
           .environment(\.motionEnabled, false)
           .environment(\.snapshot, true)
-          .environment(\.shellStyle, style)
           // The fixture's clock, as the live chat reads it
           .environment(\.clockOffset, Fixtures.now.timeIntervalSinceNow)
         let renderer = ImageRenderer(content: poster)
