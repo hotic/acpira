@@ -1,0 +1,12 @@
+# The iOS app follows the repository's two-space style; Xcode 16 and later read EditorConfig
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.swift]
+indent_style = space
+indent_size = 2

@@ -51,7 +51,7 @@ The engine, shared packages, and one directory per shell under `apps/`. One pnpm
 - `rust/` the engine (`acpira-shared` contracts; `acpira-host`: `acp/` the ACP client — `transport/` JSON-RPC + agent process, `agents/` registry / launching / pool / installer, `session/` state machine, `transcript/` normalization, `vendors/` quirks — plus `session_manager.rs`, `store/`, `accounts/`, `external/`, `sidecar/`; `acpira-agent` the built-in agent; binary `acpira`)
 - `packages/`: `shared/` contracts and pure logic (transcript, protocol, sidecar, appearance, models, export); `ui/` the React UI (`ui/` primitives, `chat/`, `settings/`, `effects/`, `styles/`); `engine-client/` the VS Code shell's engine client; `picker/` the browser panel's element picker
 - `apps/vscode/` the extension: manifest, nls files, `.vscodeignore`, `build.mjs`, `src/` (`extension.ts`, `bridge.ts`, `vscodePlatform.ts`, `files.ts`, `store/` + `accounts/` for the legacy migration); `scripts/release/package-vsix.mjs` stages it with the root's `dist/`, `media/`, README, CHANGELOG and LICENSE, and F5 reads those from the root
-- `apps/desktop/` the Tauri desktop app (own Cargo workspace; window-free logic in `rust/crates/acpira-desktop`); `apps/intellij/` the IntelliJ plugin; `apps/ios/` the iOS app (local only)
+- `apps/desktop/` the Tauri desktop app (own Cargo workspace; window-free logic in `rust/crates/acpira-desktop`); `apps/intellij/` the IntelliJ plugin; `apps/ios/` the iOS app
 - `test/` cross-package contracts (sidecar envelopes, engine golden fixtures, iOS / Rust exports), `fake-agent.ts` and fixtures the Rust tests share; `scripts/` probes; `lab/` the LAB (local only)
 
 ## Read before changing

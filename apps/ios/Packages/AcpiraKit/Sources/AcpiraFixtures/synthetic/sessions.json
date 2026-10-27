@@ -1,0 +1,84 @@
+[
+ {
+  "id": "s-0",
+  "title": "parseArgs 支持 --dry-run",
+  "agent": "devin",
+  "cwd": "/Users/dev/projects/acpira",
+  "updatedAt": "2026-10-09T09:05:18.000Z",
+  "state": "working"
+ },
+ {
+  "id": "s-1",
+  "title": "检查类型错误",
+  "agent": "devin",
+  "cwd": "/Users/dev/projects/acpira",
+  "updatedAt": "2026-10-09T03:47:18.000Z",
+  "state": "waiting"
+ },
+ {
+  "id": "s-2",
+  "title": "修 Grok 回显问题",
+  "agent": "grok",
+  "cwd": "/Users/dev/projects/acpira",
+  "updatedAt": "2026-10-08T22:29:18.000Z",
+  "pinned": true
+ },
+ {
+  "id": "s-3",
+  "title": "旧解析迁移",
+  "agent": "grok",
+  "cwd": "/Users/dev/projects/acpira",
+  "updatedAt": "2026-10-08T17:11:18.000Z",
+  "state": "unread"
+ },
+ {
+  "id": "s-4",
+  "title": "账号层测试补齐",
+  "agent": "devin",
+  "cwd": "/Users/dev/projects/acpira",
+  "updatedAt": "2026-10-08T11:53:18.000Z"
+ },
+ {
+  "id": "s-5",
+  "title": "模型选择器整理",
+  "agent": "kimi",
+  "cwd": "/Users/dev/projects/acpira",
+  "updatedAt": "2026-10-08T06:35:18.000Z",
+  "state": "error"
+ },
+ {
+  "id": "s-6",
+  "title": "上下文压缩",
+  "agent": "devin",
+  "cwd": "/Users/dev/projects/acpira",
+  "updatedAt": "2026-10-08T01:17:18.000Z"
+ },
+ {
+  "id": "s-7",
+  "title": "飞书机器人接入",
+  "agent": "grok",
+  "cwd": "/Users/dev/projects/feishu-bot",
+  "updatedAt": "2026-10-07T19:59:18.000Z"
+ },
+ {
+  "id": "s-8",
+  "title": "卡片消息回调",
+  "agent": "devin",
+  "cwd": "/Users/dev/projects/feishu-bot",
+  "updatedAt": "2026-10-07T14:41:18.000Z"
+ },
+ {
+  "id": "s-9",
+  "title": "博客迁移到 Astro",
+  "agent": "kimi",
+  "cwd": "/Users/dev/projects/blog",
+  "updatedAt": "2026-10-07T09:23:18.000Z"
+ },
+ {
+  "id": "s-10",
+  "title": "RSS 输出修复",
+  "agent": "grok",
+  "cwd": "/Users/dev/projects/blog",
+  "updatedAt": "2026-10-07T04:05:18.000Z"
+ }
+]
