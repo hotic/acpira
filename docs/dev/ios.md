@@ -6,8 +6,8 @@
 
 - `Acpira.xcodeproj`: the app target `Acpira` (iPhone only, iOS 26+, Swift 6, main-actor default isolation) and its hosted Swift Testing bundle `AcpiraTests`. Both folders are synchronized groups: a file added under `Acpira/` or `AcpiraTests/` joins its target without editing `project.pbxproj`. No signing team is set; a device run needs one picked in Xcode, which writes it into the project.
 - `Packages/AcpiraKit`: nearly all code, one library product the app links, its modules imported one by one:
-  - `AcpiraModels`: Codable mirrors of the `packages/shared` contract the app reads. Decoding is tolerant (an unknown kind becomes a placeholder), because the engine on the Mac ships faster than the App Store.
-  - `AcpiraSync`: the envelope client and session patches (`sessionPatch.ts` and `reuse.ts` are the reference) behind one transport interface; no SwiftUI or UIKit.
+  - `AcpiraModels`: Codable mirrors of the envelopes and the subset of `packages/shared` the app sends and renders. Decoding is tolerant (an unknown kind becomes a placeholder), because the engine on the Mac ships faster than the App Store; HostMsg `init` is `.initState`.
+  - `AcpiraSync`: `EngineTransport`, the envelope client and session patches applied against the views the page keeps (`sessionPatch.ts` and `sessionViews.ts` are the reference; views are values, so `reuse.ts` has no counterpart); no SwiftUI or UIKit. `SyncTests` replays `test/fixtures/engine-patches.json`, the patches the engine's golden suite records.
   - `AcpiraDesign`: tokens from `packages/ui/styles` plus the phone's own sizes, the Lucide and vendor marks, KaTeX metrics.
   - `AcpiraMarkdown`: Markdown to a block AST, and `Remend`, the port of streamdown's repair of a half-streamed tail.
   - `AcpiraFixtures`: the synthetic sessions (`synthetic/*.json`) that the app and the LAB reference page both render, written by `lab/ios-fixtures.gen.ts` (local only). `clock.json` is the fixtures' "now": the app reads it through `\.now` and runs on from it (`\.clockOffset`), so a fixture's running turn must start before it.
@@ -131,6 +131,13 @@ Xcode and the simulator:
 - A package test target referenced from the project's scheme is not run: `-only-testing` fails, and the package scheme reached through the project is "not configured for the test action". `xcodebuild -scheme AcpiraKit test` from the package directory works, hence the three steps of `check.sh`.
 - Opening the hand-written project in Xcode leaves `project.pbxproj` and the shared scheme byte-identical and writes only per-user state. A diff there comes from an edit.
 - `simctl recordVideo` right after a boot can stall for seconds: record again before calling it a bug.
+
+The harness wire (`acpira --ws`, `sidecar/ws.rs`):
+
+- URLSessionWebSocketTask sends no `Origin`; the engine drops a handshake without a loopback one of its own port, and a wrong token looks the same (connection lost, no HTTP answer).
+- URLSessionWebSocketTask caps a message at 1 MiB by default (Apple's documentation; not measured), below a long session's `init`; the transport raises it to the engine's own 64 MiB cap.
+- Every connection is its own attached engine on the shared home: hello's agent settings are ignored (the home's `agents.json` decides), and its agents end with the connection.
+- The phone attaches `{empty: true}`, which never opens or starts a session; `{mostRecent}` on an empty home starts one for the default agent.
 
 Text layout against Chrome:
 

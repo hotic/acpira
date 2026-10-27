@@ -1,4 +1,5 @@
-//! test/fixtures/engine-*.json: what the engine produces for recorded updates and diffs, the input the webview suites render.
+//! test/fixtures/engine-*.json: what the engine produces for recorded updates, diffs and patches, the input the webview
+//! suites (and the iOS app's tests) render.
 //! ACPIRA_UPDATE_FIXTURES=1 rewrites the fixtures from this engine after an intended change
 
 use std::path::PathBuf;
@@ -9,7 +10,8 @@ use acpira_host::acp::session::attachments::{FileReader, PromptCaps, prepare_pro
 use acpira_host::acp::transcript::diff::diff_lines;
 use acpira_host::acp::transcript::normalize::{NormalizeState, activity_of, apply_update, latest_step, live_activity};
 use acpira_host::util::mock_now;
-use acpira_shared::transcript::{Draft, Turn};
+use acpira_shared::session_patch::{ViewPartsData, encode_turns, raw, session_patch};
+use acpira_shared::transcript::{Draft, SessionView, Turn};
 
 use crate::support::{expect_eq, v};
 
@@ -71,6 +73,72 @@ fn normalized_turns_match_the_recorded_fixtures() {
   mock_now(None);
   if update_mode() {
     write("engine-normalize.json", &cases);
+  }
+}
+
+/// One view of the patch fixture's session: what the engine encodes for patches, and the whole view a page ends up with
+fn patch_view(rev: i64, running: bool, turns: &[Turn]) -> (ViewPartsData, Value) {
+  let mut head = json!({
+    "id": "s", "agent": "claude", "title": "Patch golden", "cwd": "/w", "status": "ready", "running": running, "rev": rev,
+    "controls": { "modes": [], "options": [] }, "commands": [], "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z", "turns": [],
+  });
+  let mut owned = turns.to_vec();
+  let mut last = owned.pop();
+  let before: Vec<&Turn> = owned.iter().collect();
+  let (encoded, last) = encode_turns(&before, last.as_mut());
+  let parts = ViewPartsData { id: "s".into(), epoch: 1, rev, head: raw(&head), turns: encoded, last };
+  head["turns"] = v(turns);
+  // Every whole view must read as a SessionView, or the fixture would test a shape the engine never sends
+  serde_json::from_value::<SessionView>(head.clone()).unwrap();
+  (parts, head)
+}
+
+/// test/fixtures/engine-patches.json: the session patches this engine sends while each recorded update sequence streams
+/// into a conversation (a reply, a new prompt, the streamed steps, the turn ending, an earlier turn rewritten). A page that
+/// applies them in order (the iOS app's port of sessionPatch.ts) must reach every whole view
+#[test]
+fn session_patches_match_the_recorded_fixtures() {
+  let user = |id: &str| serde_json::from_value::<Turn>(json!({ "role": "user", "id": id, "text": id })).unwrap();
+  let reply = |md: &str| serde_json::from_value::<Turn>(json!({ "role": "agent", "blocks": [{ "type": "text", "markdown": md }] })).unwrap();
+  let mut out = Vec::new();
+  for case in read("engine-normalize.json").as_array().unwrap() {
+    let name = case["name"].as_str().unwrap();
+    // A 20 KB plan adds bytes to every view of its chain, not a patch shape
+    if name == "todo-large" {
+      continue;
+    }
+    let opening = vec![user("u1"), reply("An earlier reply")];
+    let mut seq: Vec<(bool, Vec<Turn>)> = vec![(false, opening.clone())];
+    let mut prompt = opening.clone();
+    prompt.push(user(name));
+    seq.push((true, prompt.clone()));
+    for step in case["steps"].as_array().unwrap() {
+      let mut turns = prompt.clone();
+      turns.extend(serde_json::from_value::<Vec<Turn>>(step["turns"].clone()).unwrap());
+      seq.push((true, turns));
+    }
+    let done = seq.last().unwrap().1.clone();
+    seq.push((false, done.clone()));
+    let mut edited = done;
+    edited[1] = reply("An earlier reply, rewritten");
+    seq.push((false, edited));
+
+    let views: Vec<(ViewPartsData, Value)> = seq.iter().enumerate().map(|(rev, (running, turns))| patch_view(i64::try_from(rev).unwrap(), *running, turns)).collect();
+    let steps: Vec<Value> = views
+      .windows(2)
+      .map(|w| match session_patch(&w[0].0, &w[1].0) {
+        Some(p) => json!({ "patch": serde_json::from_str::<Value>(p.get()).unwrap(), "view": w[1].1 }),
+        None => json!({ "view": w[1].1 }),
+      })
+      .collect();
+    out.push(json!({ "name": name, "first": views[0].1, "steps": steps }));
+  }
+  let out = Value::Array(out);
+  if update_mode() {
+    write("engine-patches.json", &out);
+  } else {
+    assert_eq!(out, read("engine-patches.json"));
   }
 }
 
