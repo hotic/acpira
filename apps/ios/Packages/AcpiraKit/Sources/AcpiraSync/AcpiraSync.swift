@@ -1,6 +1,7 @@
-// Talks to the engine: the envelope client (hello / attachView / webviewMessage), session patches applied with stable
-// identity (packages/shared/sessionPatch.ts and packages/shared/reuse.ts are the reference), and transports behind one protocol:
-// a development WebSocket to `pnpm harness` first, the paired remote connection later. No SwiftUI or UIKit here.
+// Talks to the engine: transports behind one protocol (EngineTransport: the development WebSocket to `pnpm harness`
+// first, the paired remote connection later), the envelope client (EngineClient), and session patches applied against
+// the views the page keeps (SessionPatches, SessionViews; packages/shared/sessionPatch.ts and packages/ui/sessionViews.ts
+// are the reference). No SwiftUI or UIKit here.
 
 import AcpiraModels
 
