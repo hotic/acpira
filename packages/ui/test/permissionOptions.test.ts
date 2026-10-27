@@ -21,8 +21,14 @@ describe('permission option presentation', () => {
   });
   it('localizes known quick choices without changing IDs', () => {
     expect(display('Allow', 'allow_once')).toMatchObject({ id: 'wire-id', label: '允许一次', quick: true });
+    expect(display('Yes', 'allow_once')).toMatchObject({ id: 'wire-id', label: '允许一次', quick: true });
+    expect(display('Yes, proceed', 'allow_once')).toMatchObject({ id: 'wire-id', label: '允许一次', quick: true });
     expect(display('Reject', 'reject_once')).toMatchObject({ id: 'wire-id', label: '拒绝', quick: true });
+    expect(display('No', 'reject_once')).toMatchObject({ id: 'wire-id', label: '拒绝', quick: true });
+    expect(display('No, continue without running it', 'reject_once')).toMatchObject({ id: 'wire-id', label: '拒绝', quick: true });
     expect(permissionOption({ id: 'once', label: 'Allow', kind: 'allow_once' }, 'en').label).toBe('Allow once');
+    expect(display("Yes, and don't ask again for ffmpeg commands")).toMatchObject({ label: '本会话内允许', detail: '允许 ffmpeg 命令' });
+    expect(display('Yes, during this session')).toMatchObject({ label: '本会话内允许' });
   });
   it('localizes Claude plan decisions while preserving their distinct approval policies', () => {
     expect(display('Yes, manually approve edits', 'allow_once')).toMatchObject({ id: 'wire-id', label: '开始实施' });

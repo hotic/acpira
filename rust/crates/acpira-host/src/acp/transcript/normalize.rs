@@ -982,7 +982,7 @@ pub fn seal_replay(s: &mut NormalizeState) {
 }
 
 fn kind_of(meta: Option<&Value>) -> Option<String> {
-  meta.and_then(|m| text_of(m, "kind")).map(str::to_owned)
+  meta.and_then(|m| text_of(m, "kind").or_else(|| m.pointer("/jetbrains/air").and_then(|a| text_of(a, "kind")))).map(str::to_owned)
 }
 
 /// Build the controls from a session/new / resume / load response

@@ -140,6 +140,27 @@ async fn switching_into_synthesized_yolo_keeps_an_ambiguous_card_open() {
   expect_match(agent_blocks(&view(&s)).last().unwrap(), json!({ "type": "text", "markdown": "picked staging" }));
 }
 
+// Native full-access modes (Claude bypassPermissions, Codex agent-full-access, …) auto-approve bypass-immune asks
+// with allow_once so nothing lasting is written into the CLI's settings, and switching into one flushes open cards
+#[tokio::test(flavor = "multi_thread")]
+async fn native_full_access_mode_auto_approves_with_allow_once_and_flushes_pending_cards() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let s = started(&h, "/tmp").await;
+  let p = spawn_prompt(&s, "perm-meta");
+  wait_block(&s, "permission").await;
+  s.set_mode("bypassPermissions".into()).await.unwrap();
+  p.await.unwrap();
+  let blocks = agent_blocks(&view(&s));
+  assert!(!blocks.iter().any(|b| b["type"] == "permission"));
+  expect_match(blocks.last().unwrap(), json!({ "type": "text", "markdown": "picked yes-proceed" }));
+
+  prompt(&s, "perm-meta").await;
+  let blocks = agent_blocks(&view(&s));
+  assert!(!blocks.iter().any(|b| b["type"] == "permission"));
+  expect_match(blocks.last().unwrap(), json!({ "type": "text", "markdown": "picked yes-proceed" }));
+}
+
 // Antigravity's questions never ride yolo either: the question card opens and waits
 #[tokio::test(flavor = "multi_thread")]
 async fn an_antigravity_question_still_asks_under_synthesized_yolo() {

@@ -89,13 +89,16 @@ export function permissionOption(option: Option, locale: Locale, plan = false) {
       return { ...base, label: t('permission.plan.rejectExit') };
     }
   }
-  if (option.kind === 'allow_once' && /^(Allow|Allow once|Yes, allow once)$/i.test(option.label)) {
+  if (option.kind === 'allow_once' && /^(Allow|Allow once|Yes|Yes, allow once|Yes, proceed|Yes, just this once)$/i.test(option.label)) {
     return { ...base, label: t('permission.once'), quick: true };
   }
-  if (option.kind === 'reject_once' && /^(Reject|Reject once|Deny|No, reject)$/i.test(option.label)) {
+  if (option.kind === 'reject_once' && /^(Reject|Reject once|Deny|No|No, reject|Cancel|No, continue without running it)$/i.test(option.label)) {
     return { ...base, label: t('permission.reject'), quick: true };
   }
   if (option.kind !== 'allow_always') return base;
+  if (/^(Yes, during this session|Yes, and (?:don't|do not) ask again for this command in this session|Allow for this session)$/i.test(option.label)) {
+    return { ...base, label: t('permission.session') };
+  }
   const clear = /^Yes, clear context(?: \((\d+(?:\.\d+)?)% used\))? and (use auto mode|bypass permissions|auto-accept edits)$/.exec(option.label);
   if (clear) {
     const key = clear[2] === 'use auto mode' ? 'permission.plan.clearAuto'
@@ -105,14 +108,18 @@ export function permissionOption(option: Option, locale: Locale, plan = false) {
   if (option.label === 'Yes, switch to bypass mode') {
     return { ...base, label: t('permission.bypass'), bypass: true };
   }
-  const session = /^Yes, allow `([^`]+)` commands \(this session\)$/.exec(option.label);
+  const session = /^Yes, allow `([^`]+)` commands \(this session\)$/.exec(option.label)
+    ?? /^Always allow `([^`]+)` in this session$/.exec(option.label)
+    ?? /^Yes, and (?:don't|do not) ask again for commands that start with `([^`]+)`$/.exec(option.label);
+  const dontAsk = /^Yes, and (?:don't|do not) ask again for (.+) commands$/.exec(option.label);
+  const dontAskCmd = dontAsk?.[1] && dontAsk[1] !== 'similar' ? dontAsk[1] : undefined;
   const project = /^Yes, always allow `([^`]+)` commands in `([^`]+)`$/.exec(option.label);
   const all = /^Yes, always allow `([^`]+)` commands in all projects$/.exec(option.label);
-  const command = session?.[1] ?? project?.[1] ?? all?.[1];
+  const command = session?.[1] ?? dontAskCmd ?? project?.[1] ?? all?.[1];
   if (!command) return base;
   return {
     ...base,
-    label: session ? t('permission.session') : project ? t('permission.project', { project: project[2]! }) : t('permission.allProjects'),
+    label: (session || dontAskCmd) ? t('permission.session') : project ? t('permission.project', { project: project[2]! }) : t('permission.allProjects'),
     detail: t('permission.commands', { command }),
   };
 }

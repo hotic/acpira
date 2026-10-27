@@ -566,7 +566,9 @@ fn stuck_in_bypass(opened: &Value, mode: RelayMode) -> bool {
 }
 
 fn bypass_modes(opened: &Value) -> Vec<String> {
-  let full = |m: &Value| m.pointer("/_meta/kind").and_then(Value::as_str) == Some("full_access");
+  let full = |m: &Value| {
+    m.pointer("/_meta/kind").or_else(|| m.pointer("/_meta/jetbrains/air/kind")).and_then(Value::as_str) == Some("full_access")
+  };
   let mut marked: Vec<String> = vec![];
   for m in opened.pointer("/modes/availableModes").and_then(Value::as_array).into_iter().flatten() {
     if full(m)
@@ -632,16 +634,9 @@ fn caller_access(c: &Core, caller: Option<&str>) -> RelayMode {
     return c.tree.relay_latest(th).map(|(_, h, ..)| h.mode).filter(|m| *m != RelayMode::Inherit).unwrap_or(RelayMode::Consult);
   }
   let controls = &c.state.controls;
-  let Some(id) = controls.mode_id.as_deref() else {
-    return if c.perms.auto_approve { RelayMode::Bypass } else { RelayMode::Work };
-  };
-  let marked = || {
-    let select = controls.mode_config_id.as_deref().and_then(|cid| controls.options.iter().find(|o| o.id == cid)).map(|o| o.options.as_slice()).unwrap_or(&[]);
-    controls.modes.iter().chain(select).any(|m| m.id == id && m.kind.as_deref() == Some("full_access"))
-  };
-  if c.perms.auto_approve || BYPASS_MODES.contains(&id) || marked() {
+  if c.perms.auto_approve || crate::acp::session::controls::in_full_access(controls) {
     RelayMode::Bypass
-  } else if is_read_only(id) {
+  } else if controls.mode_id.as_deref().is_some_and(is_read_only) {
     RelayMode::Consult
   } else {
     RelayMode::Work

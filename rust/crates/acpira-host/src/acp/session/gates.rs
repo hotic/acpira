@@ -14,6 +14,7 @@ use crate::acp::transcript::plans::{capture_plan, plan_documents_mut, set_plan_c
 use crate::acp::transcript::questions::{clean_answers, form_content, form_question_count, form_questions, grok_questions, grok_response, spare_message};
 use crate::acp::transport::rpc::RpcError;
 use crate::acp::session::{AcpSession, Core};
+use crate::acp::session::controls::in_full_access;
 use crate::acp::session::errors::{auto_allow, permission_kind};
 use crate::acp::session::hooks::edit_paths;
 use crate::acp::session::plugin_hooks::PermVerdict;
@@ -98,9 +99,15 @@ fn rejected_permission(req: &Value) -> Value {
   }
 }
 
+/// `_meta.permission` (or `_meta.jetbrains.air.permission` on claude-agent-acp / codex-acp for AIR clients)
+fn permission_meta(v: &Value) -> Option<&Value> {
+  let m = v.get("_meta")?;
+  m.pointer("/jetbrains/air/permission").or_else(|| m.get("permission")).filter(|p| p.is_object())
+}
+
 /// `_meta.permission.defaultToNo` (claude-agent-acp / codex-acp): the adapter's own safety asks lean to No
 fn default_to_no(req: &Value) -> Option<bool> {
-  let meta = req.get("_meta").and_then(|m| m.get("permission")).filter(|p| p.is_object());
+  let meta = permission_meta(req);
   (meta.and_then(|m| m.get("defaultToNo")) == Some(&Value::Bool(true))).then_some(true)
 }
 
@@ -227,7 +234,10 @@ impl AcpSession {
     // The plugins' processes judge it before yolo, a plan's auto-approval or a card: a denial rejects it, an ask insists
     // on the card
     let insist = if judged {
-      let auto = self.core.lock().perms.auto_approve;
+      let auto = {
+        let c = self.core.lock();
+        c.perms.auto_approve || in_full_access(&c.state.controls)
+      };
       match self.plugin_permission(&req, row, auto).await {
         PermVerdict::Deny(plugin, reason) => {
           self.log(&format!("plugin {plugin}: permission denied: {reason}"));
@@ -272,10 +282,12 @@ impl AcpSession {
         return Ok(cancelled_permission());
       }
       let options: Vec<Value> = req.get("options").and_then(Value::as_array).cloned().unwrap_or_default();
-      // The root's yolo and plan auto-approval cover the root and its own native children; a summoned child answers to
-      // its own round mode alone, so a consult or work child under a yolo root still gets cards
+      // The root's full access (synthesized yolo or a native bypass mode) and plan auto-approval cover the root and its
+      // own native children; a summoned child answers to its own round mode alone, so a consult or work child under a
+      // full-access root still gets cards
       let root = !summoned;
-      let auto = root && c.perms.auto_approve && !insist;
+      let synth = c.perms.auto_approve;
+      let full_access = root && !insist && (synth || in_full_access(&c.state.controls));
       // A summoned child in a bypass round: answered without a card, preferring the one-time allow so nothing lasting
       // lands in that CLI's own settings; a request with no plain allow still gets a card
       let bypass = matches!(&target, Target::Node(id) if c.tree.relay_bypass(id));
@@ -287,12 +299,21 @@ impl AcpSession {
         .as_ref()
         .and_then(|id| plan_documents_mut(&mut state.turns).into_iter().find(|p| &p.id == id))
         .map(|p| (p.id.clone(), p.markdown.clone(), p.approval_tool_call_id.clone()));
-      // yolo: approve directly without a card, preferring allow_always so the same tool doesn't keep coming back. An
-      // ambiguous set (two options of the picked kind) still gets a card
-      if auto && options.is_empty() {
+      // Full access: approve directly without a card. Synthesized yolo (where the CLI stays in default mode) prefers
+      // allow_always so the same tool doesn't keep coming back; a native full-access mode (where the CLI only asks on
+      // bypass-immune checks) prefers allow_once so nothing lasting is written to the CLI's settings. An ambiguous set
+      // (two options of the picked kind) still gets a card
+      if full_access && options.is_empty() {
         return Err(RpcError::internal(t("host.noPermissionOptions")));
       }
-      if auto && let Some(id) = auto_allow(&options) {
+      let picked = if !full_access {
+        None
+      } else if synth {
+        auto_allow(&options)
+      } else {
+        single_allow_once(&options).or_else(|| auto_allow(&options))
+      };
+      if let Some(id) = picked {
         if let Some((pid, _, approval)) = &plan
           && approval.as_deref() == Some(tool_call_id.as_str())
           && let Some(p) = plan_documents_mut(&mut state.turns).into_iter().find(|p| &p.id == pid)
@@ -328,7 +349,7 @@ impl AcpSession {
         })
       });
       let raw = tool_call.get("rawInput").and_then(Value::as_object);
-      let meta = req.get("_meta").and_then(|m| m.get("permission")).filter(|p| p.is_object());
+      let meta = permission_meta(&req);
       let v1 = meta.is_some_and(|m| m.get("version").and_then(Value::as_f64) == Some(1.0));
       let meta_str = |v: Option<&Value>| v.and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned);
       let meta_title = if v1 { meta_str(meta.and_then(|m| m.get("title"))) } else { None };
@@ -357,7 +378,7 @@ impl AcpSession {
         id: block_id.clone(),
         title,
         command: command_from_raw(raw).or_else(|| tool.as_ref().filter(|tc| tc.kind == ToolKind::Execute).and_then(|tc| tc.target.clone())),
-        description: meta_desc.or_else(|| raw.and_then(|r| r.get("description")).and_then(Value::as_str).map(str::to_owned)),
+        description: meta_desc,
         plan_id: plan_id.clone(),
         default_to_no,
         options: options
@@ -366,7 +387,7 @@ impl AcpSession {
             id: o.get("optionId").and_then(Value::as_str).unwrap_or("").to_owned(),
             label: o.get("name").and_then(Value::as_str).unwrap_or("").to_owned(),
             kind: permission_kind(o.get("kind").unwrap_or(&Value::Null)),
-            detail: meta_str(o.get("_meta").and_then(|m| m.get("permission")).and_then(|p| p.get("description"))),
+            detail: meta_str(permission_meta(o).and_then(|p| p.get("description"))),
           })
           .collect(),
       };
@@ -424,12 +445,21 @@ impl AcpSession {
     self.touch(c);
   }
 
-  /// Switching into yolo approves the requests already waiting in one go; ambiguous ones and summoned children's (which
-  /// follow their own round mode) stay open
+  /// Switching into full access approves the requests already waiting in one go; ambiguous ones and summoned children's
+  /// (which follow their own round mode) stay open
   pub(crate) fn flush_permissions(&self, c: &mut Core) {
     let summoned = |p: &PendingPermission| p.node_id.as_deref().is_some_and(|id| c.tree.relay_thread_of(id).is_some());
-    let pending: Vec<(String, String)> =
-      c.perms.pending.iter().filter(|p| !summoned(p) && !p.insist).filter_map(|p| auto_allow(&p.options).map(|o| (p.block_id.clone(), o))).collect();
+    let synth = c.perms.auto_approve;
+    let pending: Vec<(String, String)> = c
+      .perms
+      .pending
+      .iter()
+      .filter(|p| !summoned(p) && !p.insist)
+      .filter_map(|p| {
+        let pick = if synth { auto_allow(&p.options) } else { single_allow_once(&p.options).or_else(|| auto_allow(&p.options)) };
+        pick.map(|o| (p.block_id.clone(), o))
+      })
+      .collect();
     for (block, option) in pending {
       self.resolve_permission_locked(c, &block, &option);
     }
