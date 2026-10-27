@@ -49,9 +49,9 @@ import Testing
     #expect(m.views[id]?.queued == nil)
   }
 
-  @Test func newSessionGoesToTheTopOfTheList() {
+  @Test func newSessionGoesToTheTopOfTheList() throws {
     let m = model("list")
-    let id = m.newSession(agent: "grok", cwd: "/tmp/demo", controls: m.controls(for: "grok"), text: "Fix the build\nmore", attachments: [])
+    let id = try #require(m.newSession(agent: "grok", cwd: "/tmp/demo", controls: m.controls(for: "grok"), text: "Fix the build\nmore", attachments: []))
     #expect(m.summaries.first?.id == id)
     #expect(m.summaries.first?.title == "Fix the build")
     #expect(m.projects.first == "/tmp/demo")

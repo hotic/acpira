@@ -1,6 +1,6 @@
 # iOS app
 
-`apps/ios/` is the native iPhone client: a SwiftUI control surface for the engine on the user's Mac. Agents, sessions, approvals and keys stay on the Mac; the phone is one more engine client, never a mirror of a desktop window. The screens still run on synthetic fixtures (`Store/AppModel.swift` stands in for the engine) while the connection is built.
+`apps/ios/` is the native iPhone client: a SwiftUI control surface for the engine on the user's Mac. Agents, sessions, approvals and keys stay on the Mac; the phone is one more engine client, never a mirror of a desktop window. `Store/AppModel.swift` follows a development engine with `-engine` (`AppModel+Engine.swift`: pushes in, actions out, mirroring `packages/ui/App.tsx`); without it the app is a demo on synthetic fixtures with a local stand-in for the engine. The paired connection a device uses is the remote module's.
 
 ## Layout
 
@@ -106,6 +106,8 @@
 - `shot.sh [out.png] [simulator]` builds, launches and takes a screenshot.
 - `render.sh <out.png> <fixture> [closed|open|all|every] [dark|light]` draws the fixture's whole chat (every exchange, then the dock) into one 402 pt @2x PNG, the size of the LAB reference shots. Text fields draw their placeholder.
 - `record.sh [out.mp4] [seconds] [args…]` records the same launch as video. `SKIP_BUILD=1` reuses the last build.
+- `engine.sh [port]` serves `acpira --ws` from `rust/target/debug/acpira` on a throwaway home and `HOME`, with the fake agent as the only enabled agent, and prints `-engine PORT:TOKEN`. Nothing spends a model call or reads a real login.
+  - Every harness connection is its own engine, and the fake agent keeps no sessions: a session made by another connection (a seed script, the browser page) reopens read-only on the phone. Start live sessions from the app (`-start`).
 - One simulator serves every session (`simulator.sh`):
   - Runs take turns under a lock.
   - A device a script booted is shut down after `ACPIRA_SIM_IDLE` seconds unused; a device booted by hand is left alone.
@@ -116,6 +118,7 @@
   - `-popup NAME` opens something on launch: `attach`, `model`, `model.N` (bean N's panel), a `focus.` prefix (field focused first), `demo` (every liquid transition in turn), `ring` and `ring.pick`, `account`, `toast`, `code`, `fold:N`. Debug builds also take `menu:X,Y`, which opens the system menu under that point through UIKit's private `_presentMenuAtLocation:`.
   - `-prompt TEXT` sends a prompt on launch and gets the demo reply. `-draft TEXT` pre-fills the composer.
   - `-open open|all|every` pre-opens folds. `-replay` plays the last agent turn back as a live stream (`Logic/Replay.swift`).
+  - With `-engine PORT:TOKEN`: `-session ID` opens that chat, `-start FOLDER` starts a session of the default agent there with `-prompt` as its first prompt. The fake agent's prompts pick its script (`slow` streams, `tool` asks a permission; `test/fake-agent.ts`).
 - The simulator takes no scripted taps, so menus and hit targets are checked by hand.
 - The web reference is the LAB page `lab/ios-reference.preview.tsx` (local only): the real `App` fed the same fixtures.
   - Query: `f`, `ui` / `code` (match the transcript at 17 / 14), `light`, `drawer`, `open`, `measure`.

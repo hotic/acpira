@@ -7,7 +7,8 @@ import UIKit
 #endif
 
 /// Launch options read from the process arguments, so screenshots can pin a fixture, theme, motion and locale:
-/// `-fixture showcase -theme light -motion none -locale zh-CN -screen list|chat|new|settings`
+/// `-fixture showcase -theme light -motion none -locale zh-CN -screen list|chat|new|settings`, or follow a development
+/// engine instead of the fixtures: `-engine PORT:TOKEN` (apps/ios/scripts/engine.sh)
 public struct LaunchOptions: Sendable {
   public var fixture: String
   public var theme: ColorScheme?
@@ -27,6 +28,12 @@ public struct LaunchOptions: Sendable {
   public var prompt: String?
   /// `-draft TEXT`: the chat's composer starts with this typed (screenshots of the lit send button)
   public var draft: String?
+  /// `-engine PORT:TOKEN`: the live engine `acpira --ws` serves on the Mac's loopback (development)
+  public var engine: String?
+  /// `-session ID`: with an engine, the chat of that session opens on launch (what `-fixture` is to the demo)
+  public var session: String?
+  /// `-start FOLDER`: with an engine, a session of the default agent starts there on launch, `-prompt` its first prompt
+  public var start: String?
 
   public static func current(_ arguments: [String] = ProcessInfo.processInfo.arguments) -> LaunchOptions {
     func value(_ flag: String) -> String? {
@@ -37,7 +44,8 @@ public struct LaunchOptions: Sendable {
     return LaunchOptions(fixture: value("-fixture") ?? "showcase", theme: theme, motion: value("-motion") != "none",
                          locale: value("-locale"), screen: value("-screen") ?? "chat", render: value("-render"),
                          popup: value("-popup"), replay: arguments.contains("-replay"), open: value("-open"),
-                         prompt: value("-prompt"), draft: value("-draft"))
+                         prompt: value("-prompt"), draft: value("-draft"), engine: value("-engine"),
+                         session: value("-session"), start: value("-start"))
   }
 }
 
@@ -104,15 +112,21 @@ public struct RootView: View {
     .environment(\.initialPopup, options.popup)
     .environment(\.initialDraft, options.draft)
     .environment(\.preOpen, PreOpen.folds(options.open))
-    // Fixtures carry their own clock (quota resets count down from it)
-    .environment(\.now, Fixtures.now)
+    // Fixtures carry their own clock (quota resets count down from it); an engine runs on the real one
+    .environment(\.now, model.live ? .now : Fixtures.now)
     .environment(\.clockOffset, model.clockOffset)
     .tint(Palette.fg1)
     .task {
       #if DEBUG && canImport(UIKit)
       if let popup = options.popup, popup.hasPrefix("menu:") { await MenuProbe.open(popup) }
       #endif
+      if model.live, let folder = options.start {
+        model.engineNewSession(agent: nil, cwd: folder, text: options.prompt ?? "")
+        return
+      }
       guard case .chat(let id)? = model.path.last else { return }
+      // The engine refuses an action for a session its view does not show: switch it first, in posting order
+      model.open(id)
       if options.replay { model.replay(id) }
       if let prompt = options.prompt { model.send(id, text: prompt, attachments: []) }
     }
