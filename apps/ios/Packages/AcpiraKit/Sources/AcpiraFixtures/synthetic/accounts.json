@@ -1,0 +1,41 @@
+[
+ {
+  "id": "acc-1",
+  "agent": "devin",
+  "label": "someone@example.com",
+  "detail": "Max",
+  "addedAt": "2026-09-01T08:00:00Z",
+  "quota": {
+   "windows": [
+    {
+     "id": "weekly",
+     "remaining": 0.91,
+     "resetsAt": "2026-10-14T18:05:18.000Z"
+    }
+   ],
+   "fetchedAt": "2026-10-09T09:05:18.000Z"
+  }
+ },
+ {
+  "id": "acc-2",
+  "agent": "devin",
+  "label": "other@example.com",
+  "detail": "Pro",
+  "addedAt": "2026-09-02T08:00:00Z",
+  "quota": {
+   "windows": [
+    {
+     "id": "daily",
+     "remaining": 0.12,
+     "resetsAt": "2026-10-09T12:05:18.000Z"
+    },
+    {
+     "id": "weekly",
+     "remaining": 0.58,
+     "resetsAt": "2026-10-11T10:05:18.000Z"
+    }
+   ],
+   "fetchedAt": "2026-10-09T09:05:18.000Z"
+  }
+ }
+]

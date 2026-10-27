@@ -47,6 +47,7 @@ output/
 xcuserdata/
 *.xcuserstate
 apps/ios/build/
+apps/ios/Packages/.build/
 apps/ios/Packages/*/.build/
 apps/ios/Packages/*/.swiftpm/
 apps/ios/Fixtures/local/

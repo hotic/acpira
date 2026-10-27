@@ -1,0 +1,72 @@
+[
+ {
+  "id": "grok",
+  "name": "Grok Build",
+  "available": true,
+  "localAccount": {
+   "label": "grok@example.com",
+   "detail": "SuperGrok",
+   "status": "ready",
+   "quota": {
+    "windows": [
+     {
+      "id": "monthly",
+      "remaining": 0.72,
+      "resetsAt": "2026-10-21T09:05:18.000Z"
+     }
+    ],
+    "fetchedAt": "2026-10-09T09:05:18.000Z"
+   }
+  }
+ },
+ {
+  "id": "devin",
+  "name": "Devin",
+  "accounts": true,
+  "available": true
+ },
+ {
+  "id": "kimi",
+  "name": "Kimi Code",
+  "available": false,
+  "install": {
+   "command": "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
+   "docs": "https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started.html"
+  },
+  "localAccount": {
+   "label": "Kimi Code",
+   "detail": "Moderato",
+   "status": "ready",
+   "quota": {
+    "windows": [
+     {
+      "id": "weekly",
+      "remaining": 0.65,
+      "resetsAt": "2026-10-12T09:05:18.000Z"
+     },
+     {
+      "id": "5h",
+      "remaining": 0.23,
+      "resetsAt": "2026-10-09T11:05:18.000Z"
+     }
+    ],
+    "fetchedAt": "2026-10-09T09:05:18.000Z"
+   }
+  }
+ },
+ {
+  "id": "claude",
+  "name": "Claude Code",
+  "available": true
+ },
+ {
+  "id": "codex",
+  "name": "Codex",
+  "available": true
+ },
+ {
+  "id": "acpira",
+  "name": "Acpira",
+  "available": true
+ }
+]

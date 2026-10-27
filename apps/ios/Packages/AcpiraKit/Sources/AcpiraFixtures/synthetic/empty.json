@@ -1,0 +1,188 @@
+{
+ "id": "empty",
+ "agent": "devin",
+ "accountId": "acc-1",
+ "title": "新会话",
+ "cwd": "/Users/dev/projects/acpira",
+ "status": "ready",
+ "turns": [],
+ "running": false,
+ "controls": {
+  "modes": [
+   {
+    "id": "code",
+    "name": "Code",
+    "description": "Write and edit code"
+   },
+   {
+    "id": "smart",
+    "name": "Smart",
+    "description": "Auto-approve actions the model judges safe"
+   },
+   {
+    "id": "ask",
+    "name": "Ask",
+    "description": "Answer questions without code changes"
+   },
+   {
+    "id": "plan",
+    "name": "Plan",
+    "description": "Plan changes before implementing"
+   },
+   {
+    "id": "bypassPermissions",
+    "name": "Bypass Permissions",
+    "description": "Auto-approve all tool calls"
+   }
+  ],
+  "modeId": "code",
+  "options": [
+   {
+    "id": "model",
+    "name": "模型",
+    "category": "model",
+    "options": [
+     {
+      "id": "claude-fable-5-1-medium",
+      "name": "Claude Fable 5.1 Medium"
+     },
+     {
+      "id": "claude-fable-5-1-xhigh",
+      "name": "Claude Fable 5.1 XHigh"
+     },
+     {
+      "id": "claude-fable-5-1-xhigh-fast",
+      "name": "Claude Fable 5.1 XHigh Fast"
+     },
+     {
+      "id": "claude-fable-5-1-max",
+      "name": "Claude Fable 5.1 Max"
+     },
+     {
+      "id": "claude-fable-5-1-max-fast",
+      "name": "Claude Fable 5.1 Max Fast"
+     },
+     {
+      "id": "gpt-6-astra-medium-thinking",
+      "name": "GPT-6 Astra Medium Thinking"
+     },
+     {
+      "id": "gpt-6-astra-high-thinking",
+      "name": "GPT-6 Astra High Thinking"
+     },
+     {
+      "id": "gpt-6-astra-medium-thinking-1m",
+      "name": "GPT-6 Astra Medium Thinking 1M"
+     },
+     {
+      "id": "gpt-6-astra-high-thinking-1m",
+      "name": "GPT-6 Astra High Thinking 1M"
+     },
+     {
+      "id": "swe-1-7-medium",
+      "name": "SWE-1.7 Medium"
+     },
+     {
+      "id": "swe-1-7-max",
+      "name": "SWE-1.7 Max"
+     },
+     {
+      "id": "swe-1-7-lightning-medium",
+      "name": "SWE-1.7 Lightning Medium"
+     },
+     {
+      "id": "kimi-k3-medium",
+      "name": "Kimi K3 Medium"
+     },
+     {
+      "id": "kimi-k3-max",
+      "name": "Kimi K3 Max"
+     },
+     {
+      "id": "claude-opus-4-7",
+      "name": "Claude Opus 4.7"
+     },
+     {
+      "id": "claude-opus-4-7-thinking",
+      "name": "Claude Opus 4.7 Thinking"
+     },
+     {
+      "id": "claude-opus-4-8",
+      "name": "Claude Opus 4.8"
+     },
+     {
+      "id": "gemini-3-8-flash-low",
+      "name": "Gemini 3.8 Flash Low"
+     },
+     {
+      "id": "gemini-3-8-flash-high",
+      "name": "Gemini 3.8 Flash High"
+     },
+     {
+      "id": "glm-5-2",
+      "name": "GLM-5.2"
+     },
+     {
+      "id": "glm-5-3",
+      "name": "GLM-5.3"
+     },
+     {
+      "id": "gpt-5-6-luna",
+      "name": "GPT-5.6 Luna"
+     },
+     {
+      "id": "cursor-grok-4-6-high",
+      "name": "Cursor Grok 4.6 High"
+     },
+     {
+      "id": "composer-2-5-fast",
+      "name": "Composer 2.5 Fast"
+     },
+     {
+      "id": "adaptive",
+      "name": "Adaptive"
+     }
+    ],
+    "value": "claude-fable-5-1-xhigh"
+   }
+  ]
+ },
+ "usage": {
+  "used": 48200,
+  "size": 262000
+ },
+ "commands": [
+  {
+   "name": "compact",
+   "description": "Compact the conversation to free context"
+  },
+  {
+   "name": "review",
+   "description": "Review the current changes",
+   "input": {
+    "hint": "files or scope to review"
+   }
+  },
+  {
+   "name": "init",
+   "description": "Generate an AGENTS.md for this repository"
+  },
+  {
+   "name": "config",
+   "description": "Open the configuration"
+  },
+  {
+   "name": "session-stats",
+   "description": "Show token usage for this session"
+  },
+  {
+   "name": "plan",
+   "description": "Draft an implementation plan",
+   "input": {
+    "hint": "what to plan"
+   }
+  }
+ ],
+ "createdAt": "2026-10-09T09:00:00Z",
+ "updatedAt": "2026-10-09T09:05:18Z"
+}
