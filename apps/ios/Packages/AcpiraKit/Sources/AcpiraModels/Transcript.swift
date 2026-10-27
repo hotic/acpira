@@ -119,6 +119,12 @@ public struct AgentInfo: Codable, Hashable, Sendable, Identifiable {
   public init(id: AgentId, name: String) { self.id = id; self.name = name }
 }
 
+/// Why an account shows no quota bars: the last read failed and the next one waits
+public enum AccountQuotaIssue: String, TolerantEnum {
+  case rate_limited, expired, unavailable, unknown
+  public static var unknownCase: Self { .unknown }
+}
+
 public struct AccountInfo: Codable, Hashable, Sendable, Identifiable {
   public var id: String
   public var agent: AgentId
@@ -127,6 +133,8 @@ public struct AccountInfo: Codable, Hashable, Sendable, Identifiable {
   public var addedAt: String?
   public var lastUsedAt: String?
   public var quota: AccountQuota?
+  /// Absent while `quota` is set
+  public var quotaIssue: AccountQuotaIssue?
 }
 
 // MARK: - Controls
@@ -612,6 +620,11 @@ public enum Turn: Codable, Hashable, Sendable {
 // MARK: - Sessions
 
 public struct SessionSummary: Codable, Hashable, Sendable, Identifiable {
+  /// The model a session last ran: the wire id is its identity (the vendor is read from it), the name its label
+  public struct Model: Codable, Hashable, Sendable {
+    public var id: String
+    public var name: String
+  }
   public var id: String
   public var external: Bool?
   public var title: String
@@ -619,11 +632,15 @@ public struct SessionSummary: Codable, Hashable, Sendable, Identifiable {
   public var accountId: String?
   public var cwd: String
   public var updatedAt: String
+  /// When the session started (ISO), for the list's "created" order; absent on older index entries
+  public var createdAt: String?
   public var pinned: Bool?
   public var category: String?
   public var state: SessionState?
   /// Only beside `.background`: a turn ended there that nobody has looked at yet
   public var unread: Bool?
+  /// Absent while no model control is known and on older index entries
+  public var model: Model?
 }
 
 public struct Usage: Codable, Hashable, Sendable {
@@ -647,6 +664,9 @@ public struct SessionView: Codable, Hashable, Sendable, Identifiable {
   public var cwd: String
   public var status: SessionStatus
   public var error: String?
+  /// `error` is a session lock an agent of another engine still holds, or this is a read-only copy of a session another
+  /// engine has open: takeOverSession ends that agent, or asks that engine to hand the session over
+  public var canTakeOver: Bool?
   public var turns: [Turn]
   public var running: Bool
   public var rev: Int?
@@ -667,6 +687,7 @@ public struct SessionView: Codable, Hashable, Sendable, Identifiable {
     cwd = try c.decodeIfPresent(String.self, forKey: .cwd) ?? ""
     status = try c.decodeIfPresent(SessionStatus.self, forKey: .status) ?? .ready
     error = try c.decodeIfPresent(String.self, forKey: .error)
+    canTakeOver = try c.decodeIfPresent(Bool.self, forKey: .canTakeOver)
     turns = try c.decodeIfPresent([Turn].self, forKey: .turns) ?? []
     running = try c.decodeIfPresent(Bool.self, forKey: .running) ?? false
     rev = try c.decodeIfPresent(Int.self, forKey: .rev)
