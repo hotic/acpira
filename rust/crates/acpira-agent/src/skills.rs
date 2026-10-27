@@ -69,6 +69,10 @@ fn scan_roots(places: &Places, roots: Vec<PathBuf>) -> Vec<Skill> {
 
 /// The skill folders, the later winning: the user's, the plugins', then the project's
 pub(crate) fn roots(places: &Places) -> Vec<PathBuf> {
+  // A specialised agent sees its plugin's skills alone, and none when its tools leave `skill` out
+  if let Some(p) = &places.profile {
+    return p.skills.clone().filter(|_| p.allows(crate::tools::SKILL)).into_iter().collect();
+  }
   let mut roots = vec![];
   if let Some(h) = &places.home {
     roots.push(h.join(".agents").join("skills"));

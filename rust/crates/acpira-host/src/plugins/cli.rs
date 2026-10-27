@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crate::plugins::host::{PluginHost, describe};
 use crate::plugins::store::Provenance;
 
-const USAGE: &str = "usage: acpira plugin list [--json] | new <id> [--kind runtime,tool,command,skill,provider,theme] [--lang node|python] | propose <id> | disable <id> | rollback <id>";
+const USAGE: &str = "usage: acpira plugin list [--json] | new <id> [--kind runtime,tool,command,skill,provider,theme,agent] [--lang node|python] | propose <id> | disable <id> | rollback <id>";
 
 fn host(home: &Path) -> Arc<PluginHost> {
   PluginHost::new(home.join(crate::plugins::DIR), false, Arc::new(|line| eprintln!("[acpira] {line}")))

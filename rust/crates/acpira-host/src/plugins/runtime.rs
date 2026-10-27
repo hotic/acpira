@@ -110,6 +110,11 @@ impl Worker {
     self.hooks.iter().any(|h| h == hook)
   }
 
+  /// Asked about this payload: a plugin scoped to its own agent only in that agent's sessions
+  fn serves(&self, payload: &Value) -> bool {
+    self.want.def.scope.as_deref() != Some(crate::plugins::manifest::SCOPE_AGENT) || payload.get("agent").and_then(Value::as_str) == Some(self.want.id.as_str())
+  }
+
   async fn call(&self, method: &str, params: Value) -> Result<Value, String> {
     if self.tripped.lock().is_some_and(|at| at.elapsed() < TRIP_FOR) {
       return Err(format!("plugin {} is paused after {TRIP_AFTER} failed calls in a row", self.want.id));
@@ -431,7 +436,7 @@ impl Runtimes {
 
   /// Ask every process that answers `hook`, in id order, one after another; each answer as it came
   pub async fn hook(&self, hook: &str, payload: &Value) -> Vec<HookReply> {
-    let workers: Vec<Arc<Worker>> = self.workers.read().values().filter(|w| w.answers(hook)).cloned().collect();
+    let workers: Vec<Arc<Worker>> = self.workers.read().values().filter(|w| w.answers(hook) && w.serves(payload)).cloned().collect();
     let mut out = Vec::with_capacity(workers.len());
     for w in workers {
       let result = w.call(&format!("hook/{hook}"), payload.clone()).await;
@@ -447,7 +452,7 @@ impl Runtimes {
   /// the plugin and its answer (failed calls and null answers are skipped), folds it into the payload and returns false
   /// to stop the chain. The payload as the chain ended
   pub async fn chain(&self, hook: &str, mut payload: Value, mut step: impl FnMut(&str, Value, &mut Value) -> bool) -> Value {
-    let workers: Vec<Arc<Worker>> = self.workers.read().values().filter(|w| w.answers(hook)).cloned().collect();
+    let workers: Vec<Arc<Worker>> = self.workers.read().values().filter(|w| w.answers(hook) && w.serves(&payload)).cloned().collect();
     for w in workers {
       match w.call(&format!("hook/{hook}"), payload.clone()).await {
         Ok(Value::Null) => {}

@@ -168,6 +168,8 @@ impl Session {
 
 pub struct Server {
   pub config: ConfigCache,
+  /// A plugin's specialised agent: every session takes its prompt, tools, modes and model (`profile.rs`)
+  pub profile: Option<Arc<crate::profile::Profile>>,
   pub catalog: crate::catalog::CatalogCache,
   pub version: String,
   pub http: ureq::Agent,
@@ -184,7 +186,12 @@ pub struct Server {
 
 impl Server {
   pub fn new(home: PathBuf, version: impl Into<String>) -> Arc<Server> {
+    Server::with_profile(home, version, None)
+  }
+
+  pub fn with_profile(home: PathBuf, version: impl Into<String>, profile: Option<crate::profile::Profile>) -> Arc<Server> {
     Arc::new(Server {
+      profile: profile.map(Arc::new),
       catalog: crate::catalog::CatalogCache::new(&home),
       config: ConfigCache::new(home),
       version: version.into(),
@@ -223,7 +230,24 @@ impl Server {
       },
       None => crate::prompt::Places::new(cwd, crate::turn::user_home().as_deref()),
     };
-    places.with_layers(layers.prompts).with_skill_layers(layers.skills)
+    places.with_layers(layers.prompts).with_skill_layers(layers.skills).with_profile(self.profile.clone())
+  }
+
+  /// The model a new session starts on: the profile's when it is configured, else the settings page's default
+  fn default_pick(&self, config: &Config) -> Option<String> {
+    self.profile.as_ref().and_then(|p| p.model.clone()).filter(|m| config.find(m).is_some()).or_else(|| config.default_pick())
+  }
+
+  /// A mode this agent's sessions may be in (a specialised agent offers fewer)
+  fn offers_mode(&self, mode: &str) -> bool {
+    modes::find(mode).is_some() && self.profile.as_ref().is_none_or(|p| p.offers_mode(mode))
+  }
+
+  fn modes_of(&self, st: &SessionState) -> Value {
+    json!({
+      "currentModeId": st.mode,
+      "availableModes": modes::MODES.iter().filter(|m| self.offers_mode(m.id)).map(|m| json!({ "id": m.id, "name": m.name, "description": m.description })).collect::<Vec<_>>(),
+    })
   }
 
   /// The folder processes of the session start in here (MCP servers): the session folder, or for a folder on an SSH
@@ -373,7 +397,7 @@ impl Server {
     let catalog = self.catalog.get();
     let id = uuid::Uuid::new_v4().to_string();
     let mut state = SessionState { mode: modes::AGENT.to_owned(), announced: modes::AGENT.to_owned(), ..Default::default() };
-    state.model = config.default_pick();
+    state.model = self.default_pick(&config);
     let remote = crate::remote::Remote::of(params);
     let layers = layers_of(params);
     let places = self.places_of(std::path::Path::new(cwd), remote.as_deref(), layers.clone());
@@ -381,7 +405,7 @@ impl Server {
     state.effort = default_effort(&config, &catalog, state.model.as_deref());
     let response = json!({
       "sessionId": id,
-      "modes": modes_of(&state),
+      "modes": self.modes_of(&state),
       "configOptions": sent_options(&config, &catalog, &mut state, self.offers()),
     });
     let store = Store::new(self.session_file(&id), &id, std::path::Path::new(cwd));
@@ -453,7 +477,7 @@ impl Server {
     if reconcile(&config, &catalog, &mut st) {
       session.save_state(&st);
     }
-    Ok(json!({ "modes": modes_of(&st), "configOptions": sent_options(&config, &catalog, &mut st, self.offers()) }))
+    Ok(json!({ "modes": self.modes_of(&st), "configOptions": sent_options(&config, &catalog, &mut st, self.offers()) }))
   }
 
   /// A session object from its file: the history, the controls and the system prompt as they were
@@ -462,9 +486,9 @@ impl Server {
     let catalog = self.catalog.get();
     let s = |k: &str| loaded.state.get(k).and_then(Value::as_str).map(str::to_owned);
     let mut st = SessionState {
-      mode: s("mode").filter(|m| modes::find(m).is_some()).unwrap_or_else(|| modes::AGENT.to_owned()),
+      mode: s("mode").filter(|m| self.offers_mode(m)).unwrap_or_else(|| modes::AGENT.to_owned()),
       announced: s("announced").unwrap_or_else(|| modes::AGENT.to_owned()),
-      model: s("model").or_else(|| config.default_pick()),
+      model: s("model").or_else(|| self.default_pick(&config)),
       items: loaded.items.clone(),
       summarized: loaded.summarized,
       carry: loaded.carry.clone(),
@@ -547,7 +571,7 @@ impl Server {
   fn set_mode(&self, params: &Value) -> Result<Value, RpcError> {
     let session = self.session(str_param(params, "sessionId")?)?;
     let mode = str_param(params, "modeId")?;
-    if modes::find(mode).is_none() {
+    if !self.offers_mode(mode) {
       return Err(RpcError::new(-32602, format!("Unknown mode: {mode}")));
     }
     let mut st = session.state.lock();
@@ -722,13 +746,6 @@ impl Server {
     }
   }
 
-}
-
-fn modes_of(st: &SessionState) -> Value {
-  json!({
-    "currentModeId": st.mode,
-    "availableModes": modes::MODES.iter().map(|m| json!({ "id": m.id, "name": m.name, "description": m.description })).collect::<Vec<_>>(),
-  })
 }
 
 /// The configured levels; a model entered without any (added by id rather than fetched) gets the catalogue's, as model

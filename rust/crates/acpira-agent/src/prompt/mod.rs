@@ -64,6 +64,8 @@ pub struct Places {
   /// The skill folders of the engine's plugins in effect when the session opened (`acp.rs` `SKILLS_META`): between the
   /// user's skills and the project's, read from this disk
   pub skill_layers: Vec<PathBuf>,
+  /// A plugin's specialised agent: its prompt in place of the built-in base and its variants (`profile.rs`)
+  pub profile: Option<Arc<crate::profile::Profile>>,
 }
 
 /// A session folder's prompt files as its SSH host read them (`gather`, run there by the engine's helper at session
@@ -114,15 +116,20 @@ impl HostFiles {
 
 impl Places {
   pub fn new(cwd: &Path, home: Option<&Path>) -> Places {
-    Places { cwd: cwd.to_path_buf(), home: home.map(Path::to_path_buf), root: project_root(cwd, home), host: None, layers: vec![], skill_layers: vec![] }
+    Places { cwd: cwd.to_path_buf(), home: home.map(Path::to_path_buf), root: project_root(cwd, home), host: None, layers: vec![], skill_layers: vec![], profile: None }
   }
 
   /// A folder on an SSH host, read from what the host sent
   pub fn on_host(cwd: &Path, files: Arc<HostFiles>) -> Places {
-    Places { cwd: cwd.to_path_buf(), home: files.home.clone(), root: files.root.clone(), host: Some(files), layers: vec![], skill_layers: vec![] }
+    Places { cwd: cwd.to_path_buf(), home: files.home.clone(), root: files.root.clone(), host: Some(files), layers: vec![], skill_layers: vec![], profile: None }
   }
 
   /// With the plugins' prompt folders
+  pub fn with_profile(mut self, profile: Option<Arc<crate::profile::Profile>>) -> Places {
+    self.profile = profile;
+    self
+  }
+
   pub fn with_layers(mut self, layers: Vec<PathBuf>) -> Places {
     self.layers = layers;
     self
@@ -264,12 +271,18 @@ fn select<'a>(list: &'a [Variant], target: Option<(&Provider, &ProviderModel)>) 
 
 /// The variant a model gets, without composing (to see whether a model switch changes the prompt)
 pub fn variant_name(places: &Places, target: Option<(&Provider, &ProviderModel)>) -> String {
+  if let Some(p) = &places.profile {
+    return p.variant();
+  }
   let (_, list) = variants(places);
   select(&list, target).map(|v| v.name.clone()).unwrap_or_else(|| BASE.to_owned())
 }
 
 /// Compose the system prompt for a model (None before any model is configured)
 pub fn compose(places: &Places, target: Option<(&Provider, &ProviderModel)>) -> Composed {
+  if let Some(p) = &places.profile {
+    return profiled(places, p);
+  }
   let (mut doc, list) = variants(places);
   let chosen = select(&list, target);
   let mut version = doc.text("version").unwrap_or("0").to_owned();
@@ -294,6 +307,18 @@ pub fn compose(places: &Places, target: Option<(&Provider, &ProviderModel)>) -> 
   };
   let digest = digest(&text);
   Composed { text, variant: chosen.map(|v| v.name.clone()).unwrap_or_else(|| BASE.to_owned()), version, digest, sampling, thinking }
+}
+
+/// A specialised agent's prompt: the profile's text, AGENTS.md when it asks for it, the environment; no variant defaults
+fn profiled(places: &Places, p: &crate::profile::Profile) -> Composed {
+  let mut text = p.prompt.trim_end().to_owned();
+  let instructions = if p.instructions { instructions(places) } else { String::new() };
+  if !instructions.is_empty() {
+    text.push_str("\n\n## Instructions from AGENTS.md\nThe user's own instructions for this folder.\n");
+    text.push_str(&instructions);
+  }
+  text.push_str(&environment(places));
+  Composed { digest: digest(&text), text, variant: p.variant(), version: "0".into(), ..Default::default() }
 }
 
 /// Raw mode's prompt: the settings page's text as it is, with nothing composed around it and no variant defaults

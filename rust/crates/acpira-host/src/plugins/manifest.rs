@@ -152,7 +152,14 @@ pub struct RuntimeDef {
   /// Seconds one hook call may take, at most `RUNTIME_TIMEOUT_SECS`
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub timeout: Option<f64>,
+  /// `"agent"`: the hooks are asked only in sessions of the plugin's own agent (`contributes.agent`), so a specialised
+  /// agent's guards never touch another agent's work
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub scope: Option<String>,
 }
+
+/// `runtime.scope` of a plugin whose hooks serve its own agent only
+pub const SCOPE_AGENT: &str = "agent";
 
 impl RuntimeDef {
   pub fn timeout(&self) -> std::time::Duration {
@@ -506,9 +513,18 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
     }
   }
   if let Some(agent) = &m.contributes.agent {
-    match agent.get("command").and_then(Value::as_str).filter(|c| !c.trim().is_empty()) {
-      None => err(findings, "agent: `command` is needed".into()),
-      Some(command) => command_exists(&[crate::plugins::mcp::strip_dir(command).to_owned()], dir, which, "agent", findings),
+    if agent.get("builtin").is_some() {
+      // A specialised agent runs Acpira's own loop: the agent reads the profile itself, so it is checked the same way
+      if agent.get("command").is_some() {
+        err(findings, "agent: `builtin` and `command` exclude each other".into());
+      } else if let Err(e) = acpira_agent::profile::Profile::load(dir) {
+        err(findings, format!("agent: {e}"));
+      }
+    } else {
+      match agent.get("command").and_then(Value::as_str).filter(|c| !c.trim().is_empty()) {
+        None => err(findings, "agent: `command` (another ACP agent) or `builtin` (Acpira's loop with a profile) is needed".into()),
+        Some(command) => command_exists(&[crate::plugins::mcp::strip_dir(command).to_owned()], dir, which, "agent", findings),
+      }
     }
   }
   if let Some(hooks) = &m.contributes.hooks {
@@ -547,6 +563,12 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
       if e != "*" && !RUNTIME_EVENTS.iter().any(|k| *k == e || k.split('.').next() == Some(family)) {
         findings.notes.push(format!("runtime: event `{e}` is not one this Acpira sends"));
       }
+    }
+    match rt.scope.as_deref() {
+      None => {}
+      Some(SCOPE_AGENT) if m.contributes.agent.is_some() => {}
+      Some(SCOPE_AGENT) => err(findings, "runtime: scope `agent` needs the plugin's own `agent`".into()),
+      Some(other) => err(findings, format!("runtime: scope `{other}` is not `agent`")),
     }
     if rt.timeout.is_some_and(|s| s > RUNTIME_TIMEOUT_SECS) {
       findings.notes.push(format!("runtime: timeout cut to {RUNTIME_TIMEOUT_SECS} s"));

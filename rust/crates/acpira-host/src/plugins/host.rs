@@ -35,6 +35,9 @@ pub fn force_safe_mode() {
   FORCED.store(true, Ordering::Relaxed);
 }
 
+/// The key of a plugin agent entry that names a profile folder for the built-in loop (`acpira agent --profile`)
+pub const PROFILE_KEY: &str = "acpiraProfile";
+
 /// One enabled plugin in effect: its frozen copy and manifest
 #[derive(Debug)]
 pub struct Active {
@@ -360,6 +363,8 @@ impl PluginHost {
 
   /// The agents of the plugins in effect as `agents.json` entries under the plugin's id, run from the frozen copy
   /// (`plugins::mcp::rewrite`); a built-in agent's id is never taken
+  /// The agents the plugins in effect add, as agents.json entries; a specialised agent's carries its frozen copy under
+  /// `PROFILE_KEY` instead of a command
   pub fn agent_entries(&self) -> serde_json::Map<String, Value> {
     self.reload();
     let builtin: Vec<String> = crate::acp::agents::registry::builtin_agents().into_iter().map(|d| d.id).collect();
@@ -367,6 +372,12 @@ impl PluginHost {
     for a in &self.loaded().active {
       let Some(spec) = a.manifest.contributes.agent.as_ref().and_then(Value::as_object) else { continue };
       if builtin.contains(&a.id) || a.id == crate::acp::agents::registry::SELF_AGENT_ID {
+        continue;
+      }
+      // A specialised agent: the engine launches its own loop with the frozen copy as the profile (`runtime.rs`
+      // `registry_of`), nothing of the plugin is run
+      if spec.contains_key("builtin") {
+        out.insert(a.id.clone(), json!({ "name": spec.get("name").cloned().unwrap_or_else(|| json!(a.manifest.display_name())), PROFILE_KEY: a.dir }));
         continue;
       }
       let data = self.store.data_dir(&a.id);
@@ -652,6 +663,29 @@ mod tests {
     assert!(h.prompt_layers().iter().all(|d| d.ends_with("prompts") && d.starts_with(tmp.path().join(".versions"))));
     h.action(PluginAction::SafeMode { on: true }).await.unwrap();
     assert!(h.agent_entries().is_empty() && h.prompt_layers().is_empty());
+  }
+
+  #[tokio::test]
+  async fn a_specialised_agent_is_entered_with_its_frozen_copy_as_the_profile() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = host(tmp.path());
+    h.start().await;
+    let dir = tmp.path().join("ledger");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("prompt.md"), "You keep the ledger.").unwrap();
+    let write = |agent: Value| {
+      let m = json!({ "schema": 1, "id": "ledger", "version": "1", "description": "Ledger", "contributes": { "agent": agent } });
+      std::fs::write(dir.join("plugin.json"), m.to_string()).unwrap();
+    };
+    // A profile whose prompt is not in the plugin, or one that also names a command, is refused before anything runs
+    write(json!({ "builtin": { "prompt": "missing.md", "tools": [] } }));
+    assert!(h.action(PluginAction::Enable { id: "ledger".into() }).await.unwrap_err().to_string().contains("missing.md"));
+    write(json!({ "command": "run.sh", "builtin": { "prompt": "prompt.md", "tools": [] } }));
+    assert!(h.action(PluginAction::Enable { id: "ledger".into() }).await.unwrap_err().to_string().contains("exclude each other"));
+    write(json!({ "name": "Ledger", "builtin": { "prompt": "prompt.md", "tools": ["read"] } }));
+    h.action(PluginAction::Enable { id: "ledger".into() }).await.unwrap();
+    let frozen = h.loaded().active.iter().find(|a| a.id == "ledger").unwrap().dir.clone();
+    assert_eq!(h.agent_entries()["ledger"], json!({ "name": "Ledger", PROFILE_KEY: frozen }));
   }
 
   #[tokio::test]

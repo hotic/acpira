@@ -134,7 +134,18 @@ pub fn run(args: Vec<String>) -> i32 {
     }
     let exe = std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned());
     if args.first().map(String::as_str) == Some("agent") {
-      return acpira_agent::run_until(tokio::io::stdin(), tokio::io::stdout(), explicit_home.unwrap_or_else(acpira_home), VERSION, shutdown_signal()).await;
+      // `--profile DIR`: a plugin's specialised agent, read from its frozen copy (acpira_agent::profile)
+      let profile = match args.iter().position(|a| a == "--profile").and_then(|i| args.get(i + 1)) {
+        Some(dir) => match acpira_agent::profile::Profile::load(std::path::Path::new(dir)) {
+          Ok(p) => Some(p),
+          Err(e) => {
+            eprintln!("acpira agent: {e}");
+            return 1;
+          }
+        },
+        None => None,
+      };
+      return acpira_agent::run_profile_until(tokio::io::stdin(), tokio::io::stdout(), explicit_home.unwrap_or_else(acpira_home), VERSION, profile, shutdown_signal()).await;
     }
     if args.iter().any(|a| a == "--ws") {
       return harness(&args, explicit_home, exe).await;
