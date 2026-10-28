@@ -1424,6 +1424,8 @@ export const en = {
   'mobile.new.placeholder': 'What should we work on?',
   'mobile.agent.notInstalled': 'Not installed',
   'mobile.theme.system': 'System',
+  'mobile.terminal.close': 'Close terminal',
+  'mobile.terminal.hideKeyboard': 'Hide keyboard',
   'mobile.language.system': 'System',
   'mobile.engine': 'Engine',
   'mobile.engine.status': 'Connection',

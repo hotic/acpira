@@ -1416,6 +1416,8 @@ export const ru = {
   'mobile.new.placeholder': 'Чем займёмся?',
   'mobile.agent.notInstalled': 'Не установлен',
   'mobile.theme.system': 'Как в системе',
+  'mobile.terminal.close': 'Закрыть терминал',
+  'mobile.terminal.hideKeyboard': 'Скрыть клавиатуру',
   'mobile.language.system': 'Как в системе',
   'mobile.engine': 'Движок',
   'mobile.engine.status': 'Подключение',

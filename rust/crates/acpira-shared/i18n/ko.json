@@ -1367,6 +1367,8 @@
   "mobile.new.placeholder": "무엇을 할까요?",
   "mobile.agent.notInstalled": "설치되지 않음",
   "mobile.theme.system": "시스템 설정",
+  "mobile.terminal.close": "터미널 닫기",
+  "mobile.terminal.hideKeyboard": "키보드 숨기기",
   "mobile.language.system": "시스템 설정",
   "mobile.engine": "엔진",
   "mobile.engine.status": "연결",

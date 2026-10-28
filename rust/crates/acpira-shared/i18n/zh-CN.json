@@ -1395,6 +1395,8 @@
   "mobile.new.placeholder": "想做点什么？",
   "mobile.agent.notInstalled": "未安装",
   "mobile.theme.system": "跟随系统",
+  "mobile.terminal.close": "关闭终端",
+  "mobile.terminal.hideKeyboard": "收起键盘",
   "mobile.language.system": "跟随系统",
   "mobile.engine": "引擎",
   "mobile.engine.status": "连接",

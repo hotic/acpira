@@ -19,6 +19,7 @@
 ## Rules
 
 - Every AcpiraKit module also builds for macOS, because `swift test` builds them all. UIKit-only code goes behind `#if canImport(UIKit)`.
+- SwiftTerm, the terminal's emulator, is pinned `exact:` (its 2.0 API moves between releases) and linked into `AcpiraUI` on iOS only, so its views sit behind `#if os(iOS)`. Its build-tool plugin needs `-skipPackagePluginValidation` in `xcodebuild` (the scripts pass it) and "Trust & Enable" in Xcode.
 - The package uses the app target's concurrency dialect (`dialect` in `Package.swift`).
 - Views use no raw numbers. Sizes, spacing, radii, type and motion come from `AcpiraDesign`, and rows share `Row`.
 - Comments are in English; Swift uses two-space indents (`.editorconfig`).
@@ -48,7 +49,8 @@
   - Rows keep one fact per block: the mark, the title with the time (unless a caption dates the row), the place, and the state's mark alone in a trailing column.
   - `StateMark` ports the desktop's marks and motion. The working ring keeps turning with motion off.
   - The project pin and the in-project pin are `AppModel` stand-ins. They go once the list follows the desktop's single pin plus a display option.
-- Chat: the system bar holds back, new session and the "…" menu (account, pin, rename, exports, settings, delete), with no title. Settings from the menu raises the same sheet as the list.
+- Chat: the system bar holds back, new session and the "…" menu (account, pin, rename, exports, terminal, settings, delete), with no title. Settings from the menu raises the same sheet as the list.
+- Terminal (`Terminal/`): one engine terminal per project (`phone:<cwd>`), its pty on the Mac. Opening, acks, replay, detaching when the page goes and kill follow the desktop's `terminals.ts`; `TerminalSession` holds that logic free of UIKit. The demo has no shell and shows the engine-needed toast.
 - New session: the hero sits at `Metrics.heroRise`, the optical centre, and makes both choices. The agent's bare mark grows a Liquid Glass drop that buds the other agents as a ring (`AgentRing`); the folder is a glass capsule `Menu`. The composer lies over the page bottom, so its growth never moves the hero.
 - Settings (`Settings/SettingsScreen.swift`) is a system `Form`: theme, motion and language as menu pickers, then engine status and version. `Prefs` keys live in UserDefaults; launch arguments override them for screenshots. Switches use the system green, not the muted `--ok`.
 - The account sheet is a system sheet with a `Form`, with the agent's name as the bar's subtitle.
@@ -119,6 +121,7 @@
   - `-prompt TEXT` sends a prompt on launch and gets the demo reply. `-draft TEXT` pre-fills the composer.
   - `-open open|all|every` pre-opens folds. `-replay` plays the last agent turn back as a live stream (`Logic/Replay.swift`).
   - With `-engine PORT:TOKEN`: `-session ID` opens that chat, `-start FOLDER` starts a session of the default agent there with `-prompt` as its first prompt. The fake agent's prompts pick its script (`slow` streams, `tool` asks a permission; `test/fake-agent.ts`).
+  - `-terminal FOLDER` opens that project's terminal; with an engine, `-type SCRIPT` types into it a beat per step: text with `\r` for Return, and `{hide}`, `{show}`, `{reopen}`, `{restart}`, `{close}`, `{wait}`.
 - The simulator takes no scripted taps, so menus and hit targets are checked by hand.
 - The web reference is the LAB page `lab/ios-reference.preview.tsx` (local only): the real `App` fed the same fixtures.
   - Query: `f`, `ui` / `code` (match the transcript at 17 / 14), `light`, `drawer`, `open`, `measure`.
@@ -134,6 +137,10 @@ Xcode and the simulator:
 - A package test target referenced from the project's scheme is not run: `-only-testing` fails, and the package scheme reached through the project is "not configured for the test action". `xcodebuild -scheme AcpiraKit test` from the package directory works, hence the three steps of `check.sh`.
 - Opening the hand-written project in Xcode leaves `project.pbxproj` and the shared scheme byte-identical and writes only per-user state. A diff there comes from an edit.
 - `simctl recordVideo` right after a boot can stall for seconds: record again before calling it a bug.
+
+SwiftTerm (1.99.1):
+
+- The iOS view draws its ground from the layer colour `nativeBackgroundColor` sets. Setting the view's `backgroundColor` as well clears the layer's, and the ground draws black.
 
 The harness wire (`acpira --ws`, `sidecar/ws.rs`):
 

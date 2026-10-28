@@ -1384,6 +1384,8 @@ export const fr = {
   'mobile.new.placeholder': 'Sur quoi travaille-t-on ?',
   'mobile.agent.notInstalled': 'Non installé',
   'mobile.theme.system': 'Système',
+  'mobile.terminal.close': 'Fermer le terminal',
+  'mobile.terminal.hideKeyboard': 'Masquer le clavier',
   'mobile.language.system': 'Système',
   'mobile.engine': 'Moteur',
   'mobile.engine.status': 'Connexion',

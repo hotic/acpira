@@ -1421,6 +1421,8 @@ export const zhTW = {
   'mobile.new.placeholder': '想做點什麼？',
   'mobile.agent.notInstalled': '未安裝',
   'mobile.theme.system': '跟隨系統',
+  'mobile.terminal.close': '關閉終端機',
+  'mobile.terminal.hideKeyboard': '收起鍵盤',
   'mobile.language.system': '跟隨系統',
   'mobile.engine': '引擎',
   'mobile.engine.status': '連線',

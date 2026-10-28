@@ -1368,6 +1368,8 @@
   "mobile.new.placeholder": "¿En qué trabajamos?",
   "mobile.agent.notInstalled": "No instalado",
   "mobile.theme.system": "Sistema",
+  "mobile.terminal.close": "Cerrar terminal",
+  "mobile.terminal.hideKeyboard": "Ocultar teclado",
   "mobile.language.system": "Sistema",
   "mobile.engine": "Motor",
   "mobile.engine.status": "Conexión",
