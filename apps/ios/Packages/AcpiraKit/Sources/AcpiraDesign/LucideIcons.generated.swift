@@ -101,6 +101,7 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case merge
   case messageCircleQuestion
   case messageCircleQuestionMark
+  case messageSquare
   case messageSquarePlus
   case messageSquareText
   case messagesSquare
@@ -120,6 +121,7 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case play
   case plus
   case puzzle
+  case qrCode
   case refreshCw
   case `repeat`
   case rotateCcw
@@ -134,6 +136,7 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case shieldX
   case shrink
   case slidersHorizontal
+  case smartphone
   case sparkle
   case sparkles
   case square
@@ -143,12 +146,14 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case squareSlash
   case squareTerminal
   case sunMoon
+  case tablet
   case tag
   case terminal
   case textSelect
   case trash2
   case triangleAlert
   case undo2
+  case unlink
   case unplug
   case userRound
   case users
@@ -262,6 +267,7 @@ extension LucideIcon {
     case .merge: [.path("m8 6 4-4 4 4"), .path("M12 2v10.3a4 4 0 0 1-1.172 2.872L4 22"), .path("m20 22-5-5")]
     case .messageCircleQuestion: [.path("M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"), .path("M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"), .path("M12 17h.01")]
     case .messageCircleQuestionMark: [.path("M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"), .path("M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"), .path("M12 17h.01")]
+    case .messageSquare: [.path("M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z")]
     case .messageSquarePlus: [.path("M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"), .path("M12 8v6"), .path("M9 11h6")]
     case .messageSquareText: [.path("M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"), .path("M7 11h10"), .path("M7 15h6"), .path("M7 7h8")]
     case .messagesSquare: [.path("M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"), .path("M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1")]
@@ -281,6 +287,7 @@ extension LucideIcon {
     case .play: [.path("M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z")]
     case .plus: [.path("M5 12h14"), .path("M12 5v14")]
     case .puzzle: [.path("M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z")]
+    case .qrCode: [.rect(x: 3, y: 3, width: 5, height: 5, rx: 1), .rect(x: 16, y: 3, width: 5, height: 5, rx: 1), .rect(x: 3, y: 16, width: 5, height: 5, rx: 1), .path("M21 16h-3a2 2 0 0 0-2 2v3"), .path("M21 21v.01"), .path("M12 7v3a2 2 0 0 1-2 2H7"), .path("M3 12h.01"), .path("M12 3h.01"), .path("M12 16v.01"), .path("M16 12h1"), .path("M21 12v.01"), .path("M12 21v-1")]
     case .refreshCw: [.path("M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"), .path("M21 3v5h-5"), .path("M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"), .path("M8 16H3v5")]
     case .`repeat`: [.path("m17 2 4 4-4 4"), .path("M3 11v-1a4 4 0 0 1 4-4h14"), .path("m7 22-4-4 4-4"), .path("M21 13v1a4 4 0 0 1-4 4H3")]
     case .rotateCcw: [.path("M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"), .path("M3 3v5h5")]
@@ -295,6 +302,7 @@ extension LucideIcon {
     case .shieldX: [.path("M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"), .path("m14.5 9.5-5 5"), .path("m9.5 9.5 5 5")]
     case .shrink: [.path("m15 15 6 6m-6-6v4.8m0-4.8h4.8"), .path("M9 19.8V15m0 0H4.2M9 15l-6 6"), .path("M15 4.2V9m0 0h4.8M15 9l6-6"), .path("M9 4.2V9m0 0H4.2M9 9 3 3")]
     case .slidersHorizontal: [.path("M10 5H3"), .path("M12 19H3"), .path("M14 3v4"), .path("M16 17v4"), .path("M21 12h-9"), .path("M21 19h-5"), .path("M21 5h-7"), .path("M8 10v4"), .path("M8 12H3")]
+    case .smartphone: [.rect(x: 5, y: 2, width: 14, height: 20, rx: 2), .path("M12 18h.01")]
     case .sparkle: [.path("M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z")]
     case .sparkles: [.path("M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"), .path("M20 2v4"), .path("M22 4h-4"), .circle(cx: 4, cy: 20, r: 2)]
     case .square: [.rect(x: 3, y: 3, width: 18, height: 18, rx: 2)]
@@ -304,12 +312,14 @@ extension LucideIcon {
     case .squareSlash: [.rect(x: 3, y: 3, width: 18, height: 18, rx: 2), .line(x1: 9, y1: 15, x2: 15, y2: 9)]
     case .squareTerminal: [.path("m7 11 2-2-2-2"), .path("M11 13h4"), .rect(x: 3, y: 3, width: 18, height: 18, rx: 2)]
     case .sunMoon: [.path("M12 2v2"), .path("M14.837 16.385a6 6 0 1 1-7.223-7.222c.624-.147.97.66.715 1.248a4 4 0 0 0 5.26 5.259c.589-.255 1.396.09 1.248.715"), .path("M16 12a4 4 0 0 0-4-4"), .path("m19 5-1.256 1.256"), .path("M20 12h2")]
+    case .tablet: [.rect(x: 4, y: 2, width: 16, height: 20, rx: 2), .line(x1: 12, y1: 18, x2: 12.01, y2: 18)]
     case .tag: [.path("M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"), .circle(cx: 7.5, cy: 7.5, r: 0.5)]
     case .terminal: [.path("M12 19h8"), .path("m4 17 6-6-6-6")]
     case .textSelect: [.path("M14 21h1"), .path("M14 3h1"), .path("M19 3a2 2 0 0 1 2 2"), .path("M21 14v1"), .path("M21 19a2 2 0 0 1-2 2"), .path("M21 9v1"), .path("M3 14v1"), .path("M3 9v1"), .path("M5 21a2 2 0 0 1-2-2"), .path("M5 3a2 2 0 0 0-2 2"), .path("M7 12h10"), .path("M7 16h6"), .path("M7 8h8"), .path("M9 21h1"), .path("M9 3h1")]
     case .trash2: [.path("M10 11v6"), .path("M14 11v6"), .path("M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"), .path("M3 6h18"), .path("M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2")]
     case .triangleAlert: [.path("m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"), .path("M12 9v4"), .path("M12 17h.01")]
     case .undo2: [.path("M9 14 4 9l5-5"), .path("M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11")]
+    case .unlink: [.path("m18.84 12.25 1.72-1.71h-.02a5.004 5.004 0 0 0-.12-7.07 5.006 5.006 0 0 0-6.95 0l-1.72 1.71"), .path("m5.17 11.75-1.71 1.71a5.004 5.004 0 0 0 .12 7.07 5.006 5.006 0 0 0 6.95 0l1.71-1.71"), .line(x1: 8, y1: 2, x2: 8, y2: 5), .line(x1: 2, y1: 8, x2: 5, y2: 8), .line(x1: 16, y1: 19, x2: 16, y2: 22), .line(x1: 19, y1: 16, x2: 22, y2: 16)]
     case .unplug: [.path("m19 5 3-3"), .path("m2 22 3-3"), .path("M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"), .path("M7.5 13.5 10 11"), .path("M10.5 16.5 13 14"), .path("m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z")]
     case .userRound: [.circle(cx: 12, cy: 8, r: 5), .path("M20 21a8 8 0 0 0-16 0")]
     case .users: [.path("M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"), .path("M16 3.128a4 4 0 0 1 0 7.744"), .path("M22 21v-2a4 4 0 0 0-3-3.87"), .circle(cx: 9, cy: 7, r: 4)]

@@ -124,7 +124,8 @@ struct Composer: View {
             // Lowered by the ink's offset in both forms, so the text is centred in the bar and does not move as it grows
             .padding(.top, line + Metrics.fieldInkDrop)
             .padding(.bottom, expanded ? Metrics.s1 + Metrics.barCtl + Metrics.s1 : line - Metrics.fieldInkDrop)
-            .padding(.leading, expanded ? Metrics.s3 + Metrics.s1 : lead + Metrics.s1)
+            // In the card the text starts on the `+`'s ink below it
+            .padding(.leading, expanded ? Metrics.s3 + Metrics.s1 * 2 : lead + Metrics.s1)
             .padding(.trailing, expanded ? Metrics.s3 + Metrics.s1 : Metrics.barCtl + Metrics.s1)
             .glassEffect(GlassStyle.control, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
@@ -141,7 +142,9 @@ struct Composer: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { lead = $0 }
             Spacer(minLength: 0)
           }
-          .padding([.horizontal, .bottom], expanded ? Metrics.s1 : 0)
+          // Inset from the card's corner as send is from its own: flush with the card's side, a pressed chip's glass
+          // (the whole slot) crossed the card's rounded corner
+          .padding([.leading, .bottom], expanded ? Metrics.s1 : 0)
         }
       }
       // Send sits over the container, not in it: the container draws its glass over every plain view inside, so a

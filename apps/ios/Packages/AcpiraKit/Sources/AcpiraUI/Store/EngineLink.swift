@@ -33,7 +33,7 @@ final class EngineLink {
   private var stagingSeq = 0
   /// App.tsx IMAGE_BLOB_TIMEOUT: an answer that never comes reads as an unreadable file
   static let stageTimeout: Duration = .seconds(10)
-  static let log = Logger(subsystem: "com.hotic.acpira", category: "engine")
+  static let log = Logger(subsystem: "cc.hotic.acpira", category: "engine")
 
   convenience init(address: EngineAddress, language: String) {
     self.init(transport: WebSocketTransport(port: address.port, token: address.token), language: language,

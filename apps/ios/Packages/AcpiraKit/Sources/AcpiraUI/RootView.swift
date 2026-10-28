@@ -1,6 +1,7 @@
 import AcpiraDesign
 import AcpiraFixtures
 import AcpiraModels
+import AcpiraSync
 import SwiftUI
 #if canImport(UIKit)
 import UIKit
@@ -77,16 +78,23 @@ extension EnvironmentValues {
 public struct RootView: View {
   private let options: LaunchOptions
   @State private var model: AppModel
+  /// Paired remote access; nil while this build has no pairing service (`-pairing preview` selects the preview fake)
+  @State private var pairing: PairingModel?
   @AppStorage(Prefs.theme) private var theme = "system"
   @AppStorage(Prefs.locale) private var locale = "auto"
   @AppStorage(Prefs.motion) private var motion = true
 
-  public init(options: LaunchOptions = .current()) {
+  @Environment(\.scenePhase) private var phase
+
+  /// pairingService: the real paired-remote service when the app target links one (AcpiraRemote); `-pairing preview`
+  /// still selects the preview fake, and `-engine` keeps the development engine
+  public init(options: LaunchOptions = .current(), pairingService: (any PairingService)? = nil) {
     self.options = options
     // `-locale` pins a screenshot's language; otherwise the stored choice, then the device's
     L10n.setLocale(options.locale ?? Prefs.resolve(UserDefaults.standard.string(forKey: Prefs.locale) ?? "auto"))
     InterFont.register()
     _model = State(initialValue: AppModel(options: options))
+    _pairing = State(initialValue: PairingModel.launch() ?? (options.engine == nil ? pairingService.map { PairingModel(service: $0) } : nil))
   }
 
   public var body: some View {
@@ -97,6 +105,21 @@ public struct RootView: View {
     } else {
       screens
     }
+  }
+
+  /// A paired computer's wire becomes the app model the screens follow; its end goes back to the pairing model, whose
+  /// screens say why and offer a retry
+  private func followPairing() {
+    guard let pairing else { return }
+    let language = options.locale ?? Locale.preferredLanguages.first ?? "en"
+    let adopt = { [options] (wire: any PairedConnection) in
+      let next = AppModel(link: EngineLink(transport: wire, language: language), options: options)
+      next.onClosed = { [weak pairing] in pairing?.connectionEnded(wire.endReason() ?? .offline) }
+      model = next
+    }
+    pairing.onConnection = { _, wire in adopt(wire) }
+    // Dialled before this view appeared
+    if let wire = pairing.connection { adopt(wire) }
   }
 
   private var scheme: ColorScheme? {
@@ -117,7 +140,10 @@ public struct RootView: View {
     }
     // Outside the `.id` above, so a language picked in it rebuilds the screens under the sheet, not the sheet away
     .sheet(isPresented: Bindable(model).settingsOpen) { SettingsSheet() }
+    // The add-computer sheet and `acpira://pair/…` links (Pairing/)
+    .modifier(PairingLayer())
     .environment(model)
+    .environment(\.pairing, pairing)
     // Session links in replies and from outside open that session; any other link goes to the system
     .environment(\.openURL, OpenURLAction { url in model.openLink(url) ? .handled : .systemAction })
     .onOpenURL { url in _ = model.openLink(url) }
@@ -130,6 +156,13 @@ public struct RootView: View {
     .environment(\.now, model.live ? .now : Fixtures.now)
     .environment(\.clockOffset, model.clockOffset)
     .tint(Palette.fg1)
+    .onAppear(perform: followPairing)
+    .onChange(of: phase) { _, now in
+      // Back from the background, where the service closed the wire: dial the followed computer again
+      if now == .active, let pairing, pairing.connection == nil, pairing.selected != nil, pairing.link != .connecting {
+        pairing.connectSelected()
+      }
+    }
     .task {
       #if DEBUG && canImport(UIKit)
       if let popup = options.popup, popup.hasPrefix("menu:") { await MenuProbe.open(popup) }

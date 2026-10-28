@@ -4,6 +4,7 @@
 // new files never touch the project file, and so the platform-neutral modules test with `swift test` on the Mac in seconds.
 // Every module must also build for macOS (`swift test` builds all of them): UIKit-only code goes behind `#if canImport(UIKit)`.
 
+import Foundation
 import PackageDescription
 
 // The app target's concurrency dialect (SWIFT_APPROACHABLE_CONCURRENCY, SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY),
@@ -16,13 +17,41 @@ let dialect: [SwiftSetting] = [
 
 let modules = ["AcpiraModels", "AcpiraSync", "AcpiraDesign", "AcpiraMarkdown", "AcpiraFixtures", "AcpiraUI"]
 
+// Paired remote access: acpira-mobile's XCFramework and its UniFFI bindings (apps/ios/scripts/build-net.sh), git-ignored
+// build output under Artifacts/. AcpiraNet wraps them and AcpiraRemote implements AcpiraSync's PairingService on top;
+// both exist only once the artifacts were built, so a checkout that never built them still resolves and tests.
+// Trap: SwiftPM and Xcode cache this manifest's evaluation keyed by its text and the environment, not by the files it
+// looks at. check.sh passes ACPIRA_NET_STAMP (the build's stamp) so a fresh build is seen; elsewhere a run with a cached
+// evaluation keeps the old answer until the environment or this file changes (`swift package --manifest-cache none`,
+// or Xcode's Reset Package Caches)
+// ACPIRA_NET=0 leaves them out even when built (check.sh's run without them)
+let artifacts = Context.packageDirectory + "/Artifacts"
+let net = Context.environment["ACPIRA_NET"] != "0"
+  && FileManager.default.fileExists(atPath: artifacts + "/AcpiraNetFFI.xcframework/Info.plist")
+  && FileManager.default.fileExists(atPath: artifacts + "/AcpiraNet/acpira_mobile.swift")
+let netTargets: [Target] = !net ? [] : [
+  .binaryTarget(name: "AcpiraNetFFI", path: "Artifacts/AcpiraNetFFI.xcframework"),
+  // The generated bindings, without the dialect: code written for plain Swift 6
+  .target(
+    name: "AcpiraNet",
+    dependencies: ["AcpiraNetFFI"],
+    path: "Artifacts/AcpiraNet",
+    // What the Rust side calls into: interface and route lookups (netdev, netwatch)
+    linkerSettings: ["CoreFoundation", "Network", "SystemConfiguration"].map { .linkedFramework($0) }
+  ),
+  .target(name: "AcpiraRemote", dependencies: ["AcpiraModels", "AcpiraSync", "AcpiraNet"], swiftSettings: dialect),
+  .testTarget(name: "AcpiraRemoteTests", dependencies: ["AcpiraModels", "AcpiraSync", "AcpiraNet", "AcpiraRemote"], swiftSettings: dialect),
+]
+
 let package = Package(
   name: "AcpiraKit",
   platforms: [.iOS(.v26), .macOS(.v26)],
   products: [
     // One product for the app to link; it imports the modules it needs one by one
-    .library(name: "AcpiraKit", targets: modules),
-  ],
+    // With the networking artifacts built it carries the real pairing service too, so the app target links nothing
+    // else and picks it up with `canImport(AcpiraRemote)`
+    .library(name: "AcpiraKit", targets: modules + (net ? ["AcpiraNet", "AcpiraRemote"] : [])),
+  ] + (net ? [.library(name: "AcpiraRemote", targets: ["AcpiraRemote"])] : []),
   dependencies: [
     // The terminal page's emulator and view (MIT), pinned: its 2.0 API is still moving between releases. No traits:
     // the default one only adds PNG decoders for platforms without ImageIO
@@ -58,5 +87,5 @@ let package = Package(
       dependencies: modules.map { .target(name: $0) },
       swiftSettings: dialect
     ),
-  ]
+  ] + netTargets
 )

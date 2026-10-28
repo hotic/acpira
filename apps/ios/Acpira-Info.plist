@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The keys INFOPLIST_KEY_ build settings cannot hold (arrays), merged into the generated Info.plist. Kept outside
+     the synchronized Acpira/ folder, which would otherwise copy it into the bundle as a resource. -->
+<plist version="1.0">
+<dict>
+	<!-- acpira://pair/… links from the camera app, AirDrop or a tapped link (Pairing/PairListViews.swift) -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER).pair</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>acpira</string>
+			</array>
+		</dict>
+	</array>
+	<!-- What the add-computer sheet browses for: a computer with its pairing window open -->
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_acpira-pair._udp</string>
+	</array>
+	<!-- The app's own languages (packages/shared/i18n), so system controls such as PasteButton read in the same ones -->
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>zh-Hans</string>
+		<string>zh-Hant</string>
+		<string>de</string>
+		<string>es</string>
+		<string>fr</string>
+		<string>ja</string>
+		<string>ko</string>
+		<string>ru</string>
+	</array>
+</dict>
+</plist>

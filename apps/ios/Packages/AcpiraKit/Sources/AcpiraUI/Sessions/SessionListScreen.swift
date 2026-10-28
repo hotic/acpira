@@ -3,24 +3,34 @@ import AcpiraFixtures
 import AcpiraModels
 import SwiftUI
 
-// The phone's first screen: every session, in one of two views picked under the title (as Trae's phone app switches
-// its list between a timeline and groups, rather than stacking projects over a timeline). By time: the sessions
-// pinned to the top, then day captions. By project: the same pinned run, then each project as a header folding open
-// in place, its own pins first and the latest few, the rest behind "N more" (the desktop list's project grouping and
-// its view menu's defaults; a page per project put back and its title on two rows). A search lists one run across
-// every project. Every row keeps one fact per block: the title, the place (the project, or inside a project's group
-// the agent) and the state each in their own spot, never joined on one line.
+// The phone's first screen: every session, grouped as picked under the title (as Trae's phone app switches its list
+// between a timeline and groups, rather than stacking projects over a timeline; the groupings are the desktop view
+// menu's). By time: the sessions pinned to the top, then day captions. By project: the same pinned run (or, as the
+// view menu says, each project's pins leading it), then the desktop app's sections, each project as a header folding
+// open in place, the latest few, the rest behind "N more" (the desktop list's project grouping and its view menu's
+// defaults; a page per project put back and its title on two rows). By channel: pinned, then a caption per agent.
+// Ungrouped: one run. Projects follow the user's order, shared with the desktop. A search lists one run across every project,
+// matching the conversations too (a content hit shows the text around its match under the title). Every row keeps one
+// fact per block: the title with its time and state on one line, and the project under it. Inside a project's group
+// the row is that one line: its mark already names the agent.
 
-/// The list's two views (`Prefs.listView`)
-enum SessionListView: String, CaseIterable { case time, project }
+/// How the list groups its sessions (`Prefs.listView`), the desktop view menu's Grouping: by date, by project (with the
+/// desktop app's sections), by channel (the agent), or one ungrouped run
+enum SessionListView: String, CaseIterable { case time, project, agent, none }
+
+/// Where pinned sessions sit by project (`Prefs.pinPlace`, the desktop view menu's ViewPin): one run over every project,
+/// or first inside their own project
+enum PinPlace: String, CaseIterable { case top, project }
 
 struct SessionListScreen: View {
   @Environment(AppModel.self) private var model
+  @Environment(\.pairing) private var pairing
   @AppStorage(Prefs.listView) private var view = SessionListView.time
-  @State private var query = ""
+  @AppStorage(Prefs.pinPlace) private var pinPlace = PinPlace.top
+  /// `-search TEXT` (the launch arguments' defaults domain) starts with a search typed, for screenshots of its hits
+  @State private var query = UserDefaults.standard.string(forKey: "search") ?? ""
   @State private var renaming: SessionSummary?
   @State private var newTitle = ""
-  @State private var deleting: SessionSummary?
   /// Open projects showing every session, past their latest few
   @State private var fullProjects: Set<String> = []
   @Environment(\.now) private var now
@@ -29,29 +39,49 @@ struct SessionListScreen: View {
   private static let perProject = 5
 
   var body: some View {
-    let searching = !query.trimmingCharacters(in: .whitespaces).isEmpty
-    let shown = searching ? filtered(model.summaries) : model.summaries
+    // Paired remote access: the followed computer's state takes the page until it has sessions to list
+    PairListGate(pairing: pairing) { list }
+  }
+
+  @ViewBuilder private var list: some View {
+    let terms = searchTerms(query)
+    let searching = !terms.isEmpty
+    // Content hits count for the query they answered only
+    let snippets = model.hits?.query == terms.joined(separator: " ") ? model.hits?.snippets : nil
+    let shown = searching ? filtered(model.summaries, terms: terms, snippets: snippets) : model.summaries
     // Pinned first, then the latest
     let ordered = shown.sorted { ($0.pinned == true ? 1 : 0, $0.updatedAt) > ($1.pinned == true ? 1 : 0, $1.updatedAt) }
     let byProject = view == .project && !searching
-    let groups = groups(ordered, searching: searching, byProject: byProject)
+    let pinsInProject = byProject && pinPlace == .project
+    let groups = groups(ordered, searching: searching, byProject: byProject, pinsInProject: pinsInProject)
     let onNew = { model.path.append(.new(agent: nil, cwd: model.projects.first ?? "")) }
     ScrollView(.vertical) {
       LazyVStack(alignment: .leading, spacing: 0) {
         // The list has no bar: settings sits at the title row's end and comes up as a sheet
-        LargeTitle(title: t("mobile.home")) { model.settingsOpen = true }
-        if !searching && !model.summaries.isEmpty { ListViewMenu(view: $view) }
+        if let pairing, let current = pairing.selected {
+          // The followed computer names the list; its menu switches computers
+          PairTitleRow(pairing: pairing, current: current) { model.settingsOpen = true }
+        } else {
+          LargeTitle(title: t("mobile.home")) { model.settingsOpen = true }
+        }
+        // Listed folders alone keep it too: from another view the menu is the way back to them
+        if !searching && !(model.summaries.isEmpty && model.listedProjects.isEmpty) {
+          ListViewMenu(view: $view, pinPlace: $pinPlace, unread: model.summaries.contains { $0.unread == true || $0.state == .unread },
+                       onMarkAllRead: model.markAllRead)
+        }
         if ordered.isEmpty && !(byProject && !model.listedProjects.isEmpty) {
-          Text(web: searching ? t("session.noMatch") : t("session.noneWorkspace"))
+          // Waiting on the conversation search, the empty list says so rather than "no match"
+          Text(web: searching ? t(snippets == nil ? "session.searching" : "session.noMatch") : t("session.noneWorkspace"))
             .textStyle(TypeScale.text2).foregroundStyle(Palette.fg3)
             .frame(maxWidth: .infinity, minHeight: Metrics.sheetRow)
         }
-        ForEach(groups) { group($0, searching: searching) }
-        if byProject { ForEach(model.listedProjects, id: \.self) { projectGroup($0) } }
+        ForEach(groups) { group($0, terms: terms, snippets: snippets) }
+        if byProject { projectGroups(pinsInProject: pinsInProject) }
       }
       .padding(.bottom, Metrics.msgGap)
       .animation(Motion.ease, value: ordered.map(\.id))
       .animation(Motion.ease, value: model.listedProjects)
+      .animation(Motion.ease, value: model.sections)
       .animation(Motion.ease, value: view)
     }
     .scrollIndicators(.hidden)
@@ -67,49 +97,80 @@ struct SessionListScreen: View {
       Button(t("mobile.cancel"), role: .cancel) {}
       Button(t("mobile.save")) { if let s = renaming { model.rename(s.id, to: newTitle) } }
     }
-    .confirmationDialog(t("mobile.deleteConfirm", ["title": deleting?.title ?? ""]),
-                        isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
-                        titleVisibility: .visible) {
-      Button(t("common.delete"), role: .destructive) { if let s = deleting { model.delete(s.id) } }
-      Button(t("mobile.cancel"), role: .cancel) {}
+    // The conversation search goes out once typing pauses (SessionList.tsx SEARCH_DEBOUNCE)
+    .task(id: query) {
+      if !query.isEmpty { try? await Task.sleep(for: .milliseconds(180)) }
+      guard !Task.isCancelled else { return }
+      model.search(query)
     }
   }
 
   @ViewBuilder
-  private func group(_ group: SessionGroup, searching: Bool) -> some View {
+  private func group(_ group: SessionGroup, terms: [String], snippets: [String: String]?) -> some View {
     if let caption = group.caption { Caption(text: caption) }
     ForEach(Array(group.sessions.enumerated()), id: \.element.id) { i, s in
+      // A caption already says "pinned"; one run without captions (a search) ends its leading pins at the pin rule
+      let pinEnd = group.caption == nil && s.pinned == true && group.sessions[safe: i + 1].map { $0.pinned != true } == true
       row(s, place: projectName(s.cwd),
-          // A caption already says "pinned"; one run without captions marks its pins
-          pinGlyph: group.caption == nil && s.pinned == true,
           // A day caption already says when; pinned rows and search hits have none, so they keep the time
           time: group.dated ? nil : sessionTime(s.updatedAt, now: now),
           // Captions part the runs and rows sit on space alone; one run without captions parts by hairlines
-          divider: i < group.sessions.count - 1 && group.caption == nil,
-          inProject: false)
+          divider: i < group.sessions.count - 1 && group.caption == nil && !pinEnd,
+          snippet: snippets?[s.id], terms: terms)
+      if pinEnd { PinRule() }
     }
   }
 
-  /// A project in the by-project view: its header, then, open, its sessions not pinned to the top (its own pins
-  /// first, then the latest), the latest few only until "N more" is tapped
+  /// The by-project view's projects: the desktop app's sections first, each under its name with its projects in its own
+  /// order, then the projects in none under "Projects" (the desktop list's layout); without sections, the projects
+  /// alone. Sections are made and filled on the desktop; one with nothing listed here is left out
   @ViewBuilder
-  private func projectGroup(_ cwd: String) -> some View {
+  private func projectGroups(pinsInProject: Bool) -> some View {
+    let listed = model.listedProjects
+    let runs = model.sections.map { SectionRun(section: $0, projects: $0.projects.filter(listed.contains)) }.filter { !$0.projects.isEmpty }
+    if runs.isEmpty {
+      ForEach(listed, id: \.self) { projectGroup($0, pinsInProject: pinsInProject) }
+    } else {
+      let filed = Set(runs.flatMap(\.projects))
+      let rest = listed.filter { !filed.contains($0) }
+      ForEach(runs) { run in
+        Caption(text: run.section.name.isEmpty ? t("session.section.untitled") : run.section.name)
+        ForEach(run.projects, id: \.self) { projectGroup($0, pinsInProject: pinsInProject) }
+      }
+      if !rest.isEmpty {
+        Caption(text: t("session.group.projects"))
+        ForEach(rest, id: \.self) { projectGroup($0, pinsInProject: pinsInProject) }
+      }
+    }
+  }
+
+  /// A project in the by-project view: its header, then, open, its pins when they sit in their project (ending at the
+  /// pin rule) and its other sessions, the latest few only until "N more" is tapped
+  @ViewBuilder
+  private func projectGroup(_ cwd: String, pinsInProject: Bool) -> some View {
     let all = model.summaries.filter { $0.cwd == cwd }
-    let here = { (s: SessionSummary) in model.projectPins.contains(s.id) ? 1 : 0 }
-    let sessions = all.filter { $0.pinned != true }.sorted { (here($0), $0.updatedAt) > (here($1), $1.updatedAt) }
+    let pins = pinsInProject ? all.filter { $0.pinned == true }.sorted { $0.updatedAt > $1.updatedAt } : []
+    let sessions = all.filter { $0.pinned != true }.sorted { $0.updatedAt > $1.updatedAt }
     let open = model.openProjects.contains(cwd)
     let rows = !open ? [] : fullProjects.contains(cwd) || sessions.count <= Self.perProject + 1
       ? sessions : Array(sessions.prefix(Self.perProject))
     let more = open ? sessions.count - rows.count : 0
     VStack(spacing: 0) {
-      ProjectHeader(cwd: cwd, pinned: model.pinnedProjects.contains(cwd), open: open, sessions: all,
+      ProjectHeader(cwd: cwd, first: model.listedProjects.first == cwd, open: open, sessions: all,
                     onToggle: { withAnimation(Motion.ease) { model.toggleOpen(cwd) } },
-                    onPin: { model.togglePinProject(cwd) },
+                    onMoveTop: { withAnimation(Motion.ease) { model.moveProjectToTop(cwd) } },
+                    onRemove: { withAnimation(Motion.ease) { model.removeProject(cwd) } },
                     onNew: { model.path.append(.new(agent: nil, cwd: cwd)) })
-      ForEach(Array(rows.enumerated()), id: \.element.id) { i, s in
-        // Inside its project a row names the agent; no caption says when, so every row keeps its time
-        row(s, place: model.agent(s.agent).name, pinGlyph: model.projectPins.contains(s.id),
-            time: sessionTime(s.updatedAt, now: now), divider: false, inProject: true)
+      if open {
+        // Inside its project a row is one line, the mark naming the agent; no caption says when, so every row keeps
+        // its time
+        ForEach(pins, id: \.id) { s in
+          row(s, place: nil, time: sessionTime(s.updatedAt, now: now), divider: false)
+        }
+        if !pins.isEmpty && (!rows.isEmpty || more > 0) { PinRule() }
+      }
+      ForEach(rows, id: \.id) { s in
+        row(s, place: nil, time: sessionTime(s.updatedAt, now: now), divider: false)
       }
       if more > 0 {
         MoreRow(count: more) { _ = withAnimation(Motion.ease) { fullProjects.insert(cwd) } }
@@ -117,34 +178,40 @@ struct SessionListScreen: View {
     }
   }
 
-  /// One session with its menu: pinned to the list's top, and (inside a project's group) pinned within the project
-  private func row(_ s: SessionSummary, place: String, pinGlyph: Bool, time: String?, divider: Bool,
-                   inProject: Bool) -> some View {
-    SessionRow(session: s, agentName: model.agent(s.agent).name, place: place, pinGlyph: pinGlyph, time: time,
-               divider: divider,
+  /// One session with its menu
+  private func row(_ s: SessionSummary, place: String?, time: String?, divider: Bool, snippet: String? = nil,
+                   terms: [String] = []) -> some View {
+    SessionRow(session: s, agentName: model.agent(s.agent).name, place: place, time: time, divider: divider,
+               snippet: snippet, terms: terms,
                onSelect: { model.path.append(.chat(s.id)) },
                onRename: { newTitle = s.title; renaming = s },
-               onDelete: { deleting = s }) {
+               // Deleted at once, as on the desktop: the toast's undo brings it back
+               onDelete: { withAnimation(Motion.ease) { model.delete(s.id) } }) {
       Button(s.pinned == true ? t("common.unpin") : t("common.pin"), systemImage: s.pinned == true ? "pin.slash" : "pin") {
         model.togglePin(s.id)
-      }
-      if inProject {
-        Button(model.projectPins.contains(s.id) ? t("mobile.unpinInProject") : t("mobile.pinInProject"),
-               systemImage: "pin.circle") { model.toggleProjectPin(s.id) }
       }
     }
   }
 
   /// By time: pinned, then today / yesterday / this week / this month / older, captions over each. By project: the
-  /// pinned run alone, the projects follow. A search: one run
-  private func groups(_ sessions: [SessionSummary], searching: Bool, byProject: Bool) -> [SessionGroup] {
-    if searching {
+  /// pinned run alone (none when pins sit in their projects), the projects follow. By channel: pinned, then a run per
+  /// agent under its name, the agent of the latest session first (sessionView.ts groupSessions). Ungrouped, or a
+  /// search: one run, its pins first
+  private func groups(_ sessions: [SessionSummary], searching: Bool, byProject: Bool, pinsInProject: Bool) -> [SessionGroup] {
+    if searching || view == .none {
       return [SessionGroup(id: "all", caption: nil, sessions: sessions)]
     }
-    let top = sessions.filter { $0.pinned == true }
+    let top = pinsInProject ? [] : sessions.filter { $0.pinned == true }
     var out: [SessionGroup] = top.isEmpty ? [] : [SessionGroup(id: "pinned", caption: t("session.group.pinned"), sessions: top)]
     guard !byProject else { return out }
     let rest = sessions.filter { $0.pinned != true }
+    if view == .agent {
+      var agents: [AgentId] = []
+      for s in rest where !agents.contains(s.agent) { agents.append(s.agent) }
+      return out + agents.map { a in
+        SessionGroup(id: "agent.\(a)", caption: model.agent(a).name, sessions: rest.filter { $0.agent == a })
+      }
+    }
     for key in ["today", "yesterday", "week", "month", "older"] {
       let members = rest.filter { recency($0.updatedAt) == key }
       if !members.isEmpty {
@@ -165,28 +232,53 @@ struct SessionListScreen: View {
     return days < 7 ? "week" : days < 30 ? "month" : "older"
   }
 
-  private func filtered(_ sessions: [SessionSummary]) -> [SessionSummary] {
-    let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-    return sessions.filter {
-      $0.title.lowercased().contains(q) || model.agent($0.agent).name.lowercased().contains(q)
-        || projectName($0.cwd).lowercased().contains(q)
+  /// A search's rows: every term in the title, the agent or the project, or a content hit for the query
+  private func filtered(_ sessions: [SessionSummary], terms: [String], snippets: [String: String]?) -> [SessionSummary] {
+    sessions.filter {
+      snippets?[$0.id] != nil || SessionSearch.matches([$0.title, model.agent($0.agent).name, projectName($0.cwd)], terms: terms)
     }
   }
 }
 
-/// The list's view under the title, by time or by project: a system menu ticking the current one
+/// The list's grouping under the title (date, project, channel or none): a system menu ticking the current one. By
+/// project it also says where pins sit (the desktop view menu's Pinned), and while anything is unread it marks all as
+/// read
 struct ListViewMenu: View {
   @Binding var view: SessionListView
+  @Binding var pinPlace: PinPlace
+  var unread = false
+  var onMarkAllRead: () -> Void = {}
 
-  private func name(_ view: SessionListView) -> String { t(view == .time ? "mobile.view.time" : "mobile.view.project") }
+  private func name(_ view: SessionListView) -> String { t("mobile.view.\(view.rawValue)") }
+
+  /// One option of a pick: checked while chosen; tapping the chosen one keeps it
+  private func choice<Value: Hashable>(_ value: Value, of pick: Binding<Value>, _ title: String, _ icon: String) -> some View {
+    Toggle(isOn: Binding(get: { pick.wrappedValue == value }, set: { if $0 { pick.wrappedValue = value } })) {
+      Label(title, systemImage: icon)
+    }
+  }
 
   var body: some View {
     Menu {
-      Picker(selection: $view) {
-        Label(name(.time), systemImage: "clock").tag(SessionListView.time)
-        Label(name(.project), systemImage: "folder").tag(SessionListView.project)
-      } label: { EmptyView() }
-      .pickerStyle(.inline)
+      // Titled sections of checked toggles rather than inline pickers: a menu drops an inline picker's label and the
+      // title of a section around one, which left 列表顶部 / 所在项目内 without the 置顶 that says what they place
+      Section(t("session.view.group")) {
+        choice(.time, of: $view, name(.time), "clock")
+        choice(.project, of: $view, name(.project), "folder")
+        choice(.agent, of: $view, name(.agent), "antenna.radiowaves.left.and.right")
+        choice(.none, of: $view, name(.none), "list.bullet")
+      }
+      if view == .project {
+        Section(t("session.view.pinned")) {
+          choice(.top, of: $pinPlace, t("session.view.pinned.top"), "pin")
+          choice(.project, of: $pinPlace, t("session.view.pinned.project"), "folder")
+        }
+      }
+      if unread {
+        Section {
+          Button(t("session.view.markAllRead"), systemImage: "envelope.open", action: onMarkAllRead)
+        }
+      }
     } label: {
       HStack(spacing: Metrics.s1) {
         Text(web: name(view), paragraph: false)
@@ -232,6 +324,20 @@ func sessionTime(_ iso: String, now: Date = Date()) -> String {
   return date.formatted(Date.FormatStyle(locale: locale).month(.defaultDigits).day(.defaultDigits))
 }
 
+/// `text` with a search's terms in the strong ink and weight (SessionList.tsx Marked)
+func marked(_ text: String, terms: [String], size: CGFloat) -> AttributedString {
+  var out = AttributedString()
+  for (i, part) in SessionSearch.parts(text, terms: terms).enumerated() where !part.isEmpty {
+    var run = CJKWidth.attributed(part, size: size, paragraph: false)
+    if i % 2 == 1 {
+      run.foregroundColor = Palette.fgStrong
+      run.inlinePresentationIntent = .stronglyEmphasized
+    }
+    out += run
+  }
+  return out
+}
+
 // MARK: - Pieces
 
 /// The list's large title is its first row and the page has no navigation bar (a bar holding only settings read as an
@@ -254,8 +360,16 @@ struct SystemListBar: ViewModifier {
         }
         #endif
       }
-      .searchable(text: $query, prompt: Text(web: t("session.search")))
+      // The engine searches the conversations too, so the field says so
+      .searchable(text: $query, prompt: Text(web: t("session.searchContent")))
   }
+}
+
+/// One of the desktop app's sections with the projects of it the list shows
+struct SectionRun: Identifiable {
+  let section: SessionSection
+  let projects: [String]
+  var id: String { section.id }
 }
 
 struct SessionGroup: Identifiable {
@@ -294,11 +408,15 @@ struct LargeTitle: View {
 struct SessionRow<Pins: View>: View {
   let session: SessionSummary
   let agentName: String
-  let place: String
-  /// A pin before the title, where no "pinned" caption says it (one run, or pinned inside its project)
-  var pinGlyph = false
+  /// The project under the title; none inside a project's group, where the row is one line (the mark already names
+  /// the agent, which a second line only repeated)
+  let place: String?
   var time: String?
   var divider = true
+  /// A search's content hit: the text around the match, a line of its own under the place
+  var snippet: String?
+  /// A search's terms, marked in the title and the snippet
+  var terms: [String] = []
   var onSelect: () -> Void
   var onRename: () -> Void = {}
   var onDelete: () -> Void = {}
@@ -309,14 +427,15 @@ struct SessionRow<Pins: View>: View {
     Button(action: onSelect) {
       // Marks sit centred on both lines: a mark on the title line read as hanging off the block
       HStack(alignment: .center, spacing: Metrics.gap) {
-        // The bare mark, its ink fitted and centred (logos sit off-centre in their own boxes)
+        // The bare mark, its ink fitted and centred (logos sit off-centre in their own boxes). Its column starts the
+        // slot, so the ink stands on the title's and captions' edge rather than centred a few points in
         VendorMark(brand: session.agent, name: agentName, size: Metrics.rowMark, fit: true)
           .foregroundStyle(Palette.fg2)
-          .frame(width: Metrics.lead, height: Metrics.lead)
+          .frame(width: Metrics.rowMark, height: Metrics.lead)
+          .frame(width: Metrics.lead, alignment: .leading)
         VStack(alignment: .leading, spacing: Metrics.s0_5) {
           HStack(alignment: .firstTextBaseline, spacing: Metrics.s2) {
-            if pinGlyph { Icon(.pin, size: Metrics.chevron).foregroundStyle(Palette.fg3) }
-            Text(web: session.title).lineLimit(1).truncationMode(.tail)
+            Text(marked(session.title, terms: terms, size: TypeScale.field.size)).lineLimit(1).truncationMode(.tail)
               .textStyle(TypeScale.field)
               .foregroundStyle(Palette.fgStrong)
               .frame(maxWidth: .infinity, alignment: .leading)
@@ -324,21 +443,33 @@ struct SessionRow<Pins: View>: View {
               Text(web: time, paragraph: false)
                 .textStyle(TypeScale.text3).monospacedDigit().foregroundStyle(Palette.fg3).fixedSize()
             }
+            // The state is its mark alone, as on the desktop (its meaning is the mark's accessibility label), on the
+            // time's line and centred on its digits: centred on both lines it sat below the time. Every row keeps the
+            // slot, so the times above line up: an empty `Group` with a frame lays out as nothing
+            Color.clear.frame(width: Metrics.stateSlot, height: Metrics.stateSlot).overlay {
+              if let state = session.state, state != .unknown { StateMark(state: state, unread: session.unread == true) }
+            }
+            .padding(.leading, Metrics.gap - Metrics.s2)
+            .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + TypeScale.text3.size * 0.35 }
           }
-          Text(web: place, paragraph: false).lineLimit(1).truncationMode(.middle)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .textStyle(TypeScale.text3)
-            .foregroundStyle(Palette.fg3)
+          if let place {
+            Text(web: place, paragraph: false).lineLimit(1).truncationMode(.middle)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .textStyle(TypeScale.text3)
+              .foregroundStyle(Palette.fg3)
+          }
+          if let snippet {
+            Text(marked(snippet, terms: terms, size: TypeScale.text3.size)).lineLimit(2)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .textStyle(TypeScale.text3)
+              .foregroundStyle(Palette.fg2)
+          }
         }
-        // The state is its mark alone, as on the desktop (its meaning is the mark's accessibility label), in a column
-        // of its own centred on both lines like the lead. Every row keeps the slot, so the times above line up
-        Group {
-          if let state = session.state, state != .unknown { StateMark(state: state, unread: session.unread == true) }
-        }
-        .frame(width: Metrics.stateSlot)
       }
       .padding(.horizontal, Metrics.pad)
-      .frame(minHeight: Metrics.sessionRow)
+      .padding(.vertical, snippet == nil ? 0 : Metrics.s2)
+      // One line stands as tall as a project's header
+      .frame(minHeight: place == nil && snippet == nil ? Metrics.sheetRow : Metrics.sessionRow)
       .overlay(alignment: .bottom) {
         if divider {
           // From the text column, under the lead
@@ -357,16 +488,18 @@ struct SessionRow<Pins: View>: View {
   }
 }
 
-/// A project's header in the by-project view: the folder in the marks' column, the name (a pin after it when pinned
-/// to the top) and a chevron turning down while open; folded, the project's most pressing state sits in the rows'
-/// state column. A tap folds it open or shut
+/// A project's header in the by-project view: the folder in the marks' column, the name and a chevron turning down
+/// while open; folded, the project's most pressing state sits in the rows' state column. A tap folds it open or shut;
+/// its menu moves it to the top of the user's order, starts a session in it, or takes it off the list
 struct ProjectHeader: View {
   let cwd: String
-  let pinned: Bool
+  /// It leads the list already, so "move to top" is not offered
+  let first: Bool
   let open: Bool
   let sessions: [SessionSummary]
   var onToggle: () -> Void
-  var onPin: () -> Void
+  var onMoveTop: () -> Void
+  var onRemove: () -> Void
   var onNew: () -> Void
 
   var body: some View {
@@ -377,21 +510,21 @@ struct ProjectHeader: View {
         Image(systemName: "folder.fill").resizable().scaledToFit()
           .frame(width: Metrics.iconCtl, height: Metrics.iconCtl)
           .foregroundStyle(Palette.fg2)
-          .frame(width: Metrics.lead)
+          // Centred on the marks' column, which it overhangs evenly by its extra width
+          .frame(width: Metrics.rowMark)
+          .frame(width: Metrics.lead, alignment: .leading)
         HStack(spacing: Metrics.s1_5) {
           Text(web: projectName(cwd), paragraph: false).lineLimit(1).truncationMode(.tail)
             .textStyle(TypeScale.field, weight: .semibold)
             .foregroundStyle(Palette.fgStrong)
-          if pinned { Image(systemName: "pin.fill").font(.system(size: Metrics.chevron)).foregroundStyle(Palette.fg3) }
           Icon(.chevronRight, size: Metrics.chevron, strokeWidth: 2).foregroundStyle(Palette.fg3)
             .rotationEffect(.degrees(open ? 90 : 0))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        // Open, each row shows its own state
-        Group {
+        // Open, each row shows its own state; the slot stays either way, as in the rows
+        Color.clear.frame(width: Metrics.stateSlot, height: Metrics.stateSlot).overlay {
           if !open, let mark = Self.pressing(sessions) { StateMark(state: mark.state, unread: mark.unread) }
         }
-        .frame(width: Metrics.stateSlot)
       }
       .padding(.horizontal, Metrics.pad)
       .frame(minHeight: Metrics.sheetRow)
@@ -400,8 +533,9 @@ struct ProjectHeader: View {
     .buttonStyle(ListRowStyle(active: false))
     .accessibilityAddTraits(.isHeader)
     .contextMenu {
-      Button(pinned ? t("common.unpin") : t("common.pin"), systemImage: pinned ? "pin.slash" : "pin", action: onPin)
+      if !first { Button(t("mobile.project.moveTop"), systemImage: "arrow.up.to.line", action: onMoveTop) }
       Button(t("session.project.newSession"), systemImage: "square.and.pencil", action: onNew)
+      Button(t("session.project.remove"), systemImage: "minus.circle", action: onRemove)
     }
   }
 
@@ -432,6 +566,17 @@ struct MoreRow: View {
       .contentShape(Rectangle())
     }
     .buttonStyle(ListRowStyle(active: false))
+  }
+}
+
+/// The end of a pinned run: the desktop's short faded rule (SessionList.tsx `PinDivider`) instead of a pin on each row,
+/// which pushed the row's title off the text line
+struct PinRule: View {
+  var body: some View {
+    LinearGradient(colors: [.clear, Palette.line, .clear], startPoint: .leading, endPoint: .trailing)
+      .frame(height: Metrics.hairline)
+      .padding(.horizontal, Metrics.pad)
+      .padding(.vertical, Metrics.s1)
   }
 }
 

@@ -119,8 +119,7 @@ struct QuestionCard: View {
           .foregroundStyle(Palette.fg1)
           .frame(height: Metrics.lead)
         }
-        .padding(Metrics.questionOptionPad)
-        .background(RoundedRectangle(cornerRadius: Metrics.rMd).fill(pick.other ? Palette.active : .clear))
+        .modifier(OptionFill(on: pick.other))
       }
       if q.kind == .text {
         let placeholder = t(q.numeric == true ? "question.numberPlaceholder" : "question.textPlaceholder")
@@ -206,10 +205,23 @@ struct OptionRow<Content: View>: View {
 struct OptionButtonStyle: ButtonStyle {
   var selected: Bool
   func makeBody(configuration: Configuration) -> some View {
-    configuration.label
-      .padding(Metrics.questionOptionPad)
-      .background(RoundedRectangle(cornerRadius: Metrics.rMd).fill(selected || configuration.isPressed ? Palette.active : .clear))
-      .contentShape(RoundedRectangle(cornerRadius: Metrics.rMd))
+    configuration.label.modifier(OptionFill(on: selected || configuration.isPressed))
+  }
+}
+
+/// An option's fill bleeds outward, so its text stays on the header's text line instead of the fill pushing it in.
+/// Sideways it also clears the key box, which overhangs the lead's icon column
+struct OptionFill: ViewModifier {
+  var on: Bool
+  private var bleed: CGFloat { Metrics.questionOptionPad + (Metrics.lead - WebMetrics.icon) / 2 }
+  func body(content: Content) -> some View {
+    let shape = RoundedRectangle(cornerRadius: Metrics.rMd)
+    content
+      .padding(.vertical, Metrics.questionOptionPad)
+      .padding(.horizontal, bleed)
+      .background(shape.fill(on ? Palette.active : .clear))
+      .contentShape(shape)
+      .padding(.horizontal, -bleed)
   }
 }
 

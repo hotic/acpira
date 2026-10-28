@@ -8,7 +8,7 @@ set -euo pipefail
 ios="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ios/scripts/simulator.sh"
 out="$1"; fixture="$2"; mode="${3:-closed}"; theme="${4:-dark}"; sim="${5:-$sim_default}"
-bundle="com.hotic.acpira"
+bundle="cc.hotic.acpira"
 
 # Held across the shot and the read of its output, which the next run would overwrite
 sim_acquire "$sim"

@@ -45,6 +45,7 @@ struct SettingsScreen: View {
   @AppStorage(Prefs.theme) private var theme = "system"
   @AppStorage(Prefs.locale) private var locale = "auto"
   @AppStorage(Prefs.motion) private var motion = true
+  @Environment(\.pairing) private var pairing
   @Environment(AppModel.self) private var model
 
   var body: some View {
@@ -72,25 +73,31 @@ struct SettingsScreen: View {
       }
       // The engine's own settings, shared with the computer
       EngineSettingsSections()
-      Section {
-        // One fact: the state, with its dot; what it means goes in the footnote
-        LabeledContent(t("mobile.engine.status")) {
-          HStack(spacing: Metrics.s1_5) {
-            Circle().fill(model.live ? Palette.ok : Palette.fg3).frame(width: Metrics.rowDot, height: Metrics.rowDot)
-            Text(web: t(model.live ? "connections.state.connected" : "connections.state.off"), paragraph: false)
+      if let pairing {
+        // Paired remote access: the paired computers take the engine row's place
+        PairComputersSection(pairing: pairing)
+      } else {
+        Section {
+          // One fact: the state, with its dot; what it means goes in the footnote
+          LabeledContent(t("mobile.engine.status")) {
+            HStack(spacing: Metrics.s1_5) {
+              Circle().fill(model.live ? Palette.ok : Palette.fg3).frame(width: Metrics.rowDot, height: Metrics.rowDot)
+              Text(web: t(model.live ? "connections.state.connected" : "connections.state.off"), paragraph: false)
+            }
           }
+        } header: {
+          Text(web: t("mobile.engine"))
+        } footer: {
+          // The demo's word on what it shows; a development engine needs none
+          if !model.live { Text(web: t("mobile.engine.desc")) }
         }
-      } header: {
-        Text(web: t("mobile.engine"))
-      } footer: {
-        // The demo's word on what it shows; a development engine needs none
-        if !model.live { Text(web: t("mobile.engine.desc")) }
       }
       Section(t("mobile.about")) {
         LabeledContent(t("settings.fact.version"), value: version)
       }
     }
     .formPage()
+    .pairSettingsHooks(pairing)
     .navigationDestination(for: SettingsRoute.self) { route in
       switch route {
       case .agents: AgentsSettingsPage()

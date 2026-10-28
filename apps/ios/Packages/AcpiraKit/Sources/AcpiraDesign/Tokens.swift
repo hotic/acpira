@@ -93,6 +93,9 @@ public enum Swatches {
   /// The dim behind an open liquid picker, as Messages dims its page under the `+` menu; dark enough that the
   /// captions beside the pieces read over the transcript
   public static let gooDim = Swatch(.black(0.62), .black(0.18))
+  /// Under a liquid picker's panel: the page's colour, so its clear glass keeps the rim but the content behind it no
+  /// longer reads through the rows
+  public static let gooBacking = bg0.alpha(0.86)
   /// The prompt bubble, a step darker than --chip in light so it reads on the light page
   public static let bubbleBg = Swatch(.white(0.08), RGBA(hex: 0xebebeb))
   public static let btn1Bg = Swatch(.white(0.95), RGBA(hex: 0x151515))
@@ -173,6 +176,7 @@ public enum Palette {
   public static var formPage: Color { Swatches.formPage.color }
   public static var formRow: Color { Swatches.formRow.color }
   public static var gooDim: Color { Swatches.gooDim.color }
+  public static var gooBacking: Color { Swatches.gooBacking.color }
   public static var btn1Bg: Color { Swatches.btn1Bg.color }
   public static var btn1Fg: Color { Swatches.btn1Fg.color }
   public static var sendBg: Color { Swatches.sendBg.color }
@@ -288,7 +292,11 @@ public enum Metrics {
   // Command card
   public static let commandX: CGFloat = pad - gap / 2
   public static let commandY: CGFloat = gap * 0.75
-  public static let commandAfter: CGFloat = gap * 0.75
+  /// An open code card (command output, diff) sits this far below its row and above the next one, the process rows'
+  /// own gap included, so it reads as centred between them; the web's --command-after left 11 pt under a card and 6
+  /// over it
+  public static let codeCardGap: CGFloat = gapHalf
+  public static var codeCardAfter: CGFloat { codeCardGap - processRowGap }
   public static let commandPromptLines = 3
   /// A code card's height cap in the transcript; on the phone a short preview of about eight lines, the whole card
   /// one tap away in a sheet
