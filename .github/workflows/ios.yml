@@ -1,0 +1,40 @@
+name: iOS
+
+# The iOS app's done check (apps/ios/scripts/check.sh, docs/dev/ios.md) on a macOS runner: AcpiraKit's tests on the Mac
+# and on a simulator, then the app scheme. Without the networking XCFramework (ACPIRA_NET=0), as a fresh checkout
+# builds it; signing and TestFlight uploads stay off CI.
+
+on:
+  push:
+    paths: ['apps/ios/**', '.github/workflows/ios.yml']
+  pull_request:
+    paths: ['apps/ios/**', '.github/workflows/ios.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # The newest installed Xcode 27: the app builds against the iOS 27 SDK and the scripts' iPhone 18 Pro device
+      - name: Select Xcode
+        run: |
+          xcode="$(ls -d /Applications/Xcode_27*.app | sort -V | tail -n 1)"
+          test -n "$xcode"
+          echo "DEVELOPER_DIR=$xcode/Contents/Developer" >> "$GITHUB_ENV"
+      - name: check.sh
+        env:
+          ACPIRA_NET: '0'
+          # No idle reaper left behind: the runner goes away with its device
+          ACPIRA_SIM_IDLE: '0'
+        run: apps/ios/scripts/check.sh
