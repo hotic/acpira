@@ -19,9 +19,10 @@ import { useStableList } from '../ui/useStableList';
 import { useMergedRefs } from '../ui/mergeRefs';
 import { QuietEntranceContext } from '../ui/Row';
 import { FollowContext, useBottomFollow } from './useBottomFollow';
+import { captureSliceScroll, restoreSliceScroll, type SliceScroll } from './sliceScroll';
 import { Header } from './Header';
 import { SessionList, projectName } from './SessionList';
-import type { MoveTarget } from './sessionTree';
+import { isChatFolder, type MoveTarget } from './sessionTree';
 import { AgentMessage } from './Turns';
 import { HistoryComposerContext, HistoryContext, HistoryMessage } from './HistoryMessage';
 import { QuoteToolbar } from './QuoteToolbar';
@@ -62,8 +63,9 @@ import { OpenToolFileContext, AsyncTaskStopContext, BlobUrlContext, DiffSourceCo
 import { TurnActionsContext } from './TurnActions';
 import { ForkBoundary } from './ForkBoundary';
 import { SubagentInspector } from './subagents/SubagentInspector';
-import { InspectorSplitter, clamp, usePreferredPaneWidth, type PaneBounds } from './subagents/InspectorSplitter';
+import { InspectorSplitter, clamp, fitPaneBounds, usePreferredPaneWidth, type PaneBounds } from './subagents/InspectorSplitter';
 import { ToolPanelDock, openPlanInPanel, projectPath } from '../panel/ToolPanel';
+import { preferMarkdownPreview } from '../panel/FileViewer';
 import { markShellResize } from '../panel/api';
 import { FilesLayout } from '../panel/FilesLayout';
 import { panel, usePanelValue } from '../panel/store';
@@ -97,8 +99,8 @@ export interface ShellHandlers {
   setConfig: (configId: string, value: string) => void;
   selectSession: (id: string) => void;
   // Without an agent the host falls back to the configured defaultAgent; with a category the new session is filed there;
-  // `cwd` (a project shell, the desktop app) starts it in that folder
-  newSession: (agent?: AgentInfo['id'], category?: string, cwd?: string) => void;
+  // `cwd` (a project shell, the desktop app) starts it in that folder; `chat` in a fresh folder of its own (no project)
+  newSession: (agent?: AgentInfo['id'], category?: string, cwd?: string, chat?: boolean) => void;
   renameSession: (id: string, title: string) => void;
   deleteSession: (id: string) => void;
   restoreSession: (id: string) => void;
@@ -240,6 +242,8 @@ export interface ShellProps {
   noProject?: boolean;
   // The user's home folder: the start page's project paths shorten it to ~
   home?: string;
+  // Desktop: where chats' folders live (InitState.chats); a session in one belongs to no project
+  chats?: string;
 }
 
 // A toast: text plus an optional undo; each dismisses itself, several can stack (an attachment notice must not take the undo of a deletion with it)
@@ -291,6 +295,7 @@ export function Shell(p: ShellProps) {
       const w = entries?.[0]?.contentRect.width ?? element.clientWidth;
       if (lastW >= 0 && Math.abs(w - lastW) > 1.5) markShellResize();
       lastW = w;
+      element.style.setProperty('--shell-w', `${w}px`);
       setCanDock(w >= minWidth);
       setCanFiles(w >= filesMin);
     };
@@ -309,7 +314,12 @@ export function Shell(p: ShellProps) {
   // dock resize — each frame of the fold animation — would restyle the whole transcript.
   const contentRef = useCallback((el: HTMLDivElement | null) => {
     threadContent.current = el;
-    if (el) el.style.paddingBottom = threadClearance(dockHeight.current);
+    if (!el) return;
+    // The dock survives a session switch; measure its new contents before the thread's first bottom pin.
+    // Waiting for its observer gives the new thread the previous session's clearance for one painted frame.
+    dockHeight.current = Math.round(planDock.current?.getBoundingClientRect().height ?? 0);
+    el.style.paddingBottom = threadClearance(dockHeight.current);
+    toastLayer.current?.style.setProperty('--thread-dock-height', `${dockHeight.current}px`);
   }, []);
   const toastRef = useCallback((el: HTMLDivElement | null) => {
     toastLayer.current = el;
@@ -338,7 +348,7 @@ export function Shell(p: ShellProps) {
   const sideBounds = useCallback((): PaneBounds => {
     const element = root.current ?? document.documentElement;
     const px = (name: string) => Number.parseFloat(getComputedStyle(element).getPropertyValue(name));
-    return { min: px('--session-pane-min'), max: element.clientWidth - px('--session-main-min'), initial: px('--pop-w-md') };
+    return fitPaneBounds(sessionPanel.current, { min: px('--session-pane-min'), max: element.clientWidth - px('--session-main-min'), initial: px('--pop-w-md') });
   }, []);
   const sideWidth = draggedSide ?? preferredSide;
   const commitSide = useCallback((w: number) => { setDraggedSide(undefined); setPreferredSide(w); }, [setPreferredSide]);
@@ -434,7 +444,7 @@ export function Shell(p: ShellProps) {
     const styles = getComputedStyle(mainColumn.current ?? document.documentElement);
     const px = (name: string) => Number.parseFloat(styles.getPropertyValue(name));
     const room = (mainColumn.current?.clientWidth ?? 0) + (inspectorPane.current?.offsetWidth ?? 0);
-    return { min: px('--subagent-pane-min'), max: room - px('--subagent-main-min'), initial: px('--subagent-pane-w') };
+    return fitPaneBounds(inspectorPane.current, { min: px('--subagent-pane-min'), max: room - px('--subagent-main-min'), initial: px('--subagent-pane-w') });
   }, []);
   const paneWidth = draggedPane ?? preferredPane;
   // Desktop, files layout: the chat's width is the user's (drag its left edge, over the stage's rim), kept with the tool
@@ -445,7 +455,7 @@ export function Shell(p: ShellProps) {
     const element = mainColumn.current ?? document.documentElement;
     const px = (name: string) => Number.parseFloat(getComputedStyle(element).getPropertyValue(name));
     const stage = root.current?.querySelector<HTMLElement>('[data-stage]');
-    return { min: px('--files-chat-min'), max: element.offsetWidth + (stage?.offsetWidth ?? 0) - px('--stage-min'), initial: px('--files-chat-w') };
+    return fitPaneBounds(mainColumn.current, { min: px('--files-chat-min'), max: Math.min(px('--files-chat-max'), element.offsetWidth + (stage?.offsetWidth ?? 0) - px('--stage-min')), initial: px('--files-chat-w') }, px('--files-chat-max'));
   }, []);
   const chatWidth = draggedChat ?? chatW;
   const commitChat = useCallback((w: number) => { setDraggedChat(undefined); panel.setChatW(w); }, []);
@@ -460,8 +470,14 @@ export function Shell(p: ShellProps) {
   useEffect(() => setGraphOpen(false), [p.activeSessionId]);
   useEffect(() => setInspect(undefined), [p.activeSessionId]);
   const inspectNode = inspect !== undefined ? p.subagents?.find(n => n.id === inspect.id) : undefined;
-  // Too narrow to dock: the child takes over the main column, header included
-  const overlayInspect = inspectNode !== undefined && !canDockInspector;
+  // Desktop docking follows the window tier, not the room left after opening another pane.
+  // The inspector and the other columns share that room without replacing the main conversation.
+  const dockInspector = desktop ? canDock : canDockInspector;
+  const overlayInspect = inspectNode !== undefined && !dockInspector;
+  // Wide enough: the child docks beside the column. The shell carries it as data-subagent-docked for desktop.css and
+  // panel.css: a :has() over the pane's presence kept matching in the desktop app's WKWebView after the pane was
+  // removed, which left the header without the pinned panel toggle's room
+  const dockedInspect = inspectNode !== undefined && dockInspector && p.activeSessionId !== undefined;
   useEffect(() => { if (inspect !== undefined && inspectNode === undefined) setInspect(undefined); }, [inspect, inspectNode]);
   // Observing is exactly the open child; the previous subscription ends before the next one starts
   useEffect(() => {
@@ -567,24 +583,38 @@ export function Shell(p: ShellProps) {
     if (alias) setRemotePick(alias);
     else openSettingsPage?.({ kind: 'connections' });
   }, [closeDrawer, openSettingsPage]);
+  // A chat: a session in a folder of its own that belongs to no project. On a chat's start page already, the composer
+  // takes the focus instead
+  const chatHere = desktop && isChatFolder(p.chats, p.cwd);
+  const newChat = useCallback(() => {
+    closeDrawer();
+    if (startPage && chatHere) { root.current?.querySelector<HTMLTextAreaElement>('[data-start-dock] textarea')?.focus(); return; }
+    on.newSession(currentAgent, undefined, undefined, true);
+  }, [closeDrawer, startPage, chatHere, on.newSession, currentAgent]);
+  // "New session": in the given project, else the one on screen; from a chat it is another chat, and with no project at
+  // all a chat too where the engine makes them, the folder dialog elsewhere
   const newIn = useCallback((cwd?: string) => {
     const dir = cwd ?? p.cwd;
+    if (!cwd && (chatHere || (!dir && p.chats))) { newChat(); return; }
     closeDrawer();
     if (!dir) { addProject(); return; }
     // Already on that project's start page: the composer takes the focus instead
     if (startPage && dir === p.cwd) { root.current?.querySelector<HTMLTextAreaElement>('[data-start-dock] textarea')?.focus(); return; }
     unfold(dir);
     on.newSession(agentIn(dir, currentAgent), undefined, dir);
-  }, [p.cwd, closeDrawer, addProject, startPage, unfold, on.newSession, currentAgent, agentIn]);
+  }, [p.cwd, p.chats, chatHere, newChat, closeDrawer, addProject, startPage, unfold, on.newSession, currentAgent, agentIn]);
   const newHere = useCallback(() => newIn(), [newIn]);
   // The start page starts its empty session over with another agent or in another project (the engine drops the empty one
   // it leaves); what was typed there moves to the new one before its composer mounts
   const carry = useRef<string | undefined>(undefined);
   const startOver = (agent: AgentId, cwd = p.cwd) => {
     carry.current = p.activeSessionId;
+    // A chat starts over as a new chat: the engine takes the empty one's folder away with it
+    if (chatHere && cwd === p.cwd) { on.newSession(agent, undefined, undefined, true); return; }
     if (cwd) unfold(cwd);
     on.newSession(agent, undefined, cwd);
   };
+  const startChat = () => { carry.current = p.activeSessionId; on.newSession(p.agent.id, undefined, undefined, true); };
   if (carry.current && p.activeSessionId && carry.current !== p.activeSessionId) {
     if (!p.turns.length) {
       moveDraft(carry.current, p.activeSessionId);
@@ -596,8 +626,8 @@ export function Shell(p: ShellProps) {
   // The start page's projects: the column's registered ones, and the folder on screen if it is not among them
   const startProjects = useMemo(() => {
     const list = p.categories?.projects ?? [];
-    return p.cwd && !list.includes(p.cwd) ? [...list, p.cwd] : list;
-  }, [p.categories, p.cwd]);
+    return p.cwd && !chatHere && !list.includes(p.cwd) ? [...list, p.cwd] : list;
+  }, [p.categories, p.cwd, chatHere]);
   const copyPath = useCallback((path: string) => copied(navigator.clipboard.writeText(path), t('session.project.copied')), [copied]);
   const newFromPanel = useCallback((agent?: AgentId) => { on.newSession(agent); closeDrawer(); }, [on.newSession, closeDrawer]);
   const newInCat = useCallback((category: string) => { on.newSession(p.agent.id, category); closeDrawer(); }, [on.newSession, p.agent.id, closeDrawer]);
@@ -718,6 +748,8 @@ export function Shell(p: ShellProps) {
       onCopyPath={copyPath}
       fresh={fresh}
       onMarkAllRead={on.markAllRead}
+      chats={desktop ? p.chats : undefined}
+      onNewChat={desktop && p.chats ? newChat : undefined}
     />
   );
 
@@ -828,13 +860,23 @@ export function Shell(p: ShellProps) {
         previewImage(path);
         return;
       }
-      const rel = filePanelRoot ? projectPath(filePanelRoot, path) : undefined;
-      if (filePanelRoot && rel !== undefined) { panel.openFile(filePanelRoot, rel, line); return; }
-      const plan = filePanelRoot ? plansRef.current.find(b => b.path === path) : undefined;
+      const resolved = resolveSessionPath(path, undefined, p.home);
+      const rel = filePanelRoot ? projectPath(filePanelRoot, resolved) : undefined;
+      if (filePanelRoot && rel !== undefined) {
+        if (/\.plan\.md$/i.test(rel)) preferMarkdownPreview();
+        panel.openFile(filePanelRoot, rel, line);
+        return;
+      }
+      const plan = filePanelRoot ? plansRef.current.find(b => b.path === path || b.path === resolved) : undefined;
       if (filePanelRoot && plan) { openPlanInPanel(filePanelRoot, plan, line); return; }
+      if (filePanelRoot) {
+        if (/\.plan\.md$/i.test(resolved)) preferMarkdownPreview();
+        panel.openFile(filePanelRoot, resolved, line);
+        return;
+      }
       on.openFile?.(sid, path, line);
     };
-  }, [p.activeSessionId, on.openFile, filePanelRoot, previewImage]);
+  }, [p.activeSessionId, on.openFile, filePanelRoot, previewImage, p.home]);
   const activeCwdRef = useRef<string | undefined>(undefined);
   activeCwdRef.current = p.sessions.find(s => s.id === p.activeSessionId)?.cwd || p.cwd;
   const homeRef = useRef(p.home);
@@ -915,6 +957,8 @@ export function Shell(p: ShellProps) {
           // A docked column beside the chat, open: on its left, or at the window's right edge in the files layout
           data-column={(desktop && position === 'left' && canDock && !columnHidden) || undefined}
           data-column-moving={columnMoving || undefined}
+          // The docked subagent pane is open beside the chat (its sheet joint, header room)
+          data-subagent-docked={dockedInspect || undefined}
           // A narrow window (below --session-dock-min): its list is a page over the whole window, the title row keeps only
           // the column's toggle and the header centres its title
           data-narrow={(desktop && !canDock) || undefined}
@@ -942,7 +986,7 @@ export function Shell(p: ShellProps) {
                   'flex min-h-0 flex-col',
                   // Files layout: last, at the window's right edge, a hairline from the chat beside it; it gives way to the
                   // stage's room down to its narrowest (desktop.css)
-                  files ? 'order-5 shrink border-l border-line' : 'shrink-0',
+                  files ? 'order-5 shrink border-l border-line' : desktop && dockedInspect ? 'shrink' : 'shrink-0',
                   position === 'right' && 'order-last',
                   // Desktop: the column has no fill or rule of its own, it lies on the window's canvas (desktop.css)
                   !desktop && cn('bg-bg-0 border-line', position === 'right' ? 'border-l' : 'border-r'),
@@ -983,7 +1027,7 @@ export function Shell(p: ShellProps) {
           <div ref={mainColumn} data-sheet={desktop || undefined} inert={(desktop && !canDock && drawerOpen) || undefined}
             // Files layout: the chat lies on the canvas right of the stage (desktop.css), as wide as the user made it. Beside
             // the docked tool panel its basis is what it keeps there: the panel shrinks first, to its narrowest (panel.css)
-            className={cn('relative flex flex-col', files ? 'order-3 min-w-(--files-chat-min) shrink' : cn('min-w-0 flex-1', panelDocked && 'basis-(--tool-main-min)'))}
+            className={cn('relative flex flex-col', desktop && dockedInspect ? 'min-w-(--chat-fit-min)' : files ? 'min-w-(--files-chat-min)' : 'min-w-0', files ? 'order-3 shrink' : cn('flex-1', (panelDocked || dockedInspect) && 'basis-(--tool-main-min)'))}
             style={files ? { width: chatWidth !== undefined ? `clamp(var(--files-chat-min), ${chatWidth}px, var(--files-chat-max))` : 'var(--files-chat-w)' } : undefined}>
             {files && <InspectorSplitter side="right" width={chatWidth} bounds={chatBounds} onDrag={setDraggedChat} onCommit={commitChat} onReset={resetChat} />}
             {/* Covered by the overlay inspector: out of the tab order and the accessibility tree meanwhile */}
@@ -991,7 +1035,9 @@ export function Shell(p: ShellProps) {
             <Header
               title={desktop && p.noProject ? '' : p.title}
               // Desktop start page: the project after the title is a dropdown that starts the empty session over there
-              projectPick={start.shown && p.cwd ? <ProjectPick cwd={p.cwd} projects={startProjects} home={p.home} onPick={cwd => startOver(agentIn(cwd, p.agent.id) ?? p.agent.id, cwd)} onOpenOther={on.pickFolder ? addProject : undefined} /> : undefined}
+              projectPick={start.shown && p.cwd ? <ProjectPick cwd={p.cwd} projects={startProjects} home={p.home} onPick={cwd => startOver(agentIn(cwd, p.agent.id) ?? p.agent.id, cwd)} onOpenOther={on.pickFolder ? addProject : undefined}
+                chat={chatHere} chats={p.chats} onChat={p.chats && !chatHere ? startChat : undefined} /> : undefined}
+              placeName={chatHere ? t('session.group.chats') : undefined}
               sessions={p.sessions}
               categories={p.categories}
               agent={p.agent}
@@ -1017,7 +1063,7 @@ export function Shell(p: ShellProps) {
             />
             </div>
             <div className="relative flex min-h-0 flex-1 flex-col">
-              {desktop && p.noProject && <NoProject onOpen={on.pickFolder ? addProject : undefined} />}
+              {desktop && p.noProject && <NoProject onOpen={on.pickFolder ? addProject : undefined} onChat={p.chats ? newChat : undefined} />}
               {/* The thread's toast stack is hidden with the thread: the start page shows the shell's own (an unknown session link) */}
               {desktop && p.noProject && <ShellToasts open={on.revealPath} />}
               {/* The overlay inspector replaces this block visually; it stays mounted (scroll + draft survive) but inert */}
@@ -1091,7 +1137,7 @@ export function Shell(p: ShellProps) {
                       started over with another agent, so the segments slide instead of the page replaying its entrance */}
                   {start.mounted && <StartPicker open={start.shown} agents={p.agents} current={p.agent.id} only={startOnly} onPick={agent => startOver(agent)} />}
                   {/* Sibling keys include the component role; duplicate session-only keys leave stale queue rows after reconciliation. */}
-                  {!p.external && <Composer key={`composer:${p.activeSessionId}`} {...composerProps} draftKey={p.activeSessionId} main shareSelection={p.shareEditorSelection}
+                  {!p.external && <Composer resetKey={p.activeSessionId} {...composerProps} draftKey={p.activeSessionId} main shareSelection={p.shareEditorSelection}
                     toolbarStart={!!p.subagents?.length && <Chip narrow="icon" caret={false} className="shrink-0" icon={<Network strokeWidth={1.5} />}
                       aria-label={`${t('subagents.graph')} · ${t('subagents.entry', { n: p.subagents.length })}`}
                       title={`${t('subagents.graph')} · ${t('subagents.entry', { n: p.subagents.length })}`}
@@ -1125,7 +1171,7 @@ export function Shell(p: ShellProps) {
             {/* Desktop, narrow: the sheet dims as the list page slides over it, the dim moving with the sheet (its corners) */}
             {desktop && !canDock && <div data-sheet-dim aria-hidden="true" className="pointer-events-none absolute inset-0 z-40 bg-scrim/45" />}
           </div>
-          {inspectNode !== undefined && canDockInspector && inspect !== undefined && p.activeSessionId !== undefined && (
+          {dockedInspect && inspect !== undefined && (
             // Desktop: its card (beside the sheet) or its place on the canvas (files layout) comes from desktop.css
             <aside ref={inspectorPane} data-subagent-panel="docked" className={cn('relative flex w-subagent-pane shrink-0 flex-col', !desktop && 'border-l border-line bg-bg-0', files ? 'order-4' : 'order-last')}
               style={paneWidth !== undefined ? { width: `clamp(var(--subagent-pane-min), ${paneWidth}px, calc(100% - var(--subagent-main-min)))` } : undefined}>
@@ -1221,10 +1267,12 @@ function threadClearance(dockHeight: number) {
 const STAGGER_CAP = 12;
 
 // Long transcripts mount the tail exchanges first so the viewport paints within one frame on session switch,
-// then prepend earlier exchanges in frame slices while keeping the scroll position anchored.
+// then prepend earlier exchanges in frame slices while keeping the scroll position anchored. A slice is a count of
+// exchanges, and in the largest transcripts one exchange can hold hundreds of KB of tool output: 14 at a time made the
+// frames after a switch to a 13 MB session take ~45 ms in WebKit, 6 keep them near 25 ms
 const EXCHANGE_WINDOW_THRESHOLD = 10;
 const INITIAL_EXCHANGES = 8;
-const EXCHANGE_SLICE = 14;
+const EXCHANGE_SLICE = 6;
 
 function canWindowExchanges(count: number): boolean {
   return count > EXCHANGE_WINDOW_THRESHOLD
@@ -1241,7 +1289,7 @@ function useExchangeWindow(
   const [start, setStart] = useState(() => canWindowExchanges(count) ? count - INITIAL_EXCHANGES : 0);
   const slicing = useRef(false);
   const [quiet] = useState(() => ({ get current() { return opening.current || slicing.current; } }));
-  const before = useRef<{ scroller: HTMLElement; top: number; height: number; bottom: boolean } | undefined>(undefined);
+  const before = useRef<SliceScroll | undefined>(undefined);
 
   useEffect(() => {
     if (start <= 0) return;
@@ -1252,13 +1300,7 @@ function useExchangeWindow(
       frame2 = requestAnimationFrame(() => {
         timer = setTimeout(() => {
           const scroller = scrollerRef.current;
-          const bottom = follow.value;
-          before.current = scroller ? {
-            scroller,
-            top: bottom ? 0 : scroller.scrollTop,
-            height: bottom ? 0 : scroller.scrollHeight,
-            bottom: bottom || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 1,
-          } : undefined;
+          before.current = scroller ? captureSliceScroll(scroller, follow.value) : undefined;
           slicing.current = true;
           flushSync(() => setStart(cur => Math.max(0, cur - EXCHANGE_SLICE)));
         }, 0);
@@ -1276,9 +1318,7 @@ function useExchangeWindow(
     const kept = before.current;
     before.current = undefined;
     if (!kept) return;
-    const { scroller, top, height, bottom } = kept;
-    if (bottom) scroller.scrollTop = scroller.scrollHeight;
-    else scroller.scrollTop = top + (scroller.scrollHeight - height);
+    restoreSliceScroll(kept);
   }, [start]);
 
   const effectiveStart = start > 0 ? Math.min(start, Math.max(0, count - INITIAL_EXCHANGES)) : 0;

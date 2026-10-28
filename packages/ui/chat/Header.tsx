@@ -45,6 +45,8 @@ export interface HeaderProps {
   gearDocked?: boolean;
   // Desktop: the session's project, named after the title
   cwd?: string;
+  // Desktop: the name shown for `cwd` instead of its folder's (a chat's folder is no project)
+  placeName?: string;
   // Desktop start page: shown in the project name's place, the dropdown that switches it (chat/StartPage.tsx ProjectPick)
   projectPick?: ReactNode;
   // Desktop: the plus opens the start page at once (the agent is picked there), as the column's own row does
@@ -60,7 +62,7 @@ export interface HeaderProps {
 // A narrow session panel gets a drawer toggle; collapsed navigation uses the history popover.
 // The person icon is the account layer's home (login state, switching, adding) for the current agent only; agents without accounts have no person icon.
 // The plus menu lists the enabled agents in the configured order (acpira.agentOrder / acpira.disabledAgents)
-export const Header = memo(function Header({ title, sessions, categories, agent, agents, accounts, accountId, activeSessionId, workspace, sessionScope, nativeSessions, on, onToggleDrawer, onOpenSettings, drawerOpen, sessionPanel = 'hidden', sessionPanelDocked = false, sessionNav = false, gearDocked = sessionNav, cwd, projectPick, onNewIn, narrow }: HeaderProps) {
+export const Header = memo(function Header({ title, sessions, categories, agent, agents, accounts, accountId, activeSessionId, workspace, sessionScope, nativeSessions, on, onToggleDrawer, onOpenSettings, drawerOpen, sessionPanel = 'hidden', sessionPanelDocked = false, sessionNav = false, gearDocked = sessionNav, cwd, placeName, projectPick, onNewIn, narrow }: HeaderProps) {
   useLocale();
   const desktop = useDesktop();
   const narrowDesk = desktop && !!narrow;
@@ -152,14 +154,14 @@ export const Header = memo(function Header({ title, sessions, categories, agent,
             <span className="ml-1 min-w-0 truncate">{agent.name}</span>
             {/* The start page's project dropdown takes the caption's size on this line */}
             <span className="ml-3 flex shrink-0 items-center [&_button]:h-auto [&_button]:text-3">
-              {projectPick ?? <span key={cwd} className="swap-in" title={cwd}>{projectName(cwd)}</span>}
+              {projectPick ?? <span key={cwd} className="swap-in" title={cwd}>{placeName ?? projectName(cwd)}</span>}
             </span>
           </span>}
         </span>
         : desktop && cwd
         ? <span className="flex min-w-0 flex-1 items-baseline gap-gap">
           <span className="min-w-0 truncate text-2 font-medium text-fg-strong">{title}</span>
-          {projectPick ?? <span key={cwd} className="swap-in shrink-0 text-2 text-fg-3" title={cwd}>{projectName(cwd)}</span>}
+          {projectPick ?? <span key={cwd} className="swap-in shrink-0 text-2 text-fg-3" title={cwd}>{placeName ?? projectName(cwd)}</span>}
         </span>
         : <span className="min-w-0 flex-1 truncate text-2 font-medium text-fg-strong">{title}</span>}
       {/* The icon is 6px smaller than the button box; the negative margin makes the right edge of the last icon bite into the page-margin line */}

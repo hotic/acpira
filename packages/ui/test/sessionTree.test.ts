@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionCategory, SessionSummary } from '@acpira/shared/transcript';
-import { buildSessionTree, categoryOf, draggable, dropAction } from '../chat/sessionTree';
+import { buildSessionTree, categoryOf, draggable, dropAction, isChatFolder } from '../chat/sessionTree';
 
 const WS = '/work/acpira';
 const OTHER = '/work/bot';
@@ -94,6 +94,23 @@ describe('session tree', () => {
     expect(tree.projects.map(p => p.cwd)).toEqual([WS]);
     expect(tree.projects[0]!.open).toBe(true);
     expect(tree.projects[0]!.categories.map(n => [n.category.id, n.open])).toEqual([['ssh', true]]);
+  });
+
+  it('gathers chats, whose folders sit directly in the chats root, outside every project', () => {
+    const root = '/home/u/.acpira/chats';
+    const isChat = (cwd: string) => isChatFolder(root, cwd);
+    expect([`${root}/2026-10-28-a1`, 'C:\\h\\chats\\x', `${root}/a/b`, root, `${root}/`, '/elsewhere/a1'].map(c => isChatFolder(c.startsWith('C:') ? 'C:\\h\\chats' : root, c)))
+      .toEqual([true, true, false, false, false, false]);
+    const shown = [s('a', { cwd: `${root}/one` }), s('b'), s('c', { cwd: `${root}/two`, pinned: true }), s('d', { cwd: `${root}/three` })];
+    const tree = buildSessionTree({ ...base, shown, grouped: true, isChat, registered: [WS] });
+    expect(tree.chats.map(x => x.id)).toEqual(['a', 'd']);
+    expect(tree.pinned.map(x => x.id)).toEqual(['c']);
+    // No chat folder heads a group (the other project shows for its category)
+    expect(tree.projects.map(p => p.cwd)).toEqual([WS, OTHER]);
+    // Pinned into projects, a pinned chat leads the chats
+    expect(buildSessionTree({ ...base, shown, grouped: true, isChat, pinInProject: true }).chats.map(x => x.id)).toEqual(['c', 'a', 'd']);
+    // One headerless project has no chats of its own
+    expect(buildSessionTree({ ...base, shown, grouped: false, isChat }).chats).toEqual([]);
   });
 
   it('drags only unpinned local sessions', () => {

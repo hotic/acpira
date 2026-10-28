@@ -21,6 +21,7 @@ import { deliverTerminal, startTerminals, terminalsConnected } from './panel/ter
 import { vscodeApi } from './vscodeApi';
 import { desktopShell, pushShellToast, runShellCommand, setDesktopMenu, setUpdateState, setWindowMaximized } from './desktop';
 import { deliverRemote, watchConnections } from './remote/api';
+import { deliverRemoteAccess, watchRemoteAccess } from './remote/access';
 import type { QuickSettings } from './chat/DesktopFrame';
 import { SettingsShell, type SettingsHandlers } from './settings/SettingsShell';
 import { contextDrafts, sameContext, sameRange, selectionDraft, setContextSelection, setEditorCopy, setEditorSelection } from './chat/editorContext';
@@ -126,7 +127,7 @@ const sessionMarkdown = (id: string) => new Promise<string>((resolve, reject) =>
   post({ type: 'sessionMarkdown', id, seq });
 });
 
-type InitEnv = Pick<InitState, 'host' | 'home' | 'cwd' | 'blobBase'>;
+type InitEnv = Pick<InitState, 'host' | 'home' | 'cwd' | 'blobBase' | 'chats'>;
 
 const EMPTY_TURNS: Turn[] = [];
 const EMPTY_CONTROLS: SessionControls = { modes: [], options: [] };
@@ -254,7 +255,7 @@ export function App() {
           break;
         }
         // A sidecar that came back answers nothing it was asked before: pending controls requests go out again
-        case 'init': controlsAsked.current.clear(); setInit({ host: m.state.host, home: m.state.home, cwd: m.state.cwd, blobBase: m.state.blobBase }); setAppearance(m.state.appearance); lastAgents.current = m.state.agents; setAgents(m.state.agents); setSessions(m.state.sessions); setCategories(m.state.categories); setAccounts(m.state.accounts); setAccountActions(m.state.accountActions ?? []); setAgentInstalls(m.state.agentInstalls ?? []); setHidden(m.state.hidden); setSession(views.init(m.state.active)); setNoProject(!m.state.active); setSettings(syncPanelScope(m.state.settings)); setLocale(m.state.locale); setLoc(m.state.locale); terminalsConnected(m.state.home); watchConnections(); break;
+        case 'init': controlsAsked.current.clear(); setInit({ host: m.state.host, home: m.state.home, cwd: m.state.cwd, blobBase: m.state.blobBase, chats: m.state.chats }); setAppearance(m.state.appearance); lastAgents.current = m.state.agents; setAgents(m.state.agents); setSessions(m.state.sessions); setCategories(m.state.categories); setAccounts(m.state.accounts); setAccountActions(m.state.accountActions ?? []); setAgentInstalls(m.state.agentInstalls ?? []); setHidden(m.state.hidden); setSession(views.init(m.state.active)); setNoProject(!m.state.active); setSettings(syncPanelScope(m.state.settings)); setLocale(m.state.locale); setLoc(m.state.locale); terminalsConnected(m.state.home); watchConnections(); watchRemoteAccess(); break;
         case 'appearance': setAppearance(m.appearance); break;
         // An agent whose executable appeared or vanished has a stale inventory (binary path, version); drop it so the page rescans
         case 'agents': {
@@ -344,6 +345,8 @@ export function App() {
         case 'terminalOutput': case 'terminalState': deliverTerminal(m); break;
         // SSH hosts: the pushed list, the ~/.ssh/config hosts and the remote folder picker's listings (remote/api.ts)
         case 'connections': case 'sshHosts': case 'remoteDir': deliverRemote(m); break;
+        // Paired devices: the pushed view (remote/access.ts)
+        case 'remoteAccess': deliverRemoteAccess(m); break;
         // The desktop tool panel (packages/ui/panel): its browser tabs' messages, the new-tab page's history, open_browser
         case 'panelBrowser': deliverToBrowserTab(m.tab, m.msg); break;
         case 'panelHistory': setRecentPages({ pages: m.pages, running: m.running }); break;
@@ -441,7 +444,7 @@ export function App() {
       if (kept) { setNoProject(false); setSession(kept); }
       post({ type: 'selectSession', id });
     },
-    newSession: (agent, category, cwd) => post({ type: 'newSession', ...(agent ? { agent } : {}), ...(category ? { category } : {}), ...(cwd ? { cwd } : {}) }),
+    newSession: (agent, category, cwd, chat) => post({ type: 'newSession', ...(agent ? { agent } : {}), ...(category ? { category } : {}), ...(cwd ? { cwd } : {}), ...(chat ? { chat } : {}) }),
     renameSession: (id, title) => post({ type: 'renameSession', id, title }),
     deleteSession: id => post({ type: 'deleteSession', id }),
     restoreSession: id => post({ type: 'restoreSession', id }),
@@ -645,6 +648,7 @@ export function App() {
       desktop={desktop}
       noProject={desktop && noProject}
       home={init.home}
+      chats={init.chats}
     />
     </LocaleContext.Provider>
   );

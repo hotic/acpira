@@ -30,6 +30,8 @@ import { SubagentsPage } from './SubagentsPage';
 import { StoragePage, type StorageState } from './StoragePage';
 import { ConnectionsPage } from './ConnectionsPage';
 import { useConnections } from '../remote/api';
+import { useRemoteAccess } from '../remote/access';
+import { RemoteAccessSection } from './RemoteAccess';
 import type { StorageAction, StorageDetail } from '@acpira/shared/storage';
 import type { SharedAction } from '@acpira/shared/sharedConfig';
 import type { ProviderAction, ProviderProbe } from '@acpira/shared/providers';
@@ -151,6 +153,8 @@ export function SettingsShell(p: SettingsShellProps) {
   const update = useUpdateState();
   // SSH hosts are offered once the engine answered for them (remote/api.ts); ChatGPT lives on the same page
   const remote = useConnections() !== undefined;
+  // Remote access (paired devices) once the engine answered for it (remote/access.ts); it heads the same page
+  const access = useRemoteAccess();
   const chatgpt = p.agents.some(a => a.id === 'chatgpt' && a.external);
   // The agents on, for the dialog's switch: the last one cannot be switched off
   const enabledAgents = p.agents.filter(a => !a.external && !a.disabled);
@@ -196,7 +200,7 @@ export function SettingsShell(p: SettingsShellProps) {
             data-column={desktop || undefined}
           >
             <div className="flex min-h-0 flex-1">
-              <PageRail page={p.page} onPage={trail.go} onBack={p.onBack} desktop={desktop} width={desktop ? railWidth : undefined} opening={opening} connections={remote || chatgpt} />
+              <PageRail page={p.page} onPage={trail.go} onBack={p.onBack} desktop={desktop} width={desktop ? railWidth : undefined} opening={opening} connections={remote || chatgpt || !!access} />
               <div data-sheet={desktop || undefined} className="relative flex min-w-0 flex-1 flex-col">
               <main key={page.kind === 'agent' ? 'plugins' : page.kind === 'chatgpt' ? 'connections' : page.kind} className="min-h-0 min-w-0 flex-1 overflow-y-auto scroll-stable">
                 <Page>
@@ -218,6 +222,7 @@ export function SettingsShell(p: SettingsShellProps) {
                     openExternal: p.on.openExternal,
                   }} />}
                   {page.kind === 'storage' && <StoragePage state={p.storage} agents={p.agents} env={p.env} on={p.on} refresh={storageRefresh} />}
+                  {(page.kind === 'connections' || page.kind === 'chatgpt') && access && <RemoteAccessSection view={access} />}
                   {(page.kind === 'connections' || page.kind === 'chatgpt') && <ConnectionsPage env={p.env} projects={p.projects} on={p.on} remote={remote}
                     chatgpt={chatgpt ? { status: p.chatgptStatus, open: page.kind === 'chatgpt', onOpen: () => trail.go({ kind: 'chatgpt' }), onClose: () => trail.replace({ kind: 'connections' }) } : undefined} />}
                   {page.kind === 'subagents' && <SubagentsPage page={page} onPage={trail.go} onReplace={trail.replace} settings={p.settings} agents={p.agents} controls={p.controls} shapes={p.modelShapes} on={p.on} />}

@@ -1,4 +1,4 @@
-import { Component, createRef, Fragment, memo, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { Component, createRef, Fragment, memo, useDeferredValue, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, Circle, Copy, Ellipsis, Folder, FolderInput, FolderOpen, FolderPlus, Import, Layers, ListFilter, LoaderCircle, Pencil, Pin, PinOff, Plus, Search, Server, SquarePen, Trash2, Undo2, X } from 'lucide-react';
 import type { AgentId, AgentInfo, CategoryOp, NativeSessionInfo, SessionCategories, SessionCategory, SessionSection, SessionSummary } from '@acpira/shared/transcript';
 import type { ExportFormat, NativeSessionsState, SessionHit } from '@acpira/shared/protocol';
@@ -24,7 +24,7 @@ import { ModelMark } from './ModelMark';
 import { RowContextMenu, SessionContextMenu, Submenu, type MoveProject, type SessionCopyKind, type SessionMenuItemsProps } from './SessionMenu';
 import { setWebviewState, webviewState } from '../vscodeApi';
 import { markParts, matchesTitle, searchTerms } from './sessionSearch';
-import { buildSessionTree, categoryOf, draggable, dropAction, type CategoryNode, type MoveTarget, type ProjectNode, type SessionTree } from './sessionTree';
+import { buildSessionTree, categoryOf, draggable, dropAction, isChatFolder, type CategoryNode, type MoveTarget, type ProjectNode, type SessionTree } from './sessionTree';
 import { clearFilters, filterCount, groupSessions, passes, readView, sortSessions, VIEW_KEY, type FlatGroup, type ListView, type TimeBucket } from './sessionView';
 import { ViewMenu } from './ViewMenu';
 import { CONNECTION_STATE_NAME, useConnections, useFolderHost } from '../remote/api';
@@ -155,7 +155,7 @@ class FlipRows extends Component<{ on: boolean; layout: string; children: ReactN
 // What decides where every row sits; FlipRows measures only when it changed
 function layoutOf(tree: SessionTree, folded: string[], more: Map<string, number>, active?: string): string {
   const ids = (list: SessionSummary[]) => list.map(s => s.id).join();
-  return [folded.join(), active, ids(tree.pinned), ...tree.projects.map(p =>
+  return [folded.join(), active, ids(tree.pinned), `chats>${more.get(CHATS) ?? 0}>${ids(tree.chats)}`, ...tree.projects.map(p =>
     `${p.cwd}>${p.open}${more.get(p.cwd) ?? 0}>${ids(p.pinned)}>${ids(p.loose)}>${p.categories.map(n => `${n.category.id}${n.open}:${ids(n.sessions)}`).join(';')}`)].join('|');
 }
 
@@ -221,20 +221,35 @@ export interface SessionListProps {
   fresh?: string;
   // The view menu's "mark all as read" (absent where the host does not offer it)
   onMarkAllRead?: () => void;
+  // Desktop: where chats' folders live (InitState.chats). Chats belong to no project and get a section of their own
+  chats?: string;
+  // Desktop: the chats section's pen, a new chat on the start page
+  onNewChat?: () => void;
 }
 
 // The drag payload's type: only rows of this list carry it, so files or text dragged in are left alone
 const DRAG_TYPE = 'application/x-acpira-session';
-// The drop target's frame: a thin light outline drawn inset (never shifts layout) around the whole block, header and children
-const FRAME = 'ring-1 ring-inset ring-fg-1/70';
+// A drop zone's marks, set by the drag handlers straight on the DOM (`paint`), never by a render. `data-hot` frames the
+// zone: a thin light outline drawn inset (never shifts layout) around the whole block, header and children. `data-insert`
+// ("top" / "bottom") draws the insert line on that edge in the frame's colour, so every drop reads in one style; that
+// zone needs `relative`
+const FRAME = 'transition-shadow data-hot:ring-1 data-hot:ring-inset data-hot:ring-fg-1/70';
+const LINE = 'data-insert:before:pointer-events-none data-insert:before:absolute data-insert:before:inset-x-2 data-insert:before:z-10 data-insert:before:h-0.5 data-insert:before:rounded-full data-insert:before:bg-fg-1/70 data-[insert=top]:before:-top-px data-[insert=bottom]:before:-bottom-px';
 
-type Held = { kind: 'session' | 'category'; id: string };
+// A project is held by its folder
+type Held = { kind: 'session' | 'category' | 'project'; id: string };
 type Over =
   | { kind: 'category'; id: string; cwd: string }
   // A project's loose area; for a session of another project, anywhere on that project's group (header included)
   | { kind: 'loose'; cwd: string }
   // Reordering categories: the dragged one goes before `before` (absent: after the project's last)
-  | { kind: 'gap'; cwd: string; before?: string };
+  | { kind: 'gap'; cwd: string; before?: string }
+  // Placing a project (desktop): into `section` (absent: under Projects), before the project `before` (absent: at the end)
+  | { kind: 'slot'; section?: string; before?: string };
+// The [data-section] of the Projects section, the one holding the projects filed in no section
+const REST = 'rest';
+// The `more` key of the chats section (a project's is its folder)
+const CHATS = ' chats';
 
 const sameOver = (a?: Over, b?: Over) => JSON.stringify(a) === JSON.stringify(b);
 const newCategoryId = () => `c-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -283,7 +298,7 @@ function perKey<T>(compute: (key: string) => T): (key: string) => T {
 // (FlipRows). The desktop app (DesktopContext) lists its registered projects in their own order without categories, each
 // open project its latest sessions with the rest behind one row.
 // Deletion applies immediately, undo lives on the Toast at the shell's bottom
-export const SessionList = memo(function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, activeAgent, nativeSessions, onListNative, onImportNative, onSelect, onRename, onDelete, onPin, onMove, onExport, onCopy, onSearch, categories: categoryState, onFile, onCategoryOp, onNewInCategory, nav, onNew, onNewIn, onAddProject, onAddRemote, onRevealPath, onCopyPath, fresh, onMarkAllRead }: SessionListProps) {
+export const SessionList = memo(function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, activeAgent, nativeSessions, onListNative, onImportNative, onSelect, onRename, onDelete, onPin, onMove, onExport, onCopy, onSearch, categories: categoryState, onFile, onCategoryOp, onNewInCategory, nav, onNew, onNewIn, onAddProject, onAddRemote, onRevealPath, onCopyPath, fresh, onMarkAllRead, chats, onNewChat }: SessionListProps) {
   const locale = useLocale();
   const desktop = useDesktop();
   // The SSH hosts the add menu offers folders on; undefined until the engine answered for them
@@ -302,7 +317,9 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   // A category being renamed; set right after creating one, before the host has pushed it back
   const [editingCategory, setEditingCategory] = useState<string>();
   const [held, setHeld] = useState<Held>();
-  const [over, setOver] = useState<Over>();
+  // The hovered zone and the elements marked for it: a ref, not state, so hovering never re-renders the list
+  const over = useRef<Over>(undefined);
+  const marked = useRef<HTMLElement[]>([]);
   // Nav layout: the sections folded by their label, kept in the webview's state across reloads
   const [folded, setFolded] = useState<Section[]>(storedFolds);
   // Desktop: per project, how many sessions past the latest few are shown. A click on the "more" row adds a page; with
@@ -322,18 +339,24 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   // The desktop app has no categories: a session filed in an IDE window reads as loose there
   const categories = filing && !desktop ? categoryState?.categories ?? NO_CATEGORIES : NO_CATEGORIES;
 
-  const terms = useMemo(() => searchTerms(query), [query]);
+  // The rows follow the field on a deferred copy: the field shows each key at once, and the list renders in slices React
+  // drops for the next key, so a first letter matching hundreds of sessions no longer holds the frame it was typed in
+  const listQuery = useDeferredValue(query);
+  const terms = useMemo(() => searchTerms(listQuery), [listQuery]);
   const q = terms.join(' ');
+  // The content search goes out for the field's own text, not the list's deferred copy: the engine searches while the
+  // list renders, where asking after that render put the two one after the other
+  const asked = useMemo(() => searchTerms(query).join(' '), [query]);
   // Content hits belong to the query they answered; a reply for an older query is ignored rather than mixed in
   const [hits, setHits] = useState<{ q: string; snippets: Map<string, string> }>();
   useEffect(() => {
-    if (!onSearch || !q) return;
+    if (!onSearch || !asked) return;
     let live = true;
     const timer = setTimeout(() => {
-      void onSearch(q).then(list => { if (live) setHits({ q, snippets: new Map(list.map(h => [h.id, h.snippet])) }); });
+      void onSearch(asked).then(list => { if (live) setHits({ q: asked, snippets: new Map(list.map(h => [h.id, h.snippet])) }); });
     }, SEARCH_DEBOUNCE);
     return () => { live = false; clearTimeout(timer); };
-  }, [q, onSearch]);
+  }, [asked, onSearch]);
   const snippets = hits?.q === q ? hits.snippets : undefined;
   const searching = !!onSearch && !!q && !snippets;
   // The active session always stays listed (its row is the highlight), even when it belongs to another project
@@ -359,9 +382,11 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   const removed = desktop ? categoryState?.removedProjects : undefined;
   // View menu → Show → Pinned: grouped by project, pinned rows lead their own project instead of one section on top
   const pinInProject = grouped && !flat && view.pinned === 'project';
+  // Desktop: a chat's folder is no project, so it never heads a group or becomes a destination
+  const isChat = (cwd: string) => desktop && isChatFolder(chats, cwd);
   const tree = buildSessionTree({
     shown, categories, collapsedProjects: filing ? categoryState?.collapsedProjects ?? [] : [],
-    workspace, grouped, filtering, expand: !!q, registered, removed, pinInProject,
+    workspace, grouped, filtering, expand: !!q, registered, removed, pinInProject, isChat,
   });
   const pinnedHere = (s: SessionSummary) => !!s.pinned && pinInProject;
   // Every project the list knows (the sessions' folders, the categories' own and the registered ones, not the removed
@@ -372,14 +397,14 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
     for (const s of sessions) if (s.cwd && (latest.get(s.cwd) ?? '') < s.updatedAt) latest.set(s.cwd, s.updatedAt);
     for (const c of categoryState?.categories ?? []) if (c.cwd && !latest.has(c.cwd)) latest.set(c.cwd, '');
     for (const cwd of registered ?? []) if (!latest.has(cwd)) latest.set(cwd, '');
-    const cwds = [...latest.keys()].filter(c => !removed?.includes(c)).sort((a, b) => Number(b === workspace) - Number(a === workspace) || latest.get(b)!.localeCompare(latest.get(a)!));
+    const cwds = [...latest.keys()].filter(c => !removed?.includes(c) && !(desktop && isChatFolder(chats, c))).sort((a, b) => Number(b === workspace) - Number(a === workspace) || latest.get(b)!.localeCompare(latest.get(a)!));
     const names = cwds.map(projectName);
     return cwds.map((cwd, i) => {
       const name = names[i]!;
       const shared = names.indexOf(name) !== names.lastIndexOf(name);
       return { cwd, name, current: cwd === workspace, ...(shared ? { hint: cwd.slice(0, cwd.lastIndexOf(name)).replace(/[\\/]+$/, '') || cwd } : {}) };
     });
-  }, [sessions, categoryState, registered, removed, workspace]));
+  }, [sessions, categoryState, registered, removed, workspace, desktop, chats]));
   // A row's slices of the menus' lists, one array per project, so a row gets the same one on every render
   const projectsBesides = useMemo(() => perKey(cwd => projects.filter(p => p.cwd !== cwd)), [projects]);
   const categoriesIn = useMemo(() => perKey(cwd => categories.filter(c => c.cwd === cwd)), [categories]);
@@ -417,6 +442,23 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   // ---- Native drag and drop. One handler pair on the list: the hovered zone comes from the event target's nearest
   // [data-drop] ("category:<id>" / "loose:<cwd>") or, for a category being reordered, [data-category]
   const resolve = (h: Held, target: Element, y: number): Over | undefined => {
+    if (h.kind === 'project') {
+      // Over a project: before it (its upper half) or after it, in whichever section it sits; over a section's label or
+      // empty row: at that section's end
+      const block = target.closest<HTMLElement>('[data-project]');
+      const hovered = block?.dataset.project;
+      if (block && hovered !== undefined) {
+        if (hovered === h.id) return undefined;
+        const section = sectionOf(hovered)?.id;
+        const run = (section ? sectionNodes.find(n => n.section.id === section)?.projects ?? [] : unsectioned).map(p => p.cwd).filter(c => c !== h.id);
+        const box = block.getBoundingClientRect();
+        const before = y < box.top + box.height / 2 ? hovered : run[run.indexOf(hovered) + 1];
+        return { kind: 'slot', ...(section ? { section } : {}), ...(before ? { before } : {}) };
+      }
+      const zone = target.closest<HTMLElement>('[data-section]')?.dataset.section;
+      if (!zone) return undefined;
+      return zone === REST ? { kind: 'slot' } : { kind: 'slot', section: zone };
+    }
     if (h.kind === 'category') {
       const moving = categories.find(c => c.id === h.id);
       const block = target.closest<HTMLElement>('[data-category]');
@@ -443,25 +485,74 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
     e.dataTransfer.setData(DRAG_TYPE, h.id);
     setHeld(h);
   };
-  const end = () => { setHeld(undefined); setOver(undefined); };
+  // Marks the zone a drop would land in. Straight on the DOM, in the dragover that found it: re-rendering a list of a
+  // thousand sessions per zone change left the frame behind the pointer (and WebKit's cursor with it). React leaves the
+  // data attributes alone, since no prop names them
+  const unpaint = () => {
+    for (const el of marked.current) { delete el.dataset.hot; delete el.dataset.insert; }
+    marked.current = [];
+  };
+  const paint = (root: HTMLElement, next?: Over) => {
+    unpaint();
+    if (!next) return;
+    const find = (attr: string, value?: string) => value === undefined ? null : root.querySelector<HTMLElement>(`[${attr}="${CSS.escape(value)}"]`);
+    const mark = (el: HTMLElement | null, insert?: 'top' | 'bottom') => {
+      if (!el) return;
+      if (insert) el.dataset.insert = insert; else el.dataset.hot = '';
+      marked.current.push(el);
+    };
+    if (next.kind === 'category') mark(find('data-category', next.id));
+    // Only a session of this project lights its loose area; one from elsewhere frames the whole project group
+    else if (next.kind === 'loose') mark(heldSession?.cwd === next.cwd ? find('data-loose', next.cwd) : onMove && heldSession ? find('data-group', next.cwd) : null);
+    else if (next.kind === 'gap') {
+      if (next.before) mark(find('data-category', next.before), 'top');
+      else mark(find('data-category', tree.projects.find(p => p.cwd === next.cwd)?.categories.at(-1)?.category.id), 'bottom');
+    } else {
+      // A held project: the line above the project it would precede, or under its run's last one; landing in another
+      // section (or out of one) also frames where it lands, as a session landing in another project does
+      const run = next.section ? sectionNodes.find(n => n.section.id === next.section)?.projects ?? [] : unsectioned;
+      if (next.before) mark(find('data-project', next.before), 'top');
+      else mark(find('data-project', run.at(-1)?.cwd), 'bottom');
+      if (held?.kind === 'project' && sectionOf(held.id)?.id !== next.section) mark(find('data-section-body', next.section ?? REST));
+    }
+  };
+  const end = () => { setHeld(undefined); over.current = undefined; unpaint(); };
   const onDragOver = (e: DragEvent) => {
     if (!held || !e.dataTransfer.types.includes(DRAG_TYPE)) return;
-    const next = resolve(held, e.target as Element, e.clientY);
+    const target = e.target as Element;
+    // The margin between two zones (above a project) belongs to none: the pointer keeps the zone it came from on its way
+    // to the next, instead of the frame blinking off and the cursor flipping to "no drop" in between
+    const between = !!over.current && !target.closest('[data-drop]') && !!target.querySelector(':scope > [data-drop]');
+    const next = between ? over.current : resolve(held, target, e.clientY);
     // Moving to another project needs the host's move; without it only same-project zones take the drop
-    const ok = !!next && (next.kind === 'gap' || !heldSession || heldSession.cwd === next.cwd || !!onMove);
+    const ok = !!next && (next.kind === 'gap' || next.kind === 'slot' || !heldSession || heldSession.cwd === next.cwd || !!onMove);
     if (ok) e.preventDefault();
     e.dataTransfer.dropEffect = ok ? 'move' : 'none';
-    if (!sameOver(next, over)) setOver(next);
+    // A push that re-mounted a marked block took its marks along: paint again
+    if (!sameOver(next, over.current) || marked.current.some(el => !el.isConnected)) {
+      over.current = next;
+      paint(e.currentTarget as HTMLElement, next);
+    }
   };
   const onDrop = (e: DragEvent) => {
     if (!held) return;
     e.preventDefault();
-    const zone = heldSession && over && over.kind !== 'gap' ? { cwd: over.cwd, ...(over.kind === 'category' ? { category: over.id } : {}) } : undefined;
+    const at = over.current;
+    const zone = heldSession && at && at.kind !== 'gap' && at.kind !== 'slot' ? { cwd: at.cwd, ...(at.kind === 'category' ? { category: at.id } : {}) } : undefined;
     const action = heldSession && zone ? dropAction(heldSession, zone, categories) : undefined;
     if (action?.kind === 'file') onFile?.(heldSession!.id, action.category);
     if (action?.kind === 'move') onMove?.(heldSession!.id, action.to);
-    if (held.kind === 'category' && over?.kind === 'gap') onCategoryOp?.({ op: 'reorder', id: held.id, ...(over.before ? { before: over.before } : {}) });
+    if (held.kind === 'category' && at?.kind === 'gap') onCategoryOp?.({ op: 'reorder', id: held.id, ...(at.before ? { before: at.before } : {}) });
+    if (held.kind === 'project' && at?.kind === 'slot') placeProject(held.id, at);
     end();
+  };
+  // A dropped project: filed in its section at the slot, or out of any section and placed among the rest. The two ops of
+  // the second case touch different fields, so they compose in either order
+  const placeProject = (cwd: string, slot: { section?: string; before?: string }) => {
+    const before = slot.before ? { before: slot.before } : {};
+    if (slot.section) { onCategoryOp?.({ op: 'setProjectSection', cwd, section: slot.section, ...before }); return; }
+    if (sectionOf(cwd)) onCategoryOp?.({ op: 'setProjectSection', cwd });
+    onCategoryOp?.({ op: 'reorderProject', cwd, ...before });
   };
 
   // What a row's controls do, read through the ref when they are used: rows hold the same object on every render, so a
@@ -482,6 +573,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
     dragEnd: end,
   };
   const renderItem = (s: SessionSummary) => (
+    // A chat's row sits flush under its section label, like a pinned one, and names no project
     <Item
       key={s.id}
       session={s}
@@ -493,12 +585,10 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
       // Grouped, a row's project is its group, so only pinned rows (which sit above every group) name theirs. The desktop
       // app names none: the title gets the room, the tooltip still names it
       // Grouped by date or channel the rows leave their project's group, so they name it unless it is the window's own
-      project={flat ? (desktop || !here(s) ? projectName(s.cwd) : undefined) : desktop || here(s) || (grouped && (!s.pinned || pinnedHere(s))) ? undefined : projectName(s.cwd)}
+      project={isChat(s.cwd) ? (flat ? t('session.group.chats') : undefined) : flat ? (desktop || !here(s) ? projectName(s.cwd) : undefined) : desktop || here(s) || (grouped && (!s.pinned || pinnedHere(s))) ? undefined : projectName(s.cwd)}
       model={view.model ? s.model?.name : undefined}
-      // Pinned inside its project, the row has no section saying so: a pin glyph before the time does
-      pinMark={pinnedHere(s)}
       // Desktop: a project's sessions sit a step in, their agent mark under the project name, so the group reads as a level
-      nudge={desktop && (!s.pinned || pinnedHere(s)) && !flat}
+      nudge={desktop && (!s.pinned || pinnedHere(s)) && !flat && !isChat(s.cwd)}
       editing={editing === s.id}
       dragging={held?.kind === 'session' && held.id === s.id}
       actions={rowActions}
@@ -516,16 +606,12 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   // A category: a quiet sub-label and, open, its sessions at the same inset (one level of nesting is the project's alone).
   // The whole block is one drop zone and lights up as one; a collapsed category stays collapsed under a drag (no
   // spring-open), so its frame is just the header
-  const renderCategory = (node: CategoryNode, siblings: CategoryNode[]) => {
+  const renderCategory = (node: CategoryNode) => {
     const c = node.category;
-    const hot = over?.kind === 'category' && over.id === c.id;
-    const gapBefore = over?.kind === 'gap' && over.before === c.id;
-    const gapAfter = over?.kind === 'gap' && !over.before && over.cwd === c.cwd && siblings.at(-1) === node;
     const newHere = onNewInCategory && c.cwd === workspace ? () => onNewInCategory(c.id) : undefined;
     return (
       <div key={c.id} role="group" aria-label={c.name} data-category={c.id} data-drop={`category:${c.id}`}
-        className={cn('relative flex flex-col rounded-lg transition-shadow', hot && FRAME)}>
-        {gapBefore && <InsertLine edge="top" />}
+        className={cn('relative flex flex-col rounded-lg', FRAME, LINE)}>
         <GroupHeader
           sub
           name={c.name}
@@ -553,7 +639,6 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
             ? node.sessions.map(renderItem)
             : <div className="flex min-h-row items-center px-2 text-3 text-fg-3">{t('session.category.empty')}</div>}
         </Fold>
-        {gapAfter && <InsertLine edge="bottom" />}
       </div>
     );
   };
@@ -562,31 +647,39 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   // one inset, so a category runs on to the next sub-label or project: loose sessions after the last one would read as its.
   // Desktop: the latest few sessions, then the active one when it is older than those, the rest folded behind one row; a
   // search lists every match, while the view menu's filters keep the cut (they only narrow what it cuts)
+  // Desktop: the latest few of `list`, the active one when it is older than those, the rest folded behind one row whose
+  // page count `key` keeps; a search lists every match, while the view menu's filters keep the cut. `flush`: the rows sit
+  // at the section label's inset (the chats), not a project's
+  const cutRows = (key: string, list: SessionSummary[], flush?: boolean) => {
+    const cut = desktop && !q && view.per ? view.per : list.length;
+    const extra = more.get(key) ?? 0;
+    // An active session still folded behind "more" sits above it on its own instead of stretching the list down to it
+    const late = list.slice(cut + extra).find(s => s.id === activeId);
+    const rest = late ? list.slice(cut).filter(s => s !== late) : list.slice(cut);
+    const shown = Math.min(extra, rest.length);
+    return <>
+      {list.slice(0, cut).map(renderItem)}
+      {/* One fold per page, so each click opens only the page it adds (a closed fold releases its rows) */}
+      {rest.length > 0 && pages(rest).map((page, i) => <Fold key={i} open={shown > i * MORE_PAGE}>{page.map(renderItem)}</Fold>)}
+      {late && renderItem(late)}
+      {rest.length > 0 && <MoreRow flush={flush} open={shown >= rest.length} rest={rest.slice(shown)} nameOf={nameOf} onToggle={() => stepMore(key, rest.length)} />}
+    </>;
+  };
   const renderBody = (p: ProjectNode) => {
-    // Only a session of this project lights the loose area; one from elsewhere frames the whole project group
-    const looseHot = over?.kind === 'loose' && over.cwd === p.cwd && heldSession?.cwd === p.cwd;
     // A filed session of this project being dragged needs somewhere to land even when nothing is loose
     const strip = !p.loose.length && !!heldSession && heldSession.cwd === p.cwd && !!categoryOf(heldSession, categories);
-    const cut = desktop && !q && view.per ? view.per : p.loose.length;
-    const extra = more.get(p.cwd) ?? 0;
-    // An active session still folded behind "more" sits above it on its own instead of stretching the list down to it
-    const late = p.loose.slice(cut + extra).find(s => s.id === activeId);
-    const rest = late ? p.loose.slice(cut).filter(s => s !== late) : p.loose.slice(cut);
-    const shown = Math.min(extra, rest.length);
     return <>
       {/* Pinned first, outside the "more" cut and the loose drop zone (pinned rows never drag) */}
       {p.pinned.map(renderItem)}
+      {/* The pinned rows end at a short faded rule, the IDE list's, instead of a pin glyph on each row's tail */}
+      {!flat && <PinDivider on={p.pinned.length > 0 && (p.loose.length > 0 || strip || p.categories.length > 0)} />}
       {(p.loose.length > 0 || strip) && (
-        <div data-drop={`loose:${p.cwd}`} className={cn('flex flex-col rounded-lg transition-shadow', looseHot && FRAME)}>
-          {p.loose.slice(0, cut).map(renderItem)}
-          {/* One fold per page, so each click opens only the page it adds (a closed fold releases its rows) */}
-          {rest.length > 0 && pages(rest).map((page, i) => <Fold key={i} open={shown > i * MORE_PAGE}>{page.map(renderItem)}</Fold>)}
-          {late && renderItem(late)}
-          {rest.length > 0 && <MoreRow open={shown >= rest.length} rest={rest.slice(shown)} nameOf={nameOf} onToggle={() => stepMore(p.cwd, rest.length)} />}
+        <div data-drop={`loose:${p.cwd}`} data-loose={p.cwd} className={cn('flex flex-col rounded-lg', FRAME)}>
+          {cutRows(p.cwd, p.loose)}
           {strip && <div className="flex min-h-row items-center px-2 text-3 text-fg-3">{t('session.category.remove')}</div>}
         </div>
       )}
-      {p.categories.map(n => renderCategory(n, p.categories))}
+      {p.categories.map(renderCategory)}
       {desktop && !p.count && <EmptyProjectRow onNew={onNewIn ? () => onNewIn(p.cwd) : undefined} />}
     </>;
   };
@@ -624,12 +717,12 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   // `list`: the run the project sits in (a section's or the unsectioned ones), whose previous entry sets the spacing
   const renderProject = (p: ProjectNode, i: number, list: ProjectNode[]) => {
     const all = [...p.pinned, ...p.categories.flatMap(n => n.sessions), ...p.loose];
-    // A session of another project dropped anywhere on the group (its categories keep their own zones) moves here
-    const incoming = !!onMove && !!heldSession && heldSession.cwd !== p.cwd && over?.kind === 'loose' && over.cwd === p.cwd;
+    // A session of another project dropped anywhere on the group (its categories keep their own zones) moves here: the
+    // group is framed (`data-group`); a held project's insert line sits on its edge
     return (
       // Desktop: folded projects stack at the row pitch like a tree; only an open project's sessions leave room after them
-      <div key={p.cwd} role="group" aria-label={projectName(p.cwd)} data-drop={`loose:${p.cwd}`}
-        className={cn('flex flex-col rounded-lg transition-shadow', i > 0 && (!desktop || list[i - 1]?.open) && 'mt-2', incoming && FRAME)}>
+      <div key={p.cwd} role="group" aria-label={projectName(p.cwd)} data-drop={`loose:${p.cwd}`} data-group={p.cwd} data-project={desktop ? p.cwd : undefined}
+        className={cn('relative flex flex-col rounded-lg', FRAME, LINE, i > 0 && (!desktop || list[i - 1]?.open) && 'mt-2')}>
         <GroupHeader
           project
           name={projectName(p.cwd)}
@@ -646,6 +739,10 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
           onNewSession={desktop && onNewIn ? () => onNewIn(p.cwd) : undefined}
           newSessionLabel={t('session.project.newSession')}
           menu={projectMenu(p.cwd)}
+          // Desktop: a project drags into another section, out of one, or to another place in its own
+          dragging={held?.kind === 'project' && held.id === p.cwd}
+          onDragStart={desktop && filing && !filtering ? begin({ kind: 'project', id: p.cwd }) : undefined}
+          onDragEnd={end}
         />
         {/* Desktop rows sit a step in (Item `nudge`), elsewhere the marks line up under the folder glyph; the heavier project name sets the group apart */}
         <Fold open={p.open}>{renderBody(p)}</Fold>
@@ -722,6 +819,23 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   if (nav) {
     const fresh = launchable(agents);
     const flip = (k: Section) => setFolded(prev => { const next = prev.includes(k) ? prev.filter(x => x !== k) : [...prev, k]; setWebviewState(FOLDED_KEY, next); return next; });
+    // Desktop: the chats under their own label, which folds them and carries the pen for a new one; empty, the section is
+    // that action's row. A search or filter that leaves no chat hides it
+    const chatOpen = !!q || !folded.includes('chats');
+    const chatSection = desktop && !!chats && !flat && (tree.chats.length > 0 || !filtering) && (
+      <div className="flex flex-col" role="group" aria-label={t('session.group.chats')}>
+        <SectionLabel open={chatOpen} onToggle={() => flip('chats')} quiet actions={onNewChat && (
+          <button type="button" title={t('session.chat.new')} aria-label={t('session.chat.new')} onClick={onNewChat} className={SECTION_ACT}>
+            <SquarePen className="size-icon" strokeWidth={1.5} />
+          </button>
+        )}>
+          {t('session.group.chats')}
+        </SectionLabel>
+        <Fold open={chatOpen}>
+          {tree.chats.length ? cutRows(CHATS, tree.chats, true) : <EmptyProjectRow flush label={t('session.chat.new')} onNew={onNewChat} />}
+        </Fold>
+      </div>
+    );
     return (
       <div className="flex min-h-0 flex-1 flex-col" onKeyDown={onEscape}>
         <div className="flex shrink-0 flex-col">
@@ -755,8 +869,9 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
             stays reserved: folding a section must not take the scrollbar away and shift every right-aligned time and action.
             The right padding gives way to that gutter, so the rows keep equal margins on both sides. Desktop: the column runs
             to the window's foot, so the list fades out at its bottom edge, and under the rows on top once it scrolled (rows
-            cut off by a hard edge there read as sliced) */}
-        <div ref={desktop ? listFade : undefined} className={cn('scroll-thin scroll-stable mt-gap-half -mx-gap-half flex min-h-0 flex-col overflow-y-auto pl-gap-half pr-list-gutter', desktop ? 'flex-1 pb-gap list-fade' : 'pb-1')}
+            cut off by a hard edge there read as sliced). No top margin of its own: the first section label's mt-gap is the
+            step, the same one as between later sections */}
+        <div ref={desktop ? listFade : undefined} className={cn('scroll-thin scroll-stable -mx-gap-half flex min-h-0 flex-col overflow-y-auto pl-gap-half pr-list-gutter', desktop ? 'flex-1 pb-gap list-fade' : 'pb-1')}
           role="listbox" aria-label={t('session.listAria')}
           style={timeCh ? { '--session-time': `${timeCh}ch` } as CSSProperties : undefined}
           onDragOver={onDragOver} onDrop={onDrop}>
@@ -770,7 +885,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
                 </div>
               )}
               {sectionNodes.map(({ section: x, projects: list }, i) => (
-                <div key={x.id} className="flex flex-col" role="group" aria-label={x.name}>
+                <div key={x.id} className="flex flex-col" role="group" aria-label={x.name} data-section={x.id}>
                   <SectionLabel open={!!q || !x.collapsed} onToggle={() => onCategoryOp?.({ op: 'collapseSection', id: x.id, collapsed: !x.collapsed })} quiet
                     rename={editingSection === x.id ? <RenameInput initial={x.name} label={t('common.rename')} onDone={name => { setEditingSection(undefined); if (name.trim() && name.trim() !== x.name) onCategoryOp?.({ op: 'renameSection', id: x.id, name }); }} /> : undefined}
                     actions={<SectionActions
@@ -780,13 +895,17 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
                       onDelete={() => onCategoryOp?.({ op: 'deleteSection', id: x.id })} />}>
                     {x.name}
                   </SectionLabel>
+                  {/* The section's projects are one zone: a project held in from elsewhere frames it */}
                   <Fold open={!!q || !x.collapsed}>
-                    {list.length
-                      ? list.map(renderProject)
-                      : <div className="flex min-h-row items-center gap-gap px-2 text-3 text-fg-3"><span className="w-lead shrink-0" />{t('session.section.empty')}</div>}
+                    <div data-section-body={x.id} className={cn('flex flex-col rounded-lg', FRAME)}>
+                      {list.length
+                        ? list.map(renderProject)
+                        : <div className="flex min-h-row items-center gap-gap px-2 text-3 text-fg-3"><span className="w-lead shrink-0" />{t('session.section.empty')}</div>}
+                    </div>
                   </Fold>
                 </div>
               ))}
+              <div className="contents" data-section={desktop ? REST : undefined}>
               <SectionLabel open={!folded.includes('rest')} onToggle={() => flip('rest')} quiet={desktop} keep={filters > 0 || (desktop && !tree.projects.length)} actions={<>
                 {filing && workspace && !tree.grouped && (
                   <button type="button" title={t('session.category.new')} aria-label={t('session.category.new')} onClick={() => createCategory(workspace)} className={SECTION_ACT}>
@@ -825,9 +944,14 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
                 {tree.grouped && !flat ? t('session.group.projects') : t('session.listAria')}
               </SectionLabel>
               <Fold open={!folded.includes('rest')}>
-                {emptyRow}
-                {rest && restRows}
+                <div data-section-body={REST} className={cn('flex flex-col rounded-lg', FRAME)}>
+                  {emptyRow}
+                  {rest && restRows}
+                </div>
               </Fold>
+              </div>
+              {/* Desktop: the chats, sessions that belong to no project, under the projects as Codex lists them */}
+              {chatSection}
             </FlipRows>
           </LazyPanelContext.Provider>
         </div>
@@ -873,14 +997,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
                 {tree.pinned.map(renderItem)}
               </div>
             )}
-            {/* Keep the divider mounted so both pinning and unpinning can transition. */}
-            <div
-              role="presentation"
-              className={cn(
-                'shrink-0 bg-linear-to-r from-transparent via-line to-transparent transition-[height,margin,opacity,scale] duration-(--dur-open) ease-out',
-                tree.pinned.length > 0 && rest ? 'my-1 h-px scale-x-100 opacity-100' : 'my-0 h-0 scale-x-0 opacity-0',
-              )}
-            />
+            <PinDivider on={tree.pinned.length > 0 && !!rest} />
             {rest && <div className="flex flex-col pt-1">{restRows}</div>}
           </FlipRows>
         </LazyPanelContext.Provider>
@@ -889,9 +1006,24 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   );
 });
 
-// The nav layout's action rows share the session rows' box (height, inset, radius, lead slot), so the column reads as one list
+// The rule between the pinned rows and the rest. Kept mounted so both pinning and unpinning can transition
+function PinDivider({ on }: { on: boolean }) {
+  return (
+    <div
+      role="presentation"
+      className={cn(
+        'shrink-0 bg-linear-to-r from-transparent via-line to-transparent transition-[height,margin,opacity,scale] duration-(--dur-open) ease-out',
+        on ? 'my-1 h-px scale-x-100 opacity-100' : 'my-0 h-0 scale-x-0 opacity-0',
+      )}
+    />
+  );
+}
+
+// The nav layout's action rows share the session rows' box (height, inset, radius, lead slot), so the column reads as one list.
+// The lead takes the session rows' half-gap pull too: without it "New session" and "Search" started their text 6 px right of
+// the pinned and project rows below them
 const NAV_ROW = 'flex min-h-row w-full items-center gap-gap rounded-md px-2 text-left text-2 text-fg-1 transition-colors hover:bg-hover focus-visible:bg-hover data-[popup-open]:bg-hover';
-const NAV_LEAD = 'flex size-lead shrink-0 items-center justify-center text-fg-2';
+const NAV_LEAD = '-mr-gap-half flex size-lead shrink-0 items-center justify-center text-fg-2';
 const SECTION_ACT = 'inline-flex size-ctl-sm items-center justify-center rounded-md text-fg-3 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1 data-[popup-open]:bg-hover data-[popup-open]:text-fg-1';
 // The filter row's view button, an IconButton's box (ui/Button)
 const ROW_ACT = 'inline-flex size-ctl shrink-0 items-center justify-center rounded-md text-fg-2 transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1 data-[popup-open]:bg-active data-[popup-open]:text-fg-1';
@@ -903,11 +1035,11 @@ const CONCEAL = 'transition-opacity duration-150 group-hover:pointer-events-none
 // The resting tail and the hover actions stacked in one grid cell, so the title's room never changes under the pointer
 const STACK = "grid [grid-template-areas:'x'] *:[grid-area:x]";
 
-type Section = 'pinned' | 'rest';
+type Section = 'pinned' | 'rest' | 'chats';
 const FOLDED_KEY = 'sessionSectionsFolded';
 function storedFolds(): Section[] {
   const v = webviewState(FOLDED_KEY);
-  return Array.isArray(v) ? v.filter((x): x is Section => x === 'pinned' || x === 'rest') : [];
+  return Array.isArray(v) ? v.filter((x): x is Section => x === 'pinned' || x === 'rest' || x === 'chats') : [];
 }
 
 // A section's quiet label in the nav layout (Pinned, Projects / Sessions), its actions at the end. The label folds the
@@ -927,7 +1059,7 @@ function SectionLabel({ children, actions, open, quiet, keep, rename, onToggle }
       </button>}
       {actions && !rename && (
         <span className={cn('-mr-1 ml-auto flex shrink-0 items-center gap-0.5',
-          quiet && !keep && 'opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 group-has-[[data-popup-open]]:opacity-100')}>
+          quiet && !keep && 'opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 has-[[data-popup-open]]:opacity-100')}>
           {actions}
         </span>
       )}
@@ -959,15 +1091,11 @@ function Hint({ children }: { children: ReactNode }) {
   return <span className="shrink-0 text-3 text-fg-3 tabular-nums">{children}</span>;
 }
 
-// Where a reordered category will land: a short accent line on the block's edge, positioned absolutely so nothing shifts
-function InsertLine({ edge }: { edge: 'top' | 'bottom' }) {
-  return <div role="presentation" className={cn('pointer-events-none absolute inset-x-2 z-10 h-0.5 rounded-full bg-accent', edge === 'top' ? '-top-px' : '-bottom-px')} />;
-}
-
 // Desktop: an empty project's only row. With a way to start a session it is that action, a muted plus and "new session in
 // this project" that brighten under the pointer; without one it only says the project has none
-function EmptyProjectRow({ onNew }: { onNew?: () => void }) {
-  const box = 'group flex min-h-row w-full shrink-0 items-center gap-gap rounded-md pr-2 pl-6 text-left text-3 text-fg-3';
+// `flush`: at a section label's inset (the empty chats section), `label` its action's words
+function EmptyProjectRow({ onNew, flush, label = t('session.project.newSession') }: { onNew?: () => void; flush?: boolean; label?: string }) {
+  const box = cn('group flex min-h-row w-full shrink-0 items-center gap-gap rounded-md pr-2 text-left text-3 text-fg-3', flush ? 'pl-2' : 'pl-6');
   if (!onNew) return <div className={box}><span className="-mr-gap-half w-lead shrink-0" />{t('session.none')}</div>;
   return (
     <button type="button" onClick={onNew}
@@ -975,7 +1103,7 @@ function EmptyProjectRow({ onNew }: { onNew?: () => void }) {
       <span className="-mr-gap-half flex size-lead shrink-0 items-center justify-center opacity-60 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100">
         <Plus strokeWidth={1.5} className="size-icon" />
       </span>
-      <span className="min-w-0 truncate">{t('session.project.newSession')}</span>
+      <span className="min-w-0 truncate">{label}</span>
     </button>
   );
 }
@@ -986,12 +1114,13 @@ const pages = <T,>(list: T[]) => Array.from({ length: Math.ceil(list.length / MO
 // (their marks) and the most urgent state inside, on the session rows' state column; `rest` is what is still hidden, a
 // page at a time coming out above it. With all of them out (`open`), it reads "show less" at the
 // list's end: the chevron turns over, the labels cross-fade and the preview fades away, so the row changes in place
-function MoreRow({ open, rest, nameOf, onToggle }: { open: boolean; rest: SessionSummary[]; nameOf: (id: string) => string; onToggle: () => void }) {
+// `flush`: at a section label's inset (the chats), not a project's
+function MoreRow({ open, rest, nameOf, onToggle, flush }: { open: boolean; rest: SessionSummary[]; nameOf: (id: string) => string; onToggle: () => void; flush?: boolean }) {
   const marks = [...new Set(rest.map(s => s.agent))].slice(0, MORE_MARKS);
   const state = aggregate(rest);
   return (
     <button type="button" data-more aria-expanded={open} onClick={onToggle}
-      className="group flex min-h-row w-full shrink-0 items-center gap-gap rounded-md pr-2 pl-6 text-left text-3 text-fg-3 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1">
+      className={cn('group flex min-h-row w-full shrink-0 items-center gap-gap rounded-md pr-2 text-left text-3 text-fg-3 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1', flush ? 'pl-2' : 'pl-6')}>
       <span className="-mr-gap-half flex size-lead shrink-0 items-center justify-center">
         <ChevronDown strokeWidth={1.5} className={cn('size-icon transition-transform duration-(--dur-open) ease-out', open && 'rotate-180')} />
       </span>
@@ -1288,7 +1417,6 @@ interface ItemProps {
   // The view menu's "model at the row end": the session's model name, faint before the time
   model?: string;
   // A pinned session listed inside its project: a faint pin before the time
-  pinMark?: boolean;
   // Desktop: the row sits a step in from its project's folder glyph
   nudge?: boolean;
   editing: boolean;
@@ -1336,7 +1464,7 @@ interface RowActions {
 // (`mark-flip`, motion.css), so a pointer sweeping down the list flips nothing.
 // Memoized: a push re-renders only the rows whose summary (kept by reference while unchanged, App's reuseById) or
 // place-dependent props changed
-const Item = memo(function Item({ session: s, agentName, terms, snippet, active, time, project, model, pinMark, nudge, editing, actions, moveHere, moveTo, projects, exportable, copyable, drag, dragging, fileable, categories }: ItemProps) {
+const Item = memo(function Item({ session: s, agentName, terms, snippet, active, time, project, model, nudge, editing, actions, moveHere, moveTo, projects, exportable, copyable, drag, dragging, fileable, categories }: ItemProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const select = () => actions.current.select(s);
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -1406,7 +1534,6 @@ const Item = memo(function Item({ session: s, agentName, terms, snippet, active,
           <span className={cn('flex items-center justify-end gap-2', CONCEAL)}>
             {project && <span className="max-w-project truncate text-fg-3/70" title={s.cwd}>{project}</span>}
             {model && <span className="max-w-project truncate text-fg-3/70">{model}</span>}
-            {pinMark && <Pin aria-label={t('session.group.pinned')} className="size-3 shrink-0 text-fg-3/70" strokeWidth={1.5} />}
             {s.state && <StateMark state={s.state} unread={s.unread} />}
             <span className="min-w-session-time text-right">{time}</span>
           </span>

@@ -4,7 +4,8 @@ import type { SessionCategory, SessionSummary } from '@acpira/shared/transcript'
 // user categories and the sessions filed nowhere ("loose"). Under the workspace scope there is a single node (the
 // window's project) and the list shows no project header; under "all" every project is a collapsible group, the
 // window's own first. A session sits in exactly one place: pinned, a category of its own project, or loose. Grouped with
-// `pinInProject`, pinned sessions leave the top section and lead their own project instead
+// `pinInProject`, pinned sessions leave the top section and lead their own project instead. Grouped with `isChat`, chats
+// (sessions in a folder of their own under InitState.chats) belong to no project and gather in `chats`
 
 export interface CategoryNode {
   category: SessionCategory;
@@ -30,6 +31,8 @@ export interface SessionTree {
   // Project groups with headers ("all" scope) or the single headerless node
   grouped: boolean;
   projects: ProjectNode[];
+  // Grouped with `isChat`: the chats in view, in list order (with `pinInProject` their pinned ones first)
+  chats: SessionSummary[];
 }
 
 export interface TreeInput {
@@ -51,6 +54,15 @@ export interface TreeInput {
   removed?: string[];
   // Grouped: pinned sessions sit first in their own project rather than in one section on top
   pinInProject?: boolean;
+  // Grouped: whether a folder is a chat's (`isChatFolder`); those sessions leave the project groups for `chats`
+  isChat?: (cwd: string) => boolean;
+}
+
+// A chat's folder: directly inside `root` (InitState.chats), in either separator
+export function isChatFolder(root: string | undefined, cwd: string | undefined): boolean {
+  if (!root || !cwd) return false;
+  const cut = Math.max(cwd.lastIndexOf('/'), cwd.lastIndexOf('\\'));
+  return cut > 0 && cut < cwd.length - 1 && cwd.slice(0, cut) === root;
 }
 
 // The category a session is filed under, if that category still exists and belongs to the session's project
@@ -59,7 +71,7 @@ export function categoryOf(s: SessionSummary, categories: SessionCategory[]): Se
   return categories.find(c => c.id === s.category && c.cwd === s.cwd);
 }
 
-export function buildSessionTree({ shown, categories, collapsedProjects, workspace, grouped, filtering, registered, removed, pinInProject, expand = filtering }: TreeInput): SessionTree {
+export function buildSessionTree({ shown, categories, collapsedProjects, workspace, grouped, filtering, registered, removed, pinInProject, isChat, expand = filtering }: TreeInput): SessionTree {
   // Pinning into projects only means something when there are project groups to pin into
   const inProject = grouped && !!pinInProject;
   const pinned = inProject ? [] : shown.filter(s => s.pinned);
@@ -92,11 +104,13 @@ export function buildSessionTree({ shown, categories, collapsedProjects, workspa
   if (!grouped) {
     // One project: the window's. A session from elsewhere still listed (the active one) stays loose with its tag
     const cwd = workspace ?? '';
-    return { pinned, grouped, projects: [node(cwd, rest)] };
+    return { pinned, grouped, projects: [node(cwd, rest)], chats: [] };
   }
 
+  const chat = (s: SessionSummary) => !!isChat?.(s.cwd);
+  const chats = [...rest.filter(s => s.pinned && chat(s)), ...rest.filter(s => !s.pinned && chat(s))];
   const byProject = new Map<string, SessionSummary[]>();
-  for (const s of rest) if (filtering || !removed?.includes(s.cwd)) byProject.set(s.cwd, [...byProject.get(s.cwd) ?? [], s]);
+  for (const s of rest) if (!chat(s) && (filtering || !removed?.includes(s.cwd))) byProject.set(s.cwd, [...byProject.get(s.cwd) ?? [], s]);
   // A project with categories but no session in view still shows (so its categories can be reached), unless filtering
   if (!filtering) for (const c of categories) if (!byProject.has(c.cwd)) byProject.set(c.cwd, []);
   if (!filtering) for (const cwd of registered ?? []) if (!byProject.has(cwd)) byProject.set(cwd, []);
@@ -104,7 +118,7 @@ export function buildSessionTree({ shown, categories, collapsedProjects, workspa
   // Unregistered folders rank after every registered one (Infinity - Infinity is NaN, which falls through to the next key)
   const rank = (cwd: string) => { const i = registered?.indexOf(cwd) ?? -1; return i < 0 ? Infinity : i; };
   const order = [...byProject.keys()].sort((a, b) => rank(a) - rank(b) || Number(b === workspace) - Number(a === workspace) || latest(b).localeCompare(latest(a)));
-  return { pinned, grouped, projects: order.map(cwd => node(cwd, byProject.get(cwd)!)) };
+  return { pinned, grouped, projects: order.map(cwd => node(cwd, byProject.get(cwd)!)), chats };
 }
 
 // Where a session is moved to: another project's folder, optionally one of that project's categories

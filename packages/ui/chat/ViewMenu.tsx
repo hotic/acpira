@@ -85,10 +85,10 @@ export function ViewMenu({ view, onChange, agents, desktop, pins, onMarkAllRead,
             <Sub side={side} icon={<ArrowDownWideNarrow strokeWidth={1.5} />} label={t('session.view.order')} value={t(`session.view.order.${view.order}`)}>
               {VIEW_ORDERS.map(o => <Pick key={o} checked={view.order === o} onPick={() => set({ order: o })}>{t(`session.view.order.${o}`)}</Pick>)}
             </Sub>
-            <Sub side={side} icon={<Eye strokeWidth={1.5} />} label={t('session.view.show')}>
+            <Sub side={side} icon={<Eye strokeWidth={1.5} />} label={t('session.view.show')}
+              value={desktop ? view.per ? t('session.view.show.latest', { n: view.per }) : t('session.view.show.all') : undefined}>
               {desktop && <>
                 <DropdownMenu.Group>
-                  <DropdownMenu.GroupLabel className="flex min-h-row items-center px-2 text-3 text-fg-3">{t('session.view.show.perProject')}</DropdownMenu.GroupLabel>
                   {VIEW_PER.map(k => <Pick key={k} checked={view.per === k} onPick={() => set({ per: k })}>{k ? t('session.view.show.latest', { n: k }) : t('session.view.show.all')}</Pick>)}
                 </DropdownMenu.Group>
                 {separator}
