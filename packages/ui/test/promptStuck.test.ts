@@ -36,6 +36,12 @@ describe('followsBottom', () => {
     expect(followsBottom({ scrollHeight: 2000, scrollTop: 1099.5, clientHeight: 900 }, false, 1090)).toBe(true);
     expect(followsBottom({ scrollHeight: 1800, scrollTop: 900, clientHeight: 900 }, true, 1100)).toBe(true);
   });
+
+  it('releases on a downward user scroll short of the bottom after a fold was opened by hand', () => {
+    // A thought opened at the bottom grows scrollHeight; scrolling down into it must not stay pinned or snap to the tail
+    expect(followsBottom({ scrollHeight: 2200, scrollTop: 1120, clientHeight: 900 }, true, 1100, true, false)).toBe(false);
+    expect(followsBottom({ scrollHeight: 2200, scrollTop: 1300, clientHeight: 900 }, false, 1120, true, false)).toBe(true);
+  });
 });
 
 describe('scrollerUsable', () => {

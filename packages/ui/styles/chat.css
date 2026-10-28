@@ -32,6 +32,13 @@
   & > .row-lead { margin-top: calc((var(--text-2-lh) - var(--lead)) / 2); }
 }
 
+/* The fades' edge sizes are read only by the scroller that sets them. Non-inherited, so an edge flag flipping (the session
+   list leaving its top, the transcript its bottom) restyles that one element instead of every row inside it */
+@property --fade-top { syntax: '<length>'; inherits: false; initial-value: 0px; }
+@property --fade-bottom { syntax: '<length>'; inherits: false; initial-value: 0px; }
+@property --thread-fade-clear { syntax: '<length>'; inherits: false; initial-value: 0px; }
+@property --thread-fade-span { syntax: '<length>'; inherits: false; initial-value: 0px; }
+
 /* Scroll containers fade the edge that still hides content; useScrollFade sets the data flags.
    Only apply mask-image when an edge actually overflows, so short prompt cards never allocate GPU mask layers. */
 @utility scroll-fade {
@@ -110,6 +117,12 @@
   /* Session list rows (SessionList's Item): a store lists hundreds of them, and the ones out of sight skip style, layout and
      paint (a mark's 3D flip card is a compositor layer each) until they near the viewport. One row tall until laid out once */
   [data-session] { content-visibility: auto; contain-intrinsic-block-size: auto var(--row); }
+
+  /* Transcript and to-do dock rows put the icon's box on the text edge, so row icons and the prose or composer text around
+     them share one keyline (a 14 px icon centred in the 20 px lead sat 3 px in). The slot moves out by the difference and
+     gives it back on its far side, so labels keep their line; a mark filling the slot (Orb, subagent bars) overhangs the edge
+     by as much. Lists follow (prose.css) */
+  :is([data-thread], [data-plan-dock]) .row-lead { margin-inline: calc((var(--icon) - var(--lead)) / 2) calc((var(--lead) - var(--icon)) / 2); }
 
   /* Command / summon pill: margin and padding cancel, so glyphs stay where the composer's textarea has them */
   .prompt-mark {

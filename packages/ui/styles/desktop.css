@@ -47,7 +47,7 @@
 }
 .acp-shell[data-desktop][data-caption][data-narrow] :is([data-sheet-header], [data-stage-tabs], [data-settings-rail]) { --title-w: calc(var(--gap) + 2 * var(--ctl) + 2px + var(--gap)); }
 /* A sheet header that ends at the window's edge leaves the caption its room; beside a shown tool panel it does not */
-.acp-shell[data-desktop][data-caption]:not([data-layout="files"]):not(:has(> [data-subagent-panel="docked"])) [data-sheet-header] { --sheet-trail: calc(var(--start-x) + var(--caps-w)); }
+.acp-shell[data-desktop][data-caption]:not([data-layout="files"]):not([data-subagent-docked]) [data-sheet-header] { --sheet-trail: calc(var(--start-x) + var(--caps-w)); }
 .acp-shell[data-desktop][data-caption]:not([data-layout="files"]):has(> [data-tool-panel-wrap][data-shown]) [data-sheet-header] { --sheet-trail: var(--start-x); }
 /* A page-drawn caption: the stage's rule under its tabs gives way to its card's edge (the card under the title bar, below) */
 .acp-shell[data-desktop][data-caption] [data-stage-body] { --stage-rule: transparent; }
@@ -58,7 +58,7 @@
    session column folds. Its palette counts from the canvas (palette.css), so cards and the composer keep their contrast
    and what paints the page's colour (sticky prompts, fades) paints the canvas */
 .acp-shell[data-desktop][data-layout="files"] [data-sheet-header] { --sheet-lead: var(--start-x); }
-.acp-shell[data-desktop][data-layout="files"]:not([data-column]):not(:has(> [data-subagent-panel="docked"])) [data-sheet-header] { --sheet-trail: calc(var(--start-x) + var(--ctl) + var(--gap) + var(--caps-w)); }
+.acp-shell[data-desktop][data-layout="files"]:not([data-column]):not([data-subagent-docked]) [data-sheet-header] { --sheet-trail: calc(var(--start-x) + var(--ctl) + var(--gap) + var(--caps-w)); }
 .acp-shell[data-desktop][data-layout="files"] > :is([data-sheet], [data-subagent-panel="docked"]) { --bg-0: var(--canvas); }
 /* The docked subagent pane (chat/Shell.tsx, data-subagent-panel="docked"): its header line starts and ends at the dock's
    margin. When the pane ends the window's line (the tool panel closed, or the files layout's session column folded), the
@@ -72,8 +72,36 @@
   --pane-trail: calc(var(--start-x) + var(--ctl) + var(--gap) + var(--caps-w));
 }
 
+/* A docked inspector never trades the main conversation for a drill-down. On smaller desktop
+   windows, effective minima share the shell's measured width; the remaining room stays flexible.
+   The shares leave room for the sheet insets, including when every auxiliary column is open. */
+.acp-shell[data-desktop][data-subagent-docked] {
+  --chat-fit-min: min(var(--subagent-main-min), calc(var(--shell-w) * .30));
+  --inspector-fit-min: min(var(--subagent-pane-min), calc(var(--shell-w) * .22));
+  --session-fit-min: min(var(--session-pane-min), calc(var(--shell-w) * .15));
+  --tool-fit-min: min(var(--tool-panel-min), calc(var(--shell-w) * .30));
+  --inspector-sessions: 0px;
+  --inspector-tools: 0px;
+}
+.acp-shell[data-desktop][data-subagent-docked][data-column] { --inspector-sessions: var(--session-fit-min); }
+.acp-shell[data-desktop][data-subagent-docked]:not([data-layout="files"]):has(> [data-tool-panel-wrap][data-shown]) { --inspector-tools: var(--tool-fit-min); }
+.acp-shell[data-desktop][data-subagent-docked][data-layout="files"] {
+  --chat-fit-min: min(var(--files-chat-min), calc(var(--shell-w) * .26));
+  --inspector-fit-min: min(var(--subagent-pane-min), calc(var(--shell-w) * .20));
+  --explorer-fit-min: min(var(--explorer-min), calc(var(--shell-w) * .13));
+  --stage-fit-min: min(var(--stage-min), calc(var(--shell-w) * .24));
+  --inspector-tools: var(--stage-fit-min);
+}
+.acp-shell[data-desktop][data-subagent-docked][data-layout="files"]:has(> [data-explorer]:not([data-hidden])) { --inspector-tools: calc(var(--stage-fit-min) + var(--explorer-fit-min)); }
+
 @layer components {
   .acp-shell[data-desktop] { background: var(--canvas); }
+  /* Clamp the basis before flex layout: shrinking it afterwards made a widening drag narrow the pane. */
+  .acp-shell[data-desktop][data-subagent-docked] > [data-subagent-panel="docked"] {
+    min-width: var(--inspector-fit-min);
+    max-width: calc(var(--shell-w) - var(--chat-fit-min) - var(--inspector-sessions) - var(--inspector-tools) - 2 * var(--sheet-inset));
+  }
+  .acp-shell[data-desktop][data-subagent-docked] > [data-session-panel]:not([data-column-hidden], [data-moving]) { min-width: var(--session-fit-min); }
   .acp-shell[data-desktop] [data-sheet] {
     margin: var(--title-top) var(--sheet-inset) var(--sheet-inset) 0;
     border-radius: var(--r-lg);
@@ -90,7 +118,7 @@
      (two cards side by side read as a crack). The sheet gives up its right inset and corners and clips its rim and shadow
      at the joint; the pane's half of the card is drawn under it (::before, so its resize edge is not clipped), inset from
      the window like the sheet, flush with a shown tool panel. A page-drawn caption starts both halves under the title bar */
-  .acp-shell[data-desktop]:not([data-layout="files"]):has(> [data-subagent-panel="docked"]) > [data-sheet] {
+  .acp-shell[data-desktop]:not([data-layout="files"])[data-subagent-docked] > [data-sheet] {
     margin-right: 0; border-top-right-radius: 0; border-bottom-right-radius: 0; clip-path: inset(-24px 0 -24px -24px);
   }
   .acp-shell[data-desktop]:not([data-layout="files"]) > [data-subagent-panel="docked"] {
@@ -103,7 +131,7 @@
     box-shadow: 0 0 0 1px var(--line-strong), 0 2px 10px rgb(0 0 0 / 0.18); clip-path: inset(-24px -24px -24px 0);
   }
   .acp-shell[data-desktop][data-caption]:not([data-layout="files"]) > [data-subagent-panel="docked"]::before { top: var(--hdr); }
-  .acp-shell[data-desktop][data-caption]:not([data-layout="files"]):has(> [data-subagent-panel="docked"]) > [data-sheet]::before {
+  .acp-shell[data-desktop][data-caption]:not([data-layout="files"])[data-subagent-docked] > [data-sheet]::before {
     border-top-right-radius: 0; border-bottom-right-radius: 0;
   }
   /* Files layout: flat on the canvas like the chat beside it, a hairline between them */
@@ -111,7 +139,7 @@
     margin: var(--title-top) 0 var(--sheet-inset); border-left: 1px solid var(--line);
   }
   /* Its session column at the window's right edge gives the stage room down to its narrowest */
-  .acp-shell[data-desktop][data-layout="files"] > [data-session-panel]:not([data-column-hidden], [data-moving]) { min-width: var(--session-pane-min); }
+  .acp-shell[data-desktop][data-layout="files"] > [data-session-panel]:not([data-column-hidden], [data-moving]) { min-width: var(--session-fit-min, var(--session-pane-min)); }
   /* A narrow window's drawer (the column, undocked) lies over the sheet: it takes the canvas the docked column lies on,
      without which the list was drawn straight over the conversation (reported 2026-10-23) */
   .acp-shell[data-desktop] [data-session-panel][data-docked="false"] { background: var(--canvas); }
@@ -173,12 +201,13 @@
   /* A page switch (chat and settings replace each other in App): the canvas, the sheet and the pinned title row are the same
      on both and stay; what sits in the column or rail and on the sheet fades in as it mounts. The sheet's chat content sits
      in a display: contents wrapper, so its children are named too. Excluded on BrowserPanel so its iframe is not held in a
-     fill-mode animation compositing layer */
+     fill-mode animation compositing layer. Backwards, not both: the end state is the natural opacity, and a forwards fill
+     kept the finished fade in effect on these whole columns */
   .acp-shell[data-desktop]:not([data-browser-panel]) :is(
     [data-sheet] > :not(.contents, [data-sheet-dim]), [data-sheet] > .contents > *,
     [data-session-panel] > :not([role="separator"], [data-title-space]),
     [data-settings-rail] > :not([data-title-space])
-  ) { animation: acp-fade-in 220ms var(--start-ease) both; }
+  ) { animation: acp-fade-in 220ms var(--start-ease) backwards; }
 
   /* The start page (an empty session, chat/StartPage.tsx): the agent picker above the composer folds in as it opens and
      out as the first message goes. The composer's field eases between the

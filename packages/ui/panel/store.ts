@@ -74,9 +74,10 @@ export interface PanelState {
   tabs: PanelTab[];
   tab: string;
   slots: Record<string, PanelSlot | undefined>;
-  // The panel's and the tree's dragged widths (undefined: the token default)
+  // The panel's and the tree's dragged widths (undefined: the token default); `treeOpen` shows the tree beside an open file
   width?: number;
   treeW?: number;
+  treeOpen: boolean;
   // Per Files tab and project folder (`viewKey`); null: the viewer was closed by hand, so the tree takes the tab even where the session's review
   // would show by default
   views: Record<string, PanelView | null | undefined>;
@@ -191,6 +192,7 @@ function restore(): PanelState {
     slots,
     ...(typeof saved?.width === 'number' ? { width: saved.width } : {}),
     ...(typeof saved?.treeW === 'number' ? { treeW: saved.treeW } : {}),
+    treeOpen: false,
     views: {},
     expanded: {},
     opened: {},
@@ -398,7 +400,7 @@ export const panel = {
     const key = viewKey(tab, root);
     const r = scopedRoot(root);
     const view: PanelView = { path, ...(line !== undefined ? { line } : {}) };
-    update({ open: true, tab, views: { ...s.views, [key]: view }, opened: withOpened(s, r, view) });
+    update({ open: true, tab, ...(s.open ? {} : { treeOpen: false }), views: { ...s.views, [key]: view }, opened: withOpened(s, r, view) });
   },
   // A plan whose file is outside `root` (or only in memory): shown in the viewer with its markdown text
   openPlan(root: string, view: { path: string; text?: string; planId?: string; line?: number }) {
@@ -406,7 +408,7 @@ export const panel = {
     const tab = s.tabs.find(t => t.id === s.tab)?.kind === 'files' ? s.tab : FILES_TAB;
     const key = viewKey(tab, root);
     const r = scopedRoot(root);
-    update({ open: true, tab, views: { ...s.views, [key]: view }, opened: withOpened(s, r, view) });
+    update({ open: true, tab, ...(s.open ? {} : { treeOpen: false }), views: { ...s.views, [key]: view }, opened: withOpened(s, r, view) });
   },
   // Keeps an open plan view's text in step when the agent revises the plan
   syncPlans(root: string, plans: { id: string; markdown: string }[]) {
@@ -581,9 +583,19 @@ export const panel = {
   },
   close(tab: string) {
     const s = current();
-    if (tab === FILES_TAB || (!s.files && s.tabs.length === 1 && s.tabs[0]?.kind === 'new')) return;
     const at = s.tabs.findIndex(t => t.id === tab);
     if (at < 0) return;
+    if (tab === FILES_TAB) {
+      const r = s.root ? scopedRoot(s.root) : undefined;
+      const views = r ? { ...s.views, [r]: null } : s.views;
+      if (s.tabs.length <= 1) {
+        update({ open: false, treeOpen: false, views });
+        return;
+      }
+      const nextTab = s.tab === FILES_TAB ? (s.tabs[1]?.id ?? FILES_TAB) : s.tab;
+      update({ tab: nextTab, views });
+      return;
+    }
     const rawRest = s.tabs.filter(t => t.id !== tab);
     const next = normalizeSlot({
       tabs: rawRest,
@@ -591,10 +603,11 @@ export const panel = {
     }, s);
     // A Files tab's views go with it
     const views = Object.fromEntries(Object.entries(s.views).filter(([key]) => !key.startsWith(`${tab}\n`)));
-    update({ tabs: next.tabs, views, tab: next.tab });
+    update({ ...(rawRest.length ? {} : { open: false }), tabs: next.tabs, views, tab: next.tab });
   },
   setWidth(width: number | undefined) { update({ width }); },
   setTreeW(treeW: number | undefined) { update({ treeW }); },
+  toggleTree(treeOpen = !current().treeOpen) { update({ treeOpen }); },
   toggleExplorer(hidden = !current().explorerHidden) { update({ explorerHidden: hidden }); },
   setExplorerW(explorerW: number | undefined) { update({ explorerW }); },
   setChatW(chatW: number | undefined) { update({ chatW }); },

@@ -583,7 +583,7 @@ export function ItemRow({ lead, title, desc, extra, trailing, onOpen, reserveOpe
       {trailing && <span className="relative flex min-w-0 max-w-1/2 shrink-0 items-center gap-2">{trailing}</span>}
       {(onOpen || reserveOpen) && (
         // Zero height: the button overflows the slot evenly, so reserving it never makes the row taller than its neighbours
-        <span className="-mr-1.5 flex h-0 w-ctl shrink-0 items-center justify-center" aria-hidden={!onOpen || undefined}>
+        <span className="-mr-ctl-bleed flex h-0 w-ctl shrink-0 items-center justify-center" aria-hidden={!onOpen || undefined}>
           {/* Always shown as the row's cue; the pointer goes through to the row, the keyboard still stops here */}
           {onOpen && <IconButton title={t('common.open')} aria-label={t('common.open')} onClick={onOpen}
             className={!onEdit ? 'pointer-events-none text-fg-3 group-hover/row:text-fg-2' : 'text-fg-3 hover:text-fg-1'}>

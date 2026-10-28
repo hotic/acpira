@@ -1,6 +1,7 @@
 import { useContext, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { flushSync } from 'react-dom';
 import { QuietEntranceContext } from '../ui/Row';
+import { captureSliceScroll, restoreSliceScroll, type SliceScroll } from './sliceScroll';
 
 // A live turn opened with a long history renders its tail first and mounts the earlier items in idle slices after
 // the first paint. Mounting every row of a 700-block live turn in one commit took ~140 ms in a production build
@@ -27,15 +28,14 @@ export function useTailWindow(count: number, live: boolean, anchor: RefObject<HT
   const outer = useContext(QuietEntranceContext);
   const slicing = useRef(false);
   const [quiet] = useState(() => ({ get current() { return slicing.current || outer.current; } }));
-  const before = useRef<{ scroller: HTMLElement; top: number; height: number; bottom: boolean } | undefined>(undefined);
+  const before = useRef<SliceScroll | undefined>(undefined);
 
   useEffect(() => {
     if (start === 0) return;
     const grow = () => {
       const scroller = anchor.current ? scrollerOf(anchor.current) : undefined;
       // Read from the geometry, not the follow state: a scroll the reader just made may not have dispatched its event yet
-      before.current = scroller ? { scroller, top: scroller.scrollTop, height: scroller.scrollHeight,
-        bottom: scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 1 } : undefined;
+      before.current = scroller ? captureSliceScroll(scroller) : undefined;
       slicing.current = true;
       // Committed right here, so no streamed push lands between the measure above and the correction below
       flushSync(() => setStart(current => Math.max(0, current - SLICE)));
@@ -53,12 +53,12 @@ export function useTailWindow(count: number, live: boolean, anchor: RefObject<HT
     const kept = before.current;
     before.current = undefined;
     if (!kept) return;
-    const { scroller, top, height, bottom } = kept;
-    if (bottom) { scroller.scrollTop = scroller.scrollHeight; return; }
-    // A reader above the whole turn sees nothing move
-    const turnTop = anchor.current?.getBoundingClientRect().top;
-    if (turnTop !== undefined && turnTop >= scroller.getBoundingClientRect().bottom) return;
-    scroller.scrollTop = top + (scroller.scrollHeight - height);
+    // A reader above the whole turn sees nothing move.
+    if (!kept.bottom) {
+      const turnTop = anchor.current?.getBoundingClientRect().top;
+      if (turnTop !== undefined && turnTop >= kept.scroller.getBoundingClientRect().bottom) return;
+    }
+    restoreSliceScroll(kept);
   }, [start]);
 
   return { start, quiet };

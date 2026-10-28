@@ -24,6 +24,7 @@
   /* The new-tab page's column, its file list (fixed, so results arriving never move it); a tab's widest title */
   --new-tab-w: 480px;
   --new-tab-list: calc(var(--row) * 10);
+  --panel-tab-min: 96px;
   --panel-tab-max: 224px;
   /* The files layout (FilesLayout.tsx): the explorer's default, narrowest and widest width, the chat's beside the stage,
      what the stage keeps, and the narrowest window that takes the layout: its four columns at their narrowest. A narrower
@@ -35,12 +36,13 @@
   --files-chat-min: 360px;
   --files-chat-max: 960px;
   --stage-min: 320px;
+  --stage-fit-min: var(--stage-min);
   --files-layout-min: 1080px;
 }
 /* While the panel is closed its toggle (ToolPanel.tsx, pinned at the window's top-right corner) sits at the end of the
    chat header's line, which leaves it the room. Unlayered like desktop.css's --sheet-lead rules so it beats the default.
    The files layout's toggle folds the session column instead (desktop.css) */
-.acp-shell[data-desktop]:not([data-layout="files"]):has(> [data-panel-toggle]):not(:has(> [data-tool-panel-wrap][data-shown])):not(:has(> [data-subagent-panel="docked"])) [data-sheet-header] {
+.acp-shell[data-desktop]:not([data-layout="files"]):has(> [data-panel-toggle]):not(:has(> [data-tool-panel-wrap][data-shown])):not([data-subagent-docked]) [data-sheet-header] {
   --sheet-trail: calc(var(--start-x) + var(--ctl) + var(--gap) + var(--caps-w, 0px));
 }
 /* The Files tab's tree sits at the panel's (and the window's) right edge, under the pinned toggle: its filter, sections and
@@ -79,7 +81,7 @@
      factor under one on the chat would leave the overflow unshared once the panel stops at its narrowest (flex scales the
      free space by the factors' sum). Opening, it stops where the room ends; its narrowest holds once it is in place */
   .acp-shell[data-desktop]:not([data-narrow]) > [data-tool-panel-wrap][data-shown] { flex-shrink: 1000; }
-  .acp-shell[data-desktop]:not([data-narrow]) > [data-tool-panel-wrap][data-shown]:not([data-moving]) { min-width: var(--tool-panel-min); }
+  .acp-shell[data-desktop]:not([data-narrow]) > [data-tool-panel-wrap][data-shown]:not([data-moving]) { min-width: var(--tool-fit-min, var(--tool-panel-min)); }
   /* Open, the chat sheet runs to the panel's edge, and its rim and shadow fall on the panel as on the column */
   .acp-shell[data-desktop]:not([data-narrow]):has(> [data-tool-panel-wrap]:is([data-shown], [data-moving])) [data-sheet] { z-index: 1; }
   .acp-shell[data-desktop]:not([data-narrow]):has(> [data-tool-panel-wrap][data-shown]) [data-sheet] { margin-right: 0; }
@@ -96,7 +98,7 @@
      open width, --explorer-open, clipped while the width eases); it and the session column give the stage room down to
      their narrowest. Its resize edge stays over the stage's rim */
   [data-explorer] { --panel-bg: var(--canvas, var(--bg-0)); }
-  [data-explorer]:not([data-hidden], [data-moving]) { min-width: var(--explorer-min); }
+  [data-explorer]:not([data-hidden], [data-moving]) { min-width: var(--explorer-fit-min, var(--explorer-min)); }
   [data-explorer][data-hidden] { opacity: 0; overflow: hidden; }
   [data-explorer][data-moving] { overflow: hidden; transition: width 320ms var(--start-ease), opacity 260ms var(--start-ease); }
   [data-explorer][data-moving] > :not([role="separator"]) { min-width: var(--explorer-open, auto); }
@@ -132,6 +134,7 @@
   /* Off-screen file blocks skip layout and paint while holding their exact row-multiple height */
   [data-tree] > [role="tree"] { contain: strict; }
   [data-tree] .tree-block { content-visibility: auto; contain-intrinsic-size: auto calc(var(--tree-block-rows) * var(--row)); }
+  [data-tree] .tree-block[data-pending] { height: calc(var(--tree-block-rows) * var(--row)); }
 
   /* The viewer's lines: added lines tinted, removed ones put back and dimmed, a picked range in the focus colour */
   [data-viewer] {
@@ -156,7 +159,13 @@
   [data-viewer] .code-row.is-selected .code-num, [data-viewer] .code-row:hover .code-num { color: var(--fg-1); }
   /* A long file is laid out a block at a time: blocks out of sight keep their last size and skip layout and paint */
   [data-viewer] [data-code] { contain: strict; }
-  [data-viewer] .code-block { content-visibility: auto; contain-intrinsic-size: auto calc(var(--code-block-rows) * var(--code-output-line-height)); }
+  [data-viewer] .code-block { content-visibility: auto; contain-intrinsic-size: auto calc(var(--code-block-lines) * var(--code-output-line-height)); }
+  /* A block whose rows are not rendered yet (panel/nearBlocks.ts) holds the same estimate in sight */
+  [data-viewer] .code-block[data-pending] { height: calc(var(--code-block-lines) * var(--code-output-line-height)); }
+  /* A long Markdown preview's parts (FileViewer's PreviewPart): laid out once, one out of sight skips style, layout and
+     paint at its last size. Without it every relayout of the panel in WebView2 went through the whole document */
+  [data-markdown-preview] [data-preview-part] { contain-intrinsic-block-size: auto var(--row); }
+  [data-markdown-preview] [data-preview-part][data-seen] { content-visibility: auto; }
   /* The review's diffs show whole (DiffBlock `whole`), the panel scrolls them. A card not yet near the visible part holds
      about the height its diff will take (diff-scroll's padding included); out of sight a card skips layout and paint,
      keeping its last laid-out size (`auto`), else that estimate plus its header */

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { dedupeRecentPages } from '../panel/browserTabs';
 import { FILES_TAB, anyModule, panel, panelState } from '../panel/store';
+import { projectPath } from '../panel/ToolPanel';
 import { setPluginSlots } from '../pluginSlots';
 
 describe('dedupeRecentPages', () => {
@@ -111,5 +112,28 @@ describe('plugin tab pieces', () => {
     expect(anyModule(panelState())).toBe(false);
     expect(panelState().open).toBe(false);
     panel.setModules({ files: true, terminal: true, browser: true });
+  });
+});
+
+describe('file viewer tab close and tree toggle', () => {
+  it('opens a file without the tree by default, toggles the tree on demand, and closes the panel when the last tab closes', () => {
+    expect(projectPath('/proj', '~/.agents/plans/test.plan.md')).toBeUndefined();
+    expect(projectPath('/proj', '/proj/src/a.ts')).toBe('src/a.ts');
+
+    panel.setContext('s-close', '/proj-close');
+    panel.toggle(false);
+    panel.openFile('/proj-close', '/Users/dev/.agents/plans/test.plan.md');
+    expect(panelState().open).toBe(true);
+    expect(panelState().treeOpen).toBe(false);
+    expect(panelState().views['/proj-close']).toEqual({ path: '/Users/dev/.agents/plans/test.plan.md' });
+
+    panel.toggleTree();
+    expect(panelState().treeOpen).toBe(true);
+
+    // Closing the sole Files tab clears its view and collapses the panel
+    panel.close(FILES_TAB);
+    expect(panelState().open).toBe(false);
+    expect(panelState().treeOpen).toBe(false);
+    expect(panelState().views['/proj-close']).toBeNull();
   });
 });

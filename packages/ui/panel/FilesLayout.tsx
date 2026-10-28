@@ -6,7 +6,7 @@ import { IconButton } from '../ui/Button';
 import { cn } from '../ui/cn';
 import { macOS } from '../desktop';
 import { TitleSpace } from '../chat/DesktopFrame';
-import { InspectorSplitter, clamp, type PaneBounds } from '../chat/subagents/InspectorSplitter';
+import { InspectorSplitter, clamp, fitPaneBounds, type PaneBounds } from '../chat/subagents/InspectorSplitter';
 import { FileTree } from './FileTree';
 import { FileGlyph, nameOf } from './files';
 import { NewTab, type TabPick } from './NewTab';
@@ -14,7 +14,7 @@ import { FILES_TAB, allLiveTabs, panel, sameView, scopedRoot, usePanel } from '.
 import { TerminalFrame } from './TerminalFrame';
 import { PluginFrame } from './PluginFrame';
 import { usePluginPieces } from '../pluginSlots';
-import { BrowserFrame, MOVE_MS, TAB_ICON, TOGGLE_KEY, TabButton, ViewPane, pickNewTab, tabLabel, tabTitle, terminalPathOpener, useFreshTab, useProjectFiles } from './ToolPanel';
+import { BrowserFrame, MOVE_MS, TAB_ICON, TOGGLE_KEY, PanelTabList, TabButton, ViewPane, pickNewTab, tabLabel, tabTitle, terminalPathOpener, useFreshTab, useProjectFiles } from './ToolPanel';
 
 // The desktop app's files layout (acpira.desktopLayout = files, picked in the LAB, lab/desk-ide.preview, 2026-10-24): the
 // conversation layout flipped, the raised sheet moved from the chat to what the session works on. Shell lays the chat on
@@ -48,7 +48,7 @@ export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
   const [dragW, setDragW] = useState<number>();
   const bounds = useCallback((): PaneBounds => {
     const px = (name: string) => Number.parseFloat(getComputedStyle(aside.current ?? document.documentElement).getPropertyValue(name));
-    return { min: px('--explorer-min'), max: px('--explorer-max'), initial: px('--explorer-w') };
+    return fitPaneBounds(aside.current, { min: px('--explorer-min'), max: px('--explorer-max'), initial: px('--explorer-w') }, px('--explorer-max'));
   }, []);
   // Folding and unfolding ease the width, the explorer's content keeping its open width meanwhile, as the session column does
   const [moving, setMoving] = useState(false);
@@ -126,10 +126,10 @@ export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
         </div>
       </aside>
       {/* At the window's left edge while the explorer is folded: the pinned title row sits over its tabs' start */}
-      <div data-stage data-edge={hidden || undefined} data-moving={moving || undefined} className="relative order-2 flex min-w-(--stage-min) flex-1 flex-col">
+      <div data-stage data-edge={hidden || undefined} data-moving={moving || undefined} className="relative order-2 flex min-w-(--stage-fit-min) flex-1 flex-col">
         <div data-drag-region data-stage-tabs
           className={cn('flex h-hdr shrink-0 items-center gap-1 pr-gap', hidden ? 'pl-[calc(var(--title-w)-var(--sheet-inset))]' : 'pl-gap-half')}>
-          <div role="tablist" aria-label={t('panel.label')} className="flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none]">
+          <PanelTabList>
             {views.map(v => (v === 'review'
               ? <TabButton key="review" label={t('panel.allChanges')} on={!!shown && sameView(shown, v)} closable
                   icon={className => <Layers strokeWidth={1.5} className={className} />} onSelect={() => panel.showView(r, v)} onClose={() => panel.closeView(root, v)} />
@@ -142,7 +142,7 @@ export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
                   icon={className => <Icon strokeWidth={1.5} className={className} />} onSelect={() => panel.select(tab.id)} onClose={() => panel.close(tab.id)} />
               );
             })}
-          </div>
+          </PanelTabList>
           {(s.terminal || s.browser || pluginTabs.length > 0) && (
             <IconButton title={t('panel.newTab')} aria-label={t('panel.newTab')} onClick={() => fresh.made(panel.newTab())}><Plus strokeWidth={1.5} /></IconButton>
           )}

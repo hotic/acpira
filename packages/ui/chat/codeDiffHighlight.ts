@@ -1,17 +1,18 @@
 import type { DiffLine, DiffSource } from '@acpira/shared/transcript';
 import { plainDiffRows, type CodeDiffRow } from './codeDiff';
 import { codeLanguage } from './codeLanguage';
-import { tokenizeCode } from './codeSyntax';
+import { tokenizeCode, type CodeTheme } from './codeSyntax';
 
 // Diff highlighting for the highlighting worker (`codeDiff.worker.ts`): kept apart from `codeDiff.ts`, which the page
 // imports, so the shiki highlighter stays out of the page bundle
-export async function highlightDiff(lines: DiffLine[], source?: DiffSource, path = ''): Promise<CodeDiffRow[]> {
+// `theme`: the scheme the tokens get their colours for; `pause`: awaited between slices of a long side (`tokenizeCode`)
+export async function highlightDiff(lines: DiffLine[], theme: CodeTheme, source?: DiffSource, path = '', pause?: () => Promise<void>): Promise<CodeDiffRow[]> {
   const rows = plainDiffRows(lines);
   const language = codeLanguage(source?.path ?? path);
   if (!language) return rows;
   // Whole files give every line its true grammar state; a page view's omitted source falls back to the visible segments
   if (source && !source.omitted) {
-    const [oldTokens, newTokens] = await Promise.all([tokenizeCode(source.oldText, language), tokenizeCode(source.newText, language)]);
+    const [oldTokens, newTokens] = await Promise.all([tokenizeCode(source.oldText, language, theme, pause), tokenizeCode(source.newText, language, theme, pause)]);
     return rows.map(row => {
       const number = row.kind === 'del' ? row.oldLine : row.newLine;
       const tokens = number === undefined ? undefined : (row.kind === 'del' ? oldTokens : newTokens)[number - 1];
@@ -27,8 +28,8 @@ export async function highlightDiff(lines: DiffLine[], source?: DiffSource, path
     const old = segment.filter(row => row.kind !== 'add');
     const next = segment.filter(row => row.kind !== 'del');
     const [oldTokens, newTokens] = await Promise.all([
-      tokenizeCode(old.map(row => row.text.slice(1)).join('\n'), language),
-      tokenizeCode(next.map(row => row.text.slice(1)).join('\n'), language),
+      tokenizeCode(old.map(row => row.text.slice(1)).join('\n'), language, theme, pause),
+      tokenizeCode(next.map(row => row.text.slice(1)).join('\n'), language, theme, pause),
     ]);
     old.forEach((row, index) => { if (row.kind === 'del' && oldTokens[index]) row.tokens = oldTokens[index]!; });
     next.forEach((row, index) => { if (newTokens[index]) row.tokens = newTokens[index]!; });
