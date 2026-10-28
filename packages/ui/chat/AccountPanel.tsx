@@ -4,7 +4,7 @@ import type { AccountInfo, AgentInfo } from '@acpira/shared/transcript';
 import type { AddAccountVia } from '@acpira/shared/protocol';
 import { PanelHeader } from '../ui/Panel';
 import { RadioGroup } from '../ui/RadioGroup';
-import { AccountIdentity, AccountLabel } from '../ui/AccountLabel';
+import { AccountLabel } from '../ui/AccountLabel';
 import { LocalAccountQuota, SavedAccountQuota } from '../ui/LocalAccountQuota';
 import { Button } from '../ui/Button';
 import { t } from '../i18n';
@@ -44,12 +44,15 @@ export function AccountPanel(p: AccountPanelProps) {
     (list.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]') ?? list.current?.querySelector<HTMLButtonElement>('button:not(:disabled)'))?.focus({ preventScroll: true });
   }, []);
 
-  if (p.agent.localAccount) return <div className="flex flex-col">
-    <PanelHeader>{p.agent.name}</PanelHeader>
-    <LocalAccountBody agent={p.agent} account={p.agent.localAccount} />
-  </div>;
+  if (p.agent.localAccount) {
+    // A known login is tagged in the header's free right end (there is no "+" here): on the identity line the tag cut the email short
+    const tag = knownLogin(p.agent, p.agent.localAccount) && <span className="shrink-0 px-2 text-3 text-fg-3">{t('quota.officialAccount')}</span>;
+    return <div className="flex flex-col">
+      <PanelHeader tail={tag}>{p.agent.name}</PanelHeader>
+      <LocalAccountBody agent={p.agent} account={p.agent.localAccount} />
+    </div>;
+  }
 
-  const current = p.accounts.find(a => a.id === p.accountId);
   const add = { label: t('composer.addAccount'), icon: <Plus strokeWidth={1.75} />, onClick: () => { p.onAddAccount(p.agent.id, 'auto'); p.close(); } };
   return <div className="flex flex-col">
     <PanelHeader action={add}>{p.agent.name}</PanelHeader>
@@ -60,39 +63,60 @@ export function AccountPanel(p: AccountPanelProps) {
     </div>}
     <RadioGroup.Root ref={list} aria-label={p.agent.name} value={p.accountId ?? ''} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
       {/* Stored accounts do not describe CLI credentials: a local API key can work with an empty account list. */}
-      {!p.accounts.length && <div className="px-2 py-1.5 text-2"><AccountIdentity caption={t('composer.noAccounts')} wrapCaption>{t('settings.agent.accounts.none')}</AccountIdentity></div>}
+      {!p.accounts.length && <div className="px-2 py-1.5 text-2"><StateText title={t('settings.agent.accounts.none')} caption={t('composer.noAccounts')} /></div>}
       {p.accounts.map(a => <div key={a.id} className="group/item relative flex shrink-0 flex-col">
-        {/* Same skeleton as the official account: identity row (avatar · name · plan · check), the quota bars below it */}
+        {/* Same skeleton as the official account: one identity line (email, plan, check), the quota bars below it. No avatar:
+            a stock person glyph said nothing and drew a second left edge the quota bars did not share */}
         <RadioGroup.Item value={a.id} onClick={() => { p.onSelectAccount(a.id); p.close(); }} className="min-h-0 flex-col items-stretch gap-0 py-1.5">
-          {/* The plan goes under the name so a long email keeps the width; pr-6 leaves room for the remove button */}
-          <span className="flex min-w-0 items-center gap-2 pr-6">
-            <AccountIdentity caption={a.detail}><span title={a.label}>{a.label}</span></AccountIdentity>
-            {a.id === p.accountId ? <Check className="size-icon shrink-0 text-fg-1" strokeWidth={2} /> : current && <span className="size-icon shrink-0" aria-hidden />}
+          {/* Only the email truncates. The trailing slot stands on the right text edge, where the quota bars end and the header's
+              "+" stands: the check, or the remove button over it on hover */}
+          <span className="flex min-w-0 items-center gap-2">
+            <AccountLabel label={a.label} detail={a.detail} className="flex-1 text-fg-1" detailClassName="text-fg-3" />
+            <span className="flex size-icon shrink-0 items-center justify-center transition-opacity group-hover/item:opacity-0 group-has-[[data-remove]:focus-visible]/item:opacity-0" aria-hidden>
+              {a.id === p.accountId && <Check className="size-icon text-fg-1" strokeWidth={2} />}
+            </span>
           </span>
           <SavedAccountQuota account={a} />
         </RadioGroup.Item>
-        {/* Centred on the identity row (py-1.5 + half the avatar), not on a row the quota bars make tall */}
-        <button type="button" aria-label={t('common.removeNamed', { name: a.label })} title={t('common.remove')}
-          onClick={e => { e.stopPropagation(); p.onRemoveAccount(a.id); }}
-          className="absolute right-1 top-3 flex size-icon-ctl items-center justify-center rounded-sm text-fg-3 opacity-0 transition-opacity hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1 focus-visible:opacity-100 group-hover/item:opacity-100">
-          <X className="size-3" strokeWidth={2} />
-        </button>
+        {/* A button cannot sit inside the radio's, so the remove button lies over the row in a copy of the identity line's box:
+            the same padding and an invisible strut one text line tall, so it centres on that line at every density, not on a
+            row the quota bars make tall */}
+        <span className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-end px-2 py-1.5 text-2">
+          <span className="invisible w-0" aria-hidden>{'\u00a0'}</span>
+          <span className="flex size-icon shrink-0 items-center justify-center">
+            <button type="button" data-remove aria-label={t('common.removeNamed', { name: a.label })} title={t('common.remove')}
+              onClick={e => { e.stopPropagation(); p.onRemoveAccount(a.id); }}
+              className="pointer-events-auto flex size-icon-ctl shrink-0 items-center justify-center rounded-sm text-fg-3 opacity-0 transition-opacity hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1 focus-visible:opacity-100 group-hover/item:opacity-100">
+              <X className="size-3" strokeWidth={2} />
+            </button>
+          </span>
+        </span>
       </div>)}
     </RadioGroup.Root>
   </div>;
 }
 
-// Official account: one identity row (avatar · name · caption), then the quota bars and a footnote about what they count.
+type LocalAccount = NonNullable<AgentInfo['localAccount']>;
+// Before a login is found the label is only the product name the header already shows
+const knownLogin = (agent: AgentInfo, account: LocalAccount) => account.label !== agent.name || !!account.detail;
+
+// A state in place of an account (nothing saved, signed out): a title line and a caption that wraps
+function StateText({ title, caption }: { title: string; caption: string }) {
+  return <span className="flex min-w-0 flex-col text-left">
+    <span className="truncate text-fg-1">{title}</span>
+    <span className="text-pretty text-3 text-fg-3">{caption}</span>
+  </span>;
+}
+
+// Official account: one identity line (email, plan), then the quota bars and a footnote about what they count.
 // Without a known login the row itself carries the state ("Not signed in" + how to fix it), and the footnote is left out,
 // since it explains bars that are not there
-function LocalAccountBody({ agent, account }: { agent: AgentInfo; account: NonNullable<AgentInfo['localAccount']> }) {
-  // Before a login is found the label is only the product name the header already shows
-  const known = account.label !== agent.name || !!account.detail;
-  const status = t(`quota.status.${account.status}`);
+function LocalAccountBody({ agent, account }: { agent: AgentInfo; account: LocalAccount }) {
+  const known = knownLogin(agent, account);
   return <div className="flex min-w-0 flex-col gap-gap px-2 py-1.5 text-2">
     {known
-      ? <AccountIdentity caption={t('quota.officialAccount')}><AccountLabel label={account.label} detail={account.detail} /></AccountIdentity>
-      : <AccountIdentity caption={status} wrapCaption>{account.status === 'login_required' ? t('composer.notLoggedIn') : t('quota.officialAccount')}</AccountIdentity>}
+      ? <AccountLabel label={account.label} detail={account.detail} className="text-fg-1" detailClassName="text-fg-3" />
+      : <StateText title={account.status === 'login_required' ? t('composer.notLoggedIn') : t('quota.officialAccount')} caption={t(`quota.status.${account.status}`)} />}
     {known && <LocalAccountQuota account={account} />}
     {account.quota && <span className="border-t border-line pt-1.5 text-balance break-keep text-3 text-fg-3">{t('quota.local.desc')}</span>}
   </div>;

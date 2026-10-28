@@ -42,7 +42,7 @@ export function Alert({ turn, onRetry, onContinue, onDismiss, onCompact, onNewSe
           {stop === 'error' && !contextTooLong && (err?.actions === undefined || err.actions.includes('retry')) && <Button variant="primary" title={t('alert.retryHint')} onClick={onRetry}>{t('common.retry')}</Button>}
           {stop === 'error' && !contextTooLong && err?.actions?.includes('new_session') === true && onNewSession && <Button variant="secondary" onClick={onNewSession}>{t('notice.continueNew')}</Button>}
           {(stop === 'max_tokens' || stop === 'max_turn_requests') && <Button variant="primary" onClick={onContinue}>{t('alert.continue')}</Button>}
-          <IconButton aria-label={t('common.close')} onClick={onDismiss} className="-my-1 -mr-1.5"><X strokeWidth={1.5} /></IconButton>
+          <IconButton aria-label={t('common.close')} onClick={onDismiss} className="-my-1 -mr-ctl-bleed"><X strokeWidth={1.5} /></IconButton>
         </div>
         {message && <p className="m-0 whitespace-pre-wrap text-3 text-fg-2 [overflow-wrap:anywhere]">{message}</p>}
         {contextTooLong && onCompact && <div className="flex justify-end pt-1"><Button variant="primary" onClick={onCompact}>{t('alert.contextLength.compact')}</Button></div>}

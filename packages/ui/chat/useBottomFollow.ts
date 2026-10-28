@@ -65,7 +65,6 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
       if (h <= 0 || h === lastH) return;
       const had = lastH > 0;
       lastH = h;
-      el.style.setProperty('--thread-h', `${h}px`);
       if (had) pin();
     };
     syncBox();
@@ -80,9 +79,10 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
     const onScroll = () => {
       if (!scrollerUsable(el)) return;
       const was = pinned.current;
-      pinned.current = followsBottom(el, was, lastTop, intent());
+      const user = intent();
+      pinned.current = followsBottom(el, was, lastTop, user, untouched.current);
       follow.set(pinned.current);
-      if (was && pinned.current && el.scrollHeight - el.scrollTop - el.clientHeight > 1) el.scrollTop = el.scrollHeight;
+      if (was && pinned.current && !user && el.scrollHeight - el.scrollTop - el.clientHeight > 1) el.scrollTop = el.scrollHeight;
       lastTop = el.scrollTop;
     };
     const touched = () => { untouched.current = false; intentAt = holding.current = performance.now(); };
@@ -93,7 +93,24 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
         intentAt = holding.current = performance.now();
       }
     };
-    const moved = () => { intentAt = performance.now(); };
+    // A wheel over a nested scrollport (thought, command output, code) scrolls that box first, not the thread.
+    const takesWheel = (event: WheelEvent) => {
+      for (let node = event.target as Element | null; node && node !== el; node = node.parentElement) {
+        if (node.scrollTop <= 0 || node.scrollHeight <= node.clientHeight) continue;
+        const { overflowY } = getComputedStyle(node);
+        if (overflowY === 'auto' || overflowY === 'scroll') return false;
+      }
+      return el.scrollTop > 0;
+    };
+    // A history slice can prepend before the wheel's scroll event arrives, making the corrected offset look like a
+    // downward scroll. Release on upward wheel intent itself, but only when the thread takes the vertical gesture.
+    const moved = (event: WheelEvent | TouchEvent) => {
+      intentAt = performance.now();
+      if ('deltaY' in event && event.deltaY < 0 && !event.ctrlKey && Math.abs(event.deltaY) >= Math.abs(event.deltaX) && takesWheel(event)) {
+        pinned.current = false;
+        follow.set(false);
+      }
+    };
     // A fold opened or closed by hand changes scrollHeight without firing a scroll event: sync the bottom state so
     // an opened fold that now overflows below shows the bottom fade (and is not yanked to the bottom by the next
     // streamed chunk), and closing it back into the viewport restores the follow.
@@ -120,7 +137,7 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
     const box = new ResizeObserver(syncBox);
     box.observe(el);
     const body = new ResizeObserver(grew);
-    if (content.current) body.observe(content.current);
+    if (content.current) body.observe(content.current, { box: 'border-box' });
     return () => {
       box.disconnect();
       body.disconnect();

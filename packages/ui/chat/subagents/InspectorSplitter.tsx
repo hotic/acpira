@@ -14,6 +14,27 @@ function stored(key: string): number | undefined {
 
 export interface PaneBounds { min: number; max: number; initial: number }
 
+// In a desktop split, resize limits use the same effective minima as flex layout. Other panes
+// can yield space, but dragging one pane must never push a neighbour out of the window.
+export function fitPaneBounds(element: HTMLElement | null, bounds: PaneBounds, cap = Infinity): PaneBounds {
+  const shell = element?.closest<HTMLElement>('.acp-shell[data-desktop][data-subagent-docked]');
+  if (!shell || !element) return bounds;
+  const px = (value: string) => Number.parseFloat(value) || 0;
+  const margin = (style: CSSStyleDeclaration) => px(style.marginLeft) + px(style.marginRight);
+  const style = getComputedStyle(element);
+  let room = shell.clientWidth - margin(style);
+  for (const child of shell.children) {
+    if (!(child instanceof HTMLElement) || child === element) continue;
+    const sibling = getComputedStyle(child);
+    // Pinned controls and closed columns do not take part in the shell's flex row.
+    if (sibling.position === 'absolute' || sibling.display === 'none' || child.offsetWidth === 0) continue;
+    room -= px(sibling.minWidth) + margin(sibling);
+  }
+  const min = px(style.minWidth);
+  const cssMax = Number.parseFloat(style.maxWidth);
+  return { ...bounds, min, max: Math.max(min, Math.min(cap, Number.isFinite(cssMax) ? cssMax : Infinity, room)) };
+}
+
 // The user's chosen width (undefined = the token default); the shell clamps it to the room it has right now,
 // so a narrow window squeezes the pane without forgetting the choice.
 export function usePreferredPaneWidth(key = 'subagentPaneW') {

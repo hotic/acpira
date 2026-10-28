@@ -1,7 +1,10 @@
 // Which grammar a file or a fenced block gets, without the highlighter: the page only needs these answers, while the shiki
 // highlighter and its grammars (`codeSyntax.ts`, about 1.3 MB) live in the highlighting worker alone
 
+// A run of a line in one colour. Only the scheme it was tokenized for has its colour: each scheme costs a whole pass of
+// the grammar, so the highlighter tokenizes for the one on screen and a switch asks again
 export interface CodeToken { text: string; light?: string; dark?: string }
+export type CodeTheme = 'light' | 'dark';
 
 // The grammars the highlighter loads (`codeSyntax.ts` maps each id to its shiki module)
 export const LANGUAGES = ['python', 'tsx', 'typescript', 'javascript', 'jsx', 'json', 'jsonc', 'css', 'html', 'shellscript', 'yaml', 'markdown', 'rust', 'go', 'sql'] as const;

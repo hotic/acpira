@@ -6,11 +6,13 @@ import { BEAM_SIZE, BEAM_STRENGTH } from './presets';
 export interface WorkingBeamProps {
   active: boolean;
   theme: 'dark' | 'light';
+  // Which field it wraps: a new one (the composer's field remounted for another session) is measured again
+  field?: string;
   children: ReactNode;
 }
 
 // Beam wrapping the composer: lights up while the composer is focused (including while one of its menus is open), fades out on blur. The radius is measured off the wrapped element; capsule-like large radii clamp to half the height
-export function WorkingBeam({ active, theme, children }: WorkingBeamProps) {
+export function WorkingBeam({ active, theme, field, children }: WorkingBeamProps) {
   const { beam, beamColor, motion } = useAppearance();
   const hostRef = useRef<HTMLDivElement>(null);
   const [radius, setRadius] = useState(12);
@@ -30,7 +32,7 @@ export function WorkingBeam({ active, theme, children }: WorkingBeamProps) {
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [beam]);
+  }, [beam, field]);
 
   const enabled = beam !== 'none' && motion !== 'none';
   return (

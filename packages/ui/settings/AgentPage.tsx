@@ -177,7 +177,7 @@ function AccountsTab({ agent, accounts, on }: { agent: AgentInfo; accounts: Acco
             title={<AccountLabel label={a.label} detail={a.detail} />}
             extra={(a.quota || a.quotaIssue) && <SavedAccountQuota account={a} />}
             trailing={
-              <IconButton title={t('common.remove')} aria-label={t('common.removeNamed', { name: a.label })} onClick={() => on.removeAccount(a.id)} className="-mr-1.5 text-fg-2 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100">
+              <IconButton title={t('common.remove')} aria-label={t('common.removeNamed', { name: a.label })} onClick={() => on.removeAccount(a.id)} className="-mr-ctl-bleed text-fg-2 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100">
                 <X strokeWidth={1.5} />
               </IconButton>
             }
@@ -527,7 +527,7 @@ function InstallProgressRow({ install, env }: { install: AgentInstallProgress; e
         // drops the toggle, and under an error it stays on the status line
         trailing={log && (
           <span className="flex h-(--text-2-lh) items-center">
-            <IconButton title={t('settings.install.log')} aria-label={t('settings.install.log')} aria-expanded={open} onClick={() => setOpen(v => !v)} className="-mr-1.5 text-fg-2">
+            <IconButton title={t('settings.install.log')} aria-label={t('settings.install.log')} aria-expanded={open} onClick={() => setOpen(v => !v)} className="-mr-ctl-bleed text-fg-2">
               {open ? <ChevronUp strokeWidth={1.5} /> : <ChevronDown strokeWidth={1.5} />}
             </IconButton>
           </span>
@@ -590,7 +590,7 @@ function CopyButton({ text }: { text: string }) {
   }, [copied]);
   const Icon = copied ? Check : Copy;
   return (
-    <IconButton title={t('common.copy')} aria-label={t('common.copy')} onClick={() => { void navigator.clipboard.writeText(text).then(() => setCopied(true)); }} className="-mr-1.5 text-fg-2">
+    <IconButton title={t('common.copy')} aria-label={t('common.copy')} onClick={() => { void navigator.clipboard.writeText(text).then(() => setCopied(true)); }} className="-mr-ctl-bleed text-fg-2">
       <Icon strokeWidth={1.5} />
     </IconButton>
   );

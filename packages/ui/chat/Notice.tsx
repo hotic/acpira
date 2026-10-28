@@ -189,7 +189,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
             {primary && <Button variant="primary" title={primary.title} onClick={primary.run}>{primary.label}</Button>}
           </fieldset>
         </div>
-        {showRetry && <IconButton aria-label={retry.label} title={retry.label} onClick={onRetry} className="-my-1 -mr-1.5"><RotateCw strokeWidth={1.5} /></IconButton>}
+        {showRetry && <IconButton aria-label={retry.label} title={retry.label} onClick={onRetry} className="-my-1 -mr-ctl-bleed"><RotateCw strokeWidth={1.5} /></IconButton>}
         {feedback
           ? <p role="status" className={text}>{feedback}</p>
           : <p className={text}>{body.text}</p>}

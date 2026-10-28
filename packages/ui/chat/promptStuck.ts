@@ -14,8 +14,10 @@ export function scrollerUsable(el: { clientHeight: number; clientWidth: number }
 // it is the browser clamping the offset to content that shrank for a layout (a block remounting, a fold measuring): WebKit
 // lays out and clamps between React's commits where Chromium did not, and treating that as "left the bottom" stopped the
 // follow two seconds into a streamed reply in WKWebView (2026-10-25). Only the reader lets go of the bottom.
-export function followsBottom(el: { scrollHeight: number; scrollTop: number; clientHeight: number }, pinned: boolean, lastTop: number, intent = true): boolean {
-  return el.scrollHeight - el.scrollTop - el.clientHeight <= 1 || (pinned && (!intent || el.scrollTop >= lastTop));
+// `untouched`: no press or key has landed in the scroller since the last pin. Once the reader opened a fold by hand, a
+// downward scroll short of the new bottom is their own reading, not a late scroll event from a pin.
+export function followsBottom(el: { scrollHeight: number; scrollTop: number; clientHeight: number }, pinned: boolean, lastTop: number, intent = true, untouched = true): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= 1 || (pinned && (!intent || (untouched && el.scrollTop >= lastTop)));
 }
 
 // How long after the reader's last wheel, touch, key or pointer release a scroll still counts as theirs (trackpad

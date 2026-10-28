@@ -41,7 +41,8 @@ function PanelBar({ edge, lead, children, onClick, action, tail }: PanelBarProps
   const text = 'flex h-ctl min-w-0 items-center gap-1 px-2 text-left text-2';
   return (
     <div className={cn('flex items-center gap-1 border-line', edge === 'top' ? 'mb-1 border-b pb-1' : 'mt-1 border-t pt-1')}>
-      {lead && <BarButton {...lead} />}
+      {/* The squares bleed so their glyphs stand on the rows' icon and text edges (tokens.css bar-bleed) */}
+      {lead && <BarButton {...lead} className="-ms-bar-bleed" />}
       {children !== undefined && (onClick
         ? (
           <button type="button" onClick={onClick} className={cn(text, 'rounded-md text-fg-2 outline-none transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1')}>
@@ -51,7 +52,7 @@ function PanelBar({ edge, lead, children, onClick, action, tail }: PanelBarProps
         )
         : <div className={cn(text, 'text-fg-1')}><span className="truncate">{children}</span></div>)}
       <span className="min-w-0 flex-1" />
-      {action && <BarButton {...action} />}
+      {action && <BarButton {...action} className="-me-bar-bleed" />}
       {tail}
     </div>
   );
@@ -62,14 +63,14 @@ export function PanelHeader(p: PanelBarProps) { return <PanelBar edge="top" {...
 // Footer of a menu: a note or an entry on the left, one action on the right
 export function PanelFooter(p: PanelBarProps) { return <PanelBar edge="bottom" {...p} />; }
 
-function BarButton({ label, icon, onClick }: FooterAction) {
+function BarButton({ label, icon, onClick, className }: FooterAction & { className?: string }) {
   return (
     <button
       type="button"
       aria-label={label}
       title={label}
       onClick={onClick}
-      className="flex size-ctl shrink-0 items-center justify-center rounded-md text-fg-3 outline-none transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1 [&_svg]:size-icon"
+      className={cn('flex size-ctl shrink-0 items-center justify-center rounded-md text-fg-3 outline-none transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1 [&_svg]:size-icon', className)}
     >
       {icon}
     </button>

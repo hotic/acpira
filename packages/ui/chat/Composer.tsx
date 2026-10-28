@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { Plus, SquareDashedMousePointer, TextSelect, X } from 'lucide-react';
 import type { Draft, SessionControls, SessionOption, SlashCommand, Turn, Usage } from '@acpira/shared/transcript';
 import type { EditorSelection, FileHit } from '@acpira/shared/protocol';
@@ -59,6 +59,9 @@ export interface ComposerProps {
   edit?: { text: string; attachments?: ReactNode; hasAttachments: boolean; onCancel: () => void; dismissOnOutside?: boolean };
   // Where the unsent draft (text + attachments) is parked while another session is shown; the session id. Absent: nothing is kept across remounts
   draftKey?: string;
+  // The session the main composer belongs to: the field (draft, chips, menus) starts over when it changes, while the frame
+  // and its beam stay mounted
+  resetKey?: string;
   onSearchFiles: (query: string) => Promise<FileHit[]>;
   // Something couldn't be attached; the shell shows it as a toast
   onNotice: (text: string) => void;
@@ -82,7 +85,23 @@ export interface ComposerProps {
 // Composer has three layers: attachment chips (when any), the input area, and a toolbar row below.
 // One layout for all ACP agents: mode on the left; context, model with reasoning, and send on the right.
 // Attachments come from pasting / dropping (images, OS files, Explorer items) or from an @ mention that searches the workspace
+// The frame and its beam stay mounted when the shown session changes; only the field remounts (`resetKey`). border-beam
+// writes a <style> with per-instance @property rules, and removing a <style> makes WebKit rebuild every element's style:
+// remounting the beam with the field cost each switch a full-document restyle (~30 ms with a long session list)
 export const Composer = memo(function Composer(p: ComposerProps) {
+  const { composer } = useAppearance();
+  const flush = !p.edit && composer === 'flush';
+  const [beamActive, setBeamActive] = useState(false);
+  return (
+    <div className={cn(p.edit ? 'min-w-0' : flush ? 'pt-0' : 'px-dock pb-dock')}>
+      <WorkingBeam active={beamActive} theme={p.theme} field={p.resetKey}>
+        <ComposerField key={p.resetKey} {...p} onBeam={setBeamActive} />
+      </WorkingBeam>
+    </div>
+  );
+});
+
+const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProps & { onBeam: (active: boolean) => void }) {
   useLocale();
   const { composer } = useAppearance();
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -114,6 +133,7 @@ export const Composer = memo(function Composer(p: ComposerProps) {
   const [openMenus, setOpenMenus] = useState(0);
   const onOpenChange = useCallback((open: boolean) => setOpenMenus(n => n + (open ? 1 : -1)), []);
   const beamActive = focused || openMenus > 0;
+  useLayoutEffect(() => { onBeam(beamActive); }, [onBeam, beamActive]);
   const dim = p.running || p.disabled;
   const { models, reasoning, modelConfig, collaboration, permission, sidekick, sidekickEffort, other } = composerControls(p.controls.options);
   const canCompact = !!p.commands?.some(c => c.name === 'compact');
@@ -414,11 +434,7 @@ export const Composer = memo(function Composer(p: ComposerProps) {
     </div>
   );
 
-  return (
-    <div className={cn(p.edit ? 'min-w-0' : flush ? 'pt-0' : 'px-dock pb-dock')}>
-      <WorkingBeam active={beamActive} theme={p.theme}>{field}</WorkingBeam>
-    </div>
-  );
+  return field;
 });
 
 // One mode chip and its menu: single-line rows with a glyph each, the agent's own name and description ride along as a tooltip.

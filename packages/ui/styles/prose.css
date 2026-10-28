@@ -6,6 +6,8 @@
 .acp-prose p, .acp-prose li { overflow-wrap: anywhere; }
 .acp-prose :is(h1, h2, h3, h4, h5, h6) { margin: 0; color: var(--fg-strong); font-weight: 600; line-height: var(--text-1-lh); }
 .acp-prose :is(h1, h2, h3, h4, h5, h6):not(:first-child) { margin-top: var(--gap); }
+/* The file viewer previews a long document in parts (panel/previewParts.ts): a heading that opens a later part keeps the gap it has in the whole */
+:where([data-preview-part] + [data-preview-part] > .acp-prose) > :is(h1, h2, h3, h4, h5, h6):first-child { margin-top: var(--gap); }
 .acp-prose h1 { font-size: calc(var(--text-1) * 1.35); }
 .acp-prose h2 { font-size: calc(var(--text-1) * 1.25); }
 .acp-prose h3 { font-size: calc(var(--text-1) * 1.15); }
@@ -17,11 +19,24 @@
    (GPT opens each reasoning section with a `**Title**` line) lifts one shade instead of jumping to the strongest foreground. */
 .acp-thought :is(h1, h2, h3, h4, h5, h6) { font-size: inherit; line-height: inherit; }
 .acp-thought :is(h1, h2, h3, h4, h5, h6, strong, [data-streamdown="strong"]) { color: var(--fg-1); }
-/* Tailwind preflight strips list-style; restore the markers streamdown's own (ungenerated) classes would have set */
-.acp-prose :is(ul, ol) { margin: 0; padding-left: 1.2em; }
-.acp-prose ul { list-style-type: disc; }
+/* Lists take the transcript rows' keylines (chat.css puts a row's icon box on the text edge): item text starts where a row's
+   label does, one lead and gap in, and the bullet centres on the rows' icon column, so a list between tool rows adds no lines
+   of its own. The bullet is drawn, since a disc marker's place depends on the font and streamdown's list-inside class; a
+   zero-width float keeps it out of the text's way and on the first line. A task item's checkbox takes the bullet's place
+   (it was drawn after a bullet). Numbers stay native markers, ending just before the text */
+.acp-prose :is(ul, ol) { --list-in: calc(var(--lead) + var(--gap)); margin: 0; padding-left: var(--list-in); list-style-position: outside; }
+.acp-prose ul { list-style: none; }
 .acp-prose ol { list-style-type: decimal; }
 .acp-prose li::marker { color: var(--fg-3); }
+.acp-prose ul > li:not(.task-list-item)::before {
+  --dot: 5px;
+  content: ''; float: left; width: var(--dot); height: var(--dot); border-radius: 50%; background: var(--fg-3);
+  margin: calc((1lh - var(--dot)) / 2) calc(var(--list-in) - (var(--icon) + var(--dot)) / 2) 0 calc((var(--icon) - var(--dot)) / 2 - var(--list-in));
+}
+.acp-prose .task-list-item input[type="checkbox"] {
+  float: left; width: var(--icon); height: var(--icon);
+  margin: calc((1lh - var(--icon)) / 2) calc(var(--list-in) - var(--icon)) 0 calc(-1 * var(--list-in));
+}
 .acp-prose li + li, .acp-prose li > :is(ul, ol) { margin-top: 2px; }
 .acp-prose blockquote {
   position: relative; margin: 0; padding: var(--gap) var(--pad); border: 0;

@@ -120,18 +120,22 @@ export function Questions({ block, onAnswer, subtitle }: { block: QuestionBlock;
   return (
     <div className="px-dock">
       <Card ref={root} tabIndex={-1} role="form" aria-label={t('question.title')} onKeyDown={onKeyDown} className="flex min-w-0 flex-col overflow-hidden">
-        <div key={current.id} ref={fade} className="scroll-fade scroll-thin flex max-h-question-body flex-col gap-(--question-section-gap) overflow-y-auto px-pad pt-(--question-top-pad) pb-(--question-section-gap) [--scroll-fade-size:var(--question-section-gap)] [&>*]:shrink-0">
-          {/* The question itself labels the card; a separate title row adds no context. */}
-          {subtitle && <div className="text-3 text-fg-3">{subtitle}</div>}
-          <Row dense className="items-start lead-top" lead={<MessageCircleQuestion className="size-icon" strokeWidth={1.5} />}
-            trailing={<span aria-live="polite">{t('question.of', { n: page + 1, total })}</span>}>
-            <h3 id={titleId} className="m-0 min-w-0 text-2 font-medium text-fg-strong [overflow-wrap:anywhere]">{current.text}</h3>
-          </Row>
-          {block.message && page === 0 && <p className="m-0 text-2 text-fg-2 [overflow-wrap:anywhere]">{block.message}</p>}
-          <QuestionItem question={current} titleId={titleId} pick={picks[current.id] ?? EMPTY}
-            onChoose={id => choose(current, id)} onOther={() => chooseOther(current)}
-            onOtherFocus={() => update(current.id, p => ({ ...p, other: true, ...(current.kind === 'single' ? { options: [] } : {}) }))}
-            onText={text => update(current.id, p => ({ ...p, text, ...(current.kind !== 'text' ? { other: true } : {}), ...(current.kind === 'single' ? { options: [] } : {}) }))} />
+        <div className="flex min-h-0 max-h-question-body flex-col">
+          {/* Keep the question and counter outside the answer scrollport and its edge fade. */}
+          <div className="flex shrink-0 flex-col gap-(--question-section-gap) px-pad pt-(--question-top-pad) pb-(--question-section-gap)">
+            {subtitle && <div className="text-3 text-fg-3">{subtitle}</div>}
+            <Row dense className="items-start lead-top" lead={<MessageCircleQuestion className="size-icon" strokeWidth={1.5} />}
+              trailing={<span aria-live="polite">{t('question.of', { n: page + 1, total })}</span>}>
+              <h3 id={titleId} className="m-0 min-w-0 text-2 font-medium text-fg-strong [overflow-wrap:anywhere]">{current.text}</h3>
+            </Row>
+          </div>
+          <div key={current.id} ref={fade} className="scroll-fade scroll-thin flex min-h-0 flex-col gap-(--question-section-gap) overflow-y-auto overscroll-y-contain px-pad pb-(--question-section-gap) [--scroll-fade-size:var(--question-section-gap)] [&>*]:shrink-0">
+            {block.message && page === 0 && <p className="m-0 text-2 text-fg-2 [overflow-wrap:anywhere]">{block.message}</p>}
+            <QuestionItem question={current} titleId={titleId} pick={picks[current.id] ?? EMPTY}
+              onChoose={id => choose(current, id)} onOther={() => chooseOther(current)}
+              onOtherFocus={() => update(current.id, p => ({ ...p, other: true, ...(current.kind === 'single' ? { options: [] } : {}) }))}
+              onText={text => update(current.id, p => ({ ...p, text, ...(current.kind !== 'text' ? { other: true } : {}), ...(current.kind === 'single' ? { options: [] } : {}) }))} />
+          </div>
         </div>
         <div className="flex shrink-0 items-center justify-between gap-gap border-t border-line px-pad py-(--question-section-gap)">
           <Button variant="secondary" onClick={skip} className={cn(focusRing, 'h-ctl-sm border-line/50')}>{t('question.skip')}</Button>

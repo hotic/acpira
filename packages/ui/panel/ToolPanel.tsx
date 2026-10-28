@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import type { FileHit, ProjectBase, ProjectChange } from '@acpira/shared/protocol';
 import { Folder, Globe, LayoutGrid, PanelRight, Plus, Puzzle, SquareTerminal, X, type LucideIcon } from 'lucide-react';
 import { parseRemoteFolder } from '@acpira/shared/remote';
@@ -10,7 +10,7 @@ import { vscodeApi } from '../vscodeApi';
 import { fileUriOf } from '../chat/drafts';
 import { sameRange, selectionDraft, setEditorSelection } from '../chat/editorContext';
 import { updateMainComposer } from '../chat/useComposerDraft';
-import { InspectorSplitter, clamp, type PaneBounds } from '../chat/subagents/InspectorSplitter';
+import { InspectorSplitter, clamp, fitPaneBounds, type PaneBounds } from '../chat/subagents/InspectorSplitter';
 import { lastRead, project, sameRead, shellResizeIdleIn, type GitStatus } from './api';
 import { registerBrowserFrame } from './browserTabs';
 import { FileGlyph, absPath, dirOf, markIndex, nameOf, relPath } from './files';
@@ -34,6 +34,7 @@ export const MOVE_MS = 340;
 // A path a tool call names, relative to the project when inside it (undefined outside). A folder on an SSH host is named
 // by its path there, as the agent's tools name its files
 export function projectPath(root: string, path: string): string | undefined {
+  if (path === '~' || /^~[\\/]/.test(path)) return undefined;
   if (/^([a-z]:)?[\\/]/i.test(path)) return relPath(parseRemoteFolder(root)?.path ?? root, path);
   const rel = path.replace(/\\/g, '/').replace(/^\.\//, '');
   return rel.startsWith('../') ? undefined : rel;
@@ -105,7 +106,7 @@ export const ToolPanelDock = memo(function ToolPanelDock(p: ToolPanelDockProps) 
     const element = aside.current ?? document.documentElement;
     const px = (name: string) => Number.parseFloat(getComputedStyle(element).getPropertyValue(name));
     const room = (p.sheet.current?.offsetWidth ?? 0) + (aside.current?.offsetWidth ?? 0);
-    return { min: px('--tool-panel-min'), max: room - px('--tool-main-min'), initial: px('--tool-panel-w') };
+    return fitPaneBounds(aside.current, { min: px('--tool-panel-min'), max: room - px('--tool-main-min'), initial: px('--tool-panel-w') });
   }, [p.sheet]);
   // Opening or closing eases the width; meanwhile the content keeps the width it has open, clipped instead of re-wrapped
   const wasShown = useRef(shown);
@@ -178,7 +179,31 @@ export function tabLabel(tab: PanelTab): string {
 // A tab's tooltip: a terminal's folder, a plugin piece's plugin, else its label
 export const tabTitle = (tab: PanelTab) => (tab.kind === 'terminal' ? `${tabLabel(tab)} — ${tab.cwd}` : tab.kind === 'plugin' ? `${tabLabel(tab)} — ${tab.plugin}` : undefined);
 
-const TAB = 'group/tab inline-flex h-ctl max-w-panel-tab shrink-0 items-center gap-1.5 rounded-md px-2 text-2 transition-colors';
+const TAB = 'group/tab inline-flex h-ctl min-w-[min(var(--panel-tab-min),100%)] max-w-[min(var(--panel-tab-max),100%)] shrink items-center gap-1.5 rounded-md px-2 text-2 transition-colors';
+
+// Both desktop layouts shrink tab titles before scrolling. Keep the selected tab whole when
+// its container resizes, without scrollIntoView moving any of the shell's ancestor scrollports.
+export function PanelTabList({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const reveal = useCallback(() => {
+    const list = ref.current;
+    const active = list?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+    if (!list || !active) return;
+    const box = list.getBoundingClientRect();
+    const tab = active.getBoundingClientRect();
+    if (tab.left < box.left) list.scrollLeft -= box.left - tab.left;
+    else if (tab.right > box.right) list.scrollLeft += tab.right - box.right;
+  }, []);
+  useLayoutEffect(reveal);
+  useLayoutEffect(() => {
+    const list = ref.current;
+    if (!list) return;
+    const observer = new ResizeObserver(reveal);
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, [reveal]);
+  return <div ref={ref} role="tablist" aria-label={t('panel.label')} className="flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none]">{children}</div>;
+}
 
 // A tab "+" just made sits under the pointer, its icon where the close button would show: it keeps the icon until the
 // pointer leaves it (or rests on it a second), so a double click on "+" does not close what the first click opened
@@ -222,7 +247,7 @@ export function TabButton({ label, title, icon, on, closable, guard, onSelect, o
           </span>
         )}
       </span>
-      <span className="truncate">{label}</span>
+      <span className="min-w-0 truncate">{label}</span>
     </button>
   );
 }
@@ -287,18 +312,17 @@ function ToolPanel(p: ToolPanelProps) {
       {/* The tabs on the window's title line, the line moves the window; the pinned toggle sits at its end. The first tab starts
           on the Files tree's leading edge (panel.css --tree-lead), so the tab and the filter under it line up */}
       <div data-drag-region data-panel-tabs className="flex h-hdr shrink-0 items-center gap-1 pr-[calc(var(--start-x)+var(--ctl)+var(--gap)+var(--caps-w,0px))] pl-[var(--start-x)]">
-        <div role="tablist" aria-label={t('panel.label')} className="flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none]">
+        <PanelTabList>
           {s.tabs.map(tab => {
             const Icon = TAB_ICON[tab.kind];
             const face = tab.kind === 'files' ? filesTabFace(s.views[viewKey(tab.id, p.root, p.sessionId)]) : { label: tabLabel(tab), title: tabTitle(tab) };
-            const closable = tab.id !== FILES_TAB && !(!s.files && s.tabs.length === 1 && tab.kind === 'new');
             return (
-              <TabButton key={tab.id} label={face.label} title={face.title} on={tab.id === s.tab} closable={closable} guard={fresh.guard(tab.id)}
+              <TabButton key={tab.id} label={face.label} title={face.title} on={tab.id === s.tab} closable guard={fresh.guard(tab.id)}
                 icon={className => (face.path ? <FileGlyph name={face.path} className={className} /> : <Icon strokeWidth={1.5} className={className} />)}
                 onSelect={() => panel.select(tab.id)} onClose={() => panel.close(tab.id)} />
             );
           })}
-        </div>
+        </PanelTabList>
         <IconButton title={t('panel.newTab')} aria-label={t('panel.newTab')} onClick={() => fresh.made(panel.newTab())}><Plus strokeWidth={1.5} /></IconButton>
       </div>
       <div className="relative min-h-0 flex-1">
@@ -441,9 +465,16 @@ export function useProjectFiles({ sessionId, root, running, shareSelection, show
   const file = view && view !== 'review' ? view : undefined;
   const expanded = s.expanded[root] ?? [];
   const setExpanded = useCallback((fn: (open: string[]) => string[]) => panel.setExpanded(root, fn), [root]);
-  const reveal = (path: string) => setExpanded(open => [...new Set([...open, ...ancestors(path)])]);
+  const reveal = (path: string) => {
+    const rel = projectPath(root, path);
+    if (rel !== undefined) setExpanded(open => [...new Set([...open, ...ancestors(rel)])]);
+  };
   // Shown on this Files tab (the files layout's stage), whatever tab was up
-  const open = (path: string) => { reveal(path); panel.showView(key, { path }, tab); };
+  const open = (path: string) => {
+    if (/\.plan\.md$/i.test(path)) preferMarkdownPreview();
+    reveal(path);
+    panel.showView(key, { path }, tab);
+  };
   // The base a file's changes are measured against: this session's when it edited the file, else the last commit
   const base: ProjectBase = file && changed.has(file.path) ? 'session' : 'head';
   // A folder on an SSH host: its files by their path there, as the agent's tools name them
@@ -476,12 +507,20 @@ export function useProjectFiles({ sessionId, root, running, shareSelection, show
 
 // What the viewer side shows: the session's review, or a file of the project with its changes against a base. `onClose`
 // (the tool panel's Files tab, which has no file tabs to close): a × on the viewer's bar gives the tab back to the tree
-export function ViewPane({ f, openEditor, openPlan, onClose }: { f: ProjectFiles; openEditor?: (path: string, line?: number) => void; openPlan?: (planId: string) => void; onClose?: () => void }) {
+export function ViewPane({ f, openEditor, openPlan, treeOpen, onToggleTree, onClose }: {
+  f: ProjectFiles;
+  openEditor?: (path: string, line?: number) => void;
+  openPlan?: (planId: string) => void;
+  treeOpen?: boolean;
+  onToggleTree?: () => void;
+  onClose?: () => void;
+}) {
   const { file, root } = f;
   if (f.view === 'review') {
-    return <ReviewView sessionId={f.sessionId} changes={f.changes} refresh={f.refresh} onOpen={path => { const rel = projectPath(root, path); if (rel !== undefined) f.open(rel); }} onClose={onClose} />;
+    return <ReviewView sessionId={f.sessionId} changes={f.changes} refresh={f.refresh} onOpen={path => f.open(projectPath(root, path) ?? path)} treeOpen={treeOpen} onToggleTree={onToggleTree} onClose={onClose} />;
   }
   if (!file) return null;
+  const inProject = file.text === undefined && projectPath(root, file.path) !== undefined;
   const openInEditor = file.planId && (openPlan || openEditor)
     ? (line?: number) => {
         if (line !== undefined && openEditor && /^([a-z]:)?[\\/]/i.test(file.path)) openEditor(file.path, line);
@@ -492,13 +531,16 @@ export function ViewPane({ f, openEditor, openPlan, onClose }: { f: ProjectFiles
   return (
     <FileViewer key={file.path} sessionId={f.sessionId} path={file.path} text={file.text} base={f.base}
       refresh={f.refresh} line={file.line} selection={file.selection}
-      onSelect={f.select} onSelectionText={f.liveSelection} onAdd={f.addRange} onReveal={file.text === undefined ? () => f.reveal(file.path) : undefined}
+      onSelect={f.select} onSelectionText={f.liveSelection} onAdd={f.addRange}
+      onReveal={inProject ? () => { panel.toggleTree(true); f.reveal(file.path); } : undefined}
       onOpenEditor={openInEditor}
-      onOpenLink={(target, line) => void openMarkdownLink(f, file.text === undefined ? file.path : '', target, line, openEditor)} onClose={onClose} />
+      onOpenLink={(target, line) => void openMarkdownLink(f, inProject ? file.path : '', target, line, openEditor)}
+      treeOpen={treeOpen} onToggleTree={onToggleTree} onClose={onClose} />
   );
 }
 
-// A Files tab: the viewer (a file or the session's review) beside the project's tree, or the tree alone
+// A Files tab: the viewer (a file or the session's review), with the project's tree shown when nothing is open or when
+// toggled on from the viewer's bar
 function FilesTab({ sessionId, root, running, searchFiles, openEditor, openPlan, shareSelection, shown, tab: id }: ToolPanelProps & { shown: boolean; tab: string }) {
   const s = usePanel();
   const tab = useRef<HTMLDivElement>(null);
@@ -512,11 +554,21 @@ function FilesTab({ sessionId, root, running, searchFiles, openEditor, openPlan,
     const room = element.clientWidth;
     return { min: px('--tree-min'), max: room - px('--viewer-min'), initial: clamp(room * px('--tree-share') / 100, px('--tree-min'), px('--tree-max')) };
   }, []);
-  const split = !!f.view;
+  const hasView = !!f.view;
+  const showTree = !hasView || s.treeOpen;
+  const split = hasView && s.treeOpen;
+  const closeView = () => {
+    if (s.treeOpen) panel.setView(f.key, null);
+    else panel.close(id);
+  };
   return (
     <div ref={tab} className={cn('absolute inset-0 flex', !shown && 'invisible')} data-files-tab>
-      {split && <div className="flex min-w-0 flex-1 flex-col"><ViewPane f={f} openEditor={openEditor} openPlan={openPlan} onClose={() => panel.setView(f.key, null)} /></div>}
-      <div className={cn('relative flex min-h-0 shrink-0 flex-col', dragW === undefined && 'transition-[width] duration-300 ease-[cubic-bezier(.3,.7,.2,1)]', split && 'border-l border-line')}
+      {hasView && (
+        <div className="flex min-w-0 flex-1 flex-col">
+          <ViewPane f={f} openEditor={openEditor} openPlan={openPlan} treeOpen={s.treeOpen} onToggleTree={() => panel.toggleTree()} onClose={closeView} />
+        </div>
+      )}
+      <div className={cn('relative flex min-h-0 shrink-0 flex-col', !showTree && 'hidden', dragW === undefined && 'transition-[width] duration-300 ease-[cubic-bezier(.3,.7,.2,1)]', split && 'border-l border-line')}
         style={{ width: split ? (treeW !== undefined ? `clamp(var(--tree-min), ${treeW}px, calc(100% - var(--viewer-min)))` : 'clamp(var(--tree-min), var(--tree-share), var(--tree-max))') : '100%' }}>
         {split && (
           <InspectorSplitter width={treeW} bounds={treeBounds} onDrag={setDragW}

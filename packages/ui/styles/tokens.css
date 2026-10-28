@@ -168,9 +168,10 @@
   --widget-placeholder: 120px;
   --widget-max: 900px;
   /* Sticky prompts keep one cap and scroll internally, leaving room for the reply on a small laptop screen.
-     The cap is the card's scrollport (attachments + text): five text lines, the last one under the scroll fade.
-     0.3 * --thread-h shrinks it in a very short sidebar without `[container-type:size]` invalidating the thread on every horizontal resize. */
-  --user-message-max: min(calc(5 * var(--text-1-lh)), max(calc(0.3 * var(--thread-h, 100vh)), calc(2 * var(--text-1-lh))));
+     The cap is the card's scrollport (attachments + text): five text lines, the last one under the scroll fade, and 0.3 of
+     the view in a very short sidebar. A custom property takes its var()s where it is declared, here: a thread height set on
+     the thread could not reach it, and writing one restyled the whole thread on every switch and resize */
+  --user-message-max: min(calc(5 * var(--text-1-lh)), max(calc(0.3 * 100vh), calc(2 * var(--text-1-lh))));
 
   /* Three radius levels: inline (inline code / progress bar) / control (button / Chip / menu item / row hover) / container (composer / card / overlay / code block / bubble).
      --r-xs is for tiny swatches only (legend squares) and does not follow the radius axis */
@@ -501,6 +502,12 @@
   --spacing-lead: var(--lead);
   --spacing-icon: var(--icon);
   --spacing-icon-ctl: var(--icon-ctl);
+  /* Icon button bleeds: the glyph's box, not the button, stands on the text edge beside it, at every density (a fixed
+     -mr-1.5 was right for the base --ctl only). ctl: a default IconButton; ctl-sm: a small one; bar: a menu bar's square
+     (ui/Panel.tsx), measured against the menu rows' px-2 */
+  --spacing-ctl-bleed: calc((var(--ctl) - var(--icon-ctl)) / 2);
+  --spacing-ctl-sm-bleed: calc((var(--ctl-sm) - var(--icon)) / 2);
+  --spacing-bar-bleed: calc((var(--ctl) - var(--icon)) / 2 - 8px);
   /* The check glyph inside a review row's tick box (settings/StoragePage.tsx), inset from the icon-sized box */
   --spacing-tick: calc(var(--icon) - 4px);
   --spacing-pad: var(--pad);

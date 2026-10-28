@@ -236,7 +236,7 @@ function AgentTile({ agent: a, on, last, dragging, inventory, onToggle, onOpen, 
           {a.id === BUILTIN_AGENT_ID && <span className="shrink-0">{t('settings.plugins.bundled')}</span>}
           {version && <span className="truncate font-mono tabular-nums">{version}</span>}
         </span>
-        <span data-no-drag className="-mr-1.5 flex shrink-0">
+        <span data-no-drag className="-mr-ctl-sm-bleed flex shrink-0">
           <IconButton size="sm" title={settings} aria-label={settings} aria-haspopup="dialog" aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
             onClick={onOpen} onKeyDown={onKeyDown} className="text-fg-2">
             <Settings2 strokeWidth={1.75} />

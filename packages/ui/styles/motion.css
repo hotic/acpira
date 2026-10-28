@@ -23,10 +23,11 @@
 .shimmer.truncate > .shimmer-sweep > span { display: block; overflow: hidden; text-overflow: ellipsis; }
 @keyframes acp-shimmer-window { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
 @keyframes acp-shimmer-copy { from { transform: translateX(100%); } to { transform: translateX(-100%); } }
-/* Content that replaces something in place (a prompt card ↔ its inline editor): a plain fade, the container animates its own height */
-@utility fade-in { animation: acp-fade-in var(--dur-open) ease both; }
+/* Content that replaces something in place (a prompt card ↔ its inline editor): a plain fade, the container animates its own height.
+   Entrances fill backwards (their keyframes only set the start): a forwards fill keeps the finished animation in effect */
+@utility fade-in { animation: acp-fade-in var(--dur-open) ease backwards; }
 @utility enter {
-  animation: acp-enter var(--enter-dur) cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation: acp-enter var(--enter-dur) cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
   animation-delay: calc(var(--i, 0) * var(--enter-stagger));
 }
 

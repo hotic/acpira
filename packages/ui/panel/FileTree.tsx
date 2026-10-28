@@ -10,6 +10,7 @@ import { DiffStat } from '../chat/ToolCall';
 import { nameOf as uriName } from '../chat/drafts';
 import { lastRead, project, sameRead, shellResizeIdleIn, type DirListing } from './api';
 import { FileGlyph, MARK_DOT, MARK_TEXT, buildTree, dirOf, nameOf, type MarkLookup, type TreeNode } from './files';
+import { useNearBlocks } from './nearBlocks';
 
 // The Files tab's tree, Codex-like (picked in the LAB, 2026-10-23): a filter, the session's changed files pinned over the
 // project's folders, open folders sticking under their ancestors, git marks at rest and an @ on hover. Folders are listed
@@ -100,18 +101,26 @@ function TreeRow({ node, depth, open, ctx }: { node: { name: string; path: strin
   );
 }
 
-// File rows in a large directory are chunked so off-screen files skip layout and paint while keeping exact height
+// File rows in a large directory are chunked so off-screen files skip layout and paint while keeping exact height, and a
+// block gets its rows only near the visible part of the tree (nearBlocks.ts): opening a folder of 3000 files built every
+// row at once, a quarter-second frame
 const TREE_BLOCK = 20;
 
 // The project as listed so far: a folder's rows once it was opened, loaded on demand
 function Branch({ dir, depth, ctx }: { dir: string; depth: number; ctx: BranchCtx }) {
+  const { near, watch, add } = useNearBlocks('[role="tree"]', 3);
   const listing = ctx.dirs[dir];
+  const files = listing?.entries.filter(e => !e.dir) ?? [];
+  // The open file's block always has its rows: revealing it scrolls to that row. It joins the near ones too, so opening
+  // another file never empties the block in sight
+  const activeAt = ctx.active && dirOf(ctx.active) === dir ? files.findIndex(e => e.name === nameOf(ctx.active!)) : -1;
+  const activeBlock = activeAt < 0 ? -1 : Math.floor(activeAt / TREE_BLOCK);
+  useEffect(() => { if (activeBlock >= 0) add([activeBlock]); }, [activeBlock, add]);
   if (!listing) return null;
   if (listing.error || !listing.entries.length) {
     return <div className="flex min-h-row items-center text-3 text-fg-3" style={indent(depth)}>{listing.error ? t('panel.error.other', { error: listing.error }) : t('panel.emptyFolder')}</div>;
   }
   const folders = listing.entries.filter(e => e.dir);
-  const files = listing.entries.filter(e => !e.dir);
   const fileBlocks: (typeof files)[] = [];
   for (let i = 0; i < files.length; i += TREE_BLOCK) fileBlocks.push(files.slice(i, i + TREE_BLOCK));
   return <>
@@ -126,14 +135,18 @@ function Branch({ dir, depth, ctx }: { dir: string; depth: number; ctx: BranchCt
         </div>
       );
     })}
-    {fileBlocks.map((block, bi) => (
-      <div key={`b:${bi}`} className="tree-block" style={{ '--tree-block-rows': block.length } as CSSProperties}>
-        {block.map(e => {
-          const path = dir ? `${dir}/${e.name}` : e.name;
-          return <TreeRow key={path} node={{ name: e.name, path, dir: false }} depth={depth} open={false} ctx={ctx} />;
-        })}
-      </div>
-    ))}
+    {fileBlocks.map((block, bi) => {
+      const style = { '--tree-block-rows': block.length } as CSSProperties;
+      if (!near.has(bi) && bi !== activeBlock) return <div key={`b:${bi}`} ref={watch} data-block={bi} data-pending className="tree-block" style={style} />;
+      return (
+        <div key={`b:${bi}`} className="tree-block" style={style}>
+          {block.map(e => {
+            const path = dir ? `${dir}/${e.name}` : e.name;
+            return <TreeRow key={path} node={{ name: e.name, path, dir: false }} depth={depth} open={false} ctx={ctx} />;
+          })}
+        </div>
+      );
+    })}
   </>;
 }
 
@@ -287,7 +300,7 @@ export function FileTree(p: FileTreeProps) {
     <div className="flex min-h-0 flex-1 flex-col" data-tree>
       {/* The side insets are the tool panel's when the tree sits in it (panel.css --tree-lead / --tree-trail): the filter, the
           sections and the rows share its edge lines. The filter is as tall as the panel's tabs, so the two read as one block */}
-      <div className="flex min-h-row shrink-0 items-center border-b border-line py-gap-half pl-[var(--tree-lead,var(--spacing-gap))] pr-[var(--tree-trail,var(--spacing-gap))]">
+      <div className="flex h-[calc(var(--ctl)+var(--spacing-gap))] shrink-0 items-center border-b border-line pl-[var(--tree-lead,var(--spacing-gap))] pr-[var(--tree-trail,var(--spacing-gap))]">
         <label className="flex h-ctl min-w-0 flex-1 items-center gap-1.5 rounded-md border border-line bg-chip px-2 text-2 focus-within:border-line-strong">
           <Search strokeWidth={1.5} className="size-3.5 shrink-0 text-fg-3" />
           <input value={query} onChange={e => setQuery(e.target.value)} placeholder={t('panel.filter')} spellCheck={false}
@@ -331,7 +344,7 @@ export function FileTree(p: FileTreeProps) {
         <span className="truncate">{nameOf(p.root.replace(/\\/g, '/').replace(/\/+$/, ''))}</span>
         <span className="flex-1" />
         <span className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover/section:opacity-100 focus-within:opacity-100">
-          {p.active && <IconButton size="sm" title={t('panel.locate')} aria-label={t('panel.locate')}
+          {p.active && !/^([a-z]:)?[\\/]/i.test(p.active) && <IconButton size="sm" title={t('panel.locate')} aria-label={t('panel.locate')}
             onClick={locate}><Crosshair strokeWidth={1.5} /></IconButton>}
           <IconButton size="sm" title={t('panel.collapseAll')} aria-label={t('panel.collapseAll')} onClick={() => p.setExpanded(() => [])}><ChevronsDownUp strokeWidth={1.5} /></IconButton>
         </span>
