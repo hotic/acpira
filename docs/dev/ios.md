@@ -13,7 +13,7 @@
   - `AcpiraFixtures`: the synthetic sessions (`synthetic/*.json`) that the app and the LAB reference page both render, written by `lab/ios-fixtures.gen.ts` (local only); the card fixtures after `empty` in `Fixtures.sessionNames` are hand-written. `clock.json` is the fixtures' "now": the app reads it through `\.now` and runs on from it (`\.clockOffset`), so a fixture's running turn must start before it.
   - `AcpiraUI`: screens and components, main-actor by default. `Logic/` ports the webview's pure logic under the TypeScript names; `Prose/` holds the Markdown views, the math typesetter and the mermaid flowchart port.
   - `AcpiraKitTests`: `ContractTests` pins the Swift mirrors to the TypeScript sources by reading them from the repository. It is skipped where the tree is unreadable; the iOS simulator can read it.
-- Generated and committed, each with a drift test under `test/ios-*.test.ts`: the Lucide icons, the KaTeX metrics and fonts, the i18n tables, the remend cases and the shiki bundle (`scripts/export/ios-*.ts`). Rerun the export after bumping its source package.
+- Generated and committed, each with a drift test under `test/ios-*.test.ts`: the Lucide icons, the KaTeX metrics and fonts, the i18n tables, the remend cases, the shiki bundle, and the mermaid and Tailwind runtimes the web views load (`Resources/web`) (`scripts/export/ios-*.ts`). Rerun the export after bumping its source package.
 - `Fixtures/local/` (git-ignored) holds fixtures exported from real sessions; only synthetic ones are committed.
 
 ## Rules
@@ -42,14 +42,16 @@
 
 ## Screens
 
-- `RootView` holds the session list in a `NavigationStack` (`Route`: chat, new session). Settings is a sheet outside the root's `.id(locale)`, so a language picked in it rebuilds the screens under it without dismissing it. A language switch calls `L10n.setLocale` before storing the choice. The path lives in the model, so the reader stays on the same screen.
+- `RootView` holds the session list in a `NavigationStack` (`Route`: chat, new session, changes, file, terminal). Settings is a sheet outside the root's `.id(locale)`, so a language picked in it rebuilds the screens under it without dismissing it. A language switch calls `L10n.setLocale` before storing the choice. The path lives in the model, so the reader stays on the same screen.
 - Session list:
   - There is no navigation bar. The large title is the first row with settings at its end, and search and new session sit on the system bottom bar.
   - Two views sit under the title (`Prefs.listView`). By time: pinned sessions, then day captions. By project: pinned sessions, then projects that fold open in place with their own pins first, the latest few, then "N more".
   - Rows keep one fact per block: the mark, the title with the time (unless a caption dates the row), the place, and the state's mark alone in a trailing column.
   - `StateMark` ports the desktop's marks and motion. The working ring keeps turning with motion off.
   - The project pin and the in-project pin are `AppModel` stand-ins. They go once the list follows the desktop's single pin plus a display option.
-- Chat: the system bar holds back, new session and the "…" menu (account, pin, rename, exports, subagent graph when the session has children, terminal, settings, delete), with no title. Settings from the menu raises the same sheet as the list.
+- Chat: the system bar holds back, new session and the "…" menu (account, changes, pin, rename, copy, move to project, exports, subagent graph when the session has children, terminal, settings, delete), with no title. Settings from the menu raises the same sheet as the list.
+- Links (`AppModel+Links.swift`): a reply's file paths (link targets and code spans, `fileLinks.ts`'s rules) become `acpira-file:` links that push the file page at the line; `acpira://session/…` and the shells' forms open that chat. Links from outside arrive through the `acpira` scheme the pairing's `Acpira-Info.plist` registers. Every other link goes to the system.
+- Review (`Files/`): read-only. The changes page lists `sessionChanges`; the file page shows `projectFile` with its hunks inline and steps between them. Both are seq requests that time out rather than wait. The demo builds both from the fixture's diffs, falling back to the call's target where a diff has no source.
 - Subagents (`Subagents/`) are pushed pages over their chat: the inspector (`Route.subagent`) and the graph (`Route.subagents`).
   - The inspector is read-only, driven by `\.subagentTranscript`: no composer, turn actions (so no copy or stats either), quoting or failure remedies, and the Working row leads with a static mark. Only the child's own cards act, answered through the parent session. "Request stop" in its "…" menu appears only while the agent allows cancel.
   - The engine answers `observeSubagent` only once its view shows the session; an earlier observe is never answered later. The page therefore observes once the parent's view is here, not on appear.
@@ -58,7 +60,9 @@
   - A turn shows its top-level children only, so a grandchild is reached from the graph alone. The graph indents instead of the web's elbow lines.
 - Terminal (`Terminal/`): one engine terminal per project (`phone:<cwd>`), its pty on the Mac. Opening, acks, replay, detaching when the page goes and kill follow the desktop's `terminals.ts`; `TerminalSession` holds that logic free of UIKit. The demo has no shell and shows the engine-needed toast.
 - New session: the hero sits at `Metrics.heroRise`, the optical centre, and makes both choices. The agent's bare mark grows a Liquid Glass drop that buds the other agents as a ring (`AgentRing`); the folder is a glass capsule `Menu`. The composer lies over the page bottom, so its growth never moves the hero.
-- Settings (`Settings/SettingsScreen.swift`) is a system `Form`: theme, motion and language as menu pickers, then engine status and version. `Prefs` keys live in UserDefaults; launch arguments override them for screenshots. Switches use the system green, not the muted `--ok`.
+- Settings (`Settings/SettingsScreen.swift`) is a system `Form`: theme, motion and language as menu pickers, the engine's settings, then engine status and version. `Prefs` keys live in UserDefaults; launch arguments override them for screenshots. Switches use the system green, not the muted `--ok`.
+  - The engine's settings (`EngineSettings.swift`) are written through the engine and shared with the computer: agent switches, order and default, how sessions run, and per agent Plan-mode approval and model visibility. Keys, model sources and MCP stay on the computer, so a lost phone exposes no credentials.
+  - Hidden model families (`hiddenOptions`) thin the model chip's lists as `visibleOptions` does on the desktop; the model in use always stays.
 - The account sheet is a system sheet with a `Form`, with the agent's name as the bar's subtitle.
 - The toast is a `.regular` Liquid Glass capsule dropped below the navigation bar. Over the bar it showed the bar's buttons through it.
 - `Design/TopFade.swift` draws a progressive blur where content scrolls under the bar's glass buttons. The system's own edge effect reaches only the status bar's band, so it is hidden. The blur is stacked materials under a page-colour gradient, because the materials' own tint reads as a grey band. The list's band stops at the bar so the title is never veiled at rest.
@@ -108,6 +112,11 @@
 
   Leads are marked by preference rather than environment, because `Group(subviews:)` subviews keep the environment they were built in.
 - Code cards stop at `--code-output-max`, do not scroll inside the transcript, fade at the cut, and open whole in `CodeSheet` on a tap.
+- A diff's copy follows CodeBlock.tsx: the whole new file, else the visible new code without signs. A view that left the files out carries the path only, so the copy asks `diffSource` by `DiffLocation` (tool call, nth diff) at the tap.
+- Web content (`Web/`): a `show_widget` page and any mermaid diagram the native flowchart port cannot read run in a `WKWebView` with the vendored runtimes; a diagram mermaid also rejects stays source.
+  - Tailwind is injected at document end: its script appends to `document.head`, which does not exist at document start.
+  - The theme switches by script (`WidgetDoc.theme`), never by reloading: a reload on a scheme change left the page blank.
+  - A widget holds `widgetPlaceholder` until its page reports a height and scrolls inside past `widgetMax`.
 - The failure card and the session card read top to bottom: what happened and ✕ (or retry), the agent's words, then copy at the start and the way on at the end. The copy label drops the code and kind, and then the ways drop to a second row, before anything overflows the card.
 - Sign-in and unlocking the credential store happen on the computer, so the session card says so. It offers only what the engine does without a terminal there: an auth method with no `terminal`, `retry`, `takeOverSession`, a new session.
 - A saved plan's card shows its opening, faded at a cap; the whole plan opens in `CodeSheet`, since a scroll view nested in the thread fights the thread's own scrolling. The executor is picked on the card and only sent with Build. While its approval waits, the composer's send answers the revise option, then sends the words.
@@ -146,7 +155,7 @@
   - The scripts use their own device ("Acpira Scripts"), never the one a person keeps open, because a shot relaunches the app with its own arguments. Do not create more devices.
   - With a hardware keyboard attached, the software keyboard is minimised. `defaults write com.apple.keyboard.preferences AutomaticMinimizationEnabled -bool false` (run through `simctl spawn`) brings it back.
 - Launch arguments:
-  - `-fixture`, `-theme`, `-motion none`, `-locale`, `-screen list|chat|new|settings`, `-acpira.listView project`.
+  - `-fixture`, `-theme`, `-motion none`, `-locale`, `-screen list|chat|new|settings|changes|file`, `-settingsPage agents|agent:ID|models:ID`, `-acpira.listView project`.
   - `-popup NAME` opens something on launch: `attach`, `model`, `model.N` (bean N's panel), a `focus.` prefix (field focused first), `demo` (every liquid transition in turn), `ring` and `ring.pick`, `account`, `toast`, `code`, `lightbox` (the chat's first image), `fold:N`, and `plan.build` / `plan.build.model` / `plan.revise` (the first plan card that can build presses Build, builds on the last model family, or sends a revision), `edit` (the newest typed prompt in the editing composer) and `stats` (the newest reply's statistics card). Debug builds also take `menu:X,Y`, which opens the system menu under that point through UIKit's private `_presentMenuAtLocation:`.
   - `-prompt TEXT` sends a prompt on launch and gets the demo reply. `-draft TEXT` pre-fills the composer.
   - The composer's `-popup` names: `attach.N` (bean N of `+`), `attach.paste` (the paste bean without an image on the pasteboard), `context` (the ring's card), `quotes` (the staged quotes' card).
@@ -159,6 +168,7 @@
   - Query: `f`, `ui` / `code` (match the transcript at 17 / 14), `light`, `drawer`, `open`, `measure`.
   - Shoot it 402 wide at @2x, and the transcript 422 wide: the web page margin is 10 pt wider on each side.
 - The scripts default `DEVELOPER_DIR` to Xcode, because the Command Line Tools have no iOS SDK.
+- CI (`.github/workflows/ios.yml`) runs `check.sh` on the newest Xcode 27 with `ACPIRA_NET=0`. Signing and TestFlight uploads stay local, so CI holds no signing secrets.
 
 ## Platform behaviour
 
@@ -180,6 +190,7 @@ The harness wire (`acpira --ws`, `sidecar/ws.rs`):
 - URLSessionWebSocketTask caps a message at 1 MiB by default (Apple's documentation; not measured), below a long session's `init`; the transport raises it to the engine's own 64 MiB cap.
 - Every connection is its own attached engine on the shared home: hello's agent settings are ignored (the home's `agents.json` decides), and its agents end with the connection.
 - The phone attaches `{empty: true}`, which never opens or starts a session; `{mostRecent}` on an empty home starts one for the default agent.
+- A hello on another protocol version is rejected with the engine's own version, so the app names the older side to update instead of a bare disconnect.
 
 Text layout against Chrome:
 
@@ -202,6 +213,8 @@ SwiftUI traps:
 - A `Group` with empty content is no view, so modifiers on it never run. `StreamProse` holds a zero-height view until its first characters arrive.
 - A `.task` loop that copies state before `Task.sleep` and writes it back afterwards overwrites whatever `.onChange` stored meanwhile.
 - `ImageRenderer` draws preference-driven rails the same as the live screen.
+- `ViewThatFits` with two `ForEach` children keyed by offset (ids repeating across them) trips `SizeFittingState`'s precondition: a crash on the device, not in `ImageRenderer` or `swift test`. Its candidates go through one `ForEach` with unique ids and a plain last child (`CardActions`).
+- A public type named `Observation` in a module the app imports shadows the Observation module inside the `@Observable` expansion, and `AppModel` loses its conformance. Hence `ObservationState`.
 - A `Row`'s trailing slot is `fixedSize`: text there never truncates, so a long trailing pushes the row, and with it the whole turn, past the screen's edge.
 - A compact-adapted popover sizes itself from its content's ideal size, measured unwrapped: a card whose labels wrap needs a set width, or its last lines are clipped.
 - `contentShape(.contextMenuPreview, _:)` is unavailable on macOS, where `swift test` builds it.
