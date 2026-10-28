@@ -28,6 +28,12 @@ export interface WebviewBridgeOpts {
   onFocus?: (bridge: WebviewBridge) => void;
   // Whether the user can see this webview right now (its panel or sidebar is shown), for the attention check
   visible?: () => boolean;
+  // The first run: the data folder as the consent card names it while it does not exist (no engine runs until it does)
+  firstRun?: () => string | undefined;
+  // The consent card's yes (createDataHome): the folder, then the engine; rejects with why the folder could not be made
+  createHome?: () => Promise<void>;
+  // Settings' interface tour, played in a tab of its own (openTour)
+  openTour?: () => void;
   log?: (line: string) => void;
 }
 
@@ -72,6 +78,15 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
     this.disposables.push(webview.onDidReceiveMessage((m: WebviewMsg) => {
       if (m.type === 'viewFocus') { opts.onFocus?.(this); return; }
       if (m.type === 'probeResult') { this.probes.get(m.id)?.({ ok: m.ok, error: m.error }); return; }
+      // The first-run flow and the tour are the shell's: the first runs before any engine, the tour never needs one. VS
+      // Code's first run shows only the consent card, so the agent row's question (detectAgents) goes unanswered
+      if (m.type === 'createDataHome') {
+        // Straight to the page, which listens though no init came
+        opts.createHome?.().catch((e: unknown) => this.outbox.push({ type: 'firstRunError', error: e instanceof Error ? e.message : String(e) }));
+        return;
+      }
+      if (m.type === 'openTour') { opts.openTour?.(); return; }
+      if (m.type === 'detectAgents' || m.type === 'tourDone') return;
       opts.client.send(this.viewId, m);
     }));
     this.detach = opts.client.attach(this);
@@ -126,29 +141,52 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
     this.initialized = true;
   }
 
+  // Built at each load: a page loaded after the first run's yes no longer starts the flow
   private html(): string {
-    const dist = vscode.Uri.joinPath(this.opts.extensionUri, 'dist', 'webview');
-    const js = this.webview.asWebviewUri(vscode.Uri.joinPath(dist, 'main.js'));
-    const css = this.webview.asWebviewUri(vscode.Uri.joinPath(dist, 'main.css'));
-    const nonce = randomBytes(16).toString('base64url');
-    // The page requests its UI face before init arrives (webview/fontPreload.ts); validated like the engine's appearance,
-    // so only one of the axis' values reaches the inline script
-    const font = appearanceFromSettings(key => this.opts.setting(`appearance.${key}`)).font;
-    const csp = [
-      "default-src 'none'",
-      `img-src ${this.webview.cspSource} https: data:`,
-      // Attachment text blobs are fetched for the peek card from the same source the <img> tags already load them from;
-      // loopback pages are probed before open_browser shows them (probeUrl)
-      `connect-src ${this.webview.cspSource} http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*`,
-      `style-src ${this.webview.cspSource} 'unsafe-inline'`,
-      `font-src ${this.webview.cspSource}`,
-      `script-src 'nonce-${nonce}' 'wasm-unsafe-eval'`,
-      "worker-src blob:",
-      // The attention chime is a WAV synthesized in the page and played from a blob: URL (effects/chime.ts)
-      "media-src blob:",
-    ].join('; ');
-    return `<!doctype html>
-<html lang="${this.opts.locale()}">
+    const home = this.opts.firstRun?.();
+    return chatPageHtml(this.webview, this.opts.extensionUri, this.opts.locale(), {
+      host: this.host,
+      font: pageFont(this.opts.setting),
+      sessionLinkBase: this.opts.sessionLinkBase,
+      ...(home === undefined ? {} : { firstRun: { home, locale: this.opts.locale() } }),
+      ...(this.opts.openTour ? { opensTour: true } : {}),
+    });
+  }
+
+  dispose() {
+    for (const done of [...this.probes.values()]) done(undefined);
+    for (const d of this.disposables) d.dispose();
+    this.detach();
+  }
+}
+
+// The page requests its UI face before init arrives (webview/fontPreload.ts); validated like the engine's appearance, so
+// only one of the axis' values reaches the inline script
+export function pageFont(setting: (key: string) => unknown) {
+  return appearanceFromSettings(key => setting(`appearance.${key}`)).font;
+}
+
+// The chat bundle's page: CSP, bundle URIs and the boot config the page reads as window.__acpira (App.tsx)
+export function chatPageHtml(webview: vscode.Webview, extensionUri: vscode.Uri, lang: string, config: Record<string, unknown>): string {
+  const dist = vscode.Uri.joinPath(extensionUri, 'dist', 'webview');
+  const js = webview.asWebviewUri(vscode.Uri.joinPath(dist, 'main.js'));
+  const css = webview.asWebviewUri(vscode.Uri.joinPath(dist, 'main.css'));
+  const nonce = randomBytes(16).toString('base64url');
+  const csp = [
+    "default-src 'none'",
+    `img-src ${webview.cspSource} https: data:`,
+    // Attachment text blobs are fetched for the peek card from the same source the <img> tags already load them from;
+    // loopback pages are probed before open_browser shows them (probeUrl)
+    `connect-src ${webview.cspSource} http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*`,
+    `style-src ${webview.cspSource} 'unsafe-inline'`,
+    `font-src ${webview.cspSource}`,
+    `script-src 'nonce-${nonce}' 'wasm-unsafe-eval'`,
+    "worker-src blob:",
+    // The attention chime is a WAV synthesized in the page and played from a blob: URL (effects/chime.ts)
+    "media-src blob:",
+  ].join('; ');
+  return `<!doctype html>
+<html lang="${lang}">
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
@@ -158,17 +196,23 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
 </head>
 <body>
 <div id="root"></div>
-<script nonce="${nonce}">window.__acpira={host:${JSON.stringify(this.host)},font:${JSON.stringify(font)},sessionLinkBase:${JSON.stringify(this.opts.sessionLinkBase)}}</script>
+<script nonce="${nonce}">window.__acpira=${JSON.stringify(config).replace(/</g, '\\u003c')}</script>
 <script type="module" nonce="${nonce}" src="${js}"></script>
 </body>
 </html>`;
-  }
+}
 
-  dispose() {
-    for (const done of [...this.probes.values()]) done(undefined);
-    for (const d of this.disposables) d.dispose();
-    this.detach();
-  }
+// Settings' interface tour in a tab of its own, the sidebar being too narrow for it: the chat bundle over its sample
+// session (`tourPage`), with no view in the engine. The page closes the tab when the tour ends (tourDone)
+export function openTourPanel(extensionUri: vscode.Uri, locale: string, font: unknown): vscode.WebviewPanel {
+  const panel = vscode.window.createWebviewPanel('acpira.tour', t('welcome.replay.title'), vscode.ViewColumn.Active, {
+    enableScripts: true,
+    localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'dist', 'webview')],
+  });
+  panel.iconPath = { light: vscode.Uri.joinPath(extensionUri, 'media', 'icon-light.svg'), dark: vscode.Uri.joinPath(extensionUri, 'media', 'icon.svg') };
+  panel.webview.html = chatPageHtml(panel.webview, extensionUri, locale, { host: 'editor', font, tourPage: { locale } });
+  panel.webview.onDidReceiveMessage((m: WebviewMsg) => { if (m.type === 'tourDone') panel.dispose(); });
+  return panel;
 }
 
 export interface BrowserPanelOpts {

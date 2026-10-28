@@ -111,7 +111,8 @@ async function main() {
     const linuxEngine = prefix => join(prefix, 'libexec', 'acpira', 'acpira-engine');
     const agentsBin = engine ?? (basename(bin) === 'AppRun' ? linuxEngine(join(dirname(bin), 'usr')) : LINUX ? linuxEngine(dirname(dirname(bin))) : join(dirname(bin), 'acpira-engine'));
 
-    for (const d of [home, data, user, alpha, beta, ...(shotDir ? [shotDir] : [])]) mkdirSync(d, { recursive: true });
+    // No data folder: the run starts as a first launch, whose consent card creates it
+    for (const d of [home, user, alpha, beta, ...(shotDir ? [shotDir] : [])]) mkdirSync(d, { recursive: true });
     for (const [dir, file] of [[alpha, 'alpha-notes.md'], [beta, 'beta-notes.md']]) {
       execFileSync('git', ['init', '-q', dir]);
       writeFileSync(join(dir, file), `# ${file}\n`);
@@ -162,6 +163,22 @@ async function main() {
     await page.waitFor('the chat page', `!!document.querySelector('.acp-shell')`);
     const origin = await page.eval('location.protocol + "//" + location.host + " " + isSecureContext + " " + history.length');
     if (origin !== `${ORIGIN} true 1`) fail(`the page runs on ${origin} (expected ${ORIGIN}, a secure context, no back entry)`);
+
+    // First launch: no engine runs (it would create the folder), the intro lists what `agents --json` found, and the
+    // consent card's yes creates the folder, private to the user, then starts the engine, whose init swaps the sample
+    // shell for the real one
+    await page.waitFor('the first-run intro', `!!document.querySelector('.wl-intro[data-open]')`);
+    const firstRun = await page.eval('JSON.stringify(window.__acpira.firstRun)');
+    if (firstRun !== JSON.stringify({ home: data, locale: 'en' })) fail(`the first-run page says ${firstRun}`);
+    await page.waitFor('the intro\'s agent row', `!!document.querySelector('.wl-agent, .wl-none')`);
+    if (existsSync(data)) fail('the data folder exists before the consent card');
+    await page.click('the intro\'s skip', `document.querySelector('.wl-intro .wl-quiet')`);
+    await page.waitFor('the consent card', `!!document.querySelector('.wl-center[data-open]')`);
+    await page.press('the create button', `[...document.querySelectorAll('.wl-center button')].find(b => b.innerText.includes('Create and start'))`);
+    await waitUntil('the data folder', () => existsSync(data), 10_000);
+    if (!WIN && (statSync(data).mode & 0o777) !== 0o700) fail(`the data folder has mode ${(statSync(data).mode & 0o777).toString(8)}`);
+    await page.waitFor('the first-run layer to go', `!document.querySelector('.wl-layer') && !document.querySelector('[data-sample-shell]')`);
+    say('first launch: intro with no engine, the data folder created on consent, then the real shell');
 
     await page.waitFor('the empty state', `document.body.innerText.includes('Open a folder to start')`);
     await sleep(1000);

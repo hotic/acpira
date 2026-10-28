@@ -13,7 +13,8 @@ use acpira_desktop::client::{ClientOpts, HelloPayload, ShellView, SidecarClient,
 use acpira_desktop::context_api::{ContextPayloadError, ContextSlots, add_context_msg, page_owner, parse_context_payload};
 use acpira_desktop::editors::{Editor, FileTarget};
 use acpira_desktop::locator::{LocateOpts, SidecarCommand, sidecar_commands};
-use acpira_desktop::page::APP_ORIGIN;
+use acpira_desktop::first_run;
+use acpira_desktop::page::{APP_ORIGIN, FirstRunPage};
 use acpira_desktop::platform::{CAPABILITIES, Platform, handle_request, hello_settings, system};
 use acpira_desktop::settings::SettingsStore;
 use acpira_desktop::shared_settings::SharedSettingsFile;
@@ -199,6 +200,20 @@ pub struct App {
   page_menu: Mutex<Option<Value>>,
   /// When each page's WebContent process last ended (page_process_ended), by window label
   page_ended: Mutex<HashMap<String, Instant>>,
+  /// The data folder was missing at launch and the user has not said yes yet (acpira_desktop::first_run): no engine runs
+  first_run: AtomicBool,
+  /// The login shell's environment is in, so a yes starts the engine at once
+  env_ready: AtomicBool,
+  /// The first-run intro's agent row
+  detection: Mutex<Detection>,
+}
+
+/// What the first-run probe found, or the windows waiting for it
+enum Detection {
+  Running(Vec<Arc<ChatWindow>>),
+  Found(Value),
+  /// Logged; the intro leaves its row empty rather than claim nothing was found
+  Failed,
 }
 
 pub fn log(line: &str) {
@@ -228,6 +243,7 @@ impl App {
     let windows_state = window_store.read();
     let log_file = paths.logs.join("desktop.log");
     let background = std::env::var("ACPIRA_DESKTOP_BACKGROUND").as_deref() == Ok("1");
+    let first_run = !paths.data_home.exists();
     let app = Arc::new(App {
       handle,
       paths,
@@ -255,6 +271,9 @@ impl App {
       update_phase: Mutex::new(Phase::Idle),
       page_menu: Mutex::new(None),
       page_ended: Mutex::new(HashMap::new()),
+      first_run: AtomicBool::new(first_run),
+      env_ready: AtomicBool::new(false),
+      detection: Mutex::new(Detection::Running(vec![])),
     });
     let _ = APP.set(app.clone());
     app.register_links();
@@ -424,21 +443,8 @@ impl App {
   }
 
   fn make_client(self: &Arc<Self>) -> SidecarClient {
-    let engines = self.paths.engines.clone();
     let data_home = self.paths.data_home.clone();
-    let commands = move || {
-      let over = std::env::var("ACPIRA_SIDECAR_BIN").ok();
-      let env = app().login_env.lock().clone().unwrap_or_default();
-      sidecar_commands(&LocateOpts { candidates: &engines, override_bin: over.as_deref() })
-        .into_iter()
-        .map(|mut c: SidecarCommand| {
-          let mut merged: std::collections::BTreeMap<String, String> = env.clone().into_iter().collect();
-          merged.extend(std::mem::take(&mut c.env));
-          c.env = merged;
-          c
-        })
-        .collect()
-    };
+    let commands = || app().engine_commands();
     let hello = || {
       let a = app();
       let paths = acpira_desktop::vscode_settings::ide_settings_paths(
@@ -524,14 +530,105 @@ impl App {
     });
   }
 
-  /// The login shell's environment (read off the main thread while the first window loads), then the engine
+  /// The engine binaries in preference order, each with the login shell's environment under its own
+  fn engine_commands(&self) -> Vec<SidecarCommand> {
+    let over = std::env::var("ACPIRA_SIDECAR_BIN").ok();
+    let env = self.login_env.lock().clone().unwrap_or_default();
+    sidecar_commands(&LocateOpts { candidates: &self.paths.engines, override_bin: over.as_deref() })
+      .into_iter()
+      .map(|mut c: SidecarCommand| {
+        let mut merged: std::collections::BTreeMap<String, String> = env.clone().into_iter().collect();
+        merged.extend(std::mem::take(&mut c.env));
+        c.env = merged;
+        c
+      })
+      .collect()
+  }
+
+  /// The login shell's environment (read off the main thread while the first window loads), then the engine. On a first
+  /// run the engine waits for the user's yes (create_data_home), which would create the data folder; meanwhile the
+  /// engine binary only lists the CLIs it finds, for the intro
   pub fn start_engine(self: &Arc<Self>) {
     std::thread::spawn(|| {
       let env = acpira_desktop::login_env::resolve_login_env(&log, None);
       let a = app();
       *a.login_env.lock() = env;
-      a.client().start();
+      // Paired with create_data_home's store then load: whichever runs second sees the other's write and starts the
+      // engine (both may; a second start is a no-op)
+      a.env_ready.store(true, Ordering::SeqCst);
+      if !a.first_run.load(Ordering::SeqCst) {
+        a.client().start();
+        return;
+      }
+      log("first run: no data folder, the engine waits for consent");
+      a.probe_agents();
     });
+  }
+
+  /// The page's data, when the first-run flow is on: the folder as the consent card names it and the language to use
+  pub fn first_run_page(&self) -> Option<FirstRunPage> {
+    if !self.first_run.load(Ordering::SeqCst) {
+      return None;
+    }
+    let home = first_run::display_home(&self.paths.data_home, &self.paths.home, cfg!(unix));
+    Some(FirstRunPage { home, locale: self.locale().tag().to_owned() })
+  }
+
+  /// Runs `acpira agents --json` and answers the windows that asked meanwhile
+  fn probe_agents(&self) {
+    let found = match self.engine_commands().first() {
+      Some(engine) => first_run::probe_agents(engine),
+      None => Err("no engine binary".into()),
+    };
+    let next = match found {
+      Ok(agents) => Detection::Found(json!(agents)),
+      Err(e) => {
+        log(&format!("first run: no agent list: {e}"));
+        Detection::Failed
+      }
+    };
+    let waiting = match std::mem::replace(&mut *self.detection.lock(), next) {
+      Detection::Running(w) => w,
+      _ => vec![],
+    };
+    for w in waiting {
+      self.detect_agents(&w);
+    }
+  }
+
+  /// A first-run page asks which CLIs this machine has (detectAgents): answered now, or once the probe is done
+  pub fn detect_agents(&self, w: &Arc<ChatWindow>) {
+    let agents = {
+      let mut d = self.detection.lock();
+      match &mut *d {
+        Detection::Running(waiting) => {
+          waiting.push(w.clone());
+          return;
+        }
+        Detection::Found(agents) => agents.clone(),
+        Detection::Failed => return,
+      }
+    };
+    w.post_now(json!({ "type": "detectedAgents", "agents": agents }));
+  }
+
+  /// The consent card's yes (createDataHome): the folder, then the engine, whose init swaps the page's sample shell for
+  /// the real one. Every window waits on the same engine, so a yes in one ends the flow in all
+  pub fn create_data_home(&self, w: &Arc<ChatWindow>) {
+    if !self.first_run.load(Ordering::SeqCst) {
+      return;
+    }
+    if let Err(e) = first_run::create_home(&self.paths.data_home) {
+      log(&format!("first run: creating {} failed: {e}", self.paths.data_home.display()));
+      w.post_now(json!({ "type": "firstRunError", "error": e.to_string() }));
+      return;
+    }
+    log(&format!("first run: created {}", self.paths.data_home.display()));
+    self.first_run.store(false, Ordering::SeqCst);
+    if self.env_ready.load(Ordering::SeqCst) {
+      // Off the page's message callback: starting may spawn and connect to the engine
+      std::thread::spawn(|| app().client().start());
+    }
   }
 
   pub fn windows(&self) -> Vec<Arc<ChatWindow>> {
@@ -1157,6 +1254,10 @@ impl App {
   /// way in an engine that had failed is started again
   pub fn toggle_safe_mode(self: &Arc<Self>) {
     let a = self.clone();
+    // Safe mode is a file in the data folder, which a first run has not been allowed to create yet
+    if a.first_run.load(Ordering::SeqCst) {
+      return;
+    }
     std::thread::spawn(move || {
       let home = a.paths.data_home.clone();
       let on = !acpira_desktop::safe_mode::is_on(&home);

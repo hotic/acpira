@@ -1,6 +1,6 @@
 import { access, chmod, copyFile, cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { accountSecretKey, type SecretVault } from '../accounts/AccountStore';
 import { msg } from '../errors';
 
@@ -13,6 +13,15 @@ export function acpiraHome(env: NodeJS.ProcessEnv = process.env, home = homedir(
   const override = env.ACPIRA_HOME?.trim();
   if (override) return resolve(override);
   return join(home, '.acpira');
+}
+
+// The folder as the first run's consent card names it: `~/…` under the user's home where a shell spells it so, the full
+// path otherwise (Windows, a folder elsewhere). The desktop app's twin is acpira_desktop::first_run::display_home
+export function displayHome(dir: string, home = homedir(), unix = process.platform !== 'win32'): string {
+  if (!unix) return dir;
+  const rel = relative(home, dir);
+  if (rel === '') return '~';
+  return rel.startsWith('..') || isAbsolute(rel) ? dir : `~/${rel}`;
 }
 
 export interface MigrateOnceOpts {

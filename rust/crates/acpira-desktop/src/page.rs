@@ -151,6 +151,15 @@ pub struct PageConfig {
   /// A browser tab of a chat window's tool panel (host browser in a frame): the page talks through its parent
   /// (webview/panel/browserTabs.ts), there being no shell transport in a frame
   pub tab: Option<String>,
+  /// The data folder is missing and no engine runs: the page starts the first-run flow (first_run.rs)
+  pub first_run: Option<FirstRunPage>,
+}
+
+/// What the first-run flow needs before any engine: the folder as the consent card names it, and the language to speak
+#[derive(Debug, Clone)]
+pub struct FirstRunPage {
+  pub home: String,
+  pub locale: String,
 }
 
 fn escape_attr(s: &str) -> String {
@@ -193,6 +202,9 @@ pub fn page_html_on(c: &PageConfig, origin: &str, platform: &str) -> String {
   let mut config = json!({ "host": c.host.as_str(), "sessionLinkBase": SESSION_LINK_BASE, "shell": "desktop", "platform": platform });
   if let Some(f) = &c.font {
     config["font"] = json!(f);
+  }
+  if let Some(f) = &c.first_run {
+    config["firstRun"] = json!({ "home": f.home, "locale": f.locale });
   }
   let mut boot = format!("window.__acpira={}", script_json(&config));
   if let Some(tab) = &c.tab {
@@ -321,28 +333,37 @@ mod tests {
 
   #[test]
   fn the_page_carries_the_config_a_nonce_and_a_csp_for_its_host() {
-    let html = page_html(&PageConfig { host: PageHost::Editor, locale: "zh-CN".into(), dark: true, font: Some("inter".into()), tab: None });
+    let html = page_html(&PageConfig { host: PageHost::Editor, locale: "zh-CN".into(), dark: true, font: Some("inter".into()), tab: None, first_run: None });
     assert!(html.contains(r#"<html lang="zh-CN">"#));
     assert!(html.contains(r#"<body class="vscode-dark">"#));
     assert!(html.contains(&format!(
-      r#"window.__acpira={{"host":"editor","sessionLinkBase":"acpira://session/","shell":"desktop","platform":"{PLATFORM}","font":"inter"}}"#
+      r#"window.__acpira={{"host":"editor","sessionLinkBase":"acpira://session/","shell":"desktop","platform":"{PLATFORM}","fileBase":"{APP_ORIGIN}/file","font":"inter"}}"#
     )));
-    let mac = page_html_on(&PageConfig { host: PageHost::Editor, locale: "en".into(), dark: true, font: None, tab: None }, app_origin(false), "mac");
+    let mac = page_html_on(&PageConfig { host: PageHost::Editor, locale: "en".into(), dark: true, font: None, tab: None, first_run: None }, app_origin(false), "mac");
     assert!(mac.contains("frame-src acpira-app:") && mac.contains("connect-src acpira-app: ipc: http://ipc.localhost"));
     assert!(mac.contains(r#"src="acpira-app://localhost/webview/main.js""#));
     // WebView2: the bundle comes from the http origin wry maps the scheme to
-    let win = page_html_on(&PageConfig { host: PageHost::Editor, locale: "en".into(), dark: true, font: None, tab: None }, app_origin(true), "win");
+    let win = page_html_on(&PageConfig { host: PageHost::Editor, locale: "en".into(), dark: true, font: None, tab: None, first_run: None }, app_origin(true), "win");
     assert!(win.contains("frame-src http://acpira-app.localhost\"") && win.contains("img-src http://acpira-app.localhost https: data:"));
     assert!(win.contains(r#"href="http://acpira-app.localhost/webview/main.css""#) && win.contains(r#""platform":"win""#));
     let nonce = html.split("'nonce-").nth(1).unwrap().split('\'').next().unwrap();
     assert_eq!(html.matches(&format!(r#"nonce="{nonce}""#)).count(), 2);
-    let tab = page_html(&PageConfig { host: PageHost::Browser, locale: "en".into(), dark: false, font: None, tab: Some("t-1".into()) });
+    let tab = page_html(&PageConfig { host: PageHost::Browser, locale: "en".into(), dark: false, font: None, tab: Some("t-1".into()), first_run: None });
     assert!(tab.contains(r#"window.__acpiraApi=parent.__acpiraBrowserTab("t-1")"#));
     assert!(tab.contains("frame-src http://127.0.0.1:* http://localhost:*") && tab.contains("vscode-light"));
     // A font name cannot close the script
     let evil =
-      page_html(&PageConfig { host: PageHost::Editor, locale: "en\"><x".into(), dark: false, font: Some("</script>".into()), tab: None });
+      page_html(&PageConfig { host: PageHost::Editor, locale: "en\"><x".into(), dark: false, font: Some("</script>".into()), tab: None, first_run: None });
     assert!(!evil.contains("</script><") && evil.contains(r#"lang="en&quot;>&lt;x""#));
+    let first = page_html(&PageConfig {
+      host: PageHost::Editor,
+      locale: "en".into(),
+      dark: true,
+      font: None,
+      tab: None,
+      first_run: Some(FirstRunPage { home: "~/.acpira</script>".into(), locale: "zh-CN".into() }),
+    });
+    assert!(first.contains(r#""firstRun":{"home":"~/.acpira\u003c/script>","locale":"zh-CN"}"#));
   }
 
   #[test]

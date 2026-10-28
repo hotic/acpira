@@ -1,0 +1,199 @@
+/* The first-run flow and the interface tour (welcome/Welcome.tsx): a fixed sheet over the window, beside the shell rather
+   than inside it, so the sample shell under it can give way to the real one. Over everything the shell draws (z-40 at
+   most) and under the window's own caption buttons (Windows, Linux: z-50). Every element's own style is its final,
+   visible state and entrance keyframes only say where it comes from (fill backwards): the motion kill switch (motion.css:
+   the OS preference, appearance motion = none) drops every animation and transition, and nothing may stay hidden then.
+   Layered below the utilities like every feature sheet; the kbd override that must beat base.css lives there */
+@layer components {
+  .wl-layer {
+    position: fixed; inset: 0; z-index: 48; pointer-events: none;
+    background: transparent;
+    --wl-ease: cubic-bezier(.22, .8, .24, 1);
+    --wl-veil: rgb(0 0 0 / .74);
+    --wl-wash: color-mix(in srgb, var(--bg-0) 88%, transparent);
+    --wl-line: color-mix(in srgb, var(--fg-1) 55%, transparent);
+    /* The intro: type column, the mark at poster scale and how far the window crops it */
+    --wl-copy-x: 96px;
+    --wl-copy-w: 440px;
+    --wl-mark-h: 660px;
+    --wl-mark-crop: -128px;
+    --wl-hero: 36px;
+    --wl-card-w: 460px;
+    --wl-dock-x: 96px;
+    --wl-dock-y: 12px;
+    --wl-branch-w: 12px;
+    --wl-file-w: 112px;
+  }
+  .wl-layer[data-theme="light"] {
+    --wl-veil: rgb(250 250 250 / .84);
+    --wl-line: color-mix(in srgb, var(--fg-1) 45%, transparent);
+  }
+  .wl-root {
+    position: absolute; inset: 0; overflow: hidden; pointer-events: auto;
+    color: var(--fg-1); font-family: var(--font); font-size: var(--text-2);
+    transition: opacity .55s var(--wl-ease);
+  }
+  .wl-root[data-phase="done"] { opacity: 0; pointer-events: none; }
+
+  /* The window's title bar strip: the desktop shell starts a window drag from data-drag-region */
+  .wl-drag { position: absolute; inset: 0 0 auto; height: var(--hdr); }
+
+  /* Intro and consent: the window recedes into a frosted wash. Into the tour the veil darkens first and the wash lifts
+     after it, so the window never shows undimmed between them; back to the wash (consent) it comes in at once and the
+     veil lifts after */
+  .wl-wash {
+    position: absolute; inset: 0; opacity: 0; background: var(--wl-wash);
+    backdrop-filter: blur(28px) saturate(.5); -webkit-backdrop-filter: blur(28px) saturate(.5);
+    transform: translateZ(0); backface-visibility: hidden;
+    transition: opacity .55s var(--wl-ease) .24s;
+  }
+  .wl-root:is([data-phase="intro"], [data-phase="consent"]) .wl-wash { opacity: 1; transition-delay: 0s; }
+  /* Ending from the card (the engine answered): the wash stays until the whole layer has faded */
+  .wl-root[data-phase="done"] .wl-wash { transition-delay: 0s; }
+
+  /* Tour: one dark (or, in light, a white) veil with a soft-edged hole that glides between targets */
+  .wl-veil { position: absolute; inset: 0; opacity: 0; overflow: visible; transition: opacity .45s var(--wl-ease) .2s; }
+  .wl-root[data-phase="tour"] .wl-veil { opacity: 1; transition: opacity .3s ease; }
+  .wl-veil-fill { fill: var(--wl-veil); }
+  .wl-hole-edge { fill: none; stroke: var(--wl-line); stroke-width: 1; opacity: .45; }
+  /* Under the veil the window is also softly blurred, so text behind a caption reads as shade, not as letters competing
+     with it. The lit target is cut out of the blur by an inline mask that follows the hole (Welcome.tsx holeMask) */
+  .wl-blur {
+    position: absolute; inset: 0; opacity: 0; pointer-events: none;
+    backdrop-filter: blur(2.5px); -webkit-backdrop-filter: blur(2.5px);
+    transition: opacity .45s var(--wl-ease) .2s;
+  }
+  .wl-root[data-phase="tour"] .wl-blur { opacity: 1; transition: opacity .3s ease; }
+
+  /* The leader draws itself out of the lit target once the hole has arrived; a node sits on the target's edge */
+  .wl-leader { transition: opacity .22s ease; }
+  .wl-leader.is-out { opacity: 0; }
+  .wl-stop { stop-color: var(--fg-1); }
+  .wl-stop-a { stop-opacity: .7; }
+  .wl-stop-b { stop-opacity: .5; }
+  .wl-stop-c { stop-opacity: 0; }
+  .wl-lead {
+    fill: none; stroke-width: 1; stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 0;
+    animation: wl-draw .62s cubic-bezier(.55, 0, .2, 1) .48s backwards;
+  }
+  /* A short bright stretch travelling from the target into the caption; hidden at rest, so the motion kill switch simply
+     leaves the plain leader */
+  .wl-glint {
+    fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-dasharray: .2 1.2; stroke-dashoffset: .2; opacity: 0;
+    filter: drop-shadow(0 0 3px color-mix(in srgb, var(--fg-1) 60%, transparent));
+    animation: wl-glint 3.2s cubic-bezier(.45, 0, .3, 1) 1.3s infinite;
+  }
+  @keyframes wl-glint { 0% { stroke-dashoffset: .2; opacity: 0; } 12% { opacity: 1; } 55% { stroke-dashoffset: -1; opacity: 0; } 100% { stroke-dashoffset: -1; opacity: 0; } }
+  .wl-node { fill: var(--fg-1); transform-box: fill-box; transform-origin: center; animation: wl-pop .4s var(--wl-ease) .44s backwards; }
+  .wl-ring { fill: none; stroke: var(--fg-1); stroke-width: 1; opacity: 0; transform-box: fill-box; transform-origin: center; animation: wl-ring 2.8s var(--wl-ease) 1.2s infinite; }
+  @keyframes wl-draw { from { stroke-dashoffset: 1; } }
+  @keyframes wl-pop { from { opacity: 0; scale: .2; } }
+  @keyframes wl-ring { 0% { opacity: .5; scale: 1; } 75%, 100% { opacity: 0; scale: 3.4; } }
+
+  /* Captions sit on the veil, no card: a mono step number, the title written in glyph by glyph, then the line under it */
+  .wl-note { position: absolute; display: flex; flex-direction: column; gap: 6px; pointer-events: none; transition: opacity .2s ease, translate .25s var(--wl-ease); }
+  .wl-note.is-out { opacity: 0; translate: 0 -3px; }
+  .wl-note.is-center { align-items: center; text-align: center; }
+  .wl-note.is-above { transform: translateY(-100%); }
+  .wl-note-head { display: flex; align-items: center; gap: 10px; height: 24px; }
+  .wl-num { font-size: 11px; letter-spacing: .06em; color: var(--fg-3); animation: wl-rise .45s var(--wl-ease) .56s backwards; }
+  .wl-note-title { font-size: calc(var(--ui-font-size) + 5px); font-weight: 600; letter-spacing: -.01em; color: var(--fg-strong); white-space: nowrap; }
+  /* Lines are broken by hand (one per string); a caption narrower than its line (a small window) wraps instead of leaving it */
+  .wl-note-body { font-size: var(--text-2); line-height: 1.75; color: var(--fg-2); animation: wl-rise .55s var(--wl-ease) .8s backwards; }
+  .wl-key { font-family: var(--font-mono); font-size: .92em; color: var(--fg-1); }
+
+  .wl-ch { display: inline-block; white-space: pre; animation: wl-ch .6s var(--wl-ease) backwards; }
+  @keyframes wl-ch { from { opacity: 0; translate: 0 .22em; } }
+  @keyframes wl-rise { from { opacity: 0; translate: 0 6px; } }
+  @keyframes wl-appear { from { opacity: 0; } }
+
+  /* One small capsule for the controls in the header's empty right half, left of its own icons, frosted over the veil */
+  .wl-dock {
+    position: absolute; right: var(--wl-dock-x); top: var(--wl-dock-y);
+    display: flex; align-items: center; gap: 4px;
+    padding: 3px; border: 1px solid var(--popup-border); border-radius: var(--r-lg);
+    background: color-mix(in srgb, var(--popup-bg) 76%, transparent) !important;
+    backdrop-filter: blur(20px) saturate(1.3); -webkit-backdrop-filter: blur(20px) saturate(1.3);
+    transform: translateZ(0); backface-visibility: hidden;
+    box-shadow: var(--shadow-pop);
+    animation: wl-dock-in .6s var(--wl-ease) .3s backwards;
+    transition: opacity .3s ease, translate .35s var(--wl-ease);
+  }
+  .wl-dock:not([data-open]) { opacity: 0; translate: 0 -8px; }
+  @keyframes wl-dock-in { from { opacity: 0; translate: 0 -12px; } }
+  .wl-sep { width: 1px; height: 14px; background: var(--line); }
+  .wl-steps { display: flex; align-items: center; gap: 6px; padding: 0 10px; }
+  /* Over IconButton's own color and hover utilities, which outrank this layer */
+  .wl-next:not(:disabled) { color: var(--fg-1) !important; background: var(--hover) !important; }
+  .wl-step { width: 6px; height: 6px; border-radius: 2px; background: color-mix(in srgb, var(--fg-1) 20%, transparent); transition: width .5s var(--wl-ease), background-color .3s ease; }
+  .wl-step.is-past { background: color-mix(in srgb, var(--fg-1) 48%, transparent); }
+  .wl-step.is-now { width: 22px; background: var(--fg-1); }
+
+  .wl-quiet { justify-self: start; display: inline-flex; align-items: baseline; gap: 8px; font-size: var(--text-2); color: var(--fg-3); transition: color .15s ease; }
+  .wl-quiet:hover { color: var(--fg-1); }
+
+  /* Intro: type on the left, the mark in outline on the right at poster scale, cropped by the window */
+  .wl-intro { position: absolute; inset: 0; transition: opacity .22s ease, scale .5s var(--wl-ease); }
+  .wl-intro:not([data-open]) { opacity: 0; scale: .985; pointer-events: none; }
+  .wl-intro::before {
+    content: ''; position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(42% 60% at 80% 50%, color-mix(in srgb, var(--fg-1) 5%, transparent), transparent 72%);
+  }
+  .wl-layer[data-theme="light"] .wl-intro::before { display: none; }
+  .wl-copy { position: absolute; left: var(--wl-copy-x); top: 50%; width: var(--wl-copy-w); max-width: calc(100% - 2 * var(--page)); translate: 0 -50%; display: flex; flex-direction: column; }
+  .wl-brand { display: flex; align-items: center; gap: 8px; font-size: var(--text-2); font-weight: 500; color: var(--fg-2); animation: wl-rise .6s var(--wl-ease) .1s backwards; }
+  .wl-brand-mark { width: 15px; height: 14px; color: var(--fg-1); }
+  .wl-hero { margin: 22px 0 0; font-size: var(--wl-hero); line-height: 1.18; font-weight: 600; letter-spacing: -.02em; color: var(--fg-strong); }
+  .wl-hero-dim { color: var(--fg-3); }
+  .wl-lede { margin: 18px 0 0; font-size: calc(var(--ui-font-size) + 1px); line-height: 1.75; color: var(--fg-2); white-space: nowrap; animation: wl-rise .6s var(--wl-ease) .85s backwards; }
+  .wl-found { margin-top: 30px; display: flex; flex-direction: column; gap: 10px; }
+  .wl-label { font-size: var(--text-3); color: var(--fg-3); animation: wl-rise .5s var(--wl-ease) .95s backwards; }
+  /* The row's room is held while the shell looks for agents, so the column never shifts when they arrive */
+  .wl-agents { display: flex; flex-wrap: wrap; gap: 8px 22px; min-height: calc(var(--text-2-lh) + 2px); }
+  .wl-agent { display: inline-flex; align-items: center; gap: 8px; font-size: var(--text-2); color: var(--fg-1); animation: wl-agent .55s var(--wl-ease) backwards; }
+  .wl-agent-mark { width: 16px; height: 16px; }
+  .wl-none { font-size: var(--text-2); color: var(--fg-2); animation: wl-agent .55s var(--wl-ease) .15s backwards; }
+  @keyframes wl-agent { from { opacity: 0; translate: -4px 0; } }
+  .wl-actions { margin-top: 38px; display: flex; align-items: center; gap: 22px; animation: wl-rise .6s var(--wl-ease) 1.35s backwards; }
+  /* Over Button's own size utilities, which outrank this layer */
+  .wl-cta { height: 34px !important; gap: 10px !important; padding: 0 14px 0 16px !important; }
+
+  .wl-bigmark { position: absolute; right: var(--wl-mark-crop); top: 50%; height: var(--wl-mark-h); translate: 0 -50%; overflow: visible; pointer-events: none; }
+  /* Stroke widths are in the mark's own units: the 428-unit viewBox is drawn 660 px tall, so 0.65 is one pixel. (A
+     non-scaling stroke would keep them in pixels but breaks pathLength-normalised dashes in Chromium) */
+  .wl-outline {
+    fill: none; stroke: color-mix(in srgb, var(--fg-1) 17%, transparent); stroke-width: .65;
+    stroke-dasharray: 1; stroke-dashoffset: 0; animation: wl-draw 2.2s cubic-bezier(.6, 0, .2, 1) .15s backwards;
+  }
+  .wl-arm-b .wl-outline { animation-delay: .45s; }
+  /* Light running round each dock, the two in opposite senses; parked part way round when motion is off */
+  .wl-comet {
+    fill: none; stroke: var(--fg-1); stroke-width: .95; stroke-linecap: round;
+    stroke-dasharray: .07 .93; stroke-dashoffset: -.2;
+    animation: wl-run 11s linear 2.2s infinite, wl-appear 1.4s ease 2.2s backwards;
+  }
+  .wl-arm-b .wl-comet { stroke-dashoffset: -.58; animation-direction: reverse, normal; }
+  .wl-comet.is-glow { stroke-width: 5.5; opacity: .18; }
+  @keyframes wl-run { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -1; } }
+
+  /* A window too narrow for type and mark side by side: the mark steps back behind the type */
+  @media (max-width: 900px) {
+    .wl-layer { --wl-copy-x: var(--page); --wl-mark-crop: -260px; }
+    .wl-bigmark { opacity: .45; }
+    .wl-lede { white-space: normal; }
+  }
+
+  /* Consent: the card rising into the wash */
+  /* One column as wide as the window, so the card's own width can be a share of it (an auto column would size to the card) */
+  .wl-center { position: absolute; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; padding: var(--page); }
+  .wl-card { width: min(var(--wl-card-w), 100%); animation: wl-card .6s var(--wl-ease) .12s backwards; transition: opacity .35s ease, translate .4s var(--wl-ease); }
+  .wl-center:not([data-open]) .wl-card { opacity: 0; translate: 0 8px; }
+  @keyframes wl-card { from { opacity: 0; translate: 0 14px; scale: .985; } }
+  .wl-title { font-size: calc(var(--ui-font-size) + 5px); letter-spacing: -.01em; }
+  .wl-dir { padding-block: 7px; }
+  .wl-tree { padding-block: 6px; }
+  .wl-line { padding-block: 3px; animation: wl-line .45s var(--wl-ease) backwards; }
+  .wl-branch { width: var(--wl-branch-w); }
+  .wl-file { width: var(--wl-file-w); }
+  @keyframes wl-line { from { opacity: 0; translate: -4px 0; } }
+}

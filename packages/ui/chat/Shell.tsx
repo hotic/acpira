@@ -244,6 +244,9 @@ export interface ShellProps {
   home?: string;
   // Desktop: where chats' folders live (InitState.chats); a session in one belongs to no project
   chats?: string;
+  // The staged sample session the interface tour plays over (welcome/SampleShell.tsx): its folder is not real, so the tool
+  // panel, which would ask the engine about it, stays away
+  sample?: boolean;
 }
 
 // A toast: text plus an optional undo; each dismisses itself, several can stack (an attachment notice must not take the undo of a deletion with it)
@@ -276,7 +279,8 @@ export function Shell(p: ShellProps) {
   // Desktop: the column folded away by its title row's button (kept across reloads); `columnMoving` lets its width ease
   // only while it folds, never under the drag that resizes it. The files layout docks it at the right edge, where the
   // settings rail never stands, so coming back from settings it starts folded
-  const [columnHidden, setColumnHidden] = useState(() => desktop && !(p.fromSettings && !filesLayout) && webviewState(COLUMN_HIDDEN_KEY) === true);
+  // The sample session always shows its column: the tour's first step lights it
+  const [columnHidden, setColumnHidden] = useState(() => desktop && !p.sample && !(p.fromSettings && !filesLayout) && webviewState(COLUMN_HIDDEN_KEY) === true);
   const [columnMoving, setColumnMoving] = useState(false);
   useEffect(() => {
     if (!columnMoving) return;
@@ -463,7 +467,7 @@ export function Shell(p: ShellProps) {
   // Files layout: the title row's toggle folds the explorer, the pinned one at the top-right corner (⌥⌘B) the session column
   const explorerHidden = usePanelValue(s => s.explorerHidden);
   // Conversation layout: the tool panel docked open beside the chat (ToolPanelDock's own condition, wide window)
-  const panelDocked = usePanelValue(s => s.open && (s.files || s.terminal || s.browser)) && desktop && canDock && !files && !p.noProject && !p.external && !!p.cwd && !!p.activeSessionId;
+  const panelDocked = usePanelValue(s => s.open && (s.files || s.terminal || s.browser)) && desktop && canDock && !files && !p.noProject && !p.external && !p.sample && !!p.cwd && !!p.activeSessionId;
   const toggleSessions = useCallback(() => hideColumn(!columnHidden), [hideColumn, columnHidden]);
   const [inspect, setInspect] = useState<{ id: string }>();
   const [graphOpen, setGraphOpen] = useState(false);
@@ -787,7 +791,7 @@ export function Shell(p: ShellProps) {
   plansRef.current = plans;
   // Desktop: a file of the session's project (or a plan document) opens in the tool panel (panel/ToolPanel.tsx) when the
   // built-in Files module is enabled, anything else in the editor
-  const panelRoot = desktop && anyPanelModule && !p.noProject && !p.external ? p.cwd : undefined;
+  const panelRoot = desktop && anyPanelModule && !p.noProject && !p.external && !p.sample ? p.cwd : undefined;
   const filePanelRoot = filesOn ? panelRoot : undefined;
   useEffect(() => {
     if (filePanelRoot && plans.length) panel.syncPlans(filePanelRoot, plans);

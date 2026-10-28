@@ -9,6 +9,7 @@ pub mod context_api;
 pub mod dirs;
 pub mod editors;
 pub mod engine;
+pub mod first_run;
 pub mod freedesktop;
 pub mod json_file;
 pub mod locator;

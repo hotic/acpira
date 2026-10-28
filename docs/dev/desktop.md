@@ -20,6 +20,7 @@
 - macOS windows start on `/blank` so WebKit's private 60 fps cap (`PreferPageRenderingUpdatesNear60FPSEnabled`, turned off via `WKPreferences _setEnabled:forFeature:`) applies before the real page loads. Private API: fine outside the App Store; recheck on every macOS release.
 - Settings: `<profile>/settings.json` holds only window-following keys (session list side and scope, editor choice); everything else is the shared `<ACPIRA_HOME>/settings.json`, which the shell only reads (polled by mtime / size / inode). While no engine has created the shared file, the hello seeds it from VS Code's (else Cursor's) `acpira.*` keys, skipping `agents` (Settings Sync carries another OS's commands).
 - Login environment (`login_env.rs`): `$SHELL -i -l -c` printing `env -0` between marks, merged into the engine's environment; it dominates cold start, so it runs while the first window loads.
+- **First run** (`acpira_desktop::first_run`): with no `<ACPIRA_HOME>` at launch the engine is not started, since it would create the folder. Chat pages boot with `firstRun` (`page.rs`) and play the intro, tour and consent card over a sample shell. `detectAgents` is answered from `<engine> agents --json`, which only reads the folder; `createDataHome` creates it `0700` and starts the client, whose `init` ends the flow in every window. Nothing else may write the folder before that yes, so Safe Mode is refused meanwhile.
 
 ## Page layout and shell traps
 
@@ -68,6 +69,7 @@
 
 `cd apps/desktop && node scripts/smoke.mjs [--app <Acpira.app | Acpira.exe>] [--engine <bin>] [--pack-tool <acpira-update-pack>] [--keep]` runs the real app on a temp home, profile and HOME with `test/fake-agent.ts` as its only agent. Without `--app` it builds the debug app (no update step); with `--app <bundle>` it also exercises an update through a delta and a restart.
 
+- The run starts without the data folder, so it passes the first-run consent card before anything else.
 - WKWebView has no DevTools protocol and Tauri's WebDriver does not run on macOS, so a `smoke`-feature build listens on `ACPIRA_DESKTOP_HOOK` (JSON lines: `eval`, `resize`, `menu`, `link`, `screenshot`, …). Clicks are DOM events at the element's centre, so a press on something still sliding in fails.
 - The fake agent is copied into the temp folder so only this run's processes match its path; a test home that opens stored Claude sessions needs `{"claude":{"command":"/usr/bin/false"}}` in its `agents.json`, since disabling `claude` does not stop `claude-agent-acp`.
 - The drag pasteboard is written only while no mouse button is down, so a real user's drag is left alone. A failure keeps the temp folder with `failure.png` and the app log.
