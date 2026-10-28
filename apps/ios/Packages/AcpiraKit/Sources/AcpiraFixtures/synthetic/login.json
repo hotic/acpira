@@ -1,0 +1,95 @@
+{
+ "id": "login",
+ "agent": "grok",
+ "title": "需要登录",
+ "cwd": "/Users/dev/projects/acpira",
+ "status": "auth_required",
+ "turns": [
+  {
+   "role": "user",
+   "text": "看一下 CI 为什么挂了"
+  },
+  {
+   "role": "agent",
+   "startedAt": 1791534318000,
+   "endedAt": 1791534378000,
+   "stop": "end_turn",
+   "blocks": [
+    {
+     "type": "tool_call",
+     "id": "s-read",
+     "kind": "read",
+     "verb": "读取",
+     "target": ".github/workflows/ci.yml",
+     "targetMono": true,
+     "status": "completed",
+     "meta": "96 行"
+    },
+    {
+     "type": "text",
+     "markdown": "CI 挂在 Windows 的 clippy 步骤上，是一条新的 `needless_return` 警告。"
+    }
+   ]
+  }
+ ],
+ "running": false,
+ "controls": {
+  "modes": [],
+  "options": []
+ },
+ "usage": {
+  "used": 48200,
+  "size": 262000
+ },
+ "commands": [
+  {
+   "name": "compact",
+   "description": "Compact the conversation to free context"
+  },
+  {
+   "name": "review",
+   "description": "Review the current changes",
+   "input": {
+    "hint": "files or scope to review"
+   }
+  },
+  {
+   "name": "init",
+   "description": "Generate an AGENTS.md for this repository"
+  },
+  {
+   "name": "config",
+   "description": "Open the configuration"
+  },
+  {
+   "name": "session-stats",
+   "description": "Show token usage for this session"
+  },
+  {
+   "name": "plan",
+   "description": "Draft an implementation plan",
+   "input": {
+    "hint": "what to plan"
+   }
+  }
+ ],
+ "createdAt": "2026-10-09T08:40:00Z",
+ "updatedAt": "2026-10-09T09:05:18Z",
+ "error": "Authentication required: run `grok login` or set XAI_API_KEY",
+ "authMethods": [
+  {
+   "id": "grok.com",
+   "name": "Sign in with Grok",
+   "terminal": {
+    "args": [
+     "login"
+    ]
+   }
+  },
+  {
+   "id": "xai.api_key",
+   "name": "Use XAI_API_KEY",
+   "description": "Read the key from the environment"
+  }
+ ]
+}

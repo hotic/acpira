@@ -10,7 +10,7 @@
   - `AcpiraSync`: `EngineTransport`, the envelope client and session patches applied against the views the page keeps (`sessionPatch.ts` and `sessionViews.ts` are the reference; views are values, so `reuse.ts` has no counterpart); no SwiftUI or UIKit. `SyncTests` replays `test/fixtures/engine-patches.json`, the patches the engine's golden suite records.
   - `AcpiraDesign`: tokens from `packages/ui/styles` plus the phone's own sizes, the Lucide and vendor marks, KaTeX metrics.
   - `AcpiraMarkdown`: Markdown to a block AST, and `Remend`, the port of streamdown's repair of a half-streamed tail.
-  - `AcpiraFixtures`: the synthetic sessions (`synthetic/*.json`) that the app and the LAB reference page both render, written by `lab/ios-fixtures.gen.ts` (local only). `clock.json` is the fixtures' "now": the app reads it through `\.now` and runs on from it (`\.clockOffset`), so a fixture's running turn must start before it.
+  - `AcpiraFixtures`: the synthetic sessions (`synthetic/*.json`) that the app and the LAB reference page both render, written by `lab/ios-fixtures.gen.ts` (local only); the card fixtures after `empty` in `Fixtures.sessionNames` are hand-written. `clock.json` is the fixtures' "now": the app reads it through `\.now` and runs on from it (`\.clockOffset`), so a fixture's running turn must start before it.
   - `AcpiraUI`: screens and components, main-actor by default. `Logic/` ports the webview's pure logic under the TypeScript names; `Prose/` holds the Markdown views, the math typesetter and the mermaid flowchart port.
   - `AcpiraKitTests`: `ContractTests` pins the Swift mirrors to the TypeScript sources by reading them from the repository. It is skipped where the tree is unreadable; the iOS simulator can read it.
 - Generated and committed, each with a drift test under `test/ios-*.test.ts`: the Lucide icons, the KaTeX metrics and fonts, the i18n tables, the remend cases and the shiki bundle (`scripts/export/ios-*.ts`). Rerun the export after bumping its source package.
@@ -98,7 +98,9 @@
 
   Leads are marked by preference rather than environment, because `Group(subviews:)` subviews keep the environment they were built in.
 - Code cards stop at `--code-output-max`, do not scroll inside the transcript, fade at the cut, and open whole in `CodeSheet` on a tap.
-- The failure card reads top to bottom: what happened and ✕, the agent's words, then copy at the start and the way on at the end. The error's code and kind go only into the copied text.
+- The failure card and the session card read top to bottom: what happened and ✕ (or retry), the agent's words, then copy at the start and the way on at the end. The copy label drops the code and kind, and then the ways drop to a second row, before anything overflows the card.
+- Sign-in and unlocking the credential store happen on the computer, so the session card says so. It offers only what the engine does without a terminal there: an auth method with no `terminal`, `retry`, `takeOverSession`, a new session.
+- A saved plan's card shows its opening, faded at a cap; the whole plan opens in `CodeSheet`, since a scroll view nested in the thread fights the thread's own scrolling. The executor is picked on the card and only sent with Build. While its approval waits, the composer's send answers the revise option, then sends the words.
 - A prompt is a right-aligned bubble that does not stick to the top.
 - Images (`Media/`):
   - Every view asks one `MediaLoader` (bounded cache, shared in-flight loads) with a `MediaSource`; the bytes come from an injected `BlobFetch` closure, so nothing in the views assumes HTTP. The engine link fetches `GET {blobBase}/{session}/{blob}` (`InitState.blobBase`, no auth); the demo reads `AcpiraFixtures/synthetic/blobs`.
@@ -108,7 +110,7 @@
   - As on the desktop, only image-result tools (`verb.imagegen`, `verb.showImage`) leave a closed process fold; an image block stays inside it, and a file-less read row (the fake agent's `view_image`) shows no image.
   - `ImageRenderer` runs no tasks, so `render.sh` preloads the fixture's images before drawing.
   - The Lightbox is a full-screen cover without the system slide, fading on its own. Zoom and pan are `UIScrollView`'s; a one-finger downward pull at rest closes it. Share goes through `ShareLink`; its Save Image needs `NSPhotoLibraryAddUsageDescription`, set in the app target.
-- Not ported yet: plan approval cards, goal blocks, subagent rows, `show_widget`, the notice row's web form, and `observation: unknown`.
+- Not ported yet: goal blocks, subagent rows, `show_widget`, account choices on the session card (import, terminal sign-in, switching accounts), and opening a plan file on the computer.
 
 ## Commands
 
@@ -125,7 +127,7 @@
   - With a hardware keyboard attached, the software keyboard is minimised. `defaults write com.apple.keyboard.preferences AutomaticMinimizationEnabled -bool false` (run through `simctl spawn`) brings it back.
 - Launch arguments:
   - `-fixture`, `-theme`, `-motion none`, `-locale`, `-screen list|chat|new|settings`, `-acpira.listView project`.
-  - `-popup NAME` opens something on launch: `attach`, `model`, `model.N` (bean N's panel), a `focus.` prefix (field focused first), `demo` (every liquid transition in turn), `ring` and `ring.pick`, `account`, `toast`, `code`, `lightbox` (the chat's first image), `fold:N`. Debug builds also take `menu:X,Y`, which opens the system menu under that point through UIKit's private `_presentMenuAtLocation:`.
+  - `-popup NAME` opens something on launch: `attach`, `model`, `model.N` (bean N's panel), a `focus.` prefix (field focused first), `demo` (every liquid transition in turn), `ring` and `ring.pick`, `account`, `toast`, `code`, `lightbox` (the chat's first image), `fold:N`, and `plan.build` / `plan.build.model` / `plan.revise` (the first plan card that can build presses Build, builds on the last model family, or sends a revision). Debug builds also take `menu:X,Y`, which opens the system menu under that point through UIKit's private `_presentMenuAtLocation:`.
   - `-prompt TEXT` sends a prompt on launch and gets the demo reply. `-draft TEXT` pre-fills the composer.
   - `-open open|all|every` pre-opens folds. `-replay` plays the last agent turn back as a live stream (`Logic/Replay.swift`).
   - With `-engine PORT:TOKEN`: `-session ID` opens that chat, `-start FOLDER` starts a session of the default agent there with `-prompt` as its first prompt. The fake agent's prompts pick its script (`slow` streams, `tool` asks a permission; `test/fake-agent.ts`).

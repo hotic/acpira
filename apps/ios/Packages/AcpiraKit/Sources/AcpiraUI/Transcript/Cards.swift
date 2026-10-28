@@ -141,8 +141,34 @@ struct DisplayOption: Identifiable {
   var bypass = false
 }
 
-/// permissionOption: ACP kinds say nothing of scope, so only complete, known labels are rewritten
-func permissionOption(_ option: PermissionOption) -> DisplayOption {
+/// Complete adapter plan headings (permissionOptions.ts PLAN_TITLES); custom mode names stay the agent's text
+private let planTitles: [String: String] = [
+  "Approve Plan": "permission.plan.approve", "Ready to code?": "permission.plan.ready",
+  "Implement this plan?": "permission.plan.implementTitle", "Enter plan mode": "permission.plan.enterTitle",
+  "EnterPlanMode": "permission.plan.enterTitle", "Exit plan mode": "permission.plan.exitTitle",
+  "ExitPlanMode": "permission.plan.exitTitle", "exit_plan_mode": "permission.plan.exitTitle",
+]
+
+/// planApprovalTitle: a known plan heading in the current language, anything else verbatim
+func planApprovalTitle(_ title: String) -> String { planTitles[title].map { t($0) } ?? title }
+
+/// Known plan approval options (PLAN_OPTIONS): Claude's and Codex's exact labels, matched with their kind
+private let planOptions: [(kind: PermissionKind, labels: [String], key: String, bypass: Bool)] = [
+  (.allow_once, ["Yes, manually approve edits", "Yes, and manually approve edits"], "permission.plan.manual", false),
+  (.reject_once, ["No, keep planning"], "permission.plan.continue", false),
+  (.allow_always, ["Yes, and use auto mode", "Yes, and use \"auto\" mode"], "permission.plan.auto", false),
+  (.allow_always, ["Yes, auto-accept edits", "Yes, and auto-accept edits"], "permission.plan.acceptEdits", false),
+  (.allow_always, ["Yes, and bypass permissions"], "permission.plan.bypass", true),
+  (.allow_once, ["Yes, implement this plan"], "permission.plan.implement", false),
+  // Codex also uses this rejection on ordinary approvals; it keeps its exact meaning
+  (.reject_once, ["No, and tell Codex what to do differently"], "permission.feedbackCodex", false),
+  (.allow_once, ["Yes, enter plan mode"], "permission.plan.enter", false),
+  (.reject_once, ["No, start implementing now"], "permission.plan.start", false),
+]
+
+/// permissionOption: ACP kinds say nothing of scope, so only complete, known labels are rewritten. `plan`: the option
+/// belongs to a linked plan approval, where Build / Revise and Kimi's reject-and-exit are localized too
+func permissionOption(_ option: PermissionOption, plan: Bool = false) -> DisplayOption {
   var out = DisplayOption(id: option.id, label: option.label, kind: option.kind, detail: option.detail)
   let label = option.label
   func matches(_ pattern: String) -> [String]? {
@@ -152,17 +178,46 @@ func permissionOption(_ option: PermissionOption) -> DisplayOption {
       Range(m.range(at: i), in: label).map { String(label[$0]) } ?? ""
     }
   }
-  if option.kind == .allow_once, matches("^(Allow|Allow once|Yes, allow once)$") != nil { out.label = t("permission.once"); return out }
-  if option.kind == .reject_once, matches("^(Reject|Reject once|Deny|No, reject)$") != nil { out.label = t("permission.reject"); return out }
-  guard option.kind == .allow_always else { return out }
-  if label == "Yes, switch to bypass mode" { out.label = t("permission.bypass"); out.bypass = true; return out }
-  if let m = matches("^Yes, allow `([^`]+)` commands \\(this session\\)$") {
-    out.label = t("permission.session"); out.detail = t("permission.commands", ["command": m[1]])
-  } else if let m = matches("^Yes, always allow `([^`]+)` commands in `([^`]+)`$") {
-    out.label = t("permission.project", ["project": m[2]]); out.detail = t("permission.commands", ["command": m[1]])
-  } else if let m = matches("^Yes, always allow `([^`]+)` commands in all projects$") {
-    out.label = t("permission.allProjects"); out.detail = t("permission.commands", ["command": m[1]])
+  if let known = planOptions.first(where: { $0.kind == option.kind && $0.labels.contains(label) }) {
+    out.label = t(known.key); out.bypass = known.bypass; return out
   }
+  if plan {
+    switch (option.kind, label) {
+    case (.allow_once, "Build"): out.label = t("plan.build"); return out
+    case (.reject_once, "Revise"): out.label = t("plan.revise"); return out
+    case (.allow_always, "Build with Bypass Permissions"): out.label = t("permission.plan.buildBypass"); out.bypass = true; return out
+    case (.reject_once, "Reject and exit Plan mode"): out.label = t("permission.plan.rejectExit"); return out
+    default: break
+    }
+  }
+  if option.kind == .allow_once, matches("^(Allow|Allow once|Yes|Yes, allow once|Yes, proceed|Yes, just this once)$") != nil {
+    out.label = t("permission.once"); return out
+  }
+  if option.kind == .reject_once, matches("^(Reject|Reject once|Deny|No|No, reject|Cancel|No, continue without running it)$") != nil {
+    out.label = t("permission.reject"); return out
+  }
+  guard option.kind == .allow_always else { return out }
+  if matches("^(Yes, during this session|Yes, and (?:don't|do not) ask again for this command in this session|Allow for this session)$") != nil {
+    out.label = t("permission.session"); return out
+  }
+  // Case-sensitive like the TypeScript, whose pattern carries no `i` flag
+  if let m = label.wholeMatch(of: /Yes, clear context(?: \((\d+(?:\.\d+)?)% used\))? and (use auto mode|bypass permissions|auto-accept edits)/) {
+    let key = m.2 == "use auto mode" ? "permission.plan.clearAuto" : m.2 == "bypass permissions" ? "permission.plan.clearBypass"
+      : "permission.plan.clearAcceptEdits"
+    out.label = t(key, ["usage": m.1.map { t("permission.plan.usage", ["percent": String($0)]) } ?? ""])
+    out.bypass = m.2 == "bypass permissions"
+    return out
+  }
+  if label == "Yes, switch to bypass mode" { out.label = t("permission.bypass"); out.bypass = true; return out }
+  let session = matches("^Yes, allow `([^`]+)` commands \\(this session\\)$") ?? matches("^Always allow `([^`]+)` in this session$")
+    ?? matches("^Yes, and (?:don't|do not) ask again for commands that start with `([^`]+)`$")
+  let dontAsk = matches("^Yes, and (?:don't|do not) ask again for (.+) commands$").map(\.[1]).flatMap { $0 != "similar" ? $0 : nil }
+  let project = matches("^Yes, always allow `([^`]+)` commands in `([^`]+)`$")
+  let all = matches("^Yes, always allow `([^`]+)` commands in all projects$")
+  guard let command = session?[1] ?? dontAsk ?? project?[1] ?? all?[1] else { return out }
+  out.label = session != nil || dontAsk != nil ? t("permission.session")
+    : project.map { t("permission.project", ["project": $0[2]]) } ?? t("permission.allProjects")
+  out.detail = t("permission.commands", ["command": command])
   return out
 }
 
@@ -172,13 +227,13 @@ struct PermissionCard: View {
   var onChoose: (String) -> Void = { _ in }
 
   var body: some View {
-    let options = block.options.map(permissionOption)
+    let options = block.options.map { permissionOption($0, plan: block.planId != nil) }
     // Several allow_once and no allow_always: a list of answers, every option an equal button
     let flat = !options.contains { $0.kind == .allow_always } && options.filter { $0.kind == .allow_once }.count > 1
     let allow = flat ? nil : options.first { $0.kind == .allow_once }
     let reject = flat ? nil : options.first { $0.kind == .reject_once }
     let more = flat ? [] : options.filter { $0.id != allow?.id && $0.id != reject?.id }
-    let title = block.command != nil ? t("permission.run") : block.title
+    let title = block.command != nil ? t("permission.run") : planApprovalTitle(block.title)
 
     VStack(alignment: .leading, spacing: Metrics.gap) {
       Row(dense: true) {

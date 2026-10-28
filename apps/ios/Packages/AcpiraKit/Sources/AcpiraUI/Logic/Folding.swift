@@ -282,6 +282,7 @@ public func namesLabel(_ names: [String]) -> String {
 
 /// toolVerb: 已读取 / 正在运行 / 运行失败 …, rendered from the semantic kind
 public func toolVerb(_ block: ToolCallBlock) -> String {
+  if block.observation == .unknown { return t("chatgpt.unknownTool") }
   let key = switch block.status {
   case .pending: "fold.queued"
   case .in_progress: "fold.pending"
@@ -329,8 +330,10 @@ public func commandDuration(ms: Double, whole: Bool = false) -> String {
   return m > 0 ? (s > 0 ? t("turns.elapsed.ms", ["m": m, "s": s]) : t("turns.elapsed.m", ["m": m])) : t("turns.elapsed.s", ["s": s])
 }
 
-/// turnOutcome: a line for a short stop, or for a normal end with nothing to show
+/// turnOutcome: a line for a short stop, or for a normal end with nothing to show (a slash command's receipt names
+/// the setting changes it reported); a turn whose observation was lost says so first
 public func turnOutcome(_ turn: AgentTurn) -> String? {
+  if turn.observation == .unknown { return t("chatgpt.unknownTurn") }
   switch turn.stop {
   case .error: return t("turns.stop.error")
   case .refusal: return t("turns.stop.refusal")
@@ -339,7 +342,12 @@ public func turnOutcome(_ turn: AgentTurn) -> String? {
   case .cancelled: return t("turns.stop.cancelled")
   case .end_turn:
     let empty = turn.blocks.allSatisfy { if case .text(let t) = $0 { t.markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } else { false } }
-    return empty ? t("turns.stop.empty") : nil
+    guard empty else { return nil }
+    guard let command = turn.command else { return t("turns.stop.empty") }
+    let changes = [command.mode.map { t("turns.command.mode", ["mode": $0]) } ?? ""]
+      + (command.options ?? []).map { t("turns.command.option", ["name": $0.name, "value": $0.value]) }
+    let said = changes.filter { !$0.isEmpty }
+    return said.isEmpty ? t("turns.command.empty") : said.joined(separator: t("common.listSep"))
   default: return nil
   }
 }

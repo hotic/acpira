@@ -28,15 +28,22 @@ struct Dock: View {
       }
       if let alertTurn, dismissedAlert != session.turns.count {
         AlertCard(turn: alertTurn, onDismiss: { dismissedAlert = session.turns.count },
-                  onRetry: actions.retry, onContinue: actions.carryOn)
+                  onRetry: actions.retry, onContinue: actions.carryOn,
+                  onCompact: session.commands.contains { $0.name == "compact" } ? actions.compact : nil,
+                  onNewSession: actions.newSession)
       }
+      if let external = session.external { ExternalSessionNotice(info: external) } else { SessionNotice(session: session) }
       ForEach(session.queued ?? []) { item in
         QueueRow(item: item, steer: session.canSteer == true && session.running,
                  onSend: { actions.sendQueued(item.id) }, onEdit: { actions.editQueued(item.id) },
                  onRemove: { actions.removeQueued(item.id) })
       }
-      Composer(session: session, text: $draft, staged: $staged, onSend: actions.send, onStop: actions.stop,
-               onSetMode: actions.setMode, onSetConfig: actions.setConfig)
+      // A ChatGPT mirror is a receiver: nothing to send or stop. While a plan waits, a send revises it
+      if session.external == nil {
+        Composer(session: session, text: $draft, staged: $staged, onSend: actions.send, onStop: actions.stop,
+                 onSetMode: actions.setMode, onSetConfig: actions.setConfig,
+                 placeholder: pendingPlanReview(session.turns).flatMap(reviseOption) != nil ? t("composer.placeholder.revisePlan") : nil)
+      }
     }
     // The dock runs closer to the screen edges than the transcript (--page): a phone composer spans the width
     .padding(.horizontal, Metrics.pad)
@@ -74,6 +81,8 @@ func dockPlan(_ turns: [Turn], running: Bool) -> [PlanEntry]? {
       if case .toolCall(let t) = block, t.verbKey == "verb.todo", t.status == .completed { t.todoEntries } else { nil }
     }.first
     guard let entries = plan ?? todos else { continue }
+    // A list written while planning is part of the plan: the dock waits until that turn's plan is built
+    if agent.blocks.contains(where: { if case .planDocument(let d) = $0 { d.status != "approved" && d.status != "executing" } else { false } }) { return nil }
     if entries.contains(where: { $0.status != .completed }) { return entries }
     return running && i == turns.count - 1 ? entries : nil
   }
@@ -213,95 +222,6 @@ private struct QueueAttachment: View {
       AttachmentPill(name: "\(name) \(start == end ? "L\(start)" : "L\(start)-\(end)")", icon: .textSelect)
     case .quote, .unknown:
       EmptyView()
-    }
-  }
-}
-
-// MARK: - Alert
-
-/// Alert.tsx: a turn that stopped short. One row holds the glyph, what happened, the copyable detail and the action
-/// (retry for an error, carry on for a limit, nothing for a refusal) with ✕ hiding the card; the agent's words below
-struct AlertCard: View {
-  let turn: AgentTurn
-  var onDismiss: () -> Void
-  var onRetry: () -> Void = {}
-  var onContinue: () -> Void = {}
-  @State private var copied = false
-
-  var body: some View {
-    let stop = turn.stop ?? .error
-    let err = turn.error
-    let detail = [err?.code.map(String.init) ?? "", err?.kind ?? ""].filter { !$0.isEmpty }.joined(separator: t("common.metaSep"))
-    let copyable = [err?.message ?? "", detail].filter { !$0.isEmpty }.joined(separator: "\n")
-    let message: String? = switch stop {
-    case .error: (err?.message).flatMap { $0.isEmpty ? nil : $0 } ?? t("alert.error.unknown")
-    case .refusal: t("alert.refusal.text")
-    case .max_tokens: t("alert.maxTokens.text")
-    case .max_turn_requests: t("alert.maxTurns.text")
-    default: nil
-    }
-    let title = switch stop {
-    case .refusal: t("alert.refusal.title")
-    case .max_tokens: t("alert.maxTokens.title")
-    case .max_turn_requests: t("alert.maxTurns.title")
-    default: t("alert.error.title")
-    }
-    phone(stop: stop, title: title, message: message, copyable: copyable)
-  }
-
-  /// The card as a phone reads it, top to bottom. What happened and ✕ on the first line,
-  /// the agent's words under it, then the actions on their own row: the copyable detail as a quiet
-  /// button at the start, the way on (retry, carry on) as the one filled button at the end, where a thumb reaches
-  private func phone(stop: TurnStop, title: String, message: String?, copyable: String) -> some View {
-    let retry = stop == .error && (turn.error?.actions == nil || turn.error?.actions?.contains(.retry) == true)
-    let carry = stop == .max_tokens || stop == .max_turn_requests
-    return VStack(alignment: .leading, spacing: Metrics.s2) {
-      HStack(spacing: Metrics.s2) {
-        Icon(.triangleAlert, size: Metrics.icon, strokeWidth: 1.75).foregroundStyle(Palette.warn)
-        Text(web: title)
-          .textStyle(TypeScale.text2, weight: .semibold)
-          .foregroundStyle(Palette.fgStrong)
-          .frame(maxWidth: .infinity, alignment: .leading)
-        IconButton(.x, label: t("common.close"), action: onDismiss)
-          .padding(.vertical, -Metrics.s1)
-          .padding(.trailing, -Metrics.s1_5)
-      }
-      if let message {
-        Text(web: message)
-          .textStyle(TypeScale.text3)
-          .foregroundStyle(Palette.fg2)
-          .fixedSize(horizontal: false, vertical: true)
-      }
-      // The code and kind are left out on the phone (too dense for a touch screen); "Copy details" still carries them
-      if !copyable.isEmpty || retry || carry {
-        HStack(spacing: Metrics.s2) {
-          if !copyable.isEmpty {
-            Button {
-              UIPasteboardBridge.copy(copyable)
-              copied = true
-            } label: {
-              Text(web: copied ? t("alert.copied") : t("alert.copy"))
-            }
-            .buttonStyle(AcpButtonStyle(.secondary, fixed: true))
-          }
-          Spacer(minLength: 0)
-          if retry {
-            Button(web: t("common.retry"), action: onRetry).buttonStyle(AcpButtonStyle(.primary, fixed: true))
-          }
-          if carry {
-            Button(web: t("alert.continue"), action: onContinue).buttonStyle(AcpButtonStyle(.primary, fixed: true))
-          }
-        }
-        .padding(.top, Metrics.s1)
-      }
-    }
-    .padding(.horizontal, Metrics.pad)
-    .padding(.vertical, Metrics.s3)
-    .modifier(CardSurface())
-    .task(id: copied) {
-      guard copied else { return }
-      try? await Task.sleep(for: .milliseconds(1500))
-      copied = false
     }
   }
 }

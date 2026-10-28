@@ -1,0 +1,215 @@
+{
+ "id": "records",
+ "agent": "claude",
+ "title": "发布说明整理",
+ "cwd": "/Users/dev/projects/acpira",
+ "status": "ready",
+ "turns": [
+  {
+   "role": "user",
+   "text": "整理一下这次要发布的内容"
+  },
+  {
+   "role": "agent",
+   "startedAt": 1791536178000,
+   "endedAt": 1791536358000,
+   "stop": "end_turn",
+   "blocks": [
+    {
+     "type": "question",
+     "id": "q-a",
+     "toolCallId": "t-q",
+     "outcome": "answered",
+     "answers": {
+      "q0": "release-summary",
+      "q1": [
+       "markdown"
+      ]
+     },
+     "questions": [
+      {
+       "id": "q0",
+       "title": "报告范围",
+       "text": "这次发布报告需要覆盖哪些内容？",
+       "kind": "single",
+       "options": [
+        {
+         "id": "release-summary",
+         "label": "本次发布的主要变更"
+        },
+        {
+         "id": "technical-review",
+         "label": "完整的技术评审记录"
+        }
+       ]
+      },
+      {
+       "id": "q1",
+       "title": "文档格式",
+       "text": "报告使用哪种文档格式？",
+       "kind": "single",
+       "options": [
+        {
+         "id": "markdown",
+         "label": "Markdown"
+        },
+        {
+         "id": "html",
+         "label": "HTML"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "tool_call",
+     "id": "t-q",
+     "kind": "other",
+     "verb": "提问",
+     "target": "AskUserQuestion",
+     "targetMono": true,
+     "status": "completed"
+    },
+    {
+     "type": "text",
+     "markdown": "好，按主要变更写一份 Markdown。"
+    },
+    {
+     "type": "question",
+     "id": "q-s",
+     "outcome": "skipped",
+     "questions": [
+      {
+       "id": "q2",
+       "text": "要不要附上截图？",
+       "kind": "single",
+       "options": [
+        {
+         "id": "yes",
+         "label": "要"
+        },
+        {
+         "id": "no",
+         "label": "不要"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "future_widget",
+     "id": "fw-1",
+     "title": "来自更新版本引擎的卡片"
+    },
+    {
+     "type": "tool_call",
+     "id": "t-lost",
+     "kind": "execute",
+     "verb": "运行",
+     "target": "pnpm test",
+     "targetMono": true,
+     "status": "in_progress",
+     "observation": "unknown"
+    },
+    {
+     "type": "text",
+     "markdown": "说明草稿在 `docs/release-notes.md`；测试那一步的结果没能确认，需要再跑一次。"
+    }
+   ]
+  }
+ ],
+ "running": false,
+ "controls": {
+  "modes": [
+   {
+    "id": "default",
+    "name": "Default",
+    "description": "Ask before edits and commands"
+   },
+   {
+    "id": "acceptEdits",
+    "name": "Accept Edits",
+    "description": "Auto-approve file edits"
+   },
+   {
+    "id": "plan",
+    "name": "Plan",
+    "description": "Plan changes before implementing"
+   },
+   {
+    "id": "bypassPermissions",
+    "name": "Bypass Permissions",
+    "description": "Auto-approve all tool calls"
+   }
+  ],
+  "modeId": "default",
+  "options": [
+   {
+    "id": "model",
+    "name": "Model",
+    "category": "model",
+    "value": "claude-fable-5-1-xhigh",
+    "options": [
+     {
+      "id": "claude-fable-5-1-medium",
+      "name": "Claude Fable 5.1 Medium"
+     },
+     {
+      "id": "claude-fable-5-1-xhigh",
+      "name": "Claude Fable 5.1 XHigh"
+     },
+     {
+      "id": "claude-fable-5-1-max",
+      "name": "Claude Fable 5.1 Max"
+     },
+     {
+      "id": "claude-opus-4-8",
+      "name": "Claude Opus 4.8"
+     },
+     {
+      "id": "claude-haiku-4-6",
+      "name": "Claude Haiku 4.6"
+     }
+    ]
+   }
+  ]
+ },
+ "usage": {
+  "used": 48200,
+  "size": 262000
+ },
+ "commands": [
+  {
+   "name": "compact",
+   "description": "Compact the conversation to free context"
+  },
+  {
+   "name": "review",
+   "description": "Review the current changes",
+   "input": {
+    "hint": "files or scope to review"
+   }
+  },
+  {
+   "name": "init",
+   "description": "Generate an AGENTS.md for this repository"
+  },
+  {
+   "name": "config",
+   "description": "Open the configuration"
+  },
+  {
+   "name": "session-stats",
+   "description": "Show token usage for this session"
+  },
+  {
+   "name": "plan",
+   "description": "Draft an implementation plan",
+   "input": {
+    "hint": "what to plan"
+   }
+  }
+ ],
+ "createdAt": "2026-10-09T08:40:00Z",
+ "updatedAt": "2026-10-09T09:05:18Z"
+}

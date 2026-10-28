@@ -24,6 +24,12 @@ extension ThoughtBlock {
   }
 }
 
+extension CompactionBlock {
+  public init(_ id: String, status: CompactionStatus, error: String? = nil) {
+    self.id = id; self.status = status; self.error = error
+  }
+}
+
 extension ToolCallBlock {
   public init(id: String, kind: ToolKind, verb: String, target: String? = nil, targetMono: Bool? = nil,
               status: ToolStatus, meta: String? = nil) {

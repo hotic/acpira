@@ -1,0 +1,129 @@
+{
+ "id": "connecting",
+ "agent": "claude",
+ "title": "正在启动",
+ "cwd": "/Users/dev/projects/acpira",
+ "status": "starting",
+ "turns": [
+  {
+   "role": "user",
+   "text": "看一下 CI 为什么挂了"
+  },
+  {
+   "role": "agent",
+   "startedAt": 1791534318000,
+   "endedAt": 1791534378000,
+   "stop": "end_turn",
+   "blocks": [
+    {
+     "type": "tool_call",
+     "id": "s-read",
+     "kind": "read",
+     "verb": "读取",
+     "target": ".github/workflows/ci.yml",
+     "targetMono": true,
+     "status": "completed",
+     "meta": "96 行"
+    },
+    {
+     "type": "text",
+     "markdown": "CI 挂在 Windows 的 clippy 步骤上，是一条新的 `needless_return` 警告。"
+    }
+   ]
+  }
+ ],
+ "running": false,
+ "controls": {
+  "modes": [
+   {
+    "id": "default",
+    "name": "Default",
+    "description": "Ask before edits and commands"
+   },
+   {
+    "id": "acceptEdits",
+    "name": "Accept Edits",
+    "description": "Auto-approve file edits"
+   },
+   {
+    "id": "plan",
+    "name": "Plan",
+    "description": "Plan changes before implementing"
+   },
+   {
+    "id": "bypassPermissions",
+    "name": "Bypass Permissions",
+    "description": "Auto-approve all tool calls"
+   }
+  ],
+  "modeId": "default",
+  "options": [
+   {
+    "id": "model",
+    "name": "Model",
+    "category": "model",
+    "value": "claude-fable-5-1-xhigh",
+    "options": [
+     {
+      "id": "claude-fable-5-1-medium",
+      "name": "Claude Fable 5.1 Medium"
+     },
+     {
+      "id": "claude-fable-5-1-xhigh",
+      "name": "Claude Fable 5.1 XHigh"
+     },
+     {
+      "id": "claude-fable-5-1-max",
+      "name": "Claude Fable 5.1 Max"
+     },
+     {
+      "id": "claude-opus-4-8",
+      "name": "Claude Opus 4.8"
+     },
+     {
+      "id": "claude-haiku-4-6",
+      "name": "Claude Haiku 4.6"
+     }
+    ]
+   }
+  ]
+ },
+ "usage": {
+  "used": 48200,
+  "size": 262000
+ },
+ "commands": [
+  {
+   "name": "compact",
+   "description": "Compact the conversation to free context"
+  },
+  {
+   "name": "review",
+   "description": "Review the current changes",
+   "input": {
+    "hint": "files or scope to review"
+   }
+  },
+  {
+   "name": "init",
+   "description": "Generate an AGENTS.md for this repository"
+  },
+  {
+   "name": "config",
+   "description": "Open the configuration"
+  },
+  {
+   "name": "session-stats",
+   "description": "Show token usage for this session"
+  },
+  {
+   "name": "plan",
+   "description": "Draft an implementation plan",
+   "input": {
+    "hint": "what to plan"
+   }
+  }
+ ],
+ "createdAt": "2026-10-09T08:40:00Z",
+ "updatedAt": "2026-10-09T09:05:18Z"
+}

@@ -4,6 +4,7 @@ import Foundation
 import Testing
 
 // Every synthetic fixture decodes, and decodes to what the web reference renders: no block falls through to `.unknown`
+// (but the one `future_*` block the records fixture carries on purpose, for the placeholder row)
 struct FixtureTests {
   @Test(arguments: Fixtures.sessionNames)
   func sessionDecodes(name: String) throws {
@@ -11,7 +12,7 @@ struct FixtureTests {
     #expect(view.id == name)
     for case .agent(let turn) in view.turns {
       for block in turn.blocks {
-        if case .unknown(let type) = block { Issue.record("unknown block \(type) in \(name)") }
+        if case .unknown(let type) = block, !type.hasPrefix("future_") { Issue.record("unknown block \(type) in \(name)") }
       }
     }
   }
