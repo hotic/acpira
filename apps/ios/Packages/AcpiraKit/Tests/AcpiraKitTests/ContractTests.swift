@@ -52,7 +52,28 @@ struct ContractTests {
 
   @Test(.enabled(if: readable))
   func webviewActions() throws {
-    try checkUnion("WebviewMsg", in: Self.source("protocol.ts"), mirrored: WebviewMsg.types, samples: ContractSamples.actions) {
+    let categoryOp = try need(TS.alias(Self.source("transcript.ts"), "CategoryOp"))
+    try checkUnion("WebviewMsg", in: Self.source("protocol.ts"), mirrored: WebviewMsg.types, samples: ContractSamples.actions,
+                   intersections: ["categoryOp": (categoryOp, "op")]) {
+      if case .unknown = $0 { false } else { true }
+    }
+  }
+
+  @Test(.enabled(if: readable))
+  func categoryOps() throws {
+    try checkUnion("CategoryOp", tag: "op", in: Self.source("transcript.ts"), mirrored: CategoryOp.ops, samples: ContractSamples.categoryOps) {
+      if case .unknown = $0 { false } else { true }
+    }
+  }
+
+  /// AgentBlock is a union of named interfaces; NoticeBlock reads its revision, category and actions leniently
+  @Test(.enabled(if: readable))
+  func agentBlocks() throws {
+    let transcript = try Self.source("transcript.ts")
+    let members = try need(TS.interfaceUnion(transcript, "AgentBlock"), "AgentBlock")
+    try checkMembers("AgentBlock", members: members, mirrored: AgentBlock.types,
+                     samples: try ContractSamples.blocks.map { try decode($0) as AgentBlock },
+                     lenient: ["notice": ["revision", "category", "actions"]]) {
       if case .unknown = $0 { false } else { true }
     }
   }
@@ -118,15 +139,132 @@ struct ContractTests {
     try checkStruct(patch, try need(TS.interface(Self.source("sessionPatch.ts"), "SessionPatch")))
   }
 
-  /// The transcript structs the messages carry name only fields transcript.ts has (they mirror a subset)
+  /// The transcript structs the messages carry: SessionView, SessionSummary and AgentInfo whole, AccountInfo as a subset
+  /// (it reads addedAt leniently)
   @Test(.enabled(if: readable))
   func transcriptFieldsExist() throws {
     let transcript = try Self.source("transcript.ts")
     guard case .initState(let state) = try decode(ContractSamples.pushes[0]) as HostMsg else { Issue.record("not init"); return }
-    try checkStruct(try need(state.active), try need(TS.interface(transcript, "SessionView")), subset: true)
-    try checkStruct(try need(state.sessions.first), try need(TS.interface(transcript, "SessionSummary")), subset: true)
+    try checkStruct(try need(state.active), try need(TS.interface(transcript, "SessionView")))
+    try checkStruct(try need(state.sessions.first), try need(TS.interface(transcript, "SessionSummary")))
     try checkStruct(try need(state.accounts.first), try need(TS.interface(transcript, "AccountInfo")), subset: true)
-    try checkStruct(try need(state.agents.first), try need(TS.interface(transcript, "AgentInfo")), subset: true)
+    try checkStruct(try need(state.agents.first), try need(TS.interface(transcript, "AgentInfo")))
+  }
+
+  /// The payloads of the parity actions and pushes
+  @Test(.enabled(if: readable))
+  func parityPayloads() throws {
+    let proto = try Self.source("protocol.ts"), transcript = try Self.source("transcript.ts")
+    try checkStruct(ContractSamples.edit, try need(TS.interface(proto, "EditTurnRequest")))
+    try checkStruct(ContractSamples.edit.settings, try need(TS.interface(transcript, "TurnSettings")))
+    let pushes = try ContractSamples.pushes.map { try decode($0) as HostMsg }
+    for push in pushes {
+      switch push {
+      case .files(_, let files): try checkStruct(try need(files.first), try need(TS.interface(proto, "FileHit")))
+      case .diffSource(_, let source):
+        try checkStruct(try need(source), try need(TS.interface(transcript, "FullDiffSource")), leftOut: ["omitted"])
+      case .projectDir(_, let entries, _): try checkStruct(try need(entries.first), try need(TS.interface(proto, "ProjectEntry")))
+      case .projectFile(_, _, let hunks, _): try checkStruct(try need(hunks?.first), try need(TS.interface(proto, "ProjectHunk")))
+      case .sessionChanges(_, let files): try checkStruct(try need(files.first), try need(TS.interface(proto, "ProjectChange")))
+      case .terminalState(_, _, _, _, _, let exit, _): try checkStruct(try need(exit), try need(TS.interface(proto, "TerminalExit")))
+      default: break
+      }
+    }
+  }
+
+  /// A session view with every field set, down to the goal, the subagents and both kinds of turn
+  @Test(.enabled(if: readable))
+  func sessionViewParts() throws {
+    let transcript = try Self.source("transcript.ts"), subagents = try Self.source("subagents.ts")
+    let view: SessionView = try decode(ContractSamples.richView)
+    func inline(_ fields: [TSField], _ name: String) throws -> [TSField] {
+      try TS.inline(try need(fields.first { $0.name == name }, name).type)
+    }
+    try checkStruct(view, try need(TS.interface(transcript, "SessionView")))
+    try checkStruct(try need(view.external), try need(TS.interface(transcript, "ExternalSessionInfo")))
+    let auth = try need(view.authMethods?.first), authFields = try need(TS.interface(transcript, "AuthMethodInfo"))
+    try checkStruct(auth, authFields)
+    try checkStruct(try need(auth.terminal), try inline(authFields, "terminal"))
+    try checkStruct(try need(view.usage), try need(TS.interface(transcript, "Usage")))
+    try checkStruct(try need(view.goal), try need(TS.interface(transcript, "SessionGoal")))
+    try checkStruct(try need(view.forkedFrom), try need(TS.interface(transcript, "ForkOrigin")))
+
+    let summary = try need(view.subagents?.first), summaryFields = try need(TS.interface(subagents, "SubagentSummary"))
+    try checkStruct(summary, summaryFields)
+    try checkStruct(summary.controls, try inline(summaryFields, "controls"))
+    try checkStruct(try need(summary.usage), try inline(summaryFields, "usage"))
+    try checkStruct(summary.peer, try inline(summaryFields, "peer"))
+    try checkStruct(try need(summary.harness), try need(TS.interface(subagents, "SubagentHarness")))
+
+    guard case .user(let user) = view.turns.first, case .agent(let agent) = view.turns.last else {
+      Issue.record("not a user turn then an agent turn"); return
+    }
+    try checkStruct(user, try need(TS.interface(transcript, "UserTurn")), leftOut: ["role"])
+    try checkStruct(try need(user.settings), try need(TS.interface(transcript, "TurnSettings")))
+    let agentFields = try need(TS.interface(transcript, "AgentTurn"))
+    try checkStruct(agent, agentFields, leftOut: ["role"])
+    try checkStruct(try need(agent.usage), try need(TS.interface(transcript, "TurnUsage")))
+    try checkStruct(try need(agent.error), try need(TS.interface(transcript, "TurnError")))
+    try checkStruct(try need(agent.command), try inline(agentFields, "command"))
+
+    let block: AgentBlock = try decode(ContractSamples.blocks[2])
+    let task = try need(block.toolCall?.asyncTask), taskFields = try need(TS.interface(transcript, "AsyncTaskInfo"))
+    try checkStruct(task, taskFields, lenient: ["canStop"])
+    try checkStruct(try need(task.usage), try inline(taskFields, "usage"))
+  }
+
+  /// The string enums added for the parity work name exactly their TypeScript literals (`unknown` is the app's own
+  /// fallback)
+  @Test(.enabled(if: readable))
+  func stringUnions() throws {
+    let transcript = try Self.source("transcript.ts"), proto = try Self.source("protocol.ts")
+    let subagents = try Self.source("subagents.ts")
+    func check<E: TolerantEnum & CaseIterable>(_: E.Type, _ union: String?, _ name: String) throws {
+      let literals = TS.literals(try need(union, name))
+      #expect(Set(E.allCases.filter { $0 != E.unknownCase }.map(\.rawValue)) == literals, "\(name) is \(literals.sorted())")
+    }
+    func field(_ source: String, _ interface: String, _ name: String) -> String? {
+      TS.interface(source, interface)?.first { $0.name == name }?.type
+    }
+    try check(GoalStatus.self, TS.alias(transcript, "GoalStatus"), "GoalStatus")
+    try check(GoalAction.self, TS.alias(transcript, "GoalAction"), "GoalAction")
+    try check(GoalEvent.self, TS.alias(transcript, "GoalEvent"), "GoalEvent")
+    try check(AddAccountVia.self, TS.alias(proto, "AddAccountVia"), "AddAccountVia")
+    try check(ProjectBase.self, TS.alias(proto, "ProjectBase"), "ProjectBase")
+    try check(GitMark.self, TS.alias(proto, "GitMark"), "GitMark")
+    try check(EditTurnRequest.Intent.self, field(proto, "EditTurnRequest", "intent"), "EditTurnRequest.intent")
+    try check(ExternalSessionInfo.State.self, field(transcript, "ExternalSessionInfo", "state"), "ExternalSessionInfo.state")
+    try check(SubagentState.self, TS.alias(subagents, "SubagentState"), "SubagentState")
+    try check(SubagentVisibility.self, TS.alias(subagents, "SubagentVisibility"), "SubagentVisibility")
+    try check(SubagentSummary.StateSource.self, field(subagents, "SubagentSummary", "stateSource"), "SubagentSummary.stateSource")
+    try check(RelayMode.self, TS.alias(subagents, "RelayMode"), "RelayMode")
+    let reasons = TS.literals(try need(TS.alias(proto, "ProjectError"), "ProjectError"))
+    #expect(Set(ProjectError.reasons.map(\.rawValue)) == reasons, "ProjectError is \(reasons.sorted())")
+  }
+
+  /// The turns the engine's golden suite records (test/fixtures/engine-*.json, the input the webview suites render) hold
+  /// no block this build does not know, and encode back to the same JSON: the Turn mirror misses no field the engine
+  /// writes there
+  @Test(.enabled(if: readable))
+  func goldenTurnsRoundTrip() throws {
+    var turns: [(String, [String: Any])] = []
+    for file in ["engine-builtin.json", "engine-normalize.json"] {
+      let data = try Data(contentsOf: Self.root.appending(path: "test/fixtures/\(file)"))
+      for entry in try #require(JSONSerialization.jsonObject(with: data) as? [[String: Any]]) {
+        let name = "\(file) \(entry["name"] ?? "")"
+        let lists = (entry["turns"].map { [$0] } ?? []) + ((entry["steps"] as? [[String: Any]]) ?? []).compactMap { $0["turns"] }
+        for case let list as [[String: Any]] in lists { turns += list.map { (name, $0) } }
+      }
+    }
+    #expect(!turns.isEmpty)
+    for (name, object) in turns {
+      let turn = try JSONDecoder().decode(Turn.self, from: JSONObject.data(object))
+      if case .agent(let agent) = turn {
+        for case .unknown(let type) in agent.blocks { Issue.record("\(name): unknown block \(type)") }
+      }
+      let encoded = try JSONObject.of(turn)
+      #expect(JSONObject.same(encoded, object), "\(name): \(object) re-encodes as \(encoded)")
+    }
   }
 
   // MARK: Helpers
@@ -144,11 +282,23 @@ struct ContractTests {
   }
 
   /// `samples` cover exactly the `mirrored` literals of union `name`; each encodes to its member's fields, decodes back
-  /// equal, still decodes (to a known case) without any one optional field, and fails without any one required field
+  /// equal, still decodes (to a known case) without any one optional field, and fails without any one required field.
+  /// `intersections`: members written `{ type: 'x' } & Other`, which also carry the fields of the `Other` member their
+  /// sample picks by that union's tag
   func checkUnion<T: Codable & Equatable>(
-    _ name: String, tag: String = "type", in source: String, mirrored: [String], samples: [T], known: (T) -> Bool
+    _ name: String, tag: String = "type", in source: String, mirrored: [String], samples: [T],
+    intersections: [String: (union: String, tag: String)] = [:], known: (T) -> Bool
   ) throws {
     let members = TS.members(try #require(TS.alias(source, name), "\(name) not found"), tag: tag)
+    try checkMembers(name, tag: tag, members: members, mirrored: mirrored, samples: samples, intersections: intersections, known: known)
+  }
+
+  /// checkUnion against members already read; `lenient` names, per literal, required fields the Swift side still
+  /// decodes without
+  func checkMembers<T: Codable & Equatable>(
+    _ name: String, tag: String = "type", members: [String: [TSField]], mirrored: [String], samples: [T],
+    intersections: [String: (union: String, tag: String)] = [:], lenient: [String: Set<String>] = [:], known: (T) -> Bool
+  ) throws {
     for literal in mirrored {
       #expect(members[literal] != nil, "\(name) has no member '\(literal)'")
     }
@@ -157,14 +307,19 @@ struct ContractTests {
       let object = try JSONObject.of(sample)
       let literal = try #require(object[tag] as? String)
       covered.insert(literal)
-      guard let fields = members[literal] else { continue }
+      guard var fields = members[literal] else { continue }
+      if let (union, inner) = intersections[literal] {
+        let picked = try #require(object[inner] as? String, "\(name) '\(literal)' has no '\(inner)'")
+        let more = try #require(TS.members(union, tag: inner)[picked], "\(name) '\(literal)': no '\(inner)' member '\(picked)'")
+        fields += [TSField(name: inner, optional: false, type: "'\(picked)'")] + more
+      }
       #expect(Set(object.keys).subtracting([tag]) == Set(fields.map(\.name)), "\(name) '\(literal)' encodes other fields")
       #expect(try JSONDecoder().decode(T.self, from: JSONObject.data(object)) == sample, "\(name) '\(literal)' does not round-trip")
       for field in fields {
         var without = object
         without[field.name] = nil
         let decoded = try? JSONDecoder().decode(T.self, from: JSONObject.data(without))
-        if field.optional {
+        if field.optional || lenient[literal]?.contains(field.name) == true {
           #expect(decoded.map(known) == true, "\(name) '\(literal)' needs optional '\(field.name)'")
         } else {
           #expect(decoded == nil, "\(name) '\(literal)' takes no '\(field.name)' though TypeScript requires it")
@@ -174,9 +329,10 @@ struct ContractTests {
     #expect(covered == Set(mirrored), "\(name) samples cover \(covered.sorted()), not \(mirrored.sorted())")
   }
 
-  /// The struct's stored properties are the TypeScript fields (minus `leftOut`) with the same optionality; with
-  /// `subset`, only that every property names a TypeScript field
-  func checkStruct(_ value: Any, _ fields: [TSField], leftOut: Set<String> = [], subset: Bool = false) throws {
+  /// The struct's stored properties are the TypeScript fields (minus `leftOut`) with the same optionality, but for
+  /// `lenient` ones that Swift reads as optional though TypeScript requires them; with `subset`, only that every
+  /// property names a TypeScript field
+  func checkStruct(_ value: Any, _ fields: [TSField], leftOut: Set<String> = [], lenient: Set<String> = [], subset: Bool = false) throws {
     let swift = Dictionary(uniqueKeysWithValues: Mirror(reflecting: value).children.compactMap { child in
       child.label.map { ($0, Mirror(reflecting: child.value).displayStyle == .optional) }
     })
@@ -186,7 +342,7 @@ struct ContractTests {
     #expect(leftOut.isSubset(of: ts.keys), "\(type) leaves out fields TypeScript does not have: \(leftOut.subtracting(ts.keys).sorted())")
     if subset { return }
     #expect(Set(swift.keys) == Set(ts.keys).subtracting(leftOut), "\(type) does not mirror \(Set(ts.keys).subtracting(leftOut).subtracting(swift.keys).sorted())")
-    for (name, optional) in swift where ts[name] != nil {
+    for (name, optional) in swift where ts[name] != nil && !lenient.contains(name) {
       #expect(ts[name] == optional, "\(type).\(name) is \(optional ? "" : "not ")optional, TypeScript says otherwise")
     }
   }
@@ -245,6 +401,24 @@ enum TS {
     let chars = Array(source[source.index(before: head.upperBound)...])
     guard let end = close(chars, 0) else { return nil }
     return fields(String(chars[1..<end]))
+  }
+
+  /// The members of a union of named interfaces (`export type X = A | B`), by the literal of their `tag` field (left
+  /// out of the fields)
+  static func interfaceUnion(_ source: String, _ name: String, tag: String = "type") -> [String: [TSField]]? {
+    guard let union = alias(source, name) else { return nil }
+    var out: [String: [TSField]] = [:]
+    for member in union.split(separator: "|") {
+      guard let body = interface(source, member.trimmingCharacters(in: .whitespacesAndNewlines)),
+            let t = body.first(where: { $0.name == tag }), let literal = t.type.firstMatch(of: /^'([^']*)'$/) else { return nil }
+      out[String(literal.1)] = body.filter { $0.name != tag }
+    }
+    return out
+  }
+
+  /// The string literals of a union of them (`'a' | 'b'`)
+  static func literals(_ union: String) -> Set<String> {
+    Set(union.matches(of: /'([^']*)'/).map { String($0.1) })
   }
 
   /// The fields of an inline object type (`{ a: string; b?: number }`)
@@ -374,7 +548,70 @@ enum ContractSamples {
     .sendQueued(sessionId: "s1", id: "q1"),
     .steerQueued(sessionId: "s1", id: "q1"),
     .editQueued(sessionId: "s1", id: "q1", text: "edited", retainedAttachments: [0], attachments: [drafts[2]]),
+    .categoryOp(op: .reorderProject(cwd: "/w/a", before: "/w/b"), file: "s1"),
+    .moveSession(id: "s1", cwd: "/w2", category: "c1"),
+    .sessionMarkdown(id: "s1", seq: 4),
+    .addAccount(agent: "codex", via: .login),
+    .removeAccount(id: "acc-1"),
+    .unlockCredentials(agent: "claude"),
+    .login(sessionId: "s1", methodId: "chatgpt"),
+    .reconnect(sessionId: "s1"),
+    .retryTurn(sessionId: "s1"),
+    .editTurn(requestId: "e1", edit: edit),
+    .observeSubagent(sessionId: "s1", subagentId: "n1"),
+    .unobserveSubagent(sessionId: "s1", subagentId: "n1"),
+    .cancelSubagent(sessionId: "s1", subagentId: "n1"),
+    .stopAsyncTask(sessionId: "s1", taskId: "t1"),
+    .goal(sessionId: "s1", action: .set, objective: "ship it"),
+    .searchFiles(query: "app", seq: 5),
+    .setSetting(key: "theme", value: "dark"),
+    .controls(agent: "claude", fresh: true),
+    .projectDir(sessionId: "s1", dir: "src", seq: 6),
+    .projectStatus(sessionId: "s1", seq: 7),
+    .projectFile(sessionId: "s1", path: "src/a.ts", base: .head, seq: 8),
+    .sessionChanges(sessionId: "s1", seq: 9),
+    .diffSource(sessionId: "s1", toolCallId: "call-1", nth: 0, subagentId: "n1", seq: 10),
+    .imageBlob(sessionId: "s1", path: "/w/shot.png", seq: 11),
+    .openPlan(sessionId: "s1", planId: "p1"),
+    .terminalOpen(id: "T", cwd: "/w", cols: 100, rows: 30),
+    .terminalInput(id: "T", data: "ls\r", binary: false),
+    .terminalResize(id: "T", cols: 120, rows: 40),
+    .terminalAck(id: "T", chars: 4096),
+    .terminalClose(id: "T"),
+    .terminalKill(id: "T"),
   ]
+
+  static let edit = EditTurnRequest(
+    sessionId: "s1", turnIndex: 0, turnCount: 2, originalText: "fail", turnId: "u1", text: "hello again", retainedAttachments: [0],
+    attachments: [drafts[4]], settings: TurnSettings(modeId: "agent", config: ["model": "opus"]), intent: .continue)
+
+  static let categoryOps: [CategoryOp] = [
+    .addProject(cwd: "/w/a"),
+    .removeProject(cwd: "/w/a"),
+    .reorderProject(cwd: "/w/a", before: "/w/b"),
+    .collapseProject(cwd: "/w/a", collapsed: true),
+  ]
+
+  /// In AgentBlock.types order (sessionViewParts reads the tool call)
+  static let blocks = [
+    #"{"type":"thought","text":"hmm","startedAt":1000,"durationSec":2,"streaming":true}"#,
+    #"{"type":"plan","entries":[{"title":"read","status":"in_progress","priority":"high"}],"changed":true}"#,
+    #"{"type":"tool_call","observation":"unknown","id":"call-1","kind":"edit","verb":"Edit","verbKey":"verb.edit","mcpServer":"Blockbench","target":"a.ts","targetMono":true,"locations":[{"path":"/w/a.ts","line":3}],"readRange":{"path":"/w/a.ts","start":1,"end":9},"status":"in_progress","background":true,"asyncTask":{"id":"t1","state":"running","canStop":true,"taskType":"shell","name":"build","description":"cargo build","summary":"compiling","lastToolName":"Bash","outputFilePath":"/tmp/t1.log","usage":{"totalTokens":1200,"toolUses":3,"durationMs":4500},"stopRequested":true},"startedAt":1000,"endedAt":2000,"meta":"+1 -1","diffStat":{"add":1,"del":1},"todoEntries":[{"title":"read","status":"completed"}],"content":{"type":"diff","lines":[{"kind":"del","text":"-a","oldLine":1},{"kind":"add","text":"+b","newLine":1}],"source":{"path":"/w/a.ts","omitted":true}},"contents":[{"type":"text","text":"done"},{"type":"image","blob":"3f2a.png","mimeType":"image/png"}],"subagentId":"n1"}"#,
+    #"{"type":"text","id":"m1","phase":"final","markdown":"done","streaming":true,"images":[{"blob":"3f2a.png","mimeType":"image/png","uri":"/w/shot.png"}]}"#,
+    #"{"type":"permission","id":"perm-1","title":"Run ls","command":"ls","description":"list","planId":"p1","defaultToNo":true,"options":[{"id":"allow","label":"Allow","kind":"allow_once","detail":"once"}]}"#,
+    #"{"type":"compaction","id":"c1","status":"failed","error":"too long"}"#,
+    ##"{"type":"plan_document","id":"p1","title":"Plan","markdown":"# Plan","path":"/w/plan.md","toolCallId":"call-2","approvalToolCallId":"call-3","status":"ready"}"##,
+    #"{"type":"question","id":"q1","toolCallId":"call-4","message":"Pick","questions":[{"id":"a","title":"Kind","text":"Which?","kind":"single","options":[{"id":"x","label":"X","description":"the x"}],"other":true,"numeric":false,"required":true}],"outcome":"answered","answers":{"a":"x"}}"#,
+    #"{"type":"image","id":"img-1","blob":"3f2a.png","mimeType":"image/png","uri":"/w/shot.png"}"#,
+    #"{"type":"notice","id":"n-1","revision":2,"category":"limit","severity":"warning","info":true,"title":"Slow down","details":"429","actions":["retry"]}"#,
+    #"{"type":"steer","id":"st-1","text":"also this","attachments":[{"kind":"quote","text":"x","comment":"y"}]}"#,
+    #"{"type":"goal","event":"set","objective":"ship it","iterations":2,"tokensUsed":1200,"timeUsedSeconds":0}"#,
+  ]
+
+  static let richView = #"{"id":"s1","external":{"source":"chatgpt","sourceKey":"k1","connectionPrompt":"paste this","state":"receiving","activeTurnId":"t1","lastEventAt":"2026-10-27T19:33:34.971Z"},"agent":"claude","accountId":"acc-1","title":"t","cwd":"/w","status":"auth_required","error":"sign in","canTakeOver":true,"authMethods":[{"id":"chatgpt","name":"ChatGPT","description":"browser login","terminal":{"args":["login"],"env":{"NO_COLOR":"1"}}}],"turns":[\#(userTurn),\#(agentTurn)],"running":true,"rev":2,"controls":{"modes":[],"options":[]},"modelShapes":{"opus":[{"id":"effort","name":"Effort","options":[{"id":"high","name":"High"}],"value":"high"}]},"usage":{"used":1000,"size":200000,"cost":0.5,"compactedFrom":150000},"commands":[],"queued":[{"id":"q1","text":"next","attachments":[],"sending":true}],"canSteer":true,"goal":{"objective":"ship it","status":"active","iterations":2,"tokenBudget":100000,"tokensUsed":1200,"timeUsedSeconds":40,"updatedAt":1761593614971},"goalActions":["set","pause","resume","clear"],"subagents":[\#(subagent)],"forkedFrom":{"sessionId":"s0","turnIndex":3,"agent":"codex"},"createdAt":"2026-10-27T19:33:34.971Z","updatedAt":"2026-10-27T19:33:34.971Z"}"#
+  static let userTurn = #"{"role":"user","id":"u1","text":"go","command":"goal","attachments":[{"kind":"text","blob":"b.txt","name":"notes.txt","context":{"sourceId":"browser","sourceName":"Browser"}},{"kind":"selection","blob":"s.txt","uri":"file:///w/a.ts","name":"a.ts","startLine":1,"endLine":3}],"settings":{"modeId":"agent","config":{"model":"opus"}},"edited":true,"planId":"p1","auto":true,"autoReason":"goal","goalContinue":true}"#
+  static let agentTurn = #"{"role":"agent","observation":"unknown","blocks":[\#(blocks[11])],"usage":{"input":10,"output":20,"cachedRead":5,"cachedWrite":1,"reasoning":3,"total":39,"modelCalls":2,"model":"opus","requestId":"r1","context":{"used":1000,"size":200000}},"startedAt":1000,"respondedAt":1100,"endedAt":2000,"activity":{"kind":"read","label":"Reading"},"stop":"error","error":{"message":"boom","code":-32603,"kind":"overloaded","retryable":true,"failureId":"f1","actions":["retry"]},"command":{"name":"goal","mode":"agent","options":[{"name":"Model","value":"opus"}]},"retry":{"attempt":1,"max":3,"detail":"retrying"}}"#
+  static let subagent = #"{"id":"n1","parentId":"n0","turnIndex":1,"visibility":"session","title":"Scout","task":"find it","role":"scout","state":"running","stateSource":"agent","controls":{"cancel":true},"cancelRequested":false,"background":true,"announcedAt":1000,"endedAt":2000,"model":"opus","usage":{"used":10,"size":100},"peer":{"sessionId":"ps1","agentId":"a1","toolCallId":"call-1","sidechainId":"sc1"},"activity":"Reading","toolCount":3,"result":"done","hasProcess":true,"permissions":[\#(blocks[4])],"question":\#(blocks[7]),"harness":{"agent":"codex","persona":"scout","mode":"consult","thread":"n1","round":1,"sessionId":"cs1","effort":"high","group":"g1"}}"#
 
   /// In HostMsg.types order (the struct checks above index into it)
   static let pushes = [
@@ -391,5 +628,18 @@ enum ContractSamples {
     #"{"type":"settings","settings":\#(settings),"locale":"zh-CN"}"#,
     #"{"type":"controls","agent":"claude","controls":[{"id":"model","name":"Model","category":"model","options":[{"id":"opus","name":"Opus"}],"value":"opus"}],"shapes":{"opus":[{"id":"effort","name":"Effort","options":[{"id":"high","name":"High"}],"value":"high"}]}}"#,
     #"{"type":"sessionHits","seq":3,"hits":[{"id":"s1","snippet":"… the zebracorn …"}]}"#,
+    #"{"type":"subagent","sessionId":"s1","subagentId":"n1","rev":3,"running":true,"turns":[{"role":"user","text":"look"},{"role":"agent","blocks":[{"type":"text","markdown":"found it"}]}]}"#,
+    #"{"type":"files","seq":5,"files":[{"uri":"file:///w/src/app.ts","path":"src/app.ts"}]}"#,
+    #"{"type":"diffSource","seq":10,"source":{"path":"/w/a.ts","oldText":"a\n","newText":"b\n"}}"#,
+    #"{"type":"imageBlob","seq":11,"blob":"3f2a.png"}"#,
+    ##"{"type":"sessionMarkdown","seq":4,"markdown":"# t\n","error":"unreadable"}"##,
+    #"{"type":"projectDir","seq":6,"entries":[{"name":"src","dir":true},{"name":"a.ts"}],"error":"missing"}"#,
+    #"{"type":"projectStatus","seq":7,"root":"/w","marks":{"src/a.ts":"M","new/":"U"}}"#,
+    #"{"type":"projectFile","seq":8,"text":"b\n","hunks":[{"at":1,"add":1,"del":["a"]}],"error":"EACCES: permission denied"}"#,
+    #"{"type":"sessionChanges","seq":9,"files":[{"path":"a.ts","add":1,"del":1,"gone":false}]}"#,
+    #"{"type":"terminalOutput","id":"T","data":"term-42\r\n"}"#,
+    #"{"type":"terminalState","id":"T","title":"sh","cols":100,"rows":30,"replay":"","exit":{"code":5,"signal":"SIGHUP"},"error":"no shell"}"#,
+    #"{"type":"editTurnResult","requestId":"e1","error":"stale"}"#,
+    #"{"type":"appearance","appearance":{"density":"airy","motion":"none"}}"#,
   ]
 }

@@ -58,9 +58,9 @@ struct TurnAttachments: View {
         case .image(let blob, _, _):
           // Inline pixels when the app staged the photo itself; a blob name from the engine keeps the glyph for now
           AttachmentThumb(blob: blob)
-        case .file(_, let name), .text(_, let name):
+        case .file(_, let name), .text(_, let name, _):
           AttachmentPill(name: name, icon: .fileText)
-        case .selection(_, let name, let start, let end):
+        case .selection(_, let name, let start, let end, _):
           AttachmentPill(name: "\(name) \(start == end ? "L\(start)" : "L\(start)-\(end)")", icon: .textSelect)
         case .quote, .unknown:
           EmptyView()

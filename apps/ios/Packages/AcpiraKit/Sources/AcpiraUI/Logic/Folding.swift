@@ -255,7 +255,7 @@ public func editEntries(_ blocks: [ToolCallBlock]) -> [(key: String, blocks: [To
 public func editSpan(_ blocks: [ToolCallBlock]) -> String? {
   var lo = Int.max, hi = Int.min
   for block in blocks {
-    for case .diff(let lines) in visibleToolContents(block) {
+    for case .diff(let lines, _) in visibleToolContents(block) {
       let adds = lines.filter { $0.kind == .add }.compactMap(\.newLine)
       for n in adds.isEmpty ? lines.filter({ $0.kind == .del }).compactMap(\.oldLine) : adds {
         lo = min(lo, n); hi = max(hi, n)

@@ -209,9 +209,9 @@ private struct QueueAttachment: View {
       RoundedRectangle(cornerRadius: Metrics.rSm).fill(Palette.chip)
         .frame(width: Metrics.ctlSm, height: Metrics.ctlSm)
         .overlay { Icon(.image, size: Metrics.icon).foregroundStyle(Palette.fg3) }
-    case .file(_, let name), .text(_, let name):
+    case .file(_, let name), .text(_, let name, _):
       AttachmentPill(name: name, icon: .fileText)
-    case .selection(_, let name, let start, let end):
+    case .selection(_, let name, let start, let end, _):
       AttachmentPill(name: "\(name) \(start == end ? "L\(start)" : "L\(start)-\(end)")", icon: .textSelect)
     case .quote, .unknown:
       EmptyView()
