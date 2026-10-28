@@ -78,6 +78,7 @@ The React UI in `packages/ui`: how to check it, stylesheet layering, markdown an
 
 ## Other surfaces
 
+- First run and interface tour (`welcome/`; shell side in `desktop.md` and `host-architecture.md`): the layer is a fixed sibling of whatever shell is under it, never a portal, so it survives the swap from the sample shell to the real one at `init` and fades out over the real one. The sample is the real `Shell` with `sample` (column docked, no tool panel) inside an `inert` wrapper. Steps find their targets by DOM queries into it (`STEPS` in `Welcome.tsx`): renaming a class or icon there silently drops a step. Before `init` the locale comes from the boot config (`firstRun` / `tourPage`).
 - Browser panel (`browser/BrowserPanel.tsx`; host side in `host-architecture.md`): the same bundle with `window.__acpira.host === 'browser'`, no `App` and no session state. Shapes and URL redaction in `packages/shared/picker.ts`, the in-page side in `packages/picker/`.
 - The panel takes messages only from `window.parent` in their declared shape (`hostMsgOf`): frames inside the page can post to it too.
 - Pinning the same context again replaces the earlier chip (`addContext` in `App.tsx`); dropping it as a duplicate lost comments on re-picked elements.

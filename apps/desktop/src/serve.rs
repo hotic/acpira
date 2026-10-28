@@ -51,8 +51,16 @@ pub fn handle(request: Request<Vec<u8>>, responder: tauri::UriSchemeResponder) {
   let blobs = app.client().sessions_dir().map(std::path::PathBuf::from);
   match route(&path, uri.query(), &app.paths.webview, blobs.as_deref()) {
     Route::Page { host, tab } => {
-      let html =
-        page_html(&PageConfig { host, locale: app.host_language(), dark: crate::os::dark_mode(), font: crate::app::page_font(), tab });
+      // Only a chat window's page runs the first-run flow; a browser page has no engine view to wait for
+      let first_run = if host == PageHost::Editor && tab.is_none() { app.first_run_page() } else { None };
+      let html = page_html(&PageConfig {
+        host,
+        locale: app.host_language(),
+        dark: crate::os::dark_mode(),
+        font: crate::app::page_font(),
+        tab,
+        first_run,
+      });
       responder.respond(respond(StatusCode::OK, "text/html; charset=utf-8", html.into_bytes()));
     }
     Route::Theme => responder.respond(respond(StatusCode::OK, "text/css; charset=utf-8", THEME_CSS.as_bytes().to_vec())),

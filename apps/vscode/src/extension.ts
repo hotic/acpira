@@ -9,13 +9,13 @@ import type { BrowserOpened, PlatformRequest } from '@acpira/shared/sidecar';
 import type { SessionView } from '@acpira/shared/transcript';
 import { sessionIdOfLink } from '@acpira/shared/sessionLinks';
 import { FileVault } from './accounts/AccountStore';
-import { BrowserPanel, WebviewBridge } from './bridge';
+import { BrowserPanel, WebviewBridge, openTourPanel, pageFont } from './bridge';
 import { setHostLocale, t } from './i18n';
 import { SidecarClient } from '@acpira/engine-client/SidecarClient';
 import { engineEndpoint } from '@acpira/engine-client/engine';
 import { sidecarCommands } from '@acpira/engine-client/sidecarLocator';
 import { safeModeOn, setSafeMode } from '@acpira/engine-client/safeMode';
-import { acpiraHome, migrateOnce } from './store/dataDir';
+import { acpiraHome, displayHome, migrateOnce } from './store/dataDir';
 import { EDITOR_VIEW_TYPE, fileColumn, VscodePlatform } from './vscodePlatform';
 import { editorSelectionOf } from './editorSelection';
 import { ContextPayloadError, ContextSlots, pageOwner, parseContextPayload, type ContextPayload } from '@acpira/engine-client/contextApi';
@@ -44,9 +44,13 @@ export async function activate(context: vscode.ExtensionContext) {
   const platform = new VscodePlatform(context, id => { openEditor(id); }, r => announce(r), url => probeUrl(url), (url, folder) => showPreview(url, true, folder));
   setHostLocale(platform.locale());
 
-  // The legacy globalStorage / SecretStorage tree only VS Code can read is merged before the sidecar takes over ~/.acpira
+  // The legacy globalStorage / SecretStorage tree only VS Code can read is merged before the sidecar takes over ~/.acpira.
+  // On a first run (no folder yet) neither happens until the user says yes on the chat's consent card (createHome): both
+  // would create the folder
   const home = acpiraHome();
-  await migrateOnce({ from: platform.legacy.from, to: home, oldVault: platform.legacy.vault, newVault: new FileVault(join(home, 'secrets.json'), l => log.info(l)), log: l => log.info(l) });
+  const migrate = () => migrateOnce({ from: platform.legacy.from, to: home, oldVault: platform.legacy.vault, newVault: new FileVault(join(home, 'secrets.json'), l => log.info(l)), log: l => log.info(l) });
+  let consented = existsSync(home);
+  if (consented) await migrate();
 
   // Sessions run in a persistent engine on the machine that hosts the workspace (the SSH server for Remote-SSH): closing the
   // window, reloading it or losing the connection leaves running turns going, and the next window for the workspace reconnects.
@@ -73,6 +77,8 @@ export async function activate(context: vscode.ExtensionContext) {
   });
   // Safe mode through the engine binary itself, so it works while the engine is stuck; every engine follows within a second
   const switchSafeMode = async (on: boolean): Promise<boolean> => {
+    // Safe mode is a file in the data folder, which a first run has not been allowed to create yet
+    if (!consented) return false;
     const binary = sidecarCommands({ root: resources.fsPath, env: process.env })[0]?.command;
     if (!binary) return false;
     try {
@@ -96,10 +102,28 @@ export async function activate(context: vscode.ExtensionContext) {
   const panels = new Map<WebviewBridge, vscode.WebviewPanel>();
   // Copied session links open through this window's URI handler (`cursor://` under Cursor, `vscode-insiders://` …)
   const sessionLinkBase = `${vscode.env.uriScheme}://${context.extension.id}/session/`;
+  // The consent card's yes, from whichever chat says it first: the folder (with the legacy merge), then the engine, whose
+  // init ends the flow in every chat. A failure lets a later yes try again
+  let creating: Promise<void> | undefined;
+  const createHome = () => creating ??= (async () => {
+    if (consented) return;
+    await migrate();
+    consented = true;
+    log.info(`first run: created ${home}`);
+    sidecar.start();
+  })().catch((e: unknown) => { creating = undefined; throw e; });
+  // Settings' interface tour, one tab at a time
+  let tour: vscode.WebviewPanel | undefined;
+  const openTour = () => {
+    if (tour) { tour.reveal(); return; }
+    tour = openTourPanel(resources, platform.locale(), pageFont(key => platform.setting(key)));
+    tour.onDidDispose(() => { tour = undefined; });
+  };
   const attach = (webview: vscode.Webview, host: 'sidebar' | 'editor', visible: () => boolean, initial?: string | { mostRecent: true }, onSession?: (s: SessionView) => void) => {
     const b = new WebviewBridge(webview, host, {
       client: sidecar, extensionUri: resources, sessionsDir, onSession, visible, log: line => log.info(line),
       locale: () => platform.locale(), setting: key => platform.setting(key), sessionLinkBase,
+      firstRun: () => consented ? undefined : displayHome(home), createHome, openTour,
       onPageReady: ready => {
         ready.postShell({ type: 'editorSelection', selection: liveSelection });
         if (lastCopy) ready.postShell({ type: 'editorCopy', selection: lastCopy });
@@ -474,7 +498,8 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
   );
 
-  sidecar.start();
+  if (consented) sidecar.start();
+  else log.info(`first run: no ${home}, the engine waits for consent`);
   trackSelection(vscode.window.activeTextEditor);
 }
 

@@ -123,6 +123,8 @@ export interface SettingsShellProps {
   on: SettingsHandlers;
   // The standalone desktop app: the chat's window frame (desktop.css), the rail on the canvas and the page on a sheet
   desktop?: boolean;
+  // Plays the interface tour (absent where the shell cannot): About carries it on the desktop, General elsewhere
+  onTour?: () => void;
 }
 
 // Navigation and content are separate columns. The page heading shares the cards' content measure.
@@ -205,7 +207,7 @@ export function SettingsShell(p: SettingsShellProps) {
               <main key={page.kind === 'agent' ? 'plugins' : page.kind === 'chatgpt' ? 'connections' : page.kind} className="min-h-0 min-w-0 flex-1 overflow-y-auto scroll-stable">
                 <Page>
                   <PageHeader title={title} action={action} />
-                  {page.kind === 'general' && <General settings={p.settings} agents={p.agents} on={p.on} />}
+                  {page.kind === 'general' && <General settings={p.settings} agents={p.agents} on={p.on} onTour={desktop ? undefined : p.onTour} />}
                   {page.kind === 'appearance' && <AppearancePage settings={p.settings} appearance={p.appearance} on={p.on} />}
                   {(page.kind === 'plugins' || page.kind === 'agent') && <PluginsPage agents={p.agents} inventories={p.inventories}
                     onReorder={ids => p.on.setSetting('agentOrder', [...ids, ...p.settings.agentOrder.filter(unlisted)])}
@@ -220,7 +222,7 @@ export function SettingsShell(p: SettingsShellProps) {
                     install: () => postUpdate({ type: 'updateInstall' }),
                     setAuto: on => postUpdate({ type: 'updateAuto', on }),
                     openExternal: p.on.openExternal,
-                  }} />}
+                  }} onTour={p.onTour} />}
                   {page.kind === 'storage' && <StoragePage state={p.storage} agents={p.agents} env={p.env} on={p.on} refresh={storageRefresh} />}
                   {(page.kind === 'connections' || page.kind === 'chatgpt') && access && <RemoteAccessSection view={access} />}
                   {(page.kind === 'connections' || page.kind === 'chatgpt') && <ConnectionsPage env={p.env} projects={p.projects} on={p.on} remote={remote}

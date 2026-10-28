@@ -1,11 +1,11 @@
 import type { ChatGptIntegrationStatus } from '@acpira/shared/chatgptIntegration';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AccountAction, AgentInstallProgress, EditTurnRequest, FileHit, HostMsg, InitState, NativeSessionsState, SessionHit, WebviewMsg } from '@acpira/shared/protocol';
+import type { AccountAction, AgentInstallProgress, DetectedAgent, EditTurnRequest, FileHit, HostMsg, InitState, NativeSessionsState, SessionHit, WebviewMsg } from '@acpira/shared/protocol';
 import type { AccountInfo, AgentId, AgentInfo, ConfigControl, FullDiffSource, SessionCategories, SessionControls, SessionSummary, SessionView, Turn } from '@acpira/shared/transcript';
 import type { ModelShapes } from '@acpira/shared/modelShapes';
 import type { HiddenMap, PanelScope, SettingKey, SettingsView } from '@acpira/shared/settings';
 import type { AgentInventory } from '@acpira/shared/inventory';
-import type { Locale } from '@acpira/shared/i18n';
+import { isLocale, resolveLocale, type Locale } from '@acpira/shared/i18n';
 import { reuse, reuseById } from '@acpira/shared/reuse';
 import { effortLabel } from '@acpira/shared/composerControls';
 import { SessionViews } from './sessionViews';
@@ -35,6 +35,8 @@ import type { SettingsPage } from './settings/Nav';
 import type { SharedState } from './settings/SharedPage';
 import type { StorageState } from './settings/StoragePage';
 import type { ProvidersState } from './settings/ProvidersSection';
+import { SampleShell } from './welcome/SampleShell';
+import { Welcome, type WelcomeMode } from './welcome/Welcome';
 
 declare global {
   // `font`: the configured UI face, for fontPreload.ts (VS Code only says so; other hosts get the default).
@@ -43,7 +45,13 @@ declare global {
   // `shell: 'desktop'`: the standalone desktop app (rust/crates/acpira-desktop/src/page.rs), which turns on the desktop layout
   // `tab`: a browser page shown as a tab of the desktop tool panel (rust/crates/acpira-desktop/src/page.rs), whose transport comes from the chat
   // `remote`: the page offers SSH hosts without being the desktop app (the browser harness, test/host-preview/shim.js)
-  interface Window { __acpira?: { host: 'sidebar' | 'editor' | 'browser'; font?: Appearance['font']; sessionLinkBase?: string; shell?: 'desktop'; platform?: 'mac' | 'win' | 'linux'; tab?: string; remote?: boolean } }
+  // `fileBase`: where the tool panel loads a local media file by absolute path (the desktop app's /file route)
+  // `firstRun`: the shell found no data folder and started no engine; the first-run flow (welcome/) shows the folder as
+  // `home`, in the shell's `locale`, until the user says yes (createDataHome) and the engine's init arrives
+  // `tourPage`: VS Code's tab of the interface tour (openTour), which has no engine view at all
+  // `opensTour`: the shell plays the tour in a tab of its own when the General page asks (VS Code)
+  // `imageCopy`: the shell answers copyImage with copiedImage, putting an image on the system clipboard (VS Code, local)
+  interface Window { __acpira?: { host: 'sidebar' | 'editor' | 'browser'; font?: Appearance['font']; sessionLinkBase?: string; shell?: 'desktop'; platform?: 'mac' | 'win' | 'linux'; tab?: string; remote?: boolean; fileBase?: string; firstRun?: { home: string; locale: string }; tourPage?: { locale: string }; opensTour?: boolean; imageCopy?: boolean } }
 }
 
 // Always through the memo: acquireVsCodeApi() throws when called twice, and other components (Link) reach the api via vscodeApi()
@@ -51,6 +59,15 @@ const vscode = vscodeApi();
 const post = (m: WebviewMsg) => vscode.postMessage(m);
 // The desktop app's page (rust/crates/acpira-desktop/src/page.rs): its frame, start page and project registry (Shell's `desktop`)
 const desktop = desktopShell();
+// Before any engine (the first run, VS Code's tour tab) the shell's language is the page's until init brings the setting's
+const firstRun = window.__acpira?.firstRun;
+const tourPage = window.__acpira?.tourPage;
+const bootTag = (firstRun ?? tourPage)?.locale;
+const bootLocale: Locale | undefined = bootTag === undefined ? undefined : isLocale(bootTag) ? bootTag : resolveLocale(undefined, bootTag);
+if (bootLocale) setLocale(bootLocale);
+
+// What the tour's steps light: the sample shell's root (welcome/SampleShell.tsx)
+const sampleScope = () => document.querySelector<HTMLElement>('[data-sample-shell] .acp-shell');
 
 // Replies return to the originating webview. Drafts survive a rejected edit.
 const editWaits = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
@@ -183,7 +200,14 @@ export function App() {
   const fromSettings = view === 'chat' && lastView.current === 'settings';
   useEffect(() => { lastView.current = view; }, [view]);
   const [settings, setSettings] = useState<SettingsView>();
-  const [locale, setLoc] = useState<Locale>('en');
+  const [locale, setLoc] = useState<Locale>(bootLocale ?? 'en');
+  // The first-run flow or the interface tour over the sample session (welcome/): which, and whether a replay has ended (the
+  // real shell is back under the fading layer). The desktop's first launch gets the intro and the tour; VS Code's sidebar
+  // only the folder card
+  const [welcome, setWelcome] = useState<{ mode: WelcomeMode; ended: boolean } | undefined>(() =>
+    tourPage ? { mode: 'replay', ended: false } : firstRun ? { mode: desktop ? 'first' : 'consent', ended: false } : undefined);
+  const [detected, setDetected] = useState<DetectedAgent[]>();
+  const [firstRunError, setFirstRunError] = useState<string>();
   const [chatgptStatus, setChatgptStatus] = useState<ChatGptIntegrationStatus>();
   const [inventories, setInventories] = useState<Partial<Record<AgentId, AgentInventory>>>({});
   const [shared, setShared] = useState<SharedState>();
@@ -277,6 +301,8 @@ export function App() {
         case 'noSession': setNoProject(true); setSession(undefined); break;
         case 'pickedFolder': { const settle = folderPick.current; folderPick.current = undefined; settle?.(m.path); break; }
         case 'toast': pushShellToast(m); break;
+        case 'detectedAgents': setDetected(m.agents); break;
+        case 'firstRunError': setFirstRunError(m.error); break;
         case 'pluginTheme': applyPluginTheme(m.css); break;
         // Plugins' interface pieces and their frames' traffic (pluginSlots.ts); the tool panel closes tabs of pieces gone
         case 'pluginUi': setPluginSlots(m.slots); panel.syncPlugins(); break;
@@ -389,6 +415,8 @@ export function App() {
     };
     window.addEventListener('message', onMsg);
     post({ type: 'ready', patches: true });
+    // The intro's agent row: the shell looks on PATH itself, there being no engine yet
+    if (firstRun && desktop) post({ type: 'detectAgents' });
     // The shell routes "Add to Chat" to the chat used last; a click into an already visible view changes no visibility it could see
     const onFocus = () => post({ type: 'viewFocus' });
     window.addEventListener('focus', onFocus);
@@ -538,6 +566,14 @@ export function App() {
     setView('settings');
   }, []);
 
+  // Settings' interface tour: the desktop plays it here over the sample session and comes back to the chat; VS Code opens
+  // a tab of its own for it (opensTour), the sidebar being too narrow
+  const startTour = useCallback(() => {
+    if (!desktop) { post({ type: 'openTour' }); return; }
+    setView('chat');
+    setWelcome({ mode: 'replay', ended: false });
+  }, []);
+
   // Desktop: the gear menu's theme, language, layout and panel-scope switches write the same settings the settings page does
   const quickTheme = settings?.theme, quickLanguage = settings?.language, quickLayout = settings?.desktopLayout, quickScope = settings?.panelScope;
   const quickFiles = settings?.panelFiles, quickTerminal = settings?.panelTerminal, quickBrowser = settings?.panelBrowser;
@@ -558,14 +594,35 @@ export function App() {
     : undefined, [quickTheme, quickLanguage, quickLayout, quickScope, quickFiles, quickTerminal, quickBrowser]);
 
   cwdRef.current = session?.cwd ?? init?.cwd ?? '';
-  if (!init || !settings) return null;
+  // The first-run flow / tour layer sits beside whatever shell is under it (the second child below, in every branch),
+  // so it outlives the swap from the sample shell to the real one and fades out over the real one. The first run ends
+  // when the engine's init is in; a replay when the user finishes or skips it
+  const ready = !!init && !!settings;
+  const layer = welcome && (
+    <LocaleContext.Provider value={locale}>
+      <Welcome mode={welcome.mode} scope={sampleScope} home={firstRun?.home ?? ''} agents={detected} error={firstRunError}
+        closing={welcome.mode === 'replay' ? welcome.ended : ready} appearance={appearance} theme={theme} look={look}
+        onCreate={() => { setFirstRunError(undefined); post({ type: 'createDataHome' }); }}
+        onEnd={() => { setWelcome(w => w && { ...w, ended: true }); if (tourPage) post({ type: 'tourDone' }); }}
+        onGone={() => setWelcome(undefined)} />
+    </LocaleContext.Provider>
+  );
+  // VS Code's tour tab only ever shows the sample; elsewhere it gives way once a replay ended or the engine is in
+  if (welcome && (tourPage || (welcome.mode === 'replay' ? !welcome.ended : !ready))) {
+    const host = init?.host ?? (window.__acpira?.host === 'sidebar' ? 'sidebar' : 'editor');
+    return <>
+      <LocaleContext.Provider value={locale}><SampleShell appearance={appearance} theme={theme} settings={settings} host={host} desktop={desktop} locale={locale} /></LocaleContext.Provider>
+      {layer}
+    </>;
+  }
+  if (!init || !settings) return <>{null}{layer}</>;
   const agent = agents.find(a => a.id === session?.agent) ?? agents[0];
-  if (!agent) return null;
+  if (!agent) return <>{null}{layer}</>;
   // A locale change re-renders in place: t() reads module state, and what memo or a cache would keep (rows, joined
   // names) reads the locale from LocaleContext. Remounting on key={locale} replayed every mount animation, closed open
   // menus and reset scroll positions, which read as the window blinking
   if (view === 'settings') {
-    return (
+    return <>
       <LocaleContext.Provider value={locale}>
       <SettingsShell
         appearance={appearance}
@@ -592,11 +649,13 @@ export function App() {
         onBack={() => setView('chat')}
         desktop={desktop}
         on={settingsOn}
+        onTour={desktop || window.__acpira?.opensTour ? startTour : undefined}
       />
       </LocaleContext.Provider>
-    );
+      {layer}
+    </>;
   }
-  return (
+  return <>
     <LocaleContext.Provider value={locale}>
     <Shell
       fromSettings={fromSettings}
@@ -651,5 +710,6 @@ export function App() {
       chats={init.chats}
     />
     </LocaleContext.Provider>
-  );
+    {layer}
+  </>;
 }

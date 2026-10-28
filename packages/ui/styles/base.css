@@ -82,6 +82,8 @@
   background: var(--hover); border: 1px solid var(--line-strong); border-radius: var(--r-sm);
   box-shadow: none; padding: 0.1em 0.4em;
 }
+/* The first-run flow's keys read as quiet text beside their action, never as keycap boxes (welcome.css) */
+.acp-shell.wl-layer kbd { all: unset; font-family: var(--font-mono); font-size: 11px; letter-spacing: .02em; opacity: .55; }
 
 /* Standard themes indicate focus via background lift; high-contrast palettes add an explicit outline.
    Must live outside @layer: the host webview paints --vscode-focusBorder on :focus (a yellow frame in Cursor),

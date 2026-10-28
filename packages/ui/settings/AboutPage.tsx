@@ -6,6 +6,7 @@ import { getLocale, t } from '../i18n';
 import { Button } from '../ui/Button';
 import { Shimmer } from '../ui/Shimmer';
 import { Field, ItemRow, Section, SectionAction, Switch } from './controls';
+import { TourSection } from './TourSection';
 
 export interface UpdateHandlers {
   // download: fetch a newer version now even with automatic downloads off
@@ -25,11 +26,12 @@ const BUSY = new Set<UpdateState['phase']>(['checking', 'downloading', 'staging'
 // Desktop only: About Acpira, at the rail's foot. The first card is the app: its version as the head, where its updates
 // stand (HostMsg updateState, rust/crates/acpira-desktop/src/update/) as the second line with the one next step as the
 // head's action, then the automatic download switch. An install that cannot replace itself (a dmg, App Translocation,
-// a folder it cannot write, a development build) says why and links to the release page instead. The second card links
-// out to the repository: help, release notes, source
-export function AboutPage({ state, on }: { state: UpdateState | undefined; on: UpdateHandlers }) {
+// a folder it cannot write, a development build) says why and links to the release page instead. Getting started replays
+// the interface tour. The last card links out to the repository: help, release notes, source
+export function AboutPage({ state, on, onTour }: { state: UpdateState | undefined; on: UpdateHandlers; onTour?: () => void }) {
   return <>
     {state && <VersionCard state={state} on={on} />}
+    {onTour && <TourSection onStart={onTour} />}
     <Section title="GitHub" desc={REPO_URL.replace(/^https:\/\//, '')}>
       <ItemRow lead={<MessagesSquare />} title={t('desktop.help')} desc="Issues" onOpen={() => on.openExternal(HELP_URL)} />
       <ItemRow lead={<Tag />} title={t('settings.about.releaseNotes')} desc="Releases" onOpen={() => on.openExternal(RELEASES_URL)} />

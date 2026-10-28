@@ -9,13 +9,15 @@ import { playChime } from '../effects/chime';
 import { t } from '../i18n';
 import { Field, NumberField, Section, Select, Switch } from './controls';
 import type { SettingsHandlers } from './SettingsShell';
+import { TourSection } from './TourSection';
 
 // The threshold field works in thousands of tokens
 const K = 1000;
 
 // General: the shell's own knobs. Rendering preferences live on the Appearance page; the LAB appearance axes (bar motion) stay design decisions.
-// The settings shell owns the page heading and content measure.
-export function General({ settings, agents, on }: { settings: SettingsView; agents: AgentInfo[]; on: SettingsHandlers }) {
+// The settings shell owns the page heading and content measure. `onTour`: getting started at the foot (VS Code, which has
+// no About page)
+export function General({ settings, agents, on, onTour }: { settings: SettingsView; agents: AgentInfo[]; on: SettingsHandlers; onTour?: () => void }) {
   const desktop = useDesktop();
   // `auto` follows the host's language: the editor's in an IDE, the system's in the desktop app (app.getLocale)
   const languages = LANGUAGES.map(l => ({ value: l, label: t(desktop && l === 'auto' ? 'settings.language.system' : `settings.language.${l}` as const) }));
@@ -103,6 +105,7 @@ export function General({ settings, agents, on }: { settings: SettingsView; agen
           <Switch checked={settings.notifySystem} onChange={v => on.setSetting('notifySystem', v)} label={t('settings.notifySystem')} />
         </Field>
       </Section>
+      {onTour && <TourSection onStart={onTour} />}
     </>
   );
 }

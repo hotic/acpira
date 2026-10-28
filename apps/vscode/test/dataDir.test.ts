@@ -3,9 +3,17 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { FileVault, MemoryVault, accountSecretKey } from '../src/accounts/AccountStore';
-import { acpiraHome, migrateOnce } from '../src/store/dataDir';
+import { acpiraHome, displayHome, migrateOnce } from '../src/store/dataDir';
 
 function tmp() { return mkdtempSync(join(tmpdir(), 'acpira-home-')); }
+
+describe('displayHome', () => {
+  it('spells a folder under the home with ~ on Unix only', () => {
+    expect(displayHome('/home/u/.acpira', '/home/u', true)).toBe('~/.acpira');
+    expect(displayHome('/home/u2/.acpira', '/home/u', true)).toBe('/home/u2/.acpira');
+    expect(displayHome('/home/u/.acpira', '/home/u', false)).toBe('/home/u/.acpira');
+  });
+});
 
 describe('acpiraHome', () => {
   it('uses ACPIRA_HOME when non-empty, otherwise ~/.acpira', () => {

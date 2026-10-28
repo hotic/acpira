@@ -61,6 +61,9 @@ export type WindowControl = 'minimize' | 'maximize' | 'close';
 // What a shell toast's button posts back (HostMsg toast `action`)
 export type ToastCommand = 'updateInstall';
 
+// An agent CLI the shell found on PATH before the engine first ran (the first-run intro's row): its registry id and name
+export interface DetectedAgent { id: string; name: string }
+
 export interface EditTurnRequest {
   sessionId: string;
   turnIndex: number;
@@ -232,6 +235,10 @@ export type HostMsg =
   // updater's item), and whether the window is maximized (the restore glyph). Never sent by the sidecar
   | { type: 'desktopMenu'; menus: DesktopMenu[] }
   | { type: 'windowState'; maximized: boolean }
+  // The first-run flow (packages/ui/welcome), never sent by the sidecar: the agent CLIs the shell found on PATH before any
+  // engine ran (answering detectAgents), and why the data folder could not be created (answering createDataHome)
+  | { type: 'detectedAgents'; agents: DetectedAgent[] }
+  | { type: 'firstRunError'; error: string }
   // The desktop tool panel's browser tabs, never sent by the sidecar: a message for the page in tab `tab`, the address bar's
   // history for the new-tab page (`running`: the ones whose server answered just now), and open_browser (`tab` names a tab
   // of this window the shell navigated; absent, the page opens a tab on `url`)
@@ -403,6 +410,14 @@ export type WebviewMsg =
   | { type: 'panelBrowser'; tab: string; msg: BrowserMsg }
   | { type: 'panelBrowserClose'; tab: string }
   | { type: 'panelHistory' }
+  // The first-run flow (packages/ui/welcome), kept in the shell like pickFolder: which agent CLIs are on PATH (answered with
+  // detectedAgents), and the user's yes to the data folder: the shell creates it and starts the engine, whose init ends
+  // the flow (firstRunError when it could not). VS Code only: play the interface tour in an editor tab of its own, and
+  // that tab's tour ended
+  | { type: 'detectAgents' }
+  | { type: 'createDataHome' }
+  | { type: 'openTour' }
+  | { type: 'tourDone' }
   // The tool panel's terminal tabs, run by the engine. Open terminal `id` (a login shell in `cwd`), or view it again
   // after a reload; keys and pastes (`binary`: each character one byte, xterm's legacy mouse reports); the laid-out size; how much output (UTF-16 units) the page has rendered, since output
   // pauses while too much is not; the page stops viewing it (it runs on a minute for a reload); the tab closed or restarts
