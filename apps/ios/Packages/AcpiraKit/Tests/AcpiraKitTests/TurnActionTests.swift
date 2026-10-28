@@ -116,6 +116,19 @@ private func agentTurns(_ view: SessionView) -> [AgentTurn] {
     #expect(request.settings == TurnSettings(modeId: "read-only", config: ["model": "gpt-6-astra-high-thinking"]))
   }
 
+  @Test func anEditKeepsTheOriginalsByIndexAndSendsNewOnesAsDrafts() {
+    let view = Fixtures.session("goal")!
+    guard case .user(var prompt) = view.turns[2] else { Issue.record("no prompt"); return }
+    let kept = Attachment.image(blob: "a.png", mimeType: "image/png", name: "a.png")
+    let dropped = Attachment.file(uri: "file:///w/b.swift", name: "b.swift")
+    prompt.attachments = [kept, dropped]
+    let edit = TurnEdit(turnIndex: 2, turnCount: view.turns.count, original: prompt, controls: view.controls)
+    let added = Attachment.image(blob: "AAAA", mimeType: "image/jpeg", name: nil)
+    let request = editTurnRequest(sessionId: "s", edit: edit, text: "x", staged: [kept, added])
+    #expect(request.retainedAttachments == [0])
+    #expect(request.attachments == [.image(mimeType: "image/jpeg", data: "AAAA", name: nil)])
+  }
+
   @Test func retryOnlyAnswersARetryableFailureOnTheNewestTurn() {
     #expect(retryableTurn(Fixtures.session("failure")!) == 1)
     // A context that no longer fits goes on by compaction, not a retry

@@ -97,13 +97,17 @@ func retainedAttachments(_ original: [Attachment], staged: [Attachment]) -> [Int
   }
 }
 
-/// The editTurn request for a send from the editing composer. Attachments staged during the edit stay on the phone, as
-/// they do for a plain send, until the composer hands drafts to the engine
+/// The editTurn request for a send from the editing composer: the prompt's attachments still staged go by index, the
+/// ones staged during the edit as drafts, as a plain send hands them over (`AppModel.drafts`)
 func editTurnRequest(sessionId: String, edit: TurnEdit, text: String, staged: [Attachment]) -> EditTurnRequest {
-  EditTurnRequest(sessionId: sessionId, turnIndex: edit.turnIndex, turnCount: edit.turnCount, originalText: edit.original.text,
-                  turnId: edit.original.id, text: text.trimmingCharacters(in: .whitespacesAndNewlines),
-                  retainedAttachments: retainedAttachments(edit.original.attachments ?? [], staged: staged), attachments: [],
-                  settings: captureTurnSettings(edit.controls))
+  let original = edit.original.attachments ?? []
+  let retained = retainedAttachments(original, staged: staged)
+  var added = staged
+  for i in retained { if let at = added.firstIndex(of: original[i]) { added.remove(at: at) } }
+  return EditTurnRequest(sessionId: sessionId, turnIndex: edit.turnIndex, turnCount: edit.turnCount, originalText: edit.original.text,
+                         turnId: edit.original.id, text: text.trimmingCharacters(in: .whitespacesAndNewlines),
+                         retainedAttachments: retained, attachments: AppModel.drafts(added),
+                         settings: captureTurnSettings(edit.controls))
 }
 
 /// The turn a reply's actions offer Retry on: the newest one, when it ended on an error Retry can answer (Alert.tsx):

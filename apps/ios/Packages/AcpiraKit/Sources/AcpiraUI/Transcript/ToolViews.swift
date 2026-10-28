@@ -541,6 +541,7 @@ struct CommandPrompt: View {
           }
           .buttonStyle(.plain)
           .foregroundStyle(Palette.fg3)
+          .accessibilityLabel(Text(web: t(expanded ? "code.commandCollapse" : "code.commandExpand")))
         }
       }
     }

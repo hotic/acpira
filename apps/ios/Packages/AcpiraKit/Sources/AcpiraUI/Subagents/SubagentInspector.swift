@@ -67,6 +67,8 @@ struct SubagentInspector: View {
         }
       }
       .environment(\.subagentTranscript, true)
+      // A diff's whole files are asked for in the child's own transcript
+      .environment(\.diffSource, model.live ? { [model, session, id] in await model.diffSource(session, $0, subagentId: id) } : nil)
       .environment(\.agentAccent, Palette.accent(for: agent))
       .environment(\.chatAgent, model.agent(agent))
       // Only the child's cards act, through the parent session; everything else is left at its no-op default
