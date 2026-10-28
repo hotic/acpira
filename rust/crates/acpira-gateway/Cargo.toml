@@ -1,0 +1,31 @@
+[package]
+name = "acpira-gateway"
+description = "The computer side of paired devices: admits paired phones and computers and bridges them to an engine as peer wires"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "acpira-gateway"
+path = "src/main.rs"
+
+[dependencies]
+acpira-desktop = { path = "../acpira-desktop" }
+acpira-net = { path = "../acpira-net" }
+acpira-shared.workspace = true
+anyhow.workspace = true
+base64.workspace = true
+libc.workspace = true
+parking_lot.workspace = true
+qrcode.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+acpira-host = { path = "../acpira-host" }
+tempfile.workspace = true
+
+[lints]
+workspace = true

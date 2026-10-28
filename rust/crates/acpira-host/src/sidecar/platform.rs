@@ -59,6 +59,10 @@ pub struct SidecarPlatform {
   settings: parking_lot::RwLock<Map<String, Value>>,
   /// `<ACPIRA_HOME>/settings.json`, where the shared keys live once the runtime has opened it (`use_shared`)
   shared: parking_lot::RwLock<Option<Arc<SharedSettings>>>,
+  /// Whether a window's snapshot is in `settings`: a platform a peer's hello built (an SSH host's client, a paired
+  /// device's gateway) has only the peer's empty one, so it must not create the shared file from it; the first window
+  /// that joins does (`rebind`)
+  window_seen: std::sync::atomic::AtomicBool,
   env: parking_lot::RwLock<ShellEnv>,
   pending: parking_lot::Mutex<HashMap<String, Pending>>,
   settings_listeners: parking_lot::Mutex<Vec<Arc<dyn Fn(Affects) + Send + Sync>>>,
@@ -66,6 +70,16 @@ pub struct SidecarPlatform {
   files: NodeFiles,
   seq: std::sync::atomic::AtomicU64,
   closed: parking_lot::Mutex<Option<String>>,
+}
+
+/// The first engine on the machine creates the shared file from a window's snapshot (whatever it had until now). A
+/// failed seed leaves the shell's snapshot in charge
+async fn seed_shared(store: &SharedSettings, snapshot: &Map<String, Value>, log: &Arc<dyn Fn(&str) + Send + Sync>) {
+  match store.seed(snapshot).await {
+    Ok(true) => log(&format!("shared settings created from the shell's: {}", store.path().display())),
+    Ok(false) => {}
+    Err(e) => log(&format!("shared settings could not be created at {}: {e}", store.path().display())),
+  }
 }
 
 impl SidecarPlatform {
@@ -92,6 +106,7 @@ impl SidecarPlatform {
       peers: Default::default(),
       settings: parking_lot::RwLock::new(hello.settings.clone()),
       shared: Default::default(),
+      window_seen: std::sync::atomic::AtomicBool::new(!hello.client.is_peer()),
       env: parking_lot::RwLock::new(hello.env.clone()),
       pending: Default::default(),
       settings_listeners: Default::default(),
@@ -124,6 +139,14 @@ impl SidecarPlatform {
   /// and listeners hear about every key whose value differs (the settings may have changed while no shell was connected)
   pub fn rebind(&self, hello: &Hello) {
     *self.caps.write() = hello.client.capabilities.iter().cloned().collect();
+    // The engine started for a peer: the first window's snapshot is the one to create the shared file from
+    if !self.window_seen.swap(true, std::sync::atomic::Ordering::AcqRel)
+      && let Some(store) = self.shared.read().clone()
+    {
+      let snapshot = hello.settings.clone();
+      let log = self.stderr.clone();
+      tokio::spawn(async move { seed_shared(&store, &snapshot, &log).await });
+    }
     let keys: Vec<String> = {
       let cur = self.settings.read();
       let mut keys: Vec<String> =
@@ -207,14 +230,12 @@ impl SidecarPlatform {
     self.shared_store(key).is_some()
   }
 
-  /// Opens the shared settings: the first engine on the machine creates the file from this shell's snapshot (whatever it
-  /// had until now). A failed seed leaves the shell's snapshot in charge
+  /// Opens the shared settings: the first engine on the machine creates the file from this shell's snapshot, unless a
+  /// peer started it (`window_seen`)
   pub async fn use_shared(&self, store: Arc<SharedSettings>) {
-    let snapshot = self.settings.read().clone();
-    match store.seed(&snapshot).await {
-      Ok(true) => self.log(&format!("shared settings created from the shell's: {}", store.path().display())),
-      Ok(false) => {}
-      Err(e) => self.log(&format!("shared settings could not be created at {}: {e}", store.path().display())),
+    if self.window_seen.load(std::sync::atomic::Ordering::Acquire) {
+      let snapshot = self.settings.read().clone();
+      seed_shared(&store, &snapshot, &self.stderr).await;
     }
     *self.shared.write() = Some(store);
   }
@@ -486,5 +507,47 @@ impl SidecarPlatform {
     for p in pending {
       let _ = p.tx.send(Err(anyhow!("{}: {reason}", p.method)));
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use serde_json::json;
+
+  fn hello(role: Option<&str>, settings: Value) -> Hello {
+    serde_json::from_value(json!({
+      "protocolVersion": 1, "requestId": "r",
+      "client": { "name": "t", "role": role },
+      "settings": settings,
+    }))
+    .unwrap()
+  }
+
+  // An engine a peer started (a paired device's gateway, an SSH host's client) has only the peer's empty snapshot: the
+  // shared file waits for the first window, which creates it from its own settings
+  #[tokio::test]
+  async fn a_peer_first_engine_leaves_the_shared_file_to_the_first_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = SidecarPlatform::routed(Arc::new(|_| None), &hello(Some("peer"), json!({})), Arc::new(|_| {}), false);
+    let store = Arc::new(SharedSettings::open(dir.path()));
+    p.use_shared(store.clone()).await;
+    assert!(!store.exists());
+    p.rebind(&hello(None, json!({ "disabledAgents": ["kimi"] })));
+    for _ in 0..100 {
+      if store.exists() {
+        break;
+      }
+      tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(store.get("disabledAgents"), Some(json!(["kimi"])));
+    assert_eq!(p.read_setting("disabledAgents"), Some(json!(["kimi"])));
+
+    // A window first seeds at once, as before
+    let dir = tempfile::tempdir().unwrap();
+    let w = SidecarPlatform::routed(Arc::new(|_| None), &hello(None, json!({ "disabledAgents": ["grok"] })), Arc::new(|_| {}), false);
+    let store = Arc::new(SharedSettings::open(dir.path()));
+    w.use_shared(store.clone()).await;
+    assert_eq!(store.get("disabledAgents"), Some(json!(["grok"])));
   }
 }

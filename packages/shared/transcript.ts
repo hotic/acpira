@@ -633,13 +633,14 @@ export type CategoryOp =
   | { op: 'seedProjects'; cwds: string[] }
   // Sections (project shells): the page picks a new one's id, so it can start renaming it at once; `project` files that
   // folder into it in the same edit (a separate setProjectSection could land first and find no section). Deleting one
-  // leaves its projects under Projects; `setProjectSection` without `section` takes a project out
+  // leaves its projects under Projects; `setProjectSection` without `section` takes a project out, with one files it before
+  // `before` (a project of that section; absent: at its end)
   | { op: 'createSection'; id: string; name: string; project?: string }
   | { op: 'renameSection'; id: string; name: string }
   | { op: 'deleteSection'; id: string }
   | { op: 'collapseSection'; id: string; collapsed: boolean }
   | { op: 'reorderSection'; id: string; before?: string }
-  | { op: 'setProjectSection'; cwd: string; section?: string };
+  | { op: 'setProjectSection'; cwd: string; section?: string; before?: string };
 
 // One entry of an agent's own session list (ACP session/list), for the history list's "Import from <agent>"
 export interface NativeSessionInfo {

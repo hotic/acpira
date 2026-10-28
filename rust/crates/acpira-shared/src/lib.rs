@@ -9,6 +9,7 @@ pub mod appearance;
 pub mod attachments;
 pub mod chatgpt_integration;
 pub mod composer_controls;
+pub mod devices;
 pub mod export_transcript;
 pub mod host_tools;
 pub mod i18n;

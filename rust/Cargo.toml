@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/acpira-shared", "crates/acpira-rpc", "crates/acpira-agent", "crates/acpira-host", "crates/acpira-desktop"]
+members = ["crates/acpira-shared", "crates/acpira-rpc", "crates/acpira-agent", "crates/acpira-host", "crates/acpira-desktop", "crates/acpira-net", "crates/acpira-gateway", "crates/acpira-mobile"]
 
 [workspace.package]
 version = "1.11.0"
@@ -35,6 +35,12 @@ flate2 = "1.1"
 # pixels, `image` composites the frames, scales them and writes the PNG
 gif = "0.14"
 image = { version = "0.25", default-features = false, features = ["gif", "png"] }
+# Paired devices (acpira-net, docs/dev/paired-remote.md): QUIC with hole punching and relays. Only acpira-net and the
+# gateway / mobile builds link it; the engine binary stays without it. Minor versions move together with n0's public relays
+iroh = { version = "1.4", default-features = false, features = ["tls-ring", "portmapper"] }
+n0-future = "0.3"
+# The gateway's `pair` command prints the pairing QR code in a terminal (a headless Mac has no settings page)
+qrcode = { version = "0.14", default-features = false }
 libc = "0.2"
 # acpira-shared's i18n dictionaries, stored DEFLATE-compressed (build.rs packs, i18n.rs inflates); the version flate2 and png
 # already link
@@ -52,6 +58,8 @@ same-file = "1.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["preserve_order", "raw_value"] }
 sha2 = "0.10"
+# The 6-digit pairing code (PAKE); the pre-release shares curve25519-dalek 5, sha2 0.11 and rand_core 0.10 with iroh
+spake2 = { version = "0.5.0-pre.0", features = ["getrandom"] }
 # The desktop app's update packages: the full bundle and the delta's container
 tar = { version = "0.4", default-features = false }
 similar = { version = "3.2", default-features = false, features = ["std"] }
@@ -60,6 +68,9 @@ toml = { version = "=1.1.6", default-features = false, features = ["parse", "ser
 tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "io-util", "io-std", "process", "sync", "time", "fs", "net", "signal"] }
 # socks-proxy: the engine's own requests honour a socks5:// / socks5h:// proxy setting too (net_proxy::ureq_config)
 ureq = { version = "=3.4.2", features = ["socks-proxy"] }
+# acpira-mobile's Swift bindings (proc-macro style). apps/ios/scripts/build-net.sh installs the matching
+# `uniffi-bindgen-swift` at the version Cargo.lock holds, so the two never drift apart
+uniffi = { version = "0.32", default-features = false }
 # The desktop shell's preview addresses: WHATWG URL parsing, as the page and the TypeScript shells normalize them
 url = "2.5"
 uuid = { version = "1.24", features = ["v4"] }
@@ -84,3 +95,14 @@ panic = "abort"
 inherits = "release"
 lto = "fat"
 codegen-units = 1
+
+# The phone's network library (acpira-mobile, apps/ios/scripts/build-net.sh): size first. Linked into an app and stripped,
+# the arm64 code is 4.6 MB at opt-level z against 5.8 MB at s (2.6 / 2.9 MB gzipped, 2026-10-28); the link carries a few
+# KB/s, so speed does not matter. Panics unwind there: UniFFI turns one in a call into an error, and tokio contains one
+# in a task, where an abort would end the app
+[profile.mobile]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "unwind"

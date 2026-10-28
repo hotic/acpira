@@ -60,6 +60,8 @@ use crate::store::transcript_store::{LogFn, RecordLoadError, SessionPrefs, Trans
 use crate::util::{clip, local_stamp, ms_of_iso, now_iso, random_uuid};
 
 const TRASH_TTL: Duration = Duration::from_secs(30);
+/// Under ACPIRA_HOME: one folder per chat (`chat_root`)
+const CHATS_DIR: &str = "chats";
 const PROBE_INTERVAL: Duration = Duration::from_secs(10);
 /// Focus-triggered login shell re-runs are at least this far apart
 const LOGIN_PATH_REFRESH: Duration = Duration::from_secs(30);
@@ -689,7 +691,7 @@ impl SessionManager {
     let cwds: Vec<String> = list
       .into_iter()
       .map(|s| s.cwd)
-      .filter(|c| !c.is_empty() && std::path::Path::new(c) != home && (acpira_shared::remote::is_remote_folder(c) || std::path::Path::new(c).is_dir()))
+      .filter(|c| !c.is_empty() && std::path::Path::new(c) != home && !self.is_chat(c) && (acpira_shared::remote::is_remote_folder(c) || std::path::Path::new(c).is_dir()))
       .collect();
     if cwds.is_empty() {
       return;
@@ -702,7 +704,8 @@ impl SessionManager {
   /// The folder a view means when something needs one: a new session, warming, a probe, native sessions, @ search, the
   /// settings page's project files, ChatGPT. An explicit folder wins; a shell with a workspace means its workspace (as it
   /// always did); a project shell (`ManagerDeps.projects`) means the session the view shows, else the newest session's
-  /// folder, else its first registered project, else nothing: no session starts in the home directory on its own
+  /// project folder (a chat's is its own), else its first registered project, else nothing: no session starts in the home
+  /// directory on its own
   pub fn folder_for(&self, v: Option<&Viewer>, explicit: Option<String>) -> Option<String> {
     if let Some(dir) = explicit.filter(|d| !d.trim().is_empty()) {
       return Some(dir);
@@ -713,20 +716,64 @@ impl SessionManager {
     if let Some(dir) = v.and_then(|v| v.active_id()).and_then(|id| self.session_cwd(&id)) {
       return Some(dir);
     }
-    if let Some(s) = self.sessions().into_iter().filter(|s| !s.cwd.is_empty()).max_by(|a, b| a.updated_at.cmp(&b.updated_at)) {
+    if let Some(s) = self.sessions().into_iter().filter(|s| !s.cwd.is_empty() && !self.is_chat(&s.cwd)).max_by(|a, b| a.updated_at.cmp(&b.updated_at)) {
       return Some(s.cwd);
     }
     self.state.lock().categories.projects.as_ref().and_then(|p| p.first().cloned())
   }
 
-  /// A folder a project shell starts something in joins its list (at the end) the first time
+  /// A folder a project shell starts something in joins its list (at the end) the first time; a chat's folder never does
   async fn register_project(&self, cwd: &str) {
-    if !(self.deps.projects)() || self.state.lock().categories.projects.as_ref().is_some_and(|p| p.iter().any(|x| x == cwd)) {
+    if !(self.deps.projects)() || self.is_chat(cwd) || self.state.lock().categories.projects.as_ref().is_some_and(|p| p.iter().any(|x| x == cwd)) {
       return;
     }
     if let Err(e) = self.category_op(&CategoryOp::AddProject { cwd: cwd.to_owned() }).await {
       self.log(&format!("registering project {cwd} failed: {e}"));
     }
+  }
+
+  /// Where chats live (`<ACPIRA_HOME>/chats`): a project shell's session that belongs to no project gets a fresh folder
+  /// of its own here, since an ACP session always runs in one
+  pub fn chat_root(&self) -> std::path::PathBuf {
+    self.deps.lease_root.join(CHATS_DIR)
+  }
+
+  /// A chat's folder: directly inside `chat_root`
+  pub fn is_chat(&self, cwd: &str) -> bool {
+    let p = std::path::Path::new(cwd);
+    p.file_name().is_some() && p.parent() == Some(self.chat_root().as_path())
+  }
+
+  /// A new chat's folder, made now: named by its day and a random tail, never by the prompt (a pasted key would land in
+  /// the file system)
+  async fn new_chat_folder(&self) -> Result<String> {
+    let root = self.chat_root();
+    tokio::fs::create_dir_all(&root).await?;
+    let day = crate::util::now_iso().chars().take(10).collect::<String>();
+    loop {
+      let dir = root.join(format!("{day}-{}", crate::util::random_hex(3)));
+      match tokio::fs::create_dir(&dir).await {
+        Ok(()) => return Ok(dir.to_string_lossy().into_owned()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+        Err(e) => return Err(e.into()),
+      }
+    }
+  }
+
+  /// A chat that is gone takes its folder along while nothing else runs there: whole (`all`) for one never prompted, else
+  /// only when nothing was written there, so a deleted chat's outputs stay
+  async fn remove_chat_folder(&self, cwd: &str, all: bool) {
+    if !self.is_chat(cwd) {
+      return;
+    }
+    let used = {
+      let st = self.state.lock();
+      st.index.iter().any(|s| s.cwd == cwd) || st.live.values().any(|s| s.cwd == cwd)
+    };
+    if used {
+      return;
+    }
+    let _ = if all { tokio::fs::remove_dir_all(cwd).await } else { tokio::fs::remove_dir(cwd).await };
   }
 
   /// Resolves once the first probe pass has run: `init` may return before it (see there)
@@ -2122,6 +2169,10 @@ impl SessionManager {
         return Ok(());
       }
       me.drop_empty_current(&v).await;
+      // Starting over in the same chat (another agent) just took its folder along with the empty session it left
+      if me.is_chat(&cwd) {
+        tokio::fs::create_dir_all(&cwd).await?;
+      }
       me.register_project(&cwd).await;
       // Inheritable settings are snapped before the session starts spawning
       let last = me.last_settings(&id);
@@ -2190,6 +2241,7 @@ impl SessionManager {
     self.state.lock().index.retain(|x| x.id != cur.id);
     self.deps.store.remove(&cur.id).await;
     self.save_index();
+    self.remove_chat_folder(&cur.cwd, true).await;
   }
 
   pub fn select_session_for<'a>(self: &'a Arc<Self>, v: &'a Arc<Viewer>, id: &'a str) -> BoxFuture<()> {
@@ -2731,8 +2783,10 @@ impl SessionManager {
     let valid = |id: &str| is_session_id(id);
     match m {
       W::ConnectChatgpt => self.new_session_for(v, Some(CHATGPT_ID.into()), None, None, None).await?,
-      W::Send { session_id, text, attachments, steer } => {
-        if let Some(s) = self.target(v, session_id.as_deref()) {
+      W::Send { session_id, text, attachments, steer, client_id } => {
+        if let Some(s) = self.target(v, session_id.as_deref())
+          && s.claim_client_id(client_id.as_deref())
+        {
           if steer == Some(true) {
             s.steer_prompt(text, attachments).await?;
           } else {
@@ -2740,21 +2794,25 @@ impl SessionManager {
           }
         }
       }
-      W::Stop { session_id } => {
-        if let Some(s) = self.target(v, session_id.as_deref()) {
+      W::Stop { session_id, client_id } => {
+        if let Some(s) = self.target(v, session_id.as_deref())
+          && s.claim_client_id(client_id.as_deref())
+        {
           s.cancel().await;
         }
       }
-      W::Permission { session_id, block_id, option_id } => {
+      W::Permission { session_id, block_id, option_id, client_id } => {
         if valid(&session_id)
           && let Some(s) = self.live(&session_id)
+          && s.claim_client_id(client_id.as_deref())
         {
           s.resolve_permission(&block_id, &option_id);
         }
       }
-      W::Answer { session_id, block_id, answers, skip } => {
+      W::Answer { session_id, block_id, answers, skip, client_id } => {
         if valid(&session_id)
           && let Some(s) = self.live(&session_id)
+          && s.claim_client_id(client_id.as_deref())
         {
           s.answer_questions(&block_id, &answers, skip == Some(true));
         }
@@ -2782,7 +2840,12 @@ impl SessionManager {
         }
       }
       W::SelectSession { id } => self.select_session_for(v, &id).await,
-      W::NewSession { agent, category, cwd } => self.new_session_for(v, agent, None, category, cwd).await?,
+      // A chat (project shells): a fresh folder of its own, unfiled
+      W::NewSession { agent, chat: Some(true), .. } if (self.deps.projects)() => {
+        let dir = self.new_chat_folder().await?;
+        self.new_session_for(v, agent, None, None, Some(dir)).await?
+      }
+      W::NewSession { agent, category, cwd, .. } => self.new_session_for(v, agent, None, category, cwd).await?,
       W::RenameSession { id, title } => self.rename_session(&id, &title).await?,
       W::DeleteSession { id } => self.delete_session(&id).await?,
       W::RestoreSession { id } => self.restore_session(&id).await?,
@@ -2932,9 +2995,10 @@ impl SessionManager {
           s.send_queued(&id).await?;
         }
       }
-      W::SteerQueued { session_id, id } => {
+      W::SteerQueued { session_id, id, client_id } => {
         if valid(&session_id)
           && let Some(s) = self.live(&session_id)
+          && s.claim_client_id(client_id.as_deref())
         {
           s.steer_queued(&id).await?;
         }
@@ -3093,8 +3157,11 @@ impl SessionManager {
       let timer = tokio::spawn(async move {
         tokio::time::sleep(TRASH_TTL).await;
         let Some(m) = weak.upgrade() else { return };
-        m.state.lock().trash.remove(&tid);
+        let gone = m.state.lock().trash.remove(&tid);
         m.deps.store.remove(&tid).await;
+        if let Some(t) = gone {
+          m.remove_chat_folder(&t.summary.cwd, false).await;
+        }
       });
       self.state.lock().trash.insert(id.to_owned(), Trash { summary, timer: timer.abort_handle() });
     }
@@ -3941,7 +4008,7 @@ fn session_id_of(m: &WebviewMsg) -> Option<String> {
   use WebviewMsg as W;
   match m {
     W::Send { session_id, .. }
-    | W::Stop { session_id }
+    | W::Stop { session_id, .. }
     | W::SetMode { session_id, .. }
     | W::SetConfig { session_id, .. }
     | W::SelectAccount { session_id, .. }

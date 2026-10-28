@@ -1,0 +1,33 @@
+[package]
+name = "acpira-net"
+description = "Paired devices: identity, pairing and the link between a device and a computer's gateway, over iroh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = ["fast-apple-datapath"]
+# iroh's batched UDP path on Apple platforms reaches private APIs through dlsym: on for the macOS gateway, off for the
+# App Store build (acpira-mobile)
+fast-apple-datapath = ["iroh/fast-apple-datapath"]
+
+[dependencies]
+acpira-shared.workspace = true
+anyhow.workspace = true
+base64.workspace = true
+flate2.workspace = true
+iroh.workspace = true
+n0-future.workspace = true
+parking_lot.workspace = true
+ring.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+spake2.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

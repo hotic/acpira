@@ -50,4 +50,6 @@ apps/ios/build/
 apps/ios/Packages/.build/
 apps/ios/Packages/*/.build/
 apps/ios/Packages/*/.swiftpm/
+# acpira-mobile's XCFramework and Swift bindings (apps/ios/scripts/build-net.sh)
+apps/ios/Packages/AcpiraKit/Artifacts/
 apps/ios/Fixtures/local/

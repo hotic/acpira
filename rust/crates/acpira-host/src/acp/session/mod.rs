@@ -271,7 +271,13 @@ pub struct AcpSession {
   /// The project stdio MCP servers on the folder's SSH host this session's agent was given, by name: the only commands
   /// an `acpira mcp-host` shim holding its grant can start there (`HubOp::HostStdio`)
   pub(crate) host_stdio: parking_lot::Mutex<std::collections::HashMap<String, remote::HostStdio>>,
+  /// The `clientId`s of the actions this instance ran, newest last (`claim_client_id`)
+  client_ids: parking_lot::Mutex<std::collections::VecDeque<String>>,
 }
+
+/// How many `clientId`s a session remembers: a device resends within seconds of losing its link, never hundreds of
+/// actions later
+const CLIENT_IDS: usize = 256;
 
 /// A fresh view epoch: every opened session gets one, a chain of read-only copies shares one (their revs keep growing)
 pub fn next_view_epoch() -> u64 {
@@ -406,8 +412,25 @@ impl AcpSession {
         epoch,
         shown: Default::default(),
         host_stdio: Default::default(),
+        client_ids: Default::default(),
       }
     })
+  }
+
+  /// Whether an action carrying `client_id` should run: a paired device that lost its link resends what it is unsure of
+  /// with the same id, and each id runs once. Actions without one always run. Checked where the session is live, so an
+  /// action forwarded over the push bus is counted by the engine that runs it. The memory dies with the instance
+  pub fn claim_client_id(&self, client_id: Option<&str>) -> bool {
+    let Some(id) = client_id else { return true };
+    let mut ids = self.client_ids.lock();
+    if ids.iter().any(|x| x == id) {
+      return false;
+    }
+    if ids.len() == CLIENT_IDS {
+      ids.pop_front();
+    }
+    ids.push_back(id.to_owned());
+    true
   }
 
   pub fn fresh(agent: &str, cwd: &str, deps: SessionDeps, account_id: Option<String>) -> Arc<AcpSession> {
