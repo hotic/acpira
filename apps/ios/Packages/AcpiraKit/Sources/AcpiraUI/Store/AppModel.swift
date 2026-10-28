@@ -206,9 +206,13 @@ final class AppModel {
     return line.count > 40 ? String(line.prefix(40)) + "…" : line
   }
 
-  /// Sends a prompt, or queues it while a turn runs
+  /// Sends a prompt, or queues it while a turn runs; while a plan waits on its card the words revise it
   func send(_ id: String, text: String, attachments: [Attachment]) {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !trimmed.isEmpty, let review = views[id].flatMap({ pendingPlanReview($0.turns) }), let revise = reviseOption(review) {
+      revisePlan(id, review: review, option: revise.id, text: trimmed, attachments: attachments)
+      return
+    }
     // Attachments go to the engine with P2's drafts; until then only the text does
     if link != nil {
       if !trimmed.isEmpty { post(.send(sessionId: id, text: trimmed)) }
@@ -321,6 +325,11 @@ final class AppModel {
   func choosePermission(_ id: String, block: String, option: String) {
     if post(.permission(sessionId: id, blockId: block, optionId: option)) { return }
     guard var view = views[id] else { return }
+    // A plan's extra approvals reach here only to reject it (the allow ones build): the turn ends as on Revise
+    if let plan = planPermission(view, block: block)?.planId {
+      settlePlan(id, plan: plan, status: "rejected")
+      return
+    }
     view.turns = view.turns.map { turn in
       guard case .agent(var agent) = turn else { return turn }
       agent.blocks.removeAll { if case .permission(let p) = $0 { p.id == block } else { false } }
@@ -373,9 +382,9 @@ final class AppModel {
 
   // MARK: - Short stops
 
-  /// Retry: the failed turn goes, its prompt runs again
+  /// Retry: the failed turn goes, its prompt runs again (`retryTurn`; `retry` restarts the session, see `restart`)
   func retry(_ id: String) {
-    if post(.retry(sessionId: id)) { return }
+    if post(.retryTurn(sessionId: id)) { return }
     guard var view = views[id], case .agent? = view.turns.last else { return }
     view.turns.removeLast()
     guard case .user(let prompt)? = view.turns.last else { return }
@@ -385,7 +394,164 @@ final class AppModel {
   }
 
   /// Continue after a limit: a follow-up asking the agent to carry on
-  func carryOn(_ id: String) { send(id, text: t("alert.continue"), attachments: []) }
+  func carryOn(_ id: String) { send(id, text: t("alert.continueText"), attachments: []) }
+
+  /// /compact, offered when the context no longer fits; the demo plays the compaction as its own automatic turn
+  func compact(_ id: String) {
+    if post(.compact(sessionId: id)) { return }
+    guard let view = views[id], !view.running else { return }
+    serial += 1
+    var prompt = UserTurn(text: "/compact")
+    prompt.auto = true
+    prompt.autoReason = "compact"
+    let started = now.timeIntervalSince1970 * 1000
+    let running = CompactionBlock("demo-compact-\(serial)", status: .in_progress)
+    var done = running
+    done.status = .completed
+    func step(_ block: CompactionBlock, ended: Bool) -> SessionView {
+      var step = view
+      step.turns.append(.user(prompt))
+      step.turns.append(.agent(AgentTurn(blocks: [.compaction(block)], startedAt: started,
+                                         endedAt: ended ? started + Double(Replay.hold) * Replay.interval * 1000 : nil,
+                                         stop: ended ? .end_turn : nil)))
+      step.running = !ended
+      return step
+    }
+    apply(step(running, ended: false), to: id)
+    play(id, Array(repeating: step(running, ended: false), count: Replay.hold) + [step(done, ended: true)])
+  }
+
+  // MARK: - Plans
+
+  /// Build a saved plan (the plan card's Build): `option` answers its approval (the allow-once one when nil), `model`
+  /// is the executor picked on the card. The demo goes on with a short build after the card
+  func buildPlan(_ id: String, plan: String, option: String?, model: ModelPick?) {
+    if post(.buildPlan(sessionId: id, planId: plan, optionId: option, model: model)) { return }
+    guard let view = views[id], !view.turns.isEmpty else { return }
+    if let model { setConfig(id, model.configId, model.value) }
+    settlePlan(id, plan: plan, status: "executing")
+    continuePlan(id, plan: plan)
+  }
+
+  /// A send while a plan waits on its card: Revise answers the card and the words go out as the next prompt, so they
+  /// reach the agent after the rejection instead of steering a turn that is blocked on the card (Shell.tsx)
+  func revisePlan(_ id: String, review: PermissionBlock, option: String, text: String, attachments: [Attachment]) {
+    if link != nil {
+      post(.permission(sessionId: id, blockId: review.id, optionId: option))
+      post(.send(sessionId: id, text: text))
+      return
+    }
+    settlePlan(id, plan: review.planId ?? "", status: "rejected")
+    startTurn(id, text: text, attachments: attachments)
+  }
+
+  /// The permission block `block` of the newest agent turn, when it is a plan's approval
+  private func planPermission(_ view: SessionView, block: String) -> PermissionBlock? {
+    guard case .agent(let turn)? = view.turns.last else { return nil }
+    for case .permission(let p) in turn.blocks where p.id == block && p.planId != nil { return p }
+    return nil
+  }
+
+  /// Demo: the plan's approval answered. Its permission leaves, the plan takes `status`, and a rejection ends the turn
+  /// the way claude-agent-acp does (cancelled, nothing said)
+  private func settlePlan(_ id: String, plan: String, status: String) {
+    guard var view = views[id], let at = view.turns.lastIndex(where: { if case .agent = $0 { true } else { false } }),
+          case .agent(var turn) = view.turns[at] else { return }
+    turn.blocks = turn.blocks.compactMap { block in
+      switch block {
+      case .permission(let p) where p.planId == plan: return nil
+      case .planDocument(var d) where d.id == plan: d.status = status; return .planDocument(d)
+      default: return block
+      }
+    }
+    if status == "rejected" {
+      runs[id]?.cancel()
+      runs[id] = nil
+      turn.stop = .cancelled
+      turn.endedAt = now.timeIntervalSince1970 * 1000
+      view.running = false
+      touch(id, state: nil)
+    }
+    view.turns[at] = .agent(turn)
+    views[id] = view
+  }
+
+  /// Demo: the built plan's turn goes on after the card, an edit and a word on where the reply comes from, then ends
+  private func continuePlan(_ id: String, plan: String) {
+    guard let view = views[id], let at = view.turns.lastIndex(where: { if case .agent = $0 { true } else { false } }),
+          case .agent(let turn) = view.turns[at] else { return }
+    let started = now.timeIntervalSince1970 * 1000
+    let added: [AgentBlock] = [
+      .toolCall(ToolCallBlock(id: "demo-build-\(Int(started))", kind: .edit, verb: t("verb.edit"), target: "README.md",
+                              targetMono: true, status: .completed)),
+      .text(TextBlock(markdown: t("mobile.demo.build"))),
+    ]
+    func step(_ count: Int, ended: Bool) -> SessionView {
+      var step = view
+      var live = turn
+      live.blocks += added.prefix(count)
+      if ended {
+        live.blocks = live.blocks.map { block in
+          if case .planDocument(var d) = block, d.id == plan { d.status = "approved"; return .planDocument(d) }
+          return block
+        }
+        live.stop = .end_turn
+        live.endedAt = started + Double(added.count + 1) * Replay.interval * 1000
+      }
+      step.turns[at] = .agent(live)
+      step.running = !ended
+      return step
+    }
+    play(id, (0...added.count).map { step($0, ended: false) } + [step(added.count, ended: true)])
+  }
+
+  // MARK: - Session state
+
+  /// The session's agent started again (the session card's retry): after an error, or a sign-in finished on the
+  /// computer
+  func restart(_ id: String) {
+    if post(.retry(sessionId: id)) { return }
+    settleStatus(id)
+  }
+
+  /// Sign in with a method the engine runs itself, without a terminal on the computer
+  func login(_ id: String, method: String) {
+    if post(.login(sessionId: id, methodId: method)) { return }
+    settleStatus(id)
+  }
+
+  /// Take the session over from the Acpira instance that holds it, or ask the engine with its copy open to hand it over
+  func takeOver(_ id: String) {
+    if post(.takeOverSession(sessionId: id)) { return }
+    settleStatus(id)
+  }
+
+  /// "Continue in a new session": the new-session screen preset to this agent and project, as the bar's new button
+  func continueNew(_ id: String) {
+    guard let view = views[id] else { return }
+    path.append(.new(agent: view.agent, cwd: view.cwd))
+  }
+
+  /// An AIR failure notice's remedy: a real turn retries its prompt, a session-scoped failure (no turn started)
+  /// restarts the session; sign-in belongs to the session card
+  func failureAction(_ id: String, _ action: FailureAction) {
+    switch action {
+    case .retry:
+      if case .agent(let turn)? = views[id]?.turns.last, turn.startedAt != nil { retry(id) } else { restart(id) }
+    case .new_session: continueNew(id)
+    case .login, .unknown: break
+    }
+  }
+
+  /// Demo: whatever held the session back is resolved
+  private func settleStatus(_ id: String) {
+    guard var view = views[id] else { return }
+    view.status = .ready
+    view.error = nil
+    view.authMethods = nil
+    view.canTakeOver = nil
+    views[id] = view
+  }
 
   // MARK: - Controls
 
@@ -500,6 +666,18 @@ struct SessionActions {
   var carryOn: () -> Void = {}
   var setMode: (String) -> Void = { _ in }
   var setConfig: (String, String) -> Void = { _, _ in }
+  /// A saved plan's Build: the plan, the approval option (nil: its allow-once one), the model to run it on
+  var buildPlan: (String, String?, ModelPick?) -> Void = { _, _, _ in }
+  var compact: () -> Void = {}
+  /// "Continue in a new session"
+  var newSession: () -> Void = {}
+  /// The session card's retry: the agent starts again
+  var restart: () -> Void = {}
+  /// Sign in with a method the engine runs itself
+  var login: (String) -> Void = { _ in }
+  var takeOver: () -> Void = {}
+  /// An AIR failure notice's remedy
+  var failureAction: (FailureAction) -> Void = { _ in }
 }
 
 extension EnvironmentValues {

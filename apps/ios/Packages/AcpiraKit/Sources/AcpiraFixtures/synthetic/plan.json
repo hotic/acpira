@@ -1,0 +1,250 @@
+{
+ "id": "plan",
+ "agent": "claude",
+ "title": "发布流程计划",
+ "cwd": "/Users/dev/projects/acpira",
+ "status": "ready",
+ "turns": [
+  {
+   "role": "user",
+   "text": "把发布流程整理成计划，先别动代码"
+  },
+  {
+   "role": "agent",
+   "startedAt": 1791535278000,
+   "endedAt": 1791535458000,
+   "stop": "end_turn",
+   "blocks": [
+    {
+     "type": "thought",
+     "text": "先读现有的发布文档和打包脚本，再决定清单的粒度。",
+     "durationSec": 6
+    },
+    {
+     "type": "tool_call",
+     "id": "p1-read",
+     "kind": "read",
+     "verb": "读取",
+     "target": "docs/releasing.md",
+     "targetMono": true,
+     "status": "completed",
+     "meta": "84 行"
+    },
+    {
+     "type": "tool_call",
+     "id": "p1-search",
+     "kind": "search",
+     "verb": "搜索",
+     "target": "pnpm package",
+     "targetMono": true,
+     "status": "completed",
+     "meta": "4 处"
+    },
+    {
+     "type": "plan_document",
+     "id": "plan-1",
+     "title": "Release checklist",
+     "markdown": "# Release checklist\n\n## Context\n\n发布步骤散在 `docs/releasing.md` 和几条脚本里，漏一步就要重新打包。\n\n## Steps\n\n1. 把版本号、目录刷新和打包合成一份清单\n2. 每一步写上要跑的命令和预期输出\n3. 末尾列出发布后要核对的三件事",
+     "path": "/Users/dev/.claude/plans/release-checklist.md",
+     "toolCallId": "toolu_exit1",
+     "status": "approved"
+    },
+    {
+     "type": "tool_call",
+     "id": "p1-edit",
+     "kind": "edit",
+     "verb": "编辑",
+     "target": "docs/releasing.md",
+     "targetMono": true,
+     "status": "completed",
+     "diffStat": {
+      "add": 18,
+      "del": 4
+     }
+    },
+    {
+     "type": "text",
+     "markdown": "清单已经写进 `docs/releasing.md`：版本号、目录刷新、打包三段，每段都附了命令和预期输出。"
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "text": "再规划一下怎么给 iOS 加 TestFlight 上传"
+  },
+  {
+   "role": "agent",
+   "startedAt": 1791536538000,
+   "blocks": [
+    {
+     "type": "thought",
+     "text": "看一下 check.sh 和现有的打包约定，上传步骤要能脱离 Xcode 跑。",
+     "durationSec": 9
+    },
+    {
+     "type": "tool_call",
+     "id": "p2-read",
+     "kind": "read",
+     "verb": "读取",
+     "target": "apps/ios/scripts/check.sh",
+     "targetMono": true,
+     "status": "completed",
+     "meta": "31 行"
+    },
+    {
+     "type": "plan",
+     "entries": [
+      {
+       "title": "新增 testflight.sh",
+       "status": "pending"
+      },
+      {
+       "title": "自动递增构建号",
+       "status": "pending"
+      },
+      {
+       "title": "记录测试组与密钥",
+       "status": "pending"
+      }
+     ]
+    },
+    {
+     "type": "plan_document",
+     "id": "plan-2",
+     "title": "TestFlight upload",
+     "markdown": "# TestFlight upload\n\n## Context\n\niOS 包现在只能在 Xcode 里手动上传。目标是一条命令完成归档、导出和上传，并且每次自动递增构建号。\n\n## Approach\n\n| 方案 | 依赖 | 速度 |\n|---|---|---|\n| xcodebuild + altool | 无 | 快 |\n| fastlane | Ruby | 中 |\n\n## Steps\n\n1. 新增 `apps/ios/scripts/testflight.sh`：归档、导出、上传\n2. 构建号取当前时间戳，写进 `Info.plist`\n3. 导出前把 Homebrew 移出 PATH，避免 rsync 3.5.1 让导出失败\n4. 在 `docs/dev/ios.md` 记下内部测试组和所需的 App Store Connect 密钥\n5. 用一次真实上传验证，确认测试组里能看到新构建\n\n## Verification\n\n- `testflight.sh` 一次跑完，退出码为 0\n- App Store Connect 的构建列表出现新构建号",
+     "path": "/Users/dev/.claude/plans/testflight-upload.md",
+     "toolCallId": "toolu_exit2",
+     "status": "ready"
+    },
+    {
+     "type": "permission",
+     "id": "perm-plan-2",
+     "title": "Approve Plan",
+     "planId": "plan-2",
+     "options": [
+      {
+       "id": "exit-plan-clear-bypass",
+       "label": "Yes, clear context (11% used) and bypass permissions",
+       "kind": "allow_always"
+      },
+      {
+       "id": "exit-plan-bypass",
+       "label": "Yes, and bypass permissions",
+       "kind": "allow_always"
+      },
+      {
+       "id": "exit-plan-auto",
+       "label": "Yes, and use auto mode",
+       "kind": "allow_always"
+      },
+      {
+       "id": "exit-plan-default",
+       "label": "Yes, manually approve edits",
+       "kind": "allow_once"
+      },
+      {
+       "id": "reject",
+       "label": "No, keep planning",
+       "kind": "reject_once"
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "running": true,
+ "controls": {
+  "modes": [
+   {
+    "id": "default",
+    "name": "Default",
+    "description": "Ask before edits and commands"
+   },
+   {
+    "id": "acceptEdits",
+    "name": "Accept Edits",
+    "description": "Auto-approve file edits"
+   },
+   {
+    "id": "plan",
+    "name": "Plan",
+    "description": "Plan changes before implementing"
+   },
+   {
+    "id": "bypassPermissions",
+    "name": "Bypass Permissions",
+    "description": "Auto-approve all tool calls"
+   }
+  ],
+  "modeId": "plan",
+  "options": [
+   {
+    "id": "model",
+    "name": "Model",
+    "category": "model",
+    "value": "claude-fable-5-1-xhigh",
+    "options": [
+     {
+      "id": "claude-fable-5-1-medium",
+      "name": "Claude Fable 5.1 Medium"
+     },
+     {
+      "id": "claude-fable-5-1-xhigh",
+      "name": "Claude Fable 5.1 XHigh"
+     },
+     {
+      "id": "claude-fable-5-1-max",
+      "name": "Claude Fable 5.1 Max"
+     },
+     {
+      "id": "claude-opus-4-8",
+      "name": "Claude Opus 4.8"
+     },
+     {
+      "id": "claude-haiku-4-6",
+      "name": "Claude Haiku 4.6"
+     }
+    ]
+   }
+  ]
+ },
+ "usage": {
+  "used": 48200,
+  "size": 262000
+ },
+ "commands": [
+  {
+   "name": "compact",
+   "description": "Compact the conversation to free context"
+  },
+  {
+   "name": "review",
+   "description": "Review the current changes",
+   "input": {
+    "hint": "files or scope to review"
+   }
+  },
+  {
+   "name": "init",
+   "description": "Generate an AGENTS.md for this repository"
+  },
+  {
+   "name": "config",
+   "description": "Open the configuration"
+  },
+  {
+   "name": "session-stats",
+   "description": "Show token usage for this session"
+  },
+  {
+   "name": "plan",
+   "description": "Draft an implementation plan",
+   "input": {
+    "hint": "what to plan"
+   }
+  }
+ ],
+ "createdAt": "2026-10-09T08:40:00Z",
+ "updatedAt": "2026-10-09T09:05:18Z"
+}

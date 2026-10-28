@@ -1,0 +1,197 @@
+{
+ "id": "notices",
+ "agent": "codex",
+ "title": "Hook 拦截与限流",
+ "cwd": "/Users/dev/projects/acpira",
+ "status": "ready",
+ "turns": [
+  {
+   "role": "user",
+   "text": "跑一下 workspace hooks，再提交"
+  },
+  {
+   "role": "agent",
+   "startedAt": 1791534918000,
+   "endedAt": 1791535038000,
+   "stop": "end_turn",
+   "blocks": [
+    {
+     "type": "notice",
+     "id": "hooks:pre-commit",
+     "severity": "error",
+     "title": "pre-commit 拦下了这次编辑",
+     "details": "这些文件不在允许的路径里：\n- src/secret/config.ts\n- rust/Cargo.lock\n还原后再跑一次检查。"
+    },
+    {
+     "type": "tool_call",
+     "id": "n1-exec",
+     "kind": "execute",
+     "verb": "运行",
+     "target": "pnpm typecheck",
+     "targetMono": true,
+     "status": "completed",
+     "meta": "4.1s"
+    },
+    {
+     "type": "notice",
+     "id": "bg-1",
+     "severity": "warning",
+     "info": true,
+     "title": "后台任务已停止：cargo watch"
+    },
+    {
+     "type": "notice",
+     "id": "warn-1",
+     "severity": "warning",
+     "title": "本轮改用 GPT-5.6 Luna 回答"
+    },
+    {
+     "type": "text",
+     "markdown": "类型检查通过；被拦下的两个文件需要先还原，提交先不做。"
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "text": "还原了，再试一次"
+  },
+  {
+   "role": "agent",
+   "startedAt": 1791535998000,
+   "endedAt": 1791536058000,
+   "stop": "error",
+   "error": {
+    "message": "Upstream closed the connection",
+    "kind": "stream_disconnected"
+   },
+   "blocks": [
+    {
+     "type": "tool_call",
+     "id": "n2-read",
+     "kind": "read",
+     "verb": "读取",
+     "target": ".agents/hooks.json",
+     "targetMono": true,
+     "status": "completed",
+     "meta": "22 行"
+    },
+    {
+     "type": "notice",
+     "id": "stream-1",
+     "severity": "error",
+     "title": "流在完成前断开",
+     "details": "stream disconnected before completion: connection reset by peer"
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "text": "继续"
+  },
+  {
+   "role": "agent",
+   "startedAt": 1791536598000,
+   "endedAt": 1791536658000,
+   "stop": "end_turn",
+   "blocks": [
+    {
+     "type": "text",
+     "markdown": "提交信息已经写好，正在等额度恢复。"
+    },
+    {
+     "type": "notice",
+     "id": "turn-3:limit",
+     "severity": "error",
+     "category": "limit",
+     "title": "达到速率上限",
+     "details": "一分钟后再试，或换一个新会话继续。",
+     "actions": [
+      "retry",
+      "new_session"
+     ]
+    }
+   ]
+  }
+ ],
+ "running": false,
+ "controls": {
+  "modes": [
+   {
+    "id": "read-only",
+    "name": "Read Only",
+    "description": "Read files and answer"
+   },
+   {
+    "id": "auto",
+    "name": "Auto",
+    "description": "Edit and run commands in the workspace"
+   },
+   {
+    "id": "full-access",
+    "name": "Full Access",
+    "description": "Edit and run anywhere"
+   }
+  ],
+  "modeId": "auto",
+  "options": [
+   {
+    "id": "model",
+    "name": "Model",
+    "category": "model",
+    "value": "gpt-6-astra-high-thinking",
+    "options": [
+     {
+      "id": "gpt-6-astra-medium-thinking",
+      "name": "GPT-6 Astra Medium Thinking"
+     },
+     {
+      "id": "gpt-6-astra-high-thinking",
+      "name": "GPT-6 Astra High Thinking"
+     },
+     {
+      "id": "gpt-5-6-luna",
+      "name": "GPT-5.6 Luna"
+     }
+    ]
+   }
+  ]
+ },
+ "usage": {
+  "used": 48200,
+  "size": 262000
+ },
+ "commands": [
+  {
+   "name": "compact",
+   "description": "Compact the conversation to free context"
+  },
+  {
+   "name": "review",
+   "description": "Review the current changes",
+   "input": {
+    "hint": "files or scope to review"
+   }
+  },
+  {
+   "name": "init",
+   "description": "Generate an AGENTS.md for this repository"
+  },
+  {
+   "name": "config",
+   "description": "Open the configuration"
+  },
+  {
+   "name": "session-stats",
+   "description": "Show token usage for this session"
+  },
+  {
+   "name": "plan",
+   "description": "Draft an implementation plan",
+   "input": {
+    "hint": "what to plan"
+   }
+  }
+ ],
+ "createdAt": "2026-10-09T08:40:00Z",
+ "updatedAt": "2026-10-09T09:05:18Z"
+}

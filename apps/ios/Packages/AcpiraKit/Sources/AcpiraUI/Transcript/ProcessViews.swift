@@ -63,8 +63,67 @@ struct LineBlockView: View {
     case .compaction(let c): CompactionRow(block: c)
     case .steer(let s): SteeredMessage(block: s)
     case .image(let image): AgentImageView(blob: image.blob, uri: image.uri)
+    // The open card is docked above the composer; only a resolved one has a place in the message
+    case .question(let q) where q.outcome != nil: QuestionRecord(block: q)
+    case .unknown(let type): UnknownBlockRow(type: type)
     default: EmptyView()
     }
+  }
+}
+
+// MARK: - Question record, unknown blocks
+
+/// Questions.tsx QuestionRecord: an answered or skipped question keeps one row in the message, the answers folded
+/// under it (open when answered)
+struct QuestionRecord: View {
+  let block: QuestionBlock
+  @State private var manual: Bool?
+
+  var body: some View {
+    let answers = block.answers ?? [:]
+    let label = block.outcome == .answered ? (answers.count == 1 ? t("question.answeredOne") : t("question.answered", ["n": answers.count]))
+      : block.outcome == .skipped ? t("question.skipped") : t("question.cancelled")
+    Disclosure(open: foldBinding($manual, block.outcome == .answered), icon: .messageCircleQuestion) {
+      RowLabel(label)
+    } content: {
+      VStack(alignment: .leading, spacing: Metrics.s1_5) {
+        ForEach(block.questions) { q in
+          let names = answerNames(q, answers[q.id])
+          VStack(alignment: .leading, spacing: 0) {
+            Text(web: q.text).foregroundStyle(Palette.fg3)
+            Text(web: names.isEmpty ? t("question.noAnswer") : names.joined(separator: t("common.listSep")))
+              .foregroundStyle(names.isEmpty ? Palette.fg3 : Palette.fg1)
+          }
+          .textStyle(WebType.text2)
+          .fixedSize(horizontal: false, vertical: true)
+        }
+      }
+    }
+  }
+
+  /// An answer's option labels (free text as written)
+  private func answerNames(_ q: Question, _ answer: QuestionAnswer?) -> [String] {
+    let values: [String] = switch answer {
+    case .one(let value): [value]
+    case .many(let values): values
+    case nil: []
+    }
+    return values.map { v in q.options.first { $0.id == v }?.label ?? v }
+  }
+}
+
+/// A block type this build does not know (an engine ahead of the app): a quiet row naming it, so the turn does not
+/// silently lose a step
+struct UnknownBlockRow: View {
+  let type: String
+  var body: some View {
+    Row {
+      Icon(.puzzle, size: WebMetrics.icon)
+    } content: {
+      RowLabel(t("mobile.unknownBlock"))
+      RowTarget(type, mono: true, ink: Palette.fg3)
+    }
+    .foregroundStyle(Palette.fg3)
   }
 }
 
@@ -352,39 +411,135 @@ nonisolated struct IconElementShape: Shape {
   }
 }
 
-/// One row per failure: an error marks only its glyph with the warn tone; details wrap under the label column
+/// Which notice rows of a turn may offer the adapter's remedies (the session's last turn, settled), the notice the
+/// turn's own error card already explains (`suppressId`, never drawn twice), and the error notices its closing row
+/// carries instead (`absorbedNotices`)
+struct NoticeScope {
+  var showActions = false
+  var suppressId: String?
+  var absorbed: [NoticeBlock] = []
+}
+
+extension EnvironmentValues {
+  @Entry var noticeScope = NoticeScope()
+}
+
+/// Workspace hook notices (`acp/session/hooks.rs`) carry this id prefix and the gate's shield glyph
+private let hookNotice = "hooks:"
+
+/// One row per failure (Turns.tsx NoticeRow). A notice with details folds like a thought, the title alone on the row
+/// and the details on the rail once open; an error opens by default and marks only its glyph with the warn tone. An
+/// info notice only informs, without the triangle. The adapter's remedies follow as small buttons at the label column;
+/// sign-in is left to the session card, which says where it happens
 struct NoticeRow: View {
   let block: NoticeBlock
+  @Environment(\.noticeScope) private var scope
+  @Environment(\.sessionActions) private var actions
+  @Environment(\.motionEnabled) private var motion
+  @Environment(\.holdScroll) private var holdScroll
+  @State private var manual: Bool?
+
   var body: some View {
-    let error = block.severity == "error"
-    VStack(alignment: .leading, spacing: Metrics.s0_5) {
-      Row {
-        Icon(.triangleAlert, size: WebMetrics.icon).foregroundStyle(error ? Palette.warn : Palette.fg3)
-      } content: {
-        Text(web: block.title).foregroundStyle(error ? Palette.fg2 : Palette.fg3)
-      }
-      if let details = block.details {
-        Text(web: details)
-          .textStyle(WebType.text3)
-          .foregroundStyle(Palette.fg3)
+    if block.id != scope.suppressId && !scope.absorbed.contains(where: { $0.id == block.id }) {
+      let error = block.severity == "error"
+      let buttons = error && scope.showActions ? (block.actions ?? []).filter { $0 == .retry || $0 == .new_session } : []
+      VStack(alignment: .leading, spacing: Metrics.s0_5) {
+        if let details = block.details {
+          fold(details, error: error)
+        } else {
+          Row { glyph(error) } content: {
+            Text(web: block.title)
+              .foregroundStyle(error ? Palette.fg2 : Palette.fg3)
+              .fixedSize(horizontal: false, vertical: true)
+          }
+        }
+        if !buttons.isEmpty {
+          FlowLayout(spacing: Metrics.gap) {
+            ForEach(buttons, id: \.self) { action in
+              Button(web: action == .retry ? t("common.retry") : t("notice.continueNew")) { actions.failureAction(action) }
+                .buttonStyle(AcpButtonStyle(.secondary, compact: true))
+            }
+          }
           .padding(.leading, WebMetrics.indent)
-          .fixedSize(horizontal: false, vertical: true)
+          .padding(.top, Metrics.s1)
+        }
       }
     }
   }
+
+  private func glyph(_ error: Bool) -> some View {
+    let icon: LucideIcon = block.id.hasPrefix(hookNotice) ? (error ? .shieldX : .shieldAlert) : block.info == true ? .info : .triangleAlert
+    return Icon(icon, size: WebMetrics.icon).foregroundStyle(error ? Palette.warn : Palette.fg3)
+  }
+
+  /// Disclosure's row and body rail with the notice's own tinted glyph in the lead
+  private func fold(_ details: String, error: Bool) -> some View {
+    let open = manual ?? error
+    return VStack(alignment: .leading, spacing: 0) {
+      Button {
+        holdScroll()
+        withAnimation(foldAnimation(opening: !open, motion: motion)) { manual = !open }
+      } label: {
+        Row(tone: .action) { glyph(error) } content: {
+          RowLabel(block.title).lineLimit(1)
+        }
+      }
+      .buttonStyle(RowButtonStyle())
+      .accessibilityAddTraits(.isButton)
+      .accessibilityValue(open ? Text(web: "expanded") : Text(web: "collapsed"))
+      NoticeDetails(text: details)
+        .transformPreference(RailLeadKey.self) { $0 = [] }
+        .padding(.top, Metrics.s1)
+        .padding(.leading, WebMetrics.indent)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .reveal(open)
+    }
+    .connectedRail(enabled: open, endAtLastRow: false, action: true)
+  }
 }
 
-/// One faint row closing the message: how the turn ended, the error's own words as the target
+/// Details under an open notice: `- path` lines read as file rows, the rest verbatim
+struct NoticeDetails: View {
+  let text: String
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      ForEach(Array(text.trimmingTrailingWhitespace().components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
+        if let path = line.wholeMatch(of: /\s*-\s+(\S+)/).map({ String($0.1) }), path.contains("/") || path.contains(".") {
+          HStack(spacing: Metrics.gap) {
+            Icon(.fileText, size: WebMetrics.icon).foregroundStyle(Palette.fg3)
+            Text(path).textStyle(WebType.mono).foregroundStyle(Palette.fg2).lineLimit(1).truncationMode(.middle)
+          }
+        } else {
+          Text(web: line.isEmpty ? "\u{00a0}" : line).foregroundStyle(Palette.fg3).fixedSize(horizontal: false, vertical: true)
+        }
+      }
+    }
+    .textStyle(WebType.text3)
+  }
+}
+
+/// One faint row closing the message: how the turn ended, the error's own words as the target. Error notices the
+/// outcome absorbed follow as quiet detail lines at the label column
 struct OutcomeRow: View {
   let turn: AgentTurn
+  @Environment(\.noticeScope) private var scope
   var body: some View {
     if let outcome = turnOutcome(turn) {
       // A warning glyph for the short stops, none for "stopped" / "no reply"
-      Row {
-        if turn.stop != .cancelled && turn.stop != .end_turn { LeadIcon(.triangleAlert) }
-      } content: {
-        RowLabel(outcome)
-        if turn.stop == .error, let message = turn.error?.message { RowTarget(message, ink: Palette.fg3) }
+      let warn = turn.stop != .cancelled && turn.stop != .end_turn
+      VStack(alignment: .leading, spacing: Metrics.s0_5) {
+        Row {
+          if warn { LeadIcon(.triangleAlert) }
+        } content: {
+          RowLabel(outcome)
+          if turn.stop == .error, let message = turn.error?.message { RowTarget(message, ink: Palette.fg3) }
+        }
+        ForEach(scope.absorbed, id: \.id) { notice in
+          Text(web: notice.details.map { "\(notice.title)\n\($0)" } ?? notice.title)
+            .textStyle(WebType.text3)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.leading, warn ? WebMetrics.indent : 0)
+        }
       }
       .foregroundStyle(Palette.fg3)
     }

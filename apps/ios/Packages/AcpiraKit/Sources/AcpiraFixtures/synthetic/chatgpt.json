@@ -1,0 +1,106 @@
+{
+ "id": "chatgpt",
+ "agent": "chatgpt",
+ "title": "ChatGPT 镜像",
+ "cwd": "/Users/dev/projects/acpira",
+ "status": "readonly",
+ "turns": [
+  {
+   "role": "user",
+   "text": "帮我看看 README 里的安装步骤是不是过时了"
+  },
+  {
+   "role": "agent",
+   "startedAt": 1791535818000,
+   "endedAt": 1791535878000,
+   "stop": "end_turn",
+   "blocks": [
+    {
+     "type": "tool_call",
+     "id": "g-read",
+     "kind": "read",
+     "verb": "读取",
+     "target": "README.md",
+     "targetMono": true,
+     "status": "completed",
+     "meta": "120 行"
+    },
+    {
+     "type": "text",
+     "markdown": "安装步骤还停在旧的 `pnpm install:local`，新的打包脚本已经改名。"
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "text": "那就改一下"
+  },
+  {
+   "role": "agent",
+   "startedAt": 1791536358000,
+   "observation": "unknown",
+   "blocks": [
+    {
+     "type": "tool_call",
+     "id": "g-edit",
+     "kind": "edit",
+     "verb": "编辑",
+     "target": "README.md",
+     "targetMono": true,
+     "status": "in_progress",
+     "observation": "unknown"
+    }
+   ]
+  }
+ ],
+ "running": false,
+ "controls": {
+  "modes": [],
+  "options": []
+ },
+ "usage": {
+  "used": 48200,
+  "size": 262000
+ },
+ "commands": [
+  {
+   "name": "compact",
+   "description": "Compact the conversation to free context"
+  },
+  {
+   "name": "review",
+   "description": "Review the current changes",
+   "input": {
+    "hint": "files or scope to review"
+   }
+  },
+  {
+   "name": "init",
+   "description": "Generate an AGENTS.md for this repository"
+  },
+  {
+   "name": "config",
+   "description": "Open the configuration"
+  },
+  {
+   "name": "session-stats",
+   "description": "Show token usage for this session"
+  },
+  {
+   "name": "plan",
+   "description": "Draft an implementation plan",
+   "input": {
+    "hint": "what to plan"
+   }
+  }
+ ],
+ "createdAt": "2026-10-09T08:40:00Z",
+ "updatedAt": "2026-10-09T09:05:18Z",
+ "external": {
+  "source": "chatgpt",
+  "sourceKey": "chatgpt:conv-7f3a",
+  "state": "stale",
+  "connectionPrompt": "Connect to Acpira through Desktop Commander and mirror this conversation.",
+  "lastEventAt": "2026-10-09T08:59:02.000Z"
+ }
+}

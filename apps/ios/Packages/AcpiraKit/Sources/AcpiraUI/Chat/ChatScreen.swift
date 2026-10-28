@@ -77,6 +77,7 @@ struct ChatScreen: View {
     .modifier(SystemChatBar(pinned: pinned, actions: headerActions(session, agent)))
     .background(Palette.bg0)
     .environment(\.agentAccent, Palette.accent(for: session.agent))
+    .environment(\.chatAgent, agent)
     .environment(\.sessionActions, sessionActions)
     .modifier(MediaLayer(session: session, loader: model.media))
     // The accounts as a system sheet with a form
@@ -126,7 +127,14 @@ struct ChatScreen: View {
       retry: { model.retry(id) },
       carryOn: { model.carryOn(id) },
       setMode: { model.setMode(id, $0) },
-      setConfig: { model.setConfig(id, $0, $1) })
+      setConfig: { model.setConfig(id, $0, $1) },
+      buildPlan: { model.buildPlan(id, plan: $0, option: $1, model: $2) },
+      compact: { model.compact(id) },
+      newSession: { model.continueNew(id) },
+      restart: { model.restart(id) },
+      login: { model.login(id, method: $0) },
+      takeOver: { model.takeOver(id) },
+      failureAction: { model.failureAction(id, $0) })
   }
 }
 
@@ -192,7 +200,7 @@ struct Thread: View {
         .environment(\.holdScroll, hold)
     }
     // The docked plan floats over the thread's bottom; the inset is also the transcript's scroll clearance
-    .safeAreaInset(edge: .bottom, spacing: 0) { PlanDock(session: session) }
+    .safeAreaInset(edge: .bottom, spacing: 0) { ThreadDock(session: session) }
     .scrollIndicators(.hidden)
     .scrollPosition($position)
     .defaultScrollAnchor(.bottom, for: .initialOffset)
@@ -255,6 +263,7 @@ struct ThreadContent: View {
     .padding(.horizontal, Metrics.s1)
     .padding(.top, Metrics.padY)
     .padding(.bottom, WebMetrics.msgGap)
+    .environment(\.planContext, PlanContext(controls: session.controls, running: session.running, ready: session.status == .ready))
   }
 
   private func sections(_ groups: [Exchange], _ activeAgent: Int?) -> some View {
@@ -267,7 +276,7 @@ struct ThreadContent: View {
         VStack(alignment: .leading, spacing: WebMetrics.msgGap) {
           ForEach(exchange.agents, id: \.index) { item in
             AgentMessage(turn: item.turn, running: session.running && item.index == activeAgent && item.turn.stop == nil,
-                         scope: "\(session.id):\(item.index)", index: item.index)
+                         scope: "\(session.id):\(item.index)", index: item.index, last: item.index == session.turns.count - 1)
           }
         }
         .padding(.top, exchange.user != nil && !exchange.agents.isEmpty ? WebMetrics.msgGap : 0)
@@ -284,7 +293,7 @@ struct ThreadContent: View {
   private func endsWithActions(_ exchange: Exchange, running: Bool, active: Int?) -> Bool {
     guard let last = exchange.agents.last else { return false }
     let live = running && last.index == active && last.turn.stop == nil
-    return !live && last.turn.blocks.contains { if case .notice = $0 { false } else { true } }
+    return showsTurnActions(last.turn, running: live)
   }
 }
 
@@ -305,7 +314,7 @@ public struct ChatPoster: View {
   public var body: some View {
     VStack(spacing: 0) {
       ThreadContent(session: session, lazy: false, preOpen: preOpen)
-      PlanDock(session: session)
+      ThreadDock(session: session)
       Dock(session: session, draft: .constant(""), staged: .constant([]))
         .padding(.bottom, Metrics.page)
     }
@@ -314,6 +323,7 @@ public struct ChatPoster: View {
     .background(Palette.bg0)
     .environment(\.agentAccent, Palette.accent(for: session.agent))
     .environment(\.media, MediaScope(session: session.id))
+    .environment(\.chatAgent, Fixtures.agents.first { $0.id == session.agent })
   }
 }
 

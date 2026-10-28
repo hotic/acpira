@@ -3,7 +3,8 @@ import AcpiraModels
 import SwiftUI
 
 // Turns.tsx AgentMessage / CodexMessage / CodexFold under fold = codex: one process fold per turn whose head carries
-// the Orb and the Working label, the reply outside it, permission cards after the reply, the outcome row last.
+// the Orb and the Working label, the reply outside it, permission cards after the reply, the outcome row last. A saved
+// plan cuts the turn: its card stands between the stretch before it and the continuation after it (planSections.ts).
 
 /// One agent turn: --pad sides, a --gap column, rows at --chat-row
 struct AgentMessage: View {
@@ -13,12 +14,33 @@ struct AgentMessage: View {
   var scope = ""
   /// The turn's place in the session (fork from here)
   var index = 0
+  /// The session's newest turn: only there, once settled, do failure notices offer their remedies
+  var last = false
   @Environment(\.sessionActions) private var sessionActions
 
   var body: some View {
+    let absorbed = absorbedNotices(turn)
+    let shown = displayTurn(turn, absorbed: absorbed)
+    let sections = splitPlanSections(shown.blocks)
+    let outcome = turnOutcome(shown) != nil
     VStack(alignment: .leading, spacing: Metrics.gap) {
-      CodexMessage(turn: turn, running: running, onPermission: sessionActions.permission)
-      if !running && turn.blocks.contains(where: { if case .notice = $0 { false } else { true } }) {
+      ForEach(Array(sections.enumerated()), id: \.element.key) { i, section in
+        let lastSection = i == sections.count - 1
+        // A plan approval renders on its card. A stretch holding nothing else while the card waits has no working
+        // row to show: the fold head there would say "awaiting approval" under the card that already asks
+        let visible = section.blocks.contains { if case .permission(let p) = $0 { p.planId == nil } else { true } }
+        let planWait = section.blocks.contains { if case .permission(let p) = $0 { p.planId != nil } else { false } }
+        if visible || (lastSection && ((running && !planWait) || outcome)) {
+          CodexMessage(turn: sectionTurn(shown, section, last: lastSection, split: sections.count > 1),
+                       running: lastSection && running, onPermission: sessionActions.permission)
+        }
+        if let plan = section.plan {
+          PlanDocumentCard(block: plan, permission: shown.blocks.lazy.compactMap { block -> PermissionBlock? in
+            if case .permission(let p) = block, p.planId == plan.id { p } else { nil }
+          }.first)
+        }
+      }
+      if showsTurnActions(turn, running: running) {
         TurnActions(turn: turn, index: index)
       }
     }
@@ -27,7 +49,18 @@ struct AgentMessage: View {
     // Entrance effects belong to the live turn only; restored history stays still
     .environment(\.rowEnter, running)
     .environment(\.entranceScope, EntranceScope(live: running, scope: scope))
+    .environment(\.noticeScope, NoticeScope(showActions: last && !running, suppressId: turn.error?.failureId, absorbed: absorbed))
     .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  /// A stretch as its own message: only the continuation owns the live activity and the turn's outcome, and with more
+  /// than one stretch none has timing of its own (repeating the whole turn's duration would lie)
+  private func sectionTurn(_ turn: AgentTurn, _ section: PlanSection, last: Bool, split: Bool) -> AgentTurn {
+    var content = turn
+    content.blocks = section.blocks
+    if !last { content.stop = nil; content.error = nil; content.command = nil }
+    if split { content.startedAt = nil; content.respondedAt = nil; content.endedAt = nil }
+    return content
   }
 }
 
@@ -37,7 +70,8 @@ struct CodexMessage: View {
   var onPermission: (String, String) -> Void
 
   var body: some View {
-    let split = splitCodexBlocks(turn.blocks)
+    // A call whose observation was lost reads as settled before anything groups or draws it
+    let split = splitCodexBlocks(turn.blocks.map(observedBlock))
     let hasTools = turn.blocks.contains { $0.toolCall != nil }
     VStack(alignment: .leading, spacing: Metrics.gap) {
       CodexFold(turn: turn, blocks: split.process, running: running, hasTools: hasTools)

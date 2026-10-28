@@ -1,0 +1,132 @@
+{
+ "id": "failure",
+ "agent": "codex",
+ "title": "额度用尽",
+ "cwd": "/Users/dev/projects/acpira",
+ "status": "ready",
+ "turns": [
+  {
+   "role": "user",
+   "text": "给 accounts 模块补测试"
+  },
+  {
+   "role": "agent",
+   "startedAt": 1791536478000,
+   "endedAt": 1791536538000,
+   "stop": "error",
+   "error": {
+    "message": "Your workspace has run out of credits for this model.",
+    "kind": "quota_exceeded",
+    "failureId": "turn-1:error",
+    "actions": [
+     "retry",
+     "new_session"
+    ]
+   },
+   "blocks": [
+    {
+     "type": "tool_call",
+     "id": "f-read",
+     "kind": "read",
+     "verb": "读取",
+     "target": "rust/crates/acpira-host/src/accounts/mod.rs",
+     "targetMono": true,
+     "status": "completed",
+     "meta": "412 行"
+    },
+    {
+     "type": "notice",
+     "id": "turn-1:error",
+     "severity": "error",
+     "category": "quota",
+     "title": "Workspace out of credits",
+     "actions": [
+      "retry",
+      "new_session"
+     ]
+    }
+   ]
+  }
+ ],
+ "running": false,
+ "controls": {
+  "modes": [
+   {
+    "id": "read-only",
+    "name": "Read Only",
+    "description": "Read files and answer"
+   },
+   {
+    "id": "auto",
+    "name": "Auto",
+    "description": "Edit and run commands in the workspace"
+   },
+   {
+    "id": "full-access",
+    "name": "Full Access",
+    "description": "Edit and run anywhere"
+   }
+  ],
+  "modeId": "auto",
+  "options": [
+   {
+    "id": "model",
+    "name": "Model",
+    "category": "model",
+    "value": "gpt-6-astra-high-thinking",
+    "options": [
+     {
+      "id": "gpt-6-astra-medium-thinking",
+      "name": "GPT-6 Astra Medium Thinking"
+     },
+     {
+      "id": "gpt-6-astra-high-thinking",
+      "name": "GPT-6 Astra High Thinking"
+     },
+     {
+      "id": "gpt-5-6-luna",
+      "name": "GPT-5.6 Luna"
+     }
+    ]
+   }
+  ]
+ },
+ "usage": {
+  "used": 48200,
+  "size": 262000
+ },
+ "commands": [
+  {
+   "name": "compact",
+   "description": "Compact the conversation to free context"
+  },
+  {
+   "name": "review",
+   "description": "Review the current changes",
+   "input": {
+    "hint": "files or scope to review"
+   }
+  },
+  {
+   "name": "init",
+   "description": "Generate an AGENTS.md for this repository"
+  },
+  {
+   "name": "config",
+   "description": "Open the configuration"
+  },
+  {
+   "name": "session-stats",
+   "description": "Show token usage for this session"
+  },
+  {
+   "name": "plan",
+   "description": "Draft an implementation plan",
+   "input": {
+    "hint": "what to plan"
+   }
+  }
+ ],
+ "createdAt": "2026-10-09T08:40:00Z",
+ "updatedAt": "2026-10-09T09:05:18Z"
+}

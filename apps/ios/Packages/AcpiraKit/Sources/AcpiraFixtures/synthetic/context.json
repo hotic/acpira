@@ -1,0 +1,135 @@
+{
+ "id": "context",
+ "agent": "claude",
+ "title": "长对话重构",
+ "cwd": "/Users/dev/projects/acpira",
+ "status": "ready",
+ "turns": [
+  {
+   "role": "user",
+   "text": "把 session_manager 里的镜像逻辑拆成单独的模块"
+  },
+  {
+   "role": "agent",
+   "startedAt": 1791536418000,
+   "endedAt": 1791536478000,
+   "stop": "error",
+   "error": {
+    "message": "prompt is too long: 212034 tokens > 200000 maximum",
+    "code": 400,
+    "kind": "context_length_exceeded"
+   },
+   "blocks": [
+    {
+     "type": "thought",
+     "text": "先把 mirror 相关的函数都找出来。",
+     "durationSec": 4
+    },
+    {
+     "type": "tool_call",
+     "id": "c-search",
+     "kind": "search",
+     "verb": "搜索",
+     "target": "fn mirror",
+     "targetMono": true,
+     "status": "completed",
+     "meta": "9 处"
+    }
+   ]
+  }
+ ],
+ "running": false,
+ "controls": {
+  "modes": [
+   {
+    "id": "default",
+    "name": "Default",
+    "description": "Ask before edits and commands"
+   },
+   {
+    "id": "acceptEdits",
+    "name": "Accept Edits",
+    "description": "Auto-approve file edits"
+   },
+   {
+    "id": "plan",
+    "name": "Plan",
+    "description": "Plan changes before implementing"
+   },
+   {
+    "id": "bypassPermissions",
+    "name": "Bypass Permissions",
+    "description": "Auto-approve all tool calls"
+   }
+  ],
+  "modeId": "default",
+  "options": [
+   {
+    "id": "model",
+    "name": "Model",
+    "category": "model",
+    "value": "claude-fable-5-1-xhigh",
+    "options": [
+     {
+      "id": "claude-fable-5-1-medium",
+      "name": "Claude Fable 5.1 Medium"
+     },
+     {
+      "id": "claude-fable-5-1-xhigh",
+      "name": "Claude Fable 5.1 XHigh"
+     },
+     {
+      "id": "claude-fable-5-1-max",
+      "name": "Claude Fable 5.1 Max"
+     },
+     {
+      "id": "claude-opus-4-8",
+      "name": "Claude Opus 4.8"
+     },
+     {
+      "id": "claude-haiku-4-6",
+      "name": "Claude Haiku 4.6"
+     }
+    ]
+   }
+  ]
+ },
+ "usage": {
+  "used": 48200,
+  "size": 262000
+ },
+ "commands": [
+  {
+   "name": "compact",
+   "description": "Compact the conversation to free context"
+  },
+  {
+   "name": "review",
+   "description": "Review the current changes",
+   "input": {
+    "hint": "files or scope to review"
+   }
+  },
+  {
+   "name": "init",
+   "description": "Generate an AGENTS.md for this repository"
+  },
+  {
+   "name": "config",
+   "description": "Open the configuration"
+  },
+  {
+   "name": "session-stats",
+   "description": "Show token usage for this session"
+  },
+  {
+   "name": "plan",
+   "description": "Draft an implementation plan",
+   "input": {
+    "hint": "what to plan"
+   }
+  }
+ ],
+ "createdAt": "2026-10-09T08:40:00Z",
+ "updatedAt": "2026-10-09T09:05:18Z"
+}
