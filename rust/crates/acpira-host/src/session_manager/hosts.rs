@@ -1,8 +1,10 @@
-//! Remote run on this engine's side (docs/dev/remote.md): every SSH host whose run mode is remote has its engine reached
-//! as a peer (`remote::peer`). One empty view there brings its session list, which joins the local list with each
-//! folder as its `ssh://` form; a host session shown here gets a view of its own there, whose pushes are rebuilt into
-//! this engine's views (its own revs, so pages take patches as for any session). Page actions on a host session go to
-//! that view, list actions on one to the list view. The last list a host sent stays (also on disk) while it is away
+//! Host sessions on this engine's side (docs/dev/remote.md): every SSH host that is not turned off has its engine reached
+//! as a peer (`remote::peer`), whatever its run mode, since a host folder has one history, the host's own. One empty view
+//! there brings its session list, which joins the local list with each folder as its `ssh://` form; a host session shown
+//! here gets a view of its own there, whose pushes are rebuilt into this engine's views (its own revs, so pages take
+//! patches as for any session). Page actions on a host session go to that view, list actions on one to the list view. The
+//! run mode decides only where a new session starts: on the host under remote run, here under local run. The last list a
+//! host sent stays (also on disk) while it is away
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -42,6 +44,8 @@ pub(super) struct Hosts {
 
 struct HostRun {
   alias: String,
+  /// The host's run mode now: under remote run new sessions in its folders start there
+  mode: parking_lot::Mutex<RunMode>,
   /// Envelopes to the host's engine while it is connected
   out: parking_lot::Mutex<Option<mpsc::UnboundedSender<Value>>>,
   /// Whether it is connected now
@@ -98,7 +102,7 @@ impl HostRun {
 fn list_target(m: &WebviewMsg) -> Option<String> {
   use WebviewMsg as W;
   match m {
-    W::RenameSession { id, .. } | W::DeleteSession { id } | W::PinSession { id, .. } => Some(id.clone()),
+    W::RenameSession { id, .. } | W::DeleteSession { id } | W::RestoreSession { id } | W::PinSession { id, .. } => Some(id.clone()),
     _ => None,
   }
 }
@@ -167,7 +171,7 @@ fn apply_patch(prev: &ViewParts, patch: &Value) -> Option<(Vec<Box<RawValue>>, O
 }
 
 impl SessionManager {
-  /// Follow the connection list: a host in remote run gets its engine reached, one that left it is let go
+  /// Follow the connection list: a host that is on gets its engine reached, one turned off or removed is let go
   pub(super) fn start_hosts(self: &Arc<Self>) {
     let Some(connections) = self.deps.remote.clone() else { return };
     let weak = Arc::downgrade(self);
@@ -192,12 +196,12 @@ impl SessionManager {
   }
 
   fn sync_hosts(self: &Arc<Self>, views: &[ConnectionView]) {
-    let wanted: Vec<&str> = views.iter().filter(|v| v.mode == RunMode::Remote && !v.disabled).map(|v| v.alias.as_str()).collect();
+    let wanted: Vec<(&str, RunMode)> = views.iter().filter(|v| !v.disabled).map(|v| (v.alias.as_str(), v.mode)).collect();
     let mut changed = false;
     {
       let mut runs = self.hosts.runs.lock();
       runs.retain(|alias, run| {
-        let keep = wanted.contains(&alias.as_str());
+        let keep = wanted.iter().any(|(a, _)| a == alias);
         if !keep {
           if let Some(t) = run.task.lock().take() {
             t.abort();
@@ -206,12 +210,14 @@ impl SessionManager {
         }
         keep
       });
-      for alias in wanted {
-        if runs.contains_key(alias) {
+      for (alias, mode) in wanted {
+        if let Some(run) = runs.get(alias) {
+          *run.mode.lock() = mode;
           continue;
         }
         let run = Arc::new(HostRun {
           alias: alias.to_owned(),
+          mode: parking_lot::Mutex::new(mode),
           out: Default::default(),
           up: tokio::sync::watch::Sender::new(false),
           items: parking_lot::Mutex::new(self.cached_host_list(alias)),
@@ -231,13 +237,48 @@ impl SessionManager {
     }
   }
 
+  /// A copy of a session this engine drove left a host (`remote::host_store`). With its id, as it is deleted here: the
+  /// host's list drops it at once, else it would show again as one of the host's own. Without: the host removed the
+  /// copies, so its engine is asked for the list again, read from its directory
+  pub fn host_copy_gone(self: &Arc<Self>, alias: &str, id: Option<&str>) {
+    let Some(run) = self.hosts.runs.lock().get(alias).cloned() else { return };
+    let Some(id) = id else {
+      run.send_to_view(LIST_VIEW, json!({ "type": "ready", "patches": false }));
+      return;
+    };
+    let left = {
+      let mut items = run.items.lock();
+      let before = items.len();
+      items.retain(|s| s.id != id);
+      (items.len() != before).then(|| items.clone())
+    };
+    if let Some(items) = left {
+      self.save_host_list(alias, &items);
+      self.emit_sessions();
+    }
+  }
+
   /// The host engines this engine is connected to, with their pids
   pub fn host_engines(&self) -> Vec<(String, u32)> {
     self.hosts.runs.lock().values().filter_map(|r| r.pid.lock().map(|p| (r.alias.clone(), p))).collect()
   }
 
+  /// The host whose session this is. A session this machine has itself (live, stored, or run by another engine here) is
+  /// never a host's: the host's list also holds the copies of this machine's sessions in its folders (`remote::host_store`)
   fn host_of(&self, id: &str) -> Option<Arc<HostRun>> {
+    let mine = {
+      let st = self.state.lock();
+      st.live.contains_key(id) || st.index.iter().any(|s| s.id == id) || st.elsewhere.values().flatten().any(|s| s.id == id)
+    };
+    if mine {
+      return None;
+    }
     self.hosts.runs.lock().values().find(|r| r.owns(id)).cloned()
+  }
+
+  /// Whether a session is a host's own (not this machine's, though the host may hold a copy of it)
+  pub(super) fn is_host_session(&self, id: &str) -> bool {
+    self.host_of(id).is_some()
   }
 
   /// The host sessions for the list; ids this engine has itself win
@@ -270,9 +311,10 @@ impl SessionManager {
     if self.hosts.runs.lock().is_empty() {
       return None;
     }
+    // Under local run a new session in a host folder starts here (`acp/session/remote.rs`)
     let asked_on = match m {
       W::NewSession { cwd: Some(cwd), .. } => parse_remote_folder(cwd).and_then(|f| {
-        let run = self.hosts.runs.lock().get(&f.alias).cloned();
+        let run = self.hosts.runs.lock().get(&f.alias).cloned().filter(|r| *r.mode.lock() == RunMode::Remote);
         run.map(|r| (f, r))
       }),
       _ => None,
@@ -291,16 +333,19 @@ impl SessionManager {
     let explicit = session_id_of(m).or_else(|| list_target(m));
     let target = explicit.clone().or_else(|| v.active_id().filter(|_| is_forwarded(m)))?;
     let run = self.host_of(&target)?;
-    if let W::SelectSession { id } = m {
-      self.set_active(v, Some(id.clone()));
-      self.show_host_session(&run, id, v);
-      self.emit_sessions();
-      return Some(Ok(()));
-    }
     let msg = serde_json::to_value(m).ok()?;
     // Shown here: through its own view, as the page would act on it there; else the list view, for list actions
     let view_id = run.shown.lock().get(&target).map(|s| s.view_id.clone()).unwrap_or_else(|| LIST_VIEW.to_owned());
     Some(if run.send_to_view(&view_id, msg) { Ok(()) } else { Err(anyhow!(crate::i18n::tp("host.remoteUnreachable", &[("host", &run.alias)]))) })
+  }
+
+  /// A viewer lands on a session: a host's own is shown through the host's engine. False when it is not a host's
+  pub(super) fn open_on_host(self: &Arc<Self>, v: &Arc<Viewer>, id: &str) -> bool {
+    let Some(run) = self.host_of(id) else { return false };
+    self.set_active(v, Some(id.to_owned()));
+    self.show_host_session(&run, id, v);
+    self.emit_sessions();
+    true
   }
 
   /// A viewer lands on a host session: its view there is opened once, and a view already pushed goes out at once
@@ -353,7 +398,8 @@ impl SessionManager {
   fn save_host_list(&self, alias: &str, items: &[SessionSummary]) {
     let path = self.cache_file(alias);
     let Ok(text) = serde_json::to_string(items) else { return };
-    let tmp = path.with_extension("json.tmp");
+    // Every engine on this machine keeps the same cache: a temp file of its own each
+    let tmp = path.with_extension(format!("json.{}.tmp", std::process::id()));
     let saved = path.parent().map(std::fs::create_dir_all).transpose().and_then(|_| std::fs::write(&tmp, text)).and_then(|_| std::fs::rename(&tmp, &path));
     if let Err(e) = saved {
       self.log(&format!("remote run: {} list not cached: {e}", alias));
@@ -394,8 +440,10 @@ impl SessionManager {
       _ => None,
     };
     let Some(list) = list.and_then(|l| serde_json::from_value::<Vec<SessionSummary>>(l.clone()).ok()) else { return };
+    // Sessions the host's engine lists from hosts of its own are theirs, not this host's
     let items: Vec<SessionSummary> = list
       .into_iter()
+      .filter(|s| !acpira_shared::remote::is_remote_folder(&s.cwd))
       .map(|mut s| {
         s.cwd = local_folder(&run.alias, &s.cwd);
         s.category = None;
@@ -501,7 +549,7 @@ async fn drive(weak: Weak<SessionManager>, run: Arc<HostRun>) {
     let Some(connections) = m.deps.remote.clone() else { return };
     drop(m);
     let attempt: Result<PeerLink> = async {
-      let client = connections.ensure(&run.alias, CONNECT_WAIT).await?;
+      let client = connections.follow(&run.alias, CONNECT_WAIT).await?;
       PeerLink::connect(&client, None, PeerHello { version: env!("CARGO_PKG_VERSION"), capabilities: PEER_CAPS, host_language: "en" }).await
     }
     .await;

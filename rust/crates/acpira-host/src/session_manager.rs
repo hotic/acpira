@@ -192,6 +192,7 @@ impl SessionSnapshot {
         imported_from: None,
         subagents: None,
         goal: v.goal,
+        copy_of: None,
       },
     }
   }
@@ -313,6 +314,8 @@ struct State {
   dirty: HashMap<String, bool>,
   // Sessions another engine holds the lease of: read-only copies of their record, refreshed until the lease comes free
   mirrors: HashMap<String, Arc<AcpSession>>,
+  // Mirrored records that are copies of another machine's session (`remote::host_store`): never opened here
+  copies: HashSet<String>,
   // Mirrored sessions whose owner pushes their view over the bus (`bus.rs`): shown instead of the record copy, and the
   // pages' actions on them go to the owner
   remote: HashMap<String, Remote>,
@@ -440,6 +443,7 @@ impl SessionManager {
           sync_again: false,
           dirty: HashMap::new(),
           mirrors: HashMap::new(),
+          copies: HashSet::new(),
           remote: HashMap::new(),
           refresh: HashSet::new(),
           elsewhere: HashMap::new(),
@@ -683,7 +687,8 @@ impl SessionManager {
     if !(self.deps.projects)() || self.state.lock().categories.projects.is_some() {
       return;
     }
-    let mut list = self.sessions();
+    // A host's own sessions are not this machine's history: a host lists every folder it ever ran one in
+    let mut list: Vec<SessionSummary> = self.sessions().into_iter().filter(|s| !self.is_host_session(&s.id)).collect();
     list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     // Folders a session merely ran in are not projects: the home directory (where windows without a workspace start)
     // and folders that are gone
@@ -1491,6 +1496,7 @@ impl SessionManager {
       imported_from: Some(ImportedFrom { session_id: session_id.to_owned() }),
       subagents: None,
       goal: None,
+      copy_of: None,
     };
     if let Err(e) = self.deps.store.flush(Arc::new(record.clone())).await {
       self.log(&format!("import flush failed: {e}"));
@@ -2264,6 +2270,10 @@ impl SessionManager {
         me.emit_sessions();
         return;
       }
+      // A host's own session (`hosts.rs`): its view comes from the host's engine, a page's pick or a restored one alike
+      if me.open_on_host(&v, &id) {
+        return;
+      }
       if v.active_id().as_deref() == Some(id.as_str()) && me.live(&id).is_some() {
         return;
       }
@@ -2344,6 +2354,13 @@ impl SessionManager {
       }
     };
     if self.live(id).is_some() {
+      return;
+    }
+    // A copy of a session another machine drives in this machine's folder: only that machine writes it
+    if let Some(from) = record.copy_of.clone().filter(|c| c.machine != crate::remote::host_store::this_machine().0) {
+      self.state.lock().copies.insert(id.to_owned());
+      let name = if from.name.is_empty() { t("host.sessionCopyAnother") } else { from.name };
+      self.start_mirror(id, record, tp("host.sessionCopy", &[("machine", &name)]), false);
       return;
     }
     // Another engine is mid-turn on this session (or holds it while draining): starting an agent here would race it
@@ -2638,8 +2655,9 @@ impl SessionManager {
           m.end_remote(&id);
           return;
         }
-        // Free and nobody else is about to take it (a takeover in flight frees it for the requester, not for this copy)
-        if !m.leases.held_elsewhere(&id) && !m.leases.takeover_requested(&id) {
+        // Free and nobody else is about to take it (a takeover in flight frees it for the requester, not for this copy).
+        // Another machine's copy is never free here
+        if !m.state.lock().copies.contains(&id) && !m.leases.held_elsewhere(&id) && !m.leases.takeover_requested(&id) {
           m.state.lock().mirrors.remove(&id);
           m.leases.clear_handover(&id);
           m.end_remote(&id);
@@ -3375,6 +3393,7 @@ impl SessionManager {
       imported_from: None,
       subagents: (!subagents.is_empty()).then_some(subagents),
       goal: None,
+      copy_of: None,
     };
     // Every blob the copied turns point at (prompt / steer attachments and the images the agent produced, subagent
     // transcripts included) is re-saved under the fork's own blob dir; content-hash names keep the same file name

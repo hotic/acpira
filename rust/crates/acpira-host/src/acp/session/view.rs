@@ -354,6 +354,10 @@ impl RecordSource for AcpSession {
     self.id.clone()
   }
 
+  fn record_cwd(&self) -> String {
+    self.cwd.clone()
+  }
+
   fn record_json(&self) -> Vec<u8> {
     let c = self.core.lock();
     let r = RecordRef {

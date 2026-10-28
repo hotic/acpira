@@ -195,3 +195,36 @@ async fn a_stale_index_summary_gains_its_acp_session_id_and_the_index_file_is_up
   until(|| index().as_deref() == Some(acp_id.as_str()), 5000).await;
   m.dispose().await;
 }
+
+// A host folder's session keeps one writer across machines (`remote/host_store.rs`): the copy another machine left in
+// this store opens read-only, saying where it runs, and nothing done here reaches its record; a copy this machine
+// made itself (its record here was lost) opens as its own
+#[tokio::test(flavor = "multi_thread")]
+async fn a_copy_another_machine_left_here_is_read_only() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let at = "2026-10-01T00:00:00.000Z";
+  let record = |id: &str, machine: &str| {
+    serde_json::to_vec(&json!({ "id": id, "agent": "fake", "cwd": "/work/app", "title": id, "createdAt": at, "updatedAt": at,
+      "turns": [], "controls": { "modes": [], "options": [] }, "commands": [], "copyOf": { "machine": machine, "name": "Studio" } }))
+    .unwrap()
+  };
+  let (me, _) = acpira_host::remote::host_store::this_machine();
+  std::fs::write(dir.path().join("s-far.json"), record("s-far", "machine-elsewhere")).unwrap();
+  std::fs::write(dir.path().join("s-own.json"), record("s-own", me)).unwrap();
+  let m = Mgr::new(dir.path(), Opts::fake(&fake));
+  m.init().await;
+
+  m.handle(json!({ "type": "selectSession", "id": "s-far" })).await;
+  until(|| m.active().is_some_and(|a| a["id"] == "s-far" && a["status"] == "readonly"), 5000).await;
+  let shown = m.active().unwrap();
+  assert!(shown["error"].as_str().unwrap_or_default().contains("Studio"), "{shown}");
+  m.handle(json!({ "type": "send", "text": "hi" })).await;
+  m.handle(json!({ "type": "renameSession", "id": "s-far", "title": "Renamed here" })).await;
+  tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+  assert_eq!(std::fs::read(dir.path().join("s-far.json")).unwrap(), record("s-far", "machine-elsewhere"), "the record is the other machine's");
+
+  m.handle(json!({ "type": "selectSession", "id": "s-own" })).await;
+  until(|| m.active().is_some_and(|a| a["id"] == "s-own" && a["status"] != "readonly"), 5000).await;
+  m.dispose().await;
+}

@@ -632,6 +632,8 @@ export const ja = {
   'host.sessionTakenOver': 'このセッションは別の Acpira エンジンに引き継がれ、ここでは読み取り専用になりました。ここで引き継ぐと取り戻せます。',
   'host.takeOverTimeout': '別の Acpira エンジンが 10 秒以内にセッションを手放しませんでした。もう一度お試しください。',
   'host.sessionBusyElsewhere': '別の Acpira エンジンがこのセッションを開いています。続けるにはここで引き継いでください。',
+  'host.sessionCopy': 'このセッションは {machine} で実行されています。ここでは閲覧のみです。続けるにはそのコンピューターで操作してください。',
+  'host.sessionCopyAnother': '別のコンピューター',
   'host.storage.gone': 'すでにありません。',
   'host.storage.pinned': 'ピン留めしたセッションは残します。',
   'host.storage.running': 'このセッションは実行中です。',

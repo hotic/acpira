@@ -457,6 +457,7 @@ impl AcpSession {
         imported_from: None,
         subagents: None,
         goal: None,
+        copy_of: None,
       },
       deps,
     )

@@ -1,6 +1,6 @@
 # SSH remote workspaces
 
-Remote folders over the system `ssh`. Local run keeps login, agent loop and session store here and runs only tools on the host through a helper (`acpira remote --stdio`); remote run drives the host's own `acpira serve` as a peer. Code: `rust/crates/acpira-host/src/remote/`.
+Remote folders over the system `ssh`. Local run keeps login and agent loop here and runs only tools on the host through a helper (`acpira remote --stdio`); remote run drives the host's own `acpira serve` as a peer. Either way a host folder has one session history, the host's own store. Code: `rust/crates/acpira-host/src/remote/`.
 
 ## Transport
 
@@ -39,6 +39,7 @@ OpenSSH behaviour the code relies on (OpenSSH 10.3 client, Ubuntu and macOS serv
 - `remote/connections.rs`, `$ACPIRA_HOME/connections.json`, shared by every engine on the machine: each edit takes the file lock and re-reads the file.
 - Every ssh call is hardened (`BatchMode`, no forwarding, `PermitLocalCommand=no`, `--` before the destination) and runs `/bin/sh -c`, so the host's login shell does not matter. A host key is never accepted automatically; `openTerminal` runs `ssh <alias>` in a terminal here.
 - One driver per host reconnects with backoff; a host key, a locked key, a refusal, another machine, no build or no ssh stops it, since only the user can settle those.
+- Every host that is on is brought up by `session_manager/hosts.rs` through `follow`, which starts a host that is simply off but never undoes a user's disconnect nor retries a failure only the user can settle. `ensure` (opening a folder there, a terminal) connects regardless.
 
 ## Pages
 
@@ -64,6 +65,16 @@ Under local run only the built-in agent works in an `ssh://` folder; others are 
 - Project MCP servers: the project's `.mcp.json` is read on the host and shadows the user's; a stdio server runs through `acpira mcp-host` and the helper's `exec`. `${VAR}` expands from this machine's environment; a loopback http URL is refused because it would mean this machine.
 - Terminal tabs run on a host pty (`TerminalHub::spawn_remote`). Preview proxies are keyed by host and origin so two hosts' `localhost:3000` never share; the helper's `tcp` op allows loopback targets only.
 - A VS Code browser panel restored after reload forgets its remote folder.
+
+## One history per host
+
+- Every host that is on has its engine reached as a peer (below) in either run mode, for its list. The run mode only picks where a new session starts.
+- A session runs where it was created. One created here under local run stays this engine's in either mode, since a record of its own wins over the host's copy in the list; one created on the host opens through the host's engine in either mode.
+- `remote/host_store.rs`: this engine's records in host folders get a copy in the host's store (the host's path as `cwd`, no category, blobs too), batched, and compared on every connection, which also copies records written before. Bodies travel as stdin frames, since a record can outgrow one wire line. A copy never replaces one the host updated later or holds in its trash.
+- A copy carries `copyOf` (the machine that wrote it) and opens read-only on every other engine, so only the machine that created a session ever writes it; no lease spans machines.
+- A deletion here drops the id from the host's list at once and stays filed in `run/remote/gone.json` until the host confirms its copy gone, so one made while the host is away survives a restart instead of listing again as a host session.
+- Known limits: the built-in agent's own log stays here, so the host cannot resume a copy's agent context; a copy whose machine is gone for good stays read-only on the host; a host session's blobs are not fetched here.
+- Unverified: a real host (only the fake ssh in `tests/engine/remote_store.rs` and `remote_peer.rs`).
 
 ## Remote run: the peer wire
 

@@ -151,3 +151,50 @@ async fn a_host_in_remote_run_has_its_sessions_in_the_local_list() {
   }
   connections.dispose();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn under_local_run_the_hosts_sessions_list_too_and_this_machines_own_stay_here() {
+  let fake = crate::fake_or_skip!();
+  let lab = Lab::new();
+  let _stop = StopEngines::for_lab(&lab);
+  let connections = lab.engine("engine");
+  connections.op(ConnectionOp::Add { alias: "gen1".into(), mode: RunMode::Local }).await.unwrap();
+  let work = lab.path().join("hostfs").join("work");
+  std::fs::create_dir_all(&work).unwrap();
+  let folder = format!("ssh://gen1{}", work.display());
+  let record = |id: &str, cwd: &str, title: &str| {
+    let at = "2026-10-01T00:00:00.000Z";
+    serde_json::to_vec(&json!({ "id": id, "agent": "fake", "cwd": cwd, "title": title, "createdAt": at, "updatedAt": at,
+      "turns": [], "controls": { "modes": [], "options": [] }, "commands": [] }))
+    .unwrap()
+  };
+  // A session this machine drives in the host folder, its copy in the host's store under another title, and one of the
+  // host's own
+  let dir = tempfile::tempdir().unwrap();
+  std::fs::write(dir.path().join("s-mine.json"), record("s-mine", &folder, "Driven here")).unwrap();
+  let host = lab.host_home().join(".acpira").join("sessions");
+  std::fs::create_dir_all(&host).unwrap();
+  let path = work.display().to_string();
+  std::fs::write(host.join("s-mine.json"), record("s-mine", &path, "Copy on the host")).unwrap();
+  std::fs::write(host.join("s-host.json"), record("s-host", &path, "The host's own")).unwrap();
+
+  let mut opts = crate::session_manager::Opts::fake(&fake).projects();
+  opts.remote = Some(connections.clone());
+  let m = crate::session_manager::Mgr::new(dir.path(), opts);
+  m.init().await;
+  wait(&m, "the host's list under local run", 30_000, || m.sessions().iter().any(|s| s["id"] == "s-host" && s["cwd"] == folder.as_str())).await;
+  let mine: Vec<Value> = m.sessions().into_iter().filter(|s| s["id"] == "s-mine").collect();
+  assert_eq!(mine.len(), 1, "listed once");
+  assert_eq!(mine[0]["title"], "Driven here", "this machine's record wins over the host's copy");
+
+  // Acted on here: a rename lands in this machine's record, not in the host's copy through the host's engine
+  m.handle(json!({ "type": "renameSession", "id": "s-mine", "title": "Renamed here" })).await;
+  let title = || serde_json::from_slice::<Value>(&std::fs::read(dir.path().join("s-mine.json")).unwrap()).unwrap()["title"].clone();
+  wait(&m, "the rename in this machine's record", 15_000, || title() == "Renamed here").await;
+
+  // The host's own session opens through the host's engine
+  m.handle(json!({ "type": "selectSession", "id": "s-host" })).await;
+  wait(&m, "the host's session on screen", 30_000, || m.active().is_some_and(|v| v["title"] == "The host's own" && v["cwd"] == folder.as_str())).await;
+  m.dispose().await;
+  connections.dispose();
+}
