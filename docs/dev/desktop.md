@@ -25,7 +25,7 @@
 ## Page layout and shell traps
 
 - `window.__acpira.shell === 'desktop'` turns on `DesktopContext` (`packages/ui/desktop.ts`); styles in `packages/ui/styles/desktop.css` keep tokens unlayered (they must beat the density's `--hdr`) and rules in `@layer components`.
-- The title row (`chat/DesktopFrame.tsx`) is pinned absolute at the window's top-left so it never moves when the column folds or the page changes; the header line is the drag region (`data-drag-region`, `start_dragging` from `init.js`). macOS traffic lights sit by `traffic_light_position` in `app.rs`; Tauri measures 9 pt lower than Electron did.
+- The title row (`chat/DesktopFrame.tsx`) is pinned absolute at the window's top-left so it never moves when the column folds or the page changes; the header line is the drag region (`data-drag-region`, `start_dragging` from `init.js`). macOS traffic lights sit by `traffic_light_position` in `app/windows.rs`; Tauri measures 9 pt lower than Electron did.
 - `data-moving` goes on the column itself, not the root: React writes a child's attributes before its parent's, so a root flag landed after the width changed and the opening jumped.
 - Narrow window (below `--session-dock-min`): the list is a page over the window. `data-drawer-moving` is honoured only in narrow mode, otherwise a widen right after a close slid the docked column in.
 - The column-folded flag is webview state `desktopColumnHidden`, read only by the docked column; a narrow window's list page and ⌘K ignore it.
@@ -79,7 +79,7 @@
 
 ## Updates
 
-The app updates itself without Sparkle or `tauri-plugin-updater`: `rust/crates/acpira-desktop/src/update/` (window-free, unit-tested), shell side in `src/app.rs`. Release side: `docs/releasing.md` "Desktop app" and the `acpira-update-pack` binary.
+The app updates itself without Sparkle or `tauri-plugin-updater`: `rust/crates/acpira-desktop/src/update/` (window-free, unit-tested), shell side in `src/app/updates.rs`. Release side: `docs/releasing.md` "Desktop app" and the `acpira-update-pack` binary.
 
 - Manifest `desktop-update.json` carries per-platform (`darwin-aarch64`, `windows-x86_64`) full packages, file lists with SHA-256 and deltas; its detached Ed25519 signature covers every digest. Keys in `update::PUBLIC_KEYS` (several for rotation); a build without a key never checks, nor a macOS build without `TEAM_ID`.
 - Deltas (`delta.rs`) are zstd patches against the installed file as reference prefix (zstd over bsdiff: nearly as small, no extra dependency); `keep` uses `clonefile`. The installed bundle must match the base byte for byte or the full package is taken, and the result is checked against the manifest file list including `_CodeSignature` and the stapled ticket, so the client never signs anything.

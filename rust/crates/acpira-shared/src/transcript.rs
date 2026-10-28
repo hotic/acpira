@@ -493,7 +493,7 @@ pub struct ToolCallBlock {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub verb_key: Option<String>,
   /// The MCP server a tool call went to, as a label (`Blockbench`): the row reads "Call Blockbench" with the tool's
-  /// title as its target, whichever adapter naming the call came in (`normalize.rs`, `mcp_identity`)
+  /// title as its target, whichever adapter naming the call came in (`normalize/tool_kind.rs`, `mcp_identity`)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub mcp_server: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]

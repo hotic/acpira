@@ -58,7 +58,7 @@ pub struct SessionState {
   pub turn: Option<Cancel>,
   /// Rules the user added from permission cards ("always allow"), for this session only
   pub allowed: Vec<Rule>,
-  /// What the last model request's prefix was built from (`turn.rs` logs a `view` event when it changes)
+  /// What the last model request's prefix was built from (`turn/request.rs` logs a `view` event when it changes)
   pub last_view: Option<Value>,
   /// The config options the client last got for this session (`Server::push_controls` sends a change)
   pub sent_options: Option<Vec<Value>>,

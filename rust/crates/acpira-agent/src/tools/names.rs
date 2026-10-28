@@ -1,6 +1,6 @@
 //! Tool-name recovery. Weaker models call `read_file`, `Bash`, `functions.grep` or `run_command` for the tools they
 //! were given; a name that maps to exactly one tool of the current set is taken as that tool (a few times a turn, see
-//! `turn.rs`), anything else gets an error that lists the real names, so a turn never ends silently on a misspelt call
+//! `turn/calls.rs`), anything else gets an error that lists the real names, so a turn never ends silently on a misspelt call
 
 use super::{BASH, EDIT, EXIT_PLAN, GLOB, GREP, HISTORY_GREP, HISTORY_LIST, JOB, LIST, QUESTION, READ, SKILL, TODO, WEBFETCH, WEBSEARCH, WRITE};
 use crate::goal::{CREATE as CREATE_GOAL, GET as GET_GOAL, UPDATE as UPDATE_GOAL};

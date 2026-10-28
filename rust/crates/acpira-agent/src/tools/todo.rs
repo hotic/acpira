@@ -2,7 +2,7 @@
 //! `todos`, which the host turns into the to-do bar (`todo_tools.rs`); the model gets the list back as plain lines.
 //!
 //! The list also rides on other calls: `read`, `write`, `edit` and `bash` take it as `todos` (`rider_property`), and
-//! the turn shows it as a `todo` row of its own before the call runs (`turn.rs`). A model that makes one call per
+//! the turn shows it as a `todo` row of its own before the call runs (`turn/riders.rs`). A model that makes one call per
 //! reply otherwise spends a whole request on moving the list on: 14% of the steps of the 2026-10-15 eval runs did
 //! nothing else.
 

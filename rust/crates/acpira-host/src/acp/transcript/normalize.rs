@@ -561,7 +561,7 @@ mod retitled_row_tests {
   use serde_json::json;
 
   // The built-in agent turns the row a stream opened for an edit into the row of the to-do list the edit carried
-  // (acpira-agent `turn.rs`, `ride_todo`), so the list sits above the edit
+  // (acpira-agent `turn/riders.rs`, `ride_todo`), so the list sits above the edit
   #[test]
   fn a_streamed_row_retitled_todo_becomes_the_to_do_row() {
     let mut s = NormalizeState::new(vec![]);

@@ -111,7 +111,7 @@ fn claude_exit_plan_mode_is_recognised_after_the_adapter_drops_the_repeated_kind
 #[test]
 fn the_builtin_agents_exit_plan_is_the_plan_approval() {
   // acpira-agent's exit_plan: the streamed call, its prepared presentation, then the update and permission toolCall
-  // that carry the plan file with `acpira/planApproval` (crates/acpira-agent/src/turn.rs `exit_plan`)
+  // that carry the plan file with `acpira/planApproval` (crates/acpira-agent/src/turn/calls.rs `exit_plan`)
   let mut s = NormalizeState::new(vec![]);
   let call = json!({ "sessionUpdate": "tool_call", "toolCallId": "call-3", "title": "exit_plan", "kind": "switch_mode", "status": "pending" });
   apply_update(&mut s, &call);

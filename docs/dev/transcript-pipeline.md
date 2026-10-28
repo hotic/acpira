@@ -94,7 +94,7 @@ How ACP updates become transcript blocks and how prompts go out: attachments, to
 
 ## Session failures and async tasks
 
-JetBrains AIR extensions from codex-acp and claude-agent-acp (`acp-agents-compat.md`); code in `session/failure.rs` and `normalize.rs`. Tests: `tests/engine/failures.rs`, `tests/engine/acp_session/failures.rs`.
+JetBrains AIR extensions from codex-acp and claude-agent-acp (`acp-agents-compat.md`); code in `session/failure.rs` and `normalize/notices.rs`. Tests: `tests/engine/failures.rs`, `tests/engine/acp_session/failures.rs`.
 
 - `sessionFailure` keeps one `NoticeBlock` per id, rewritten only by a higher revision.
 - Retry warnings (warning, no actions, connection / service / limit) never become rows: claude-agent-acp 0.81.0 `api_retry` mints a new id per attempt. They set `AgentTurn.retry` for the "Retrying (N/M)" line instead.
