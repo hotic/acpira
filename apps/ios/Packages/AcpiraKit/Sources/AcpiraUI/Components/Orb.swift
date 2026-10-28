@@ -23,7 +23,7 @@ public struct Orb: View {
       }
     }
     .frame(width: WebMetrics.lead, height: WebMetrics.lead)
-    .accessibilityLabel(Text(web: "Thinking…"))
+    .accessibilityLabel(Text(web: t("host.thinking")))
   }
 }
 
