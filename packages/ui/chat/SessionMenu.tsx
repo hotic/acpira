@@ -1,4 +1,4 @@
-import { useState, type ReactElement, type ReactNode } from 'react';
+import { cloneElement, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactElement, type ReactNode } from 'react';
 import { ContextMenu } from '@base-ui/react/context-menu';
 import { AppWindow, ChevronRight, Copy, FileDown, FileJson, FileText, Folder, FolderInput, Inbox, LetterText, Link, Pencil, Pin, PinOff, SquareArrowOutUpRight, Trash2, Undo2 } from 'lucide-react';
 import type { ExportFormat } from '@acpira/shared/protocol';
@@ -164,8 +164,8 @@ export function SessionMenu({ trigger, align = 'start', onOpenChange, lead, ...i
 // rows (at least the small popup width) and flips to the other side of the pointer when it does not fit. At the fixed popup width
 // a narrow session column left no room, so the align shift pinned the menu to the same spot wherever the row was clicked.
 // Shifting stays as the fallback when neither side fits.
-// `editing`: the row is being renamed. The menu stays mounted but disabled (the input keeps the native menu), so the row
-// element is not remounted. Closing never returns focus: a context menu has no trigger button to return to, and returning
+// `editing`: the row is being renamed. A menu already mounted stays mounted but disabled (the input keeps the native menu),
+// so the row element is not remounted. Closing never returns focus: a context menu has no trigger button to return to, and returning
 // focus to the row (or to a row right-clicked earlier) either stole focus from the fresh rename input or left the row's
 // focus-within action cluster showing without a hover fill
 const contextMenuCollision = { side: 'flip', align: 'flip', fallbackAxisSide: 'none' } as const;
@@ -175,12 +175,38 @@ export function SessionContextMenu({ children, onOpenChange, editing, ...items }
 }
 
 // Any list row's right-click menu, built like the session row's above: project and category headers open the rows of their
-// "…" menu here. `disabled` while the row is being renamed
+// "…" menu here. `disabled` while the row is being renamed.
+// The menu's root (positioning, dismissal, list navigation, typeahead, a document listener) mounts on the row's first
+// right-click rather than with the row: a list mounts hundreds of rows at a time (a search's first letter, every page of a
+// project), and a root per row was most of that work. Arming puts the row under the trigger, a new element: it is created
+// with the open menu's look, so no hover fill fades in under the pointer, and the right-click is replayed on it, so the
+// menu opens where it was asked. An armed row keeps its root, so a rename picked from the menu never remounts it
 export function RowContextMenu({ children, items, disabled, onOpenChange }: { children: ReactElement<Record<string, unknown>>; items: ReactNode | (() => ReactNode); disabled?: boolean; onOpenChange?: (open: boolean) => void }) {
   const [open, setOpen] = useState(false);
+  // undefined until the first right-click; then where it landed, until it is replayed on the trigger; then null
+  const [armed, setArmed] = useState<{ x: number; y: number } | null>();
+  const row = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!armed) return;
+    row.current?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: armed.x, clientY: armed.y, button: 2, buttons: 2 }));
+    setArmed(null);
+  }, [armed]);
+  if (armed === undefined) {
+    const own = children.props.onContextMenu as ((e: ReactMouseEvent<HTMLElement>) => void) | undefined;
+    return cloneElement(children, {
+      onContextMenu: (e: ReactMouseEvent<HTMLElement>) => {
+        own?.(e);
+        // Renaming: the input keeps the native menu
+        if (disabled || e.defaultPrevented) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setArmed({ x: e.clientX, y: e.clientY });
+      },
+    });
+  }
   return (
     <ContextMenu.Root disabled={disabled} onOpenChange={next => { setOpen(next); onOpenChange?.(next); }}>
-      <ContextMenu.Trigger render={children} />
+      <ContextMenu.Trigger ref={row} render={armed ? cloneElement(children, { 'data-menu-open': '' }) : children} />
       {/* Portaled, but React events still bubble up the component tree: a menu click must not reach the row and select it */}
       <DropdownMenu.Portal><DropdownMenu.Positioner className="w-max min-w-pop-sm" collisionAvoidance={contextMenuCollision}><DropdownMenu.Popup finalFocus={false} onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
         {open && (typeof items === 'function' ? items() : items)}

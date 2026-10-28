@@ -1,0 +1,171 @@
+/* Remote access: the pairing core (remote/Pairing.tsx) and the desktop foot card (remote/DevicesCard.tsx).
+   Every base style is the final state and entrances are `from` keyframes filled backwards, so the reduced-motion kill
+   switch (motion.css) shows the settled card. Motion is transform / opacity / filter only. The geometry the markup draws
+   (the code's box, the ring) comes from remote/pairGeometry.ts through --dv-qr */
+
+.acp-shell, .acp-settings {
+  --dv-card-w: 300px;
+  /* A device row: its name over its path tag */
+  --dv-row: 44px;
+  --dv-ease: cubic-bezier(.3, .7, .2, 1);
+  /* The fuse's dim track and its lit part */
+  --dv-track: color-mix(in srgb, var(--popup-fg, var(--fg-1)) 15%, var(--popup-bg, var(--bg-0)));
+  --dv-lit: color-mix(in srgb, var(--popup-fg, var(--fg-1)) 42%, var(--popup-bg, var(--bg-0)));
+}
+.dv-card { --stack-gap: 3px; }
+/* The settings dialog's body is the surface the code is drawn on */
+.dv-on-dialog { --popup-bg: var(--bg-1); --popup-fg: var(--fg-1); }
+
+@keyframes dv-scan { 0%, 100% { transform: translateY(-4.5px); } 50% { transform: translateY(4.5px); } }
+@keyframes dv-pop-in { from { transform: scale(.3); opacity: 0; } }
+@keyframes dv-breathe { 0% { transform: scale(1); opacity: .5; } 55%, 100% { transform: scale(2.6); opacity: 0; } }
+@keyframes dv-gone { from { opacity: 1; } }
+@keyframes dv-come { from { opacity: 0; transform: scale(.97); filter: blur(1.2px); } }
+@keyframes dv-glyph-in { from { opacity: 0; transform: scale(.82); filter: blur(3px); } }
+@keyframes dv-check-in { from { opacity: 0; transform: scale(.35); } }
+@keyframes dv-card-in { from { opacity: 0; transform: translateY(6px) scale(.94); } }
+@keyframes dv-card-out { to { opacity: 0; transform: translateY(4px) scale(.96); } }
+@keyframes dv-new { from { opacity: 1; } }
+@keyframes dv-row-in { from { opacity: 0; transform: translateY(4px); } }
+@keyframes dv-lead { from { opacity: 0; transform: scale(.7); } }
+@keyframes dv-fade { from { opacity: 0; } }
+@keyframes dv-digits-in { from { opacity: 0; transform: translateY(3px); filter: blur(2px); } }
+
+@layer components {
+  /* The foot button's phone: the presence dot in its notch, a scan line while a pairing window is open */
+  .dv-phone .dv-phone-scan { animation: dv-scan 2.4s cubic-bezier(.45, 0, .55, 1) infinite; }
+  .dv-phone .dv-phone-dot { fill: var(--ok); transform-box: fill-box; transform-origin: center; animation: dv-pop-in 360ms cubic-bezier(.3, 1.4, .5, 1) backwards; }
+
+  /* A device glyph, its presence dot notched out of the stroke; the dot breathes now and then */
+  .dv-glyph { position: relative; display: inline-flex; align-items: center; justify-content: center; }
+  .dv-glyph > svg { display: block; width: var(--icon-ctl); height: var(--icon-ctl); }
+  .dv-glyph[data-online] > svg {
+    -webkit-mask: radial-gradient(circle at calc(100% - 1px) 2px, transparent 4.6px, #000 5.2px);
+    mask: radial-gradient(circle at calc(100% - 1px) 2px, transparent 4.6px, #000 5.2px);
+  }
+  .dv-glyph-dot { position: absolute; top: -1px; right: -2px; width: 6px; height: 6px; border-radius: 999px; background: var(--ok); }
+  .dv-glyph-dot::after { content: ""; position: absolute; inset: 0; border-radius: inherit; background: var(--ok); opacity: 0; animation: dv-breathe 3.2s ease-out infinite; }
+
+  /* A line replaced in place: every variant in one grid cell, so the box keeps the largest */
+  .dv-swap { display: grid; min-width: 0; }
+  .dv-swap > * { grid-area: 1 / 1; min-width: 0; transition: opacity 260ms ease, transform 320ms cubic-bezier(.2, .7, .2, 1), filter 260ms ease; }
+  .dv-swap > [data-off] { opacity: 0; transform: translateY(3px); filter: blur(2px); pointer-events: none; }
+
+  /* The QR on the card surface: modules in the surface's foreground, the quiet zone is padding, the ring its only frame */
+  .dv-qr { position: relative; flex-shrink: 0; width: var(--dv-qr); height: var(--dv-qr); color: var(--popup-fg, var(--fg-1)); }
+  .dv-qr-hit { position: absolute; inset: 0; border-radius: 16px; cursor: pointer; }
+  .dv-qr-hit:disabled { cursor: default; }
+  .dv-qr-hit:focus-visible { outline: var(--focus-outline); outline-offset: 2px; }
+  .dv-qr-mods { position: absolute; inset: 0; transition: opacity 220ms ease; }
+  .dv-qr-layer { position: absolute; inset: 0; display: block; width: 100%; height: 100%; overflow: visible; }
+  .dv-qr-band { fill: currentColor; transform-box: view-box; transform-origin: 50% 50%; }
+  /* Paired: the rings dissolve outward from the mark */
+  .dv-qr-out .dv-qr-band { opacity: 0; filter: blur(1.6px); transform: scale(1.07);
+    transition: opacity 380ms ease-out, filter 380ms ease-out, transform 520ms cubic-bezier(.2, .7, .2, 1); transition-delay: calc(var(--i) * 42ms); }
+  /* A fresh code: the old one leaves ring by ring from the centre out, the new one follows */
+  .dv-qr-layer[data-leave] .dv-qr-band { opacity: 0; animation: dv-gone 200ms ease-in backwards; animation-delay: calc(var(--i) * 38ms); }
+  .dv-qr-layer[data-enter] .dv-qr-band { animation: dv-come 300ms ease-out backwards; animation-delay: calc(var(--i) * 38ms + 140ms); }
+
+  /* The centre: Acpira's mark in the knock-out (about 70% of it); the copy feedback and the device take its place */
+  .dv-qr-centre { --hole: calc(var(--dv-qr) * var(--dv-hole)); position: absolute; left: 50%; top: 50%; width: var(--hole); height: var(--hole);
+    margin: calc(var(--hole) / -2) 0 0 calc(var(--hole) / -2); display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center; pointer-events: none; }
+  .dv-qr-centre > * { grid-area: 1 / 1; }
+  .dv-qr-mark { display: block; width: 70%; height: 70%; opacity: 0; color: var(--popup-fg, var(--fg-1));
+    transition: opacity 240ms ease, transform 420ms cubic-bezier(.3, 1.3, .5, 1), filter 240ms ease; }
+  .dv-qr-mark[data-on] { opacity: 1; }
+  .dv-qr-copied { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; color: var(--fg-1); font-size: var(--text-2); font-weight: 500;
+    opacity: 0; transform: scale(.94); transition: opacity 180ms ease, transform 260ms cubic-bezier(.3, 1.3, .5, 1); }
+  .dv-qr-copied svg { width: var(--icon); height: var(--icon); color: var(--ok); }
+  .dv-qr[data-copied] .dv-qr-mods { opacity: .14; }
+  .dv-qr[data-copied] .dv-qr-mark { opacity: 0; transform: scale(.8); filter: blur(2px); }
+  .dv-qr[data-copied] .dv-qr-copied { opacity: 1; transform: none; }
+  /* Paired: the mark gives way to the device and its check */
+  .dv-qr[data-success] .dv-qr-mark { opacity: 0; transform: scale(1.4); filter: blur(3px); transition-delay: 160ms; }
+  .dv-qr-device { position: relative; display: block; color: var(--fg-1); animation: dv-glyph-in 460ms cubic-bezier(.2, .9, .3, 1.15) 380ms backwards; }
+  .dv-qr-device > svg { display: block; width: 52px; height: 52px; }
+  .dv-qr-check { position: absolute; right: -9px; bottom: -5px; display: flex; align-items: center; justify-content: center; width: 22px; height: 22px;
+    border-radius: 999px; background: var(--ok); color: #fff; box-shadow: 0 0 0 3px var(--popup-bg, var(--bg-0));
+    animation: dv-check-in 420ms cubic-bezier(.3, 1.5, .5, 1) 720ms backwards; }
+  .dv-qr-check > svg { width: 13px; height: 13px; }
+
+  /* The fuse: a static dim track, the lit ring above it in straight runs and corners, the spark at the burning point */
+  .dv-fz { position: absolute; inset: 0; pointer-events: none; transition: opacity 300ms ease; --dv-fz-lit: var(--dv-lit); }
+  .dv-fz[data-off] { opacity: 0; }
+  .dv-fz[data-late] { --dv-fz-lit: var(--warn); }
+  .dv-fz-track { position: absolute; left: 0; top: 0; overflow: visible; stroke: var(--dv-track); }
+  .dv-fz-lit { stroke: var(--dv-fz-lit); fill: none; overflow: visible; }
+  .dv-fz-side { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+  .dv-fz-win { width: 100%; height: 100%; overflow: hidden; }
+  .dv-fz-strip { width: 100%; height: 100%; }
+  .dv-fz-strip svg { display: block; }
+  .dv-fz-corner { position: absolute; }
+  .dv-fz-spark { position: absolute; left: 0; top: 0; width: 5px; height: 5px; margin: -2.5px 0 0 -2.5px; border-radius: 999px; background: var(--fg-strong);
+    box-shadow: 0 0 3px var(--fg-strong), 0 0 9px color-mix(in srgb, var(--fg-strong) 55%, transparent); }
+  .dv-fz[data-late] .dv-fz-spark { background: var(--warn); box-shadow: 0 0 3px var(--warn), 0 0 8px var(--warn); }
+
+  /* This computer's name, edited in place; the pencil shows on hover */
+  .dv-name { display: inline-flex; justify-content: center; max-width: 220px; }
+  .dv-name-box { position: relative; display: inline-grid; min-width: 0; max-width: 100%; }
+  .dv-name-text, .dv-name-input { padding: 0 1px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+  .dv-name-text { grid-area: 1 / 1; }
+  .dv-name[data-editing] .dv-name-text { visibility: hidden; }
+  .dv-name-input { position: absolute; inset: 0; width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; font: inherit; color: inherit;
+    letter-spacing: inherit; text-align: center; caret-color: var(--accent); }
+  .dv-name-input::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+  .dv-name-rule { position: absolute; left: -2px; right: -2px; bottom: -3px; height: 1px; background: var(--accent); opacity: 0; transform: scaleX(.6);
+    transition: opacity 160ms ease, transform 240ms cubic-bezier(.2, .7, .2, 1); pointer-events: none; }
+  .dv-name[data-editing] .dv-name-rule { opacity: .8; transform: none; }
+  .dv-name-pen { position: absolute; left: 100%; top: 50%; margin-left: 2px; transform: translateY(-50%); display: flex; align-items: center; justify-content: center;
+    width: var(--ctl-sm); height: var(--ctl-sm); border-radius: var(--r-sm); color: var(--fg-3); opacity: 0;
+    transition: opacity 160ms ease, color var(--dur), background-color var(--dur); }
+  .dv-name-pen svg { width: 12px; height: 12px; }
+  .dv-name-pen:hover { color: var(--fg-1); background: var(--hover); }
+  .dv-name:hover .dv-name-pen, .dv-name-pen:focus-visible { opacity: 1; }
+  .dv-name[data-editing] .dv-name-pen { opacity: 0; pointer-events: none; }
+
+  /* The code's slot: the code in its block, and once paired the live path in its place, under the title */
+  .dv-slot { position: relative; height: 46px; }
+  .dv-slot-bg { position: absolute; inset: 0; border-radius: var(--r-lg); background: var(--chip); transition: opacity 220ms ease; }
+  .dv-slot[data-success] .dv-slot-bg { opacity: 0; }
+  .dv-slot-code { position: absolute; inset: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; transition: opacity 160ms ease, filter 160ms ease; }
+  .dv-slot[data-success] .dv-slot-code { opacity: 0; filter: blur(2px); pointer-events: none; }
+  .dv-slot-path { position: absolute; inset: 0; display: flex; align-items: flex-start; justify-content: center; transform: translateY(-6px); opacity: 0; pointer-events: none;
+    transition: opacity 320ms ease; }
+  .dv-slot[data-success] .dv-slot-path { opacity: 1; pointer-events: auto; transition-delay: 320ms; }
+  .dv-digits { font-size: 24px; line-height: 1; font-weight: 500; letter-spacing: .07em; font-variant-numeric: tabular-nums; color: var(--fg-1); white-space: pre; }
+  .dv-digits-in { animation: dv-digits-in 320ms cubic-bezier(.2, .7, .2, 1) 200ms backwards; }
+  .dv-lock { display: inline-flex; color: var(--fg-3); }
+  .dv-lock svg { width: 11px; height: 11px; }
+
+  /* The foot card: Base UI's popup without its own surface; the clip and the surface in it are the card */
+  .dv-card { transform-origin: var(--transform-origin); animation: dv-card-in 240ms cubic-bezier(.2, .8, .2, 1) backwards; }
+  .dv-card[data-ending-style] { animation: dv-card-out 150ms ease-in forwards; }
+  /* The shadow follows whatever shape the clipped surface has right now */
+  .dv-shadow { filter: drop-shadow(0 10px 22px rgb(0 0 0 / .42)) drop-shadow(0 1px 2px rgb(0 0 0 / .35)); }
+  .acp-shell[data-theme="light"] .dv-shadow { filter: drop-shadow(0 10px 24px rgb(0 0 0 / .14)) drop-shadow(0 1px 2px rgb(0 0 0 / .1)); }
+  /* Bottom-anchored: the clip ends on the anchor with the card's lower corners and the surface above it only translates,
+     so a change of view is a translateY of the surface plus a cross-fade of the views */
+  .dv-clip { position: relative; overflow: hidden; border-radius: 0 0 var(--r-lg) var(--r-lg); pointer-events: none; }
+  .dv-surface { position: absolute; left: 0; right: 0; top: 0; border: 1px solid var(--popup-border); border-bottom: 0; border-radius: var(--r-lg) var(--r-lg) 0 0;
+    background: var(--popup-bg); transition: transform 460ms var(--dv-ease); }
+  .dv-clip::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: var(--r-lg); border: 1px solid var(--popup-border); border-top: 0;
+    border-radius: 0 0 var(--r-lg) var(--r-lg); pointer-events: none; }
+  .dv-view { position: absolute; left: 0; right: 0; bottom: 0; pointer-events: auto; transition: opacity 220ms ease, transform 420ms var(--dv-ease); }
+  .dv-view[data-off] { opacity: 0; pointer-events: none; visibility: hidden; transition: opacity 220ms ease, transform 420ms var(--dv-ease), visibility 0s linear 420ms; }
+  .dv-view[data-view="list"][data-off] { transform: translateY(6px); }
+  .dv-view[data-view="pair"][data-off] { transition-duration: 160ms, 420ms, 0s; }
+  .dv-clip[data-dir="shrink"] .dv-surface { transition-delay: 70ms; }
+  .dv-clip[data-dir="shrink"] .dv-view[data-view="pair"][data-off] { transition-duration: 90ms, 420ms, 0s; }
+  .dv-clip[data-dir="grow"] .dv-view:not([data-off]) { transition-delay: 200ms; }
+  /* The flying glyph takes over at once */
+  .dv-view[data-view="pair"][data-off] .dv-qr-centre { opacity: 0; }
+  .dv-flight { position: absolute; z-index: 1; pointer-events: none; color: var(--fg-1); }
+  .dv-flight > * { display: block; transform-origin: 0 0; }
+  .dv-flight svg { width: 100%; height: 100%; }
+  .dv-row-new { position: absolute; inset: 0; border-radius: var(--r-md); background: var(--active); opacity: 0; pointer-events: none; animation: dv-new 1800ms ease-out 500ms backwards; }
+  .dv-row { position: relative; animation: dv-row-in 360ms cubic-bezier(.2, .7, .2, 1) backwards; animation-delay: calc(140ms + var(--i, 0) * 45ms); }
+  /* From the success moment: the glyph lands first, the head and the new row's text follow it in */
+  .dv-lead-late { animation: dv-lead 200ms ease 600ms backwards; }
+  .dv-view[data-from] .dv-head { animation: dv-fade 260ms ease 320ms backwards; }
+  .dv-view[data-from] .dv-row[data-fresh] .dv-row-text { animation: dv-fade 260ms ease 520ms backwards; }
+}

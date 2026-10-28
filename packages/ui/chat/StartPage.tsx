@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useState } from 'react';
-import { Check, ChevronDown, Folder, FolderPlus, Search } from 'lucide-react';
+import { Check, ChevronDown, Folder, FolderPlus, MessageSquare, Search } from 'lucide-react';
 import type { AgentId, AgentInfo } from '@acpira/shared/transcript';
 import { launchable } from '@acpira/shared/agentOrder';
 import { parseRemoteFolder } from '@acpira/shared/remote';
@@ -80,9 +80,10 @@ export function StartPicker({ open, agents, current, only, onPick }: { open: boo
 // The start page's project, on the sheet header after the title: the name opens the projects in the column's order with
 // their paths, filtered as you type, the current one ticked; "open another folder" asks the system's folder dialog and
 // starts there. The list keeps one height, so filtering never moves the popover. It replaced a bar under the composer
-// (2026-10-23): a second, smaller dropdown under the composer's own read as clutter for what is only a path
+// (2026-10-23): a second, smaller dropdown under the composer's own read as clutter for what is only a path. Where the
+// engine makes chats (`chats`), "no project" leads the list: a chat in a folder of its own; on one (`chat`) it is ticked
 const PICK = 'inline-flex h-ctl-sm min-w-0 items-center gap-1 rounded-md px-1.5 -mx-1.5 text-2 text-fg-3 transition-colors hover:bg-hover hover:text-fg-1 data-[popup-open]:bg-hover data-[popup-open]:text-fg-1';
-export function ProjectPick({ cwd, projects, home, onPick, onOpenOther }: { cwd: string; projects: string[]; home?: string; onPick: (cwd: string) => void; onOpenOther?: () => void }) {
+export function ProjectPick({ cwd, projects, home, onPick, onOpenOther, chat, chats, onChat }: { cwd: string; projects: string[]; home?: string; onPick: (cwd: string) => void; onOpenOther?: () => void; chat?: boolean; chats?: string; onChat?: () => void }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const q = query.trim().toLowerCase();
@@ -98,7 +99,7 @@ export function ProjectPick({ cwd, projects, home, onPick, onOpenOther }: { cwd:
     <Popover.Root open={open} onOpenChange={o => { setOpen(o); if (!o) setQuery(''); }}>
       <Popover.Trigger render={<button type="button" title={cwd} aria-label={t('start.project')} className={PICK}>
         {/* The name fades in when the project changes */}
-        <span key={cwd} className="swap-in min-w-0 truncate">{projectName(cwd)}</span>
+        <span key={cwd} className="swap-in min-w-0 truncate">{chat ? t('start.noProject') : projectName(cwd)}</span>
         <ChevronDown className={cn('size-3 shrink-0 text-fg-3 transition-transform duration-200', open && 'rotate-180')} strokeWidth={1.5} />
       </button>} />
       <Popover.Portal><Popover.Positioner side="bottom" align="start" width="lg"><Popover.Popup aria-label={t('start.project')}>
@@ -108,6 +109,18 @@ export function ProjectPick({ cwd, projects, home, onPick, onOpenOther }: { cwd:
             className="min-w-0 flex-1 bg-transparent text-2 text-fg-1 outline-none placeholder:text-fg-3" />
         </label>
         <div className="my-1 h-px shrink-0 bg-line" />
+        {/* Outside the filtered list, so it is always there and the list keeps its height */}
+        {chats && (
+          <button type="button" role="option" aria-selected={!!chat} title={chats} onClick={() => { close(); if (!chat) onChat?.(); }}
+            className="flex shrink-0 items-center gap-gap rounded-md px-2 py-1 text-left transition-colors hover:bg-hover focus-visible:bg-hover">
+            <MessageSquare className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} />
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate text-2 text-fg-1">{t('start.noProject')}</span>
+              <span className="truncate text-3 text-fg-3">{short(chats)}</span>
+            </span>
+            {chat && <Check className="size-icon shrink-0 text-fg-1" strokeWidth={1.75} />}
+          </button>
+        )}
         <div className="scroll-thin flex h-pop flex-col overflow-y-auto" role="listbox" aria-label={t('start.project')}>
           {shown.map(p => (
             <button key={p} type="button" role="option" aria-selected={p === cwd} title={p} onClick={() => { close(); if (p !== cwd) onPick(p); }}

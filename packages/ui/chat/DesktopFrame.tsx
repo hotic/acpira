@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, ArrowRight, Check, ChevronRight, CircleAlert, Columns3, Copy, FolderOpen, FolderPlus, Info, Languages, LifeBuoy, Menu, Minus, Palette, PanelLeft, PanelRight, Settings, Settings2, Square, SunMoon, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, ChevronRight, CircleAlert, Columns3, Copy, FolderOpen, FolderPlus, Info, Languages, LifeBuoy, Menu, MessageSquare, Minus, Palette, PanelLeft, PanelRight, Settings, Settings2, Square, SunMoon, X } from 'lucide-react';
 import { DESKTOP_LAYOUTS, PANEL_SCOPES, THEMES, type DesktopLayout, type PanelScope, type ThemeSetting } from '@acpira/shared/settings';
 import { LANGUAGES, type Language } from '@acpira/shared/i18n';
 import { t } from '../i18n';
@@ -11,6 +11,7 @@ import type { DesktopMenuEntry, WindowControl } from '@acpira/shared/protocol';
 import { dropShellToast, pageCaption, postMenuCommand, postUpdate, postWindowControl, shortcutLabel, useDesktopMenu, useShellToasts, useWindowMaximized, windowsOS } from '../desktop';
 import { vscodeApi } from '../vscodeApi';
 import type { SettingsPage } from '../settings/Nav';
+import { DevicesButton } from '../remote/DevicesCard';
 
 // The desktop app's own frame around the shared Shell (desktop.css): the column's title row, its gear menu, and the
 // sheet's state when no project is open
@@ -252,10 +253,12 @@ function QuickChoice<V extends string>({ icon, label, value, options, labelOf, o
 }
 
 export function AppMenu({ onOpenSettings, onOpenExternal, quick }: { onOpenSettings: (page?: SettingsPage) => void; onOpenExternal?: (url: string) => void; quick?: QuickSettings }) {
+  // The devices card opens from the gear's corner, as the gear's own menu does (remote/DevicesCard.tsx)
+  const gear = useRef<HTMLButtonElement>(null);
   return (
     <div className="flex shrink-0 items-center p-gap-half">
       <DropdownMenu.Root>
-        <DropdownMenu.Trigger render={<button type="button" title={t('desktop.appMenu')} aria-label={t('desktop.appMenu')} className={GEAR}>
+        <DropdownMenu.Trigger render={<button ref={gear} type="button" title={t('desktop.appMenu')} aria-label={t('desktop.appMenu')} className={GEAR}>
           <span className="flex size-lead items-center justify-center"><Settings className="size-(--foot-icon)" strokeWidth={1.5} /></span>
         </button>} />
         {/* No collision padding: the gear sits closer to the window's edge than the shell's pad, which shifted the menu off it */}
@@ -291,12 +294,14 @@ export function AppMenu({ onOpenSettings, onOpenExternal, quick }: { onOpenSetti
           </>}
         </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
       </DropdownMenu.Root>
+      <DevicesButton anchor={gear} onOpenSettings={onOpenSettings} />
     </div>
   );
 }
 
-// No project yet (the engine answered noSession): a session needs a folder to run in, so the sheet asks for one
-export function NoProject({ onOpen }: { onOpen?: () => void }) {
+// No project yet (the engine answered noSession): a session needs a folder to run in, so the sheet asks for one; where
+// the engine makes chats (`onChat`), a chat in a folder of its own is the quieter way in
+export function NoProject({ onOpen, onChat }: { onOpen?: () => void; onChat?: () => void }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-pad px-page text-center">
       <FolderOpen className="size-8 text-fg-3" strokeWidth={1.25} />
@@ -304,10 +309,13 @@ export function NoProject({ onOpen }: { onOpen?: () => void }) {
         <div className="text-1 font-medium text-fg-strong">{t('desktop.empty.title')}</div>
         <div className="text-2 text-fg-3">{t('desktop.empty.text')}</div>
       </div>
-      {onOpen && (
+      {(onOpen || onChat) && (
         <div className="flex flex-col items-center gap-gap">
-          <Button variant="primary" onClick={onOpen}><FolderPlus className="size-icon" strokeWidth={1.75} />{t('desktop.empty.open')}</Button>
-          <span className="text-3 text-fg-3">{t('desktop.empty.drop')}</span>
+          <div className="flex items-center gap-gap">
+            {onOpen && <Button variant="primary" onClick={onOpen}><FolderPlus className="size-icon" strokeWidth={1.75} />{t('desktop.empty.open')}</Button>}
+            {onChat && <Button onClick={onChat}><MessageSquare className="size-icon" strokeWidth={1.75} />{t('desktop.empty.chat')}</Button>}
+          </div>
+          {onOpen && <span className="text-3 text-fg-3">{t('desktop.empty.drop')}</span>}
         </div>
       )}
     </div>
