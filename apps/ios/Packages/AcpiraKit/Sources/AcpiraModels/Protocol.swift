@@ -177,6 +177,182 @@ public struct SessionHit: Codable, Hashable, Sendable, Identifiable {
   public var snippet: String
 }
 
+/// How an account comes in (AddAccountVia): import the CLI's own login, log in a new one in a terminal on the engine's
+/// machine, or `auto` (import if not yet imported, else log in)
+public enum AddAccountVia: String, TolerantEnum, CaseIterable {
+  case `import`, login, auto, unknown
+  public static var unknownCase: Self { .unknown }
+}
+
+/// One edit of the category list, applied by the engine to what is on disk so concurrent windows compose (transcript.ts
+/// CategoryOp), as the subset the phone sends: the project list's own ops
+public enum CategoryOp: Codable, Hashable, Sendable {
+  /// Register a folder at the end of the project list (undoing a removal)
+  case addProject(cwd: String)
+  /// Take a folder off the list; its sessions stay
+  case removeProject(cwd: String)
+  /// Move a folder before `before`, or to the end
+  case reorderProject(cwd: String, before: String? = nil)
+  case collapseProject(cwd: String, collapsed: Bool)
+  /// An op this build does not know (decoding only)
+  case unknown(String)
+
+  /// The `op` literals this build mirrors
+  public static let ops = ["addProject", "removeProject", "reorderProject", "collapseProject"]
+
+  /// The wire `op`
+  public var op: String {
+    switch self {
+    case .addProject: "addProject"
+    case .removeProject: "removeProject"
+    case .reorderProject: "reorderProject"
+    case .collapseProject: "collapseProject"
+    case .unknown(let op): op
+    }
+  }
+
+  private enum Keys: String, CodingKey { case op, cwd, before, collapsed }
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: Keys.self)
+    func cwd() throws -> String { try c.decode(String.self, forKey: .cwd) }
+    switch try c.decode(String.self, forKey: .op) {
+    case "addProject": self = .addProject(cwd: try cwd())
+    case "removeProject": self = .removeProject(cwd: try cwd())
+    case "reorderProject": self = .reorderProject(cwd: try cwd(), before: try c.decodeIfPresent(String.self, forKey: .before))
+    case "collapseProject": self = .collapseProject(cwd: try cwd(), collapsed: try c.decode(Bool.self, forKey: .collapsed))
+    case let op: self = .unknown(op)
+    }
+  }
+  public func encode(to encoder: Encoder) throws {
+    var c = encoder.container(keyedBy: Keys.self)
+    try c.encode(op, forKey: .op)
+    switch self {
+    case .addProject(let cwd), .removeProject(let cwd):
+      try c.encode(cwd, forKey: .cwd)
+    case let .reorderProject(cwd, before):
+      try c.encode(cwd, forKey: .cwd)
+      try c.encodeIfPresent(before, forKey: .before)
+    case let .collapseProject(cwd, collapsed):
+      try c.encode(cwd, forKey: .cwd)
+      try c.encode(collapsed, forKey: .collapsed)
+    case .unknown:
+      break
+    }
+  }
+}
+
+/// A rewrite of a sent prompt (WebviewMsg editTurn): the user turn at `turnIndex` and everything after it give way to
+/// `text` with the kept attachments (by index) and new drafts, sent with `settings`. turnCount, originalText and turnId
+/// are the view the page edited; the engine refuses the edit as stale once they no longer match. intent `continue`: keep
+/// the native session (which still holds the original) instead of rebuilding the context
+public struct EditTurnRequest: Codable, Hashable, Sendable {
+  public enum Intent: String, TolerantEnum, CaseIterable {
+    case replace, `continue`, unknown
+    public static var unknownCase: Self { .unknown }
+  }
+  public var sessionId: String
+  public var turnIndex: Int
+  public var turnCount: Int
+  public var originalText: String
+  public var turnId: String?
+  public var text: String
+  public var retainedAttachments: [Int]
+  public var attachments: [Draft]
+  public var settings: TurnSettings
+  public var intent: Intent?
+
+  public init(sessionId: String, turnIndex: Int, turnCount: Int, originalText: String, turnId: String? = nil, text: String,
+              retainedAttachments: [Int] = [], attachments: [Draft] = [], settings: TurnSettings, intent: Intent? = nil) {
+    self.sessionId = sessionId; self.turnIndex = turnIndex; self.turnCount = turnCount; self.originalText = originalText
+    self.turnId = turnId; self.text = text; self.retainedAttachments = retainedAttachments; self.attachments = attachments
+    self.settings = settings; self.intent = intent
+  }
+}
+
+/// One hit of the @ file search: the file's URI and the workspace-relative path the list shows
+public struct FileHit: Codable, Hashable, Sendable {
+  public var uri: String
+  public var path: String
+}
+
+// The reads of a session's project (rust/crates/acpira-host/src/project_files.rs). Paths are relative to the project
+// folder with `/` separators
+
+/// An entry of a project folder
+public struct ProjectEntry: Codable, Hashable, Sendable {
+  public var name: String
+  public var dir: Bool?
+}
+
+/// A changed stretch of a file as it is now: `add` lines from line `at` (1-based) are new, the `del` lines stood just
+/// before line `at` (one past the last line for lines removed at the end)
+public struct ProjectHunk: Codable, Hashable, Sendable {
+  public var at: Int
+  public var add: Int
+  public var del: [String]?
+}
+
+/// A file the session changed against what it held before the session's first edit; absolute when outside the project
+public struct ProjectChange: Codable, Hashable, Sendable {
+  public var path: String
+  public var add: Int
+  public var del: Int
+  public var gone: Bool?
+}
+
+/// What a file's hunks are measured against: before the session's first edit of it, or the last commit
+public enum ProjectBase: String, TolerantEnum, CaseIterable {
+  case session, head, unknown
+  public static var unknownCase: Self { .unknown }
+}
+
+/// A path's git mark; a folder as a whole ends in `/`
+public enum GitMark: String, TolerantEnum, CaseIterable {
+  case modified = "M", added = "A", deleted = "D", untracked = "U", ignored = "I", unknown
+  public static var unknownCase: Self { .unknown }
+}
+
+/// Why a project listing or read failed (`ProjectError | string`): a known reason, or the system's own message
+public enum ProjectError: Codable, Hashable, Sendable {
+  case noProject, outside, missing, binary, tooLarge
+  /// Anything else: the system's own message
+  case message(String)
+
+  /// The reasons this build knows (ProjectError's literals)
+  public static let reasons: [ProjectError] = [.noProject, .outside, .missing, .binary, .tooLarge]
+
+  /// The wire string
+  public var rawValue: String {
+    switch self {
+    case .noProject: "noProject"
+    case .outside: "outside"
+    case .missing: "missing"
+    case .binary: "binary"
+    case .tooLarge: "tooLarge"
+    case .message(let text): text
+    }
+  }
+
+  public init(rawValue: String) {
+    self = Self.reasons.first { $0.rawValue == rawValue } ?? .message(rawValue)
+  }
+  public init(from decoder: Decoder) throws {
+    self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+  }
+  public func encode(to encoder: Encoder) throws {
+    var c = encoder.singleValueContainer()
+    try c.encode(rawValue)
+  }
+}
+
+/// How a terminal's shell ended: its exit code, or the signal that ended it
+public struct TerminalExit: Codable, Hashable, Sendable {
+  public var code: Int
+  public var signal: String?
+
+  public init(code: Int, signal: String? = nil) { self.code = code; self.signal = signal }
+}
+
 /// The settings the engine pushes (settings.ts SettingsView), as the subset the phone reads; a key missing from the
 /// push reads as DEFAULT_SETTINGS has it. Not mirrored: the desktop / IDE-only keys (sessionScope, sessionListPosition,
 /// font sizes and smoothing, diffMarkers, shareEditorSelection, agentCpuCap, proxy, openFilesWith, desktopLayout,
@@ -334,6 +510,66 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   case sendQueued(sessionId: String, id: String)
   case steerQueued(sessionId: String, id: String)
   case editQueued(sessionId: String, id: String, text: String, retainedAttachments: [Int], attachments: [Draft])
+  /// An edit of the project list; `file`: with a create, file that session under the new category in the same step
+  case categoryOp(op: CategoryOp, file: String? = nil)
+  /// Re-home a session into another project folder (absent: the view's workspace folder), the agent working there from
+  /// the next open on; `category`, one of that project's, files it there in the same step
+  case moveSession(id: String, cwd: String? = nil, category: String? = nil)
+  /// "Copy as Markdown": the export's Markdown as text, answered with `sessionMarkdown` echoing seq
+  case sessionMarkdown(id: String, seq: Int)
+  case addAccount(agent: AgentId, via: AddAccountVia)
+  case removeAccount(id: String)
+  /// AgentInfo.credentialsLocked: unlock the credential store in a terminal, then reconnect the agent's sessions stuck
+  /// on sign-in
+  case unlockCredentials(agent: AgentId)
+  /// Sign in with one of SessionView.authMethods
+  case login(sessionId: String?, methodId: String? = nil)
+  /// Drop the agent process and resume the same native session (prompts keep failing on the live connection)
+  case reconnect(sessionId: String?)
+  /// Send the last user turn again after its agent turn ended in error or short; both turns are dropped first
+  case retryTurn(sessionId: String?)
+  /// Rewrite a sent prompt, answered with `editTurnResult` echoing requestId
+  case editTurn(requestId: String, edit: EditTurnRequest)
+  /// Follow / stop following one subagent's transcript (the `subagent` push); per viewer, one at a time
+  case observeSubagent(sessionId: String, subagentId: String)
+  case unobserveSubagent(sessionId: String, subagentId: String)
+  /// Ask the agent to cancel one child
+  case cancelSubagent(sessionId: String, subagentId: String)
+  /// Ask the adapter to stop one AIR async task
+  case stopAsyncTask(sessionId: String, taskId: String)
+  /// A goal control (SessionView.goalActions): turn-starting ones go out as a `/goal …` prompt, which queues behind a
+  /// running turn like any prompt
+  case goal(sessionId: String, action: GoalAction, objective: String? = nil)
+  /// @ mention: fuzzy search over the workspace's files, answered with `files` echoing seq
+  case searchFiles(query: String, seq: Int)
+  /// Write a setting (settings.ts SettingKey); the engine sanitizes the value
+  case setSetting(key: String, value: JSONValue)
+  /// An agent's model controls, answered with `controls`; fresh: re-read them from a throwaway process
+  case controls(agent: AgentId, fresh: Bool? = nil)
+  /// The session's project, each answered by the push of the same name echoing seq: a folder (`dir` relative, "" for
+  /// the project itself), its git marks, a file with its hunks against `base` (none: no hunks), the files the session's
+  /// edits left changed
+  case projectDir(sessionId: String, dir: String, seq: Int)
+  case projectStatus(sessionId: String, seq: Int)
+  case projectFile(sessionId: String, path: String, base: ProjectBase? = nil, seq: Int)
+  case sessionChanges(sessionId: String, seq: Int)
+  /// The whole files behind the `nth` diff of a tool call (counted in `contents`, or `content` alone), answered with
+  /// `diffSource` echoing seq; subagentId: the subagent transcript the diff was shown in
+  case diffSource(sessionId: String, toolCallId: String, nth: Int, subagentId: String? = nil, seq: Int)
+  /// Stage an image file path into the session's blob store, answered with `imageBlob` echoing seq
+  case imageBlob(sessionId: String, path: String, seq: Int)
+  /// Open a plan document; the engine passes it on as the openPlanDocument platform request
+  case openPlan(sessionId: String, planId: String)
+  /// The engine's terminals (terminal.rs): open terminal `id` (a login shell in `cwd`) or view it again; keys and
+  /// pastes (`binary`: each character one byte); the laid-out size; how much output (UTF-16 units) the page has
+  /// rendered, since output pauses while too much is not; stop viewing it (it runs on a while for a reload); end its
+  /// shell (the tab closed or restarts)
+  case terminalOpen(id: String, cwd: String? = nil, cols: Int? = nil, rows: Int? = nil)
+  case terminalInput(id: String, data: String, binary: Bool? = nil)
+  case terminalResize(id: String, cols: Int, rows: Int)
+  case terminalAck(id: String, chars: Int)
+  case terminalClose(id: String)
+  case terminalKill(id: String)
   /// A type this build does not know (decoding only)
   case unknown(String)
 
@@ -342,7 +578,11 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     "ready", "resync", "send", "stop", "permission", "answer", "buildPlan", "setMode", "setConfig", "selectSession",
     "newSession", "renameSession", "deleteSession", "restoreSession", "pinSession", "markAllRead", "searchSessions",
     "forkSession", "selectAccount", "refreshQuota", "compact", "retry", "takeOverSession", "dequeue", "sendQueued",
-    "steerQueued", "editQueued",
+    "steerQueued", "editQueued", "categoryOp", "moveSession", "sessionMarkdown", "addAccount", "removeAccount",
+    "unlockCredentials", "login", "reconnect", "retryTurn", "editTurn", "observeSubagent", "unobserveSubagent",
+    "cancelSubagent", "stopAsyncTask", "goal", "searchFiles", "setSetting", "controls", "projectDir", "projectStatus",
+    "projectFile", "sessionChanges", "diffSource", "imageBlob", "openPlan", "terminalOpen", "terminalInput",
+    "terminalResize", "terminalAck", "terminalClose", "terminalKill",
   ]
 
   /// The wire `type`
@@ -375,6 +615,37 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case .sendQueued: "sendQueued"
     case .steerQueued: "steerQueued"
     case .editQueued: "editQueued"
+    case .categoryOp: "categoryOp"
+    case .moveSession: "moveSession"
+    case .sessionMarkdown: "sessionMarkdown"
+    case .addAccount: "addAccount"
+    case .removeAccount: "removeAccount"
+    case .unlockCredentials: "unlockCredentials"
+    case .login: "login"
+    case .reconnect: "reconnect"
+    case .retryTurn: "retryTurn"
+    case .editTurn: "editTurn"
+    case .observeSubagent: "observeSubagent"
+    case .unobserveSubagent: "unobserveSubagent"
+    case .cancelSubagent: "cancelSubagent"
+    case .stopAsyncTask: "stopAsyncTask"
+    case .goal: "goal"
+    case .searchFiles: "searchFiles"
+    case .setSetting: "setSetting"
+    case .controls: "controls"
+    case .projectDir: "projectDir"
+    case .projectStatus: "projectStatus"
+    case .projectFile: "projectFile"
+    case .sessionChanges: "sessionChanges"
+    case .diffSource: "diffSource"
+    case .imageBlob: "imageBlob"
+    case .openPlan: "openPlan"
+    case .terminalOpen: "terminalOpen"
+    case .terminalInput: "terminalInput"
+    case .terminalResize: "terminalResize"
+    case .terminalAck: "terminalAck"
+    case .terminalClose: "terminalClose"
+    case .terminalKill: "terminalKill"
     case .unknown(let t): t
     }
   }
@@ -382,12 +653,15 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   private enum Keys: String, CodingKey {
     case type, patches, sessionId, text, attachments, steer, blockId, optionId, answers, skip, planId, model, id, configId
     case value, agent, category, cwd, title, pinned, query, seq, turnIndex, retainedAttachments
+    case file, via, methodId, requestId, edit, subagentId, taskId, action, objective, key, fresh, dir, path, base
+    case toolCallId, nth, cols, rows, data, binary, chars
   }
 
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: Keys.self)
     func str(_ k: Keys) throws -> String { try c.decode(String.self, forKey: k) }
     func opt(_ k: Keys) throws -> String? { try c.decodeIfPresent(String.self, forKey: k) }
+    func int(_ k: Keys) throws -> Int { try c.decode(Int.self, forKey: k) }
     switch try str(.type) {
     case "ready": self = .ready(patches: try c.decodeIfPresent(Bool.self, forKey: .patches))
     case "resync": self = .resync
@@ -426,6 +700,45 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
       self = .editQueued(sessionId: try str(.sessionId), id: try str(.id), text: try str(.text),
                          retainedAttachments: try c.decode([Int].self, forKey: .retainedAttachments),
                          attachments: try c.decode([Draft].self, forKey: .attachments))
+    case "categoryOp": self = .categoryOp(op: try CategoryOp(from: decoder), file: try opt(.file))
+    case "moveSession": self = .moveSession(id: try str(.id), cwd: try opt(.cwd), category: try opt(.category))
+    case "sessionMarkdown": self = .sessionMarkdown(id: try str(.id), seq: try int(.seq))
+    case "addAccount": self = .addAccount(agent: try str(.agent), via: try c.decode(AddAccountVia.self, forKey: .via))
+    case "removeAccount": self = .removeAccount(id: try str(.id))
+    case "unlockCredentials": self = .unlockCredentials(agent: try str(.agent))
+    case "login": self = .login(sessionId: try opt(.sessionId), methodId: try opt(.methodId))
+    case "reconnect": self = .reconnect(sessionId: try opt(.sessionId))
+    case "retryTurn": self = .retryTurn(sessionId: try opt(.sessionId))
+    case "editTurn": self = .editTurn(requestId: try str(.requestId), edit: try c.decode(EditTurnRequest.self, forKey: .edit))
+    case "observeSubagent": self = .observeSubagent(sessionId: try str(.sessionId), subagentId: try str(.subagentId))
+    case "unobserveSubagent": self = .unobserveSubagent(sessionId: try str(.sessionId), subagentId: try str(.subagentId))
+    case "cancelSubagent": self = .cancelSubagent(sessionId: try str(.sessionId), subagentId: try str(.subagentId))
+    case "stopAsyncTask": self = .stopAsyncTask(sessionId: try str(.sessionId), taskId: try str(.taskId))
+    case "goal":
+      self = .goal(sessionId: try str(.sessionId), action: try c.decode(GoalAction.self, forKey: .action), objective: try opt(.objective))
+    case "searchFiles": self = .searchFiles(query: try str(.query), seq: try int(.seq))
+    case "setSetting": self = .setSetting(key: try str(.key), value: try c.decode(JSONValue.self, forKey: .value))
+    case "controls": self = .controls(agent: try str(.agent), fresh: try c.decodeIfPresent(Bool.self, forKey: .fresh))
+    case "projectDir": self = .projectDir(sessionId: try str(.sessionId), dir: try str(.dir), seq: try int(.seq))
+    case "projectStatus": self = .projectStatus(sessionId: try str(.sessionId), seq: try int(.seq))
+    case "projectFile":
+      self = .projectFile(sessionId: try str(.sessionId), path: try str(.path), base: try c.decodeIfPresent(ProjectBase.self, forKey: .base),
+                          seq: try int(.seq))
+    case "sessionChanges": self = .sessionChanges(sessionId: try str(.sessionId), seq: try int(.seq))
+    case "diffSource":
+      self = .diffSource(sessionId: try str(.sessionId), toolCallId: try str(.toolCallId), nth: try int(.nth),
+                         subagentId: try opt(.subagentId), seq: try int(.seq))
+    case "imageBlob": self = .imageBlob(sessionId: try str(.sessionId), path: try str(.path), seq: try int(.seq))
+    case "openPlan": self = .openPlan(sessionId: try str(.sessionId), planId: try str(.planId))
+    case "terminalOpen":
+      self = .terminalOpen(id: try str(.id), cwd: try opt(.cwd), cols: try c.decodeIfPresent(Int.self, forKey: .cols),
+                           rows: try c.decodeIfPresent(Int.self, forKey: .rows))
+    case "terminalInput":
+      self = .terminalInput(id: try str(.id), data: try str(.data), binary: try c.decodeIfPresent(Bool.self, forKey: .binary))
+    case "terminalResize": self = .terminalResize(id: try str(.id), cols: try int(.cols), rows: try int(.rows))
+    case "terminalAck": self = .terminalAck(id: try str(.id), chars: try int(.chars))
+    case "terminalClose": self = .terminalClose(id: try str(.id))
+    case "terminalKill": self = .terminalKill(id: try str(.id))
     case let type: self = .unknown(type)
     }
   }
@@ -441,7 +754,8 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
       try c.encode(text, forKey: .text)
       try c.encodeIfPresent(attachments, forKey: .attachments)
       try c.encodeIfPresent(steer, forKey: .steer)
-    case .stop(let sessionId), .compact(let sessionId), .retry(let sessionId), .takeOverSession(let sessionId):
+    case .stop(let sessionId), .compact(let sessionId), .retry(let sessionId), .takeOverSession(let sessionId),
+         .reconnect(let sessionId), .retryTurn(let sessionId):
       try c.encodeIfPresent(sessionId, forKey: .sessionId)
     case let .permission(sessionId, blockId, optionId):
       try c.encode(sessionId, forKey: .sessionId)
@@ -494,6 +808,90 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
       try c.encode(text, forKey: .text)
       try c.encode(retainedAttachments, forKey: .retainedAttachments)
       try c.encode(attachments, forKey: .attachments)
+    case let .categoryOp(op, file):
+      try op.encode(to: encoder)
+      try c.encodeIfPresent(file, forKey: .file)
+    case let .moveSession(id, cwd, category):
+      try c.encode(id, forKey: .id)
+      try c.encodeIfPresent(cwd, forKey: .cwd)
+      try c.encodeIfPresent(category, forKey: .category)
+    case let .sessionMarkdown(id, seq):
+      try c.encode(id, forKey: .id)
+      try c.encode(seq, forKey: .seq)
+    case let .addAccount(agent, via):
+      try c.encode(agent, forKey: .agent)
+      try c.encode(via, forKey: .via)
+    case .removeAccount(let id), .terminalClose(let id), .terminalKill(let id):
+      try c.encode(id, forKey: .id)
+    case .unlockCredentials(let agent):
+      try c.encode(agent, forKey: .agent)
+    case let .login(sessionId, methodId):
+      try c.encodeIfPresent(sessionId, forKey: .sessionId)
+      try c.encodeIfPresent(methodId, forKey: .methodId)
+    case let .editTurn(requestId, edit):
+      try c.encode(requestId, forKey: .requestId)
+      try c.encode(edit, forKey: .edit)
+    case let .observeSubagent(sessionId, subagentId), let .unobserveSubagent(sessionId, subagentId),
+         let .cancelSubagent(sessionId, subagentId):
+      try c.encode(sessionId, forKey: .sessionId)
+      try c.encode(subagentId, forKey: .subagentId)
+    case let .stopAsyncTask(sessionId, taskId):
+      try c.encode(sessionId, forKey: .sessionId)
+      try c.encode(taskId, forKey: .taskId)
+    case let .goal(sessionId, action, objective):
+      try c.encode(sessionId, forKey: .sessionId)
+      try c.encode(action, forKey: .action)
+      try c.encodeIfPresent(objective, forKey: .objective)
+    case let .searchFiles(query, seq):
+      try c.encode(query, forKey: .query)
+      try c.encode(seq, forKey: .seq)
+    case let .setSetting(key, value):
+      try c.encode(key, forKey: .key)
+      try c.encode(value, forKey: .value)
+    case let .controls(agent, fresh):
+      try c.encode(agent, forKey: .agent)
+      try c.encodeIfPresent(fresh, forKey: .fresh)
+    case let .projectDir(sessionId, dir, seq):
+      try c.encode(sessionId, forKey: .sessionId)
+      try c.encode(dir, forKey: .dir)
+      try c.encode(seq, forKey: .seq)
+    case let .projectStatus(sessionId, seq), let .sessionChanges(sessionId, seq):
+      try c.encode(sessionId, forKey: .sessionId)
+      try c.encode(seq, forKey: .seq)
+    case let .projectFile(sessionId, path, base, seq):
+      try c.encode(sessionId, forKey: .sessionId)
+      try c.encode(path, forKey: .path)
+      try c.encodeIfPresent(base, forKey: .base)
+      try c.encode(seq, forKey: .seq)
+    case let .diffSource(sessionId, toolCallId, nth, subagentId, seq):
+      try c.encode(sessionId, forKey: .sessionId)
+      try c.encode(toolCallId, forKey: .toolCallId)
+      try c.encode(nth, forKey: .nth)
+      try c.encodeIfPresent(subagentId, forKey: .subagentId)
+      try c.encode(seq, forKey: .seq)
+    case let .imageBlob(sessionId, path, seq):
+      try c.encode(sessionId, forKey: .sessionId)
+      try c.encode(path, forKey: .path)
+      try c.encode(seq, forKey: .seq)
+    case let .openPlan(sessionId, planId):
+      try c.encode(sessionId, forKey: .sessionId)
+      try c.encode(planId, forKey: .planId)
+    case let .terminalOpen(id, cwd, cols, rows):
+      try c.encode(id, forKey: .id)
+      try c.encodeIfPresent(cwd, forKey: .cwd)
+      try c.encodeIfPresent(cols, forKey: .cols)
+      try c.encodeIfPresent(rows, forKey: .rows)
+    case let .terminalInput(id, data, binary):
+      try c.encode(id, forKey: .id)
+      try c.encode(data, forKey: .data)
+      try c.encodeIfPresent(binary, forKey: .binary)
+    case let .terminalResize(id, cols, rows):
+      try c.encode(id, forKey: .id)
+      try c.encode(cols, forKey: .cols)
+      try c.encode(rows, forKey: .rows)
+    case let .terminalAck(id, chars):
+      try c.encode(id, forKey: .id)
+      try c.encode(chars, forKey: .chars)
     case .resync, .markAllRead, .unknown:
       break
     }
@@ -525,13 +923,43 @@ public enum HostMsg: Codable, Hashable, Sendable {
   case controls(agent: AgentId, controls: [ConfigControl], shapes: ModelShapes? = nil)
   /// The answer to searchSessions with the same seq; a lower seq is stale
   case sessionHits(seq: Int, hits: [SessionHit])
+  /// One observed subagent's transcript, pushed to the viewer that asked for it; rev grows with every change
+  case subagent(sessionId: String, subagentId: String, rev: Int, running: Bool, turns: [Turn])
+  /// The answer to searchFiles with the same seq
+  case files(seq: Int, files: [FileHit])
+  /// The answer to diffSource: the whole files behind one diff, absent when the session or the diff is gone
+  case diffSource(seq: Int, source: FullDiffSource? = nil)
+  /// The answer to imageBlob: the session blob name for the image file, absent when unreadable
+  case imageBlob(seq: Int, blob: String? = nil)
+  /// The answer to sessionMarkdown: the session as Markdown, or why it could not be read
+  case sessionMarkdown(seq: Int, markdown: String? = nil, error: String? = nil)
+  /// The answers to the project reads, each echoing its request's seq. projectStatus: the project folder and the git
+  /// marks by relative path, empty outside a work tree
+  case projectDir(seq: Int, entries: [ProjectEntry], error: ProjectError? = nil)
+  case projectStatus(seq: Int, root: String? = nil, marks: [String: GitMark])
+  case projectFile(seq: Int, text: String? = nil, hunks: [ProjectHunk]? = nil, error: ProjectError? = nil)
+  /// The files the session's edits left changed, in the order it first edited them
+  case sessionChanges(seq: Int, files: [ProjectChange])
+  /// A terminal's output as it comes, to every page viewing it
+  case terminalOutput(id: String, data: String)
+  /// A terminal's state. Answering terminalOpen it carries the size, the title, the output so far (`replay`, shown
+  /// instead of what the page had) and the exit if the shell ended; later only what changed. error: the shell could not
+  /// start
+  case terminalState(id: String, title: String? = nil, cols: Int? = nil, rows: Int? = nil, replay: String? = nil,
+                     exit: TerminalExit? = nil, error: String? = nil)
+  /// The answer to editTurn with the same requestId; error: why the edit was refused
+  case editTurnResult(requestId: String, error: String? = nil)
+  /// The appearance axes changed
+  case appearance(appearance: Appearance)
   /// A push this build does not mirror; carries the type for diagnostics
   case unknown(String)
 
   /// The `type` literals this build mirrors
   public static let types = [
     "init", "agents", "sessions", "categories", "noSession", "session", "sessionPatch", "accounts", "accountActions",
-    "hidden", "settings", "controls", "sessionHits",
+    "hidden", "settings", "controls", "sessionHits", "subagent", "files", "diffSource", "imageBlob", "sessionMarkdown",
+    "projectDir", "projectStatus", "projectFile", "sessionChanges", "terminalOutput", "terminalState", "editTurnResult",
+    "appearance",
   ]
 
   /// The wire `type`
@@ -550,6 +978,19 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case .settings: "settings"
     case .controls: "controls"
     case .sessionHits: "sessionHits"
+    case .subagent: "subagent"
+    case .files: "files"
+    case .diffSource: "diffSource"
+    case .imageBlob: "imageBlob"
+    case .sessionMarkdown: "sessionMarkdown"
+    case .projectDir: "projectDir"
+    case .projectStatus: "projectStatus"
+    case .projectFile: "projectFile"
+    case .sessionChanges: "sessionChanges"
+    case .terminalOutput: "terminalOutput"
+    case .terminalState: "terminalState"
+    case .editTurnResult: "editTurnResult"
+    case .appearance: "appearance"
     case .unknown(let t): t
     }
   }
@@ -557,10 +998,15 @@ public enum HostMsg: Codable, Hashable, Sendable {
   private enum Keys: String, CodingKey {
     case type, state, agents, sessions, categories, session, patch, accounts, actions, hidden, settings, locale, agent
     case controls, shapes, seq, hits
+    case sessionId, subagentId, rev, running, turns, files, source, blob, markdown, error, entries, root, marks, text
+    case hunks, id, data, title, cols, rows, replay, exit, requestId, appearance
   }
 
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: Keys.self)
+    func str(_ k: Keys) throws -> String { try c.decode(String.self, forKey: k) }
+    func opt(_ k: Keys) throws -> String? { try c.decodeIfPresent(String.self, forKey: k) }
+    func int(_ k: Keys) throws -> Int { try c.decode(Int.self, forKey: k) }
     switch try c.decode(String.self, forKey: .type) {
     case "init": self = .initState(state: try c.decode(InitState.self, forKey: .state))
     case "agents": self = .agents(agents: try c.decode([AgentInfo].self, forKey: .agents))
@@ -578,6 +1024,29 @@ public enum HostMsg: Codable, Hashable, Sendable {
       self = .controls(agent: try c.decode(String.self, forKey: .agent), controls: try c.decode([ConfigControl].self, forKey: .controls),
                        shapes: try c.decodeIfPresent(ModelShapes.self, forKey: .shapes))
     case "sessionHits": self = .sessionHits(seq: try c.decode(Int.self, forKey: .seq), hits: try c.decode([SessionHit].self, forKey: .hits))
+    case "subagent":
+      self = .subagent(sessionId: try str(.sessionId), subagentId: try str(.subagentId), rev: try int(.rev),
+                       running: try c.decode(Bool.self, forKey: .running), turns: try c.decode([Turn].self, forKey: .turns))
+    case "files": self = .files(seq: try int(.seq), files: try c.decode([FileHit].self, forKey: .files))
+    case "diffSource": self = .diffSource(seq: try int(.seq), source: try c.decodeIfPresent(FullDiffSource.self, forKey: .source))
+    case "imageBlob": self = .imageBlob(seq: try int(.seq), blob: try opt(.blob))
+    case "sessionMarkdown": self = .sessionMarkdown(seq: try int(.seq), markdown: try opt(.markdown), error: try opt(.error))
+    case "projectDir":
+      self = .projectDir(seq: try int(.seq), entries: try c.decode([ProjectEntry].self, forKey: .entries),
+                         error: try c.decodeIfPresent(ProjectError.self, forKey: .error))
+    case "projectStatus":
+      self = .projectStatus(seq: try int(.seq), root: try opt(.root), marks: try c.decode([String: GitMark].self, forKey: .marks))
+    case "projectFile":
+      self = .projectFile(seq: try int(.seq), text: try opt(.text), hunks: try c.decodeIfPresent([ProjectHunk].self, forKey: .hunks),
+                          error: try c.decodeIfPresent(ProjectError.self, forKey: .error))
+    case "sessionChanges": self = .sessionChanges(seq: try int(.seq), files: try c.decode([ProjectChange].self, forKey: .files))
+    case "terminalOutput": self = .terminalOutput(id: try str(.id), data: try str(.data))
+    case "terminalState":
+      self = .terminalState(id: try str(.id), title: try opt(.title), cols: try c.decodeIfPresent(Int.self, forKey: .cols),
+                            rows: try c.decodeIfPresent(Int.self, forKey: .rows), replay: try opt(.replay),
+                            exit: try c.decodeIfPresent(TerminalExit.self, forKey: .exit), error: try opt(.error))
+    case "editTurnResult": self = .editTurnResult(requestId: try str(.requestId), error: try opt(.error))
+    case "appearance": self = .appearance(appearance: try c.decode(Appearance.self, forKey: .appearance))
     case let type: self = .unknown(type)
     }
   }
@@ -605,6 +1074,57 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case let .sessionHits(seq, hits):
       try c.encode(seq, forKey: .seq)
       try c.encode(hits, forKey: .hits)
+    case let .subagent(sessionId, subagentId, rev, running, turns):
+      try c.encode(sessionId, forKey: .sessionId)
+      try c.encode(subagentId, forKey: .subagentId)
+      try c.encode(rev, forKey: .rev)
+      try c.encode(running, forKey: .running)
+      try c.encode(turns, forKey: .turns)
+    case let .files(seq, files):
+      try c.encode(seq, forKey: .seq)
+      try c.encode(files, forKey: .files)
+    case let .diffSource(seq, source):
+      try c.encode(seq, forKey: .seq)
+      try c.encodeIfPresent(source, forKey: .source)
+    case let .imageBlob(seq, blob):
+      try c.encode(seq, forKey: .seq)
+      try c.encodeIfPresent(blob, forKey: .blob)
+    case let .sessionMarkdown(seq, markdown, error):
+      try c.encode(seq, forKey: .seq)
+      try c.encodeIfPresent(markdown, forKey: .markdown)
+      try c.encodeIfPresent(error, forKey: .error)
+    case let .projectDir(seq, entries, error):
+      try c.encode(seq, forKey: .seq)
+      try c.encode(entries, forKey: .entries)
+      try c.encodeIfPresent(error, forKey: .error)
+    case let .projectStatus(seq, root, marks):
+      try c.encode(seq, forKey: .seq)
+      try c.encodeIfPresent(root, forKey: .root)
+      try c.encode(marks, forKey: .marks)
+    case let .projectFile(seq, text, hunks, error):
+      try c.encode(seq, forKey: .seq)
+      try c.encodeIfPresent(text, forKey: .text)
+      try c.encodeIfPresent(hunks, forKey: .hunks)
+      try c.encodeIfPresent(error, forKey: .error)
+    case let .sessionChanges(seq, files):
+      try c.encode(seq, forKey: .seq)
+      try c.encode(files, forKey: .files)
+    case let .terminalOutput(id, data):
+      try c.encode(id, forKey: .id)
+      try c.encode(data, forKey: .data)
+    case let .terminalState(id, title, cols, rows, replay, exit, error):
+      try c.encode(id, forKey: .id)
+      try c.encodeIfPresent(title, forKey: .title)
+      try c.encodeIfPresent(cols, forKey: .cols)
+      try c.encodeIfPresent(rows, forKey: .rows)
+      try c.encodeIfPresent(replay, forKey: .replay)
+      try c.encodeIfPresent(exit, forKey: .exit)
+      try c.encodeIfPresent(error, forKey: .error)
+    case let .editTurnResult(requestId, error):
+      try c.encode(requestId, forKey: .requestId)
+      try c.encodeIfPresent(error, forKey: .error)
+    case .appearance(let appearance):
+      try c.encode(appearance, forKey: .appearance)
     case .noSession, .unknown:
       break
     }

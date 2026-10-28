@@ -175,10 +175,101 @@ struct ProtocolTests {
     }
   }
 
+  // MARK: Parity actions and pushes
+
+  /// rust/crates/acpira-host/tests/engine/session_manager/projects.rs and categories.rs: the project ops flatten into
+  /// the message; an op the phone does not send keeps its name, and `file` beside it
+  @Test func categoryOpsFlatten() throws {
+    try roundTrip(WebviewMsg.categoryOp(op: .addProject(cwd: "/p1")), #"{"type":"categoryOp","op":"addProject","cwd":"/p1"}"#)
+    try roundTrip(WebviewMsg.categoryOp(op: .reorderProject(cwd: "/p2", before: "/p1")),
+                  #"{"type":"categoryOp","op":"reorderProject","cwd":"/p2","before":"/p1"}"#)
+    try roundTrip(WebviewMsg.categoryOp(op: .removeProject(cwd: "/p2")), #"{"type":"categoryOp","op":"removeProject","cwd":"/p2"}"#)
+    try roundTrip(WebviewMsg.categoryOp(op: .collapseProject(cwd: "/elsewhere", collapsed: true)),
+                  #"{"type":"categoryOp","op":"collapseProject","cwd":"/elsewhere","collapsed":true}"#)
+    let create = try decode(WebviewMsg.self, #"{"type":"categoryOp","op":"create","id":"c-new","name":"","cwd":"/tmp","file":"s1"}"#)
+    #expect(create == .categoryOp(op: .unknown("create"), file: "s1"))
+  }
+
+  /// test/sidecarContract.test.ts (an edit after a retry) and sidecarRuntime.test.ts (a continue edit), with their ids
+  /// filled in, and the acknowledgement
+  @Test func editTurnAsTheSidecarTestsSendIt() throws {
+    let edit = EditTurnRequest(sessionId: "s1", turnIndex: 0, turnCount: 2, originalText: "fail", turnId: "u1", text: "hello again",
+                               settings: TurnSettings())
+    try roundTrip(WebviewMsg.editTurn(requestId: "e1", edit: edit),
+                  #"{"type":"editTurn","requestId":"e1","edit":{"sessionId":"s1","turnIndex":0,"turnCount":2,"originalText":"fail","turnId":"u1","text":"hello again","retainedAttachments":[],"attachments":[],"settings":{"config":{}}}}"#)
+    let continued = EditTurnRequest(sessionId: "s1", turnIndex: 0, turnCount: 2, originalText: "original", turnId: "u1",
+                                    text: "inspect-history", settings: TurnSettings(modeId: "agent", config: ["model": "opus"]),
+                                    intent: .continue)
+    try roundTrip(WebviewMsg.editTurn(requestId: "continue-request", edit: continued),
+                  #"{"type":"editTurn","requestId":"continue-request","edit":{"sessionId":"s1","turnIndex":0,"turnCount":2,"originalText":"original","turnId":"u1","text":"inspect-history","retainedAttachments":[],"attachments":[],"settings":{"modeId":"agent","config":{"model":"opus"}},"intent":"continue"}}"#)
+    try roundTrip(HostMsg.editTurnResult(requestId: "continue-request"), #"{"type":"editTurnResult","requestId":"continue-request"}"#)
+  }
+
+  /// test/sidecarContract.test.ts: a terminal opened at 100×30 and its state, keys, then the exit of `exit 5`
+  @Test func terminalAsTheSidecarContractRunsIt() throws {
+    try roundTrip(WebviewMsg.terminalOpen(id: "T", cwd: "/w", cols: 100, rows: 30),
+                  #"{"type":"terminalOpen","id":"T","cwd":"/w","cols":100,"rows":30}"#)
+    try roundTrip(HostMsg.terminalState(id: "T", title: "sh", cols: 100, rows: 30, replay: ""),
+                  #"{"type":"terminalState","id":"T","title":"sh","cols":100,"rows":30,"replay":""}"#)
+    try roundTrip(WebviewMsg.terminalInput(id: "T", data: "stty size; exit 5\r"), #"{"type":"terminalInput","id":"T","data":"stty size; exit 5\r"}"#)
+    try roundTrip(HostMsg.terminalOutput(id: "T", data: "30 100\r\n"), #"{"type":"terminalOutput","id":"T","data":"30 100\r\n"}"#)
+    try roundTrip(HostMsg.terminalState(id: "T", exit: TerminalExit(code: 5)), #"{"type":"terminalState","id":"T","exit":{"code":5}}"#)
+    try roundTrip(WebviewMsg.terminalKill(id: "T"), #"{"type":"terminalKill","id":"T"}"#)
+  }
+
+  /// rust/crates/acpira-host/tests/engine/session_manager/viewers.rs: observing a child; its pushes carry its turns
+  @Test func subagentPush() throws {
+    try roundTrip(WebviewMsg.observeSubagent(sessionId: "s1", subagentId: "n1"),
+                  #"{"type":"observeSubagent","sessionId":"s1","subagentId":"n1"}"#)
+    let json = #"{"type":"subagent","sessionId":"s1","subagentId":"n1","rev":4,"running":false,"turns":[{"role":"user","text":"find the zebracorn"},{"role":"agent","blocks":[{"type":"tool_call","id":"call-1","kind":"search","verb":"Search","status":"completed"},{"type":"text","markdown":"in docs/"}],"stop":"end_turn"}]}"#
+    let push = try decode(HostMsg.self, json)
+    guard case .subagent("s1", "n1", 4, false, let turns) = push, case .agent(let agent) = turns.last else {
+      Issue.record("not subagent: \(push)"); return
+    }
+    #expect(turns.first == .user(UserTurn(text: "find the zebracorn")))
+    #expect(agent.blocks.first?.toolCall?.kind == .search && agent.stop == .end_turn)
+    #expect(JSONObject.same(try JSONObject.of(push), try JSONObject.parse(json)))
+  }
+
+  /// rust/crates/acpira-host/tests/engine/acp_session/goal.rs: goal rows; the view's goal and the controls the agent
+  /// advertises (the harness frame's goalActions)
+  @Test func goalBlocksAndState() throws {
+    try roundTrip(AgentBlock.goal(GoalBlock(event: .set, objective: "ship it", tokensUsed: 1200, timeUsedSeconds: 0)),
+                  #"{"type":"goal","event":"set","objective":"ship it","tokensUsed":1200,"timeUsedSeconds":0}"#)
+    try roundTrip(AgentBlock.goal(GoalBlock(event: .cleared, tokensUsed: 1200, timeUsedSeconds: 0)),
+                  #"{"type":"goal","event":"cleared","tokensUsed":1200,"timeUsedSeconds":0}"#)
+    // An event this build does not know is still a goal row
+    #expect(try decode(AgentBlock.self, #"{"type":"goal","event":"rescheduled"}"#) == .goal(GoalBlock(event: .unknown)))
+    guard case .hostMessage(_, .sessionPatch(let patch)) = try decode(SidecarMsg.self, HarnessFrames.patch) else {
+      Issue.record("not sessionPatch"); return
+    }
+    #expect(patch.view.goalActions == [.set, .pause, .resume, .clear])
+    let view = try decode(SessionView.self, #"{"id":"s1","agent":"codex","goal":{"objective":"ship it","status":"limited","tokenBudget":50000,"tokensUsed":50210,"timeUsedSeconds":312,"updatedAt":1761593614971}}"#)
+    #expect(view.goal?.status == .limited && view.goal?.tokensUsed == 50210 && view.goal?.updatedAt == 1761593614971)
+    try roundTrip(WebviewMsg.goal(sessionId: "s1", action: .pause), #"{"type":"goal","sessionId":"s1","action":"pause"}"#)
+  }
+
+  /// A block type this build does not know becomes a placeholder, and the blocks around it still render
+  @Test func unknownBlockKeepsTheTurn() throws {
+    #expect(try decode(AgentBlock.self, #"{"type":"hologram","frames":[1,2]}"#) == .unknown("hologram"))
+    let turn = try decode(Turn.self, #"{"role":"agent","blocks":[{"type":"text","markdown":"before"},{"type":"hologram","frames":[1,2]},{"type":"text","markdown":"after"}]}"#)
+    #expect(turn == .agent(AgentTurn(blocks: [.text(TextBlock(markdown: "before")), .unknown("hologram"), .text(TextBlock(markdown: "after"))])))
+  }
+
+  /// The project reads: a failure is a known reason or the system's own message; a git mark this build does not know
+  /// stays a mark
+  @Test func projectReadErrorsAndMarks() throws {
+    try roundTrip(HostMsg.projectFile(seq: 2, error: .tooLarge), #"{"type":"projectFile","seq":2,"error":"tooLarge"}"#)
+    try roundTrip(HostMsg.projectDir(seq: 1, entries: [], error: .message("Permission denied (os error 13)")),
+                  #"{"type":"projectDir","seq":1,"entries":[],"error":"Permission denied (os error 13)"}"#)
+    let status = try decode(HostMsg.self, #"{"type":"projectStatus","seq":3,"root":"/w","marks":{"a.ts":"M","new/":"U","b.ts":"R"}}"#)
+    #expect(status == .projectStatus(seq: 3, root: "/w", marks: ["a.ts": .modified, "new/": .untracked, "b.ts": .unknown]))
+  }
+
   // MARK: Tolerance
 
   @Test func unknownTypesDecodeToPlaceholders() throws {
-    #expect(try decode(HostMsg.self, #"{"type":"terminalOutput","id":"T","data":"x"}"#) == .unknown("terminalOutput"))
+    #expect(try decode(HostMsg.self, #"{"type":"pluginTheme","css":""}"#) == .unknown("pluginTheme"))
     #expect(try decode(WebviewMsg.self, #"{"type":"hologram","x":1}"#) == .unknown("hologram"))
     #expect(try decode(Draft.self, #"{"kind":"hologram"}"#) == .unknown("hologram"))
     #expect(try decode(ShellMsg.self, #"{"type":"previewClose","panelId":"p"}"#) == .unknown("previewClose"))

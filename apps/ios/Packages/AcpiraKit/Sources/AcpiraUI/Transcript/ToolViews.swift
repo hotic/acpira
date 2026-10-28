@@ -194,7 +194,7 @@ struct ToolBody: View {
     VStack(alignment: .leading, spacing: Metrics.gap) {
       ForEach(Array(items.enumerated()), id: \.offset) { _, item in
         switch item {
-        case .diff(let lines): DiffBlockView(lines: lines, title: block.target ?? "")
+        case .diff(let lines, _): DiffBlockView(lines: lines, title: block.target ?? "")
         case .list(let list): ResultList(items: list, kind: block.kind)
         case .text(let text): ToolOutput(text: text)
         case .image, .unknown: EmptyView()
@@ -311,7 +311,7 @@ struct EditEntry: View {
         VStack(alignment: .leading, spacing: Metrics.gap) {
           ForEach(Array(diffs.enumerated()), id: \.offset) { _, item in
             switch item {
-            case .diff(let lines): DiffBlockView(lines: lines, title: fileName(blocks[0]))
+            case .diff(let lines, _): DiffBlockView(lines: lines, title: fileName(blocks[0]))
             case .text(let text): ToolOutput(text: text)
             default: EmptyView()
             }
@@ -487,7 +487,7 @@ func outputOf(_ b: ToolCallBlock) -> String {
   switch b.content {
   case .text(let t): return t
   case .list(let items): return items.joined(separator: "\n")
-  case .diff(let lines): return lines.map(\.code).joined(separator: "\n")
+  case .diff(let lines, _): return lines.map(\.code).joined(separator: "\n")
   default: return ""
   }
 }
