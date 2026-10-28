@@ -1397,6 +1397,7 @@ export const fr = {
   'mobile.projects.pathHint': 'Un chemin sur l’ordinateur qui exécute le moteur Acpira',
   'mobile.new.placeholder': 'Sur quoi travaille-t-on ?',
   'mobile.thinking.off': 'Réflexion désactivée',
+  'mobile.edit.title': 'Modification du message',
   'mobile.agent.notInstalled': 'Non installé',
   'mobile.theme.system': 'Système',
   'mobile.terminal.close': 'Fermer le terminal',

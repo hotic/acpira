@@ -57,6 +57,7 @@ struct LineBlockView: View {
   var body: some View {
     switch block {
     case .notice(let n): NoticeRow(block: n)
+    case .goal(let g): GoalRow(block: g)
     case .thought(let th): ThoughtView(block: th)
     case .plan(let p): PlanDetails(entries: p.entries) { RowLabel(t("plan.title")) }
     case .toolCall(let call): ToolCallView(block: call)

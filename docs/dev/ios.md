@@ -114,7 +114,15 @@
   - As on the desktop, only image-result tools (`verb.imagegen`, `verb.showImage`) leave a closed process fold; an image block stays inside it, and a file-less read row (the fake agent's `view_image`) shows no image.
   - `ImageRenderer` runs no tasks, so `render.sh` preloads the fixture's images before drawing.
   - The Lightbox is a full-screen cover without the system slide, fading on its own. Zoom and pan are `UIScrollView`'s; a one-finger downward pull at rest closes it. Share goes through `ShareLink`; its Save Image needs `NSPhotoLibraryAddUsageDescription`, set in the app target.
-- Not ported yet: goal blocks, subagent rows, `show_widget`, account choices on the session card (import, terminal sign-in, switching accounts), and opening a plan file on the computer.
+- Turn actions (`Logic/TurnEdit.swift`, `Logic/TurnStats.swift`, `Logic/GoalText.swift`, `Store/AppModel+Turns.swift`):
+  - A prompt's long press offers Edit (while `canEditPrompts`: idle, ready or starting, nothing held in the queue), Copy, and Set as goal on the newest typed prompt where the agent advertises `set` and no goal is set.
+  - Edit moves the prompt into the chat's own composer under an editing bar with ✕: one `Composer` instance, so focus holds. Its pickers act on `TurnEdit.controls`, a snapshot opened from the prompt's `settings` (`openTurnControls` / `editTurnConfig`, never `setConfig`); send posts `editTurn`. The draft from before waits in the edit and returns on cancel or an accepted edit; a refused edit (`editTurnResult.error`) toasts and puts the rewrite back, both only into an untouched composer.
+  - `Composer` clears its text and staged items after `onSend` returns, so a draft restored inside the send is wiped: the demo restores on the next main-actor pass.
+  - Attachments staged during an edit are not sent (`attachments: []`); kept originals go by index (`retainedAttachments`), as a plain send carries text only.
+  - Retry sits in the reply's action row on the newest turn only, under Alert.tsx's rule (an error that is not a context overflow and whose declared actions, if any, include retry); the desktop row has no Retry.
+  - The goal heads the floating to-do card; its pause / resume / clear sit in one system `Menu` whose header holds the objective, the time or rounds and the spend. Milestone rows sit above the fold when they open the turn, after the reply when they follow the last action, in the process otherwise (`splitCodexBlocks`).
+  - A background task's row trades the ✓ / ✗ glyph and the run time for its state tag and, while live and `canStop` with no stop asked, a Stop. A refusal is the engine's error toast; the row stays live.
+- Not ported yet: subagent rows, `show_widget`, account choices on the session card (import, terminal sign-in, switching accounts), opening a plan file on the computer, a workflow task's agent count and its script / output links.
 
 ## Commands
 
@@ -131,7 +139,7 @@
   - With a hardware keyboard attached, the software keyboard is minimised. `defaults write com.apple.keyboard.preferences AutomaticMinimizationEnabled -bool false` (run through `simctl spawn`) brings it back.
 - Launch arguments:
   - `-fixture`, `-theme`, `-motion none`, `-locale`, `-screen list|chat|new|settings`, `-acpira.listView project`.
-  - `-popup NAME` opens something on launch: `attach`, `model`, `model.N` (bean N's panel), a `focus.` prefix (field focused first), `demo` (every liquid transition in turn), `ring` and `ring.pick`, `account`, `toast`, `code`, `lightbox` (the chat's first image), `fold:N`, and `plan.build` / `plan.build.model` / `plan.revise` (the first plan card that can build presses Build, builds on the last model family, or sends a revision). Debug builds also take `menu:X,Y`, which opens the system menu under that point through UIKit's private `_presentMenuAtLocation:`.
+  - `-popup NAME` opens something on launch: `attach`, `model`, `model.N` (bean N's panel), a `focus.` prefix (field focused first), `demo` (every liquid transition in turn), `ring` and `ring.pick`, `account`, `toast`, `code`, `lightbox` (the chat's first image), `fold:N`, and `plan.build` / `plan.build.model` / `plan.revise` (the first plan card that can build presses Build, builds on the last model family, or sends a revision), `edit` (the newest typed prompt in the editing composer) and `stats` (the newest reply's statistics card). Debug builds also take `menu:X,Y`, which opens the system menu under that point through UIKit's private `_presentMenuAtLocation:`.
   - `-prompt TEXT` sends a prompt on launch and gets the demo reply. `-draft TEXT` pre-fills the composer.
   - The composer's `-popup` names: `attach.N` (bean N of `+`), `attach.paste` (the paste bean without an image on the pasteboard), `context` (the ring's card), `quotes` (the staged quotes' card).
   - `-open open|all|every` pre-opens folds. `-replay` plays the last agent turn back as a live stream (`Logic/Replay.swift`).
@@ -185,6 +193,9 @@ SwiftUI traps:
 - A `Group` with empty content is no view, so modifiers on it never run. `StreamProse` holds a zero-height view until its first characters arrive.
 - A `.task` loop that copies state before `Task.sleep` and writes it back afterwards overwrites whatever `.onChange` stored meanwhile.
 - `ImageRenderer` draws preference-driven rails the same as the live screen.
+- A `Row`'s trailing slot is `fixedSize`: text there never truncates, so a long trailing pushes the row, and with it the whole turn, past the screen's edge.
+- A compact-adapted popover sizes itself from its content's ideal size, measured unwrapped: a card whose labels wrap needs a set width, or its last lines are clipped.
+- `contentShape(.contextMenuPreview, _:)` is unavailable on macOS, where `swift test` builds it.
 
 Deliberate deviations from the webview:
 
@@ -192,4 +203,5 @@ Deliberate deviations from the webview:
 - No "open in editor tab".
 - Images: no image-generation mosaic or dissolve, no image context menu, no read-row image preview, no openable Markdown caption. Small pictures fill their card instead of keeping their natural size.
 - An account is removed by a swipe.
+- A goal milestone row shows the time (or rounds) and the tokens, not all three; the goal head keeps its time in the menu while it has one.
 - A tap outside a picker closes it and is swallowed.

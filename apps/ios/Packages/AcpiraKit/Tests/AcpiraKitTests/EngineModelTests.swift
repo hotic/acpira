@@ -120,4 +120,26 @@ struct EngineModelTests {
     try await until { wire.types.last == "webviewMessage:send" }
     #expect(wire.sent.last?.contains(#""sessionId":"s2""#) == true)
   }
+
+  @Test func transcriptActionsPostTheEnginesActions() async throws {
+    let (model, wire) = try await connected()
+    model.goal("s1", .pause)
+    model.stopTask("s1", task: "task-1")
+    try await until { wire.types.last == "webviewMessage:stopAsyncTask" }
+    #expect(Array(wire.types.suffix(2)) == ["webviewMessage:goal", "webviewMessage:stopAsyncTask"])
+    #expect(wire.sent.last?.contains(#""taskId":"task-1""#) == true)
+    // An edit leaves the composer empty until the engine answers; a refusal puts the rewrite back
+    model.beginEdit("s1", turn: 0)
+    model.sendEdit("s1", text: "hello", attachments: [])
+    let draft = model.draft(for: "s1")
+    // What the composer does once its send returns
+    draft.text = ""
+    try await until { wire.types.last == "webviewMessage:editTurn" }
+    #expect(draft.edit == nil)
+    let request = try #require(draft.pending?.request)
+    #expect(wire.sent.last?.contains(#""text":"hello""#) == true && wire.sent.last?.contains(#""turnIndex":0"#) == true)
+    push(wire, #"{"type":"editTurnResult","requestId":"\#(request)","error":"The conversation moved on"}"#)
+    try await until { draft.edit != nil }
+    #expect(draft.text == "hello" && model.toast?.text == "The conversation moved on")
+  }
 }

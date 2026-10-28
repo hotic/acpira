@@ -97,6 +97,8 @@ extension AppModel {
       link.staged(seq, blob: blob)
     case let .files(seq, files):
       fileSearch.receive(seq: seq, files: files)
+    case let .editTurnResult(requestId, error):
+      editAnswered(requestId, error: error)
     default:
       break
     }

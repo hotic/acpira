@@ -1399,6 +1399,7 @@ export const ko = {
   'mobile.projects.pathHint': 'Acpira 엔진이 실행 중인 컴퓨터의 경로',
   'mobile.new.placeholder': '무엇을 할까요?',
   'mobile.thinking.off': '생각 끔',
+  'mobile.edit.title': '메시지 편집 중',
   'mobile.agent.notInstalled': '설치되지 않음',
   'mobile.theme.system': '시스템 설정',
   'mobile.terminal.close': '터미널 닫기',

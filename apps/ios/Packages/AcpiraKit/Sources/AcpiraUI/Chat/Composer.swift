@@ -26,6 +26,8 @@ struct Composer: View {
   var onSetConfig: (String, String) -> Void = { _, _ in }
   /// The new-session screen's prompt: no run to stop, the first message starts the session
   var placeholder: String?
+  /// A new value focuses the field (a sent prompt taken in for editing, HistoryEditor's autoFocus)
+  var focusKey: Int?
   @FocusState private var focused: Bool
   @Environment(\.snapshot) private var snapshot
   @Environment(\.motionEnabled) private var motion
@@ -176,6 +178,7 @@ struct Composer: View {
       typed = now
       selection = TextSelection(insertionPoint: now.endIndex)
     }
+    .onChange(of: focusKey) { _, key in if key != nil { focused = true } }
     .environment(\.composerInk, true)
   }
 
@@ -471,6 +474,9 @@ struct StagedAttachments: View {
                 AttachmentThumbnail(blob: blob)
               case .file(_, let name), .text(_, let name, _):
                 AttachmentPill(name: name, icon: .fileText)
+              // Only a sent prompt taken in for editing brings a selection back
+              case .selection(_, let name, let start, let end, _):
+                AttachmentPill(name: "\(name) \(start == end ? "L\(start)" : "L\(start)-\(end)")", icon: .textSelect)
               default:
                 EmptyView()
               }

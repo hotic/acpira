@@ -13,6 +13,8 @@ struct Dock: View {
   let session: SessionView
   @Binding var draft: String
   @Binding var staged: [Attachment]
+  /// A sent prompt being rewritten in the composer (PromptEdit.swift); nil while the composer writes a new one
+  var edit: Binding<TurnEdit?> = .constant(nil)
   /// Hides the alert card for this many turns (the ✕ keeps the transcript row, drops the card)
   @State private var dismissedAlert: Int?
   @Environment(\.sessionActions) private var actions
@@ -20,6 +22,7 @@ struct Dock: View {
   var body: some View {
     let question = openQuestion(session)
     let alertTurn = shortStop(session)
+    let editing = edit.wrappedValue
     VStack(spacing: Metrics.dockGap) {
       if let question {
         QuestionCard(block: question) { actions.answer(question.id, $0, $1) }
@@ -38,11 +41,22 @@ struct Dock: View {
                  onSend: { actions.sendQueued(item.id) }, onEdit: { actions.editQueued(item.id) },
                  onRemove: { actions.removeQueued(item.id) })
       }
-      // A ChatGPT mirror is a receiver: nothing to send or stop. While a plan waits, a send revises it
+      // A ChatGPT mirror is a receiver: nothing to send or stop. While a plan waits, a send revises it. While a sent
+      // prompt is being rewritten, the same composer (so focus holds) edits it: its pickers act on the edit's own
+      // selections and send rewrites the turn
       if session.external == nil {
-        Composer(session: session, text: $draft, staged: $staged, onSend: actions.send, onStop: actions.stop,
-                 onSetMode: actions.setMode, onSetConfig: actions.setConfig,
-                 placeholder: pendingPlanReview(session.turns).flatMap(reviseOption) != nil ? t("composer.placeholder.revisePlan") : nil)
+        if let editing { EditingBar(original: editing.original, onCancel: actions.cancelEdit) }
+        Composer(session: editing.map { editingView(session, $0) } ?? session, text: $draft, staged: $staged,
+                 onSend: editing == nil ? actions.send : actions.sendEdit, onStop: actions.stop,
+                 onSetMode: editing == nil ? actions.setMode : { edit.wrappedValue?.controls.modeId = $0 },
+                 onSetConfig: editing == nil ? actions.setConfig : { id, value in
+                   guard let now = edit.wrappedValue else { return }
+                   edit.wrappedValue?.controls = editTurnConfig(now.controls, live: session.controls, id: id, value: value,
+                                                                shapes: session.modelShapes)
+                 },
+                 placeholder: editing == nil && pendingPlanReview(session.turns).flatMap(reviseOption) != nil
+                   ? t("composer.placeholder.revisePlan") : nil,
+                 focusKey: editing?.turnIndex)
       }
     }
     // The dock runs closer to the screen edges than the transcript (--page): a phone composer spans the width
@@ -90,42 +104,51 @@ func dockPlan(_ turns: [Turn], running: Bool) -> [PlanEntry]? {
 }
 
 /// PlanBar's card: the to-do title (shimmering while the turn works) with the done count and a caret; folded it shows
-/// the current entry only (or "all n done"), unfolded every entry, scrolling past seven rows
+/// the current entry only (or "all n done"), unfolded every entry, scrolling past seven rows. A session goal takes the
+/// head row (GoalHead), so goal and to-dos share one card; with a goal and no list the card is the goal line alone
 struct PlanCard: View {
-  let entries: [PlanEntry]
+  let entries: [PlanEntry]?
   var live: Bool
+  var goal: GoalDock?
   @State private var open = false
 
   var body: some View {
-    let done = entries.filter { $0.status == .completed }.count
-    let current = entries.first { $0.status == .in_progress } ?? entries.first { $0.status == .pending }
+    let done = entries?.filter { $0.status == .completed }.count ?? 0
+    let current = entries?.first { $0.status == .in_progress } ?? entries?.first { $0.status == .pending }
     VStack(alignment: .leading, spacing: Metrics.planSectionGap) {
-      Button { open.toggle() } label: {
-        Row(dense: true) {
-          RowLabel(t("plan.todoTitle"), shimmer: live && current != nil)
-        } trailing: {
-          Text(web: "\(done)/\(entries.count)")
-          Icon(.chevronDown, size: Metrics.icon)
-            .rotationEffect(.degrees(open ? 180 : 0))
+      if let goal {
+        GoalHead(goal: goal.goal, actions: goal.actions, running: goal.running, onAction: goal.onAction,
+                 onToggle: entries == nil ? nil : { open.toggle() }) {
+          if let entries { count(done, entries.count) }
         }
-      }
-      .buttonStyle(.plain)
-      .accessibilityAddTraits(.isHeader)
-      Group {
-        if open {
-          ScrollView(.vertical) {
-            PlanEntries(entries: entries, showStatus: false, docked: true)
+      } else if let entries {
+        Button { open.toggle() } label: {
+          Row(dense: true) {
+            RowLabel(t("plan.todoTitle"), shimmer: live && current != nil)
+          } trailing: {
+            count(done, entries.count)
           }
-          .scrollIndicators(.hidden)
-          .frame(maxHeight: Metrics.planMax)
-          .fixedSize(horizontal: false, vertical: true)
-        } else if let current {
-          PlanEntries(entries: [current], showStatus: false, docked: true)
-        } else {
-          // Every entry done: one summary line in place of the list
-          Row(dense: true) { Text(web: t("plan.completed", ["n": entries.count])).foregroundStyle(Palette.fg2) }
-            .environment(\.rowDenseHeight, TypeScale.text2.lineHeight)
-            .padding(.vertical, Metrics.planEntryPadY)
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(.isHeader)
+      }
+      if let entries {
+        Group {
+          if open {
+            ScrollView(.vertical) {
+              PlanEntries(entries: entries, showStatus: false, docked: true)
+            }
+            .scrollIndicators(.hidden)
+            .frame(maxHeight: Metrics.planMax)
+            .fixedSize(horizontal: false, vertical: true)
+          } else if let current {
+            PlanEntries(entries: [current], showStatus: false, docked: true)
+          } else {
+            // Every entry done: one summary line in place of the list
+            Row(dense: true) { Text(web: t("plan.completed", ["n": entries.count])).foregroundStyle(Palette.fg2) }
+              .environment(\.rowDenseHeight, TypeScale.text2.lineHeight)
+              .padding(.vertical, Metrics.planEntryPadY)
+          }
         }
       }
     }
@@ -133,17 +156,40 @@ struct PlanCard: View {
     .padding(.vertical, Metrics.planPadY)
     .modifier(CardSurface())
   }
+
+  /// The done count and the caret that folds the list
+  @ViewBuilder private func count(_ done: Int, _ total: Int) -> some View {
+    Text(web: "\(done)/\(total)")
+    Icon(.chevronDown, size: Metrics.icon)
+      .rotationEffect(.degrees(open ? 180 : 0))
+  }
 }
 
-/// The plan card floating over the bottom of the thread, `--dock-gap` above the dock
+/// The session goal as the floating card's head reads it: the controls are the advertised ones its status allows
+struct GoalDock {
+  var goal: SessionGoal
+  var actions: [GoalAction]
+  var running: Bool
+  var onAction: (GoalAction) -> Void
+}
+
+/// The plan card floating over the bottom of the thread, `--dock-gap` above the dock; the session goal heads it
 struct PlanDock: View {
   let session: SessionView
+  @Environment(\.sessionActions) private var actions
+
   var body: some View {
-    if let entries = dockPlan(session.turns, running: session.running) {
+    let entries = dockPlan(session.turns, running: session.running)
+    // A ChatGPT mirror has no goal of its own to steer
+    let goal = session.external == nil ? session.goal : nil
+    if entries != nil || goal != nil {
       // px-page like the dock under it, so on the phone the dock's edges (--pad)
-      PlanCard(entries: entries, live: session.running)
-        .padding(.horizontal, Metrics.pad)
-        .padding(.bottom, Metrics.dockGap)
+      PlanCard(entries: entries, live: session.running, goal: goal.map {
+        GoalDock(goal: $0, actions: goalHeadActions($0, advertised: session.goalActions), running: session.running,
+                 onAction: { actions.goal($0, nil) })
+      })
+      .padding(.horizontal, Metrics.pad)
+      .padding(.bottom, Metrics.dockGap)
     }
   }
 }

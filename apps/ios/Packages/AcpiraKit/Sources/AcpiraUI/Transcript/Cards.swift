@@ -8,15 +8,23 @@ import SwiftUI
 // MARK: - User message
 
 /// A sent prompt: a right-aligned bubble on the chip fill, no outline; attachments above it, also right-aligned. The
-/// bubble's right edge meets the prose's (the agent turn's --pad)
+/// bubble's right edge meets the prose's (the agent turn's --pad). A long press opens its menu: Edit (the desktop's
+/// click on the card, while the session is idle), Copy, and on the newest typed prompt Set as goal (Goal.tsx
+/// PromptFooter) where the agent takes one
 struct UserMessageCard: View {
   let turn: UserTurn
+  /// The prompt's place in the transcript; nil for a prompt steered into a turn, which is not rewritten on its own
+  var index: Int?
+  var editable = false
+  var goal = false
+  @Environment(\.sessionActions) private var actions
 
   var body: some View {
     if turn.auto != true {
       let shown = turn.text.trimmingTrailingWhitespace()
       let attachments = turn.attachments ?? []
       let shape = RoundedRectangle(cornerRadius: Metrics.rBubble)
+      let edit = editable ? index : nil
       VStack(alignment: .trailing, spacing: Metrics.s2) {
         // At its own width, so the row sits on the bubble's right edge
         if !attachments.isEmpty { TurnAttachments(attachments: attachments).fixedSize() }
@@ -31,9 +39,44 @@ struct UserMessageCard: View {
             .background(shape.fill(Palette.bg0).overlay(shape.fill(Palette.bubbleBg)))
         }
       }
+      .modifier(PromptMenu(show: edit != nil || !shown.isEmpty, shape: shape) {
+        if let edit {
+          Button(t("history.edit"), systemImage: "pencil") { actions.editPrompt(edit) }
+        }
+        if !shown.isEmpty {
+          Button(t("common.copy"), systemImage: "doc.on.doc") {
+            UIPasteboardBridge.copy(shown)
+            actions.toast(t("code.copied"), .copy)
+          }
+        }
+        if goal {
+          Button(t("goal.setFromPrompt"), systemImage: "flag") {
+            actions.goal(.set, turn.text.trimmingCharacters(in: .whitespacesAndNewlines))
+          }
+        }
+      })
       .padding(.leading, Metrics.bubbleInset)
       .padding(.horizontal, Metrics.pad)
       .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+  }
+}
+
+/// The prompt's long-press menu, left off when it would hold nothing; the lifted preview keeps the bubble's corners
+private struct PromptMenu<Items: View>: ViewModifier {
+  var show: Bool
+  var shape: RoundedRectangle
+  @ViewBuilder var items: Items
+
+  func body(content: Content) -> some View {
+    if show {
+      #if canImport(UIKit)
+      content.contentShape(.contextMenuPreview, shape).contextMenu { items }
+      #else
+      content.contextMenu { items }
+      #endif
+    } else {
+      content
     }
   }
 }
@@ -300,16 +343,30 @@ struct PermissionCard: View {
 
 // MARK: - Turn actions
 
-/// Copy the reply · fork from this turn · response statistics; hugs the reply (-mt-gap) at --ctl-sm
+/// Retry · copy the reply · fork from this turn · response statistics; hugs the reply (-mt-gap) at --ctl-sm. Retry
+/// shows only on the newest reply when it failed in a way Retry answers (`retryableTurn`, the alert card's rule), so it
+/// stays at hand after the card is dismissed. A reply with nothing in it offers no copy or statistics
 struct TurnActions: View {
   let turn: AgentTurn
   var index = 0
+  /// The prompt's selections, which name the model when the peer did not
+  var settings: TurnSettings?
+  var retry = false
+  /// The session's newest turn (`-popup stats` opens its card)
+  var last = false
   @Environment(\.sessionActions) private var sessionActions
+  @Environment(\.planContext) private var context
+  @Environment(\.initialPopup) private var initialPopup
   @State private var copied = false
   @State private var stats = false
 
   var body: some View {
+    let content = hasTurnContent(turn)
     HStack(spacing: Metrics.s0_5) {
+      if retry {
+        IconButton(.rotateCcw, size: .web, label: t("common.retry")) { sessionActions.retry() }
+          .accessibilityHint(Text(web: t("alert.retryHint")))
+      }
       let reply = replyMarkdown(turn)
       if !reply.isEmpty {
         IconButton(copied ? .check : .copy, size: .web, label: copied ? t("code.copied") : t("turn.copy")) {
@@ -319,10 +376,13 @@ struct TurnActions: View {
         }
       }
       IconButton(.gitBranch, size: .web, label: t("turn.fork")) { sessionActions.fork(index) }
-      IconButton(.chartNoAxesColumn, size: .web, label: t("turn.stats"), open: stats) { stats.toggle() }
-        .popover(isPresented: $stats) {
-          TurnStats(turn: turn).presentationCompactAdaptation(.popover)
-        }
+      if content {
+        IconButton(.chartNoAxesColumn, size: .web, label: t("turn.stats"), open: stats) { stats.toggle() }
+          .popover(isPresented: $stats) {
+            TurnStats(turn: turn, model: modelLabel(turn.usage, settings: settings, controls: context.controls))
+              .presentationCompactAdaptation(.popover)
+          }
+      }
     }
     .frame(maxWidth: .infinity, minHeight: WebMetrics.ctlSm, maxHeight: WebMetrics.ctlSm, alignment: .trailing)
     .padding(.top, -Metrics.gap)
@@ -332,37 +392,92 @@ struct TurnActions: View {
       try? await Task.sleep(for: .milliseconds(1500))
       copied = false
     }
+    .task {
+      // `-popup stats`: the newest reply's card, once the thread has settled on screen (screenshots)
+      guard initialPopup == "stats", last, content else { return }
+      try? await Task.sleep(for: .seconds(1))
+      stats = true
+    }
   }
 }
 
-/// The reply text a copy takes: the turn's final prose
+/// The reply text a copy takes: the turn's final prose, else (a tail the split finds nothing in) its plain text blocks
 func replyMarkdown(_ turn: AgentTurn) -> String {
-  splitCodexBlocks(turn.blocks).reply.map { $0.markdown.trimmingTrailingWhitespace() }.joined(separator: "\n\n")
+  let reply = splitCodexBlocks(turn.blocks).reply.map(\.markdown).joined(separator: "\n\n")
+    .trimmingCharacters(in: .whitespacesAndNewlines)
+  if !reply.isEmpty { return reply }
+  return turn.blocks.compactMap { if case .text(let b) = $0 { b.markdown } else { nil } }.joined(separator: "\n\n")
+    .trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
-/// Per-turn statistics: dense label / value rows
+/// StatsCard: the title, the reported rows in their groups under thin dividers, and the vendor's request id with its
+/// copy action at the foot
 struct TurnStats: View {
   let turn: AgentTurn
+  var model: String?
+  @State private var copied = false
+
   var body: some View {
-    let calls = turn.blocks.filter { $0.toolCall != nil }.count
-    VStack(alignment: .leading, spacing: 0) {
-      if turn.startedAt != nil && turn.endedAt != nil { stat(t("stats.duration"), elapsedDuration(turn)) }
-      stat(t("stats.toolCalls"), "\(calls)")
-      if let input = turn.usage?.input { stat(t("stats.input"), input.formatted()) }
-      if let output = turn.usage?.output { stat(t("stats.output"), output.formatted()) }
+    let groups = turnStatGroups(turn, model: model)
+    VStack(alignment: .leading, spacing: Metrics.s1) {
+      Text(web: t("turn.stats"))
+        .textStyle(WebType.text2, weight: .medium)
+        .foregroundStyle(Palette.fg1)
+        .padding(.horizontal, Metrics.s2)
+        .frame(minHeight: WebMetrics.ctl)
+      VStack(alignment: .leading, spacing: 0) {
+        ForEach(Array(groups.enumerated()), id: \.offset) { i, rows in
+          if i > 0 { divider.padding(.vertical, Metrics.s1) }
+          ForEach(rows, id: \.label) { stat($0.label, $0.value) }
+        }
+      }
+      if let requestId = turn.usage?.requestId { footer(requestId) }
     }
+    .monospacedDigit()
     .padding(Metrics.s1)
-    .frame(minWidth: Metrics.popLg)
+    // A set width: the popover sizes itself from the card's ideal size, which must already hold the wrapped labels
+    .frame(width: Metrics.popLg)
+    .task(id: copied) {
+      guard copied else { return }
+      try? await Task.sleep(for: .milliseconds(1500))
+      copied = false
+    }
+  }
+
+  private var divider: some View {
+    Rectangle().fill(Palette.line).frame(height: Metrics.hairline).padding(.horizontal, Metrics.s2)
   }
 
   func stat(_ label: String, _ value: String) -> some View {
-    HStack(spacing: Metrics.s3) {
-      Text(web: label).foregroundStyle(Palette.fg1)
+    // The figure keeps its width; a label longer than the phone's popover leaves wraps under itself
+    HStack(alignment: .firstTextBaseline, spacing: Metrics.s3) {
+      Text(web: label).foregroundStyle(Palette.fg1).fixedSize(horizontal: false, vertical: true)
       Spacer(minLength: 0)
-      Text(web: value).foregroundStyle(Palette.fg2).lineLimit(1)
+      Text(web: value).foregroundStyle(Palette.fg2).lineLimit(1).truncationMode(.middle).layoutPriority(1)
     }
     .textStyle(WebType.text3)
     .padding(.horizontal, Metrics.s2)
     .padding(.vertical, Metrics.s0_5)
+  }
+
+  /// PanelFooter: the id in faint text and the square copy button, under one divider
+  private func footer(_ requestId: String) -> some View {
+    let label = copied ? t("stats.requestIdCopied") : t("stats.copyRequestId")
+    return VStack(spacing: Metrics.s1) {
+      divider.padding(.horizontal, -Metrics.s2)
+      HStack(spacing: Metrics.s1) {
+        Text(web: requestId)
+          .textStyle(WebType.text3)
+          .foregroundStyle(Palette.fg3)
+          .lineLimit(1)
+          .truncationMode(.middle)
+          .frame(maxWidth: .infinity, alignment: .leading)
+        IconButton(copied ? .check : .copy, size: .web, label: label) {
+          UIPasteboardBridge.copy(requestId)
+          copied = true
+        }
+      }
+      .padding(.leading, Metrics.s2)
+    }
   }
 }
