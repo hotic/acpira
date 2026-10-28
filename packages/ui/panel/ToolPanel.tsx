@@ -13,7 +13,7 @@ import { updateMainComposer } from '../chat/useComposerDraft';
 import { InspectorSplitter, clamp, fitPaneBounds, type PaneBounds } from '../chat/subagents/InspectorSplitter';
 import { lastRead, project, sameRead, shellResizeIdleIn, type GitStatus } from './api';
 import { registerBrowserFrame } from './browserTabs';
-import { FileGlyph, absPath, dirOf, markIndex, nameOf, relPath } from './files';
+import { FileGlyph, absPath, dirOf, markIndex, mediaKind, mediaUrl, nameOf, relPath } from './files';
 import { FileTree, ancestors } from './FileTree';
 import { FileViewer, ReviewView, preferMarkdownPreview } from './FileViewer';
 import { NewTab, type TabPick } from './NewTab';
@@ -528,8 +528,15 @@ export function ViewPane({ f, openEditor, openPlan, treeOpen, onToggleTree, onCl
         else if (openEditor && /^([a-z]:)?[\\/]/i.test(file.path)) openEditor(file.path, line);
       }
     : openEditor && ((line?: number) => openEditor(absPath(parseRemoteFolder(root)?.path ?? root, file.path), line));
+  // A file on this machine: media loads from the shell by its path, and anything the viewer cannot show opens in the
+  // system's own app. A file on an SSH host has neither
+  const local = file.text === undefined && !parseRemoteFolder(root) ? absPath(root, file.path) : undefined;
+  const kind = local !== undefined ? mediaKind(file.path) : undefined;
+  const src = kind && mediaUrl(local!);
   return (
     <FileViewer key={file.path} sessionId={f.sessionId} path={file.path} text={file.text} base={f.base}
+      media={kind && src ? { kind, src } : undefined}
+      onOpenDefault={local !== undefined ? () => vscodeApi().postMessage({ type: 'openPath', path: local }) : undefined}
       refresh={f.refresh} line={file.line} selection={file.selection}
       onSelect={f.select} onSelectionText={f.liveSelection} onAdd={f.addRange}
       onReveal={inProject ? () => { panel.toggleTree(true); f.reveal(file.path); } : undefined}
