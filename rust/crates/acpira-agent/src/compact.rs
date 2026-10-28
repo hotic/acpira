@@ -116,8 +116,8 @@ pub fn usable(context: u64, output: Option<u64>) -> u64 {
   context.saturating_sub(output.unwrap_or(RESERVED_OUTPUT).min(RESERVED_OUTPUT))
 }
 
-/// What providers say when a request is over the window, as seen through the gateway on 2026-10-13 (`scripts/` probe
-/// notes in `docs/dev/builtin-agent.md`): OpenAI "Your input exceeds the context window of this model", DeepSeek and
+/// What providers say when a request is over the window, as seen through an OpenAI-compatible
+/// gateway: OpenAI "Your input exceeds the context window of this model", DeepSeek and
 /// GLM "The prompt is too long: N, model maximum context length: M", MiniMax "context window exceeds limit", Gemini
 /// "The input token count exceeds the maximum number of tokens allowed (N)"; plus the wordings OpenAI's and
 /// Anthropic's documentation give ("maximum context length", "prompt is too long")
