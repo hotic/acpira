@@ -13,8 +13,12 @@ import Observation
 final class ComposerDraft {
   var text = ""
   var staged: [Attachment] = []
+  /// A sent prompt the composer is rewriting (AppModel+Turns.swift)
+  var edit: TurnEdit?
+  /// An edit sent and not yet answered: its request id, and what goes back into the composer if the engine refuses it
+  @ObservationIgnored var pending: (request: String, edit: TurnEdit, text: String, staged: [Attachment])?
 
-  var isEmpty: Bool { text.isEmpty && staged.isEmpty }
+  var isEmpty: Bool { text.isEmpty && staged.isEmpty && edit == nil && pending == nil }
 }
 
 /// The `@` list's file search. Each query goes out with a new seq and only the reply to the latest one lands, so a slow

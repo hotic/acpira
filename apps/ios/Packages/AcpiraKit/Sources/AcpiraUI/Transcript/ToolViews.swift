@@ -96,7 +96,10 @@ struct ToolCallView: View {
     } else {
       Disclosure(open: foldBinding($manual, preOpen.contains(.results)), icon: icon, indent: false,
                  rail: { if case .list = block.content { .rows } else { .off } }()) { label } trailing: { trailing } content: {
-        ToolBody(block: block, items: visible)
+        VStack(alignment: .leading, spacing: Metrics.gap) {
+          TaskMeta(task: block.asyncTask)
+          ToolBody(block: block, items: visible)
+        }
       }
     }
   }
@@ -128,13 +131,17 @@ struct ToolLabel: View {
   }
 }
 
-/// Commands end with ✓ / ✗ and their run time; other rows show their diff stat
+/// Commands end with ✓ / ✗ and their run time; other rows show their diff stat. A background task's state tag (and its
+/// Stop while it runs) stands in for the glyph and, unlike the webview, for the run time too: the tag is long, a row's
+/// trailing never truncates, and the command it names must keep room on a phone
 struct ToolTrailing: View {
   let block: ToolCallBlock
   let execute: Bool
 
   var body: some View {
-    if execute {
+    if execute, let task = block.asyncTask {
+      TaskTag(task: task)
+    } else if execute {
       let duration = block.startedAt.flatMap { start in block.endedAt.map { commandDuration(ms: $0 - start) } }
       if block.status == .completed {
         Icon(.check, size: WebMetrics.chevron, strokeWidth: 2).foregroundStyle(Palette.ok)
@@ -151,8 +158,58 @@ struct ToolTrailing: View {
         // row's gap and a long command is cut before it; Row drops a slot that renders nothing
         Color.clear.frame(width: 0, height: 0)
       }
-    } else if let stat = block.diffStat {
-      DiffStatView(add: stat.add, del: stat.del)
+    } else {
+      if let stat = block.diffStat { DiffStatView(add: stat.add, del: stat.del) }
+      if let task = block.asyncTask { TaskTag(task: task) }
+    }
+  }
+}
+
+/// An AIR async task on its row: the state ("Stopping…" once a stop is asked; done in the ok tone, failed in danger),
+/// then Stop while the task runs and the adapter can stop it. A refusal comes back as the engine's error toast, and the
+/// row is live again with its Stop
+struct TaskTag: View {
+  let task: AsyncTaskInfo
+  @Environment(\.sessionActions) private var actions
+
+  var body: some View {
+    let state = taskRowState(task)
+    Text(web: state.tag)
+      .foregroundStyle(state.tone == .danger ? Palette.danger : state.tone == .ok ? Palette.ok : Palette.fg3)
+      .lineLimit(1)
+    if state.stoppable {
+      // Small enough to sit in a process row without growing it, as the webview's sm button with a size-3 glyph
+      Button { actions.stopTask(task.id) } label: {
+        Icon(.square, size: WebMetrics.chevron, strokeWidth: 1.5)
+      }
+      .buttonStyle(IconButtonStyle(side: WebMetrics.ctlSm))
+      .padding(.vertical, -Metrics.s1)
+      .padding(.trailing, -Metrics.s1)
+      .accessibilityLabel(Text(web: t("asyncTask.stop")))
+    }
+  }
+}
+
+/// TaskMeta: the task's own report under its row, its latest summary, the tool it was last on and its usage. The
+/// output file stays hidden: the card already shows the command
+struct TaskMeta: View {
+  let task: AsyncTaskInfo?
+
+  var body: some View {
+    if let task {
+      let usage = taskUsage(task)
+      // A workflow's last tool is whichever of its agents reported last, which says nothing on its own
+      let tool = task.taskType == "workflow" ? nil : task.lastToolName
+      if task.summary != nil || tool != nil || usage != nil {
+        VStack(alignment: .leading, spacing: Metrics.s1) {
+          if let summary = task.summary { Text(web: summary).fixedSize(horizontal: false, vertical: true) }
+          if let tool { Text(web: tool) }
+          if let usage { Text(web: usage) }
+        }
+        .textStyle(WebType.text3)
+        .foregroundStyle(Palette.fg3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+      }
     }
   }
 }
@@ -181,14 +238,15 @@ struct CommandDisclosure<Label: View, Trailing: View>: View {
     // The phone keeps it there too: a column-wide card without the rail lost the desktop's reading of the row (2026-10-27)
     Disclosure(open: foldBinding($manual, defaultOpen || preOpen.contains(.command)), icon: icon,
                bodyTop: Metrics.gapHalf) { label } trailing: { trailing } content: {
-      if block.kind == .execute {
-        // An image the command produced (screenshot tools) sits below its output (ToolCall.tsx ToolBody)
-        VStack(alignment: .leading, spacing: Metrics.gap) {
+      VStack(alignment: .leading, spacing: Metrics.gap) {
+        TaskMeta(task: block.asyncTask)
+        if block.kind == .execute {
+          // An image the command produced (screenshot tools) sits below its output (ToolCall.tsx ToolBody)
           TerminalOutput(block: block, command: command)
           ForEach(Array(toolImages(block).enumerated()), id: \.offset) { _, image in AgentImageView(blob: image.blob, uri: image.uri) }
+        } else {
+          ToolOutput(text: items.compactMap { if case .text(let t) = $0 { t } else { nil } }.joined(separator: "\n"))
         }
-      } else {
-        ToolOutput(text: items.compactMap { if case .text(let t) = $0 { t } else { nil } }.joined(separator: "\n"))
       }
     }
     .padding(.bottom, open ? Metrics.commandAfter : 0)

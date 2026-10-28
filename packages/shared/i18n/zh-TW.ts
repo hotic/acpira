@@ -1434,6 +1434,7 @@ export const zhTW = {
   'mobile.projects.pathHint': '執行 Acpira 引擎那台電腦上的路徑',
   'mobile.new.placeholder': '想做點什麼？',
   'mobile.thinking.off': '思考已關閉',
+  'mobile.edit.title': '編輯訊息',
   'mobile.agent.notInstalled': '未安裝',
   'mobile.theme.system': '跟隨系統',
   'mobile.terminal.close': '關閉終端機',

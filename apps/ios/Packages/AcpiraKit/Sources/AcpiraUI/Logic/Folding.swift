@@ -13,18 +13,37 @@ public struct CodexSplit {
   public var reply: [TextBlock]
   public var permissions: [PermissionBlock]
   public var notices: [NoticeBlock]
+  /// Goal milestones before any other block, which open the turn above the fold
+  public var goalsLead: [GoalBlock] = []
+  /// Goal milestones after the turn's last action, which follow the reply
+  public var goals: [GoalBlock] = []
 }
 
-/// splitCodexBlocks: the text after the last action stays outside the process fold; explicit phases win
+/// splitCodexBlocks: the text after the last action stays outside the process fold; explicit phases win. Goal
+/// milestones are status rows: the leading ones open the turn, the ones after the last action follow the reply, and
+/// one that more actions follow (a `/goal` steered into a running turn) keeps its place in the process
 public func splitCodexBlocks(_ blocks: [AgentBlock]) -> CodexSplit {
   var permissions: [PermissionBlock] = []
   var notices: [NoticeBlock] = []
   var content: [AgentBlock] = []
-  for block in blocks {
+  var goalsLead: [GoalBlock] = []
+  var goals: [GoalBlock] = []
+  func isAction(_ b: AgentBlock) -> Bool {
+    switch b {
+    case .goal, .text, .permission, .notice: false
+    case .question(let q): q.outcome != nil
+    default: true
+    }
+  }
+  let firstOther = blocks.firstIndex { if case .goal = $0 { false } else { true } }
+  let lastAction = blocks.lastIndex(where: isAction)
+  for (i, block) in blocks.enumerated() {
     switch block {
     case .permission(let p): permissions.append(p)
     case .notice(let n): notices.append(n)
     case .question(let q) where q.outcome == nil: break
+    case .goal(let g) where firstOther.map({ i < $0 }) ?? true: goalsLead.append(g)
+    case .goal(let g) where lastAction.map({ i > $0 }) ?? true: goals.append(g)
     default: content.append(block)
     }
   }
@@ -48,7 +67,8 @@ public func splitCodexBlocks(_ blocks: [AgentBlock]) -> CodexSplit {
       process.append(block)
     }
   }
-  return CodexSplit(process: process, reply: reply, permissions: permissions, notices: notices)
+  return CodexSplit(process: process, reply: reply, permissions: permissions, notices: notices, goalsLead: goalsLead,
+                    goals: goals)
 }
 
 // MARK: - Process items

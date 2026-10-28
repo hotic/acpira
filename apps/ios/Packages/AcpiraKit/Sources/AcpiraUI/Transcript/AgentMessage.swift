@@ -16,6 +16,10 @@ struct AgentMessage: View {
   var index = 0
   /// The session's newest turn: only there, once settled, do failure notices offer their remedies
   var last = false
+  /// The selections the prompt went out with: the statistics name the model from them when the peer did not
+  var settings: TurnSettings?
+  /// The reply failed in a way Retry answers (`retryableTurn`): its action row offers it
+  var retry = false
   @Environment(\.sessionActions) private var sessionActions
 
   var body: some View {
@@ -41,7 +45,7 @@ struct AgentMessage: View {
         }
       }
       if showsTurnActions(turn, running: running) {
-        TurnActions(turn: turn, index: index)
+        TurnActions(turn: turn, index: index, settings: settings, retry: retry, last: last)
       }
     }
     .padding(.horizontal, Metrics.pad)
@@ -75,12 +79,16 @@ struct CodexMessage: View {
     let split = splitCodexBlocks(turn.blocks.map(observedBlock))
     let hasTools = turn.blocks.contains { $0.toolCall != nil }
     VStack(alignment: .leading, spacing: Metrics.gap) {
+      // Goal milestones before anything else (a `/goal` prompt's own "Goal set") open the turn above the fold
+      ForEach(Array(split.goalsLead.enumerated()), id: \.offset) { _, goal in GoalRow(block: goal) }
       CodexFold(turn: turn, blocks: split.process, running: running, hasTools: hasTools)
       ForEach(split.notices, id: \.id) { NoticeRow(block: $0) }
       ForEach(Array(split.reply.enumerated()), id: \.offset) { _, block in
         // A long press on a block of the reply quotes it into the composer (Quotes.swift)
         StreamProse(block: block).environment(\.quoteProse, QuoteAction(run: actions.quote))
       }
+      // Later milestones (paused, met, cleared …) close the reply they followed
+      ForEach(Array(split.goals.enumerated()), id: \.offset) { _, goal in GoalRow(block: goal) }
       ForEach(split.permissions.filter { $0.planId == nil }, id: \.id) { block in
         PermissionCard(block: block) { onPermission(block.id, $0) }
       }

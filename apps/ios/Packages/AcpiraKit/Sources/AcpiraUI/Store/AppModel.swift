@@ -344,10 +344,12 @@ final class AppModel {
     startTurn(id, text: trimmed, attachments: attachments)
   }
 
-  /// Appends the prompt and streams the demo reply after it
-  private func startTurn(_ id: String, text: String, attachments: [Attachment]) {
+  /// Appends the prompt and streams the demo reply after it; `edited` marks a rewritten prompt (AppModel+Turns.swift)
+  func startTurn(_ id: String, text: String, attachments: [Attachment], edited: Bool = false) {
     guard var view = views[id] else { return }
-    view.turns.append(.user(UserTurn(text: text, attachments: attachments.isEmpty ? nil : attachments)))
+    var prompt = UserTurn(text: text, attachments: attachments.isEmpty ? nil : attachments)
+    if edited { prompt.edited = true }
+    view.turns.append(.user(prompt))
     view.running = false
     var full = view
     full.turns.append(.agent(DemoReply.turn(for: text, cwd: view.cwd, at: now)))
@@ -842,6 +844,14 @@ struct SessionActions {
   var failureAction: (FailureAction) -> Void = { _ in }
   /// Stages text quoted from the transcript in the chat's composer
   var quote: (String) -> Void = { _ in }
+  /// Takes the sent prompt at that turn index into the composer for rewriting; send then goes out as `editTurn`
+  var editPrompt: (Int) -> Void = { _ in }
+  var sendEdit: (String, [Attachment]) -> Void = { _, _ in }
+  var cancelEdit: () -> Void = {}
+  /// A goal control (`set` carries the objective)
+  var goal: (GoalAction, String?) -> Void = { _, _ in }
+  /// Asks the agent to stop a background task by its id
+  var stopTask: (String) -> Void = { _ in }
 }
 
 extension EnvironmentValues {

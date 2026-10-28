@@ -1429,6 +1429,7 @@ export const ru = {
   'mobile.projects.pathHint': 'Путь на компьютере, где работает движок Acpira',
   'mobile.new.placeholder': 'Чем займёмся?',
   'mobile.thinking.off': 'Размышление выкл.',
+  'mobile.edit.title': 'Редактирование сообщения',
   'mobile.agent.notInstalled': 'Не установлен',
   'mobile.theme.system': 'Как в системе',
   'mobile.terminal.close': 'Закрыть терминал',

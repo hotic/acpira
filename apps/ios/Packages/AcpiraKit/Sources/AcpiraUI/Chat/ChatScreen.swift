@@ -48,7 +48,7 @@ struct ChatScreen: View {
       Thread(session: session)
       // The dock reaches down into the home indicator's band and rests where the list's system bottom bar does
       // (Metrics.barSink), leaving the thread more room; on a phone without the indicator it keeps the plain gap
-      Dock(session: session, draft: Bindable(draft).text, staged: Bindable(draft).staged)
+      Dock(session: session, draft: Bindable(draft).text, staged: Bindable(draft).staged, edit: Bindable(draft).edit)
         .padding(.bottom, keyboard ? Metrics.s2 : max(Metrics.s2, homeInset - Metrics.barSink))
     }
     // The keyboard's safe area still lifts the dock; only the container's (the home indicator) is taken over
@@ -66,6 +66,7 @@ struct ChatScreen: View {
       // switching to the agent's first account
       if initialPopup == "account" { accountOpen = true }
       if initialPopup == "quotes" { model.seedQuotes(id) }
+      if initialPopup == "edit" { model.beginEditLast(id) }
       if initialPopup == "toast", let account = model.accounts.first(where: { $0.agent == agent.id }) {
         Task {
           try? await Task.sleep(for: .seconds(1))
@@ -153,7 +154,12 @@ struct ChatScreen: View {
       login: { model.login(id, method: $0) },
       takeOver: { model.takeOver(id) },
       failureAction: { model.failureAction(id, $0) },
-      quote: { model.quote(id, $0) })
+      quote: { model.quote(id, $0) },
+      editPrompt: { model.beginEdit(id, turn: $0) },
+      sendEdit: { model.sendEdit(id, text: $0, attachments: $1) },
+      cancelEdit: { model.cancelEdit(id) },
+      goal: { model.goal(id, $0, objective: $1) },
+      stopTask: { model.stopTask(id, task: $0) })
   }
 }
 
@@ -292,7 +298,11 @@ struct ThreadContent: View {
     .environment(\.planContext, PlanContext(controls: session.controls, running: session.running, ready: session.status == .ready))
   }
 
-  private func sections(_ groups: [Exchange], _ activeAgent: Int?) -> some View {
+  @ViewBuilder private func sections(_ groups: [Exchange], _ activeAgent: Int?) -> some View {
+    // What the prompts' long-press menus offer, and the failed reply that offers Retry
+    let editable = canEditPrompts(session)
+    let goalPrompt = canSetGoal(session) ? lastTypedPrompt(session.turns) : nil
+    let retry = retryableTurn(session)
     ForEach(Array(groups.enumerated()), id: \.element.id) { n, exchange in
       // The gap to the next exchange closes this one, so a pinned card keeps no transparent band above it; an
       // exchange ending in a reply's action row only needs a row gap, the row's own height separates them
@@ -302,7 +312,8 @@ struct ThreadContent: View {
         VStack(alignment: .leading, spacing: WebMetrics.msgGap) {
           ForEach(exchange.agents, id: \.index) { item in
             AgentMessage(turn: item.turn, running: session.running && item.index == activeAgent && item.turn.stop == nil,
-                         scope: "\(session.id):\(item.index)", index: item.index, last: item.index == session.turns.count - 1)
+                         scope: "\(session.id):\(item.index)", index: item.index, last: item.index == session.turns.count - 1,
+                         settings: exchange.user?.settings, retry: item.index == retry)
           }
         }
         .padding(.top, exchange.user != nil && !exchange.agents.isEmpty ? WebMetrics.msgGap : 0)
@@ -310,7 +321,7 @@ struct ThreadContent: View {
         .environment(\.preOpen, n == groups.count - 1 ? preOpen : [])
       } header: {
         if let user = exchange.user, user.auto != true {
-          UserMessageCard(turn: user)
+          UserMessageCard(turn: user, index: exchange.id, editable: editable, goal: exchange.id == goalPrompt)
         }
       }
     }

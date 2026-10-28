@@ -38,6 +38,14 @@ extension ToolCallBlock {
   }
 }
 
+extension SessionGoal {
+  public init(objective: String, status: GoalStatus, iterations: Int? = nil, tokenBudget: Int? = nil, tokensUsed: Int? = nil,
+              timeUsedSeconds: Double? = nil) {
+    self.objective = objective; self.status = status; self.iterations = iterations; self.tokenBudget = tokenBudget
+    self.tokensUsed = tokensUsed; self.timeUsedSeconds = timeUsedSeconds
+  }
+}
+
 extension QueuedPrompt {
   public init(id: String, text: String, attachments: [Attachment]? = nil) {
     self.id = id; self.text = text; self.attachments = attachments
