@@ -271,11 +271,10 @@ async fn run(cmd: Value) -> (bool, Value) {
       let path = cmd["path"].as_str().unwrap_or("/tmp/acpira-shot.png").to_owned();
       #[cfg(target_os = "macos")]
       {
-        let number = on_main(move || crate::mac::window_number(&w.window)).await.flatten();
-        let Some(n) = number else { return (false, json!("no window number")) };
-        let ok =
-          std::process::Command::new("screencapture").args(["-x", "-o", "-l", &n.to_string(), &path]).status().is_ok_and(|s| s.success());
-        (ok, json!(path))
+        match crate::mac::screenshot(&w.window, &path).await {
+          Ok(()) => (true, json!(path)),
+          Err(e) => (false, json!(e)),
+        }
       }
       #[cfg(target_os = "linux")]
       {
