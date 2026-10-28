@@ -34,9 +34,25 @@ public enum L10n {
     return dict
   }
 
-  /// The message for `key` with `{param}` placeholders filled
+  /// i18n/index.ts pluralCategory: CLDR cardinal rules for the shipped locales, counts only; nil is the plain key
+  static func pluralCategory(_ locale: String, _ n: Int) -> String? {
+    guard n >= 0 else { return nil }
+    switch locale {
+    case "ru":
+      let d = n % 10, h = n % 100
+      if d == 1 && h != 11 { return "one" }
+      return (2...4).contains(d) && !(12...14).contains(h) ? "few" : "many"
+    case "fr": return n < 2 ? "one" : nil
+    case "en", "es", "de": return n == 1 ? "one" : nil
+    default: return nil
+    }
+  }
+
+  /// The message for `key` with `{param}` placeholders filled; a count (`n` or `count`) picks the plural variant
   public static func t(_ key: String, _ params: [String: CustomStringConvertible] = [:]) -> String {
-    var text = table[key] ?? english[key] ?? key
+    let count = (params["n"] ?? params["count"]).flatMap { Int($0.description) }
+    let variant = count.flatMap { pluralCategory(locale, $0) }.flatMap { table["\(key)#\($0)"] }
+    var text = variant ?? table[key] ?? english[key] ?? key
     for (name, value) in params { text = text.replacingOccurrences(of: "{\(name)}", with: value.description) }
     return text
   }

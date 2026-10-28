@@ -253,6 +253,10 @@ public enum Metrics {
   public static let dockGap: CGFloat = 8
   public static let thumb: CGFloat = 56
   public static let agentImage: CGFloat = 240
+  /// An HTML widget (tokens.css --widget-placeholder / --widget-max): the room held before its page reports a height,
+  /// and the height past which the page scrolls inside itself
+  public static let widgetPlaceholder: CGFloat = 120
+  public static let widgetMax: CGFloat = 900
   public static let hit: CGFloat = 6
   public static var indent: CGFloat { lead + gap }
   public static let railWidth: CGFloat = 1
@@ -447,6 +451,8 @@ public enum Motion {
   public static let ringLand: Double = 0.28
   /// How long a toast stays up (the phone's confirmation of copy, pin, export …)
   public static let toast: Double = 1.8
+  /// A toast offering undo stays long enough to reach for it
+  public static let toastUndo: Double = 6
   public static let durOpen: Double = 0.220
   public static let durClose: Double = 0.320
   public static let enter: Double = 0.300

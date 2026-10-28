@@ -292,6 +292,7 @@ public struct ProjectHunk: Codable, Hashable, Sendable {
   public var at: Int
   public var add: Int
   public var del: [String]?
+  public init(at: Int, add: Int, del: [String]? = nil) { self.at = at; self.add = add; self.del = del }
 }
 
 /// A file the session changed against what it held before the session's first edit; absolute when outside the project
@@ -300,6 +301,7 @@ public struct ProjectChange: Codable, Hashable, Sendable {
   public var add: Int
   public var del: Int
   public var gone: Bool?
+  public init(path: String, add: Int, del: Int, gone: Bool? = nil) { self.path = path; self.add = add; self.del = del; self.gone = gone }
 }
 
 /// What a file's hunks are measured against: before the session's first edit of it, or the last commit

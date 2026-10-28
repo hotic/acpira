@@ -12,6 +12,8 @@ public enum EngineEvent: Sendable {
   /// An envelope that did not decode: a push the app now misses (an engine newer than this mirror), reported so it
   /// never vanishes silently
   case dropped(String)
+  /// The engine turned the hello down for speaking another protocol version (its own here); `.closed` follows
+  case incompatible(engineVersion: Int)
   /// The wire ended: a rejected hello, the engine gone, the connection lost (nil: closed from this side)
   case closed(String?)
 }
@@ -97,7 +99,8 @@ public actor EngineClient {
         for await action in actions { await write(.webviewMessage(viewId: viewId, message: action)) }
       }
       sink.yield(.connected(ok))
-    case .helloReject(_, _, let reason):
+    case .helloReject(_, let version, let reason):
+      if version != hello.protocolVersion { sink.yield(.incompatible(engineVersion: version)) }
       throw EngineError.rejected(reason)
     case .hostMessage(let id, let host) where id == viewId:
       sink.yield(.host(host))

@@ -2,7 +2,8 @@ import AcpiraDesign
 import SwiftUI
 
 // The phone's settings: the webview's appearance and language preferences that make sense on a phone (theme, motion,
-// the interface language), the engine connection and the app's version, as a system form in a sheet. Preferences
+// the interface language), the engine's settings a phone may change (EngineSettings.swift), the engine connection and
+// the app's version, as a system form in a sheet. Preferences
 // persist in UserDefaults (`Prefs`); launch arguments for screenshots override them.
 
 /// UserDefaults keys of the phone's preferences
@@ -14,6 +15,8 @@ enum Prefs {
   static let motion = "acpira.motion"
   /// The session list's view: `time` (day captions) or `project` (folding project groups)
   static let listView = "acpira.listView"
+  /// Where pinned sessions sit by project: `top` or `project` (PinPlace)
+  static let pinPlace = "acpira.pinPlace"
 
   /// The table a stored language choice selects
   static func resolve(_ locale: String) -> String { locale == "auto" ? L10n.preferred() : locale }
@@ -24,8 +27,10 @@ enum Prefs {
 /// at the left edge, where the system's own pages centre it beside back
 struct SettingsSheet: View {
   @Environment(\.dismiss) private var dismiss
+  /// `-settingsPage agents | agent:ID | models:ID` opens a page for screenshots
+  @State private var path = SettingsRoute.launchPath(UserDefaults.standard.string(forKey: "settingsPage"))
   var body: some View {
-    NavigationStack {
+    NavigationStack(path: $path) {
       SettingsScreen()
         .toolbar {
           ToolbarItem(placement: .primaryAction) { Button(role: .close) { dismiss() } }
@@ -40,6 +45,7 @@ struct SettingsScreen: View {
   @AppStorage(Prefs.theme) private var theme = "system"
   @AppStorage(Prefs.locale) private var locale = "auto"
   @AppStorage(Prefs.motion) private var motion = true
+  @Environment(AppModel.self) private var model
 
   var body: some View {
     Form {
@@ -64,24 +70,34 @@ struct SettingsScreen: View {
           }
         }
       }
+      // The engine's own settings, shared with the computer
+      EngineSettingsSections()
       Section {
         // One fact: the state, with its dot; what it means goes in the footnote
         LabeledContent(t("mobile.engine.status")) {
           HStack(spacing: Metrics.s1_5) {
-            Circle().fill(Palette.fg3).frame(width: Metrics.rowDot, height: Metrics.rowDot)
-            Text(web: t("connections.state.off"), paragraph: false)
+            Circle().fill(model.live ? Palette.ok : Palette.fg3).frame(width: Metrics.rowDot, height: Metrics.rowDot)
+            Text(web: t(model.live ? "connections.state.connected" : "connections.state.off"), paragraph: false)
           }
         }
       } header: {
         Text(web: t("mobile.engine"))
       } footer: {
-        Text(web: t("mobile.engine.desc"))
+        // The demo's word on what it shows; a development engine needs none
+        if !model.live { Text(web: t("mobile.engine.desc")) }
       }
       Section(t("mobile.about")) {
         LabeledContent(t("settings.fact.version"), value: version)
       }
     }
     .formPage()
+    .navigationDestination(for: SettingsRoute.self) { route in
+      switch route {
+      case .agents: AgentsSettingsPage()
+      case .agent(let id): AgentSettingsPage(id: id)
+      case .models(let id): ModelsSettingsPage(id: id)
+      }
+    }
     .navigationTitle(t("session.settings"))
     .navigationBarTitleDisplayModeInline()
   }

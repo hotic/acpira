@@ -204,7 +204,8 @@ struct ToolBody: View {
     VStack(alignment: .leading, spacing: Metrics.gap) {
       ForEach(Array(items.enumerated()), id: \.offset) { _, item in
         switch item {
-        case .diff(let lines, _): DiffBlockView(lines: lines, title: block.target ?? "")
+        case .diff(let lines, let source):
+          DiffBlockView(lines: lines, title: block.target ?? "", source: source, locate: diffLocation(block, lines))
         case .list(let list): ResultList(items: list, kind: block.kind)
         case .text(let text): ToolOutput(text: text)
         case .image(let image): if !isWidget(image) { AgentImageView(blob: image.blob, uri: image.uri) }
@@ -306,7 +307,9 @@ struct EditEntry: View {
   var body: some View {
     let stat = diffStatOf(blocks)
     let span = editSpan(blocks)
-    let diffs = blocks.flatMap { visibleToolContents($0) }.filter { if case .diff = $0 { true } else if case .text = $0 { true } else { false } }
+    let diffs = blocks.flatMap { block in
+      visibleToolContents(block).filter { if case .diff = $0 { true } else if case .text = $0 { true } else { false } }.map { (block, $0) }
+    }
     let label = HStack(alignment: .firstTextBaseline, spacing: Metrics.s1) {
       RowTarget(fileName(blocks[0]), mono: true, ink: Palette.fg2)
       if let span { Aside(span) }
@@ -320,9 +323,11 @@ struct EditEntry: View {
         label
       } trailing: { trailing } content: {
         VStack(alignment: .leading, spacing: Metrics.gap) {
-          ForEach(Array(diffs.enumerated()), id: \.offset) { _, item in
+          ForEach(Array(diffs.enumerated()), id: \.offset) { _, entry in
+            let (block, item) = entry
             switch item {
-            case .diff(let lines, _): DiffBlockView(lines: lines, title: fileName(blocks[0]))
+            case .diff(let lines, let source):
+              DiffBlockView(lines: lines, title: fileName(blocks[0]), source: source, locate: diffLocation(block, lines))
             case .text(let text): ToolOutput(text: text)
             default: EmptyView()
             }
@@ -520,6 +525,10 @@ struct DiffBlockView: View {
   let lines: [DiffLine]
   /// The file, for the code sheet's title and the grammar
   var title = ""
+  /// The whole files behind the diff (a page view keeps the path only) and where the diff sits, to ask for them
+  var source: DiffSource?
+  var locate: DiffLocation?
+  @Environment(\.diffSource) private var fetchSource
   @Environment(\.codeSheet) private var inSheet
   @Environment(\.snapshot) private var snapshot
   @Environment(\.colorScheme) private var scheme
@@ -606,10 +615,27 @@ struct DiffBlockView: View {
       let result = await Task.detached(priority: .utility) { SyntaxHighlighter.shared.diff(lines, path: title, theme: theme) }.value
       if let result { colored = Colored(lines: lines, theme: theme, tokens: result) }
     }
-    // The rows as a unified diff: the wire text already starts with its sign
-    .codeViewer(title: title, copy: rows.map { lines[$0] }.filter { $0.kind != .hunk }.map(\.text).joined(separator: "\n"), copyLabel: t("code.copyCode")) {
-      DiffBlockView(lines: lines, title: title)
+    // CodeBlock.tsx: copy takes the new file, asked for when the view left its text out, else the visible new code
+    .codeViewer(title: title, copy: copyText, copyLabel: t(copiesSource ? "code.copySource" : "code.copyVisible"), read: readSource) {
+      DiffBlockView(lines: lines, title: title, source: source, locate: locate)
     }
+  }
+
+  private var copyText: String { diffCopyText(lines, source) }
+
+  private var fetchable: Bool {
+    if case .omitted? = source, locate != nil, fetchSource != nil { true } else { false }
+  }
+
+  private var copiesSource: Bool {
+    if case .full? = source { true } else { fetchable }
+  }
+
+  /// The new file from the engine; the visible code when it no longer has the call
+  private var readSource: (() async -> String)? {
+    guard fetchable, let locate, let fetchSource else { return nil }
+    let fallback = copyText
+    return { await fetchSource(locate)?.newText ?? fallback }
   }
 }
 
@@ -640,8 +666,10 @@ extension View {
   }
 
   /// A tap on a code card opens the whole card in the code sheet; inside the sheet the card stays as it is
-  func codeViewer<Full: View>(title: String, copy: String, copyLabel: String, @ViewBuilder full: @escaping () -> Full) -> some View {
-    modifier(CodeViewer(title: title, copy: copy, copyLabel: copyLabel, full: full))
+  /// read: the text copy takes when it has to be fetched first (a diff's whole file); `copy` until then
+  func codeViewer<Full: View>(title: String, copy: String, copyLabel: String, read: (() async -> String)? = nil,
+                              @ViewBuilder full: @escaping () -> Full) -> some View {
+    modifier(CodeViewer(title: title, copy: copy, copyLabel: copyLabel, read: read, full: full))
   }
 }
 
@@ -649,6 +677,7 @@ private struct CodeViewer<Full: View>: ViewModifier {
   var title: String
   var copy: String
   var copyLabel: String
+  var read: (() async -> String)?
   let full: () -> Full
   @Environment(\.codeSheet) private var inSheet
   @Environment(\.initialPopup) private var initialPopup
@@ -659,7 +688,7 @@ private struct CodeViewer<Full: View>: ViewModifier {
       content
         .contentShape(Rectangle())
         .onTapGesture { shown = true }
-        .sheet(isPresented: $shown) { CodeSheet(title: title, copy: copy, copyLabel: copyLabel, content: full) }
+        .sheet(isPresented: $shown) { CodeSheet(title: title, copy: copy, copyLabel: copyLabel, read: read, content: full) }
         .task {
           // `-popup code` opens the first card that shows, for screenshots
           guard initialPopup == "code", !CodeSheetProbe.claimed else { return }
@@ -684,6 +713,7 @@ struct CodeSheet<Content: View>: View {
   var title: String
   var copy: String
   var copyLabel: String
+  var read: (() async -> String)? = nil
   let content: () -> Content
   @Environment(\.dismiss) private var dismiss
   @State private var copied = false
@@ -705,8 +735,15 @@ struct CodeSheet<Content: View>: View {
         }
         ToolbarItem(placement: .primaryAction) {
           Button {
-            UIPasteboardBridge.copy(copy)
-            copied = true
+            guard let read else {
+              UIPasteboardBridge.copy(copy)
+              copied = true
+              return
+            }
+            Task {
+              UIPasteboardBridge.copy(await read())
+              copied = true
+            }
           } label: {
             Image(systemName: copied ? "checkmark" : "doc.on.doc")
           }
@@ -721,4 +758,31 @@ struct CodeSheet<Content: View>: View {
       copied = false
     }
   }
+}
+
+// MARK: - Diff sources
+
+/// Where a diff sits in the session: its tool call and which of the call's diffs (CodeBlock.tsx DiffLocation)
+nonisolated struct DiffLocation: Hashable, Sendable {
+  var toolCallId: String
+  var nth: Int
+}
+
+/// The location of the diff with these lines, counted among the call's diffs (`contents`, or `content` alone)
+nonisolated func diffLocation(_ block: ToolCallBlock, _ lines: [DiffLine]) -> DiffLocation? {
+  let diffs = (block.contents ?? block.content.map { [$0] } ?? []).compactMap { item -> [DiffLine]? in
+    if case .diff(let lines, _) = item { lines } else { nil }
+  }
+  return diffs.firstIndex(of: lines).map { DiffLocation(toolCallId: block.id, nth: $0) }
+}
+
+/// codeDiff.ts diffCopyText: the new file when the diff carries it, else the visible new code without signs
+nonisolated func diffCopyText(_ lines: [DiffLine], _ source: DiffSource?) -> String {
+  if case .full(let full)? = source { return full.newText }
+  return lines.filter { $0.kind == .add || $0.kind == .ctx }.map(\.code).joined(separator: "\n")
+}
+
+extension EnvironmentValues {
+  /// Asks the engine for a diff's whole files in the chat's session (nil: no engine, or it no longer has the call)
+  @Entry var diffSource: ((DiffLocation) async -> FullDiffSource?)? = nil
 }

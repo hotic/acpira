@@ -512,6 +512,7 @@ struct LiquidControls: View {
   var onSetMode: (String) -> Void
   var onSetConfig: (String, String) -> Void
   @Environment(\.motionEnabled) private var motion
+  @Environment(\.hiddenModels) private var hidden
 
   /// One bean: its glyph, the value beside it and the panel it turns into
   private struct Bean {
@@ -524,7 +525,7 @@ struct LiquidControls: View {
   }
 
   var body: some View {
-    let c = ModelChoices(controls: controls, onSetConfig: onSetConfig)
+    let c = ModelChoices(controls: controls, hidden: hidden, onSetConfig: onSetConfig)
     let beans = beans(c)
     if !beans.isEmpty {
       GooChip(id: "model", open: $open, stage: $stage, pieces: pieces(beans)) {
@@ -752,9 +753,16 @@ struct ModelChoices {
   let sidekickEffort: ConfigControl?
   private let onSetConfig: (String, String) -> Void
 
-  init(controls: SessionControls, onSetConfig: @escaping (String, String) -> Void) {
+  /// hidden: the agent's settings `hiddenOptions` (option id → hidden family keys); the model in use always stays
+  init(controls: SessionControls, hidden: [String: [String]] = [:], onSetConfig: @escaping (String, String) -> Void) {
     let split = ComposerControls.split(controls.options)
-    let model = split.models.first
+    // The models the settings left visible (ModelPicker.tsx visibleOptions), the sidekick's list as well
+    func visible(_ c: ConfigControl) -> ConfigControl {
+      var c = c
+      c.options = ModelCatalog.visibleOptions(c.options, hidden: hidden[c.id], current: c.value)
+      return c
+    }
+    let model = split.models.first.map(visible)
     let families = model.map { ModelCatalog.group($0.options) } ?? []
     let cur = families.first { f in f.variants.contains { $0.id == model?.value } }
     let curVar = cur?.variants.first { $0.id == model?.value }
@@ -765,7 +773,7 @@ struct ModelChoices {
     self.effort = Self.effort(split: split, cur: cur, curVar: curVar, modelId: model?.id, onSetConfig: onSetConfig)
     self.mode = controls.modes.first { $0.id == controls.modeId } ?? controls.modes.first
     self.modes = controls.modes.count > 1 ? controls.modes : []
-    self.sidekick = split.sidekick.first
+    self.sidekick = split.sidekick.first.map(visible)
     self.sidekickEffort = split.sidekickEffort.first
     self.onSetConfig = onSetConfig
   }
@@ -910,4 +918,9 @@ struct FastGlyph: View {
     }
     .frame(width: size, height: size)
   }
+}
+
+extension EnvironmentValues {
+  /// The chat agent's hidden model families by option id (settings → Agents → Models), for the model chip's lists
+  @Entry var hiddenModels: [String: [String]] = [:]
 }

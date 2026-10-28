@@ -168,7 +168,10 @@ public struct AccountInfo: Codable, Hashable, Sendable, Identifiable {
 public struct SessionOption: Codable, Hashable, Sendable, Identifiable {
   public struct Group: Codable, Hashable, Sendable { public var id: String; public var name: String }
   /// A provider verified by the agent adapter (official / custom), never inferred from a display name
-  public struct Source: Codable, Hashable, Sendable { public var id: String; public var name: String; public var kind: String }
+  public struct Source: Codable, Hashable, Sendable {
+    public var id: String; public var name: String; public var kind: String
+    public init(id: String, name: String, kind: String) { self.id = id; self.name = name; self.kind = kind }
+  }
   public var id: String
   public var name: String
   public var description: String?
@@ -187,6 +190,9 @@ public struct ConfigControl: Codable, Hashable, Sendable, Identifiable {
   public var type: String?
   public var options: [SessionOption]
   public var value: String?
+  public init(id: String, name: String, category: String? = nil, type: String? = nil, options: [SessionOption] = [], value: String? = nil) {
+    self.id = id; self.name = name; self.category = category; self.type = type; self.options = options; self.value = value
+  }
 }
 
 public struct SessionControls: Codable, Hashable, Sendable {
@@ -230,6 +236,9 @@ public struct DiffLine: Codable, Hashable, Sendable {
   public var text: String
   public var oldLine: Int?
   public var newLine: Int?
+  public init(kind: Kind, text: String, oldLine: Int? = nil, newLine: Int? = nil) {
+    self.kind = kind; self.text = text; self.oldLine = oldLine; self.newLine = newLine
+  }
 }
 
 /// The whole files behind a diff, as the `diffSource` push answers with them

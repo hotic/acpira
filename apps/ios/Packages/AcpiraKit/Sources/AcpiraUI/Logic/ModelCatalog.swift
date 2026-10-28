@@ -29,6 +29,8 @@ struct ModelFamily: Hashable, Sendable {
   /// The blurb every option of the family shares, if any
   var description: String?
   var source: String?
+  /// `official` / `custom`, from the agent adapter's source metadata
+  var sourceKind: String?
   var variants: [ModelVariant]
   /// Effort labels by strength, deduplicated
   var efforts: [String] = []
@@ -109,10 +111,12 @@ enum ModelCatalog {
       let namespace = o.source?.id ?? o.group?.id
       let separate = ambiguous.contains(Base(namespace: namespace, family: p.family))
       let source = o.source?.name ?? o.group?.name ?? (separate ? o.id : nil)
-      let key = separate ? "\(namespace ?? "")\u{1}\(p.family)\u{1}\(o.id)" : namespace.map { "\($0)\u{1}\(p.family)" } ?? p.family
+      // The TS keys verbatim (JSON arrays): settings `hiddenOptions` stores them, shared with the desktop
+      let key = separate ? jsonKey([namespace, p.family, o.id]) : namespace.map { jsonKey([$0, p.family]) } ?? p.family
       var f = map[key] ?? {
         order.append(key)
-        return ModelFamily(key: key, name: p.family, description: o.description, source: source, variants: [])
+        return ModelFamily(key: key, name: p.family, description: o.description, source: source, sourceKind: o.source?.kind,
+                           variants: [])
       }()
       // Fusion pairs are Devin's own routing, like Adaptive
       if f.brand == nil { f.brand = p.lead != nil ? "devin" : optionBrand(o) }
@@ -143,6 +147,12 @@ enum ModelCatalog {
       f.hasLong = f.variants.contains(where: \.long)
       return f
     }
+  }
+
+  /// `JSON.stringify` of a short array of strings and nulls, as models.ts builds a family's key
+  static func jsonKey(_ parts: [String?]) -> String {
+    let data = try? JSONSerialization.data(withJSONObject: parts.map { $0.map { $0 as Any } ?? NSNull() }, options: [.withoutEscapingSlashes])
+    return data.flatMap { String(data: $0, encoding: .utf8) } ?? parts.map { $0 ?? "" }.joined(separator: "/")
   }
 
   /// Exact effort / Fast / 1M first, then dropping 1M, Fast, both; finally any variant at that effort

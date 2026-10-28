@@ -101,12 +101,14 @@ struct MediaSourceTests {
     #expect(fileOfURI("C:\\shots\\a.png") == "C:\\shots\\a.png")
   }
 
-  @Test func aWidgetsHTMLIsNoImage() throws {
+  @Test func aWidgetsHTMLIsItsPageNotAnImage() throws {
     let json = #"{"id":"w","kind":"other","verb":"Widget","verbKey":"verb.showWidget","status":"completed","contents":["#
       + #"{"type":"image","blob":"a.html","mimeType":"text/html"},{"type":"image","blob":"b.png","mimeType":"image/png"}]}"#
     let block = try JSONDecoder().decode(ToolCallBlock.self, from: Data(json.utf8))
     #expect(toolImages(block).map(\.blob) == ["b.png"])
-    #expect(!isImageResult(block))
+    #expect(toolWidget(block)?.blob == "a.html")
+    // A result for the reader, as imageTools.ts isImageResultBlock: under its row, after a closed fold
+    #expect(isImageResult(block))
   }
 
   @Test func markdownImages() throws {

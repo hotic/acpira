@@ -6,7 +6,7 @@ import AcpiraModels
 public enum Fixtures {
   /// Fixture names that hold a SessionView. The cards' fixtures after `empty` are hand-written (plan approval, notice
   /// rows, records, failure cards, session states); `records` carries one deliberately unknown block type
-  public static let sessionNames = ["showcase", "running", "streaming", "question", "queued", "stopped", "empty", "media",
+  public static let sessionNames = ["showcase", "running", "streaming", "question", "queued", "stopped", "empty", "diagrams", "media",
                                     "plan", "notices", "records", "context", "failure", "login", "readonly", "closed",
                                     "error", "connecting", "chatgpt"]
 

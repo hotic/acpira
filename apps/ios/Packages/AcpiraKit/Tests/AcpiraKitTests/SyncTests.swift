@@ -279,6 +279,7 @@ struct EngineClientTests {
       case .host(let m): seen.append("host:\(m)")
       case .platform: seen.append("platform")
       case .dropped: seen.append("dropped")
+      case .incompatible: seen.append("incompatible")
       case .closed(let reason): seen.append("closed:\(reason ?? "")")
       }
     }
@@ -293,8 +294,14 @@ struct EngineClientTests {
     await c.start()
     wire.feed.yield(#"{"type":"helloReject","requestId":"hello-1","protocolVersion":2,"reason":"protocol mismatch"}"#)
     var last: EngineEvent?
-    for await event in c.events { last = event }
+    var engineVersion: Int?
+    for await event in c.events {
+      if case .incompatible(let v) = event { engineVersion = v }
+      last = event
+    }
     guard case .closed(let reason) = last else { Issue.record("not closed"); return }
     #expect(reason?.contains("protocol mismatch") == true)
+    // The engine's version comes first, so the app can say which side to update
+    #expect(engineVersion == 2)
   }
 }

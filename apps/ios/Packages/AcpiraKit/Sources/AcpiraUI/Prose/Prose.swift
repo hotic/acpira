@@ -200,10 +200,12 @@ struct ProseBlock: View {
       ProseQuote(blocks: inner, style: style)
     case .code(let lang, let text):
       Group {
-      // A mermaid block the flowchart parser reads is drawn as the diagram; anything else stays source, as a failed
-      // render does in the webview
+      // A mermaid block the flowchart parser reads is drawn natively; any other diagram goes to mermaid itself in a web
+      // view, and stays source if mermaid cannot read it either, as a failed render does in the webview
       if lang == "mermaid", let diagram = MermaidBlock(source: text) {
         diagram
+      } else if lang == "mermaid" {
+        MermaidWebBlock(source: text)
       } else {
         CodeSurface(text: text, lang: lang)
       }
