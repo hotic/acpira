@@ -62,6 +62,51 @@ struct EngineModelTests {
     #expect(model.views["s1"]?.title == "T")
   }
 
+  @Test func listActionsPostTheEnginesMessages() async throws {
+    let (model, wire) = try await connected()
+    push(wire, #"{"type":"categories","categories":{"categories":[],"collapsedProjects":[],"projects":["/a","/w"],"removedProjects":["/gone"]}}"#)
+    try await until { model.projectOrder == ["/a", "/w"] }
+    #expect(model.listedProjects.prefix(2) == ["/a", "/w"])
+    model.moveProjectToTop("/w")
+    model.markAllRead()
+    model.delete("s1")
+    model.toast?.action?.run()
+    model.search("needle")
+    try await until { wire.types.last == "webviewMessage:searchSessions" }
+    #expect(Array(wire.types.suffix(5)) == ["webviewMessage:categoryOp", "webviewMessage:markAllRead", "webviewMessage:deleteSession",
+                                            "webviewMessage:restoreSession", "webviewMessage:searchSessions"])
+    #expect(wire.sent.contains { $0.contains(#""op":"reorderProject""#) && $0.contains(#""before":"\/a""#) })
+    // Only the reply to the latest query counts
+    push(wire, #"{"type":"sessionHits","seq":0,"hits":[{"id":"old","snippet":"x"}]}"#)
+    push(wire, #"{"type":"sessionHits","seq":\#(model.searchSeq),"hits":[{"id":"s1","snippet":"…a needle here"}]}"#)
+    try await until { model.hits != nil }
+    #expect(model.hits == SessionHits(query: "needle", snippets: ["s1": "…a needle here"]))
+  }
+
+  @Test func attachmentsGoAsDrafts() throws {
+    // A file picked on the phone travels as its bytes; a path on the computer stays a link
+    let folder = AttachmentFile.folder.appendingPathComponent("test-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let copy = folder.appendingPathComponent("notes.txt")
+    try Data("hi".utf8).write(to: copy)
+    let drafts = AppModel.drafts([.image(blob: "AAAA", mimeType: "image/jpeg", name: nil), .file(uri: copy.absoluteString, name: "notes.txt"),
+                                  .file(uri: "file:///Users/me/w/a.swift", name: "a.swift"), .quote(text: "q", comment: nil)])
+    #expect(drafts == [.image(mimeType: "image/jpeg", data: "AAAA", name: nil), .file(uri: copy.absoluteString, name: "notes.txt", data: "aGk="),
+                       .file(uri: "file:///Users/me/w/a.swift", name: "a.swift"), .quote(text: "q", comment: nil)])
+  }
+
+  @Test func aNewSessionTakesThePickedControls() async throws {
+    let (model, wire) = try await connected()
+    let picked = try JSONDecoder().decode(SessionControls.self, from: Data(#"{"modes":[{"id":"plan","name":"Plan"}],"modeId":"plan","options":[]}"#.utf8))
+    model.newSession(agent: "fake", cwd: "/w", controls: picked, text: "go", attachments: [.image(blob: "AAAA", mimeType: "image/png", name: nil)])
+    try await until { wire.types.last == "webviewMessage:newSession" }
+    push(wire, #"{"type":"session","session":{"id":"s2","agent":"fake","cwd":"/w","rev":0,"controls":{"modes":[{"id":"agent","name":"Agent"},{"id":"plan","name":"Plan"}],"modeId":"agent","options":[]}}}"#)
+    try await until { wire.types.last == "webviewMessage:send" }
+    #expect(Array(wire.types.suffix(2)) == ["webviewMessage:setMode", "webviewMessage:send"])
+    #expect(wire.sent.last?.contains(#""kind":"image""#) == true)
+  }
+
   @Test func aNewSessionsFirstPromptWaitsForTheSessionTheEngineMakes() async throws {
     let (model, wire) = try await connected()
     model.path = [.new(agent: nil, cwd: nil)]

@@ -50,7 +50,7 @@ let package = Package(
         "AcpiraModels", "AcpiraSync", "AcpiraDesign", "AcpiraMarkdown", "AcpiraFixtures",
         .product(name: "SwiftTerm", package: "SwiftTerm", condition: .when(platforms: [.iOS])),
       ],
-      resources: [.copy("Resources/i18n"), .copy("Resources/shiki")],
+      resources: [.copy("Resources/i18n"), .copy("Resources/shiki"), .copy("Resources/web")],
       swiftSettings: dialect + [.defaultIsolation(MainActor.self)]
     ),
     .testTarget(

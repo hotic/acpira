@@ -145,6 +145,11 @@ final class MediaLoader {
     }
   }
 
+  /// A stored blob's text (a widget's page), read fresh each time: pages are small and not decoded images
+  func text(session: String, blob: String) async throws -> String {
+    String(decoding: try await fetch(session, blob), as: UTF8.self)
+  }
+
   /// Every image a session shows, loaded before a still render or a launch-time Lightbox (tasks do not run in
   /// `ImageRenderer`); failures are left to the views
   func preload(_ view: SessionView) async {
@@ -229,11 +234,18 @@ func toolImages(_ block: ToolCallBlock) -> [ImageRef] {
   }
 }
 
-/// imageTools.ts WIDGET_MIME: show_widget stores its HTML as an image content, which the phone does not draw yet
+/// imageTools.ts WIDGET_MIME: show_widget stores its HTML as an image content (WidgetView.swift draws it)
 func isWidget(_ ref: ImageRef) -> Bool { ref.mimeType == "text/html" }
 
-/// imageTools.ts isImageResultBlock without widgets: generated and shown images are results for the reader, not
+/// imageTools.ts toolWidget: the saved page of a show_widget call
+func toolWidget(_ block: ToolCallBlock) -> ImageRef? {
+  (block.contents ?? block.content.map { [$0] } ?? []).lazy.compactMap {
+    if case .image(let ref) = $0, ref.blob != nil, isWidget(ref) { ref } else { nil }
+  }.first
+}
+
+/// imageTools.ts isImageResultBlock: generated and shown images, and widgets, are results for the reader, not
 /// process detail
 func isImageResult(_ block: ToolCallBlock) -> Bool {
-  block.verbKey == "verb.imagegen" || block.verbKey == "verb.showImage"
+  block.verbKey == "verb.imagegen" || block.verbKey == "verb.showImage" || block.verbKey == "verb.showWidget"
 }

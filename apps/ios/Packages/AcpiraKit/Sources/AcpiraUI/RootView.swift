@@ -14,6 +14,8 @@ public struct LaunchOptions: Sendable {
   public var theme: ColorScheme?
   public var motion: Bool
   public var locale: String?
+  /// `-screen chat|list|new|settings|changes|file`: the screen on launch (`changes` / `file`: the review pages over the
+  /// fixture's chat)
   public var screen: String
   /// `-render closed|open|all`: draw the fixture's full-length chat into tmp/acpira-render.png instead of the screens
   public var render: String?
@@ -113,6 +115,9 @@ public struct RootView: View {
     // Outside the `.id` above, so a language picked in it rebuilds the screens under the sheet, not the sheet away
     .sheet(isPresented: Bindable(model).settingsOpen) { SettingsSheet() }
     .environment(model)
+    // Session links in replies and from outside open that session; any other link goes to the system
+    .environment(\.openURL, OpenURLAction { url in model.openLink(url) ? .handled : .systemAction })
+    .onOpenURL { url in _ = model.openLink(url) }
     .preferredColorScheme(scheme)
     .environment(\.motionEnabled, options.motion && motion)
     .environment(\.initialPopup, options.popup)
@@ -152,6 +157,10 @@ public struct RootView: View {
       let start = agent ?? model.summaries.max { $0.updatedAt < $1.updatedAt }?.agent
         ?? launchable(model.agents).first { $0.available != false }?.id ?? ""
       NewSessionScreen(agent: start, cwd: cwd ?? model.projects.first ?? "", controls: model.controls(for: start))
+    case .changes(let id):
+      ChangesScreen(sessionId: id)
+    case let .file(id, path, line):
+      FileScreen(sessionId: id, path: path, line: line)
     case .terminal(let cwd):
       TerminalPage(cwd: cwd)
     }

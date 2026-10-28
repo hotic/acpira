@@ -16,6 +16,9 @@ public enum Route: Hashable {
   case chat(String)
   /// The new-session screen, preset to an agent and a project when it is opened from a session
   case new(agent: AgentId?, cwd: String?)
+  /// The files a session changed, and one file of its project (read-only, its changes marked)
+  case changes(String)
+  case file(session: String, path: String, line: Int?)
   /// A project's terminal on the engine's computer (Terminal/TerminalPage.swift)
   case terminal(cwd: String)
 }
@@ -23,11 +26,20 @@ public enum Route: Hashable {
 /// agentOrder.ts launchable: the agents a new session can start with, the disabled ones left out
 func launchable(_ agents: [AgentInfo]) -> [AgentInfo] { agents.filter { $0.disabled != true } }
 
-/// A short confirmation floating over the screen (copied, pinned, forked …)
+/// A short confirmation floating over the screen (copied, pinned, forked …), with an action when the step can be taken
+/// back (a deleted session, a project taken off the list)
 struct Toast: Identifiable, Equatable {
   let id = UUID()
   var text: String
   var icon: LucideIcon = .check
+  var action: ToastAction?
+
+  static func == (a: Toast, b: Toast) -> Bool { a.id == b.id }
+}
+
+struct ToastAction {
+  var label: String
+  var run: () -> Void
 }
 
 @Observable
@@ -36,16 +48,27 @@ final class AppModel {
   var accounts: [AccountInfo] = Fixtures.accounts
   /// The engine's settings (steering, the agents' order …); nil in the demo, which reads every default
   var settings: SettingsView?
+  /// Each agent's config controls as the engine last reported them (`controls`): the settings' model lists
+  var agentControls: [AgentId: [ConfigControl]] = [:]
   var summaries: [SessionSummary]
   var views: [String: SessionView]
   var path: [Route] = []
   var toast: Toast?
   /// Folders added by hand, ahead of the ones sessions use
   var addedProjects: [String] = []
+  /// Project folders in the user's order (SessionCategories.projects: moved to the top, added by hand) and the ones taken
+  /// off the list (`removedProjects`), shared with every project shell on the machine
+  var projectOrder: [String] = []
+  var removedProjects: [String] = []
   /// Stand-ins for two engine fields that do not exist yet: projects pinned to the top of the by-project view (in pin
   /// order), and sessions pinned inside their project only (`SessionSummary.pinned` is the list's top pin)
   var pinnedProjects: [String] = []
   var projectPins: Set<String> = []
+  /// The desktop app's sections ("Work", "Personal"), each holding whole projects in its own order; the by-project
+  /// view lists them as the desktop does. Made and filled on the desktop only
+  var sections: [SessionSection] = []
+  /// The history search's content hits, for the query they answered
+  var hits: SessionHits?
   /// Projects folded open in the by-project view
   var openProjects: Set<String> = []
   /// The settings sheet is up
@@ -66,6 +89,18 @@ final class AppModel {
   @ObservationIgnored private var runs: [String: Task<Void, Never>] = [:]
   @ObservationIgnored private let launched = Date()
   @ObservationIgnored private var serial = 0
+  /// Reads waiting for the engine's answer, by the seq it echoes (AppModel+Files.swift)
+  @ObservationIgnored var asking: [Int: CheckedContinuation<HostMsg?, Never>] = [:]
+  @ObservationIgnored var askSeq = 0
+  /// The engine turned this app down for another protocol version; the close that follows says nothing more
+  @ObservationIgnored var incompatible = false
+  /// The last history search sent to the engine: its reply echoes the seq
+  @ObservationIgnored var searchSeq = 0
+  @ObservationIgnored var searchQuery = ""
+  /// Each account action's last state, so a repeated push does not repeat its toast
+  @ObservationIgnored var actionStates: [String: AccountActionStatus] = [:]
+  /// Deleted sessions the toast's undo can bring back (the demo's stand-in for the engine's trash)
+  @ObservationIgnored private var trash: [String: (summary: SessionSummary, view: SessionView?)] = [:]
 
   convenience init(options: LaunchOptions) {
     if let address = EngineAddress(options.engine) {
@@ -108,17 +143,21 @@ final class AppModel {
     }
     self.summaries = summaries
     self.views = views
-    // Demo data for the pin levels until the engine carries them, and one session with background work so the list
-    // shows every state mark
+    // One session with background work, so the list shows every state mark
     if let at = self.summaries.firstIndex(where: { $0.title == "上下文压缩" }) { self.summaries[at].state = .background }
-    pinnedProjects = summaries.first.map { [$0.cwd] } ?? []
-    projectPins = Set(summaries.filter { $0.title == "账号层测试补齐" }.map(\.id))
-    // A pinned project starts open, so the by-project view shows open and closed groups
-    openProjects = Set(pinnedProjects)
+    // The engine's defaults, so the settings that live on the computer can be tried in the demo
+    settings = .defaults
+    // The latest project starts open, so the by-project view shows open and closed groups
+    openProjects = Set(summaries.first.map { [$0.cwd] } ?? [])
+    let fixture = fixtureId(options.fixture)
     path = switch options.screen {
     case "list", "settings": []
     case "new": [.new(agent: nil, cwd: nil)]
-    default: [.chat(fixtureId(options.fixture))]
+    // The review pages over the fixture's chat: its changed files, or the first of them opened
+    case "changes": [.chat(fixture), .changes(fixture)]
+    case "file": [.chat(fixture), .changes(fixture)]
+      + (Self.demoChanges(views[fixture]).first.map { [.file(session: fixture, path: $0.path, line: nil)] } ?? [])
+    default: [.chat(fixture)]
     }
     settingsOpen = options.screen == "settings"
   }
@@ -137,21 +176,53 @@ final class AppModel {
 
   func agent(_ id: AgentId) -> AgentInfo { agents.first { $0.id == id } ?? AgentInfo(id: id, name: id) }
 
-  func show(_ text: String, icon: LucideIcon = .check) { toast = Toast(text: text, icon: icon) }
+  func show(_ text: String, icon: LucideIcon = .check, action: ToastAction? = nil) {
+    toast = Toast(text: text, icon: icon, action: action)
+  }
 
   // MARK: - Projects
 
-  /// Every known project, the latest first: folders added by hand, then the ones sessions work in
+  /// Every known project for the folder menus, the latest first: folders added by hand, the ones sessions work in, then
+  /// the registered ones no session used yet
   var projects: [String] {
-    var seen = Set<String>()
+    var seen = Set(removedProjects)
     let used = summaries.sorted { $0.updatedAt > $1.updatedAt }.map(\.cwd)
-    return (addedProjects + used).filter { !$0.isEmpty && seen.insert($0).inserted }
+    return (addedProjects + used + projectOrder).filter { !$0.isEmpty && seen.insert($0).inserted }
   }
 
-  /// The by-project view's projects: the pinned ones in pin order, then the rest, the latest first
+  /// The by-project view's projects (sessionTree.ts buildSessionTree): the user's order first, then every other folder a
+  /// session ran in, the latest first. Folders taken off the list stay off; their sessions still show in a search
   var listedProjects: [String] {
-    let pinned = pinnedProjects.filter(projects.contains)
-    return pinned + projects.filter { !pinned.contains($0) }
+    var seen = Set(removedProjects)
+    let used = summaries.sorted { $0.updatedAt > $1.updatedAt }.map(\.cwd)
+    return (projectOrder + addedProjects + used).filter { !$0.isEmpty && seen.insert($0).inserted }
+  }
+
+  /// The project leads the by-project view: registered if it was not, then moved before the first one (the desktop
+  /// drags it there)
+  func moveProjectToTop(_ cwd: String) {
+    guard listedProjects.first != cwd else { return }
+    if live {
+      if !projectOrder.contains(cwd) { post(.categoryOp(op: .addProject(cwd: cwd))) }
+      post(.categoryOp(op: .reorderProject(cwd: cwd, before: projectOrder.first { $0 != cwd })))
+      return
+    }
+    projectOrder.removeAll { $0 == cwd }
+    projectOrder.insert(cwd, at: 0)
+  }
+
+  /// Takes a folder off the list (its sessions stay and still show in a search); the toast puts it back
+  func removeProject(_ cwd: String) {
+    if !post(.categoryOp(op: .removeProject(cwd: cwd))) {
+      projectOrder.removeAll { $0 == cwd }
+      if !removedProjects.contains(cwd) { removedProjects.append(cwd) }
+    }
+    show(t("mobile.project.removed", ["name": projectName(cwd)]), icon: .folder,
+         action: ToastAction(label: t("common.undo")) { [weak self] in self?.addProject(cwd) })
+  }
+
+  func toggleOpen(_ cwd: String) {
+    if openProjects.remove(cwd) == nil { openProjects.insert(cwd) }
   }
 
   func togglePinProject(_ cwd: String) {
@@ -160,21 +231,56 @@ final class AppModel {
     show(pinned ? t("mobile.pinned") : t("mobile.unpinned"), icon: pinned ? .pin : .pinOff)
   }
 
-  func toggleOpen(_ cwd: String) {
-    if openProjects.remove(cwd) == nil { openProjects.insert(cwd) }
-  }
-
   func toggleProjectPin(_ id: String) {
     let pinned = projectPins.insert(id).inserted
     if !pinned { projectPins.remove(id) }
     show(pinned ? t("mobile.pinned") : t("mobile.unpinned"), icon: pinned ? .pin : .pinOff)
   }
 
+  /// A folder picked by hand: first in the folder menus, and back on the list if it was taken off (the engine registers
+  /// it at the end of the user's order)
   func addProject(_ path: String) {
     let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return }
     addedProjects.removeAll { $0 == trimmed }
     addedProjects.insert(trimmed, at: 0)
+    if !post(.categoryOp(op: .addProject(cwd: trimmed))) {
+      removedProjects.removeAll { $0 == trimmed }
+      if !projectOrder.contains(trimmed) { projectOrder.append(trimmed) }
+    }
+  }
+
+  // MARK: - List
+
+  /// Every unread mark goes, for every engine and window on the machine (they share them)
+  func markAllRead() {
+    if post(.markAllRead) { return }
+    for i in summaries.indices {
+      summaries[i].unread = nil
+      if summaries[i].state == .unread { summaries[i].state = nil }
+    }
+  }
+
+  /// The history search over saved conversations; its content hits land in `hits` (the engine answers `sessionHits`,
+  /// the demo searches its own views)
+  func search(_ query: String) {
+    let terms = searchTerms(query)
+    guard !terms.isEmpty else {
+      hits = nil
+      return
+    }
+    let q = terms.joined(separator: " ")
+    if live {
+      searchSeq += 1
+      searchQuery = q
+      post(.searchSessions(query: q, seq: searchSeq))
+      return
+    }
+    var found: [String: String] = [:]
+    for (id, view) in views {
+      if let snippet = SessionSearch.snippet(view, terms: terms) { found[id] = snippet }
+    }
+    hits = SessionHits(query: q, snippets: found)
   }
 
   // MARK: - Sessions
@@ -191,7 +297,7 @@ final class AppModel {
   @discardableResult
   func newSession(agent: AgentId, cwd: String, controls: SessionControls, text: String, attachments: [Attachment]) -> String? {
     if link != nil {
-      engineNewSession(agent: agent, cwd: cwd, text: text)
+      engineNewSession(agent: agent, cwd: cwd, controls: controls, text: text, attachments: attachments)
       return nil
     }
     serial += 1
@@ -214,19 +320,21 @@ final class AppModel {
     return line.count > 40 ? String(line.prefix(40)) + "…" : line
   }
 
-  /// Sends a prompt, or queues it while a turn runs; while a plan waits on its card the words revise it
+  /// Sends a prompt, or queues it while a turn runs (with steering on, the engine joins it to the running turn); while a
+  /// plan waits on its card the words revise it
   func send(_ id: String, text: String, attachments: [Attachment]) {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty || !attachments.isEmpty else { return }
     if !trimmed.isEmpty, let review = views[id].flatMap({ pendingPlanReview($0.turns) }), let revise = reviseOption(review) {
       revisePlan(id, review: review, option: revise.id, text: trimmed, attachments: attachments)
       return
     }
-    // Attachments go to the engine with P2's drafts; until then only the text does
     if link != nil {
-      if !trimmed.isEmpty { post(.send(sessionId: id, text: trimmed)) }
+      let drafts = Self.drafts(attachments)
+      post(.send(sessionId: id, text: trimmed, attachments: drafts.isEmpty ? nil : drafts, steer: steering(id) ? true : nil))
       return
     }
-    guard var view = views[id], !trimmed.isEmpty || !attachments.isEmpty else { return }
+    guard var view = views[id] else { return }
     if view.running {
       serial += 1
       view.queued = (view.queued ?? []) + [QueuedPrompt(id: "q-\(serial)", text: trimmed, attachments: attachments.isEmpty ? nil : attachments)]
@@ -363,10 +471,33 @@ final class AppModel {
     views[id] = view
   }
 
+  /// Settings `steerQueued` on an agent that can steer, while a turn runs: a send joins the turn, and a queued row's send
+  /// steers it in (Shell.tsx `steering`)
+  func steering(_ id: String) -> Bool {
+    settings?.steerQueued == true && views[id]?.canSteer == true && views[id]?.running == true
+  }
+
+  /// What the engine takes for the composer's attachments: photos as their bytes; a file picked on the phone as its bytes
+  /// too (its path means nothing on the computer: the engine stages the bytes and links its copy), any other file (an @
+  /// mention, a path on the computer) as the link it is; quotes as they are
+  static func drafts(_ attachments: [Attachment]) -> [Draft] {
+    attachments.compactMap { a -> Draft? in
+      switch a {
+      case let .image(blob?, mime, name): return .image(mimeType: mime, data: blob, name: name)
+      case let .file(uri, name):
+        guard let url = URL(string: uri), AttachmentFile.isCopy(url) else { return .file(uri: uri, name: name) }
+        return (try? Data(contentsOf: url)).map { .file(uri: uri, name: name, data: $0.base64EncodedString()) }
+      case let .quote(text, comment): return .quote(text: text, comment: comment)
+      default: return nil
+      }
+    }
+  }
+
   // MARK: - Queue
 
-  /// Send now (or steer): the running turn stops and the queued prompt goes at once
+  /// Send now: the running turn stops and the queued prompt goes at once; with steering on it joins the turn instead
   func sendQueued(_ id: String, item: String) {
+    if steering(id), post(.steerQueued(sessionId: id, id: item)) { return }
     if post(.sendQueued(sessionId: id, id: item)) { return }
     guard let prompt = takeQueued(id, item) else { return }
     if views[id]?.running == true { stop(id) }
@@ -581,6 +712,20 @@ final class AppModel {
     if let label = accounts.first(where: { $0.id == account })?.label { show(t("mobile.account.switched", ["name": label]), icon: .userRound) }
   }
 
+  /// An agent's accounts came into view: the engine refreshes their quotas
+  func refreshQuota(_ agent: AgentId) { post(.refreshQuota(agent: agent)) }
+
+  /// Adds the login the agent's CLI holds on the computer; a new login needs its terminal, which is on the computer
+  func addAccount(_ agent: AgentId) {
+    if post(.addAccount(agent: agent, via: .import)) { return }
+    show(t("mobile.engineNeeded"), icon: .unplug)
+  }
+
+  func removeAccount(_ account: String) {
+    if post(.removeAccount(id: account)) { return }
+    accounts.removeAll { $0.id == account }
+  }
+
   // MARK: - Session actions
 
   func togglePin(_ id: String) {
@@ -598,16 +743,25 @@ final class AppModel {
     if let at = summaries.firstIndex(where: { $0.id == id }) { summaries[at].title = trimmed }
   }
 
+  /// Deletes at once, as the desktop does; the toast's undo restores the session
   func delete(_ id: String) {
     runs[id]?.cancel()
     runs[id] = nil
-    let title = views[id]?.title ?? summaries.first { $0.id == id }?.title ?? ""
-    post(.deleteSession(id: id))
+    let summary = summaries.first { $0.id == id }
+    let title = views[id]?.title ?? summary?.title ?? ""
+    if !post(.deleteSession(id: id)), let summary { trash[id] = (summary, views[id]) }
     summaries.removeAll { $0.id == id }
-    projectPins.remove(id)
     views[id] = nil
     path.removeAll { $0 == .chat(id) }
-    show(t("session.deleted", ["title": title]), icon: .trash2)
+    show(t("session.deleted", ["title": title]), icon: .trash2,
+         action: ToastAction(label: t("common.undo")) { [weak self] in self?.restore(id) })
+  }
+
+  func restore(_ id: String) {
+    if post(.restoreSession(id: id)) { return }
+    guard let kept = trash.removeValue(forKey: id) else { return }
+    summaries.append(kept.summary)
+    views[id] = kept.view
   }
 
   /// Fork from a turn: a new session holding the transcript up to and including that turn, opened over this one
@@ -700,16 +854,30 @@ extension EnvironmentValues {
 /// own bars and buttons around it
 struct ToastView: View {
   let toast: Toast
+  var dismiss: () -> Void = {}
   var body: some View {
     HStack(spacing: Metrics.s2) {
       Icon(toast.icon, size: Metrics.iconCtl, strokeWidth: 1.75)
       Text(web: toast.text, paragraph: false).lineLimit(1).truncationMode(.middle)
+      if let action = toast.action {
+        // The desktop toast's secondary button, as the capsule's last word after a hairline
+        Rectangle().fill(Palette.lineStrong).frame(width: Metrics.hairline, height: Metrics.iconCtl)
+        Button {
+          action.run()
+          dismiss()
+        } label: {
+          Text(web: action.label, paragraph: false).textStyle(TypeScale.text2, weight: .semibold)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+      }
     }
     .textStyle(TypeScale.text2, weight: .medium)
     .foregroundStyle(Palette.fgStrong)
     .padding(.horizontal, Metrics.pad)
     .frame(height: Metrics.mCtl)
-    .glassEffect(.regular, in: Capsule())
+    .glassEffect(toast.action == nil ? .regular : .regular.interactive(), in: Capsule())
     // Translucent, it would show the system bar's glass buttons through it: it drops in under the bar instead
     .padding(.top, Metrics.navBar)
     .padding(.horizontal, Metrics.page)
@@ -718,22 +886,23 @@ struct ToastView: View {
 }
 
 extension View {
-  /// Shows the model's toast over this view, dropping in from the top and leaving after Motion.toast
+  /// Shows the model's toast over this view, dropping in from the top and leaving after Motion.toast (one with an undo
+  /// stays longer, and only it takes taps)
   func toastLayer(_ model: AppModel) -> some View {
     overlay(alignment: .top) {
       ZStack {
         if let toast = model.toast {
-          ToastView(toast: toast)
+          ToastView(toast: toast) { if model.toast?.id == toast.id { model.toast = nil } }
             .id(toast.id)
             .transition(.move(edge: .top).combined(with: .opacity))
             .task(id: toast.id) {
-              try? await Task.sleep(for: .seconds(Motion.toast))
+              try? await Task.sleep(for: .seconds(toast.action == nil ? Motion.toast : Motion.toastUndo))
               if model.toast?.id == toast.id { model.toast = nil }
             }
         }
       }
       .animation(Motion.open, value: model.toast)
-      .allowsHitTesting(false)
+      .allowsHitTesting(model.toast?.action != nil)
     }
   }
 }

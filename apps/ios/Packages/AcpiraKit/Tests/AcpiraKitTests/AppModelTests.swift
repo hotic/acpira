@@ -73,6 +73,50 @@ import Testing
     m.delete(fork)
     #expect(m.views[fork] == nil)
     #expect(!m.path.contains(.chat(fork)))
+    // The toast's undo brings it back
+    m.toast?.action?.run()
+    #expect(m.summaries.contains { $0.id == fork })
+    #expect(m.views[fork]?.title == "Renamed")
+  }
+
+  @Test func projectsFollowTheUsersOrder() {
+    let m = model("list")
+    let listed = m.listedProjects
+    #expect(listed.count > 1)
+    let last = listed.last!
+    m.moveProjectToTop(last)
+    #expect(m.listedProjects.first == last)
+    #expect(Set(m.listedProjects) == Set(listed))
+    // Taken off the list, it stays off until added again (the toast's undo)
+    m.removeProject(last)
+    #expect(!m.listedProjects.contains(last))
+    m.toast?.action?.run()
+    #expect(m.listedProjects.contains(last))
+  }
+
+  @Test func theSearchFindsConversationsAndMarksTheTerms() {
+    let m = model("list")
+    // A word from inside a fixture's reply, not its title
+    let id = m.fixtureId("showcase")
+    guard case .agent(let turn)? = m.views[id]?.turns.last, case .text(let block)? = turn.blocks.last(where: { if case .text = $0 { true } else { false } }),
+          let word = block.markdown.components(separatedBy: " ").first(where: { $0.count > 6 && $0.allSatisfy(\.isLetter) }) else {
+      Issue.record("no reply word in the showcase"); return
+    }
+    m.search(" \(word.uppercased())  ")
+    #expect(m.hits?.query == word.lowercased())
+    #expect(m.hits?.snippets[id]?.localizedCaseInsensitiveContains(word) == true)
+    m.search("")
+    #expect(m.hits == nil)
+    #expect(SessionSearch.parts("Fix the Build now", terms: ["build", "fix"]) == ["", "Fix", " the ", "Build", " now"])
+    #expect(searchTerms("  A b  a ") == ["a", "b"])
+  }
+
+  @Test func markAllReadClearsEveryUnreadMark() {
+    let m = model("list")
+    m.summaries[0].unread = true
+    m.summaries[1].state = .unread
+    m.markAllRead()
+    #expect(!m.summaries.contains { $0.unread == true || $0.state == .unread })
   }
 
   @Test func controlsAndCardsUpdateTheSession() {

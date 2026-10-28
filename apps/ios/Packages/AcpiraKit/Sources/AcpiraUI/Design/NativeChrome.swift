@@ -12,19 +12,44 @@ import UIKit
 
 // MARK: - Session "…"
 
-/// The session's "…" menu: the account, pin and rename, the exports in a submenu, the project's terminal, settings,
-/// delete
+/// The session's "…" menu: the account and the session's changes, pin and rename, copy / move / export in submenus,
+/// the project's terminal, settings, delete
 struct NativeSessionMenu: View {
   var pinned: Bool
   var actions = HeaderActions()
 
   var body: some View {
-    if let account = actions.account {
-      Section { Button(action: account) { Label(t("common.account"), systemImage: "person.crop.circle") } }
+    if actions.account != nil || actions.changes != nil {
+      Section {
+        if let account = actions.account { Button(action: account) { Label(t("common.account"), systemImage: "person.crop.circle") } }
+        if let changes = actions.changes { Button(action: changes) { Label(t("panel.changes"), systemImage: "plusminus") } }
+      }
     }
     Section {
       Button(action: actions.pin) { Label(pinned ? t("common.unpin") : t("common.pin"), systemImage: pinned ? "pin.slash" : "pin") }
       Button(action: actions.rename) { Label(t("common.rename"), systemImage: "pencil") }
+      Menu {
+        Button { actions.copy(.link) } label: { Label(t("session.copy.link"), systemImage: "link") }
+        Button { actions.copy(.markdown) } label: { Label(t("session.copy.markdown"), systemImage: "doc.text") }
+        if !actions.cwd.isEmpty {
+          Button { actions.copy(.cwd) } label: { Label(t("session.copy.cwd"), systemImage: "folder") }
+        }
+      } label: {
+        Label(t("session.copy"), systemImage: "doc.on.doc")
+      }
+      if let move = actions.move, actions.projects.contains(where: { $0 != actions.cwd }) {
+        Menu {
+          // The other known folders, the latest first; the session's own is left out
+          ForEach(actions.projects.filter { $0 != actions.cwd }, id: \.self) { folder in
+            Button { move(folder) } label: {
+              Text(verbatim: folderName(folder))
+              Text(verbatim: folder)
+            }
+          }
+        } label: {
+          Label(t("session.moveToProject"), systemImage: "folder.badge.arrow.forward")
+        }
+      }
       Menu {
         Button { actions.export(false) } label: { Label(t("session.export.markdown"), systemImage: "doc.text") }
         Button { actions.export(true) } label: { Label(t("session.export.json"), systemImage: "curlybraces") }

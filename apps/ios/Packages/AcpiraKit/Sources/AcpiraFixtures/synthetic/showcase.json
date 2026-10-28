@@ -85,67 +85,67 @@
        },
        {
         "kind": "ctx",
-        "text": "export function parseArgs(argv: string[]) {"
+        "text": " export function parseArgs(argv: string[]) {"
        },
        {
         "kind": "add",
-        "text": "  const out = { verbose: false, dryRun: false, files: [] as string[] };"
+        "text": "+  const out = { verbose: false, dryRun: false, files: [] as string[] };"
        },
        {
         "kind": "ctx",
-        "text": "  for (const a of argv) {"
+        "text": "   for (const a of argv) {"
        },
        {
         "kind": "add",
-        "text": "    if (a === '--dry-run') { out.dryRun = true; continue; }"
+        "text": "+    if (a === '--dry-run') { out.dryRun = true; continue; }"
        },
        {
         "kind": "ctx",
-        "text": "    if (a === '--verbose') out.verbose = true;"
+        "text": "     if (a === '--verbose') out.verbose = true;"
        },
        {
         "kind": "ctx",
-        "text": "    else out.files.push(a);"
+        "text": "     else out.files.push(a);"
        },
        {
         "kind": "ctx",
-        "text": "  }"
+        "text": "   }"
        },
        {
         "kind": "ctx",
-        "text": "  return out;"
+        "text": "   return out;"
        },
        {
         "kind": "ctx",
-        "text": "}"
+        "text": " }"
        },
        {
         "kind": "add",
-        "text": ""
+        "text": "+"
        },
        {
         "kind": "add",
-        "text": "export function describeArgs(a: ReturnType<typeof parseArgs>) {"
+        "text": "+export function describeArgs(a: ReturnType<typeof parseArgs>) {"
        },
        {
         "kind": "add",
-        "text": "  const flags = [a.verbose && '--verbose', a.dryRun && '--dry-run'].filter(Boolean);"
+        "text": "+  const flags = [a.verbose && '--verbose', a.dryRun && '--dry-run'].filter(Boolean);"
        },
        {
         "kind": "add",
-        "text": "  return `${flags.join(' ')} ${a.files.join(' ')}`.trim();"
+        "text": "+  return `${flags.join(' ')} ${a.files.join(' ')}`.trim();"
        },
        {
         "kind": "add",
-        "text": "}"
+        "text": "+}"
        },
        {
         "kind": "add",
-        "text": ""
+        "text": "+"
        },
        {
         "kind": "add",
-        "text": "export const DRY_RUN_HINT = '--dry-run: 只打印计划，不写文件';"
+        "text": "+export const DRY_RUN_HINT = '--dry-run: 只打印计划，不写文件';"
        }
       ]
      }

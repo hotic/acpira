@@ -63,6 +63,7 @@ struct NewSessionScreen: View {
     .background(Palette.bg0)
     .modifier(SystemTitle(title: t("session.new")))
     .environment(\.agentAccent, Palette.accent(for: draft.agent))
+    .environment(\.hiddenModels, model.settings?.hiddenOptions[draft.agent] ?? [:])
     .environment(\.sessionActions, SessionActions(toast: { model.show($0, icon: $1) }))
   }
 

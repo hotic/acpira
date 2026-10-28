@@ -406,7 +406,7 @@ struct AttachPickers: ViewModifier {
       #endif
       .fileImporter(isPresented: shown(.files), allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
         guard case .success(let urls) = result else { return }
-        staged += urls.map { .file(uri: $0.absoluteString, name: $0.lastPathComponent) }
+        staged += urls.compactMap(AttachmentFile.copy)
       }
       #if canImport(UIKit)
       .fullScreenCover(isPresented: shown(.camera)) {
@@ -426,6 +426,29 @@ struct AttachPickers: ViewModifier {
 
 /// Where an attachment comes from
 enum AttachSource: Equatable { case photos, camera, files }
+
+/// A picked file is readable only while the picker's grant lasts, so it is copied into the app's temporary folder at
+/// once; the send reads the copy and hands its bytes to the engine (AppModel.drafts)
+enum AttachmentFile {
+  static var folder: URL { FileManager.default.temporaryDirectory.appendingPathComponent("attachments", isDirectory: true) }
+
+  /// A picked file's copy, as opposed to a path on the computer
+  static func isCopy(_ url: URL) -> Bool { url.isFileURL && url.standardizedFileURL.path.hasPrefix(folder.standardizedFileURL.path + "/") }
+
+  static func copy(_ url: URL) -> Attachment? {
+    let scoped = url.startAccessingSecurityScopedResource()
+    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+    let folder = folder.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let copy = folder.appendingPathComponent(url.lastPathComponent)
+    do {
+      try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+      try FileManager.default.copyItem(at: url, to: copy)
+    } catch {
+      return nil
+    }
+    return .file(uri: copy.absoluteString, name: url.lastPathComponent)
+  }
+}
 
 /// The attachments picked for the next prompt: image tiles and file pills, each with its ✕
 struct StagedAttachments: View {

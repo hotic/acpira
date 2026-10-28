@@ -83,12 +83,17 @@ struct ChatScreen: View {
     .modifier(MediaLayer(session: session, loader: model.media))
     .environment(\.mentionPersonas, model.personas)
     .environment(\.compactAt, model.compactAt)
+    .environment(\.hiddenModels, model.settings?.hiddenOptions[session.agent] ?? [:])
+    .environment(\.diffSource, model.live ? { [model, id] in await model.diffSource(id, $0) } : nil)
     .environment(model.fileSearch)
     // The accounts as a system sheet with a form
     .sheet(isPresented: $accountOpen) {
       NativeAccountSheet(agent: agent, accounts: model.accounts.filter { $0.agent == agent.id }, accountId: session.accountId,
                          onSelect: { model.selectAccount(id, $0) },
-                         onAdd: { model.show(t("mobile.engineNeeded"), icon: .unplug) })
+                         onAdd: { model.addAccount(agent.id) },
+                         onRemove: { model.removeAccount($0) })
+        // The quotas are fetched when an account list comes into view, as on the desktop
+        .onAppear { model.refreshQuota(agent.id) }
     }
     .alert(t("common.rename"), isPresented: $renaming) {
       TextField(text: $newTitle) { Text(web: t("session.titleAria")) }
@@ -111,7 +116,12 @@ struct ChatScreen: View {
       export: { model.export(id, json: $0) },
       terminal: { model.openTerminal(session.cwd) },
       settings: { model.settingsOpen = true },
-      delete: { deleting = true })
+      delete: { deleting = true },
+      changes: session.cwd.isEmpty ? nil : { model.path.append(.changes(id)) },
+      copy: { kind in Task { await model.copy(id, kind) } },
+      cwd: session.cwd,
+      projects: model.projects,
+      move: { model.move(id, to: $0) })
   }
 
   private var sessionActions: SessionActions {
@@ -161,6 +171,13 @@ struct HeaderActions {
   var terminal: () -> Void = {}
   var settings: () -> Void = {}
   var delete: () -> Void = {}
+  /// The files the session changed (panel.changes)
+  var changes: (() -> Void)?
+  var copy: (SessionCopy) -> Void = { _ in }
+  /// The session's folder and the others it can move to
+  var cwd = ""
+  var projects: [String] = []
+  var move: ((String) -> Void)?
 }
 
 /// The chat's navigation bar: the system back button on the left, new session and the "…" menu as bar buttons on the

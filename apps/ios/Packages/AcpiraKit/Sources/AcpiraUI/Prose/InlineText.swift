@@ -205,7 +205,8 @@ struct InlineBuilder {
       a.font = style.font(marks.weight, italic: marks.italic)
       a.foregroundColor = accent
       a.underlineStyle = .single
-      a.link = URL(string: url)
+      // A workspace path opens the file page (chat/Link.tsx); session links and the rest go to openLink as they are
+      a.link = fileTarget(url) ?? URL(string: url)
       return Text(a)
     }
   }
@@ -226,11 +227,23 @@ struct InlineBuilder {
     // A mono space is .6em; the pad is .4em of the code size
     let pad = Text(web: "\u{00A0}").font(Font(MonoFont.ctFont(size: mono.size * 0.4 / 0.6, weight: .regular)))
     // A word joiner after each slash: Chrome finds no break opportunity after `/` before a letter, CoreText does
-    let body = Text(web: s.replacingOccurrences(of: "/", with: "/\u{2060}"), size: WebType.mono.size, paragraph: false).styled(mono).foregroundStyle(Palette.fg1)
+    var text = CJKWidth.attributed(s.replacingOccurrences(of: "/", with: "/\u{2060}"), size: WebType.mono.size, paragraph: false)
+    // A path in backticks opens the file page (chat/Link.tsx InlineFileCode), still looking like code
+    if let target = fileTarget(s) {
+      text.link = target
+      text.foregroundColor = Palette.fg1
+    }
+    let body = Text(text).styled(mono).foregroundStyle(Palette.fg1)
     let chip = Text("\(pad)\(body)\(pad)").customAttribute(InlineCodeChip())
     let lead = previous.map { !$0.isWhitespace && opens($0) } ?? true ? "" : "\u{200B}"
     let trail = next.map { !$0.isWhitespace && !$0.isPunctuation && !$0.isSymbol } ?? false ? "\u{200B}" : ""
     return Text("\(Text(web: lead))\(chip)\(Text(web: trail))")
+  }
+
+  /// The app's link for a workspace path (FileLinks.swift); a session link stays itself
+  private func fileTarget(_ text: String) -> URL? {
+    guard SessionLinks.id(ofLink: text) == nil, let file = FileLinks.parse(text) else { return nil }
+    return FileLinks.url(file)
   }
 
   private func opens(_ c: Character) -> Bool {

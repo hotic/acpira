@@ -1,0 +1,24 @@
+<div class="p-4 space-y-3 rounded-xl border border-border bg-card">
+  <div class="flex items-baseline justify-between">
+    <h2 class="text-base font-semibold">Context budget</h2>
+    <span id="out" class="font-mono text-sm text-muted-foreground">400k</span>
+  </div>
+  <input id="k" type="range" min="100" max="800" step="50" value="400" class="w-full accent-primary">
+  <div class="grid grid-cols-3 gap-2 text-center text-sm">
+    <div class="rounded-lg bg-muted p-2"><div class="text-muted-foreground">Turns</div><div id="turns" class="font-mono">32</div></div>
+    <div class="rounded-lg bg-muted p-2"><div class="text-muted-foreground">Compactions</div><div id="comp" class="font-mono">1</div></div>
+    <div class="rounded-lg bg-muted p-2"><div class="text-muted-foreground">Cache hits</div><div id="hit" class="font-mono text-success">91%</div></div>
+  </div>
+</div>
+<script>
+  const k = document.getElementById('k');
+  const set = () => {
+    const v = +k.value;
+    document.getElementById('out').textContent = v + 'k';
+    document.getElementById('turns').textContent = Math.round(v / 12.5);
+    document.getElementById('comp').textContent = Math.max(0, Math.round(800 / v) - 1);
+    document.getElementById('hit').textContent = Math.min(97, 80 + Math.round(v / 40)) + '%';
+  };
+  k.addEventListener('input', set);
+  set();
+</script>
