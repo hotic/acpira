@@ -1391,6 +1391,7 @@ export const es = {
   'mobile.projects.path': 'Ruta de la carpeta',
   'mobile.projects.pathHint': 'Una ruta en el ordenador que ejecuta el motor de Acpira',
   'mobile.new.placeholder': '¿En qué trabajamos?',
+  'mobile.thinking.off': 'Razonamiento desactivado',
   'mobile.agent.notInstalled': 'No instalado',
   'mobile.theme.system': 'Sistema',
   'mobile.terminal.close': 'Cerrar terminal',

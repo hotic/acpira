@@ -14,9 +14,6 @@ import UIKit
 struct ChatScreen: View {
   let id: String
   @Environment(AppModel.self) private var model
-  @State private var draft = ""
-  /// Attachments picked for the next prompt
-  @State private var staged: [Attachment] = []
   /// The bottom safe area (the home indicator), read before the dock takes part of it over
   @State private var homeInset: CGFloat = 0
   /// The software keyboard is up: the system already lifts the dock over it, so the dock keeps only a small gap
@@ -39,16 +36,19 @@ struct ChatScreen: View {
     }
     // Coming on screen, pushed or popped back to, switches the engine's view to this session
     .onAppear { model.open(id) }
+    .onDisappear { model.parkDraft(id) }
   }
 
   private func screen(_ session: SessionView) -> some View {
     let agent = model.agent(session.agent)
     let pinned = model.summaries.first { $0.id == id }?.pinned == true
+    // The unsent prompt and attachments live in the app model, so leaving the chat and coming back keeps them
+    let draft = model.draft(for: id)
     return VStack(spacing: 0) {
       Thread(session: session)
       // The dock reaches down into the home indicator's band and rests where the list's system bottom bar does
       // (Metrics.barSink), leaving the thread more room; on a phone without the indicator it keeps the plain gap
-      Dock(session: session, draft: $draft, staged: $staged)
+      Dock(session: session, draft: Bindable(draft).text, staged: Bindable(draft).staged)
         .padding(.bottom, keyboard ? Metrics.s2 : max(Metrics.s2, homeInset - Metrics.barSink))
     }
     // The keyboard's safe area still lifts the dock; only the container's (the home indicator) is taken over
@@ -61,10 +61,11 @@ struct ChatScreen: View {
     // The thread blurs and dims gradually as it scrolls up under the bar's glass buttons
     .topFade()
     .onAppear {
-      if let initialDraft, draft.isEmpty { draft = initialDraft }
+      if let initialDraft, draft.text.isEmpty { draft.text = initialDraft }
       // `-popup account`: the account sheet open on launch (screenshots); `-popup toast`: a moment later, the toast of
       // switching to the agent's first account
       if initialPopup == "account" { accountOpen = true }
+      if initialPopup == "quotes" { model.seedQuotes(id) }
       if initialPopup == "toast", let account = model.accounts.first(where: { $0.agent == agent.id }) {
         Task {
           try? await Task.sleep(for: .seconds(1))
@@ -80,6 +81,9 @@ struct ChatScreen: View {
     .environment(\.chatAgent, agent)
     .environment(\.sessionActions, sessionActions)
     .modifier(MediaLayer(session: session, loader: model.media))
+    .environment(\.mentionPersonas, model.personas)
+    .environment(\.compactAt, model.compactAt)
+    .environment(model.fileSearch)
     // The accounts as a system sheet with a form
     .sheet(isPresented: $accountOpen) {
       NativeAccountSheet(agent: agent, accounts: model.accounts.filter { $0.agent == agent.id }, accountId: session.accountId,
@@ -121,7 +125,11 @@ struct ChatScreen: View {
       sendQueued: { model.sendQueued(id, item: $0) },
       editQueued: { item in
         // Edit takes the prompt out of the queue and back into the composer
-        if let prompt = model.takeQueued(id, item) { draft = prompt.text; staged = prompt.attachments ?? [] }
+        if let prompt = model.takeQueued(id, item) {
+          let draft = model.draft(for: id)
+          draft.text = prompt.text
+          draft.staged = prompt.attachments ?? []
+        }
       },
       removeQueued: { model.takeQueued(id, $0) },
       retry: { model.retry(id) },
@@ -134,7 +142,8 @@ struct ChatScreen: View {
       restart: { model.restart(id) },
       login: { model.login(id, method: $0) },
       takeOver: { model.takeOver(id) },
-      failureAction: { model.failureAction(id, $0) })
+      failureAction: { model.failureAction(id, $0) },
+      quote: { model.quote(id, $0) })
   }
 }
 

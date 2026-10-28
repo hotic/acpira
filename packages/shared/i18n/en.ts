@@ -1428,6 +1428,7 @@ export const en = {
   'mobile.projects.path': 'Folder path',
   'mobile.projects.pathHint': 'A path on the computer running the Acpira engine',
   'mobile.new.placeholder': 'What should we work on?',
+  'mobile.thinking.off': 'Thinking off',
   'mobile.agent.notInstalled': 'Not installed',
   'mobile.theme.system': 'System',
   'mobile.terminal.close': 'Close terminal',

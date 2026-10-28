@@ -273,6 +273,8 @@ public struct EditTurnRequest: Codable, Hashable, Sendable {
 public struct FileHit: Codable, Hashable, Sendable {
   public var uri: String
   public var path: String
+
+  public init(uri: String, path: String) { self.uri = uri; self.path = path }
 }
 
 // The reads of a session's project (rust/crates/acpira-host/src/project_files.rs). Paths are relative to the project
@@ -353,10 +355,53 @@ public struct TerminalExit: Codable, Hashable, Sendable {
   public init(code: Int, signal: String? = nil) { self.code = code; self.signal = signal }
 }
 
+/// A cross-harness subagent from the settings (subagents.ts SubagentPersona): any session summons it through
+/// `ask_agent`, or the user names it with `@name` in the composer
+public struct SubagentPersona: Codable, Hashable, Sendable, Identifiable {
+  /// Stable slug: the tool's `agent` value
+  public var id: String
+  public var name: String
+  /// The CLI it runs in
+  public var agent: AgentId
+  /// A value of that agent's model select; absent: the CLI's default
+  public var model: String?
+  /// A value of its reasoning-effort select; absent: the default
+  public var effort: String?
+  public var mode: RelayMode
+  /// Tells the model when to summon it
+  public var when: String
+  public var brief: String?
+  public var enabled: Bool
+  /// general | scout | executor | reviewer; absent: general
+  public var duty: String?
+  /// Every new conversation starts with the handoff pack of the session's changes
+  public var changes: Bool?
+
+  public init(id: String, name: String, agent: AgentId, model: String? = nil, effort: String? = nil, mode: RelayMode = .consult,
+              when: String = "", enabled: Bool = true) {
+    self.id = id; self.name = name; self.agent = agent; self.model = model; self.effort = effort; self.mode = mode
+    self.when = when; self.enabled = enabled
+  }
+}
+
+/// Personas summoned together by one `@name` (subagents.ts SubagentGroup)
+public struct SubagentGroup: Codable, Hashable, Sendable, Identifiable {
+  public var id: String
+  public var name: String
+  /// Persona ids, in the order their rounds start
+  public var members: [String]
+  public var when: String
+  public var enabled: Bool
+
+  public init(id: String, name: String, members: [String], when: String = "", enabled: Bool = true) {
+    self.id = id; self.name = name; self.members = members; self.when = when; self.enabled = enabled
+  }
+}
+
 /// The settings the engine pushes (settings.ts SettingsView), as the subset the phone reads; a key missing from the
 /// push reads as DEFAULT_SETTINGS has it. Not mirrored: the desktop / IDE-only keys (sessionScope, sessionListPosition,
 /// font sizes and smoothing, diffMarkers, shareEditorSelection, agentCpuCap, proxy, openFilesWith, desktopLayout,
-/// panel*) and the subagent personas (subagents, subagentGroups)
+/// panel*)
 public struct SettingsView: Codable, Hashable, Sendable {
   /// `auto` or a Locale
   public var language: String
@@ -380,6 +425,9 @@ public struct SettingsView: Codable, Hashable, Sendable {
   public var notifySystem: Bool
   /// Agents whose Plan mode approves tool requests without a card
   public var planAutoApprove: [AgentId]
+  /// The cross-harness subagents and their groups (~/.acpira/subagents.json): the composer's `@` summons
+  public var subagents: [SubagentPersona]
+  public var subagentGroups: [SubagentGroup]
 
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -397,6 +445,8 @@ public struct SettingsView: Codable, Hashable, Sendable {
     notifySound = try c.decode(.notifySound, or: false)
     notifySystem = try c.decode(.notifySystem, or: false)
     planAutoApprove = try c.decode(.planAutoApprove, or: [])
+    subagents = try c.decode(.subagents, or: [])
+    subagentGroups = try c.decode(.subagentGroups, or: [])
   }
 }
 

@@ -394,34 +394,89 @@ enum GooColumn {
 // MARK: - The composer's liquid controls
 
 /// Attach as a liquid chip: the photo, camera and file sources squeeze out of `+` in a short column, each named beside
-/// it; the `+` turns ×. `lift` raises the column over the card the chip sits in while typing
+/// it; the `+` turns ×. `lift` raises the column over the card the chip sits in while typing. The pasteboard's image
+/// joins them while there is one, and the summonable personas (SummonMenu) last, as a bean whose panel lists them
 struct LiquidAttach: View {
   @Binding var open: String?
+  /// The bean whose panel is open (the summon list), 0 for none
+  @Binding var stage: Int
   var lift: CGFloat = 0
+  /// Stages the pasteboard's image; nil while it holds none
+  var paste: (() -> Void)? = nil
+  var personas: [MentionPersona] = []
+  var onSummon: (MentionPersona) -> Void = { _ in }
   var onPick: (AttachSource) -> Void
   @Environment(\.motionEnabled) private var motion
 
+  /// One bean: its glyph and name, and either what a tap does or the panel it turns into
+  private struct Source {
+    let key: String
+    let icon: LucideIcon
+    let label: String
+    var pick: (() -> Void)? = nil
+    var rows = 0
+    var panel: AnyView? = nil
+  }
+
   var body: some View {
-    let sources: [(AttachSource, LucideIcon, String)] = [
-      (.photos, .image, t("mobile.attach.photos")), (.camera, .camera, t("mobile.attach.camera")),
-      (.files, .paperclip, t("mobile.attach.files")),
-    ]
+    let sources = sources()
     let chip = CGSize(width: Metrics.barCtl, height: Metrics.barCtl)
     let offsets = GooColumn.offsets(chip: chip, widths: sources.map { _ in chip.width }, lift: lift)
-    GooChip(id: "attach", open: $open, stage: .constant(0), pieces: zip(sources, offsets).map { item, offset in
-      let (source, icon, label) = item
-      return GooPiece(id: "attach.\(label)", name: label, offset: offset,
-                      glyph: AnyView(Icon(icon, size: Metrics.barIcon, strokeWidth: 1.75).foregroundStyle(Palette.fg1)),
-                      caption: AnyView(GooCaption(text: label))) {
-        withAnimation(motion ? Motion.gooSpring : nil) { open = nil }
-        onPick(source)
+    GooChip(id: "attach", open: $open, stage: $stage, pieces: zip(sources, offsets).enumerated().map { k, item in
+      let (source, offset) = item
+      let h = min(CGFloat(source.rows), Metrics.gooPanelRows) * Metrics.gooRow + Metrics.s1_5 * 2
+      return GooPiece(id: "attach.\(source.key)", name: source.label, offset: offset,
+                      glyph: AnyView(Icon(source.icon, size: Metrics.barIcon, strokeWidth: 1.75).foregroundStyle(Palette.fg1)),
+                      caption: AnyView(GooCaption(text: source.label)),
+                      panel: source.panel.map { GooPanel(size: CGSize(width: Metrics.gooPanelW, height: h), content: $0) }) {
+        if let pick = source.pick {
+          withAnimation(motion ? Motion.gooSpring : nil) { open = nil }
+          pick()
+        } else {
+          withAnimation(motion ? Motion.gooSpring : nil) { stage = stage == k + 1 ? 0 : k + 1 }
+        }
       }
     }) {
-      Icon(.plus, size: Metrics.barIcon, strokeWidth: 1.75)
-        .foregroundStyle(Palette.fg1)
-        .rotationEffect(.degrees(open == "attach" ? 45 : 0))
-        .accessibilityLabel(Text(web: t("mobile.attach")))
+      // × over the beans, ‹ over the summon panel, as the model chip
+      ZStack {
+        if open == "attach" && stage > 0 {
+          Icon(.chevronLeft, size: Metrics.barIcon, strokeWidth: 1.75)
+            .transition(.scale(scale: Metrics.gooSeed).combined(with: .opacity))
+        } else {
+          Icon(.plus, size: Metrics.barIcon, strokeWidth: 1.75)
+            .rotationEffect(.degrees(open == "attach" ? 45 : 0))
+            .transition(.scale(scale: Metrics.gooSeed).combined(with: .opacity))
+        }
+      }
+      .foregroundStyle(Palette.fg1)
+      .accessibilityLabel(Text(web: open == "attach" && stage > 0 ? t("common.back") : t("mobile.attach")))
     }
+  }
+
+  private func sources() -> [Source] {
+    var out = [
+      Source(key: "photos", icon: .image, label: t("mobile.attach.photos")) { onPick(.photos) },
+      Source(key: "camera", icon: .camera, label: t("mobile.attach.camera")) { onPick(.camera) },
+      Source(key: "files", icon: .paperclip, label: t("mobile.attach.files")) { onPick(.files) },
+    ]
+    if let paste { out.append(Source(key: "paste", icon: .clipboardPaste, label: t("desktop.menu.paste"), pick: paste)) }
+    guard !personas.isEmpty else { return out }
+    out.append(Source(key: "summon", icon: .atSign, label: t("summon.entry"), rows: personas.count,
+                      panel: AnyView(GooList(current: nil) {
+                        ForEach(personas) { persona in
+                          GooRow(name: persona.name, checked: false) {
+                            SummonMark(persona: persona, size: Metrics.iconCtl).foregroundStyle(Palette.fg1)
+                          } trailing: {
+                            if let cli = persona.cli {
+                              Text(web: cli, paragraph: false).textStyle(TypeScale.text3).foregroundStyle(Palette.fg3).lineLimit(1)
+                            }
+                          } action: {
+                            withAnimation(motion ? Motion.gooSpring : nil) { open = nil; stage = 0 }
+                            onSummon(persona)
+                          }
+                        }
+                      })))
+    return out
   }
 }
 
@@ -443,15 +498,15 @@ struct GooCaption: View {
   }
 }
 
-/// The model button as one liquid chip (the model's mark, large, beside `+`). Opening it squeezes three beans out of
-/// it in a column: the model, the reasoning level and the special modes (the agent's modes, Fast), each with its
-/// value on its right, and the mark turns into × (the chip has become the beans, as `+` does). A tapped bean
-/// stretches into its panel of choices and swallows the others; a pick shrinks it back into the bean and leaves the
-/// beans out, so another setting can change next. Fast flips in place
+/// The model button as one liquid chip (the model's mark, large, beside `+`). Opening it squeezes its beans out of
+/// it in a column: the model (and the built-in agent's sidekick), the reasoning level and the special modes (the
+/// agent's modes, Fast), each with its value on its right, and the mark turns into × (the chip has become the beans,
+/// as `+` does). A tapped bean stretches into its panel of choices and swallows the others; a pick shrinks it back
+/// into the bean and leaves the beans out, so another setting can change next. Fast and Thinking flip in place
 struct LiquidControls: View {
   let controls: SessionControls
   @Binding var open: String?
-  /// The bean whose panel is open (1…3), 0 for none
+  /// The bean whose panel is open (1…), 0 for none
   @Binding var stage: Int
   var lift: CGFloat = 0
   var onSetMode: (String) -> Void
@@ -529,13 +584,30 @@ struct LiquidControls: View {
                         }
                       })))
     }
-    if let effort, effort.levels.count > 1 {
-      let name = effort.levels.first { $0.id == effort.value }?.name ?? ""
+    if let sk = c.sidekick { out.append(sidekickBean(sk, effort: c.sidekickEffort)) }
+    if let effort, effort.levels.count > 1 || effort.thinking != nil {
+      let levels = effort.levels.count > 1 ? effort.levels : []
+      let thinking = effort.thinking
+      let name = thinking?.on == false ? t("mobile.thinking.off")
+        : levels.first { $0.id == effort.value }?.name ?? (thinking != nil ? "Thinking" : "")
       out.append(Bean(key: "effort", title: t("composer.effort"),
-                      glyph: AnyView(Icon(.brain, size: Metrics.barIcon, strokeWidth: 1.75).foregroundStyle(Palette.fg1)),
-                      caption: AnyView(GooCaption(text: name)), rows: effort.levels.count,
+                      glyph: AnyView(Icon(.brain, size: Metrics.barIcon, strokeWidth: 1.75)
+                        .foregroundStyle(thinking?.on == false ? Palette.fg3 : Palette.fg1)),
+                      caption: AnyView(GooCaption(text: name)), rows: levels.count + (thinking != nil ? 1 : 0),
                       panel: AnyView(GooList(current: effort.value) {
-                        ForEach(effort.levels, id: \.id) { level in
+                        if let thinking {
+                          // ReasoningParams' Thinking switch (ModelParams' for a Standard / Thinking pair): flips in
+                          // place, the panel stays out
+                          GooRow(name: "Thinking", checked: thinking.on) {
+                            Icon(.brain, size: Metrics.icon, strokeWidth: 1.75)
+                          } trailing: {
+                            Toggle("", isOn: Binding(get: { thinking.on }, set: { thinking.set($0) }))
+                              .labelsHidden()
+                              .tint(.green)
+                              .disabled(thinking.disabled)
+                          } action: { if !thinking.disabled { thinking.set(!thinking.on) } }
+                        }
+                        ForEach(levels, id: \.id) { level in
                           GooRow(name: level.name, checked: level.id == effort.value) { EmptyView() } action: {
                             effort.pick(level.id)
                             fold()
@@ -588,6 +660,57 @@ struct LiquidControls: View {
     return out
   }
 
+  /// SidekickPanel as a bean: the built-in agent's second model, its mark on the glass (a faint plus for none) and the
+  /// pair's side spelled out beside it. The panel lists none and the models, then the sidekick's own levels while its
+  /// model has them; a model pick keeps the panel out, since its level is set right below
+  private func sidekickBean(_ sk: ConfigControl, effort: ConfigControl?) -> Bean {
+    let picked = sk.options.first { $0.id == sk.value && $0.id != ComposerControls.noSidekick }
+    let scale = picked == nil ? nil
+      : effort.flatMap { ComposerControls.reasoningVisible($0) ? ComposerControls.presentReasoning($0) : nil }
+    let levels = scale?.efforts ?? []
+    let level = effort.flatMap(ComposerControls.reasoningChip)
+    let model = picked.map { [$0.name, level].compactMap { $0 }.joined(separator: " ") } ?? t("composer.sidekickNone")
+    return Bean(key: "sidekick", title: t("composer.sidekick"),
+                glyph: AnyView(Group {
+                  if let picked {
+                    VendorMark(brand: ModelCatalog.optionBrand(picked), name: picked.name, size: Metrics.barIcon).foregroundStyle(Palette.fg1)
+                  } else {
+                    Icon(.circleFadingPlus, size: Metrics.barIcon, strokeWidth: 1.75).foregroundStyle(Palette.fg3)
+                  }
+                }),
+                caption: AnyView(GooCaption(text: t("composer.pairSide", ["role": t("composer.sidekick"), "model": model]))),
+                rows: sk.options.count + (levels.isEmpty ? 0 : levels.count + 1),
+                panel: AnyView(GooList(current: sk.value ?? ComposerControls.noSidekick) {
+                  ForEach(sk.options) { o in
+                    let none = o.id == ComposerControls.noSidekick
+                    GooRow(name: none ? t("composer.sidekickNone") : o.name, checked: o.id == (sk.value ?? ComposerControls.noSidekick)) {
+                      if none {
+                        Color.clear.frame(width: Metrics.iconCtl, height: Metrics.iconCtl)
+                      } else {
+                        VendorMark(brand: ModelCatalog.optionBrand(o), name: o.name, size: Metrics.iconCtl)
+                      }
+                    } action: {
+                      onSetConfig(sk.id, o.id)
+                      if none { fold() }
+                    }
+                    .id(o.id)
+                  }
+                  if let effort, let scale, !levels.isEmpty {
+                    Text(web: t("composer.effort"), paragraph: false)
+                      .textStyle(TypeScale.text3)
+                      .foregroundStyle(Palette.fg3)
+                      .padding(.horizontal, Metrics.gooPadX)
+                      .frame(maxWidth: .infinity, minHeight: Metrics.gooRow, alignment: .bottomLeading)
+                    ForEach(levels) { l in
+                      GooRow(name: l.name, checked: !scale.off && l.id == scale.value) { EmptyView() } action: {
+                        onSetConfig(effort.id, l.id)
+                        fold()
+                      }
+                    }
+                  }
+                }))
+  }
+
   /// A pick folds the panel back into its bean; the beans stay out for the next change
   private func fold() { withAnimation(motion ? Motion.gooSpring : nil) { stage = 0 } }
 }
@@ -609,8 +732,10 @@ func nativeFastState(_ c: ConfigControl, onChange: @escaping (String) -> Void) -
 /// What the composer's model chip offers, read from the session's controls: the model families, the reasoning levels
 /// with Fast, and the modes
 struct ModelChoices {
-  /// The reasoning levels on offer (the family's own scale, else the agent's thought_level) and Fast beside them
-  typealias Effort = (levels: [(id: String, name: String)], value: String, pick: (String) -> Void, fast: FastState?)
+  /// The reasoning levels on offer (the family's own scale, else the agent's thought_level), Fast beside them, and the
+  /// Thinking switch where thinking can be turned off
+  typealias Effort = (levels: [(id: String, name: String)], value: String, pick: (String) -> Void, fast: FastState?,
+                      thinking: FastState?)
 
   let families: [ModelFamily]
   let cur: ModelFamily?
@@ -622,6 +747,9 @@ struct ModelChoices {
   let mode: SessionOption?
   /// The modes to choose between; none when the agent has only one
   let modes: [SessionOption]
+  /// The built-in agent's sidekick select and its level
+  let sidekick: ConfigControl?
+  let sidekickEffort: ConfigControl?
   private let onSetConfig: (String, String) -> Void
 
   init(controls: SessionControls, onSetConfig: @escaping (String, String) -> Void) {
@@ -637,6 +765,8 @@ struct ModelChoices {
     self.effort = Self.effort(split: split, cur: cur, curVar: curVar, modelId: model?.id, onSetConfig: onSetConfig)
     self.mode = controls.modes.first { $0.id == controls.modeId } ?? controls.modes.first
     self.modes = controls.modes.count > 1 ? controls.modes : []
+    self.sidekick = split.sidekick.first
+    self.sidekickEffort = split.sidekickEffort.first
     self.onSetConfig = onSetConfig
   }
 
@@ -647,20 +777,36 @@ struct ModelChoices {
   private static func effort(split: ComposerControls.Split, cur: ModelFamily?, curVar: ModelVariant?, modelId: String?,
                              onSetConfig: @escaping (String, String) -> Void) -> Effort? {
     let nativeFast = split.modelConfig.first(where: ComposerControls.isFast).map { c in nativeFastState(c) { onSetConfig(c.id, $0) } }
-    if let f = cur, let v = curVar, let modelId, f.fusion == nil, ModelCatalog.variantScale(f) {
+    if let f = cur, let v = curVar, let modelId, f.fusion == nil, ModelCatalog.variantScale(f) || ModelCatalog.thinkingOnly(f) {
       let fast: FastState? = f.hasFast ? {
         func at(_ long: Bool) -> ModelVariant? { f.variants.first { $0.effort == v.effort && $0.fast == !v.fast && $0.long == long } }
         let hit = at(false) ?? at(v.long)
         return FastState(on: v.fast, disabled: hit == nil) { _ in if let hit { onSetConfig(modelId, hit.id) } }
       }() : nativeFast
-      return (f.efforts.map { ($0, $0.isEmpty ? t("composer.standard") : $0) }, v.effort, { e in
+      let pick = { (e: String) in
         if let hit = ModelCatalog.findVariant(f, effort: e, fast: v.fast, long: false) { onSetConfig(modelId, hit.id) }
-      }, fast)
+      }
+      // A Standard / Thinking pair is a switch, not two levels
+      if ModelCatalog.thinkingOnly(f) {
+        let on = v.effort == "Thinking"
+        let thinking = FastState(on: on, disabled: ModelCatalog.findVariant(f, effort: on ? "" : "Thinking", fast: v.fast, long: false) == nil) {
+          pick($0 ? "Thinking" : "")
+        }
+        return ([], v.effort, pick, fast, thinking)
+      }
+      return (f.efforts.map { ($0, $0.isEmpty ? t("composer.standard") : $0) }, v.effort, pick, fast, nil)
     }
     if let c = split.reasoning.first(where: ComposerControls.reasoningVisible) {
       let p = ComposerControls.presentReasoning(c)
-      guard p.efforts.count > 1 else { return nil }
-      return (p.efforts.map { ($0.id, $0.name) }, p.off ? "" : p.value ?? "", { onSetConfig(c.id, $0) }, nativeFast)
+      // Turned back on at High, else the first level, else the agent's own "on"
+      let turnOn = p.efforts.first { $0.id == "high" }?.id ?? p.efforts.first?.id ?? p.onId
+      let thinking = p.offId.map { off in
+        FastState(on: !p.off, disabled: false) { on in
+          if !on { onSetConfig(c.id, off) } else if let turnOn { onSetConfig(c.id, turnOn) }
+        }
+      }
+      guard p.efforts.count > 1 || thinking != nil else { return nil }
+      return (p.efforts.map { ($0.id, $0.name) }, p.off ? "" : p.value ?? "", { onSetConfig(c.id, $0) }, nativeFast, thinking)
     }
     return nil
   }

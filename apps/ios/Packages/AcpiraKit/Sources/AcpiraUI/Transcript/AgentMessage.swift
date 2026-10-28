@@ -68,6 +68,7 @@ struct CodexMessage: View {
   let turn: AgentTurn
   var running: Bool
   var onPermission: (String, String) -> Void
+  @Environment(\.sessionActions) private var actions
 
   var body: some View {
     // A call whose observation was lost reads as settled before anything groups or draws it
@@ -76,7 +77,10 @@ struct CodexMessage: View {
     VStack(alignment: .leading, spacing: Metrics.gap) {
       CodexFold(turn: turn, blocks: split.process, running: running, hasTools: hasTools)
       ForEach(split.notices, id: \.id) { NoticeRow(block: $0) }
-      ForEach(Array(split.reply.enumerated()), id: \.offset) { _, block in StreamProse(block: block) }
+      ForEach(Array(split.reply.enumerated()), id: \.offset) { _, block in
+        // A long press on a block of the reply quotes it into the composer (Quotes.swift)
+        StreamProse(block: block).environment(\.quoteProse, QuoteAction(run: actions.quote))
+      }
       ForEach(split.permissions.filter { $0.planId == nil }, id: \.id) { block in
         PermissionCard(block: block) { onPermission(block.id, $0) }
       }

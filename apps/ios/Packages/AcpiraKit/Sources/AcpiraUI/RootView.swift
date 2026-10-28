@@ -17,8 +17,9 @@ public struct LaunchOptions: Sendable {
   public var screen: String
   /// `-render closed|open|all`: draw the fixture's full-length chat into tmp/acpira-render.png instead of the screens
   public var render: String?
-  /// `-popup attach|model|model.N|focus…|demo|ring|ring.pick|account|toast|code|lightbox|fold:N|menu:X,Y`: open that
-  /// picker, sheet or fold, or play the liquid transitions, on launch (screenshots and recordings, docs/dev/ios.md)
+  /// `-popup attach|attach.N|attach.paste|model|model.N|focus…|demo|ring|ring.pick|account|toast|code|lightbox|context|quotes|
+  /// fold:N|menu:X,Y`: open that picker, sheet, card or fold, or play the liquid transitions, on launch (screenshots and
+  /// recordings, docs/dev/ios.md)
   public var popup: String?
   /// `-replay`: the chat plays its last agent turn back as a live stream (motion recordings)
   public var replay = false

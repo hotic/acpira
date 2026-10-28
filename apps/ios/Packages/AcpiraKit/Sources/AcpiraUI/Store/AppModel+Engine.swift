@@ -60,6 +60,7 @@ extension AppModel {
       if let base = state.blobBase { link.blobBase = base }
       agents = state.agents
       accounts = state.accounts
+      settings = state.settings
       summaries = state.sessions
       present(link.feed.receive(message))
     case .agents(let list):
@@ -68,12 +69,16 @@ extension AppModel {
       summaries = list
     case .accounts(let list):
       accounts = list
+    case .settings(let next, _):
+      settings = next
     case .session, .sessionPatch, .noSession:
       present(link.feed.receive(message))
     case .terminalOutput, .terminalState:
       terminals.receive(message)
     case .imageBlob(let seq, let blob):
       link.staged(seq, blob: blob)
+    case let .files(seq, files):
+      fileSearch.receive(seq: seq, files: files)
     default:
       break
     }
