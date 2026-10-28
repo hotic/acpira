@@ -1,7 +1,7 @@
 //! `acpira mcp`: the MCP server Acpira hands every agent in `session/new` / `load` / `resume` (`mcpServers`).
 //! It offers `show_image`, that lets the model put a local image in front of the user: the call's arguments
 //! name the files, and the host reads them into the session's blob store when the tool call completes
-//! (`normalize.rs` `attach_shown_images`). The server itself only validates the paths and answers a receipt, so no
+//! (`normalize/content.rs` `attach_shown_images`). The server itself only validates the paths and answers a receipt, so no
 //! pixels travel back through the model's context. `show_widget` does the same for one self-contained HTML file, which
 //! the webview runs as an interactive widget in a sandboxed frame (`attach_shown_widget`, `webview/chat/AgentWidget.tsx`).
 //!

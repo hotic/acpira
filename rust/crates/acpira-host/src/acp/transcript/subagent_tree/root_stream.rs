@@ -202,7 +202,7 @@ impl SubagentTree {
     if ctx.root_tool(&tool_call_id).is_none() {
       return;
     }
-    // A finished child of an earlier turn whose id a fresh agent session reused (a historical edit, see `normalize.rs`
+    // A finished child of an earlier turn whose id a fresh agent session reused (a historical edit, see `normalize/tasks.rs`
     // `settled_before`): the new row is not linked to it, so the stale mapping goes and the call may open its own child
     if let Some(i) = self.by(&self.by_tool, &tool_call_id)
       && terminal(self.nodes[i].status)

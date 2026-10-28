@@ -108,7 +108,7 @@ impl Tool {
   }
 
   /// What the tool card carries so the engine can show the row as "Call <Server>" with the tool's title
-  /// (`acpira/mcp`, read by `normalize.rs` `mcp_identity`)
+  /// (`acpira/mcp`, read by `normalize/tool_kind.rs` `mcp_identity`)
   pub fn meta(&self) -> Value {
     json!({ "acpira/mcp": { "server": self.server_name, "tool": self.tool, "title": self.title } })
   }

@@ -25,7 +25,7 @@ pub fn unlock_frame_rate(window: &tauri::WebviewWindow, log: Log) {
 
 /// Overflow scrolling on the page's main thread from the next load on: WebKit's AsyncOverflowScrollingEnabled off, so the
 /// page has no overflow nodes in the UI-side scrolling tree. The fallback for a window whose WebContent process WebKit
-/// keeps killing over that tree (app.rs page_process_ended)
+/// keeps killing over that tree (app/windows.rs page_process_ended)
 pub fn sync_overflow_scrolling(window: &tauri::WebviewWindow, log: Log) {
   set_webkit_feature(window, "overflow scrolling", c"AsyncOverflowScrollingEnabled", false, log);
 }

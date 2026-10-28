@@ -1,5 +1,5 @@
 //! Modes as data: a mode is a text the model is told when the session enters it, and permission rules that hold over
-//! every other layer (`turn.rs` evaluates them last, so an earlier "always allow" cannot widen them). A mode's `ask`
+//! every other layer (`turn/approval.rs` evaluates them last, so an earlier "always allow" cannot widen them). A mode's `ask`
 //! rules are the exception: the approval level sits above them, so full access drops them and a command of Plan mode
 //! runs without a card (its `deny` rules hold whatever the level is). `{plan}` in a text or a rule pattern stands for
 //! the session's plan file. Agent and Plan offer the same

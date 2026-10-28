@@ -3,7 +3,7 @@
 //! the real result; at run time it is re-applied to whatever the file holds then. Matching tolerates the two slips models
 //! make most: LF written for a CRLF file, and trailing whitespace.
 //!
-//! Both take `then_run`, a command run once the change is made, on a command row of its own (`turn.rs`): the check
+//! Both take `then_run`, a command run once the change is made, on a command row of its own (`turn/riders.rs`): the check
 //! after an edit was a request of its own in 14% of the steps of the 2026-10-15 eval runs (SoL-Pi's Action Fusion)
 
 use std::path::{Path, PathBuf};

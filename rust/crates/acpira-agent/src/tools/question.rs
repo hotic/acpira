@@ -106,7 +106,7 @@ pub fn prepare(args: &Value) -> Result<Action, String> {
   Ok(Action::Question { questions })
 }
 
-/// The tool card's title, which the host reads as an ask row (`normalize.rs` `ASK_TITLE`)
+/// The tool card's title, which the host reads as an ask row (`normalize/tool_kind.rs` `ASK_TITLE`)
 pub fn title(n: usize) -> String {
   if n == 1 { "Ask 1 question".to_owned() } else { format!("Ask {n} questions") }
 }
