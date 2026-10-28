@@ -566,7 +566,7 @@ function FilesTab({ sessionId, root, running, searchFiles, openEditor, openPlan,
   const split = hasView && s.treeOpen;
   const closeView = () => {
     if (s.treeOpen) panel.setView(f.key, null);
-    else panel.close(id);
+    else panel.closeViewer(id);
   };
   return (
     <div ref={tab} className={cn('absolute inset-0 flex', !shown && 'invisible')} data-files-tab>

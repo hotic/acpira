@@ -1568,6 +1568,8 @@ export const ko = {
   'panel.error.media': '이 파일은 여기서 미리 볼 수 없습니다',
   'panel.openDefault': '기본 앱으로 열기',
   'panel.emptyFolder': '빈 폴더',
+  'panel.chatFiles': '이 채팅의 파일',
+  'panel.chatEmpty': '이 채팅에는 아직 파일이 없습니다',
   'trace.title': '트레이스',
   'trace.live': '진행 중',
   'trace.done': '완료',

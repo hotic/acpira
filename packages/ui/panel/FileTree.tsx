@@ -11,6 +11,7 @@ import { nameOf as uriName } from '../chat/drafts';
 import { lastRead, project, sameRead, shellResizeIdleIn, type DirListing } from './api';
 import { FileGlyph, MARK_DOT, MARK_TEXT, buildTree, dirOf, nameOf, type MarkLookup, type TreeNode } from './files';
 import { useNearBlocks } from './nearBlocks';
+import { isChatRoot } from './chat';
 
 // The Files tab's tree, Codex-like (picked in the LAB, 2026-10-23): a filter, the session's changed files pinned over the
 // project's folders, open folders sticking under their ancestors, git marks at rest and an @ on hover. Folders are listed
@@ -50,6 +51,8 @@ interface BranchCtx {
   toggle: (path: string) => void;
   open: (path: string) => void;
   mention: (path: string) => void;
+  // The root is a chat's own hidden folder (panel/chat.ts): an empty root says so in the chat's terms
+  chat: boolean;
 }
 
 // Stuck folders stack with the outer ones on top: a deeper folder whose rows have scrolled by is pushed up out of its
@@ -118,7 +121,7 @@ function Branch({ dir, depth, ctx }: { dir: string; depth: number; ctx: BranchCt
   useEffect(() => { if (activeBlock >= 0) add([activeBlock]); }, [activeBlock, add]);
   if (!listing) return null;
   if (listing.error || !listing.entries.length) {
-    return <div className="flex min-h-row items-center text-3 text-fg-3" style={indent(depth)}>{listing.error ? t('panel.error.other', { error: listing.error }) : t('panel.emptyFolder')}</div>;
+    return <div className="flex min-h-row items-center text-3 text-fg-3" style={indent(depth)}>{listing.error ? t('panel.error.other', { error: listing.error }) : t(ctx.chat && !dir ? 'panel.chatEmpty' : 'panel.emptyFolder')}</div>;
   }
   const folders = listing.entries.filter(e => e.dir);
   const fileBlocks: (typeof files)[] = [];
@@ -291,7 +294,8 @@ export function FileTree(p: FileTreeProps) {
     setSeen(s => new Set(s).add(path));
     p.setExpanded(open => (open.includes(path) ? open.filter(x => x !== path) : [...open, path]));
   };
-  const ctx: BranchCtx = { dirs, expanded, seen, mark: p.mark, active: p.active, query: q, toggle, open: p.onOpen, mention: p.onMention };
+  const chat = isChatRoot(p.root);
+  const ctx: BranchCtx = { dirs, expanded, seen, mark: p.mark, active: p.active, query: q, toggle, open: p.onOpen, mention: p.onMention, chat };
   const add = p.changes.reduce((n, c) => n + c.add, 0), del = p.changes.reduce((n, c) => n + c.del, 0);
   const shown = p.changes.filter(c => !q || c.path.toLowerCase().includes(q));
   const matches = useMemo(() => (hits ? buildTree(hits) : undefined), [hits]);
@@ -299,8 +303,9 @@ export function FileTree(p: FileTreeProps) {
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-tree>
       {/* The side insets are the tool panel's when the tree sits in it (panel.css --tree-lead / --tree-trail): the filter, the
-          sections and the rows share its edge lines. The filter is as tall as the panel's tabs, so the two read as one block */}
-      <div className="flex h-[calc(var(--ctl)+var(--spacing-gap))] shrink-0 items-center border-b border-line pl-[var(--tree-lead,var(--spacing-gap))] pr-[var(--tree-trail,var(--spacing-gap))]">
+          sections and the rows share its edge lines. The filter is as tall as the panel's tabs, so the two read as one block; no rule under it, a stuck folder
+          draws its own edge once the tree scrolls */}
+      <div className="flex h-[calc(var(--ctl)+var(--spacing-gap))] shrink-0 items-center pl-[var(--tree-lead,var(--spacing-gap))] pr-[var(--tree-trail,var(--spacing-gap))]">
         <label className="flex h-ctl min-w-0 flex-1 items-center gap-1.5 rounded-md border border-line bg-chip px-2 text-2 focus-within:border-line-strong">
           <Search strokeWidth={1.5} className="size-3.5 shrink-0 text-fg-3" />
           <input value={query} onChange={e => setQuery(e.target.value)} placeholder={t('panel.filter')} spellCheck={false}
@@ -341,7 +346,8 @@ export function FileTree(p: FileTreeProps) {
         </div>
       )}
       <div className={cn(SECTION, 'mr-[var(--tree-trail,var(--spacing-gap-half))] ml-[var(--tree-lead,var(--spacing-gap-half))]')}>
-        <span className="truncate">{nameOf(p.root.replace(/\\/g, '/').replace(/\/+$/, ''))}</span>
+        {/* A chat's folder is named by date and random (never by the prompt): it is titled for what it holds instead */}
+        <span className="truncate">{chat ? t('panel.chatFiles') : nameOf(p.root.replace(/\\/g, '/').replace(/\/+$/, ''))}</span>
         <span className="flex-1" />
         <span className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover/section:opacity-100 focus-within:opacity-100">
           {p.active && !/^([a-z]:)?[\\/]/i.test(p.active) && <IconButton size="sm" title={t('panel.locate')} aria-label={t('panel.locate')}

@@ -1606,6 +1606,8 @@ export const en = {
   'panel.error.media': 'This file can’t be shown here',
   'panel.openDefault': 'Open with default app',
   'panel.emptyFolder': 'Empty folder',
+  'panel.chatFiles': 'Files in this chat',
+  'panel.chatEmpty': 'This chat has no files yet',
   'trace.title': 'Trace',
   'trace.live': 'Live',
   'trace.done': 'Done',

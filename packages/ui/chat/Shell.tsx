@@ -69,6 +69,7 @@ import { preferMarkdownPreview } from '../panel/FileViewer';
 import { markShellResize } from '../panel/api';
 import { FilesLayout } from '../panel/FilesLayout';
 import { panel, usePanelValue } from '../panel/store';
+import { useChatPanel } from '../panel/chat';
 import { SubagentGraph } from './subagents/SubagentGraph';
 import { breadcrumb, nodesByTurn, subagentTitle } from './subagents/subagentState';
 
@@ -590,6 +591,8 @@ export function Shell(p: ShellProps) {
   // A chat: a session in a folder of its own that belongs to no project. On a chat's start page already, the composer
   // takes the focus instead
   const chatHere = desktop && isChatFolder(p.chats, p.cwd);
+  // An empty chat's folder is no use in the tool panel: fold it there (panel/chat.ts)
+  useChatPanel(desktop ? p.chats : undefined, chatHere, p.activeSessionId);
   const newChat = useCallback(() => {
     closeDrawer();
     if (startPage && chatHere) { root.current?.querySelector<HTMLTextAreaElement>('[data-start-dock] textarea')?.focus(); return; }

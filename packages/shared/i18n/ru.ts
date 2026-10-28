@@ -1598,6 +1598,8 @@ export const ru = {
   'panel.error.media': 'Этот файл нельзя показать здесь',
   'panel.openDefault': 'Открыть в приложении по умолчанию',
   'panel.emptyFolder': 'Пустая папка',
+  'panel.chatFiles': 'Файлы этого чата',
+  'panel.chatEmpty': 'В этом чате пока нет файлов',
   'trace.title': 'Трассировка',
   'trace.live': 'Идёт',
   'trace.done': 'Готово',

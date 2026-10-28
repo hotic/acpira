@@ -1573,6 +1573,8 @@ export const ja = {
   'panel.error.media': 'このファイルはここでプレビューできません',
   'panel.openDefault': '既定のアプリで開く',
   'panel.emptyFolder': '空のフォルダ',
+  'panel.chatFiles': 'このチャットのファイル',
+  'panel.chatEmpty': 'このチャットにはまだファイルがありません',
   'trace.title': 'トレース',
   'trace.live': '実行中',
   'trace.done': '完了',

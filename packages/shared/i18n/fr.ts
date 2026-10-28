@@ -1566,6 +1566,8 @@ export const fr = {
   'panel.error.media': 'Impossible d’afficher ce fichier ici',
   'panel.openDefault': 'Ouvrir avec l’app par défaut',
   'panel.emptyFolder': 'Dossier vide',
+  'panel.chatFiles': 'Fichiers de cette discussion',
+  'panel.chatEmpty': 'Cette discussion n’a pas encore de fichiers',
   'trace.title': 'Trace',
   'trace.live': 'En cours',
   'trace.done': 'Terminé',
