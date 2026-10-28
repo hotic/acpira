@@ -3,7 +3,7 @@ import { chmodSync, copyFileSync, existsSync, globSync, mkdirSync, mkdtempSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SIDECAR_TARGETS, exeName, hostPlatform, targetFor } from './sidecar-targets.mjs';
+import { GATEWAY_EXE, SIDECAR_TARGETS, exeName, hostPlatform, targetFor } from './sidecar-targets.mjs';
 
 // Packages VSIXes from an existing build (`pnpm build` + dist/sidecar/<platform>/ from build-sidecar.mjs):
 //   node scripts/release/package-vsix.mjs                 this machine's platform package
@@ -58,12 +58,14 @@ try {
     rmSync(bin, { recursive: true, force: true });
     const t = SIDECAR_TARGETS.find(x => x.vsce.includes(target));
     if (!t) throw new Error(`unknown VS Code target ${target}; one of ${allTargets.join(', ')}`);
-    const exe = exeName(t.platform);
-    const from = join(root, 'dist', 'sidecar', t.platform, exe);
-    if (!existsSync(from)) throw new Error(`${from} is missing: run \`node scripts/release/build-sidecar.mjs ${t.platform}\` first`);
     mkdirSync(bin);
-    copyFileSync(from, join(bin, exe));
-    if (!exe.endsWith('.exe')) chmodSync(join(bin, exe), 0o755);
+    // The engine, and the paired-remote gateway it looks for beside itself where the target ships one
+    for (const exe of [exeName(t.platform), ...(t.gateway ? [GATEWAY_EXE] : [])]) {
+      const from = join(root, 'dist', 'sidecar', t.platform, exe);
+      if (!existsSync(from)) throw new Error(`${from} is missing: run \`node scripts/release/build-sidecar.mjs ${t.platform}\` first`);
+      copyFileSync(from, join(bin, exe));
+      if (!exe.endsWith('.exe')) chmodSync(join(bin, exe), 0o755);
+    }
     const argv = ['package', '--no-dependencies', '--target', target, '-o', join(root, `${name}-${version}-${target}.vsix`)];
     console.log(`$ vsce ${argv.join(' ')}`);
     // Windows runs the .cmd shim through the shell, which splits unquoted paths at their spaces

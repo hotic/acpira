@@ -3,6 +3,7 @@
 !dist/picker.js
 !bin/acpira
 !bin/acpira.exe
+!bin/acpira-gateway
 !docs/chatgpt-bridge.md
 !dist/webview/main.js
 !dist/webview/main.css

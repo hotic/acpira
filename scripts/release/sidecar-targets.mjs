@@ -1,8 +1,10 @@
 // The platforms the Rust sidecar ships for. `platform` is the directory under dist/sidecar/ and, unchanged, under the IntelliJ
-// plugin's sidecar/bin/; `vsce` lists the VS Code targets that package that binary (the musl build also serves Alpine)
+// plugin's sidecar/bin/; `vsce` lists the VS Code targets that package that binary (the musl build also serves Alpine).
+// `gateway`: acpira-gateway, the paired-remote process, ships beside the engine, which looks for it there (remote access
+// is macOS-only: acpira-host devices/)
 export const SIDECAR_TARGETS = [
-  { platform: 'mac-arm64', triple: 'aarch64-apple-darwin', vsce: ['darwin-arm64'] },
-  { platform: 'mac-x86_64', triple: 'x86_64-apple-darwin', vsce: ['darwin-x64'] },
+  { platform: 'mac-arm64', triple: 'aarch64-apple-darwin', vsce: ['darwin-arm64'], gateway: true },
+  { platform: 'mac-x86_64', triple: 'x86_64-apple-darwin', vsce: ['darwin-x64'], gateway: true },
   { platform: 'linux-arm64', triple: 'aarch64-unknown-linux-musl', vsce: ['linux-arm64', 'alpine-arm64'] },
   { platform: 'linux-x86_64', triple: 'x86_64-unknown-linux-musl', vsce: ['linux-x64', 'alpine-x64'] },
   { platform: 'windows-arm64', triple: 'aarch64-pc-windows-msvc', vsce: ['win32-arm64'] },
@@ -10,6 +12,7 @@ export const SIDECAR_TARGETS = [
 ];
 
 export const exeName = platform => (platform.startsWith('windows-') ? 'acpira.exe' : 'acpira');
+export const GATEWAY_EXE = 'acpira-gateway';
 
 // The platform directory of the machine running the script
 export function hostPlatform() {

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { packPage } from './pack-page.mjs';
@@ -28,6 +28,7 @@ const inputs = [
   ['dist/webview/main.js', 'pnpm build'],
   ['dist/picker.js', 'pnpm build'],
   ['dist/sidecar/mac-arm64/acpira', 'pnpm build:sidecar mac-arm64'],
+  ['dist/sidecar/mac-arm64/acpira-gateway', 'pnpm build:sidecar mac-arm64'],
 ];
 const missing = inputs.filter(([path]) => !existsSync(join(repo, path)));
 if (missing.length) {
@@ -39,9 +40,15 @@ for (const [path] of inputs) {
   console.log(`${path}: built ${age < 1 ? `${Math.round(age * 60)} min` : `${age.toFixed(1)} h`} ago`);
 }
 
-// Tauri wants an external binary under its target triple's name
+// Tauri wants an external binary under its target triple's name. The paired-remote gateway sits beside the engine
+// (Contents/MacOS/acpira-gateway), where the engine looks for it, under the same signature. Both are made executable:
+// a CI artifact download drops the mode
 mkdirSync(join(shell, 'binaries'), { recursive: true });
-copyFileSync(join(repo, 'dist/sidecar/mac-arm64/acpira'), join(shell, 'binaries', `acpira-engine-${TRIPLE}`));
+for (const [from, to] of [['acpira', 'acpira-engine'], ['acpira-gateway', 'acpira-gateway']]) {
+  const dest = join(shell, 'binaries', `${to}-${TRIPLE}`);
+  copyFileSync(join(repo, 'dist/sidecar/mac-arm64', from), dest);
+  chmodSync(dest, 0o755);
+}
 
 // The page as the app ships it, its assets/ zstd-compressed (scripts/pack-page.mjs)
 packPage(repo, join(shell, 'target', 'webview-packed'));
@@ -50,7 +57,7 @@ const identity = process.env.APPLE_SIGNING_IDENTITY?.trim() || '-';
 if (identity === '-') console.log('no APPLE_SIGNING_IDENTITY: signing ad hoc, the app runs on this Mac only');
 // --config is merged into tauri.conf.json as a JSON merge patch: null drops the plain page from the resources
 const resources = { '../../dist/webview/': null, 'target/webview-packed/': 'webview/' };
-const config = { bundle: { externalBin: ['binaries/acpira-engine'], resources, macOS: { signingIdentity: identity } } };
+const config = { bundle: { externalBin: ['binaries/acpira-engine', 'binaries/acpira-gateway'], resources, macOS: { signingIdentity: identity } } };
 const env = { ...process.env };
 if (process.argv.includes('--layout')) env.TAURI_BUNDLER_DMG_IGNORE_CI = 'true';
 else env.CI = 'true';
