@@ -114,6 +114,8 @@
     // The system clipboard's text through the shell: WebKit asks the user before navigator.clipboard.readText (a paste
     // bubble), which a terminal's right-click paste must not show
     readClipboard: () => T.invoke('acpira_clipboard'),
+    // A GIF on the system clipboard as a file, which the web clipboard would flatten to one PNG frame (commands.rs)
+    copyImage: (data, name) => T.invoke('acpira_copy_image', data, { headers: { 'x-acpira-name': encodeURIComponent(name) } }),
     // A dropped file's path: WKWebView gives the page its name and bytes only, so the paths of a Finder drag are read
     // from the system's drag pasteboard as it enters the page and matched by name at the drop; WebView2 answers through
     // the shell, a promise (packages/ui Shell's folder drop takes both)

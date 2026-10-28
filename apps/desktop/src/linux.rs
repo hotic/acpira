@@ -171,6 +171,27 @@ pub fn clipboard_write(text: &str) {
   gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD).set_text(text);
 }
 
+/// A GIF on the clipboard: its URI as file managers offer a copied file (GNOME's own list too), plus its bytes as
+/// image/gif. GTK hands each out on request while the app owns the clipboard. Main thread only
+pub fn clipboard_write_gif(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
+  let uri = glib::filename_to_uri(path, None).map_err(|e| e.to_string())?;
+  let flags = gtk::TargetFlags::empty();
+  let targets = [
+    gtk::TargetEntry::new("text/uri-list", flags, 0),
+    gtk::TargetEntry::new("x-special/gnome-copied-files", flags, 1),
+    gtk::TargetEntry::new("image/gif", flags, 2),
+  ];
+  let data = data.to_vec();
+  let set = gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD).set_with_data(&targets, move |_, selection, info| match info {
+    0 => {
+      selection.set_uris(&[uri.as_str()]);
+    }
+    1 => selection.set(&selection.target(), 8, format!("copy\n{uri}").as_bytes()),
+    _ => selection.set(&selection.target(), 8, &data),
+  });
+  if set { Ok(()) } else { Err("GTK refused the clipboard".into()) }
+}
+
 /// Main thread only: waits for the owner's answer in a nested main loop
 pub fn clipboard_read() -> String {
   gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD).wait_for_text().map(|s| s.to_string()).unwrap_or_default()

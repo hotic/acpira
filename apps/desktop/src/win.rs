@@ -9,7 +9,7 @@ use windows::Win32::Globalization::GetUserPreferredUILanguages;
 use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_OUTPUT_HANDLE};
 use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData};
 use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
-use windows::Win32::System::Ole::CF_UNICODETEXT;
+use windows::Win32::System::Ole::{CF_HDROP, CF_UNICODETEXT};
 use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
 use windows::Win32::UI::WindowsAndMessaging::{HWND_BOTTOM, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SetWindowPos};
 use windows::core::{PWSTR, w};
@@ -149,6 +149,48 @@ pub fn clipboard_write(text: &str) {
       }
     }
     let _ = CloseClipboard();
+  }
+}
+
+/// A GIF on the clipboard as Explorer's Copy puts a file there: a file drop list (CF_HDROP), which chat apps and browsers
+/// paste as the animated image
+pub fn clipboard_write_gif(path: &std::path::Path, _data: &[u8]) -> Result<(), String> {
+  use std::os::windows::ffi::OsStrExt;
+  // DROPFILES: the file list's offset (the header's own 20 bytes), a zero drop point and fNC, fWide set; then the path in
+  // UTF-16, the list ended by a second NUL
+  let mut block: Vec<u8> = Vec::new();
+  block.extend_from_slice(&20u32.to_le_bytes());
+  block.extend_from_slice(&[0; 12]);
+  block.extend_from_slice(&1u32.to_le_bytes());
+  for unit in path.as_os_str().encode_wide().chain([0, 0]) {
+    block.extend_from_slice(&unit.to_le_bytes());
+  }
+  if !open_clipboard() {
+    return Err("the clipboard is busy".into());
+  }
+  // SAFETY: the clipboard is open; the memory handed to SetClipboardData belongs to the system once it succeeds and is
+  // freed here otherwise
+  unsafe {
+    let _ = EmptyClipboard();
+    let result = match GlobalAlloc(GMEM_MOVEABLE, block.len()) {
+      Err(e) => Err(e.to_string()),
+      Ok(mem) => {
+        let p = GlobalLock(mem) as *mut u8;
+        if p.is_null() {
+          let _ = GlobalFree(Some(mem));
+          Err("could not lock the clipboard memory".into())
+        } else {
+          std::ptr::copy_nonoverlapping(block.as_ptr(), p, block.len());
+          let _ = GlobalUnlock(mem);
+          SetClipboardData(u32::from(CF_HDROP.0), Some(HANDLE(mem.0))).map(|_| ()).map_err(|e| {
+            let _ = GlobalFree(Some(mem));
+            e.to_string()
+          })
+        }
+      }
+    };
+    let _ = CloseClipboard();
+    result
   }
 }
 

@@ -1,7 +1,8 @@
 // acquireVsCodeApi() may be called only once per webview; both roots (chat App, settings) go through this memo so a single bundle can host either.
 // getState / setState are the webview's own persisted state (survives a reload of the same webview); LAB stubs may omit them
-// pathForFile, dragPaths and readClipboard: the desktop app only (apps/desktop/src/init.js), the real paths of files and
-// folders dropped from the OS and the clipboard's text without WebKit's paste bubble
+// pathForFile, dragPaths, readClipboard and copyImage: the desktop app only (apps/desktop/src/init.js), the real paths of
+// files and folders dropped from the OS, the clipboard's text without WebKit's paste bubble and an image put on the
+// system clipboard as a file
 export interface VsCodeApi {
   postMessage(msg: unknown): void;
   getState?(): unknown;
@@ -12,6 +13,9 @@ export interface VsCodeApi {
   // folder's ending in '/', empty for a drag without files
   dragPaths?(): string[];
   readClipboard?(): Promise<string>;
+  // An image the web clipboard would flatten (an animated GIF keeps only its first frame as PNG): the shell writes the
+  // bytes to a temporary file named `name` and puts that file, with the raw image data, on the system clipboard
+  copyImage?(data: Uint8Array, name: string): Promise<void>;
 }
 
 declare global {
@@ -61,6 +65,28 @@ export function readClipboardText(): Promise<string> {
   const read = host()?.readClipboard;
   return (read ? read() : navigator.clipboard.readText()).catch(() => '');
 }
+
+// The shell's own image copy (VsCodeApi.copyImage): the desktop app's init script, or the VS Code shell answering
+// copyImage with copiedImage where its page says it can (window.__acpira.imageCopy); undefined elsewhere
+export function hostImageCopy(): ((data: Uint8Array, name: string) => Promise<void>) | undefined {
+  const api = host();
+  if (api?.copyImage) return (data, name) => api.copyImage!(data, name);
+  if (!api || typeof window === 'undefined' || !window.__acpira?.imageCopy) return undefined;
+  return (data, name) => new Promise<void>((resolve, reject) => {
+    const id = `copy:${++imageCopySeq}`;
+    const settle = (e: MessageEvent) => {
+      const m = e.data as { type?: string; id?: string; error?: string } | undefined;
+      if (m?.type !== 'copiedImage' || m.id !== id) return;
+      window.removeEventListener('message', settle);
+      if (m.error) reject(new Error(m.error));
+      else resolve();
+    };
+    window.addEventListener('message', settle);
+    api.postMessage({ type: 'copyImage', id, data, name });
+  });
+}
+
+let imageCopySeq = 0;
 
 function host(): VsCodeApi | undefined {
   try { return vscodeApi(); } catch { return undefined; }

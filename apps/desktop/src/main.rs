@@ -89,6 +89,7 @@ fn main() {
       commands::acpira_post,
       commands::acpira_window,
       commands::acpira_clipboard,
+      commands::acpira_copy_image,
       commands::acpira_drag_paths,
       smoke::acpira_smoke_result
     ])

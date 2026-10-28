@@ -220,6 +220,8 @@ export type HostMsg =
   // The VS Code shell asks the page whether a URL answers from the user's machine (the page renders there even when the
   // extension host is remote); answered with probeResult. Never sent by the sidecar
   | { type: 'probeUrl'; id: string; url: string }
+  // The VS Code shell's answer to copyImage: the image is on the system clipboard, or why not. Never sent by the sidecar
+  | { type: 'copiedImage'; id: string; error?: string }
   // The desktop shell's folder dialog answered pickFolder: the folder picked, absent when the dialog was dismissed. Never sent
   // by the sidecar
   | { type: 'pickedFolder'; path?: string }
@@ -393,6 +395,9 @@ export type WebviewMsg =
   | { type: 'viewFocus' }
   // probeUrl's answer, kept in the VS Code shell like viewFocus: ok when anything answered over HTTP
   | { type: 'probeResult'; id: string; ok: boolean; error?: string }
+  // Kept in the VS Code shell like viewFocus, where the page's boot config says imageCopy: put the image bytes on the
+  // system clipboard as a file named `name` (a GIF the web clipboard would flatten to one PNG frame); answered with copiedImage
+  | { type: 'copyImage'; id: string; data: Uint8Array; name: string }
   // Desktop shell only, kept there like viewFocus: show the system folder dialog; answered with pickedFolder
   | { type: 'pickFolder' }
   // Desktop shell only: the updater. Check now (`download`: fetch a newer version even with automatic downloads off),

@@ -1,5 +1,5 @@
 //! What the pages call (src/init.js): attach a document's channel, post a batch of page messages, move the window from a
-//! title bar region, read the clipboard and a Finder drag's paths
+//! title bar region, read the clipboard, put a GIF on it and read a Finder drag's paths
 
 use serde_json::value::RawValue;
 use tauri::ipc::{Channel, InvokeBody, InvokeResponseBody, Request};
@@ -70,6 +70,23 @@ pub fn acpira_window(webview: Webview, op: String) {
 #[tauri::command]
 pub fn acpira_clipboard() -> String {
   crate::os::clipboard_read()
+}
+
+/// A GIF on the system clipboard as a file (packages/ui copyImage): the web clipboard takes PNG only, which keeps one frame.
+/// The page sends the bytes and the file's name (`x-acpira-name`, URI-encoded); the file goes in a temporary folder that
+/// holds only the latest copy. A sync command, so it runs on the main thread where the pasteboard wants it
+#[tauri::command]
+pub fn acpira_copy_image(request: Request<'_>) -> Result<(), String> {
+  let InvokeBody::Raw(data) = request.body() else { return Err("copyImage carried no image bytes".into()) };
+  let name = request.headers().get("x-acpira-name").and_then(|v| v.to_str().ok()).and_then(acpira_desktop::confine::percent_decode);
+  // Only a plain file name: anything path-like from the page is cut to its last part
+  let name = name.as_deref().and_then(|n| n.rsplit(['/', '\\']).next()).map(str::trim).filter(|n| !n.is_empty() && *n != "." && *n != "..");
+  let dir = std::env::temp_dir().join("acpira-clipboard");
+  let _ = std::fs::remove_dir_all(&dir);
+  std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+  let path = dir.join(name.unwrap_or("image.gif"));
+  std::fs::write(&path, data).map_err(|e| e.to_string())?;
+  crate::os::clipboard_write_gif(&path, data)
 }
 
 /// The paths of a drag from the OS, read when it enters the page: macOS's `pathForFile` matches them to the dropped files

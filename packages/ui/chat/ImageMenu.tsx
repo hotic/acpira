@@ -28,7 +28,7 @@ export function ImageMenu({ src, mimeType = '', path, line, openInEditor, childr
 }) {
   const layer = useContext(ShellLayerContext);
   const actions = useContext(ToolFileActionsContext);
-  const writeImage = useCallback(() => copyImage(src, mimeType), [src, mimeType]);
+  const writeImage = useCallback(() => copyImage(src, mimeType, path), [src, mimeType, path]);
   const { state: copyState, copy } = useCopyAction(src, writeImage);
   const open = openInEditor ?? (path && actions?.openInEditor ? () => actions.openInEditor!(path, line) : undefined);
   const reveal = path && actions?.revealInOS ? () => actions.revealInOS!(path) : undefined;

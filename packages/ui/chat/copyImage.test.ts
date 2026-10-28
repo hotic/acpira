@@ -89,6 +89,20 @@ describe('copyImage', () => {
     expect(await written[0]!.text()).toBe('converted');
   });
 
+  it('hands a GIF to the shell clipboard, named after its file, instead of flattening it to PNG', async () => {
+    const { write } = stubClipboard();
+    const shellCopy = vi.fn(async (_data: Uint8Array, _name: string) => {});
+    vi.stubGlobal('__acpiraApi', { postMessage: vi.fn(), copyImage: shellCopy });
+    const gif = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 2]);
+    stubFetch(new Blob([gif]));
+
+    await copyImage('/blobs/b1', '', '/work/media/demo.gif');
+    expect(write).not.toHaveBeenCalled();
+    expect(shellCopy).toHaveBeenCalledOnce();
+    expect(shellCopy.mock.calls[0]![0]).toEqual(gif);
+    expect(shellCopy.mock.calls[0]![1]).toBe('demo.gif');
+  });
+
   it('rejects when the image request fails', async () => {
     const { write } = stubClipboard();
     write.mockImplementation(async (items: Item[]) => { await items[0]!.data['image/png']; });

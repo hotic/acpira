@@ -6,6 +6,7 @@ import type { SessionView } from '@acpira/shared/transcript';
 import { normalizePreviewUrl, type PageContextOp } from '@acpira/shared/picker';
 import type { SidecarClient, SidecarState, ShellView } from '@acpira/engine-client/SidecarClient';
 import { PostQueue } from './outbox';
+import { copyImageFile, imageClipboardSupported } from './imageClipboard';
 import { t } from './i18n';
 
 // The page's own probe gives up sooner (effects/probeUrl.ts); this only covers a page that never answers
@@ -78,6 +79,7 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
     this.disposables.push(webview.onDidReceiveMessage((m: WebviewMsg) => {
       if (m.type === 'viewFocus') { opts.onFocus?.(this); return; }
       if (m.type === 'probeResult') { this.probes.get(m.id)?.({ ok: m.ok, error: m.error }); return; }
+      if (m.type === 'copyImage') { this.copyImage(m); return; }
       // The first-run flow and the tour are the shell's: the first runs before any engine, the tour never needs one. VS
       // Code's first run shows only the consent card, so the agent row's question (detectAgents) goes unanswered
       if (m.type === 'createDataHome') {
@@ -150,6 +152,19 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
       sessionLinkBase: this.opts.sessionLinkBase,
       ...(home === undefined ? {} : { firstRun: { home, locale: this.opts.locale() } }),
       ...(this.opts.openTour ? { opensTour: true } : {}),
+      ...(imageClipboardSupported(vscode.env.remoteName !== undefined) ? { imageCopy: true } : {}),
+    });
+  }
+
+  // The page's image copy that its own clipboard would flatten (a GIF), answered with copiedImage
+  private copyImage({ id, data, name }: Extract<WebviewMsg, { type: 'copyImage' }>) {
+    // Typed arrays cross postMessage as they are; anything else is a page this shell does not know
+    const bytes = data instanceof Uint8Array ? data : undefined;
+    const done = bytes ? copyImageFile(bytes, name) : Promise.reject(new Error('copyImage carried no image bytes'));
+    done.then(() => this.outbox.push({ type: 'copiedImage', id }), (e: unknown) => {
+      const error = e instanceof Error ? e.message : String(e);
+      this.opts.log?.(`copyImage failed: ${error}`);
+      this.outbox.push({ type: 'copiedImage', id, error });
     });
   }
 

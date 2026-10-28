@@ -1,6 +1,17 @@
+import { hostImageCopy } from '../vscodeApi';
+
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
-export async function copyImage(src: string, mimeType: string): Promise<void> {
+// `path` is the image's file where it has one, which names the copy the shell puts on the clipboard
+export async function copyImage(src: string, mimeType: string, path?: string): Promise<void> {
+  // The web clipboard takes PNG only, so a GIF would paste as its first frame: where the shell has a clipboard of its own,
+  // the GIF goes there as a file. Decided from the declared type and names, before any await: the PNG path below must
+  // reach the clipboard inside the click (WebKit refuses a write once the gesture has passed)
+  const shell = hostImageCopy();
+  if (shell && isGif(mimeType, src, path)) {
+    const blob = await readImage(src);
+    return shell(new Uint8Array(await blob.arrayBuffer()), gifName(path));
+  }
   // Pass the pending image to ClipboardItem before the user gesture expires while the blob loads.
   const png = readImage(src).then(async blob => {
     // Trust the bytes rather than the declared MIME type: the clipboard rejects a PNG entry that does not decode as PNG
@@ -22,6 +33,19 @@ async function readImage(src: string): Promise<Blob> {
   const response = await fetch(src);
   if (!response.ok) throw new Error(`Image request failed: ${response.status}`);
   return response.blob();
+}
+
+function isGif(mimeType: string, src: string, path?: string): boolean {
+  if (mimeType) return mimeType.toLowerCase() === 'image/gif';
+  if (/^data:image\/gif[;,]/i.test(src)) return true;
+  return [path, src.split(/[?#]/)[0]].some(name => name !== undefined && /\.gif$/i.test(name));
+}
+
+// The file's own name where there is one, else a generic one; the clipboard file always ends in .gif
+function gifName(path?: string): string {
+  const base = path?.split(/[\\/]/).pop()?.trim();
+  if (!base) return 'image.gif';
+  return /\.gif$/i.test(base) ? base : `${base}.gif`;
 }
 
 async function isPng(blob: Blob): Promise<boolean> {

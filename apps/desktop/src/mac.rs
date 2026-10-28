@@ -550,6 +550,39 @@ pub fn clipboard_read() -> String {
   }
 }
 
+/// A GIF on the pasteboard as a Finder copy carries a file (its file URL), plus its bytes as GIF data for apps that read
+/// images rather than files. Main thread only
+pub fn clipboard_write_gif(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
+  let pb = pasteboard().ok_or("no general pasteboard")?;
+  let classes = (AnyClass::get(c"NSData"), AnyClass::get(c"NSURL"), AnyClass::get(c"NSPasteboardItem"), AnyClass::get(c"NSArray"));
+  let (Some(data_cls), Some(url_cls), Some(item_cls), Some(array_cls)) = classes else { return Err("AppKit classes missing".into()) };
+  // SAFETY: documented NSData / NSURL / NSPasteboardItem / NSArray / NSPasteboard messages on the classes looked up above;
+  // every answer is checked for nil before it is used, dataWithBytes:length: copies `data` while it is borrowed, and the
+  // item made with `new` is released by its Retained once the pasteboard holds it
+  unsafe {
+    let bytes: *mut AnyObject = msg_send![data_cls, dataWithBytes: data.as_ptr().cast::<std::ffi::c_void>(), length: data.len()];
+    let file = NSString::from_str(&path.to_string_lossy());
+    let url: *mut AnyObject = msg_send![url_cls, fileURLWithPath: &*file];
+    if bytes.is_null() || url.is_null() {
+      return Err("could not read the image file".into());
+    }
+    let url_string: *mut AnyObject = msg_send![url, absoluteString];
+    let item: Option<Retained<AnyObject>> = msg_send![item_cls, new];
+    let item = item.ok_or("no pasteboard item")?;
+    let file_type = NSString::from_str("public.file-url");
+    let gif_type = NSString::from_str("com.compuserve.gif");
+    let _: Bool = msg_send![&*item, setString: url_string, forType: &*file_type];
+    let _: Bool = msg_send![&*item, setData: bytes, forType: &*gif_type];
+    let items: *mut AnyObject = msg_send![array_cls, arrayWithObject: &*item];
+    if items.is_null() {
+      return Err("no pasteboard item list".into());
+    }
+    let _: isize = msg_send![pb, clearContents];
+    let written: Bool = msg_send![pb, writeObjects: items];
+    if written.as_bool() { Ok(()) } else { Err("the pasteboard refused the image".into()) }
+  }
+}
+
 fn ns_string(s: *mut AnyObject) -> Option<String> {
   if s.is_null() {
     return None;
