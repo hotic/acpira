@@ -16,12 +16,13 @@ struct ChatScreen: View {
   @Environment(AppModel.self) private var model
   /// The bottom safe area (the home indicator), read before the dock takes part of it over
   @State private var homeInset: CGFloat = 0
-  /// The software keyboard is up: the system already lifts the dock over it, so the dock keeps only a small gap
-  @State private var keyboard = false
   @State private var renaming = false
   @State private var newTitle = ""
   @State private var deleting = false
   @State private var accountOpen = false
+  /// The closures the chat hands its views, made once per session and app model (`Memo`): a reconnect swaps the model
+  @State private var actionsMemo = Memo<SessionActions>()
+  @State private var diffMemo = Memo<((DiffLocation) async -> FullDiffSource?)?>()
   @Environment(\.initialPopup) private var initialPopup
   @Environment(\.initialDraft) private var initialDraft
 
@@ -48,16 +49,13 @@ struct ChatScreen: View {
       Thread(session: session)
       // The dock reaches down into the home indicator's band and rests where the list's system bottom bar does
       // (Metrics.barSink), leaving the thread more room; on a phone without the indicator it keeps the plain gap
-      Dock(session: session, draft: Bindable(draft).text, staged: Bindable(draft).staged, edit: Bindable(draft).edit)
-        .padding(.bottom, keyboard ? Metrics.s2 : max(Metrics.s2, homeInset - Metrics.barSink))
+      DockSeat(homeInset: homeInset) {
+        Dock(session: session, draft: Bindable(draft).text, staged: Bindable(draft).staged, edit: Bindable(draft).edit)
+      }
     }
     // The keyboard's safe area still lifts the dock; only the container's (the home indicator) is taken over
     .ignoresSafeArea(.container, edges: .bottom)
-    // The bottom inset counts the keyboard too while it is up (34 → ~300 on an iPhone 18 Pro), and padding by it
-    // lifted the dock a second keyboard's height, to the top of the screen; it also fed back into itself (the padding
-    // moves the inset). So it is read only with the keyboard down, where it is the home indicator's band
-    .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.bottom } action: { if !keyboard { homeInset = $0 } }
-    .modifier(KeyboardWatch(up: $keyboard))
+    .modifier(HomeInset(inset: $homeInset))
     // The thread blurs and dims gradually as it scrolls up under the bar's glass buttons
     .topFade()
     .onAppear {
@@ -80,14 +78,14 @@ struct ChatScreen: View {
     .background(Palette.bg0)
     .environment(\.agentAccent, Palette.accent(for: session.agent))
     .environment(\.chatAgent, agent)
-    .environment(\.sessionActions, sessionActions)
+    .environment(\.sessionActions, actionsMemo(memoKey) { sessionActions })
     // A subagent row pushes that child's inspector
     .environment(\.inspectSubagent, SubagentInspect(session: id) { model.path.append(.subagent(session: id, id: $0)) })
     .modifier(MediaLayer(session: session, loader: model.media))
     .environment(\.mentionPersonas, model.personas)
     .environment(\.compactAt, model.compactAt)
     .environment(\.hiddenModels, model.settings?.hiddenOptions[session.agent] ?? [:])
-    .environment(\.diffSource, model.live ? { [model, id] in await model.diffSource(id, $0) } : nil)
+    .environment(\.diffSource, diffMemo("\(memoKey):\(model.live)") { model.live ? { [model, id] in await model.diffSource(id, $0) } : nil })
     .environment(model.fileSearch)
     // The accounts as a system sheet with a form
     .sheet(isPresented: $accountOpen) {
@@ -128,6 +126,9 @@ struct ChatScreen: View {
       projects: model.projects,
       move: { model.move(id, to: $0) })
   }
+
+  /// What the memoised closures are bound to: this session on this app model
+  private var memoKey: String { "\(ObjectIdentifier(model).hashValue):\(id)" }
 
   private var sessionActions: SessionActions {
     SessionActions(
@@ -301,8 +302,9 @@ struct ThreadContent: View {
         VStack(alignment: .leading, spacing: 0) { sections(groups, activeAgent, nodes) }
       }
     }
-    // No margin of its own: the messages' `Metrics.pad` puts prose, row icons and cards on the edge the dock, the
-    // composer and the bar's back button share
+    // The messages' `Metrics.pad` puts prose, row icons and cards on the edge the dock, the composer and the bar's back
+    // button share; the thread's own inset moves them a little inside it
+    .padding(.horizontal, Metrics.threadInset)
     .padding(.top, Metrics.padY)
     .padding(.bottom, WebMetrics.msgGap)
     .environment(\.planContext, PlanContext(controls: session.controls, running: session.running, ready: session.status == .ready))
@@ -376,8 +378,58 @@ public struct ChatPoster: View {
   }
 }
 
-/// Tracks the software keyboard from the system's will-show / will-hide notifications, which arrive before the
-/// keyboard's safe area changes (no keyboard off iOS). The new-session screen's composer reads it too
+/// Where a screen's dock rests: sunk into the home indicator's band with the keyboard down (`Metrics.barSink`), a
+/// small gap over the keyboard with it up (the keyboard's safe area lifts it). The keyboard flag is this view's own
+/// state, so a keyboard change redraws the dock alone, never the transcript or hero around it
+struct DockSeat<Content: View>: View {
+  var homeInset: CGFloat
+  let content: Content
+  @State private var keyboard = false
+
+  init(homeInset: CGFloat, @ViewBuilder content: () -> Content) {
+    self.homeInset = homeInset
+    self.content = content()
+  }
+
+  var body: some View {
+    content
+      .padding(.bottom, keyboard ? Metrics.s2 : max(Metrics.s2, homeInset - Metrics.barSink))
+      .modifier(KeyboardWatch(up: $keyboard))
+  }
+}
+
+/// The home indicator's band: the bottom safe area of a layer that ignores the keyboard, so the keyboard's height
+/// never gets in. Read off the screen's own geometry it arrived with the keyboard a moment before the will-show
+/// notification, and the dock padded by it inside the keyboard's animation: the chat dropped a keyboard's height (a
+/// dark band over the top) and flew back up on every show, and the dock leapt to the top on every hide. Applied
+/// outside `ignoresSafeArea(.container)`, where the inset is non-zero
+struct HomeInset: ViewModifier {
+  @Binding var inset: CGFloat
+
+  func body(content: Content) -> some View {
+    content.background {
+      Color.clear
+        .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.bottom } action: { inset = $0 }
+        .ignoresSafeArea(.keyboard)
+    }
+  }
+}
+
+/// A value made once per key and handed out again while the key holds. For closures a screen puts in the environment:
+/// a fresh closure never compares equal, so a new one on every rebuild of the chat (each streamed chunk) told every
+/// visible message that reads it that its inputs had changed, and redrew them all
+final class Memo<Value> {
+  private var made: (key: String, value: Value)?
+
+  func callAsFunction(_ key: String, make: () -> Value) -> Value {
+    if let made, made.key == key { return made.value }
+    let value = make()
+    made = (key, value)
+    return value
+  }
+}
+
+/// Tracks the software keyboard from the system's will-show / will-hide notifications (no keyboard off iOS)
 struct KeyboardWatch: ViewModifier {
   @Binding var up: Bool
 

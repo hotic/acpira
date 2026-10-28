@@ -14,7 +14,8 @@ import VisionKit
 struct PairCameraCard: View {
   /// Scans only while the sheet's form shows and nothing is being paired
   var active: Bool
-  var onLink: (String) -> Void
+  /// A pairing link and the code's rows as read
+  var onLink: (String, [String]?) -> Void
   @Environment(\.pairing) private var pairing
   @Environment(\.scenePhase) private var scenePhase
   @State private var source: Source?
@@ -135,10 +136,11 @@ nonisolated struct PairFinderCorners: Shape {
 
 #if canImport(UIKit)
 /// VisionKit's scanner set to QR codes, without its own highlights or guidance (the card draws the viewfinder). It hands
-/// on the first pairing link it sees and stays quiet about anything else
+/// on the first pairing link it sees, with the modules it read (the sheet draws that very code), and stays quiet about
+/// anything else
 struct PairDataScanner: UIViewControllerRepresentable {
   var active: Bool
-  var onLink: (String) -> Void
+  var onLink: (String, [String]?) -> Void
   var onUnavailable: () -> Void
 
   func makeUIViewController(context: Context) -> DataScannerViewController {
@@ -174,7 +176,7 @@ struct PairDataScanner: UIViewControllerRepresentable {
       for item in added {
         guard case .barcode(let code) = item, let text = code.payloadStringValue, PairingModel.isPairingLink(text) else { continue }
         scanner.stopScanning()
-        parent.onLink(text)
+        parent.onLink(text, PairCodeRows.make(link: text, scanned: code.observation.barcodeDescriptor))
         return
       }
     }

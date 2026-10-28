@@ -5,10 +5,11 @@ import AcpiraModels
 // so a simulator screenshot of a fixture and a LAB screenshot of it compare like for like.
 public enum Fixtures {
   /// Fixture names that hold a SessionView. The cards' fixtures after `empty` are hand-written (plan approval, notice
-  /// rows, records, failure cards, session states, subagents); `records` carries one deliberately unknown block type
+  /// rows, records, failure cards, session states, subagents, the built-in agent's controls with a sidekick); `records`
+  /// carries one deliberately unknown block type
   public static let sessionNames = ["showcase", "running", "streaming", "question", "queued", "stopped", "empty", "diagrams", "media",
                                     "plan", "notices", "records", "context", "failure", "login", "readonly", "closed",
-                                    "error", "connecting", "chatgpt", "goal", "subagents"]
+                                    "error", "connecting", "chatgpt", "goal", "subagents", "builtin"]
 
   /// Raw JSON of `synthetic/<name>.json`
   public static func data(_ name: String) -> Data? {

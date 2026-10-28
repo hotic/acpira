@@ -31,12 +31,13 @@ struct Composer: View {
   @FocusState private var focused: Bool
   @Environment(\.snapshot) private var snapshot
   @Environment(\.motionEnabled) private var motion
-  /// The liquid chip that is open (attach, model), if any, the model bean whose panel is out (1…, 0 for none), and the
-  /// picker `+` opened
+  /// The liquid chip that is open (attach, model, sidekick), if any, the bean whose panel is out (1…, 0 for none), and
+  /// the picker `+` opened
   @State private var goo: String?
   @State private var gooStage = 0
   @State private var source: AttachSource?
-  /// The width of the bar's group of `+` and the mark (the mark is gone when the agent offers nothing to pick)
+  /// The width of the bar's group of `+`, the mark and the sidekick's (the mark is gone when the agent offers nothing to
+  /// pick, the sidekick's without a sidekick select)
   @State private var lead = Metrics.barCtl * 2
   /// The bar's height, so the beans rise over the card while typing
   @State private var tall = Metrics.barCtl
@@ -55,19 +56,27 @@ struct Composer: View {
 
   private var hint: String { placeholder ?? (session.running ? t("composer.placeholder.queue") : t("composer.placeholder")) }
 
+  /// The bar's hint at rest: its first sentence, cut before the `@` tip, on one line. The tip shows once the bar has
+  /// grown into the card; with the sidekick's chip in the bar the sentence may still end in an ellipsis, where the
+  /// wrapped hint used to stop halfway through a phrase
+  private var restHint: String {
+    hint.split(separator: "@", maxSplits: 1).first.map { $0.trimmingCharacters(in: .whitespaces) } ?? hint
+  }
+
   private var filled: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !staged.isEmpty }
 
   /// The field: a snapshot draws the placeholder (or the draft) where the field would be
   private var field: some View {
-    Group {
+    let rest = !(focused || filled)
+    return Group {
       if snapshot {
-        Text(web: text.isEmpty ? hint : text)
+        Text(web: text.isEmpty ? rest ? restHint : hint : text)
           .foregroundStyle(text.isEmpty ? Palette.fg3 : Palette.fgStrong)
           .frame(maxWidth: .infinity, alignment: .leading)
       } else {
         VStack(alignment: .leading, spacing: 0) {
           TextField(text: fieldText, selection: $selection, axis: .vertical) {
-            Text(web: hint).foregroundStyle(Palette.fg3)
+            Text(web: rest ? restHint : hint).foregroundStyle(Palette.fg3)
           }
           .focused($focused)
           // The command's own wording for what follows it, a faint second line while its arguments are empty
@@ -82,7 +91,7 @@ struct Composer: View {
     }
     .textStyle(TypeScale.field)
     .foregroundStyle(Palette.fgStrong)
-    .lineLimit(1...8)
+    .lineLimit(rest ? 1...1 : 1...8)
     .frame(minHeight: TypeScale.field.lineHeight, alignment: .topLeading)
   }
 
@@ -98,9 +107,9 @@ struct Composer: View {
     }
   }
 
-  /// At rest one glass bar: `+` and the model's mark at its start, the field, and send at
-  /// its end, where Messages keeps it (dim with nothing to send, stop while a turn runs). `+` and the mark are liquid
-  /// chips. Typing (focused, or a draft waiting) the bar grows into one glass card as in Codex: the field across the
+  /// At rest one glass bar: `+` and the model's mark at its start (the built-in agent's sidekick mark beside it), the
+  /// field, and send at its end, where Messages keeps it (dim with nothing to send, stop while a turn runs). `+` and
+  /// the marks are liquid chips. Typing (focused, or a draft waiting) the bar grows into one glass card as in Codex: the field across the
   /// whole width over a row of the chips and send, so the text is never squeezed between controls. Nothing comes or
   /// goes between the two: the chips keep the bottom-left corner and send the bottom-right one, the glass grows up
   /// around them, and the field stays the same view throughout, so focus holds. The chips and send are glass circles
@@ -137,6 +146,7 @@ struct Composer: View {
                            onSummon: summon) { source = $0 }
               LiquidControls(controls: session.controls, open: $goo, stage: $gooStage, lift: lift, onSetMode: onSetMode,
                              onSetConfig: onSetConfig)
+              LiquidSidekick(controls: session.controls, open: $goo, stage: $gooStage, lift: lift, onSetConfig: onSetConfig)
             }
             .gooGlass()
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { lead = $0 }
@@ -300,7 +310,8 @@ struct Composer: View {
     #endif
   }
 
-  /// `-popup attach`, `-popup model` or `-popup model.2` (a bean's panel out; `attach.N` for `+`, and `attach.paste`
+  /// `-popup attach`, `-popup model` or `-popup model.2` (a bean's panel out; `attach.N` for `+`, `sidekick.N` for the
+  /// sidekick's chip, and `attach.paste`
   /// offers the paste bean whatever the pasteboard holds) for screenshots; a `focus.` prefix
   /// (`-popup focus`, `-popup focus.model`) raises the keyboard first. With motion on both wait a moment after launch,
   /// so a recording shows them change. `-popup demo` plays every liquid transition in turn, for a recording read
@@ -314,7 +325,7 @@ struct Composer: View {
     let focus = popup.hasPrefix("focus")
     if focus { popup = String(popup.dropFirst("focus".count).drop { $0 == "." }) }
     let parts = popup.split(separator: ".", maxSplits: 1).map(String.init)
-    let chip = ["attach", "model"].contains(parts.first ?? "") ? parts.first : nil
+    let chip = ["attach", "model", "sidekick"].contains(parts.first ?? "") ? parts.first : nil
     let stage = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
     Task {
       if motion { try? await Task.sleep(for: .seconds(1)) }
@@ -329,14 +340,18 @@ struct Composer: View {
 
   /// The demo's steps, each after a pause: the model's beans, two panels in and out, one panel back and another bean
   /// tapped as soon as the beans take taps (the first panel's spring still settling), closing, `+`, then the same from
-  /// the card, closing from an open panel
+  /// the card, closing from an open panel; last the sidekick's chip where the agent has one, its two panels in turn
   private func demo() async {
-    let steps: [(Double, () -> Void)] = [
+    var steps: [(Double, () -> Void)] = [
       (1.0, { goo = "model" }), (1.2, { gooStage = 2 }), (1.4, { gooStage = 0 }), (1.2, { gooStage = 1 }),
       (1.4, { gooStage = 0 }), (1.2, { gooStage = 3 }), (1.4, { gooStage = 0 }), (0.5, { gooStage = 2 }),
       (1.4, { goo = nil; gooStage = 0 }), (1.4, { goo = "attach" }), (1.2, { goo = nil }), (1.2, { focused = true }),
       (1.4, { goo = "model" }), (1.2, { gooStage = 3 }), (1.4, { goo = nil; gooStage = 0 }), (1.4, { focused = false }),
     ]
+    if !ComposerControls.split(session.controls.options).sidekick.isEmpty {
+      steps += [(1.4, { goo = "sidekick" }), (1.2, { gooStage = 1 }), (1.4, { gooStage = 0 }), (1.2, { gooStage = 2 }),
+                (1.4, { goo = nil; gooStage = 0 })]
+    }
     for (pause, step) in steps {
       try? await Task.sleep(for: .seconds(pause))
       withAnimation(motion ? Motion.gooSpring : nil) { step() }

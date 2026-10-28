@@ -70,6 +70,8 @@ public enum ConnectionError: Error, Equatable, Sendable {
   case revoked
   /// The two sides speak different protocol versions; the message says which side to update
   case incompatible(String)
+  /// This app went to the background and closed the wire itself; coming back dials again, so nothing failed
+  case suspended
   case other(String)
 }
 

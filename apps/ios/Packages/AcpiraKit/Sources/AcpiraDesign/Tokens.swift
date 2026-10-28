@@ -216,14 +216,20 @@ public enum Palette {
   public static var cardBg: Color { bg2 }
   public static var cardLine: Color { conversationLine }
 
-  /// `--accent` under accent = agent: Devin and Grok have their own colour, every other agent takes the brand
+  /// `--accent` under accent = agent: Devin and Grok have their own colour, every other agent takes the brand. Each is
+  /// made once: the screens put it in the environment, and a fresh dynamic colour compares unequal, so every rebuild
+  /// of a chat redrew all the prose reading it
   public static func accent(for agent: String) -> Color {
     switch agent {
-    case "devin": Swatches.agentDevin.color
-    case "grok": Swatches.agentGrok.color
-    default: brand
+    case "devin": accentDevin
+    case "grok": accentGrok
+    default: accentBrand
     }
   }
+
+  private static let accentDevin = Swatches.agentDevin.color
+  private static let accentGrok = Swatches.agentGrok.color
+  private static let accentBrand = Swatches.brand.color
 }
 
 // MARK: - Sizes
@@ -263,6 +269,9 @@ public enum Metrics {
   public static let widgetMax: CGFloat = 900
   public static let hit: CGFloat = 6
   public static var indent: CGFloat { lead + gap }
+  /// A project's sessions sit this far in from its folder row, the desktop app's step (SessionList.tsx Item `nudge`:
+  /// pl-6 against the folder row's pl-2), so the list reads as folders over their sessions
+  public static var nest: CGFloat { s6 - s2 }
   public static let railWidth: CGFloat = 1
   public static let railDot: CGFloat = 4
   /// --rail-fade: the line's top end fades in over this length below its icon
@@ -352,9 +361,13 @@ public enum Metrics {
   /// A floating glass button: Apple's 44 pt target
   public static let glassCtl: CGFloat = 44
   public static let glassIcon: CGFloat = 18
-  /// A right-aligned prompt bubble's corners, and the room it always leaves on its left
+  /// A right-aligned prompt bubble's corners, and the room it always leaves on its left: the bubble stops near
+  /// three quarters of the thread, so a long prompt still reads as the right-hand side's and not as a full line
   public static let rBubble: CGFloat = 20
-  public static let bubbleInset: CGFloat = 48
+  public static let bubbleInset: CGFloat = 72
+  /// The thread's inset on top of the messages' own `pad`: prose, rows and cards sit a little inside the edge the bar's
+  /// buttons, the dock and the composer share, as ChatGPT and Claude set their text inside their bar buttons
+  public static let threadInset: CGFloat = 4
   /// The composer card's corners while typing
   public static let rComposer: CGFloat = 26
   /// A card (alert, question): rounder than the desktop's, inside the composer's
@@ -401,6 +414,10 @@ public enum Metrics {
   public static let rGooPanel: CGFloat = 22
   /// The room a bean's caption may take beside it
   public static let gooAside: CGFloat = 240
+  /// The sidekick chip's plus badge on its model's mark and the ring cut round it: the desktop's --pair-badge and
+  /// --pair-notch, scaled to the bar's glyph
+  public static let sidekickBadge: CGFloat = 10
+  public static let sidekickNotch: CGFloat = 2
   /// The user card's text cap: five body lines
   public static var userMessageMax: CGFloat { 5 * TypeScale.text1.lineHeight }
 }

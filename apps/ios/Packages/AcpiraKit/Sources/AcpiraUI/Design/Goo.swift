@@ -235,6 +235,8 @@ private struct GooControls: View, Animatable {
   /// (the chip, the field) until its spring had crossed zero
   var open: Bool
   var chip: CGRect
+  /// The layer's width: a caption never runs past the screen's edge, so a chip far along the bar wraps its note
+  var room: CGFloat
   var pieces: [GooPiece]
   var close: () -> Void
   var back: () -> Void
@@ -272,13 +274,15 @@ private struct GooControls: View, Animatable {
           .position(c)
           .allowsHitTesting(f.live)
           if let caption = piece.caption {
+            let start = c.x + chip.width / 2 + Metrics.s2
+            let aside = max(0, min(Metrics.gooAside, room - Metrics.pad - start))
             Button(action: piece.action) {
               caption.frame(height: chip.height).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .frame(width: Metrics.gooAside, alignment: .leading)
+            .frame(width: aside, alignment: .leading)
             .opacity(f.caption)
-            .position(x: c.x + chip.width / 2 + Metrics.s2 + Metrics.gooAside / 2, y: c.y)
+            .position(x: start + aside / 2, y: c.y)
             .allowsHitTesting(f.live)
             .accessibilityHidden(true)
           }
@@ -340,8 +344,8 @@ extension View {
       GeometryReader { proxy in
         ForEach(items, id: \.id) { item in
           GooSpring(progress: item.progress) {
-            GooControls(progress: item.progress, open: item.progress[0] > 0, chip: proxy[item.anchor], pieces: item.pieces,
-                        close: item.close, back: item.back)
+            GooControls(progress: item.progress, open: item.progress[0] > 0, chip: proxy[item.anchor], room: proxy.size.width,
+                        pieces: item.pieces, close: item.close, back: item.back)
           }
         }
       }
@@ -507,28 +511,67 @@ struct LiquidAttach: View {
 }
 
 /// A piece's caption over the dim, on a soft patch of the page's colour so it reads over the transcript in either
-/// theme (a map label's halo)
+/// theme (a map label's halo). A note under the value says what the setting is, wrapped to the room beside the bean
 struct GooCaption: View {
   var text: String
+  var note: String? = nil
   var body: some View {
-    Text(web: text, paragraph: false)
-      .fixedSize()
-      .textStyle(TypeScale.text2, weight: .medium)
-      .foregroundStyle(Palette.fgStrong)
-      .background {
-        Capsule()
-          .fill(Palette.bg0)
-          .padding(-Metrics.s1)
-          .blur(radius: Metrics.s2)
+    VStack(alignment: .leading, spacing: Metrics.s0_5) {
+      Text(web: text, paragraph: false)
+        .fixedSize()
+        .textStyle(TypeScale.text2, weight: .medium)
+        .foregroundStyle(Palette.fgStrong)
+      if let note {
+        Text(web: note, paragraph: false)
+          .textStyle(TypeScale.text3)
+          .foregroundStyle(Palette.fg2)
+          .lineLimit(2)
+          .fixedSize(horizontal: false, vertical: true)
       }
+    }
+    .background {
+      RoundedRectangle(cornerRadius: note == nil ? Metrics.barCtl : Metrics.rGooPanel, style: .continuous)
+        .fill(Palette.bg0)
+        .padding(-Metrics.s1)
+        .blur(radius: Metrics.s2)
+    }
+  }
+}
+
+/// One bean of a setting chip: its glyph, the value beside it and the panel it turns into
+struct GooBean {
+  let key: String
+  let title: String
+  let glyph: AnyView
+  let caption: AnyView
+  let rows: Int
+  let panel: AnyView
+}
+
+extension GooColumn {
+  /// A setting chip's beans in a column above it, their values on their right; each turns into its panel, which
+  /// rests on the column's bottom-left corner so a long list grows up the screen. A tap on a bean opens its panel,
+  /// or folds it back
+  static func pieces(_ beans: [GooBean], lift: CGFloat, motion: Bool, stage: Binding<Int>) -> [GooPiece] {
+    let chip = CGSize(width: Metrics.barCtl, height: Metrics.barCtl)
+    let offsets = offsets(chip: chip, widths: beans.map { _ in chip.width }, lift: lift)
+    return zip(beans, offsets).enumerated().map { k, item in
+      let (b, at) = item
+      let h = min(CGFloat(b.rows), Metrics.gooPanelRows) * Metrics.gooRow + Metrics.s1_5 * 2
+      return GooPiece(id: "bean.\(b.key)", name: b.title, offset: at, glyph: b.glyph, caption: b.caption,
+                      panel: GooPanel(size: CGSize(width: Metrics.gooPanelW, height: h), content: b.panel)) {
+        withAnimation(motion ? Motion.gooSpring : nil) { stage.wrappedValue = stage.wrappedValue == k + 1 ? 0 : k + 1 }
+      }
+    }
   }
 }
 
 /// The model button as one liquid chip (the model's mark, large, beside `+`). Opening it squeezes its beans out of
-/// it in a column: the model (and the built-in agent's sidekick), the reasoning level and the special modes (the
-/// agent's modes, Fast), each with its value on its right, and the mark turns into × (the chip has become the beans,
-/// as `+` does). A tapped bean stretches into its panel of choices and swallows the others; a pick shrinks it back
-/// into the bean and leaves the beans out, so another setting can change next. Fast and Thinking flip in place
+/// it in a column: the model, the reasoning level and the special modes (the agent's modes, Fast), each with its
+/// value on its right, and the mark turns into × (the chip has become the beans, as `+` does). A tapped bean
+/// stretches into its panel of choices and swallows the others; a pick shrinks it back into the bean and leaves the
+/// beans out, so another setting can change next. Fast and Thinking flip in place. The built-in agent's sidekick has
+/// a chip of its own beside this one (`LiquidSidekick`)
 struct LiquidControls: View {
   let controls: SessionControls
   @Binding var open: String?
@@ -540,21 +583,11 @@ struct LiquidControls: View {
   @Environment(\.motionEnabled) private var motion
   @Environment(\.hiddenModels) private var hidden
 
-  /// One bean: its glyph, the value beside it and the panel it turns into
-  private struct Bean {
-    let key: String
-    let title: String
-    let glyph: AnyView
-    let caption: AnyView
-    let rows: Int
-    let panel: AnyView
-  }
-
   var body: some View {
     let c = ModelChoices(controls: controls, hidden: hidden, onSetConfig: onSetConfig)
     let beans = beans(c)
     if !beans.isEmpty {
-      GooChip(id: "model", open: $open, stage: $stage, pieces: pieces(beans)) {
+      GooChip(id: "model", open: $open, stage: $stage, pieces: GooColumn.pieces(beans, lift: lift, motion: motion, stage: $stage)) {
         // The model's mark alone, large; Fast shows as a bolt on its shoulder. Open, it is the way back: × over the
         // beans, ‹ over a panel
         ZStack {
@@ -575,28 +608,13 @@ struct LiquidControls: View {
     }
   }
 
-  /// The beans in a column above the chip, their values on their right; each turns into its panel, which rests on
-  /// the column's bottom-left corner so a long list grows up the screen
-  private func pieces(_ beans: [Bean]) -> [GooPiece] {
-    let chip = CGSize(width: Metrics.barCtl, height: Metrics.barCtl)
-    let offsets = GooColumn.offsets(chip: chip, widths: beans.map { _ in chip.width }, lift: lift)
-    return zip(beans, offsets).enumerated().map { k, item in
-      let (b, at) = item
-      let h = min(CGFloat(b.rows), Metrics.gooPanelRows) * Metrics.gooRow + Metrics.s1_5 * 2
-      return GooPiece(id: "bean.\(b.key)", name: b.title, offset: at, glyph: b.glyph, caption: b.caption,
-                      panel: GooPanel(size: CGSize(width: Metrics.gooPanelW, height: h), content: b.panel)) {
-        withAnimation(motion ? Motion.gooSpring : nil) { stage = stage == k + 1 ? 0 : k + 1 }
-      }
-    }
-  }
-
-  private func beans(_ c: ModelChoices) -> [Bean] {
+  private func beans(_ c: ModelChoices) -> [GooBean] {
     let families = c.families
     let effort = c.effort
     let mode = c.mode
-    var out: [Bean] = []
+    var out: [GooBean] = []
     if let cur = c.cur, c.modelId != nil {
-      out.append(Bean(key: "model", title: t("stats.model"),
+      out.append(GooBean(key: "model", title: t("stats.model"),
                       glyph: AnyView(VendorMark(brand: cur.brand, name: cur.name, size: Metrics.barIcon).foregroundStyle(Palette.fg1)),
                       caption: AnyView(GooCaption(text: cur.name)), rows: families.count,
                       panel: AnyView(GooList(current: cur.key) {
@@ -611,13 +629,12 @@ struct LiquidControls: View {
                         }
                       })))
     }
-    if let sk = c.sidekick { out.append(sidekickBean(sk, effort: c.sidekickEffort)) }
     if let effort, effort.levels.count > 1 || effort.thinking != nil {
       let levels = effort.levels.count > 1 ? effort.levels : []
       let thinking = effort.thinking
       let name = thinking?.on == false ? t("mobile.thinking.off")
         : levels.first { $0.id == effort.value }?.name ?? (thinking != nil ? "Thinking" : "")
-      out.append(Bean(key: "effort", title: t("composer.effort"),
+      out.append(GooBean(key: "effort", title: t("composer.effort"),
                       glyph: AnyView(Icon(.brain, size: Metrics.barIcon, strokeWidth: 1.75)
                         .foregroundStyle(thinking?.on == false ? Palette.fg3 : Palette.fg1)),
                       caption: AnyView(GooCaption(text: name)), rows: levels.count + (thinking != nil ? 1 : 0),
@@ -646,7 +663,7 @@ struct LiquidControls: View {
     let modes = c.modes
     let fast = c.fast
     if !modes.isEmpty || fast != nil {
-      out.append(Bean(key: "mode", title: t("composer.mode"),
+      out.append(GooBean(key: "mode", title: t("composer.mode"),
                       glyph: AnyView(Group {
                         if let mode, !modes.isEmpty {
                           Icon(modeIcon(mode), size: Metrics.barIcon, strokeWidth: 1.75)
@@ -687,59 +704,143 @@ struct LiquidControls: View {
     return out
   }
 
-  /// SidekickPanel as a bean: the built-in agent's second model, its mark on the glass (a faint plus for none) and the
-  /// pair's side spelled out beside it. The panel lists none and the models, then the sidekick's own levels while its
-  /// model has them; a model pick keeps the panel out, since its level is set right below
-  private func sidekickBean(_ sk: ConfigControl, effort: ConfigControl?) -> Bean {
-    let picked = sk.options.first { $0.id == sk.value && $0.id != ComposerControls.noSidekick }
-    let scale = picked == nil ? nil
-      : effort.flatMap { ComposerControls.reasoningVisible($0) ? ComposerControls.presentReasoning($0) : nil }
-    let levels = scale?.efforts ?? []
-    let level = effort.flatMap(ComposerControls.reasoningChip)
-    let model = picked.map { [$0.name, level].compactMap { $0 }.joined(separator: " ") } ?? t("composer.sidekickNone")
-    return Bean(key: "sidekick", title: t("composer.sidekick"),
-                glyph: AnyView(Group {
-                  if let picked {
-                    VendorMark(brand: ModelCatalog.optionBrand(picked), name: picked.name, size: Metrics.barIcon).foregroundStyle(Palette.fg1)
-                  } else {
-                    Icon(.circleFadingPlus, size: Metrics.barIcon, strokeWidth: 1.75).foregroundStyle(Palette.fg3)
-                  }
-                }),
-                caption: AnyView(GooCaption(text: t("composer.pairSide", ["role": t("composer.sidekick"), "model": model]))),
-                rows: sk.options.count + (levels.isEmpty ? 0 : levels.count + 1),
-                panel: AnyView(GooList(current: sk.value ?? ComposerControls.noSidekick) {
-                  ForEach(sk.options) { o in
-                    let none = o.id == ComposerControls.noSidekick
-                    GooRow(name: none ? t("composer.sidekickNone") : o.name, checked: o.id == (sk.value ?? ComposerControls.noSidekick)) {
-                      if none {
-                        Color.clear.frame(width: Metrics.iconCtl, height: Metrics.iconCtl)
-                      } else {
-                        VendorMark(brand: ModelCatalog.optionBrand(o), name: o.name, size: Metrics.iconCtl)
-                      }
-                    } action: {
-                      onSetConfig(sk.id, o.id)
-                      if none { fold() }
-                    }
-                    .id(o.id)
-                  }
-                  if let effort, let scale, !levels.isEmpty {
-                    Text(web: t("composer.effort"), paragraph: false)
-                      .textStyle(TypeScale.text3)
-                      .foregroundStyle(Palette.fg3)
-                      .padding(.horizontal, Metrics.gooPadX)
-                      .frame(maxWidth: .infinity, minHeight: Metrics.gooRow, alignment: .bottomLeading)
-                    ForEach(levels) { l in
-                      GooRow(name: l.name, checked: !scale.off && l.id == scale.value) { EmptyView() } action: {
-                        onSetConfig(effort.id, l.id)
-                        fold()
-                      }
-                    }
-                  }
-                }))
-  }
-
   /// A pick folds the panel back into its bean; the beans stay out for the next change
   private func fold() { withAnimation(motion ? Motion.gooSpring : nil) { stage = 0 } }
+}
+
+/// The built-in agent's sidekick as a chip of its own beside the model's, so it gets the full set the lead has rather
+/// than one line among the lead's settings (the desktop's model panel switches between the two sides). At rest it
+/// shows the sidekick's mark with a plus badge, or a faint fading plus while there is none. Its beans are the
+/// sidekick's model, captioned with what a sidekick does, and its reasoning level while that model has levels. A pick
+/// folds back to the beans, so a newly picked model's level bean comes out of the closing panel. Nothing shows for an
+/// agent without a sidekick select
+struct LiquidSidekick: View {
+  let controls: SessionControls
+  @Binding var open: String?
+  /// The bean whose panel is open (1…), 0 for none
+  @Binding var stage: Int
+  var lift: CGFloat = 0
+  var onSetConfig: (String, String) -> Void
+  @Environment(\.motionEnabled) private var motion
+  @Environment(\.hiddenModels) private var hidden
+
+  private var isOpen: Bool { open == "sidekick" }
+
+  var body: some View {
+    if let pair = ModelChoices.sidekick(ComposerControls.split(controls.options), hidden: hidden) {
+      let picked = pair.select.options.first { $0.id == pair.select.value && $0.id != ComposerControls.noSidekick }
+      let beans = beans(pair.select, effort: picked == nil ? nil : pair.effort, picked: picked)
+      GooChip(id: "sidekick", open: $open, stage: $stage, pieces: GooColumn.pieces(beans, lift: lift, motion: motion, stage: $stage)) {
+        // × over the beans, ‹ over a panel, as the model chip
+        ZStack {
+          if isOpen {
+            Icon(stage > 0 ? .chevronLeft : .x, size: Metrics.barIcon, strokeWidth: 1.75)
+              .id(stage > 0)
+              .transition(.scale(scale: Metrics.gooSeed).combined(with: .opacity))
+          } else {
+            SidekickMark(picked: picked)
+              .transition(.scale(scale: Metrics.gooSeed).combined(with: .opacity))
+          }
+        }
+        .foregroundStyle(Palette.fg1)
+        .animation(motion ? isOpen ? Motion.gooSwap : Motion.gooSwapBack : nil, value: isOpen ? stage + 1 : 0)
+        .accessibilityLabel(Text(web: isOpen ? t(stage > 0 ? "common.back" : "common.close") : side(picked)))
+      }
+    }
+  }
+
+  /// "Sidekick: <model>", or none: what VoiceOver reads for the chip
+  private func side(_ picked: SessionOption?) -> String {
+    t("composer.pairSide", ["role": t("composer.sidekick"), "model": picked?.name ?? t("composer.sidekickNone")])
+  }
+
+  private func beans(_ sk: ConfigControl, effort: ConfigControl?, picked: SessionOption?) -> [GooBean] {
+    let current = sk.value ?? ComposerControls.noSidekick
+    var out = [GooBean(key: "model", title: t("composer.sidekick"),
+                       glyph: AnyView(SidekickMark(picked: picked, badge: false).foregroundStyle(Palette.fg1)),
+                       // The model's name alone, as the lead's bean shows it: the chip and the note already say whose it is
+                       caption: AnyView(GooCaption(text: picked?.name ?? t("composer.sidekickNone"), note: t("composer.sidekickHint"))),
+                       rows: sk.options.count,
+                       panel: AnyView(GooList(current: current) {
+                         ForEach(sk.options) { o in
+                           let none = o.id == ComposerControls.noSidekick
+                           GooRow(name: none ? t("composer.sidekickNone") : o.name, checked: o.id == current) {
+                             if none {
+                               Icon(.circleFadingPlus, size: Metrics.iconCtl, strokeWidth: 1.75).foregroundStyle(Palette.fg3)
+                             } else {
+                               VendorMark(brand: ModelCatalog.optionBrand(o), name: o.name, size: Metrics.iconCtl)
+                             }
+                           } action: {
+                             onSetConfig(sk.id, o.id)
+                             fold()
+                           }
+                           .id(o.id)
+                         }
+                       }))]
+    if let effort, ComposerControls.reasoningVisible(effort) {
+      let scale = ComposerControls.presentReasoning(effort)
+      if scale.efforts.count > 1 {
+        let name = scale.off ? t("mobile.thinking.off") : scale.efforts.first { $0.id == scale.value }?.name ?? ""
+        out.append(GooBean(key: "effort", title: t("composer.effort"),
+                           glyph: AnyView(Icon(.brain, size: Metrics.barIcon, strokeWidth: 1.75).foregroundStyle(Palette.fg1)),
+                           caption: AnyView(GooCaption(text: name)), rows: scale.efforts.count,
+                           panel: AnyView(GooList(current: scale.value) {
+                             ForEach(scale.efforts) { l in
+                               GooRow(name: l.name, checked: !scale.off && l.id == scale.value) { EmptyView() } action: {
+                                 onSetConfig(effort.id, l.id)
+                                 fold()
+                               }
+                               .id(l.id)
+                             }
+                           })))
+      }
+    }
+    return out
+  }
+
+  private func fold() { withAnimation(motion ? Motion.gooSpring : nil) { stage = 0 } }
+}
+
+/// The sidekick's mark: its model's mark with the desktop's plus badge (SidekickPair.tsx `SidekickMark`) set into a
+/// ring cut out of the mark's corner, or a faint fading plus while there is none, an empty slot that reads as "add
+/// one" in any language. The badge's plus is cut out of it, so the glass shows through
+struct SidekickMark: View {
+  var picked: SessionOption?
+  /// Off on the model bean, whose column already says it is the sidekick's
+  var badge = true
+
+  var body: some View {
+    if let picked {
+      let mark = VendorMark(brand: ModelCatalog.optionBrand(picked), name: picked.name, size: Metrics.barIcon)
+      if badge {
+        let b = Metrics.sidekickBadge, n = Metrics.sidekickNotch
+        mark
+          .mask {
+            ZStack(alignment: .bottomTrailing) {
+              Rectangle()
+              Circle()
+                .frame(width: b + n * 2, height: b + n * 2)
+                .offset(x: n * 2, y: n * 2)
+                .blendMode(.destinationOut)
+            }
+            .compositingGroup()
+          }
+          .overlay(alignment: .bottomTrailing) {
+            ZStack {
+              Circle()
+              Icon(.plus, size: b, strokeWidth: 2).blendMode(.destinationOut)
+            }
+            .compositingGroup()
+            .frame(width: b, height: b)
+            .offset(x: n, y: n)
+          }
+      } else {
+        mark
+      }
+    } else {
+      Icon(.circleFadingPlus, size: Metrics.barIcon, strokeWidth: 1.75).foregroundStyle(Palette.fg3)
+    }
+  }
 }
 
 /// One Fast toggle per panel, whatever its source: an embedded variant, a Fusion pair, or a native model_config control
@@ -774,7 +875,7 @@ struct ModelChoices {
   let mode: SessionOption?
   /// The modes to choose between; none when the agent has only one
   let modes: [SessionOption]
-  /// The built-in agent's sidekick select and its level
+  /// The built-in agent's sidekick select and its level (the sidekick's own chip, `LiquidSidekick`)
   let sidekick: ConfigControl?
   let sidekickEffort: ConfigControl?
   private let onSetConfig: (String, String) -> Void
@@ -782,14 +883,8 @@ struct ModelChoices {
   /// hidden: the agent's settings `hiddenOptions` (option id → hidden family keys); the model in use always stays
   init(controls: SessionControls, hidden: [String: [String]] = [:], onSetConfig: @escaping (String, String) -> Void) {
     let split = ComposerControls.split(controls.options)
-    // The models the settings left visible (ModelPicker.tsx visibleOptions), the sidekick's list as well
-    func visible(_ c: ConfigControl) -> ConfigControl {
-      var c = c
-      c.options = ModelCatalog.visibleOptions(c.options, hidden: hidden[c.id], current: c.value)
-      return c
-    }
-    let model = split.models.first.map(visible)
-    let families = model.map { ModelCatalog.group($0.options) } ?? []
+    let model = split.models.first.map { Self.visible($0, hidden: hidden) }
+    let families = model.map { ModelCatalog.grouped($0.options) } ?? []
     let cur = families.first { f in f.variants.contains { $0.id == model?.value } }
     let curVar = cur?.variants.first { $0.id == model?.value }
     self.families = families
@@ -799,9 +894,22 @@ struct ModelChoices {
     self.effort = Self.effort(split: split, cur: cur, curVar: curVar, modelId: model?.id, onSetConfig: onSetConfig)
     self.mode = controls.modes.first { $0.id == controls.modeId } ?? controls.modes.first
     self.modes = controls.modes.count > 1 ? controls.modes : []
-    self.sidekick = split.sidekick.first.map(visible)
-    self.sidekickEffort = split.sidekickEffort.first
+    let sidekick = Self.sidekick(split, hidden: hidden)
+    self.sidekick = sidekick?.select
+    self.sidekickEffort = sidekick?.effort
     self.onSetConfig = onSetConfig
+  }
+
+  /// The models the settings left visible (ModelPicker.tsx visibleOptions)
+  private static func visible(_ c: ConfigControl, hidden: [String: [String]]) -> ConfigControl {
+    var c = c
+    c.options = ModelCatalog.visibleOptions(c.options, hidden: hidden[c.id], current: c.value)
+    return c
+  }
+
+  /// The sidekick select, thinned as the lead's list is, and its level select
+  static func sidekick(_ split: ComposerControls.Split, hidden: [String: [String]]) -> (select: ConfigControl, effort: ConfigControl?)? {
+    split.sidekick.first.map { (visible($0, hidden: hidden), split.sidekickEffort.first) }
   }
 
   /// Fast, when the model in use can switch it at the level in force, or while it is on (the bolt on the chip says

@@ -12,7 +12,8 @@ import SwiftUI
 // Ungrouped: one run. Projects follow the user's order, shared with the desktop. A search lists one run across every project,
 // matching the conversations too (a content hit shows the text around its match under the title). Every row keeps one
 // fact per block: the title with its time and state on one line, and the project under it. Inside a project's group
-// the row is that one line: its mark already names the agent.
+// the row is that one line, its mark already naming the agent, and sits a step in from the folder (`Metrics.nest`), as
+// on the desktop app: flush, the sessions read as more folders.
 
 /// How the list groups its sessions (`Prefs.listView`), the desktop view menu's Grouping: by date, by project (with the
 /// desktop app's sections), by channel (the agent), or one ungrouped run
@@ -71,7 +72,8 @@ struct SessionListScreen: View {
         }
         if ordered.isEmpty && !(byProject && !model.listedProjects.isEmpty) {
           // Waiting on the conversation search, the empty list says so rather than "no match"
-          Text(web: searching ? t(snippets == nil ? "session.searching" : "session.noMatch") : t("session.noneWorkspace"))
+          // The whole list is empty, not one project's ("session.noneWorkspace" is the IDE's workspace-scoped list)
+          Text(web: searching ? t(snippets == nil ? "session.searching" : "session.noMatch") : t("session.none"))
             .textStyle(TypeScale.text2).foregroundStyle(Palette.fg3)
             .frame(maxWidth: .infinity, minHeight: Metrics.sheetRow)
         }
@@ -165,12 +167,12 @@ struct SessionListScreen: View {
         // Inside its project a row is one line, the mark naming the agent; no caption says when, so every row keeps
         // its time
         ForEach(pins, id: \.id) { s in
-          row(s, place: nil, time: sessionTime(s.updatedAt, now: now), divider: false)
+          row(s, place: nil, time: sessionTime(s.updatedAt, now: now), divider: false, nested: true)
         }
         if !pins.isEmpty && (!rows.isEmpty || more > 0) { PinRule() }
       }
       ForEach(rows, id: \.id) { s in
-        row(s, place: nil, time: sessionTime(s.updatedAt, now: now), divider: false)
+        row(s, place: nil, time: sessionTime(s.updatedAt, now: now), divider: false, nested: true)
       }
       if more > 0 {
         MoreRow(count: more) { _ = withAnimation(Motion.ease) { fullProjects.insert(cwd) } }
@@ -179,10 +181,10 @@ struct SessionListScreen: View {
   }
 
   /// One session with its menu
-  private func row(_ s: SessionSummary, place: String?, time: String?, divider: Bool, snippet: String? = nil,
-                   terms: [String] = []) -> some View {
+  private func row(_ s: SessionSummary, place: String?, time: String?, divider: Bool, nested: Bool = false,
+                   snippet: String? = nil, terms: [String] = []) -> some View {
     SessionRow(session: s, agentName: model.agent(s.agent).name, place: place, time: time, divider: divider,
-               snippet: snippet, terms: terms,
+               nested: nested, snippet: snippet, terms: terms,
                onSelect: { model.path.append(.chat(s.id)) },
                onRename: { newTitle = s.title; renaming = s },
                // Deleted at once, as on the desktop: the toast's undo brings it back
@@ -413,6 +415,8 @@ struct SessionRow<Pins: View>: View {
   let place: String?
   var time: String?
   var divider = true
+  /// Inside a project's group: a step in from the folder row
+  var nested = false
   /// A search's content hit: the text around the match, a line of its own under the place
   var snippet: String?
   /// A search's terms, marked in the title and the snippet
@@ -466,6 +470,7 @@ struct SessionRow<Pins: View>: View {
           }
         }
       }
+      .padding(.leading, nested ? Metrics.nest : 0)
       .padding(.horizontal, Metrics.pad)
       .padding(.vertical, snippet == nil ? 0 : Metrics.s2)
       // One line stands as tall as a project's header
@@ -474,7 +479,7 @@ struct SessionRow<Pins: View>: View {
         if divider {
           // From the text column, under the lead
           Rectangle().fill(Palette.line).frame(height: Metrics.hairline)
-            .padding(.leading, Metrics.pad + Metrics.lead + Metrics.gap)
+            .padding(.leading, Metrics.pad + (nested ? Metrics.nest : 0) + Metrics.lead + Metrics.gap)
         }
       }
       .contentShape(Rectangle())
@@ -505,8 +510,8 @@ struct ProjectHeader: View {
   var body: some View {
     Button(action: onToggle) {
       HStack(spacing: Metrics.gap) {
-        // The folder in the session marks' column, the system's filled folder so it weighs what the filled logos
-        // weigh. A pin never takes its place (it says "pinned", not "project")
+        // The folder in the top-level session marks' column (its own sessions sit a step in), the system's filled
+        // folder so it weighs what the filled logos weigh. A pin never takes its place (it says "pinned", not "project")
         Image(systemName: "folder.fill").resizable().scaledToFit()
           .frame(width: Metrics.iconCtl, height: Metrics.iconCtl)
           .foregroundStyle(Palette.fg2)
@@ -561,6 +566,8 @@ struct MoreRow: View {
           .textStyle(TypeScale.text2).foregroundStyle(Palette.fg3)
         Spacer(minLength: 0)
       }
+      // Only ever inside a project's group: its text on its sessions' titles
+      .padding(.leading, Metrics.nest)
       .padding(.horizontal, Metrics.pad)
       .frame(minHeight: Metrics.sheetRow)
       .contentShape(Rectangle())

@@ -416,6 +416,7 @@
   "composer.sidekick": "サブ",
   "composer.sidekickNone": "なし",
   "composer.pairSide": "{role}：{model}",
+  "composer.sidekickHint": "メインが並行作業やレビューを任せる相手",
   "composer.fusionSummary": "メイン {leads}、サブ {sidekicks}",
   "composer.addAccount": "アカウントを追加",
   "composer.accountsOf": "{agent} のアカウント",

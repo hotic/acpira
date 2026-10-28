@@ -20,7 +20,7 @@ public struct LaunchOptions: Sendable {
   public var screen: String
   /// `-render closed|open|all`: draw the fixture's full-length chat into tmp/acpira-render.png instead of the screens
   public var render: String?
-  /// `-popup attach|attach.N|attach.paste|model|model.N|focus…|demo|ring|ring.pick|account|toast|code|lightbox|context|quotes|
+  /// `-popup attach|attach.N|attach.paste|model|model.N|sidekick|sidekick.N|focus…|demo|ring|ring.pick|account|toast|code|lightbox|context|quotes|
   /// fold:N|menu:X,Y`: open that picker, sheet, card or fold, or play the liquid transitions, on launch (screenshots and
   /// recordings, docs/dev/ios.md)
   public var popup: String?
@@ -108,18 +108,20 @@ public struct RootView: View {
   }
 
   /// A paired computer's wire becomes the app model the screens follow; its end goes back to the pairing model, whose
-  /// screens say why and offer a retry
+  /// screens say why and offer a retry. A new wire to the computer already on screen keeps the screens (`resume`)
   private func followPairing() {
     guard let pairing else { return }
     let language = options.locale ?? Locale.preferredLanguages.first ?? "en"
-    let adopt = { [options] (wire: any PairedConnection) in
+    let adopt = { [options] (computer: PairedComputer, wire: any PairedConnection) in
       let next = AppModel(link: EngineLink(transport: wire, language: language), options: options)
-      next.onClosed = { [weak pairing] in pairing?.connectionEnded(wire.endReason() ?? .offline) }
+      next.computer = computer.id
+      if model.live, model.computer == computer.id { next.resume(from: model) }
+      next.onClosed = { [weak pairing] in pairing?.connectionEnded(wire.endReason() ?? .offline, of: wire) }
       model = next
     }
-    pairing.onConnection = { _, wire in adopt(wire) }
+    pairing.onConnection = { computer, wire in adopt(computer, wire) }
     // Dialled before this view appeared
-    if let wire = pairing.connection { adopt(wire) }
+    if let wire = pairing.connection, let computer = pairing.selected { adopt(computer, wire) }
   }
 
   private var scheme: ColorScheme? {
@@ -160,6 +162,13 @@ public struct RootView: View {
     .onChange(of: phase) { _, now in
       // Back from the background, where the service closed the wire: dial the followed computer again
       if now == .active, let pairing, pairing.connection == nil, pairing.selected != nil, pairing.link != .connecting {
+        pairing.connectSelected()
+      }
+    }
+    // A wire ending as suspended once the app is back (a background close that never ran, a dial that lost the race
+    // with the service's return) leaves the link idle: nothing else would dial it
+    .onChange(of: pairing?.link) { _, link in
+      if link == .idle, phase == .active, let pairing, pairing.connection == nil, pairing.selected != nil {
         pairing.connectSelected()
       }
     }

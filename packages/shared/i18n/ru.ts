@@ -421,6 +421,7 @@ export const ru = {
   'composer.sidekick': 'Помощник',
   'composer.sidekickNone': 'Нет',
   'composer.pairSide': '{role}: {model}',
+  'composer.sidekickHint': 'Берёт у ведущей параллельную работу или проверку',
   'composer.fusionSummary': 'Ведущих: {leads}, помощников: {sidekicks}',
   'composer.addAccount': 'Добавить аккаунт',
   'composer.accountsOf': 'Аккаунты {agent}',

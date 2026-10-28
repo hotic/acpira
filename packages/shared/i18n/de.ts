@@ -418,6 +418,7 @@ export const de = {
   'composer.sidekick': 'Helfer',
   'composer.sidekickNone': 'Keiner',
   'composer.pairSide': '{role}: {model}',
+  'composer.sidekickHint': 'Übernimmt parallele Arbeit oder Prüfungen vom Hauptmodell',
   'composer.fusionSummary': '{leads} Hauptmodelle, {sidekicks} Helfer',
   'composer.addAccount': 'Konto hinzufügen',
   'composer.accountsOf': 'Konten von {agent}',

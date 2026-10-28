@@ -92,6 +92,16 @@ enum ModelCatalog {
     return Parsed(family: t.joined(separator: " "), effort: effort, fast: fast, long: long)
   }
 
+  /// `group` for the composer's model chip, which reads the same list on every redraw (a keystroke redraws it): the
+  /// last list's families are kept
+  static func grouped(_ options: [SessionOption]) -> [ModelFamily] {
+    if let last = lastGroup, last.options == options { return last.families }
+    let families = group(options)
+    lastGroup = (options, families)
+    return families
+  }
+  private static var lastGroup: (options: [SessionOption], families: [ModelFamily])?
+
   static func group(_ options: [SessionOption]) -> [ModelFamily] {
     struct Base: Hashable { var namespace: String?; var family: String }
     struct Tuple: Hashable { var base: Base; var effort: String; var fast: Bool; var long: Bool; var lead: String?; var sidekick: String? }

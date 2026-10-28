@@ -68,16 +68,27 @@ final class PairingModel {
     await refreshPresence()
   }
 
-  /// Every computer's state, probed side by side; the followed one keeps its live wire's word
+  /// Every computer's state, probed side by side; the followed one keeps its live wire's word. It is not probed while
+  /// its own dial or wire is up: the gateway keeps one connection per device, so a probe landing after the dial
+  /// replaced the app's wire
   func refreshPresence() async {
     let service = service
+    let probing = computers.filter { !($0.id == selected?.id && wired) }
     let probed = await withTaskGroup(of: (String, Presence?).self) { group in
-      for computer in computers { group.addTask { (computer.id, await service.presence(of: computer)) } }
+      for computer in probing { group.addTask { (computer.id, await service.presence(of: computer)) } }
       var out: [String: Presence] = [:]
       for await (id, state) in group { if let state { out[id] = state } }
       return out
     }
     for (id, state) in probed where !(id == selected?.id && link != .idle && link != .connecting) { presence[id] = state }
+  }
+
+  /// The followed computer is being dialed or its wire is up
+  var wired: Bool {
+    switch link {
+    case .connecting, .online: true
+    case .idle, .failed: false
+    }
   }
 
   /// Follows another computer
@@ -125,24 +136,32 @@ final class PairingModel {
         presence[computer.id] = .online(path)
       }
       guard !Task.isCancelled, selected?.id == computer.id else { return }
-      ended(.offline, computer.id)
+      // The paths can end before the frames report why (a background close is not the computer going offline)
+      ended(wire.endReason() ?? .offline, computer.id)
     }
   }
 
-  /// Integration point: the app model reports how the followed computer's wire ended (its frames finishing or failing)
-  func connectionEnded(_ error: ConnectionError) {
-    guard let id = selected?.id else { return }
+  /// Integration point: the app model reports how the followed computer's wire ended (its frames finishing or failing).
+  /// Only the current wire counts: a wire closed by a switch or a new pairing ends after the next one is dialed
+  func connectionEnded(_ error: ConnectionError, of wire: any PairedConnection) {
+    guard let id = selected?.id, let connection, connection as AnyObject === wire as AnyObject else { return }
     watching?.cancel()
     ended(error, id)
   }
 
   private func ended(_ error: ConnectionError, _ id: String) {
     connection = nil
+    // The app's own background close: coming back dials again (RootView), so nothing failed and the screens wait as for
+    // a dial rather than offer Retry on every return
+    if error == .suspended {
+      link = .idle
+      return
+    }
     link = .failed(error)
     switch error {
     case .offline: presence[id] = .offline
     case .revoked: presence[id] = .revoked
-    case .incompatible, .other: presence[id] = nil
+    case .incompatible, .suspended, .other: presence[id] = nil
     }
   }
 

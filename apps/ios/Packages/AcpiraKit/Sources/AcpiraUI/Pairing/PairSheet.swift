@@ -5,7 +5,8 @@ import SwiftUI
 // The add-computer sheet. Its form leads with the camera card, then the computers this network shows (picking one asks
 // for the code on its card) and a pasted pairing link. A code scanned or a link pasted in the sheet pairs at once; a link
 // opened from outside the app asks first. Pairing, connecting, connected and a refusal share one connect frame that
-// replaces the form in place, and the sheet goes once the new computer answers.
+// replaces the form in place, and the sheet goes once the new computer answers. A scanned code is drawn in that frame as
+// the computer's card draws it, and the paired moment plays on both screens at once (PairCode.swift).
 
 /// What the sheet shows
 enum PairPhase: Equatable {
@@ -37,15 +38,17 @@ struct PairSheet: View {
   @State private var path: [NearbyComputer] = []
   @State private var nearby: [NearbyComputer] = []
   @State private var browsing = true
+  /// The code being paired with and its link: the very modules a scan read, else made from the link
+  @State private var code: (link: String, rows: [String])?
 
   var body: some View {
     NavigationStack(path: $path) {
       ZStack {
         if phase == .choose {
-          PairAddForm(nearby: nearby, browsing: browsing, scanning: path.isEmpty, onLink: { pair($0) })
+          PairAddForm(nearby: nearby, browsing: browsing, scanning: path.isEmpty, onLink: { pair($0, scanned: $1) })
             .transition(.opacity)
         } else {
-          PairStage(phase: phase, finish: { dismiss() }, onConnect: connectConfirmed, onRetry: retry)
+          PairStage(phase: phase, code: code?.rows, finish: { dismiss() }, onConnect: connectConfirmed, onRetry: retry)
             .transition(.opacity)
         }
       }
@@ -85,10 +88,21 @@ struct PairSheet: View {
     path = []
     do {
       phase = .confirm(link: link, name: try pairing.service.computerName(link: link))
+      show(link)
       // `-popup pair.link.go|pair.link.expired`: the yes given at once
       if initialPopup == "pair.link.go" || initialPopup == "pair.link.expired" { connectConfirmed() }
     } catch {
+      code = nil
       phase = .failed(name: nil, message: Self.message(error, name: nil), retry: .scan)
+    }
+  }
+
+  /// The code to draw for a link: the rows a scan read, else the ones already shown for it, else made from its text
+  private func show(_ link: String, scanned: [String]? = nil) {
+    if let scanned {
+      code = (link, scanned)
+    } else if code?.link != link {
+      code = PairCodeRows.make(link: link).map { (link, $0) }
     }
   }
 
@@ -105,14 +119,16 @@ struct PairSheet: View {
     }
   }
 
-  /// Pairs through a scanned, pasted or confirmed link
-  private func pair(_ link: String) {
+  /// Pairs through a scanned, pasted or confirmed link; a scan hands over the modules it read
+  private func pair(_ link: String, scanned: [String]? = nil) {
     guard let pairing else { return }
     let name: String
     do { name = try pairing.service.computerName(link: link) } catch {
+      code = nil
       phase = .failed(name: nil, message: Self.message(error, name: nil), retry: .scan)
       return
     }
+    show(link, scanned: scanned)
     phase = .pairing(link: link, name: name)
     Task {
       do {
@@ -149,7 +165,8 @@ struct PairAddForm: View {
   let browsing: Bool
   /// The form is on top: the camera runs only then
   let scanning: Bool
-  var onLink: (String) -> Void
+  /// A pairing link, with the code's rows when the camera read it
+  var onLink: (String, [String]?) -> Void
   @State private var notice: String?
   @State private var noticeGen = 0
 
@@ -209,7 +226,7 @@ struct PairAddForm: View {
 
   private func pasted(_ text: String) {
     if PairingModel.isPairingLink(text) {
-      onLink(text)
+      onLink(text, nil)
       return
     }
     // Not a pairing link: the row says so for a moment, in place
@@ -223,26 +240,36 @@ struct PairAddForm: View {
   }
 }
 
-/// The connect frame inside the sheet: the glyph, the computer's name, one sentence, one action
+/// The connect frame inside the sheet: the glyph (or the code being paired with), the computer's name, one sentence,
+/// one action. Paired is the moment the computer answers the pairing, not its wire: the computer's card celebrates on
+/// that same answer, so the two screens play it together while the wire comes up
 struct PairStage: View {
   let phase: PairPhase
+  /// The code's rows, drawn in the glyph's place
+  var code: [String]?
   /// Closes the sheet
   var finish: () -> Void
   var onConnect: () -> Void = {}
   var onRetry: () -> Void = {}
   @Environment(\.pairing) private var pairing
+  /// When the computer answered the pairing
+  @State private var pairedAt: ContinuousClock.Instant?
 
   var body: some View {
-    PairHeroPlacement {
-      PairHero(symbol: symbol, ring: ring, name: name, line: line, action: action, dim: dim, onAction: act)
+    PairHeroPlacement(box: code == nil ? Metrics.pairGlyphBox : Metrics.pairCode) {
+      PairHero(symbol: symbol, ring: ring, code: code, paired: paired, name: name, line: line, path: path, action: action,
+               dim: dim, onAction: act)
     }
     .background(Palette.formPage)
-    // Connected: the check shows a beat, then the sheet goes. A wire that fails right after pairing leaves the sheet too,
-    // and the list says what happened
+    .onChange(of: paired, initial: true) { _, now in pairedAt = now ? .now : nil }
+    // Connected: the sheet goes once the paired moment has held as long as the card holds it, so both screens move on
+    // together, and a beat after a wire that came up later. A wire that fails right after pairing leaves the sheet
+    // too, and the list says what happened
     .task(id: wire) {
       switch wire {
       case .up:
-        try? await Task.sleep(for: .seconds(Motion.pairDone))
+        let held = pairedAt.map { $0.duration(to: .now) } ?? .zero
+        try? await Task.sleep(for: max(.seconds(Motion.pairHold) - held, .seconds(Motion.pairDone)))
         if !Task.isCancelled { finish() }
       case .down: finish()
       case .waiting, .none: break
@@ -250,7 +277,20 @@ struct PairStage: View {
     }
   }
 
+  private var paired: Bool {
+    if case .joined = phase { return true }
+    return false
+  }
+
   private enum Wire { case waiting, up, down }
+
+  /// The path the newly paired computer's wire travels, once it is up; it follows the wire, so a relay that gives way to
+  /// a direct path shows the change
+  private var path: PathKind? {
+    guard case .joined(let computer) = phase, let pairing, pairing.selected?.id == computer.id,
+          case .online(let path) = pairing.link else { return nil }
+    return path
+  }
 
   /// The newly paired computer's wire, once the list follows it
   private var wire: Wire? {
@@ -281,7 +321,8 @@ struct PairStage: View {
   private var ring: PairHero.Ring {
     switch phase {
     case .pairing: .spin
-    case .joined: wire == .up ? .done : .spin
+    // The spinner stays with its sentence while the path's tag takes their place, so the line fades out whole
+    case .joined: .spin
     default: .rest
     }
   }
@@ -291,7 +332,7 @@ struct PairStage: View {
     case .choose: ""
     case .confirm: t("mobile.pair.confirm")
     case .pairing: t("mobile.pair.connecting")
-    case .joined: wire == .up ? t("mobile.pair.connected") : t("mobile.pair.connecting")
+    case .joined: t("mobile.pair.connecting")
     case .failed(_, let message, _): message
     }
   }

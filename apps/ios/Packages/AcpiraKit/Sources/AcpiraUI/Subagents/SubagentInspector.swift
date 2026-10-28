@@ -24,9 +24,10 @@ struct SubagentInspector: View {
       }
     }
     // Observed once the parent's view is here, as the web observes only the active session's child: an observe the
-    // engine reads before it shows the session has no transcript to answer with, and is not answered later
-    .task(id: model.views[session] != nil) {
-      if model.views[session] != nil { model.observeSubagent(session, id) }
+    // engine reads before it shows the session has no transcript to answer with, and is not answered later. A parent
+    // carried over a reconnect counts once the new wire shows it
+    .task(id: model.shown(session)) {
+      if model.shown(session) { model.observeSubagent(session, id) }
     }
     .onDisappear { model.unobserveSubagent(session, id) }
   }

@@ -414,6 +414,7 @@
   "composer.sidekick": "보조 모델",
   "composer.sidekickNone": "없음",
   "composer.pairSide": "{role}: {model}",
+  "composer.sidekickHint": "주 모델이 병렬 작업이나 검토를 맡깁니다",
   "composer.fusionSummary": "주 모델 {leads}개, 보조 모델 {sidekicks}개",
   "composer.addAccount": "계정 추가",
   "composer.accountsOf": "{agent} 계정",
