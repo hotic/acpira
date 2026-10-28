@@ -828,7 +828,7 @@ pub fn apply_category_op(list: &mut SessionCategories, op: &CategoryOp) {
         list.sections.push(SessionSection { id: id.clone(), name, projects: vec![], collapsed: None });
       }
       if let Some(cwd) = project {
-        apply_category_op(list, &CategoryOp::SetProjectSection { cwd: cwd.clone(), section: Some(id.clone()) });
+        apply_category_op(list, &CategoryOp::SetProjectSection { cwd: cwd.clone(), section: Some(id.clone()), before: None });
       }
     }
     CategoryOp::RenameSection { id, name } => {
@@ -849,7 +849,7 @@ pub fn apply_category_op(list: &mut SessionCategories, op: &CategoryOp) {
       list.sections.insert(at, moving);
     }
     // One section per project: filing it anywhere takes it out of the others. A section that is gone files it nowhere
-    CategoryOp::SetProjectSection { cwd, section } => {
+    CategoryOp::SetProjectSection { cwd, section, before } => {
       if cwd.is_empty() {
         return;
       }
@@ -857,7 +857,9 @@ pub fn apply_category_op(list: &mut SessionCategories, op: &CategoryOp) {
         s.projects.retain(|p| p != cwd);
       }
       if let Some(s) = section.as_ref().and_then(|id| list.sections.iter_mut().find(|s| &s.id == id)) {
-        s.projects.push(cwd.clone());
+        // A drag drops it before a project of that section; anything else (the menu, a gone anchor) appends
+        let at = before.as_ref().and_then(|b| s.projects.iter().position(|p| p == b)).unwrap_or(s.projects.len());
+        s.projects.insert(at, cwd.clone());
       }
     }
   }
@@ -961,7 +963,7 @@ mod tests {
   fn sections_hold_each_project_once_and_give_them_back_when_deleted() {
     let mut list = SessionCategories::default();
     let op = |o: CategoryOp, l: &mut SessionCategories| apply_category_op(l, &o);
-    let file = |cwd: &str, section: Option<&str>| CategoryOp::SetProjectSection { cwd: cwd.into(), section: section.map(Into::into) };
+    let file = |cwd: &str, section: Option<&str>| CategoryOp::SetProjectSection { cwd: cwd.into(), section: section.map(Into::into), before: None };
     let create = |id: &str, name: &str, project: Option<&str>| CategoryOp::CreateSection { id: id.into(), name: name.into(), project: project.map(Into::into) };
     op(create("w", " Work ", None), &mut list);
     // Made from a project's menu: the project goes in with it
@@ -976,6 +978,15 @@ mod tests {
     // One section per project: filing /a under p took it out of w; a section that is gone files nothing
     assert_eq!(held(&list, "w"), ["/b"]);
     assert_eq!(held(&list, "p"), ["/z", "/a"]);
+    // A drag places it: before a project of the section, re-placed within its own one, appended past a gone anchor
+    let place = |cwd: &str, section: &str, before: &str| CategoryOp::SetProjectSection { cwd: cwd.into(), section: Some(section.into()), before: Some(before.into()) };
+    op(place("/b", "p", "/a"), &mut list);
+    assert_eq!(held(&list, "p"), ["/z", "/b", "/a"]);
+    op(place("/a", "p", "/z"), &mut list);
+    assert_eq!(held(&list, "p"), ["/a", "/z", "/b"]);
+    op(place("/b", "w", "/gone"), &mut list);
+    assert_eq!(held(&list, "w"), ["/b"]);
+    assert_eq!(held(&list, "p"), ["/a", "/z"]);
     op(CategoryOp::ReorderSection { id: "p".into(), before: Some("w".into()) }, &mut list);
     op(CategoryOp::CollapseSection { id: "w".into(), collapsed: true }, &mut list);
     op(CategoryOp::RenameSection { id: "p".into(), name: "Personal".into() }, &mut list);

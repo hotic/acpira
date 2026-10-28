@@ -216,6 +216,43 @@ async fn a_session_another_engine_owns_streams_here_and_takes_actions_without_a_
   b.dispose().await;
 }
 
+// A paired device resends what it is unsure of after a lost link with the same clientId: the engine running the session
+// runs it once, whether the resend reaches it directly or forwarded over the push bus from another engine
+#[tokio::test(flavor = "multi_thread")]
+async fn a_resent_client_id_runs_once_here_and_over_the_bus() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let a = Mgr::new(dir.path(), Opts::fake(&fake));
+  let b = Mgr::new(dir.path(), Opts::fake(&fake));
+  a.init().await;
+  b.init().await;
+  until(|| a.m.bus_connected() && b.m.bus_connected(), 3000).await;
+  a.new_session(None).await;
+  let send = |id: &str, cid: &str| json!({ "type": "send", "sessionId": id, "text": "hi", "clientId": cid });
+  a.handle(json!({ "type": "send", "text": "first" })).await;
+  let id = a.active_id().unwrap();
+  until(|| a.active().is_some_and(|s| turns_in(&s) == 2 && s["running"] == false), 5000).await;
+  a.handle(send(&id, "c1")).await;
+  a.handle(send(&id, "c1")).await;
+  until(|| a.active().is_some_and(|s| turns_in(&s) == 4 && s["running"] == false), 5000).await;
+
+  until(|| dir.path().join(format!("{id}.json")).exists(), 3000).await;
+  a.m.refresh_index().await;
+  b.m.refresh_index().await;
+  b.m.select_session_for(&b.v, &id).await;
+  until(|| b.active().is_some_and(|s| s["id"] == id.as_str() && s["status"] != "readonly"), 3000).await;
+  b.handle(send(&id, "c2")).await;
+  b.handle(send(&id, "c2")).await;
+  // The id A already ran, now arriving from B
+  b.handle(send(&id, "c1")).await;
+  until(|| a.active().is_some_and(|s| turns_in(&s) == 6 && s["running"] == false), 5000).await;
+  tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+  assert_eq!(turns_in(&a.active().unwrap()), 6);
+  assert!(b.toasts().is_empty(), "{:?}", b.toasts());
+  a.dispose().await;
+  b.dispose().await;
+}
+
 // The sync model's session facts in the list: a session another engine runs shows there as its owner lists it (a new one
 // at once, a rename) without waiting for a refresh, and a rename or pin made in the other engine is written by the owner
 // instead of being refused as "busy elsewhere"

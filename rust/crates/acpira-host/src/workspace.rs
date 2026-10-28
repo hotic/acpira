@@ -84,15 +84,27 @@ impl Workspace {
     }
   }
 
-  /// A file of the folder by its relative path, as the viewer shows it (`project_files::read_text`)
+  /// A file of the folder by its relative path, or an explicit local path (a plan or session-edited file outside the project),
+  /// as the viewer shows it (`project_files::read_text`)
   pub async fn read_text(&self, rel: &str) -> Result<String, ProjectError> {
     match self {
-      Workspace::Local(root) => project_files::read_text(&project_files::resolve(root, rel)?).await,
+      Workspace::Local(root) => {
+        let p = Path::new(rel);
+        let resolved = if p.is_absolute() && !p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+          p.to_path_buf()
+        } else {
+          project_files::resolve(root, rel)?
+        };
+        project_files::read_text(&resolved).await
+      }
       Workspace::Remote { client, path } => Self::call(client, path, "readText", json!({ "rel": rel })).await.map(|v| Self::field(&v, "text")),
     }
   }
 
   pub async fn head_text(&self, rel: &str) -> Option<String> {
+    if Path::new(rel).is_absolute() {
+      return None;
+    }
     match self {
       Workspace::Local(root) => project_files::head_text(root, rel).await,
       Workspace::Remote { client, path } => Self::call(client, path, "headText", json!({ "rel": rel })).await.ok().and_then(|v| Self::field(&v, "text")),

@@ -20,22 +20,38 @@ describe('rust workspace', () => {
   });
 
   // The Windows desktop exe compiles the engine crates inside apps/desktop's own workspace, so its Cargo.lock must hold
-  // every registry crate at the version rust/Cargo.lock (what the engine's suites ran against) locks; Tauri's own extra
-  // versions may sit beside them. A lock that drifted: seed apps/desktop/Cargo.lock with rust/Cargo.lock's entries
+  // every registry crate those crates reach at the version rust/Cargo.lock (what the engine's suites ran against) locks;
+  // Tauri's own extra versions may sit beside them, and crates only the engine workspace's other members reach (the
+  // gateway's network stack) are not the desktop's. A lock that drifted: seed apps/desktop/Cargo.lock with
+  // rust/Cargo.lock's entries
   it('locks the engine crates of the desktop app at the versions the engine tests', () => {
-    const versions = (lock: string) => {
-      const out = new Map<string, Set<string>>();
-      for (const block of lock.split('\n[[package]]\n').slice(1)) {
-        if (!block.includes('\nsource = ')) continue;
-        const name = block.match(/^name = "(.*)"$/m)![1]!;
-        if (!out.has(name)) out.set(name, new Set());
-        out.get(name)!.add(block.match(/^version = "(.*)"$/m)![1]!);
-      }
-      return out;
+    interface Pkg { name: string; version: string; registry: boolean; deps: string[] }
+    const parse = (lock: string): Pkg[] => lock.split('\n[[package]]\n').slice(1).map(block => ({
+      name: block.match(/^name = "(.*)"$/m)![1]!,
+      version: block.match(/^version = "(.*)"$/m)![1]!,
+      registry: block.includes('\nsource = '),
+      deps: [...(block.match(/^dependencies = \[\n([\s\S]*?)\n\]/m)?.[1] ?? '').matchAll(/^ "(.*)",?$/gm)].map(m => m[1]!),
+    }));
+    const engine = parse(read('rust/Cargo.lock'));
+    const desktop = parse(read('apps/desktop/Cargo.lock'));
+    // From the engine's own crates the desktop builds, everything they reach in the engine's lock. A dependency is
+    // written `name` when the lock holds one version of it, `name version` otherwise
+    const resolve = (dep: string) => {
+      const [name, version] = dep.split(' ');
+      return engine.find(p => p.name === name && (!version || p.version === version))!;
     };
-    const engine = versions(read('rust/Cargo.lock'));
-    const desktop = versions(read('apps/desktop/Cargo.lock'));
-    const drifted = [...engine].filter(([name, vs]) => desktop.has(name) && [...vs].some(v => !desktop.get(name)!.has(v)));
-    expect(drifted.map(([name, vs]) => `${name} ${[...vs].join(',')} vs ${[...desktop.get(name)!].join(',')}`)).toEqual([]);
+    const queue = engine.filter(p => !p.registry && desktop.some(d => d.name === p.name));
+    const reached = new Set<Pkg>(queue);
+    while (queue.length) {
+      for (const dep of queue.pop()!.deps.map(resolve)) {
+        if (!reached.has(dep)) {
+          reached.add(dep);
+          queue.push(dep);
+        }
+      }
+    }
+    const locked = new Set(desktop.map(p => `${p.name} ${p.version}`));
+    const drifted = [...reached].filter(p => p.registry && desktop.some(d => d.name === p.name) && !locked.has(`${p.name} ${p.version}`));
+    expect(drifted.map(p => `${p.name} ${p.version}`)).toEqual([]);
   });
 });

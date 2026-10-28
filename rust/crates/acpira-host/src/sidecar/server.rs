@@ -343,7 +343,7 @@ impl Engine {
       protocol_version: SIDECAR_PROTOCOL_VERSION,
       sidecar: SidecarInfo { version: self.opts.version.clone(), pid: std::process::id() },
       sessions_dir: rt.sessions_dir.to_string_lossy().into_owned(),
-      features: vec!["preview".into(), "projects".into(), "remote".into(), "plugins".into()],
+      features: vec!["preview".into(), "projects".into(), "remote".into(), "plugins".into(), "remoteAccess".into()],
       safe_mode: rt.plugins.loaded().safe_mode,
     }
   }

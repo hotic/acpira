@@ -185,3 +185,42 @@ async fn a_folder_on_an_ssh_host_is_a_project_in_one_spelling() {
   until(|| m.active().is_some_and(|v| v["error"].as_str().is_some_and(|e| e.contains("local run"))), 5000).await;
   connections.dispose();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_chat_runs_in_a_folder_of_its_own_that_is_no_project_and_an_unprompted_one_takes_it_along() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let home = folder(dir.path(), "home");
+  let p1 = folder(dir.path(), "p1");
+  let m = Mgr::new(&dir.path().join("sessions"), Opts::fake(&fake).cwd(&home).projects());
+  m.init().await;
+  let chat_cwd = |m: &Mgr| cwd_of(m).as_str().unwrap_or_default().to_owned();
+
+  // No project needed: a fresh folder directly under the chats root
+  m.handle(json!({ "type": "newSession", "chat": true })).await;
+  let first = chat_cwd(&m);
+  assert!(m.m.is_chat(&first), "{first}");
+  assert_eq!(Path::new(&first).parent(), Some(m.m.chat_root().as_path()));
+  assert!(Path::new(&first).is_dir());
+  // Started over as another chat (another agent on the start page): the empty one's folder goes with it
+  m.handle(json!({ "type": "newSession", "chat": true })).await;
+  let second = chat_cwd(&m);
+  assert_ne!(first, second);
+  assert!(!Path::new(&first).exists());
+
+  // Prompted, it stays a chat: the project list never takes its folder, and a window showing nothing does not mean it
+  m.handle(json!({ "type": "send", "text": "hi" })).await;
+  until(|| m.sessions().iter().any(|s| s["cwd"] == second.as_str()), 2000).await;
+  assert!(projects_of(&m).is_null(), "{}", projects_of(&m));
+  let other = m.m.attach(None);
+  assert_eq!(m.m.folder_for(Some(&other), None), None);
+
+  // An empty chat switched to a project on the start page leaves no folder behind; a prompted chat keeps its own
+  m.handle(json!({ "type": "newSession", "chat": true })).await;
+  let third = chat_cwd(&m);
+  m.handle(json!({ "type": "newSession", "cwd": p1 })).await;
+  assert_eq!(cwd_of(&m), p1.as_str());
+  assert!(!Path::new(&third).exists());
+  assert!(Path::new(&second).is_dir());
+  assert_eq!(projects_of(&m), json!([p1]));
+}

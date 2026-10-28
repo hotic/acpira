@@ -1,0 +1,29 @@
+[package]
+name = "acpira-mobile"
+description = "The phone's side of paired remote access, exported to Swift through UniFFI: pairing and the link to a computer's gateway"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# staticlib: the XCFramework apps/ios/scripts/build-net.sh builds; lib: the tests below
+crate-type = ["staticlib", "lib"]
+
+[dependencies]
+# Without fast-apple-datapath: it reaches Apple's private APIs, which an App Store build must not
+acpira-net = { path = "../acpira-net", default-features = false }
+acpira-shared.workspace = true
+anyhow.workspace = true
+parking_lot.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+uniffi.workspace = true
+
+[dev-dependencies]
+acpira-gateway = { path = "../acpira-gateway" }
+acpira-host = { path = "../acpira-host" }
+tempfile.workspace = true
+
+[lints]
+workspace = true

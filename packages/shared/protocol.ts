@@ -1,4 +1,5 @@
 import type { ChatGptIntegrationStatus } from './chatgptIntegration';
+import type { RemoteAccessOp, RemoteAccessView } from './devices';
 import type { ConnectionOp, ConnectionView, RemoteDirEntry, SshHost } from './remote';
 import type { AccountInfo, AgentId, AgentInfo, CategoryOp, ConfigControl, Draft, FullDiffSource, GoalAction, NativeSessionInfo, QuestionAnswers, SessionCategories, SessionSummary, SessionView, Turn, TurnSettings } from './transcript';
 import type { Appearance, AxisKey } from './appearance';
@@ -93,6 +94,8 @@ export interface InitState {
   cwd: string;
   // Webview URI of the sessions directory: an attachment blob is loaded from `${blobBase}/${sessionId}/${blob}`
   blobBase?: string;
+  // Where chats' folders live (`<ACPIRA_HOME>/chats`): a session whose cwd is directly inside is a chat, not a project
+  chats?: string;
 }
 
 // One hit of the @ file search: file URI plus the workspace-relative path shown in the list
@@ -319,6 +322,8 @@ export type HostMsg =
   | { type: 'connections'; connections: ConnectionView[] }
   | { type: 'sshHosts'; hosts: SshHost[]; error?: string }
   | { type: 'remoteDir'; seq: number; alias: string; path: string; entries: RemoteDirEntry[]; error?: string }
+  // Paired devices (helloOk.features has 'remoteAccess'): the view on every change once asked for
+  | { type: 'remoteAccess'; view: RemoteAccessView }
   // The tool panel's terminal tabs (rust/crates/acpira-host/src/terminal.rs): output as it comes, and the state. Answering
   // terminalOpen the state carries the size, the title, the output so far (`replay`, shown instead of what the page had)
   // and the exit if the shell ended; later only what changed. `error`: the shell could not start
@@ -367,6 +372,8 @@ export interface AgentInstallProgress {
 
 // Session actions carry the id of the session the view was showing; the host refuses to apply one to a different
 // session — a late message must never land on whatever happens to be active. Absent (tests / scripts): the viewer's current
+// clientId (send, stop, permission, answer, steerQueued): set by a paired device, which resends with the same id after a
+// lost link; the engine running the session runs each id once
 export type WebviewMsg =
   | { type: 'chatgptStatus' }
   | { type: 'connectChatgpt' }
@@ -406,8 +413,8 @@ export type WebviewMsg =
   | { type: 'terminalClose'; id: string }
   | { type: 'terminalKill'; id: string }
   // steer: sent while a turn runs with steering on (SessionView.canSteer); it joins that turn instead of queueing behind it
-  | { type: 'send'; sessionId?: string; text: string; attachments?: Draft[]; steer?: boolean }
-  | { type: 'stop'; sessionId?: string }
+  | { type: 'send'; sessionId?: string; text: string; attachments?: Draft[]; steer?: boolean; clientId?: string }
+  | { type: 'stop'; sessionId?: string; clientId?: string }
   // @ mention: fuzzy search over workspace files, answered with a `files` message
   | { type: 'searchFiles'; query: string; seq: number }
   // Full-text search over saved session conversations (user prompts and agent replies) for the history list
@@ -418,6 +425,9 @@ export type WebviewMsg =
   | { type: 'connectionOp'; op: ConnectionOp }
   | { type: 'sshHosts' }
   | { type: 'remoteDir'; alias: string; path?: string; seq: number }
+  // Paired devices (helloOk.features has 'remoteAccess'): the view (then pushed on every change), and a change
+  | { type: 'remoteAccess' }
+  | { type: 'remoteAccessOp'; op: RemoteAccessOp }
   // The desktop tool panel: a folder of the session's project (`dir` relative, '' for the project itself), its git marks,
   // a file with its hunks against `base` (none: no hunks), the files the session's edits left changed
   | { type: 'projectDir'; sessionId: string; dir: string; seq: number }
@@ -430,9 +440,9 @@ export type WebviewMsg =
   | { type: 'diffSource'; sessionId: string; toolCallId: string; nth: number; subagentId?: string; seq: number }
   // Stage a local/remote image file path into the session's blob store for the Lightbox; answered with `imageBlob` echoing seq
   | { type: 'imageBlob'; sessionId: string; path: string; seq: number }
-  | { type: 'permission'; sessionId: string; blockId: string; optionId: string }
+  | { type: 'permission'; sessionId: string; blockId: string; optionId: string; clientId?: string }
   // The question card was closed: `answers` holds the answered questions only (option ids / free text); skip tells the agent to go on with what it has
-  | { type: 'answer'; sessionId: string; blockId: string; answers: QuestionAnswers; skip?: boolean }
+  | { type: 'answer'; sessionId: string; blockId: string; answers: QuestionAnswers; skip?: boolean; clientId?: string }
   | { type: 'buildPlan'; sessionId: string; planId: string; optionId?: string; model?: { configId: string; value: string } }
   | { type: 'openPlan'; sessionId: string; planId: string }
   | { type: 'setMode'; sessionId?: string; id: string }
@@ -440,7 +450,8 @@ export type WebviewMsg =
   | { type: 'selectSession'; id: string }
   // `category`: file the new session under that category (of the window's project) from the start
   // cwd: the project folder to start in (a project shell, `ShellEnv.projects`); the shell's workspace when absent
-  | { type: 'newSession'; agent?: AgentId; category?: string; cwd?: string }
+  // `chat` (project shells): the engine makes the session a fresh folder under InitState.chats, `cwd` ignored
+  | { type: 'newSession'; agent?: AgentId; category?: string; cwd?: string; chat?: boolean }
   | { type: 'renameSession'; id: string; title: string }
   | { type: 'deleteSession'; id: string }
   | { type: 'restoreSession'; id: string }
@@ -500,7 +511,7 @@ export type WebviewMsg =
   | { type: 'dequeue'; sessionId: string; id: string }
   | { type: 'sendQueued'; sessionId: string; id: string }
   // Inject a queued prompt into the running turn instead of waiting for it to end (SessionView.canSteer)
-  | { type: 'steerQueued'; sessionId: string; id: string }
+  | { type: 'steerQueued'; sessionId: string; id: string; clientId?: string }
   | { type: 'editQueued'; sessionId: string; id: string; text: string; retainedAttachments: number[]; attachments: Draft[] }
   // Open an editor tab; each tab is its own viewer with its own active session. The tab starts on this webview's session, or on a fresh one without an id
   | { type: 'openInEditor'; sessionId?: string }

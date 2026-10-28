@@ -49,6 +49,8 @@ pub struct HostRuntime {
   pub connections: Arc<crate::remote::connections::Connections>,
   /// The user's plugins (docs/dev/plugins.md)
   pub plugins: Arc<crate::plugins::host::PluginHost>,
+  /// Remote access: the paired-devices gateway (docs/dev/paired-remote.md)
+  pub remote_access: Arc<crate::devices::RemoteAccess>,
   /// The plugins' agents the registry was last built with (`registry_of`)
   plugin_agents: parking_lot::Mutex<serde_json::Map<String, Value>>,
 }
@@ -121,6 +123,12 @@ impl HostRuntime {
       log.clone(),
       Some(ssh_terminal),
       Default::default(),
+    );
+    let remote_access = crate::devices::RemoteAccess::new(
+      &root,
+      std::path::Path::new(&platform.home()),
+      bridge_exe.as_deref().map(PathBuf::from),
+      log.clone(),
     );
     let accounts = AccountManager::new(
       account_store,
@@ -316,8 +324,11 @@ impl HostRuntime {
       terminals: crate::terminal::TerminalHub::new(),
       connections,
       plugins,
+      remote_access,
     });
     runtime.terminals.set_remote(runtime.connections.clone());
+    let ra = runtime.remote_access.clone();
+    tokio::spawn(async move { ra.refresh_installed().await });
     // A host's folders are the `ssh://` entries of the project list
     let weak = Arc::downgrade(&runtime.manager);
     runtime.connections.set_projects(Arc::new(move || weak.upgrade().and_then(|m| m.categories().projects).unwrap_or_default()));
@@ -452,6 +463,7 @@ impl HostRuntime {
       self.terminals.clone(),
       self.connections.clone(),
       self.plugins.clone(),
+      self.remote_access.clone(),
     );
     self.bridges.lock().push(core.clone());
     core
@@ -509,6 +521,7 @@ impl HostRuntime {
     }
     self.terminals.dispose();
     self.connections.dispose();
+    self.remote_access.dispose();
     self.manager.dispose().await;
     self.plugins.runtimes().stop_all().await;
   }

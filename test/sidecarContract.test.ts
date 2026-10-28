@@ -145,6 +145,9 @@ describe('sidecar session contract', () => {
     expect(file.hunks).toEqual([{ at: 2, add: 1, del: ['two'] }, { at: 4, add: 1 }]);
     expect((await ask('projectFile', { path: '../outside.txt' })).error).toBe('outside');
     expect((await ask('projectFile', { path: 'gone.ts' })).error).toBe('missing');
+    const externalPlan = join(at.home, 'plan.plan.md');
+    writeFileSync(externalPlan, '# Plan\n');
+    expect((await ask('projectFile', { path: externalPlan })).text).toBe('# Plan\n');
     s.view('V', { type: 'send', sessionId: id, text: 'tool' });
     const asked = await s.hostMsg('V', 'session', m => blocks(m.session).some(b => b.type === 'permission'));
     const card = blocks(asked.session).find(b => b.type === 'permission');

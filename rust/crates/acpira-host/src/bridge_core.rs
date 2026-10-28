@@ -118,6 +118,9 @@ pub struct BridgeCore {
   /// SSH hosts; the page is subscribed from its first `connections` request on
   connections: Arc<Connections>,
   connections_sub: parking_lot::Mutex<Option<u64>>,
+  /// The paired-devices gateway; the page is subscribed from its first `remoteAccess` request on
+  remote_access: Arc<crate::devices::RemoteAccess>,
+  remote_access_sub: parking_lot::Mutex<Option<u64>>,
   /// The user's plugins; the page is subscribed from its first `plugins` request on
   plugins: Arc<crate::plugins::host::PluginHost>,
   plugins_sub: parking_lot::Mutex<Option<u64>>,
@@ -145,6 +148,7 @@ impl BridgeCore {
     terminals: Arc<TerminalHub>,
     connections: Arc<Connections>,
     plugins: Arc<crate::plugins::host::PluginHost>,
+    remote_access: Arc<crate::devices::RemoteAccess>,
   ) -> Arc<BridgeCore> {
     let viewer = manager.attach(initial);
     // The page loads its bundle between attach and `ready`: a stored session it opens on is read and brought live meanwhile,
@@ -175,6 +179,8 @@ impl BridgeCore {
       terminals,
       connections,
       connections_sub: Default::default(),
+      remote_access,
+      remote_access_sub: Default::default(),
       plugins,
       plugins_sub: Default::default(),
       theme: Default::default(),
@@ -270,6 +276,7 @@ impl BridgeCore {
           // A project shell without a project yet has the home directory here, like a shell without a workspace
           cwd: manager.folder_for(Some(&self.viewer), None).unwrap_or_else(|| platform.home()),
           blob_base: self.blob_base.clone(),
+          chats: Some(manager.chat_root().to_string_lossy().into_owned()),
         };
         // The page takes init's view as a whole and starts its cache over, keeping that view as the one on screen: it
         // becomes the base the next push of that session patches against, instead of a second copy of the transcript
@@ -466,14 +473,30 @@ impl BridgeCore {
       }
       W::ProjectFile { session_id, path, base, seq } => {
         let (core, root) = (self.clone(), manager.session_cwd(&session_id));
-        // The session's base is looked up now, while its view is at hand
-        let session_base = match (&root, base) {
-          (Some(root), Some(ProjectBase::Session)) => {
-            let abs = crate::workspace::folder_path(root).join(&path);
-            manager.edit_bases(&session_id).into_iter().find(|(p, _)| Path::new(p) == abs).and_then(|(_, b)| b)
+        // A `~` / `~/…` path on a local workspace resolves against the user's home, and an absolute path inside `root`
+        // shortens to its relative path so git marks and HEAD lookups apply
+        let path = match &root {
+          Some(r) if !crate::workspace::is_remote(r) => {
+            let expanded = if path == "~" {
+              home_dir().to_string_lossy().into_owned()
+            } else if let Some(rest) = path.strip_prefix("~/").or_else(|| if cfg!(windows) { path.strip_prefix("~\\") } else { None }) {
+              home_dir().join(rest).to_string_lossy().into_owned()
+            } else {
+              path
+            };
+            let root_path = crate::workspace::folder_path(r);
+            match Path::new(&expanded).strip_prefix(&root_path) {
+              Ok(rel) if !rel.as_os_str().is_empty() => project_files::relative(&root_path, &expanded),
+              _ => expanded,
+            }
           }
-          _ => None,
+          _ => path,
         };
+        // The session's base is looked up now, while its view is at hand
+        let session_base = root.as_ref().and_then(|r| {
+          let abs = crate::workspace::folder_path(r).join(&path);
+          manager.edit_bases(&session_id).into_iter().find(|(p, _)| Path::new(p) == abs).and_then(|(_, b)| b)
+        });
         tokio::spawn(async move {
           let ws = match core.workspace(root).await {
             Ok(ws) => ws,
@@ -491,7 +514,7 @@ impl BridgeCore {
           };
           let base_text = match base {
             Some(ProjectBase::Session) => session_base,
-            Some(ProjectBase::Head) => ws.head_text(&path).await,
+            Some(ProjectBase::Head) => ws.head_text(&path).await.or(session_base),
             None => None,
           };
           let (text, hunks) = match base_text {
@@ -542,6 +565,28 @@ impl BridgeCore {
             core.platform.toast("error", &format!("{e:#}"));
             // The page may have shown the edit already: the list as it is puts it right
             core.post_now(HostMsg::Connections { connections: connections.views() });
+          }
+        });
+      }
+      // Paired devices (devices/mod.rs)
+      W::RemoteAccess => {
+        let mut sub = self.remote_access_sub.lock();
+        if sub.is_none() {
+          let weak = self.me.clone();
+          *sub = Some(self.remote_access.subscribe(Arc::new(move |view| {
+            if let Some(c) = weak.upgrade() {
+              c.post_now(HostMsg::RemoteAccess { view: view.clone() });
+            }
+          })));
+        }
+        drop(sub);
+        self.post_now(HostMsg::RemoteAccess { view: self.remote_access.view() });
+      }
+      W::RemoteAccessOp { op } => {
+        let (core, ra) = (self.clone(), self.remote_access.clone());
+        tokio::spawn(async move {
+          if let Err(e) = ra.op(op).await {
+            core.platform.toast("error", &format!("{e:#}"));
           }
         });
       }
@@ -866,6 +911,9 @@ impl BridgeCore {
     }
     if let Some(id) = self.connections_sub.lock().take() {
       self.connections.unsubscribe(id);
+    }
+    if let Some(id) = self.remote_access_sub.lock().take() {
+      self.remote_access.unsubscribe(id);
     }
     if let Some(id) = self.plugins_sub.lock().take() {
       self.plugins.unsubscribe(id);

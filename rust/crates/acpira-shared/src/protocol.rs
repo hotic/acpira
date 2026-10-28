@@ -79,6 +79,9 @@ pub struct InitState {
   pub cwd: String,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub blob_base: Option<String>,
+  /// Where chats' folders live (`<ACPIRA_HOME>/chats`): a session whose cwd is directly inside is a chat, not a project
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub chats: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -425,6 +428,10 @@ pub enum HostMsg {
   Connections {
     connections: Vec<ConnectionView>,
   },
+  /// Remote access: the gateway, its paired devices and the open pairing window (WebviewMsg `remoteAccess`)
+  RemoteAccess {
+    view: crate::devices::RemoteAccessView,
+  },
   /// The add dialog's hosts from ~/.ssh/config
   SshHosts {
     hosts: Vec<SshHost>,
@@ -524,6 +531,7 @@ impl HostMsg {
       HostMsg::ProjectFile { .. } => "projectFile",
       HostMsg::SessionChanges { .. } => "sessionChanges",
       HostMsg::Connections { .. } => "connections",
+      HostMsg::RemoteAccess { .. } => "remoteAccess",
       HostMsg::SshHosts { .. } => "sshHosts",
       // Each listing answers its own request
       HostMsg::RemoteDir { .. } => "remoteDir",
@@ -585,9 +593,15 @@ pub enum WebviewMsg {
     /// Sent while a turn runs with steering on: join that turn over `_session/steering` instead of waiting behind it
     #[serde(default, skip_serializing_if = "Option::is_none")]
     steer: Option<bool>,
+    /// Set by a paired device: a resend after a lost link carries the same id, and the session runs it once
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    client_id: Option<String>,
   },
   Stop {
     session_id: Option<String>,
+    /// Set by a paired device: a resend after a lost link carries the same id, and the session runs it once
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    client_id: Option<String>,
   },
   SearchFiles {
     query: String,
@@ -620,6 +634,11 @@ pub enum WebviewMsg {
     op: ConnectionOp,
   },
   SshHosts,
+  /// Remote access (paired devices, docs/dev/paired-remote.md): the gateway's state, pushed on every change after
+  RemoteAccess,
+  RemoteAccessOp {
+    op: crate::devices::RemoteAccessOp,
+  },
   RemoteDir {
     alias: String,
     #[serde(default)]
@@ -705,6 +724,9 @@ pub enum WebviewMsg {
     session_id: String,
     block_id: String,
     option_id: String,
+    /// Set by a paired device: a resend after a lost link carries the same id, and the session runs it once
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    client_id: Option<String>,
   },
   Answer {
     session_id: String,
@@ -713,6 +735,9 @@ pub enum WebviewMsg {
     answers: QuestionAnswers,
     #[serde(default)]
     skip: Option<bool>,
+    /// Set by a paired device: a resend after a lost link carries the same id, and the session runs it once
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    client_id: Option<String>,
   },
   BuildPlan {
     session_id: String,
@@ -744,6 +769,9 @@ pub enum WebviewMsg {
     /// The project folder to start in (a project shell); the shell's workspace when absent
     #[serde(default)]
     cwd: Option<String>,
+    /// A project shell's chat: the engine makes a fresh folder under `<ACPIRA_HOME>/chats` and starts there (`cwd` ignored)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    chat: Option<bool>,
   },
   RenameSession {
     id: String,
@@ -883,6 +911,9 @@ pub enum WebviewMsg {
   SteerQueued {
     session_id: String,
     id: String,
+    /// Set by a paired device: a resend after a lost link carries the same id, and the session runs it once
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    client_id: Option<String>,
   },
   EditQueued {
     session_id: String,
@@ -1036,7 +1067,9 @@ mod tests {
   #[test]
   fn parses_webview_messages() {
     let m: WebviewMsg = serde_json::from_str(r#"{"type":"send","text":"hi"}"#).unwrap();
-    assert_eq!(m, WebviewMsg::Send { session_id: None, text: "hi".into(), attachments: vec![], steer: None });
+    assert_eq!(m, WebviewMsg::Send { session_id: None, text: "hi".into(), attachments: vec![], steer: None, client_id: None });
+    let m: WebviewMsg = serde_json::from_str(r#"{"type":"stop","sessionId":"s","clientId":"c1"}"#).unwrap();
+    assert_eq!(m, WebviewMsg::Stop { session_id: Some("s".into()), client_id: Some("c1".into()) });
     let m: WebviewMsg = serde_json::from_str(r#"{"type":"send","text":"hi","steer":true}"#).unwrap();
     assert!(matches!(m, WebviewMsg::Send { steer: Some(true), .. }));
     let m: WebviewMsg = serde_json::from_str(r#"{"type":"openFile","sessionId":"s","path":"a.ts","line":3}"#).unwrap();

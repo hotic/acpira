@@ -1327,11 +1327,14 @@ pub enum CategoryOp {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     before: Option<String>,
   },
-  /// File a project folder at the end of `section`, out of any other; no section takes it out
+  /// File a project folder in `section` before `before` (absent or not in that section: at its end), out of any other;
+  /// no section takes it out
   SetProjectSection {
     cwd: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     section: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    before: Option<String>,
   },
 }
 
