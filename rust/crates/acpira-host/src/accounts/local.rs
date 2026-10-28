@@ -290,7 +290,7 @@ async fn json_file(path: &Path) -> Map<String, Value> {
   serde_json::from_str::<Value>(&text).ok().and_then(|v| v.as_object().cloned()).unwrap_or_default()
 }
 
-fn hostname() -> String {
+pub(crate) fn hostname() -> String {
   #[cfg(unix)]
   {
     let mut buf = [0u8; 256];

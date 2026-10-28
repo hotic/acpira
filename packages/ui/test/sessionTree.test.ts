@@ -88,6 +88,20 @@ describe('session tree', () => {
     expect(buildSessionTree({ ...input, filtering: true }).projects.map(p => p.cwd)).toEqual([WS, '/work/gone']);
   });
 
+  it('a project shell groups only the host folders it added; the rest of a host list shows in a search', () => {
+    const added = 'ssh://gen1/home/u/app';
+    const other = 'ssh://gen1/home/u/scratch';
+    const shown = [s('a', { cwd: added, updatedAt: at(9) }), s('b', { cwd: other, updatedAt: at(8) }), s('c', { cwd: '/work/local', updatedAt: at(7) })];
+    const input = { ...base, categories: [], workspace: undefined, shown, grouped: true, registered: [WS, added] };
+    // A local folder a session ran in still joins the list on its own
+    expect(buildSessionTree(input).projects.map(p => p.cwd)).toEqual([WS, added, '/work/local']);
+    expect(buildSessionTree({ ...input, filtering: true }).projects.map(p => p.cwd)).toEqual([added, '/work/local', other]);
+    // A view filter is no search: the folders nobody added stay out
+    expect(buildSessionTree({ ...input, filtering: true, expand: false }).projects.map(p => p.cwd)).toEqual([added, '/work/local']);
+    // An IDE list registers nothing and keeps every folder
+    expect(buildSessionTree({ ...input, registered: undefined }).projects.map(p => p.cwd)).toEqual(['/work/local', other, added]);
+  });
+
   it('filtering hides empty categories and empty projects and opens everything else', () => {
     const shown = [s('a', { category: 'ssh' })];
     const tree = buildSessionTree({ ...base, shown, grouped: true, filtering: true, collapsedProjects: [WS] });

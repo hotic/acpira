@@ -625,6 +625,8 @@ export const fr = {
   'host.sessionTakenOver': 'Un autre moteur Acpira a repris cette session ; elle est en lecture seule ici. Reprenez-la ici pour continuer.',
   'host.takeOverTimeout': 'L\'autre moteur Acpira n\'a pas libéré la session en 10 secondes ; réessayez.',
   'host.sessionBusyElsewhere': 'Un autre moteur Acpira a cette session ouverte ; reprenez-la ici pour continuer.',
+  'host.sessionCopy': 'Cette session s\'exécute sur {machine}. Ici, elle est en lecture seule ; poursuivez-la sur cet ordinateur.',
+  'host.sessionCopyAnother': 'un autre ordinateur',
   'host.storage.gone': 'Déjà supprimé.',
   'host.storage.pinned': 'Les sessions épinglées sont conservées.',
   'host.storage.running': 'Un tour est en cours dans cette session.',

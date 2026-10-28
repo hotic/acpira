@@ -613,6 +613,8 @@
   "host.sessionTakenOver": "다른 Acpira 엔진이 이 세션을 넘겨받아 여기서는 읽기 전용이 되었습니다. 여기서 넘겨받으면 다시 가져올 수 있습니다.",
   "host.takeOverTimeout": "다른 Acpira 엔진이 10초 안에 세션을 놓지 않았습니다. 다시 시도하세요.",
   "host.sessionBusyElsewhere": "다른 Acpira 엔진이 이 세션을 열고 있습니다. 계속하려면 여기서 넘겨받으세요.",
+  "host.sessionCopy": "이 세션은 {machine}에서 실행됩니다. 여기서는 읽기 전용이며, 계속하려면 그 컴퓨터에서 이어 가세요.",
+  "host.sessionCopyAnother": "다른 컴퓨터",
   "host.storage.gone": "이미 없습니다.",
   "host.storage.pinned": "고정한 세션은 남겨 둡니다.",
   "host.storage.running": "이 세션은 실행 중입니다.",

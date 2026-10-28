@@ -626,6 +626,8 @@ export const es = {
   'host.sessionTakenOver': 'Otro motor de Acpira tomó esta sesión; aquí ahora es de solo lectura. Tómala aquí para continuar.',
   'host.takeOverTimeout': 'El otro motor de Acpira no soltó la sesión en 10 segundos; inténtalo de nuevo.',
   'host.sessionBusyElsewhere': 'Otro motor de Acpira tiene esta sesión abierta; tómala aquí para continuar.',
+  'host.sessionCopy': 'Esta sesión se ejecuta en {machine}. Aquí solo se puede leer; continúala en ese equipo.',
+  'host.sessionCopyAnother': 'otro equipo',
   'host.storage.gone': 'Ya no existe.',
   'host.storage.pinned': 'Las sesiones fijadas se conservan.',
   'host.storage.running': 'Hay un turno en curso en esta sesión.',

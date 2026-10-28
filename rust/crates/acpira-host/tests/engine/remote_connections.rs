@@ -318,6 +318,27 @@ async fn ssh_failures_only_the_user_can_settle_stop_the_driver() {
 }
 
 #[tokio::test]
+async fn background_work_never_undoes_a_disconnect_or_retries_what_the_user_must_settle() {
+  let lab = Lab::new();
+  let c = lab.engine("engine");
+  add(&c).await;
+  connected(&c).await;
+  c.op(ConnectionOp::Disconnect { alias: ALIAS.into() }).await.unwrap();
+  let calls = lab.calls().len();
+  assert!(c.follow(ALIAS, Duration::from_millis(300)).await.is_err(), "the host stays off");
+  assert_eq!(lab.calls().len(), calls);
+  // Something the user does (opening a folder there) connects it again
+  c.ensure(ALIAS, Duration::from_secs(30)).await.expect("connected again");
+
+  std::fs::write(lab.path().join("fail"), "Host key verification failed.\n").unwrap();
+  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: false, fetch_build: false }).await.unwrap();
+  until(&c, "the host key error", |v| v.state == ConnectionState::Error).await;
+  let calls = lab.calls().len();
+  assert!(c.follow(ALIAS, Duration::from_millis(300)).await.is_err());
+  assert_eq!(lab.calls().len(), calls, "no new attempt");
+}
+
+#[tokio::test]
 async fn a_network_failure_retries_with_a_backoff() {
   let lab = Lab::new();
   std::fs::write(lab.path().join("fail"), "ssh: connect to host 10.0.0.9 port 2222: Connection refused\n").unwrap();

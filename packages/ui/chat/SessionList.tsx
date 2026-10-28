@@ -24,7 +24,7 @@ import { ModelMark } from './ModelMark';
 import { RowContextMenu, SessionContextMenu, Submenu, type MoveProject, type SessionCopyKind, type SessionMenuItemsProps } from './SessionMenu';
 import { setWebviewState, webviewState } from '../vscodeApi';
 import { markParts, matchesTitle, searchTerms } from './sessionSearch';
-import { buildSessionTree, categoryOf, draggable, dropAction, isChatFolder, type CategoryNode, type MoveTarget, type ProjectNode, type SessionTree } from './sessionTree';
+import { buildSessionTree, categoryOf, draggable, dropAction, isChatFolder, offList, type CategoryNode, type MoveTarget, type ProjectNode, type SessionTree } from './sessionTree';
 import { clearFilters, filterCount, groupSessions, passes, readView, sortSessions, VIEW_KEY, type FlatGroup, type ListView, type TimeBucket } from './sessionView';
 import { ViewMenu } from './ViewMenu';
 import { CONNECTION_STATE_NAME, useConnections, useFolderHost } from '../remote/api';
@@ -378,7 +378,8 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   }, [sessions, agents]);
   // The desktop app always groups by project, its registered folders leading in their own order
   const grouped = desktop || (scope === 'all' && !!workspace);
-  const registered = desktop ? categoryState?.projects : undefined;
+  // Before the list arrives the desktop app registers nothing yet, rather than every folder (`offList`)
+  const registered = desktop ? categoryState?.projects ?? [] : undefined;
   const removed = desktop ? categoryState?.removedProjects : undefined;
   // View menu → Show → Pinned: grouped by project, pinned rows lead their own project instead of one section on top
   const pinInProject = grouped && !flat && view.pinned === 'project';
@@ -389,15 +390,15 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
     workspace, grouped, filtering, expand: !!q, registered, removed, pinInProject, isChat,
   });
   const pinnedHere = (s: SessionSummary) => !!s.pinned && pinInProject;
-  // Every project the list knows (the sessions' folders, the categories' own and the registered ones, not the removed
-  // ones), the window's first, then the most recently used: the "move to project" destinations. Taken from all sessions,
+  // Every project the list knows (the sessions' folders, the categories' own and the registered ones, not those off the
+  // list), the window's first, then the most recently used: the "move to project" destinations. Taken from all sessions,
   // not the filtered view, so a search does not hide one. Kept while equal: every push brings a new session list
   const projects = useReused(useMemo<MoveProject[]>(() => {
     const latest = new Map<string, string>();
     for (const s of sessions) if (s.cwd && (latest.get(s.cwd) ?? '') < s.updatedAt) latest.set(s.cwd, s.updatedAt);
     for (const c of categoryState?.categories ?? []) if (c.cwd && !latest.has(c.cwd)) latest.set(c.cwd, '');
     for (const cwd of registered ?? []) if (!latest.has(cwd)) latest.set(cwd, '');
-    const cwds = [...latest.keys()].filter(c => !removed?.includes(c) && !(desktop && isChatFolder(chats, c))).sort((a, b) => Number(b === workspace) - Number(a === workspace) || latest.get(b)!.localeCompare(latest.get(a)!));
+    const cwds = [...latest.keys()].filter(c => !offList(c, registered, removed) && !(desktop && isChatFolder(chats, c))).sort((a, b) => Number(b === workspace) - Number(a === workspace) || latest.get(b)!.localeCompare(latest.get(a)!));
     const names = cwds.map(projectName);
     return cwds.map((cwd, i) => {
       const name = names[i]!;

@@ -97,6 +97,8 @@ struct Live {
   driver: Option<tokio::task::AbortHandle>,
   /// Bumped by each connect / disconnect; a driver whose generation is no longer current stops touching the state
   generation: u64,
+  /// The user disconnected it: background work (`follow`) leaves it off until something else connects it
+  parked: bool,
 }
 
 struct Entry {
@@ -227,11 +229,21 @@ impl Connections {
   /// The host's channel, connecting when it is not already: waits up to `wait` for the attempt (a reconnect in
   /// progress included). A disabled or unknown host, or a failure only the user can settle, answers at once
   pub async fn ensure(&self, alias: &str, wait: Duration) -> Result<RemoteClient> {
+    self.reach(alias, wait, false).await
+  }
+
+  /// `ensure` for background work (the host's list, `session_manager/hosts.rs`): it starts a host that is simply off,
+  /// but never one the user disconnected, nor retries a failure only the user can settle; it waits for those instead
+  pub async fn follow(&self, alias: &str, wait: Duration) -> Result<RemoteClient> {
+    self.reach(alias, wait, true).await
+  }
+
+  async fn reach(&self, alias: &str, wait: Duration, background: bool) -> Result<RemoteClient> {
     let mut rx = self.changed.subscribe();
     let deadline = tokio::time::Instant::now() + wait;
     let mut started = false;
     loop {
-      let (state, error, disabled, driving) = {
+      let (state, error, disabled, driving, parked) = {
         let hosts = self.hosts.lock();
         let Some(e) = hosts.iter().find(|e| e.saved.alias == alias) else { bail!("{alias} is not among the connections") };
         if let Some(c) = &e.live.client
@@ -239,12 +251,14 @@ impl Connections {
         {
           return Ok(c.clone());
         }
-        (e.live.state, e.live.error.clone(), e.saved.disabled, e.live.driver.is_some())
+        (e.live.state, e.live.error.clone(), e.saved.disabled, e.live.driver.is_some(), e.live.parked)
       };
       if disabled {
         bail!("the connection to {alias} is turned off");
       }
       match (state, driving) {
+        (ConnectionState::Off, _) if background && parked => {}
+        (ConnectionState::Error, false) if background => {}
         // A failure that stopped the driver: only this caller's own fresh attempt may answer it
         (ConnectionState::Error, false) | (ConnectionState::Off, _) if !started => {
           started = true;
@@ -344,7 +358,12 @@ impl Connections {
           Some(false) => self.connect(&alias, accept_new_machine, fetch_build),
         }
       }
-      ConnectionOp::Disconnect { alias } => self.stop(&alias, None),
+      ConnectionOp::Disconnect { alias } => {
+        self.stop(&alias, None);
+        if let Some(e) = self.hosts.lock().iter_mut().find(|e| e.saved.alias == alias) {
+          e.live.parked = true;
+        }
+      }
       ConnectionOp::OpenTerminal { alias } => {
         let terminal = self.terminal.clone().ok_or_else(|| anyhow!("this shell has no terminal"))?;
         let host = Host::new(self.opts.ssh.clone(), &alias);
@@ -371,6 +390,7 @@ impl Connections {
     let mut hosts = self.hosts.lock();
     let Some(e) = hosts.iter_mut().find(|e| e.saved.alias == alias) else { return };
     stop_live(&mut e.live, None);
+    e.live.parked = false;
     let generation = e.live.generation;
     e.live.state = ConnectionState::Connecting;
     e.live.step = Some(ConnectStep::Ssh);

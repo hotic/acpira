@@ -149,7 +149,46 @@ pub struct TranscriptStore {
   write_guard: parking_lot::RwLock<Option<WriteGuard>>,
   /// The data root the built-in agent keeps its session logs under; set, a record removed for good takes its log along
   agent_home: parking_lot::RwLock<Option<PathBuf>>,
+  /// Told of every record written, trashed, restored or removed (`remote::host_store` copies host folders' records)
+  on_change: parking_lot::RwLock<Option<ChangeHook>>,
   me: Weak<TranscriptStore>,
+}
+
+/// What happened to a record, for `set_change_hook`
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordChange<'a> {
+  /// Written, with the session's folder
+  Written { cwd: &'a str },
+  /// Moved into the trash or removed for good, with the folder it was in (empty when unknown)
+  Gone { cwd: &'a str },
+  /// Back from the trash
+  Restored { cwd: &'a str },
+}
+
+pub type ChangeHook = Arc<dyn Fn(&str, RecordChange) + Send + Sync>;
+
+/// A record's `updatedAt` and folder alone, the transcript skipped over by the parser
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Stamped {
+  #[serde(default)]
+  updated_at: String,
+  #[serde(default)]
+  cwd: String,
+}
+
+/// The folder a record file names, empty when it cannot be read
+async fn cwd_of(path: &Path) -> String {
+  let Ok(raw) = fs::read(path).await else { return String::new() };
+  serde_json::from_slice::<Stamped>(&raw).map(|s| s.cwd).unwrap_or_default()
+}
+
+/// A record copy as `copy_stamps` reports it: when it was last updated and the blobs it has
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CopyStamp {
+  pub updated_at: String,
+  pub blobs: Vec<String>,
 }
 
 /// The two fields of a record the log cascade needs; the transcript is skipped over by the parser instead of built
@@ -187,6 +226,7 @@ impl TranscriptStore {
       inflight: Default::default(),
       write_guard: Default::default(),
       agent_home: Default::default(),
+      on_change: Default::default(),
       me: me.clone(),
     })
   }
@@ -206,9 +246,82 @@ impl TranscriptStore {
     *self.agent_home.write() = Some(home);
   }
 
+  /// Install the hook told of every record change
+  pub fn set_change_hook(&self, hook: ChangeHook) {
+    *self.on_change.write() = Some(hook);
+  }
+
+  fn changed(&self, id: &str, change: RecordChange) {
+    let hook = self.on_change.read().clone();
+    if let Some(f) = hook {
+      f(id, change);
+    }
+  }
+
   async fn ensure(&self) -> Result<()> {
     fs::create_dir_all(&self.dir).await?;
     Ok(())
+  }
+
+  /// Write a copy of a record another machine drives (a session it runs in a folder of this host, docs/dev/remote.md),
+  /// unless the copy here was updated later or the record waits in the trash here (deleted on this host). False when
+  /// it was not written
+  pub async fn put_copy(&self, record: &SessionRecord) -> Result<bool> {
+    let id = &record.id;
+    if !is_session_id(id) {
+      return Err(anyhow!("{id} is not a session id"));
+    }
+    self.ensure().await?;
+    let Some(path) = confined(&self.dir, &format!("{id}.json")).await else { return Err(anyhow!("{id}: outside the store")) };
+    if fs::metadata(self.dir.join(TRASH_DIR).join(format!("{id}.json"))).await.is_ok() {
+      return Ok(false);
+    }
+    if let Ok(raw) = fs::read(&path).await
+      && let Ok(here) = serde_json::from_slice::<Stamped>(&raw)
+      && here.updated_at > record.updated_at
+    {
+      return Ok(false);
+    }
+    write_atomic(&path, &serde_json::to_vec(record)?, None).await?;
+    // The engines here prefer an index entry to the record for a session they do not drive: the entry goes too
+    let mut index = self.read_index().await;
+    let summary = record.summary();
+    match index.iter_mut().find(|s| s.id == *id) {
+      Some(entry) => *entry = summary,
+      None => index.push(summary),
+    }
+    sort_index(&mut index);
+    write_atomic(&self.dir.join("index.json"), serde_json::to_string_pretty(&index)?.as_bytes(), None).await?;
+    Ok(true)
+  }
+
+  /// For each of `ids` with a record here (not in the trash): its `updatedAt` and the blobs it has
+  pub async fn copy_stamps(&self, ids: &[String]) -> HashMap<String, CopyStamp> {
+    let mut out = HashMap::new();
+    for id in ids.iter().filter(|id| is_session_id(id)) {
+      let Ok(raw) = fs::read(self.dir.join(format!("{id}.json"))).await else { continue };
+      let Ok(s) = serde_json::from_slice::<Stamped>(&raw) else { continue };
+      out.insert(id.clone(), CopyStamp { updated_at: s.updated_at, blobs: self.blob_names(id).await });
+    }
+    out
+  }
+
+  /// The blobs a session has here, by name
+  pub async fn blob_names(&self, id: &str) -> Vec<String> {
+    let mut names = vec![];
+    if !is_session_id(id) {
+      return names;
+    }
+    if let Ok(mut rd) = fs::read_dir(self.dir.join(id)).await {
+      while let Ok(Some(e)) = rd.next_entry().await {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if is_blob_name(&name) {
+          names.push(name);
+        }
+      }
+    }
+    names.sort();
+    names
   }
 
   /// The list as the disk knows it
@@ -568,7 +681,10 @@ impl TranscriptStore {
     }
     let bytes = source.record_json();
     write_atomic(&path, &bytes, None).await?;
-    self.state.lock().known.insert(id);
+    self.state.lock().known.insert(id.clone());
+    if self.on_change.read().is_some() {
+      self.changed(&id, RecordChange::Written { cwd: &source.record_cwd() });
+    }
     Ok(())
   }
 
@@ -581,15 +697,24 @@ impl TranscriptStore {
     self.settle_inflight(id).await;
     self.state.lock().known.remove(id);
     let mut log = None;
+    let mut cwd = String::new();
+    let hooked = self.on_change.read().is_some();
     for dir in [self.dir.clone(), self.dir.join(TRASH_DIR)] {
+      let file = dir.join(format!("{id}.json"));
       if log.is_none() {
-        log = builtin_session_of(&dir.join(format!("{id}.json"))).await;
+        log = builtin_session_of(&file).await;
+      }
+      if hooked && cwd.is_empty() {
+        cwd = cwd_of(&file).await;
       }
       rm_confined(&dir, &format!("{id}.json"), false).await;
       rm_confined(&dir, id, true).await;
     }
     if let Some(acp) = log {
       self.remove_agent_log(id, &acp).await;
+    }
+    if hooked {
+      self.changed(id, RecordChange::Gone { cwd: &cwd });
     }
   }
 
@@ -640,12 +765,20 @@ impl TranscriptStore {
     {
       let _ = f.set_modified(SystemTime::now());
     }
+    if self.on_change.read().is_some() {
+      let cwd = cwd_of(&trash.join(format!("{id}.json"))).await;
+      self.changed(id, RecordChange::Gone { cwd: &cwd });
+    }
     Ok(())
   }
 
   pub async fn restore(&self, id: &str) {
     if is_session_id(id) {
       move_record(&self.dir.join(TRASH_DIR), &self.dir, id).await;
+      if self.on_change.read().is_some() {
+        let cwd = cwd_of(&self.dir.join(format!("{id}.json"))).await;
+        self.changed(id, RecordChange::Restored { cwd: &cwd });
+      }
     }
   }
 

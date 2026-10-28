@@ -1,4 +1,5 @@
 import type { SessionCategory, SessionSummary } from '@acpira/shared/transcript';
+import { isRemoteFolder } from '@acpira/shared/remote';
 
 // The session list as a tree: pinned sessions on top, then one node per project (the session's cwd), each holding its
 // user categories and the sessions filed nowhere ("loose"). Under the workspace scope there is a single node (the
@@ -50,7 +51,8 @@ export interface TreeInput {
   // A project shell's registered folders (SessionCategories.projects, the desktop app): grouped, they lead in this order,
   // a folder without a session included, and any other folder a session ran in follows by latest activity
   registered?: string[];
-  // Folders the project shell took off its list (SessionCategories.removedProjects): their sessions show only in a search
+  // Folders the project shell took off its list (SessionCategories.removedProjects): their sessions show only in a search,
+  // as do those of host folders that are not registered (`offList`)
   removed?: string[];
   // Grouped: pinned sessions sit first in their own project rather than in one section on top
   pinInProject?: boolean;
@@ -63,6 +65,12 @@ export function isChatFolder(root: string | undefined, cwd: string | undefined):
   if (!root || !cwd) return false;
   const cut = Math.max(cwd.lastIndexOf('/'), cwd.lastIndexOf('\\'));
   return cut > 0 && cut < cwd.length - 1 && cwd.slice(0, cut) === root;
+}
+
+// Whether a project shell keeps a folder off its list: one it took off, or a host folder it never added (a host's list
+// brings every folder that host ever ran a session in). Their sessions show only in a search
+export function offList(cwd: string, registered?: string[], removed?: string[]): boolean {
+  return !!removed?.includes(cwd) || (!!registered && isRemoteFolder(cwd) && !registered.includes(cwd));
 }
 
 // The category a session is filed under, if that category still exists and belongs to the session's project
@@ -110,9 +118,11 @@ export function buildSessionTree({ shown, categories, collapsedProjects, workspa
   const chat = (s: SessionSummary) => !!isChat?.(s.cwd);
   const chats = [...rest.filter(s => s.pinned && chat(s)), ...rest.filter(s => !s.pinned && chat(s))];
   const byProject = new Map<string, SessionSummary[]>();
-  for (const s of rest) if (!chat(s) && (filtering || !removed?.includes(s.cwd))) byProject.set(s.cwd, [...byProject.get(s.cwd) ?? [], s]);
+  // Host folders nobody added come back for a search only, not for a view filter (`expand` is on exactly while
+  // searching); folders taken off the list come back for either
+  for (const s of rest) if (!chat(s) && (filtering ? expand || !offList(s.cwd, registered) : !offList(s.cwd, registered, removed))) byProject.set(s.cwd, [...byProject.get(s.cwd) ?? [], s]);
   // A project with categories but no session in view still shows (so its categories can be reached), unless filtering
-  if (!filtering) for (const c of categories) if (!byProject.has(c.cwd)) byProject.set(c.cwd, []);
+  if (!filtering) for (const c of categories) if (!byProject.has(c.cwd) && !offList(c.cwd, registered)) byProject.set(c.cwd, []);
   if (!filtering) for (const cwd of registered ?? []) if (!byProject.has(cwd)) byProject.set(cwd, []);
   const latest = (cwd: string) => byProject.get(cwd)!.reduce((m, s) => (s.updatedAt > m ? s.updatedAt : m), '');
   // Unregistered folders rank after every registered one (Infinity - Infinity is NaN, which falls through to the next key)

@@ -626,6 +626,8 @@ export const de = {
   'host.sessionTakenOver': 'Eine andere Acpira-Engine hat diese Sitzung übernommen; hier ist sie jetzt schreibgeschützt. Übernimm sie hier, um fortzufahren.',
   'host.takeOverTimeout': 'Die andere Acpira-Engine hat die Sitzung nicht innerhalb von 10 Sekunden freigegeben; versuche es erneut.',
   'host.sessionBusyElsewhere': 'Eine andere Acpira-Engine hat diese Sitzung gerade geöffnet; übernimm sie hier, um fortzufahren.',
+  'host.sessionCopy': 'Diese Sitzung läuft auf {machine}. Hier ist sie nur lesbar; fahre auf diesem Computer fort.',
+  'host.sessionCopyAnother': 'einem anderen Computer',
   'host.storage.gone': 'Bereits entfernt.',
   'host.storage.pinned': 'Angeheftete Sitzungen bleiben erhalten.',
   'host.storage.running': 'In dieser Sitzung läuft gerade ein Turn.',

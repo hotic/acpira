@@ -47,6 +47,8 @@ pub struct HostRuntime {
   terminals: Arc<crate::terminal::TerminalHub>,
   /// SSH hosts and their helper channels (docs/dev/remote.md)
   pub connections: Arc<crate::remote::connections::Connections>,
+  /// Copies of this engine's records in host folders, in the hosts' stores (`remote::host_store`)
+  host_mirror: Arc<crate::remote::host_store::HostMirror>,
   /// The user's plugins (docs/dev/plugins.md)
   pub plugins: Arc<crate::plugins::host::PluginHost>,
   /// Remote access: the paired-devices gateway (docs/dev/paired-remote.md)
@@ -152,6 +154,8 @@ impl HostRuntime {
     );
     // The built-in agent runs with this root as its home: a session deleted for good takes the agent's log along
     store.set_agent_home(root.clone());
+    // One session history per host: this engine's records in host folders get a copy in the host's own store
+    let host_mirror = crate::remote::host_store::HostMirror::new(connections.clone(), store.clone(), &root, log.clone());
     // Cross-harness subagents: the persona file and the loopback hub `ask_agent` calls come back through
     let roster = Arc::new(crate::relay::roster::Roster::new(&root));
     let hub = match crate::relay::hub::RelayHub::start(roster.clone(), log.clone()).await {
@@ -323,10 +327,18 @@ impl HostRuntime {
       bridges: Default::default(),
       terminals: crate::terminal::TerminalHub::new(),
       connections,
+      host_mirror,
       plugins,
       remote_access,
     });
     runtime.terminals.set_remote(runtime.connections.clone());
+    let weak = Arc::downgrade(&runtime.manager);
+    runtime.host_mirror.set_gone_hook(Arc::new(move |alias: &str, id: Option<&str>| {
+      if let Some(m) = weak.upgrade() {
+        m.host_copy_gone(alias, id);
+      }
+    }));
+    runtime.host_mirror.start();
     let ra = runtime.remote_access.clone();
     tokio::spawn(async move { ra.refresh_installed().await });
     // A host's folders are the `ssh://` entries of the project list
@@ -520,6 +532,7 @@ impl HostRuntime {
       b.dispose();
     }
     self.terminals.dispose();
+    self.host_mirror.stop();
     self.connections.dispose();
     self.remote_access.dispose();
     self.manager.dispose().await;

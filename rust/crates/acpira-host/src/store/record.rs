@@ -30,6 +30,17 @@ pub struct ImportedFrom {
   pub session_id: String,
 }
 
+/// The machine that drives a session whose record this is a copy of (`remote::host_store`)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CopyOf {
+  /// Its machine id (`remote::helper::machine_id`)
+  pub machine: String,
+  /// Its name, for the note a copy shows
+  #[serde(default)]
+  pub name: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionRecord {
@@ -69,6 +80,9 @@ pub struct SessionRecord {
   /// The agent's goal when the record was written (`vendors::goal`); the agent's own snapshot replaces it once connected
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub goal: Option<SessionGoal>,
+  /// Set on a copy of a session another machine drives in a folder of this one: shown read-only here, never driven
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub copy_of: Option<CopyOf>,
 }
 
 impl SessionRecord {
@@ -98,6 +112,10 @@ pub trait RecordSource: Send + Sync {
   fn record_id(&self) -> String;
   fn record_json(&self) -> Vec<u8>;
   fn record(&self) -> SessionRecord;
+  /// The session's folder, without serializing the rest
+  fn record_cwd(&self) -> String {
+    self.record().cwd
+  }
 }
 
 impl RecordSource for SessionRecord {
@@ -109,5 +127,8 @@ impl RecordSource for SessionRecord {
   }
   fn record(&self) -> SessionRecord {
     self.clone()
+  }
+  fn record_cwd(&self) -> String {
+    self.cwd.clone()
   }
 }
