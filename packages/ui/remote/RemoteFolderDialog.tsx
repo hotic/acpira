@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronRight, Folder, GitBranch, House } from 'lucide-react';
 import { formatRemoteFolder } from '@acpira/shared/remote';
 import { cn } from '../ui/cn';
+import { imeKey } from '../ui/ime';
 import { Button } from '../ui/Button';
 import { Shimmer } from '../ui/Shimmer';
 import { t } from '../i18n';
@@ -11,7 +12,8 @@ import { ConnectStatus } from './ConnectStatus';
 
 // A folder on an SSH host to add as a project: breadcrumbs over a list of fixed height (it never resizes the dialog while
 // a folder loads, fails or fills), starting in the host's home. A click on a folder goes into it; the footer adds the
-// folder the list shows. Opened from a host's settings page (only while connected) and from the session column's add menu.
+// folder the list shows, and its path box takes a typed path (Enter goes there). Opened from a host's settings page
+// (only while connected) and from the session column's add menu.
 // Nothing is listed until the host is connected: a host that is off is connected on opening, and until it is up the list's
 // place shows the attempt's steps or its failure (remote/ConnectStatus), with Retry
 export function RemoteFolderDialog({ alias, onAdd, onClose }: { alias: string; onAdd: (folder: string) => void; onClose: () => void }) {
@@ -50,7 +52,7 @@ export function RemoteFolderDialog({ alias, onAdd, onClose }: { alias: string; o
   return (
     <SettingsDialog title={t('connections.folderTitle', { host: alias })} onClose={onClose}
       footer={<>
-        <span className="min-w-0 flex-1 truncate font-mono text-mono text-fg-3" title={path}>{path !== undefined ? shortRemote(path, home) : ''}</span>
+        <PathBox path={path} home={home} label={t('connections.folderOn', { host: alias })} onGo={go} />
         <Button variant="primary" disabled={!ready || loading || !!error || !folder} onClick={() => { if (folder) onAdd(folder); }}>{t('connections.addAsProject')}</Button>
       </>}>
       <div className="flex min-h-0 flex-col p-1">
@@ -104,6 +106,35 @@ function Crumbs({ path, home, onGo }: { path?: string; home?: string; onGo: (to:
       })}
     </div>
   );
+}
+
+// The folder shown, as text to edit: Enter goes to what was typed (~ for the host's home, a name without a leading slash
+// under the folder shown). A path that cannot be read leaves the text as typed beside the error; the next listing resets it
+function PathBox({ path, home, label, onGo }: { path?: string; home?: string; label: string; onGo: (to: string) => void }) {
+  const shown = path !== undefined ? shortRemote(path, home) : '';
+  const [text, setText] = useState(shown);
+  useEffect(() => setText(shown), [shown]);
+  const submit = () => {
+    const typed = text.trim();
+    if (!typed || path === undefined) return;
+    const to = typed === '~' || typed.startsWith('~/') ? `${home ?? ''}${typed.slice(1)}` || '/'
+      : typed.startsWith('/') ? typed : `${path === '/' ? '' : path}/${typed}`;
+    onGo(resolveDots(to));
+  };
+  return <input aria-label={label} title={path} value={text} disabled={path === undefined} spellCheck={false} autoComplete="off"
+    onChange={e => setText(e.target.value)}
+    onKeyDown={e => { if (e.key === 'Enter' && !imeKey(e.nativeEvent)) { e.preventDefault(); submit(); } }}
+    className="h-ctl min-w-0 flex-1 rounded-md border border-line bg-hover px-3 font-mono text-mono text-fg-1 outline-none transition-colors hover:border-line-strong focus:bg-active disabled:text-fg-3" />;
+}
+
+// An absolute path with its . and .. resolved (the engine takes neither), never above the root
+function resolveDots(path: string): string {
+  const parts: string[] = [];
+  for (const seg of path.split('/')) {
+    if (seg === '..') parts.pop();
+    else if (seg && seg !== '.') parts.push(seg);
+  }
+  return `/${parts.join('/')}`;
 }
 
 // A path of the host as the footer shows it: under the host's home with ~

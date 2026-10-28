@@ -12,6 +12,8 @@ import { AgentMark } from '../chat/AgentMark';
 import { CONNECTION_STATE_NAME as STATE_NAME, connectionOp, listSshHosts, remoteProjectOp, useConnections, type SshHostList } from '../remote/api';
 import { RemoteFolderDialog } from '../remote/RemoteFolderDialog';
 import { ConnectStatus, hasConnectStatus, reconnect } from '../remote/ConnectStatus';
+import { Collapsible } from '../ui/Collapsible';
+import { usePresence } from '../ui/usePresence';
 import {
   blockItem, blockList, DangerAction, DialogBody, Dot, FactRow, Field, FooterNote, Group, ItemRow, Note, PickContent, Section, SectionAction,
   SectionDescription, Segmented, SettingsDialog, Status, shortPath, useSettingRow,
@@ -20,8 +22,10 @@ import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 
 // Settings → Connections: the SSH hosts remote folders live on (docs/dev/remote.md), and the external session sources
 // (ChatGPT). A list of hosts, each opening a dialog (connection progress, run mode, its projects, removal); adding is
-// one step in a dialog listing ~/.ssh/config. Every edit goes to the engine, which pushes the whole list back
-// (remote/api.ts)
+// one step in a dialog listing ~/.ssh/config. Both dialogs are wide and about as tall, so a pick in the add dialog
+// turns it into the host's nearly in place. On the host's page every block that comes and goes folds in or out and the
+// dialog keeps its top edge, so the page grows and shrinks smoothly downward. Every edit goes to the engine, which
+// pushes the whole list back (remote/api.ts)
 
 const MODES: RunMode[] = ['local', 'remote'];
 const MODE_NAME: Record<RunMode, MsgKey> = { local: 'connections.mode.local', remote: 'connections.mode.remote' };
@@ -77,7 +81,7 @@ export function ConnectionsPage({ env, projects, on, remote = true, chatgpt }: {
         trailing={<ChatGptState status={chatgpt.status} />} />
     </Section>}
     {picking && <AddHostDialog taken={list.map(c => c.alias)} onAdd={add} onClose={() => setPicking(false)} />}
-    {current && <HostDialog view={current} env={env} projects={projects} on={on} onClose={() => setOpen(undefined)} />}
+    {current && <HostDialog view={current} env={env} projects={projects} on={on} fresh={added?.alias === open} onClose={() => setOpen(undefined)} />}
     {chatgpt?.open && <ChatGptDialog status={chatgpt.status} on={on} onClose={chatgpt.onClose} />}
   </>;
 }
@@ -127,7 +131,7 @@ function AddHostDialog({ taken, onAdd, onClose }: { taken: string[]; onAdd: (ali
     ? [{ alias: typed, typed: true }, ...hosts] : hosts;
   const error = listing?.error && (listing.error === 'timeout' ? t('connections.noAnswer') : listing.error);
   return (
-    <SettingsDialog icon={<Server />} title={t('connections.addTitle')} onClose={onClose}
+    <SettingsDialog wide icon={<Server />} title={t('connections.addTitle')} onClose={onClose}
       footer={<>
         <FooterNote>{t('connections.addHint')}</FooterNote>
         <Button onClick={onClose}>{t('settings.shared.cancel')}</Button>
@@ -162,15 +166,18 @@ function AddHostDialog({ taken, onAdd, onClose }: { taken: string[]; onAdd: (ali
 
 // One host in a dialog: the connection (its state, round trip and remote version, the one action that moves it on,
 // the attempt's steps while it runs or why it failed), where agents run, the host's projects (browsable only while
-// connected); the footer removes the host
-function HostDialog({ view, env, projects, on, onClose }: { view: ConnectionView; env: SettingsEnv; projects?: string[]; on: SettingsHandlers; onClose: () => void }) {
+// connected); the footer removes the host. `fresh`: it just replaced the add dialog in the same box, so its body fades in
+function HostDialog({ view, env, projects, on, fresh, onClose }: { view: ConnectionView; env: SettingsEnv; projects?: string[]; on: SettingsHandlers; fresh?: boolean; onClose: () => void }) {
   const { alias, state } = view;
   // The pick shows at once; the pushed list confirms it
   const [mode, setMode] = useState(view.mode);
   useEffect(() => setMode(view.mode), [view.mode]);
   const [picking, setPicking] = useState(false);
+  // Held from the first render: `fresh` clears as soon as the pushed list brings the host, which would cut the fade short
+  const [enter] = useState(fresh);
   // The project list (categories) is fresher than the host's view, which the engine pushes only when the connection changes
   const folders = (projects ?? view.projects).filter(p => parseRemoteFolder(p)?.alias === alias);
+  const rows = usePresence(folders, f => f);
   const action = state === 'connected' ? 'disconnect' : state === 'connecting' ? 'cancel' : 'connect';
   const ACTION: Record<typeof action, MsgKey> = { connect: 'connections.connect', disconnect: 'connections.disconnect', cancel: 'connections.cancel' };
   const live = state === 'connected';
@@ -179,30 +186,39 @@ function HostDialog({ view, env, projects, on, onClose }: { view: ConnectionView
     ? [view.rttMs !== undefined && t('connections.rttValue', { ms: view.rttMs }), view.remoteVersion && t('connections.remoteVersionValue', { version: view.remoteVersion })].filter(Boolean).join(sep)
     : view.identityFile ? t('connections.identityValue', { path: shortPath(view.identityFile, { home: env.home, cwd: '' }) }) : undefined;
   return (
-    <SettingsDialog wide icon={<Server />} title={alias} sub={view.address} onClose={onClose}
+    <SettingsDialog wide pinTop icon={<Server />} title={alias} sub={view.address} onClose={onClose}
       footer={<>
         <DangerAction title={t('connections.removeHint')} onClick={() => { connectionOp({ op: 'remove', alias }); onClose(); }}>{t('connections.remove')}</DangerAction>
         <span className="flex-1" />
         <Button variant="primary" onClick={onClose}>{t('common.done')}</Button>
       </>}>
-      <DialogBody>
-        <Section title={<span className="flex items-center gap-2"><StateDot state={state} /><StableText current={state} items={STATES.map(s => ({ key: s, text: t(STATE_NAME[s]) }))} /></span>} desc={facts || undefined}
+      <DialogBody className={cn(enter && 'fade-in')}>
+        {/* The head's second line is always there (a blank one without facts), so facts arriving never move the card */}
+        <Section title={<span className="flex items-center gap-2"><StateDot state={state} /><StableText current={state} items={STATES.map(s => ({ key: s, text: t(STATE_NAME[s]) }))} /></span>} desc={facts || '\u00a0'}
           action={<SectionAction icon={action === 'connect' ? <Link2 /> : action === 'disconnect' ? <Unplug /> : <X />}
             onClick={action === 'connect' ? () => reconnect({ ...view, mode }) : () => connectionOp({ op: 'disconnect', alias })}>{t(ACTION[action])}</SectionAction>}>
-          {hasConnectStatus(view) && <StatusRow view={view} onOpenConfig={() => on.openPath(`${env.home}/.ssh/config`)} />}
+          {/* Folds open as an attempt starts and away once it is over; at rest it shows the steps settled (all done after
+              a success), which is what folds away */}
+          <Collapsible.Section open={hasConnectStatus(view)}>
+            <StatusRow view={view} onOpenConfig={() => on.openPath(`${env.home}/.ssh/config`)} />
+          </Collapsible.Section>
           <Field label={t('connections.mode.label')} desc={<ModeEffect mode={mode} />}>
             <ModeSegments compact value={mode} onChange={m => { setMode(m); connectionOp({ op: 'setMode', alias, mode: m }); }} />
           </Field>
         </Section>
         <Section title={t('connections.projects')} count={folders.length} desc={t('connections.projectsDesc')}
           action={<SectionAction icon={<Plus />} disabled={!live} title={live ? undefined : t('connections.connectFirst')} onClick={() => setPicking(true)}>{t('connections.addFolder')}</SectionAction>}>
-          {folders.length === 0 && <Note>{t('connections.noProjects')}</Note>}
-          {folders.map(f => {
+          {/* Rows fold in and out as folders are added and removed; the empty note comes last, so while it is folded
+              away it never counts as the row before the first folder (rowRules) */}
+          {rows.map(({ key: f, open }) => {
             const path = parseRemoteFolder(f)?.path ?? f;
-            return <ItemRow key={f} title={baseName(path)} desc={<span title={path}>{path}</span>}
-              trailing={<IconButton size="sm" title={t('session.project.remove')} aria-label={t('session.project.remove')} onClick={() => remoteProjectOp('removeProject', f)}
-                className="text-fg-3 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100"><X strokeWidth={1.5} /></IconButton>} />;
+            return <Collapsible.Section key={f} open={open}>
+              <ItemRow title={baseName(path)} desc={<span title={path}>{path}</span>}
+                trailing={<IconButton size="sm" title={t('session.project.remove')} aria-label={t('session.project.remove')} onClick={() => remoteProjectOp('removeProject', f)}
+                  className="text-fg-3 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100"><X strokeWidth={1.5} /></IconButton>} />
+            </Collapsible.Section>;
           })}
+          <Collapsible.Section open={folders.length === 0}><Note>{t('connections.noProjects')}</Note></Collapsible.Section>
         </Section>
       </DialogBody>
       {picking && <RemoteFolderDialog alias={alias} onClose={() => setPicking(false)}

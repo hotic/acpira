@@ -213,6 +213,8 @@
   --subagent-badge-inset: -3px;
   /* The faint project name a session row from another project carries before its time, kept short so the title keeps the room */
   --session-project-w: 10ch;
+  /* The SSH host name at the end of a remote project row, wide enough for an alias while leaving the folder name its room */
+  --session-host-w: 14ch;
   /* The session list's unread dot, a pixel larger than the other state dots so it holds its own beside the 10 px ring */
   --unread-dot: 7px;
 
@@ -403,9 +405,6 @@
   --storage-bar: 8px;
   --storage-gap: 2px;
   --storage-list: calc(var(--setting-row-detail) * 6);
-  /* A connection attempt's block (remote/ConnectStatus): a failure's title row with its buttons, a two-line fix and the
-     engine's words in two mono lines; the four steps of an attempt under way fit inside */
-  --connect-status: calc(var(--ctl) + var(--text-2-lh) * 2 + var(--text-mono-lh) * 2 + var(--stack-gap) * 3);
 }
 /* The sidebar's narrow column: a smaller page title */
 .acp-settings[data-surface-host="sidebar"] {
@@ -569,6 +568,7 @@
   --spacing-pop-lg: var(--pop-w-lg);
   --spacing-pop-xl: var(--pop-w-xl);
   --spacing-project: var(--session-project-w);
+  --spacing-host: var(--session-host-w);
   --spacing-unread-dot: var(--unread-dot);
   /* Session times share one right-aligned column wide enough for the longest listed one, so the state marks before them line up
      whatever the time's length. SessionList sets --session-time (in ch) on the list; it must be read where it is used, not on :root */

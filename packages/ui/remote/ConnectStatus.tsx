@@ -1,18 +1,21 @@
-import type { ReactNode } from 'react';
-import { Check, CircleAlert, Download, LoaderCircle, SquareTerminal } from 'lucide-react';
+import { useRef, type ReactNode } from 'react';
+import { Check, Download, LoaderCircle, SquareTerminal } from 'lucide-react';
 import type { MsgKey } from '@acpira/shared/i18n';
 import type { ConnectFailure, ConnectionView, ConnectStep } from '@acpira/shared/remote';
 import { cn } from '../ui/cn';
 import { Button } from '../ui/Button';
+import { Collapsible } from '../ui/Collapsible';
 import { Shimmer } from '../ui/Shimmer';
 import { t } from '../i18n';
 import { connectionOp } from './api';
 
-// A connection attempt in one block of fixed height (--connect-status), on a host's page and in the remote folder picker:
-// while connecting, the steps (done, under way with its newest detail, still to come); after a failure, what failed,
-// what to do about it, the engine's own words and the action that settles it. Both layouts sit in the same grid cell,
-// so a retry flipping between them (a network failure retries on its own) never changes the block's height. Icons are
-// --icon squares on the text's line, the same column as the section title's state dot
+// A connection attempt in one block, on a host's page and in the remote folder picker: while connecting, the steps
+// (done, under way with its newest detail, still to come); after a failure, one setting row saying what failed and what
+// to do about it, with the action that settles it. Each layout keeps its own height and the two fold into each other
+// (one closing as the other opens, ui/Collapsible), so a retry flipping between them (a network failure retries on its
+// own) eases the block between heights instead of jumping or reserving the taller one as blank space. A host at rest shows the steps at rest (all to come when off, all done when connected): a host's page folds
+// the block away once an attempt is over, and that is what it shows while folding. Icons are --icon squares on the
+// text's line, the same column as the section title's state dot; a step's icon fades in as it changes
 
 const STEP_NAME: Record<ConnectStep, MsgKey> = {
   ssh: 'connections.step.ssh', probe: 'connections.step.probe', fetch: 'connections.step.fetch', upload: 'connections.step.upload', start: 'connections.step.start',
@@ -29,11 +32,6 @@ const FIX: Partial<Record<ConnectFailure, MsgKey>> = {
 const SLOTS: ConnectStep[] = ['ssh', 'probe', 'upload', 'start'];
 const SLOT_OF: Record<ConnectStep, number> = { ssh: 0, probe: 1, fetch: 2, upload: 2, start: 3 };
 
-/** Whether the block has anything to show: an attempt under way or a failure with its reason */
-export function hasConnectStatus(view: ConnectionView): boolean {
-  return view.state === 'connecting' || (view.state === 'error' && !!view.error);
-}
-
 /** Connect again: a switched-off host comes back on through add, which also connects */
 export function reconnect(view: ConnectionView, extra?: { acceptNewMachine?: boolean; fetchBuild?: boolean }) {
   connectionOp(view.disabled ? { op: 'add', alias: view.alias, mode: view.mode } : { op: 'connect', alias: view.alias, ...extra });
@@ -45,30 +43,47 @@ export function reconnect(view: ConnectionView, extra?: { acceptNewMachine?: boo
  */
 export function ConnectStatus({ view, retry, onOpenConfig, className }: { view: ConnectionView; retry?: boolean; onOpenConfig?: () => void; className?: string }) {
   const error = view.state === 'error' ? view.error : undefined;
+  // The failure keeps its last words while it fades out, so a retry never blanks it mid-fade
+  const shown = useLast(error && view);
+  // Stacked, not overlaid: the closing one gives its height to the opening one, so their texts never cross
   return (
-    <div className={cn('grid h-(--connect-status) min-w-0', className)}>
-      <Steps view={view} className={cn('[grid-area:1/1]', error && 'invisible')} />
-      <div className={cn('[grid-area:1/1] min-w-0', !error && 'invisible')} aria-hidden={!error || undefined}>
-        {error && <Failure view={view} retry={retry} onOpenConfig={onOpenConfig} />}
-      </div>
+    <div className={cn('flex min-w-0 flex-col', className)}>
+      <Collapsible.Section open={!error}><Steps view={view} /></Collapsible.Section>
+      <Collapsible.Section open={!!error}>{shown && <Failure view={shown} retry={retry} onOpenConfig={onOpenConfig} />}</Collapsible.Section>
     </div>
   );
 }
 
-function Steps({ view, className }: { view: ConnectionView; className?: string }) {
+/** Whether the block has anything to show: an attempt under way or a failure with its reason */
+export function hasConnectStatus(view: ConnectionView): boolean {
+  return view.state === 'connecting' || (view.state === 'error' && !!view.error);
+}
+
+// The last defined value, held after it goes away
+function useLast<T>(value: T | undefined | false | ''): T | undefined {
+  const last = useRef<T>(undefined);
+  if (value) last.current = value;
+  return last.current;
+}
+
+function Steps({ view }: { view: ConnectionView }) {
   const step = view.step ?? 'ssh';
-  const at = SLOT_OF[step];
+  // At rest no step runs: an off host has every step to come, a connected one every step done
+  const at = view.state === 'off' ? -1 : view.state === 'connected' ? SLOTS.length : SLOT_OF[step];
   return (
-    <ol className={cn('m-0 flex min-w-0 list-none flex-col justify-between p-0', className)}>
+    <ol className="m-0 flex min-w-0 list-none flex-col gap-1 p-0">
       {SLOTS.map((slot, i) => {
         const name = i === at ? STEP_NAME[step] : STEP_NAME[slot];
-        const icon = i < at ? <Check className="size-icon text-fg-3" strokeWidth={1.75} />
-          : i === at ? <LoaderCircle className="size-icon animate-spin live-spin text-fg-2" strokeWidth={1.75} />
+        const kind = i < at ? 'done' : i === at ? 'live' : 'wait';
+        const icon = kind === 'done' ? <Check className="size-icon text-fg-3" strokeWidth={1.75} />
+          : kind === 'live' ? <LoaderCircle className="size-icon animate-spin live-spin text-fg-2" strokeWidth={1.75} />
             : <span className="size-(--dot) rounded-full bg-fg-3 opacity-50" />;
         return <li key={slot} className="flex h-(--text-2-lh) min-w-0 items-center gap-2 text-2">
-          <span className="flex size-icon shrink-0 items-center justify-center">{icon}</span>
+          {/* Keyed by kind: a step moving on remounts the slot, which fades in (on the slot, since the spinner's own
+              animation would override a fade on the icon) */}
+          <span key={kind} className="fade-in flex size-icon shrink-0 items-center justify-center">{icon}</span>
           {i === at ? <Shimmer className="shrink-0 text-fg-1">{t(name)}</Shimmer>
-            : <span className={cn('shrink-0', i < at ? 'text-fg-2' : 'text-fg-3')}>{t(name)}</span>}
+            : <span className={cn('shrink-0 transition-colors duration-(--dur-open)', i < at ? 'text-fg-2' : 'text-fg-3')}>{t(name)}</span>}
           {i === at && view.detail && <span className="min-w-0 truncate font-mono text-mono text-fg-3" title={view.detail}>{view.detail}</span>}
         </li>;
       })}
@@ -92,17 +107,18 @@ function Failure({ view, retry, onOpenConfig }: { view: ConnectionView; retry?: 
         : error.kind === 'denied' && onOpenConfig
           ? <>{again}<Button onClick={onOpenConfig}>{t('connections.editConfigShort')}</Button></>
           : again;
-  // Two columns: the icon, then the title with its action and, under it, the fix and the engine's words (each at most
-  // two lines, the rest in its tooltip)
+  // The fix in words, or the engine's own words when there is none (they otherwise sit in the line's tooltip)
+  const words = fix ? t(fix) : error.message;
+  // One setting row in the page's three text roles (title fg-1, the line under it fg-3, actions on the right), wrapping
+  // like a card head: the actions drop under the text once the text column would go below its minimum, so a narrow
+  // column never squeezes the fix into an ellipsis
   return (
-    <div className="grid min-w-0 grid-cols-[var(--icon)_minmax(0,1fr)] items-center gap-x-2 gap-y-(--stack-gap)">
-      <CircleAlert className="size-icon text-danger" strokeWidth={1.75} />
-      <div className="flex h-ctl min-w-0 items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-2 text-danger">{title}</span>
-        {actions && <span className="flex shrink-0 items-center gap-2">{actions}</span>}
+    <div className="flex min-w-0 flex-wrap items-center gap-gap">
+      <div className="flex min-w-0 flex-[1_1_var(--setting-header-copy)] flex-col gap-y-(--stack-gap)">
+        <span className="truncate text-2 text-fg-1">{title}</span>
+        {words && <p className="m-0 line-clamp-3 text-3 text-fg-3 [overflow-wrap:anywhere]" title={error.message || undefined}>{words}</p>}
       </div>
-      {fix && <p className="col-start-2 m-0 line-clamp-2 text-2 text-fg-2 [overflow-wrap:anywhere]" title={t(fix)}>{t(fix)}</p>}
-      {error.message && <p className="col-start-2 m-0 line-clamp-2 font-mono text-mono text-fg-3 [overflow-wrap:anywhere]" title={error.message}>{error.message}</p>}
+      {actions && <span className="flex shrink-0 items-center gap-2">{actions}</span>}
     </div>
   );
 }
