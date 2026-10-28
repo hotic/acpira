@@ -34,6 +34,8 @@ struct Toast: Identifiable, Equatable {
 final class AppModel {
   var agents: [AgentInfo] = Fixtures.agents
   var accounts: [AccountInfo] = Fixtures.accounts
+  /// The engine's settings (steering, the agents' order …); nil in the demo, which reads every default
+  var settings: SettingsView?
   var summaries: [SessionSummary]
   var views: [String: SessionView]
   var path: [Route] = []
@@ -50,6 +52,12 @@ final class AppModel {
   var settingsOpen = false
   /// A session's export waiting for the share sheet
   var shared: ExportFile?
+  /// Each chat's unsent draft (AppModel+Composer.swift): the map is not observed, each draft is
+  @ObservationIgnored var drafts: [String: ComposerDraft] = [:]
+  /// The composer's `@` file search, answered by the engine's `files`
+  @ObservationIgnored private(set) lazy var fileSearch = FileSearch { [weak self] query, seq in
+    self?.post(.searchFiles(query: query, seq: seq)) ?? false
+  }
 
   /// The live engine; nil in the demo
   @ObservationIgnored let link: EngineLink?
@@ -678,6 +686,8 @@ struct SessionActions {
   var takeOver: () -> Void = {}
   /// An AIR failure notice's remedy
   var failureAction: (FailureAction) -> Void = { _ in }
+  /// Stages text quoted from the transcript in the chat's composer
+  var quote: (String) -> Void = { _ in }
 }
 
 extension EnvironmentValues {

@@ -13,7 +13,8 @@ import UIKit
 // on a phone, so iOS draws its own: one Liquid Glass bar with `+` and the model's mark at its start and send at its
 // end, growing into a card while typing. The mark opens liquid beans holding everything the desktop toolbar spreads
 // over chips: the model, its effort and parameters, the mode and any other agent option (Goo.swift). Picked
-// attachments wait in a strip above the field.
+// attachments wait in a strip above the field. A `/` or `@` token under the caret raises the command or mention list
+// over the strip (Suggestions.swift), and the context ring sits beside send (ContextUsage.swift).
 
 struct Composer: View {
   let session: SessionView
@@ -38,6 +39,17 @@ struct Composer: View {
   /// The bar's height, so the beans rise over the card while typing
   @State private var tall = Metrics.barCtl
   @Environment(\.initialPopup) private var initialPopup
+  /// The field's selection: the caret the `/` and `@` tokens are read at
+  @State private var selection: TextSelection?
+  /// The text as the field last wrote it or a pick set it; any other change (a restored draft, an edited queue item)
+  /// puts the caret at the end, where the field left it at its old offset
+  @State private var typed: String?
+  /// The pasteboard holds an image, so `+` offers to paste it
+  @State private var pasteReady = false
+  @Environment(FileSearch.self) private var files: FileSearch?
+  @Environment(\.mentionPersonas) private var personas
+  @Environment(\.compactAt) private var compactAt
+  @Environment(\.sessionActions) private var actions
 
   private var hint: String { placeholder ?? (session.running ? t("composer.placeholder.queue") : t("composer.placeholder")) }
 
@@ -51,10 +63,19 @@ struct Composer: View {
           .foregroundStyle(text.isEmpty ? Palette.fg3 : Palette.fgStrong)
           .frame(maxWidth: .infinity, alignment: .leading)
       } else {
-        TextField(text: $text, axis: .vertical) {
-          Text(web: hint).foregroundStyle(Palette.fg3)
+        VStack(alignment: .leading, spacing: 0) {
+          TextField(text: fieldText, selection: $selection, axis: .vertical) {
+            Text(web: hint).foregroundStyle(Palette.fg3)
+          }
+          .focused($focused)
+          // The command's own wording for what follows it, a faint second line while its arguments are empty
+          if let commandHint {
+            Text(web: commandHint, paragraph: false)
+              .textStyle(TypeScale.mono)
+              .foregroundStyle(Palette.fg3)
+              .lineLimit(1)
+          }
         }
-        .focused($focused)
       }
     }
     .textStyle(TypeScale.field)
@@ -91,10 +112,13 @@ struct Composer: View {
     // In the card the beans rest over its top edge, not inside it
     let lift = expanded ? max(0, tall - Metrics.s1 - Metrics.barCtl) : 0
     return VStack(alignment: .leading, spacing: Metrics.s1_5) {
+      suggestions
       if !staged.isEmpty { StagedAttachments(items: $staged) }
       GlassEffectContainer(spacing: Metrics.gooMerge) {
         ZStack(alignment: .bottomLeading) {
           field
+            // Room for the context ring beside send in the bar
+            .padding(.trailing, expanded || session.usage == nil ? 0 : Metrics.ctlSm)
             // Lowered by the ink's offset in both forms, so the text is centred in the bar and does not move as it grows
             .padding(.top, line + Metrics.fieldInkDrop)
             .padding(.bottom, expanded ? Metrics.s1 + Metrics.barCtl + Metrics.s1 : line - Metrics.fieldInkDrop)
@@ -106,7 +130,8 @@ struct Composer: View {
           // The chips' row at the start; the room after them takes no taps, so they reach the field under it
           HStack(spacing: 0) {
             HStack(spacing: 0) {
-              LiquidAttach(open: $goo, lift: lift) { source = $0 }
+              LiquidAttach(open: $goo, stage: $gooStage, lift: lift, paste: paste, personas: personas,
+                           onSummon: summon) { source = $0 }
               LiquidControls(controls: session.controls, open: $goo, stage: $gooStage, lift: lift, onSetMode: onSetMode,
                              onSetConfig: onSetConfig)
             }
@@ -120,7 +145,11 @@ struct Composer: View {
       // Send sits over the container, not in it: the container draws its glass over every plain view inside, so a
       // solid button there came out refracted into a soft blob
       .overlay(alignment: .bottomTrailing) {
-        send.padding([.trailing, .bottom], expanded ? Metrics.s1 : 0)
+        HStack(spacing: 0) {
+          ring
+          send
+        }
+        .padding([.trailing, .bottom], expanded ? Metrics.s1 : 0)
       }
       .animation(motion ? Motion.gooSpring : nil, value: expanded)
     }
@@ -138,10 +167,135 @@ struct Composer: View {
     }
     .onAppear(perform: startPopup)
     .modifier(AttachPickers(staged: $staged, source: $source))
+    .modifier(PasteWatch(ready: $pasteReady, forced: initialPopup == "attach.paste"))
+    // Mention.tsx useMentionHits: the query goes out a moment after the last keystroke, and the list closing drops
+    // whatever is still on its way
+    .task(id: mentionSpan?.query) { await searchFiles(mentionSpan?.query) }
+    .onChange(of: text) { _, now in
+      guard now != typed else { return }
+      typed = now
+      selection = TextSelection(insertionPoint: now.endIndex)
+    }
     .environment(\.composerInk, true)
   }
 
-  /// `-popup attach`, `-popup model` or `-popup model.2` (a bean's panel out) for screenshots; a `focus.` prefix
+  /// The context window ring beside send, once the agent has reported usage
+  @ViewBuilder private var ring: some View {
+    if let usage = session.usage {
+      ContextRing(usage: usage, canCompact: session.commands.contains { $0.name == "compact" }, compactAt: compactAt,
+                  running: session.running, onCompact: actions.compact)
+    }
+  }
+
+  /// The prompt as the field edits it, noting what it wrote
+  private var fieldText: Binding<String> {
+    Binding(get: { text }, set: { typed = $0; text = $0 })
+  }
+
+  /// The paste bean's action while the pasteboard holds an image
+  private var paste: (() -> Void)? { pasteReady ? { pasteImage() } : nil }
+
+  private func searchFiles(_ query: String?) async {
+    guard let query else {
+      files?.close()
+      return
+    }
+    try? await Task.sleep(for: Self.debounce)
+    if !Task.isCancelled { files?.search(query) }
+  }
+
+  /// Mention.tsx's wait before a query goes out
+  private static let debounce = Duration.milliseconds(60)
+
+  // MARK: Commands and mentions
+
+  /// The caret as a character offset (the end until the field reports a selection), and whether nothing is selected
+  private var caret: (at: Int, collapsed: Bool) {
+    guard let selection, case .selection(let range) = selection.indices else { return (text.count, true) }
+    let end = min(range.upperBound, text.endIndex)
+    return (text.distance(from: text.startIndex, to: end), range.isEmpty)
+  }
+
+  private var slashSpan: SigilSpan? {
+    let c = caret
+    return c.collapsed ? SlashCommands.commandAt(text, caret: c.at) : nil
+  }
+
+  private var mentionSpan: SigilSpan? {
+    let c = caret
+    guard c.collapsed, files != nil || !personas.isEmpty else { return nil }
+    return SlashCommands.mentionAt(text, caret: c.at)
+  }
+
+  /// The commands matching the `/` token, the list shown only with hits: without one the slash stays plain text
+  private var slashHits: [SlashCommand] {
+    slashSpan.map { SlashCommands.match(session.commands, query: $0.query) } ?? []
+  }
+
+  /// The input hint of the command the text names, while the list is not showing it
+  private var commandHint: String? { slashHits.isEmpty ? SlashCommands.hint(session.commands, text: text) : nil }
+
+  /// The `/` list, else the `@` list (the personas, then the files the engine found for the query)
+  @ViewBuilder private var suggestions: some View {
+    let commands = slashHits
+    if !commands.isEmpty {
+      SuggestionList(items: commands, key: \.name, pick: pickCommand) { CommandRow(command: $0) }
+    } else if let span = mentionSpan {
+      let hits = MentionPersona.hits(personas, query: span.query) + (files?.hits ?? [])
+      let answered = files?.answered == span.query
+      if !hits.isEmpty || (answered && !span.query.isEmpty) {
+        SuggestionList(items: hits, empty: t("mention.noFiles"), key: \.uri, pick: pickMention) { hit in
+          MentionRow(hit: hit, persona: MentionPersona.of(hit, in: personas))
+        }
+      }
+    }
+  }
+
+  /// A command completes the token in place (`/name `); it goes out through the ordinary send, the agent runs it
+  private func pickCommand(_ command: SlashCommand) {
+    guard let span = slashSpan else { return }
+    apply(SlashCommands.complete(text, span: span, caret: caret.at, name: command.name))
+  }
+
+  /// A persona is summoned by name; a file leaves the text and rides along as an attachment
+  private func pickMention(_ hit: FileHit) {
+    guard let span = mentionSpan else { return }
+    if let persona = MentionPersona.of(hit, in: personas) {
+      apply(SlashCommands.summon(text, name: persona.name, at: span.start, cut: caret.at - span.start))
+      return
+    }
+    apply(SlashCommands.dropToken(text, span: span, caret: caret.at))
+    if !staged.contains(where: { if case .file(let uri, _) = $0 { uri == hit.uri } else { false } }) {
+      staged.append(.file(uri: hit.uri, name: hit.path))
+    }
+  }
+
+  /// SummonMenu: `@name ` at the caret
+  private func summon(_ persona: MentionPersona) {
+    apply(SlashCommands.summon(text, name: persona.name, at: caret.at))
+    focused = true
+  }
+
+  /// The edited prompt, the caret after what was written (set again once the field has taken the new text)
+  private func apply(_ edit: PromptEdit) {
+    typed = edit.text
+    text = edit.text
+    let at = min(edit.caret, text.count)
+    selection = TextSelection(insertionPoint: text.index(text.startIndex, offsetBy: at))
+    Task { selection = TextSelection(insertionPoint: text.index(text.startIndex, offsetBy: min(at, text.count))) }
+  }
+
+  /// The pasteboard's image, staged as a picked photo is (reading it asks the system's paste permission)
+  private func pasteImage() {
+    #if canImport(UIKit)
+    guard let data = UIPasteboard.general.image?.jpegData(compressionQuality: 0.9),
+          let image = AttachmentImage.thumbnail(data) else { return }
+    staged.append(.image(blob: image, mimeType: "image/jpeg", name: nil))
+    #endif
+  }
+
+  /// `-popup attach`, `-popup model` or `-popup model.2` (a bean's panel out; `attach.N` for `+`, and `attach.paste`
+  /// offers the paste bean whatever the pasteboard holds) for screenshots; a `focus.` prefix
   /// (`-popup focus`, `-popup focus.model`) raises the keyboard first. With motion on both wait a moment after launch,
   /// so a recording shows them change. `-popup demo` plays every liquid transition in turn, for a recording read
   /// frame by frame
@@ -153,8 +307,9 @@ struct Composer: View {
     }
     let focus = popup.hasPrefix("focus")
     if focus { popup = String(popup.dropFirst("focus".count).drop { $0 == "." }) }
-    let chip = popup == "attach" ? popup : popup.hasPrefix("model") ? "model" : nil
-    let stage = popup.hasPrefix("model.") ? Int(popup.dropFirst("model.".count)) ?? 0 : 0
+    let parts = popup.split(separator: ".", maxSplits: 1).map(String.init)
+    let chip = ["attach", "model"].contains(parts.first ?? "") ? parts.first : nil
+    let stage = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
     Task {
       if motion { try? await Task.sleep(for: .seconds(1)) }
       if focus { focused = true }
@@ -180,6 +335,31 @@ struct Composer: View {
       try? await Task.sleep(for: .seconds(pause))
       withAnimation(motion ? Motion.gooSpring : nil) { step() }
     }
+  }
+}
+
+/// Whether the pasteboard holds an image, checked without reading it (which would ask the paste permission): on
+/// launch, on a change made in the app, and on coming back from another app
+struct PasteWatch: ViewModifier {
+  @Binding var ready: Bool
+  /// `-popup attach.paste`: offered whatever the pasteboard holds (screenshots)
+  var forced = false
+
+  func body(content: Content) -> some View {
+    #if canImport(UIKit)
+    content
+      .onAppear(perform: check)
+      .onReceive(NotificationCenter.default.publisher(for: UIPasteboard.changedNotification)) { _ in check() }
+      .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in check() }
+    #else
+    content
+    #endif
+  }
+
+  private func check() {
+    #if canImport(UIKit)
+    ready = forced || UIPasteboard.general.hasImages
+    #endif
   }
 }
 
@@ -253,27 +433,28 @@ struct StagedAttachments: View {
   var body: some View {
     ScrollView(.horizontal) {
       HStack(spacing: Metrics.s2) {
+        // Quotes from the transcript lead as one annotations chip; its ✕ drops them all
+        if items.contains(where: Self.quote) {
+          QuoteChip(items: $items)
+            .overlay(alignment: .topTrailing) {
+              RemoveBadge(label: t("quote.removeAll")) { items.removeAll(where: Self.quote) }
+            }
+        }
         ForEach(Array(items.enumerated()), id: \.offset) { i, item in
-          Group {
-            switch item {
-            case .image(let blob, _, _):
-              AttachmentThumbnail(blob: blob)
-            case .file(_, let name), .text(_, let name, _):
-              AttachmentPill(name: name, icon: .fileText)
-            default:
-              EmptyView()
+          if !Self.quote(item) {
+            Group {
+              switch item {
+              case .image(let blob, _, _):
+                AttachmentThumbnail(blob: blob)
+              case .file(_, let name), .text(_, let name, _):
+                AttachmentPill(name: name, icon: .fileText)
+              default:
+                EmptyView()
+              }
             }
-          }
-          .overlay(alignment: .topTrailing) {
-            Button { items.remove(at: i) } label: {
-              Icon(.x, size: Metrics.chevron, strokeWidth: 2)
-                .foregroundStyle(Palette.btn1Fg)
-                .frame(width: Metrics.lead, height: Metrics.lead)
-                .background(Circle().fill(Palette.btn1Bg))
+            .overlay(alignment: .topTrailing) {
+              RemoveBadge(label: t("common.remove")) { items.remove(at: i) }
             }
-            .buttonStyle(.plain)
-            .offset(x: Metrics.s1_5, y: -Metrics.s1_5)
-            .accessibilityLabel(Text(web: t("common.remove")))
           }
         }
       }
@@ -283,26 +464,24 @@ struct StagedAttachments: View {
     }
     .scrollIndicators(.hidden)
   }
+
+  private static func quote(_ item: Attachment) -> Bool { if case .quote = item { true } else { false } }
 }
 
-/// An image attachment's tile: its pixels when the blob is inline data, the image glyph otherwise
-struct AttachmentThumb: View {
-  var blob: String?
+/// A staged chip's ✕, riding its top-right corner
+struct RemoveBadge: View {
+  let label: String
+  var action: () -> Void
   var body: some View {
-    RoundedRectangle(cornerRadius: Metrics.rSm).fill(Palette.chip)
-      .frame(width: Metrics.thumb, height: Metrics.thumb)
-      .overlay {
-        #if canImport(UIKit)
-        if let image = blob.flatMap(AttachmentImage.decode) {
-          Image(uiImage: image).resizable().scaledToFill()
-        } else {
-          Icon(.image, size: Metrics.icon).foregroundStyle(Palette.fg3)
-        }
-        #else
-        Icon(.image, size: Metrics.icon).foregroundStyle(Palette.fg3)
-        #endif
-      }
-      .clipShape(RoundedRectangle(cornerRadius: Metrics.rSm))
+    Button(action: action) {
+      Icon(.x, size: Metrics.chevron, strokeWidth: 2)
+        .foregroundStyle(Palette.btn1Fg)
+        .frame(width: Metrics.lead, height: Metrics.lead)
+        .background(Circle().fill(Palette.btn1Bg))
+    }
+    .buttonStyle(.plain)
+    .offset(x: Metrics.s1_5, y: -Metrics.s1_5)
+    .accessibilityLabel(Text(web: label))
   }
 }
 
@@ -394,38 +573,6 @@ func modeLabel(_ mode: SessionOption) -> String {
   ]
   guard let key = short[mode.id] ?? (mode.kind == "full_access" ? "composer.modeShort.full" : nil) else { return mode.name }
   return t(key)
-}
-
-// MARK: - Context ring
-
-/// The context window ring: a 14 pt arc on a faint track, inside an icon-button slot
-struct ContextRing: View {
-  let usage: Usage
-  @State private var open = false
-
-  var body: some View {
-    let pct = usage.size > 0 ? min(1, Double(usage.used) / Double(usage.size)) : 0
-    let stroke = Metrics.icon * 2 / 16
-    Button { open.toggle() } label: {
-      ZStack {
-        Circle().stroke(lineWidth: stroke).opacity(0.25)
-        Circle().trim(from: 0, to: pct).stroke(style: StrokeStyle(lineWidth: stroke, lineCap: .round))
-          .rotationEffect(.degrees(-90))
-      }
-      .padding(Metrics.icon / 16 * 1)
-      .frame(width: Metrics.icon, height: Metrics.icon)
-    }
-    .buttonStyle(IconButtonStyle(side: Metrics.ctlSm, open: open))
-    .accessibilityLabel(Text(web: t("usage.usedPct", ["pct": Int((pct * 100).rounded())])))
-    .popover(isPresented: $open) {
-      VStack(alignment: .leading, spacing: Metrics.s1) {
-        Text(web: "\(usage.used.formatted()) / \(usage.size.formatted())").textStyle(TypeScale.text3)
-        Text(web: t("usage.usedPct", ["pct": Int((pct * 100).rounded())])).textStyle(TypeScale.text3).foregroundStyle(Palette.fg3)
-      }
-      .padding(Metrics.s3)
-      .presentationCompactAdaptation(.popover)
-    }
-  }
 }
 
 // MARK: - Send

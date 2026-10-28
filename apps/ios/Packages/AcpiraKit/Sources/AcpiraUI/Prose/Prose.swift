@@ -162,11 +162,15 @@ struct ProseStyle {
 struct ProseBlocks: View {
   let blocks: [MDBlock]
   let style: ProseStyle
+  @Environment(\.quoteProse) private var quote
 
   var body: some View {
     VStack(alignment: .leading, spacing: Metrics.gap) {
       ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
         ProseBlock(block: block, style: style, first: index == 0)
+          // Quoted whole: the blocks nested in a list or a quote take no menu of their own
+          .environment(\.quoteProse, nil)
+          .quoteMenu(block, quote)
           .tailOnly(index == blocks.count - 1)
       }
     }

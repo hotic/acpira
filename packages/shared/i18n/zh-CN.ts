@@ -1441,6 +1441,7 @@ export const zhCN = {
   'mobile.projects.path': '文件夹路径',
   'mobile.projects.pathHint': '运行 Acpira 引擎那台电脑上的路径',
   'mobile.new.placeholder': '想做点什么？',
+  'mobile.thinking.off': '思考已关闭',
   'mobile.agent.notInstalled': '未安装',
   'mobile.theme.system': '跟随系统',
   'mobile.terminal.close': '关闭终端',

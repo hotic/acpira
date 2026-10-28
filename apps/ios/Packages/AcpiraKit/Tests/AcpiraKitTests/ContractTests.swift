@@ -124,9 +124,11 @@ struct ContractTests {
     try checkStruct(state, try need(TS.interface(proto, "InitState")), leftOut: ["agentInstalls"])
     try checkStruct(state.settings, try need(TS.interface(Self.source("settings.ts"), "SettingsView")), leftOut: [
       "sessionScope", "sessionListPosition", "uiFontSize", "codeFontSize", "diffMarkers", "fontSmoothing", "shareEditorSelection",
-      "subagents", "subagentGroups", "agentCpuCap", "proxy", "openFilesWith", "desktopLayout", "panelScope", "panelFiles",
-      "panelTerminal", "panelBrowser",
+      "agentCpuCap", "proxy", "openFilesWith", "desktopLayout", "panelScope", "panelFiles", "panelTerminal", "panelBrowser",
     ])
+    let subagents = try Self.source("subagents.ts")
+    try checkStruct(try need(state.settings.subagents.first), try need(TS.interface(subagents, "SubagentPersona")))
+    try checkStruct(try need(state.settings.subagentGroups.first), try need(TS.interface(subagents, "SubagentGroup")))
     let categories = try need(state.categories)
     try checkStruct(categories, try need(TS.interface(transcript, "SessionCategories")))
     try checkStruct(try need(categories.categories.first), try need(TS.interface(transcript, "SessionCategory")))
@@ -485,7 +487,7 @@ enum TS {
 /// One sample per mirrored member with every field set
 enum ContractSamples {
   static let view = #"{"id":"s1","agent":"claude","title":"t","cwd":"/w","status":"ready","turns":[],"running":false,"rev":2,"controls":{"modes":[],"options":[]},"commands":[],"createdAt":"2026-10-27T19:33:34.971Z","updatedAt":"2026-10-27T19:33:34.971Z"}"#
-  static let settings = #"{"language":"auto","locale":"en","defaultAgent":"claude","agentOrder":["claude"],"disabledAgents":["pi"],"autoCompact":true,"compactAtTokens":300000,"hiddenOptions":{"claude":{"model":["haiku"]}},"accountSwitch":"earliestReset","theme":"dark","steerQueued":true,"notifySound":false,"notifySystem":true,"planAutoApprove":["claude"]}"#
+  static let settings = #"{"language":"auto","locale":"en","defaultAgent":"claude","agentOrder":["claude"],"disabledAgents":["pi"],"autoCompact":true,"compactAtTokens":300000,"hiddenOptions":{"claude":{"model":["haiku"]}},"accountSwitch":"earliestReset","theme":"dark","steerQueued":true,"notifySound":false,"notifySystem":true,"planAutoApprove":["claude"],"subagents":[{"id":"review","name":"Review","agent":"codex","model":"gpt-6","effort":"high","mode":"consult","when":"before a merge","brief":"look for bugs","enabled":true,"duty":"reviewer","changes":true}],"subagentGroups":[{"id":"panel","name":"Panel","members":["review"],"when":"a second opinion","enabled":true}]}"#
 
   static let shell: [ShellMsg] = [
     .hello(Hello(requestId: "h1",

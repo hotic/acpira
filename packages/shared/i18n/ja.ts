@@ -1395,6 +1395,7 @@ export const ja = {
   'mobile.projects.path': 'フォルダのパス',
   'mobile.projects.pathHint': 'Acpira エンジンが動いているコンピュータ上のパス',
   'mobile.new.placeholder': '何をしますか？',
+  'mobile.thinking.off': '思考オフ',
   'mobile.agent.notInstalled': '未インストール',
   'mobile.theme.system': 'システムに合わせる',
   'mobile.terminal.close': 'ターミナルを閉じる',

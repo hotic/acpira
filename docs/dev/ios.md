@@ -64,7 +64,7 @@
 - Send is a solid circle overlaid on the `GlassEffectContainer`, never inside it: the container draws its glass over every plain view inside and blurs it. A glass send tinted white bloomed into a blob.
 - `+` and the mark open liquid pickers (`Design/Goo.swift`):
   - A column of beans telescopes out of the chip over a dim. The chip turns into × (‹ while a panel is out), stepping back one level per tap; a tap elsewhere closes everything.
-  - The mark's beans are the model, the reasoning level and the special modes (the agent's modes and Fast).
+  - The mark's beans are the model, the built-in agent's sidekick, the reasoning level (with a Thinking switch where the agent can turn thinking off) and the special modes (the agent's modes and Fast).
   - A tapped bean stretches into its panel while the others slide into it. A pick folds back to the beans, and closing from a panel takes it home as one drop.
 - Every piece shares one geometry (`GooGeometry`), read at the same spring by two views:
   - the glass (`gooGlass()`), inside the composer's container, so the beans melt out of the group itself;
@@ -80,7 +80,11 @@
   - The spring is underdamped, so a closing panel dips below 0 and comes back. `GooGeometry` keeps a bean swallowed while another panel is ahead of its own.
   - Any outer `.animation(value:)` on the screen can hijack an inner insertion's curve, so the ring's flight pins its own animation.
 - Mode names are the desktop's short labels (`modeLabel`, matched on the id). The agent's own name shows only for an unknown mode.
-- Staged attachments (Photos, Files, the camera where there is one) wait in a strip above the field. Photos are kept as scaled inline JPEG.
+- Staged attachments (Photos, Files, the camera where there is one, a pasted image, an `@` file) wait in a strip above the field. Photos are kept as scaled inline JPEG. Quotes lead the strip as one chip.
+- The pasteboard is only asked `hasImages`: reading it raises the system's paste prompt, so the paste bean appears without reading and the image is read on the tap.
+- The `/` and `@` lists sit in the composer's own stack above the strip, for the same reason the goo's hit targets are not in the composer. `@` searches answer by seq and only the latest lands.
+- Drafts live in `AppModel.drafts`, one observable object per session, so a keystroke redraws the composer and not the chat. An empty draft is dropped when its chat leaves the screen.
+- The transcript has no text selection, so quoting is a long press on one top-level block of the reply.
 
 ## Transcript
 
@@ -129,6 +133,7 @@
   - `-fixture`, `-theme`, `-motion none`, `-locale`, `-screen list|chat|new|settings`, `-acpira.listView project`.
   - `-popup NAME` opens something on launch: `attach`, `model`, `model.N` (bean N's panel), a `focus.` prefix (field focused first), `demo` (every liquid transition in turn), `ring` and `ring.pick`, `account`, `toast`, `code`, `lightbox` (the chat's first image), `fold:N`, and `plan.build` / `plan.build.model` / `plan.revise` (the first plan card that can build presses Build, builds on the last model family, or sends a revision). Debug builds also take `menu:X,Y`, which opens the system menu under that point through UIKit's private `_presentMenuAtLocation:`.
   - `-prompt TEXT` sends a prompt on launch and gets the demo reply. `-draft TEXT` pre-fills the composer.
+  - The composer's `-popup` names: `attach.N` (bean N of `+`), `attach.paste` (the paste bean without an image on the pasteboard), `context` (the ring's card), `quotes` (the staged quotes' card).
   - `-open open|all|every` pre-opens folds. `-replay` plays the last agent turn back as a live stream (`Logic/Replay.swift`).
   - With `-engine PORT:TOKEN`: `-session ID` opens that chat, `-start FOLDER` starts a session of the default agent there with `-prompt` as its first prompt. The fake agent's prompts pick its script (`slow` streams, `tool` asks a permission; `test/fake-agent.ts`).
   - `-terminal FOLDER` opens that project's terminal; with an engine, `-type SCRIPT` types into it a beat per step: text with `\r` for Return, and `{hide}`, `{show}`, `{reopen}`, `{restart}`, `{close}`, `{wait}`.
