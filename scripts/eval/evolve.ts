@@ -361,7 +361,7 @@ async function main() {
     };
     let { si, sc, noise, d } = judge();
     // One evaluation's median wall time varies about as much as the 10% asked (one policy measured 138 to 172 s over
-    // four rounds, docs/dev/evals.md), so a win on time alone is checked with a second evaluation and both pooled
+    // four rounds), so a win on time alone is checked with a second evaluation and both pooled
     if (d.onTime) {
       console.log(`round ${round}: ${d.reason}; evaluating both once more`);
       const [inc2, cand2] = await paired(join(dir, 'confirm'), 'dev', incumbent, v.policy);

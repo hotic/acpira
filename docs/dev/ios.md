@@ -31,6 +31,7 @@
 
 - There are two scales. The transcript, and the rows it shares with the dock, read the webview's tokens a point above the reference page (`WebType` / `WebMetrics`: ui 17, code 14). The chrome around it (list, settings, composer, sheets) uses the phone's own `TypeScale` / `Metrics`.
 - Text that mirrors the webview goes through `Text(web:)` / `CJKWidth.attributed` and `textStyle(_:)` (the CSS line box). A run inside a larger `Text` passes `paragraph: false`.
+- Keylines: a `Row`'s lead slot centres its contents on an icon-wide column at the row's start, so a 14 pt icon's ink stands on the text edge above and below it; smaller marks centre on that column and larger ones overhang it evenly. Fills and selections bleed outward (negative padding) rather than pushing their content in. In the chat, prose, row icons, transcript cards, the dock and the composer share one 16 pt edge with the bar's back button; the list's marks stand on its title's edge.
 - A CSS `border` takes layout room; a SwiftUI `strokeBorder` overlay does not. Paddings that mirror a bordered box carry `+ Metrics.hairline`. An inset box-shadow needs no adjustment.
 - `DiffLine.text` carries its sign column (`transcript/diff.rs`): the gutter draws the sign and the code drops the first character.
 - Code colours come from shiki running in JavaScriptCore (`Logic/Syntax.swift`) with the webview's regex options. Tokenizing runs off the main actor and is cached by source; the snapshot render tokenizes in place. Its per-line time cap is raised: a language's first line converts the grammar's patterns, which on a busy device passed shiki's 500 ms default and cached a half-coloured line. With no whole-file source, a diff colours each visible segment (codeDiffHighlight.ts's fallback).
@@ -45,8 +46,11 @@
 - `RootView` holds the session list in a `NavigationStack` (`Route`: chat, new session, changes, file, terminal). Settings is a sheet outside the root's `.id(locale)`, so a language picked in it rebuilds the screens under it without dismissing it. A language switch calls `L10n.setLocale` before storing the choice. The path lives in the model, so the reader stays on the same screen.
 - Session list:
   - There is no navigation bar. The large title is the first row with settings at its end, and search and new session sit on the system bottom bar.
-  - Two views sit under the title (`Prefs.listView`). By time: pinned sessions, then day captions. By project: pinned sessions, then projects that fold open in place with their own pins first, the latest few, then "N more".
-  - Rows keep one fact per block: the mark, the title with the time (unless a caption dates the row), the place, and the state's mark alone in a trailing column.
+  - The view menu under the title mirrors the desktop's grouping (`Prefs.listView`): time, project, channel (agent groups in order of first appearance) and none. It stays while folders alone are listed, as the way back to them. By time: pinned sessions, then day captions. By project: pinned sessions (or each project's own, the menu's 置顶 pick), then projects that fold open in place with their own pins first, the latest few, then "N more".
+  - The by-project view follows the desktop app's sections (`SessionCategories.sections`) read-only: each section's caption over its listed folders, then the rest under "Projects"; empty sections are hidden. Sections are made and filled on the desktop only, and IDE categories do not show, as on the desktop app.
+  - The menu's options are titled sections of checked toggles: a menu drops the label of an inline picker and the title of a section around one.
+  - Rows keep one fact per block: the mark, the title with the time (unless a caption dates the row) and the state's mark on one line, and the place under it. Inside a project's group the row is that one line: a second line named the agent the mark already shows. The state mark centres on the time's digits; centred on both lines it sat below the time.
+  - A pinned run without a caption (a search, a project's own pins) ends at the desktop's faded rule (`PinRule`); no pin glyph sits on the row, where it pushed the title off the text line.
   - `StateMark` ports the desktop's marks and motion. The working ring keeps turning with motion off.
   - The project pin and the in-project pin are `AppModel` stand-ins. They go once the list follows the desktop's single pin plus a display option.
 - Chat: the system bar holds back, new session and the "…" menu (account, changes, pin, rename, copy, move to project, exports, subagent graph when the session has children, terminal, settings, delete), with no title. Settings from the menu raises the same sheet as the list.
@@ -64,6 +68,10 @@
   - The engine's settings (`EngineSettings.swift`) are written through the engine and shared with the computer: agent switches, order and default, how sessions run, and per agent Plan-mode approval and model visibility. Keys, model sources and MCP stay on the computer, so a lost phone exposes no credentials.
   - Hidden model families (`hiddenOptions`) thin the model chip's lists as `visibleOptions` does on the desktop; the model in use always stays.
 - The account sheet is a system sheet with a `Form`, with the agent's name as the bar's subtitle.
+- Pairing (`AcpiraUI/Pairing/`) talks to `AcpiraSync.PairingService` only. `PairingModel` sits in `\.pairing`, which is nil while the build has no service, and then every screen stays as before. It owns the paired computers, the followed one and its wire; `onConnection` / `connectionEnded` are where `AppModel` plugs in. The list gives way to one connect frame (`PairHero`) until the followed computer is online, and its title names that computer.
+  - The root raises the add-computer sheet unless the settings are up; then the settings raise it (two sheets cannot share a presenter). An `acpira://pair/…` link from outside asks first. A code scanned or a link pasted in the sheet pairs at once.
+  - Paste uses the system `PasteButton`, which reads without the paste prompt. Its label is system text and follows `CFBundleLocalizations` (`Acpira-Info.plist`, which holds the plist arrays the build settings cannot), not the in-app language.
+  - The camera card is VisionKit's `DataScannerViewController` set to QR only. It is unsupported on the simulator, where the card shows a quiet stand-in. Whether it reads light-on-dark codes is unverified on a device; Vision's barcode request does in stills.
 - The toast is a `.regular` Liquid Glass capsule dropped below the navigation bar. Over the bar it showed the bar's buttons through it.
 - `Design/TopFade.swift` draws a progressive blur where content scrolls under the bar's glass buttons. The system's own edge effect reaches only the status bar's band, so it is hidden. The blur is stacked materials under a page-colour gradient, because the materials' own tint reads as a grey band. The list's band stops at the bar so the title is never veiled at rest.
 
@@ -71,11 +79,14 @@
 
 - At rest the composer is one glass bar: `+` and the model's mark on the left, the field, and send at the end (as in Messages). While typing it grows into one glass card, with the field across the width over the chips and send. Nothing is inserted or removed between the two forms: the chips keep the bottom-left corner, send keeps the bottom-right, and the field stays the same view so focus holds.
 - Each chip is its own glass circle that the container melts into the bar, so a press lights only that circle. The circle is inset past `gooMerge` (`gooChipInset`), because a full-size circle on the bar's round end merged into a head with a neck.
+- A press lights the whole slot, not the inset circle. In the card the chips keep an inset from its corner, as send does; flush with the card's side, the lit circle crossed the rounded corner. The field text moves in by the same inset, so it still starts on the `+`'s ink.
 - Send is a solid circle overlaid on the `GlassEffectContainer`, never inside it: the container draws its glass over every plain view inside and blurs it. A glass send tinted white bloomed into a blob.
 - `+` and the mark open liquid pickers (`Design/Goo.swift`):
   - A column of beans telescopes out of the chip over a dim. The chip turns into × (‹ while a panel is out), stepping back one level per tap; a tap elsewhere closes everything.
   - The mark's beans are the model, the built-in agent's sidekick, the reasoning level (with a Thinking switch where the agent can turn thinking off) and the special modes (the agent's modes and Fast).
   - A tapped bean stretches into its panel while the others slide into it. A pick folds back to the beans, and closing from a panel takes it home as one drop.
+  - A bean swells out of the chip's inset circle and shrinks back into it. Full-size beans near home stood out of the bar as a dome through the spring's slow tail, then vanished at once.
+  - A panel's glass is backed by the page colour (`gooBacking`). The clear lens let the new-session hero or the transcript read through its rows, dim or not.
 - Every piece shares one geometry (`GooGeometry`), read at the same spring by two views:
   - the glass (`gooGlass()`), inside the composer's container, so the beans melt out of the group itself;
   - the screen-level `gooLayer()`, with the captions, rows and every hit target.
@@ -104,7 +115,7 @@
 - While a turn runs, the thread keeps the bottom in view until the reader drags away; a settled session never scrolls on its own.
 - A fold calls `\.holdScroll` first, which swaps the bottom-edge position for the current offset unless the thread is following. Otherwise the edge pin shoves the thread up by the fold's height. `scrollTo(y:)` counts below the top inset, and `contentOffset` counts from the frame's top.
 - Folds move on a spring without bounce and fade their body in over the first half.
-- Process rows always lead with their icon (`toolIcon` / `kindIcon`). `Disclosure` call sites pass what ui/Disclosure's callers pass (indent, rail, root).
+- Process rows always lead with their icon (`toolIcon` / `kindIcon`). `Disclosure` call sites pass what ui/Disclosure's callers pass (indent, rail, root), except diffs: they sit in the label column like the command card, so the transcript has one card edge, and both cards keep `Metrics.codeCardGap` to the rows on either side.
 - Rails (`Components/Rail.swift`):
   - Icons publish their frame and painted span by preference.
   - A `Row`'s lead slot turns its icons into rail leads.
@@ -117,6 +128,7 @@
   - Tailwind is injected at document end: its script appends to `document.head`, which does not exist at document start.
   - The theme switches by script (`WidgetDoc.theme`), never by reloading: a reload on a scheme change left the page blank.
   - A widget holds `widgetPlaceholder` until its page reports a height and scrolls inside past `widgetMax`.
+- Sideways strips in the thread (tables, code fences, wide math) do not bounce at their ends: `Scroller` turns the UIKit scroll view's `bouncesHorizontally` off, since `.scrollBounceBehavior(.basedOnSize)` still bounces overflowing content. Pulled past its end, a table showed empty room beside it.
 - The failure card and the session card read top to bottom: what happened and ✕ (or retry), the agent's words, then copy at the start and the way on at the end. The copy label drops the code and kind, and then the ways drop to a second row, before anything overflows the card.
 - Sign-in and unlocking the credential store happen on the computer, so the session card says so. It offers only what the engine does without a terminal there: an auth method with no `terminal`, `retry`, `takeOverSession`, a new session.
 - A saved plan's card shows its opening, faded at a cap; the whole plan opens in `CodeSheet`, since a scroll view nested in the thread fights the thread's own scrolling. The executor is picked on the card and only sent with Build. While its approval waits, the composer's send answers the revise option, then sends the words.
@@ -157,6 +169,7 @@
 - Launch arguments:
   - `-fixture`, `-theme`, `-motion none`, `-locale`, `-screen list|chat|new|settings|changes|file`, `-settingsPage agents|agent:ID|models:ID`, `-acpira.listView project`.
   - `-popup NAME` opens something on launch: `attach`, `model`, `model.N` (bean N's panel), a `focus.` prefix (field focused first), `demo` (every liquid transition in turn), `ring` and `ring.pick`, `account`, `toast`, `code`, `lightbox` (the chat's first image), `fold:N`, and `plan.build` / `plan.build.model` / `plan.revise` (the first plan card that can build presses Build, builds on the last model family, or sends a revision), `edit` (the newest typed prompt in the editing composer) and `stats` (the newest reply's statistics card). Debug builds also take `menu:X,Y`, which opens the system menu under that point through UIKit's private `_presentMenuAtLocation:`.
+  - `-pairing preview[.paired|.offline|.removed]` swaps in `PreviewPairingService` (code `384917`, `000000` expired). `-pairing.pace N` stretches its delays, and `-pairing.camera unavailable|denied` pins the camera card. Its popups: `pair.add`, `pair.code`, `pair.code.type|wrong|expired|demo`, `pair.link`, `pair.link.go|expired`, `pair.computer`.
   - `-prompt TEXT` sends a prompt on launch and gets the demo reply. `-draft TEXT` pre-fills the composer.
   - The composer's `-popup` names: `attach.N` (bean N of `+`), `attach.paste` (the paste bean without an image on the pasteboard), `context` (the ring's card), `quotes` (the staged quotes' card).
   - `-subagent ID|tree` pushes that child's inspector, or the graph, over the launch chat (`-fixture subagents` has a child in every state). With `-start` only `tree` is useful, since a fresh session's child ids are not known up front.
@@ -166,7 +179,7 @@
 - The simulator takes no scripted taps, so menus and hit targets are checked by hand.
 - The web reference is the LAB page `lab/ios-reference.preview.tsx` (local only): the real `App` fed the same fixtures.
   - Query: `f`, `ui` / `code` (match the transcript at 17 / 14), `light`, `drawer`, `open`, `measure`.
-  - Shoot it 402 wide at @2x, and the transcript 422 wide: the web page margin is 10 pt wider on each side.
+  - Shoot it 402 wide at @2x, and the transcript 430 wide: the web page margin is 14 pt wider on each side.
 - The scripts default `DEVELOPER_DIR` to Xcode, because the Command Line Tools have no iOS SDK.
 - CI (`.github/workflows/ios.yml`) runs `check.sh` on the newest Xcode 27 with `ACPIRA_NET=0`. Signing and TestFlight uploads stay local, so CI holds no signing secrets.
 
