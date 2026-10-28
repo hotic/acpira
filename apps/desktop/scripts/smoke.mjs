@@ -52,6 +52,21 @@ const MAC = process.platform === 'darwin';
 const LINUX = process.platform === 'linux';
 // The app protocol's origin as the page sees it (acpira_desktop::page::app_origin)
 const ORIGIN = WIN ? 'http://acpira-app.localhost' : 'acpira-app://localhost';
+// A one-page PDF saying `text`, its cross-reference offsets counted
+function onePagePdf(text) {
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${`BT /F1 18 Tf 20 40 Td (${text}) Tj ET`.length} >>\nstream\nBT /F1 18 Tf 20 40 Td (${text}) Tj ET\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let out = '%PDF-1.4\n';
+  const at = objects.map((o, i) => { const offset = out.length; out += `${i + 1} 0 obj\n${o}\nendobj\n`; return offset; });
+  const xref = out.length;
+  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${at.map(o => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}`;
+  return `${out}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+}
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const say = line => console.log(`smoke: ${line}`);
 class SmokeError extends Error {}
@@ -119,6 +134,12 @@ async function main() {
     }
     mkdirSync(join(alpha, 'docs'), { recursive: true });
     writeFileSync(join(alpha, 'docs', 'guide.md'), '# guide\n');
+    // Media for the viewer: a 2 × 1 PNG, an SVG, and where ffmpeg is at hand a noise clip larger than one /file chunk with its
+    // index at the end (ffmpeg's default), so the player has to read it by range before it can show a frame
+    writeFileSync(join(alpha, 'docs', 'dot.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAADUlEQVR4nGP4z8AARAAI/gH/xp559wAAAABJRU5ErkJggg==', 'base64'));
+    writeFileSync(join(alpha, 'docs', 'logo.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="3" height="2"><rect width="3" height="2" fill="red"/></svg>');
+    writeFileSync(join(alpha, 'docs', 'page.pdf'), onePagePdf('smoke pdf'));
+    const clip = spawnSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'nullsrc=s=320x240:r=30:d=5,geq=random(1)*255:128:128', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-y', join(alpha, 'docs', 'clip.mp4')]).status === 0;
     if (fakeAgentArg) writeFileSync(fakeAgent, readFileSync(fakeAgentArg));
     else {
       const { buildSync } = await import('esbuild');
@@ -278,6 +299,41 @@ async function main() {
     await page.press('alpha-notes.md in the tree', treeRow);
     await page.waitFor('the file in the viewer', `document.querySelector('[data-viewer]')?.innerText.includes('# alpha-notes.md')`);
     if (shotDir) await page.shot(join(shotDir, 'panel-files.png'));
+    // Media in the viewer, loaded from the app's /file route: a picture at its size, a byte range, script-bearing types
+    // refused there (an SVG draws from its source instead), a video that loads by range and seeks
+    const media = kind => `document.querySelector('[data-viewer] [data-media="${kind}"]')`;
+    // A file open in the Files tab puts the tree away; the viewer's bar brings it back
+    const pick = async path => {
+      const row = `document.querySelector('[data-tree] [data-path="${path}"]')`;
+      if (!(await page.eval(`(${row})?.getBoundingClientRect().width > 0`))) await page.press('the tree toggle', `document.querySelector('[data-viewer] button[aria-label="File Tree"]')`);
+      await page.press(`${path} in the tree`, row);
+    };
+    await pick('docs/dot.png');
+    await page.waitFor('the picture in the viewer', `(() => { const i = ${media('image')}?.querySelector('img'); return !!i?.complete && i.naturalWidth === 2 && ${media('image')}.innerText.includes('2 × 1'); })()`);
+    const ranged = await page.eval(`(async () => {
+      const src = ${media('image')}.querySelector('img').src;
+      const r = await fetch(src, { headers: { Range: 'bytes=1-4' } });
+      const svg = await fetch(src.replace('dot.png', 'logo.svg'));
+      return [r.status, r.headers.get('content-range'), (await r.arrayBuffer()).byteLength, svg.status].join(' ');
+    })()`);
+    if (ranged !== '206 bytes 1-4/70 4 404') fail(`the /file route answered ${ranged}`);
+    await pick('docs/logo.svg');
+    await page.waitFor('the SVG drawn from its source', `(() => { const i = ${media('image')}?.querySelector('img'); return !!i?.complete && i.src.startsWith('data:image/svg+xml') && i.naturalWidth === 3; })()`);
+    // WebKit draws a PDF in a frame with its own plugin: a document of the PDF's type holding one embed. Other engines'
+    // viewers are only seen loading
+    await pick('docs/page.pdf');
+    const pdf = await page.waitFor('the PDF in the viewer', `(() => { const d = ${media('pdf')}?.contentDocument; return d?.readyState === 'complete' && d.URL !== 'about:blank' && d.contentType + ' ' + d.embeds.length; })()`);
+    if (MAC && pdf !== 'application/pdf 1') fail(`the PDF frame holds ${pdf}`);
+    if (clip) {
+      await pick('docs/clip.mp4');
+      const video = `${media('video')}?.querySelector('video')`;
+      await page.waitFor('the video\'s first frame', `(() => { const v = ${video}; return !!v && v.readyState >= 2 && v.videoWidth === 320 && Math.round(v.duration) === 5; })()`)
+        .catch(async e => fail(`${e.message}: ${await page.eval(`(() => { const v = ${video}; return v ? JSON.stringify({ ready: v.readyState, network: v.networkState, error: v.error?.code, message: v.error?.message, duration: v.duration, width: v.videoWidth }) : document.querySelector('[data-viewer]')?.innerText; })()`)}`));
+      await page.eval(`(${media('video')}.querySelector('video').currentTime = 4.5, true)`);
+      await page.waitFor('the video seeking near its end', `(() => { const v = ${media('video')}.querySelector('video'); return !v.seeking && v.readyState >= 2 && v.currentTime > 4; })()`);
+      if (shotDir) await page.shot(join(shotDir, 'panel-video.png'));
+      say('the viewer shows a picture, an SVG from its source, a PDF and a video read by range');
+    } else say('the viewer shows a picture, an SVG from its source and a PDF (no ffmpeg: the video check was skipped)');
     await page.press('the new tab button', `document.querySelector('[data-panel-tabs] button[aria-label="New tab"]')`);
     const tiles = await page.waitFor('the new tab\'s tiles', `(() => { const t = [...document.querySelectorAll('[data-new-tab] .grid button')].map(b => b.textContent.trim()); return t.length && t.join(','); })()`);
     if (tiles !== 'Files,Terminal,Browser') fail(`the new tab's tiles read ${tiles}`);

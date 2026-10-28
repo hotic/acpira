@@ -2,11 +2,11 @@ import { Fragment, memo, useCallback, useEffect, useEffectEvent, useLayoutEffect
 import { flushSync } from 'react-dom';
 import type { DiffLine } from '@acpira/shared/transcript';
 import type { ProjectBase, ProjectChange, ProjectHunk } from '@acpira/shared/protocol';
-import { BookOpen, ChevronDown, ChevronUp, ExternalLink, FolderTree, Layers, MessageSquarePlus, WrapText, X } from 'lucide-react';
+import { BookOpen, ChevronDown, ChevronUp, ExternalLink, FolderTree, Image as ImageIcon, Layers, MessageSquarePlus, WrapText, X } from 'lucide-react';
 import type { TextBlock } from '@acpira/shared/transcript';
 import { t } from '../i18n';
 import { useTheme, type Theme } from '../look';
-import { IconButton } from '../ui/Button';
+import { Button, IconButton } from '../ui/Button';
 import { popupClass } from '../ui/Overlay';
 import { cn } from '../ui/cn';
 import { DiffBlock } from '../chat/CodeBlock';
@@ -19,7 +19,7 @@ import { project, sameRead, shellResizeIdleIn, type FileRead } from './api';
 import type { LineRange } from './store';
 import { useNearBlocks } from './nearBlocks';
 import { previewParts } from './previewParts';
-import { FileGlyph, dirOf, nameOf } from './files';
+import { FileGlyph, dirOf, nameOf, type MediaKind } from './files';
 
 // The Files tab's viewer: one file as it is now with the changes against a base marked (added lines tinted, removed ones
 // put back where they stood), a change navigator, soft wrap with a hanging indent, and line numbers that pick a range for
@@ -186,6 +186,7 @@ export function readError(error: string): string {
 export const VIEW_BAR = 'flex h-[calc(var(--ctl)+var(--spacing-gap))] shrink-0 items-center gap-1 border-b border-line pr-gap pl-pad';
 // Files the viewer can show rendered as well as as source
 const isMarkdown = (path: string) => /\.(md|markdown|mdx)$/i.test(path);
+const isSvg = (path: string) => /\.svg$/i.test(path);
 
 // The last preview choice, carried to the next Markdown file this page opens
 let previewMarkdown = false;
@@ -245,6 +246,62 @@ function MarkdownPreview({ text, onOpenLink }: { text: string; onOpenLink?: (pat
   );
 }
 
+// What the viewer says in place of the file (a read error, media it cannot play), with the system's own app as a way out
+function Notice({ text, onOpenDefault }: { text: string; onOpenDefault?: () => void }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-gap px-page text-center text-2 text-fg-3">
+      {text}
+      {onOpenDefault && <Button onClick={onOpenDefault}>{t('panel.openDefault')}</Button>}
+    </div>
+  );
+}
+
+// An SVG drawn from its source: as an image, so its scripts never run
+function SvgPreview({ text, name }: { text: string; name: string }) {
+  const src = useMemo(() => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(text)}`, [text]);
+  return (
+    <div className="scroll-thin absolute inset-0 flex items-center justify-center overflow-auto p-pad" data-media="image">
+      <img src={src} alt={name} draggable={false} className="max-h-full max-w-full object-contain" />
+    </div>
+  );
+}
+
+// A local image, video, audio file or PDF, loaded from the shell's /file route rather than read as text. A picture or a
+// video keeps a caption line for its size from the start, so the size arriving never moves it
+function MediaView({ kind, src, name, onOpenDefault }: { kind: MediaKind; src: string; name: string; onOpenDefault?: () => void }) {
+  const [failed, setFailed] = useState(false);
+  const [size, setSize] = useState<string>();
+  const player = useRef<HTMLMediaElement>(null);
+  // A player out of sight (its tab hidden, the panel closed) stops instead of playing on unseen
+  useEffect(() => {
+    const el = player.current;
+    if (!el) return;
+    const io = new IntersectionObserver(([e]) => { if (!e?.isIntersecting) el.pause(); });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [kind, src, failed]);
+  if (failed) return <Notice text={t('panel.error.media')} onOpenDefault={onOpenDefault} />;
+  if (kind === 'pdf') return <iframe src={src} title={name} className="absolute inset-0 size-full border-0" data-media="pdf" />;
+  const fail = () => setFailed(true);
+  return (
+    <div className="absolute inset-0 flex flex-col" data-media={kind}>
+      <div className="flex min-h-0 flex-1 items-center justify-center p-pad">
+        {kind === 'image' && <img src={src} alt={name} draggable={false} className="max-h-full max-w-full object-contain" onError={fail}
+          onLoad={e => setSize(`${e.currentTarget.naturalWidth} × ${e.currentTarget.naturalHeight}`)} />}
+        {kind === 'video' && <video ref={player as RefObject<HTMLVideoElement>} src={src} controls preload="metadata" className="max-h-full max-w-full" onError={fail}
+          onLoadedMetadata={e => {
+            const v = e.currentTarget;
+            setSize(`${v.videoWidth} × ${v.videoHeight}`);
+            // With only the metadata loaded WebKit paints no frame; a tiny seek loads just the first one as the poster
+            if (!v.currentTime) v.currentTime = 0.001;
+          }} />}
+        {kind === 'audio' && <audio ref={player as RefObject<HTMLAudioElement>} src={src} controls preload="metadata" className="w-full" onError={fail} />}
+      </div>
+      {kind !== 'audio' && <div className="flex h-ctl shrink-0 items-center justify-center text-3 text-fg-3 tabular-nums">{size}</div>}
+    </div>
+  );
+}
+
 // Rows laid out a block at a time (panel.css .code-block): a long file skips layout and paint for what is out of sight.
 // Kept small (40 rows) so each block entering the viewport lays out within the 6.25 ms 160 Hz frame budget in WebKit.
 const BLOCK = 40;
@@ -258,6 +315,11 @@ export interface FileViewerProps {
   path: string;
   // Inline text for a plan document whose file is not inside the project folder
   text?: string;
+  // A local image, video, audio file or PDF the shell can load: shown from `src` instead of read as text, loaded again when
+  // `refresh` bumps (the file may have been written anew)
+  media?: { kind: MediaKind; src: string };
+  // Opens the file with the system's default application (a local file the viewer cannot show)
+  onOpenDefault?: () => void;
   // What the changes are measured against: before this session first edited the file when it did, else the last commit.
   // Not offered as a pick since 2026-10-24 (a dropdown on the bar was judged unnecessary)
   base: ProjectBase;
@@ -354,7 +416,7 @@ export function FileViewer(p: FileViewerProps) {
   // re-read the file; against `session` the hunks are that conversation's own
   const readTarget = p.base === 'session' ? `${p.path}\n${p.base}\n${p.sessionId}` : `${p.path}\n${p.base}`;
   useEffect(() => {
-    if (p.text !== undefined) return;
+    if (p.text !== undefined || p.media) return;
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const ask = (sid: string) => {
@@ -378,7 +440,7 @@ export function FileViewer(p: FileViewerProps) {
     };
     ask(sessionRef.current);
     return () => { live = false; if (timer !== undefined) clearTimeout(timer); };
-  }, [readTarget, p.refresh, p.text !== undefined]);
+  }, [readTarget, p.refresh, p.text !== undefined, !!p.media]);
   // Keep showing the file's text while its diff base switches between `session` and `head`, so the viewer never blanks
   const current = inline ?? (read?.path === p.path ? read : undefined);
   const colored = useHighlight(p.path, current, theme);
@@ -408,14 +470,16 @@ export function FileViewer(p: FileViewerProps) {
   // Soft wrap is the default in a side panel; a continuation line hangs two columns past the line's own indentation
   const [wrap, setWrap] = useState(true);
   const markdown = isMarkdown(p.path) || p.text !== undefined;
-  const [preview, setPreview] = useState(previewMarkdown);
+  // An SVG opens drawn, whatever Markdown was last left in
+  const svg = !markdown && isSvg(p.path);
+  const [preview, setPreview] = useState(svg || previewMarkdown);
   const lastAsk = useRef(previewAsk);
   if (lastAsk.current !== previewAsk) {
     lastAsk.current = previewAsk;
     if (markdown && !preview) setPreview(true);
   }
-  const previewing = markdown && preview && current?.text !== undefined;
-  const togglePreview = () => setPreview(v => (previewMarkdown = !v));
+  const previewing = (markdown || svg) && preview && current?.text !== undefined;
+  const togglePreview = () => setPreview(v => (svg ? !v : (previewMarkdown = !v)));
   const scroller = useRef<HTMLDivElement>(null);
   const anchor = useRef<number | undefined>(undefined);
   const barRow = useRef<HTMLDivElement>(null);
@@ -649,18 +713,24 @@ export function FileViewer(p: FileViewerProps) {
           <span className="min-w-[3ch] shrink-0 text-center text-3 text-fg-2 tabular-nums @max-bar-count/viewer:hidden">{Math.min(hunk, hunks.length - 1) + 1}/{hunks.length}</span>
           <IconButton size="sm" className="shrink-0" title={t('panel.nextChange')} aria-label={t('panel.nextChange')} onClick={() => go((hunk + 1) % hunks.length)}><ChevronDown strokeWidth={1.5} /></IconButton>
         </>}
-        <IconButton size="sm" className="shrink-0 disabled:pointer-events-none disabled:opacity-40" title={t('panel.wrap')} aria-label={t('panel.wrap')} aria-pressed={wrap} disabled={previewing} onClick={() => setWrap(w => !w)}><WrapText strokeWidth={1.5} /></IconButton>
+        {!p.media && <IconButton size="sm" className="shrink-0 disabled:pointer-events-none disabled:opacity-40" title={t('panel.wrap')} aria-label={t('panel.wrap')} aria-pressed={wrap} disabled={previewing} onClick={() => setWrap(w => !w)}><WrapText strokeWidth={1.5} /></IconButton>}
         {/* The one toggle here with a pressed fill: the view changes wholesale, so its state has to read at a glance */}
         {markdown && <IconButton size="sm" className="shrink-0 aria-pressed:bg-active aria-pressed:text-fg-1" title={t('panel.markdownPreview')} aria-label={t('panel.markdownPreview')} aria-pressed={preview} onClick={togglePreview}><BookOpen strokeWidth={1.5} /></IconButton>}
+        {svg && <IconButton size="sm" className="shrink-0 aria-pressed:bg-active aria-pressed:text-fg-1" title={t('panel.imagePreview')} aria-label={t('panel.imagePreview')} aria-pressed={preview} onClick={togglePreview}><ImageIcon strokeWidth={1.5} /></IconButton>}
         {p.onToggleTree && <IconButton size="sm" className="shrink-0 aria-pressed:bg-active aria-pressed:text-fg-1" title={t('settings.plugins.files')} aria-label={t('settings.plugins.files')} aria-pressed={p.treeOpen} onClick={p.onToggleTree}><FolderTree strokeWidth={1.5} /></IconButton>}
         {/* Open-in-editor stands after the view toggles, only the close button past it */}
-        {p.onOpenEditor && <IconButton size="sm" className="shrink-0 @max-bar-open/viewer:hidden" title={t('panel.openFile')} aria-label={t('panel.openFile')} onClick={() => p.onOpenEditor!(p.selection?.start ?? p.line)}><ExternalLink strokeWidth={1.5} /></IconButton>}
+        {/* Media goes to the system's own app instead: a code editor has nothing to show for it */}
+        {p.media && p.onOpenDefault
+          ? <IconButton size="sm" className="shrink-0 @max-bar-open/viewer:hidden" title={t('panel.openDefault')} aria-label={t('panel.openDefault')} onClick={p.onOpenDefault}><ExternalLink strokeWidth={1.5} /></IconButton>
+          : p.onOpenEditor && <IconButton size="sm" className="shrink-0 @max-bar-open/viewer:hidden" title={t('panel.openFile')} aria-label={t('panel.openFile')} onClick={() => p.onOpenEditor!(p.selection?.start ?? p.line)}><ExternalLink strokeWidth={1.5} /></IconButton>}
         {p.onClose && <CloseView onClose={p.onClose} />}
       </div>
       <div className="relative min-h-0 flex-1">
-        {current?.error !== undefined
-          ? <div className="flex h-full items-center justify-center px-page text-center text-2 text-fg-3">{readError(current.error)}</div>
-          : previewing ? <MarkdownPreview text={current.text!} onOpenLink={p.onOpenLink} />
+        {p.media
+          ? <MediaView key={`${p.media.src}&v=${p.refresh}`} kind={p.media.kind} src={`${p.media.src}&v=${p.refresh}`} name={nameOf(p.path)} onOpenDefault={p.onOpenDefault} />
+          : current?.error !== undefined
+          ? <Notice text={readError(current.error)} onOpenDefault={current.error === 'binary' || current.error === 'tooLarge' ? p.onOpenDefault : undefined} />
+          : previewing ? (svg ? <SvgPreview text={current.text!} name={nameOf(p.path)} /> : <MarkdownPreview text={current.text!} onOpenLink={p.onOpenLink} />)
           : (
             <div ref={scroller} className="scroll-thin absolute inset-0 overflow-auto py-gap font-mono text-mono" data-code
               onWheel={e => { if (!wrap && e.deltaX > 0) e.currentTarget.setAttribute('data-scrolled-x', ''); }}

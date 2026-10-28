@@ -1,5 +1,5 @@
 import type { GitMark } from '@acpira/shared/protocol';
-import { File, FileCode2, FileJson, FileText, Image as ImageIcon } from 'lucide-react';
+import { File, FileCode2, FileJson, FileMusic, FileText, FileVideo, Image as ImageIcon } from 'lucide-react';
 import { cn } from '../ui/cn';
 
 // Small pieces the tree, the viewer and the review share
@@ -24,12 +24,35 @@ export function relPath(root: string, path: string): string | undefined {
   return inside ? p.slice(base.length + 1) : undefined;
 }
 
+const extOf = (name: string) => (name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toLowerCase() : '');
+
+// Files the viewer shows as media rather than as text: the types the desktop shell's /file serves
+// (rust/crates/acpira-desktop/src/page.rs media_mime). SVG stays text, previewed from its source
+export type MediaKind = 'image' | 'video' | 'audio' | 'pdf';
+export function mediaKind(name: string): MediaKind | undefined {
+  const ext = extOf(name);
+  if (/^(png|jpe?g|gif|webp|avif|bmp|ico|tiff?|heic|heif)$/.test(ext)) return 'image';
+  if (/^(mp4|m4v|mov|webm|ogv)$/.test(ext)) return 'video';
+  if (/^(mp3|wav|m4a|aac|flac|ogg|oga|opus)$/.test(ext)) return 'audio';
+  if (ext === 'pdf') return 'pdf';
+  return undefined;
+}
+
+// Where the page loads a local file by absolute path; undefined in a shell without the route (only the desktop app has it)
+export function mediaUrl(absolute: string): string | undefined {
+  const base = typeof window === 'undefined' ? undefined : window.__acpira?.fileBase;
+  return base ? `${base}?path=${encodeURIComponent(absolute)}` : undefined;
+}
+
 export function FileGlyph({ name, className }: { name: string; className?: string }) {
-  const ext = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toLowerCase() : '';
+  const ext = extOf(name);
+  const media = mediaKind(name);
   const Icon = /^(tsx?|jsx?|mjs|cjs|rs|kt|kts|swift|css|scss|html|py|go|sh|java|c|cc|cpp|h|hpp|rb|php|lua|zig|vue|svelte)$/.test(ext) ? FileCode2
     : /^(md|mdx|txt|log|rst)$/.test(ext) ? FileText
     : /^(json|jsonc|toml|ya?ml|lock|xml|ini)$/.test(ext) ? FileJson
-    : /^(png|jpe?g|gif|svg|webp|icns|ico|avif|bmp)$/.test(ext) ? ImageIcon
+    : media === 'image' || /^(svg|icns)$/.test(ext) ? ImageIcon
+    : media === 'video' ? FileVideo
+    : media === 'audio' ? FileMusic
     : File;
   return <Icon strokeWidth={1.5} className={cn('size-icon shrink-0', className)} />;
 }
