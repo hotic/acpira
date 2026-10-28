@@ -119,23 +119,40 @@ struct CardActions<Ways: View>: View {
   }
 
   var body: some View {
-    ViewThatFits(in: .horizontal) {
-      ForEach(Array((copy.isEmpty ? [nil] : copy.map(Optional.some)).enumerated()), id: \.offset) { _, label in
-        HStack(spacing: Metrics.s2) {
-          if let label { copyButton(label) }
-          Spacer(minLength: 0)
-          ways
+    if let shortest = copy.last {
+      // The copy label on the ways' row, longest first, then the ways on a row of their own. One ForEach with unique ids
+      // and a plain last candidate: two ForEach children (their offsets repeating) tripped SwiftUI's SizeFittingState
+      // precondition, a crash at launch
+      let candidates = copy.map { (label: $0, stacked: false) } + copy.dropLast().map { (label: $0, stacked: true) }
+      ViewThatFits(in: .horizontal) {
+        ForEach(Array(candidates.enumerated()), id: \.offset) { _, c in
+          if c.stacked { stacked(c.label) } else { row(c.label) }
         }
+        stacked(shortest)
       }
-      ForEach(Array(copy.enumerated()), id: \.offset) { _, label in
-        VStack(alignment: .trailing, spacing: Metrics.s2) {
-          HStack(spacing: 0) {
-            copyButton(label)
-            Spacer(minLength: 0)
-          }
-          HStack(spacing: Metrics.s2) { ways }
-        }
+    } else {
+      HStack(spacing: Metrics.s2) {
+        Spacer(minLength: 0)
+        ways
       }
+    }
+  }
+
+  private func row(_ label: String) -> some View {
+    HStack(spacing: Metrics.s2) {
+      copyButton(label)
+      Spacer(minLength: 0)
+      ways
+    }
+  }
+
+  private func stacked(_ label: String) -> some View {
+    VStack(alignment: .trailing, spacing: Metrics.s2) {
+      HStack(spacing: 0) {
+        copyButton(label)
+        Spacer(minLength: 0)
+      }
+      HStack(spacing: Metrics.s2) { ways }
     }
   }
 
