@@ -1577,6 +1577,8 @@
   "panel.error.media": "这个文件无法在这里预览",
   "panel.openDefault": "用默认应用打开",
   "panel.emptyFolder": "空文件夹",
+  "panel.chatFiles": "本对话的文件",
+  "panel.chatEmpty": "这个对话还没有产生文件",
   "trace.title": "执行轨迹",
   "trace.live": "进行中",
   "trace.done": "完成",

@@ -1544,6 +1544,8 @@
   "panel.error.media": "Diese Datei lässt sich hier nicht anzeigen",
   "panel.openDefault": "Mit Standard-App öffnen",
   "panel.emptyFolder": "Leerer Ordner",
+  "panel.chatFiles": "Dateien in diesem Chat",
+  "panel.chatEmpty": "Dieser Chat hat noch keine Dateien",
   "trace.title": "Trace",
   "trace.live": "Live",
   "trace.done": "Fertig",

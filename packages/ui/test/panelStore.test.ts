@@ -136,4 +136,26 @@ describe('file viewer tab close and tree toggle', () => {
     expect(panelState().treeOpen).toBe(false);
     expect(panelState().views['/proj-close']).toBeNull();
   });
+
+  it('closes the first Files tab beside other tabs like any tab and brings it back on a file link', () => {
+    panel.setContext('s-files-close', '/proj-files-close');
+    const browserId = panel.openBrowser('http://localhost:4100/');
+    expect(panelState().tabs.map(t => t.id)).toEqual([FILES_TAB, browserId]);
+    panel.select(FILES_TAB);
+    panel.close(FILES_TAB);
+    expect(panelState().tabs.map(t => t.id)).toEqual([browserId]);
+    expect(panelState().tab).toBe(browserId);
+    // Another project and back: the closed tab stays closed
+    panel.setContext('s-files-other', '/proj-files-other');
+    panel.setContext('s-files-close', '/proj-files-close');
+    expect(panelState().tabs.map(t => t.id)).toEqual([browserId]);
+    panel.openFile('/proj-files-close', 'src/a.ts');
+    expect(panelState().tabs.map(t => t.id)).toEqual([FILES_TAB, browserId]);
+    expect(panelState().tab).toBe(FILES_TAB);
+    // The viewer's × gives the tab back to the tree and steps aside, keeping the tab
+    panel.closeViewer(FILES_TAB);
+    expect(panelState().tabs.map(t => t.id)).toEqual([FILES_TAB, browserId]);
+    expect(panelState().tab).toBe(browserId);
+    panel.close(browserId);
+  });
 });

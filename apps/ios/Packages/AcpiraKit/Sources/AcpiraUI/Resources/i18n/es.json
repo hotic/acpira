@@ -1550,6 +1550,8 @@
   "panel.error.media": "Este archivo no se puede mostrar aquí",
   "panel.openDefault": "Abrir con la app predeterminada",
   "panel.emptyFolder": "Carpeta vacía",
+  "panel.chatFiles": "Archivos de este chat",
+  "panel.chatEmpty": "Este chat aún no tiene archivos",
   "trace.title": "Traza",
   "trace.live": "En curso",
   "trace.done": "Hecho",

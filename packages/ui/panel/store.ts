@@ -14,7 +14,8 @@ import { setWebviewState, webviewState } from '../vscodeApi';
 export interface LineRange { start: number; end: number }
 
 export type PanelTab =
-  // The first one (`FILES_TAB`) always there; more from "+", each with a view of its own, closable like a browser tab
+  // The first one (`FILES_TAB`), where file links land: closable like any tab, back at the front when a file is opened
+  // again; more from "+", each with a view of its own
   | { id: string; kind: 'files' }
   // What "+" opens: the tab becomes a Files tab, a terminal or a browser
   | { id: string; kind: 'new' }
@@ -46,6 +47,8 @@ export interface PanelModules {
   browser: boolean;
 }
 
+interface SavedSlot { tabs?: PanelTab[]; tab?: string; filesClosed?: boolean }
+
 interface Saved {
   open?: boolean;
   files?: boolean;
@@ -54,7 +57,9 @@ interface Saved {
   scope?: PanelScope;
   tabs?: PanelTab[];
   tab?: string;
-  slots?: Record<string, { tabs?: PanelTab[]; tab?: string } | undefined>;
+  // The first Files tab was closed (it is not saved with the tabs, so restoring would bring it back)
+  filesClosed?: boolean;
+  slots?: Record<string, SavedSlot | undefined>;
   width?: number;
   treeW?: number;
   explorerHidden?: boolean;
@@ -99,7 +104,7 @@ const ALL_MODULES: PanelModules = { files: true, terminal: true, browser: true }
 export const anyModule = (m: PanelModules) => m.files || m.terminal || m.browser || pluginPieces('panel.tab').length > 0;
 const isPluginTab = (t: PanelTab): t is Extract<PanelTab, { kind: 'plugin' }> => t.kind === 'plugin';
 
-function validTabs(raw: unknown, m: PanelModules = ALL_MODULES): PanelTab[] {
+function validTabs(raw: unknown, m: PanelModules = ALL_MODULES, filesClosed = false): PanelTab[] {
   const list = Array.isArray(raw)
     ? raw.filter((t): t is PanelTab => !!t && typeof t.id === 'string' && (
         (m.browser && t.kind === 'browser')
@@ -109,28 +114,28 @@ function validTabs(raw: unknown, m: PanelModules = ALL_MODULES): PanelTab[] {
         || (t.kind === 'plugin' && typeof t.plugin === 'string' && typeof t.piece === 'string')
       ))
     : [];
-  if (m.files) return [FILES, ...list];
-  return list.length ? list : [{ id: nextId('new'), kind: 'new' }];
+  if (m.files && !filesClosed) return [FILES, ...list];
+  return list.length ? list : [m.files ? FILES : { id: nextId('new'), kind: 'new' }];
 }
 
-function validSlot(raw: { tabs?: PanelTab[]; tab?: string } | undefined, m: PanelModules = ALL_MODULES): PanelSlot {
-  const tabs = validTabs(raw?.tabs, m);
+function validSlot(raw: SavedSlot | undefined, m: PanelModules = ALL_MODULES): PanelSlot {
+  const tabs = validTabs(raw?.tabs, m, raw?.filesClosed === true);
   return { tabs, tab: tabs.some(t => t.id === raw?.tab) ? raw!.tab! : tabs[0]!.id };
 }
 
-function normalizeSlot(slot: PanelSlot, m: PanelModules): PanelSlot {
+// The slot's tabs for the modules switched on. The first Files tab stays closed once closed, unless `ensureFiles` (the
+// Files module just switched on) or nothing else is left
+function normalizeSlot(slot: PanelSlot, m: PanelModules, ensureFiles = false): PanelSlot {
   const kept = slot.tabs.filter(t => {
-    if (t.kind === 'files') return m.files && t.id !== FILES_TAB;
+    if (t.kind === 'files') return m.files;
     if (t.kind === 'terminal') return m.terminal;
     if (t.kind === 'browser') return m.browser;
     if (t.kind === 'plugin') return true;
-    return !(m.files && slot.tabs.length === 1);
+    // A lone new-tab page gives way to the Files tab coming back
+    return !(ensureFiles && m.files && slot.tabs.length === 1);
   });
-  if (m.files) {
-    const tabs = [FILES, ...kept];
-    return { tabs, tab: tabs.some(t => t.id === slot.tab) ? slot.tab : FILES_TAB };
-  }
-  const tabs: PanelTab[] = kept.length ? kept : [{ id: nextId('new'), kind: 'new' }];
+  const addFiles = m.files && !kept.some(t => t.id === FILES_TAB) && (ensureFiles || !kept.length);
+  const tabs: PanelTab[] = addFiles ? [FILES, ...kept] : kept.length ? kept : [{ id: nextId('new'), kind: 'new' }];
   return { tabs, tab: tabs.some(t => t.id === slot.tab) ? slot.tab : tabs[0]!.id };
 }
 
@@ -176,7 +181,7 @@ function restore(): PanelState {
     browser: saved?.browser !== false,
   };
   const scope: PanelScope = saved?.scope && PANEL_SCOPES.includes(saved.scope) ? saved.scope : 'project';
-  const main = validSlot({ tabs: saved?.tabs, tab: saved?.tab }, m);
+  const main = validSlot({ tabs: saved?.tabs, tab: saved?.tab, filesClosed: saved?.filesClosed }, m);
   const slots: Record<string, PanelSlot | undefined> = {};
   if (saved?.slots && typeof saved.slots === 'object') {
     for (const [k, v] of Object.entries(saved.slots)) {
@@ -208,20 +213,23 @@ const current = () => (state ??= restore());
 
 function persist(s: PanelState) {
   const { open, files, terminal, browser, scope, tabs, tab, slots, width, treeW, explorerHidden, explorerW, chatW } = s;
-  const savedSlots: Record<string, { tabs?: PanelTab[]; tab?: string }> = {};
+  const savedSlots: Record<string, SavedSlot> = {};
   for (const [k, v] of Object.entries(slots)) {
     if (!v) continue;
     const rest = v.tabs.filter(t => t.id !== FILES_TAB);
-    if (rest.length || v.tab !== FILES_TAB) savedSlots[k] = { tabs: rest, tab: v.tab };
+    const closed = files && rest.length === v.tabs.length;
+    if (rest.length || v.tab !== FILES_TAB || closed) savedSlots[k] = { tabs: rest, tab: v.tab, ...(closed ? { filesClosed: true } : {}) };
   }
+  const mainTabs = tabs.filter(t => t.id !== FILES_TAB);
   setWebviewState(KEY, {
     open,
     ...(files ? {} : { files: false }),
     ...(terminal ? {} : { terminal: false }),
     ...(browser ? {} : { browser: false }),
     scope,
-    tabs: tabs.filter(t => t.id !== FILES_TAB),
+    tabs: mainTabs,
     tab,
+    ...(files && mainTabs.length === tabs.length ? { filesClosed: true } : {}),
     ...(Object.keys(savedSlots).length ? { slots: savedSlots } : {}),
     width,
     treeW,
@@ -270,6 +278,10 @@ function tabEntry(view: Exclude<PanelView, 'review'>): Exclude<PanelView, 'revie
   };
 }
 
+// The first Files tab back at the front when `tab` asks for it after it was closed (a file link, the files layout's stage)
+const withFiles = (s: PanelState, tab: string): Partial<PanelState> =>
+  (tab === FILES_TAB && s.files && !s.tabs.some(t => t.id === FILES_TAB) ? { tabs: [FILES, ...s.tabs] } : {});
+
 const openedKeyOf = (key: string) => (key.includes('\n') ? key.slice(key.indexOf('\n') + 1) : key);
 
 // `view` among the project's open tabs: a file opened again keeps its tab, a new one goes last
@@ -299,7 +311,7 @@ export const panel = {
     if (!anyModule(s)) { if (s.open) update({ open: false }); return; }
     update({ open });
   },
-  select(tab: string) { update({ tab, open: true }); },
+  select(tab: string) { update({ tab, open: true, ...withFiles(current(), tab) }); },
   // Binds the panel to the session and project folder currently on screen. Under `project` scope, switching sessions in the
   // same project keeps the slot; switching to another project swaps to that project's tabs and active tab
   setContext(sessionId: string | undefined, root: string | undefined) {
@@ -329,10 +341,11 @@ export const panel = {
       browser: next.browser ?? s.browser,
     };
     if (s.files === m.files && s.terminal === m.terminal && s.browser === m.browser) return;
-    const main = normalizeSlot({ tabs: s.tabs, tab: s.tab }, m);
+    const ensureFiles = !s.files && m.files;
+    const main = normalizeSlot({ tabs: s.tabs, tab: s.tab }, m, ensureFiles);
     const slots: Record<string, PanelSlot | undefined> = {};
     for (const [k, v] of Object.entries(s.slots)) {
-      if (v) slots[k] = normalizeSlot(v, m);
+      if (v) slots[k] = normalizeSlot(v, m, ensureFiles);
     }
     const key = slotKeyOf(s.scope, s.sessionId, s.root);
     slots[key] = main;
@@ -400,7 +413,7 @@ export const panel = {
     const key = viewKey(tab, root);
     const r = scopedRoot(root);
     const view: PanelView = { path, ...(line !== undefined ? { line } : {}) };
-    update({ open: true, tab, ...(s.open ? {} : { treeOpen: false }), views: { ...s.views, [key]: view }, opened: withOpened(s, r, view) });
+    update({ open: true, tab, ...withFiles(s, tab), ...(s.open ? {} : { treeOpen: false }), views: { ...s.views, [key]: view }, opened: withOpened(s, r, view) });
   },
   // A plan whose file is outside `root` (or only in memory): shown in the viewer with its markdown text
   openPlan(root: string, view: { path: string; text?: string; planId?: string; line?: number }) {
@@ -408,7 +421,7 @@ export const panel = {
     const tab = s.tabs.find(t => t.id === s.tab)?.kind === 'files' ? s.tab : FILES_TAB;
     const key = viewKey(tab, root);
     const r = scopedRoot(root);
-    update({ open: true, tab, ...(s.open ? {} : { treeOpen: false }), views: { ...s.views, [key]: view }, opened: withOpened(s, r, view) });
+    update({ open: true, tab, ...withFiles(s, tab), ...(s.open ? {} : { treeOpen: false }), views: { ...s.views, [key]: view }, opened: withOpened(s, r, view) });
   },
   // Keeps an open plan view's text in step when the agent revises the plan
   syncPlans(root: string, plans: { id: string; markdown: string }[]) {
@@ -446,7 +459,7 @@ export const panel = {
     const next = now && sameView(now, view)
       ? (now !== 'review' && view !== 'review' && view.text !== undefined ? { ...now, text: view.text, ...(view.planId !== undefined ? { planId: view.planId } : {}) } : now)
       : view;
-    update({ tab, views: { ...s.views, [key]: next }, opened: withOpened(s, key, view) });
+    update({ tab, ...withFiles(s, tab), views: { ...s.views, [key]: next }, opened: withOpened(s, key, view) });
   },
   // The new-tab page `replace` becomes a Files tab of its own, the project's tree until a file is picked there
   openFiles(replace: string): string {
@@ -581,29 +594,37 @@ export const panel = {
     }
     if (changed) update({ tabs, slots });
   },
+  // A tab closed like a browser tab, the first Files tab too; the last one closes the panel (and leaves the Files tab, or a
+  // new-tab page, for the next time it opens)
   close(tab: string) {
     const s = current();
     const at = s.tabs.findIndex(t => t.id === tab);
     if (at < 0) return;
-    if (tab === FILES_TAB) {
-      const r = s.root ? scopedRoot(s.root) : undefined;
-      const views = r ? { ...s.views, [r]: null } : s.views;
-      if (s.tabs.length <= 1) {
-        update({ open: false, treeOpen: false, views });
-        return;
-      }
-      const nextTab = s.tab === FILES_TAB ? (s.tabs[1]?.id ?? FILES_TAB) : s.tab;
-      update({ tab: nextTab, views });
-      return;
-    }
     const rawRest = s.tabs.filter(t => t.id !== tab);
     const next = normalizeSlot({
       tabs: rawRest,
       tab: s.tab === tab ? (rawRest[Math.max(0, at - 1)]?.id ?? '') : s.tab,
     }, s);
-    // A Files tab's views go with it
-    const views = Object.fromEntries(Object.entries(s.views).filter(([key]) => !key.startsWith(`${tab}\n`)));
-    update({ ...(rawRest.length ? {} : { open: false }), tabs: next.tabs, views, tab: next.tab });
+    // A Files tab's views go with it; the first one's view is cleared, so the tree takes it when it comes back
+    const r = tab === FILES_TAB && s.root ? scopedRoot(s.root) : undefined;
+    const views = r
+      ? { ...s.views, [r]: null }
+      : Object.fromEntries(Object.entries(s.views).filter(([key]) => !key.startsWith(`${tab}\n`)));
+    update({ ...(rawRest.length ? {} : { open: false, treeOpen: false }), tabs: next.tabs, views, tab: next.tab });
+  },
+  // The × on a Files tab's viewer: the first Files tab gives its place back to the tree and steps aside (the panel closes
+  // when it is the only tab); another Files tab closes
+  closeViewer(tab: string) {
+    if (tab !== FILES_TAB) { panel.close(tab); return; }
+    const s = current();
+    const r = s.root ? scopedRoot(s.root) : undefined;
+    const views = r ? { ...s.views, [r]: null } : s.views;
+    const other = s.tabs.find(t => t.id !== FILES_TAB);
+    if (!other) {
+      update({ open: false, treeOpen: false, views });
+      return;
+    }
+    update({ tab: s.tab === FILES_TAB ? other.id : s.tab, views });
   },
   setWidth(width: number | undefined) { update({ width }); },
   setTreeW(treeW: number | undefined) { update({ treeW }); },

@@ -1603,6 +1603,8 @@ export const zhTW = {
   'panel.error.media': '這個檔案無法在這裡預覽',
   'panel.openDefault': '用預設應用程式開啟',
   'panel.emptyFolder': '空資料夾',
+  'panel.chatFiles': '本對話的檔案',
+  'panel.chatEmpty': '這個對話還沒有產生檔案',
   'trace.title': '執行軌跡',
   'trace.live': '進行中',
   'trace.done': '完成',
