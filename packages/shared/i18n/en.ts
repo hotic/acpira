@@ -420,6 +420,7 @@ export const en = {
   'composer.sidekick': 'Sidekick',
   'composer.sidekickNone': 'None',
   'composer.pairSide': '{role}: {model}',
+  'composer.sidekickHint': 'Takes parallel work or reviews from the lead',
   'composer.fusionSummary': '{leads} leads, {sidekicks} sidekicks',
   'composer.addAccount': 'Add account',
   'composer.accountsOf': '{agent} accounts',

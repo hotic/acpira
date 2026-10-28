@@ -25,6 +25,15 @@ public enum Route: Hashable {
   case subagent(session: String, id: String)
   /// A session's subagents as a tree (Subagents/SubagentTree.swift)
   case subagents(session: String)
+
+  /// The session the screen shows or reads from; nil for the new-session screen and a terminal
+  var session: String? {
+    switch self {
+    case .chat(let id), .changes(let id): id
+    case .file(let session, _, _), .subagent(let session, _), .subagents(let session): session
+    case .new, .terminal: nil
+    }
+  }
 }
 
 /// agentOrder.ts launchable: the agents a new session can start with, the disabled ones left out
@@ -77,6 +86,11 @@ final class AppModel {
   var shared: ExportFile?
   /// The observed subagents' transcripts and the one the phone follows (AppModel+Subagents.swift)
   var subagentFeed = SubagentFeed()
+  /// This wire's init came in, so the lists are the engine's own
+  var synced = false
+  /// The screens and lists came over from the wire before to the same computer, until this one's init replaces them
+  /// (AppModel+Engine.swift `resume`)
+  var resumed = false
   /// Each chat's unsent draft (AppModel+Composer.swift): the map is not observed, each draft is
   @ObservationIgnored var drafts: [String: ComposerDraft] = [:]
   /// The composer's `@` file search, answered by the engine's `files`
@@ -88,6 +102,8 @@ final class AppModel {
   @ObservationIgnored let link: EngineLink?
   /// Told when the live engine's wire ends (a paired computer's connection reports it to the pairing model)
   @ObservationIgnored var onClosed: (() -> Void)?
+  /// The paired computer whose engine this is (its id); nil for the demo and the development engine
+  @ObservationIgnored var computer: String?
   /// The engine's terminals the phone opened, one per project (Terminal/TerminalSession.swift)
   @ObservationIgnored let terminals = TerminalHub()
   @ObservationIgnored private var runs: [String: Task<Void, Never>] = [:]
@@ -279,10 +295,18 @@ final class AppModel {
 
   // MARK: - Sessions
 
-  /// The controls a new session of `agent` starts with: those of its latest session, else the showcase's
+  /// The controls a new session of `agent` starts with: those of its latest session while the app keeps its view, else
+  /// the engine's answer to `controls` (its probe or its newest session, `loadControls`), else in the demo a fixture of
+  /// that agent's or the showcase's. Only sessions opened on the phone are kept, so without the engine's answer a new
+  /// session showed no model chip until its first prompt had made it. Protocol modes come with a session only, so the
+  /// engine's answer has none
   func controls(for agent: AgentId) -> SessionControls {
     let latest = summaries.filter { $0.agent == agent }.max { $0.updatedAt < $1.updatedAt }
-    let fallback = link == nil ? Fixtures.session("showcase")?.controls : nil
+    if let kept = latest.flatMap({ views[$0.id]?.controls }), !kept.options.isEmpty { return kept }
+    if let options = agentControls[agent], !options.isEmpty { return SessionControls(options: options) }
+    let own = views.values.filter { $0.agent == agent && $0.id.hasPrefix("fx-") && !$0.controls.options.isEmpty }
+      .min { $0.id < $1.id }?.controls
+    let fallback = link == nil ? own ?? Fixtures.session("showcase")?.controls : nil
     return latest.flatMap { views[$0.id]?.controls } ?? fallback ?? SessionControls()
   }
 
@@ -811,7 +835,8 @@ struct ExportFile: Identifiable, Equatable {
 // MARK: - Session actions in the environment
 
 /// What the controls inside a chat call, bound to that chat's session. Defaults do nothing, so the full-length render
-/// and previews draw the same views without a model
+/// and previews draw the same views without a model. A screen makes its set once (`Memo`): a fresh set of closures
+/// never compares equal, and handing one out on every rebuild redrew every visible view reading it
 struct SessionActions {
   var send: (String, [Attachment]) -> Void = { _, _ in }
   var stop: () -> Void = {}

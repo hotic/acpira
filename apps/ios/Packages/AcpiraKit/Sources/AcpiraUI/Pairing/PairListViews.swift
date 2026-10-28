@@ -67,11 +67,13 @@ struct PairHeroList: View {
   @Environment(AppModel.self) private var model
   @Environment(\.motionEnabled) private var motion
 
-  /// Whether the list gives way to this page
-  static func covers(_ pairing: PairingModel) -> Bool {
-    guard pairing.loaded, pairing.selected != nil else { return true }
-    if case .online = pairing.link { return false }
-    return true
+  /// Whether the list gives way to this page: until the followed computer's lists are in (the wire is up well before
+  /// its init, and the list in between read as empty), and whenever its wire failed. While the computer the list shows
+  /// connects again, its last lists stay
+  static func covers(_ pairing: PairingModel, _ model: AppModel) -> Bool {
+    guard pairing.loaded, let current = pairing.selected else { return true }
+    if case .failed = pairing.link { return true }
+    return !(model.computer == current.id && (model.synced || model.resumed))
   }
 
   var body: some View {
@@ -116,7 +118,8 @@ struct PairHeroList: View {
     case .failed(.revoked): (symbol, false, t("mobile.pair.revoked", named), t("mobile.pair.again"), true, { pairing.addOpen = true })
     case .failed(.incompatible): (symbol, false, t("mobile.pair.incompatible", named), t("mobile.pair.retry"), true, retry)
     case .failed(.other): (symbol, false, t("mobile.pair.connectFailed", named), t("mobile.pair.retry"), true, retry)
-    case .idle, .connecting, .online: (symbol, true, t("mobile.pair.connecting"), nil, false, {})
+    // Online too until the engine's lists are in; a background close dials again on the way back
+    case .idle, .connecting, .online, .failed(.suspended): (symbol, true, t("mobile.pair.connecting"), nil, false, {})
     }
   }
 }
@@ -171,11 +174,12 @@ struct PairingLayer: ViewModifier {
 struct PairListGate<List: View>: View {
   let pairing: PairingModel?
   @ViewBuilder var list: () -> List
+  @Environment(AppModel.self) private var model
   @Environment(\.motionEnabled) private var motion
 
   var body: some View {
     if let pairing {
-      let covered = PairHeroList.covers(pairing)
+      let covered = PairHeroList.covers(pairing, model)
       ZStack {
         if covered {
           PairHeroList(pairing: pairing).transition(.opacity)

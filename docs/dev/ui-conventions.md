@@ -53,7 +53,7 @@ Rules for primitives, tokens, menus, overlays, the composer, transcript rows and
 
 ## Session list
 
-- Tree in `chat/sessionTree.ts`; nothing indents except in the desktop app, where flush rows lost the hierarchy. A project body lists loose sessions before its categories.
+- Tree in `chat/sessionTree.ts`; nothing indents except in the desktop app and the iOS app (`Metrics.nest`, the same step), where flush rows lost the hierarchy. A project body lists loose sessions before its categories.
 - Filing uses native HTML5 drag and drop (`application/x-acpira-session`, the browser's own drag image on purpose); a collapsed category stays collapsed under a drag, and pinned rows and ChatGPT mirrors do not drag. "Move to category" in the row menu is the no-drag route. `lab/session-categories.drag.mjs` replays the drags.
 - Drop marks (`data-hot` frame, `data-insert` line, one colour for both) are set on the DOM by the dragover handler, never through state: re-rendering a list of a thousand sessions per zone change left the frame trailing the pointer in WebKit. The margin between zones keeps the last zone. In the Tauri app wry turns WebKit's "no drop" answer into the copy cursor, so a green plus there means no zone, not a pending drop.
 - Desktop: project headers drag between sections and within one (`[data-project]` / `[data-section]`, an insert line, a frame on the destination section's body when it changes sections, the menu's "move to section" as the no-drag route). Chats (`sessionTree` `isChat`) leave the project groups for their own section under Projects and are never offered as a move destination.

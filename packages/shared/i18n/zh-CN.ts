@@ -426,6 +426,7 @@ export const zhCN = {
   'composer.sidekick': '副手',
   'composer.sidekickNone': '无',
   'composer.pairSide': '{role}：{model}',
+  'composer.sidekickHint': '替主模型做并行任务和复查',
   'composer.fusionSummary': '{leads} 个主模型，{sidekicks} 个副手',
   'composer.addAccount': '添加账号',
   'composer.accountsOf': '{agent} 账号',

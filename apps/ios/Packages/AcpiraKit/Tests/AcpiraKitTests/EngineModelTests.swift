@@ -107,6 +107,17 @@ struct EngineModelTests {
     #expect(wire.sent.last?.contains(#""kind":"image""#) == true)
   }
 
+  @Test func aNewSessionShowsTheEnginesControlsBeforeItsFirstPrompt() async throws {
+    // The listed session was never opened on the phone, so its controls are unknown here: the engine's answer fills in
+    let (model, wire) = try await connected()
+    #expect(model.controls(for: "fake").options.isEmpty)
+    model.loadControls("fake")
+    try await until { wire.types.last == "webviewMessage:controls" }
+    push(wire, #"{"type":"controls","agent":"fake","controls":[{"id":"model","name":"Model","category":"model","value":"m1","options":[{"id":"m1","name":"M1"}]}]}"#)
+    try await until { model.agentControls["fake"] != nil }
+    #expect(model.controls(for: "fake").options.map(\.value) == ["m1"])
+  }
+
   @Test func aNewSessionsFirstPromptWaitsForTheSessionTheEngineMakes() async throws {
     let (model, wire) = try await connected()
     model.path = [.new(agent: nil, cwd: nil)]
@@ -141,5 +152,26 @@ struct EngineModelTests {
     push(wire, #"{"type":"editTurnResult","requestId":"\#(request)","error":"The conversation moved on"}"#)
     try await until { draft.edit != nil }
     #expect(draft.text == "hello" && model.toast?.text == "The conversation moved on")
+  }
+
+  /// A new wire to the same computer keeps the screens and the last lists until its init, minus a terminal (its shell
+  /// was on the old wire), then opens the session on screen again
+  @Test func aReconnectKeepsTheScreens() async throws {
+    let (before, _) = try await connected()
+    before.path = [.chat("s1"), .terminal(cwd: "/w")]
+    before.draft(for: "s1").text = "half typed"
+    let wire = FakeTransport()
+    let model = AppModel(link: EngineLink(transport: wire, language: "en"), options: LaunchOptions.current(["app"]))
+    model.resume(from: before)
+    #expect(model.path == [.chat("s1")])
+    #expect(model.summaries.map(\.id) == ["s1"] && model.views["s1"] != nil)
+    #expect(model.draft(for: "s1").text == "half typed")
+    // The carried view is not this wire's until the engine shows it again
+    #expect(model.resumed && !model.synced && !model.shown("s1"))
+    wire.feed.yield(EngineClientTests.helloOk)
+    push(wire, #"{"type":"init","state":{"host":"sidebar","agents":[],"accounts":[],"hidden":{},"sessions":[],"settings":{},"locale":"en","home":"/h","cwd":"/w"}}"#)
+    try await until { wire.types.last == "webviewMessage:selectSession" }
+    #expect(model.synced && model.summaries.isEmpty)
+    #expect(wire.sent.last?.contains(#""id":"s1""#) == true)
   }
 }

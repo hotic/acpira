@@ -13,8 +13,8 @@ struct NewSessionScreen: View {
   @State private var text = ""
   @State private var staged: [Attachment] = []
   @State private var homeInset: CGFloat = 0
-  /// The software keyboard is up: the system already lifts the composer over it, so it keeps only a small gap
-  @State private var keyboard = false
+  /// A model or mode was picked here, so the engine's later answer for the agent's controls no longer replaces them
+  @State private var picked = false
   /// The agent ring is out: the page dims under it and a tap anywhere folds it
   @State private var ring = false
 
@@ -45,19 +45,25 @@ struct NewSessionScreen: View {
         .animation(ring ? .easeOut(duration: Motion.durOpen) : Motion.gooDimOut, value: ring)
       }
       .overlay(alignment: .bottom) {
-        Composer(session: draft, text: $text, staged: $staged, onSend: start,
-                 onSetMode: { draft.controls.modeId = $0 }, onSetConfig: setConfig,
-                 placeholder: t("mobile.new.placeholder"))
-          .padding(.horizontal, Metrics.pad)
-          // The composer rests where the list's system bottom bar does
-          .padding(.bottom, keyboard ? Metrics.s2 : max(Metrics.s2, homeInset - Metrics.barSink))
+        // The composer rests where the list's system bottom bar does
+        DockSeat(homeInset: homeInset) {
+          Composer(session: draft, text: $text, staged: $staged, onSend: start,
+                   onSetMode: { picked = true; draft.controls.modeId = $0 }, onSetConfig: setConfig,
+                   placeholder: t("mobile.new.placeholder"))
+            .padding(.horizontal, Metrics.pad)
+        }
       }
     }
     .ignoresSafeArea(.container, edges: .bottom)
-    // The bottom inset counts the keyboard while it is up, and padding by it lifted the composer a second keyboard's
-    // height, over the hero to the header (ChatScreen's dock had the same trap); read it only with the keyboard down
-    .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.bottom } action: { if !keyboard { homeInset = $0 } }
-    .modifier(KeyboardWatch(up: $keyboard))
+    .modifier(HomeInset(inset: $homeInset))
+    // The agent's models as the engine knows them (its probe or its newest session), so the model chip is there
+    // before the first prompt; they fill the draft once they arrive unless something was picked meanwhile
+    .task(id: draft.agent) { model.loadControls(draft.agent) }
+    .onChange(of: model.agentControls[draft.agent]) { _, _ in
+      guard !picked else { return }
+      let known = model.controls(for: draft.agent)
+      if known != draft.controls { draft.controls = known }
+    }
     // The composer's liquid pickers, drawn over the whole screen so every piece takes taps
     .gooLayer()
     .background(Palette.bg0)
@@ -71,10 +77,12 @@ struct NewSessionScreen: View {
   private func pickAgent(_ id: AgentId) {
     draft.agent = id
     draft.controls = model.controls(for: id)
+    picked = false
   }
 
   private func setConfig(_ control: String, _ value: String) {
     guard let at = draft.controls.options.firstIndex(where: { $0.id == control }) else { return }
+    picked = true
     draft.controls.options[at].value = value
   }
 

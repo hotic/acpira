@@ -12,12 +12,10 @@ import Foundation
 ///
 /// Lifecycle (the paired-remote plan): going to the background ends every connection and closes the node, since iOS
 /// suspends its sockets anyway and an endpoint can come back silently dead; coming back rebuilds the node from the same
-/// key. Connections are not resumed or replayed: their `frames()` end with `ConnectionError.other(Self.suspended)`, and
+/// key. Connections are not resumed or replayed: their `frames()` end with `ConnectionError.suspended`, and
 /// whoever owns the reconnect connects again, which probes first (`probeMs`). A network change (NWPathMonitor) tells
 /// iroh at once and probes every live connection the same way, ending the ones that stay silent as `.offline`
 public actor RemotePairingService: PairingService {
-  /// What a connection ended by the app going to the background reports
-  public static let suspended = "suspended"
   /// What a connection reports while the device has no network at all
   public static let noNetwork = "no network"
 
@@ -210,7 +208,7 @@ public actor RemotePairingService: PairingService {
   // MARK: Internals
 
   private func dropNode(rebuildLater: Bool) async {
-    for c in live.values { c.fail(.other(Self.suspended)) }
+    for c in live.values { c.fail(.suspended) }
     live = [:]
     starting?.cancel()
     starting = nil
@@ -230,7 +228,7 @@ public actor RemotePairingService: PairingService {
   }
 
   private func liveNode() async throws -> Node {
-    if background { throw ConnectionError.other(Self.suspended) }
+    if background { throw ConnectionError.suspended }
     watchSystem()
     if let node { return node }
     if let starting { return try await starting.value }
@@ -249,7 +247,7 @@ public actor RemotePairingService: PairingService {
     // Sent to the background while it started
     if background {
       await n.close()
-      throw ConnectionError.other(Self.suspended)
+      throw ConnectionError.suspended
     }
     if let node { return node }
     node = n

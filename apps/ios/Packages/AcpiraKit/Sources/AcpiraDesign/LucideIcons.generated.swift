@@ -59,7 +59,9 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case fileCode2
   case fileDown
   case fileJson
+  case fileMusic
   case fileText
+  case fileVideo
   case fileX
   case files
   case folder
@@ -225,7 +227,9 @@ extension LucideIcon {
     case .fileCode2: [.path("M4 12.15V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-3.35"), .path("M14 2v5a1 1 0 0 0 1 1h5"), .path("m5 16-3 3 3 3"), .path("m9 22 3-3-3-3")]
     case .fileDown: [.path("M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"), .path("M14 2v5a1 1 0 0 0 1 1h5"), .path("M12 18v-6"), .path("m9 15 3 3 3-3")]
     case .fileJson: [.path("M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"), .path("M14 2v5a1 1 0 0 0 1 1h5"), .path("M10 12a1 1 0 0 0-1 1v1a1 1 0 0 1-1 1 1 1 0 0 1 1 1v1a1 1 0 0 0 1 1"), .path("M14 18a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1 1 1 0 0 1-1-1v-1a1 1 0 0 0-1-1")]
+    case .fileMusic: [.path("M11.65 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v10.35"), .path("M14 2v5a1 1 0 0 0 1 1h5"), .path("M8 20v-7l3 1.474"), .circle(cx: 6, cy: 20, r: 2)]
     case .fileText: [.path("M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"), .path("M14 2v5a1 1 0 0 0 1 1h5"), .path("M10 9H8"), .path("M16 13H8"), .path("M16 17H8")]
+    case .fileVideo: [.path("M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"), .path("M14 2v5a1 1 0 0 0 1 1h5"), .path("M15.033 13.44a.647.647 0 0 1 0 1.12l-4.065 2.352a.645.645 0 0 1-.968-.56v-4.704a.645.645 0 0 1 .967-.56z")]
     case .fileX: [.path("M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"), .path("M14 2v5a1 1 0 0 0 1 1h5"), .path("m14.5 12.5-5 5"), .path("m9.5 12.5 5 5")]
     case .files: [.path("M15 2h-4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8"), .path("M16.706 2.706A2.4 2.4 0 0 0 15 2v5a1 1 0 0 0 1 1h5a2.4 2.4 0 0 0-.706-1.706z"), .path("M5 7a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h8a2 2 0 0 0 1.732-1")]
     case .folder: [.path("M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z")]

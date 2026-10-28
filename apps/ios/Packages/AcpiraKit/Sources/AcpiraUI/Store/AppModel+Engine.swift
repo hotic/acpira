@@ -74,6 +74,8 @@ extension AppModel {
       summaries = state.sessions
       if let categories = state.categories { follow(categories) }
       present(link.feed.receive(message))
+      synced = true
+      if resumed { reopen() }
     case .agents(let list):
       agents = list
     case .sessions(let list):
@@ -135,6 +137,43 @@ extension AppModel {
     case .resync:
       link.client.post(.resync)
     }
+  }
+
+  /// A new wire to the computer the screens follow (coming back from the background, a retry): they stay where they
+  /// were, showing the last lists and views until this wire's init replaces them, and the drafts stay too. Before, a
+  /// fresh model popped every return to an empty list until init landed. A terminal's page goes, since its shell was
+  /// attached to the old wire
+  func resume(from previous: AppModel) {
+    agents = previous.agents
+    accounts = previous.accounts
+    settings = previous.settings
+    agentControls = previous.agentControls
+    summaries = previous.summaries
+    views = previous.views
+    path = Array(previous.path.prefix { if case .terminal = $0 { false } else { true } })
+    addedProjects = previous.addedProjects
+    projectOrder = previous.projectOrder
+    removedProjects = previous.removedProjects
+    sections = previous.sections
+    hits = previous.hits
+    openProjects = previous.openProjects
+    settingsOpen = previous.settingsOpen
+    shared = previous.shared
+    drafts = previous.drafts
+    resumed = true
+  }
+
+  /// After a resumed wire's init: its view starts on no session, so the one on screen is opened again (a chat opens
+  /// itself on appear, which a screen carried over never repeats)
+  private func reopen() {
+    guard let id = path.reversed().lazy.compactMap(\.session).first else { return }
+    open(id)
+  }
+
+  /// The session's view came on this wire: a view carried over from the wire before waits for the engine to show it
+  /// again (an observe sent before that is never answered)
+  func shown(_ id: String) -> Bool {
+    views[id] != nil && (link.map { $0.feed.views.kept.contains(id) } ?? true)
   }
 
   /// A chat came on screen: its kept view at once, and the engine switches the view to it
