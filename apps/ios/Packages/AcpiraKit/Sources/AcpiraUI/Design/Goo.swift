@@ -78,6 +78,8 @@ struct GooFrame {
   /// Where the bean's panel rests open, from the chip's centre, and how much of its rows shows
   var panel: CGRect?
   var rows: Double
+  /// How much of the page's colour backs the glass: a panel's rows over a clear lens read the content behind it
+  var backing: Double = 0
   /// Whether the bean and its caption, or its panel, take taps
   var live: Bool
   var panelLive: Bool
@@ -98,6 +100,8 @@ enum GooGeometry {
   private static let glyphOut: CGFloat = 0.3, glyphSwallowed: CGFloat = 0.35, captionOut: CGFloat = 0.1
   /// Taps land once a bean or panel has arrived, and on the beans only once no panel is left over them
   private static let arrived: CGFloat = 0.9, uncovered: CGFloat = 0.05
+  /// A bean leaves the chip as the chip's own glass circle and reaches full size by this share of its way out
+  private static let grown: CGFloat = 0.5
 
   static func frames(_ pieces: [GooPiece], _ progress: GooProgress, chip: CGSize) -> [GooFrame] {
     let main = progress[0]
@@ -131,15 +135,20 @@ enum GooGeometry {
       // panel) keeps it inside, so the panel goes home as one drop instead of spilling the beans on the way
       let swallowed = main > GooGeometry.gone ? unit(max(0, others - s) / (swallow * min(1, main))) : 1
       let scale = 1 - swallowed
+      // The bean swells out of the chip's own glass circle and shrinks back into it, so near home it lies inside the
+      // bar. At full size it stood out of the bar as a dome through the spring's slow tail, then vanished at once
+      let seed = chip.height - Metrics.gooChipInset * 2
+      let side = seed + (chip.height - seed) * unit(t / grown)
+      let bean = CGSize(width: side + chip.width - chip.height, height: side)
       // The bean, or its panel part of the way out, then shrunk into the panel that swallows it
       var centre = at
-      var size = chip
-      var radius = chip.height / 2
+      var size = bean
+      var radius = bean.height / 2
       let own = piece.panel.map(rest)
       if let rect = own, s > 0 {
         centre = CGPoint(x: at.x + (rect.midX - at.x) * s, y: at.y + (rect.midY - at.y) * s)
-        size = CGSize(width: chip.width + (rect.width - chip.width) * s, height: chip.height + (rect.height - chip.height) * s)
-        radius = chip.height / 2 + (Metrics.rGooPanel - chip.height / 2) * unit(s)
+        size = CGSize(width: bean.width + (rect.width - bean.width) * s, height: bean.height + (rect.height - bean.height) * s)
+        radius = bean.height / 2 + (Metrics.rGooPanel - bean.height / 2) * unit(s)
       }
       if let (h, panel) = host, h != i {
         let rect = rest(panel)
@@ -153,6 +162,7 @@ enum GooGeometry {
       f.caption = Double(min(unit((t - captionFrom) / (1 - captionFrom)), unit((main - captionMain) / (1 - captionMain)))
                          * (1 - unit(opened / captionOut)))
       f.rows = Double(unit((s - rowsFrom) / rowsSpan) * kept)
+      f.backing = Double(unit(s))
       out.append(f)
     }
     return out
@@ -184,6 +194,18 @@ private struct GooGlass: View, Animatable {
     let frames = GooGeometry.frames(pieces, progress, chip: chip.size)
     ZStack(alignment: .topLeading) {
       if progress[0] > GooGeometry.gone {
+        // Plain views under the glass: a panel growing out of its bean fills with the page's colour, so the title or
+        // the transcript behind it no longer reads through its rows
+        ForEach(pieces.indices, id: \.self) { i in
+          let f = frames[i]
+          if f.backing > 0, f.size.width > Metrics.s0_5 {
+            RoundedRectangle(cornerRadius: f.radius, style: .continuous)
+              .fill(Palette.gooBacking)
+              .opacity(f.backing)
+              .frame(width: f.size.width, height: f.size.height)
+              .position(x: chip.midX + f.centre.x, y: chip.midY + f.centre.y)
+          }
+        }
         ForEach(pieces.indices, id: \.self) { i in
           let f = frames[i]
           if f.size.width > Metrics.s0_5 {
@@ -209,6 +231,9 @@ private struct GooGlass: View, Animatable {
 /// a tap anywhere else closes whatever is open
 private struct GooControls: View, Animatable {
   var progress: GooProgress
+  /// Whether the picker is open or opening, not animated: a closing picker's catcher took every tap on the screen
+  /// (the chip, the field) until its spring had crossed zero
+  var open: Bool
   var chip: CGRect
   var pieces: [GooPiece]
   var close: () -> Void
@@ -274,6 +299,7 @@ private struct GooControls: View, Animatable {
         }
       }
     }
+    .allowsHitTesting(open)
   }
 }
 
@@ -314,8 +340,8 @@ extension View {
       GeometryReader { proxy in
         ForEach(items, id: \.id) { item in
           GooSpring(progress: item.progress) {
-            GooControls(progress: item.progress, chip: proxy[item.anchor], pieces: item.pieces, close: item.close,
-                        back: item.back)
+            GooControls(progress: item.progress, open: item.progress[0] > 0, chip: proxy[item.anchor], pieces: item.pieces,
+                        close: item.close, back: item.back)
           }
         }
       }

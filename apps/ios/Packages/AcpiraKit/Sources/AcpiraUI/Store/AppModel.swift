@@ -64,10 +64,6 @@ final class AppModel {
   /// off the list (`removedProjects`), shared with every project shell on the machine
   var projectOrder: [String] = []
   var removedProjects: [String] = []
-  /// Stand-ins for two engine fields that do not exist yet: projects pinned to the top of the by-project view (in pin
-  /// order), and sessions pinned inside their project only (`SessionSummary.pinned` is the list's top pin)
-  var pinnedProjects: [String] = []
-  var projectPins: Set<String> = []
   /// The desktop app's sections ("Work", "Personal"), each holding whole projects in its own order; the by-project
   /// view lists them as the desktop does. Made and filled on the desktop only
   var sections: [SessionSection] = []
@@ -90,6 +86,8 @@ final class AppModel {
 
   /// The live engine; nil in the demo
   @ObservationIgnored let link: EngineLink?
+  /// Told when the live engine's wire ends (a paired computer's connection reports it to the pairing model)
+  @ObservationIgnored var onClosed: (() -> Void)?
   /// The engine's terminals the phone opened, one per project (Terminal/TerminalSession.swift)
   @ObservationIgnored let terminals = TerminalHub()
   @ObservationIgnored private var runs: [String: Task<Void, Never>] = [:]
@@ -231,18 +229,6 @@ final class AppModel {
 
   func toggleOpen(_ cwd: String) {
     if openProjects.remove(cwd) == nil { openProjects.insert(cwd) }
-  }
-
-  func togglePinProject(_ cwd: String) {
-    let pinned = !pinnedProjects.contains(cwd)
-    if pinned { pinnedProjects.append(cwd) } else { pinnedProjects.removeAll { $0 == cwd } }
-    show(pinned ? t("mobile.pinned") : t("mobile.unpinned"), icon: pinned ? .pin : .pinOff)
-  }
-
-  func toggleProjectPin(_ id: String) {
-    let pinned = projectPins.insert(id).inserted
-    if !pinned { projectPins.remove(id) }
-    show(pinned ? t("mobile.pinned") : t("mobile.unpinned"), icon: pinned ? .pin : .pinOff)
   }
 
   /// A folder picked by hand: first in the folder menus, and back on the list if it was taken off (the engine registers

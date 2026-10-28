@@ -90,17 +90,24 @@ struct ToolCallView: View {
                 || (grouped && block.content == nil && command == nil) {
       Row(tone: .action) { LeadIcon(icon) } content: { label } trailing: { trailing }
     } else if execute || (!visible.isEmpty && visible.allSatisfy({ if case .text = $0 { true } else { false } })) {
-      // The command card sits in the label column; an open card keeps --command-after below it
+      // The command card sits in the label column, `codeCardGap` from the rows around it
       CommandDisclosure(block: block, command: command, items: visible, icon: icon, label: label, trailing: trailing,
                         defaultOpen: execute && !grouped && running)
+    } else if case .list = block.content {
+      Disclosure(open: foldBinding($manual, preOpen.contains(.results)), icon: icon, indent: false, rail: .rows) { label } trailing: { trailing } content: {
+        ToolBody(block: block, items: visible)
+      }
     } else {
-      Disclosure(open: foldBinding($manual, preOpen.contains(.results)), icon: icon, indent: false,
-                 rail: { if case .list = block.content { .rows } else { .off } }()) { label } trailing: { trailing } content: {
+      // A diff is a code card too: in the label column on the row's rail, spaced as the command card is (the webview
+      // runs it full width, which gave the transcript two card edges)
+      let open = manual ?? preOpen.contains(.results)
+      Disclosure(open: foldBinding($manual, preOpen.contains(.results)), icon: icon, bodyTop: Metrics.codeCardGap) { label } trailing: { trailing } content: {
         VStack(alignment: .leading, spacing: Metrics.gap) {
           TaskMeta(task: block.asyncTask)
           ToolBody(block: block, items: visible)
         }
       }
+      .padding(.bottom, open ? Metrics.codeCardAfter : 0)
     }
   }
 }
@@ -234,10 +241,10 @@ struct CommandDisclosure<Label: View, Trailing: View>: View {
 
   var body: some View {
     let open = manual ?? (defaultOpen || preOpen.contains(.command))
-    // The card sits in the label column on the row's rail; --command-after stays outside it so the end dot meets the card.
+    // The card sits in the label column on the row's rail; the room after it stays outside so the end dot meets the card.
     // The phone keeps it there too: a column-wide card without the rail lost the desktop's reading of the row (2026-10-27)
     Disclosure(open: foldBinding($manual, defaultOpen || preOpen.contains(.command)), icon: icon,
-               bodyTop: Metrics.gapHalf) { label } trailing: { trailing } content: {
+               bodyTop: Metrics.codeCardGap) { label } trailing: { trailing } content: {
       VStack(alignment: .leading, spacing: Metrics.gap) {
         TaskMeta(task: block.asyncTask)
         if block.kind == .execute {
@@ -249,7 +256,7 @@ struct CommandDisclosure<Label: View, Trailing: View>: View {
         }
       }
     }
-    .padding(.bottom, open ? Metrics.commandAfter : 0)
+    .padding(.bottom, open ? Metrics.codeCardAfter : 0)
   }
 }
 
@@ -376,8 +383,11 @@ struct EditEntry: View {
     if diffs.isEmpty {
       Row(tone: .action, dense: true) { LeadIcon(.pencil) } content: { label } trailing: { trailing }
     } else {
-      // EntryFold: full width, no rail root of its own, so the group's rail runs on through its icon
-      Disclosure(open: foldBinding($manual, preOpen.contains(.edit)), dense: true, icon: .pencil, indent: false, root: false) {
+      // EntryFold: no rail root of its own, so the group's rail runs on through its icon. The diff is a code card in
+      // the label column like every other (entries stack without the process rows' gap, so it takes the whole gap)
+      let open = manual ?? preOpen.contains(.edit)
+      Disclosure(open: foldBinding($manual, preOpen.contains(.edit)), dense: true, icon: .pencil, root: false,
+                 bodyTop: Metrics.codeCardGap) {
         label
       } trailing: { trailing } content: {
         VStack(alignment: .leading, spacing: Metrics.gap) {
@@ -392,6 +402,7 @@ struct EditEntry: View {
           }
         }
       }
+      .padding(.bottom, open ? Metrics.codeCardGap : 0)
     }
   }
 }

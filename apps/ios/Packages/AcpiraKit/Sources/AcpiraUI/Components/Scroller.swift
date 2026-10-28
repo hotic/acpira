@@ -1,4 +1,7 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 // Containers a full-length render can draw. ImageRenderer cannot draw the UIKit views behind ScrollView, Menu or
 // TextField, so under `\.snapshot` a scroller lays its content out at its ideal size along the scrolling axes,
@@ -22,10 +25,45 @@ public struct Scroller<Content: View>: View {
   public var body: some View {
     if snapshot {
       OverflowLayout(axes: axes) { content }.clipped()
+    } else if axes == .horizontal {
+      // A sideways strip inside the thread (table, code, math) stops dead at its ends: pulled past them it showed
+      // empty room beside the content, as if the table had slid out of its frame
+      ScrollView(axes, showsIndicators: false) { content.background(SideBounceOff()) }
     } else {
       ScrollView(axes, showsIndicators: false) { content }
     }
   }
+}
+
+/// Turns off the sideways bounce of the scroll view it sits in. SwiftUI only offers `.basedOnSize`, which still
+/// bounces whenever the content overflows
+private struct SideBounceOff: View {
+  var body: some View {
+    #if canImport(UIKit)
+    Probe().allowsHitTesting(false).accessibilityHidden(true)
+    #else
+    Color.clear
+    #endif
+  }
+
+  #if canImport(UIKit)
+  private struct Probe: UIViewRepresentable {
+    func makeUIView(context: Context) -> Finder { Finder() }
+    func updateUIView(_ view: Finder, context: Context) {}
+  }
+
+  /// Walks up to the nearest scroll view, the strip's own, once it is in the window
+  final class Finder: UIView {
+    override func didMoveToWindow() {
+      super.didMoveToWindow()
+      var view = superview
+      while let v = view, !(v is UIScrollView) { view = v.superview }
+      guard let scroll = view as? UIScrollView else { return }
+      scroll.bouncesHorizontally = false
+      scroll.alwaysBounceHorizontal = false
+    }
+  }
+  #endif
 }
 
 /// ScrollView's sizing without the scrolling: along a scrolling axis the child gets no size limit and the box takes

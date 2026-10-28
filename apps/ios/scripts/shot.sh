@@ -12,7 +12,7 @@ ios="$(cd "$(dirname "$0")/.." && pwd)"
 out="${1:-/tmp/acpira-ios.png}"
 sim="${2:-$sim_default}"
 shift $(( $# > 2 ? 2 : $# ))
-bundle="com.hotic.acpira"
+bundle="cc.hotic.acpira"
 derived="$ios/build/DerivedData"
 
 # xcode-select may still point at the Command Line Tools, which ship no iOS SDK

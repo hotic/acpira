@@ -473,6 +473,8 @@ public struct InitState: Codable, Hashable, Sendable {
   public var cwd: String
   /// Where an attachment blob loads from: `${blobBase}/${sessionId}/${blob}`
   public var blobBase: String?
+  /// Where chats' folders live: a session whose cwd is directly inside is a chat, not a project
+  public var chats: String?
 
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -491,6 +493,7 @@ public struct InitState: Codable, Hashable, Sendable {
     home = try c.decode(.home, or: "")
     cwd = try c.decode(.cwd, or: "")
     blobBase = try c.decodeIfPresent(String.self, forKey: .blobBase)
+    chats = try c.decodeIfPresent(String.self, forKey: .chats)
   }
 }
 
@@ -517,25 +520,28 @@ public struct SessionPatch: Codable, Hashable, Sendable {
 
 /// The actions the phone sends (WebviewMsg), wrapped in a webviewMessage envelope. A session action carries the id of
 /// the session the view shows; the engine refuses one for another session. TypeScript marks some of those ids optional
-/// for tests and scripts (absent: the view's current session); the app always passes them
+/// for tests and scripts (absent: the view's current session); the app always passes them. clientId (send, stop,
+/// permission, answer, steerQueued): set by a paired device, which resends with the same id after a lost link; the
+/// engine running the session runs each id once
 public enum WebviewMsg: Codable, Hashable, Sendable {
   /// The page is mounted: the engine answers with `init`. patches: the page applies `sessionPatch` (the app sends true)
   case ready(patches: Bool? = nil)
   /// A sessionPatch did not fit the view the page holds: the engine sends the whole view again
   case resync
   /// steer: join the running turn instead of queueing behind it (SessionView.canSteer)
-  case send(sessionId: String?, text: String, attachments: [Draft]? = nil, steer: Bool? = nil)
-  case stop(sessionId: String?)
-  case permission(sessionId: String, blockId: String, optionId: String)
+  case send(sessionId: String?, text: String, attachments: [Draft]? = nil, steer: Bool? = nil, clientId: String? = nil)
+  case stop(sessionId: String?, clientId: String? = nil)
+  case permission(sessionId: String, blockId: String, optionId: String, clientId: String? = nil)
   /// The question card closed: `answers` holds the answered questions only; skip tells the agent to go on without them
-  case answer(sessionId: String, blockId: String, answers: QuestionAnswers, skip: Bool? = nil)
+  case answer(sessionId: String, blockId: String, answers: QuestionAnswers, skip: Bool? = nil, clientId: String? = nil)
   /// Build a reviewed plan: optionId picks the card's option, model the model it is built with
   case buildPlan(sessionId: String, planId: String, optionId: String? = nil, model: ModelPick? = nil)
   case setMode(sessionId: String?, id: String)
   case setConfig(sessionId: String?, configId: String, value: String)
   case selectSession(id: String)
   /// category: file it under that category from the start; cwd: the project folder to start in
-  case newSession(agent: AgentId? = nil, category: String? = nil, cwd: String? = nil)
+  /// `chat`: a session in a fresh folder of its own under InitState.chats (project shells), `cwd` ignored
+  case newSession(agent: AgentId? = nil, category: String? = nil, cwd: String? = nil, chat: Bool? = nil)
   case renameSession(id: String, title: String)
   case deleteSession(id: String)
   case restoreSession(id: String)
@@ -560,7 +566,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   /// by index, new drafts alongside)
   case dequeue(sessionId: String, id: String)
   case sendQueued(sessionId: String, id: String)
-  case steerQueued(sessionId: String, id: String)
+  case steerQueued(sessionId: String, id: String, clientId: String? = nil)
   case editQueued(sessionId: String, id: String, text: String, retainedAttachments: [Int], attachments: [Draft])
   /// An edit of the project list; `file`: with a create, file that session under the new category in the same step
   case categoryOp(op: CategoryOp, file: String? = nil)
@@ -704,7 +710,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
 
   private enum Keys: String, CodingKey {
     case type, patches, sessionId, text, attachments, steer, blockId, optionId, answers, skip, planId, model, id, configId
-    case value, agent, category, cwd, title, pinned, query, seq, turnIndex, retainedAttachments
+    case value, agent, category, cwd, chat, title, pinned, query, seq, turnIndex, retainedAttachments, clientId
     case file, via, methodId, requestId, edit, subagentId, taskId, action, objective, key, fresh, dir, path, base
     case toolCallId, nth, cols, rows, data, binary, chars
   }
@@ -719,19 +725,20 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case "resync": self = .resync
     case "send":
       self = .send(sessionId: try opt(.sessionId), text: try str(.text), attachments: try c.decodeIfPresent([Draft].self, forKey: .attachments),
-                   steer: try c.decodeIfPresent(Bool.self, forKey: .steer))
-    case "stop": self = .stop(sessionId: try opt(.sessionId))
-    case "permission": self = .permission(sessionId: try str(.sessionId), blockId: try str(.blockId), optionId: try str(.optionId))
+                   steer: try c.decodeIfPresent(Bool.self, forKey: .steer), clientId: try opt(.clientId))
+    case "stop": self = .stop(sessionId: try opt(.sessionId), clientId: try opt(.clientId))
+    case "permission":
+      self = .permission(sessionId: try str(.sessionId), blockId: try str(.blockId), optionId: try str(.optionId), clientId: try opt(.clientId))
     case "answer":
       self = .answer(sessionId: try str(.sessionId), blockId: try str(.blockId), answers: try c.decode(QuestionAnswers.self, forKey: .answers),
-                     skip: try c.decodeIfPresent(Bool.self, forKey: .skip))
+                     skip: try c.decodeIfPresent(Bool.self, forKey: .skip), clientId: try opt(.clientId))
     case "buildPlan":
       self = .buildPlan(sessionId: try str(.sessionId), planId: try str(.planId), optionId: try opt(.optionId),
                         model: try c.decodeIfPresent(ModelPick.self, forKey: .model))
     case "setMode": self = .setMode(sessionId: try opt(.sessionId), id: try str(.id))
     case "setConfig": self = .setConfig(sessionId: try opt(.sessionId), configId: try str(.configId), value: try str(.value))
     case "selectSession": self = .selectSession(id: try str(.id))
-    case "newSession": self = .newSession(agent: try opt(.agent), category: try opt(.category), cwd: try opt(.cwd))
+    case "newSession": self = .newSession(agent: try opt(.agent), category: try opt(.category), cwd: try opt(.cwd), chat: try c.decodeIfPresent(Bool.self, forKey: .chat))
     case "renameSession": self = .renameSession(id: try str(.id), title: try str(.title))
     case "deleteSession": self = .deleteSession(id: try str(.id))
     case "restoreSession": self = .restoreSession(id: try str(.id))
@@ -747,7 +754,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case "takeOverSession": self = .takeOverSession(sessionId: try opt(.sessionId))
     case "dequeue": self = .dequeue(sessionId: try str(.sessionId), id: try str(.id))
     case "sendQueued": self = .sendQueued(sessionId: try str(.sessionId), id: try str(.id))
-    case "steerQueued": self = .steerQueued(sessionId: try str(.sessionId), id: try str(.id))
+    case "steerQueued": self = .steerQueued(sessionId: try str(.sessionId), id: try str(.id), clientId: try opt(.clientId))
     case "editQueued":
       self = .editQueued(sessionId: try str(.sessionId), id: try str(.id), text: try str(.text),
                          retainedAttachments: try c.decode([Int].self, forKey: .retainedAttachments),
@@ -801,23 +808,29 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     switch self {
     case .ready(let patches):
       try c.encodeIfPresent(patches, forKey: .patches)
-    case let .send(sessionId, text, attachments, steer):
+    case let .send(sessionId, text, attachments, steer, clientId):
       try c.encodeIfPresent(sessionId, forKey: .sessionId)
       try c.encode(text, forKey: .text)
       try c.encodeIfPresent(attachments, forKey: .attachments)
       try c.encodeIfPresent(steer, forKey: .steer)
-    case .stop(let sessionId), .compact(let sessionId), .retry(let sessionId), .takeOverSession(let sessionId),
-         .reconnect(let sessionId), .retryTurn(let sessionId):
+      try c.encodeIfPresent(clientId, forKey: .clientId)
+    case let .stop(sessionId, clientId):
       try c.encodeIfPresent(sessionId, forKey: .sessionId)
-    case let .permission(sessionId, blockId, optionId):
+      try c.encodeIfPresent(clientId, forKey: .clientId)
+    case .compact(let sessionId), .retry(let sessionId), .takeOverSession(let sessionId), .reconnect(let sessionId),
+         .retryTurn(let sessionId):
+      try c.encodeIfPresent(sessionId, forKey: .sessionId)
+    case let .permission(sessionId, blockId, optionId, clientId):
       try c.encode(sessionId, forKey: .sessionId)
       try c.encode(blockId, forKey: .blockId)
       try c.encode(optionId, forKey: .optionId)
-    case let .answer(sessionId, blockId, answers, skip):
+      try c.encodeIfPresent(clientId, forKey: .clientId)
+    case let .answer(sessionId, blockId, answers, skip, clientId):
       try c.encode(sessionId, forKey: .sessionId)
       try c.encode(blockId, forKey: .blockId)
       try c.encode(answers, forKey: .answers)
       try c.encodeIfPresent(skip, forKey: .skip)
+      try c.encodeIfPresent(clientId, forKey: .clientId)
     case let .buildPlan(sessionId, planId, optionId, model):
       try c.encode(sessionId, forKey: .sessionId)
       try c.encode(planId, forKey: .planId)
@@ -832,10 +845,11 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
       try c.encode(value, forKey: .value)
     case .selectSession(let id), .deleteSession(let id), .restoreSession(let id):
       try c.encode(id, forKey: .id)
-    case let .newSession(agent, category, cwd):
+    case let .newSession(agent, category, cwd, chat):
       try c.encodeIfPresent(agent, forKey: .agent)
       try c.encodeIfPresent(category, forKey: .category)
       try c.encodeIfPresent(cwd, forKey: .cwd)
+      try c.encodeIfPresent(chat, forKey: .chat)
     case let .renameSession(id, title):
       try c.encode(id, forKey: .id)
       try c.encode(title, forKey: .title)
@@ -851,9 +865,13 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
       try c.encodeIfPresent(agent, forKey: .agent)
     case .refreshQuota(let agent):
       try c.encode(agent, forKey: .agent)
-    case let .dequeue(sessionId, id), let .sendQueued(sessionId, id), let .steerQueued(sessionId, id):
+    case let .dequeue(sessionId, id), let .sendQueued(sessionId, id):
       try c.encode(sessionId, forKey: .sessionId)
       try c.encode(id, forKey: .id)
+    case let .steerQueued(sessionId, id, clientId):
+      try c.encode(sessionId, forKey: .sessionId)
+      try c.encode(id, forKey: .id)
+      try c.encodeIfPresent(clientId, forKey: .clientId)
     case let .editQueued(sessionId, id, text, retainedAttachments, attachments):
       try c.encode(sessionId, forKey: .sessionId)
       try c.encode(id, forKey: .id)

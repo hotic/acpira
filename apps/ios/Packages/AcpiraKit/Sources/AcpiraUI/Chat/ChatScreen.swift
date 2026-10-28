@@ -301,7 +301,8 @@ struct ThreadContent: View {
         VStack(alignment: .leading, spacing: 0) { sections(groups, activeAgent, nodes) }
       }
     }
-    .padding(.horizontal, Metrics.s1)
+    // No margin of its own: the messages' `Metrics.pad` puts prose, row icons and cards on the edge the dock, the
+    // composer and the bar's back button share
     .padding(.top, Metrics.padY)
     .padding(.bottom, WebMetrics.msgGap)
     .environment(\.planContext, PlanContext(controls: session.controls, running: session.running, ready: session.status == .ready))

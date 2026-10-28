@@ -12,7 +12,7 @@ out="${1:-/tmp/acpira-ios.mp4}"
 seconds="${2:-12}"
 shift $(( $# > 2 ? 2 : $# ))
 sim="${SIM:-$sim_default}"
-bundle="com.hotic.acpira"
+bundle="cc.hotic.acpira"
 derived="$ios/build/DerivedData"
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 

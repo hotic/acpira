@@ -50,11 +50,16 @@ extension AppModel {
     case .incompatible(let engine):
       // The older side is the one to update
       incompatible = true
-      show(t(engine < SidecarProtocol.version ? "mobile.engine.updateComputer" : "mobile.engine.updateApp"), icon: .triangleAlert)
+      if onClosed == nil {
+        show(t(engine < SidecarProtocol.version ? "mobile.engine.updateComputer" : "mobile.engine.updateApp"), icon: .triangleAlert)
+      }
     case .closed(let reason):
       EngineLink.log.notice("closed \(reason ?? "", privacy: .public)")
-      // A toast, unless the version notice already said why
-      if !incompatible { show(t("mobile.engine.disconnected"), icon: .unplug) }
+      // A paired computer's wire has its own screens for an ended connection; the development engine gets a toast,
+      // unless the version notice already said why
+      if let onClosed { onClosed() } else if !incompatible {
+        show(t("mobile.engine.disconnected"), icon: .unplug)
+      }
     }
   }
 
