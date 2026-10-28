@@ -17,9 +17,11 @@ export const ForkBoundary = memo(function ForkBoundary({ origin, agents, agentId
   const title = titleOf?.(origin.sessionId);
   const across = origin.agent && origin.agent !== agentId ? origin.agent : undefined;
   // Inset like an agent reply (`AgentMessage`): the row's hover area reaches out by --hit inside that padding, so its
-  // lead and text line up with the rows and prose of the turns around it and nothing overflows the thread
+  // lead and text line up with the rows and prose of the turns around it and nothing overflows the thread.
+  // As the thread's tail (a fork nothing was sent in yet) it keeps the room a last reply's hidden action row holds, so the
+  // connecting row floating over the tail (`ConnectingNotice`) covers empty space instead of this row's text
   return (
-    <div className="flex min-w-0 flex-col px-pad [--row:var(--chat-row)]">
+    <div className="flex min-w-0 flex-col px-pad last:pb-ctl-sm [--row:var(--chat-row)]">
     <Row data-fork-boundary as={openSession ? 'button' : 'div'} interactive={!!openSession} lead={<GitBranch strokeWidth={1.5} />}
       onClick={openSession ? () => openSession(origin.sessionId) : undefined}
       trailing={across && (

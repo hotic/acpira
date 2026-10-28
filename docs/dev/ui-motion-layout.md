@@ -42,7 +42,7 @@ Rules for motion, status signals, rails, sticky prompts, bottom follow, scrollba
 - An exchange's paint clip reaches only `--hit-end` past the column on the right: a full `-mx-hit` overhung the thread and drew a horizontal scrollbar that headless screenshots did not show.
 - Desktop inspector docking follows the shell's width tier, never the chat's remaining width: opening tools or folding side columns must not turn the child into an overlay over the parent. Both desktop layouts share effective pane minima under room pressure; splitter bounds read those same CSS minima (`InspectorSplitter.fitPaneBounds`).
 - A finished reply's action row (`TurnActions`) keeps its height so hover never shifts the transcript.
-- The thread's lower-edge fade keys off `data-more-below` from the follow state; `useScrollFade` flashed once per chunk. The connecting row floats over the tail instead of joining `DockStack`, so history never jumps when a stored session starts its CLI.
+- The thread's lower-edge fade keys off `data-more-below` from the follow state; `useScrollFade` flashed once per chunk. The connecting row floats over the tail instead of joining `DockStack`, so history never jumps when a stored session starts its CLI. It relies on the thread ending in blank room: a last reply's hidden action row, or the padding a tail fork boundary keeps; anything new that can end the thread must keep that room.
 - A custom property that a state flag sets on a big scroller is a non-inherited `@property` (the fades' edge sizes in `chat.css`): an inherited one restyles the whole subtree at each flip, a long frame when the opened session list left its top.
 
 ## Scrollbars
