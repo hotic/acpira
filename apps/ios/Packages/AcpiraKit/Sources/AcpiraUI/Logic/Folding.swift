@@ -86,7 +86,8 @@ public enum ProcessItem: Identifiable, Hashable {
 }
 
 func groupKind(_ block: AgentBlock) -> GroupKind? {
-  guard case .toolCall(let b) = block, b.status != .failed, b.status != .cancelled, b.asyncTask == nil else { return nil }
+  guard case .toolCall(let b) = block, b.status != .failed, b.status != .cancelled, b.asyncTask == nil,
+        b.subagentId == nil else { return nil }
   if b.kind == .read { return b.status != .completed || !toolFiles(b).isEmpty ? .read : nil }
   if b.kind == .edit { return .edit }
   return nil

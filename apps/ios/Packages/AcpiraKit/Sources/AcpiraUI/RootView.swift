@@ -41,6 +41,9 @@ public struct LaunchOptions: Sendable {
   /// (AppModel.scriptTerminal)
   public var terminal: String?
   public var type: String?
+  /// `-subagent ID|tree`: that child's inspector, or the session's subagent graph, pushed over the launch chat (with
+  /// `-start`, once the engine has opened the new chat)
+  public var subagent: String?
 
   public static func current(_ arguments: [String] = ProcessInfo.processInfo.arguments) -> LaunchOptions {
     func value(_ flag: String) -> String? {
@@ -53,7 +56,7 @@ public struct LaunchOptions: Sendable {
                          popup: value("-popup"), replay: arguments.contains("-replay"), open: value("-open"),
                          prompt: value("-prompt"), draft: value("-draft"), engine: value("-engine"),
                          session: value("-session"), start: value("-start"), terminal: value("-terminal"),
-                         type: value("-type"))
+                         type: value("-type"), subagent: value("-subagent"))
   }
 }
 
@@ -137,10 +140,14 @@ public struct RootView: View {
         return
       }
       if model.live, let folder = options.start {
-        model.engineNewSession(agent: nil, cwd: folder, text: options.prompt ?? "")
+        // `-subagent tree` opens the new session's graph over its chat (a fresh session's child ids are not known yet)
+        model.engineNewSession(agent: nil, cwd: folder, text: options.prompt ?? "") {
+          model.path += AppModel.subagentPath(options, after: model.path)
+        }
         return
       }
-      guard case .chat(let id)? = model.path.last else { return }
+      // The launch chat, also under the inspector or graph `-subagent` pushes over it
+      guard case .chat(let id)? = model.path.first else { return }
       // The engine refuses an action for a session its view does not show: switch it first, in posting order
       model.open(id)
       if options.replay { model.replay(id) }
@@ -163,6 +170,10 @@ public struct RootView: View {
       FileScreen(sessionId: id, path: path, line: line)
     case .terminal(let cwd):
       TerminalPage(cwd: cwd)
+    case .subagent(let session, let id):
+      SubagentInspector(session: session, id: id)
+    case .subagents(let session):
+      SubagentTreePage(session: session)
     }
   }
 }

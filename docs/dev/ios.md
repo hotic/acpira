@@ -49,7 +49,13 @@
   - Rows keep one fact per block: the mark, the title with the time (unless a caption dates the row), the place, and the state's mark alone in a trailing column.
   - `StateMark` ports the desktop's marks and motion. The working ring keeps turning with motion off.
   - The project pin and the in-project pin are `AppModel` stand-ins. They go once the list follows the desktop's single pin plus a display option.
-- Chat: the system bar holds back, new session and the "…" menu (account, pin, rename, exports, terminal, settings, delete), with no title. Settings from the menu raises the same sheet as the list.
+- Chat: the system bar holds back, new session and the "…" menu (account, pin, rename, exports, subagent graph when the session has children, terminal, settings, delete), with no title. Settings from the menu raises the same sheet as the list.
+- Subagents (`Subagents/`) are pushed pages over their chat: the inspector (`Route.subagent`) and the graph (`Route.subagents`).
+  - The inspector is read-only, driven by `\.subagentTranscript`: no composer, turn actions (so no copy or stats either), quoting or failure remedies, and the Working row leads with a static mark. Only the child's own cards act, answered through the parent session. "Request stop" in its "…" menu appears only while the agent allows cancel.
+  - The engine answers `observeSubagent` only once its view shows the session; an earlier observe is never answered later. The page therefore observes once the parent's view is here, not on appear.
+  - The engine keeps one observed child per view and ignores an unobserve naming another; `SubagentFeed` ends the previous child before the next and drops a push whose `rev` is not newer.
+  - The child's open question docks at the inspector's bottom; the chat's dock does not show it.
+  - A turn shows its top-level children only, so a grandchild is reached from the graph alone. The graph indents instead of the web's elbow lines.
 - Terminal (`Terminal/`): one engine terminal per project (`phone:<cwd>`), its pty on the Mac. Opening, acks, replay, detaching when the page goes and kill follow the desktop's `terminals.ts`; `TerminalSession` holds that logic free of UIKit. The demo has no shell and shows the engine-needed toast.
 - New session: the hero sits at `Metrics.heroRise`, the optical centre, and makes both choices. The agent's bare mark grows a Liquid Glass drop that buds the other agents as a ring (`AgentRing`); the folder is a glass capsule `Menu`. The composer lies over the page bottom, so its growth never moves the hero.
 - Settings (`Settings/SettingsScreen.swift`) is a system `Form`: theme, motion and language as menu pickers, then engine status and version. `Prefs` keys live in UserDefaults; launch arguments override them for screenshots. Switches use the system green, not the muted `--ok`.
@@ -122,7 +128,9 @@
   - Retry sits in the reply's action row on the newest turn only, under Alert.tsx's rule (an error that is not a context overflow and whose declared actions, if any, include retry); the desktop row has no Retry.
   - The goal heads the floating to-do card; its pause / resume / clear sit in one system `Menu` whose header holds the objective, the time or rounds and the spend. Milestone rows sit above the fold when they open the turn, after the reply when they follow the last action, in the process otherwise (`splitCodexBlocks`).
   - A background task's row trades the ✓ / ✗ glyph and the run time for its state tag and, while live and `canStop` with no stop asked, a Stop. A refusal is the engine's error toast; the row stays live.
-- Not ported yet: subagent rows, `show_widget`, account choices on the session card (import, terminal sign-in, switching accounts), opening a plan file on the computer, a workflow task's agent count and its script / output links.
+- Subagent rows follow `processParts` / `planSections`: a delegation row never draws as a tool; a placed node keeps one row as the anchor its group draws at, outside the process fold so a closed fold keeps the children in view; unplaced nodes follow the turn's content. At phone width the title line drops whole faint parts (model and role first, the round last) before the title truncates. Tallies and quoted results join with `common.listSep`, not the web's ` · `.
+- The demo's subagents fixture keeps each child's transcript in `<fixture>.children.json` by node id; the demo answers an observe from it, and answering a child's card settles it on the node and in its transcript.
+- Not ported yet: account choices on the session card (import, terminal sign-in, switching accounts), opening a plan file on the computer, a workflow task's agent count and its script / output links.
 
 ## Commands
 
@@ -142,6 +150,7 @@
   - `-popup NAME` opens something on launch: `attach`, `model`, `model.N` (bean N's panel), a `focus.` prefix (field focused first), `demo` (every liquid transition in turn), `ring` and `ring.pick`, `account`, `toast`, `code`, `lightbox` (the chat's first image), `fold:N`, and `plan.build` / `plan.build.model` / `plan.revise` (the first plan card that can build presses Build, builds on the last model family, or sends a revision), `edit` (the newest typed prompt in the editing composer) and `stats` (the newest reply's statistics card). Debug builds also take `menu:X,Y`, which opens the system menu under that point through UIKit's private `_presentMenuAtLocation:`.
   - `-prompt TEXT` sends a prompt on launch and gets the demo reply. `-draft TEXT` pre-fills the composer.
   - The composer's `-popup` names: `attach.N` (bean N of `+`), `attach.paste` (the paste bean without an image on the pasteboard), `context` (the ring's card), `quotes` (the staged quotes' card).
+  - `-subagent ID|tree` pushes that child's inspector, or the graph, over the launch chat (`-fixture subagents` has a child in every state). With `-start` only `tree` is useful, since a fresh session's child ids are not known up front.
   - `-open open|all|every` pre-opens folds. `-replay` plays the last agent turn back as a live stream (`Logic/Replay.swift`).
   - With `-engine PORT:TOKEN`: `-session ID` opens that chat, `-start FOLDER` starts a session of the default agent there with `-prompt` as its first prompt. The fake agent's prompts pick its script (`slow` streams, `tool` asks a permission; `test/fake-agent.ts`).
   - `-terminal FOLDER` opens that project's terminal; with an engine, `-type SCRIPT` types into it a beat per step: text with `\r` for Return, and `{hide}`, `{show}`, `{reopen}`, `{restart}`, `{close}`, `{wait}`.

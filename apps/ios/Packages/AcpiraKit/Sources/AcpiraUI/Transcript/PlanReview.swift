@@ -32,14 +32,20 @@ struct PlanSection: Identifiable {
 /// splitPlanSections: a plan is a chronological boundary outside both neighbouring process folds. The trailing section
 /// stays even while empty, since the approval and the continuation arrive there. A question's own tool row is dropped
 /// (its card holds the request and the answer) unless it failed, and so are thoughts with no text.
-/// Delegation rows stay: the phone draws no subagent rows yet, so they are its only trace of the hand-off
-func splitPlanSections(_ blocks: [AgentBlock]) -> [PlanSection] {
+/// A delegation row (a tool call with `subagentId`) is not a boundary and never draws as a tool: when its node is in
+/// `placed` it stays, once per node, as the point the subagent rows render at (`processParts`); the others drop
+func splitPlanSections(_ blocks: [AgentBlock], placed: Set<String> = []) -> [PlanSection] {
   var sections = [PlanSection(key: "start", blocks: [])]
+  var seen = Set<String>()
   let questionTools = Set(blocks.compactMap { block -> String? in if case .question(let q) = block { q.toolCallId } else { nil } })
   for block in blocks {
     switch block {
     case .toolCall(let call) where call.status != .failed && questionTools.contains(call.id):
       continue
+    case .toolCall(let call) where call.subagentId != nil:
+      if let id = call.subagentId, placed.contains(id), seen.insert(id).inserted {
+        sections[sections.count - 1].blocks.append(block)
+      }
     case .thought(let thought) where thought.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
       continue
     case .planDocument(let plan):

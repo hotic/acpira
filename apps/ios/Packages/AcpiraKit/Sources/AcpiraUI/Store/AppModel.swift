@@ -21,6 +21,10 @@ public enum Route: Hashable {
   case file(session: String, path: String, line: Int?)
   /// A project's terminal on the engine's computer (Terminal/TerminalPage.swift)
   case terminal(cwd: String)
+  /// One delegated child's transcript, read-only (Subagents/SubagentInspector.swift)
+  case subagent(session: String, id: String)
+  /// A session's subagents as a tree (Subagents/SubagentTree.swift)
+  case subagents(session: String)
 }
 
 /// agentOrder.ts launchable: the agents a new session can start with, the disabled ones left out
@@ -75,6 +79,8 @@ final class AppModel {
   var settingsOpen = false
   /// A session's export waiting for the share sheet
   var shared: ExportFile?
+  /// The observed subagents' transcripts and the one the phone follows (AppModel+Subagents.swift)
+  var subagentFeed = SubagentFeed()
   /// Each chat's unsent draft (AppModel+Composer.swift): the map is not observed, each draft is
   @ObservationIgnored var drafts: [String: ComposerDraft] = [:]
   /// The composer's `@` file search, answered by the engine's `files`
@@ -118,6 +124,7 @@ final class AppModel {
     summaries = []
     views = [:]
     path = options.session.map { [.chat($0)] } ?? (options.screen == "new" ? [.new(agent: nil, cwd: nil)] : [])
+    path += Self.subagentPath(options, after: path)
     settingsOpen = options.screen == "settings"
     connect()
   }
@@ -159,6 +166,7 @@ final class AppModel {
       + (Self.demoChanges(views[fixture]).first.map { [.file(session: fixture, path: $0.path, line: nil)] } ?? [])
     default: [.chat(fixture)]
     }
+    path += Self.subagentPath(options, after: path)
     settingsOpen = options.screen == "settings"
   }
 
@@ -442,6 +450,7 @@ final class AppModel {
   /// A permission answered: the card leaves the transcript, as the engine drops it once the agent has the outcome
   func choosePermission(_ id: String, block: String, option: String) {
     if post(.permission(sessionId: id, blockId: block, optionId: option)) { return }
+    if settleChildCard(id, block: block) { return }
     guard var view = views[id] else { return }
     // A plan's extra approvals reach here only to reject it (the allow ones build): the turn ends as on Revise
     if let plan = planPermission(view, block: block)?.planId {
@@ -459,6 +468,7 @@ final class AppModel {
   /// A question answered or skipped: it closes, and its card leaves the dock
   func answer(_ id: String, question: String, answers: [String: QuestionAnswer], skipped: Bool) {
     if post(.answer(sessionId: id, blockId: question, answers: skipped ? [:] : answers, skip: skipped ? true : nil)) { return }
+    if settleChildCard(id, block: question) { return }
     guard var view = views[id] else { return }
     view.turns = view.turns.map { turn in
       guard case .agent(var agent) = turn else { return turn }
