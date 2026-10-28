@@ -159,8 +159,11 @@ mod tests {
   /// through `Workspace` (or `process_folder`, `is_remote`) or to treat the folder only as a name. A new file on this
   /// list is a decision: read the folder through `Workspace` first
   const FOLDER_CALLERS: &[(&str, &[&str])] = &[
-    (".session_cwd(", &["bridge_core.rs", "session_manager.rs"]),
-    ("folder_for(", &["bridge_core.rs", "session_manager.rs", "runtime.rs"]),
+    (".session_cwd(", &["bridge_core.rs", "session_manager/projects.rs"]),
+    (
+      "folder_for(",
+      &["bridge_core.rs", "runtime.rs", "session_manager/agents.rs", "session_manager/open.rs", "session_manager/projects.rs", "session_manager/records.rs"],
+    ),
   ];
 
   #[test]
