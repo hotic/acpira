@@ -508,12 +508,65 @@ fn order(window: &tauri::WebviewWindow, back: bool) {
   });
 }
 
-/// The window server's number for a window (screencapture -l). Main thread
+/// The window's webview rendered to a PNG (`WKWebView takeSnapshotWithConfiguration:completionHandler:`), in-process so
+/// macOS never asks for Screen Recording permission and a covered background window still renders
 #[cfg(feature = "smoke")]
-pub fn window_number(window: &tauri::WebviewWindow) -> Option<isize> {
-  let ns = window.ns_window().ok()? as *mut AnyObject;
-  // SAFETY: the window's own NSWindow; windowNumber takes no arguments
-  Some(unsafe { msg_send![ns, windowNumber] })
+pub async fn screenshot(window: &tauri::WebviewWindow, path: &str) -> Result<(), String> {
+  let (tx, rx) = tokio::sync::oneshot::channel();
+  window
+    .with_webview(move |wv| {
+      let tx = std::cell::Cell::new(Some(tx));
+      let done = block2::RcBlock::new(move |image: *mut AnyObject, error: *mut AnyObject| {
+        let Some(tx) = tx.take() else { return };
+        // SAFETY: WebKit invokes the completion handler on the main thread with a live NSImage or NSError
+        let _ = tx.send(unsafe { png_of_image(image, error) });
+      });
+      // SAFETY: `wv.inner()` is the live WKWebView on the main thread; a nil configuration snapshots its full viewport
+      unsafe {
+        let wk = wv.inner() as *mut AnyObject;
+        let none: *const AnyObject = std::ptr::null();
+        let _: () = msg_send![wk, takeSnapshotWithConfiguration: none, completionHandler: &*done];
+      }
+    })
+    .map_err(|e| e.to_string())?;
+  let png = rx.await.map_err(|_| "the window closed before the snapshot finished".to_owned())??;
+  std::fs::write(path, png).map_err(|e| e.to_string())
+}
+
+#[cfg(feature = "smoke")]
+unsafe fn png_of_image(image: *mut AnyObject, error: *mut AnyObject) -> Result<Vec<u8>, String> {
+  if image.is_null() {
+    // SAFETY: `error` is a live NSError when non-nil
+    let desc: *mut AnyObject = if error.is_null() { std::ptr::null_mut() } else { unsafe { msg_send![error, localizedDescription] } };
+    return Err(ns_string(desc).unwrap_or_else(|| "could not snapshot the webview".into()));
+  }
+  let (Some(rep_cls), Some(dict_cls)) = (AnyClass::get(c"NSBitmapImageRep"), AnyClass::get(c"NSDictionary")) else {
+    return Err("AppKit classes missing".into());
+  };
+  // SAFETY: documented NSImage / NSBitmapImageRep / NSDictionary / NSData messages on the main thread; every pointer and
+  // length is checked before reading the byte slice
+  unsafe {
+    let tiff: *mut AnyObject = msg_send![image, TIFFRepresentation];
+    if tiff.is_null() {
+      return Err("no TIFF representation".into());
+    }
+    let rep: *mut AnyObject = msg_send![rep_cls, imageRepWithData: tiff];
+    let props: *mut AnyObject = msg_send![dict_cls, dictionary];
+    if rep.is_null() || props.is_null() {
+      return Err("no bitmap representation".into());
+    }
+    // NSBitmapImageFileTypePNG = 4
+    let png: *mut AnyObject = msg_send![rep, representationUsingType: 4usize, properties: props];
+    if png.is_null() {
+      return Err("could not encode PNG".into());
+    }
+    let len: usize = msg_send![png, length];
+    let bytes: *const u8 = msg_send![png, bytes];
+    if len == 0 || bytes.is_null() {
+      return Err("empty PNG".into());
+    }
+    Ok(std::slice::from_raw_parts(bytes, len).to_vec())
+  }
 }
 
 fn pasteboard() -> Option<*mut AnyObject> {
