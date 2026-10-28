@@ -435,6 +435,25 @@ document.addEventListener('securitypolicyviolation', () => { seen.blocked = true
       say('the page draws the caption (maximize, restore) and the menu (File, Edit, View, Help)');
     }
 
+    // Pick real list options, then check them again after quitting the app: sessionStorage alone loses them.
+    const viewButton = `document.querySelector('[data-view-menu]')`;
+    const viewItem = text => `[...document.querySelectorAll('[role="menuitem"]')].find(e => e.textContent.trim() === ${JSON.stringify(text)})`;
+    await page.press('the list view menu', viewButton);
+    await page.waitFor('the current list count', `!!(${viewItem('ShowLatest 5')})`);
+    await page.press('the pinned placement submenu', viewItem('PinnedAt the top'));
+    await page.press('pins inside their project', viewItem('In their project'));
+    await page.press('close the pinned placement menu', viewButton);
+    await page.press('reopen the list view menu', viewButton);
+    await page.press('the show submenu', viewItem('ShowLatest 5'));
+    if (await page.eval(`document.body.innerText.includes('Per project')`)) fail('the show submenu still has the redundant per-project label');
+    await page.press('the latest ten option', viewItem('Latest 10'));
+    await page.press('the model name option', viewItem('Model at the row end'));
+    await page.waitFor('the updated list count', `!!(${viewItem('ShowLatest 10')})`);
+    const listView = await page.eval(`window.__acpiraApi.getState().sessionListView`);
+    if (listView.pinned !== 'project' || listView.per !== 10 || !listView.model) fail(`the list options did not apply: ${JSON.stringify(listView)}`);
+    await page.press('close the list view menu', viewButton);
+    say('list menu shows its current count and applies pin placement, count and model display');
+
     // A second window from the menu bar (the page's menu on Windows and Linux), then closed: the window list follows
     if (!MAC) await page.eval(`window.__acpiraApi.postMessage({ type: 'menuCommand', id: 'NewWindow' })`);
     else await page.call({ op: 'menu', item: 'NewWindow' });
@@ -474,6 +493,12 @@ document.addEventListener('securitypolicyviolation', () => { seen.blocked = true
     const again = Number(/sidecar ready: pid (\d+)/.exec(appLog.slice(before))?.[1]);
     if (again !== enginePid) fail(`the relaunch reached engine ${again}, not the running ${enginePid}`);
     say('a relaunch restores the window on its session and reuses the running engine');
+    const restoredView = await page.eval(`window.__acpiraApi.getState().sessionListView`);
+    if (JSON.stringify(restoredView) !== JSON.stringify(listView)) fail(`relaunch lost list options: ${JSON.stringify(restoredView)}`);
+    await page.press('the restored list view menu', viewButton);
+    await page.waitFor('the restored list choices', `!!(${viewItem('ShowLatest 10')}) && !!(${viewItem('PinnedIn their project')})`);
+    await page.press('close the restored list view menu', viewButton);
+    say('a full app relaunch preserves list preferences and displays the restored choices');
     const engines = [enginePid];
     if (release) {
       // The app updates itself: checked, the delta downloaded and applied, the staged bundle verified, then the restart

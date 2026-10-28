@@ -5,7 +5,7 @@
 use std::path::Path;
 
 /// The app's identity for the shell and its notifications (AppUserModelID); the bundle identifier on macOS
-pub const AUMID: &str = "com.hotic.acpira.desktop";
+pub const AUMID: &str = "cc.hotic.acpira.desktop";
 
 /// One string value under HKEY_CURRENT_USER; `name` None is the key's default value
 #[derive(Debug, Clone, PartialEq, Eq)]

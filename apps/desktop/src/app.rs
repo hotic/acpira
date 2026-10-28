@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use acpira_desktop::browser::{BrowserHistory, BrowserPage, browser_look, normalize_preview_url, origin_of};
 use acpira_desktop::client::{ClientOpts, HelloPayload, ShellView, SidecarClient, SidecarState};
@@ -197,6 +197,8 @@ pub struct App {
   /// The menu bar as the page draws it where there is no global one (Windows; menu.rs install), sent to each page on
   /// ready and on every change
   page_menu: Mutex<Option<Value>>,
+  /// When each page's WebContent process last ended (page_process_ended), by window label
+  page_ended: Mutex<HashMap<String, Instant>>,
 }
 
 pub fn log(line: &str) {
@@ -252,6 +254,7 @@ impl App {
       updater: OnceLock::new(),
       update_phase: Mutex::new(Phase::Idle),
       page_menu: Mutex::new(None),
+      page_ended: Mutex::new(HashMap::new()),
     });
     let _ = APP.set(app.clone());
     app.register_links();
@@ -724,7 +727,31 @@ impl App {
     }
   }
 
+  /// macOS: a page's WebContent process ended, which leaves the window blank. Besides a crash, WebKit's UI process
+  /// kills it when a layer tree commit fails its checks: on macOS 27.0.1 a long session failed
+  /// `RemoteScrollingCoordinatorProxy::establishLayerTreeScrollingRelations`, and since the reloaded page came back the
+  /// same, every popover or settings page opened after it killed the process again. The first end reloads the page (what
+  /// wry did by default); another within PAGE_END_REPEAT turns async overflow scrolling off for that webview first
+  /// (mac.rs sync_overflow_scrolling), which takes the overflow nodes and that check out of the page, at the cost of
+  /// overflow scrolling on the page's main thread until the window closes
+  #[cfg(target_os = "macos")]
+  pub fn page_process_ended(&self, label: &str) {
+    const PAGE_END_REPEAT: Duration = Duration::from_secs(300);
+    let now = Instant::now();
+    let again = self.page_ended.lock().insert(label.to_owned(), now).is_some_and(|t| now.duration_since(t) < PAGE_END_REPEAT);
+    let window = self.window_by_label(label).map(|w| w.window.clone()).or_else(|| self.browser_by_label(label).map(|b| b.window.clone()));
+    let Some(window) = window else { return };
+    if again {
+      log(&format!("page {label}: WebContent process ended again; reloading with async overflow scrolling off"));
+      crate::mac::sync_overflow_scrolling(&window, log_arc());
+    } else {
+      log(&format!("page {label}: WebContent process ended; reloading"));
+    }
+    self.reload(label);
+  }
+
   pub fn window_closed(&self, label: &str) {
+    self.page_ended.lock().remove(label);
     if let Some(b) = self.browser_by_label(label) {
       b.relay.dispose();
       self.browsers.lock().retain(|x| x.label != label);

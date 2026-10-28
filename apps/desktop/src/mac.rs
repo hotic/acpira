@@ -20,6 +20,19 @@ use crate::os::{Log, TitleDoubleClick, session_of_request};
 /// it off applies to what loads next: call it before the real page loads. Private API: fine for a directly distributed
 /// app, not for the App Store; checked again on every macOS release (docs/dev/desktop.md)
 pub fn unlock_frame_rate(window: &tauri::WebviewWindow, log: Log) {
+  set_webkit_feature(window, "frame rate", c"PreferPageRenderingUpdatesNear60FPSEnabled", false, log);
+}
+
+/// Overflow scrolling on the page's main thread from the next load on: WebKit's AsyncOverflowScrollingEnabled off, so the
+/// page has no overflow nodes in the UI-side scrolling tree. The fallback for a window whose WebContent process WebKit
+/// keeps killing over that tree (app.rs page_process_ended)
+pub fn sync_overflow_scrolling(window: &tauri::WebviewWindow, log: Log) {
+  set_webkit_feature(window, "overflow scrolling", c"AsyncOverflowScrollingEnabled", false, log);
+}
+
+/// One private WKPreferences feature of the window's webview by key; WKPreferences is shared with the live page, so the
+/// change applies to what loads next. Missing API or key: left at WebKit's default, with a log line naming `what`
+fn set_webkit_feature(window: &tauri::WebviewWindow, what: &'static str, feature: &'static CStr, enabled: bool, log: Log) {
   // SAFETY: `wv.inner()` is the live WKWebView; each private selector is checked with respondsToSelector: before it is
   // sent, messages to nil return nil / 0, and the C string is null-checked before it is read
   let _ = window.with_webview(move |wv| unsafe {
@@ -27,13 +40,13 @@ pub fn unlock_frame_rate(window: &tauri::WebviewWindow, log: Log) {
     let config: *mut AnyObject = msg_send![wk, configuration];
     let prefs: *mut AnyObject = msg_send![config, preferences];
     let Some(cls) = AnyClass::get(c"WKPreferences") else {
-      log("frame rate: no WKPreferences, left at WebKit's default");
+      log(&format!("{what}: no WKPreferences, left at WebKit's default"));
       return;
     };
     let has_features: Bool = msg_send![cls, respondsToSelector: Sel::register(c"_features")];
     let has_set: Bool = msg_send![prefs, respondsToSelector: Sel::register(c"_setEnabled:forFeature:")];
     if !has_features.as_bool() || !has_set.as_bool() {
-      log("frame rate: WKPreferences _features / _setEnabled:forFeature: missing, left at WebKit's default");
+      log(&format!("{what}: WKPreferences _features / _setEnabled:forFeature: missing, left at WebKit's default"));
       return;
     }
     let features: *mut AnyObject = msg_send![cls, _features];
@@ -42,12 +55,12 @@ pub fn unlock_frame_rate(window: &tauri::WebviewWindow, log: Log) {
       let f: *mut AnyObject = msg_send![features, objectAtIndex: i];
       let key: *mut AnyObject = msg_send![f, key];
       let utf8: *const c_char = msg_send![key, UTF8String];
-      if !utf8.is_null() && CStr::from_ptr(utf8).to_bytes() == b"PreferPageRenderingUpdatesNear60FPSEnabled" {
-        let _: () = msg_send![prefs, _setEnabled: Bool::NO, forFeature: f];
+      if !utf8.is_null() && CStr::from_ptr(utf8) == feature {
+        let _: () = msg_send![prefs, _setEnabled: Bool::new(enabled), forFeature: f];
         return;
       }
     }
-    log("frame rate: PreferPageRenderingUpdatesNear60FPSEnabled is not among WebKit's features, left at the default");
+    log(&format!("{what}: {} is not among WebKit's features, left at the default", feature.to_string_lossy()));
   });
 }
 

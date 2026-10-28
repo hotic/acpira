@@ -25,9 +25,14 @@ mod win;
 use acpira_desktop::single_instance::{Instance, claim, links_in};
 use tauri::{Manager, RunEvent, WindowEvent};
 
-/// The page transport (src/init.js), injected before the page's own scripts, with the app protocol's origin filled in
-pub static INIT_SCRIPT: std::sync::LazyLock<String> =
-  std::sync::LazyLock::new(|| include_str!("init.js").replace("__ACPIRA_APP_ORIGIN__", acpira_desktop::page::APP_ORIGIN));
+/// The page transport, injected before page scripts, scoped to the app origin and an optional desktop profile.
+pub static INIT_SCRIPT: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+  // WKWebView ignores data_directory for its persistent store, so custom profiles need their own preference key.
+  let profile = std::env::var("ACPIRA_DESKTOP_USER_DATA").unwrap_or_default();
+  include_str!("init.js")
+    .replace("__ACPIRA_APP_ORIGIN__", acpira_desktop::page::APP_ORIGIN)
+    .replace("'__ACPIRA_STATE_SCOPE__'", &serde_json::json!(profile.trim()).to_string())
+});
 
 fn main() {
   let args: Vec<String> = std::env::args().collect();
@@ -69,7 +74,15 @@ fn main() {
   #[cfg(target_os = "macos")]
   let background = std::env::var("ACPIRA_DESKTOP_BACKGROUND").as_deref() == Ok("1");
 
-  let built = tauri::Builder::default()
+  let builder = tauri::Builder::default();
+  // A page whose WebContent process ended: the app reloads it itself (wry's default reload is replaced by this hook)
+  #[cfg(target_os = "macos")]
+  let builder = builder.on_web_content_process_terminate(|webview| {
+    if let Some(a) = app::try_app() {
+      a.page_process_ended(webview.label());
+    }
+  });
+  let built = builder
     .register_asynchronous_uri_scheme_protocol("acpira-app", |_ctx, request, responder| serve::handle(request, responder))
     .invoke_handler(tauri::generate_handler![
       commands::acpira_attach,

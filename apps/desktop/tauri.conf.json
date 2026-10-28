@@ -3,7 +3,7 @@
   "productName": "Acpira",
   "mainBinaryName": "Acpira",
   "version": "1.11.0",
-  "identifier": "com.hotic.acpira.desktop",
+  "identifier": "cc.hotic.acpira.desktop",
   "build": { "frontendDist": "stub" },
   "app": {
     "windows": [],
