@@ -53,7 +53,7 @@ One pnpm workspace: each package declares its own dependencies (versions in the 
 
 | Area | Doc |
 |---|---|
-| Engine composition, sidecar protocol and shells, persistent engine and push bus, agent registry / launching / installs, browser panel, session links, cross-harness subagents, terminals, shared config, stores, accounts, probes | `docs/dev/host-architecture.md` |
+| Engine composition, sidecar protocol and shells, persistent engine and push bus, agent registry / launching / installs, browser panel, session links, cross-harness subagents, terminals, shared config, stores, accounts, remote access gateway, probes | `docs/dev/host-architecture.md` |
 | Transcript normalization: prompts and attachments, tool content, terminal / image output, session import, subagents, usage, forking, export | `docs/dev/transcript-pipeline.md` |
 | `packages/ui` structure, stylesheets, markdown links, slash commands, render budget | `docs/dev/webview.md` |
 | UI primitives, tokens, rows, menus, overlays, composer, model panels | `docs/dev/ui-conventions.md` |

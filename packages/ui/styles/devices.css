@@ -27,8 +27,8 @@
 @keyframes dv-card-out { to { opacity: 0; transform: translateY(4px) scale(.96); } }
 @keyframes dv-new { from { opacity: 1; } }
 @keyframes dv-row-in { from { opacity: 0; transform: translateY(4px); } }
-@keyframes dv-lead { from { opacity: 0; transform: scale(.7); } }
 @keyframes dv-fade { from { opacity: 0; } }
+@keyframes dv-wait { to { opacity: .35; } }
 @keyframes dv-digits-in { from { opacity: 0; transform: translateY(3px); filter: blur(2px); } }
 
 @layer components {
@@ -59,7 +59,8 @@
   .dv-qr-mods { position: absolute; inset: 0; transition: opacity 220ms ease; }
   .dv-qr-layer { position: absolute; inset: 0; display: block; width: 100%; height: 100%; overflow: visible; }
   .dv-qr-band { fill: currentColor; transform-box: view-box; transform-origin: 50% 50%; }
-  /* Paired: the rings dissolve outward from the mark */
+  /* Paired: the rings dissolve outward from the mark. The phone's sheet plays this moment on the same timeline
+     (apps/ios PairingTokens.swift Motion.pair…): change both together */
   .dv-qr-out .dv-qr-band { opacity: 0; filter: blur(1.6px); transform: scale(1.07);
     transition: opacity 380ms ease-out, filter 380ms ease-out, transform 520ms cubic-bezier(.2, .7, .2, 1); transition-delay: calc(var(--i) * 42ms); }
   /* A fresh code: the old one leaves ring by ring from the centre out, the new one follows */
@@ -91,10 +92,17 @@
   /* The fuse: a static dim track, the lit ring above it in straight runs and corners, the spark at the burning point */
   .dv-fz { position: absolute; inset: 0; pointer-events: none; transition: opacity 300ms ease; --dv-fz-lit: var(--dv-lit); }
   .dv-fz[data-off] { opacity: 0; }
+  /* Waiting for a code: the track alone, the mark breathing in the middle */
+  .dv-qr[data-waiting] .dv-fz { opacity: 1; }
+  .dv-qr[data-waiting] :is(.dv-fz-side, .dv-fz-corner, .dv-fz-spark) { opacity: 0; }
+  .dv-qr[data-waiting] .dv-qr-mark { animation: dv-wait 1.6s ease-in-out infinite alternate; }
   .dv-fz[data-late] { --dv-fz-lit: var(--warn); }
   .dv-fz-track { position: absolute; left: 0; top: 0; overflow: visible; stroke: var(--dv-track); }
   .dv-fz-lit { stroke: var(--dv-fz-lit); fill: none; overflow: visible; }
-  .dv-fz-side { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+  /* Clipped to its own box: the sliding window leaves it while the ring is unlit, and inside a scroller (the settings
+     page's pairing dialog) that overflow grew a scrollbar that changed the dialog's height. The lit strip never leaves
+     the box, so nothing visible is cut */
+  .dv-fz-side { position: absolute; left: 0; top: 0; transform-origin: 0 0; overflow: clip; }
   .dv-fz-win { width: 100%; height: 100%; overflow: hidden; }
   .dv-fz-strip { width: 100%; height: 100%; }
   .dv-fz-strip svg { display: block; }
@@ -164,8 +172,8 @@
   .dv-flight svg { width: 100%; height: 100%; }
   .dv-row-new { position: absolute; inset: 0; border-radius: var(--r-md); background: var(--active); opacity: 0; pointer-events: none; animation: dv-new 1800ms ease-out 500ms backwards; }
   .dv-row { position: relative; animation: dv-row-in 360ms cubic-bezier(.2, .7, .2, 1) backwards; animation-delay: calc(140ms + var(--i, 0) * 45ms); }
-  /* From the success moment: the glyph lands first, the head and the new row's text follow it in */
-  .dv-lead-late { animation: dv-lead 200ms ease 600ms backwards; }
+  /* From the success moment: the head and the new row's text come in around the flown glyph, which hands over to the
+     row's own glyph on its last frame (DevicesCard.tsx) */
   .dv-view[data-from] .dv-head { animation: dv-fade 260ms ease 320ms backwards; }
   .dv-view[data-from] .dv-row[data-fresh] .dv-row-text { animation: dv-fade 260ms ease 520ms backwards; }
 }

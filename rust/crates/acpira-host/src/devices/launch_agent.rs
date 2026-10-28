@@ -4,6 +4,7 @@
 //! (an engine of its own, `shell: remote`, which reaches the windows' engines over the push bus).
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
@@ -136,22 +137,43 @@ async fn launchctl(args: &[&str]) -> Result<std::process::Output> {
   tokio::process::Command::new("/bin/launchctl").args(args).output().await.context("launchctl")
 }
 
-/// Load the plist written at `plist` (replacing a loaded one of the same label) and start it
-pub async fn bootstrap(label: &str, plist: &Path) -> Result<()> {
-  let _ = bootout(label).await;
-  // A service still being torn down refuses a bootstrap for a moment (`5: Input/output error`)
-  let mut tries = 0;
-  loop {
-    let out = launchctl(&["bootstrap", &domain(), &plist.to_string_lossy()]).await?;
-    if out.status.success() {
-      return Ok(());
+/// How long launchd may take to let go of a job after `bootout`: it waits for the process to exit, up to the job's
+/// `ExitTimeOut` (20 s by default) before a SIGKILL
+const GONE_WAIT: Duration = Duration::from_secs(25);
+
+/// Whether launchd has the label loaded, running or not
+pub async fn loaded(label: &str) -> bool {
+  launchctl(&["print", &format!("{}/{label}", domain())]).await.is_ok_and(|o| o.status.success())
+}
+
+/// Stop it, unload it, and wait until launchd has let go of it: `bootout` answers while the job is still listed
+/// (`state = SIGTERMed`), and a bootstrap in that window fails with `5: Input/output error`
+pub async fn unload(label: &str) -> Result<()> {
+  bootout(label).await?;
+  let deadline = Instant::now() + GONE_WAIT;
+  while loaded(label).await {
+    if Instant::now() >= deadline {
+      bail!("launchd did not let go of {label}");
     }
-    tries += 1;
-    if tries == 5 {
-      bail!("launchctl bootstrap: {}", String::from_utf8_lossy(&out.stderr).trim());
-    }
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
   }
+  Ok(())
+}
+
+/// Load the plist at `plist` and start it; the label must not be loaded (`unload` first to replace it)
+pub async fn load(label: &str, plist: &Path) -> Result<()> {
+  let out = launchctl(&["bootstrap", &domain(), &plist.to_string_lossy()]).await?;
+  // 5 also answers a label already loaded: another engine sharing the data root loaded it meanwhile
+  if out.status.success() || loaded(label).await {
+    return Ok(());
+  }
+  let err = String::from_utf8_lossy(&out.stderr);
+  let mut msg = format!("launchctl bootstrap: {}", err.lines().next().unwrap_or("").trim());
+  if out.status.code() == Some(5) {
+    // Neither loaded nor being torn down: launchd answers 5 for a job switched off too
+    msg.push_str(" (is acpira-gateway switched off under System Settings > General > Login Items?)");
+  }
+  bail!(msg)
 }
 
 /// Stop it and unload it; not loaded is not an error

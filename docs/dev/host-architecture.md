@@ -198,6 +198,14 @@ Rounds, threads, duties and delivery: `transcript-pipeline.md` (Cross-harness su
 - **Official CLI quota monitoring** (`accounts/local.rs`, Grok / Kimi): read-only, never changes session credentials. Account switch: `switch.rs`.
 - Tests: `tests/engine/accounts.rs`, `tests/engine/local_accounts.rs`.
 
+## Remote access gateway
+
+- **Where.** `devices/` is the engine's side of `acpira-gateway`, the only network-facing process, a LaunchAgent on macOS. Every engine sharing a data root drives the same LaunchAgent, so ops must stay idempotent: turning it on while a gateway installed from the same binaries answers changes nothing, and a reload would cut off its devices.
+- **Start contract.** The desktop card starts remote access as it opens, with no switch on the card. Only the settings switch turns it off. An op that starts the gateway returns once the gateway answers, so a page never reads a starting gateway as stopped.
+- **Control socket first.** The gateway answers its control socket before its relay is up. Engines treat a gateway that does not answer as not running, and a relay can take seconds.
+- **launchd (macOS 27.0).** `bootout` returns while the job is still listed (`state = SIGTERMed`). A `bootstrap` in that window, on a label already loaded, or on a disabled job fails the same way: `5: Input/output error`. Wait for `launchctl print` to fail before a bootstrap, and treat a 5 with the label loaded as success.
+- Tests: `acpira-gateway/tests/e2e.rs` (`launch_agent_round_trip` loads a real LaunchAgent, `--ignored`).
+
 ## Host probes
 
 Everything except a prompt-less `pnpm probe` (or one with only `--mcp`) spends real model calls, so run probes only when the repository owner asked. Give a CLI a temp store (`DSH_HOME`, `PI_CODING_AGENT_DIR`) where it has one.
