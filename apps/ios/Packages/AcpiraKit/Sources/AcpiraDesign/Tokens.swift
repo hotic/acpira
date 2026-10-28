@@ -468,6 +468,11 @@ public enum Motion {
   public static let foldDwell: Double = 0.900
   /// The outer fold's close and a frame or two (Turns.tsx SETTLE_MS)
   public static let foldSettle: Double = 0.400
+  /// The subagent mark's bead loop (subagents.css `subagent-mark-*`, 1 s) and each bar's lead on the next one
+  public static let subagentLoop: Double = 1
+  public static let subagentBarStagger: Double = 0.33
+  /// A child finishing in front of the reader: the bars gather onto the ✓ and it draws (icons.tsx playFinish)
+  public static let subagentFinish: Double = 1
 
   /// A pressed send button: the webview's hover `brightness(1.08)`, and a slight sink
   public static let pressBrightness: Double = 0.08

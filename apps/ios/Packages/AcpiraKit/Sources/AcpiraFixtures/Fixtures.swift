@@ -5,10 +5,10 @@ import AcpiraModels
 // so a simulator screenshot of a fixture and a LAB screenshot of it compare like for like.
 public enum Fixtures {
   /// Fixture names that hold a SessionView. The cards' fixtures after `empty` are hand-written (plan approval, notice
-  /// rows, records, failure cards, session states); `records` carries one deliberately unknown block type
+  /// rows, records, failure cards, session states, subagents); `records` carries one deliberately unknown block type
   public static let sessionNames = ["showcase", "running", "streaming", "question", "queued", "stopped", "empty", "diagrams", "media",
                                     "plan", "notices", "records", "context", "failure", "login", "readonly", "closed",
-                                    "error", "connecting", "chatgpt", "goal"]
+                                    "error", "connecting", "chatgpt", "goal", "subagents"]
 
   /// Raw JSON of `synthetic/<name>.json`
   public static func data(_ name: String) -> Data? {
@@ -28,6 +28,12 @@ public enum Fixtures {
   }
 
   public static func session(_ name: String) -> SessionView? { try? decode(SessionView.self, name) }
+
+  /// The child transcripts a fixture's subagents show once observed (`synthetic/<name>.children.json`, keyed by
+  /// subagent id): what the engine's `subagent` pushes would carry. Empty for a fixture without children
+  public static func subagentTranscripts(_ name: String) -> [String: SubagentTranscript] {
+    (try? decode([String: SubagentTranscript].self, "\(name).children")) ?? [:]
+  }
   public static var agents: [AgentInfo] { (try? decode([AgentInfo].self, "agents")) ?? [] }
   public static var sessions: [SessionSummary] { (try? decode([SessionSummary].self, "sessions")) ?? [] }
   public static var accounts: [AccountInfo] { (try? decode([AccountInfo].self, "accounts")) ?? [] }

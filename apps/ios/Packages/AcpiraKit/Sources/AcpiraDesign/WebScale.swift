@@ -44,4 +44,13 @@ public enum WebMetrics {
   /// --code-output-max / --code-output-line-height
   public static let codeOutputMax: CGFloat = 350
   public static let codeOutputLine: CGFloat = 22
+  /// --subagent-mark: the subagent row's state mark fills its lead slot, so the dotted bars read
+  public static let subagentMark: CGFloat = 20
+  /// --subagent-check-scale: the settled ✓ shrinks back to --icon inside that slot
+  public static let subagentCheckScale: CGFloat = 0.7
+  /// --subagent-badge / --subagent-badge-inset: a summoned child's CLI mark on the state mark's corner
+  public static let subagentBadge: CGFloat = 11
+  public static let subagentBadgeInset: CGFloat = -3
+  /// ChipTag small (h-3.5): the effort badge beside a summoned child's model
+  public static let chipTagSmall: CGFloat = 14
 }

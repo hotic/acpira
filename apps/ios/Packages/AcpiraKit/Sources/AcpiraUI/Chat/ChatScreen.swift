@@ -81,6 +81,8 @@ struct ChatScreen: View {
     .environment(\.agentAccent, Palette.accent(for: session.agent))
     .environment(\.chatAgent, agent)
     .environment(\.sessionActions, sessionActions)
+    // A subagent row pushes that child's inspector
+    .environment(\.inspectSubagent, SubagentInspect(session: id) { model.path.append(.subagent(session: id, id: $0)) })
     .modifier(MediaLayer(session: session, loader: model.media))
     .environment(\.mentionPersonas, model.personas)
     .environment(\.compactAt, model.compactAt)
@@ -116,6 +118,8 @@ struct ChatScreen: View {
       rename: { newTitle = session.title; renaming = true },
       export: { model.export(id, json: $0) },
       terminal: { model.openTerminal(session.cwd) },
+      subagents: (session.subagents ?? []).isEmpty ? nil : { model.path.append(.subagents(session: id)) },
+      subagentCounts: countsLabel(session.subagents ?? []),
       settings: { model.settingsOpen = true },
       delete: { deleting = true },
       changes: session.cwd.isEmpty ? nil : { model.path.append(.changes(id)) },
@@ -175,6 +179,9 @@ struct HeaderActions {
   var export: (Bool) -> Void = { _ in }
   /// The project's terminal page
   var terminal: () -> Void = {}
+  /// The session's subagent graph page; nil while the session has no subagents. `subagentCounts` is its subtitle
+  var subagents: (() -> Void)?
+  var subagentCounts = ""
   var settings: () -> Void = {}
   var delete: () -> Void = {}
   /// The files the session changed (panel.changes)
@@ -282,23 +289,26 @@ struct ThreadContent: View {
   var body: some View {
     let groups = exchanges(session.turns)
     let activeAgent = session.turns.lastIndex { if case .agent = $0 { true } else { false } }
+    // Each child reaches only the turn that announced it
+    let nodes = nodesByTurn(session.subagents ?? [])
     Group {
       if lazy {
         // A prompt bubble does not stick (it would sit under the floating glass with the thread showing beside it)
         LazyVStack(alignment: .leading, spacing: 0) {
-          sections(groups, activeAgent)
+          sections(groups, activeAgent, nodes)
         }
       } else {
-        VStack(alignment: .leading, spacing: 0) { sections(groups, activeAgent) }
+        VStack(alignment: .leading, spacing: 0) { sections(groups, activeAgent, nodes) }
       }
     }
     .padding(.horizontal, Metrics.s1)
     .padding(.top, Metrics.padY)
     .padding(.bottom, WebMetrics.msgGap)
     .environment(\.planContext, PlanContext(controls: session.controls, running: session.running, ready: session.status == .ready))
+    .environment(\.allSubagents, session.subagents ?? [])
   }
 
-  @ViewBuilder private func sections(_ groups: [Exchange], _ activeAgent: Int?) -> some View {
+  @ViewBuilder private func sections(_ groups: [Exchange], _ activeAgent: Int?, _ nodes: [Int: [SubagentSummary]]) -> some View {
     // What the prompts' long-press menus offer, and the failed reply that offers Retry
     let editable = canEditPrompts(session)
     let goalPrompt = canSetGoal(session) ? lastTypedPrompt(session.turns) : nil
@@ -313,7 +323,8 @@ struct ThreadContent: View {
           ForEach(exchange.agents, id: \.index) { item in
             AgentMessage(turn: item.turn, running: session.running && item.index == activeAgent && item.turn.stop == nil,
                          scope: "\(session.id):\(item.index)", index: item.index, last: item.index == session.turns.count - 1,
-                         settings: exchange.user?.settings, retry: item.index == retry)
+                         settings: exchange.user?.settings, retry: item.index == retry,
+                         subagents: nodes[item.index] ?? [])
           }
         }
         .padding(.top, exchange.user != nil && !exchange.agents.isEmpty ? WebMetrics.msgGap : 0)

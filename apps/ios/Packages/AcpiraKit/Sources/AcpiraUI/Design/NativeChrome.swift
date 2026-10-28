@@ -58,6 +58,17 @@ struct NativeSessionMenu: View {
       }
     }
     Section {
+      // The composer's subagent entry on the desktop: the session's relation tree, its tallies as the subtitle
+      if let subagents = actions.subagents {
+        Button(action: subagents) {
+          Label {
+            Text(web: t("subagents.graph"))
+            Text(web: actions.subagentCounts)
+          } icon: {
+            Image(systemName: "point.3.connected.trianglepath.dotted")
+          }
+        }
+      }
       Button(action: actions.terminal) { Label(t("panel.terminal"), systemImage: "apple.terminal") }
       Button(action: actions.settings) { Label(t("session.settings"), systemImage: "gearshape") }
     }

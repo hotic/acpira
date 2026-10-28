@@ -1010,6 +1010,18 @@ public struct SubagentSummary: Codable, Hashable, Sendable, Identifiable {
   }
 }
 
+/// One child's transcript as the `subagent` push carries it (App.tsx keeps the same triple per child); `rev` grows with
+/// every change, so an older push never replaces a newer one
+public struct SubagentTranscript: Codable, Hashable, Sendable {
+  public var rev: Int
+  public var running: Bool
+  public var turns: [Turn]
+
+  public init(rev: Int, running: Bool, turns: [Turn]) {
+    self.rev = rev; self.running = running; self.turns = turns
+  }
+}
+
 public struct SessionView: Codable, Hashable, Sendable, Identifiable {
   public var id: String
   public var external: ExternalSessionInfo?

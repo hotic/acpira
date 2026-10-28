@@ -99,6 +99,8 @@ extension AppModel {
       fileSearch.receive(seq: seq, files: files)
     case let .editTurnResult(requestId, error):
       editAnswered(requestId, error: error)
+    case let .subagent(sessionId, subagentId, rev, running, turns):
+      subagentFeed.receive(session: sessionId, id: subagentId, transcript: SubagentTranscript(rev: rev, running: running, turns: turns))
     default:
       break
     }
@@ -139,15 +141,16 @@ extension AppModel {
 
   /// The engine makes the session and shows it on this view; the controls picked on the new-session screen are set on
   /// it, the first prompt follows, and its chat replaces the new-session screen
-  /// agent: nil starts the engine's default agent
+  /// agent: nil starts the engine's default agent; `opened` runs once its chat is on screen (`-start` with `-subagent`)
   func engineNewSession(agent: AgentId?, cwd: String, controls: SessionControls? = nil, text: String,
-                        attachments: [Attachment] = []) {
+                        attachments: [Attachment] = [], opened: (() -> Void)? = nil) {
     guard let link else { return }
     link.awaiting = (from: link.feed.views.current?.id, then: { [weak self] id in
       guard let self else { return }
       if let controls, let made = self.views[id]?.controls { self.apply(controls, over: made, to: id) }
       self.send(id, text: text, attachments: attachments)
       if case .new? = self.path.last { self.path[self.path.count - 1] = .chat(id) } else { self.path.append(.chat(id)) }
+      opened?()
     })
     post(.newSession(agent: agent, cwd: cwd.isEmpty ? nil : cwd))
   }
