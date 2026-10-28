@@ -45,7 +45,8 @@ OpenSSH behaviour the code relies on (OpenSSH 10.3 client, Ubuntu and macOS serv
 
 - `packages/ui/remote/api.ts` is the only place that posts or reads remote messages; `settings/ConnectionsPage.tsx`, `remote/ConnectStatus.tsx`, `remote/RemoteFolderDialog.tsx` are the UI.
 - Only the desktop app and the browser harness send `connections` at `init`; the list stays `undefined` otherwise, so VS Code and IntelliJ (which have Remote-SSH of their own) never show it.
-- The connect-status block has one fixed height for steps and failure, so a retry loop never moves the page.
+- The connect-status block stacks steps and failure in one grid cell sized to the taller, so a retry loop never moves the page; on a host's page the whole block folds in and out with the attempt.
+- The desktop column groups only registered host folders (`chat/sessionTree.ts` `offList`): a host's list brings every folder it ever ran a session in. The rest show in a search.
 - Unverified: connecting a real host from the pages.
 
 ## Built-in agent

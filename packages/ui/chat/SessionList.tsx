@@ -1142,11 +1142,11 @@ function MoreRow({ open, rest, nameOf, onToggle, flush }: { open: boolean; rest:
 }
 
 // Header of a project or a category. A project: the folder glyph (open or shut with the fold), the heavier name, the
-// "current" badge, then its actions. A category (`sub`): a quiet label with no glyph, its chevron after the name. Hovered,
-// the count / state cross-fade into the actions — "new category", "new session here" and the "…" menu, which right-click
-// opens too. Collapsed, both still show the most urgent state inside. A project on an SSH host (`folder` is `ssh://…`) has
-// the globe-badged folder and the host's name after its own; its connection shows only when it is off the usual: the glyph
-// breathes while connecting and turns amber when the connection failed
+// "current" badge, then its tail. A category (`sub`): a quiet label with no glyph, its chevron after the name. Hovered,
+// the resting tail (host / state / count) cross-fades into the actions — "new category", "new session here" and the "…"
+// menu, which right-click opens too. Collapsed, both still show the most urgent state inside. A project on an SSH host
+// (`folder` is `ssh://…`) has the monochrome globe-badged folder and, right-aligned in the tail, the host's name and its
+// connection dot (green connected, breathing while connecting, dimmed when off, amber when failed)
 function GroupHeader({ project, sub, name, title, folder, badge, count, open, state, fresh, dragging, editing, onDragStart, onDragEnd, onToggle, onRename, onNewSession, newSessionLabel = t('session.category.newSession'), onNewCategory, menu }: {
   project?: boolean;
   sub?: boolean;
@@ -1220,7 +1220,7 @@ function GroupHeader({ project, sub, name, title, folder, badge, count, open, st
       {project && (
         // The folder shuts and opens in place with the fold. A pixel low: centred on the line box, the folder sat high
         // beside the bold name's lowercase letters
-        <span title={hostTitle || undefined} className={cn('relative -mr-gap-half flex size-lead shrink-0 items-center justify-center text-fg-3 *:absolute *:size-icon *:translate-y-px *:transition-opacity *:duration-200', hostState === 'error' && 'text-warn')}>
+        <span title={hostTitle || undefined} className="relative -mr-gap-half flex size-lead shrink-0 items-center justify-center text-fg-3 *:absolute *:size-icon *:translate-y-px *:transition-opacity *:duration-200">
           {host ? <>
             <RemoteFolderIcon pulse={hostState === 'connecting'} className={open ? 'opacity-0' : 'opacity-100'} />
             <RemoteFolderIcon open pulse={hostState === 'connecting'} className={open ? 'opacity-100' : 'opacity-0'} />
@@ -1233,8 +1233,6 @@ function GroupHeader({ project, sub, name, title, folder, badge, count, open, st
       {editing && onRename
         ? <RenameInput initial={name} label={t('session.category.rename')} onDone={onRename} />
         : <span className="min-w-0 truncate">{name}</span>}
-      {/* The host gives way first: it shrinks a thousand times faster than the name */}
-      {host && !editing && <span title={host.alias} className="min-w-0 shrink-1000 truncate text-3 font-normal text-fg-3/70">{host.alias}</span>}
       {/* Like a section label's: shown only on hover or focus in either state */}
       {sub && !editing && (
         <ChevronRight strokeWidth={1.5} className={cn('-ml-1 size-3 shrink-0 opacity-0 transition-[rotate,opacity] duration-(--dur-open) group-hover:opacity-100 group-focus-visible:opacity-100 group-data-[menu-open]:opacity-100',
@@ -1243,8 +1241,16 @@ function GroupHeader({ project, sub, name, title, folder, badge, count, open, st
       {badge && !editing && <span className="shrink-0 rounded-sm bg-active px-1 text-3 font-normal text-fg-3">{badge}</span>}
       {!editing && (
         <span className={cn(STACK, 'ml-auto shrink-0 items-center text-3 font-normal text-fg-3 tabular-nums')}>
-          <span className={cn('flex items-center justify-end gap-2', actions && CONCEAL)}>
+          <span className={cn('flex items-center justify-end gap-1.5', actions && CONCEAL)}>
             {state && <StateMark {...state} />}
+            {host && <>
+              <span title={hostTitle || host.alias} className="max-w-host truncate text-fg-3/70">{host.alias}</span>
+              <span title={hostTitle || host.alias} className={cn('size-1.5 shrink-0 rounded-full',
+                hostState === 'connected' ? 'bg-ok'
+                  : hostState === 'error' ? 'bg-warn'
+                  : hostState === 'connecting' ? 'bg-fg-3 remote-breathe'
+                  : 'bg-fg-3/40')} />
+            </>}
             {count !== undefined && <span className="text-right">{count}</span>}
           </span>
           {actions && (

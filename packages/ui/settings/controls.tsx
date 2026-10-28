@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { ArrowUpRight, Check, ChevronRight, ChevronsUpDown, Search, Trash2, X } from 'lucide-react';
 import { Radio } from '@base-ui/react/radio';
 import { RadioGroup } from '@base-ui/react/radio-group';
@@ -93,8 +93,10 @@ const block = 'flex flex-col overflow-hidden rounded-lg bg-chip px-3';
 // The rules inside a card run from card edge to card edge, like a clickable row's hover fill (`rowHover`): a hovered row is
 // a closed cell between two rules. Inset rules left the fill spilling past their ends and running into the rule above.
 // `rowRules` draws one above every row but the first, `topRule` one above a block (a card's list under its head, a
-// footer, a group after another); the card clips both at its border
-export const rowRules = '[&>*+*]:relative [&>*+*]:after:pointer-events-none [&>*+*]:after:absolute [&>*+*]:after:top-0 [&>*+*]:after:-inset-x-pad [&>*+*]:after:h-px [&>*+*]:after:bg-line';
+// footer, a group after another); the card clips both at its border. A closed fold (Collapsible.Section, inert while
+// closed) does not count as a row before: the first row after it would otherwise draw a second line on the block's top
+// rule. Not data-closed: a Collapsible.Root holding a visible row carries that too
+export const rowRules = '[&>:not([inert])~*]:relative [&>:not([inert])~*]:after:pointer-events-none [&>:not([inert])~*]:after:absolute [&>:not([inert])~*]:after:top-0 [&>:not([inert])~*]:after:-inset-x-pad [&>:not([inert])~*]:after:h-px [&>:not([inert])~*]:after:bg-line';
 export const topRule = 'relative before:pointer-events-none before:absolute before:top-0 before:-inset-x-pad before:h-px before:bg-line';
 
 // A text field on a settings card (inline forms)
@@ -262,26 +264,41 @@ export function Segmented<V extends string>({ items, value, onChange, label, cla
 // The settings pages' dialog frame: a scrim over the settings shell, a head (an optional mark, the title with a fg-3
 // subtitle, an optional control such as the item's switch, close), the body, and an optional footer. A click on the
 // scrim closes. Inside, Sections and Groups render as filled blocks. `tall` gives a tabbed dialog one fixed height, so
-// switching tabs never resizes it. It shares the menus' z-30 layer: a select inside portals its list after it into the
-// same layer and so paints above it; a dialog opened from a dialog paints above the one it came from
-export function SettingsDialog({ title, sub, icon, control, wide, tall, onClose, footer, children }: {
+// switching tabs never resizes it. `pinTop`: the dialog opens centred and then keeps its top edge, so content that
+// folds in or out (a page whose blocks come and go) moves only the bottom edge, never the title under the pointer. It shares the menus' z-30 layer: a select inside
+// portals its list after it into the same layer and so paints above it; a dialog opened from a dialog paints above the
+// one it came from
+export function SettingsDialog({ title, sub, icon, control, wide, tall, pinTop, onClose, footer, children }: {
   title: string;
   sub?: ReactNode;
   icon?: ReactNode;
   control?: ReactNode;
   wide?: boolean;
   tall?: boolean;
+  pinTop?: boolean;
   onClose: () => void;
   footer?: ReactNode;
   children: ReactNode;
 }) {
   const scrim = (e: MouseEvent) => { if (e.target === e.currentTarget) onClose(); };
-  return <Dialog.Root open onOpenChange={next => { if (!next) onClose(); }}>
+  // The top edge the centred dialog opened at, measured as the card attaches (Base UI mounts the popup on its own
+  // render, after this component's effects) and before its first paint; it then stays put
+  const [top, setTop] = useState<number>();
+  const card = useCallback((el: HTMLDivElement | null) => {
+    if (!pinTop || !el?.parentElement) return;
+    setTop(prev => prev ?? el.offsetTop - parseFloat(getComputedStyle(el.parentElement!).paddingTop));
+  }, [pinTop]);
+  const pinned = pinTop && top !== undefined;
+  // The popup covers the whole layer and `scrim` answers clicks beside the card, so base-ui's own outside-press check is
+  // off: it took a click whose target the click itself unmounted (a folder row the picker swaps for its loading line)
+  // as a click outside, and closed the dialog and every dialog under it
+  return <Dialog.Root open disablePointerDismissal onOpenChange={next => { if (!next) onClose(); }}>
     <Dialog.Portal>
       {/* acp-settings: the settings measures (dialog widths, row leading) also where the dialog opens outside the
           settings shell, such as the remote folder picker from the session column */}
-      <Dialog.Popup onClick={scrim} className="acp-settings absolute inset-0 z-30 flex items-center justify-center bg-scrim p-pad">
-        <div className={cn('flex max-h-full max-w-full flex-col overflow-hidden rounded-lg border border-line bg-bg-1 shadow-pop', wide ? 'w-(--dialog-w-wide)' : 'w-(--dialog-w)', tall && 'h-(--dialog-h)')}>
+      <Dialog.Popup onClick={scrim} className={cn('acp-settings absolute inset-0 z-30 flex justify-center bg-scrim p-pad', pinned ? 'items-start' : 'items-center')}>
+        <div ref={card} style={pinned ? { marginTop: top, maxHeight: `calc(100% - ${top}px)` } : undefined}
+          className={cn('flex max-h-full max-w-full flex-col overflow-hidden rounded-lg border border-line bg-bg-1 shadow-pop', wide ? 'w-(--dialog-w-wide)' : 'w-(--dialog-w)', tall && 'h-(--dialog-h)')}>
           <header className="flex shrink-0 items-center gap-gap border-b border-line py-gap pr-gap pl-pad">
             {icon && <span className="flex size-lead shrink-0 items-center justify-center text-fg-2 [&>svg]:size-lead [&>svg]:stroke-[1.5]">{icon}</span>}
             <span className="flex min-w-0 flex-1 items-baseline gap-2">
