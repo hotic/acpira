@@ -1362,6 +1362,7 @@ export const ja = {
   'mobile.attach': '添付を追加',
   'mobile.attach.photos': '写真',
   'mobile.attach.camera': 'カメラ',
+  'mobile.share': '共有',
   'mobile.attach.files': 'ファイル',
   'mobile.projects': 'プロジェクト',
   'mobile.projects.recent': '最近',

@@ -205,10 +205,8 @@ private struct QueueAttachment: View {
   let attachment: Attachment
   var body: some View {
     switch attachment {
-    case .image:
-      RoundedRectangle(cornerRadius: Metrics.rSm).fill(Palette.chip)
-        .frame(width: Metrics.ctlSm, height: Metrics.ctlSm)
-        .overlay { Icon(.image, size: Metrics.icon).foregroundStyle(Palette.fg3) }
+    case .image(let blob, _, let name):
+      AttachmentThumbnail(blob: blob, name: name, side: Metrics.ctlSm)
     case .file(_, let name), .text(_, let name, _):
       AttachmentPill(name: name, icon: .fileText)
     case .selection(_, let name, let start, let end, _):

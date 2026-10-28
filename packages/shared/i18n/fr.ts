@@ -1355,6 +1355,7 @@ export const fr = {
   'mobile.attach': 'Ajouter une pièce jointe',
   'mobile.attach.photos': 'Photos',
   'mobile.attach.camera': 'Appareil photo',
+  'mobile.share': 'Partager',
   'mobile.attach.files': 'Fichiers',
   'mobile.projects': 'Projets',
   'mobile.projects.recent': 'Récents',

@@ -55,9 +55,9 @@ struct TurnAttachments: View {
     FlowLayout(spacing: Metrics.gap) {
       ForEach(Array(attachments.enumerated()), id: \.offset) { _, item in
         switch item {
-        case .image(let blob, _, _):
-          // Inline pixels when the app staged the photo itself; a blob name from the engine keeps the glyph for now
-          AttachmentThumb(blob: blob)
+        case .image(let blob, _, let name):
+          // Inline pixels when the app staged the photo itself, else the engine's blob
+          AttachmentThumbnail(blob: blob, name: name)
         case .file(_, let name), .text(_, let name, _):
           AttachmentPill(name: name, icon: .fileText)
         case .selection(_, let name, let start, let end, _):

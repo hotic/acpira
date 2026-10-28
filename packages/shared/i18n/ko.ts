@@ -1357,6 +1357,7 @@ export const ko = {
   'mobile.attach': '첨부 추가',
   'mobile.attach.photos': '사진',
   'mobile.attach.camera': '카메라',
+  'mobile.share': '공유',
   'mobile.attach.files': '파일',
   'mobile.projects': '프로젝트',
   'mobile.projects.recent': '최근',

@@ -78,6 +78,7 @@ struct ChatScreen: View {
     .background(Palette.bg0)
     .environment(\.agentAccent, Palette.accent(for: session.agent))
     .environment(\.sessionActions, sessionActions)
+    .modifier(MediaLayer(session: session, loader: model.media))
     // The accounts as a system sheet with a form
     .sheet(isPresented: $accountOpen) {
       NativeAccountSheet(agent: agent, accounts: model.accounts.filter { $0.agent == agent.id }, accountId: session.accountId,
@@ -312,6 +313,7 @@ public struct ChatPoster: View {
     .fixedSize(horizontal: false, vertical: true)
     .background(Palette.bg0)
     .environment(\.agentAccent, Palette.accent(for: session.agent))
+    .environment(\.media, MediaScope(session: session.id))
   }
 }
 

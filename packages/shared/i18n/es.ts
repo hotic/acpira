@@ -1358,6 +1358,7 @@ export const es = {
   'mobile.attach': 'Añadir adjunto',
   'mobile.attach.photos': 'Fotos',
   'mobile.attach.camera': 'Cámara',
+  'mobile.share': 'Compartir',
   'mobile.attach.files': 'Archivos',
   'mobile.projects': 'Proyectos',
   'mobile.projects.recent': 'Recientes',

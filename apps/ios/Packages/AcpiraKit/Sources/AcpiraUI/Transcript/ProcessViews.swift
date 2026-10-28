@@ -62,6 +62,7 @@ struct LineBlockView: View {
     case .toolCall(let call): ToolCallView(block: call)
     case .compaction(let c): CompactionRow(block: c)
     case .steer(let s): SteeredMessage(block: s)
+    case .image(let image): AgentImageView(blob: image.blob, uri: image.uri)
     default: EmptyView()
     }
   }

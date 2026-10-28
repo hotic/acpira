@@ -61,6 +61,12 @@ struct ToolCallView: View {
 
     if let todos = block.todoEntries {
       PlanDetails(entries: todos) { label } trailing: { trailing }
+    } else if isImageResult(block) {
+      // Generated and shown images: under their row in an open process fold, after the fold once it closes (CodexFold)
+      VStack(alignment: .leading, spacing: Metrics.gap) {
+        Row(tone: .action) { LeadIcon(icon) } content: { label } trailing: { trailing }
+        ImageResults(block: block, grouped: grouped)
+      }
     } else if !files.isEmpty && block.kind == .search {
       Disclosure(open: foldBinding($manual, preOpen.contains(.results)), icon: icon, indent: false, rail: .rows) { label } trailing: { trailing } content: {
         ResultList(items: files, kind: block.kind).environment(\.rowEnterDelay, Motion.rowEnterFile)
@@ -176,7 +182,11 @@ struct CommandDisclosure<Label: View, Trailing: View>: View {
     Disclosure(open: foldBinding($manual, defaultOpen || preOpen.contains(.command)), icon: icon,
                bodyTop: Metrics.gapHalf) { label } trailing: { trailing } content: {
       if block.kind == .execute {
-        TerminalOutput(block: block, command: command)
+        // An image the command produced (screenshot tools) sits below its output (ToolCall.tsx ToolBody)
+        VStack(alignment: .leading, spacing: Metrics.gap) {
+          TerminalOutput(block: block, command: command)
+          ForEach(Array(toolImages(block).enumerated()), id: \.offset) { _, image in AgentImageView(blob: image.blob, uri: image.uri) }
+        }
       } else {
         ToolOutput(text: items.compactMap { if case .text(let t) = $0 { t } else { nil } }.joined(separator: "\n"))
       }
@@ -197,7 +207,8 @@ struct ToolBody: View {
         case .diff(let lines, _): DiffBlockView(lines: lines, title: block.target ?? "")
         case .list(let list): ResultList(items: list, kind: block.kind)
         case .text(let text): ToolOutput(text: text)
-        case .image, .unknown: EmptyView()
+        case .image(let image): if !isWidget(image) { AgentImageView(blob: image.blob, uri: image.uri) }
+        case .unknown: EmptyView()
         }
       }
     }

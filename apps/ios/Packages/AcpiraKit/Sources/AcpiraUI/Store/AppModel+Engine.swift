@@ -10,6 +10,9 @@ import os
 extension AppModel {
   var live: Bool { link != nil }
 
+  /// The loader the chat's images ask: the engine's, else the demo's (fixture blobs from the bundle)
+  var media: MediaLoader { link?.media ?? .demo }
+
   /// Posts an action to the engine; false in the demo, where the caller acts locally
   @discardableResult
   func post(_ message: WebviewMsg) -> Bool {
@@ -54,6 +57,7 @@ extension AppModel {
     guard let link else { return }
     switch message {
     case .initState(let state):
+      if let base = state.blobBase { link.blobBase = base }
       agents = state.agents
       accounts = state.accounts
       summaries = state.sessions
@@ -68,6 +72,8 @@ extension AppModel {
       present(link.feed.receive(message))
     case .terminalOutput, .terminalState:
       terminals.receive(message)
+    case .imageBlob(let seq, let blob):
+      link.staged(seq, blob: blob)
     default:
       break
     }

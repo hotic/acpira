@@ -1387,6 +1387,7 @@ export const ru = {
   'mobile.attach': 'Добавить вложение',
   'mobile.attach.photos': 'Фото',
   'mobile.attach.camera': 'Камера',
+  'mobile.share': 'Поделиться',
   'mobile.attach.files': 'Файлы',
   'mobile.projects': 'Проекты',
   'mobile.projects.recent': 'Недавние',

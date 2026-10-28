@@ -2,8 +2,8 @@ import Foundation
 
 // Markdown → block AST, the subset the webview's streamdown pipeline renders for agent prose: GFM blocks (headings,
 // paragraphs, nested lists, quotes, fenced code, tables, rules), `$$` display math and the inline set (code, strong,
-// emphasis, strike, links, autolinks, breaks). It is safe against half-streamed syntax: an unclosed fence runs to the
-// end, an unclosed delimiter stays literal text. Single-dollar math stays off, like the webview ("$5 and $10").
+// emphasis, strike, links, images, autolinks, breaks). It is safe against half-streamed syntax: an unclosed fence runs
+// to the end, an unclosed delimiter stays literal text. Single-dollar math stays off, like the webview ("$5 and $10").
 
 public indirect enum MDInline: Hashable, Sendable {
   case text(String)
@@ -12,6 +12,8 @@ public indirect enum MDInline: Hashable, Sendable {
   case emphasis([MDInline])
   case strike([MDInline])
   case link(url: String, [MDInline])
+  /// `![alt](src)`: the source as written (angle brackets dropped), the alt text plain
+  case image(url: String, alt: String)
   case lineBreak
 }
 
@@ -42,6 +44,7 @@ public enum Markdown {
       switch inline {
       case .text(let s), .code(let s): s
       case .strong(let c), .emphasis(let c), .strike(let c), .link(_, let c): plain(c)
+      case .image(_, let alt): alt
       case .lineBreak: "\n"
       }
     }.joined()
@@ -311,6 +314,7 @@ struct InlineParser {
         continue
       }
       if c == "`", let code = codeSpan() { flush(); out.append(.code(code)); continue }
+      if c == "!", i + 1 < chars.count, chars[i + 1] == "[", let image = imageAt() { flush(); out.append(image); continue }
       if c == "[", let link = linkAt() { flush(); out.append(link); continue }
       if c == "<", let auto = autolink() { flush(); out.append(auto); continue }
       if (c == "h" || c == "w"), let bare = bareURL() { flush(); out.append(bare); continue }
@@ -426,10 +430,22 @@ struct InlineParser {
     guard k < chars.count else { return nil }
     let label = String(chars[(i + 1)..<j])
     var target = String(chars[(j + 2)..<k]).trimmingCharacters(in: .whitespaces)
-    if let space = target.firstIndex(of: " ") { target = String(target[..<space]) }
-    if target.hasPrefix("<") && target.hasSuffix(">") { target = String(target.dropFirst().dropLast()) }
+    // `<a path with spaces>` keeps its spaces; otherwise a space starts the title
+    if target.hasPrefix("<"), let close = target.firstIndex(of: ">") {
+      target = String(target[target.index(after: target.startIndex)..<close])
+    } else if let space = target.firstIndex(of: " ") {
+      target = String(target[..<space])
+    }
     i = k + 1
     return .link(url: target, Inline.parse(label))
+  }
+
+  /// `![alt](src "title")`: a link's syntax after the bang; the bang stays text when no link follows
+  mutating func imageAt() -> MDInline? {
+    let start = i
+    i += 1
+    guard case .link(let url, let label)? = linkAt() else { i = start; return nil }
+    return .image(url: url, alt: Markdown.plain(label))
   }
 
   mutating func autolink() -> MDInline? {

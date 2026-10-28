@@ -5,11 +5,17 @@ import AcpiraModels
 // so a simulator screenshot of a fixture and a LAB screenshot of it compare like for like.
 public enum Fixtures {
   /// Fixture names that hold a SessionView
-  public static let sessionNames = ["showcase", "running", "streaming", "question", "queued", "stopped", "empty"]
+  public static let sessionNames = ["showcase", "running", "streaming", "question", "queued", "stopped", "empty", "media"]
 
   /// Raw JSON of `synthetic/<name>.json`
   public static func data(_ name: String) -> Data? {
     guard let url = Bundle.module.url(forResource: name, withExtension: "json", subdirectory: "synthetic") else { return nil }
+    return try? Data(contentsOf: url)
+  }
+
+  /// A stored file of the fixture sessions (`synthetic/blobs/<name>`), what the engine's blob store holds for a real one
+  public static func blob(_ name: String) -> Data? {
+    guard let url = Bundle.module.url(forResource: name, withExtension: nil, subdirectory: "synthetic/blobs") else { return nil }
     return try? Data(contentsOf: url)
   }
 
