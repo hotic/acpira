@@ -1052,7 +1052,7 @@ function SectionLabel({ children, actions, open, quiet, keep, rename, onToggle }
   return (
     <div className="group mt-gap flex min-h-row items-center gap-gap px-2 text-3 text-fg-3">
       {rename ?? <button type="button" aria-expanded={open} onClick={onToggle}
-        className="inline-flex min-w-0 items-center gap-1 rounded-sm px-[calc((var(--spacing-lead)-var(--spacing-icon))/2)] transition-colors hover:text-fg-1 focus-visible:text-fg-1">
+        className="inline-flex min-w-0 select-none items-center gap-1 rounded-sm px-[calc((var(--spacing-lead)-var(--spacing-icon))/2)] transition-colors hover:text-fg-1 focus-visible:text-fg-1">
         <span className="min-w-0 truncate">{children}</span>
         <ChevronRight strokeWidth={1.5} className={cn('size-3 shrink-0 opacity-0 transition-[rotate,opacity] duration-(--dur-open) group-hover:opacity-100 group-focus-within:opacity-100',
           open && 'rotate-90')} />
@@ -1210,8 +1210,8 @@ function GroupHeader({ project, sub, name, title, folder, badge, count, open, st
         'group flex min-h-row items-center gap-gap rounded-md px-2 text-2 transition-colors hover:bg-hover focus-visible:bg-hover data-[menu-open]:bg-hover',
         onToggle && 'cursor-pointer',
         project ? 'font-semibold text-fg-strong' : 'text-3 text-fg-3 hover:text-fg-1',
-        // Renaming keeps the hover fill, as on a session row
-        editing && 'bg-hover',
+        // Renaming keeps the hover fill, as on a session row. select-none as on ui/Row (see the session row), off while renaming
+        editing ? 'bg-hover' : 'select-none',
         dragging && 'opacity-40',
         fresh && 'row-flash',
       )}
@@ -1505,7 +1505,9 @@ const Item = memo(function Item({ session: s, agentName, terms, snippet, active,
         nudge && 'pl-6',
         snippet && !editing && 'py-1',
         // Renaming keeps the fill too: the menu that started it has closed and the focused input is not the row's focus-visible
-        editing && 'bg-hover text-fg-1',
+        // select-none as on ui/Row: a drag or double click selected titles, and WebKit keeps a selection when the next click
+        // lands on unselectable chrome. Off while renaming: an ancestor's -webkit-user-select: none blocks selecting in the input
+        editing ? 'bg-hover text-fg-1' : 'select-none',
         active && 'bg-active text-fg-strong hover:bg-active data-[menu-open]:bg-active data-[menu-open]:text-fg-strong',
         dragging && 'opacity-40',
       )}
