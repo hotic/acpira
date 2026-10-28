@@ -257,7 +257,7 @@ struct StagedAttachments: View {
           Group {
             switch item {
             case .image(let blob, _, _):
-              AttachmentThumb(blob: blob)
+              AttachmentThumbnail(blob: blob)
             case .file(_, let name), .text(_, let name, _):
               AttachmentPill(name: name, icon: .fileText)
             default:

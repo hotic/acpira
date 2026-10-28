@@ -1392,6 +1392,7 @@ export const zhTW = {
   'mobile.attach': '新增附件',
   'mobile.attach.photos': '照片',
   'mobile.attach.camera': '拍照',
+  'mobile.share': '分享',
   'mobile.attach.files': '檔案',
   'mobile.projects': '專案',
   'mobile.projects.recent': '最近',

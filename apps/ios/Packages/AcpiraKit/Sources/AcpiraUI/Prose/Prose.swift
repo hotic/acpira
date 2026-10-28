@@ -68,6 +68,8 @@ public struct StreamProse: View {
   let markdown: String
   let streaming: Bool
   var tone: ProseTone
+  /// The local images the engine read with the text, for its Markdown images
+  var images: [ImageRef]?
   @Environment(\.motionEnabled) private var motion
   @State private var pacer: StreamPacer?
 
@@ -83,6 +85,7 @@ public struct StreamProse: View {
 
   public init(block: TextBlock, tone: ProseTone = .reply) {
     self.init(markdown: block.markdown, tone: tone, streaming: block.streaming == true)
+    images = block.images
   }
 
   public var body: some View {
@@ -105,6 +108,7 @@ public struct StreamProse: View {
     .onChange(of: markdown) { receive() }
     .onChange(of: streaming) { receive() }
     .task(id: pacer != nil && motion) { await pace() }
+    .environment(\.markdownImages, images)
   }
 
   private func receive() {
@@ -177,6 +181,8 @@ struct ProseBlock: View {
 
   var body: some View {
     switch block {
+    case .paragraph(let inlines) where holdsImage(inlines):
+      ImageParagraph(inlines: inlines, style: style)
     case .paragraph(let inlines):
       InlineText(inlines: inlines, style: style.body, ink: style.ink, strongInk: style.strongInk, accent: style.accent)
     case .heading(let level, let inlines):

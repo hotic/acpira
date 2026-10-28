@@ -1352,6 +1352,7 @@ export const de = {
   'mobile.attach': 'Anhang hinzufügen',
   'mobile.attach.photos': 'Fotos',
   'mobile.attach.camera': 'Kamera',
+  'mobile.share': 'Teilen',
   'mobile.attach.files': 'Dateien',
   'mobile.projects': 'Projekte',
   'mobile.projects.recent': 'Zuletzt',

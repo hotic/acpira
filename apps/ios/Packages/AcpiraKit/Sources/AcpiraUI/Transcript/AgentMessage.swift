@@ -86,7 +86,10 @@ struct CodexFold: View {
             }
           }
           .reveal(open)
+          .environment(\.imageInFold, open)
         }
+        // Generated and shown images stay in view once the fold closes (Turns.tsx)
+        if !open { FoldImageResults(blocks: blocks) }
       }
     }
   }

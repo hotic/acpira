@@ -100,7 +100,15 @@
 - Code cards stop at `--code-output-max`, do not scroll inside the transcript, fade at the cut, and open whole in `CodeSheet` on a tap.
 - The failure card reads top to bottom: what happened and ✕, the agent's words, then copy at the start and the way on at the end. The error's code and kind go only into the copied text.
 - A prompt is a right-aligned bubble that does not stick to the top.
-- Not ported yet: plan approval cards, goal blocks, subagent rows, images (blocks, tool output, Markdown), the notice row's web form, and `observation: unknown`.
+- Images (`Media/`):
+  - Every view asks one `MediaLoader` (bounded cache, shared in-flight loads) with a `MediaSource`; the bytes come from an injected `BlobFetch` closure, so nothing in the views assumes HTTP. The engine link fetches `GET {blobBase}/{session}/{blob}` (`InitState.blobBase`, no auth); the demo reads `AcpiraFixtures/synthetic/blobs`.
+  - A blob name always holds a dot (hash + extension) and base64 never does: that tells a stored `Attachment.image(blob:)` from a local draft's inline pixels.
+  - A Markdown image matches `TextBlock.images` by its percent-decoded source. An entry without a blob is unreadable (the named chip); a source with no entry (an older record) is staged through `imageBlob`.
+  - Image cards have a fixed height (`Metrics.agentImage`) and take their width from the aspect, so arriving pixels change only the width. A picture wider than the column fits inside, with a blurred copy of itself as the bands.
+  - As on the desktop, only image-result tools (`verb.imagegen`, `verb.showImage`) leave a closed process fold; an image block stays inside it, and a file-less read row (the fake agent's `view_image`) shows no image.
+  - `ImageRenderer` runs no tasks, so `render.sh` preloads the fixture's images before drawing.
+  - The Lightbox is a full-screen cover without the system slide, fading on its own. Zoom and pan are `UIScrollView`'s; a one-finger downward pull at rest closes it. Share goes through `ShareLink`; its Save Image needs `NSPhotoLibraryAddUsageDescription`, set in the app target.
+- Not ported yet: plan approval cards, goal blocks, subagent rows, `show_widget`, the notice row's web form, and `observation: unknown`.
 
 ## Commands
 
@@ -117,7 +125,7 @@
   - With a hardware keyboard attached, the software keyboard is minimised. `defaults write com.apple.keyboard.preferences AutomaticMinimizationEnabled -bool false` (run through `simctl spawn`) brings it back.
 - Launch arguments:
   - `-fixture`, `-theme`, `-motion none`, `-locale`, `-screen list|chat|new|settings`, `-acpira.listView project`.
-  - `-popup NAME` opens something on launch: `attach`, `model`, `model.N` (bean N's panel), a `focus.` prefix (field focused first), `demo` (every liquid transition in turn), `ring` and `ring.pick`, `account`, `toast`, `code`, `fold:N`. Debug builds also take `menu:X,Y`, which opens the system menu under that point through UIKit's private `_presentMenuAtLocation:`.
+  - `-popup NAME` opens something on launch: `attach`, `model`, `model.N` (bean N's panel), a `focus.` prefix (field focused first), `demo` (every liquid transition in turn), `ring` and `ring.pick`, `account`, `toast`, `code`, `lightbox` (the chat's first image), `fold:N`. Debug builds also take `menu:X,Y`, which opens the system menu under that point through UIKit's private `_presentMenuAtLocation:`.
   - `-prompt TEXT` sends a prompt on launch and gets the demo reply. `-draft TEXT` pre-fills the composer.
   - `-open open|all|every` pre-opens folds. `-replay` plays the last agent turn back as a live stream (`Logic/Replay.swift`).
   - With `-engine PORT:TOKEN`: `-session ID` opens that chat, `-start FOLDER` starts a session of the default agent there with `-prompt` as its first prompt. The fake agent's prompts pick its script (`slow` streams, `tool` asks a permission; `test/fake-agent.ts`).
@@ -175,5 +183,6 @@ Deliberate deviations from the webview:
 
 - No auto-focused search in menus, because the keyboard would cover them.
 - No "open in editor tab".
+- Images: no image-generation mosaic or dissolve, no image context menu, no read-row image preview, no openable Markdown caption. Small pictures fill their card instead of keeping their natural size.
 - An account is removed by a swipe.
 - A tap outside a picker closes it and is swallowed.

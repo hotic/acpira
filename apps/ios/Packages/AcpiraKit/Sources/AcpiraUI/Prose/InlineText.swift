@@ -125,7 +125,7 @@ private func hasCode(_ inlines: [MDInline]) -> Bool {
     switch $0 {
     case .code: true
     case .strong(let c), .emphasis(let c), .strike(let c), .link(_, let c): hasCode(c)
-    case .text, .lineBreak: false
+    case .text, .lineBreak, .image: false
     }
   }
 }
@@ -197,6 +197,9 @@ struct InlineBuilder {
     case .strike(let children):
       var m = marks; m.strike = true
       return list(children, m)
+    case .image(_, let alt):
+      // An image inside a run (a badge in a link): its alt text; a paragraph's own images stand as views (Prose)
+      return plain(alt, marks)
     case .link(let url, let children):
       var a = CJKWidth.attributed(Markdown.plain(children), size: style.size, paragraph: false)
       a.font = style.font(marks.weight, italic: marks.italic)

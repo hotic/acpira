@@ -1395,6 +1395,7 @@ export const en = {
   'mobile.attach': 'Add attachment',
   'mobile.attach.photos': 'Photos',
   'mobile.attach.camera': 'Camera',
+  'mobile.share': 'Share',
   'mobile.attach.files': 'Files',
   'mobile.projects': 'Projects',
   'mobile.projects.recent': 'Recent',

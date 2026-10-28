@@ -17,8 +17,8 @@ public struct LaunchOptions: Sendable {
   public var screen: String
   /// `-render closed|open|all`: draw the fixture's full-length chat into tmp/acpira-render.png instead of the screens
   public var render: String?
-  /// `-popup attach|model|model.N|focus…|demo|ring|ring.pick|account|toast|code|fold:N|menu:X,Y`: open that picker,
-  /// sheet or fold, or play the liquid transitions, on launch (screenshots and recordings, docs/dev/ios.md)
+  /// `-popup attach|model|model.N|focus…|demo|ring|ring.pick|account|toast|code|lightbox|fold:N|menu:X,Y`: open that
+  /// picker, sheet or fold, or play the liquid transitions, on launch (screenshots and recordings, docs/dev/ios.md)
   public var popup: String?
   /// `-replay`: the chat plays its last agent turn back as a live stream (motion recordings)
   public var replay = false
@@ -185,6 +185,8 @@ struct RenderScreen: View {
     Text(verbatim: done ? "rendered" : "rendering")
       .task {
         guard let session = Fixtures.session(fixture) else { return }
+        // Tasks do not run in ImageRenderer: the images are at hand before it draws
+        await MediaLoader.demo.preload(session)
         let poster = ChatPoster(session: session, width: 402, preOpen: preOpen)
           .environment(\.colorScheme, scheme)
           .environment(\.motionEnabled, false)
