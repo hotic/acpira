@@ -20,6 +20,10 @@ export function holeOf(n: number): number {
   return h % 2 === n % 2 ? h : h - 1;
 }
 
+/** The knock-out's share of the box before a code arrives: a version 10 code's (57 modules), the size a pairing link
+ *  takes, so the mark keeps its place when the code fills in */
+export const WAIT_HOLE = holeOf(57) / (57 + QUIET * 2);
+
 // Clockwise rounded rectangle (counter-clockwise for a hole under the nonzero rule)
 function rr(x: number, y: number, w: number, h: number, r: number, ccw = false) {
   const iw = w - 2 * r, ih = h - 2 * r;

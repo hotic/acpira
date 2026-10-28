@@ -11,7 +11,8 @@ import type { DesktopMenuEntry, WindowControl } from '@acpira/shared/protocol';
 import { dropShellToast, pageCaption, postMenuCommand, postUpdate, postWindowControl, shortcutLabel, useDesktopMenu, useShellToasts, useWindowMaximized, windowsOS } from '../desktop';
 import { vscodeApi } from '../vscodeApi';
 import type { SettingsPage } from '../settings/Nav';
-import { DevicesButton } from '../remote/DevicesCard';
+import { DevicesButton, devicesShown } from '../remote/DevicesCard';
+import { useRemoteAccess } from '../remote/access';
 
 // The desktop app's own frame around the shared Shell (desktop.css): the column's title row, its gear menu, and the
 // sheet's state when no project is open
@@ -217,6 +218,9 @@ export function TitleSpace() {
 // is a size up from a row's (--foot-icon) and its hover fill square, the weight Codex and VS Code give their foot gear: at
 // the rows' size it read as a stray mark under the list (reported 2026-10-23)
 const GEAR = 'flex aspect-square items-center rounded-md px-2 text-fg-2 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover data-[popup-open]:bg-hover data-[popup-open]:text-fg-1';
+// Beside the devices row the gear is the row's trailing square instead: a row-sized glyph standing on the rows' right
+// text edge (bar-bleed, the same square-against-px-2 geometry as a menu bar's), so the foot is one line across the column
+const GEAR_END = '-mr-bar-bleed flex size-ctl shrink-0 items-center justify-center rounded-md text-fg-2 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover data-[popup-open]:bg-hover data-[popup-open]:text-fg-1 [&_svg]:size-icon';
 // The settings worth a quick switch without opening the page: the theme, the interface language and the window's layout
 export interface QuickSettings {
   theme: ThemeSetting;
@@ -253,16 +257,19 @@ function QuickChoice<V extends string>({ icon, label, value, options, labelOf, o
 }
 
 export function AppMenu({ onOpenSettings, onOpenExternal, quick }: { onOpenSettings: (page?: SettingsPage) => void; onOpenExternal?: (url: string) => void; quick?: QuickSettings }) {
-  // The devices card opens from the gear's corner, as the gear's own menu does (remote/DevicesCard.tsx)
-  const gear = useRef<HTMLButtonElement>(null);
+  // With the devices row (remote/DevicesCard.tsx) the foot is one line: the row from the column's left edge, its card
+  // rising from the row, and the gear at the line's end opening its menu end-aligned. Without it the gear stands alone
+  // at the left, its glyph a size up (--foot-icon) so it does not read as a stray mark
+  const row = devicesShown(useRemoteAccess());
   return (
     <div className="flex shrink-0 items-center p-gap-half">
+      {row && <DevicesButton onOpenSettings={onOpenSettings} />}
       <DropdownMenu.Root>
-        <DropdownMenu.Trigger render={<button ref={gear} type="button" title={t('desktop.appMenu')} aria-label={t('desktop.appMenu')} className={GEAR}>
-          <span className="flex size-lead items-center justify-center"><Settings className="size-(--foot-icon)" strokeWidth={1.5} /></span>
+        <DropdownMenu.Trigger render={<button type="button" title={t('desktop.appMenu')} aria-label={t('desktop.appMenu')} className={row ? GEAR_END : GEAR}>
+          {row ? <Settings strokeWidth={1.5} /> : <span className="flex size-lead items-center justify-center"><Settings className="size-(--foot-icon)" strokeWidth={1.5} /></span>}
         </button>} />
         {/* No collision padding: the gear sits closer to the window's edge than the shell's pad, which shifted the menu off it */}
-        <DropdownMenu.Portal><DropdownMenu.Positioner side="top" align="start" width="md" collisionPadding={0}><DropdownMenu.Popup>
+        <DropdownMenu.Portal><DropdownMenu.Positioner side="top" align={row ? 'end' : 'start'} width="md" collisionPadding={0}><DropdownMenu.Popup>
           <DropdownMenu.Item onClick={() => onOpenSettings()}>
             <OptionContent icon={<Settings2 strokeWidth={1.5} />}>{t('session.settings')}</OptionContent>
             <span className="shrink-0 text-3 text-fg-3">{shortcutLabel(',')}</span>
@@ -294,7 +301,6 @@ export function AppMenu({ onOpenSettings, onOpenExternal, quick }: { onOpenSetti
           </>}
         </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
       </DropdownMenu.Root>
-      <DevicesButton anchor={gear} onOpenSettings={onOpenSettings} />
     </div>
   );
 }

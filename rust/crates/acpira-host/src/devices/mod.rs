@@ -25,6 +25,9 @@ const RETRY: Duration = Duration::from_secs(2);
 const IDLE_RETRY: Duration = Duration::from_secs(30);
 /// How long a control request may take (pairing answers at once; nothing waits on the network)
 const REQUEST_WAIT: Duration = Duration::from_secs(5);
+/// How long a (re)started gateway may take to answer: the login shell's environment, then its endpoint; a gateway
+/// that exits at once is started again by launchd after its throttle (10 s)
+const START_WAIT: Duration = Duration::from_secs(20);
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub struct RemoteAccess {
@@ -187,7 +190,12 @@ impl RemoteAccess {
         self.edit_config(|c| c["relays"] = serde_json::to_value(&relays).unwrap_or_default()).await?;
         // The endpoint is bound with its relays: a running gateway starts over (its devices reconnect on their own)
         if cfg!(target_os = "macos") && self.plist().is_file() {
-          self.busy_while(launch_agent::kickstart(&self.label())).await?;
+          self
+            .busy_while(async {
+              launch_agent::kickstart(&self.label()).await?;
+              self.wait_up(START_WAIT).await
+            })
+            .await?;
         }
         Ok(())
       }
@@ -253,21 +261,55 @@ impl RemoteAccess {
     let engine_str = engine.to_string_lossy().into_owned();
     self.edit_config(move |c| c["engine"] = Value::String(engine_str)).await?;
     let (label, plist) = (self.label(), self.plist());
+    let text = launch_agent::plist(&label, &gateway, &self.root);
+    // Installed from these binaries and answering (switched on from another window, the desktop card opening while it
+    // starts): a reload would only cut off its devices. A gateway still starting answers once it does
+    if tokio::fs::read_to_string(&plist).await.is_ok_and(|t| t == text)
+      && launch_agent::loaded(&label).await
+      && self.wait_up(REQUEST_WAIT).await.is_ok()
+    {
+      return Ok(());
+    }
     if let Some(dir) = plist.parent() {
       tokio::fs::create_dir_all(dir).await?;
     }
-    crate::store::file_lock::write_atomic(&plist, launch_agent::plist(&label, &gateway, &self.root).as_bytes(), Some(0o644)).await?;
+    crate::store::file_lock::write_atomic(&plist, text.as_bytes(), Some(0o644)).await?;
+    launch_agent::unload(&label).await?;
     // A gateway started by hand holds the control socket: it stops for the LaunchAgent's
     let _ = self.request(&GatewayRequest::Stop).await;
-    launch_agent::bootstrap(&label, &plist).await?;
+    launch_agent::load(&label, &plist).await?;
     launch_agent::prune(&self.root, engine.parent()).await;
     (self.log)(&format!("remote access: {label} installed ({})", gateway.display()));
-    Ok(())
+    self.wait_up(START_WAIT).await
+  }
+
+  /// Wait for the gateway to answer, so a start ends on a running gateway instead of a view that reads as stopped
+  /// until the watch reconnects. Its answer is the view's gateway until the watch's next report
+  async fn wait_up(&self, within: Duration) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + within;
+    loop {
+      let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+      if let Ok(Ok(v)) = tokio::time::timeout(left, self.request(&GatewayRequest::Status)).await
+        && let Ok(st) = serde_json::from_value::<GatewayStatus>(v)
+      {
+        *self.gateway.lock() = Some(st);
+        return Ok(());
+      }
+      if tokio::time::Instant::now() >= deadline {
+        let log = self.root.join("devices").join("gateway.log");
+        let last = std::fs::read_to_string(&log).ok().and_then(|s| s.lines().rev().find(|l| !l.trim().is_empty()).map(str::to_owned));
+        return Err(match last {
+          Some(l) => anyhow!("remote access did not start; {} says: {l}", log.display()),
+          None => anyhow!("remote access did not start"),
+        });
+      }
+      tokio::time::sleep(Duration::from_millis(250).min(left)).await;
+    }
   }
 
   async fn disable(&self) -> Result<()> {
     let label = self.label();
-    launch_agent::bootout(&label).await?;
+    launch_agent::unload(&label).await?;
     let _ = tokio::fs::remove_file(self.plist()).await;
     launch_agent::prune(&self.root, None).await;
     self.set_gateway(None);
@@ -276,17 +318,26 @@ impl RemoteAccess {
   }
 
   /// At engine start: a gateway installed by an older version is reinstalled from this one (an extension upgrade must
-  /// not leave devices talking to the old engine). An older engine still running beside a newer one leaves it alone
+  /// not leave devices talking to the old engine). An older engine still running beside a newer one leaves it alone.
+  /// Switched on but not loaded (a load that failed, a `bootout` by hand): loaded again, as the switch says
   pub async fn refresh_installed(&self) {
     if !cfg!(target_os = "macos") || !self.plist().is_file() {
       return;
     }
     let installed = self.config().get("engine").and_then(Value::as_str).and_then(|e| launch_agent::installed_version(Path::new(e)));
     if installed.as_deref().is_some_and(|v| !launch_agent::newer(VERSION, v)) {
+      let label = self.label();
+      if !launch_agent::loaded(&label).await
+        && let Err(e) = launch_agent::load(&label, &self.plist()).await
+      {
+        (self.log)(&format!("remote access: loading {label} failed: {e:#}"));
+      }
       return;
     }
     let (Some(exe), Some(gateway)) = (self.exe.clone(), self.gateway_binary()) else { return };
-    if let Err(e) = self.install(&exe, &gateway).await {
+    let r = self.busy_while(self.install(&exe, &gateway)).await;
+    self.emit();
+    if let Err(e) = r {
       (self.log)(&format!("remote access: reinstalling for {VERSION} failed: {e:#}"));
     }
   }

@@ -372,10 +372,32 @@ fn launch_agent_round_trip() {
     };
     assert!(ra.view().available);
 
+    // SAFETY: getuid has no preconditions
+    let uid = unsafe { libc::getuid() };
+    let target = format!("gui/{uid}/{label}");
+    let pid = || {
+      let out = std::process::Command::new("/bin/launchctl").args(["print", &target]).output().unwrap();
+      String::from_utf8_lossy(&out.stdout).lines().find_map(|l| l.trim().strip_prefix("pid = ").map(str::to_owned))
+    };
+
     ra.op(O::Enable).await.unwrap();
+    // The op ends on a gateway that answers, never on a view that reads as stopped while it starts
+    assert!(ra.view().gateway.is_some(), "running once the op returns");
     let v = next("the LaunchAgent's gateway", &|v| v.gateway.is_some()).await;
     assert!(v.enabled);
     let first = v.gateway.unwrap();
+    // Turning it on again (another window, the desktop card opening) leaves the running gateway alone
+    let before = pid();
+    assert!(before.is_some());
+    ra.op(O::Enable).await.unwrap();
+    assert_eq!(pid(), before, "not restarted");
+
+    // Unloaded behind the engine's back: the next engine start loads it again
+    let out = std::process::Command::new("/bin/launchctl").args(["bootout", &target]).output().unwrap();
+    assert!(out.status.success());
+    next("gone after the bootout", &|v| v.gateway.is_none()).await;
+    ra.refresh_installed().await;
+    next("loaded again", &|v| v.gateway.is_some()).await;
     let cfg: Value = serde_json::from_str(&std::fs::read_to_string(root.path().join("devices/gateway.json")).unwrap()).unwrap();
     let engine = PathBuf::from(cfg["engine"].as_str().unwrap());
     assert!(engine.starts_with(root.path().join("devices/bin")) && engine.is_file(), "{}", engine.display());
@@ -390,9 +412,7 @@ fn launch_agent_round_trip() {
     let v = ra.view();
     assert!(!v.enabled && v.gateway.is_none());
     assert!(!root.path().join("devices/bin").read_dir().unwrap().any(|_| true), "copies removed");
-    // SAFETY: getuid has no preconditions
-    let uid = unsafe { libc::getuid() };
-    let loaded = std::process::Command::new("/bin/launchctl").args(["print", &format!("gui/{uid}/{label}")]).output().unwrap();
+    let loaded = std::process::Command::new("/bin/launchctl").args(["print", &target]).output().unwrap();
     assert!(!loaded.status.success(), "unloaded");
     ra.dispose();
   });

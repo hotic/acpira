@@ -113,11 +113,18 @@ async fn run(args: &[String]) -> Result<()> {
     log: log.clone(),
   })
   .await?;
-  if !endpoint::online(g.endpoint(), Duration::from_secs(10)).await {
-    log("no relay reachable yet; LAN and Tailscale still work, and the relay is retried");
-  }
+  // Answer the control socket at once: the engines read a gateway that does not answer as not running, and a relay
+  // can take seconds to come up
   let stop = Arc::new(tokio::sync::Notify::new());
   tokio::spawn(control::serve(g.clone(), listener, stop.clone()));
+  tokio::spawn({
+    let (g, log) = (g.clone(), log.clone());
+    async move {
+      if !endpoint::online(g.endpoint(), Duration::from_secs(10)).await {
+        log("no relay reachable yet; LAN and Tailscale still work, and the relay is retried");
+      }
+    }
+  });
   let awake = {
     let g = g.clone();
     tokio::spawn(async move {

@@ -502,8 +502,8 @@
   --spacing-icon: var(--icon);
   --spacing-icon-ctl: var(--icon-ctl);
   /* Icon button bleeds: the glyph's box, not the button, stands on the text edge beside it, at every density (a fixed
-     -mr-1.5 was right for the base --ctl only). ctl: a default IconButton; ctl-sm: a small one; bar: a menu bar's square
-     (ui/Panel.tsx), measured against the menu rows' px-2 */
+     -mr-1.5 was right for the base --ctl only). ctl: a default IconButton; ctl-sm: a small one; bar: a --ctl square at the
+     end of px-2 rows (a menu bar's, ui/Panel.tsx; the desktop column foot's gear) */
   --spacing-ctl-bleed: calc((var(--ctl) - var(--icon-ctl)) / 2);
   --spacing-ctl-sm-bleed: calc((var(--ctl-sm) - var(--icon)) / 2);
   --spacing-bar-bleed: calc((var(--ctl) - var(--icon)) / 2 - 8px);

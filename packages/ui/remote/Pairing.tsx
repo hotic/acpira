@@ -6,7 +6,7 @@ import { ChipTag } from '../ui/Button';
 import { MarkSvg } from '../chat/marks';
 import { t } from '../i18n';
 import { PATHS, PATH_NAME, pairingDeadline, remoteAccessOp, useRemoteAccess } from './access';
-import { BAND_COUNT, QR_BOX, QUIET, RING, RING_STROKE, STRIP_H, qrShape, slide, walk } from './pairGeometry';
+import { BAND_COUNT, QR_BOX, QUIET, RING, RING_STROKE, STRIP_H, WAIT_HOLE, qrShape, slide, walk } from './pairGeometry';
 
 // The pairing core both shells show (the desktop app's foot card, remote/DevicesCard.tsx; the settings page's pairing
 // dialog, settings/RemoteAccess.tsx): the gateway's QR code drawn on the card surface with Acpira's mark in its centre, a
@@ -108,9 +108,11 @@ export function Swap({ items, on, className }: { items: ReactNode[]; on: number;
   </span>;
 }
 
-/** The path's name as the composer's badge (ui/Button ChipTag); every path in one cell, the live one shown */
-export const PathTag = ({ path, className }: { path: PathKind; className?: string }) =>
-  <Swap on={PATHS.indexOf(path)} className={className} items={PATHS.map(p => <ChipTag key={p}>{t(PATH_NAME[p])}</ChipTag>)} />;
+/** The path's name as the composer's badge (ui/Button ChipTag); every path in one cell, the live one shown. None while
+ * the path is not known, so nothing is guessed: the tag comes in once it is, and a path that changes (a relay giving way
+ * to a punched hole) crosses over in place */
+export const PathTag = ({ path, className }: { path?: PathKind; className?: string }) =>
+  <Swap on={path ? PATHS.indexOf(path) : -1} className={className} items={PATHS.map(p => <ChipTag key={p}>{t(PATH_NAME[p])}</ChipTag>)} />;
 
 /** A device's glyph, its presence dot notched out of the stroke while it is online */
 export function DeviceGlyph({ kind, online }: { kind: DeviceKind; online: boolean }) {
@@ -235,7 +237,8 @@ function NameField({ name }: { name: string }) {
   };
   return <span className="dv-name" data-editing={editing || undefined}>
     <span className="dv-name-box">
-      <span className="dv-name-text" aria-hidden={editing || undefined}>{editing ? draft || ' ' : name}</span>
+      {/* Before the gateway answers there is no name yet: the line keeps its height */}
+      <span className="dv-name-text" aria-hidden={editing || undefined}>{editing ? draft || ' ' : name || ' '}</span>
       {editing && <input ref={input} className="dv-name-input" value={draft} maxLength={64} spellCheck={false} aria-label={t('devices.nameLabel')}
         onChange={e => setDraft(e.target.value)} onBlur={commit}
         onKeyDown={e => {
@@ -243,8 +246,8 @@ function NameField({ name }: { name: string }) {
           if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); settled.current = true; setEditing(false); }
         }} />}
       <span className="dv-name-rule" />
-      <button type="button" className="dv-name-pen" title={t('devices.rename')} aria-label={t('devices.renameThis')} tabIndex={editing ? -1 : 0}
-        onClick={() => { setDraft(name); setEditing(true); }}><Pencil strokeWidth={1.75} /></button>
+      {name && <button type="button" className="dv-name-pen" title={t('devices.rename')} aria-label={t('devices.renameThis')} tabIndex={editing ? -1 : 0}
+        onClick={() => { setDraft(name); setEditing(true); }}><Pencil strokeWidth={1.75} /></button>}
     </span>
   </span>;
 }
@@ -290,10 +293,12 @@ export function PairingCore({ pairing, glyphRef, className }: PairingCoreProps) 
     copyTimer.current = window.setTimeout(() => setCopied(false), 1400);
   };
   const Kind = KIND_ICON[paired?.kind ?? 'phone'];
-  const hole = shown ? qrShape(shown.rows).hole / (shown.rows.length + QUIET * 2) : 0;
+  const hole = shown ? qrShape(shown.rows).hole / (shown.rows.length + QUIET * 2) : WAIT_HOLE;
   const digits = shown?.key ?? code?.code;
+  // No code yet (the gateway starting, the first code on its way): the ring's track and the mark hold the place
+  const waiting = !shown && !success;
   return <div className={cn('flex flex-col items-center', className)}>
-    <div className="dv-qr" data-success={success || undefined} data-copied={copied || undefined}
+    <div className="dv-qr" data-success={success || undefined} data-copied={copied || undefined} data-waiting={waiting || undefined}
       style={{ '--dv-qr': `${QR_BOX}px`, '--dv-hole': hole, '--dv-bands': BAND_COUNT } as CSSProperties}>
       <button type="button" className="dv-qr-hit" onClick={copy} disabled={success || !code} title={t('devices.copyLink')} aria-label={t('devices.qrLabel')}>
         <span className="dv-qr-mods">
@@ -302,7 +307,7 @@ export function PairingCore({ pairing, glyphRef, className }: PairingCoreProps) 
         </span>
       </button>
       <span className="dv-qr-centre">
-        <span className="dv-qr-mark" data-on={!!shown || undefined}><MarkSvg id="acpira" className="size-full" /></span>
+        <span className="dv-qr-mark" data-on={!!shown || waiting || undefined}><MarkSvg id="acpira" className="size-full" /></span>
         <span className="dv-qr-copied"><Check strokeWidth={2.25} />{t('devices.copied')}</span>
         {success && <span ref={glyphRef} className="dv-qr-device">
           <Kind strokeWidth={1.25} />
@@ -320,13 +325,15 @@ export function PairingCore({ pairing, glyphRef, className }: PairingCoreProps) 
       <span className="dv-slot-code">
         <span className="text-2 text-fg-2">{t('devices.code')}</span>
         {/* A fresh code's digits come in as the old ones leave, with the modules' ripple */}
-        <span className="dv-swap justify-items-end">
+        <span className="dv-swap items-center justify-items-end">
           {shown?.prev && <span key={shown.prev.key} data-off aria-hidden className="dv-digits">{spaced(shown.prev.key)}</span>}
           <span key={digits ?? ''} className={cn('dv-digits', shown?.prev && 'dv-digits-in')}>{spaced(digits)}</span>
+          <span data-off={!!gateway || undefined} aria-hidden={!!gateway || undefined} className="text-2 text-fg-3">{t('devices.starting')}</span>
         </span>
       </span>
-      {/* The live path under the title */}
-      <span className="dv-slot-path"><PathTag path={paired?.path ?? 'lan'} className="justify-items-center" /></span>
+      {/* The live path under the title, as the phone's sheet shows its own (apps/ios PairHero); none until the device's
+          connection reports one */}
+      <span className="dv-slot-path"><PathTag path={paired?.path} className="justify-items-center" /></span>
     </div>
   </div>;
 }

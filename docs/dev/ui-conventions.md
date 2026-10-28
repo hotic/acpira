@@ -58,6 +58,7 @@ Rules for primitives, tokens, menus, overlays, the composer, transcript rows and
 - Drop marks (`data-hot` frame, `data-insert` line, one colour for both) are set on the DOM by the dragover handler, never through state: re-rendering a list of a thousand sessions per zone change left the frame trailing the pointer in WebKit. The margin between zones keeps the last zone. In the Tauri app wry turns WebKit's "no drop" answer into the copy cursor, so a green plus there means no zone, not a pending drop.
 - Desktop: project headers drag between sections and within one (`[data-project]` / `[data-section]`, an insert line, a frame on the destination section's body when it changes sections, the menu's "move to section" as the no-drag route). Chats (`sessionTree` `isChat`) leave the project groups for their own section under Projects and are never offered as a move destination.
 - Search matches titles and agent names locally (`chat/sessionSearch.ts`) and asks the host for content hits after a pause.
+- Desktop column foot (`chat/DesktopFrame.tsx` `AppMenu`): where remote access is offered it is one row on the session rows' box, the devices row (this computer's name, how many are online) with the gear square at its end, so the corner reads as the column's last line rather than loose icons over empty space. Without it the gear stands alone a size up. The devices card is the account menu's family: a bar with "+", one line per device.
 
 ## Settings
 
