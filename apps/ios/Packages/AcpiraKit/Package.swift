@@ -23,6 +23,11 @@ let package = Package(
     // One product for the app to link; it imports the modules it needs one by one
     .library(name: "AcpiraKit", targets: modules),
   ],
+  dependencies: [
+    // The terminal page's emulator and view (MIT), pinned: its 2.0 API is still moving between releases. No traits:
+    // the default one only adds PNG decoders for platforms without ImageIO
+    .package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.99.1", traits: []),
+  ],
   targets: [
     // Codable mirrors of the host ↔ webview contract in packages/shared
     .target(name: "AcpiraModels", swiftSettings: dialect),
@@ -37,10 +42,14 @@ let package = Package(
     .target(name: "AcpiraFixtures", dependencies: ["AcpiraModels"], resources: [.copy("synthetic")], swiftSettings: dialect),
     // Screens and components; main-actor by default, like the app target. The i18n tables are exported from the
     // webview dictionaries by scripts/export/ios-i18n.ts, the syntax highlighter (shiki for JavaScriptCore, its grammars
-    // and themes) by scripts/export/ios-shiki.ts
+    // and themes) by scripts/export/ios-shiki.ts. SwiftTerm draws the terminal page on iOS only: the Mac build (swift
+    // test) keeps the terminal's logic and skips compiling the emulator's AppKit front end
     .target(
       name: "AcpiraUI",
-      dependencies: ["AcpiraModels", "AcpiraSync", "AcpiraDesign", "AcpiraMarkdown", "AcpiraFixtures"],
+      dependencies: [
+        "AcpiraModels", "AcpiraSync", "AcpiraDesign", "AcpiraMarkdown", "AcpiraFixtures",
+        .product(name: "SwiftTerm", package: "SwiftTerm", condition: .when(platforms: [.iOS])),
+      ],
       resources: [.copy("Resources/i18n"), .copy("Resources/shiki")],
       swiftSettings: dialect + [.defaultIsolation(MainActor.self)]
     ),

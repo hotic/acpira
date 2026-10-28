@@ -12,7 +12,8 @@ import UIKit
 
 // MARK: - Session "…"
 
-/// The session's "…" menu: the account, pin and rename, the exports in a submenu, settings, delete
+/// The session's "…" menu: the account, pin and rename, the exports in a submenu, the project's terminal, settings,
+/// delete
 struct NativeSessionMenu: View {
   var pinned: Bool
   var actions = HeaderActions()
@@ -31,7 +32,10 @@ struct NativeSessionMenu: View {
         Label(t("session.export"), systemImage: "square.and.arrow.up")
       }
     }
-    Section { Button(action: actions.settings) { Label(t("session.settings"), systemImage: "gearshape") } }
+    Section {
+      Button(action: actions.terminal) { Label(t("panel.terminal"), systemImage: "apple.terminal") }
+      Button(action: actions.settings) { Label(t("session.settings"), systemImage: "gearshape") }
+    }
     Section { Button(role: .destructive, action: actions.delete) { Label(t("common.delete"), systemImage: "trash") } }
   }
 }

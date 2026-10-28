@@ -103,6 +103,7 @@ struct ChatScreen: View {
       pin: { model.togglePin(id) },
       rename: { newTitle = session.title; renaming = true },
       export: { model.export(id, json: $0) },
+      terminal: { model.openTerminal(session.cwd) },
       settings: { model.settingsOpen = true },
       delete: { deleting = true })
   }
@@ -138,6 +139,8 @@ struct HeaderActions {
   var pin: () -> Void = {}
   var rename: () -> Void = {}
   var export: (Bool) -> Void = { _ in }
+  /// The project's terminal page
+  var terminal: () -> Void = {}
   var settings: () -> Void = {}
   var delete: () -> Void = {}
 }

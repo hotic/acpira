@@ -22,7 +22,7 @@ sim_acquire "$sim"
 
 if [ -z "${SKIP_BUILD:-}" ]; then
   xcodebuild -project "$ios/Acpira.xcodeproj" -scheme Acpira -configuration Debug \
-    -destination "platform=iOS Simulator,name=$sim" -derivedDataPath "$derived" -quiet build
+    -destination "platform=iOS Simulator,name=$sim" -derivedDataPath "$derived" -skipPackagePluginValidation -quiet build
 fi
 
 # Boots the device when it is shut down and waits until it is ready

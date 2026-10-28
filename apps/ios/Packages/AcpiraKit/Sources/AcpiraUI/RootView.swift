@@ -34,6 +34,10 @@ public struct LaunchOptions: Sendable {
   public var session: String?
   /// `-start FOLDER`: with an engine, a session of the default agent starts there on launch, `-prompt` its first prompt
   public var start: String?
+  /// `-terminal FOLDER`: with an engine, that project's terminal opens on launch; `-type SCRIPT` then types into it
+  /// (AppModel.scriptTerminal)
+  public var terminal: String?
+  public var type: String?
 
   public static func current(_ arguments: [String] = ProcessInfo.processInfo.arguments) -> LaunchOptions {
     func value(_ flag: String) -> String? {
@@ -45,7 +49,8 @@ public struct LaunchOptions: Sendable {
                          locale: value("-locale"), screen: value("-screen") ?? "chat", render: value("-render"),
                          popup: value("-popup"), replay: arguments.contains("-replay"), open: value("-open"),
                          prompt: value("-prompt"), draft: value("-draft"), engine: value("-engine"),
-                         session: value("-session"), start: value("-start"))
+                         session: value("-session"), start: value("-start"), terminal: value("-terminal"),
+                         type: value("-type"))
   }
 }
 
@@ -120,6 +125,11 @@ public struct RootView: View {
       #if DEBUG && canImport(UIKit)
       if let popup = options.popup, popup.hasPrefix("menu:") { await MenuProbe.open(popup) }
       #endif
+      if let folder = options.terminal {
+        model.openTerminal(folder)
+        if model.live, let script = options.type { await model.scriptTerminal(folder, script) }
+        return
+      }
       if model.live, let folder = options.start {
         model.engineNewSession(agent: nil, cwd: folder, text: options.prompt ?? "")
         return
@@ -141,6 +151,8 @@ public struct RootView: View {
       let start = agent ?? model.summaries.max { $0.updatedAt < $1.updatedAt }?.agent
         ?? launchable(model.agents).first { $0.available != false }?.id ?? ""
       NewSessionScreen(agent: start, cwd: cwd ?? model.projects.first ?? "", controls: model.controls(for: start))
+    case .terminal(let cwd):
+      TerminalPage(cwd: cwd)
     }
   }
 }

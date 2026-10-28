@@ -16,6 +16,8 @@ public enum Route: Hashable {
   case chat(String)
   /// The new-session screen, preset to an agent and a project when it is opened from a session
   case new(agent: AgentId?, cwd: String?)
+  /// A project's terminal on the engine's computer (Terminal/TerminalPage.swift)
+  case terminal(cwd: String)
 }
 
 /// agentOrder.ts launchable: the agents a new session can start with, the disabled ones left out
@@ -51,6 +53,8 @@ final class AppModel {
 
   /// The live engine; nil in the demo
   @ObservationIgnored let link: EngineLink?
+  /// The engine's terminals the phone opened, one per project (Terminal/TerminalSession.swift)
+  @ObservationIgnored let terminals = TerminalHub()
   @ObservationIgnored private var runs: [String: Task<Void, Never>] = [:]
   @ObservationIgnored private let launched = Date()
   @ObservationIgnored private var serial = 0

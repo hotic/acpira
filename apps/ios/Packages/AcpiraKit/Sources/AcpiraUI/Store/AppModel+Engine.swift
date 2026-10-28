@@ -66,6 +66,8 @@ extension AppModel {
       accounts = list
     case .session, .sessionPatch, .noSession:
       present(link.feed.receive(message))
+    case .terminalOutput, .terminalState:
+      terminals.receive(message)
     default:
       break
     }

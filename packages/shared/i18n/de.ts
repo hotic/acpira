@@ -1381,6 +1381,8 @@ export const de = {
   'mobile.new.placeholder': 'Woran arbeiten wir?',
   'mobile.agent.notInstalled': 'Nicht installiert',
   'mobile.theme.system': 'System',
+  'mobile.terminal.close': 'Terminal schließen',
+  'mobile.terminal.hideKeyboard': 'Tastatur ausblenden',
   'mobile.language.system': 'System',
   'mobile.engine': 'Engine',
   'mobile.engine.status': 'Verbindung',

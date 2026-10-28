@@ -20,11 +20,13 @@ echo "== AcpiraKit on macOS"
 sim_acquire "$sim"
 
 echo "== AcpiraKit on $sim"
+# SwiftTerm's build-tool plugin (its version stamp) is never trusted in Xcode on a fresh checkout or machine, and
+# xcodebuild refuses an untrusted plugin; every iOS script passes this flag
 (cd "$ios/Packages/AcpiraKit" && xcodebuild -scheme AcpiraKit -destination "$destination" \
-  -derivedDataPath "$ios/build/PackageDerivedData" -quiet test)
+  -derivedDataPath "$ios/build/PackageDerivedData" -skipPackagePluginValidation -quiet test)
 
 echo "== Acpira app on $sim"
 xcodebuild -project "$ios/Acpira.xcodeproj" -scheme Acpira -destination "$destination" \
-  -derivedDataPath "$ios/build/DerivedData" -quiet test
+  -derivedDataPath "$ios/build/DerivedData" -skipPackagePluginValidation -quiet test
 
 echo "== all green"

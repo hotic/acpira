@@ -1391,6 +1391,8 @@ export const ja = {
   'mobile.new.placeholder': '何をしますか？',
   'mobile.agent.notInstalled': '未インストール',
   'mobile.theme.system': 'システムに合わせる',
+  'mobile.terminal.close': 'ターミナルを閉じる',
+  'mobile.terminal.hideKeyboard': 'キーボードを閉じる',
   'mobile.language.system': 'システムに合わせる',
   'mobile.engine': 'エンジン',
   'mobile.engine.status': '接続',
