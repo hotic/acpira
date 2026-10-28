@@ -53,7 +53,7 @@ if (doDesktop && process.platform === 'darwin') {
     const running = () => spawnSync('pgrep', ['-f', `${dest}/Contents/MacOS/`]).status === 0;
     if (running()) {
       console.log('Acpira is running: asking it to quit');
-      spawnSync('osascript', ['-e', 'tell application id "com.hotic.acpira.desktop" to quit']);
+      spawnSync('osascript', ['-e', 'tell application id "cc.hotic.acpira.desktop" to quit']);
       const until = Date.now() + 20_000;
       while (running() && Date.now() < until) spawnSync('sleep', ['0.5']);
     }

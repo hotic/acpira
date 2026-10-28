@@ -9,6 +9,8 @@
   if (window.top !== window || `${location.protocol}//${location.host}` !== ORIGIN || window.__acpiraApi) return;
   const T = window.__TAURI_INTERNALS__;
   const STATE_KEY = 'acpira.webviewState';
+  const STATE_SCOPE = '__ACPIRA_STATE_SCOPE__';
+  const VIEW_KEY = `acpira.sessionListView${STATE_SCOPE ? `:${STATE_SCOPE}` : ''}`;
   const encoder = new TextEncoder();
 
   // Up: one invoke at a time, carrying everything posted meanwhile as one JSON array, so the shell sees the page's
@@ -85,10 +87,29 @@
   window.__acpiraApi = Object.freeze({
     postMessage: message => { queue.push(JSON.stringify(message)); flush(); },
     getState: () => {
-      try { return JSON.parse(sessionStorage.getItem(STATE_KEY) ?? 'null') ?? undefined; } catch { return undefined; }
+      let state;
+      try { state = JSON.parse(sessionStorage.getItem(STATE_KEY) ?? 'null') ?? undefined; } catch { /* use saved preferences */ }
+      // A new window inherits the last list preferences; an existing window keeps its own choices.
+      if (state?.sessionListView === undefined) {
+        try {
+          const view = JSON.parse(localStorage.getItem(VIEW_KEY) ?? 'null');
+          if (view != null) state = { ...state, sessionListView: view };
+        } catch { /* unavailable or invalid storage: the list uses its defaults */ }
+      }
+      return state;
     },
     setState: state => {
+      let previousView;
+      try { previousView = JSON.stringify(JSON.parse(sessionStorage.getItem(STATE_KEY) ?? 'null')?.sessionListView); } catch { /* no previous choice */ }
       try { sessionStorage.setItem(STATE_KEY, JSON.stringify(state)); } catch { /* quota: the state is a convenience */ }
+      // Only list preferences outlive the window; drafts, selection and panel state stay window-local.
+      if (state?.sessionListView !== undefined) {
+        try {
+          const view = JSON.stringify(state.sessionListView);
+          // An unrelated state write in another window must not undo the last explicit list choice.
+          if (view !== previousView || localStorage.getItem(VIEW_KEY) === null) localStorage.setItem(VIEW_KEY, view);
+        } catch { /* keep window-local state */ }
+      }
     },
     // The system clipboard's text through the shell: WebKit asks the user before navigator.clipboard.readText (a paste
     // bubble), which a terminal's right-click paste must not show

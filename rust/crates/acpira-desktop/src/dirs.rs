@@ -79,7 +79,7 @@ mod tests {
 
   #[test]
   fn each_platform_keeps_settings_logs_and_cache_where_its_apps_do() {
-    let id = "com.hotic.acpira.desktop";
+    let id = "cc.hotic.acpira.desktop";
     let mac = app_dirs("macos", &env_of(&[("HOME", "/Users/u")]), id);
     assert_eq!(mac.home, PathBuf::from("/Users/u"));
     assert_eq!(mac.user_data, PathBuf::from("/Users/u/Library/Application Support").join(id));

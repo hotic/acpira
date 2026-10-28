@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// The bundle identifier a staged bundle must carry (tauri.conf.json)
-pub const IDENTIFIER: &str = "com.hotic.acpira.desktop";
+pub const IDENTIFIER: &str = "cc.hotic.acpira.desktop";
 
 /// Whether two existing paths are on one volume: the swap is a rename, which cannot cross volumes
 pub fn same_volume(a: &Path, b: &Path) -> bool {
@@ -106,7 +106,7 @@ mod tests {
   #[test]
   fn the_requirement_pins_identifier_and_team() {
     let r = requirement("ABCDE12345");
-    assert!(r.starts_with("anchor apple generic and identifier \"com.hotic.acpira.desktop\""));
+    assert!(r.starts_with("anchor apple generic and identifier \"cc.hotic.acpira.desktop\""));
     assert!(r.ends_with("certificate leaf[subject.OU] = \"ABCDE12345\""));
   }
 
