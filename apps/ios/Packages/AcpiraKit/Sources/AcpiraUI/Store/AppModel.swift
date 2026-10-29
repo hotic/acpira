@@ -224,13 +224,17 @@ final class AppModel {
   /// The built-in agent (BUILTIN_AGENT_ID)
   static let builtinAgent: AgentId = "acpira"
 
-  /// The agent a new session in `cwd` starts with (Shell.tsx agentIn): under local run only the built-in agent works in
-  /// a folder on an SSH host (the engine refuses others with host.remoteBuiltinOnly), so it takes that one whatever was
-  /// picked; a host the phone has not heard of yet counts as local run, the default
+  /// The agents that work in a folder on an SSH host under local run (remote.ts LOCAL_RUN_AGENTS), the fallback first
+  static let localRunAgents: [AgentId] = [builtinAgent, "claude"]
+
+  /// The agent a new session in `cwd` starts with (Shell.tsx agentIn): under local run only the built-in agent and
+  /// Claude Code work in a folder on an SSH host (the engine refuses others with host.remoteBuiltinOnly), so it keeps one
+  /// of them and otherwise takes the first installed; a host the phone has not heard of yet counts as local run, the default
   func startAgent(_ agent: AgentId, in cwd: String) -> AgentId {
     guard let host = host(of: cwd), host.view?.mode != .remote,
-          agents.contains(where: { $0.id == Self.builtinAgent && $0.available != false }) else { return agent }
-    return Self.builtinAgent
+          let ready = Self.localRunAgents.first(where: { id in agents.contains { $0.id == id && $0.available != false } })
+    else { return agent }
+    return Self.localRunAgents.contains(agent) ? agent : ready
   }
 
   /// The by-project view's projects (sessionTree.ts buildSessionTree): the user's order first, then every other folder a
