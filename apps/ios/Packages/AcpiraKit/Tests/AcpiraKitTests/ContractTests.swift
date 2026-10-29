@@ -618,6 +618,7 @@ enum ContractSamples {
     .removeProject(cwd: "/w/a"),
     .reorderProject(cwd: "/w/a", before: "/w/b"),
     .collapseProject(cwd: "/w/a", collapsed: true),
+    .setProjectSection(cwd: "/w/a", section: "s1", before: "/w/b"),
   ]
 
   /// In AgentBlock.types order (sessionViewParts reads the tool call)

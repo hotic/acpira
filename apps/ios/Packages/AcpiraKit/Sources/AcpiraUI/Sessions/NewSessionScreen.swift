@@ -153,6 +153,8 @@ struct NewSessionHero: View {
           .glassEffect(GlassStyle.control.interactive(), in: Capsule())
         }
         .menuStyle(.button)
+        // Keep local before remote and Add last, even when the system opens the menu upward.
+        .menuOrder(.fixed)
         .buttonStyle(.plain)
         .modifier(AddProjectAlert(isPresented: $adding, onAdd: onAdd))
       }

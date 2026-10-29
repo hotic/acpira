@@ -13,7 +13,8 @@ import UIKit
 // MARK: - Session "…"
 
 /// The session's "…" menu: the account and the session's changes, pin and rename, copy / move / export in submenus,
-/// the project's terminal, settings, delete
+/// the project's terminal, settings, delete. A list row's long press shows it too, without the chat's own entries (the
+/// desktop's row menu: pin, rename, move, copy, export, delete)
 struct NativeSessionMenu: View {
   var pinned: Bool
   var actions = HeaderActions()
@@ -52,11 +53,21 @@ struct NativeSessionMenu: View {
       }
       Menu {
         Button { actions.export(false) } label: { Label(t("session.export.markdown"), systemImage: "doc.text") }
-        Button { actions.export(true) } label: { Label(t("session.export.json"), systemImage: "curlybraces") }
+        if actions.exportJSON {
+          Button { actions.export(true) } label: { Label(t("session.export.json"), systemImage: "curlybraces") }
+        }
       } label: {
         Label(t("session.export"), systemImage: "square.and.arrow.up")
       }
     }
+    if actions.subagents != nil || actions.terminal != nil || actions.settings != nil {
+      chatSection
+    }
+    Section { Button(role: .destructive, action: actions.delete) { Label(t("common.delete"), systemImage: "trash") } }
+  }
+
+  /// The chat's own pages: the subagent graph, the project's terminal, settings
+  private var chatSection: some View {
     Section {
       // The composer's subagent entry on the desktop: the session's relation tree, its tallies as the subtitle
       if let subagents = actions.subagents {
@@ -69,16 +80,15 @@ struct NativeSessionMenu: View {
           }
         }
       }
-      Button(action: actions.terminal) { Label(t("panel.terminal"), systemImage: "apple.terminal") }
-      Button(action: actions.settings) { Label(t("session.settings"), systemImage: "gearshape") }
+      if let terminal = actions.terminal { Button(action: terminal) { Label(t("panel.terminal"), systemImage: "apple.terminal") } }
+      if let settings = actions.settings { Button(action: settings) { Label(t("session.settings"), systemImage: "gearshape") } }
     }
-    Section { Button(role: .destructive, action: actions.delete) { Label(t("common.delete"), systemImage: "trash") } }
   }
 }
 
 // MARK: - Project / agent
 
-/// The project menu's rows: the recent folders as a checked picker, then "Add folder" (the caller raises its alert)
+/// Native project menus: local folders, or an SSH host's folders, then Add (the caller raises its alert).
 struct NativeProjectMenu: View {
   let cwd: String
   let recent: [String]
@@ -88,28 +98,60 @@ struct NativeProjectMenu: View {
   var body: some View {
     var seen = Set<String>()
     let folders = ([cwd] + recent).filter { !$0.isEmpty && seen.insert($0).inserted }
-    Section(t("mobile.projects.recent")) {
-      Picker(selection: Binding(get: { cwd }, set: { onSelect($0) })) {
-        ForEach(folders, id: \.self) { folder in
-          // The subtitle line of a menu row: the full path under the folder's name. A folder on an SSH host wears the
-          // list's globe and names its host before the path
-          Button {} label: {
-            Text(verbatim: folderName(folder))
-            if let remote = RemoteFolder.parse(folder) {
-              Text(verbatim: "\(remote.alias):\(remote.path)")
-              Image(systemName: "globe")
-            } else {
-              Text(verbatim: folder)
-            }
+    let local = folders.filter { RemoteFolder.parse($0) == nil }
+    let remote = folders.filter { RemoteFolder.parse($0) != nil }
+    var seenHosts = Set<String>()
+    let hosts = remote.compactMap { RemoteFolder.parse($0)?.alias }.filter { seenHosts.insert($0).inserted }
+    Section {
+      Menu {
+        projects(local)
+      } label: {
+        Label(t("mobile.projects.local"), systemImage: "desktopcomputer")
+      }
+      .disabled(local.isEmpty)
+      Menu {
+        ForEach(hosts, id: \.self) { host in
+          Menu {
+            projects(remote.filter { RemoteFolder.parse($0)?.alias == host })
+          } label: {
+            Label { Text(verbatim: host) } icon: { Image(systemName: "server.rack") }
           }
-          .tag(folder)
         }
       } label: {
-        EmptyView()
+        Label(t("mobile.projects.remote"), systemImage: "globe")
       }
-      .pickerStyle(.inline)
+      .disabled(remote.isEmpty)
     }
     Button(action: onAdd) { Label(t("mobile.projects.add"), systemImage: "folder.badge.plus") }
+  }
+
+  private func projects(_ folders: [String]) -> some View {
+    Picker(selection: Binding(get: { cwd }, set: { onSelect($0) })) {
+      ForEach(folders, id: \.self) { folder in
+        let remote = RemoteFolder.parse(folder)
+        Button {} label: {
+          Text(verbatim: folderName(remote?.path ?? folder))
+          // Menu labels become native actions; keep their subtitle short before UIKit lays it out.
+          Text(verbatim: subtitle(folder))
+          Image(systemName: remote == nil ? "folder" : "globe")
+        }
+        .tag(folder)
+      }
+    } label: {
+      EmptyView()
+    }
+    .pickerStyle(.inline)
+  }
+
+  /// The title names the project and its menu names the machine, leaving the parent path as the only subtitle.
+  private func subtitle(_ folder: String) -> String {
+    let remote = RemoteFolder.parse(folder)
+    let path = remote?.path ?? folder
+    let parent = folderOf(path.hasSuffix("/") && path != "/" ? String(path.dropLast()) : path)
+    let parts = parent.split(whereSeparator: { $0 == "/" || $0 == "\\" })
+    let tail = parts.suffix(2).joined(separator: "/")
+    return tail.isEmpty ? (path.hasPrefix("/") ? "/" : ".")
+      : parts.count > 2 ? "…/\(tail)" : parent
   }
 }
 

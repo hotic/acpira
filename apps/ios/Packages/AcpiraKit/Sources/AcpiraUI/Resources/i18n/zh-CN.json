@@ -1431,6 +1431,8 @@
   "mobile.attach.files": "文件",
   "mobile.projects": "项目",
   "mobile.projects.recent": "最近",
+  "mobile.projects.local": "当前电脑",
+  "mobile.projects.remote": "远程",
   "mobile.projects.add": "添加文件夹",
   "mobile.state.waiting": "待处理",
   "mobile.state.unread": "有新回复",

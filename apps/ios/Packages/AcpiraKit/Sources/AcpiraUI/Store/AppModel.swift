@@ -268,6 +268,20 @@ final class AppModel {
          action: ToastAction(label: t("common.undo")) { [weak self] in self?.addProject(cwd) })
   }
 
+  /// Files a folder into one of the desktop's sections at its end, or takes it out (`section` nil): the desktop project
+  /// menu's "Move to section"
+  func setProjectSection(_ cwd: String, _ section: String?) {
+    if post(.categoryOp(op: .setProjectSection(cwd: cwd, section: section))) { return }
+    for i in sections.indices { sections[i].projects.removeAll { $0 == cwd } }
+    if let section, let at = sections.firstIndex(where: { $0.id == section }) { sections[at].projects.append(cwd) }
+  }
+
+  /// The desktop project menu's "Copy path": the folder as the engine names it (`ssh://alias/path` on a host)
+  func copyPath(_ cwd: String) {
+    UIPasteboardBridge.copy(cwd)
+    show(t("session.project.copied"), icon: .folder)
+  }
+
   func toggleOpen(_ cwd: String) {
     if openProjects.remove(cwd) == nil { openProjects.insert(cwd) }
   }
@@ -836,18 +850,32 @@ final class AppModel {
     show(t("mobile.forked"), icon: .gitBranch)
   }
 
-  /// Writes the export to a temporary file and hands it to the share sheet
+  /// Writes the export to a temporary file and hands it to the share sheet. The Markdown is `sessionMarkdown`'s (with an
+  /// engine, the desktop's own export, so a list row's session the phone never opened exports too); the JSON is the view
+  /// the phone holds
   func export(_ id: String, json: Bool) {
-    guard let view = views[id] else { return }
-    let name = "\(SessionExport.fileName(view.title)).\(json ? "json" : "md")"
-    let body = json ? SessionExport.json(view) : SessionExport.markdown(view, agentName: agent(view.agent).name, exportedAt: now)
-    let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
-    do {
-      try Data(body.utf8).write(to: url, options: .atomic)
-      shared = ExportFile(url: url)
-    } catch {
-      show(error.localizedDescription, icon: .triangleAlert)
+    Task {
+      let title = views[id]?.title ?? summaries.first { $0.id == id }?.title ?? ""
+      let body = json ? views[id].map(SessionExport.json) : await sessionMarkdown(id)
+      guard let body, !body.isEmpty else {
+        show(t("mobile.engineNeeded"), icon: .triangleAlert)
+        return
+      }
+      let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("\(SessionExport.fileName(title)).\(json ? "json" : "md")")
+      do {
+        try Data(body.utf8).write(to: url, options: .atomic)
+        shared = ExportFile(url: url)
+      } catch {
+        show(error.localizedDescription, icon: .triangleAlert)
+      }
     }
+  }
+
+  /// The phone holds the session's view (a JSON export needs it). Read from the storage behind `views` without observing
+  /// it: a list row's menu asks, and observing `views` there would redraw every row on each streamed chunk
+  func holdsView(_ id: String) -> Bool {
+    _views[id] != nil
   }
 }
 

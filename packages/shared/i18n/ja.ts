@@ -1427,6 +1427,8 @@ export const ja = {
   'mobile.attach.files': 'ファイル',
   'mobile.projects': 'プロジェクト',
   'mobile.projects.recent': '最近',
+  'mobile.projects.local': '現在のコンピュータ',
+  'mobile.projects.remote': 'リモート',
   'mobile.projects.add': 'フォルダーを追加',
   'mobile.state.waiting': '対応待ち',
   'mobile.state.unread': '新しい返信',

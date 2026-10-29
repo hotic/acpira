@@ -1432,6 +1432,8 @@
   "mobile.attach.files": "Файлы",
   "mobile.projects": "Проекты",
   "mobile.projects.recent": "Недавние",
+  "mobile.projects.local": "Текущий компьютер",
+  "mobile.projects.remote": "Удалённые",
   "mobile.projects.add": "Добавить папку",
   "mobile.state.waiting": "Нужно действие",
   "mobile.state.unread": "Новый ответ",
