@@ -93,8 +93,8 @@ public enum TypeScale {
   public static let footnote = TextStyle(size: ui - 3, lineHeight: ui + 2)
   /// The phone composer's field: iOS body size (17), a step above the transcript's body
   public static let field = TextStyle(size: ui + 1, lineHeight: ui + 8)
-  /// The session list's large title (iOS large-title size)
-  public static let title = TextStyle(size: ui + 12, lineHeight: ui + 18)
+  /// The session list's bar title: 22 / 28, sized to stand level with the bar's 44 pt glass buttons
+  public static let barTitle = TextStyle(size: ui + 6, lineHeight: ui + 12)
   /// Code: 14 / 21
   public static let mono: TextStyle = TextStyle(size: code + 1, lineHeight: code + 8, mono: true)
   /// Command output lines (--code-output-line-height)

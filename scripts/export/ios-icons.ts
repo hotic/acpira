@@ -11,7 +11,7 @@ export const IOS_ICONS_FILE = join(root, 'apps/ios/Packages/AcpiraKit/Sources/Ac
 export const IOS_MARKS_FILE = join(root, 'apps/ios/Packages/AcpiraKit/Sources/AcpiraDesign/Marks.generated.swift');
 
 // Icons the iOS layout needs beyond what the webview imports (iOS-only affordances)
-const EXTRA = ['ArrowDown', 'Asterisk', 'Menu', 'Mic', 'Camera'];
+const EXTRA = ['ArrowDown', 'Asterisk', 'Menu', 'Mic', 'Camera', 'Maximize2', 'Minimize2'];
 
 type Attrs = Record<string, string | number>;
 type IconNode = [string, Attrs][];

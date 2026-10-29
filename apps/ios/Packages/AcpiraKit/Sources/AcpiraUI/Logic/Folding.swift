@@ -88,7 +88,8 @@ public enum ProcessItem: Identifiable, Hashable {
 func groupKind(_ block: AgentBlock) -> GroupKind? {
   guard case .toolCall(let b) = block, b.status != .failed, b.status != .cancelled, b.asyncTask == nil,
         b.subagentId == nil else { return nil }
-  if b.kind == .read { return b.status != .completed || !toolFiles(b).isEmpty ? .read : nil }
+  // A read with locations always names files; only one without them needs `toolFiles`, which runs on every patch
+  if b.kind == .read { return b.status != .completed || !(b.locations ?? []).isEmpty || !toolFiles(b).isEmpty ? .read : nil }
   if b.kind == .edit { return .edit }
   return nil
 }
@@ -184,7 +185,7 @@ public func visibleToolContents(_ block: ToolCallBlock) -> [ToolContent] {
 
 /// fileReference: strip a trailing `:line[-end][:col]`
 public func fileReference(_ hit: String) -> (path: String, line: Int?) {
-  if let m = hit.firstMatch(of: /^(.+?):(\d+)(?:[–-]\d+)?(?::\d+)?$/) { return (String(m.1), Int(m.2)) }
+  if let m = hit.firstMatch(of: FilePatterns.lineSuffix) { return (String(m.1), Int(m.2)) }
   return (hit, nil)
 }
 
@@ -194,15 +195,25 @@ private func fileHit(_ raw: String) -> String? {
     guard let url = URL(string: text) else { return nil }
     text = (url.host().map { "//\($0)" } ?? "") + url.path(percentEncoded: false)
   }
-  let hit = text.firstMatch(of: /^(.+?):(\d+)(?::\d+)?(?::.*)?$/)
+  let hit = text.firstMatch(of: FilePatterns.hitLine)
   let path = hit.map { String($0.1) } ?? text
-  let explicit = path.firstMatch(of: /^(?:\.{0,2}\/|[A-Za-z]:[\\\/])/) != nil
-  let bare = path.wholeMatch(of: /[^\s:]+[.][\w-]+/) != nil
+  let explicit = path.firstMatch(of: FilePatterns.explicitPath) != nil
+  let bare = path.wholeMatch(of: FilePatterns.barePath) != nil
   guard explicit || bare else { return nil }
   return hit.map { "\(path):\($0.2)" } ?? path
 }
 
 private let lineless = /(?i)\.(?:png|jpe?g|gif|webp|bmp|ico|avif|heic|tiff?|pdf|zip|gz|tgz|wasm|mp[34]|mov|wav|woff2?|ttf|otf)$/
+
+/// The file-reference patterns, compiled once: a regex literal is compiled again each time it is evaluated, and these
+/// run for the process rows on every streamed patch
+private enum FilePatterns {
+  nonisolated(unsafe) static let lineSuffix = /^(.+?):(\d+)(?:[–-]\d+)?(?::\d+)?$/
+  nonisolated(unsafe) static let hitLine = /^(.+?):(\d+)(?::\d+)?(?::.*)?$/
+  nonisolated(unsafe) static let explicitPath = /^(?:\.{0,2}\/|[A-Za-z]:[\\\/])/
+  nonisolated(unsafe) static let barePath = /[^\s:]+[.][\w-]+/
+  nonisolated(unsafe) static let rangeSuffix = /^(.+?):(\d+(?:[–-]\d+)?)(?::\d+)?$/
+}
 
 /// toolFiles: the file references a read or search names
 public func toolFiles(_ block: ToolCallBlock) -> [String] {
@@ -230,10 +241,10 @@ public func toolFiles(_ block: ToolCallBlock) -> [String] {
 
 /// splitHit: a reference as the name shown and its faint line note
 public func splitHit(_ hit: String) -> (main: String, aside: String?) {
-  if let m = hit.firstMatch(of: /^(.+?):(\d+(?:[–-]\d+)?)(?::\d+)?$/) {
+  if let m = hit.firstMatch(of: FilePatterns.rangeSuffix) {
     return (lastComponent(String(m.1)), "L\(m.2)")
   }
-  if hit.firstMatch(of: /^(?:\.{0,2}\/|[A-Za-z]:[\\\/])/) != nil { return (lastComponent(hit), nil) }
+  if hit.firstMatch(of: FilePatterns.explicitPath) != nil { return (lastComponent(hit), nil) }
   if let url = URL(string: hit), let host = url.host(), url.scheme != nil {
     return (url.path().isEmpty || url.path() == "/" ? host : host + url.path(), host)
   }

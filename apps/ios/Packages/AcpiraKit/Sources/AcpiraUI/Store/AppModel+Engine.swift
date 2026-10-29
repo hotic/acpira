@@ -75,6 +75,8 @@ extension AppModel {
       if let categories = state.categories { follow(categories) }
       present(link.feed.receive(message))
       synced = true
+      // The hosts' state for the host folders; the engine pushes it again on every change
+      post(.connections)
       if resumed { reopen() }
     case .agents(let list):
       agents = list
@@ -82,6 +84,8 @@ extension AppModel {
       summaries = list
     case .categories(let categories):
       follow(categories)
+    case .connections(let hosts):
+      connections = hosts
     case .accounts(let list):
       accounts = list
     case .settings(let next, _):
@@ -196,7 +200,10 @@ extension AppModel {
       if case .new? = self.path.last { self.path[self.path.count - 1] = .chat(id) } else { self.path.append(.chat(id)) }
       opened?()
     })
-    post(.newSession(agent: agent, cwd: cwd.isEmpty ? nil : cwd))
+    // A host folder under local run takes the built-in agent, whatever the page picked (also a folder picked after the
+    // page opened) or the engine would default to
+    let start = startAgent(agent ?? "", in: cwd)
+    post(.newSession(agent: start.isEmpty ? nil : start, cwd: cwd.isEmpty ? nil : cwd))
   }
 
   /// The picks a new session's screen made where they differ from what the engine started it with

@@ -116,10 +116,24 @@ struct TurnAttachments: View {
 struct AttachmentPill: View {
   let name: String
   let icon: LucideIcon
+  /// A staged pill's ✕, after the name
+  var onRemove: (() -> Void)? = nil
   var body: some View {
     HStack(spacing: Metrics.s1) {
       Icon(icon, size: WebMetrics.icon).foregroundStyle(Palette.fg3)
       Text(web: name).lineLimit(1).truncationMode(.middle)
+      if let onRemove {
+        Button(action: onRemove) {
+          Icon(.x, size: Metrics.chevron, strokeWidth: 2)
+            .foregroundStyle(Palette.fg3)
+            .frame(width: WebMetrics.ctlSm, height: WebMetrics.ctlSm)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        // The ✕'s hit square reaches into the pill's padding, so its glyph keeps the same inset as the icon
+        .padding(.trailing, (Metrics.chevron - WebMetrics.ctlSm) / 2)
+        .accessibilityLabel(Text(web: t("common.remove")))
+      }
     }
     .textStyle(WebType.text3, weight: .medium)
     .foregroundStyle(Palette.fg2)

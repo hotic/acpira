@@ -628,6 +628,8 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   case terminalAck(id: String, chars: Int)
   case terminalClose(id: String)
   case terminalKill(id: String)
+  /// The SSH hosts' state, answered with a `connections` push and pushed again on every change
+  case connections
   /// A type this build does not know (decoding only)
   case unknown(String)
 
@@ -640,7 +642,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     "unlockCredentials", "login", "reconnect", "retryTurn", "editTurn", "observeSubagent", "unobserveSubagent",
     "cancelSubagent", "stopAsyncTask", "goal", "searchFiles", "setSetting", "controls", "projectDir", "projectStatus",
     "projectFile", "sessionChanges", "diffSource", "imageBlob", "openPlan", "terminalOpen", "terminalInput",
-    "terminalResize", "terminalAck", "terminalClose", "terminalKill",
+    "terminalResize", "terminalAck", "terminalClose", "terminalKill", "connections",
   ]
 
   /// The wire `type`
@@ -662,6 +664,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case .restoreSession: "restoreSession"
     case .pinSession: "pinSession"
     case .markAllRead: "markAllRead"
+    case .connections: "connections"
     case .searchSessions: "searchSessions"
     case .forkSession: "forkSession"
     case .selectAccount: "selectAccount"
@@ -744,6 +747,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case "restoreSession": self = .restoreSession(id: try str(.id))
     case "pinSession": self = .pinSession(id: try str(.id), pinned: try c.decode(Bool.self, forKey: .pinned))
     case "markAllRead": self = .markAllRead
+    case "connections": self = .connections
     case "searchSessions": self = .searchSessions(query: try str(.query), seq: try c.decode(Int.self, forKey: .seq))
     case "forkSession":
       self = .forkSession(sessionId: try str(.sessionId), turnIndex: try c.decode(Int.self, forKey: .turnIndex), agent: try opt(.agent))
@@ -962,7 +966,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case let .terminalAck(id, chars):
       try c.encode(id, forKey: .id)
       try c.encode(chars, forKey: .chars)
-    case .resync, .markAllRead, .unknown:
+    case .resync, .markAllRead, .connections, .unknown:
       break
     }
   }
@@ -1021,6 +1025,8 @@ public enum HostMsg: Codable, Hashable, Sendable {
   case editTurnResult(requestId: String, error: String? = nil)
   /// The appearance axes changed
   case appearance(appearance: Appearance)
+  /// The SSH hosts, after `connections` was asked and on every change since
+  case connections(connections: [ConnectionView])
   /// A push this build does not mirror; carries the type for diagnostics
   case unknown(String)
 
@@ -1029,7 +1035,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
     "init", "agents", "sessions", "categories", "noSession", "session", "sessionPatch", "accounts", "accountActions",
     "hidden", "settings", "controls", "sessionHits", "subagent", "files", "diffSource", "imageBlob", "sessionMarkdown",
     "projectDir", "projectStatus", "projectFile", "sessionChanges", "terminalOutput", "terminalState", "editTurnResult",
-    "appearance",
+    "appearance", "connections",
   ]
 
   /// The wire `type`
@@ -1061,6 +1067,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case .terminalState: "terminalState"
     case .editTurnResult: "editTurnResult"
     case .appearance: "appearance"
+    case .connections: "connections"
     case .unknown(let t): t
     }
   }
@@ -1069,7 +1076,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case type, state, agents, sessions, categories, session, patch, accounts, actions, hidden, settings, locale, agent
     case controls, shapes, seq, hits
     case sessionId, subagentId, rev, running, turns, files, source, blob, markdown, error, entries, root, marks, text
-    case hunks, id, data, title, cols, rows, replay, exit, requestId, appearance
+    case hunks, id, data, title, cols, rows, replay, exit, requestId, appearance, connections
   }
 
   public init(from decoder: Decoder) throws {
@@ -1117,6 +1124,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
                             exit: try c.decodeIfPresent(TerminalExit.self, forKey: .exit), error: try opt(.error))
     case "editTurnResult": self = .editTurnResult(requestId: try str(.requestId), error: try opt(.error))
     case "appearance": self = .appearance(appearance: try c.decode(Appearance.self, forKey: .appearance))
+    case "connections": self = .connections(connections: try c.decode([ConnectionView].self, forKey: .connections))
     case let type: self = .unknown(type)
     }
   }
@@ -1195,6 +1203,8 @@ public enum HostMsg: Codable, Hashable, Sendable {
       try c.encodeIfPresent(error, forKey: .error)
     case .appearance(let appearance):
       try c.encode(appearance, forKey: .appearance)
+    case .connections(let connections):
+      try c.encode(connections, forKey: .connections)
     case .noSession, .unknown:
       break
     }

@@ -13,11 +13,23 @@ nonisolated enum FileLinks {
   static let scheme = "acpira-file"
   private static let webTLD: Set<String> = ["com", "org", "net", "io", "edu", "gov", "cn", "co", "dev", "info", "xyz", "me", "ai"]
 
+  /// Compiled once: a regex literal is compiled again each time it is evaluated, and the prose asks about every link
+  /// and code span each time a streamed paragraph is built
+  private enum Patterns {
+    nonisolated(unsafe) static let scheme = /(?:https?|mailto|javascript|data|vbscript|blob|tel):/.ignoresCase()
+    nonisolated(unsafe) static let anchorLine = /(.*)#[Ll](\d+)(?:-\d+)?/
+    nonisolated(unsafe) static let colonLine = /(.+?):(\d+)(?:[–-]\d+)?(?::\d+)?/
+    nonisolated(unsafe) static let unc = /\\\\[^\\]+\\[^\\]+/
+    nonisolated(unsafe) static let rooted = /(?:\.{0,2}\/|[A-Za-z]:[\\\/]|\/)/
+    nonisolated(unsafe) static let slashedExtension = /\.[A-Za-z][\w-]*$/
+    nonisolated(unsafe) static let bareFile = /[^\s\/\\]+\.([A-Za-z][\w-]{1,15})/
+  }
+
   static func parse(_ text: String) -> FileLink? {
     let raw = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !raw.isEmpty, !raw.contains(where: \.isWhitespace) else { return nil }
     if let own = decode(URL(string: raw)) { return own }
-    if raw.hasPrefix("#") || raw.prefixMatch(of: /(?:https?|mailto|javascript|data|vbscript|blob|tel):/.ignoresCase()) != nil { return nil }
+    if raw.hasPrefix("#") || raw.prefixMatch(of: Patterns.scheme) != nil { return nil }
     if raw.lowercased().hasPrefix("file:") { return parseFileURL(raw) }
     return pathAndLine(raw)
   }
@@ -50,11 +62,11 @@ nonisolated enum FileLinks {
   }
 
   private static func pathAndLine(_ text: String) -> FileLink? {
-    if let m = text.wholeMatch(of: /(.*)#[Ll](\d+)(?:-\d+)?/) {
+    if let m = text.wholeMatch(of: Patterns.anchorLine) {
       let path = String(m.1)
       return isFilePath(path) ? FileLink(path: path, line: Int(m.2)) : nil
     }
-    if let m = text.wholeMatch(of: /(.+?):(\d+)(?:[–-]\d+)?(?::\d+)?/), isFilePath(String(m.1)) {
+    if let m = text.wholeMatch(of: Patterns.colonLine), isFilePath(String(m.1)) {
       return FileLink(path: String(m.1), line: Int(m.2))
     }
     return isFilePath(text) ? FileLink(path: text) : nil
@@ -62,12 +74,12 @@ nonisolated enum FileLinks {
 
   static func isFilePath(_ path: String) -> Bool {
     guard !path.isEmpty else { return false }
-    if path.prefixMatch(of: /\\\\[^\\]+\\[^\\]+/) != nil { return true }
-    if path.prefixMatch(of: /(?:\.{0,2}\/|[A-Za-z]:[\\\/]|\/)/) != nil { return true }
+    if path.prefixMatch(of: Patterns.unc) != nil { return true }
+    if path.prefixMatch(of: Patterns.rooted) != nil { return true }
     let slashed = path.contains("/") || path.contains("\\")
     if path.hasPrefix(".") && slashed { return true }
-    if slashed && path.firstMatch(of: /\.[A-Za-z][\w-]*$/) != nil { return true }
-    guard let ext = path.wholeMatch(of: /[^\s\/\\]+\.([A-Za-z][\w-]{1,15})/) else { return false }
+    if slashed && path.firstMatch(of: Patterns.slashedExtension) != nil { return true }
+    guard let ext = path.wholeMatch(of: Patterns.bareFile) else { return false }
     return !webTLD.contains(ext.1.lowercased())
   }
 }

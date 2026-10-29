@@ -31,16 +31,18 @@ struct Composer: View {
   @FocusState private var focused: Bool
   @Environment(\.snapshot) private var snapshot
   @Environment(\.motionEnabled) private var motion
-  /// The liquid chip that is open (attach, model, sidekick), if any, the bean whose panel is out (1…, 0 for none), and
-  /// the picker `+` opened
+  /// The liquid chip that is open (attach, model), if any, the bean whose panel is out (1…, 0 for none), the list the
+  /// sidekick's panel opened in place of its rows, and the picker `+` opened
   @State private var goo: String?
   @State private var gooStage = 0
+  @State private var gooDeeper: String?
   @State private var source: AttachSource?
-  /// The width of the bar's group of `+`, the mark and the sidekick's (the mark is gone when the agent offers nothing to
-  /// pick, the sidekick's without a sidekick select)
+  /// The width of the bar's group of `+` and the mark (the mark is gone when the agent offers nothing to pick)
   @State private var lead = Metrics.barCtl * 2
   /// The bar's height, so the beans rise over the card while typing
   @State private var tall = Metrics.barCtl
+  /// The chips' top on the screen below its bar (`GooColumn.space`): how far their beans may rise
+  @State private var chipTop = CGFloat.infinity
   @Environment(\.initialPopup) private var initialPopup
   /// The field's selection: the caret the `/` and `@` tokens are read at
   @State private var selection: TextSelection?
@@ -49,6 +51,12 @@ struct Composer: View {
   @State private var typed: String?
   /// The pasteboard holds an image, so `+` offers to paste it
   @State private var pasteReady = false
+  /// The field's height, so the expand corner shows once the text runs to `expandLines`
+  @State private var fieldHeight: CGFloat = 0
+  /// The staged strip's height with its gap, so the expand corner sits on the first line under it
+  @State private var stripHeight: CGFloat = 0
+  /// The draft is open in the whole-screen editor (ExpandedComposer)
+  @State private var fullEditor = false
   @Environment(FileSearch.self) private var files: FileSearch?
   @Environment(\.mentionPersonas) private var personas
   @Environment(\.compactAt) private var compactAt
@@ -57,8 +65,8 @@ struct Composer: View {
   private var hint: String { placeholder ?? (session.running ? t("composer.placeholder.queue") : t("composer.placeholder")) }
 
   /// The bar's hint at rest: its first sentence, cut before the `@` tip, on one line. The tip shows once the bar has
-  /// grown into the card; with the sidekick's chip in the bar the sentence may still end in an ellipsis, where the
-  /// wrapped hint used to stop halfway through a phrase
+  /// grown into the card. A sentence too long for the bar ends in an ellipsis, where the wrapped hint stopped halfway
+  /// through a phrase
   private var restHint: String {
     hint.split(separator: "@", maxSplits: 1).first.map { $0.trimmingCharacters(in: .whitespaces) } ?? hint
   }
@@ -75,10 +83,24 @@ struct Composer: View {
           .frame(maxWidth: .infinity, alignment: .leading)
       } else {
         VStack(alignment: .leading, spacing: 0) {
-          TextField(text: fieldText, selection: $selection, axis: .vertical) {
-            Text(web: rest ? restHint : hint).foregroundStyle(Palette.fg3)
+          // The card's cap in whole lines of the field's own line box. lineLimit's cap counts the font's natural line
+          // height (about 20.6 pt at this size), not the exact one the field draws, so the last line ran cut under it
+          FieldHeight(cap: rest ? TypeScale.field.lineHeight : CGFloat(Self.maxLines) * TypeScale.field.lineHeight) {
+            TextField(text: fieldText, selection: $selection, axis: .vertical) {
+              // At rest the hint is drawn over the field instead (below)
+              Text(web: rest ? "" : hint).foregroundStyle(Palette.fg3)
+            }
+            .focused($focused)
           }
-          .focused($focused)
+          // At rest the field takes no touches (the bar's tap focuses it) and its hint is plain text over it: a drag
+          // on the bar scrolled the field's own text view, and the hint stayed cut by the one-line frame
+          .allowsHitTesting(!rest)
+          .overlay(alignment: .topLeading) {
+            if rest && text.isEmpty {
+              Text(web: restHint).foregroundStyle(Palette.fg3).allowsHitTesting(false)
+            }
+          }
+          .accessibilityLabel(Text(web: hint))
           // The command's own wording for what follows it, a faint second line while its arguments are empty
           if let commandHint {
             Text(web: commandHint, paragraph: false)
@@ -91,8 +113,43 @@ struct Composer: View {
     }
     .textStyle(TypeScale.field)
     .foregroundStyle(Palette.fgStrong)
-    .lineLimit(rest ? 1...1 : 1...8)
+    // The field's height comes from FieldHeight; this bound only has to sit past anything it lets through
+    .lineLimit(rest ? 1...1 : 1...Self.growLines)
     .frame(minHeight: TypeScale.field.lineHeight, alignment: .topLeading)
+  }
+
+  /// The lines the card grows to before the field scrolls inside itself
+  private static let maxLines = 8
+  /// lineLimit's bound, past anything FieldHeight lets through
+  private static let growLines = 1000
+  /// The lines from which the card offers the whole-screen editor (ChatGPT's expand corner)
+  private static let expandLines = 3
+
+  /// The field's top inset in both forms: the text centred in the bar, or below the staged strip
+  private var fieldTop: CGFloat {
+    staged.isEmpty ? (Metrics.barCtl - TypeScale.field.lineHeight) / 2 + Metrics.fieldInkDrop : Metrics.s2
+  }
+
+  /// The card holds enough lines to offer the whole-screen editor
+  private var offersExpand: Bool {
+    (focused || filled) && fieldHeight >= TypeScale.field.lineHeight * CGFloat(Self.expandLines) - Metrics.hairline
+  }
+
+  /// The expand corner at the card's top trailing side, centred on the first line, in the column the card keeps free
+  /// for it, so its arrival never rewraps the text
+  @ViewBuilder private var expandCorner: some View {
+    if offersExpand {
+      Button { fullEditor = true } label: {
+        Icon(.maximize2, size: Metrics.icon)
+          .foregroundStyle(Palette.cmpFg2)
+          .frame(width: Metrics.s3 * 2 + Metrics.icon, height: TypeScale.field.lineHeight)
+          .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel(Text(web: t("mobile.composer.expand")))
+      .padding(.top, (staged.isEmpty ? 0 : stripHeight) + fieldTop)
+      .transition(.opacity)
+    }
   }
 
   private var send: some View {
@@ -107,9 +164,9 @@ struct Composer: View {
     }
   }
 
-  /// At rest one glass bar: `+` and the model's mark at its start (the built-in agent's sidekick mark beside it), the
-  /// field, and send at its end, where Messages keeps it (dim with nothing to send, stop while a turn runs). `+` and
-  /// the marks are liquid chips. Typing (focused, or a draft waiting) the bar grows into one glass card as in Codex: the field across the
+  /// At rest one glass bar: `+` and the model's mark at its start, the field, and send at
+  /// its end, where Messages keeps it (dim with nothing to send, stop while a turn runs). `+` and the mark are liquid
+  /// chips. Typing (focused, or a draft waiting) the bar grows into one glass card as in Codex: the field across the
   /// whole width over a row of the chips and send, so the text is never squeezed between controls. Nothing comes or
   /// goes between the two: the chips keep the bottom-left corner and send the bottom-right one, the glass grows up
   /// around them, and the field stays the same view throughout, so focus holds. The chips and send are glass circles
@@ -120,36 +177,50 @@ struct Composer: View {
     let expanded = focused || filled
     let corner = expanded ? Metrics.rComposer : Metrics.barCtl / 2
     let line = (Metrics.barCtl - TypeScale.field.lineHeight) / 2
-    // In the card the beans rest over its top edge, not inside it
-    let lift = expanded ? max(0, tall - Metrics.s1 - Metrics.barCtl) : 0
+    let lift = beanLift
+    let room = chipTop - Metrics.s2
     return VStack(alignment: .leading, spacing: Metrics.s1_5) {
       suggestions
-      if !staged.isEmpty { StagedAttachments(items: $staged) }
       GlassEffectContainer(spacing: Metrics.gooMerge) {
         ZStack(alignment: .bottomLeading) {
-          field
-            // Room for the context ring beside send in the bar
-            .padding(.trailing, expanded || session.usage == nil ? 0 : Metrics.ctlSm)
-            // Lowered by the ink's offset in both forms, so the text is centred in the bar and does not move as it grows
-            .padding(.top, line + Metrics.fieldInkDrop)
-            .padding(.bottom, expanded ? Metrics.s1 + Metrics.barCtl + Metrics.s1 : line - Metrics.fieldInkDrop)
-            // In the card the text starts on the `+`'s ink below it
-            .padding(.leading, expanded ? Metrics.s3 + Metrics.s1 * 2 : lead + Metrics.s1)
-            .padding(.trailing, expanded ? Metrics.s3 + Metrics.s1 : Metrics.barCtl + Metrics.s1)
-            .glassEffect(GlassStyle.control, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
-            .onTapGesture { focused = true }
+          VStack(alignment: .leading, spacing: 0) {
+            // Staged attachments ride inside the card over the text, as in the desktop composer; anything staged
+            // keeps the card open. The strip runs to the card's trailing side and its tiles start on the text's edge
+            if !staged.isEmpty {
+              StagedAttachments(items: $staged)
+                .padding(.top, Metrics.s1)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { stripHeight = $0 }
+                .padding(.leading, Metrics.s3 + Metrics.s1)
+            }
+            field
+              // Room for the context ring beside send in the bar
+              .padding(.trailing, expanded || session.usage == nil ? 0 : Metrics.ctlSm)
+              .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fieldHeight = $0 }
+              // Lowered by the ink's offset in both forms, so the text is centred in the bar and does not move as it
+              // grows
+              .padding(.top, fieldTop)
+              .padding(.bottom, expanded ? Metrics.s1 + Metrics.barCtl + Metrics.s1 : line - Metrics.fieldInkDrop)
+              // In the card the text starts on the `+`'s ink below it
+              .padding(.leading, expanded ? Metrics.s3 + Metrics.s1 * 2 : lead + Metrics.s1)
+              // In the card the text stops short of the expand corner's column
+              .padding(.trailing, expanded ? Metrics.s3 + Metrics.icon + Metrics.s1 : Metrics.barCtl + Metrics.s1)
+          }
+          // Strip tiles scrolled to the side end at the card's rounded edge
+          .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+          .glassEffect(GlassStyle.control, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+          .contentShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+          .onTapGesture { focused = true }
           // The chips' row at the start; the room after them takes no taps, so they reach the field under it
           HStack(spacing: 0) {
             HStack(spacing: 0) {
-              LiquidAttach(open: $goo, stage: $gooStage, lift: lift, paste: paste, personas: personas,
+              LiquidAttach(open: $goo, stage: $gooStage, lift: lift, room: room, paste: paste, personas: personas,
                            onSummon: summon) { source = $0 }
-              LiquidControls(controls: session.controls, open: $goo, stage: $gooStage, lift: lift, onSetMode: onSetMode,
-                             onSetConfig: onSetConfig)
-              LiquidSidekick(controls: session.controls, open: $goo, stage: $gooStage, lift: lift, onSetConfig: onSetConfig)
+              LiquidControls(controls: session.controls, open: $goo, stage: $gooStage, deeper: $gooDeeper, lift: lift,
+                             room: room, onSetMode: onSetMode, onSetConfig: onSetConfig)
             }
             .gooGlass()
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { lead = $0 }
+            .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(GooColumn.space)).minY } action: { chipTop = $0 }
             Spacer(minLength: 0)
           }
           // Inset from the card's corner as send is from its own: flush with the card's side, a pressed chip's glass
@@ -166,7 +237,10 @@ struct Composer: View {
         }
         .padding([.trailing, .bottom], expanded ? Metrics.s1 : 0)
       }
+      // Over the container for the same reason as send
+      .overlay(alignment: .topTrailing) { expandCorner }
       .animation(motion ? Motion.gooSpring : nil, value: expanded)
+      .animation(motion ? Motion.quick : nil, value: offersExpand)
     }
     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { tall = $0 }
     // The dim under an open picker, as Messages dims its page under `+`: under the bar's glass, over the transcript.
@@ -181,6 +255,14 @@ struct Composer: View {
         .animation(motion ? goo == nil ? Motion.gooDimOut : Motion.gooSpring : nil, value: goo)
     }
     .onAppear(perform: startPopup)
+    .modifier(FullEditorCover(open: $fullEditor, onDismiss: { focused = true }) {
+      ExpandedComposer(text: $text, filled: filled, onSend: {
+        onSend(text, staged)
+        text = ""
+        staged = []
+        fullEditor = false
+      }, onCollapse: { fullEditor = false })
+    })
     .modifier(AttachPickers(staged: $staged, source: $source))
     .modifier(PasteWatch(ready: $pasteReady, forced: initialPopup == "attach.paste"))
     // Mention.tsx useMentionHits: the query goes out a moment after the last keystroke, and the list closing drops
@@ -192,7 +274,23 @@ struct Composer: View {
       selection = TextSelection(insertionPoint: now.endIndex)
     }
     .onChange(of: focusKey) { _, key in if key != nil { focused = true } }
+    // A tall card under the keyboard leaves a column no room to rise over it: a chip open there lowers the keyboard,
+    // so the card sinks and the beans rise clear of the bar (checked again as the card moves: the keyboard may rise
+    // after the chip opened)
+    .onChange(of: goo) { lowerKeyboardForBeans() }
+    .onChange(of: chipTop) { lowerKeyboardForBeans() }
     .environment(\.composerInk, true)
+  }
+
+  /// In the card the beans rest over its top edge, not inside it
+  private var beanLift: CGFloat { focused || filled ? max(0, tall - Metrics.s1 - Metrics.barCtl) : 0 }
+
+  /// The beans a long column holds (`+` with the paste bean, the mark with a sidekick)
+  private static let tallColumn = 4
+
+  private func lowerKeyboardForBeans() {
+    let need = CGFloat(Self.tallColumn) * (Metrics.barCtl + Metrics.gooGap)
+    if goo != nil, focused, chipTop - Metrics.s2 - beanLift < need { focused = false }
   }
 
   /// The context window ring beside send, once the agent has reported usage
@@ -310,8 +408,8 @@ struct Composer: View {
     #endif
   }
 
-  /// `-popup attach`, `-popup model` or `-popup model.2` (a bean's panel out; `attach.N` for `+`, `sidekick.N` for the
-  /// sidekick's chip, and `attach.paste`
+  /// `-popup attach`, `-popup model` or `-popup model.2` (a bean's panel out; `attach.N` for `+`, `model.N.model` or
+  /// `model.N.effort` for a list the sidekick's panel opens, and `attach.paste`
   /// offers the paste bean whatever the pasteboard holds) for screenshots; a `focus.` prefix
   /// (`-popup focus`, `-popup focus.model`) raises the keyboard first. With motion on both wait a moment after launch,
   /// so a recording shows them change. `-popup demo` plays every liquid transition in turn, for a recording read
@@ -322,11 +420,20 @@ struct Composer: View {
       Task { await demo() }
       return
     }
+    // `-popup expand`: the draft in the whole-screen editor
+    if popup == "expand" {
+      Task {
+        if motion { try? await Task.sleep(for: .seconds(1)) }
+        fullEditor = true
+      }
+      return
+    }
     let focus = popup.hasPrefix("focus")
     if focus { popup = String(popup.dropFirst("focus".count).drop { $0 == "." }) }
-    let parts = popup.split(separator: ".", maxSplits: 1).map(String.init)
-    let chip = ["attach", "model", "sidekick"].contains(parts.first ?? "") ? parts.first : nil
+    let parts = popup.split(separator: ".", maxSplits: 2).map(String.init)
+    let chip = ["attach", "model"].contains(parts.first ?? "") ? parts.first : nil
     let stage = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+    let deeper = parts.count > 2 ? parts[2] : nil
     Task {
       if motion { try? await Task.sleep(for: .seconds(1)) }
       if focus { focused = true }
@@ -334,13 +441,15 @@ struct Composer: View {
       withAnimation(motion ? Motion.gooSpring : nil) {
         goo = chip
         gooStage = stage
+        gooDeeper = deeper
       }
     }
   }
 
   /// The demo's steps, each after a pause: the model's beans, two panels in and out, one panel back and another bean
   /// tapped as soon as the beans take taps (the first panel's spring still settling), closing, `+`, then the same from
-  /// the card, closing from an open panel; last the sidekick's chip where the agent has one, its two panels in turn
+  /// the card, closing from an open panel; last the sidekick's bean where the agent has one: its panel, the model list
+  /// in and back, the level list, and closing from inside it
   private func demo() async {
     var steps: [(Double, () -> Void)] = [
       (1.0, { goo = "model" }), (1.2, { gooStage = 2 }), (1.4, { gooStage = 0 }), (1.2, { gooStage = 1 }),
@@ -348,9 +457,9 @@ struct Composer: View {
       (1.4, { goo = nil; gooStage = 0 }), (1.4, { goo = "attach" }), (1.2, { goo = nil }), (1.2, { focused = true }),
       (1.4, { goo = "model" }), (1.2, { gooStage = 3 }), (1.4, { goo = nil; gooStage = 0 }), (1.4, { focused = false }),
     ]
-    if !ComposerControls.split(session.controls.options).sidekick.isEmpty {
-      steps += [(1.4, { goo = "sidekick" }), (1.2, { gooStage = 1 }), (1.4, { gooStage = 0 }), (1.2, { gooStage = 2 }),
-                (1.4, { goo = nil; gooStage = 0 })]
+    if let k = ModelChoices(controls: session.controls, onSetConfig: { _, _ in }).sidekickStage {
+      steps += [(1.4, { goo = "model" }), (1.2, { gooStage = k }), (1.4, { gooDeeper = "model" }), (1.4, { gooDeeper = nil }),
+                (1.2, { gooDeeper = "effort" }), (1.4, { goo = nil; gooStage = 0 }), (1.0, { gooDeeper = nil })]
     }
     for (pause, step) in steps {
       try? await Task.sleep(for: .seconds(pause))
@@ -486,21 +595,22 @@ struct StagedAttachments: View {
         }
         ForEach(Array(items.enumerated()), id: \.offset) { i, item in
           if !Self.quote(item) {
-            Group {
-              switch item {
-              case .image(let blob, _, _):
-                AttachmentThumbnail(blob: blob)
-              case .file(_, let name), .text(_, let name, _):
-                AttachmentPill(name: name, icon: .fileText)
-              // Only a sent prompt taken in for editing brings a selection back
-              case .selection(_, let name, let start, let end, _):
-                AttachmentPill(name: "\(name) \(start == end ? "L\(start)" : "L\(start)-\(end)")", icon: .textSelect)
-              default:
-                EmptyView()
+            switch item {
+            case .image(let blob, _, _):
+              AttachmentThumbnail(blob: blob)
+                .overlay(alignment: .topTrailing) {
+                  RemoveBadge(label: t("common.remove")) { items.remove(at: i) }
+                }
+            // A pill is lower than the badge, which covered the end of its name: its ✕ sits inside it, after the name
+            case .file(_, let name), .text(_, let name, _):
+              AttachmentPill(name: name, icon: .fileText) { items.remove(at: i) }
+            // Only a sent prompt taken in for editing brings a selection back
+            case .selection(_, let name, let start, let end, _):
+              AttachmentPill(name: "\(name) \(start == end ? "L\(start)" : "L\(start)-\(end)")", icon: .textSelect) {
+                items.remove(at: i)
               }
-            }
-            .overlay(alignment: .topTrailing) {
-              RemoveBadge(label: t("common.remove")) { items.remove(at: i) }
+            default:
+              EmptyView()
             }
           }
         }
@@ -666,5 +776,22 @@ struct PressButtonStyle: ButtonStyle {
       .brightness(configuration.isPressed ? Motion.pressBrightness : 0)
       .scaleEffect(configuration.isPressed && motion ? Motion.pressScale : 1)
       .animation(motion ? Motion.press : nil, value: configuration.isPressed)
+  }
+}
+
+/// A vertical text field as tall as its lines up to `cap`, then scrolling inside. The field fills any finite height it
+/// is offered and reports its lines only when offered none, so it is measured unconstrained and placed at the capped
+/// height; the chat's stack no longer squeezes it to an even share, and no frame stretches it past its text
+struct FieldHeight: Layout {
+  var cap: CGFloat
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    guard let field = subviews.first else { return .zero }
+    let lines = field.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
+    return CGSize(width: proposal.width ?? lines.width, height: min(lines.height, cap))
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
   }
 }

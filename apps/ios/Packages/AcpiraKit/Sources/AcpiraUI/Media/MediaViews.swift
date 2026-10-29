@@ -87,6 +87,22 @@ struct MediaImage<Content: View, Placeholder: View, Failure: View>: View {
   }
 }
 
+/// A decoded image as a resizable picture; an animation plays on the frame clock (`DecodedImage.frame(at:)`), as an
+/// `<img>` plays a GIF on the desktop
+struct Picture: View {
+  let image: DecodedImage
+
+  var body: some View {
+    if image.animated {
+      TimelineView(.animation(minimumInterval: image.frameDuration)) { context in
+        Image(decorative: image.frame(at: context.date), scale: 1).resizable()
+      }
+    } else {
+      Image(decorative: image.cgImage, scale: 1).resizable()
+    }
+  }
+}
+
 // MARK: - Agent images
 
 /// AgentImage.tsx: an image the agent put in the transcript (an image block, a tool's image content). Without pixels
@@ -135,12 +151,12 @@ struct ImageSlot: View {
     let label = name ?? t("common.image")
     MediaImage(source: source) { image in
       Button { media.lightbox?.open(LightboxItem(image: image, name: name)) } label: {
-        let picture = Image(decorative: image.cgImage, scale: 1).resizable()
         ImageCard(width: Metrics.agentImage * image.aspect) {
-          picture.aspectRatio(contentMode: .fit)
+          Picture(image: image).aspectRatio(contentMode: .fit)
         } fill: {
-          // The bands beside a wide picture: the picture itself, blurred, so the card reads as one piece
-          picture.scaledToFill().blur(radius: Metrics.page, opaque: true)
+          // The bands beside a wide picture: the picture itself (an animation's first frame), blurred, so the card
+          // reads as one piece
+          Image(decorative: image.cgImage, scale: 1).resizable().scaledToFill().blur(radius: Metrics.page, opaque: true)
         }
       }
       .buttonStyle(.plain)
@@ -254,8 +270,7 @@ struct AttachmentThumbnail: View {
       .overlay { Icon(.image, size: Metrics.icon).foregroundStyle(Palette.fg3) }
     MediaImage(source: .stored(blob, session: media.session)) { image in
       Button { media.lightbox?.open(LightboxItem(image: image, name: name)) } label: {
-        Image(decorative: image.cgImage, scale: 1)
-          .resizable()
+        Picture(image: image)
           .scaledToFill()
           .frame(width: side, height: side)
           .clipShape(shape)

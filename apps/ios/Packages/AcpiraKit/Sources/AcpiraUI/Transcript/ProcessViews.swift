@@ -7,23 +7,38 @@ import SwiftUI
 // MARK: - Process history
 
 /// `process-rows`: rows and dense rows shrink to --process-row, items sit --process-row-gap apart, and prose inside
-/// the process keeps --process-prose-gap from its neighbours
+/// the process keeps --process-prose-gap from its neighbours.
+///
+/// Lazy: a long turn's process is hundreds of rows inside one item of the thread's lazy stack. In a plain stack every
+/// row was built and laid out again on each streamed patch, and the commit redrew the whole process (profiled on the
+/// iOS 27 simulator: layer display took most of the main thread), so a running turn slowed with every step it took. A
+/// lazy stack builds the rows in view only. The full-length render has no scroll view to be lazy in: there a lazy
+/// stack sized itself from estimates and left a band under the process, so it stacks plainly
 struct ProcessHistory: View {
   let items: [ProcessItem]
+  @Environment(\.snapshot) private var snapshot
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Metrics.processRowGap) {
-      ForEach(Array(items.enumerated()), id: \.element.id) { i, item in
-        let prose = isProse(item)
-        let afterProse = i > 0 && isProse(items[i - 1])
-        // Each item enters once under its own id, whatever view draws it
-        EntranceOnce(id: itemEntrance(item.id)) { ProcessItemView(item: item) }
-          .padding(.top, (prose && i > 0) || afterProse ? Metrics.processProseGap - Metrics.processRowGap : 0)
+    Group {
+      if snapshot {
+        VStack(alignment: .leading, spacing: Metrics.processRowGap) { rows }
+      } else {
+        LazyVStack(alignment: .leading, spacing: Metrics.processRowGap) { rows }
       }
     }
     .environment(\.rowHeight, WebMetrics.processRow)
     .environment(\.rowDenseHeight, WebMetrics.processRow)
     .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  private var rows: some View {
+    ForEach(Array(items.enumerated()), id: \.element.id) { i, item in
+      let prose = isProse(item)
+      let afterProse = i > 0 && isProse(items[i - 1])
+      // Each item enters once under its own id, whatever view draws it
+      EntranceOnce(id: itemEntrance(item.id)) { ProcessItemView(item: item) }
+        .padding(.top, (prose && i > 0) || afterProse ? Metrics.processProseGap - Metrics.processRowGap : 0)
+    }
   }
 
   private func isProse(_ item: ProcessItem) -> Bool {

@@ -94,17 +94,21 @@ struct InlineText: View {
   @Environment(\.streamFade) private var fade
 
   var body: some View {
+    // Built once per evaluation of this body: the fade's frames in between only move the renderer's clock
+    let paragraph = InlineBuilder(style: style, ink: ink, strongInk: strongInk, accent: accent).paragraph(inlines, weight: weight)
+    let growth = hasCode(inlines) ? style.inlineGrowth(WebType.mono) : (top: CGFloat(0), bottom: CGFloat(0))
     if let fade, !fade.reveals.isEmpty {
       // Only the streamed tail redraws every frame, and only while its last glyphs fade
-      TimelineView(.animation) { timeline in text(now: timeline.date.timeIntervalSinceReferenceDate) }
+      TimelineView(.animation) { timeline in
+        text(paragraph, growth: growth, now: timeline.date.timeIntervalSinceReferenceDate)
+      }
     } else {
-      text(now: 0)
+      text(paragraph, growth: growth, now: 0)
     }
   }
 
-  private func text(now: Double) -> some View {
-    let growth = hasCode(inlines) ? style.inlineGrowth(WebType.mono) : (top: CGFloat(0), bottom: CGFloat(0))
-    return InlineBuilder(style: style, ink: ink, strongInk: strongInk, accent: accent).paragraph(inlines, weight: weight)
+  private func text(_ paragraph: Text, growth: (top: CGFloat, bottom: CGFloat), now: Double) -> some View {
+    paragraph
       .lineHeight(.exact(points: style.lineHeight))
       .foregroundStyle(ink)
       .textRenderer(InlineCodeRenderer(fill: Palette.hover, radius: Metrics.rSm, outsetY: (WebType.mono.size * 0.1).rounded(.up),

@@ -116,7 +116,11 @@ struct ZoomableImage: UIViewRepresentable {
   var onTap: () -> Void
 
   func makeUIView(context: Context) -> ZoomView {
-    let view = ZoomView(image: UIImage(cgImage: image.cgImage))
+    // An animation plays in UIImageView itself; its frames are already on an even beat
+    let picture = image.animated
+      ? UIImage.animatedImage(with: image.frames.map { UIImage(cgImage: $0) }, duration: image.loopDuration)
+      : nil
+    let view = ZoomView(image: picture ?? UIImage(cgImage: image.cgImage))
     updateUIView(view, context: context)
     return view
   }
@@ -240,7 +244,7 @@ struct ZoomableImage: View {
   var onTap: () -> Void
 
   var body: some View {
-    Image(decorative: image.cgImage, scale: 1).resizable().aspectRatio(contentMode: .fit).onTapGesture(perform: onTap)
+    Picture(image: image).aspectRatio(contentMode: .fit).onTapGesture(perform: onTap)
   }
 }
 #endif

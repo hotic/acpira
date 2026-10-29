@@ -25,6 +25,12 @@ public struct Prose: View {
     self.init(markdown: block.markdown, tone: tone, streaming: block.streaming == true)
   }
 
+  /// Blocks parsed already (a streamed text's `StreamParse`)
+  init(blocks: [MDBlock], tone: ProseTone) {
+    self.blocks = blocks
+    self.tone = tone
+  }
+
   public var body: some View {
     if !blocks.isEmpty {
       ProseBlocks(blocks: blocks, style: ProseStyle(tone: tone, accent: accent))
@@ -72,15 +78,13 @@ public struct StreamProse: View {
   var images: [ImageRef]?
   @Environment(\.motionEnabled) private var motion
   @State private var pacer: StreamPacer?
+  @State private var parse = StreamParse()
 
   public init(markdown: String, tone: ProseTone = .reply, streaming: Bool) {
     self.markdown = markdown; self.streaming = streaming; self.tone = tone
-    var start: StreamPacer?
-    if streaming {
-      start = StreamPacer(streaming: true)
-      start?.receive(markdown, streaming: true, now: Date.timeIntervalSinceReferenceDate)
-    }
-    _pacer = State(initialValue: start)
+    // Empty: the text arrives on appear. A state's initial value is built on every rebuild of the parent and kept only
+    // the first time, and splitting a long text into graphemes for each throwaway copy cost every streamed chunk
+    _pacer = State(initialValue: streaming ? StreamPacer(streaming: true) : nil)
   }
 
   public init(block: TextBlock, tone: ProseTone = .reply) {
@@ -95,16 +99,19 @@ public struct StreamProse: View {
         let text = pacer.visible
         // The turn heading already indicates waiting before the first visible words
         if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-          Prose(markdown: text, tone: tone, streaming: true)
+          Prose(blocks: parse(text), tone: tone)
             .environment(\.streamFade, StreamFade(count: pacer.count, reveals: pacer.reveals))
         } else {
           // An empty Group is no view at all and would never start the task below; this holds it for the first tick
           Color.clear.frame(height: 0)
         }
+      } else if streaming {
+        Prose(blocks: parse(markdown), tone: tone)
       } else {
-        Prose(markdown: markdown, tone: tone, streaming: streaming)
+        Prose(markdown: markdown, tone: tone)
       }
     }
+    .onAppear { receive() }
     .onChange(of: markdown) { receive() }
     .onChange(of: streaming) { receive() }
     .task(id: pacer != nil && motion) { await pace() }
@@ -134,6 +141,17 @@ public struct StreamProse: View {
         pacer = next
       }
     }
+  }
+}
+
+/// A streamed text's parse, kept by its view between pacing ticks so only the unsettled tail is parsed again: parsing a
+/// long reply whole on every tick was the largest cost of the app's own code in a profile of one streaming. A reference,
+/// so the view's body advances it; it is only a cache, its result always that of a whole parse of the repaired text
+final class StreamParse {
+  private var stream = MarkdownStream()
+
+  func callAsFunction(_ text: String) -> [MDBlock] {
+    stream.parse(Remend.repair(text).trimmingCharacters(in: .newlines))
   }
 }
 

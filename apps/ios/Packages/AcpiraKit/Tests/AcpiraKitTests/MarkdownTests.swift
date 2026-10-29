@@ -56,4 +56,33 @@ struct MarkdownTests {
       [.paragraph([.text("c")])],
     ])])
   }
+
+  /// The streamed parse keeps settled blocks and parses the tail again: at every length of a growing text, and after a
+  /// rewrite, it equals a whole parse. The documents put block ends where the deciding line comes late (a paragraph a
+  /// table interrupts only once its delimiter row arrives, or no longer once that row grows into text, a list a blank
+  /// line does not end, an unclosed fence)
+  @Test func streamMatchesWholeParse() {
+    let docs = [
+      "## 标题\n\n段落一，`code` 和 **粗体**。\n第二行\n| a | b |\n|---|---|\n| 1 | 2 |\n\n结尾段落",
+      "- 一\n- 二\n\n- 三，空行后仍是同一个列表\n  续行\n\n1. 新列表\n2. 第二项\n\n---\n\n> 引用\n惰性续行\n\n收尾",
+      "前言\n\n```rust\nfn a() {}\n\nfn b() {}\n```\n\n$$\nx^2\n$$\n\n- a\n  - b\n- c\n\n| x |\n|:-:|\n| y |",
+      "开头一段，没有空行\n- 列表打断段落\n3. 有序从三开始不打断\n# 标题打断\n正文",
+      // A delimiter row that stops being one as its line grows: the table it made goes back into the paragraph
+      "段落\n| a |\n|---|之后变成文字\n\n尾",
+    ]
+    for doc in docs {
+      var stream = MarkdownStream()
+      let chars = Array(doc)
+      for end in 1...chars.count {
+        let text = Remend.repair(String(chars[..<end]))
+        let streamed = stream.parse(text)
+        let whole = Markdown.parse(text)
+        if streamed != whole { Issue.record("diverged at \(end) of \(doc.prefix(12))"); break }
+      }
+      // A rewrite, not an extension: the shared lines are reused only where equal
+      let rewritten = String(doc.reversed())
+      #expect(stream.parse(rewritten) == Markdown.parse(rewritten))
+      #expect(stream.parse(doc) == Markdown.parse(doc))
+    }
+  }
 }

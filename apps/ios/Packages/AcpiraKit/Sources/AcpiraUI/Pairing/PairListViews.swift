@@ -2,37 +2,36 @@ import AcpiraDesign
 import AcpiraSync
 import SwiftUI
 
-// The session list's side of pairing: the title row naming the followed computer (its menu switches computers or adds
-// one), the page that stands in for the list while there is nothing to list (no computer, connecting, offline, removed),
-// and the root layer that raises the add-computer sheet, also for an `acpira://pair/…` link opened from outside.
+// The session list's side of pairing: the bar title's menu of computers (it switches computers or adds one), the page
+// that stands in for the list while there is nothing to list (no computer, connecting, offline, removed), and the root
+// layer that raises the add-computer sheet, also for an `acpira://pair/…` link opened from outside.
 
-/// The list's title row with a paired computer: its name opens the computers menu, settings at the row's end
-struct PairTitleRow: View {
-  let pairing: PairingModel
-  let current: PairedComputer
-  var onSettings: () -> Void
+/// The bar's centred title: the followed computer with its menu, the plain page name without pairing, nothing while
+/// no computer is paired
+struct ListBarTitle: View {
+  @Environment(\.pairing) private var pairing
 
   var body: some View {
-    HStack(spacing: Metrics.s2) {
-      Menu {
-        PairComputerMenu(pairing: pairing)
-      } label: {
-        HStack(spacing: Metrics.s1_5) {
-          Text(web: current.name, size: TypeScale.title.size, paragraph: false).lineLimit(1).truncationMode(.tail)
-            .textStyle(TypeScale.title, weight: .bold)
-            .foregroundStyle(Palette.fgStrong)
-          Icon(.chevronDown, size: Metrics.icon, strokeWidth: 2.5).foregroundStyle(Palette.fg3)
-        }
-        .contentShape(Rectangle())
+    if let pairing {
+      if let current = pairing.selected {
+        Menu { PairComputerMenu(pairing: pairing) } label: { label(current.name, menu: true) }
+          .menuStyle(.button)
+          .buttonStyle(.plain)
       }
-      .menuStyle(.button)
-      .buttonStyle(.plain)
-      .accessibilityAddTraits(.isHeader)
-      Spacer(minLength: 0)
-      GlassIconButton(icon: .settings, label: t("session.settings"), action: onSettings)
+    } else {
+      label(t("mobile.home"), menu: false)
     }
-    .padding(.horizontal, Metrics.pad)
-    .frame(maxWidth: .infinity, minHeight: Metrics.largeTitle, alignment: .leading)
+  }
+
+  private func label(_ title: String, menu: Bool) -> some View {
+    HStack(spacing: Metrics.s1) {
+      Text(web: title, size: TypeScale.barTitle.size, paragraph: false).lineLimit(1).truncationMode(.tail)
+        .textStyle(TypeScale.barTitle, weight: .bold)
+        .foregroundStyle(Palette.fgStrong)
+      if menu { Icon(.chevronDown, size: Metrics.icon, strokeWidth: 2.5).foregroundStyle(Palette.fg3) }
+    }
+    .contentShape(Rectangle())
+    .accessibilityAddTraits(.isHeader)
   }
 }
 
@@ -81,22 +80,10 @@ struct PairHeroList: View {
       if pairing.loaded {
         PairHeroPlacement { hero }
       }
-      title
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
     .animation(motion ? Motion.ease : nil, value: pairing.link)
     .background(Palette.bg0)
-    .navigationTitle("")
-    .hiddenNavigationBar()
-  }
-
-  @ViewBuilder
-  private var title: some View {
-    if let current = pairing.selected {
-      PairTitleRow(pairing: pairing, current: current) { model.settingsOpen = true }
-    } else {
-      // Nothing paired: no title to give the page, settings alone at the row's end
-      LargeTitle(title: "") { model.settingsOpen = true }
-    }
   }
 
   /// One frame for every case, so only its contents change between them

@@ -111,6 +111,19 @@ extension AppModel {
     for block in Markdown.parse(reply ?? "").prefix(2) { quote(id, QuoteText.of(block)) }
   }
 
+  /// `-popup staged`: the chat's prompt images and two files staged in its composer (screenshots)
+  func seedStaged(_ id: String) {
+    guard draft(for: id).staged.isEmpty, let view = views[id] else { return }
+    let images = view.turns.flatMap { turn -> [Attachment] in
+      guard case .user(let user) = turn else { return [] }
+      return (user.attachments ?? []).filter { if case .image = $0 { true } else { false } }
+    }
+    draft(for: id).staged = Array(images.prefix(2)) + [
+      .file(uri: "file:///repo/src/Composer.swift", name: "Composer.swift"),
+      .file(uri: "file:///repo/docs/dev/ios.md", name: "ios.md"),
+    ]
+  }
+
 
   /// The personas the composer offers for `@` summons (settings → Subagents)
   var personas: [MentionPersona] { MentionPersona.from(settings, agents: agents) }

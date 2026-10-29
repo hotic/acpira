@@ -99,6 +99,7 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case loaderCircle
   case lockKeyhole
   case mailCheck
+  case maximize2
   case menu
   case merge
   case messageCircleQuestion
@@ -108,6 +109,7 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case messageSquareText
   case messagesSquare
   case mic
+  case minimize2
   case minus
   case moveRight
   case network
@@ -267,6 +269,7 @@ extension LucideIcon {
     case .loaderCircle: [.path("M21 12a9 9 0 1 1-6.219-8.56")]
     case .lockKeyhole: [.circle(cx: 12, cy: 16, r: 1), .rect(x: 3, y: 10, width: 18, height: 12, rx: 2), .path("M7 10V7a5 5 0 0 1 10 0v3")]
     case .mailCheck: [.path("M22 13V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v12c0 1.1.9 2 2 2h8"), .path("m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"), .path("m16 19 2 2 4-4")]
+    case .maximize2: [.path("M15 3h6v6"), .path("m21 3-7 7"), .path("m3 21 7-7"), .path("M9 21H3v-6")]
     case .menu: [.path("M4 5h16"), .path("M4 12h16"), .path("M4 19h16")]
     case .merge: [.path("m8 6 4-4 4 4"), .path("M12 2v10.3a4 4 0 0 1-1.172 2.872L4 22"), .path("m20 22-5-5")]
     case .messageCircleQuestion: [.path("M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"), .path("M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"), .path("M12 17h.01")]
@@ -276,6 +279,7 @@ extension LucideIcon {
     case .messageSquareText: [.path("M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"), .path("M7 11h10"), .path("M7 15h6"), .path("M7 7h8")]
     case .messagesSquare: [.path("M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"), .path("M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1")]
     case .mic: [.path("M12 19v3"), .path("M19 10v2a7 7 0 0 1-14 0v-2"), .rect(x: 9, y: 2, width: 6, height: 13, rx: 3)]
+    case .minimize2: [.path("m14 10 7-7"), .path("M20 10h-6V4"), .path("m3 21 7-7"), .path("M4 14h6v6")]
     case .minus: [.path("M5 12h14")]
     case .moveRight: [.path("M18 8L22 12L18 16"), .path("M2 12H22")]
     case .network: [.rect(x: 16, y: 16, width: 6, height: 6, rx: 1), .rect(x: 2, y: 16, width: 6, height: 6, rx: 1), .rect(x: 9, y: 2, width: 6, height: 6, rx: 1), .path("M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"), .path("M12 12V8")]
