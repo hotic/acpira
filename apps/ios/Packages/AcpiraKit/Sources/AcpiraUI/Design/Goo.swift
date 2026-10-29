@@ -394,6 +394,10 @@ struct GooChip<Glyph: View>: View {
     // A glass circle of its own, so a press lights this chip alone. Inset so that at rest it lies wholly inside the
     // bar and the container merges it away: at full size its outline ran along the bar's round end and swelled it
     .glassEffect(GlassStyle.control.interactive(), in: Circle().inset(by: Metrics.gooChipInset))
+    // The glass's shape is also the button's hit shape, so only the inset circle (half the slot) took taps: a touch a
+    // little below the glyph fell through to the bar or card under it and only focused the field. The whole slot takes
+    // them again
+    .contentShape(Circle())
     .anchorPreference(key: GooKey.self, value: .bounds) { anchor in
       [GooItem(id: id, anchor: anchor, progress: progress, pieces: pieces, close: { set(nil) }, back: back)]
     }
@@ -421,19 +425,24 @@ struct GooChip<Glyph: View>: View {
 
 /// A column of beans rising from a chip, each as tall as the chip
 enum GooColumn {
+  /// A bean's panel: its rows up to `gooPanelRows`, and no taller than `room`, the space above the chip, where it
+  /// rests on the column's bottom corner, its list scrolling inside. With the keyboard up that room is short, and a
+  /// panel of full height climbed under the navigation bar
+  static func panelHeight(rows: Int, room: CGFloat) -> CGFloat {
+    let pad = Metrics.s1_5 * 2
+    let natural = min(CGFloat(rows), Metrics.gooPanelRows) * Metrics.gooRow + pad
+    return max(Metrics.gooRow + pad, min(natural, room - Metrics.gooGap))
+  }
+
   /// The coordinate space `gooLayer()` names: the screen below its bar
   nonisolated static let space = "goo.screen"
 
-  /// The first rests a gap (and `lift`) above the chip's top, the rest above it. Wider pieces line up on the chip's
-  /// leading edge, or its trailing edge for a chip near the screen's end, so the column never leaves the screen.
-  /// `room` is how far the column may rise above the chip's top: a column that would climb under the bar gives up
-  /// its lift first (a tall card), as far as it has any
-  static func offsets(chip: CGSize, widths: [CGFloat], edge: HorizontalEdge = .leading, lift: CGFloat = 0,
-                      room: CGFloat = .infinity) -> [CGSize] {
-    let lift = max(0, min(lift, room - CGFloat(widths.count) * (chip.height + Metrics.gooGap)))
-    return widths.enumerated().map { i, w in
+  /// The first rests a gap above the chip's top, the rest above it. Wider pieces line up on the chip's leading edge,
+  /// or its trailing edge for a chip near the screen's end, so the column never leaves the screen
+  static func offsets(chip: CGSize, widths: [CGFloat], edge: HorizontalEdge = .leading) -> [CGSize] {
+    widths.enumerated().map { i, w in
       let dx = edge == .leading ? (w - chip.width) / 2 : (chip.width - w) / 2
-      return CGSize(width: dx, height: -(chip.height + Metrics.gooGap + lift + CGFloat(i) * (chip.height + Metrics.gooGap)))
+      return CGSize(width: dx, height: -(chip.height + Metrics.gooGap + CGFloat(i) * (chip.height + Metrics.gooGap)))
     }
   }
 }
@@ -441,14 +450,13 @@ enum GooColumn {
 // MARK: - The composer's liquid controls
 
 /// Attach as a liquid chip: the photo, camera and file sources squeeze out of `+` in a short column, each named beside
-/// it; the `+` turns ×. `lift` raises the column over the card the chip sits in while typing. The pasteboard's image
-/// joins them while there is one, and the summonable personas (SummonMenu) last, as a bean whose panel lists them
+/// it; the `+` turns ×. The pasteboard's image joins them while there is one, and the summonable personas
+/// (SummonMenu) last, as a bean whose panel lists them
 struct LiquidAttach: View {
   @Binding var open: String?
   /// The bean whose panel is open (the summon list), 0 for none
   @Binding var stage: Int
-  var lift: CGFloat = 0
-  /// How far the column may rise above the chip (`GooColumn.offsets`)
+  /// How far a panel may rise above the chip (`GooColumn.panelHeight`)
   var room: CGFloat = .infinity
   /// Stages the pasteboard's image; nil while it holds none
   var paste: (() -> Void)? = nil
@@ -470,10 +478,10 @@ struct LiquidAttach: View {
   var body: some View {
     let sources = sources()
     let chip = CGSize(width: Metrics.barCtl, height: Metrics.barCtl)
-    let offsets = GooColumn.offsets(chip: chip, widths: sources.map { _ in chip.width }, lift: lift, room: room)
+    let offsets = GooColumn.offsets(chip: chip, widths: sources.map { _ in chip.width })
     GooChip(id: "attach", open: $open, stage: $stage, pieces: zip(sources, offsets).enumerated().map { k, item in
       let (source, offset) = item
-      let h = min(CGFloat(source.rows), Metrics.gooPanelRows) * Metrics.gooRow + Metrics.s1_5 * 2
+      let h = GooColumn.panelHeight(rows: source.rows, room: room)
       return GooPiece(id: "attach.\(source.key)", name: source.label, offset: offset,
                       glyph: AnyView(Icon(source.icon, size: Metrics.barIcon, strokeWidth: 1.75).foregroundStyle(Palette.fg1)),
                       caption: AnyView(GooCaption(text: source.label)),
@@ -571,13 +579,13 @@ extension GooColumn {
   /// A setting chip's beans in a column above it, their values on their right; each turns into its panel, which
   /// rests on the column's bottom-left corner so a long list grows up the screen. A tap on a bean opens its panel on
   /// its rows (never on a list `deeper` left open), or folds it back
-  static func pieces(_ beans: [GooBean], lift: CGFloat, room: CGFloat = .infinity, motion: Bool, stage: Binding<Int>,
+  static func pieces(_ beans: [GooBean], room: CGFloat = .infinity, motion: Bool, stage: Binding<Int>,
                      deeper: Binding<String?>? = nil) -> [GooPiece] {
     let chip = CGSize(width: Metrics.barCtl, height: Metrics.barCtl)
-    let offsets = offsets(chip: chip, widths: beans.map { _ in chip.width }, lift: lift, room: room)
+    let offsets = offsets(chip: chip, widths: beans.map { _ in chip.width })
     return zip(beans, offsets).enumerated().map { k, item in
       let (b, at) = item
-      let h = min(CGFloat(b.rows), Metrics.gooPanelRows) * Metrics.gooRow + Metrics.s1_5 * 2
+      let h = panelHeight(rows: b.rows, room: room)
       return GooPiece(id: "bean.\(b.key)", name: b.title, offset: at, glyph: b.glyph, caption: b.caption,
                       panel: GooPanel(size: CGSize(width: Metrics.gooPanelW, height: h), content: b.panel)) {
         withAnimation(motion ? Motion.gooSpring : nil) {
@@ -602,8 +610,7 @@ struct LiquidControls: View {
   @Binding var stage: Int
   /// The list the sidekick's panel opened in place of its rows, nil on the rows
   @Binding var deeper: String?
-  var lift: CGFloat = 0
-  /// How far the column may rise above the chip (`GooColumn.offsets`)
+  /// How far a panel may rise above the chip (`GooColumn.panelHeight`)
   var room: CGFloat = .infinity
   var onSetMode: (String) -> Void
   var onSetConfig: (String, String) -> Void
@@ -615,7 +622,7 @@ struct LiquidControls: View {
     let beans = beans(c)
     if !beans.isEmpty {
       GooChip(id: "model", open: $open, stage: $stage, deeper: $deeper,
-              pieces: GooColumn.pieces(beans, lift: lift, room: room, motion: motion, stage: $stage, deeper: $deeper)) {
+              pieces: GooColumn.pieces(beans, room: room, motion: motion, stage: $stage, deeper: $deeper)) {
         // The model's mark alone, large; Fast shows as a bolt on its shoulder. Open, it is the way back: × over the
         // beans, ‹ over a panel
         ZStack {

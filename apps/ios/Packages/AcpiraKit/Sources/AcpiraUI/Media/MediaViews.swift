@@ -397,3 +397,20 @@ struct MediaLayer: ViewModifier {
 enum LightboxProbe {
   static var claimed = false
 }
+
+/// A Lightbox of its own for a screen that covers the chat (the whole-screen editor): a cover only rises from the
+/// screen on top, so the chat's own Lightbox cannot open over it. The session and loader stay the chat's
+struct LightboxHost: ViewModifier {
+  @State private var lightbox = LightboxPresenter()
+  @Environment(\.media) private var media
+
+  func body(content: Content) -> some View {
+    content
+      .environment(\.media, MediaScope(session: media.session, loader: media.loader, lightbox: lightbox))
+      #if os(iOS)
+      .fullScreenCover(item: Bindable(lightbox).item) { item in Lightbox(item: item) { lightbox.close() } }
+      #else
+      .sheet(item: Bindable(lightbox).item) { item in Lightbox(item: item) { lightbox.close() } }
+      #endif
+  }
+}

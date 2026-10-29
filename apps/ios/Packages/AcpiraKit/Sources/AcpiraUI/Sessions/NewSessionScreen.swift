@@ -20,6 +20,8 @@ struct NewSessionScreen: View {
   /// The hero's bottom and the composer's top on the page, so a composer grown into the hero hides it
   @State private var heroBottom: CGFloat = 0
   @State private var composerTop = CGFloat.infinity
+  /// A composer picker is out: its beans and panels rise into the hero's place, so the hero steps aside meanwhile
+  @State private var picking = false
   @Environment(\.motionEnabled) private var motion
   /// `-draft TEXT`: the composer pre-filled, as in a chat
   @Environment(\.initialDraft) private var initialDraft
@@ -48,9 +50,11 @@ struct NewSessionScreen: View {
                          recent: model.projects, onAgent: pickAgent, onProject: { draft.cwd = $0 },
                          onAdd: { model.addProject($0); draft.cwd = $0 }, ring: $ring)
             .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(Self.page)).maxY } action: { heroBottom = $0 }
-            .opacity(covered ? 0 : 1)
+            .opacity(covered || picking ? 0 : 1)
             .allowsHitTesting(!covered)
             .animation(motion ? .easeOut(duration: Motion.durOpen) : nil, value: covered)
+            // Gone as the beans leave the chip, back only as they get home (the dim's own timing)
+            .animation(motion ? picking ? .easeOut(duration: Motion.durOpen) : Motion.gooDimOut : nil, value: picking)
             .position(x: page.size.width / 2, y: page.size.height * Metrics.heroRise)
         }
         // The dim lifts with an ease-in, held while the bubbles go home (the composer pickers' dim)
@@ -68,6 +72,7 @@ struct NewSessionScreen: View {
       }
     }
     .coordinateSpace(.named(Self.page))
+    .onPreferenceChange(ComposerPickerKey.self) { picking = $0 }
     .onAppear { if let initialDraft, text.isEmpty { text = initialDraft } }
     .ignoresSafeArea(.container, edges: .bottom)
     .modifier(HomeInset(inset: $homeInset))
@@ -87,6 +92,8 @@ struct NewSessionScreen: View {
     .environment(\.agentAccent, Palette.accent(for: draft.agent))
     .environment(\.hiddenModels, model.settings?.hiddenOptions[draft.agent] ?? [:])
     .environment(\.sessionActions, SessionActions(toast: { model.show($0, icon: $1) }))
+    // Staged photos open in a Lightbox, as in a chat (the draft has no blobs of its own: they are inline pixels)
+    .modifier(MediaLayer(session: draft, loader: model.media))
   }
 
   /// The page's coordinate space, for the hero and the composer to meet in
