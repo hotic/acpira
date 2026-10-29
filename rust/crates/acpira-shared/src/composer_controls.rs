@@ -19,7 +19,13 @@ pub(crate) fn compact(value: &str) -> String {
 }
 
 pub fn is_reasoning_control(control: &ConfigControl) -> bool {
-  control.category.as_deref() == Some("thought_level") || (control.category.is_none() && REASONING_IDS.is_match(&control.id))
+  is_reasoning_select(&control.id, control.category.as_deref())
+}
+
+/// `is_reasoning_control` on a select's raw id and category, for code reading an agent's answer as JSON (the summon
+/// relay), so the effort a persona sets is the select the composer shows as effort
+pub fn is_reasoning_select(id: &str, category: Option<&str>) -> bool {
+  category == Some("thought_level") || (category.is_none() && REASONING_IDS.is_match(id))
 }
 
 #[derive(PartialEq)]

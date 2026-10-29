@@ -3,9 +3,11 @@
 
 use serde_json::{Value, json};
 
+use acpira_shared::composer_controls::is_reasoning_select;
+use acpira_shared::model_catalog::parse_level;
 use acpira_shared::subagents::{RelayMode, SubagentPersona};
 
-use super::{BYPASS_MODES, EFFORT_KEYS, MODE_KEYS, MODEL_KEYS, READ_ONLY_MODES};
+use super::{BYPASS_MODES, MODE_KEYS, MODEL_KEYS, READ_ONLY_MODES};
 use crate::acp::session::Core;
 use crate::acp::transport::process::AgentProcess;
 
@@ -43,9 +45,35 @@ pub(super) fn pick_option(options: Option<&Value>, keys: &[&str], want: &str) ->
   exact.or_else(loose).map(|(v, _)| (id.to_owned(), v.clone()))
 }
 
+/// The CLI's reasoning-effort select, recognised the way the composer recognises it (`is_reasoning_select`)
+fn find_effort(options: Option<&Value>) -> Option<&Value> {
+  options?.as_array()?.iter().find(|o| {
+    is_reasoning_select(o.get("id").and_then(Value::as_str).unwrap_or(""), o.get("category").and_then(Value::as_str))
+  })
+}
+
+/// `(config id, chosen value)` for the persona's effort: its value or name as stored, else the option on the same level
+/// (`Thinking: high` for `high`). Never one whose name merely contains it: a stored `high` on a model offering low /
+/// medium / xhigh is not offered, so the CLI's default applies and the round says so, rather than running at xhigh
+pub(super) fn pick_effort(options: Option<&Value>, want: &str) -> Option<(String, String)> {
+  let o = find_effort(options)?;
+  let id = o.get("id").and_then(Value::as_str).unwrap_or("");
+  let values = option_values(o);
+  let lower = want.trim().to_lowercase();
+  let exact = values.iter().find(|(v, n)| v.to_lowercase() == lower || n.to_lowercase() == lower);
+  let same_level = || {
+    let level = parse_level(want)?;
+    values.iter().find(|(v, n)| parse_level(v).or_else(|| parse_level(n)) == Some(level))
+  };
+  exact.or_else(same_level).map(|(v, _)| (id.to_owned(), v.clone()))
+}
+
 /// The display name of a select's current value
 pub(super) fn current_name(options: Option<&Value>, keys: &[&str]) -> Option<String> {
-  let o = find_option(options, keys)?;
+  value_name(find_option(options, keys)?)
+}
+
+fn value_name(o: &Value) -> Option<String> {
   let cur = o.get("currentValue").and_then(Value::as_str)?;
   Some(option_values(o).into_iter().find(|(v, _)| v == cur).map(|(_, n)| n).unwrap_or_else(|| cur.to_owned()))
 }
@@ -164,7 +192,7 @@ pub(super) fn caller_access(c: &Core, caller: Option<&str>) -> RelayMode {
 
 /// The model and reasoning effort the session runs, by their option names
 pub(super) fn running_controls(opened: &Value) -> (Option<String>, Option<String>) {
-  (current_name(opened.get("configOptions"), &MODEL_KEYS), current_name(opened.get("configOptions"), &EFFORT_KEYS))
+  (current_name(opened.get("configOptions"), &MODEL_KEYS), find_effort(opened.get("configOptions")).and_then(value_name))
 }
 
 /// The persona's model, then its effort, picked from the options the model switch answered (effort values depend on
@@ -181,7 +209,7 @@ pub(super) async fn relay_controls(proc: &AgentProcess, sid: &str, opened: &mut 
     }
   }
   if let Some(e) = &persona.effort {
-    match pick_option(opened.get("configOptions"), &EFFORT_KEYS, e) {
+    match pick_effort(opened.get("configOptions"), e) {
       Some((id, value)) => {
         if let Err(err) = set_config(proc, sid, opened, &id, &value).await {
           notes.push(format!("reasoning effort {e:?} was refused ({err})"));

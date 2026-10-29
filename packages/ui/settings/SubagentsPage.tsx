@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Plus, Users } from 'lucide-react';
 import type { AgentId, AgentInfo, ConfigControl } from '@acpira/shared/transcript';
 import type { SettingsView } from '@acpira/shared/settings';
-import { effortLabel, SIDEKICK_EFFORT_CATEGORY } from '@acpira/shared/composerControls';
+import { effortLabel, isReasoningControl } from '@acpira/shared/composerControls';
 import { shapeFor, type ModelShapes } from '@acpira/shared/modelShapes';
 import {
   DUTIES, DUTY_BRIEFS, dutyDefaults, GROUP_MAX, GROUP_MEMBERS_MAX, PERSONA_MAX, sanitizeGroups, sanitizePersonas,
@@ -303,7 +303,8 @@ function modelControlOf(controls: ConfigControl[] | undefined): ConfigControl | 
   return controls?.find(c => c.category === 'model' || c.id === 'model');
 }
 
-const isEffort = (c: ConfigControl) => c.category !== SIDEKICK_EFFORT_CATEGORY && (c.category === 'thought_level' || /effort|reasoning/.test(c.id));
+// The effort select as the composer and the engine's relay recognise it, so the level picked here is the one applied
+const isEffort = isReasoningControl;
 
 // The effort select a persona's model comes with: the shape remembered from a session on it (an unseen id borrows a
 // family sibling's, as Devin's variants share parameters), else the latest controls when they are that model's own.
