@@ -193,8 +193,66 @@ async function main() {
     if (firstRun !== JSON.stringify({ home: data, locale: 'en' })) fail(`the first-run page says ${firstRun}`);
     await page.waitFor('the intro\'s agent row', `!!document.querySelector('.wl-agent, .wl-none')`);
     if (existsSync(data)) fail('the data folder exists before the consent card');
+    if (shotDir) { await sleep(1600); await page.shot(join(shotDir, 'welcome-intro.png')); }
     await page.click('the intro\'s skip', `document.querySelector('.wl-intro .wl-quiet')`);
+    await page.waitFor('consent after skipping', `!!document.querySelector('.wl-center[data-open]')`);
+    if (existsSync(data)) fail('skipping the intro created the data folder before consent');
+    await page.click('see the tour after skipping', `document.querySelector('.wl-center[data-open] button')`);
+    await page.waitFor('the intro again', `!!document.querySelector('.wl-intro[data-open]')`);
+    await page.click('the intro\'s start', `document.querySelector('.wl-intro[data-open] .wl-cta')`);
+    const checkTour = async (step, name, target) => {
+      await page.waitFor(`tour step ${step + 1}: ${name}`, `document.querySelectorAll('.wl-step')[${step}]?.classList.contains('is-now')`);
+      // Wait for the hole's glide and the caption's entrance before measuring their real painted boxes.
+      await sleep(1800);
+      const error = await page.eval(`(() => {
+        const hole = document.querySelector('.wl-hole-edge')?.getBoundingClientRect();
+        const note = document.querySelector('.wl-note:not(.is-out)')?.getBoundingClientRect();
+        const dock = document.querySelector('.wl-dock')?.getBoundingClientRect();
+        const inside = r => r && r.width > 0 && r.height > 0 && r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight;
+        if (!inside(hole) || !inside(note) || !inside(dock)) return 'hole, caption or controls outside the window: ' + JSON.stringify({ hole, note, dock });
+        const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+        if (overlaps(dock, note) || overlaps(dock, hole)) return 'controls cover the caption or spotlight: ' + JSON.stringify({ hole, note, dock });
+        const lead = document.querySelector('.wl-leader:not(.is-out) .wl-lead');
+        if (!lead) return 'the active step has no leader';
+        // Sample the painted path, not its bounding box: an elbow can safely go around the capsule.
+        const length = lead.getTotalLength(), matrix = lead.getScreenCTM();
+        for (let i = 0; i <= 100; i++) {
+          const p = lead.getPointAtLength(length * i / 100).matrixTransform(matrix);
+          if (p.x >= dock.left && p.x <= dock.right && p.y >= dock.top && p.y <= dock.bottom) return 'controls cover the leader';
+        }
+        ${target ? `const r = (${target})?.getBoundingClientRect();
+        if (!r || r.x + r.width / 2 < hole.left || r.x + r.width / 2 > hole.right || r.y + r.height / 2 < hole.top || r.y + r.height / 2 > hole.bottom) return 'spotlight missed its visible control';
+        ${step === 2 ? `if (Math.abs(hole.left - r.left) > 3 || Math.abs(hole.right - r.right) > 3 || Math.abs(hole.bottom - r.bottom) > 3) return 'composer spotlight includes the dock padding';` : ''}` : ''}
+        return '';
+      })()`);
+      if (error) fail(`tour ${name}: ${error}`);
+      if (existsSync(data)) fail('the tour created the data folder before consent');
+      if (shotDir) await page.shot(join(shotDir, `welcome-${name}.png`));
+    };
+    await checkTour(0, 'sessions', `document.querySelector('[data-sample-shell] [data-session]')`);
+    for (const [i, name] of ['approvals', 'composer', 'settings'].entries()) {
+      await page.click('the tour\'s next', `document.querySelector('.wl-next')`);
+      await checkTour(i + 1, name, i === 2 ? `document.querySelector('[data-sample-shell] [data-session-panel] svg.lucide-settings')` : i === 1 ? `document.querySelector('[data-sample-shell] .composer-field')` : undefined);
+    }
+    for (const width of [680, 480]) {
+      await page.call({ op: 'resize', width, height: 760 });
+      await checkTour(3, `narrow-settings-${width}`, `document.querySelector('[data-sample-shell] [data-sheet-header] svg.lucide-ellipsis')`);
+      for (let i = 0; i < 3; i++) await page.eval(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }))`);
+      await checkTour(0, `narrow-sessions-${width}`, `document.querySelector('[data-sample-shell] [data-title-row] [data-session-toggle]')`);
+      if (width === 680) for (let i = 0; i < 3; i++) await page.click('the tour\'s next', `document.querySelector('.wl-next')`);
+    }
+    await page.call({ op: 'resize', width: 760, height: 760 });
+    await checkTour(0, 'sessions-at-breakpoint', `document.querySelector('[data-sample-shell] [data-session]')`);
+    await page.call({ op: 'resize', width: 1180, height: 820 });
+    await checkTour(0, 'sessions-widened', `document.querySelector('[data-sample-shell] [data-session]')`);
+    for (let i = 0; i < 4; i++) await page.click('the tour\'s next', `document.querySelector('.wl-next')`);
     await page.waitFor('the consent card', `!!document.querySelector('.wl-center[data-open]')`);
+    if (!(await page.eval(`document.querySelector('.wl-center[data-open] button')?.textContent.includes('Back')`))) fail('finishing the tour after skipping kept the see-tour action');
+    await page.click('back to the last tour step', `document.querySelector('.wl-center[data-open] button')`);
+    await checkTour(3, 'settings-after-consent-back', `document.querySelector('[data-sample-shell] [data-session-panel] svg.lucide-settings')`);
+    await page.click('finish the tour again', `document.querySelector('.wl-next')`);
+    await page.waitFor('consent after returning', `!!document.querySelector('.wl-center[data-open]')`);
+    if (shotDir) { await sleep(800); await page.shot(join(shotDir, 'welcome-consent.png')); }
     await page.press('the create button', `[...document.querySelectorAll('.wl-center button')].find(b => b.innerText.includes('Create and start'))`);
     await waitUntil('the data folder', () => existsSync(data), 10_000);
     if (!WIN && (statSync(data).mode & 0o777) !== 0o700) fail(`the data folder has mode ${(statSync(data).mode & 0o777).toString(8)}`);
