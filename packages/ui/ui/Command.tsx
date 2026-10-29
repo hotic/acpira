@@ -6,6 +6,9 @@ import { useMergedRefs } from './mergeRefs';
 import { optionClass } from './DropdownMenu';
 import { t } from '../i18n';
 
+// Menus offer search once their option count passes this threshold; short lists are scannable at a glance
+export const SEARCH_FROM = 12;
+
 // An inline combobox inside an existing popup, never a second portal or dialog.
 function Root<Value>({ inputValue: controlled, onInputValueChange, ...props }: Base.Root.Props<Value>) {
   const [query, setQuery] = useState('');

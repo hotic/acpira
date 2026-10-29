@@ -58,7 +58,7 @@ export function RemoteAccessSection({ view }: { view: RemoteAccessView }) {
             { value: 'off', label: t('devices.relays.off') },
           ]} />
       </Field>}
-      {view.enabled && <Field label={t('devices.keepAwake')} desc={t('devices.keepAwakeDesc')}>
+      {view.enabled && <Field label={t('devices.keepAwake')}>
         <Switch checked={view.keepAwake ?? true} label={t('devices.keepAwake')} onChange={v => remoteAccessOp({ op: 'setKeepAwake', on: v })} />
       </Field>}
     </Section>

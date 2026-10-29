@@ -23,7 +23,7 @@ export interface PageRailProps {
   page: SettingsPage;
   onPage: (p: SettingsPage) => void;
   onBack: () => void;
-  // Desktop: the rail lies on the window canvas under the window's pinned title row, whose back button returns to the chat
+  // Desktop: the rail lies on the window canvas under the window's pinned title row (back / forward through the pages)
   desktop?: boolean;
   // Desktop: the rail's width as a CSS length (desktop.css reads it as --rail-w)
   width?: string;
@@ -77,9 +77,16 @@ export function PageRail({ page, onPage, onBack, desktop, width, opening, connec
   const inset = desktop ? 'px-gap-half' : 'px-pad @max-[600px]/settings-shell:px-2';
   return (
     <aside data-settings-rail data-opening={opening || undefined} style={width ? { '--rail-w': width } as CSSProperties : undefined} className={cn('flex shrink-0 flex-col', desktop ? 'gap-gap-half pb-gap-half' : cn('gap-(--section-gap)', inset, 'w-(--settings-nav-w) py-pad-y @max-[600px]/settings-shell:w-(--settings-rail-w)'))}>
-      {/* Desktop: the window's pinned title row is the way back (its back button, SettingsShell) */}
+      {/* Desktop: the window's pinned title row sits here; Back to chat leads the list below */}
       {desktop ? <TitleSpace /> : back}
       <nav aria-label={t('settings.title')} className={cn('flex min-h-0 flex-col gap-1 overflow-y-auto', desktop && inset)}>
+        {/* Desktop: Back to chat heads the list as the chat column's first row heads it, Codex-style; the title row's back
+            walks the pages visited, this one leaves at once */}
+        {desktop && <button type="button" onClick={onBack} title={t('settings.back')} aria-label={t('settings.back')}
+          className={cn(deskItem, 'mb-gap-half', tone(false), 'hover:bg-hover focus-visible:bg-hover')}>
+          <RailIcon desktop><ArrowLeft /></RailIcon>
+          <span className="min-w-0 truncate @max-[600px]/settings-shell:hidden">{t('settings.back')}</span>
+        </button>}
         {item('general', t('settings.nav.general'), <SlidersHorizontal />)}
         {item('appearance', t('settings.nav.appearance'), <Palette />)}
         {item('plugins', t('settings.nav.plugins'), <Blocks />)}
