@@ -55,7 +55,7 @@ struct ToolCallView: View {
 
     let label = ToolLabel(verb: toolVerb(block), shimmer: running, command: command,
                           target: block.kind == .read && !files.isEmpty ? nil : block.target,
-                          mono: block.targetMono == true, span: span)
+                          mono: block.targetMono == true, span: span, sessionTool: SessionLinks.isTool(block) ? block : nil)
     let trailing = ToolTrailing(block: block, execute: execute)
     let icon = toolIcon(block)
 
@@ -120,11 +120,14 @@ struct ToolLabel: View {
   var target: String?
   var mono: Bool
   var span: String?
+  var sessionTool: ToolCallBlock? = nil
 
   var body: some View {
     RowLabel(verb, shimmer: shimmer)
     if let command {
       RowTarget(command, mono: true)
+    } else if let sessionTool {
+      SessionToolTarget(block: sessionTool)
     } else if let target, !target.isEmpty {
       if let span {
         HStack(alignment: .firstTextBaseline, spacing: Metrics.s1) {
@@ -134,6 +137,25 @@ struct ToolLabel: View {
       } else {
         RowTarget(target, mono: mono)
       }
+    }
+  }
+}
+
+/// Only session target rows observe the list, in both the chat and the child inspector.
+struct SessionToolTarget: View {
+  let block: ToolCallBlock
+  @Environment(AppModel.self) private var model: AppModel?
+
+  var body: some View {
+    let target = SessionLinks.splitTarget(block.target)
+    let rest = block.verbKey == "verb.readSession" ? SessionLinks.readLabel(target.rest) : target.rest
+    if let id = target.id {
+      HStack(alignment: .firstTextBaseline, spacing: Metrics.s1) {
+        RowTarget(SessionLinks.title(id, in: model?.summaries ?? []))
+        if let rest { Aside(rest) }
+      }
+    } else if let rest {
+      RowTarget(rest)
     }
   }
 }

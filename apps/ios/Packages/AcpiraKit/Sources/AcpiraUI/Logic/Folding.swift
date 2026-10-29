@@ -88,6 +88,8 @@ public enum ProcessItem: Identifiable, Hashable {
 func groupKind(_ block: AgentBlock) -> GroupKind? {
   guard case .toolCall(let b) = block, b.status != .failed, b.status != .cancelled, b.asyncTask == nil,
         b.subagentId == nil else { return nil }
+  // Session reads are not file groups: their rows resolve titles and turn ranges separately.
+  if SessionLinks.isTool(b) { return nil }
   // A read with locations always names files; only one without them needs `toolFiles`, which runs on every patch
   if b.kind == .read { return b.status != .completed || !(b.locations ?? []).isEmpty || !toolFiles(b).isEmpty ? .read : nil }
   if b.kind == .edit { return .edit }
