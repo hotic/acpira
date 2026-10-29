@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The app's entitlements, beside Acpira-Info.plist and outside the synchronized Acpira/ folder for the same reason.
+     Notifications from paired computers (AcpiraUI Pairing/PushCenter.swift): APNs, development here; an App Store or
+     TestFlight export switches it to production. A permission card may break through a Focus (time-sensitive). -->
+<plist version="1.0">
+<dict>
+	<key>aps-environment</key>
+	<string>development</string>
+	<key>com.apple.developer.usernotifications.time-sensitive</key>
+	<true/>
+</dict>
+</plist>

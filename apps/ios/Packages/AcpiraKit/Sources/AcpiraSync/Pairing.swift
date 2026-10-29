@@ -82,10 +82,33 @@ public protocol PairedConnection: EngineTransport {
   /// Why the connection ended, once it has (the envelope client only keeps a message); nil while open or when closed
   /// from this side
   func endReason() -> ConnectionError?
+  /// Where this phone's notifications go, or nil to stop them; the computer keeps it until it changes or the phone is
+  /// removed (acpira-net `Control::Push`)
+  func registerPush(_ target: PushTarget?) async
 }
 
 public extension PairedConnection {
   func endReason() -> ConnectionError? { nil }
+  func registerPush(_ target: PushTarget?) async {}
+}
+
+/// An APNs registration as the computer's gateway needs it (acpira-shared `devices::PushTarget`)
+public struct PushTarget: Equatable, Sendable {
+  /// The device token, hex
+  public var token: String
+  /// The app's bundle id
+  public var topic: String
+  /// The team the app is signed by
+  public var team: String
+  /// A development-signed build: APNs' sandbox
+  public var sandbox: Bool
+
+  public init(token: String, topic: String, team: String, sandbox: Bool) {
+    self.token = token
+    self.topic = topic
+    self.team = team
+    self.sandbox = sandbox
+  }
 }
 
 public protocol PairingService: AnyObject, Sendable {

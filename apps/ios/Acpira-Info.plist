@@ -21,6 +21,10 @@
 	<array>
 		<string>_acpira-pair._udp</string>
 	</array>
+	<!-- The team the app is signed by: a paired computer signs its notifications with that team's APNs key
+	     (Pairing/PushCenter.swift) -->
+	<key>AcpiraTeamID</key>
+	<string>$(DEVELOPMENT_TEAM)</string>
 	<!-- The app's own languages (packages/shared/i18n), so system controls such as PasteButton read in the same ones -->
 	<key>CFBundleLocalizations</key>
 	<array>
