@@ -62,7 +62,6 @@ const READ_ONLY_MODES: [&str; 3] = ["read-only", "plan", "ask"];
 /// Antigravity / Kimi `yolo`; a mode the agent marks `_meta.kind` `full_access` counts too
 pub(crate) const BYPASS_MODES: [&str; 4] = ["bypassPermissions", "agent-full-access", "bypass", "yolo"];
 const MODEL_KEYS: [&str; 1] = ["model"];
-const EFFORT_KEYS: [&str; 3] = ["thought_level", "reasoning_effort", "effort"];
 const MODE_KEYS: [&str; 1] = ["mode"];
 
 /// The final word of a round: the reply text for the caller, or why there is none
@@ -442,7 +441,7 @@ enum Start {
 
 #[cfg(test)]
 mod tests {
-  use super::controls::{bypass_modes, current_name, mode_ids, pick_option, round_mode};
+  use super::controls::{bypass_modes, current_name, mode_ids, pick_effort, pick_option, round_mode};
   use super::personas::call_fits;
   use super::texts::{caller_answers, change_note, compose_brief, round_edits};
   use super::tracking::{ask_agent_args, names_ask_agent};
@@ -494,11 +493,33 @@ mod tests {
     ]);
     assert_eq!(pick_option(Some(&options), &["model"], "GPT-6 Astra"), Some(("model".into(), "gpt-6-astra".into())));
     assert_eq!(pick_option(Some(&options), &["model"], "terra"), Some(("model".into(), "gpt-5.6".into())));
-    assert_eq!(pick_option(Some(&options), &["thought_level"], "max"), Some(("x".into(), "max".into())));
+    assert_eq!(pick_effort(Some(&options), "max"), Some(("x".into(), "max".into())));
     assert_eq!(pick_option(Some(&options), &["mode"], "plan"), Some(("mode".into(), "plan".into())));
     assert_eq!(pick_option(Some(&options), &["model"], "claude"), None);
     assert_eq!(current_name(Some(&options), &["model"]).as_deref(), Some("GPT-5.6 Terra"));
     assert_eq!(mode_ids(&json!({ "configOptions": options })), ["build", "plan"]);
+  }
+
+  #[test]
+  fn a_persona_effort_picks_the_same_level_never_a_longer_one() {
+    let select = |values: &[(&str, &str)]| {
+      let options: Vec<Value> = values.iter().map(|(v, n)| json!({ "value": v, "name": n })).collect();
+      json!([
+        { "id": "sidekick_effort", "category": "_sidekick_effort", "options": [{ "value": "high", "name": "High" }] },
+        { "id": "thought_level", "category": "thought_level", "options": options },
+      ])
+    };
+    // Qwen 3.8's scale has no high: the default applies rather than xhigh
+    let qwen = select(&[("low", "Low"), ("medium", "Medium"), ("xhigh", "Xhigh")]);
+    assert_eq!(pick_effort(Some(&qwen), "high"), None);
+    assert_eq!(pick_effort(Some(&qwen), "XHigh"), Some(("thought_level".into(), "xhigh".into())));
+    // pi names its levels `Thinking: <level>`; another spelling of the same level still matches
+    let pi = select(&[("off", "Thinking: off"), ("x-high", "Thinking: extra high")]);
+    assert_eq!(pick_effort(Some(&pi), "xhigh"), Some(("thought_level".into(), "x-high".into())));
+    assert_eq!(pick_effort(Some(&pi), "none"), Some(("thought_level".into(), "off".into())));
+    // An uncategorised select counts only under a reasoning id, as in the composer
+    let bare = json!([{ "id": "reasoning_summary", "options": [{ "value": "high" }] }, { "id": "reasoning_effort", "options": [{ "value": "high" }] }]);
+    assert_eq!(pick_effort(Some(&bare), "high"), Some(("reasoning_effort".into(), "high".into())));
   }
 
   #[test]
