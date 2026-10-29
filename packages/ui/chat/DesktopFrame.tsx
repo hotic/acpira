@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowLeft, ArrowRight, Check, ChevronRight, CircleAlert, Columns3, Copy, FolderOpen, FolderPlus, Info, Languages, LifeBuoy, Menu, MessageSquare, Minus, Palette, PanelLeft, PanelRight, Settings, Settings2, Square, SunMoon, X } from 'lucide-react';
 import { DESKTOP_LAYOUTS, PANEL_SCOPES, THEMES, type DesktopLayout, type PanelScope, type ThemeSetting } from '@acpira/shared/settings';
 import { LANGUAGES, type Language } from '@acpira/shared/i18n';
-import { t } from '../i18n';
+import { t, useLocale } from '../i18n';
 import { Button, IconButton } from '../ui/Button';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
@@ -257,6 +257,9 @@ function QuickChoice<V extends string>({ icon, label, value, options, labelOf, o
 }
 
 export function AppMenu({ onOpenSettings, onOpenExternal, quick }: { onOpenSettings: (page?: SettingsPage) => void; onOpenExternal?: (url: string) => void; quick?: QuickSettings }) {
+  // Shell caches this element (useMemo) and a language pick changes no prop once the optimistic setting is in, so the
+  // labels would stay in the previous language: subscribe to the locale
+  useLocale();
   // With the devices row (remote/DevicesCard.tsx) the foot is one line: the row from the column's left edge, its card
   // rising from the row, and the gear at the line's end opening its menu end-aligned. Without it the gear stands alone
   // at the left, its glyph a size up (--foot-icon) so it does not read as a stray mark

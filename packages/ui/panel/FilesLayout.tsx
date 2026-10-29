@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { FileHit } from '@acpira/shared/protocol';
 import { Layers, PanelRight, Plus } from 'lucide-react';
-import { t } from '../i18n';
+import { t, useLocale } from '../i18n';
 import { IconButton } from '../ui/Button';
 import { cn } from '../ui/cn';
 import { macOS } from '../desktop';
@@ -39,6 +39,8 @@ export interface FilesLayoutProps {
 }
 
 export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
+  // Memo / a cached parent can skip this on a language switch: subscribe so the strings follow the new locale
+  useLocale();
   const { root } = p;
   panel.setContext(p.sessionId, root);
   const s = usePanel();

@@ -1479,6 +1479,8 @@ interface RowActions {
 // Memoized: a push re-renders only the rows whose summary (kept by reference while unchanged, App's reuseById) or
 // place-dependent props changed
 const Item = memo(function Item({ session: s, agentName, terms, snippet, active, time, project, model, nudge, editing, actions, moveHere, moveTo, projects, exportable, copyable, drag, dragging, fileable, categories }: ItemProps) {
+  // Memo / a cached parent can skip this on a language switch: subscribe so the strings follow the new locale
+  useLocale();
   const [menuOpen, setMenuOpen] = useState(false);
   const select = () => actions.current.select(s);
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
