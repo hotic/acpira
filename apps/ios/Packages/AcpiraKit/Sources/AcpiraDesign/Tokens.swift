@@ -342,7 +342,7 @@ public enum Metrics {
   public static let sheetRow: CGFloat = 52
   /// A session in the phone's list: two lines beside the agent's mark with room above and below
   public static let sessionRow: CGFloat = 68
-  /// The progressive blur over a scrolled page's top (Design/TopFade.swift): how far it reaches past the bar's
+  /// The page-colour fade over a scrolled page's top (Design/TopFade.swift): how far it reaches past the bar's
   /// buttons before it is gone
   public static let topFadeTail: CGFloat = 28
   /// The new-session screen's centre piece: the agent's bare mark (no tile) at `heroBare` in a `heroTile` slot; the
