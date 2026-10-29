@@ -7,7 +7,7 @@ import { promoteHighlight, requestCodeHighlight, requestDiffHighlight } from './
 import { codeLanguage, fenceLanguage, type CodeToken, type Language } from './codeLanguage';
 import { OutputCopy } from './OutputCopy';
 import { DiffSourceContext } from './fileLinks';
-import { t } from '../i18n';
+import { t, useLocale } from '../i18n';
 
 // The code surface's card and inset, for a card that sits beside one and must line its text up with the code's
 export const CODE_CARD = 'rounded-lg border border-conversation-line';
@@ -222,6 +222,8 @@ export interface DiffLocation { toolCallId: string; nth: number }
 // file texts (`omitted`): rows highlight from the visible segments, and copying asks the host for the new file
 // `whole`: the diff at its full height, its container scrolling it (the review), instead of a capped box of its own
 export const DiffBlock = memo(function DiffBlock({ lines, source, path = '', locate, whole }: { lines: DiffLine[]; source?: DiffSource; path?: string; locate?: DiffLocation; whole?: boolean }) {
+  // Memo / a cached parent can skip this on a language switch: subscribe so the strings follow the new locale
+  useLocale();
   const root = useRef<HTMLDivElement>(null);
   const theme = useTheme();
   const light = theme === 'light';

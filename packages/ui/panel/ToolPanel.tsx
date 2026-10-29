@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import type { FileHit, ProjectBase, ProjectChange } from '@acpira/shared/protocol';
 import { Folder, Globe, LayoutGrid, PanelRight, Plus, Puzzle, SquareTerminal, X, type LucideIcon } from 'lucide-react';
 import { parseRemoteFolder } from '@acpira/shared/remote';
-import { t } from '../i18n';
+import { t, useLocale } from '../i18n';
 import { IconButton } from '../ui/Button';
 import { cn } from '../ui/cn';
 import { macOS } from '../desktop';
@@ -90,6 +90,8 @@ const commitWidth = (w: number) => panel.setWidth(w);
 
 // The panel beside the sheet and its toggle pinned at the window's top-right corner
 export const ToolPanelDock = memo(function ToolPanelDock(p: ToolPanelDockProps) {
+  // Memo / a cached parent can skip this on a language switch: subscribe so the strings follow the new locale
+  useLocale();
   const s = usePanel();
   // Re-rendered when a plugin's tab piece comes or goes, which can be all the panel has
   usePluginPieces('panel.tab');

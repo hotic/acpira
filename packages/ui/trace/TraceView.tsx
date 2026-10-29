@@ -196,6 +196,8 @@ interface TreeContext {
 // Memoised: a session patch that leaves the trace alone (streamed prose) skips it; while the turn runs it renders itself
 // once a second for its text
 const Waterfall = memo(function Waterfall({ trace, clock, still, agent, model, prompt }: WaterfallProps) {
+  // Memo / a cached parent can skip this on a language switch: subscribe so the strings follow the new locale
+  useLocale();
   const live = trace.endedAt === undefined;
   useTicker(live && still === undefined);
   // ms from the origin, as of this render
