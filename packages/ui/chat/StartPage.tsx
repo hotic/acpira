@@ -10,6 +10,7 @@ import { t } from '../i18n';
 import { shortcutLabel } from '../desktop';
 import { AgentMark } from './AgentMark';
 import { projectName } from './SessionList';
+import { SlotPieces } from '../plugins/Pieces';
 
 // The desktop app's start page: what an empty session shows around the composer, which stays where a conversation keeps
 // it. Above it the agent picker (desktop.css folds it); the project is a dropdown on the sheet header (ProjectPick) and
@@ -72,6 +73,8 @@ export function StartPicker({ open, agents, current, only, onPick }: { open: boo
             })}
           </div>
         </div>
+        {/* Plugin pieces of the start page (plugins/Pieces.tsx), under the picker, folding away with it */}
+        <SlotPieces slot="start" className="flex flex-col gap-gap pt-gap" pieceClassName="w-full" />
       </div>
     </div>
   );

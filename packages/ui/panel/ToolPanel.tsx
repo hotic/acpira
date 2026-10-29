@@ -18,7 +18,9 @@ import { FileTree, ancestors } from './FileTree';
 import { FileViewer, ReviewView, preferMarkdownPreview } from './FileViewer';
 import { NewTab, type TabPick } from './NewTab';
 import { PluginFrame } from './PluginFrame';
-import { usePluginPieces } from '../pluginSlots';
+import { pieceKey, pluginPiece, usePluginPieces } from '../pluginSlots';
+import { takeArrival } from '../plugins/arrivals';
+import { flyStandIn } from '../plugins/Pieces';
 import { FILES_TAB, allLiveTabs, anyModule, panel, panelState, usePanel, viewKey, type LineRange, type PanelTab, type PanelView } from './store';
 import { TerminalFrame } from './TerminalFrame';
 
@@ -94,7 +96,30 @@ export const ToolPanelDock = memo(function ToolPanelDock(p: ToolPanelDockProps) 
   useLocale();
   const s = usePanel();
   // Re-rendered when a plugin's tab piece comes or goes, which can be all the panel has
-  usePluginPieces('panel.tab');
+  const tabPieces = usePluginPieces('panel.tab');
+  // A tab piece applied from a card flies onto the panel's toggle, then opens as a tab (plugins/arrivals.ts)
+  // One flight per piece: another piece arriving leaves it alone, the piece going (an Undo mid-flight) ends it, and the
+  // landing opens the tab only if that very version is still in effect
+  const toggle = useRef<HTMLButtonElement>(null);
+  const flights = useRef(new Map<string, AbortController>());
+  useEffect(() => () => { for (const f of flights.current.values()) f.abort(); }, []);
+  useEffect(() => {
+    const at = toggle.current;
+    const live = new Set(tabPieces.map(p => pieceKey(p.plugin, p.id)));
+    for (const [key, f] of flights.current) if (!live.has(key)) { f.abort(); flights.current.delete(key); }
+    for (const piece of tabPieces) {
+      const from = takeArrival(piece.plugin, 'panel.tab');
+      if (!from || !at) continue;
+      const key = pieceKey(piece.plugin, piece.id);
+      flights.current.get(key)?.abort();
+      const flight = new AbortController();
+      flights.current.set(key, flight);
+      flyStandIn(from, at, () => at.getBoundingClientRect(), () => {
+        flights.current.delete(key);
+        if (pluginPiece(piece.plugin, piece.id)?.html === piece.html) panel.openPlugin(piece.plugin, piece.id, piece.title || piece.plugin);
+      }, flight.signal);
+    }
+  }, [tabPieces]);
   const anyEnabled = anyModule(s);
   const aside = useRef<HTMLElement>(null);
   const shown = anyEnabled && s.open && !!p.cwd && !!p.sessionId;
@@ -157,7 +182,7 @@ export const ToolPanelDock = memo(function ToolPanelDock(p: ToolPanelDockProps) 
       </aside>
       {p.cwd && p.sessionId && (
         <div data-panel-toggle className="pointer-events-none absolute top-0 right-0 z-40 flex h-[calc(var(--hdr)+var(--title-top))] items-center pt-[var(--title-top)] pr-[calc(var(--sheet-inset)+var(--start-x)+var(--caps-w,0px))]">
-          <IconButton className="pointer-events-auto" title={`${label} ${TOGGLE_KEY}`} aria-label={t('panel.label')} aria-pressed={shown} onClick={() => panel.toggle()}>
+          <IconButton ref={toggle} className="pointer-events-auto" title={`${label} ${TOGGLE_KEY}`} aria-label={t('panel.label')} aria-pressed={shown} onClick={() => panel.toggle()}>
             <PanelRight strokeWidth={1.5} />
           </IconButton>
         </div>

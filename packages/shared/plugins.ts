@@ -64,7 +64,8 @@ export interface ToolGroupInfo {
   tools: string[];
 }
 
-export type PluginChangeAction = 'enable' | 'disable' | 'rollback' | 'remove' | 'propose' | 'dismiss' | 'safeMode' | 'toolGroup';
+// skin: a theme enabled already became the skin; undo: a plugin card put back what applying it replaced
+export type PluginChangeAction = 'enable' | 'disable' | 'rollback' | 'remove' | 'propose' | 'dismiss' | 'safeMode' | 'toolGroup' | 'skin' | 'undo';
 
 // One committed change (changes.jsonl)
 export interface PluginChange {
@@ -89,6 +90,8 @@ export interface PluginsView {
   toolGroups: ToolGroupInfo[];
   // The newest first
   changes: PluginChange[];
+  // The plugin whose theme is the skin in effect (one at a time)
+  skin?: string;
 }
 
 // The plugin page's actions. Its switch is the user's confirmation: enable freezes the source folder, checks it and
@@ -104,6 +107,8 @@ export type PluginAction =
   // Show the source folder in the OS file manager
   | { op: 'reveal'; id: string }
   | { op: 'safeMode'; on: boolean }
+  // Make a theme in effect the skin, or show none (no id)
+  | { op: 'skin'; id?: string }
   | { op: 'toolGroup'; id: ToolGroupId; on: boolean };
 
 // The places of the page a plugin's interface may take (contributes.ui, docs/dev/plugins.md, Interface): above the
@@ -120,6 +125,30 @@ export interface PluginSlot {
   id: string;
   slot: PluginUiSlot;
   title: string;
-  // The document, read from the frozen copy
+  // The document, read from the frozen copy; empty for a message.actions button
   html: string;
+  // The piece's box in CSS pixels, along the sides its slot does not size
+  width?: number;
+  height?: number;
+  // message.actions: a native button calling this runtime method with { session, turn, text }
+  method?: string;
 }
+
+// The skin in effect (HostMsg pluginTheme): a theme plugin, its look and the backdrop it runs behind the page on hosts
+// that frame plugin documents
+export interface PluginSkin {
+  plugin: string;
+  name: string;
+  // The frozen version in effect
+  snapshot: string;
+  // The page's scheme it fixes; absent: the host's
+  base?: 'dark' | 'light';
+  // How much of the backdrop the surfaces let through
+  glass?: 'veil' | 'calm' | 'frost';
+  // Its --brand, the colour of the reveal's edge
+  brand?: string;
+  backdrop?: string;
+}
+
+// What a plugin card does: enable the version it offers (and make it the skin), or put back what applying it changed
+export type PluginCardOp = 'apply' | 'undo';

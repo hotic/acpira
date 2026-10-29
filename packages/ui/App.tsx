@@ -29,7 +29,8 @@ import { updateMainComposer } from './chat/useComposerDraft';
 import { playChime } from './effects/chime';
 import { probeUrl } from './probeUrl';
 import { isWidgetFrame } from './chat/AgentWidget';
-import { applyPluginTheme } from './pluginTheme';
+import { receivePluginBackdrop, receivePluginTheme, setPluginsView, useSkin } from './plugins/skin';
+import { SkinBackdrop } from './plugins/SkinBackdrop';
 import { deliverPluginCalled, deliverPluginPost, setPluginSlots } from './pluginSlots';
 import type { SettingsPage } from './settings/Nav';
 import type { SharedState } from './settings/SharedPage';
@@ -228,7 +229,9 @@ export function App() {
   const lastAgents = useRef<AgentInfo[]>([]);
   const hostTheme = useVsCodeTheme();
   // The theme setting resolved against the host; the document carries it too so color-scheme reaches native controls outside the shell
-  const { theme } = resolveTheme(settings?.theme ?? 'auto', hostTheme);
+  // A skin fixes the scheme it was made for (its base); the setting is back once it goes
+  const skinBase = useSkin().shown?.base;
+  const theme = skinBase ?? resolveTheme(settings?.theme ?? 'auto', hostTheme).theme;
   const look = useMemo(() => settings && lookFromSettings(settings), [settings]);
   // Settings → Orchestration, the enabled subagents as the composer offers them (name, CLI logo, CLI name and model), then
   // the enabled groups with an enabled member, their members' names in place of a CLI, joined with the language's list
@@ -270,6 +273,9 @@ export function App() {
     const onMsg = (e: MessageEvent<HostMsg>) => {
       // A widget frame (show_widget) runs an agent's page: whatever it posts is never a host message
       if (isWidgetFrame(e.source)) return;
+      // Host messages come from the page itself (the desktop shell's bridge), the webview's outer frame (VS Code) or a
+      // dispatched event (no source); a child frame (a plugin piece, a thumbnail, a browser tab) never speaks as the host
+      if (e.source && e.source !== window && e.source !== window.parent) return;
       const m = e.data;
       switch (m.type) {
         case 'editTurnResult': {
@@ -303,7 +309,11 @@ export function App() {
         case 'toast': pushShellToast(m); break;
         case 'detectedAgents': setDetected(m.agents); break;
         case 'firstRunError': setFirstRunError(m.error); break;
-        case 'pluginTheme': applyPluginTheme(m.css); break;
+        // The skin and its reveal (plugins/skin.ts); the plugins view, which in-chat plugin cards read their state from
+        case 'pluginTheme': receivePluginTheme(m); break;
+        // An action from the plugin page that failed (a dynamic check, a theme not in effect) says why
+        case 'plugins': setPluginsView(m.view); if (m.error) pushShellToast({ type: 'toast', level: 'error', text: m.error }); break;
+        case 'pluginBackdrop': receivePluginBackdrop(m); break;
         // Plugins' interface pieces and their frames' traffic (pluginSlots.ts); the tool panel closes tabs of pieces gone
         case 'pluginUi': setPluginSlots(m.slots); panel.syncPlugins(); break;
         case 'pluginCalled': deliverPluginCalled(m); break;
@@ -621,8 +631,11 @@ export function App() {
   // A locale change re-renders in place: t() reads module state, and what memo or a cache would keep (rows, joined
   // names) reads the locale from LocaleContext. Remounting on key={locale} replayed every mount animation, closed open
   // menus and reset scroll positions, which read as the window blinking
+  // The skin's backdrop, first in both branches below so React keeps it across the swap (plugins/SkinBackdrop.tsx)
+  const backdrop = <SkinBackdrop paused={view === 'settings'} motion={appearance.motion} />;
   if (view === 'settings') {
     return <>
+      {backdrop}
       <LocaleContext.Provider value={locale}>
       <SettingsShell
         appearance={appearance}
@@ -656,6 +669,7 @@ export function App() {
     </>;
   }
   return <>
+    {backdrop}
     <LocaleContext.Provider value={locale}>
     <Shell
       fromSettings={fromSettings}

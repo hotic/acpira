@@ -30,10 +30,10 @@ const PLUGIN_GUIDE_DESCRIPTION: &str = "How to write an Acpira plugin (the plugi
 with complete examples) and the state of every plugin here, with what its last check found. Read it before writing or \
 fixing a plugin.";
 
-const PLUGIN_ACTIVATE_DESCRIPTION: &str = "Enable the plugin in ~/.acpira/plugins/<id>/ that you wrote or changed. It is \
-frozen and checked first; a problem comes back for you to fix, nothing is enabled. Otherwise the user decides on a card; \
-the answer says whether they enabled it and which tools it added. Call it again after every change: an edit alone takes \
-no effect.";
+const PLUGIN_ACTIVATE_DESCRIPTION: &str = "Offer the plugin in ~/.acpira/plugins/<id>/ that you wrote or changed. It is \
+frozen and checked first; a problem comes back for you to fix, nothing is offered. Otherwise a card for it joins your \
+reply and the user applies it with one click, now or later; the answer says when they applied it and which tools it \
+added. Call it again after every change: an edit alone takes no effect.";
 
 const CALLER_DESCRIPTION: &str = "Ask the agent that summoned you a question and wait for its answer. Use it only for a \
 decision that blocks you and that you cannot reasonably make yourself; one question at a time, short and self-contained, with \

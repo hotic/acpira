@@ -11,7 +11,7 @@ use crate::model_shapes::ModelShapes;
 use crate::providers::{ProbeOutcome, ProviderAction, ProviderProbe, ProvidersView};
 use crate::remote::{ConnectionOp, ConnectionView, RemoteDirEntry, SshHost};
 use crate::shared_config::{SharedAction, SharedView};
-use crate::plugins::{PluginAction, PluginSlot, PluginsView};
+use crate::plugins::{PluginAction, PluginCardOp, PluginSkin, PluginSlot, PluginsView};
 use crate::storage::{StorageAction, StorageDetail, StorageOutcome, StorageView};
 use crate::settings::{HiddenMap, SettingsView};
 use crate::transcript::{
@@ -314,8 +314,23 @@ pub enum HostMsg {
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
   },
-  /// The plugins' theme layer (`docs/dev/plugins.md`): after init, and whenever it changes; empty takes it away
-  PluginTheme { css: String },
+  /// The plugins' theme layer (`docs/dev/plugins.md`): after init, and whenever it changes; empty takes it away.
+  /// `skin` names the theme plugin in effect; `generation` is the plugins' state it was built from
+  PluginTheme {
+    css: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    skin: Option<PluginSkin>,
+    #[serde(default)]
+    generation: u64,
+  },
+  /// A frozen theme's backdrop document, for a plugin card's thumbnail (`WebviewMsg::PluginBackdrop`); none when the
+  /// version has no backdrop or is gone
+  PluginBackdrop {
+    plugin: String,
+    snapshot: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    html: Option<String>,
+  },
   /// The plugin page, on request and on every change of the plugins (another engine's included); `error` when the
   /// action that triggered this reply failed
   Plugins {
@@ -512,6 +527,7 @@ impl HostMsg {
       HostMsg::Shared { .. } => "shared",
       HostMsg::Storage { .. } => "storage",
       HostMsg::PluginTheme { .. } => "pluginTheme",
+      HostMsg::PluginBackdrop { .. } => "pluginBackdrop",
       HostMsg::Plugins { .. } => "plugins",
       HostMsg::PluginCalled { .. } => "pluginCalled",
       HostMsg::PluginUi { .. } => "pluginUi",
@@ -976,6 +992,17 @@ pub enum WebviewMsg {
   Plugins,
   PluginAction {
     action: PluginAction,
+  },
+  /// A plugin card in a session's transcript: apply the version it offers, or undo what applying it changed
+  PluginCard {
+    session_id: String,
+    card: String,
+    op: PluginCardOp,
+  },
+  /// The backdrop of a frozen theme version, for a card's thumbnail; answered by `HostMsg::PluginBackdrop`
+  PluginBackdrop {
+    plugin: String,
+    snapshot: String,
   },
   /// Call a method a plugin's process offers (`runtime.methods`, docs/dev/plugins.md); answered by `PluginCalled`
   PluginCall {

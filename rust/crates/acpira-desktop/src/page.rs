@@ -66,7 +66,9 @@ body.vscode-light {
 /// The document a plugin's interface piece runs in (webview/panel/PluginFrame.tsx), framed with `sandbox="allow-scripts"`
 /// and no allow-same-origin, so its origin is opaque. Its policy allows inline code and nothing from the network; the
 /// page sends the piece's HTML, which replaces this document and keeps the `acpira` object: `call(method, params)` reaches
-/// the plugin's own methods, `on(fn)` hears what its runtime posts (`ui/post`). Not a boundary against the plugin itself,
+/// the plugin's own methods, `on(fn)` hears what its runtime posts (`ui/post`), `onState(fn)` hears whether the session on
+/// screen is working or waiting for the user (nothing of its content), `options` holds what the page set for this frame
+/// (a backdrop's cell size and frame cap). Not a boundary against the plugin itself,
 /// whose code runs with the user's rights anyway; it keeps the page's state and the session out of the piece's reach
 pub const PLUGIN_FRAME_HTML: &str = r#"<!doctype html>
 <html>
@@ -77,21 +79,36 @@ pub const PLUGIN_FRAME_HTML: &str = r#"<!doctype html>
 <body>
 <script>
 (function () {
-  var waits = {}, hearers = [], next = 0;
+  var waits = {}, hearers = [], watchers = [], readers = [], next = 0;
   // The page's tokens on the root, first in the head so the piece's own styles win
   function style(css) {
     var el = document.getElementById('acpira-theme');
     if (!el) { el = document.createElement('style'); el.id = 'acpira-theme'; document.head.insertBefore(el, document.head.firstChild); }
     el.textContent = ':root{' + (css || '') + '}html,body{margin:0;background:transparent;color:var(--fg-1);font-family:var(--font);font-size:var(--ui-font-size)}';
   }
+  // The native-look kit (a-btn, a-chip, a-row, ...), after the tokens and before the piece's own styles
+  function kit(css) {
+    var theme = document.getElementById('acpira-theme');
+    var el = document.createElement('style');
+    el.id = 'acpira-kit';
+    el.textContent = css || '';
+    document.head.insertBefore(el, theme ? theme.nextSibling : document.head.firstChild);
+  }
+  function tell(list, value) {
+    list.slice().forEach(function (fn) { try { fn(value); } catch (err) { console.error(err); } });
+  }
   function onMessage(e) {
     if (e.source !== parent) return;
     var m = e.data || {};
     if (m.acpira === 'load') {
+      window.acpira.options = m.options || {};
+      if (m.state) window.acpira.state = m.state;
+      if (m.session) window.acpira.session = m.session;
       document.open();
       document.write(m.html || '');
       document.close();
       style(m.css);
+      kit(m.kit);
       // document.open drops the window's listeners; the acpira object stays
       window.addEventListener('message', onMessage);
     } else if (m.acpira === 'theme') {
@@ -102,7 +119,13 @@ pub const PLUGIN_FRAME_HTML: &str = r#"<!doctype html>
       delete waits[m.id];
       if (m.error !== undefined) w.reject(new Error(m.error)); else w.resolve(m.result);
     } else if (m.acpira === 'post') {
-      hearers.slice().forEach(function (fn) { try { fn(m.message); } catch (err) { console.error(err); } });
+      tell(hearers, m.message);
+    } else if (m.acpira === 'state') {
+      window.acpira.state = m.state || {};
+      tell(watchers, window.acpira.state);
+    } else if (m.acpira === 'session') {
+      window.acpira.session = m.session || null;
+      tell(readers, window.acpira.session);
     }
   }
   window.acpira = {
@@ -116,7 +139,22 @@ pub const PLUGIN_FRAME_HTML: &str = r#"<!doctype html>
     on: function (fn) {
       hearers.push(fn);
       return function () { hearers = hearers.filter(function (h) { return h !== fn; }); };
-    }
+    },
+    onState: function (fn) {
+      watchers.push(fn);
+      if (window.acpira.state) fn(window.acpira.state);
+      return function () { watchers = watchers.filter(function (h) { return h !== fn; }); };
+    },
+    // The conversation's shape per exchange (no text); null with no session on screen
+    onSession: function (fn) {
+      readers.push(fn);
+      if (window.acpira.session !== undefined) fn(window.acpira.session);
+      return function () { readers = readers.filter(function (h) { return h !== fn; }); };
+    },
+    scrollTo: function (turn) {
+      parent.postMessage({ acpira: 'scrollTo', turn: turn }, '*');
+    },
+    options: {}
   };
   window.addEventListener('message', onMessage);
   parent.postMessage({ acpira: 'ready' }, '*');

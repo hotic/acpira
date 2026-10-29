@@ -50,8 +50,18 @@ fn write_plugin(root: &std::path::Path, id: &str, script: &str) {
 }
 
 /// The open question card of a session's view
+/// The newest plugin card in the transcript, and how many there are
 fn card(view: &Value) -> Option<Value> {
+  cards(view).pop()
+}
+
+/// The newest open question in the transcript
+fn question(view: &Value) -> Option<Value> {
   view["turns"].as_array()?.iter().rev().flat_map(|t| t["blocks"].as_array().into_iter().flatten()).find(|b| b["type"] == "question" && b["outcome"].is_null()).cloned()
+}
+
+fn cards(view: &Value) -> Vec<Value> {
+  view["turns"].as_array().into_iter().flatten().flat_map(|t| t["pluginCards"].as_array().into_iter().flatten()).cloned().collect()
 }
 
 #[cfg(unix)]
@@ -98,11 +108,14 @@ async fn a_session_lists_and_calls_plugin_tools_and_its_agent_asks_to_enable_one
   };
   until(|| m.view_of(&id).and_then(|v| card(&v)).is_some(), 5000).await;
   let shown = card(&m.view_of(&id).unwrap()).unwrap();
-  let text = shown.to_string();
-  assert!(text.contains("demo_where") && text.contains("go.sh"), "{text}");
-  m.handle(json!({ "type": "answer", "sessionId": id, "blockId": shown["id"], "answers": { "plugin": "enable" } })).await;
+  assert_eq!((shown["kind"].as_str(), shown["plugin"].as_str()), (Some("exec"), Some("demo")), "{shown}");
+  assert!(shown["runs"].as_str().is_some_and(|r| r.contains("go.sh")) && shown.get("undo").is_none(), "{shown}");
+  m.handle(json!({ "type": "pluginCard", "sessionId": id, "card": shown["id"], "op": "apply" })).await;
   let answer = done(&waiting.await.unwrap()).unwrap();
-  assert!(answer.contains("The user enabled demo") && answer.contains("demo_where"), "{answer}");
+  assert!(answer.contains("The user applied demo") && answer.contains("demo_where"), "{answer}");
+  // The card keeps what it replaced: the version enabled before
+  let applied = card(&m.view_of(&id).unwrap()).unwrap();
+  assert!(applied["undo"]["snapshot"].is_string(), "{applied}");
   assert_eq!(done(&op(&addr, &token, HubOp::PluginCall { name: "demo_where".into(), arguments: json!({}) }).await).unwrap().trim(), "v2");
   let state = plugins.store().load().unwrap();
   assert_eq!((state.plugins["demo"].provenance.by.as_str(), state.plugins["demo"].provenance.session.as_deref()), ("session", Some(id.as_str())));
@@ -110,16 +123,20 @@ async fn a_session_lists_and_calls_plugin_tools_and_its_agent_asks_to_enable_one
   // A broken plugin is never offered: the error comes back for the agent to fix
   std::fs::write(plugins_root.join("demo/plugin.json"), json!({ "schema": 1, "id": "demo", "contributes": {} }).to_string()).unwrap();
   let err = done(&op(&addr, &token, HubOp::PluginActivate { id: "demo".into(), wait_secs: Some(30) }).await).unwrap_err();
-  assert!(err.contains("contributes nothing") && card(&m.view_of(&id).unwrap()).is_none(), "{err}");
+  assert!(err.contains("contributes nothing") && cards(&m.view_of(&id).unwrap()).len() == 1, "{err}");
 
   // Answered after the call gave up: still enabled, and the agent is told in a message of its own
   write_plugin(&plugins_root, "late", "echo late");
   let gave_up = done(&op(&addr, &token, HubOp::PluginActivate { id: "late".into(), wait_secs: Some(1) }).await).unwrap();
-  assert!(gave_up.contains("still open"), "{gave_up}");
+  assert!(gave_up.contains("is in the conversation"), "{gave_up}");
   let shown = card(&m.view_of(&id).unwrap()).expect("the card stays");
-  m.handle(json!({ "type": "answer", "sessionId": id, "blockId": shown["id"], "answers": { "plugin": "enable" } })).await;
-  until(|| m.view_of(&id).is_some_and(|v| v.to_string().contains("[Acpira] The user enabled late.")), 10_000).await;
+  m.handle(json!({ "type": "pluginCard", "sessionId": id, "card": shown["id"], "op": "apply" })).await;
+  until(|| m.view_of(&id).is_some_and(|v| v.to_string().contains("[Acpira] The user applied late.")), 10_000).await;
   assert!(plugins.loaded().tool("late_where").is_some());
+  // Undone from the card: a plugin that was off is off again
+  m.handle(json!({ "type": "pluginCard", "sessionId": id, "card": shown["id"], "op": "undo" })).await;
+  until(|| plugins.loaded().tool("late_where").is_none(), 5000).await;
+  plugins.action(PluginAction::Enable { id: "late".into() }).await.unwrap();
 
   // Switched off: the next call is refused although the client may still list it
   plugins.action(PluginAction::Disable { id: "late".into() }).await.unwrap();
@@ -278,8 +295,8 @@ async fn a_plugin_reads_and_acts_on_sessions_through_the_engine_but_cannot_appro
   m.handle(json!({ "type": "send", "text": "again" })).await;
   let id = m.active_id().unwrap();
   // The plugin's question: a card in the session naming the plugin, answered by the user
-  until(|| m.view_of(&id).and_then(|v| card(&v)).is_some(), 10_000).await;
-  let shown = card(&m.view_of(&id).unwrap()).unwrap();
+  until(|| m.view_of(&id).and_then(|v| question(&v)).is_some(), 10_000).await;
+  let shown = question(&m.view_of(&id).unwrap()).unwrap();
   assert!(shown.to_string().contains("Plugin actor asks:") && shown.to_string().contains("Release now?"), "{shown}");
   m.handle(json!({ "type": "answer", "sessionId": id, "blockId": shown["id"], "answers": { "ship": "yes" } })).await;
   let results = plugins.path().join(".data/actor/results.json");

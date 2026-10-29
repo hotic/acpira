@@ -120,6 +120,10 @@ pub struct State {
   pub tool_groups: BTreeMap<String, bool>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub last: Option<Change>,
+  /// The plugin whose theme is the skin, one at a time; `""` for none. Absent in a state no engine with skins wrote:
+  /// the theme enabled last is the skin then (`PluginHost::skin_id`)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub skin: Option<String>,
   /// Fields of a newer engine, written back as they were
   #[serde(flatten)]
   pub extra: Map<String, Value>,
@@ -312,14 +316,23 @@ impl PluginStore {
 
   /// Point `id` at `hash` and enable it; the snapshot it had goes to its history
   pub async fn enable(&self, id: &str, hash: &str, provenance: Provenance) -> Result<Option<Change>> {
+    self.enable_as(id, hash, provenance, false).await
+  }
+
+  /// `enable`, and with `skin` make the plugin's theme the skin in effect (in the same commit)
+  pub async fn enable_as(&self, id: &str, hash: &str, provenance: Provenance, skin: bool) -> Result<Option<Change>> {
     let data = self.data_dir(id);
     std::fs::create_dir_all(&data).with_context(|| format!("create {}", data.display()))?;
     self
       .commit(|s| {
+        let reskin = skin && s.skin.as_deref() != Some(id);
+        if reskin {
+          s.skin = Some(id.to_owned());
+        }
         let entry = s.plugins.entry(id.to_owned()).or_default();
         if entry.enabled && entry.snapshot == hash {
           s.proposals.remove(id);
-          return Ok(None);
+          return Ok(reskin.then(|| Change { id: id.to_owned(), action: "skin".into(), snapshot: Some(hash.to_owned()), provenance, ..Default::default() }));
         }
         if !entry.snapshot.is_empty() && entry.snapshot != hash {
           let old = std::mem::take(&mut entry.snapshot);
@@ -346,6 +359,61 @@ impl PluginStore {
         entry.enabled = false;
         entry.provenance = provenance.clone();
         Ok(Some(Change { id: id.to_owned(), action: "disable".into(), snapshot: Some(entry.snapshot.clone()), provenance, ..Default::default() }))
+      })
+      .await
+  }
+
+  /// Put `id` back as a plugin card found it before applying (`PluginCardUndo`): the version enabled then, or off;
+  /// and the skin of then, when the card was a skin's
+  pub async fn restore(&self, id: &str, snapshot: Option<&str>, skin: Option<&str>, provenance: Provenance) -> Result<Option<Change>> {
+    self
+      .commit(|s| {
+        let mut changed = false;
+        if let Some(skin) = skin
+          && s.skin.as_deref() != Some(skin)
+        {
+          s.skin = Some(skin.to_owned());
+          changed = true;
+        }
+        if let Some(entry) = s.plugins.get_mut(id) {
+          match snapshot {
+            Some(back) if !(entry.enabled && entry.snapshot == back) => {
+              let now = std::mem::replace(&mut entry.snapshot, back.to_owned());
+              entry.previous.retain(|p| p != back && *p != now);
+              if !now.is_empty() {
+                entry.previous.push(now);
+              }
+              entry.enabled = true;
+              entry.committed_at = now_ms();
+              changed = true;
+            }
+            None if entry.enabled => {
+              entry.enabled = false;
+              changed = true;
+            }
+            _ => {}
+          }
+          if changed {
+            entry.provenance = provenance.clone();
+          }
+        }
+        Ok(changed.then(|| Change { id: id.to_owned(), action: "undo".into(), snapshot: snapshot.map(str::to_owned), provenance, ..Default::default() }))
+      })
+      .await
+  }
+
+  /// Make the theme of `id` the skin, or (`None`) show none; the caller checks `id` is a theme in effect
+  pub async fn set_skin(&self, id: Option<&str>, provenance: Provenance) -> Result<Option<Change>> {
+    self
+      .commit(|s| {
+        // `""` is an explicit none: an absent pick falls back to the theme enabled last
+        let pick = id.unwrap_or("");
+        if s.skin.as_deref() == Some(pick) {
+          return Ok(None);
+        }
+        s.skin = Some(pick.to_owned());
+        let snapshot = id.and_then(|id| s.plugins.get(id)).map(|e| e.snapshot.clone());
+        Ok(Some(Change { id: id.unwrap_or_default().to_owned(), action: "skin".into(), snapshot, provenance, ..Default::default() }))
       })
       .await
   }

@@ -5,7 +5,7 @@ import type { AgentInstallProgress } from '@acpira/shared/protocol';
 import type { AgentHealthStage, AgentInventory, InventoryFile, InventoryMcp, InventoryScope, InventorySkill } from '@acpira/shared/inventory';
 import type { MsgKey } from '@acpira/shared/i18n';
 import { PLAN_AUTO_APPROVE_AGENTS, type SettingsView } from '@acpira/shared/settings';
-import { familyLabel, isReasoningControl } from '@acpira/shared/composerControls';
+import { familyLabel, isReasoningControl, SIDEKICK_CATEGORY, SIDEKICK_EFFORT_CATEGORY } from '@acpira/shared/composerControls';
 import { familyHidden, groupModels, setFamilyVisible, variantLabel, type ModelFamily } from '@acpira/shared/models';
 import { filterModels, MODEL_PREVIEW_LIMIT, prioritizeModels, setModelsVisible } from '@acpira/shared/modelCatalog';
 import { Button, IconButton } from '../ui/Button';
@@ -58,8 +58,10 @@ export interface AgentSettingsProps {
 }
 
 // Reasoning levels belong to the current model's picker, not agent-wide visibility settings; a boolean's synthetic
-// Off/On pair is not a family either
-const modelControlsOf = (controls?: ConfigControl[]) => controls?.filter(c => !isReasoningControl(c) && c.type !== 'boolean');
+// Off/On pair is not a family either, nor are the built-in agent's sidekick pick and its levels (a plugin agent
+// running it shows this tab)
+const modelControlsOf = (controls?: ConfigControl[]) => controls?.filter(c => !isReasoningControl(c) && c.type !== 'boolean'
+  && c.category !== SIDEKICK_CATEGORY && c.category !== SIDEKICK_EFFORT_CATEGORY);
 
 // The tabs an agent's dialog offers, with their counts once known. The built-in agent shows its prompts, skills and MCP
 // tabs only when it has something there

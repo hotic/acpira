@@ -42,6 +42,7 @@ import { rememberFold, rememberedFold } from './foldMemory';
 import { ProcessHistory } from './ProcessHistory';
 import { compactionForDisplay } from './compactionDisplay';
 import { splitPlanSections } from './planSections';
+import { PluginCard } from '../plugins/PluginCard';
 import { TurnActions } from './TurnActions';
 import { LiveElapsed } from './TurnClock';
 import { SubagentGroup } from './subagents/SubagentGroup';
@@ -245,7 +246,7 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   }), [onFailureAction, last, running, turn.error?.failureId, absorbed]);
   // A settled turn mounts fold bodies on first open; a live one keeps them mounted (its finished items narrow this again,
   // `ProcessBlocks`) so streamed content stays in step while closed
-  return <LazyPanelContext.Provider value={!running}><EntranceScopeContext.Provider value={entrance}><RowEntranceContext.Provider value={running}><NoticeActionContext.Provider value={noticeActions}><WorkflowProgressContext.Provider value={workflows}><DelegationContext.Provider value={delegations}><div className={cn('group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]', joined && '-mt-msg-join')}>
+  return <LazyPanelContext.Provider value={!running}><EntranceScopeContext.Provider value={entrance}><RowEntranceContext.Provider value={running}><NoticeActionContext.Provider value={noticeActions}><WorkflowProgressContext.Provider value={workflows}><DelegationContext.Provider value={delegations}><div data-part="agent-message" className={cn('group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]', joined && '-mt-msg-join')}>
     {sections.map((section, i) => {
       const lastSection = i === sections.length - 1;
       // Only the continuation owns live activity and the turn outcome. Earlier
@@ -267,6 +268,8 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
           permission={shown.blocks.find((b): b is PermissionBlock => b.type === 'permission' && b.planId === section.plan!.id)} onChoose={onPermission} />}
       </Fragment>;
     })}
+    {/* Plugins an agent offered in this turn (plugin_activate): after the reply, clickable for good */}
+    {turn.pluginCards?.map(card => <PluginCard key={card.id} card={card} />)}
     {/* A reply that failed before producing anything still offers the fork: another agent can take the message over */}
     {actions && !running && !compacting && (hasTurnContent(turn) || turn.stop === 'error') && <TurnActions turn={turn} turnIndex={turnIndex} settings={settings} />}
   </div></DelegationContext.Provider></WorkflowProgressContext.Provider></NoticeActionContext.Provider></RowEntranceContext.Provider></EntranceScopeContext.Provider></LazyPanelContext.Provider>;

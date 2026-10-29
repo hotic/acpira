@@ -27,6 +27,7 @@ import { useComposerDraft } from './useComposerDraft';
 import { contextDrafts, copiedSelection, markContextSent, markSelectionSent, sameContext, sameRange, selectionDraft, selectionKey, useEditorSelection, useLiveContexts, type LiveContext } from './editorContext';
 import { PromptInput } from './PromptInput';
 import { imeKey } from '../ui/ime';
+import { SlotPieces } from '../plugins/Pieces';
 
 export interface ComposerProps {
   running: boolean;
@@ -93,7 +94,7 @@ export const Composer = memo(function Composer(p: ComposerProps) {
   const flush = !p.edit && composer === 'flush';
   const [beamActive, setBeamActive] = useState(false);
   return (
-    <div className={cn(p.edit ? 'min-w-0' : flush ? 'pt-0' : 'px-dock pb-dock')}>
+    <div data-part={p.edit ? undefined : 'composer'} className={cn(p.edit ? 'min-w-0' : flush ? 'pt-0' : 'px-dock pb-dock')}>
       <WorkingBeam active={beamActive} theme={p.theme} field={p.resetKey}>
         <ComposerField key={p.resetKey} {...p} onBeam={setBeamActive} />
       </WorkingBeam>
@@ -410,6 +411,8 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
             : contexts.map(c => <ContextChip key={c.source.id} context={c} on={contextOn(c)} narrow={liveNarrow} onToggle={() => toggleContext(c)} />)}
         </div>}
         {!p.edit && p.toolbarStart}
+        {/* Plugin chips (plugins/Pieces.tsx) after the built-in ones, on the main composer only */}
+        {!p.edit && p.main && <SlotPieces slot="composer.toolbar" className="flex shrink-0 items-center gap-1" />}
         {!p.edit && p.main && !!personas?.length && <SummonMenu personas={personas} onOpenChange={onOpenChange} onPick={persona => summon(persona.name, caret)} />}
         {/* flex-auto: the model side's base size is its content, so the live chips above shrink before it does */}
         <fieldset disabled={p.disabled || p.controlsLocked || sending} className="m-0 flex min-w-0 flex-auto items-center gap-1 border-0 p-0">

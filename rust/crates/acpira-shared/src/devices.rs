@@ -102,6 +102,8 @@ pub fn device_allowed(m: &WebviewMsg) -> bool {
     | W::StorageAction { .. }
     | W::Plugins
     | W::PluginAction { .. }
+    | W::PluginCard { .. }
+    | W::PluginBackdrop { .. }
     | W::PluginCall { .. }
     | W::Providers
     | W::ProviderAction { .. }

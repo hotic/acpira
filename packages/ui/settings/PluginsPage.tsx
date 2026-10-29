@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
-import { BrainCircuit, FolderTree, Globe, PanelsTopLeft, Settings2, SquareTerminal } from 'lucide-react';
+import { Fragment, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
+import { BrainCircuit, FolderTree, Globe, Palette, PanelsTopLeft, Settings2, SquareTerminal, Workflow, Wrench } from 'lucide-react';
+import type { PluginInfo, PluginLayer } from '@acpira/shared/plugins';
 import type { AgentId, AgentInfo } from '@acpira/shared/transcript';
 import type { AgentInventory } from '@acpira/shared/inventory';
 import { moveAgent } from '@acpira/shared/agentOrder';
@@ -11,11 +12,14 @@ import { cn } from '../ui/cn';
 import { AgentMark } from '../chat/AgentMark';
 import { t } from '../i18n';
 import { Count, SearchBox } from './controls';
+import { askPluginsView, usePluginsView } from '../plugins/skin';
+import { SkinPicker, UserPluginTile } from './UserPlugins';
 
-// Settings → Plugins: what Acpira is built from, one tile per module in layers. Until the plugin kernel lands the only
-// layer is the agents: a tile per agent with its switch (an off agent leaves the new-session entry points,
-// acpira.disabledAgents) and its gear, which opens the agent's dialog; dragging a tile (or Alt+arrow on it) reorders the
-// agents everywhere they are listed (acpira.agentOrder). Laid out in lab/settings-all.preview.tsx
+// Settings → Plugins: what Acpira is built from, one tile per module in layers. The skins head the page (one at a time,
+// settings/UserPlugins.tsx); then the agents: a tile per agent with its switch (an off agent leaves the new-session entry
+// points, acpira.disabledAgents) and its gear, which opens the agent's dialog; dragging a tile (or Alt+arrow on it)
+// reorders the agents everywhere they are listed (acpira.agentOrder). The user's plugins join the layer they declare,
+// after the built-in modules. Laid out in lab/settings-all.preview.tsx
 
 // The vendors of the agents Acpira knows by id; any other agent is described as an ACP agent
 const VENDOR: Partial<Record<AgentId, string>> = {
@@ -46,6 +50,9 @@ export interface PluginsPageProps {
 export function PluginsPage({ agents: all, inventories, onReorder, onDisabled, onOpen, onInventory, panelFiles, onPanelFiles, panelTerminal, onPanelTerminal, panelBrowser, onPanelBrowser }: PluginsPageProps) {
   const agents = all.filter(a => !a.external);
   const [query, setQuery] = useState('');
+  // The user's plugins come from the engine's plugins view, asked for once
+  useEffect(() => askPluginsView(), []);
+  const view = usePluginsView();
   // The versions on the tiles' feet: every agent not scanned yet, once per visit
   const asked = useRef(new Set<AgentId>());
   useEffect(() => {
@@ -59,20 +66,58 @@ export function PluginsPage({ agents: all, inventories, onReorder, onDisabled, o
     ...(onPanelTerminal ? [{ id: 'terminal', icon: <SquareTerminal className="size-lead" strokeWidth={1.5} />, name: t('settings.plugins.terminal'), desc: t('settings.plugins.terminalDesc'), on: panelTerminal !== false, onToggle: onPanelTerminal }] : []),
     ...(onPanelBrowser ? [{ id: 'browser', icon: <Globe className="size-lead" strokeWidth={1.5} />, name: t('settings.plugins.browser'), desc: t('settings.plugins.browserDesc'), on: panelBrowser !== false, onToggle: onPanelBrowser }] : []),
   ].filter(m => !q || m.name.toLowerCase().includes(q) || m.desc.toLowerCase().includes(q) || m.id.includes(q));
-  return <>
-    <SearchBox value={query} onChange={setQuery} label={t('settings.plugins.search')} />
-    {(!q || matchedAgents.length > 0) && (
-      <Layer icon={<BrainCircuit />} title={t('settings.plugins.agents')} count={matchedAgents.length}>
-        <AgentTiles agents={all} inventories={inventories} filter={q ? match : undefined} onReorder={onReorder} onDisabled={onDisabled} onOpen={onOpen} />
+  const matchPlugin = (p: PluginInfo) => !q || p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q) || p.description.toLowerCase().includes(q);
+  const mine = (layer: PluginLayer) => (view?.plugins ?? []).filter(p => p.layer === layer && matchPlugin(p));
+  const skinCount = view ? view.plugins.filter(p => p.contributes.includes('theme') && p.loaded && matchPlugin(p)).length : 0;
+  const userTiles = (list: PluginInfo[]) => list.map(p => <UserPluginTile key={p.id} plugin={p} safeMode={!!view?.safeMode} />);
+  // Each layer shown, in page order, so only the ones after the first draw the rule above them
+  const layers: { key: string; node: (rule: boolean) => ReactNode }[] = [];
+  if (view && (skinCount > 0 || view.skin)) {
+    layers.push({ key: 'appearance', node: rule => (
+      <Layer rule={rule} icon={<Palette />} title={t('settings.plugins.appearance')} count={skinCount}>
+        <SkinPicker view={view} filter={matchPlugin} />
       </Layer>
-    )}
-    {builtinUi.length > 0 && (
-      <Layer rule={!q || matchedAgents.length > 0} icon={<PanelsTopLeft />} title={t('settings.plugins.interface')} count={builtinUi.length}>
+    ) });
+  }
+  const agentPlugins = mine('agents');
+  if (!q || matchedAgents.length > 0 || agentPlugins.length > 0) {
+    layers.push({ key: 'agents', node: rule => (
+      <Layer rule={rule} icon={<BrainCircuit />} title={t('settings.plugins.agents')} count={matchedAgents.length + agentPlugins.length}>
+        <AgentTiles agents={all} inventories={inventories} filter={q ? match : undefined} onReorder={onReorder} onDisabled={onDisabled} onOpen={onOpen} />
+        {agentPlugins.length > 0 && <div className="grid grid-cols-2 gap-gap @max-[600px]/settings-shell:grid-cols-1">{userTiles(agentPlugins)}</div>}
+      </Layer>
+    ) });
+  }
+  const tools = mine('tools');
+  if (tools.length) {
+    layers.push({ key: 'tools', node: rule => (
+      <Layer rule={rule} icon={<Wrench />} title={t('settings.plugins.tools')} count={tools.length}>
+        <div className="grid grid-cols-2 gap-gap @max-[600px]/settings-shell:grid-cols-1">{userTiles(tools)}</div>
+      </Layer>
+    ) });
+  }
+  const ui = mine('interface');
+  if (builtinUi.length + ui.length > 0) {
+    layers.push({ key: 'interface', node: rule => (
+      <Layer rule={rule} icon={<PanelsTopLeft />} title={t('settings.plugins.interface')} count={builtinUi.length + ui.length}>
         <div className="grid grid-cols-2 gap-gap @max-[600px]/settings-shell:grid-cols-1">
           {builtinUi.map(m => <BuiltinTile key={m.id} {...m} />)}
+          {userTiles(ui)}
         </div>
       </Layer>
-    )}
+    ) });
+  }
+  const automation = mine('automation');
+  if (automation.length) {
+    layers.push({ key: 'automation', node: rule => (
+      <Layer rule={rule} icon={<Workflow />} title={t('settings.plugins.automation')} count={automation.length}>
+        <div className="grid grid-cols-2 gap-gap @max-[600px]/settings-shell:grid-cols-1">{userTiles(automation)}</div>
+      </Layer>
+    ) });
+  }
+  return <>
+    <SearchBox value={query} onChange={setQuery} label={t('settings.plugins.search')} />
+    {layers.map((l, i) => <Fragment key={l.key}>{l.node(i > 0)}</Fragment>)}
   </>;
 }
 

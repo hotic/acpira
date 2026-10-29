@@ -115,7 +115,7 @@ impl RelayHub {
     *self.plugins.write() = Some(plugins);
   }
 
-  fn plugin_host(&self) -> Option<Arc<crate::plugins::host::PluginHost>> {
+  pub fn plugin_host(&self) -> Option<Arc<crate::plugins::host::PluginHost>> {
     self.plugins.read().as_ref().and_then(Weak::upgrade)
   }
 

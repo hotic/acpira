@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  /* The piece's box is the plugin's `width` x `height`; the cat sits at its bottom right, paws on the composer's edge */
+  html, body { height: 100%; overflow: hidden; }
+  body { display: flex; align-items: flex-end; justify-content: flex-end; gap: 6px; }
+  pre { margin: 0; font: 15px/1.1 var(--font-mono, ui-monospace, monospace); color: var(--fg-2); user-select: none; }
+  .eye { color: var(--brand); }
+  .say { margin-bottom: 30px; padding: 3px 8px; border-radius: 6px 6px 0 6px; background: var(--bg-2); color: var(--fg-2);
+    font: 12px var(--font); box-shadow: 0 0 0 1px var(--line); white-space: nowrap; transition: opacity .3s; }
+  .say:empty { opacity: 0; }
+</style>
+</head>
+<body>
+<span class="say" id="say"></span>
+<pre id="cat"></pre>
+<script>
+  // A glyph cat that follows the session on screen: it blinks and flicks its tail while waiting, stares while the agent
+  // works, asks when the agent waits for an answer, and smiles when a turn ends. It hears only that state, never the
+  // conversation (`acpira.onState`)
+  const cat = document.getElementById('cat'), say = document.getElementById('say');
+  let mood = 'idle', tick = 0, until = 0;
+  const FACE = { idle: ['o', 'o'], work: ['°', '°'], ask: ['?', '?'], happy: ['^', '^'] };
+  function draw() {
+    tick++;
+    const blink = mood === 'idle' && tick % 20 === 0;
+    const [l, r] = blink ? ['-', '-'] : FACE[mood];
+    const tail = Math.floor(tick / 6) % 2 ? '~' : '_';
+    cat.innerHTML = ' /\\_/\\\n( <span class="eye">' + l + '</span>.<span class="eye">' + r + '</span> )\n (")(")' + tail;
+    if (mood === 'happy' && Date.now() > until) { mood = 'idle'; say.textContent = ''; }
+  }
+  function onState(s) {
+    const next = s.waiting ? 'ask' : s.working ? 'work' : mood === 'work' ? 'happy' : mood === 'happy' ? 'happy' : 'idle';
+    if (next === 'happy' && mood !== 'happy') { until = Date.now() + 2600; say.textContent = 'Done'; }
+    else if (next === 'ask') say.textContent = 'Your turn';
+    else if (next !== 'happy') say.textContent = '';
+    mood = next;
+    draw();
+  }
+  if (window.acpira && acpira.onState) acpira.onState(onState);
+  // With less motion asked for, the face still follows the session but neither blinks nor flicks its tail
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) setInterval(() => { if (!document.hidden) draw(); }, 200);
+  draw();
+</script>
+</body>
+</html>

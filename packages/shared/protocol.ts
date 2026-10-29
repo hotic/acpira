@@ -7,7 +7,7 @@ import type { HiddenMap, SettingKey, SettingsView } from './settings';
 import type { Locale } from './i18n';
 import type { AgentInventory } from './inventory';
 import type { SharedAction, SharedView } from './sharedConfig';
-import type { PluginAction, PluginSlot, PluginsView } from './plugins';
+import type { PluginAction, PluginCardOp, PluginSkin, PluginSlot, PluginsView } from './plugins';
 import type { StorageAction, StorageDetail, StorageOutcome, StorageView } from './storage';
 import type { ProbeOutcome, ProviderAction, ProviderProbe, ProvidersView } from './providers';
 import type { SessionPatch } from './sessionPatch';
@@ -293,7 +293,10 @@ export type HostMsg =
   // The plugin page, on request and on every change of the plugins (another engine's included); error when the action
   // that triggered this reply failed
   // The plugins' theme layer: after init and whenever it changes; empty takes it away (docs/dev/plugins.md)
-  | { type: 'pluginTheme'; css: string }
+  // `skin` names the theme plugin in effect, `generation` the plugins' state it was built from
+  | { type: 'pluginTheme'; css: string; skin?: PluginSkin; generation?: number }
+  // A frozen theme's backdrop, for a plugin card's thumbnail (pluginBackdrop); none when it has none or is gone
+  | { type: 'pluginBackdrop'; plugin: string; snapshot: string; html?: string }
   | { type: 'plugins'; view: PluginsView; error?: string }
   // The plugins' interface pieces: after every init and whenever they change; empty takes them away
   | { type: 'pluginUi'; slots: PluginSlot[] }
@@ -558,6 +561,10 @@ export type WebviewMsg =
   // The plugin page: read the view (and follow its changes from then on), or apply an action and get the view back
   | { type: 'plugins' }
   | { type: 'pluginAction'; action: PluginAction }
+  // A plugin card in a session's transcript: apply the version it offers, or undo what applying it changed
+  | { type: 'pluginCard'; sessionId: string; card: string; op: PluginCardOp }
+  // The backdrop of a frozen theme version, for a card's thumbnail; answered by pluginBackdrop
+  | { type: 'pluginBackdrop'; plugin: string; snapshot: string }
   // Call a method a plugin's process offers (runtime.methods); answered by pluginCalled
   | { type: 'pluginCall'; id: string; plugin: string; method: string; params?: unknown }
   // The built-in agent's model sources: read them, or apply an edit and get the view back

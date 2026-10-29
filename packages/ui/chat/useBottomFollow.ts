@@ -5,6 +5,8 @@ import { followsBottom, SCROLL_INTENT_MS, scrollerUsable } from './promptStuck';
 // (the live turn's automatic fold closes wait for them). Subscribed per reader, so a scroll re-renders nothing else
 export class FollowState {
   value = true;
+  // Stop following as a reader's own scroll would, before the page moves the view itself (a plugin's scrollTo)
+  release: () => void = () => this.set(false);
   private listeners = new Set<() => void>();
   set(value: boolean) {
     if (value === this.value) return;
@@ -86,6 +88,7 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
       lastTop = el.scrollTop;
     };
     const touched = () => { untouched.current = false; intentAt = holding.current = performance.now(); };
+    follow.release = () => { touched(); pinned.current = false; follow.set(false); };
     const pressed = () => { pointerDown = holdingDown.current = true; touched(); };
     const released = () => {
       if (pointerDown) {

@@ -72,6 +72,10 @@ import { panel, usePanelValue } from '../panel/store';
 import { useChatPanel } from '../panel/chat';
 import { SubagentGraph } from './subagents/SubagentGraph';
 import { breadcrumb, nodesByTurn, subagentTitle } from './subagents/subagentState';
+import { ComposerAbove } from '../plugins/ComposerAbove';
+import { backdropsShown, useSkin } from '../plugins/skin';
+import { useSessionOutline } from '../plugins/outline';
+import { SessionRail, SlotPieces } from '../plugins/Pieces';
 
 // Every action the webview sends to the host; in the LAB a fake host implements these, the real build swaps in postMessage
 export interface ShellHandlers {
@@ -267,6 +271,7 @@ export function Shell(p: ShellProps) {
   useShellLayer(root);
   const sessionPanel = useRef<HTMLElement>(null);
   const desktop = !!p.desktop;
+  const { shown: skin, leaving: leavingSkin } = useSkin();
   // The desktop app has no position setting (its column folds from the title row), so a value written earlier cannot strand it
   const position = desktop ? 'left' : p.look?.sessionListPosition ?? (a.sessions === 'drawer' ? 'left' : 'hidden');
   const [canDock, setCanDock] = useState(false);
@@ -545,6 +550,8 @@ export function Shell(p: ShellProps) {
   const rootQuestion = p.running && lastTurn?.role === 'agent' ? lastTurn.blocks.find((b): b is QuestionBlock => b.type === 'question' && !b.outcome) : undefined;
   const childQuestion = p.subagents?.find(n => n.question);
   const question = rootQuestion ?? childQuestion?.question;
+  // The session waits on the user: a question, or a permission request in the last reply (what plugin pieces hear)
+  const waitingOnUser = !!question || (lastTurn?.role === 'agent' && lastTurn.blocks.some(b => b.type === 'permission'));
   const questionSubtitle = !rootQuestion && childQuestion
     ? t('subagents.provenance', { path: breadcrumb(childQuestion.id, p.subagents ?? []).map(n => subagentTitle(n, t)).join(' › ') })
     : undefined;
@@ -975,6 +982,12 @@ export function Shell(p: ShellProps) {
           // Narrow only, so the render that widens the window past the tier drops the transition with the transform: the docked
           // column lands in place, where a close moments before used to slide it in from the left (the smoke, 2026-10-23)
           data-drawer-moving={(desktop && !canDock && drawerMoving > 0) || undefined}
+          // A plugin skin (styles/skin.css): its tokens come in the plugins' theme layer, its glass lets the backdrop through
+          data-skin={skin?.plugin}
+          data-glass={skin || leavingSkin ? (skin ?? leavingSkin!.skin).glass ?? 'veil' : undefined}
+          // Not in the files layout: its panes derive their own surfaces from the canvas, which a backdrop would empty. A
+          // backdrop leaving in a reveal without View Transitions keeps the surfaces clear until it is gone
+          data-backdrop={((skin?.backdrop || leavingSkin) && backdropsShown && !files) || undefined}
         >
           {position !== 'hidden' && (
             <>
@@ -1019,6 +1032,8 @@ export function Shell(p: ShellProps) {
                 )}
                 {/* Docked nav: the first action row is centred on the chat header's line (desktop: the title row holds that line) */}
                 <div className={cn('flex min-h-0 flex-1 flex-col p-gap-half', nav && canDock && !desktop && 'pt-[calc((var(--hdr)-var(--row))/2)]', desktop && 'pb-0')}>{sessionsPanel}</div>
+                {/* Plugin pieces at the column's foot (plugins/Pieces.tsx), full width, above the settings gear */}
+                <SlotPieces slot="sidebar" className="flex shrink-0 flex-col gap-gap-half px-gap-half pt-gap-half" pieceClassName="w-full" />
                 {!files && gear}
                 {!desktop && nav && p.onOpenSettings && (
                   <div className="shrink-0 border-t border-line p-gap-half">
@@ -1084,7 +1099,7 @@ export function Shell(p: ShellProps) {
                     <HistoryComposerContext.Provider value={history?.editing !== undefined ? composerProps : undefined}>
                       <OpenToolFileContext.Provider value={openToolFile}>
                         <TurnActionsContext.Provider value={turnActions}>
-                          <Thread key={p.activeSessionId} turns={held.turns} running={held.running} wide={wide} replayKey={p.replayKey} catchingUp={p.catchingUp} blobUrl={blobUrl} contentRef={contentRef} commands={p.commands} summons={summons}
+                          <Thread key={p.activeSessionId} session={p.activeSessionId} turns={held.turns} running={held.running} wide={wide} replayKey={p.replayKey} catchingUp={p.catchingUp} blobUrl={blobUrl} contentRef={contentRef} commands={p.commands} summons={summons}
                             onSetGoal={setGoal} subagents={p.subagents} onInspect={onInspect} onFailureAction={failureAction}
                             forkedFrom={p.external ? undefined : p.forkedFrom} agents={p.agents} agentId={p.agent.id}
                             onPermission={onPermission} />
@@ -1097,6 +1112,9 @@ export function Shell(p: ShellProps) {
                     data-plan-dock
                     className={cn('pointer-events-none absolute inset-x-0 bottom-0 z-10', wide && a.composer === 'island' && 'mx-auto w-full max-w-[calc(var(--content-w)+2*var(--page))]')}
                   >
+                    {/* Plugin pieces on the dock's top edge (plugins/ComposerAbove.tsx): over the plan card when there is
+                        one, else over the question, the queue or the composer, never on top of their controls */}
+                    {!p.external && <ComposerAbove running={p.running} waiting={waitingOnUser} />}
                     {!p.external && <ConnectingNotice status={p.status} agent={p.agent} />}
                     <div ref={planDock}>
                       {/* The session goal heads the floating to-do card, so the dock keeps one silhouette */}
@@ -1104,10 +1122,13 @@ export function Shell(p: ShellProps) {
                         goal={p.external ? undefined : p.goal} goalActions={p.goalActions} onGoalAction={goalAction} />
                     </div>
                   </div>
-                  {(toasts.length > 0 || (desktop && shellToasts.length > 0)) && (
+                  {/* Plugin rails in the margin beside the conversation column, only while it has room (plugins/Pieces.tsx) */}
+                  {!p.external && <SessionRail />}
+                  {(toasts.length > 0 || shellToasts.length > 0) && (
                     <div ref={toastRef} className="pointer-events-none absolute inset-x-0 bottom-[calc(var(--gap)+var(--thread-dock-height,0px))] z-10 flex flex-col items-center gap-1 px-page">
                       {toasts.map(t => <Toast key={t.key} text={t.text} icon={t.icon} ttl={t.ttl} onUndo={t.undo} onClose={() => dropToast(t.key)} />)}
-                      {desktop && <ShellToastItems open={on.revealPath} />}
+                      {/* The desktop's host toasts, and on every host what the page raises itself (a plugin button failing) */}
+                      <ShellToastItems open={on.revealPath} />
                     </div>
                   )}
                 </div>
@@ -1242,6 +1263,8 @@ export function Shell(p: ShellProps) {
 }
 
 interface ThreadProps {
+  // The session shown, for what plugin frames hear of it (plugins/outline.ts)
+  session?: string;
   turns: Turn[];
   running: boolean;
   wide: boolean;
@@ -1331,13 +1354,15 @@ function useExchangeWindow(
   }, [start]);
 
   const effectiveStart = start > 0 ? Math.min(start, Math.max(0, count - INITIAL_EXCHANGES)) : 0;
-  return { start: effectiveStart, quiet };
+  // Mount every exchange from `k` on now (a plugin's scrollTo an exchange not reached yet)
+  const showFrom = useCallback((k: number) => { if (k >= 0) setStart(cur => Math.min(cur, k)); }, []);
+  return { start: effectiveStart, quiet, showFrom };
 }
 
 // Conversation flow: stick-to-bottom following happens on transcript changes (new content / streaming growth) and on async growth
 // (images, diagrams) until the user touches the thread; user actions like expand / collapse never touch the scroll position —
 // the toggle under the mouse stays put while the content below it moves. Scrolling away from the bottom releases the follow; scrolling back to the bottom restores it
-const Thread = memo(function Thread({ turns, running, wide, replayKey, catchingUp, blobUrl, contentRef, commands, summons, subagents, forkedFrom, agents, agentId, onInspect, onPermission, onFailureAction, onSetGoal }: ThreadProps) {
+const Thread = memo(function Thread({ session, turns, running, wide, replayKey, catchingUp, blobUrl, contentRef, commands, summons, subagents, forkedFrom, agents, agentId, onInspect, onPermission, onFailureAction, onSetGoal }: ThreadProps) {
   useLocale();
   const ref = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
@@ -1384,6 +1409,8 @@ const Thread = memo(function Thread({ turns, running, wide, replayKey, catchingU
     exchangeSlots[exchangeSlots.length - 1]!.items.push({ ti, index });
   });
   const window = useExchangeWindow(exchangeSlots.length, ref, follow, opening);
+  const starts = exchangeSlots.map(e => e.key);
+  useSessionOutline(ref, session, turns, starts, running, { mount: turn => window.showFrom(starts.indexOf(turn)), release: () => follow.release() });
   // The prompt "Set as goal" hangs under: the last one the user typed, unless it was a slash command
   const goalPrompt = onSetGoal ? lastTypedPrompt(turns) : undefined;
   // The fork boundary follows the exchange that holds the last copied turn, as a row of its own: inside that exchange it
@@ -1439,7 +1466,7 @@ const Thread = memo(function Thread({ turns, running, wide, replayKey, catchingU
             // transcript render budget); the clip it brings is pushed out by --hit on the left and bottom, where row hit areas and
             // card shadows reach past the column, and on the right only as far as the thread's right padding (--hit-end), and the top edge stays put for the sentinel. An exchange ending in a reply's action
             // row pulls the next one up to a row gap: the row's own height already separates them (TurnActions).
-            <section data-exchange className="relative -ml-hit -mr-hit-end -mb-hit flex min-w-0 flex-col gap-msg pl-hit pr-hit-end pb-hit contain-paint has-[>:last-child>[data-turn-actions]:last-child]:-mb-[calc(var(--spacing-hit)+var(--spacing-msg-join))]">
+            <section data-exchange data-exchange-start={slot.key} className="relative -ml-hit -mr-hit-end -mb-hit flex min-w-0 flex-col gap-msg pl-hit pr-hit-end pb-hit contain-paint has-[>:last-child>[data-turn-actions]:last-child]:-mb-[calc(var(--spacing-hit)+var(--spacing-msg-join))]">
               {messages}
             </section>
           }{k === forkAfter && forkedFrom && <ForkBoundary origin={forkedFrom} agents={agents} agentId={agentId} />}</Fragment>;
