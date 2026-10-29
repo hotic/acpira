@@ -4,6 +4,7 @@
 //! acpira-gateway revoke ID [--home DIR]                                forget a device (an id prefix will do)
 //! acpira-gateway stop [--home DIR]
 //! acpira-gateway try LINK [--home DIR]                                 act as a device: pair, connect, list sessions
+//! acpira-gateway push-check TEAM [--topic ID] [--sandbox] [--home DIR]  whether APNs takes the key in <home>/apns/
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -48,12 +49,13 @@ pub async fn main() {
     Some("revoke") => revoke_cmd(&args).await,
     Some("stop") => control::request(&Paths::new(&home(&args).0).socket, &Request::Stop).await.map(|_| ()),
     Some("try") => try_cmd(&args).await,
+    Some("push-check") => push_check(&args).await,
     Some("--version") => {
       println!("acpira-gateway {VERSION}");
       Ok(())
     }
     _ => {
-      eprintln!("usage: acpira-gateway run | pair | devices | status [--json] | revoke ID | stop | try LINK   [--home DIR]");
+      eprintln!("usage: acpira-gateway run | pair | devices | status [--json] | revoke ID | stop | try LINK | push-check TEAM   [--home DIR]");
       std::process::exit(2);
     }
   };
@@ -61,6 +63,13 @@ pub async fn main() {
     eprintln!("acpira-gateway: {e:#}");
     std::process::exit(1);
   }
+}
+
+async fn push_check(args: &[String]) -> Result<()> {
+  let team = args.get(1).filter(|t| !t.starts_with("--")).ok_or_else(|| anyhow!("usage: acpira-gateway push-check TEAM [--topic ID] [--sandbox]"))?;
+  let topic = flag(args, "--topic").unwrap_or_else(|| "cc.hotic.acpira".into());
+  println!("{}", crate::push::check(&home(args).0, team, &topic, args.iter().any(|a| a == "--sandbox")).await?);
+  Ok(())
 }
 
 fn stderr_log() -> Log {

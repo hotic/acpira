@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use acpira_shared::devices::{GatewayRequest, GatewayStatus, RemoteAccessOp, RemoteAccessView};
+use acpira_shared::devices::{GatewayRequest, GatewayStatus, PushNote, RemoteAccessOp, RemoteAccessView};
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::Value;
 
@@ -340,6 +340,20 @@ impl RemoteAccess {
     if let Err(e) = r {
       (self.log)(&format!("remote access: reinstalling for {VERSION} failed: {e:#}"));
     }
+  }
+
+  /// A session wants the user: the gateway pushes it to the paired phones that asked for notifications. Nothing to
+  /// do while no gateway runs here; never waits on it
+  pub fn notify(&self, note: PushNote) {
+    if !self.socket().exists() {
+      return;
+    }
+    let Some(me) = self.me.upgrade() else { return };
+    tokio::spawn(async move {
+      if let Err(e) = me.request(&GatewayRequest::Notify(note)).await {
+        (me.log)(&format!("[remote] notify: {e:#}"));
+      }
+    });
   }
 
   /// One request on the control socket and its answer

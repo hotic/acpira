@@ -26,6 +26,7 @@ use crate::acp::session::CompactionPolicy;
 use crate::bridge_core::{BridgeCore, Post};
 use crate::external::chatgpt_store::ChatGptBridgeStore;
 use crate::i18n::{set_host_locale, tp};
+use acpira_shared::devices::{PushKind, PushNote};
 use crate::session_manager::{Attention, AttentionKind, ManagerDeps, SessionManager};
 use crate::settings::{SettingsCenter, SettingsDeps};
 use crate::sidecar::platform::{Affects, SidecarPlatform};
@@ -213,6 +214,7 @@ impl HostRuntime {
       Arc::new(move || p.prompt_layers())
     };
     let notify_p = platform.clone();
+    let notify_ra = remote_access.clone();
     let scope_p = platform.clone();
     let manager = SessionManager::new(
       registry,
@@ -253,19 +255,22 @@ impl HostRuntime {
         plugin_prompts: Some(plugin_prompts),
         plugin_runtime: Some(plugins.runtimes().clone()),
         host_mcp,
-        // Both switches are off by default (`notifySound` / `notifySystem`); read at each edge, so a change applies to the next one
+        // The paired phones hear of every edge (the gateway skips them while the user is at this computer); this
+        // computer's own chime and notification follow their switches, both off by default (`notifySound` /
+        // `notifySystem`) and read at each edge, so a change applies to the next one
         attention: Some(Arc::new(move |a: Attention| {
+          let (key, kind) = match a.kind {
+            AttentionKind::Waiting => ("host.attention.waiting", PushKind::Waiting),
+            AttentionKind::Done => ("host.attention.done", PushKind::Done),
+            AttentionKind::Error => ("host.attention.error", PushKind::Error),
+          };
+          let said = tp(key, &[("agent", &a.agent)]);
+          notify_ra.notify(PushNote { session_id: a.session_id.clone(), kind, title: a.title.clone(), subtitle: said.clone(), body: a.detail });
           let on = |k: &str| notify_p.read_setting(k).and_then(|v| v.as_bool()).unwrap_or(false);
           let (sound, system) = (on("notifySound"), on("notifySystem"));
-          if !sound && !system {
-            return;
+          if sound || system {
+            notify_p.attention(&a.session_id, &a.title, &said, sound, system);
           }
-          let key = match a.kind {
-            AttentionKind::Waiting => "host.attention.waiting",
-            AttentionKind::Done => "host.attention.done",
-            AttentionKind::Error => "host.attention.error",
-          };
-          notify_p.attention(&a.session_id, &a.title, &tp(key, &[("agent", &a.agent)]), sound, system);
         })),
       },
     );

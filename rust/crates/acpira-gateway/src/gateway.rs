@@ -50,6 +50,8 @@ pub struct Gateway {
   window: parking_lot::Mutex<Option<OpenWindow>>,
   live: parking_lot::Mutex<HashMap<String, Live>>,
   changed: tokio::sync::watch::Sender<u64>,
+  /// The devices' notification registrations and the APNs sender
+  push: Arc<crate::push::Push>,
   log: Log,
 }
 
@@ -81,6 +83,7 @@ impl Gateway {
       window: Default::default(),
       live: Default::default(),
       changed: tokio::sync::watch::channel(0).0,
+      push: crate::push::Push::load(&o.home, o.log.clone()),
       log: o.log,
     });
     (g.log)(&format!("gateway {} listening as {}", VERSION, g.ep.id()));
@@ -195,11 +198,17 @@ impl Gateway {
   /// Forget a device and drop its connection at once
   pub fn revoke(&self, id: &str) -> Result<bool> {
     let removed = self.devices.remove(id)?;
+    self.push.forget(id);
     if let Some(l) = self.live.lock().remove(id) {
       l.conn.close(close::REVOKED.into(), b"revoked");
     }
     self.bump();
     Ok(removed)
+  }
+
+  /// A session wants the user: tell the phones that registered for notifications
+  pub fn notify(&self, note: acpira_shared::devices::PushNote) {
+    self.push.send(note, self.ep.id().to_string());
   }
 
   pub fn rename(&self, id: &str, name: &str) -> Result<bool> {
@@ -307,8 +316,10 @@ async fn serve_device(g: Arc<Gateway>, conn: Connection, device: Device) {
           t.abort();
         }
         let (g2, conn2, who, dir) = (g.clone(), conn.clone(), who.clone(), sessions_dir.clone());
+        let (push, device_id) = (g.push.clone(), id.clone());
+        let on_push: bridge::OnPush = Arc::new(move |target| push.set(&device_id, target));
         current = Some(tokio::spawn(async move {
-          let ended = bridge::run(&g2.engine, &g2.log, &who, tx, rx, dir).await;
+          let ended = bridge::run(&g2.engine, &g2.log, &who, tx, rx, dir, on_push).await;
           (g2.log)(&format!("{}: {ended:?}", who.device));
           match ended {
             bridge::Ended::Behind => conn2.close(close::BEHIND.into(), b"behind"),

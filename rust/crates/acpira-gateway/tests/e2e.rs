@@ -242,8 +242,19 @@ fn a_phone_pairs_drives_a_session_and_is_revoked() {
       assert!(r.is_err(), "{sid}/{name}");
     }
 
+    // Notifications: the registration the phone sends is kept beside the devices, and goes with the device
+    let target = json!({ "token": "ab".repeat(32), "topic": "cc.hotic.acpira", "team": "TEAM", "sandbox": true });
+    p.tx.send(FrameKind::Control, json!({ "type": "push", "target": target }).to_string().as_bytes()).await.unwrap();
+    let registrations = || std::fs::read_to_string(home.path().join("devices").join("push.json")).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while registrations().is_none_or(|r| r[phone.id().to_string()] != target) {
+      assert!(Instant::now() < deadline, "the registration was not kept: {:?}", registrations());
+      tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
     // Revoked: the link drops at once, and the next dial is turned away
     assert!(g.revoke(&phone.id().to_string()).unwrap());
+    assert_eq!(registrations(), Some(json!({})));
     let why = tokio::time::timeout(Duration::from_secs(5), conn.closed()).await.unwrap();
     assert_eq!(link::close_code(&why), Some(close::REVOKED));
     let again = endpoint::dial(&phone, ticket.endpoint_addr(), ALPN_LINK, Duration::from_secs(10)).await.unwrap();

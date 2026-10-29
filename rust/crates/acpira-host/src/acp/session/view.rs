@@ -64,6 +64,34 @@ impl AcpSession {
     }
   }
 
+  /// What a notification about this session says below its title (`SessionManager::watch_attention`): the open card's
+  /// request while one waits, else the last turn's error, else its reply's opening. Plain text; empty when there is none
+  pub fn attention_detail(&self, waiting: bool) -> String {
+    let c = self.core.lock();
+    let mut agent_turns = visible_turns(&c).rev().filter_map(Turn::as_agent);
+    if waiting {
+      let card = agent_turns.flat_map(|a| a.blocks.iter().rev()).find_map(|b| match b {
+        AgentBlock::Permission(p) => Some(match p.command.as_deref().filter(|cmd| !p.title.contains(cmd)) {
+          Some(cmd) => format!("{}\n{cmd}", p.title),
+          None => p.title.clone(),
+        }),
+        AgentBlock::Question(q) if q.outcome.is_none() => q.questions.first().map(|x| x.text.clone()).or_else(|| q.message.clone()),
+        _ => None,
+      });
+      return card.map(|t| plain_opening(&t)).unwrap_or_default();
+    }
+    let Some(last) = agent_turns.next() else { return String::new() };
+    if last.stop == Some(TurnStop::Error)
+      && let Some(e) = &last.error
+    {
+      return plain_opening(&e.message);
+    }
+    last.blocks.iter().rev().find_map(|b| match b {
+      AgentBlock::Text(t) if !t.markdown.trim().is_empty() => Some(plain_opening(&t.markdown)),
+      _ => None,
+    }).unwrap_or_default()
+  }
+
   /// A background task the agent reported (AIR `asyncTasks`: Claude's background Bash, Monitor, workflows) still runs and
   /// is observed, or a summoned child the root turn left running. A task whose process went away is marked unknown on
   /// disconnect, so this cannot outlive the agent
@@ -387,5 +415,48 @@ impl RecordSource for AcpSession {
 
   fn record(&self) -> SessionRecord {
     self.to_record()
+  }
+}
+
+/// The opening of a Markdown text as plain lines for a notification: code blocks, markers and emphasis dropped, at most
+/// a few lines and a few hundred characters (the gateway clips again)
+pub(crate) fn plain_opening(md: &str) -> String {
+  const LINES: usize = 4;
+  const CHARS: usize = 400;
+  let mut out: Vec<String> = Vec::new();
+  let mut fenced = false;
+  for line in md.lines() {
+    let t = line.trim();
+    if t.starts_with("```") || t.starts_with("~~~") {
+      fenced = !fenced;
+      continue;
+    }
+    if fenced || t.is_empty() || t.chars().all(|c| matches!(c, '-' | '*' | '_' | '=' | '|' | ':' | ' ')) {
+      continue;
+    }
+    let t = t.trim_start_matches(['#', '>']).trim_start();
+    let t = t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")).or_else(|| t.strip_prefix("+ ")).unwrap_or(t);
+    let t: String = t.replace("**", "").replace("__", "").replace('`', "");
+    if !t.trim().is_empty() {
+      out.push(t.trim().to_owned());
+    }
+    if out.len() >= LINES {
+      break;
+    }
+  }
+  let text = out.join("\n");
+  if text.chars().count() <= CHARS { text } else { text.chars().take(CHARS - 1).chain(['…']).collect() }
+}
+
+#[cfg(test)]
+mod attention_tests {
+  use super::plain_opening;
+
+  #[test]
+  fn a_reply_opens_as_plain_lines() {
+    let md = "## Done\n\nFixed **the build** in `main.rs`.\n\n```rust\nfn main() {}\n```\n- tests pass\n---\n> note";
+    assert_eq!(plain_opening(md), "Done\nFixed the build in main.rs.\ntests pass\nnote");
+    assert_eq!(plain_opening(&"x".repeat(900)).chars().count(), 400);
+    assert_eq!(plain_opening("```\nonly code\n```"), "");
   }
 }

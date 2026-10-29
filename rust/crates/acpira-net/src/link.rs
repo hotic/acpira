@@ -36,6 +36,9 @@ pub enum Control {
   /// The gateway did not pass a message on: `what` is its type (`setSetting`, `openFile`, …), which only the computer
   /// itself may send (acpira-shared `devices::device_allowed`)
   Denied { what: String },
+  /// Device to gateway: where this device's notifications go, or none to stop them. A gateway that predates it reads
+  /// an unknown control frame and ignores it
+  Push { target: Option<acpira_shared::devices::PushTarget> },
 }
 
 /// Why the gateway closed a link: the QUIC application close code, which the device reads to say what happened

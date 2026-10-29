@@ -75,6 +75,10 @@ async fn client(g: Arc<Gateway>, s: UnixStream, stop: Arc<tokio::sync::Notify>) 
         g.reload();
         json!({ "ok": true })
       }
+      Request::Notify(note) => {
+        g.notify(note);
+        json!({ "ok": true })
+      }
       Request::Stop => {
         write(&mut w, &json!({ "ok": true })).await?;
         stop.notify_one();

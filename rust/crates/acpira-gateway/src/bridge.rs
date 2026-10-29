@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use acpira_net::frame::FrameKind;
 use acpira_net::link::{self, Control, EnvelopeRx, EnvelopeTx};
 use acpira_net::pair::DeviceKind;
-use acpira_shared::devices::device_allowed;
+use acpira_shared::devices::{PushTarget, device_allowed};
 use acpira_shared::protocol::WebviewMsg;
 use acpira_shared::sidecar::SIDECAR_PROTOCOL_VERSION;
 use serde_json::{Value, json};
@@ -43,8 +43,19 @@ pub enum Ended {
   NoHello,
 }
 
+/// Where a device's notifications go, or none to stop them (`Control::Push`, read before and after its hello)
+pub type OnPush = Arc<dyn Fn(Option<PushTarget>) + Send + Sync>;
+
 /// Runs until either side ends. `sessions_dir` receives the engine's (from `helloOk`) for the blob streams
-pub async fn run(spec: &EngineSpec, log: &Log, who: &Who, mut tx: EnvelopeTx, mut rx: EnvelopeRx, sessions_dir: Arc<parking_lot::Mutex<Option<PathBuf>>>) -> Ended {
+pub async fn run(
+  spec: &EngineSpec,
+  log: &Log,
+  who: &Who,
+  mut tx: EnvelopeTx,
+  mut rx: EnvelopeRx,
+  sessions_dir: Arc<parking_lot::Mutex<Option<PathBuf>>>,
+  on_push: OnPush,
+) -> Ended {
   let welcome = Control::Welcome { name: who.computer.clone(), version: who.version.clone(), protocol: SIDECAR_PROTOCOL_VERSION };
   if tx.send(FrameKind::Control, &link::control(&welcome)).await.is_err() {
     return Ended::Device;
@@ -52,13 +63,15 @@ pub async fn run(spec: &EngineSpec, log: &Log, who: &Who, mut tx: EnvelopeTx, mu
   // The device's hello, answering its pings meanwhile
   let hello = loop {
     match rx.next().await {
-      Ok(Some((FrameKind::Control, body))) => {
-        if let Ok(Control::Ping { n }) = serde_json::from_slice(&body)
-          && tx.send(FrameKind::Control, &link::control(&Control::Pong { n })).await.is_err()
-        {
-          return Ended::Device;
+      Ok(Some((FrameKind::Control, body))) => match serde_json::from_slice(&body) {
+        Ok(Control::Ping { n }) => {
+          if tx.send(FrameKind::Control, &link::control(&Control::Pong { n })).await.is_err() {
+            return Ended::Device;
+          }
         }
-      }
+        Ok(Control::Push { target }) => on_push(target),
+        _ => {}
+      },
       Ok(Some((FrameKind::Envelope, body))) => match serde_json::from_slice::<Value>(&body) {
         Ok(v) if v["type"] == "hello" => break v,
         _ => return Ended::NoHello,
@@ -140,11 +153,11 @@ pub async fn run(spec: &EngineSpec, log: &Log, who: &Who, mut tx: EnvelopeTx, mu
   let device_loop = async {
     loop {
       match rx.next().await {
-        Ok(Some((FrameKind::Control, body))) => {
-          if let Ok(Control::Ping { n }) = serde_json::from_slice(&body) {
-            push(FrameKind::Control, link::control(&Control::Pong { n }));
-          }
-        }
+        Ok(Some((FrameKind::Control, body))) => match serde_json::from_slice(&body) {
+          Ok(Control::Ping { n }) => push(FrameKind::Control, link::control(&Control::Pong { n })),
+          Ok(Control::Push { target }) => on_push(target),
+          _ => {}
+        },
         Ok(Some((FrameKind::Envelope, body))) => from_device(&body, &*push, &to_engine, log),
         _ => return,
       }
