@@ -973,21 +973,16 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
           <Search className="size-icon shrink-0" strokeWidth={1.5} />
           {searchInput}
         </label>
-        {/* The view menu ends the search row, so the row below is only there for what fills it */}
+        {/* One header row: new category and import sit beside the view menu, which ends the row. A second row for
+            two icons read as a stray empty line */}
+        {filing && workspace && (
+          <IconButton title={t('session.category.new')} aria-label={t('session.category.new')} onClick={() => createCategory(workspace)}>
+            <CategoryAddIcon />
+          </IconButton>
+        )}
+        {importer}
         {viewMenu(ROW_ACT)}
       </div>
-      {((filing && workspace) || importer) && (
-        <div className="flex min-w-0 shrink-0 items-center gap-1 px-1 pt-1">
-          <span className="ml-auto flex shrink-0 items-center">
-            {filing && workspace && (
-              <IconButton title={t('session.category.new')} aria-label={t('session.category.new')} onClick={() => createCategory(workspace)}>
-                <CategoryAddIcon />
-              </IconButton>
-            )}
-            {importer}
-          </span>
-        </div>
-      )}
       {summary}
       {/* The scroller bleeds through its container's padding (docked panel p-gap-half, popover p-1) and pads it back, so the
           thumb rides the panel edge, the divider runs edge to edge and the rows stay where they were. The gutter stays

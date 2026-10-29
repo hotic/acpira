@@ -86,12 +86,22 @@ export function ConnectionsPage({ env, projects, on, remote = true, chatgpt }: {
   </>;
 }
 
-// A host's state at a row's right edge: the dot and its words, every state's words laid out so a change never moves it
+// Every word a state on this page can show (SSH hosts, paired devices, ChatGPT). Each row's state reserves the widest and
+// sits at the end of it, so its last character lines up with the head actions' ("+ 添加主机") and a change moves nothing
+const STATE_WORDS: readonly MsgKey[] = [...STATES.map(s => STATE_NAME[s]), 'devices.state.online', 'devices.state.offline',
+  'chatgpt.checking', 'chatgpt.ready', 'chatgpt.notReady'];
+
+/** A row's state at its right edge: a dot and its word, ending on the row's text edge (only the dot when narrow) */
+export function StateCell({ ok, warn, word }: { ok: boolean; warn?: boolean; word: MsgKey }) {
+  return <StableText className="shrink-0 text-2 text-fg-2" itemClassName="flex items-center justify-self-end gap-1.5" current={word}
+    items={STATE_WORDS.map(k => ({ key: k, text: <>
+      <Dot ok={ok} warn={warn} label={k === word ? t(word) : undefined} />
+      <span className="@max-[600px]/settings-shell:hidden">{t(k)}</span>
+    </> }))} />;
+}
+
 function StateLine({ state }: { state: ConnectionState }) {
-  return <span className="flex items-center gap-1.5 text-2 text-fg-2">
-    <StateDot state={state} />
-    <StableText className="@max-[600px]/settings-shell:hidden" current={state} items={STATES.map(s => ({ key: s, text: t(STATE_NAME[s]) }))} />
-  </span>;
+  return <StateCell ok={state === 'connected'} warn={state === 'error'} word={STATE_NAME[state]} />;
 }
 
 // The state as a dot, its words the label and tooltip: green connected, amber failed, grey otherwise
@@ -229,9 +239,9 @@ function HostDialog({ view, env, projects, on, fresh, onClose }: { view: Connect
 
 // ChatGPT's row state: ready once the local receiver answers and the component runs, otherwise not connected yet
 function ChatGptState({ status }: { status?: ChatGptIntegrationStatus }) {
-  if (!status) return <Status>{t('chatgpt.checking')}</Status>;
+  if (!status) return <StateCell ok={false} word="chatgpt.checking" />;
   const ready = status.bridgeAvailable && status.desktopCommander?.process === 'detected';
-  return <Status ok={ready} warn={!ready}>{t(ready ? 'chatgpt.ready' : 'chatgpt.notReady')}</Status>;
+  return <StateCell ok={ready} warn={!ready} word={ready ? 'chatgpt.ready' : 'chatgpt.notReady'} />;
 }
 
 // ChatGPT as an external session source: Desktop Commander (the remote tool ChatGPT reaches this computer through) and

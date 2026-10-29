@@ -400,8 +400,10 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
             ))}
           </div>
         </fieldset>
-        {/* The live chips share one slot of the free width with the model side, however many sources there are */}
-        {(offered || contexts.length > 0) && <div className="flex min-w-0 max-w-fit flex-1 items-center gap-1">
+        {/* The live chips share one slot, however many sources there are, and give way first: the slot starts at its content
+            width and its huge shrink factor takes the whole shortfall before the model side loses a pixel. Splitting the free
+            width evenly instead let a long label push the model chip over the send button */}
+        {(offered || contexts.length > 0) && <div className="flex min-w-0 max-w-fit flex-[0_1000_auto] items-center gap-1">
           {offered && <SelectionChip selection={offered} cwd={p.cwd} on={offeredOn} narrow={liveNarrow} onToggle={() => setExcluded(offeredOn ? selectionKey(offered) : undefined)} />}
           {contexts.length > MAX_CONTEXT_CHIPS
             ? <ContextsMenu contexts={contexts} on={contextOn} narrow={liveNarrow} onToggle={toggleContext} onOpenChange={onOpenChange} />
@@ -409,7 +411,8 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
         </div>}
         {!p.edit && p.toolbarStart}
         {!p.edit && p.main && !!personas?.length && <SummonMenu personas={personas} onOpenChange={onOpenChange} onPick={persona => summon(persona.name, caret)} />}
-        <fieldset disabled={p.disabled || p.controlsLocked || sending} className="m-0 flex min-w-0 flex-1 items-center gap-1 border-0 p-0">
+        {/* flex-auto: the model side's base size is its content, so the live chips above shrink before it does */}
+        <fieldset disabled={p.disabled || p.controlsLocked || sending} className="m-0 flex min-w-0 flex-auto items-center gap-1 border-0 p-0">
           <div className="min-w-0 flex-1" />
           {[...other, ...(!models.length ? [...modelConfig, ...sidekick, ...sidekickEffort] : [])].map(c => (
             <OptionControl key={c.id} end control={c} hidden={p.hidden?.[c.id]} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />
