@@ -210,7 +210,8 @@ struct ContractTests {
     try checkStruct(user, try need(TS.interface(transcript, "UserTurn")), leftOut: ["role"])
     try checkStruct(try need(user.settings), try need(TS.interface(transcript, "TurnSettings")))
     let agentFields = try need(TS.interface(transcript, "AgentTurn"))
-    try checkStruct(agent, agentFields, leftOut: ["role"])
+    // Plugin confirmation cards are desktop-only; the iOS decoder intentionally ignores their envelope field.
+    try checkStruct(agent, agentFields, leftOut: ["role", "pluginCards"])
     try checkStruct(try need(agent.usage), try need(TS.interface(transcript, "TurnUsage")))
     try checkStruct(try need(agent.error), try need(TS.interface(transcript, "TurnError")))
     try checkStruct(try need(agent.command), try inline(agentFields, "command"))
