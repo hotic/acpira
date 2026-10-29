@@ -277,6 +277,8 @@ pub struct AcpSession {
   pub(crate) remote_calls: parking_lot::Mutex<std::collections::HashMap<String, remote_claude::RemoteCall>>,
   /// The `clientId`s of the actions this instance ran, newest last (`claim_client_id`)
   client_ids: parking_lot::Mutex<std::collections::VecDeque<String>>,
+  /// `plugin_activate` calls waiting on their card, by card id (`plugin_card.rs`)
+  pub(crate) plugin_waits: parking_lot::Mutex<std::collections::HashMap<String, plugin_card::PluginWait>>,
 }
 
 /// How many `clientId`s a session remembers: a device resends within seconds of losing its link, never hundreds of
@@ -418,6 +420,7 @@ impl AcpSession {
         host_stdio: Default::default(),
         remote_calls: Default::default(),
         client_ids: Default::default(),
+        plugin_waits: Default::default(),
       }
     })
   }

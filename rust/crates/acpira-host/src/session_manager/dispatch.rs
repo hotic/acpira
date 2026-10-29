@@ -23,6 +23,7 @@ pub(super) fn is_execution(m: &WebviewMsg) -> bool {
       | W::Stop { .. }
       | W::Permission { .. }
       | W::Answer { .. }
+      | W::PluginCard { .. }
       | W::BuildPlan { .. }
       | W::SetMode { .. }
       | W::SetConfig { .. }
@@ -176,6 +177,13 @@ impl SessionManager {
           && s.claim_client_id(client_id.as_deref())
         {
           s.answer_questions(&block_id, &answers, skip == Some(true));
+        }
+      }
+      W::PluginCard { session_id, card, op } => {
+        if valid(&session_id)
+          && let Some(s) = self.live(&session_id)
+        {
+          s.plugin_card(&card, op).await;
         }
       }
       W::BuildPlan { session_id, plan_id, option_id, model } => {

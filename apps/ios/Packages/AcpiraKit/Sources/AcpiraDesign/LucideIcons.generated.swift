@@ -88,6 +88,7 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case laptop
   case layers
   case layoutGrid
+  case layoutPanelLeft
   case letterText
   case lifeBuoy
   case link
@@ -116,6 +117,7 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case palette
   case panelLeft
   case panelRight
+  case panelTop
   case panelsTopLeft
   case paperclip
   case pause
@@ -258,6 +260,7 @@ extension LucideIcon {
     case .laptop: [.path("M18 5a2 2 0 0 1 2 2v8.526a2 2 0 0 0 .212.897l1.068 2.127a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45l1.068-2.127A2 2 0 0 0 4 15.526V7a2 2 0 0 1 2-2z"), .path("M20.054 15.987H3.946")]
     case .layers: [.path("M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"), .path("M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"), .path("M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17")]
     case .layoutGrid: [.rect(x: 3, y: 3, width: 7, height: 7, rx: 1), .rect(x: 14, y: 3, width: 7, height: 7, rx: 1), .rect(x: 14, y: 14, width: 7, height: 7, rx: 1), .rect(x: 3, y: 14, width: 7, height: 7, rx: 1)]
+    case .layoutPanelLeft: [.rect(x: 3, y: 3, width: 7, height: 18, rx: 1), .rect(x: 14, y: 3, width: 7, height: 7, rx: 1), .rect(x: 14, y: 14, width: 7, height: 7, rx: 1)]
     case .letterText: [.path("M15 5h6"), .path("M15 12h6"), .path("M3 19h18"), .path("m3 12 3.553-7.724a.5.5 0 0 1 .894 0L11 12"), .path("M3.92 10h6.16")]
     case .lifeBuoy: [.circle(cx: 12, cy: 12, r: 10), .path("m4.93 4.93 4.24 4.24"), .path("m14.83 9.17 4.24-4.24"), .path("m14.83 14.83 4.24 4.24"), .path("m9.17 14.83-4.24 4.24"), .circle(cx: 12, cy: 12, r: 4)]
     case .link: [.path("M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"), .path("M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71")]
@@ -286,6 +289,7 @@ extension LucideIcon {
     case .palette: [.path("M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z"), .circle(cx: 13.5, cy: 6.5, r: 0.5), .circle(cx: 17.5, cy: 10.5, r: 0.5), .circle(cx: 6.5, cy: 12.5, r: 0.5), .circle(cx: 8.5, cy: 7.5, r: 0.5)]
     case .panelLeft: [.rect(x: 3, y: 3, width: 18, height: 18, rx: 2), .path("M9 3v18")]
     case .panelRight: [.rect(x: 3, y: 3, width: 18, height: 18, rx: 2), .path("M15 3v18")]
+    case .panelTop: [.rect(x: 3, y: 3, width: 18, height: 18, rx: 2), .path("M3 9h18")]
     case .panelsTopLeft: [.rect(x: 3, y: 3, width: 18, height: 18, rx: 2), .path("M3 9h18"), .path("M9 21V9")]
     case .paperclip: [.path("m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551")]
     case .pause: [.rect(x: 14, y: 3, width: 5, height: 18, rx: 1), .rect(x: 5, y: 3, width: 5, height: 18, rx: 1)]

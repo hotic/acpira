@@ -18,7 +18,69 @@ pub const SDK_PY_FILE: &str = "acpira_plugin.py";
 pub const SDK_DIR: &str = ".sdk";
 
 /// What `acpira plugin new --kind` takes, the default first
-pub const KINDS: &[&str] = &["runtime", "tool", "command", "skill", "provider", "theme", "agent"];
+pub const KINDS: &[&str] = &["runtime", "tool", "command", "skill", "provider", "theme", "ui", "agent"];
+
+/// The backdrop runtime and the scenes `plugin new --kind theme --scene` starts from (`backdrop/`)
+const BACKDROP_RUNTIME: &str = include_str!("backdrop/runtime.js");
+const BACKDROP_HELPERS: &str = include_str!("backdrop/helpers.js");
+const CAT: &str = include_str!("backdrop/cat.html");
+
+/// A built-in scene: its script and the skin it comes with (name, base, seed tokens, one line)
+pub struct Scene {
+  pub id: &'static str,
+  pub name: &'static str,
+  pub description: &'static str,
+  pub base: &'static str,
+  /// `--bg-0`, `--fg-1`, `--brand`: the page derives the other colours from these
+  pub seeds: [&'static str; 3],
+  script: &'static str,
+}
+
+/// What `--scene` takes, the default first
+pub const SCENES: &[Scene] = &[
+  Scene {
+    id: "deepsea",
+    name: "Deep sea",
+    description: "Jellyfish pulsing upward through the dark, kelp swaying below",
+    base: "dark",
+    seeds: ["#031420", "#e2eef4", "#6fd8f2"],
+    script: include_str!("backdrop/deepsea.js"),
+  },
+  Scene {
+    id: "inkhills",
+    name: "Ink hills",
+    description: "Ink-wash ranges fading into mist, a boat on the river",
+    base: "light",
+    seeds: ["#f3efe6", "#24221e", "#b4442f"],
+    script: include_str!("backdrop/inkhills.js"),
+  },
+  Scene {
+    id: "fireflies",
+    name: "Fireflies",
+    description: "A summer night meadow, fireflies over the grass",
+    base: "dark",
+    seeds: ["#0c1511", "#e6ede2", "#c6e86a"],
+    script: include_str!("backdrop/fireflies.js"),
+  },
+  Scene {
+    id: "aurora",
+    name: "Aurora",
+    description: "Northern lights over a snowy range, mirrored in a lake",
+    base: "dark",
+    seeds: ["#0a0f1b", "#e4ebf6", "#53dcb4"],
+    script: include_str!("backdrop/aurora.js"),
+  },
+];
+
+/// What a scaffolded scene file starts with: the contract it is drawn under
+const SCENE_HEAD: &str = "// A scene for Acpira's glyph renderer (plugin.json `theme.scene`). Define `const SCENE` with:\n// paint(c, w, h, cols, rows) draws the still background once per size on a 2D canvas; setup(cols, rows) and\n// frame(t, cols, rows) prepare what moves; cell(x, y, t, o) sets one cell with set(o, glyph, r, g, b) (colours 0 to 1)\n// and adds soft light with light(o, r, g, b). Helpers: noise1, noise2, hash, fract, smooth, clamp, mix, ramp. CW and CH\n// are a cell's size in CSS pixels. The renderer (frame cap, pausing, WebGL or 2D) is Acpira's and is not in this file.\n";
+
+/// A scene's backdrop document: the scene and the renderer that draws it, the running Acpira's (`theme.scene`)
+pub fn backdrop_html(scene: &str) -> String {
+  format!(
+    "<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<style>html,body{{margin:0;height:100%;overflow:hidden;background:#000}}canvas{{display:block;width:100vw;height:100vh}}</style>\n</head>\n<body>\n<canvas id=\"c\"></canvas>\n<script>\n// The scene: paint(c, w, h, cols, rows) draws the still background once per size on a 2D canvas; setup(cols, rows)\n// and frame(t, cols, rows) prepare what moves; cell(x, y, t, o) sets one cell with set(o, glyph, r, g, b) (colours\n// 0 to 1) and adds soft light with light(o, r, g, b). CW and CH are a cell's size in CSS pixels\n{BACKDROP_HELPERS}\n{scene}</script>\n<script>\n{BACKDROP_RUNTIME}</script>\n</body>\n</html>\n"
+  )
+}
 
 /// What `acpira plugin new --lang` takes for the runtime and the tool, the default first
 pub const LANGS: &[&str] = &["node", "python"];
@@ -120,6 +182,14 @@ You are {id}, an assistant for one job: say here what it is, in one or two sente
 
 /// The manifest and files of a new plugin `id` contributing `kinds`, its runtime and tool in `lang`
 pub fn files(id: &str, kinds: &[&str], lang: &str) -> Result<(Value, Vec<(&'static str, String)>)> {
+  files_with(id, kinds, lang, SCENES[0].id)
+}
+
+/// `files`, the theme's backdrop drawn from the built-in scene `scene`
+pub fn files_with(id: &str, kinds: &[&str], lang: &str, scene: &str) -> Result<(Value, Vec<(&'static str, String)>)> {
+  let Some(scene) = SCENES.iter().find(|s| s.id == scene) else {
+    bail!("`{scene}` is not a scene: {}", SCENES.iter().map(|s| s.id).collect::<Vec<_>>().join(", "));
+  };
   let py = match lang {
     "node" => false,
     "python" => true,
@@ -169,8 +239,19 @@ pub fn files(id: &str, kinds: &[&str], lang: &str) -> Result<(Value, Vec<(&'stat
           json!([{ "id": id, "name": id, "format": "openai-chat", "baseUrl": "http://127.0.0.1:8080/v1", "keyEnv": env, "models": [{ "id": "model-id", "context": 128000 }] }]),
         );
       }
+      // A skin: three seed colours the page derives the rest from, a backdrop behind frosted surfaces
       "theme" => {
-        contributes.insert("theme".into(), json!({ "tokens": { "--bg-0": "#1b1a18" } }));
+        let [bg, fg, brand] = scene.seeds;
+        contributes.insert(
+          "theme".into(),
+          json!({ "base": scene.base, "glass": "veil", "scene": "scene.js", "tokens": { "--bg-0": bg, "--fg-1": fg, "--brand": brand } }),
+        );
+        files.push(("scene.js", format!("{SCENE_HEAD}{}", scene.script)));
+      }
+      // An interface piece sized for the composer's top edge: a glyph cat that follows the session's state
+      "ui" => {
+        contributes.insert("ui".into(), json!([{ "id": "cat", "slot": "composer.above", "title": "Cat", "html": "cat.html", "width": 180, "height": 60 }]));
+        files.push(("cat.html", CAT.into()));
       }
       // A specialised agent: Acpira's loop with this prompt and only these tools; the plugin's own tool when there is one
       "agent" => {
@@ -203,7 +284,19 @@ pub fn files(id: &str, kinds: &[&str], lang: &str) -> Result<(Value, Vec<(&'stat
 
 /// Write the folder `<root>/<id>/`, which must not exist yet; the path of the folder
 pub fn scaffold(root: &Path, id: &str, kinds: &[&str], lang: &str) -> Result<PathBuf> {
-  let (m, files) = files(id, kinds, lang)?;
+  scaffold_with(root, id, kinds, lang, SCENES[0].id)
+}
+
+/// `scaffold` with the theme's scene picked
+pub fn scaffold_with(root: &Path, id: &str, kinds: &[&str], lang: &str, scene: &str) -> Result<PathBuf> {
+  let (mut m, files) = files_with(id, kinds, lang, scene)?;
+  // A plugin that is only a skin is named after its scene
+  if kinds == ["theme"]
+    && let Some(s) = SCENES.iter().find(|s| s.id == scene)
+  {
+    m["name"] = json!(s.name);
+    m["description"] = json!(s.description);
+  }
   let dir = root.join(id);
   if dir.exists() {
     bail!("{} exists already", dir.display());
@@ -235,7 +328,7 @@ mod tests {
     assert!(pf.ok() && pf.notes.is_empty(), "{pf:?}");
     assert_eq!(std::fs::read_to_string(py.join(SDK_PY_FILE)).unwrap(), SDK_PY);
     assert!(scaffold(tmp.path(), "rb", &["tool"], "ruby").unwrap_err().to_string().contains("not a language"));
-    assert_eq!(m.contributes.kinds(), ["tools", "theme", "agent", "runtime", "skills", "commands", "providers"]);
+    assert_eq!(m.contributes.kinds(), ["tools", "theme", "agent", "runtime", "skills", "commands", "providers", "ui"]);
     // The agent lists the plugin's own tool and skill, and the runtime guards that agent alone
     let agent = m.contributes.agent.as_ref().unwrap();
     assert_eq!(agent["builtin"]["tools"], json!(["read", "grep", "todo", "question", "plugin:hello", "skill"]));
@@ -245,6 +338,25 @@ mod tests {
     assert_eq!(m.contributes.providers[0]["keyEnv"], "MY_KIT_API_KEY");
     assert!(scaffold(tmp.path(), "my-kit", &["tool"], "node").unwrap_err().to_string().contains("exists already"));
     assert!(scaffold(tmp.path(), "Bad", &["tool"], "node").is_err() && scaffold(tmp.path(), "ok", &["widget"], "node").is_err());
+  }
+
+  #[test]
+  fn every_scene_scaffolds_a_skin_that_passes_the_check() {
+    let tmp = tempfile::tempdir().unwrap();
+    for scene in SCENES {
+      let id = format!("skin-{}", scene.id);
+      let dir = scaffold_with(tmp.path(), &id, &["theme"], "node", scene.id).unwrap();
+      let (m, mut f) = manifest::parse(&std::fs::read(dir.join(manifest::FILE)).unwrap()).unwrap();
+      manifest::check(&m, &id, &dir, &|_| false, &mut f);
+      assert!(f.ok() && f.notes.is_empty(), "{}: {f:?}", scene.id);
+      let theme = m.contributes.theme.as_ref().unwrap();
+      assert_eq!(theme.base.as_deref(), Some(scene.base));
+      // Only the scene is in the plugin; the document around it is the renderer's
+      let script = std::fs::read_to_string(dir.join(theme.scene.as_ref().unwrap())).unwrap();
+      assert!(theme.backdrop.is_none() && script.contains("const SCENE") && !script.contains("acpira: 'drawn'"), "{}", scene.id);
+      assert!(backdrop_html(&script).contains("acpira: 'drawn'") && (script.len() as u64) < manifest::SCENE_MAX_BYTES, "{}", scene.id);
+    }
+    assert!(scaffold_with(tmp.path(), "x", &["theme"], "node", "rain").unwrap_err().to_string().contains("not a scene"));
   }
 
   #[test]

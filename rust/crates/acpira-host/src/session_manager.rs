@@ -715,6 +715,7 @@ fn session_id_of(m: &WebviewMsg) -> Option<String> {
     | W::OpenInEditor { session_id } => session_id.clone(),
     W::Permission { session_id, .. }
     | W::Answer { session_id, .. }
+    | W::PluginCard { session_id, .. }
     | W::BuildPlan { session_id, .. }
     | W::OpenPlan { session_id, .. }
     | W::ForkSession { session_id, .. }

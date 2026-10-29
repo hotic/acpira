@@ -8,17 +8,21 @@ const TOKENS = [
   '--fg-1', '--fg-2', '--fg-3', '--fg-strong', '--bg-0', '--bg-1', '--bg-2', '--bg-code', '--line', '--line-strong', '--hover',
   '--active', '--focus', '--chip', '--ok', '--warn', '--danger', '--brand', '--font', '--font-mono', '--ui-font-size',
   '--code-font-size', '--row', '--r-sm', '--r-md', '--r-lg', '--gap', '--pad',
+  // What the native-look kit (plugins/kit.ts) builds on
+  '--chip-hover', '--ctl', '--ctl-sm', '--input-bg', '--text-2', '--text-3', '--conversation-line',
 ];
 
-function tokensOf(el: Element): string {
+export function tokensOf(el: Element): string {
   const style = getComputedStyle(el);
-  const light = !!el.closest('[data-theme="light"]') || document.body.classList.contains('vscode-light');
+  // The nearest scheme the page states (a skin's base among them), the host's only without one
+  const stated = el.closest('[data-theme]')?.getAttribute('data-theme');
+  const light = stated ? stated === 'light' : document.body.classList.contains('vscode-light');
   return [`color-scheme: ${light ? 'light' : 'dark'}`, ...TOKENS.map(name => [name, style.getPropertyValue(name).trim()] as const)
     .filter(([, v]) => v).map(([name, v]) => `${name}: ${v}`)].join('; ');
 }
 
 // A short name of a document, so a new version makes a new frame without a 256 KB key
-function digest(text: string): string {
+export function digest(text: string): string {
   let h = 0x811c9dc5;
   for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
   return `${text.length}-${(h >>> 0).toString(36)}`;

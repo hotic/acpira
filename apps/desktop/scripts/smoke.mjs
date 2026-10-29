@@ -435,6 +435,33 @@ document.addEventListener('securitypolicyviolation', () => { seen.blocked = true
     await page.press('the tool panel toggle', `document.querySelector('[data-panel-toggle] button')`);
     await page.waitFor('the tool panel closed', `!${panelShown}`);
 
+    // A skin from the scaffold (a deep-sea backdrop and the cat on the composer): enabled as the plugin page does, its
+    // tokens and scheme take the page, its backdrop runs behind the shell in the frame document, the cat sits on the
+    // composer; switched off, all of it goes
+    execFileSync(agentsBin, ['plugin', 'new', 'smoke-skin', '--kind', 'theme,ui', '--scene', 'deepsea', '--home', data], { stdio: 'ignore' });
+    // The same piece in the toolbar, the header and the column's foot, each at the box its slot asks for
+    const skinManifest = join(data, 'plugins', 'smoke-skin', 'plugin.json');
+    const manifest = JSON.parse(readFileSync(skinManifest, 'utf8'));
+    manifest.contributes.ui.push(
+      { id: 'chip', slot: 'composer.toolbar', title: 'Chip', html: 'cat.html', width: 60, height: 20 },
+      { id: 'status', slot: 'statusbar', title: 'Status', html: 'cat.html', width: 40, height: 20 },
+      { id: 'foot', slot: 'sidebar', title: 'Foot', html: 'cat.html', height: 40 },
+    );
+    writeFileSync(skinManifest, JSON.stringify(manifest, null, 2));
+    await page.eval(`window.__acpiraApi.postMessage({ type: 'pluginAction', action: { op: 'enable', id: 'smoke-skin' } })`);
+    const skinned = `document.querySelector('.acp-shell[data-skin="smoke-skin"][data-backdrop][data-theme="dark"]')`;
+    const slotFrames = `['composer.toolbar', 'statusbar', 'sidebar'].every(s => !!document.querySelector('[data-plugin-slot="' + s + '"] iframe'))`;
+    await page.waitFor('the skin', `!!${skinned} && !!document.querySelector('[data-skin-backdrop] iframe[src$="/plugin-frame.html"]') && !!document.querySelector('[data-plugin-above] iframe') && ${slotFrames} && /#031420/.test(document.getElementById('acpira-plugin-theme')?.textContent ?? '')`);
+    if (shotDir) { await sleep(800); await page.shot(join(shotDir, 'skin.png')); }
+    // The skin picker's action: none keeps the plugin's pieces and drops its look, picking it again brings it back
+    await page.eval(`window.__acpiraApi.postMessage({ type: 'pluginAction', action: { op: 'skin' } })`);
+    await page.waitFor('no skin', `!document.querySelector('.acp-shell[data-skin]') && !document.querySelector('[data-skin-backdrop]') && ${slotFrames}`);
+    await page.eval(`window.__acpiraApi.postMessage({ type: 'pluginAction', action: { op: 'skin', id: 'smoke-skin' } })`);
+    await page.waitFor('the skin picked again', `!!${skinned}`);
+    await page.eval(`window.__acpiraApi.postMessage({ type: 'pluginAction', action: { op: 'disable', id: 'smoke-skin' } })`);
+    await page.waitFor('the skin gone', `!document.querySelector('.acp-shell[data-skin]') && !document.querySelector('[data-skin-backdrop], [data-plugin-above], [data-plugin-slot]') && !document.getElementById('acpira-plugin-theme')`);
+    say('a skin takes the page with its backdrop and pieces in four slots, can be set aside and picked again, and goes with its plugin');
+
     // A language change re-renders in place, and the menu bar follows the shared settings file
     await page.eval(`(window.__smokeNodes = [document.querySelector('[data-session-panel]'), document.querySelector('[data-session][aria-selected="true"]')]).every(Boolean)`);
     const english = await page.call({ op: 'menuBar' });

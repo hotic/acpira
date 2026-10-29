@@ -1132,6 +1132,53 @@ pub struct AgentTurn {
   pub command: Option<CommandReceipt>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub retry: Option<TurnRetry>,
+  /// Plugins an agent of this turn offered (`plugin_activate`), shown after the reply and clickable for good
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub plugin_cards: Vec<PluginCard>,
+}
+
+/// A plugin card (`docs/dev/plugins.md`, Activation): the frozen version an agent asked to enable, as the user sees it
+/// in the transcript. Its state (offered, in effect, replaced) is read from the plugins' state, not kept here; only what
+/// applying it from this card changed is, so the card can put it back
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginCard {
+  /// Unique within the session
+  pub id: String,
+  pub plugin: String,
+  /// The frozen version it offers
+  pub snapshot: String,
+  pub name: String,
+  #[serde(default)]
+  pub description: String,
+  /// `skin` (a theme), `ui` (interface pieces), `agent` (a specialised agent), `exec` (runs a program), `other`
+  pub kind: String,
+  /// What it runs, for `exec`: the first command, as the card names it
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub runs: Option<String>,
+  /// The slots its interface pieces take, for the thumbnail's map
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub slots: Vec<String>,
+  /// The source folder, which the corner button reveals
+  #[serde(default)]
+  pub folder: String,
+  #[serde(default, deserialize_with = "crate::num::lenient_i64")]
+  pub at: i64,
+  /// Set when it was applied from this card: what was in effect before
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub undo: Option<PluginCardUndo>,
+}
+
+/// What a plugin card's apply replaced: the plugin's own entry and the skin in effect
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginCardUndo {
+  /// The version enabled before, none when it was off
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub snapshot: Option<String>,
+  /// The skin before (the plugin id), empty for none; absent when the card is not a skin
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub skin: Option<String>,
 }
 
 /// A provider retry in progress. It lives in the turn's working label, never as a transcript row, and is cleared as

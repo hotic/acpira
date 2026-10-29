@@ -1,0 +1,68 @@
+/* Plugin skins (docs/dev/plugins.md Interface). A theme plugin's seed tokens arrive in the plugins' theme layer
+   (pluginTheme.ts) on `.acp-shell.acp-shell[data-skin]`, above palette.css's automatic derivation; these rules let a
+   skin's backdrop through the page's surfaces. Only where a backdrop runs (`data-backdrop`, the desktop's conversation
+   layout): the shell's own fill goes and its surfaces let the fixed layer under the page through.
+   Glass tiers: how much of each surface is the skin's --bg-0. `veil` and `calm` have no backdrop-filter (no blur pass
+   per frame, and blur turns small glyphs into bokeh); `frost` blurs. */
+/* Custom properties only, so unlayered: desktop.css sets --canvas outside any layer */
+.acp-shell.acp-shell.acp-shell[data-backdrop][data-desktop] { --canvas: transparent; }
+/* The palette a skin's seeds derive, in every theme setting: palette.css derives only in automatic mode and there
+   prefers the host's own colours (VS Code's, or the desktop body's scheme), which belong to another scheme than the
+   skin's base. The theme layer's seeds rule has the same selector and comes later, so a token the skin sets wins */
+.acp-shell.acp-shell[data-skin] {
+  --fg-2: color-mix(in srgb, var(--fg-1) 78%, var(--bg-0));
+  --fg-3: color-mix(in srgb, var(--fg-1) 64%, var(--bg-0));
+  --fg-strong: var(--fg-1);
+  --action-fg: var(--fg-2);
+  --shimmer-base: var(--action-fg);
+  --bg-1: color-mix(in srgb, var(--bg-0), var(--fg-1) 3%);
+  --bg-2: color-mix(in srgb, var(--bg-0), var(--fg-1) 6%);
+  --bg-code: var(--bg-1);
+  --line: color-mix(in srgb, var(--fg-1) 10%, transparent);
+  --line-strong: color-mix(in srgb, var(--fg-1) 22%, var(--bg-0));
+  --conversation-line: color-mix(in srgb, var(--fg-1) 16%, transparent);
+  --conversation-line-focus: color-mix(in srgb, var(--fg-1) 36%, transparent);
+  --hover: color-mix(in srgb, var(--fg-1) 6%, transparent);
+  --active: color-mix(in srgb, var(--fg-1) 11%, transparent);
+  --chip: color-mix(in srgb, var(--fg-1) 8%, transparent);
+  --chip-hover: color-mix(in srgb, var(--fg-1) 18%, transparent);
+  --widget-bg: var(--bg-1); --widget-fg: var(--fg-1); --widget-border: var(--line-strong);
+  --menu-bg: var(--widget-bg); --menu-fg: var(--widget-fg); --menu-border: var(--widget-border); --menu-separator: var(--line);
+  --suggest-bg: var(--widget-bg); --suggest-fg: var(--widget-fg); --suggest-border: var(--widget-border);
+  --input-bg: var(--bg-1); --input-fg: var(--fg-1); --input-placeholder: var(--fg-3); --input-border: var(--conversation-line);
+  --cmp-bg: var(--input-bg); --cmp-bg-lift: var(--input-bg);
+  --option-hover-bg: var(--hover); --option-hover-fg: var(--fg-1);
+  --option-selected-bg: var(--active); --option-selected-fg: var(--fg-1);
+}
+@layer components {
+  .acp-shell.acp-shell[data-backdrop] { isolation: isolate; background: transparent; --glass-sheet: 70%; --glass-column: 46%; }
+  .acp-shell.acp-shell[data-backdrop][data-glass="calm"] { --glass-sheet: 84%; --glass-column: 62%; }
+  .acp-shell.acp-shell[data-backdrop][data-glass="frost"] { --glass-sheet: 68%; --glass-column: 50%; }
+  /* Mounted beside the shells (App.tsx), behind the whole page; only a shell with data-backdrop lets it through */
+  [data-skin-backdrop] { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; }
+  .acp-shell[data-backdrop] > [data-session-panel] { background: color-mix(in srgb, var(--bg-0) var(--glass-column), transparent); }
+  /* A narrow window's list is a page over the sheet: it stays all but opaque */
+  .acp-shell[data-backdrop] > [data-session-panel][data-docked="false"] { background: color-mix(in srgb, var(--bg-0) 94%, transparent); }
+  .acp-shell[data-backdrop][data-desktop]:not([data-caption]) [data-sheet] { background: color-mix(in srgb, var(--bg-0) var(--glass-sheet), transparent); }
+  /* A page-drawn caption (Windows, Linux) draws the sheet's card on ::before, as it does the docked subagent pane's */
+  .acp-shell[data-backdrop][data-desktop][data-caption] [data-sheet]::before,
+  .acp-shell[data-backdrop][data-desktop] > [data-subagent-panel="docked"]::before { background: color-mix(in srgb, var(--bg-0) var(--glass-sheet), transparent); }
+  .acp-shell[data-backdrop] [data-tool-panel-wrap] { --panel-bg: color-mix(in srgb, var(--bg-0) var(--glass-sheet), transparent); }
+  .acp-shell[data-backdrop][data-glass="frost"] > [data-session-panel],
+  .acp-shell[data-backdrop][data-glass="frost"][data-desktop]:not([data-caption]) [data-sheet],
+  .acp-shell[data-backdrop][data-glass="frost"][data-desktop][data-caption] [data-sheet]::before,
+  .acp-shell[data-backdrop][data-glass="frost"][data-desktop] > [data-subagent-panel="docked"]::before,
+  .acp-shell[data-backdrop][data-glass="frost"] [data-tool-panel-wrap] {
+    backdrop-filter: blur(22px) saturate(1.15);
+    -webkit-backdrop-filter: blur(22px) saturate(1.15);
+  }
+
+  /* composer.above: pieces overhang the transcript's last lines from the dock's top edge (the plan card, a question or
+     the composer, whichever is highest), at its end; they take no room and no clicks, so what is under them stays usable */
+  [data-plugin-above] { position: relative; height: 0; }
+  [data-plugin-above] > div { position: absolute; right: calc(var(--spacing-dock) + var(--pad)); bottom: -4px; display: flex; align-items: flex-end; gap: var(--gap); pointer-events: none; }
+  [data-plugin-above] iframe { pointer-events: none; }
+
+  /* A plugin card's thumbnail (plugins/PluginCard.tsx): a small landscape window, the size the LAB settled on */
+  [data-plugin-thumb] { width: 112px; height: 70px; }
+}

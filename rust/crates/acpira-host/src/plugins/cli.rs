@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crate::plugins::host::{PluginHost, describe};
 use crate::plugins::store::Provenance;
 
-const USAGE: &str = "usage: acpira plugin list [--json] | new <id> [--kind runtime,tool,command,skill,provider,theme,agent] [--lang node|python] | propose <id> | disable <id> | rollback <id>";
+const USAGE: &str = "usage: acpira plugin list [--json] | new <id> [--kind runtime,tool,command,skill,provider,theme,ui,agent] [--lang node|python] [--scene deepsea|inkhills|fireflies|aurora] | propose <id> | disable <id> | rollback <id>";
 
 fn host(home: &Path) -> Arc<PluginHost> {
   PluginHost::new(home.join(crate::plugins::DIR), false, Arc::new(|line| eprintln!("[acpira] {line}")))
@@ -49,7 +49,8 @@ pub async fn plugin(args: &[String], home: &Path) -> i32 {
         None => vec![crate::plugins::sdk::KINDS[0]],
       };
       let lang = args.iter().position(|a| a == "--lang").and_then(|i| args.get(i + 1)).map(String::as_str).unwrap_or(crate::plugins::sdk::LANGS[0]);
-      match crate::plugins::sdk::scaffold(host.store().root(), id, &kinds, lang) {
+      let scene = args.iter().position(|a| a == "--scene").and_then(|i| args.get(i + 1)).map(String::as_str).unwrap_or(crate::plugins::sdk::SCENES[0].id);
+      match crate::plugins::sdk::scaffold_with(host.store().root(), id, &kinds, lang, scene) {
         Ok(dir) => {
           println!("{}", dir.display());
           println!("Edit plugin.json and the files beside it, then call plugin_activate with `{id}` (or `acpira plugin propose {id}`).");

@@ -11,6 +11,7 @@ import { AgentMark } from './AgentMark';
 import { elapsedDuration } from './folding';
 import { forkTargets, modelLabel, replyMarkdown, turnOutputTps, turnTtft } from './turnActionHelpers';
 import { hasTurnContent } from './turnOutcome';
+import { PluginActions } from '../plugins/MessageActions';
 
 // What the turn action row needs from the shell: the session it belongs to, the control list for resolving the model
 // name, and the fork action with the agents it can continue on — absent for external (ChatGPT) sessions and in hosts
@@ -41,6 +42,7 @@ export function TurnActions({ turn, turnIndex, settings }: { turn: AgentTurn; tu
       data-turn-actions
       className="-mt-gap flex h-ctl-sm items-center justify-end gap-0.5 opacity-0 transition-opacity duration-(--code-copy-duration) ease-out group-hover/turn:opacity-100 group-focus-within/turn:opacity-100 [@media(hover:none)]:opacity-100 motion-reduce:transition-none data-[open]:opacity-100"
     >
+      {ctx && reply && <PluginActions session={ctx.sessionId} turn={turnIndex} text={reply} />}
       {reply && (
         <>
           <IconButton size="sm" title={copyLabel} aria-label={copyLabel} onClick={copyState.copy}>

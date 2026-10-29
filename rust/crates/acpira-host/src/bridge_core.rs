@@ -744,6 +744,15 @@ impl BridgeCore {
         let view = self.plugins_view().await;
         self.post_now(HostMsg::Plugins { view, error });
       }
+      // A card's thumbnail: the backdrop of the version it offers, read from the frozen copy
+      W::PluginBackdrop { plugin, snapshot } => {
+        let (me, plugins) = (self.clone(), self.plugins.clone());
+        tokio::spawn(async move {
+          let (p, s) = (plugin.clone(), snapshot.clone());
+          let html = tokio::task::spawn_blocking(move || plugins.backdrop_of(&p, &s)).await.ok().flatten();
+          me.post_now(HostMsg::PluginBackdrop { plugin, snapshot, html });
+        });
+      }
       // A plugin method may take its process's full time limit: off the message loop, answered by id
       W::PluginCall { id, plugin, method, params } => {
         let me = self.clone();
@@ -873,15 +882,17 @@ impl BridgeCore {
   /// Send the theme layer when it differs from what the page has (nothing for a page that never had one and gets none)
   async fn push_theme(&self) {
     let plugins = self.plugins.clone();
-    let Ok(css) = tokio::task::spawn_blocking(move || plugins.theme_css()).await else { return };
+    let Ok((css, skin, generation)) = tokio::task::spawn_blocking(move || plugins.theme()).await else { return };
     {
+      // Compared without the generation: a commit that left the look alone sends nothing
+      let key = format!("{css}\u{0}{}", skin.as_ref().map(|s| format!("{}/{}", s.plugin, s.snapshot)).unwrap_or_default());
       let mut last = self.theme.lock();
-      if last.as_deref() == Some(css.as_str()) || (last.is_none() && css.is_empty()) {
+      if last.as_deref() == Some(key.as_str()) || (last.is_none() && css.is_empty() && skin.is_none()) {
         return;
       }
-      *last = Some(css.clone());
+      *last = Some(key);
     }
-    self.post_now(HostMsg::PluginTheme { css });
+    self.post_now(HostMsg::PluginTheme { css, skin, generation });
   }
 
   /// Send the interface pieces when they differ from what the page has, like the theme layer

@@ -543,6 +543,32 @@ export interface AgentTurn {
   command?: { name: string; mode?: string; options?: { name: string; value: string }[] };
   // A provider retry in progress: shown in the working label only, cleared once the stream resumes or the turn ends
   retry?: TurnRetry;
+  // Plugins an agent of this turn offered (plugin_activate), shown after the reply and clickable for good
+  pluginCards?: PluginCard[];
+}
+
+// A plugin card (docs/dev/plugins.md, Activation): the frozen version an agent asked to enable. Its state (offered, in
+// effect, replaced) is read from the plugins' state (PluginsView), not kept here; only what applying it from this card
+// changed is, so the card can put it back
+export interface PluginCard {
+  // Unique within the session
+  id: string;
+  plugin: string;
+  // The frozen version it offers
+  snapshot: string;
+  name: string;
+  description: string;
+  // skin: a theme; ui: interface pieces; agent: a specialised agent; exec: runs a program (named in `runs`)
+  kind: 'skin' | 'ui' | 'agent' | 'exec' | 'other' | (string & {});
+  runs?: string;
+  // The slots its interface pieces take, for the thumbnail's map
+  slots?: string[];
+  // The source folder, which the corner button reveals
+  folder: string;
+  at: number;
+  // Set when it was applied from this card: the version enabled before (none: it was off) and the skin before
+  // ('' for none; absent when the card is not a skin)
+  undo?: { snapshot?: string; skin?: string };
 }
 
 export interface TurnRetry {

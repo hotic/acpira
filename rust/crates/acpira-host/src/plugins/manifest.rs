@@ -105,7 +105,7 @@ pub struct Contributes {
 }
 
 /// `contributes.ui[]`: `html` is a file of the plugin, at most `UI_HTML_MAX_BYTES`, for the slot `slot`
-/// (`acpira_shared::plugins::UI_SLOTS`)
+/// (`acpira_shared::plugins::UI_SLOTS`); a `message.actions` piece is a native button calling `method` instead
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiDef {
@@ -113,7 +113,26 @@ pub struct UiDef {
   pub slot: String,
   #[serde(default)]
   pub title: String,
+  #[serde(default)]
   pub html: String,
+  /// The piece's box in CSS pixels, along the sides the slot does not size (`slot_box`)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub width: Option<u32>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub height: Option<u32>,
+  /// `message.actions`: the runtime method a click calls with `{ session, turn, text }`
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub method: Option<String>,
+}
+
+/// Which sides of a piece's box its slot leaves to the plugin (`width`, `height`): a slot sizes the rest itself
+pub fn slot_box(slot: &str) -> (bool, bool) {
+  match slot {
+    "composer.above" | "composer.toolbar" | "statusbar" => (true, true),
+    "session.panel" => (true, false),
+    "sidebar" | "start" => (false, true),
+    _ => (false, false),
+  }
 }
 
 /// Largest interface document; it travels to every page
@@ -252,7 +271,29 @@ pub struct Theme {
   /// A style sheet relative to the plugin
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub css: Option<String>,
+  /// `dark` / `light`: the skin fixes the page's scheme (its tokens are written for it); absent: the host's
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub base: Option<String>,
+  /// How much of the backdrop the surfaces let through (`GLASS`); only with a backdrop
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub glass: Option<String>,
+  /// An HTML document relative to the plugin, run in a sandboxed frame behind the page (desktop)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub backdrop: Option<String>,
+  /// A scene script relative to the plugin, drawn by Acpira's own glyph renderer (`sdk::backdrop_html`) as the
+  /// backdrop; the renderer is the running Acpira's, not a copy in the plugin. Excludes `backdrop`
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub scene: Option<String>,
 }
+
+pub const THEME_BASES: &[&str] = &["dark", "light"];
+pub const GLASS: &[&str] = &["veil", "calm", "frost"];
+/// Largest backdrop document; it travels to every page with the theme
+pub const BACKDROP_MAX_BYTES: u64 = 256 * 1024;
+/// Largest scene script; the renderer around it is Acpira's
+pub const SCENE_MAX_BYTES: u64 = 64 * 1024;
+/// Largest box a sized interface piece may ask for, in CSS pixels
+pub const UI_SIZE_MAX: u32 = 480;
 
 impl Manifest {
   pub fn display_name(&self) -> &str {
@@ -461,6 +502,30 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
         err(findings, format!("theme token `{k}`: the value must be a CSS value without `;`, braces or `<`"));
       }
     }
+    if let Some(b) = theme.base.as_deref().filter(|b| !THEME_BASES.contains(b)) {
+      err(findings, format!("theme base `{b}` is not one of {}", THEME_BASES.join(", ")));
+    }
+    if let Some(g) = theme.glass.as_deref().filter(|g| !GLASS.contains(g)) {
+      err(findings, format!("theme glass `{g}` is not one of {}", GLASS.join(", ")));
+    }
+    for (what, file, max) in [("backdrop", &theme.backdrop, BACKDROP_MAX_BYTES), ("scene", &theme.scene, SCENE_MAX_BYTES)] {
+      let Some(b) = file else { continue };
+      match inside(dir, b).and_then(|p| std::fs::metadata(p).ok()).filter(std::fs::Metadata::is_file) {
+        None => err(findings, format!("theme {what} `{b}` not found in the plugin")),
+        Some(meta) if meta.len() > max => err(findings, format!("theme {what} `{b}` is over {} KB", max / 1024)),
+        Some(_) => {}
+      }
+    }
+    if theme.backdrop.is_some() && theme.scene.is_some() {
+      err(findings, "theme: `backdrop` and `scene` exclude each other (a scene is drawn by Acpira's renderer, a backdrop draws itself)".into());
+    }
+    if theme.backdrop.is_some() || theme.scene.is_some() {
+      if theme.base.is_none() {
+        findings.notes.push("theme: a backdrop without `base` follows the host's light or dark scheme; its tokens must suit both".into());
+      }
+    } else if theme.glass.is_some() {
+      findings.notes.push("theme: `glass` only applies with a `backdrop` or a `scene`".into());
+    }
   }
   if let Some(p) = &m.contributes.prompts
     && !inside(dir, p).is_some_and(|d| d.is_dir())
@@ -498,10 +563,40 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
     if !acpira_shared::plugins::UI_SLOTS.contains(&u.slot.as_str()) {
       err(findings, format!("{at}: slot `{}` is not one of {}", u.slot, acpira_shared::plugins::UI_SLOTS.join(", ")));
     }
+    if u.slot == "message.actions" {
+      // A button under each reply: one frame per message would cost a document per turn
+      match u.method.as_deref() {
+        None => err(findings, format!("{at}: a `message.actions` piece names the runtime `method` its button calls, instead of `html`")),
+        Some(method) if !m.contributes.runtime.as_ref().is_some_and(|r| r.methods.iter().any(|x| x == method)) => {
+          err(findings, format!("{at}: method `{method}` is not one of the runtime's `methods`"))
+        }
+        Some(_) => {}
+      }
+      if !u.html.is_empty() {
+        err(findings, format!("{at}: a `message.actions` piece is a button, not a document; drop `html`"));
+      }
+      if u.title.trim().is_empty() {
+        err(findings, format!("{at}: the button needs a `title`"));
+      }
+      continue;
+    }
+    if u.method.is_some() {
+      err(findings, format!("{at}: only a `message.actions` piece calls a `method`"));
+    }
     match inside(dir, &u.html).and_then(|p| std::fs::metadata(p).ok()).filter(std::fs::Metadata::is_file) {
       None => err(findings, format!("{at}: html file `{}` not found in the plugin", u.html)),
       Some(meta) if meta.len() > UI_HTML_MAX_BYTES => err(findings, format!("{at}: `{}` is over {} KB", u.html, UI_HTML_MAX_BYTES / 1024)),
       Some(_) => {}
+    }
+    for (name, v) in [("width", u.width), ("height", u.height)] {
+      if v.is_some_and(|v| v == 0 || v > UI_SIZE_MAX) {
+        err(findings, format!("{at}: {name} must be 1 to {UI_SIZE_MAX} CSS pixels"));
+      }
+    }
+    let (w, h) = slot_box(&u.slot);
+    let missing: Vec<&str> = [(w && u.width.is_none(), "`width`"), (h && u.height.is_none(), "`height`")].into_iter().filter(|(m, _)| *m).map(|(_, n)| n).collect();
+    if !missing.is_empty() {
+      err(findings, format!("{at}: the slot `{}` needs {}", u.slot, missing.join(" and ")));
     }
   }
   let mut sources = std::collections::HashSet::new();
@@ -699,6 +794,78 @@ mod tests {
     check(&m, "other", dir.path(), &|_| false, &mut f);
     let text = f.text();
     for needle in ["id `Bad_Id`", "folder's name", "requires `nope`", "tool `Go`: the name", "declared twice", "a description is needed", "type object", "`../escape.sh`", "`command` is empty", "`--ctl-w`", "`--bg-0`", "missing.css", "Acpira's own", "unknown key `extra`", "unknown contribution `widgets`"] {
+      assert!(text.contains(needle), "{needle} missing in\n{text}");
+    }
+  }
+
+  #[test]
+  fn a_skin_names_its_look_and_a_piece_on_the_composer_its_box() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("cat.html"), "<p>cat</p>").unwrap();
+    let skin = |theme: Value, ui: Value| {
+      json!({ "schema": 1, "id": "sea", "version": "1", "description": "x", "contributes": { "theme": theme, "ui": ui } })
+    };
+    let (m, mut f) = manifest(skin(json!({ "base": "dim", "glass": "glass", "backdrop": "gone.html", "tokens": { "--bg-0": "#000" } }),
+      json!([{ "id": "cat", "slot": "composer.above", "title": "Cat", "html": "cat.html" }, { "id": "big", "slot": "page", "title": "Big", "html": "cat.html", "width": 900 }])));
+    check(&m, "sea", dir.path(), &|_| false, &mut f);
+    let text = f.text();
+    for needle in ["base `dim`", "glass `glass`", "`gone.html` not found", "`composer.above` needs `width` and `height`", "width must be 1 to 480"] {
+      assert!(text.contains(needle), "{needle} missing in\n{text}");
+    }
+    // A backdrop without a base, and glass without a backdrop, pass with a note
+    std::fs::write(dir.path().join("sea.html"), "<p>sea</p>").unwrap();
+    let (m, mut f) = manifest(skin(json!({ "backdrop": "sea.html", "tokens": { "--bg-0": "#000" } }), json!([])));
+    check(&m, "sea", dir.path(), &|_| false, &mut f);
+    assert!(f.ok() && f.notes.iter().any(|n| n.contains("without `base`")), "{f:?}");
+    let (m, mut f) = manifest(skin(json!({ "glass": "frost", "tokens": { "--bg-0": "#000" } }), json!([])));
+    check(&m, "sea", dir.path(), &|_| false, &mut f);
+    assert!(f.ok() && f.notes.iter().any(|n| n.contains("only applies with a `backdrop`")), "{f:?}");
+    // A scene is drawn by Acpira's renderer; a plugin gives one or its own document, not both
+    std::fs::write(dir.path().join("sea.js"), "const SCENE = {};").unwrap();
+    let (m, mut f) = manifest(skin(json!({ "base": "dark", "scene": "sea.js", "tokens": { "--bg-0": "#000" } }), json!([])));
+    check(&m, "sea", dir.path(), &|_| false, &mut f);
+    assert!(f.ok() && f.notes.is_empty(), "{f:?}");
+    let (m, mut f) = manifest(skin(json!({ "base": "dark", "scene": "sea.js", "backdrop": "sea.html" }), json!([])));
+    check(&m, "sea", dir.path(), &|_| false, &mut f);
+    assert!(f.text().contains("exclude each other"), "{f:?}");
+  }
+
+  #[test]
+  fn each_slot_asks_for_the_sides_it_does_not_size_and_a_message_action_is_a_button() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("p.html"), "<p>p</p>").unwrap();
+    std::fs::write(dir.path().join("run.mjs"), "").unwrap();
+    let ui = |ui: Value| {
+      json!({ "schema": 1, "id": "kit", "version": "1", "description": "x",
+        "contributes": { "ui": ui, "runtime": { "command": ["node", "run.mjs"], "methods": ["summarize"] } } })
+    };
+    let piece = |slot: &str, extra: Value| {
+      let mut v = json!({ "id": slot.replace('.', "-"), "slot": slot, "title": "T", "html": "p.html" });
+      v.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+      v
+    };
+    let sized = json!([
+      piece("composer.toolbar", json!({ "width": 80, "height": 24 })), piece("statusbar", json!({ "width": 60, "height": 20 })),
+      piece("session.panel", json!({ "width": 40 })), piece("sidebar", json!({ "height": 120 })), piece("start", json!({ "height": 90 })),
+      piece("panel.tab", json!({})), piece("page", json!({})),
+      { "id": "sum", "slot": "message.actions", "title": "Summarize", "method": "summarize" },
+    ]);
+    let (m, mut f) = manifest(ui(sized));
+    check(&m, "kit", dir.path(), &|p| p == "node", &mut f);
+    assert!(f.ok(), "{f:?}");
+    let bare = json!([
+      piece("statusbar", json!({ "width": 60 })), piece("session.panel", json!({})), piece("sidebar", json!({})),
+      { "id": "a", "slot": "message.actions", "title": "A", "method": "nope" },
+      { "id": "b", "slot": "message.actions", "title": "", "html": "p.html" },
+      piece("start", json!({ "height": 90, "method": "summarize" })),
+    ]);
+    let (m, mut f) = manifest(ui(bare));
+    check(&m, "kit", dir.path(), &|p| p == "node", &mut f);
+    let text = f.text();
+    for needle in [
+      "`statusbar` needs `height`", "`session.panel` needs `width`", "`sidebar` needs `height`", "method `nope` is not one of",
+      "names the runtime `method`", "not a document", "needs a `title`", "only a `message.actions` piece calls",
+    ] {
       assert!(text.contains(needle), "{needle} missing in\n{text}");
     }
   }

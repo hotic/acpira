@@ -17,6 +17,7 @@ import { shortcutLabel, useDesktop } from '../desktop';
 import { cn } from '../ui/cn';
 import { SessionMenu, Submenu } from './SessionMenu';
 import type { ShellHandlers } from './Shell';
+import { SlotPieces } from '../plugins/Pieces';
 
 export interface HeaderProps {
   title: string;
@@ -136,7 +137,7 @@ export const Header = memo(function Header({ title, sessions, categories, agent,
   };
   return (
     // Desktop: the window's title bar on the sheet (no rule under it, it moves the window), the title followed by its project
-    <div data-sheet-header={desktop || undefined} data-drag-region={desktop || undefined}
+    <div data-part="header" data-sheet-header={desktop || undefined} data-drag-region={desktop || undefined}
       className={cn('flex h-hdr shrink-0 items-center gap-gap', desktop ? 'pr-(--sheet-trail) pl-(--sheet-lead)' : 'px-dock shadow-[inset_0_-1px_0_0_var(--line)]')}>
       {/* Desktop: the column's toggle sits on the pinned title row (chat/DesktopFrame.tsx) */}
       {!desktop && sessionPanel !== 'hidden' && !sessionPanelDocked && (
@@ -166,6 +167,8 @@ export const Header = memo(function Header({ title, sessions, categories, agent,
         : <span className="min-w-0 flex-1 truncate text-2 font-medium text-fg-strong">{title}</span>}
       {/* The icon is 6px smaller than the button box; the negative margin makes the right edge of the last icon bite into the page-margin line */}
       <div className="-mr-1.5 flex shrink-0 items-center gap-0.5">
+        {/* Plugin status pieces (plugins/Pieces.tsx) lead the header's actions */}
+        <SlotPieces slot="statusbar" className="mr-gap-half flex items-center gap-1" />
         {/* New sessions start after choosing an agent from the plus menu. */}
         {onNewIn && columnAct('new', <IconButton title={t('session.new')} aria-label={t('session.new')} onClick={onNewIn}><Plus strokeWidth={1.5} /></IconButton>)}
         {!sessionNav && !onNewIn && <DropdownMenu.Root>

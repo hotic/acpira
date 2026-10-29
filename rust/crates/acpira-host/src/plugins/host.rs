@@ -59,6 +59,15 @@ pub struct Loaded {
 }
 
 impl Loaded {
+  /// The theme plugin in effect as the skin: the state's pick; in a state written before skins, the theme enabled last
+  pub fn skin(&self) -> Option<&Arc<Active>> {
+    let themed = |a: &&Arc<Active>| a.manifest.contributes.theme.is_some();
+    match self.state.skin.as_deref() {
+      Some(id) => self.active.iter().filter(themed).find(|a| a.id == id),
+      None => self.active.iter().filter(themed).max_by_key(|a| (self.state.plugins.get(&a.id).map_or(0, |e| e.committed_at), a.id.clone())),
+    }
+  }
+
   /// The script tools in effect, by the name they are served under
   pub fn tool(&self, served: &str) -> Option<(Arc<Active>, ToolDef)> {
     self.active.iter().find_map(|a| a.manifest.contributes.tools.iter().find(|t| manifest::served_name(&a.id, &t.name) == served).map(|t| (a.clone(), t.clone())))
@@ -299,34 +308,94 @@ impl PluginHost {
     out
   }
 
-  /// The style layer of the themes in effect, empty without one and in safe mode: each plugin's tokens on the page's
-  /// token roots (the same specificity as `tokens.css`, and later), then its style sheet, in id order
+  /// The style layer of the skin in effect, empty without one and in safe mode: its tokens on the page's token roots
+  /// (the same specificity as `tokens.css`, and later) and on the skinned shell (above the automatic-theme derivation
+  /// of `palette.css`), then its style sheet
   pub fn theme_css(&self) -> String {
     self.reload();
-    let mut out = String::new();
-    for a in &self.loaded().active {
-      let Some(theme) = &a.manifest.contributes.theme else { continue };
-      out.push_str(&format!("/* Acpira plugin {} */\n", a.id));
-      // Checked when it was enabled; checked again here, since this text goes into every page
-      let tokens: Vec<String> = theme
-        .tokens
-        .iter()
-        .filter(|(k, _)| manifest::THEME_TOKENS.contains(&k.as_str()))
-        .filter_map(|(k, v)| v.as_str().filter(|v| manifest::safe_css_value(v)).map(|v| format!("  {k}: {v};")))
-        .collect();
-      if !tokens.is_empty() {
-        out.push_str(&format!(":root, .acp-shell, [data-theme] {{\n{}\n}}\n", tokens.join("\n")));
-      }
-      if let Some(css) = theme.css.as_deref().and_then(|c| manifest::inside(&a.dir, c)).and_then(|p| std::fs::read_to_string(p).ok()) {
-        let mut end = css.len().min(THEME_CSS_MAX_BYTES);
-        while !css.is_char_boundary(end) {
-          end -= 1;
-        }
-        out.push_str(css.get(..end).unwrap_or_default());
-        out.push('\n');
-      }
+    theme_css_of(&self.loaded())
+  }
+
+  /// The theme push: the style layer, the skin and the generation, all of one loaded state, so a commit landing in
+  /// between never pairs one skin's colours with another's backdrop
+  pub fn theme(&self) -> (String, Option<acpira_shared::plugins::PluginSkin>, u64) {
+    self.reload();
+    let loaded = self.loaded();
+    (theme_css_of(&loaded), skin_of(&loaded), loaded.state.generation)
+  }
+
+  /// The skin in effect as the page takes it, its backdrop read from the frozen copy (left out when gone or too large)
+  pub fn skin(&self) -> Option<acpira_shared::plugins::PluginSkin> {
+    self.reload();
+    skin_of(&self.loaded())
+  }
+
+  /// The backdrop of the frozen version `snapshot` of `id`, for a card's thumbnail
+  pub fn backdrop_of(&self, id: &str, snapshot: &str) -> Option<String> {
+    let (dir, m) = self.store.open(id, snapshot).ok()?;
+    backdrop_doc(&dir, m.contributes.theme.as_ref()?)
+  }
+
+  /// The card a session shows for a frozen version an agent offers
+  pub fn card(&self, frozen: &Frozen, card_id: String) -> acpira_shared::transcript::PluginCard {
+    let m = &frozen.manifest;
+    let c = &m.contributes;
+    let runs = c
+      .tools
+      .first()
+      .map(|t| t.command.join(" "))
+      .or_else(|| c.runtime.as_ref().map(|r| r.command.join(" ")))
+      .or_else(|| c.mcp.as_ref().and_then(|m| m.values().next()).and_then(|v| v.get("command")).and_then(Value::as_str).map(str::to_owned))
+      .or_else(|| c.agent.as_ref().and_then(|a| a.get("command")).and_then(Value::as_str).map(str::to_owned))
+      .or_else(|| m.check.as_ref().map(|c| c.join(" ")));
+    acpira_shared::transcript::PluginCard {
+      id: card_id,
+      plugin: frozen.id.clone(),
+      snapshot: frozen.hash.clone(),
+      name: m.display_name().to_owned(),
+      description: m.description.clone(),
+      kind: card_kind(m).into(),
+      runs: runs.filter(|r| !r.trim().is_empty()),
+      slots: c.ui.iter().map(|u| u.slot.clone()).collect(),
+      folder: wire_path(&self.store.source(&frozen.id)),
+      at: crate::util::now_ms(),
+      undo: None,
     }
-    out
+  }
+
+  /// Apply a card: enable the version it offers (the dynamic check runs now) and, for a theme, make it the skin. What
+  /// was in effect before, for the card's undo; none when the version is in effect already (a second click from a
+  /// window that had not caught up), so the record of the first apply is kept
+  pub async fn apply_card(&self, card: &acpira_shared::transcript::PluginCard, provenance: Provenance) -> Result<Option<acpira_shared::transcript::PluginCardUndo>> {
+    self.reload();
+    let themed = self.themed(card);
+    let before = {
+      let loaded = self.loaded();
+      let entry = loaded.state.plugins.get(&card.plugin).filter(|e| e.enabled && !e.snapshot.is_empty());
+      let skin = loaded.skin().map(|a| a.id.clone()).unwrap_or_default();
+      if entry.is_some_and(|e| e.snapshot == card.snapshot) && (!themed || skin == card.plugin) {
+        return Ok(None);
+      }
+      // By what the version contributes, not the card's kind: a theme with tools is shown as a program but still
+      // takes the skin
+      acpira_shared::transcript::PluginCardUndo { snapshot: entry.map(|e| e.snapshot.clone()), skin: themed.then_some(skin) }
+    };
+    self.confirm(&card.plugin, &card.snapshot, provenance).await?;
+    Ok(Some(before))
+  }
+
+  /// The version a card offers is a theme
+  fn themed(&self, card: &acpira_shared::transcript::PluginCard) -> bool {
+    card.kind == "skin" || self.store.open(&card.plugin, &card.snapshot).is_ok_and(|(_, m)| m.contributes.theme.is_some())
+  }
+
+  /// Put back what applying a card changed; a card applied elsewhere (no record) switches its plugin off, and a skin
+  /// leaves no skin
+  pub async fn undo_card(&self, card: &acpira_shared::transcript::PluginCard, provenance: Provenance) -> Result<()> {
+    let undo = card.undo.clone().unwrap_or_else(|| acpira_shared::transcript::PluginCardUndo { snapshot: None, skin: self.themed(card).then(String::new) });
+    let change = self.store.restore(&card.plugin, undo.snapshot.as_deref(), undo.skin.as_deref(), provenance).await?;
+    self.committed(&change);
+    Ok(())
   }
 
   /// The interface pieces of the plugins in effect, in id order, each document read from the frozen copy (none in
@@ -336,13 +405,24 @@ impl PluginHost {
     let mut out = vec![];
     for a in &self.loaded().active {
       for u in &a.manifest.contributes.ui {
-        let Some(path) = manifest::inside(&a.dir, &u.html) else { continue };
-        if std::fs::metadata(&path).map(|m| m.len()).unwrap_or(u64::MAX) > manifest::UI_HTML_MAX_BYTES {
+        let title = if u.title.trim().is_empty() { a.manifest.display_name().to_owned() } else { u.title.clone() };
+        let piece = |html: String| acpira_shared::plugins::PluginSlot {
+          plugin: a.id.clone(),
+          id: u.id.clone(),
+          slot: u.slot.clone(),
+          title: title.clone(),
+          html,
+          width: u.width,
+          height: u.height,
+          method: u.method.clone(),
+        };
+        // A message action is a button: no document
+        if u.method.is_some() {
+          out.push(piece(String::new()));
           continue;
         }
-        let Ok(html) = std::fs::read_to_string(&path) else { continue };
-        let title = if u.title.trim().is_empty() { a.manifest.display_name().to_owned() } else { u.title.clone() };
-        out.push(acpira_shared::plugins::PluginSlot { plugin: a.id.clone(), id: u.id.clone(), slot: u.slot.clone(), title, html });
+        let Some(html) = read_capped(&a.dir, &u.html, manifest::UI_HTML_MAX_BYTES) else { continue };
+        out.push(piece(html));
       }
     }
     out
@@ -419,7 +499,7 @@ impl PluginHost {
       let data_root = self.store.root().join(crate::plugins::store::DATA);
       crate::plugins::runtime::probe(id, &manifest.version, hash, &dir, rt, &data_root, self.log.clone()).await.map_err(|e| anyhow!("the check failed: the runtime {e}"))?;
     }
-    let change = self.store.enable(id, hash, provenance).await?;
+    let change = self.store.enable_as(id, hash, provenance, manifest.contributes.theme.is_some()).await?;
     self.committed(&change);
     Ok(change)
   }
@@ -459,6 +539,15 @@ impl PluginHost {
         return if dir.is_dir() { Ok(Some(dir)) } else { Err(anyhow!("no plugin folder {}", dir.display())) };
       }
       PluginAction::SafeMode { on } => self.store.set_safe_mode(on, user).await?,
+      PluginAction::Skin { id } => {
+        if let Some(id) = &id {
+          self.reload();
+          if !self.loaded().active.iter().any(|a| a.id == *id && a.manifest.contributes.theme.is_some()) {
+            bail!("plugin {id} has no theme in effect");
+          }
+        }
+        self.store.set_skin(id.as_deref(), user).await?
+      }
       PluginAction::ToolGroup { id, on } => {
         if !acpira_shared::host_tools::GROUPS.iter().any(|(g, _)| *g == id) {
           bail!("no tool group `{id}`");
@@ -501,6 +590,7 @@ impl PluginHost {
       plugins,
       tool_groups,
       changes,
+      skin: loaded.skin().map(|a| a.id.clone()),
     }
   }
 
@@ -563,6 +653,91 @@ fn provenance_view(p: &Provenance) -> PluginProvenance {
 
 fn change_view(c: Change) -> PluginChange {
   PluginChange { generation: c.generation, at: c.at, id: c.id, action: c.action, snapshot: c.snapshot, on: c.on, provenance: provenance_view(&c.provenance) }
+}
+
+/// A file of a plugin's frozen copy as text, none when missing or over `max` bytes
+fn theme_css_of(loaded: &Loaded) -> String {
+  let mut out = String::new();
+  if let Some(a) = loaded.skin() {
+    let Some(theme) = &a.manifest.contributes.theme else { return out };
+    out.push_str(&format!("/* Acpira plugin {} */\n", a.id));
+    // Checked when it was enabled; checked again here, since this text goes into every page
+    let tokens: Vec<String> = theme
+      .tokens
+      .iter()
+      .filter(|(k, _)| manifest::THEME_TOKENS.contains(&k.as_str()))
+      .filter_map(|(k, v)| v.as_str().filter(|v| manifest::safe_css_value(v)).map(|v| format!("  {k}: {v};")))
+      .collect();
+    if !tokens.is_empty() {
+      out.push_str(&format!(":root, .acp-shell, [data-theme], .acp-shell.acp-shell[data-skin] {{\n{}\n}}\n", tokens.join("\n")));
+    }
+    if let Some(css) = theme.css.as_deref().and_then(|c| manifest::inside(&a.dir, c)).and_then(|p| std::fs::read_to_string(p).ok()) {
+      let mut end = css.len().min(THEME_CSS_MAX_BYTES);
+      while !css.is_char_boundary(end) {
+        end -= 1;
+      }
+      out.push_str(css.get(..end).unwrap_or_default());
+      out.push('\n');
+    }
+  }
+  out
+}
+
+fn skin_of(loaded: &Loaded) -> Option<acpira_shared::plugins::PluginSkin> {
+  let a = loaded.skin()?;
+  let theme = a.manifest.contributes.theme.as_ref()?;
+  Some(acpira_shared::plugins::PluginSkin {
+    plugin: a.id.clone(),
+    name: a.manifest.display_name().to_owned(),
+    snapshot: a.hash.clone(),
+    base: theme.base.clone().filter(|b| manifest::THEME_BASES.contains(&b.as_str())),
+    glass: theme.glass.clone().filter(|g| manifest::GLASS.contains(&g.as_str())),
+    brand: theme.tokens.get("--brand").and_then(Value::as_str).filter(|v| manifest::safe_css_value(v)).map(str::to_owned),
+    backdrop: backdrop_doc(&a.dir, theme),
+  })
+
+}
+
+/// A theme's backdrop document: its own, or its scene inside the running Acpira's renderer
+fn backdrop_doc(dir: &std::path::Path, theme: &manifest::Theme) -> Option<String> {
+  match (&theme.scene, &theme.backdrop) {
+    (Some(scene), _) => read_capped(dir, scene, manifest::SCENE_MAX_BYTES).map(|s| super::sdk::backdrop_html(&s)),
+    (None, Some(b)) => read_capped(dir, b, manifest::BACKDROP_MAX_BYTES),
+    (None, None) => None,
+  }
+}
+
+fn read_capped(dir: &std::path::Path, rel: &str, max: u64) -> Option<String> {
+  let path = manifest::inside(dir, rel)?;
+  if std::fs::metadata(&path).ok()?.len() > max {
+    return None;
+  }
+  std::fs::read_to_string(path).ok()
+}
+
+/// How a card presents a plugin and how much one click does: presentation (a theme, interface pieces in sandboxed
+/// frames, a specialised agent of the engine's own loop) applies at once; anything that runs a program says what
+fn card_kind(m: &manifest::Manifest) -> &'static str {
+  let c = &m.contributes;
+  // The self-test runs on apply too
+  let runs = m.check.is_some()
+    || !c.tools.is_empty()
+    || c.mcp.as_ref().is_some_and(|m| !m.is_empty())
+    || c.hooks.is_some()
+    || c.runtime.is_some()
+    || !c.providers.is_empty()
+    || c.agent.as_ref().is_some_and(|a| a.get("builtin").is_none());
+  if runs {
+    "exec"
+  } else if c.theme.is_some() {
+    "skin"
+  } else if !c.ui.is_empty() {
+    "ui"
+  } else if c.agent.is_some() {
+    "agent"
+  } else {
+    "other"
+  }
 }
 
 /// A frozen plugin as the card and the guide describe it: what it adds, its files and hash, the static check
@@ -702,9 +877,61 @@ mod tests {
     std::fs::write(dir.join("theme.css"), ".acp-shell { letter-spacing: 0.01em; }").unwrap();
     h.action(PluginAction::Enable { id: "warm".into() }).await.unwrap();
     let css = h.theme_css();
-    assert!(css.contains(":root, .acp-shell, [data-theme] {\n  --bg-0: #1b1a18;\n  --brand: oklch(70% 0.1 60);\n}"), "{css}");
+    assert!(css.contains(":root, .acp-shell, [data-theme], .acp-shell.acp-shell[data-skin] {\n  --bg-0: #1b1a18;\n  --brand: oklch(70% 0.1 60);\n}"), "{css}");
     assert!(css.trim_end().ends_with(".acp-shell { letter-spacing: 0.01em; }"), "{css}");
     h.action(PluginAction::SafeMode { on: true }).await.unwrap();
+    assert_eq!(h.theme_css(), "");
+  }
+
+  /// A skin with a document of its own, or (`scene`) a scene for Acpira's renderer
+  fn write_theme(root: &std::path::Path, id: &str, bg: &str, scene: bool) {
+    let dir = root.join(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    let (key, file, text) = if scene { ("scene", "scene.js", format!("const SCENE = {{ cell() {{}} }}; // {id}")) } else { ("backdrop", "backdrop.html", format!("<p>{id}</p>")) };
+    let m = json!({ "schema": 1, "id": id, "version": "1", "description": id,
+      "contributes": { "theme": { "base": "dark", "glass": "calm", key: file, "tokens": { "--bg-0": bg } } } });
+    std::fs::write(dir.join("plugin.json"), m.to_string()).unwrap();
+    std::fs::write(dir.join(file), text).unwrap();
+  }
+
+  #[tokio::test]
+  async fn one_theme_is_the_skin_and_a_card_puts_back_the_one_before() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = host(tmp.path());
+    h.start().await;
+    write_theme(tmp.path(), "warm", "#201810", false);
+    write_theme(tmp.path(), "cool", "#101820", true);
+    h.action(PluginAction::Enable { id: "warm".into() }).await.unwrap();
+    h.action(PluginAction::Enable { id: "cool".into() }).await.unwrap();
+    // Only the skin's tokens are on the page, and it comes with its look and backdrop
+    let css = h.theme_css();
+    assert!(css.contains("#101820") && !css.contains("#201810"), "{css}");
+    let skin = h.skin().unwrap();
+    assert_eq!((skin.plugin.as_str(), skin.base.as_deref(), skin.glass.as_deref()), ("cool", Some("dark"), Some("calm")));
+    // A scene comes inside the renderer this build ships
+    let doc = skin.backdrop.unwrap();
+    assert!(doc.contains("// cool") && doc.contains("acpira: 'drawn'"), "{doc}");
+    assert_eq!(h.view().skin.as_deref(), Some("cool"));
+    // A card for warm's version makes it the skin again and remembers cool; undoing puts cool back, warm stays on
+    let warm = h.view().plugins.into_iter().find(|p| p.id == "warm").unwrap().snapshot.unwrap();
+    assert_eq!(h.backdrop_of("warm", &warm).as_deref(), Some("<p>warm</p>"));
+    let mut card = acpira_shared::transcript::PluginCard { id: "c1".into(), plugin: "warm".into(), snapshot: warm.clone(), kind: "skin".into(), ..Default::default() };
+    let undo = h.apply_card(&card, Provenance::default()).await.unwrap().unwrap();
+    // A second click before the page caught up changes nothing and keeps that record
+    assert!(h.apply_card(&card, Provenance::default()).await.unwrap().is_none());
+    assert_eq!((undo.snapshot.as_deref(), undo.skin.as_deref()), (Some(warm.as_str()), Some("cool")));
+    assert_eq!(h.view().skin.as_deref(), Some("warm"));
+    card.undo = Some(undo);
+    h.undo_card(&card, Provenance::default()).await.unwrap();
+    let view = h.view();
+    assert_eq!(view.skin.as_deref(), Some("cool"));
+    assert!(view.plugins.iter().find(|p| p.id == "warm").unwrap().enabled);
+    // A card applied elsewhere has no record: undoing switches its plugin off and leaves no skin
+    card.undo = None;
+    h.apply_card(&card, Provenance::default()).await.unwrap();
+    h.undo_card(&card, Provenance::default()).await.unwrap();
+    let view = h.view();
+    assert!(view.skin.is_none() && !view.plugins.iter().find(|p| p.id == "warm").unwrap().enabled, "{view:?}");
     assert_eq!(h.theme_css(), "");
   }
 
