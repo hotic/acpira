@@ -53,3 +53,6 @@ apps/ios/Packages/*/.swiftpm/
 # acpira-mobile's XCFramework and Swift bindings (apps/ios/scripts/build-net.sh)
 apps/ios/Packages/AcpiraKit/Artifacts/
 apps/ios/Fixtures/local/
+
+# Promo films and source clips (local only)
+promo/
