@@ -25,15 +25,18 @@
   /* --pl is the indent a list gives its children; the elbows hang off it */
   .subagent-graph-tree ul {
     --pl: var(--subagent-graph-elbow);
+    --stem-reach: calc(var(--gap) / 2);
+    --stem-fade: min(var(--rail-fade), calc(var(--subagent-graph-line) * 2));
     margin-left: calc(var(--lead) / 2);
     padding-left: var(--pl);
   }
-  /* The top-level trunk drops from GitBranch's stem (x 6 of its 24 grid) instead of the lead's centre, keeping the
-     children where they were, and starts at the bottom of the stem's circle (y 21 of 24) */
+  /* Keep the trunk under GitBranch's stem (x 6 of its 24 grid), but start below the icon box with a small gap so the
+     heavier stroke cannot pierce the circle. Nested stems reach slightly into the parent's row with a shorter fade. */
   .subagent-graph-tree > li > ul {
     --stem: calc((var(--lead) - var(--icon)) / 2 + var(--icon) * 6 / 24);
     --pl: calc(var(--subagent-graph-elbow) + var(--lead) / 2 - var(--stem) + var(--subagent-graph-line) / 2);
-    --stem-reach: calc(var(--row) / 2 - var(--icon) * 3 / 8);
+    --stem-reach: max(0px, calc((var(--row) - var(--icon)) / 2 - var(--subagent-graph-line)));
+    --stem-fade: min(var(--rail-fade), calc((var(--row) / 2 + var(--stem-reach)) * .4));
     margin-left: calc(var(--stem) - var(--subagent-graph-line) / 2);
   }
 
@@ -53,9 +56,20 @@
     width: calc(var(--pl) + var(--subagent-graph-line) / 2);
     border-bottom: var(--subagent-graph-line) solid var(--line-strong);
     border-bottom-left-radius: var(--radius-sm);
+    /* Fade toward the child mark without weakening the vertical trunk or the rounded corner. */
+    --elbow-fade: 0px;
+    mask-image: linear-gradient(to bottom, transparent, #000 var(--elbow-fade)),
+      linear-gradient(to right, #000 calc(100% - min(var(--rail-fade), 40%)), transparent);
+    mask-composite: intersect;
   }
-  .subagent-graph-tree > li > ul > li:first-child::before { top: calc(-1 * var(--stem-reach)); }
-  .subagent-graph-tree > li > ul > li:first-child::after { top: calc(-1 * var(--stem-reach)); height: calc(var(--row) / 2 + var(--stem-reach)); }
+  /* Fade only the new stem, not its rows or later junctions. The solid continuation starts after the fade, so the
+     overlapping borders cannot double its opacity; a single child keeps the same fade with no continuation. */
+  .subagent-graph-tree ul > li:first-child::before { top: calc(var(--stem-fade) - var(--stem-reach)); }
+  .subagent-graph-tree ul > li:first-child::after {
+    top: calc(-1 * var(--stem-reach));
+    height: calc(var(--row) / 2 + var(--stem-reach));
+    --elbow-fade: var(--stem-fade);
+  }
 
   /* The inspected child stays marked while the graph is open over it */
   .subagent-graph-node[aria-current] { background: var(--active); color: var(--fg-1); }

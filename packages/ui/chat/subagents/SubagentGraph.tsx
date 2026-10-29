@@ -109,7 +109,7 @@ export function SubagentGraph({ nodes, sessionTitle, open, onOpenChange, onInspe
           <div className="subagent-graph-scroll scroll-thin" tabIndex={0} role="region" aria-label={t('subagents.graph')}>
             <ul className="subagent-graph-tree"><li>
               {/* The session itself labels the tree; it is not a node to open */}
-              <Row lead={<GitBranch className="size-icon" strokeWidth={1.5} />}>
+              <Row lead={<GitBranch className="size-icon" strokeWidth={2.4} />}>
                 <span className="min-w-0 truncate font-medium text-fg-1" title={sessionTitle}>{sessionTitle || t('subagents.root')}</span>
                 <span className="shrink-0 text-3 text-fg-3">{t('subagents.entry', { n: nodes.length })}</span>
               </Row>
