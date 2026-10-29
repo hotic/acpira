@@ -1458,7 +1458,7 @@
   "mobile.engine.updateComputer": "컴퓨터의 Acpira가 이 앱보다 오래되었습니다. 컴퓨터에서 업데이트하세요.",
   "mobile.engine.updateApp": "컴퓨터의 Acpira가 이 앱보다 최신입니다. 앱을 업데이트하세요.",
   "mobile.settings.agents": "에이전트",
-  "mobile.settings.agents.desc": "‘편집’을 눌러 순서를 바꿉니다. 순서는 모든 에이전트 목록에 적용되고, 끈 에이전트는 새 세션에 나오지 않습니다.",
+  "mobile.settings.agents.desc": "‘편집’을 눌러 쓸 에이전트를 고르고 끌어서 순서를 바꿉니다. 순서는 모든 에이전트 목록에 적용되고, 고르지 않은 에이전트는 새 세션에 나오지 않습니다.",
   "mobile.settings.sessions": "세션",
   "mobile.settings.engine.desc": "컴퓨터의 엔진에 저장되며 그곳의 Acpira와 공유됩니다.",
   "mobile.settings.agentOff": "꺼짐",

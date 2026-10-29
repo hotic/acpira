@@ -1486,7 +1486,7 @@
   "mobile.engine.updateComputer": "Acpira on the computer is older than this app. Update it there.",
   "mobile.engine.updateApp": "Acpira on the computer is newer than this app. Update the app.",
   "mobile.settings.agents": "Agents",
-  "mobile.settings.agents.desc": "Tap Edit to reorder. The order applies to every agent list, and an agent that is off is not offered for new sessions.",
+  "mobile.settings.agents.desc": "Tap Edit to choose the agents to offer and drag to reorder. The order applies to every agent list; an unchecked agent is not offered for new sessions.",
   "mobile.settings.sessions": "Sessions",
   "mobile.settings.engine.desc": "Saved by the engine on the computer and shared with Acpira there.",
   "mobile.settings.agentOff": "Off",

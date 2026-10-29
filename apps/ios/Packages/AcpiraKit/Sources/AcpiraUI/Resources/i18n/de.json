@@ -1453,7 +1453,7 @@
   "mobile.engine.updateComputer": "Acpira auf dem Computer ist älter als diese App. Aktualisiere es dort.",
   "mobile.engine.updateApp": "Acpira auf dem Computer ist neuer als diese App. Aktualisiere die App.",
   "mobile.settings.agents": "Agents",
-  "mobile.settings.agents.desc": "Tippe auf „Bearbeiten“, um die Reihenfolge zu ändern. Sie gilt für jede Agent-Liste; ausgeschaltete Agents werden für neue Sitzungen nicht angeboten.",
+  "mobile.settings.agents.desc": "Tippe auf „Bearbeiten“, um die angebotenen Agents auszuwählen und per Ziehen umzusortieren. Die Reihenfolge gilt für jede Agent-Liste; nicht ausgewählte Agents werden für neue Sitzungen nicht angeboten.",
   "mobile.settings.sessions": "Sitzungen",
   "mobile.settings.engine.desc": "Von der Engine auf dem Computer gespeichert und mit Acpira dort geteilt.",
   "mobile.settings.agentOff": "Aus",

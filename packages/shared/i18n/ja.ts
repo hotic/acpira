@@ -1482,7 +1482,7 @@ export const ja = {
   'mobile.engine.updateComputer': 'コンピュータの Acpira がこのアプリより古いバージョンです。コンピュータ側を更新してください。',
   'mobile.engine.updateApp': 'コンピュータの Acpira がこのアプリより新しいバージョンです。アプリを更新してください。',
   'mobile.settings.agents': 'エージェント',
-  'mobile.settings.agents.desc': '「編集」で並べ替えられます。順序はすべてのエージェント一覧に適用され、オフのエージェントは新しいセッションに表示されません。',
+  'mobile.settings.agents.desc': '「編集」で使うエージェントを選び、ドラッグで並べ替えます。順序はすべてのエージェント一覧に適用され、選んでいないエージェントは新しいセッションに表示されません。',
   'mobile.settings.sessions': 'セッション',
   'mobile.settings.engine.desc': 'コンピュータ上のエンジンに保存され、そこにある Acpira と共有されます。',
   'mobile.settings.agentOff': 'オフ',

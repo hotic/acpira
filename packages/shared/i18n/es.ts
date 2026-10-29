@@ -1478,7 +1478,7 @@ export const es = {
   'mobile.engine.updateComputer': 'Acpira en el ordenador es más antiguo que esta app. Actualízalo allí.',
   'mobile.engine.updateApp': 'Acpira en el ordenador es más reciente que esta app. Actualiza la app.',
   'mobile.settings.agents': 'Agentes',
-  'mobile.settings.agents.desc': 'Toca Editar para reordenar. El orden se aplica a todas las listas de agentes, y un agente desactivado no se ofrece para sesiones nuevas.',
+  'mobile.settings.agents.desc': 'Toca Editar para elegir los agentes que se ofrecen y arrástralos para reordenarlos. El orden se aplica a todas las listas de agentes, y un agente sin marcar no se ofrece para sesiones nuevas.',
   'mobile.settings.sessions': 'Sesiones',
   'mobile.settings.engine.desc': 'Los guarda el motor del ordenador y se comparten con Acpira allí.',
   'mobile.settings.agentOff': 'Desactivado',

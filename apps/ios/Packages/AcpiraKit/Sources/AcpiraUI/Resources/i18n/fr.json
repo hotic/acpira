@@ -1456,7 +1456,7 @@
   "mobile.engine.updateComputer": "Acpira sur l’ordinateur est plus ancien que cette app. Mettez-le à jour.",
   "mobile.engine.updateApp": "Acpira sur l’ordinateur est plus récent que cette app. Mettez l’app à jour.",
   "mobile.settings.agents": "Agents",
-  "mobile.settings.agents.desc": "Touchez Modifier pour réordonner. L’ordre s’applique à toutes les listes d’agents, et un agent désactivé n’est plus proposé pour les nouvelles sessions.",
+  "mobile.settings.agents.desc": "Touchez Modifier pour choisir les agents proposés et faites-les glisser pour les réordonner. L’ordre s’applique à toutes les listes d’agents, et un agent non coché n’est plus proposé pour les nouvelles sessions.",
   "mobile.settings.sessions": "Sessions",
   "mobile.settings.engine.desc": "Enregistrés par le moteur sur l’ordinateur et partagés avec Acpira sur celui-ci.",
   "mobile.settings.agentOff": "Désactivé",
