@@ -1,3 +1,4 @@
+import AcpiraModels
 import Foundation
 
 // shared/sessionLinks.ts: `acpira://session/<id>` and the shells' clickable forms (`vscode://hotic.acpira/session/<id>`
@@ -49,5 +50,42 @@ enum SessionLinks {
   static func ref(_ input: String) -> String? {
     let s = unwrap(input)
     return id(ofLink: s) ?? (isSessionId(s) ? s : nil)
+  }
+
+  /// Session tools carry a canonical link followed by a turn range or search query.
+  static func splitTarget(_ target: String?) -> (id: String?, rest: String?) {
+    let text = (target ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    let space = text.firstIndex(of: " ")
+    let head = space.map { String(text[..<$0]) } ?? text
+    let id = id(ofLink: head)
+    let rest = (id == nil ? text : space.map { String(text[text.index(after: $0)...]) } ?? "")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    return (id, rest.isEmpty ? nil : rest)
+  }
+
+  static func isTool(_ block: ToolCallBlock) -> Bool {
+    block.verbKey == "verb.readSession" || block.verbKey == "verb.searchSessions"
+  }
+
+  /// Local ids win over native aliases; an unknown session keeps its id rather than its URI.
+  static func title(_ id: String, in summaries: [SessionSummary]) -> String {
+    guard let session = summaries.first(where: { $0.id == id }) ?? summaries.first(where: { $0.acpSessionId == id }) else {
+      return id
+    }
+    return session.title.isEmpty ? t("session.fallbackTitle") : session.title
+  }
+
+  /// Match folding.ts sessionReadLabel without allocating a long list of turns.
+  static func readLabel(_ range: String?) -> String {
+    guard let match = (range ?? "").wholeMatch(of: /(\d*)-(\d*)/),
+          !match.1.isEmpty || !match.2.isEmpty,
+          let from = match.1.isEmpty ? 1 : Int(match.1) else { return t("tool.sessionOutline") }
+    if match.2.isEmpty { return t("tool.sessionTurnsFrom", ["n": "\(from)"]) }
+    guard let end = Int(match.2) else { return t("tool.sessionOutline") }
+    let lo = min(from, end), hi = max(from, end)
+    let label = hi - lo < 5
+      ? (lo...hi).map(String.init).joined(separator: t("turns.nameSep"))
+      : "\(lo)\u{2013}\(hi)"
+    return t("tool.sessionTurns", ["range": label])
   }
 }
