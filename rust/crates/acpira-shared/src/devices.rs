@@ -64,6 +64,9 @@ pub fn device_allowed(m: &WebviewMsg) -> bool {
     | W::Controls { .. }
     | W::Inventory { .. }
     | W::RefreshQuota { .. } => true,
+    // The SSH hosts' state, read only: the list draws each host folder's alias and status from it, and a new session in
+    // a host folder picks its agent by the host's run mode. Adding, changing and browsing hosts stay on the computer
+    W::Connections => true,
     // Puts something on the computer's screen: the device opens links and files itself
     W::ViewFocus
     | W::OpenPlan { .. }
@@ -103,7 +106,6 @@ pub fn device_allowed(m: &WebviewMsg) -> bool {
     | W::Providers
     | W::ProviderAction { .. }
     | W::ProviderProbe { .. }
-    | W::Connections
     | W::ConnectionOp { .. }
     | W::SshHosts
     | W::RemoteDir { .. }
@@ -337,5 +339,8 @@ mod tests {
     assert!(!allowed(json!({ "type": "imageBlob", "sessionId": "s", "path": "/etc/passwd", "seq": 1 })));
     assert!(!allowed(json!({ "type": "terminalOpen", "id": "t" })));
     assert!(!allowed(json!({ "type": "removeAccount", "id": "a" })));
+    assert!(allowed(json!({ "type": "connections" })));
+    assert!(!allowed(json!({ "type": "connectionOp", "op": { "op": "remove", "alias": "h" } })));
+    assert!(!allowed(json!({ "type": "remoteDir", "alias": "h", "path": "/", "seq": 1 })));
   }
 }
