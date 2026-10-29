@@ -99,7 +99,13 @@ impl SessionManager {
 
   pub async fn handle_for(self: &Arc<Self>, v: &Arc<Viewer>, m: WebviewMsg) {
     let kind = format!("{m:?}").split([' ', '{', '(']).next().unwrap_or("").to_owned();
-    let moves = matches!(m, WebviewMsg::SelectSession { .. } | WebviewMsg::NewSession { .. } | WebviewMsg::DeleteSession { .. });
+    let moves = matches!(
+      m,
+      WebviewMsg::SelectSession { .. }
+        | WebviewMsg::DeselectSession { .. }
+        | WebviewMsg::NewSession { .. }
+        | WebviewMsg::DeleteSession { .. }
+    );
     let done = match self.host_action(v, &m).await {
       Some(r) => r,
       None => self.dispatch(v, m).await,
@@ -209,6 +215,12 @@ impl SessionManager {
         }
       }
       W::SelectSession { id } => self.select_session_for(v, &id).await,
+      // Only the session the view shows: a deselect that lost the race with the next select leaves that one alone
+      W::DeselectSession { id } => {
+        if v.active_id().as_deref() == Some(id.as_str()) {
+          self.set_active(v, None);
+        }
+      }
       // A chat (project shells): a fresh folder of its own, unfiled
       W::NewSession { agent, chat: Some(true), .. } if (self.deps.projects)() => {
         let dir = self.new_chat_folder().await?;

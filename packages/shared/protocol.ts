@@ -471,6 +471,9 @@ export type WebviewMsg =
   | { type: 'setMode'; sessionId?: string; id: string }
   | { type: 'setConfig'; sessionId?: string; configId: string; value: string }
   | { type: 'selectSession'; id: string }
+  // The view stops showing `id` without showing another (a phone back on its session list, or its app in the background),
+  // so a turn ending there is no longer watched from it and gets its unread mark. Ignored unless `id` is what the view shows
+  | { type: 'deselectSession'; id: string }
   // `category`: file the new session under that category (of the window's project) from the start
   // cwd: the project folder to start in (a project shell, `ShellEnv.projects`); the shell's workspace when absent
   // `chat` (project shells): the engine makes the session a fresh folder under InitState.chats, `cwd` ignored

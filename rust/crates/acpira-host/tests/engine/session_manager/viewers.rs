@@ -136,6 +136,36 @@ async fn a_turn_ending_unwatched_marks_the_session_unread_until_it_is_opened() {
   m.dispose().await;
 }
 
+// A view that leaves its session for no other (a phone back on its list, or gone to the background) stops watching it: the
+// turn ending there leaves an unread dot. A deselect naming another session than the one shown changes nothing
+#[tokio::test(flavor = "multi_thread")]
+async fn a_view_that_deselects_its_session_no_longer_watches_it() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let m = Mgr::new(dir.path(), Opts::fake(&fake));
+  m.init().await;
+  let state_of = |id: &str| m.sessions().iter().find(|s| s["id"] == id).map(|s| s["state"].clone()).unwrap_or(Value::Null);
+  let perm_of = |id: &str| m.view_of(id).and_then(|x| crate::acp_session::agent_blocks(&x).into_iter().find(|b| b["type"] == "permission"));
+  m.new_session(None).await;
+  let id = m.active_id().unwrap();
+  let send = m.spawn_handle(json!({ "type": "send", "text": "use tool" }));
+  until(|| perm_of(&id).is_some(), 8000).await;
+  let perm = perm_of(&id).unwrap();
+
+  m.handle(json!({ "type": "deselectSession", "id": "someone-else" })).await;
+  assert_eq!(m.active_id().as_deref(), Some(id.as_str()));
+  m.handle(json!({ "type": "deselectSession", "id": id })).await;
+  assert_eq!(m.active_id(), None);
+
+  m.handle(json!({ "type": "permission", "sessionId": id, "blockId": perm["id"], "optionId": "allow" })).await;
+  send.await.unwrap();
+  until(|| state_of(&id) == "unread", 5000).await;
+  // Coming back to it reads it
+  m.handle(json!({ "type": "selectSession", "id": id })).await;
+  assert_eq!(state_of(&id), Value::Null);
+  m.dispose().await;
+}
+
 // A permission card shows the waiting dot over its running turn's spinner and is announced at once; the turn that settles
 // after the answer is announced as done once it stayed settled, a stopped turn is not announced at all
 #[tokio::test(flavor = "multi_thread")]
