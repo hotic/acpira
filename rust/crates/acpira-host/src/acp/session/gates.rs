@@ -153,7 +153,8 @@ impl AcpSession {
   // Permission gate
 
   /// A permission request from the agent: the plugins hear it asked and answered around everything that decides it
-  pub(crate) async fn on_permission(self: &Arc<Self>, req: Value, cancel: Cancel) -> Result<Value, RpcError> {
+  pub(crate) async fn on_permission(self: &Arc<Self>, mut req: Value, cancel: Cancel) -> Result<Value, RpcError> {
+    self.nativize_permission(&mut req);
     self.emit_permission_asked(&req);
     let answer = self.decide_permission(req.clone(), cancel).await;
     match &answer {
@@ -269,6 +270,7 @@ impl AcpSession {
     }
     // Read outside the session lock: the setting lives with the shell
     let plan_auto_on = self.deps.plan_auto_approve.as_ref().is_some_and(|f| f(&self.agent));
+    let remote_edit = self.remote_edit(&tool_call_id);
     let rx = {
       let mut c = self.core.lock();
       // The epoch tells a request of an ended root turn (or replaced process); a summoned child outlives both, and its
@@ -333,6 +335,17 @@ impl AcpSession {
         && captured.is_none()
         && tool_call.get("kind").and_then(Value::as_str) != Some("switch_mode")
         && default_to_no(&req) != Some(true)
+        && let Some(id) = single_allow_once(&options)
+      {
+        return Ok(json!({ "outcome": { "outcome": "selected", "optionId": id } }));
+      }
+      // Claude Code's remote writes on an SSH host (`remote_claude.rs`) ask where its native ones would not: its plan
+      // file in plan mode, and every write in accept-edits mode. The edit gate has seen them above
+      let accept_edits = c.state.controls.mode_id.as_deref() == Some("acceptEdits");
+      if root
+        && !insist
+        && (remote_edit == crate::acp::session::remote_claude::RemoteEdit::PlanFile
+          || (accept_edits && remote_edit == crate::acp::session::remote_claude::RemoteEdit::Host))
         && let Some(id) = single_allow_once(&options)
       {
         return Ok(json!({ "outcome": { "outcome": "selected", "optionId": id } }));

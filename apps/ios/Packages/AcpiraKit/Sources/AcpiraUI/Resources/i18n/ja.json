@@ -651,7 +651,7 @@
   "attach.viewSource": "ソースを表示",
   "mention.noFiles": "一致するファイルはありません",
   "host.notFound": "{command} が見つかりません。先に {agent} CLI をインストールしてください",
-  "host.remoteBuiltinOnly": "ローカル実行では {agent} は {host} 上のフォルダーで作業できません。使えるのは Acpira 内蔵のエージェントだけです",
+  "host.remoteBuiltinOnly": "ローカル実行では {agent} は {host} 上のフォルダーで作業できません。使えるのは Acpira 内蔵のエージェントと Claude Code だけです",
   "host.remoteFile": "{path} は {host} 上にあります。プロジェクトのファイルはツールパネルで開けます",
   "host.remoteUnreachable": "{host} に今は接続できません。接続されてからもう一度お試しください",
   "host.exited": "{agent} のプロセスが終了しました（{code}）",

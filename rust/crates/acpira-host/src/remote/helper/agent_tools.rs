@@ -32,8 +32,9 @@ fn safe_name(s: &str) -> String {
 /// `prepare` validates the call against this host's files (an edit's resulting text, so the card shows the real
 /// diff) and marks the files this host's guard protects; `run` carries it out. Output over the budget is written to a
 /// folder of the call and sent back as `spill:<name>` chunks, since the session's own files stay on the engine's
-/// machine; progress (a command's output so far) goes out as `progress` chunks, one JSON value per line. `close`
-/// stops a session's background jobs
+/// machine; progress (a command's output so far) goes out as `progress` chunks, one JSON value per line. With `keep`
+/// (Claude Code's calls, `claude_remote.rs`) the spilled outputs stay in that folder for the model to read on this host
+/// instead. `close` stops a session's background jobs and drops its kept outputs
 pub(super) async fn tool(a: &Value, id: u64, out: &Out) -> Result<Value, WireError> {
   use acpira_agent::tools::{self, Action, Ctx};
   let session = a.get("sessionId").and_then(Value::as_str).unwrap_or("").to_owned();
@@ -91,6 +92,7 @@ pub(super) async fn tool(a: &Value, id: u64, out: &Out) -> Result<Value, WireErr
         .map_err(|e| WireError::new("invalid", format!("not a tool action this host runs: {e}")))?;
       let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
       let dir = home.join(".acpira/remote/spill").join(safe_name(&session)).join(safe_name(&call));
+      let keep = a.get("keep").and_then(Value::as_bool).unwrap_or(false);
       let jobs = JOBS.lock().entry(session.clone()).or_default().clone();
       let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
       let ctx = Ctx {
@@ -121,6 +123,9 @@ pub(super) async fn tool(a: &Value, id: u64, out: &Out) -> Result<Value, WireErr
       while let Ok(v) = rx.try_recv() {
         out.chunks(id, "progress", &line(unmapped(v))).await;
       }
+      if keep {
+        return Ok(unmapped(json!({ "output": output })));
+      }
       let spilled = {
         let dir = dir.clone();
         blocking(move || {
@@ -145,6 +150,10 @@ pub(super) async fn tool(a: &Value, id: u64, out: &Out) -> Result<Value, WireErr
     "close" => {
       if let Some(j) = JOBS.lock().remove(&session) {
         j.stop_all();
+      }
+      if let Some(home) = std::env::var_os("HOME").filter(|_| !session.is_empty()) {
+        let dir = PathBuf::from(home).join(".acpira/remote/spill").join(safe_name(&session));
+        let _ = blocking(move || Ok(std::fs::remove_dir_all(dir))).await;
       }
       Ok(json!({}))
     }

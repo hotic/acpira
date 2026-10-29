@@ -23,6 +23,8 @@ impl AcpSession {
     let session_id = n.get("sessionId").and_then(Value::as_str).unwrap_or("").to_owned();
     let mut u = n.get("update").cloned().unwrap_or(Value::Null);
     let kind = u.get("sessionUpdate").and_then(Value::as_str).unwrap_or("").to_owned();
+    // Claude Code's project tools on an SSH host read as its native tools
+    self.nativize_remote(&kind, &mut u);
     let mut c = self.core.lock();
     if c.phase.editing {
       if matches!(kind.as_str(), "available_commands_update" | "usage_update") {

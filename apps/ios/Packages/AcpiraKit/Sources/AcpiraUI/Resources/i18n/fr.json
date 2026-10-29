@@ -644,7 +644,7 @@
   "attach.viewSource": "Afficher la source",
   "mention.noFiles": "Aucun fichier correspondant",
   "host.notFound": "{command} introuvable — installez d’abord la CLI {agent}",
-  "host.remoteBuiltinOnly": "{agent} ne peut pas travailler dans un dossier sur {host} en exécution locale ; seul l'agent intégré d'Acpira le peut",
+  "host.remoteBuiltinOnly": "{agent} ne peut pas travailler dans un dossier sur {host} en exécution locale ; seuls l'agent intégré d'Acpira et Claude Code le peuvent",
   "host.remoteFile": "{path} se trouve sur {host}. Les fichiers du projet s’ouvrent dans le panneau d’outils",
   "host.remoteUnreachable": "{host} est injoignable pour le moment ; réessayez une fois la connexion rétablie",
   "host.exited": "Le processus {agent} s’est terminé ({code})",

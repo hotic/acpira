@@ -49,7 +49,7 @@ import { compactingNow } from './usageBreakdown';
 import { BUILTIN_AGENT_ID } from '@acpira/shared/providers';
 import { imageMimeOf } from '@acpira/shared/attachments';
 import { launchable } from '@acpira/shared/agentOrder';
-import { parseRemoteFolder } from '@acpira/shared/remote';
+import { LOCAL_RUN_AGENTS, parseRemoteFolder } from '@acpira/shared/remote';
 import { connectionOf, useFolderHost } from '../remote/api';
 import { RemoteFolderDialog } from '../remote/RemoteFolderDialog';
 import { COLUMN_HIDDEN_KEY, DesktopContext, desktopOS, macOS, pageCaption, useShellCommands, useShellToasts } from '../desktop';
@@ -553,16 +553,18 @@ export function Shell(p: ShellProps) {
   // The start page shows while the session on screen has not said a word
   const startPage = desktop && !p.noProject && !p.external && !!p.activeSessionId && !p.turns.length && !p.queued?.length;
   const currentAgent = launchable(p.agents).some(x => x.id === p.agent.id && x.available !== false) ? p.agent.id : undefined;
-  // Under local run only the built-in agent works in a folder on an SSH host (the engine refuses others with
-  // host.remoteBuiltinOnly), so a session started there takes it whatever was used last; under remote run the host's
-  // own engine runs them all, and a host the list does not know yet counts as local run, the default
-  const builtinReady = p.agents.some(a => a.id === BUILTIN_AGENT_ID && a.available !== false);
+  // Under local run only the built-in agent and Claude Code work in a folder on an SSH host (LOCAL_RUN_AGENTS; the engine
+  // refuses others with host.remoteBuiltinOnly), so a session started there keeps one of them and otherwise takes the
+  // first that is installed; under remote run the host's own engine runs them all, and a host the list does not know yet
+  // counts as local run, the default
+  const localReady = LOCAL_RUN_AGENTS.find(id => p.agents.some(a => a.id === id && a.available !== false));
   const agentIn = useCallback((cwd: string | undefined, agent: AgentId | undefined) => {
     const remote = cwd ? parseRemoteFolder(cwd) : undefined;
-    return remote && connectionOf(remote.alias)?.mode !== 'remote' && builtinReady ? BUILTIN_AGENT_ID : agent;
-  }, [builtinReady]);
+    if (!remote || connectionOf(remote.alias)?.mode === 'remote' || !localReady) return agent;
+    return agent && LOCAL_RUN_AGENTS.includes(agent) ? agent : localReady;
+  }, [localReady]);
   const startHost = useFolderHost(startPage ? p.cwd : undefined);
-  const startOnly = startHost && startHost.view?.mode !== 'remote' && builtinReady ? [BUILTIN_AGENT_ID] : undefined;
+  const startOnly = startHost && startHost.view?.mode !== 'remote' && localReady ? [...LOCAL_RUN_AGENTS] : undefined;
   const [fresh, setFresh] = useState<string>();
   useEffect(() => {
     if (!fresh) return;

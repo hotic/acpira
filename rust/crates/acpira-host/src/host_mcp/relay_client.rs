@@ -105,6 +105,38 @@ impl Relay {
     crate::relay::wire::HubRequest { token: self.token.clone(), op }
   }
 
+  /// A project tool of a Claude Code session in a folder on an SSH host (`HubOp::RemoteTool`): the whole MCP result
+  /// comes back. `opened` gets the socket, which the server shuts down when the client cancels the call
+  pub(super) fn remote_tool(&self, params: &Value, opened: impl FnOnce(&std::net::TcpStream)) -> Value {
+    use crate::relay::wire::{HubOp, HubReply};
+    use std::io::{BufRead, Write};
+    let op = HubOp::RemoteTool {
+      name: params.get("name").and_then(Value::as_str).unwrap_or("").to_owned(),
+      arguments: params.get("arguments").cloned().unwrap_or_else(|| json!({})),
+      tool_use_id: params.pointer("/_meta/claudecode~1toolUseId").and_then(Value::as_str).map(str::to_owned),
+    };
+    let run = || -> std::io::Result<Option<Value>> {
+      let mut sock = std::net::TcpStream::connect(&self.addr)?;
+      opened(&sock);
+      let mut body = serde_json::to_string(&self.request(op)).map_err(std::io::Error::other)?;
+      body.push('\n');
+      sock.write_all(body.as_bytes())?;
+      for line in std::io::BufReader::new(sock).lines() {
+        match serde_json::from_str::<HubReply>(line?.trim()) {
+          Ok(HubReply::Tool(result)) => return Ok(Some(result)),
+          Ok(HubReply::Error(e)) => return Ok(Some(tool_error(e))),
+          _ => continue,
+        }
+      }
+      Ok(None)
+    };
+    match run() {
+      Ok(Some(result)) => result,
+      Ok(None) => tool_error("Acpira closed the call without an answer; whether it ran on the host is unknown.".into()),
+      Err(e) => tool_error(format!("Acpira could not be reached: {e}")),
+    }
+  }
+
   /// The host tools the serving shell can carry out now; none when the hub cannot be reached
   pub(super) fn features(&self) -> crate::relay::wire::HostFeatures {
     use crate::relay::wire::{HubOp, HubReply};
@@ -331,7 +363,7 @@ impl Relay {
         end = Some(tool_error(text));
         false
       }
-      HubReply::Personas(_) | HubReply::Roster { .. } | HubReply::Features(_) | HubReply::Plugins { .. } => true,
+      HubReply::Personas(_) | HubReply::Roster { .. } | HubReply::Features(_) | HubReply::Plugins { .. } | HubReply::Tool(_) => true,
     });
     match (end, r) {
       (Some(v), _) => v,

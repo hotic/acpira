@@ -218,6 +218,7 @@ Everything except a prompt-less `pnpm probe` (or one with only `--mcp`) spends r
   - `--elicit` answers form elicitation; `--mcp` reports whether the agent launched a marker MCP server; `--cmd` launches an explicit command line; `--log` appends the wire, secrets redacted.
   - `--wait` keeps listening for `available_commands_update` (Grok / Kimi send it after `session/new` returns, Devin during).
 - **`pnpm exec tsx scripts/probe/agent-host.ts <agent> [--attach] [--shell] [--write] [--plan] [--image] [--raw]`**: the webview's path through the sidecar: session, controls, a prompt, plus an attachment, shell command, permission write, plan reject or image view.
+- **`pnpm exec tsx scripts/probe/remote-claude-host.ts <ssh alias> [--keep]`**: Claude Code in a temp folder on a local-run host (`docs/dev/remote.md`): host instructions, tools and subagents on the host with native rows, plan mode, Stop.
 - **`scripts/probe/opencode-host.ts [--model provider/model]`**: OpenCode mode / effort, a write, native import. OpenCode retries a 503 silently: if a prompt never returns, curl the gateway and pass `--model`.
 - **`scripts/probe/restore-host.ts <agent>`**: same-store reopen (logs resume vs load, checks recall), then `session/list` → import on a fresh store.
 - **`pnpm exec tsx scripts/probe/subagents.ts <agent> [--air] [--no-caps] [--import-local] [--cmd "<command line>"] [--wait MS]`**: raw-wire subagent emission; `subagents-host.ts <claude|devin>` goes through the sidecar.

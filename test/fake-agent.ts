@@ -117,7 +117,7 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // nothing to do once the goal is no longer active, and for an objective starting with "slow" takes 1 s and a stop, which
 // pauses the goal; FAKE_GOAL_FAIL_ROUND=n fails the n-th continuation once, before any output
 // FAKE_SLOW_STEP_MS → the pause between the 50 chunks of a "slow" turn (default 40 ms, so 2 s in all)
-// FAKE_META_LOG → append `{ method, meta }` (the request's `_meta`) for every session/new, resume and load
+// FAKE_META_LOG → append `{ method, meta, cwd }` (the request's `_meta` and cwd) for every session/new, resume and load
 // FAKE_REBUILD → claude-agent-acp 0.87.0's getOrCreateSession: a resume of a live session whose
 // `_meta.claudeCode.options.settings` changed recreates it (a session/new starts there too), which resets model / effort / Fast to the defaults and keeps
 // the live mode; the response carries modes and configOptions. A recreate of a session that never got a prompt fails with
@@ -190,8 +190,8 @@ function saveSession(id: string, prompts = readSession(id)?.prompts ?? [], cwd =
 // symlinked project path land in the store under the resolved path
 const canonicalCwd = (cwd: string) => { try { return realpathSync(cwd); } catch { return cwd; } };
 // FAKE_MCP_TRACE: one line per session/new, resume and load with the mcpServers the client handed over
-function logMeta(method: string, meta: unknown) {
-  if (process.env.FAKE_META_LOG) appendFileSync(process.env.FAKE_META_LOG, `${JSON.stringify({ method, meta: meta ?? null })}\n`);
+function logMeta(method: string, meta: unknown, cwd?: string) {
+  if (process.env.FAKE_META_LOG) appendFileSync(process.env.FAKE_META_LOG, `${JSON.stringify({ method, meta: meta ?? null, cwd })}\n`);
 }
 // FAKE_REBUILD: the settings each live session was built with, the part of the adapter's fingerprint the host changes
 const builtWith = new Map<string, string>();
@@ -201,8 +201,8 @@ const settingsOf = (meta: unknown) => JSON.stringify((meta as { claudeCode?: { o
 function logMcp(method: string, servers: unknown) {
   if (process.env.FAKE_MCP_TRACE) appendFileSync(process.env.FAKE_MCP_TRACE, `${method} ${JSON.stringify(servers ?? null)}\n`);
 }
-// One MCP stdio session: initialize, tools/list, one tools/call; the server process ends with it
-function callMcp(server: Extract<acp.McpServer, { command: string }>, tool: string, args: unknown): Promise<{ tools: string[]; result: unknown }> {
+// One MCP stdio session: initialize, tools/list, one tools/call (with `meta` as its `_meta`); the server process ends with it
+function callMcp(server: Extract<acp.McpServer, { command: string }>, tool: string, args: unknown, meta?: Record<string, unknown>): Promise<{ tools: string[]; result: unknown }> {
   return new Promise((resolve, reject) => {
     const env = { ...process.env, ...Object.fromEntries(server.env.map(e => [e.name, e.value])) };
     const child = spawn(server.command, server.args, { env, stdio: ['pipe', 'pipe', 'ignore'] });
@@ -224,7 +224,7 @@ function callMcp(server: Extract<acp.McpServer, { command: string }>, tool: stri
     line({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'fake-agent', version: '0' } } });
     line({ jsonrpc: '2.0', method: 'notifications/initialized' });
     line({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
-    line({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: tool, arguments: args } });
+    line({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: tool, arguments: args, ...(meta ? { _meta: meta } : {}) } });
   });
 }
 function rejectMcp(servers: unknown[] | undefined) {
@@ -342,7 +342,7 @@ const app = acp.agent({ name: 'fake-agent' })
         }
       })();
     }
-    logMeta('new', params._meta);
+    logMeta('new', params._meta, params.cwd);
     builtWith.set(sessionId, settingsOf(params._meta));
     // Like the recreate below, a new claude-agent-acp session starts on the adapter's defaults
     if (process.env.FAKE_REBUILD) Object.assign(config, { model: 'm1', effort: 'high', fast: 'false' });
@@ -372,7 +372,7 @@ const app = acp.agent({ name: 'fake-agent' })
   })
   .onRequest(acp.methods.agent.session.resume, ({ params }) => {
     logMcp('resume', (params as { mcpServers?: unknown }).mcpServers);
-    logMeta('resume', params._meta);
+    logMeta('resume', params._meta, params.cwd);
     if (process.env.FAKE_REBUILD && builtWith.has(params.sessionId)) {
       const settings = settingsOf(params._meta);
       if (!sessions.has(params.sessionId) || builtWith.get(params.sessionId) !== settings) {
@@ -440,7 +440,7 @@ const app = acp.agent({ name: 'fake-agent' })
   })
   .onRequest(acp.methods.agent.session.load, async ({ params, client }) => {
     logMcp('load', params.mcpServers);
-    logMeta('load', params._meta);
+    logMeta('load', params._meta, params.cwd);
     rejectMcp(params.mcpServers);
     if (!sessionDir) throw acp.RequestError.methodNotFound(acp.methods.agent.session.load);
     const restored = restoreSession(params.sessionId, params.cwd);
@@ -807,6 +807,43 @@ const app = acp.agent({ name: 'fake-agent' })
       const [name, tool] = spec.includes('/') ? [spec.slice(0, spec.indexOf('/')), spec.slice(spec.indexOf('/') + 1)] : ['acpira', spec];
       const server = mcpBySession.get(sid)?.find(m => m.name === name && 'command' in m) as Extract<acp.McpServer, { command: string }> | undefined;
       const reply = server ? await callMcp(server, tool, JSON.parse(rest.join(' ') || '{}') as unknown).catch((e: unknown) => ({ error: String(e) })) : { error: `no ${name} MCP server` };
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(reply) } });
+      return { stopReason: 'end_turn' };
+    }
+    // "claude-remote-call:<tool> <json>" → claude-agent-acp 0.93.0 calling a project tool of Acpira's server (a Claude Code
+    // session on an SSH host, vendors/claude_remote.rs): the generic row `mcp__acpira__<tool>`, a permission request for a
+    // write or a command, the call with `claudecode/toolUseId`, then the completion with the result's text. As to an AIR
+    // client, the row also names the call at the top level and flags it as MCP, and the request carries its heading
+    // (the MCP name) in `_meta`. Replies with JSON { tools, result } (or { rejected })
+    if (text.startsWith('claude-remote-call:')) {
+      const [tool = '', ...rest] = text.split('\n')[0]!.slice('claude-remote-call:'.length).trim().split(' ');
+      const args = JSON.parse(rest.join(' ') || '{}') as Record<string, unknown>;
+      const server = mcpBySession.get(sid)?.find(m => m.name === 'acpira' && 'command' in m) as Extract<acp.McpServer, { command: string }> | undefined;
+      const toolCallId = `toolu_${randomUUID().replace(/-/g, '')}`;
+      const name = `mcp__acpira__${tool}`;
+      const call = { toolCallId, name, title: name, kind: 'other', status: 'pending', rawInput: args, _meta: { claudeCode: { toolName: name }, is_mcp_tool_call: true } } as acp.ToolCall;
+      await send({ sessionUpdate: 'tool_call', ...call });
+      if (!['Read', 'Grep', 'Glob'].includes(tool)) {
+        const perm = await client.request(acp.methods.client.session.requestPermission, {
+          sessionId: sid,
+          toolCall: { toolCallId, title: name, kind: 'other', rawInput: args, _meta: { claudeCode: { toolName: name } } },
+          _meta: { jetbrains: { air: { version: 1, permission: { version: 1, title: name } } } },
+          options: [
+            { optionId: 'allow', name: 'Yes', kind: 'allow_once' },
+            { optionId: 'always', name: `Yes, and don't ask again for ${name}`, kind: 'allow_always' },
+            { optionId: 'reject', name: 'No', kind: 'reject_once' },
+          ],
+        } as acp.RequestPermissionRequest);
+        if (perm.outcome.outcome !== 'selected' || perm.outcome.optionId === 'reject') {
+          await send({ sessionUpdate: 'tool_call_update', toolCallId, status: 'failed', content: [{ type: 'content', content: { type: 'text', text: 'The user rejected it' } }] });
+          await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify({ rejected: true }) } });
+          return { stopReason: 'end_turn' };
+        }
+      }
+      const reply = server ? await callMcp(server, tool, args, { 'claudecode/toolUseId': toolCallId }).catch((e: unknown) => ({ error: String(e) })) : { error: 'no acpira MCP server' };
+      const result = (reply as { result?: { content?: { type: string; text?: string }[]; isError?: boolean } }).result;
+      const resultText = (result?.content ?? []).filter(c => c.type === 'text').map(c => c.text ?? '').join('\n');
+      await send({ sessionUpdate: 'tool_call_update', toolCallId, status: result?.isError ? 'failed' : 'completed', content: [{ type: 'content', content: { type: 'text', text: resultText } }] });
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(reply) } });
       return { stopReason: 'end_turn' };
     }

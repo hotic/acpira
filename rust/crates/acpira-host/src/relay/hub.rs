@@ -180,8 +180,12 @@ impl RelayHub {
       }
       HubOp::Features => {
         let browser = self.browser.read().as_ref().is_some_and(|b| b.available());
-        let remote = session.upgrade().is_some_and(|s| s.remote_folder().is_some());
-        let _ = write.write_all(reply(HubReply::Features(HostFeatures { browser, summoned: caller.is_some(), remote })).as_bytes()).await;
+        let session = session.upgrade();
+        let remote = session.as_ref().is_some_and(|s| s.remote_folder().is_some());
+        // The project tools go to the session's own agent; a summoned child's CLI keeps its own
+        let remote_tools = session.as_ref().filter(|_| caller.is_none()).and_then(|s| s.claude_stand()).map(|st| st.alias);
+        let features = HostFeatures { browser, summoned: caller.is_some(), remote, remote_tools };
+        let _ = write.write_all(reply(HubReply::Features(features)).as_bytes()).await;
       }
       HubOp::HostHooks { cwd } => {
         let r = match session.upgrade() {
@@ -200,6 +204,25 @@ impl RelayHub {
             Err(e) => HubReply::Error(e),
           },
           None => HubReply::Error("The Acpira session that started this agent is gone.".into()),
+        };
+        let _ = write.write_all(reply(r).as_bytes()).await;
+      }
+      HubOp::RemoteTool { name, arguments, tool_use_id } => {
+        let Some(s) = session.upgrade().filter(|_| caller.is_none()) else {
+          let _ = write.write_all(reply(HubReply::Error("The Acpira session that started this agent is gone.".into())).as_bytes()).await;
+          return;
+        };
+        // The caller says nothing more after its request: its socket closing is the call's cancel, which drops the run
+        // (and with it the command's process group on the host)
+        reader.set_limit(1);
+        let mut rest = [0u8; 1];
+        let r = tokio::select! {
+          r = s.on_claude_remote_tool(&name, arguments, tool_use_id) => r,
+          _ = reader.read(&mut rest) => return,
+        };
+        let r = match r {
+          Ok(result) => HubReply::Tool(result),
+          Err(e) => HubReply::Error(e),
         };
         let _ = write.write_all(reply(r).as_bytes()).await;
       }

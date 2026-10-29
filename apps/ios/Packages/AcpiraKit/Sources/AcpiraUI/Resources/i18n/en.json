@@ -651,7 +651,7 @@
   "attach.viewSource": "View source",
   "mention.noFiles": "No matching files",
   "host.notFound": "{command} not found — install the {agent} CLI first",
-  "host.remoteBuiltinOnly": "{agent} cannot work in a folder on {host} under local run; only Acpira's own agent can",
+  "host.remoteBuiltinOnly": "{agent} cannot work in a folder on {host} under local run; only Acpira's own agent and Claude Code can",
   "host.remoteFile": "{path} is on {host}. Files of the project open in the tool panel",
   "host.remoteUnreachable": "{host} cannot be reached right now; try again once it is connected",
   "host.exited": "{agent} process exited ({code})",
