@@ -6,8 +6,10 @@ import { cn } from '../ui/cn';
 import { Card } from '../ui/Card';
 import { IconButton } from '../ui/Button';
 import { Dialog } from '../ui/Dialog';
+import { Command, SEARCH_FROM } from '../ui/Command';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
+import { Popover } from '../ui/Popover';
 import { Shimmer } from '../ui/Shimmer';
 import { StableText } from '../ui/StableText';
 import { Switch as SwitchPrimitive } from '../ui/Switch';
@@ -90,14 +92,15 @@ const DialogContext = createContext(false);
 export const useInDialog = () => useContext(DialogContext);
 const block = 'flex flex-col overflow-hidden rounded-lg bg-chip px-3';
 
-// The rules inside a card run from card edge to card edge, like a clickable row's hover fill (`rowHover`): a hovered row is
-// a closed cell between two rules. Inset rules left the fill spilling past their ends and running into the rule above.
-// `rowRules` draws one above every row but the first, `topRule` one above a block (a card's list under its head, a
-// footer, a group after another); the card clips both at its border. A closed fold (Collapsible.Section, inert while
+// The rules between rows take their colour and reach from tokens (`--rule-color`, `--rule-out`): inside a dialog's
+// blocks they run from edge to edge, like a clickable row's hover fill (`rowHover`), so a hovered row is a closed cell;
+// on a page's cards they stop at the rows' text and control edges, and the hover fill is an inset band clear of them
+// (tokens.css, after Codex / Cursor). `rowRules` draws one above every row but the first, `topRule` one above a block
+// (a card's list under its head, a footer, a group after another); the card clips both at its border. A closed fold (Collapsible.Section, inert while
 // closed) does not count as a row before: the first row after it would otherwise draw a second line on the block's top
 // rule. Not data-closed: a Collapsible.Root holding a visible row carries that too
-export const rowRules = '[&>:not([inert])~*]:relative [&>:not([inert])~*]:after:pointer-events-none [&>:not([inert])~*]:after:absolute [&>:not([inert])~*]:after:top-0 [&>:not([inert])~*]:after:-inset-x-pad [&>:not([inert])~*]:after:h-px [&>:not([inert])~*]:after:bg-line';
-export const topRule = 'relative before:pointer-events-none before:absolute before:top-0 before:-inset-x-pad before:h-px before:bg-line';
+export const rowRules = '[&>:not([inert])~*]:relative [&>:not([inert])~*]:after:pointer-events-none [&>:not([inert])~*]:after:absolute [&>:not([inert])~*]:after:top-0 [&>:not([inert])~*]:after:inset-x-(--rule-out) [&>:not([inert])~*]:after:h-px [&>:not([inert])~*]:after:bg-(--rule-color)';
+export const topRule = 'relative before:pointer-events-none before:absolute before:top-0 before:inset-x-(--rule-out) before:h-px before:bg-(--rule-color)';
 
 // A text field on a settings card (inline forms)
 export const inputBox = 'min-w-0 rounded-md border border-line bg-chip px-3 text-2 text-fg-1 outline-none placeholder:text-fg-3 focus:border-line-strong';
@@ -118,10 +121,12 @@ const second = 'text-3 text-fg-3';
 // A card (a block inside a dialog) holding the given content
 function Surface({ className, children }: { className?: string; children: ReactNode }) {
   if (useContext(DialogContext)) return <section className={cn(block, className)}>{children}</section>;
-  return <Card className={cn('acp-section-panel flex flex-col overflow-hidden px-pad shadow-none', className)}>{children}</Card>;
+  // A page's card barely lifts off the page, its edge near invisible (`--settings-card`, tokens.css)
+  return <Card className={cn('acp-section-panel flex flex-col overflow-hidden border-(--settings-card-line) bg-(--settings-card) px-pad shadow-none', className)}>{children}</Card>;
 }
 
 export function Section({ title, desc, count, status, action, cards, children }: SectionProps) {
+  const dialog = useContext(DialogContext);
   const inset = title !== undefined || !!action;
   const hasContent = children !== null && children !== undefined && children !== false;
   const content = cards ? <div className={cn('flex flex-col', !inset && 'gap-pad')}>{children}</div> : <Group>{children}</Group>;
@@ -130,6 +135,14 @@ export function Section({ title, desc, count, status, action, cards, children }:
       {desc && <SectionDescription>{desc}</SectionDescription>}
       {content}
     </div>
+  );
+  // On a page the head sits above its card, flush with the card's outer edge (Codex's group names), and the card holds
+  // only the rows; a dialog keeps its head inside the block
+  if (!dialog) return (
+    <section className="flex flex-col gap-(--group-head-gap)">
+      <ListHead title={title} desc={desc} count={count} status={status} action={action} outside />
+      {hasContent && <Surface><InsetGroupContext.Provider value={true}>{content}</InsetGroupContext.Provider></Surface>}
+    </section>
   );
   return (
     <Surface>
@@ -144,9 +157,10 @@ export function Section({ title, desc, count, status, action, cards, children }:
 // The head of a titled list: the title with its status and count, an optional second line, and the action at the right.
 // A Section card's head, and a group head inside a shared card. No icon: a head mark left the column under it empty
 // on every setting row (studied 2026-10-26)
-export function ListHead({ title, desc, count, status, action }: Pick<SectionProps, 'title' | 'desc' | 'count' | 'status' | 'action'>) {
+// `outside`: a page's group name above its card, no row height of its own, its action ending on the rows' text edge
+export function ListHead({ title, desc, count, status, action, outside }: Pick<SectionProps, 'title' | 'desc' | 'count' | 'status' | 'action'> & { outside?: boolean }) {
   return (
-    <div className={cn(settingRow, 'flex flex-wrap items-center gap-gap')} data-detail={!!desc || undefined}>
+    <div className={cn(outside ? 'flex flex-wrap items-end gap-gap pr-pad' : cn(settingRow, 'flex flex-wrap items-center gap-gap'))} data-detail={!!desc || undefined}>
       <div className={cn(stack, 'flex-[1_1_var(--setting-header-copy)]')}>
         <h3 className="m-0 flex items-baseline gap-2 text-2 font-medium text-fg-1">
           <span className="min-w-0 [overflow-wrap:anywhere]">{title}</span>
@@ -220,14 +234,16 @@ export function Tabs<V extends string>({ items, value, onChange, label }: {
     onChange(next.value);
     (e.currentTarget.parentElement?.children[items.indexOf(next)] as HTMLElement | undefined)?.focus();
   };
+  // On a page the strip takes the cards' fill; in a dialog it keeps the blocks' chip
+  const dialog = useInDialog();
   return (
-    <div role="tablist" aria-label={label} className="flex h-ctl shrink-0 [scrollbar-width:none] items-center gap-0.5 overflow-x-auto rounded-lg bg-chip p-0.5">
+    <div role="tablist" aria-label={label} className={cn('flex h-ctl shrink-0 [scrollbar-width:none] items-center gap-0.5 overflow-x-auto rounded-lg p-0.5', dialog ? 'bg-chip' : 'bg-(--settings-card)')}>
       {items.map((it, i) => {
         const on = it.value === value;
         return (
           <button key={it.value} type="button" role="tab" aria-selected={on} tabIndex={on ? 0 : -1} onClick={() => onChange(it.value)} onKeyDown={e => move(e, i)}
             className={cn('flex h-full min-w-max flex-1 items-center justify-center gap-1.5 rounded-md px-2 text-2 whitespace-nowrap outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg-2',
-              on ? 'bg-active text-fg-1' : 'text-fg-2 hover:text-fg-1')}>
+              on ? cn(dialog ? 'bg-active' : 'bg-hover', 'text-fg-1') : 'text-fg-2 hover:text-fg-1')}>
             {it.label}
             {it.count !== undefined && <span className="text-fg-3 tabular-nums">{it.count}</span>}
           </button>
@@ -404,21 +420,43 @@ export function Select<V extends string>({ options, value, onChange, label, clas
   const cur = options.find(o => o.value === value);
   // Rows with a caption get the model panels' two-line padding, all of them so the list keeps one rhythm
   const twoLine = options.some(o => o.description);
+  // A row without an icon in a list where others have one keeps the icon's column, so every label starts on one line
+  const iconColumn = options.some(o => o.icon);
   const trigger = useRef<HTMLButtonElement>(null);
   const [tone, setTone] = useState<CSSProperties>();
-  return <DropdownMenu.Root onOpenChange={open => { if (open) setTone(fieldTone(trigger.current)); }}>
-    <DropdownMenu.Trigger render={<button ref={trigger} type="button" aria-label={label}
-      className={cn('flex h-ctl w-(--ctl-w) max-w-full min-w-0 items-center gap-2 rounded-md border border-line bg-hover px-3 text-left text-2 text-fg-1 transition-colors hover:border-line-strong hover:bg-active data-[popup-open]:border-line-strong data-[popup-open]:bg-hover', className)}>
-      {cur?.icon && <span className="flex shrink-0 items-center [&_svg]:size-icon">{cur.icon}</span>}
-      {/* Every label laid out in one cell, only the current one visible: a pick never moves the caret */}
-      <StableText className="min-w-0 flex-1" itemClassName="truncate" current={value}
-        items={[...options.map(o => ({ key: o.value, text: o.label })), ...(cur ? [] : [{ key: value, text: value }])]} />
-      <ChevronsUpDown className="size-icon shrink-0 text-fg-3" strokeWidth={1.75} aria-hidden />
-    </button>} />
-    <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="start" width="anchor"><DropdownMenu.Popup style={tone}>
+  const [open, setOpen] = useState(false);
+  const onOpen = (next: boolean) => { setOpen(next); if (next) setTone(fieldTone(trigger.current)); };
+  const field = <button ref={trigger} type="button" aria-label={label}
+    className={cn('flex h-ctl w-(--ctl-w) max-w-full min-w-0 items-center gap-2 rounded-md border border-line bg-hover px-3 text-left text-2 text-fg-1 transition-colors hover:border-line-strong hover:bg-active data-[popup-open]:border-line-strong data-[popup-open]:bg-hover', className)}>
+    {cur?.icon && <span className="flex shrink-0 items-center [&_svg]:size-icon">{cur.icon}</span>}
+    {/* Every label laid out in one cell, only the current one visible: a pick never moves the caret */}
+    <StableText className="min-w-0 flex-1" itemClassName="truncate" current={value}
+      items={[...options.map(o => ({ key: o.value, text: o.label })), ...(cur ? [] : [{ key: value, text: value }])]} />
+    <ChevronsUpDown className="size-icon shrink-0 text-fg-3" strokeWidth={1.75} aria-hidden />
+  </button>;
+  const content = (o: Option<V>) => <OptionContent icon={o.icon ?? (iconColumn ? <span aria-hidden /> : undefined)} description={o.description}
+    descriptionClassName="text-fg-3/70" checked={o.value === value} checkSlot={!!cur}>{o.label}</OptionContent>;
+  const rowClass = twoLine ? 'min-h-0 py-1.5' : undefined;
+  // The list is at least the field's width and grows (leftwards, from the field's right edge) to fit a long label
+  const place = { side: 'bottom', align: 'end', width: 'anchor', className: 'w-max max-w-pop-xl min-w-(--anchor-width)' } as const;
+  // A long list (many models) opens with a search line on top, as the composer's model menus do
+  if (options.length >= SEARCH_FROM) return <Popover.Root open={open} onOpenChange={onOpen}>
+    <Popover.Trigger render={field} />
+    <Popover.Portal><Popover.Positioner {...place}><Popover.Popup palette="menu" style={tone}>
+      <Command.Root items={options} value={cur ?? null} itemToStringValue={o => o.value} isItemEqualToValue={(a, b) => a.value === b.value}
+        itemToStringLabel={o => [o.label, o.description, o.hint].filter(Boolean).join(' ')}>
+        <Command.Input /><Command.Empty />
+        <Command.List searchable>{(o: Option<V>) => <Command.Item key={o.value} value={o} title={o.hint ?? o.label} disabled={o.disabled}
+          className={rowClass} onClick={() => { onChange(o.value); setOpen(false); }}>{content(o)}</Command.Item>}</Command.List>
+      </Command.Root>
+    </Popover.Popup></Popover.Positioner></Popover.Portal>
+  </Popover.Root>;
+  return <DropdownMenu.Root open={open} onOpenChange={onOpen}>
+    <DropdownMenu.Trigger render={field} />
+    <DropdownMenu.Portal><DropdownMenu.Positioner {...place}><DropdownMenu.Popup style={tone}>
       <DropdownMenu.RadioGroup value={value} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
-        {options.map(o => <DropdownMenu.RadioItem key={o.value} value={o.value} title={o.hint ?? o.label} disabled={o.disabled} onClick={() => onChange(o.value)} className={twoLine ? 'min-h-0 py-1.5' : undefined}>
-          <OptionContent icon={o.icon} description={o.description} descriptionClassName="text-fg-3/70" checked={o.value === value} checkSlot={!!cur}>{o.label}</OptionContent>
+        {options.map(o => <DropdownMenu.RadioItem key={o.value} value={o.value} title={o.hint ?? o.label} disabled={o.disabled} onClick={() => onChange(o.value)} className={rowClass}>
+          {content(o)}
         </DropdownMenu.RadioItem>)}
       </DropdownMenu.RadioGroup>
     </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
@@ -560,13 +598,14 @@ export interface ItemRowProps {
   className?: string;
 }
 
-// Full-width hover fill for a clickable row inside an inset Group: the row keeps the group's width (its text stays on the
-// inset), while `::before` paints (and takes pointer hits) from card edge to card edge, between the rules above and below.
+// Hover fill for a clickable row inside an inset Group: the row keeps the group's width (its text stays on the inset),
+// while `::before` paints (and takes pointer hits) past it: edge to edge in a dialog's block, an inset rounded band on
+// a page's card (`--hover-out`, `--hover-y`, `--hover-r`).
 // One rule for every card: a row lights up only when a click anywhere on it does something (a dialog, open, a row-shaped
 // text button); rows that merely hold controls or information stay still
-export const rowHover = 'relative isolate before:absolute before:inset-y-0 before:-inset-x-pad before:-z-10 before:transition-colors enabled:hover:before:bg-hover focus-visible:before:bg-hover';
+export const rowHover = 'relative isolate before:absolute before:inset-y-(--hover-y) before:inset-x-(--hover-out) before:rounded-(--hover-r) before:-z-10 before:transition-colors enabled:hover:before:bg-hover focus-visible:before:bg-hover';
 // The same fill for a row that is a div (it may hold buttons of its own)
-const divHover = 'relative isolate cursor-pointer before:absolute before:inset-y-0 before:-inset-x-pad before:-z-10 before:transition-colors hover:before:bg-hover has-[[data-row-key]:focus-visible]:before:bg-hover';
+const divHover = 'relative isolate cursor-pointer before:absolute before:inset-y-(--hover-y) before:inset-x-(--hover-out) before:rounded-(--hover-r) before:-z-10 before:transition-colors hover:before:bg-hover has-[[data-row-key]:focus-visible]:before:bg-hover';
 const OWN_CONTROL = 'button:not([data-row-key]), a, input, textarea, select, label, [role="switch"], [role="checkbox"], [role="menu"]';
 
 export function ItemRow({ lead, title, desc, extra, trailing, onOpen, reserveOpen, onEdit, editLabel, onClick, dim, className }: ItemRowProps) {

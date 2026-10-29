@@ -10,7 +10,7 @@ import { Shimmer } from '../ui/Shimmer';
 import { cn } from '../ui/cn';
 import { t } from '../i18n';
 import { ModelMark } from '../chat/ModelMark';
-import { blockItem, blockList, DangerAction, DialogBody, Dot, Field, FooterNote, FormField, FormGrid, FormRows, Group, inputBox, ItemRow, Note, PickContent, SearchRow, Section, SectionAction, Select, SettingsDialog } from './controls';
+import { blockItem, blockList, DangerAction, DialogBody, Dot, Field, FooterNote, FormField, FormGrid, FormRows, Group, inputBox, ItemRow, Note, PickContent, SearchRow, Section, SectionAction, Select, SettingsDialog, Switch } from './controls';
 import { modelDesc, ModelRow } from './ProviderModel';
 import type { SettingsHandlers } from './SettingsShell';
 
@@ -54,18 +54,23 @@ export function ProvidersSection({ state, on }: { state?: ProvidersState; on: Se
   // The error of the last save from the form, shown inside the dialog (the page behind it is covered)
   const [formError, setFormError] = useState<string>();
   const [query, setQuery] = useState('');
-  // An action is in flight until the next view lands; a reply without an error closes the form and re-reads the
-  // agent's model list, so the composer picks up the change
+  // An action is in flight until the next view lands; a reply without an error closes the form (when the form saved) and
+  // re-reads the agent's model list, so the composer picks up the change
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
+  // The action in flight was the form's own save. Only that one closes the form: a model added from the add-model list
+  // the form opened, or a switch flipped on the page, leaves it open (closing it dropped one scrim under the add list)
+  const fromForm = useRef(false);
   // The source ids before a new source was saved: the one that appears afterwards opens its add-model dialog
   const before = useRef<Set<string>>(undefined);
   useEffect(() => {
     setBusy(false);
     if (!pending.current || !state) return;
     pending.current = false;
+    const form = fromForm.current;
+    fromForm.current = false;
     if (!state.error) {
-      setEditing(undefined);
+      if (form) setEditing(undefined);
       on.refreshAgent(BUILTIN_AGENT_ID);
       const added = before.current && state.view.providers.find(p => !before.current!.has(p.id));
       if (added) setAdding(added.id);
@@ -78,6 +83,7 @@ export function ProvidersSection({ state, on }: { state?: ProvidersState; on: Se
     if (!provider.id) before.current = new Set(state?.view.providers.map(p => p.id));
     act({ kind: 'save', provider: strip(provider), key });
   };
+  const saveForm = (provider: Provider, key?: string) => { fromForm.current = true; save(provider, key); };
   // Opening a form clears its last failure; closing keeps it, so the page does not repeat what the dialog showed
   const edit = (id?: string) => { if (id) setFormError(undefined); setEditing(id); };
 
@@ -104,7 +110,7 @@ export function ProvidersSection({ state, on }: { state?: ProvidersState; on: Se
       {/* Every source filtered away: say so instead of leaving the search field alone */}
       {total > 0 && query.trim() && !providers.some(p => matching(p, query).length) && <Group><Note>{t('settings.models.noResults')}</Note></Group>}
       {(editing === 'new' || edited) && <ProviderForm key={editing} provider={edited} busy={busy} error={formError}
-        onClose={() => edit(undefined)} onSave={save} onDelete={edited ? () => act({ kind: 'delete', id: edited.id }) : undefined}
+        onClose={() => edit(undefined)} onSave={saveForm} onDelete={edited ? () => { fromForm.current = true; act({ kind: 'delete', id: edited.id }); } : undefined}
         onModels={edited ? () => setAdding(edited.id) : undefined} />}
       {addingTo && <AddModelDialog provider={addingTo} busy={busy} onAdd={m => update(addingTo, [...addingTo.models, m])}
         onRemove={id => update(addingTo, addingTo.models.filter(x => x.id !== id))} onClose={() => setAdding(undefined)} />}
@@ -159,9 +165,10 @@ function SourceStatus({ provider: p }: { provider: ProviderView }) {
   return p.hasKey ? <Dot ok label={t('settings.providers.keySaved')} /> : <Dot ok={false} warn label={t('settings.providers.noKey')} />;
 }
 
-// One source as a block: its head (name with its status dot and model count, the URL, Turn on for a source switched off
-// earlier, Edit), then its model rows. There is no source switch: each model has its own. Removing the source and
-// managing its models live in the edit dialog; a source without models offers Add model in place
+// One source as a block: its head (name with its status dot and model count, the URL, Edit, the source's switch), then
+// its model rows. The head switch is on while the source is on and every model is; flipping it sets every model (and
+// turns a source switched off earlier back on), each row keeps its own switch. Removing the source and managing its
+// models live in the edit dialog; a source without models offers Add model in place
 function ProviderGroup({ provider: p, query, busy, onEdit, onAdd, onSave }: {
   provider: ProviderView; query: string; busy: boolean;
   onEdit: () => void; onAdd: () => void; onSave: (p: Provider) => void;
@@ -176,9 +183,10 @@ function ProviderGroup({ provider: p, query, busy, onEdit, onAdd, onSave }: {
   return (
     <Section title={name} count={p.models.length} status={<SourceStatus provider={p} />}
       desc={<span className="block truncate" title={p.baseUrl}>{p.baseUrl}</span>}
-      action={<div className="flex shrink-0 items-center gap-1">
-        {!p.enabled && <SectionAction disabled={busy} onClick={() => onSave({ ...strip(p), enabled: true })}>{t('settings.providers.turnOn')}</SectionAction>}
+      action={<div className="flex shrink-0 items-center gap-gap">
         <SectionAction icon={<Settings2 />} disabled={busy} title={t('settings.providers.edit', { name })} onClick={onEdit}>{t('settings.providers.editShort')}</SectionAction>
+        {p.models.length > 0 && <Switch checked={p.enabled && p.models.every(m => m.enabled)} disabled={busy} label={t('settings.providers.allModels', { name })}
+          onChange={on => onSave({ ...strip(p), enabled: on || p.enabled, models: p.models.map(m => ({ ...m, enabled: on })) })} />}
       </div>}>
       {models.map(m => (
         <ModelRow key={m.id} model={m} open={open === m.id} dim={!p.enabled}

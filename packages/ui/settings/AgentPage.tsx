@@ -225,13 +225,16 @@ function FastModelField({ state, on }: { state: ProvidersState; on: SettingsHand
   const models = usableModels(state.view);
   const stored = state.view.fastModel ?? '';
   const [value, pick] = usePick(state, models.some(m => m.pick === stored) ? stored : '');
+  const name = (m: (typeof models)[number]) => m.model.name?.trim() || m.model.id;
+  const names = models.map(name);
   const options = [
-    { value: '', label: t('settings.agent.fastModel.off'), icon: <Ban strokeWidth={1.5} /> },
-    // The model on the row, its source as the caption: two sources may offer the same model
-    ...models.map(m => ({
+    // No icon: off is a plain word in the field, as the other selects' picks; the list keeps it on the marks' column
+    { value: '', label: t('settings.agent.fastModel.off') },
+    // The model on the row; its source as the caption only when two sources offer the same name, one line otherwise
+    ...models.map((m, i) => ({
       value: m.pick,
-      label: m.model.name?.trim() || m.model.id,
-      description: m.provider.name.trim() || m.provider.id,
+      label: names[i]!,
+      ...(names.indexOf(names[i]!) !== names.lastIndexOf(names[i]!) ? { description: m.provider.name.trim() || m.provider.id } : {}),
       icon: <ModelMark family={m.model.id} />,
       hint: m.pick,
     })),
@@ -605,7 +608,9 @@ function hostOf(url: string): string {
 // Option families with a show / hide switch each; reasoning controls are excluded by the caller.
 // The lists only ever come over ACP, so before the first session there is nothing to show. The family in use can be
 // switched off too — the composer keeps the current value reachable on its own (visibleOptions). The search field with
-// the master switch on top, then one block per group (its sources as the second line), rows with what the family spans
+// the master switch on top, then one block per group, rows with what the family spans. An adapter that classifies its
+// sources gets one block per source (official or custom as the second line), so one provider's models switch together;
+// every block head carries a switch over all its models, the search aside
 function ModelsSection({ agent, controls, settings, on }: { agent: AgentInfo; controls?: ConfigControl[]; settings: SettingsView; on: SettingsHandlers }) {
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState(false);
@@ -637,7 +642,7 @@ function ModelsSection({ agent, controls, settings, on }: { agent: AgentInfo; co
     matched += found.length;
     const families = found.slice(0, remaining);
     remaining -= families.length;
-    return { ...catalog, families, found };
+    return { ...catalog, all: catalog.families, families, found };
   });
   const sep = t('common.metaSep');
   // What the family spans in words — its effort levels, Fast / 1M — the row's second line
@@ -652,26 +657,31 @@ function ModelsSection({ agent, controls, settings, on }: { agent: AgentInfo; co
   if (controls === undefined) return <Section desc={t('settings.models.desc')}><Note shimmer>{t('settings.loading')}</Note></Section>;
   if (!controls.length) return <Section desc={t('settings.models.desc')}><Note>{t('settings.models.none', { agent: agent.name })}</Note></Section>;
   // One block per group
-  const groups = visible.flatMap(({ control: c, families, found }) => {
+  const groups = visible.flatMap(({ control: c, all, families, found }) => {
     if (!families.length) return [];
     // Translate standard categories; preserve names supplied by custom controls.
     const title = c.category === 'model' ? t('settings.models.selection')
       : c.category === 'collaboration_mode' ? t('settings.models.collaboration') : c.name;
-    // Agent adapters classify model sources; unclassified ACP options retain their own group. Counts cover the whole
-    // match, not just the rows the preview limit leaves
-    const split = c.category === 'model' && families.some(f => f.sourceKind);
-    const kinds = split
-      ? [{ key: 'official', title: t('settings.models.official'), kind: 'official' as const },
-         { key: 'custom', title: t('settings.models.custom'), kind: 'custom' as const },
-         { key: 'other', title, kind: undefined }]
-      : [{ key: c.id, title, kind: null }];
-    return kinds.map(g => {
-      const keep = (f: ModelFamily) => g.kind === null || f.sourceKind === g.kind;
-      const rows = families.filter(keep);
+    // Agent adapters classify model sources: one block per source, official ones first; unclassified ACP options retain
+    // their own group. Counts cover the whole match, not just the rows the preview limit leaves
+    const split = c.category === 'model' && all.some(f => f.sourceKind);
+    const kindTitle = { official: t('settings.models.official'), custom: t('settings.models.custom') };
+    const blocks: { key: string; title: string; desc?: string; keep: (f: ModelFamily) => boolean }[] = split
+      ? [...(['official', 'custom'] as const).flatMap(kind => [...new Set(all.filter(f => f.sourceKind === kind).map(f => f.source))].map(source => ({
+          key: `${kind}:${source ?? ''}`, title: source ?? kindTitle[kind], desc: source ? kindTitle[kind] : undefined,
+          keep: (f: ModelFamily) => f.sourceKind === kind && f.source === source,
+        }))), { key: 'other', title, keep: (f: ModelFamily) => !f.sourceKind }]
+      : [{ key: c.id, title, keep: () => true }];
+    return blocks.map(g => {
+      const rows = families.filter(g.keep);
       const sources = [...new Set(rows.map(f => f.source).filter((s): s is string => !!s))];
-      return { control: c, key: `${c.id}:${g.key}`, title: g.title, count: found.filter(keep).length, rows, sources };
+      return { control: c, key: `${c.id}:${g.key}`, title: g.title, desc: g.desc ?? (sources.length > 0 ? sources.join(sep) : undefined),
+        count: found.filter(g.keep).length, rows, members: all.filter(g.keep) };
     }).filter(g => g.rows.length);
   });
+  // A block's switch: on while every model of the block is shown, flipping it shows or hides them all
+  const toggleBlock = (c: ConfigControl, members: ModelFamily[], show: boolean) =>
+    save({ ...hidden, [c.id]: setModelsVisible(members, hidden[c.id] ?? [], show) });
   return (
     <>
       <SearchRow value={query} onChange={setQuery}>
@@ -684,7 +694,9 @@ function ModelsSection({ agent, controls, settings, on }: { agent: AgentInfo; co
       {groups.map(g => {
         const off = hidden[g.control.id] ?? [];
         return (
-          <Section key={g.key} title={g.title} count={g.count} desc={g.sources.length > 0 ? g.sources.join(sep) : undefined}>
+          <Section key={g.key} title={g.title} count={g.count} desc={g.desc}
+            action={<Switch checked={g.members.every(f => !familyHidden(f, off))} onChange={v => toggleBlock(g.control, g.members, v)}
+              label={t('settings.providers.allModels', { name: g.title })} />}>
             {g.rows.map(f => {
               const shown = !familyHidden(f, off);
               const name = familyLabel(g.control, f);

@@ -407,6 +407,25 @@
   --storage-bar: 8px;
   --storage-gap: 2px;
   --storage-list: calc(var(--setting-row-detail) * 6);
+  /* A page's cards (after Codex / Cursor / Trae, 2026-10-30): the fill a few levels off the page, an edge that barely
+     shows, the group name above it at this gap. Rules and hover fills inside a dialog's blocks run edge to edge */
+  --settings-card: var(--bg-1);
+  --settings-card-line: color-mix(in srgb, var(--fg-1) 3%, transparent);
+  --group-head-gap: 12px;
+  --rule-color: var(--line);
+  --rule-out: calc(-1 * var(--pad));
+  --hover-out: calc(-1 * var(--pad));
+  --hover-y: 0px;
+  --hover-r: 0px;
+}
+/* On a page's card the rules stop at the rows' text and control edges, a step above the fill, and a clickable row's
+   hover is an inset rounded band clear of them */
+.acp-settings .acp-section-panel {
+  --rule-color: color-mix(in srgb, var(--fg-1) 6%, transparent);
+  --rule-out: 0px;
+  --hover-out: calc(-1 * var(--gap));
+  --hover-y: 3px;
+  --hover-r: var(--r-md);
 }
 /* The sidebar's narrow column: a smaller page title */
 .acp-settings[data-surface-host="sidebar"] {

@@ -9,7 +9,7 @@ import { HeaderToggle, SegmentScale, SelectRow, SwitchRow } from '../ui/Field';
 import { cn } from '../ui/cn';
 import { Popover } from '../ui/Popover';
 import { DropdownMenu } from '../ui/DropdownMenu';
-import { Command } from '../ui/Command';
+import { Command, SEARCH_FROM } from '../ui/Command';
 import { OptionContent } from '../ui/Panel';
 import { ModelMark } from './ModelMark';
 import { PairSwitch, PairViews, type PairRole } from './SidekickPair';
@@ -17,8 +17,6 @@ import { useFitStage } from './useFitStage';
 import { Collapsible } from '../ui/Collapsible';
 import { cssTimeVar } from '../ui/cssTime';
 
-// Only offer search once the option count passes this threshold; short lists are scannable at a glance
-const SEARCH_FROM = 12;
 
 interface OptionMenuProps {
   control: ConfigControl;

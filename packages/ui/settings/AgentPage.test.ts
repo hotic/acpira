@@ -174,10 +174,11 @@ describe('built-in agent model sources', () => {
     expect(markup).toContain('>DeepSeek<');
     expect(markup).toContain('>OpenRouter<');
     expect(markup).toContain('https://api.deepseek.com/v1');
-    // The status dot carries the source's state as its label: a stored key, or switched off (with Turn on offered)
+    // The status dot carries the source's state as its label: a stored key, or switched off
     expect(markup).toContain(`aria-label="${t('settings.providers.keySaved')}"`);
     expect(markup).toContain(`aria-label="${t('settings.providers.off')}"`);
-    expect(markup).toContain(`>${t('settings.providers.turnOn')}<`);
+    // Each source head carries one switch over all its models
+    expect(markup).toContain(`aria-label="${t('settings.providers.allModels', { name: 'OpenRouter' })}"`);
     expect(markup).toContain('DeepSeek V4 Flash');
     // Each model row's second line is its summary
     const sep = t('common.metaSep');

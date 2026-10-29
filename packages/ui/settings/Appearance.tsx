@@ -12,7 +12,7 @@ export function AppearancePage({ settings, appearance, on }: { settings: Setting
   const desktop = useDesktop();
   return (
     <>
-      <Section title={t('settings.group.ui')} desc={t('settings.group.ui.desc')}>
+      <Section title={t('settings.group.ui')}>
         {/* The desktop app keeps its column on the left and folds it from the title row instead; what it offers is the
             window's layout, the conversation or the files in the middle */}
         {desktop
@@ -31,22 +31,22 @@ export function AppearancePage({ settings, appearance, on }: { settings: Setting
           : <Field label={t('settings.sessionListPosition')} desc={t('settings.sessionListPosition.desc')}>
             <Select options={SESSION_LIST_POSITIONS.map(v => ({ value: v, label: t(`settings.sessionListPosition.${v}` as const) }))} value={settings.sessionListPosition} onChange={v => on.setSetting('sessionListPosition', v)} label={t('settings.sessionListPosition')} />
           </Field>}
-        <Field label={t('settings.theme')} desc={t('settings.theme.desc')}>
+        <Field label={t('settings.theme')}>
           <Select options={THEMES.map(v => ({ value: v, label: t(desktop && v === 'auto' ? 'settings.theme.system' : `settings.theme.${v}` as const) }))} value={settings.theme} onChange={v => on.setSetting('theme', v)} label={t('settings.theme')} />
         </Field>
-        <Field label={t('settings.motion')} desc={t('settings.motion.desc')}>
+        <Field label={t('settings.motion')}>
           <Switch checked={appearance.motion !== 'none'} onChange={v => on.setAppearance('motion', v ? 'on' : 'none')} label={t('settings.motion')} />
         </Field>
         <Field label={t('settings.autoExpand')} desc={t('settings.autoExpand.desc')}>
           <Switch checked={appearance.autoExpand !== 'off'} onChange={v => on.setAppearance('autoExpand', v ? 'on' : 'off')} label={t('settings.autoExpand')} />
         </Field>
-        <Field label={t('settings.diffMarkers')} desc={t('settings.diffMarkers.desc')}>
+        <Field label={t('settings.diffMarkers')}>
           <Select options={DIFF_MARKERS.map(v => ({ value: v, label: t(`settings.diffMarkers.${v}` as const) }))} value={settings.diffMarkers} onChange={v => on.setSetting('diffMarkers', v)} label={t('settings.diffMarkers')} />
         </Field>
       </Section>
 
-      <Section title={t('settings.text.title')} desc={t('settings.text.desc')}>
-        <Field label={t('settings.uiFontSize')} desc={t('settings.uiFontSize.desc')}>
+      <Section title={t('settings.text.title')}>
+        <Field label={t('settings.uiFontSize')}>
           <NumberField value={settings.uiFontSize} min={UI_FONT_SIZE.min} max={UI_FONT_SIZE.max} step={1} unit={t('settings.fontSize.unit')} label={t('settings.uiFontSize')} onCommit={v => on.setSetting('uiFontSize', v)} />
         </Field>
         <Field label={t('settings.codeFontSize')} desc={t('settings.codeFontSize.desc')}>

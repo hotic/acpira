@@ -28,11 +28,11 @@ export function General({ settings, agents, on, onTour }: { settings: SettingsVi
   const fileOpeners = FILE_OPENERS.map(o => ({ value: o, label: o === 'system' ? t('settings.openFilesWith.system') : FILE_OPENER_NAMES[o] }));
   return (
     <>
-      <Section title={t('settings.group.basic')} desc={t('settings.group.basic.desc')}>
-        <Field label={t('settings.language')} desc={t('settings.language.desc')}>
+      <Section title={t('settings.group.basic')}>
+        <Field label={t('settings.language')}>
           <Select<Language> options={languages} value={settings.language} onChange={v => on.setSetting('language', v)} label={t('settings.language')} />
         </Field>
-        <Field label={t('settings.defaultAgent')} desc={t('settings.defaultAgent.desc')}>
+        <Field label={t('settings.defaultAgent')}>
           <Select options={agentOptions} value={pickDefaultAgent(agents, settings.defaultAgent)} onChange={v => on.setSetting('defaultAgent', v)} label={t('settings.defaultAgent')} />
         </Field>
         {/* The desktop app always lists every project, grouped (rust/crates/acpira-desktop/src/settings.rs seeds `all`) */}
@@ -50,7 +50,7 @@ export function General({ settings, agents, on, onTour }: { settings: SettingsVi
         </>}
       </Section>
 
-      <Section title={t('settings.group.input')} desc={t('settings.group.input.desc')}>
+      <Section title={t('settings.group.input')}>
         <Field label={t('settings.shareEditorSelection')} desc={t('settings.shareEditorSelection.desc')}>
           <Switch checked={settings.shareEditorSelection} onChange={v => on.setSetting('shareEditorSelection', v)} label={t('settings.shareEditorSelection')} />
         </Field>
@@ -59,11 +59,11 @@ export function General({ settings, agents, on, onTour }: { settings: SettingsVi
         </Field>
       </Section>
 
-      <Section title={t('settings.compaction.title')} desc={t('settings.compaction.desc')}>
+      <Section title={t('settings.compaction.title')}>
         <Field label={t('settings.autoCompact')} desc={t('settings.autoCompact.desc')}>
           <Switch checked={settings.autoCompact} onChange={v => on.setSetting('autoCompact', v)} label={t('settings.autoCompact')} />
         </Field>
-        <Field label={t('settings.compactAt')} desc={t('settings.compactAt.desc')}>
+        <Field label={t('settings.compactAt')}>
           <NumberField
             value={Math.round(settings.compactAtTokens / K)}
             min={MIN_COMPACT_AT_TOKENS / K}
@@ -75,7 +75,7 @@ export function General({ settings, agents, on, onTour }: { settings: SettingsVi
         </Field>
       </Section>
 
-      <Section title={t('settings.group.run')} desc={t('settings.group.run.desc')}>
+      <Section title={t('settings.group.run')}>
         <Field label={t('settings.accountSwitch')} desc={t('settings.accountSwitch.desc')}>
           <Select<AccountSwitchStrategy> options={switchStrategies} value={settings.accountSwitch} onChange={v => on.setSetting('accountSwitch', v)} label={t('settings.accountSwitch')} />
         </Field>
@@ -95,7 +95,7 @@ export function General({ settings, agents, on, onTour }: { settings: SettingsVi
         </Field>
       </Section>
 
-      <Section title={t('settings.notifications.title')} desc={t('settings.notifications.desc')}>
+      <Section title={t('settings.notifications.title')}>
         <Field label={t('settings.notifySound')} desc={t('settings.notifySound.desc')}>
           {/* Switching it on plays a preview: the user hears it, and the click lets the page's audio start later on its own.
               The setting is saved first, so the switch flips even if audio output is slow to come up */}
