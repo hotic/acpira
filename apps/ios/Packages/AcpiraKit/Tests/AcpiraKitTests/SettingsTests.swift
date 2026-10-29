@@ -65,7 +65,10 @@ import Testing
                                 options: [sourced("o/k3", "K3", "official", "official"), sourced("g/k3", "K3", "gw", "custom"), SessionOption(id: "auto", name: "Auto")])
     control.value = "o/k3"
     let effort = ConfigControl(id: "effort", name: "Effort", category: "thought_level", type: "select", options: options(["low", "high"]))
-    let catalogs = ModelSettings.catalogs([control, effort]) ?? []
+    // The built-in agent's sidekick pick and its levels are composer controls, not model families
+    let sidekick = ConfigControl(id: "sidekick", name: "Sidekick", category: "_sidekick", type: "select", options: options(["none", "g/k3"]))
+    let sidekickEffort = ConfigControl(id: "sidekick_effort", name: "Sidekick effort", category: "_sidekick_effort", type: "select", options: options(["low", "high"]))
+    let catalogs = ModelSettings.catalogs([control, effort, sidekick, sidekickEffort]) ?? []
     #expect(catalogs.map(\.control.id) == ["model"])
     let groups = ModelSettings.groups(catalogs, query: "")
     #expect(groups.map(\.key) == ["model:official", "model:custom", "model:other"])
