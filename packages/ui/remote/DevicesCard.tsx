@@ -117,9 +117,10 @@ function Card({ view, open, onClose, onOpenSettings }: { view: RemoteAccessView;
   const max = Math.max(...heights, 0);
   // Which way the surface moves: shrinking, the old view is gone before the top edge passes it; growing, the new view
   // waits for the surface
+  // The first measurement after mounting is the opening, not a change of view: it sets no direction
   const last = useRef(cur);
   const dir = useRef<'shrink' | 'grow'>(undefined);
-  if (cur !== last.current) { dir.current = cur < last.current ? 'shrink' : 'grow'; last.current = cur; }
+  if (cur !== last.current) { if (last.current) dir.current = cur < last.current ? 'shrink' : 'grow'; last.current = cur; }
   // The success moment's glyph flies into its row: down first, then in (two nested translations, different easings),
   // so it never crosses the list's head; the head and the row's text wait for it
   const prev = useRef(shown);
@@ -161,7 +162,9 @@ function Card({ view, open, onClose, onOpenSettings }: { view: RemoteAccessView;
   const openDevice = () => { onClose(); onOpenSettings?.({ kind: 'connections' }); };
   return <div ref={rootRef} className="dv-shadow">
     <div className="dv-clip" data-dir={dir.current} style={{ height: max }}>
-      <div className="dv-surface" style={{ height: max, transform: `translateY(${max - cur}px)` }} />
+      {/* Mounted once the views are measured: drawn before that at translateY(0), its transition played the step to
+          the real offset on every opening, the card dropping from the pairing view's height to the list's */}
+      {heights.length > 0 && <div className="dv-surface" style={{ height: max, transform: `translateY(${max - cur}px)` }} />}
       <div ref={pairRef} className="dv-view" data-view="pair" data-off={shown !== 'pair' || undefined}>
         <PairingCore pairing={pairing} glyphRef={glyphRef} className="p-pad" />
       </div>
