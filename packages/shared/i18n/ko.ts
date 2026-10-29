@@ -1422,6 +1422,8 @@ export const ko = {
   'mobile.attach.files': '파일',
   'mobile.projects': '프로젝트',
   'mobile.projects.recent': '최근',
+  'mobile.projects.local': '현재 컴퓨터',
+  'mobile.projects.remote': '원격',
   'mobile.projects.add': '폴더 추가',
   'mobile.state.waiting': '처리 필요',
   'mobile.state.unread': '새 답장',

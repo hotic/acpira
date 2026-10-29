@@ -1423,6 +1423,8 @@ export const es = {
   'mobile.attach.files': 'Archivos',
   'mobile.projects': 'Proyectos',
   'mobile.projects.recent': 'Recientes',
+  'mobile.projects.local': 'Equipo actual',
+  'mobile.projects.remote': 'Remoto',
   'mobile.projects.add': 'Añadir carpeta',
   'mobile.state.waiting': 'Te necesita',
   'mobile.state.unread': 'Respuesta nueva',

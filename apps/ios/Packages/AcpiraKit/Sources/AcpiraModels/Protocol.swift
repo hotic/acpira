@@ -194,11 +194,13 @@ public enum CategoryOp: Codable, Hashable, Sendable {
   /// Move a folder before `before`, or to the end
   case reorderProject(cwd: String, before: String? = nil)
   case collapseProject(cwd: String, collapsed: Bool)
+  /// File a folder into a desktop section before `before` (at its end without one), or take it out (`section` nil)
+  case setProjectSection(cwd: String, section: String? = nil, before: String? = nil)
   /// An op this build does not know (decoding only)
   case unknown(String)
 
   /// The `op` literals this build mirrors
-  public static let ops = ["addProject", "removeProject", "reorderProject", "collapseProject"]
+  public static let ops = ["addProject", "removeProject", "reorderProject", "collapseProject", "setProjectSection"]
 
   /// The wire `op`
   public var op: String {
@@ -207,11 +209,12 @@ public enum CategoryOp: Codable, Hashable, Sendable {
     case .removeProject: "removeProject"
     case .reorderProject: "reorderProject"
     case .collapseProject: "collapseProject"
+    case .setProjectSection: "setProjectSection"
     case .unknown(let op): op
     }
   }
 
-  private enum Keys: String, CodingKey { case op, cwd, before, collapsed }
+  private enum Keys: String, CodingKey { case op, cwd, before, collapsed, section }
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: Keys.self)
     func cwd() throws -> String { try c.decode(String.self, forKey: .cwd) }
@@ -220,6 +223,9 @@ public enum CategoryOp: Codable, Hashable, Sendable {
     case "removeProject": self = .removeProject(cwd: try cwd())
     case "reorderProject": self = .reorderProject(cwd: try cwd(), before: try c.decodeIfPresent(String.self, forKey: .before))
     case "collapseProject": self = .collapseProject(cwd: try cwd(), collapsed: try c.decode(Bool.self, forKey: .collapsed))
+    case "setProjectSection":
+      self = .setProjectSection(cwd: try cwd(), section: try c.decodeIfPresent(String.self, forKey: .section),
+                                before: try c.decodeIfPresent(String.self, forKey: .before))
     case let op: self = .unknown(op)
     }
   }
@@ -235,6 +241,10 @@ public enum CategoryOp: Codable, Hashable, Sendable {
     case let .collapseProject(cwd, collapsed):
       try c.encode(cwd, forKey: .cwd)
       try c.encode(collapsed, forKey: .collapsed)
+    case let .setProjectSection(cwd, section, before):
+      try c.encode(cwd, forKey: .cwd)
+      try c.encodeIfPresent(section, forKey: .section)
+      try c.encodeIfPresent(before, forKey: .before)
     case .unknown:
       break
     }

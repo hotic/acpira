@@ -1460,6 +1460,8 @@ export const en = {
   'mobile.attach.files': 'Files',
   'mobile.projects': 'Projects',
   'mobile.projects.recent': 'Recent',
+  'mobile.projects.local': 'Current computer',
+  'mobile.projects.remote': 'Remote',
   'mobile.projects.add': 'Add folder',
   'mobile.state.waiting': 'Needs you',
   'mobile.state.unread': 'New reply',

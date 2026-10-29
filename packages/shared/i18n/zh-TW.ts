@@ -1457,6 +1457,8 @@ export const zhTW = {
   'mobile.attach.files': '檔案',
   'mobile.projects': '專案',
   'mobile.projects.recent': '最近',
+  'mobile.projects.local': '目前的電腦',
+  'mobile.projects.remote': '遠端',
   'mobile.projects.add': '新增資料夾',
   'mobile.state.waiting': '待處理',
   'mobile.state.unread': '有新回覆',

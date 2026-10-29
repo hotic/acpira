@@ -182,12 +182,14 @@ struct HeaderActions {
   var pin: () -> Void = {}
   var rename: () -> Void = {}
   var export: (Bool) -> Void = { _ in }
+  /// JSON export is offered: it is built from the view the phone holds, which a list row's session may not have
+  var exportJSON = true
   /// The project's terminal page
-  var terminal: () -> Void = {}
+  var terminal: (() -> Void)?
   /// The session's subagent graph page; nil while the session has no subagents. `subagentCounts` is its subtitle
   var subagents: (() -> Void)?
   var subagentCounts = ""
-  var settings: () -> Void = {}
+  var settings: (() -> Void)?
   var delete: () -> Void = {}
   /// The files the session changed (panel.changes)
   var changes: (() -> Void)?

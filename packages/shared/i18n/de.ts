@@ -1417,6 +1417,8 @@ export const de = {
   'mobile.attach.files': 'Dateien',
   'mobile.projects': 'Projekte',
   'mobile.projects.recent': 'Zuletzt',
+  'mobile.projects.local': 'Aktueller Computer',
+  'mobile.projects.remote': 'Remote',
   'mobile.projects.add': 'Ordner hinzufügen',
   'mobile.state.waiting': 'Wartet auf dich',
   'mobile.state.unread': 'Neue Antwort',

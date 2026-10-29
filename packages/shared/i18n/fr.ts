@@ -1420,6 +1420,8 @@ export const fr = {
   'mobile.attach.files': 'Fichiers',
   'mobile.projects': 'Projets',
   'mobile.projects.recent': 'Récents',
+  'mobile.projects.local': 'Ordinateur actuel',
+  'mobile.projects.remote': 'À distance',
   'mobile.projects.add': 'Ajouter un dossier',
   'mobile.state.waiting': 'À traiter',
   'mobile.state.unread': 'Nouvelle réponse',

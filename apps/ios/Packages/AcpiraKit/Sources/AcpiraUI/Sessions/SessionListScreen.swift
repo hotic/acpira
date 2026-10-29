@@ -66,7 +66,9 @@ struct SessionListScreen: View {
     let byProject = view == .project && !searching
     let pinsInProject = byProject && pinPlace == .project
     let groups = groups(ordered, searching: searching, byProject: byProject, pinsInProject: pinsInProject)
-    let onNew = { model.path.append(.new(agent: nil, cwd: model.projects.first ?? "")) }
+    // The folders the rows' menus move a session to, sorted once per render rather than in every row
+    let projects = model.projects
+    let onNew = { model.path.append(.new(agent: nil, cwd: projects.first ?? "")) }
     ScrollView(.vertical) {
       LazyVStack(alignment: .leading, spacing: 0) {
         if ordered.isEmpty && !(byProject && !model.listedProjects.isEmpty) {
@@ -76,8 +78,8 @@ struct SessionListScreen: View {
             .textStyle(TypeScale.text2).foregroundStyle(Palette.fg3)
             .frame(maxWidth: .infinity, minHeight: Metrics.sheetRow)
         }
-        ForEach(groups) { group($0, terms: terms, snippets: snippets) }
-        if byProject { projectGroups(pinsInProject: pinsInProject) }
+        ForEach(groups) { group($0, terms: terms, snippets: snippets, projects: projects) }
+        if byProject { projectGroups(pinsInProject: pinsInProject, projects: projects) }
       }
       .padding(.bottom, Metrics.msgGap)
       .animation(Motion.ease, value: ordered.map(\.id))
@@ -104,7 +106,7 @@ struct SessionListScreen: View {
   }
 
   @ViewBuilder
-  private func group(_ group: SessionGroup, terms: [String], snippets: [String: String]?) -> some View {
+  private func group(_ group: SessionGroup, terms: [String], snippets: [String: String]?, projects: [String]) -> some View {
     if let caption = group.caption { Caption(text: caption) }
     ForEach(Array(group.sessions.enumerated()), id: \.element.id) { i, s in
       // A caption already says "pinned"; one run without captions (a search) ends its leading pins at the pin rule
@@ -114,7 +116,7 @@ struct SessionListScreen: View {
           time: group.dated ? nil : sessionTime(s.updatedAt, now: now),
           // Captions part the runs and rows sit on space alone; one run without captions parts by hairlines
           divider: i < group.sessions.count - 1 && group.caption == nil && !pinEnd,
-          snippet: snippets?[s.id], terms: terms)
+          snippet: snippets?[s.id], terms: terms, projects: projects)
       if pinEnd { PinRule() }
     }
   }
@@ -123,21 +125,21 @@ struct SessionListScreen: View {
   /// order, then the projects in none under "Projects" (the desktop list's layout); without sections, the projects
   /// alone. Sections are made and filled on the desktop; one with nothing listed here is left out
   @ViewBuilder
-  private func projectGroups(pinsInProject: Bool) -> some View {
+  private func projectGroups(pinsInProject: Bool, projects: [String]) -> some View {
     let listed = model.listedProjects
     let runs = model.sections.map { SectionRun(section: $0, projects: $0.projects.filter(listed.contains)) }.filter { !$0.projects.isEmpty }
     if runs.isEmpty {
-      ForEach(listed, id: \.self) { projectGroup($0, pinsInProject: pinsInProject) }
+      ForEach(listed, id: \.self) { projectGroup($0, pinsInProject: pinsInProject, projects: projects) }
     } else {
       let filed = Set(runs.flatMap(\.projects))
       let rest = listed.filter { !filed.contains($0) }
       ForEach(runs) { run in
         Caption(text: run.section.name.isEmpty ? t("session.section.untitled") : run.section.name)
-        ForEach(run.projects, id: \.self) { projectGroup($0, pinsInProject: pinsInProject) }
+        ForEach(run.projects, id: \.self) { projectGroup($0, pinsInProject: pinsInProject, projects: projects) }
       }
       if !rest.isEmpty {
         Caption(text: t("session.group.projects"))
-        ForEach(rest, id: \.self) { projectGroup($0, pinsInProject: pinsInProject) }
+        ForEach(rest, id: \.self) { projectGroup($0, pinsInProject: pinsInProject, projects: projects) }
       }
     }
   }
@@ -145,7 +147,7 @@ struct SessionListScreen: View {
   /// A project in the by-project view: its header, then, open, its pins when they sit in their project (ending at the
   /// pin rule) and its other sessions, the latest few only until "N more" is tapped
   @ViewBuilder
-  private func projectGroup(_ cwd: String, pinsInProject: Bool) -> some View {
+  private func projectGroup(_ cwd: String, pinsInProject: Bool, projects: [String]) -> some View {
     let all = model.summaries.filter { $0.cwd == cwd }
     let pins = pinsInProject ? all.filter { $0.pinned == true }.sorted { $0.updatedAt > $1.updatedAt } : []
     let sessions = all.filter { $0.pinned != true }.sorted { $0.updatedAt > $1.updatedAt }
@@ -161,21 +163,23 @@ struct SessionListScreen: View {
     // any change (a project of hundreds hitched on every tap)
     Group {
       ProjectHeader(cwd: cwd, first: model.listedProjects.first == cwd, open: open, sessions: all,
-                    host: model.host(of: cwd),
+                    host: model.host(of: cwd), sections: model.sections,
                     onToggle: { withAnimation(Motion.ease) { model.toggleOpen(cwd) } },
                     onMoveTop: { withAnimation(Motion.ease) { model.moveProjectToTop(cwd) } },
                     onRemove: { withAnimation(Motion.ease) { model.removeProject(cwd) } },
-                    onNew: { model.path.append(.new(agent: nil, cwd: cwd)) })
+                    onNew: { model.path.append(.new(agent: nil, cwd: cwd)) },
+                    onSection: { section in withAnimation(Motion.ease) { model.setProjectSection(cwd, section) } },
+                    onCopyPath: { model.copyPath(cwd) })
       if open {
         // Inside its project a row is one line, the mark naming the agent; no caption says when, so every row keeps
         // its time
         ForEach(pins, id: \.id) { s in
-          row(s, place: nil, time: sessionTime(s.updatedAt, now: now), divider: false, nested: true)
+          row(s, place: nil, time: sessionTime(s.updatedAt, now: now), divider: false, nested: true, projects: projects)
         }
         if !pins.isEmpty && (!rows.isEmpty || paged) { PinRule() }
       }
       ForEach(rows, id: \.id) { s in
-        row(s, place: nil, time: sessionTime(s.updatedAt, now: now), divider: false, nested: true)
+        row(s, place: nil, time: sessionTime(s.updatedAt, now: now), divider: false, nested: true, projects: projects)
       }
       if paged {
         MoreRow(rest: rest, nameOf: { model.agent($0).name }) {
@@ -185,18 +189,23 @@ struct SessionListScreen: View {
     }
   }
 
-  /// One session with its menu
+  /// One session with its menu: the chat's "…" menu without the chat's own pages, as the desktop's row menu is its
+  /// header's (pin, rename, copy, move, export, delete)
   private func row(_ s: SessionSummary, place: String?, time: String?, divider: Bool, nested: Bool = false,
-                   snippet: String? = nil, terms: [String] = []) -> some View {
+                   snippet: String? = nil, terms: [String] = [], projects: [String]) -> some View {
     SessionRow(session: s, agentName: model.agent(s.agent).name, place: place, time: time, divider: divider,
                nested: nested, snippet: snippet, terms: terms,
-               onSelect: { model.path.append(.chat(s.id)) },
-               onRename: { newTitle = s.title; renaming = s },
-               // Deleted at once, as on the desktop: the toast's undo brings it back
-               onDelete: { withAnimation(Motion.ease) { model.delete(s.id) } }) {
-      Button(s.pinned == true ? t("common.unpin") : t("common.pin"), systemImage: s.pinned == true ? "pin.slash" : "pin") {
-        model.togglePin(s.id)
-      }
+               onSelect: { model.path.append(.chat(s.id)) }) {
+      NativeSessionMenu(pinned: s.pinned == true, actions: HeaderActions(
+        pin: { model.togglePin(s.id) },
+        rename: { newTitle = s.title; renaming = s },
+        export: { model.export(s.id, json: $0) },
+        exportJSON: model.holdsView(s.id),
+        // Deleted at once, as on the desktop: the toast's undo brings it back
+        delete: { withAnimation(Motion.ease) { model.delete(s.id) } },
+        copy: { kind in Task { await model.copy(s.id, kind) } },
+        cwd: s.cwd, projects: projects,
+        move: { model.move(s.id, to: $0) }))
     }
   }
 
@@ -409,7 +418,7 @@ struct ListTopBar: ViewModifier {
 /// its right end where no day caption says it; under it the place (the project, or inside a project's group the
 /// agent); then the state's mark alone in a trailing column centred on both lines, the desktop's marks without a word
 /// beside them
-struct SessionRow<Pins: View>: View {
+struct SessionRow<Items: View>: View {
   let session: SessionSummary
   let agentName: String
   /// The project under the title; none inside a project's group, where the row is one line (the mark already names
@@ -424,10 +433,8 @@ struct SessionRow<Pins: View>: View {
   /// A search's terms, marked in the title and the snippet
   var terms: [String] = []
   var onSelect: () -> Void
-  var onRename: () -> Void = {}
-  var onDelete: () -> Void = {}
-  /// The pin actions the row offers (the list's top; inside a project's group, the project's own too)
-  @ViewBuilder var pins: () -> Pins
+  /// The long press's menu (the list hands it the session menu)
+  @ViewBuilder var menu: () -> Items
 
   var body: some View {
     Button(action: onSelect) {
@@ -487,18 +494,15 @@ struct SessionRow<Pins: View>: View {
       .contentShape(Rectangle())
     }
     .buttonStyle(ListRowStyle(active: false))
-    .contextMenu {
-      pins()
-      Button(t("common.rename"), systemImage: "pencil", action: onRename)
-      Button(t("common.delete"), systemImage: "trash", role: .destructive, action: onDelete)
-    }
+    .contextMenu { menu() }
   }
 }
 
 /// A project's header in the by-project view: the folder in the marks' column, the name and a chevron turning down
 /// while open; folded, the project's most pressing state sits in the rows' state column. A folder on an SSH host wears
 /// the globe and ends in its host's alias and connection dot, as on the desktop. A tap folds it open or shut; its menu
-/// moves it to the top of the user's order, starts a session in it, or takes it off the list
+/// starts a session in it, moves it to the top of the user's order or into one of the desktop's sections, copies its
+/// path, or takes it off the list (the desktop project menu, less revealing the folder on the computer)
 struct ProjectHeader: View {
   let cwd: String
   /// It leads the list already, so "move to top" is not offered
@@ -507,10 +511,15 @@ struct ProjectHeader: View {
   let sessions: [SessionSummary]
   /// The SSH host the folder lives on (`AppModel.host(of:)`); nil for a local folder
   var host: (folder: RemoteFolder, view: ConnectionView?)?
+  /// The desktop's sections; "Move to section" shows once there is one (they are made on the desktop)
+  var sections: [SessionSection] = []
   var onToggle: () -> Void
   var onMoveTop: () -> Void
   var onRemove: () -> Void
   var onNew: () -> Void
+  /// Files the folder into a section, or takes it out (nil)
+  var onSection: (String?) -> Void = { _ in }
+  var onCopyPath: () -> Void = {}
 
   var body: some View {
     Button(action: onToggle) {
@@ -554,9 +563,31 @@ struct ProjectHeader: View {
     .buttonStyle(ListRowStyle(active: false))
     .accessibilityAddTraits(.isHeader)
     .contextMenu {
-      if !first { Button(t("mobile.project.moveTop"), systemImage: "arrow.up.to.line", action: onMoveTop) }
-      Button(t("session.project.newSession"), systemImage: "square.and.pencil", action: onNew)
-      Button(t("session.project.remove"), systemImage: "minus.circle", action: onRemove)
+      Section { Button(t("session.project.newSession"), systemImage: "square.and.pencil", action: onNew) }
+      Section {
+        if !first { Button(t("mobile.project.moveTop"), systemImage: "arrow.up.to.line", action: onMoveTop) }
+        if !sections.isEmpty { sectionMenu }
+        Button(t("session.project.copyPath"), systemImage: "doc.on.doc", action: onCopyPath)
+      }
+      Section { Button(t("session.project.remove"), systemImage: "minus.circle", action: onRemove) }
+    }
+  }
+
+  /// The sections as a checked picker, the folder's own ticked, then "Remove from section" while it is in one
+  private var sectionMenu: some View {
+    let current = sections.first { $0.projects.contains(cwd) }?.id
+    return Menu {
+      Picker(selection: Binding(get: { current }, set: { if let id = $0, id != current { onSection(id) } })) {
+        ForEach(sections) { section in
+          Text(verbatim: section.name.isEmpty ? t("session.section.untitled") : section.name).tag(Optional(section.id))
+        }
+      } label: {
+        EmptyView()
+      }
+      .pickerStyle(.inline)
+      if current != nil { Button(t("session.section.remove"), systemImage: "minus.circle") { onSection(nil) } }
+    } label: {
+      Label(t("session.section.moveTo"), systemImage: "square.stack")
     }
   }
 

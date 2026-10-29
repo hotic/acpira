@@ -83,6 +83,21 @@ struct EngineModelTests {
     #expect(model.hits == SessionHits(query: "needle", snippets: ["s1": "…a needle here"]))
   }
 
+  /// A list row's export: the Markdown is the engine's, so a session the phone never opened exports too; JSON, built
+  /// from a held view, is offered only where the phone has one
+  @Test func exportingAnUnopenedSessionAsksTheEngine() async throws {
+    let (model, wire) = try await connected()
+    #expect(model.holdsView("s1") && !model.holdsView("s9"))
+    model.export("s9", json: false)
+    try await until { wire.types.last == "webviewMessage:sessionMarkdown" }
+    #expect(wire.sent.last?.contains(#""id":"s9""#) == true)
+    push(wire, #"{"type":"sessionMarkdown","seq":\#(model.askSeq),"markdown":"Notes"}"#)
+    try await until { model.shared != nil }
+    let file = try #require(model.shared)
+    #expect(file.url.pathExtension == "md")
+    #expect(try String(contentsOf: file.url, encoding: .utf8) == "Notes")
+  }
+
   @Test func attachmentsGoAsDrafts() throws {
     // A file picked on the phone travels as its bytes; a path on the computer stays a link
     let folder = AttachmentFile.folder.appendingPathComponent("test-\(UUID().uuidString)", isDirectory: true)
