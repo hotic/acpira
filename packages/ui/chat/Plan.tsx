@@ -11,7 +11,7 @@ import { useScrollFade } from '../ui/useScrollFade';
 import { GoalHead, type GoalHeadProps } from './Goal';
 
 // Dock entries use balanced text padding; the header retains its full hit area.
-const dockEntryClass = 'min-h-[calc(var(--text-2-lh)+var(--plan-entry-pad-y)*2)] py-(--plan-entry-pad-y)';
+const dockEntryClass = 'plan-dock-entry min-h-[calc(var(--text-2-lh)+var(--plan-entry-pad-y)*2)] py-(--plan-entry-pad-y)';
 
 // Keep the current entry mounted while the surrounding rows expand. Sharing
 // the same row avoids a disappearing summary and a shrinking first frame.
@@ -42,7 +42,7 @@ export function PlanCard({ entries, live, goal }: { entries?: PlanEntry[]; live?
         )}
       {entries && (
         <div ref={fade} className="scroll-fade scroll-thin scroll-stable max-h-plan overflow-y-auto [--scroll-fade-size:var(--gap)] [overflow-anchor:none]">
-          <Collapsible.Root open={!open && !current}><Collapsible.Panel>
+          <Collapsible.Root open={!open && !current}><Collapsible.Panel className="plan-entry-fold">
             <Row className={cn('items-start lead-top', dockEntryClass)} dense lead={<PlanDot status="completed" />}>
               <span className="text-fg-2">{t('plan.completed', { n: entries.length })}</span>
             </Row>
@@ -99,7 +99,7 @@ export function PlanEntries({ entries, expanded, current, entryClass }: {
         const row = <PlanEntryRow key={key} entry={entry} className={entryClass} />;
         // History keeps its natural layout. Only the live dock folds individual rows.
         return expanded === undefined ? row : (
-          <Collapsible.Root key={key} open={expanded || entry === current}><Collapsible.Panel>{row}</Collapsible.Panel></Collapsible.Root>
+          <Collapsible.Root key={key} open={expanded || entry === current}><Collapsible.Panel className="plan-entry-fold">{row}</Collapsible.Panel></Collapsible.Root>
         );
       })}
     </ol>

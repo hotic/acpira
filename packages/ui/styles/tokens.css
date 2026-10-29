@@ -248,6 +248,8 @@
      height in its first 80ms, and opening already reads longer because its rows fade in (--row-enter-duration) */
   --dur-close: 320ms;
   --ease-close: cubic-bezier(0.4, 0, 0.2, 1);
+  --plan-entry-fade-in: 170ms;
+  --plan-entry-fade-out: 85ms;
   --enter-dur: 300ms;
   --enter-stagger: 40ms;
   --enter-y: 4px;
