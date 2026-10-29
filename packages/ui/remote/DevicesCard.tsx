@@ -46,9 +46,10 @@ function PhoneGlyph({ online, pairing }: { online: boolean; pairing: boolean }) 
   </svg>;
 }
 
-// The foot row takes the session column's row box (chat/SessionList.tsx NAV_ROW / NAV_LEAD): it spans the column on the
-// rows' icon and text edges, so the foot reads as the column's last line, not two loose icons over an empty corner
-const FOOT_ROW = 'flex min-h-row min-w-0 flex-1 items-center gap-gap rounded-md px-2 text-left text-2 text-fg-1 transition-colors hover:bg-hover focus-visible:bg-hover data-[popup-open]:bg-hover';
+// The foot row fills the column after the gear (chat/DesktopFrame.tsx AppMenu) at the session rows' height: the phone and
+// this computer's name right after the gear, the online count on the rows' right text edge, where their times end. A
+// short left pad keeps the phone close to the gear, so gear, phone and name read as one group
+const FOOT_ROW = 'flex min-h-row min-w-0 flex-1 items-center gap-gap rounded-md pr-2 pl-1 text-left text-2 text-fg-1 transition-colors hover:bg-hover focus-visible:bg-hover data-[popup-open]:bg-hover';
 
 /** Whether the foot shows the devices row: not until the engine answered for remote access, and not on a platform the
  *  gateway does not run on (a row that can only say so is noise). The gear's layout follows it (chat/DesktopFrame.tsx) */
@@ -70,7 +71,7 @@ export function DevicesButton({ onOpenSettings }: { onOpenSettings?: (page?: Set
     <Popover.Trigger render={<button type="button" title={title} aria-label={title} className={FOOT_ROW}>
       <span className="-mr-gap-half flex size-lead shrink-0 items-center justify-center text-fg-2"><PhoneGlyph online={online > 0} pairing={pairing} /></span>
       <span className="min-w-0 truncate">{name}</span>
-      {state && <span className="shrink-0 text-3 text-fg-3">{state}</span>}
+      {state && <span className="ml-auto shrink-0 text-3 text-fg-3">{state}</span>}
     </button>} />
     <Popover.Portal>
       {/* No collision padding: the foot sits closer to the window's edge than the shell's pad, as the gear's menu */}

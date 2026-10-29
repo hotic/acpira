@@ -73,7 +73,7 @@
   }
 }
 
-/* The desktop's session column runs to the window's foot: its list fades out over the last two gaps, and over as much at
+/* The desktop's session column, and the files layout's explorer tree, run to the window's foot: the list fades out over the last two gaps, and over as much at
    its top while rows scroll under the action rows above it (useScrollFade's data-more-above), the scrollbar gutter kept
    whole like thread-fade's */
 @utility list-fade {

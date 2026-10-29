@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { FileHit, ProjectChange } from '@acpira/shared/protocol';
 import { AtSign, ChevronRight, ChevronsDownUp, Crosshair, Folder, FolderOpen, Layers, Search, X } from 'lucide-react';
 import type { MsgKey } from '@acpira/shared/i18n';
@@ -6,6 +6,7 @@ import { t } from '../i18n';
 import { IconButton } from '../ui/Button';
 import { Row } from '../ui/Row';
 import { cn } from '../ui/cn';
+import { useScrollFade } from '../ui/useScrollFade';
 import { DiffStat } from '../chat/ToolCall';
 import { nameOf as uriName } from '../chat/drafts';
 import { lastRead, project, sameRead, shellResizeIdleIn, type DirListing } from './api';
@@ -196,6 +197,9 @@ export function FileTree(p: FileTreeProps) {
   const q = query.trim().toLowerCase();
   const [hits, setHits] = useState<string[]>();
   const list = useRef<HTMLDivElement>(null);
+  // The tree runs down to the column's foot, as the session list does: it fades out there instead of being cut by the gear
+  const fade = useScrollFade<HTMLDivElement>();
+  const treeRef = useCallback((el: HTMLDivElement | null) => { list.current = el; return fade(el); }, [fade]);
   const asked = useRef(new Set<string>());
   const sessionRef = useRef(p.sessionId);
   sessionRef.current = p.sessionId;
@@ -355,7 +359,7 @@ export function FileTree(p: FileTreeProps) {
           <IconButton size="sm" title={t('panel.collapseAll')} aria-label={t('panel.collapseAll')} onClick={() => p.setExpanded(() => [])}><ChevronsDownUp strokeWidth={1.5} /></IconButton>
         </span>
       </div>
-      <div ref={list} role="tree" aria-label={t('panel.tree')} className="scroll-thin relative min-h-0 flex-1 overflow-auto pr-[var(--tree-trail,var(--spacing-gap-half))] pb-gap pl-[var(--tree-lead,var(--spacing-gap-half))]">
+      <div ref={treeRef} role="tree" aria-label={t('panel.tree')} className="list-fade scroll-thin relative min-h-0 flex-1 overflow-auto pr-[var(--tree-trail,var(--spacing-gap-half))] pb-gap pl-[var(--tree-lead,var(--spacing-gap-half))]">
         {matches
           ? matches.length ? <Matches nodes={matches} depth={0} ctx={ctx} /> : <div className="flex min-h-row items-center px-2 text-3 text-fg-3">{t('panel.noMatch', { query: query.trim() })}</div>
           : <Branch dir="" depth={0} ctx={ctx} />}

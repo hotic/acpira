@@ -218,9 +218,10 @@ export function TitleSpace() {
 // is a size up from a row's (--foot-icon) and its hover fill square, the weight Codex and VS Code give their foot gear: at
 // the rows' size it read as a stray mark under the list (reported 2026-10-23)
 const GEAR = 'flex aspect-square items-center rounded-md px-2 text-fg-2 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover data-[popup-open]:bg-hover data-[popup-open]:text-fg-1';
-// Beside the devices row the gear is the row's trailing square instead: a row-sized glyph standing on the rows' right
-// text edge (bar-bleed, the same square-against-px-2 geometry as a menu bar's), so the foot is one line across the column
-const GEAR_END = '-mr-bar-bleed flex size-ctl shrink-0 items-center justify-center rounded-md text-fg-2 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover data-[popup-open]:bg-hover data-[popup-open]:text-fg-1 [&_svg]:size-icon';
+// Before the devices row the gear is a control-sized square whose glyph stands on the session rows' icon column: a row's
+// glyph sits px-2 plus half the lead slot's slack in, the square's glyph half its own slack. Spelled out rather than with
+// bar-bleed, which resolves --ctl at the root and misses the density set below it
+const GEAR_START = 'ml-[calc((var(--lead)-var(--ctl))/2+var(--spacing)*2)] flex size-ctl shrink-0 items-center justify-center rounded-md text-fg-2 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover data-[popup-open]:bg-hover data-[popup-open]:text-fg-1 [&_svg]:size-icon';
 // The settings worth a quick switch without opening the page: the theme, the interface language and the window's layout
 export interface QuickSettings {
   theme: ThemeSetting;
@@ -260,19 +261,18 @@ export function AppMenu({ onOpenSettings, onOpenExternal, quick }: { onOpenSetti
   // Shell caches this element (useMemo) and a language pick changes no prop once the optimistic setting is in, so the
   // labels would stay in the previous language: subscribe to the locale
   useLocale();
-  // With the devices row (remote/DevicesCard.tsx) the foot is one line: the row from the column's left edge, its card
-  // rising from the row, and the gear at the line's end opening its menu end-aligned. Without it the gear stands alone
-  // at the left, its glyph a size up (--foot-icon) so it does not read as a stray mark
+  // With the devices row (remote/DevicesCard.tsx) the foot is one line across the column: the gear first, on the rows'
+  // icon column, then the devices row filling the rest (its card rising from it). Without it the gear stands alone at the
+  // left, its glyph a size up (--foot-icon) so it does not read as a stray mark
   const row = devicesShown(useRemoteAccess());
   return (
     <div className="flex shrink-0 items-center p-gap-half">
-      {row && <DevicesButton onOpenSettings={onOpenSettings} />}
       <DropdownMenu.Root>
-        <DropdownMenu.Trigger render={<button type="button" title={t('desktop.appMenu')} aria-label={t('desktop.appMenu')} className={row ? GEAR_END : GEAR}>
+        <DropdownMenu.Trigger render={<button type="button" title={t('desktop.appMenu')} aria-label={t('desktop.appMenu')} className={row ? GEAR_START : GEAR}>
           {row ? <Settings strokeWidth={1.5} /> : <span className="flex size-lead items-center justify-center"><Settings className="size-(--foot-icon)" strokeWidth={1.5} /></span>}
         </button>} />
         {/* No collision padding: the gear sits closer to the window's edge than the shell's pad, which shifted the menu off it */}
-        <DropdownMenu.Portal><DropdownMenu.Positioner side="top" align={row ? 'end' : 'start'} width="md" collisionPadding={0}><DropdownMenu.Popup>
+        <DropdownMenu.Portal><DropdownMenu.Positioner side="top" align="start" width="md" collisionPadding={0}><DropdownMenu.Popup>
           <DropdownMenu.Item onClick={() => onOpenSettings()}>
             <OptionContent icon={<Settings2 strokeWidth={1.5} />}>{t('session.settings')}</OptionContent>
             <span className="shrink-0 text-3 text-fg-3">{shortcutLabel(',')}</span>
@@ -304,6 +304,7 @@ export function AppMenu({ onOpenSettings, onOpenExternal, quick }: { onOpenSetti
           </>}
         </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
       </DropdownMenu.Root>
+      {row && <DevicesButton onOpenSettings={onOpenSettings} />}
     </div>
   );
 }

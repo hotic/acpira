@@ -7,6 +7,7 @@ import { t } from '../i18n';
 import { deviceOrder, remoteAccessOp } from '../remote/access';
 import { DeviceGlyph, KIND_ICON, PairingCore, PathTag, usePairing } from '../remote/Pairing';
 import { seenLine } from '../remote/seen';
+import { StateCell } from './ConnectionsPage';
 import { DangerAction, DialogBody, Dot, Field, ItemRow, Note, Section, SectionAction, Select, SettingsDialog, Switch, TextBox } from './controls';
 
 // Settings → Connections, at the top: remote access (rust/crates/acpira-host/src/devices/). The switch that installs the
@@ -73,12 +74,9 @@ export function RemoteAccessSection({ view }: { view: RemoteAccessView }) {
   </>;
 }
 
-// Online or not at a row's right edge, both words laid out so a change never moves the row
+// Online or not at a row's right edge, in the connections page's one state column
 function Presence({ online }: { online: boolean }) {
-  return <span className="flex items-center gap-1.5 text-2 text-fg-2">
-    <Dot ok={online} />
-    <StableText current={online ? 'on' : 'off'} items={[{ key: 'on', text: t('devices.state.online') }, { key: 'off', text: t('devices.state.offline') }]} />
-  </span>;
+  return <StateCell ok={online} word={online ? 'devices.state.online' : 'devices.state.offline'} />;
 }
 
 // Add device: the pairing core in the dialog's body; a device that pairs turns the same block into its success, the
