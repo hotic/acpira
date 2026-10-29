@@ -5,6 +5,8 @@ import AcpiraSync
 @testable import AcpiraUI
 import CoreGraphics
 import Foundation
+import ImageIO
+import Synchronization
 import Testing
 
 /// Counts what a fake store was asked for, across the loads the tests run concurrently
@@ -190,6 +192,41 @@ struct MediaLoaderTests {
     #expect(MediaLoader.demo.peek(.inline("not base64 at all")) == nil)
   }
 
+  /// An animated GIF plays: every frame decoded, on an even beat where a longer frame repeats, and a zero delay plays
+  /// at the browsers' 100 ms
+  @Test func animatedImagesKeepTheirFrames() throws {
+    let gif = try Self.gif(delays: [0.1, 0.2, 0])
+    let image = try #require(MediaLoader.decodeNow(gif))
+    #expect(image.animated)
+    #expect(abs(image.frameDuration - 0.1) < 0.001)
+    // 0.1 once, 0.2 twice, the zero delay as 0.1 once
+    #expect(image.frames.count == 4)
+    #expect(image.frames[1] === image.frames[2])
+    #expect(image.frames[0] !== image.frames[1])
+    #expect(image.cgImage === image.frames[0])
+    #expect(image.frame(at: Date(timeIntervalSinceReferenceDate: 0.15)) === image.frames[1])
+    // A single frame stays a still picture
+    let still = try #require(MediaLoader.decodeNow(try Self.gif(delays: [0.1])))
+    #expect(!still.animated)
+  }
+
+  /// A GIF of solid 4×4 frames, one colour each, with these delays
+  static func gif(delays: [Double]) throws -> Data {
+    let data = NSMutableData()
+    let out = try #require(CGImageDestinationCreateWithData(data, "com.compuserve.gif" as CFString, delays.count, nil))
+    for (i, delay) in delays.enumerated() {
+      let context = try #require(CGContext(data: nil, width: 4, height: 4, bitsPerComponent: 8, bytesPerRow: 16,
+                                           space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+      context.setFillColor(CGColor(red: Double(i % 2), green: Double(i / 2 % 2), blue: 0.5, alpha: 1))
+      context.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
+      let frame = try #require(context.makeImage())
+      let props = [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: delay, kCGImagePropertyGIFUnclampedDelayTime: delay]]
+      CGImageDestinationAddImage(out, frame, props as CFDictionary)
+    }
+    #expect(CGImageDestinationFinalize(out))
+    return data as Data
+  }
+
   @Test func theDemoReadsFixtureBlobs() async throws {
     let view = try #require(Fixtures.session("media"))
     await MediaLoader.demo.preload(view)
@@ -239,6 +276,15 @@ struct EngineMediaTests {
     #expect(await staged.value == "ab12.png")
   }
 
+  /// A paired wire brings the session's blobs over its own link: the computer's HTTP route is loopback only
+  @Test func aPairedWireFetchesBlobsOverItsLink() async throws {
+    let wire = BlobWire()
+    let link = EngineLink(transport: wire, language: "en", blobBase: "http://127.0.0.1:1/blobs")
+    let image = try await link.media.image(.blob(session: "s1", name: "dot.png"))
+    #expect(image.width == 1)
+    #expect(wire.asked.withLock { $0 } == ["s1/dot.png"])
+  }
+
   @Test func initNamesTheBlobBase() async throws {
     let engine = EngineModelTests()
     let (model, wire) = try await engine.connected()
@@ -246,5 +292,17 @@ struct EngineMediaTests {
     engine.push(wire, #"{"type":"init","state":{"host":"sidebar","agents":[],"accounts":[],"hidden":{},"sessions":[],"settings":{},"locale":"en","home":"/h","cwd":"/w","blobBase":"http://127.0.0.1:7400/blobs"}}"#)
     try await engine.until { model.link?.blobBase != nil }
     #expect(model.link?.blobBase == "http://127.0.0.1:7400/blobs")
+  }
+}
+
+/// A paired wire that answers blobs only: the 1×1 dot for any name
+final class BlobWire: EngineTransport, PairedBlobs {
+  let asked = Mutex<[String]>([])
+  func frames() -> AsyncThrowingStream<String, Error> { AsyncThrowingStream { _ in } }
+  func send(_ text: String) async throws {}
+  func close() {}
+  func blob(session: String, name: String) async throws -> Data {
+    asked.withLock { $0.append("\(session)/\(name)") }
+    return Data(base64Encoded: dotPNG)!
   }
 }

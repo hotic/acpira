@@ -426,6 +426,12 @@ struct CodeOutputFrame: ViewModifier {
 struct TerminalOutput: View {
   let block: ToolCallBlock
   let command: String?
+  @Environment(\.codeSheet) private var inSheet
+
+  /// The lines the transcript's card can show. It is cut at --code-output-max and never scrolls there, so a running
+  /// command's streamed output is built and laid out only down to the cut, not whole on every patch; one line more
+  /// keeps the card past the cut so its fade still shows. The code sheet shows every line
+  private static let previewLines = Int((WebMetrics.codeOutputMax / WebType.mono.lineHeight).rounded(.up)) + 1
 
   var body: some View {
     let text = outputOf(block)
@@ -434,7 +440,7 @@ struct TerminalOutput: View {
         if let command { CommandPrompt(command: command, last: text.isEmpty) }
         if !text.isEmpty {
           OutputPane(top: command != nil ? Metrics.gapHalf : Metrics.commandY) {
-            terminalLines(text)
+            terminalLines(text, limit: inSheet ? nil : Self.previewLines)
           }
         }
       }
@@ -446,9 +452,10 @@ struct TerminalOutput: View {
     }
   }
 
-  /// npm banners muted, a leading ✓ in the success colour
-  func terminalLines(_ text: String) -> Text {
-    let lines = text.trimmingTrailingWhitespace().components(separatedBy: "\n")
+  /// npm banners muted, a leading ✓ in the success colour; the first `limit` lines only when given
+  func terminalLines(_ text: String, limit: Int? = nil) -> Text {
+    var lines = text.trimmingTrailingWhitespace().components(separatedBy: "\n")
+    if let limit, lines.count > limit { lines.removeSubrange(limit...) }
     var parts: [Text] = []
     for (i, line) in lines.enumerated() {
       let end = i < lines.count - 1 ? "\n" : ""

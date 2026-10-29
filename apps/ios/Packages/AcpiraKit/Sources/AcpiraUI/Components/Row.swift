@@ -22,6 +22,16 @@ extension EnvironmentValues {
   @Entry var rowEnterDelay: Double = 0
   /// EntranceScopeContext: whether the turn is live, and its name
   @Entry var entranceScope = EntranceScope(live: false, scope: "")
+  /// Whether the reader is moving the thread (`Thread`); outside a scrolling thread it never is
+  @Entry var scrollGesture = ScrollGesture()
+}
+
+/// The reader is dragging the thread or it is still coasting from a fling. A lazy stack builds a row that arrived off
+/// screen only once it is scrolled to, so a row mounting now came into view by the scroll, not by arriving, and skips
+/// the entrance (the text beside it has none, and the rows alone fading under the finger read as a glitch). A class, so
+/// the thread flips it on every scroll phase without redrawing the rows that read it
+final class ScrollGesture: @unchecked Sendable {
+  var active = false
 }
 
 // MARK: - Entrance
@@ -85,25 +95,29 @@ struct EntranceOnce<Content: View>: View {
 }
 
 /// One slot of `process-row-enter`: opacity 0 → 1 over --row-enter-duration, ease-out, after `delay`. The decision
-/// is taken at mount, so a row that mounted still never fades later and a fading one finishes its fade
+/// is taken at mount, so a row that mounted still never fades later and a fading one finishes its fade. A row mounted
+/// by the reader's scroll stays still (`ScrollGesture`)
 struct RowEnterFade: ViewModifier {
   var delay: Double
   @Environment(\.rowEnter) private var enter
   @Environment(\.motionEnabled) private var motion
+  @Environment(\.scrollGesture) private var gesture
   @State private var shown: Bool?
 
   func body(content: Content) -> some View {
     content
-      .opacity(shown ?? !(enter && motion) ? 1 : 0)
+      .opacity(shown ?? !plays ? 1 : 0)
       .onAppear {
         guard shown == nil else { return }
-        if enter && motion {
+        if plays {
           withAnimation(.easeOut(duration: Motion.rowEnter).delay(delay)) { shown = true }
         } else {
           shown = true
         }
       }
   }
+
+  private var plays: Bool { enter && motion && !gesture.active }
 }
 
 extension View {

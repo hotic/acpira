@@ -23,11 +23,21 @@ final class EngineLink {
   var feed = SessionFeed()
   /// After newSession or forkSession: the next session the engine shows that is not `from` is the one it made
   var awaiting: (from: String?, then: (String) -> Void)?
-  /// Where blobs load from (`{blobBase}/{sessionId}/{blob}`): hello's, until InitState names the engine's own
+  /// Where blobs load from (`{blobBase}/{sessionId}/{blob}`): hello's, until InitState names the engine's own. A paired
+  /// wire ignores it: its blobs come over the link
   var blobBase: String?
-  /// The chat's images: blobs over the engine's HTTP route, files on the Mac staged with imageBlob first
-  lazy var media = MediaLoader(fetch: HTTPBlobs.fetch(base: { [weak self] in await self?.blobBase }),
-                               stage: { [weak self] session, path in await self?.stage(session, path) })
+  /// The paired wire's own blob streams; nil on the development engine's WebSocket
+  private let pairedBlobs: (any PairedBlobs)?
+  /// The chat's images: blobs over the paired link (the computer's HTTP route is loopback only, out of the phone's
+  /// reach) or the development engine's HTTP route, files on the Mac staged with imageBlob first
+  lazy var media = MediaLoader(fetch: blobFetch, stage: { [weak self] session, path in await self?.stage(session, path) })
+
+  private var blobFetch: BlobFetch {
+    if let wire = pairedBlobs {
+      return { session, name in try await wire.blob(session: session, name: name) }
+    }
+    return HTTPBlobs.fetch(base: { [weak self] in await self?.blobBase })
+  }
   /// imageBlob requests waiting on their answer, by seq
   private var staging: [Int: CheckedContinuation<String?, Never>] = [:]
   private var stagingSeq = 0
@@ -47,11 +57,15 @@ final class EngineLink {
                       env: ShellEnv(hostLanguage: language, blobBase: blobBase, projects: true))
     client = EngineClient(transport: transport, hello: hello)
     self.blobBase = blobBase
+    pairedBlobs = transport as? any PairedBlobs
   }
 
   /// Stages a file on the engine's machine into the session's blob store (App.tsx imageBlob) and answers its blob
   /// name; nil when the engine could not read it or never answered
   func stage(_ session: String, _ path: String) async -> String? {
+    // The gateway refuses imageBlob from devices (it reads any local path), so a paired wire would only wait out the
+    // timeout: the image shows as its named chip at once
+    guard pairedBlobs == nil else { return nil }
     stagingSeq += 1
     let seq = stagingSeq
     return await withCheckedContinuation { continuation in

@@ -17,6 +17,12 @@ struct NewSessionScreen: View {
   @State private var picked = false
   /// The agent ring is out: the page dims under it and a tap anywhere folds it
   @State private var ring = false
+  /// The hero's bottom and the composer's top on the page, so a composer grown into the hero hides it
+  @State private var heroBottom: CGFloat = 0
+  @State private var composerTop = CGFloat.infinity
+  @Environment(\.motionEnabled) private var motion
+  /// `-draft TEXT`: the composer pre-filled, as in a chat
+  @Environment(\.initialDraft) private var initialDraft
 
   init(agent: AgentId, cwd: String, controls: SessionControls) {
     _draft = State(initialValue: SessionView(id: "draft", agent: agent, title: t("session.new"), cwd: cwd, controls: controls))
@@ -24,7 +30,9 @@ struct NewSessionScreen: View {
 
   var body: some View {
     let agent = model.agent(draft.agent)
-    VStack(spacing: 0) {
+    // A long prompt (or the keyboard) brings the composer up to the hero: it fades rather than show through the glass
+    let covered = composerTop < heroBottom + Metrics.s3
+    return VStack(spacing: 0) {
       // The hero sits at the page's optical centre (`heroRise`) and the composer lies over the page's bottom, so the
       // composer growing (the attach tray, a long prompt) never moves the hero
       GeometryReader { page in
@@ -39,6 +47,10 @@ struct NewSessionScreen: View {
           NewSessionHero(agent: agent, cwd: draft.cwd, agents: model.agents,
                          recent: model.projects, onAgent: pickAgent, onProject: { draft.cwd = $0 },
                          onAdd: { model.addProject($0); draft.cwd = $0 }, ring: $ring)
+            .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(Self.page)).maxY } action: { heroBottom = $0 }
+            .opacity(covered ? 0 : 1)
+            .allowsHitTesting(!covered)
+            .animation(motion ? .easeOut(duration: Motion.durOpen) : nil, value: covered)
             .position(x: page.size.width / 2, y: page.size.height * Metrics.heroRise)
         }
         // The dim lifts with an ease-in, held while the bubbles go home (the composer pickers' dim)
@@ -51,9 +63,12 @@ struct NewSessionScreen: View {
                    onSetMode: { picked = true; draft.controls.modeId = $0 }, onSetConfig: setConfig,
                    placeholder: t("mobile.new.placeholder"))
             .padding(.horizontal, Metrics.pad)
+            .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(Self.page)).minY } action: { composerTop = $0 }
         }
       }
     }
+    .coordinateSpace(.named(Self.page))
+    .onAppear { if let initialDraft, text.isEmpty { text = initialDraft } }
     .ignoresSafeArea(.container, edges: .bottom)
     .modifier(HomeInset(inset: $homeInset))
     // The agent's models as the engine knows them (its probe or its newest session), so the model chip is there
@@ -72,6 +87,9 @@ struct NewSessionScreen: View {
     .environment(\.hiddenModels, model.settings?.hiddenOptions[draft.agent] ?? [:])
     .environment(\.sessionActions, SessionActions(toast: { model.show($0, icon: $1) }))
   }
+
+  /// The page's coordinate space, for the hero and the composer to meet in
+  nonisolated private static let page = "new.page"
 
   /// Another agent: its own controls (models and modes differ per CLI)
   private func pickAgent(_ id: AgentId) {

@@ -91,10 +91,16 @@ struct NativeProjectMenu: View {
     Section(t("mobile.projects.recent")) {
       Picker(selection: Binding(get: { cwd }, set: { onSelect($0) })) {
         ForEach(folders, id: \.self) { folder in
-          // The subtitle line of a menu row: the full path under the folder's name
+          // The subtitle line of a menu row: the full path under the folder's name. A folder on an SSH host wears the
+          // list's globe and names its host before the path
           Button {} label: {
             Text(verbatim: folderName(folder))
-            Text(verbatim: folder)
+            if let remote = RemoteFolder.parse(folder) {
+              Text(verbatim: "\(remote.alias):\(remote.path)")
+              Image(systemName: "globe")
+            } else {
+              Text(verbatim: folder)
+            }
           }
           .tag(folder)
         }

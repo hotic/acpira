@@ -33,9 +33,12 @@ public indirect enum MDBlock: Hashable, Sendable {
 
 public enum Markdown {
   public static func parse(_ source: String) -> [MDBlock] {
-    let lines = source.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
-    var parser = BlockParser(lines: lines)
+    var parser = BlockParser(lines: lines(source))
     return parser.blocks()
+  }
+
+  static func lines(_ source: String) -> [String] {
+    source.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
   }
 
   /// Plain text of inline content (copy, accessibility)
@@ -53,9 +56,52 @@ public enum Markdown {
 
 // MARK: - Blocks
 
+/// The parser's patterns, compiled once: a regex literal is compiled again each time it is evaluated, and these run on
+/// every line of a streamed reply on every pacing tick
+private enum Patterns {
+  nonisolated(unsafe) static let heading = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*#*[ \t]*$/
+  nonisolated(unsafe) static let rule = /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/
+  nonisolated(unsafe) static let listMarker = /^( *)([-*+]|\d{1,9}[.)])( +|$)/
+  nonisolated(unsafe) static let tableDelimiter = /^ {0,3}\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/
+  nonisolated(unsafe) static let autolink = /^[a-zA-Z][a-zA-Z0-9+.-]{1,31}:[^\s<>]*$/
+  nonisolated(unsafe) static let bareURL = /(?:https?:\/\/|www\.)[^\s<]+/
+}
+
+/// A growing text parsed again from its unsettled tail only (a streamed reply re-parses on every pacing tick). Top-level
+/// blocks are independent (the parser's only state between them is the line it is on), and a block's extent is decided
+/// by the lines up to the line after the next block's start (a table's delimiter row). Every block whose deciding lines
+/// are unchanged is kept as it was, and parsing resumes at the first block start after them, so the result always
+/// equals `Markdown.parse` of the whole text
+public struct MarkdownStream: Sendable {
+  private var lines: [String] = []
+  private var blocks: [MDBlock] = []
+  /// The first line of each top-level block in `blocks`
+  private var starts: [Int] = []
+
+  public init() {}
+
+  public mutating func parse(_ source: String) -> [MDBlock] {
+    let next = Markdown.lines(source)
+    var same = 0
+    let common = min(next.count, lines.count)
+    while same < common && next[same] == lines[same] { same += 1 }
+    var keep = 0
+    while keep + 1 < starts.count && starts[keep + 1] + 1 < same { keep += 1 }
+    var parser = BlockParser(lines: next)
+    parser.i = keep < starts.count ? starts[keep] : 0
+    let tail = parser.blocks()
+    lines = next
+    blocks = Array(blocks.prefix(keep)) + tail
+    starts = Array(starts.prefix(keep)) + parser.starts
+    return blocks
+  }
+}
+
 struct BlockParser {
   let lines: [String]
   var i = 0
+  /// The first line of each block `blocks()` returned
+  private(set) var starts: [Int] = []
 
   init(lines: [String]) { self.lines = lines }
 
@@ -80,17 +126,17 @@ struct BlockParser {
   }
 
   static func heading(_ line: String) -> (Int, String)? {
-    guard let m = line.firstMatch(of: /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*#*[ \t]*$/) else { return nil }
+    guard let m = line.firstMatch(of: Patterns.heading) else { return nil }
     return (m.1.count, String(m.2 ?? ""))
   }
 
   static func isRule(_ line: String) -> Bool {
-    line.wholeMatch(of: /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/) != nil
+    line.wholeMatch(of: Patterns.rule) != nil
   }
 
   /// A list marker: indent, ordered, number, content column
   static func listMarker(_ line: String) -> (indent: Int, ordered: Bool, number: Int, content: Int)? {
-    guard let m = line.firstMatch(of: /^( *)([-*+]|\d{1,9}[.)])( +|$)/) else { return nil }
+    guard let m = line.firstMatch(of: Patterns.listMarker) else { return nil }
     let indent = m.1.count
     let marker = String(m.2)
     let ordered = marker.first!.isNumber
@@ -99,7 +145,7 @@ struct BlockParser {
   }
 
   static func isTableDelimiter(_ line: String) -> Bool {
-    line.wholeMatch(of: /^ {0,3}\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/) != nil && line.contains("-")
+    line.wholeMatch(of: Patterns.tableDelimiter) != nil && line.contains("-")
   }
 
   static func cells(_ line: String) -> [String] {
@@ -135,6 +181,8 @@ struct BlockParser {
     while i < lines.count {
       let line = lines[i]
       if BlockParser.isBlank(line) { i += 1; continue }
+      // Every branch below adds exactly one block
+      starts.append(i)
       if let f = BlockParser.fence(line) { out.append(fencedCode(f)); continue }
       if line.trimmingCharacters(in: .whitespaces).hasPrefix("$$") { out.append(math()); continue }
       if let (level, text) = BlockParser.heading(line) { out.append(.heading(level: level, Inline.parse(text))); i += 1; continue }
@@ -451,7 +499,7 @@ struct InlineParser {
   mutating func autolink() -> MDInline? {
     guard let close = chars[i...].firstIndex(of: ">") else { return nil }
     let body = String(chars[(i + 1)..<close])
-    guard body.firstMatch(of: /^[a-zA-Z][a-zA-Z0-9+.-]{1,31}:[^\s<>]*$/) != nil else { return nil }
+    guard body.firstMatch(of: Patterns.autolink) != nil else { return nil }
     i = close + 1
     return .link(url: body, [.text(body)])
   }
@@ -460,7 +508,7 @@ struct InlineParser {
   mutating func bareURL() -> MDInline? {
     if i > 0, chars[i - 1].isLetter || chars[i - 1].isNumber { return nil }
     let rest = String(chars[i...])
-    guard let m = rest.prefixMatch(of: /(?:https?:\/\/|www\.)[^\s<]+/) else { return nil }
+    guard let m = rest.prefixMatch(of: Patterns.bareURL) else { return nil }
     var url = String(m.0)
     while let last = url.last, ".,:;!?)\"'*_~".contains(last) {
       // Keep a closing paren that balances one inside the URL

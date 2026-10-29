@@ -63,13 +63,43 @@ extension MediaSource {
 
 /// Decoded pixels, orientation applied. CGImage is immutable, so the value crosses actors as it is
 nonisolated struct DecodedImage: @unchecked Sendable, Equatable {
+  /// The still picture: an animation's first frame
   let cgImage: CGImage
+  /// An animation's frames on an even beat of `frameDuration` (a frame held longer repeats, the same CGImage); empty
+  /// for a still picture
+  let frames: [CGImage]
+  let frameDuration: Double
+  /// Bytes the bitmaps hold, the cache's measure
+  let cost: Int
+
+  init(cgImage: CGImage) {
+    self.cgImage = cgImage
+    frames = []
+    frameDuration = 0
+    cost = cgImage.bytesPerRow * cgImage.height
+  }
+
+  init(frames: [CGImage], frameDuration: Double, cost: Int) {
+    cgImage = frames[0]
+    self.frames = frames
+    self.frameDuration = frameDuration
+    self.cost = cost
+  }
+
   var width: Int { cgImage.width }
   var height: Int { cgImage.height }
   /// Width over height
   var aspect: CGFloat { CGFloat(width) / CGFloat(max(1, height)) }
-  /// Bytes the bitmap holds, the cache's measure
-  var cost: Int { cgImage.bytesPerRow * cgImage.height }
+  var animated: Bool { frames.count > 1 }
+  /// One loop's length
+  var loopDuration: Double { Double(frames.count) * frameDuration }
+
+  /// The frame showing at `date`: every view of one image runs on the same clock, as a browser's copies of one GIF do
+  func frame(at date: Date) -> CGImage {
+    guard animated, frameDuration > 0 else { return cgImage }
+    let beat = Int((date.timeIntervalSinceReferenceDate / frameDuration).rounded(.down))
+    return frames[beat % frames.count]
+  }
 
   static func == (a: DecodedImage, b: DecodedImage) -> Bool { a.cgImage === b.cgImage }
 }
@@ -215,15 +245,84 @@ final class MediaLoader {
   /// ImageIO's thumbnail path: EXIF orientation applied, the long side capped at `maxPixel` (never enlarged), the
   /// bitmap decoded now rather than on first draw
   nonisolated static func decodeNow(_ data: Data) -> DecodedImage? {
-    guard let source = CGImageSourceCreateWithData(data as CFData, nil), CGImageSourceGetCount(source) > 0 else { return nil }
-    let options: [CFString: Any] = [
+    guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+    let count = CGImageSourceGetCount(source)
+    guard count > 0 else { return nil }
+    if count > 1, let animation = decodeAnimation(source, count: count) { return animation }
+    return CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnail(maxPixel) as CFDictionary).map(DecodedImage.init(cgImage:))
+  }
+
+  nonisolated private static func thumbnail(_ side: Int) -> [CFString: Any] {
+    [
       kCGImageSourceCreateThumbnailFromImageAlways: true,
       kCGImageSourceCreateThumbnailWithTransform: true,
       kCGImageSourceShouldCacheImmediately: true,
-      kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+      kCGImageSourceThumbnailMaxPixelSize: side,
     ]
-    return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary).map(DecodedImage.init(cgImage:))
   }
+
+  /// Every frame of an animation (GIF, APNG, animated WebP), decoded up front and scaled so all of them together stay
+  /// within `animationBudget`. nil when even `animationMinPixel` frames would not fit, or the file holds too many: the
+  /// caller then keeps the first frame as a still picture
+  nonisolated static func decodeAnimation(_ source: CGImageSource, count: Int) -> DecodedImage? {
+    guard count <= animationMaxFrames,
+          let first = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+          let width = first[kCGImagePropertyPixelWidth] as? Int, let height = first[kCGImagePropertyPixelHeight] as? Int,
+          width > 0, height > 0 else { return nil }
+    // The long side that fits every frame (4 bytes a pixel) into the budget, never above the still cap; scaled below
+    // `animationMinPixel` (a natively smaller one is fine as it is), it is no longer worth playing
+    let natural = max(width, height)
+    let fit = (Double(animationBudget) / Double(count * width * height * 4)).squareRoot()
+    let side = min(maxPixel, Int(Double(natural) * min(1, fit)))
+    guard side >= min(natural, animationMinPixel) else { return nil }
+    var frames: [CGImage] = []
+    var delays: [Double] = []
+    var cost = 0
+    for index in 0..<count {
+      guard let frame = CGImageSourceCreateThumbnailAtIndex(source, index, thumbnail(side) as CFDictionary) else { return nil }
+      frames.append(frame)
+      delays.append(frameDelay(source, at: index))
+      cost += frame.bytesPerRow * frame.height
+    }
+    // An even beat, so the card's timeline and UIImageView's animation (which spaces frames evenly) play one way: the
+    // shortest delay, a longer frame repeated for its share
+    let beat = max(minFrameDelay, delays.min() ?? defaultFrameDelay)
+    var timeline: [CGImage] = []
+    for (frame, delay) in zip(frames, delays) {
+      timeline.append(contentsOf: repeatElement(frame, count: max(1, Int((delay / beat).rounded()))))
+    }
+    guard timeline.count <= animationMaxBeats else { return nil }
+    return DecodedImage(frames: timeline, frameDuration: beat, cost: cost)
+  }
+
+  /// A frame's delay as browsers play it: the unclamped delay when the file has one, and anything under 11 ms (often 0,
+  /// meaning "as fast as possible") becomes 100 ms
+  nonisolated static func frameDelay(_ source: CGImageSource, at index: Int) -> Double {
+    let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any] ?? [:]
+    let containers: [(CFString, CFString, CFString)] = [
+      (kCGImagePropertyGIFDictionary, kCGImagePropertyGIFUnclampedDelayTime, kCGImagePropertyGIFDelayTime),
+      (kCGImagePropertyPNGDictionary, kCGImagePropertyAPNGUnclampedDelayTime, kCGImagePropertyAPNGDelayTime),
+      (kCGImagePropertyWebPDictionary, kCGImagePropertyWebPUnclampedDelayTime, kCGImagePropertyWebPDelayTime),
+    ]
+    for (container, unclamped, clamped) in containers {
+      guard let info = properties[container] as? [CFString: Any] else { continue }
+      let delay = (info[unclamped] as? Double).flatMap { $0 > 0 ? $0 : nil } ?? (info[clamped] as? Double) ?? 0
+      return delay < 0.011 ? defaultFrameDelay : delay
+    }
+    return defaultFrameDelay
+  }
+
+  /// All of an animation's frames together; a longer one is scaled down until it fits
+  nonisolated static let animationBudget = 48 << 20
+  /// Shrunk below this long side to fit the budget, an animation is no longer worth playing and the first frame shows
+  /// still
+  nonisolated static let animationMinPixel = 240
+  nonisolated static let animationMaxFrames = 400
+  /// Entries of the even-beat timeline (repeats included)
+  nonisolated static let animationMaxBeats = 4000
+  nonisolated static let defaultFrameDelay = 0.1
+  /// The shortest beat played; browsers clamp faster frames the same way
+  nonisolated static let minFrameDelay = 0.02
 }
 
 /// The saved images of a tool call in wire order (imageTools.ts toolImages): `contents` holds every item when there is

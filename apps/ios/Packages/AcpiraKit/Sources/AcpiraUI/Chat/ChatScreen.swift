@@ -46,7 +46,8 @@ struct ChatScreen: View {
     // The unsent prompt and attachments live in the app model, so leaving the chat and coming back keeps them
     let draft = model.draft(for: id)
     return VStack(spacing: 0) {
-      Thread(session: session)
+      // A prompt the session itself holds back (starting, replaying remembered controls) shows as sent (HeldPrompt.swift)
+      Thread(session: heldPrompt(session))
       // The dock reaches down into the home indicator's band and rests where the list's system bottom bar does
       // (Metrics.barSink), leaving the thread more room; on a phone without the indicator it keeps the plain gap
       DockSeat(homeInset: homeInset) {
@@ -64,6 +65,7 @@ struct ChatScreen: View {
       // switching to the agent's first account
       if initialPopup == "account" { accountOpen = true }
       if initialPopup == "quotes" { model.seedQuotes(id) }
+      if initialPopup == "staged" { model.seedStaged(id) }
       if initialPopup == "edit" { model.beginEditLast(id) }
       if initialPopup == "toast", let account = model.accounts.first(where: { $0.agent == agent.id }) {
         Task {
@@ -140,11 +142,13 @@ struct ChatScreen: View {
       toast: { model.show($0, icon: $1) },
       sendQueued: { model.sendQueued(id, item: $0) },
       editQueued: { item in
-        // Edit takes the prompt out of the queue and back into the composer
+        // Edit takes the prompt out of the queue and back into the composer, ahead of whatever is being typed there
+        // rather than over it
         if let prompt = model.takeQueued(id, item) {
           let draft = model.draft(for: id)
-          draft.text = prompt.text
-          draft.staged = prompt.attachments ?? []
+          let typed = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
+          draft.text = typed.isEmpty ? prompt.text : prompt.text + "\n\n" + draft.text
+          draft.staged = (prompt.attachments ?? []) + draft.staged
         }
       },
       removeQueued: { model.takeQueued(id, $0) },
@@ -231,6 +235,8 @@ struct Thread: View {
   @State private var position = ScrollPosition(edge: .bottom)
   @State private var follow = true
   @State private var dragging = false
+  /// `dragging` for the rows: one that mounts while it holds came in by the scroll and skips its entrance
+  @State private var gesture = ScrollGesture()
   /// The offset the thread is at, kept outside SwiftUI's state so scrolling does not redraw the thread
   @State private var offset = ScrollOffset()
 
@@ -238,6 +244,7 @@ struct Thread: View {
     ScrollView(.vertical) {
       ThreadContent(session: session, preOpen: preOpen)
         .environment(\.holdScroll, hold)
+        .environment(\.scrollGesture, gesture)
     }
     // The docked plan floats over the thread's bottom; the inset is also the transcript's scroll clearance
     .safeAreaInset(edge: .bottom, spacing: 0) { ThreadDock(session: session) }
@@ -246,7 +253,10 @@ struct Thread: View {
     .defaultScrollAnchor(.bottom, for: .initialOffset)
     .defaultScrollAnchor(.top, for: .alignment)
     .scrollDismissesKeyboard(.interactively)
-    .onScrollPhaseChange { _, phase in dragging = phase == .interacting || phase == .tracking || phase == .decelerating }
+    .onScrollPhaseChange { _, phase in
+      dragging = phase == .interacting || phase == .tracking || phase == .decelerating
+      gesture.active = dragging
+    }
     .onScrollGeometryChange(for: Bool.self) { g in
       // At the bottom within a hair: the last line may sit a fraction of a point short after a layout pass
       g.contentOffset.y + g.containerSize.height - g.contentInsets.bottom >= g.contentSize.height - Metrics.s2
@@ -286,6 +296,7 @@ struct ThreadContent: View {
   var lazy = true
   /// Folds opened in the last exchange before any tap (renders and previews)
   var preOpen: Set<PreOpen> = []
+  @Environment(\.sessionActions) private var actions
 
   var body: some View {
     let groups = exchanges(session.turns)
@@ -297,9 +308,13 @@ struct ThreadContent: View {
         // A prompt bubble does not stick (it would sit under the floating glass with the thread showing beside it)
         LazyVStack(alignment: .leading, spacing: 0) {
           sections(groups, activeAgent, nodes)
+          queue
         }
       } else {
-        VStack(alignment: .leading, spacing: 0) { sections(groups, activeAgent, nodes) }
+        VStack(alignment: .leading, spacing: 0) {
+          sections(groups, activeAgent, nodes)
+          queue
+        }
       }
     }
     // The messages' `Metrics.pad` puts prose, row icons and cards on the edge the dock, the composer and the bar's back
@@ -341,6 +356,22 @@ struct ThreadContent: View {
     }
   }
 
+  /// Prompts queued behind the running turn, as faint bubbles after it: where each lands once sent, so nothing moves
+  /// when it goes. Over the composer they stacked under the floating to-do card and pushed it up
+  @ViewBuilder private var queue: some View {
+    if let queued = session.queued, !queued.isEmpty, session.external == nil {
+      let steer = session.canSteer == true && session.running
+      VStack(alignment: .trailing, spacing: WebMetrics.msgGap) {
+        ForEach(queued) { item in
+          QueueBubble(item: item, steer: steer, onSend: { actions.sendQueued(item.id) },
+                      onEdit: { actions.editQueued(item.id) }, onRemove: { actions.removeQueued(item.id) })
+        }
+      }
+      .padding(.horizontal, Metrics.pad)
+      .padding(.top, WebMetrics.msgGap)
+    }
+  }
+
   private func endsWithActions(_ exchange: Exchange, running: Bool, active: Int?) -> Bool {
     guard let last = exchange.agents.last else { return false }
     let live = running && last.index == active && last.turn.stop == nil
@@ -363,9 +394,10 @@ public struct ChatPoster: View {
   }
 
   public var body: some View {
+    let held = heldPrompt(session)
     VStack(spacing: 0) {
-      ThreadContent(session: session, lazy: false, preOpen: preOpen)
-      ThreadDock(session: session)
+      ThreadContent(session: held, lazy: false, preOpen: preOpen)
+      ThreadDock(session: held)
       Dock(session: session, draft: .constant(""), staged: .constant([]))
         .padding(.bottom, Metrics.page)
     }

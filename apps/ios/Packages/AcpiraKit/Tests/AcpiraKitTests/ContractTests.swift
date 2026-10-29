@@ -169,6 +169,12 @@ struct ContractTests {
       case .projectFile(_, _, let hunks, _): try checkStruct(try need(hunks?.first), try need(TS.interface(proto, "ProjectHunk")))
       case .sessionChanges(_, let files): try checkStruct(try need(files.first), try need(TS.interface(proto, "ProjectChange")))
       case .terminalState(_, _, _, _, _, let exit, _): try checkStruct(try need(exit), try need(TS.interface(proto, "TerminalExit")))
+      case .connections(let hosts):
+        // The list and the new session read a few fields of a host; the rest is the settings page's
+        let remote = try Self.source("remote.ts")
+        let host = try need(hosts.first)
+        try checkStruct(host, try need(TS.interface(remote, "ConnectionView")), subset: true)
+        try checkStruct(try need(host.error), try need(TS.interface(remote, "ConnectionError")), subset: true)
       default: break
       }
     }
@@ -240,8 +246,25 @@ struct ContractTests {
     try check(SubagentVisibility.self, TS.alias(subagents, "SubagentVisibility"), "SubagentVisibility")
     try check(SubagentSummary.StateSource.self, field(subagents, "SubagentSummary", "stateSource"), "SubagentSummary.stateSource")
     try check(RelayMode.self, TS.alias(subagents, "RelayMode"), "RelayMode")
+    let remote = try Self.source("remote.ts")
+    try check(RunMode.self, TS.alias(remote, "RunMode"), "RunMode")
+    try check(ConnectionState.self, TS.alias(remote, "ConnectionState"), "ConnectionState")
     let reasons = TS.literals(try need(TS.alias(proto, "ProjectError"), "ProjectError"))
     #expect(Set(ProjectError.reasons.map(\.rawValue)) == reasons, "ProjectError is \(reasons.sorted())")
+  }
+
+  /// `ssh://` folders split as remote.ts and acpira_shared::remote split them (the fixture all three run)
+  @Test(.enabled(if: readable))
+  func remoteFolders() throws {
+    let data = try Data(contentsOf: Self.root.appending(path: "test/fixtures/remote-folders.json"))
+    let cases = try #require(try JSONSerialization.jsonObject(with: data) as? [[String: Any]])
+    #expect(!cases.isEmpty)
+    for item in cases {
+      let input = try #require(item["input"] as? String)
+      let parsed = RemoteFolder.parse(input)
+      #expect(parsed?.alias == item["alias"] as? String, "alias of \(input)")
+      #expect(parsed?.path == item["path"] as? String, "path of \(input)")
+    }
   }
 
   /// The turns the engine's golden suite records (test/fixtures/engine-*.json, the input the webview suites render) hold
@@ -581,6 +604,7 @@ enum ContractSamples {
     .terminalAck(id: "T", chars: 4096),
     .terminalClose(id: "T"),
     .terminalKill(id: "T"),
+    .connections,
   ]
 
   static let edit = EditTurnRequest(
@@ -643,5 +667,6 @@ enum ContractSamples {
     #"{"type":"terminalState","id":"T","title":"sh","cols":100,"rows":30,"replay":"","exit":{"code":5,"signal":"SIGHUP"},"error":"no shell"}"#,
     #"{"type":"editTurnResult","requestId":"e1","error":"stale"}"#,
     #"{"type":"appearance","appearance":{"density":"airy","motion":"none"}}"#,
+    #"{"type":"connections","connections":[{"alias":"gen1","mode":"local","disabled":false,"state":"error","error":{"message":"denied"}}]}"#,
   ]
 }

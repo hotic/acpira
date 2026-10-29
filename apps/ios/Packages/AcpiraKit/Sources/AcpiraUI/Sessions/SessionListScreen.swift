@@ -3,7 +3,7 @@ import AcpiraFixtures
 import AcpiraModels
 import SwiftUI
 
-// The phone's first screen: every session, grouped as picked under the title (as Trae's phone app switches its list
+// The phone's first screen: every session, grouped as picked in the bar's filter menu (as Trae's phone app switches its list
 // between a timeline and groups, rather than stacking projects over a timeline; the groupings are the desktop view
 // menu's). By time: the sessions pinned to the top, then day captions. By project: the same pinned run (or, as the
 // view menu says, each project's pins leading it), then the desktop app's sections, each project as a header folding
@@ -32,16 +32,27 @@ struct SessionListScreen: View {
   @State private var query = UserDefaults.standard.string(forKey: "search") ?? ""
   @State private var renaming: SessionSummary?
   @State private var newTitle = ""
-  /// Open projects showing every session, past their latest few
-  @State private var fullProjects: Set<String> = []
+  /// Per open project, how many sessions past its latest few are out (SessionList.tsx `more`): "N more" adds a page,
+  /// and once all are out it folds them away again
+  @State private var moreShown: [String: Int] = [:]
   @Environment(\.now) private var now
 
   /// Sessions an open project shows before "N more" (the desktop view menu's default)
   private static let perProject = 5
+  /// What one tap on "N more" brings out (SessionList.tsx MORE_PAGE): a project of hundreds never lays them all out at once
+  private static let morePage = 10
 
   var body: some View {
-    // Paired remote access: the followed computer's state takes the page until it has sessions to list
+    // Paired remote access: the followed computer's state takes the page until it has sessions to list. The bar sits
+    // over both, so the hero giving way to the list moves nothing in it
+    let covered = pairing.map { PairHeroList.covers($0, model) } ?? false
+    // Listed folders alone keep the filter too: from another view its menu is the way back to them
+    let filter = !covered && searchTerms(query).isEmpty && !(model.summaries.isEmpty && model.listedProjects.isEmpty)
     PairListGate(pairing: pairing) { list }
+      .modifier(ListTopBar(filter: filter ? ListViewMenu(view: $view, pinPlace: $pinPlace,
+                                                         unread: model.summaries.contains { $0.unread == true || $0.state == .unread },
+                                                         onMarkAllRead: model.markAllRead) : nil,
+                           onSettings: { model.settingsOpen = true }))
   }
 
   @ViewBuilder private var list: some View {
@@ -58,18 +69,6 @@ struct SessionListScreen: View {
     let onNew = { model.path.append(.new(agent: nil, cwd: model.projects.first ?? "")) }
     ScrollView(.vertical) {
       LazyVStack(alignment: .leading, spacing: 0) {
-        // The list has no bar: settings sits at the title row's end and comes up as a sheet
-        if let pairing, let current = pairing.selected {
-          // The followed computer names the list; its menu switches computers
-          PairTitleRow(pairing: pairing, current: current) { model.settingsOpen = true }
-        } else {
-          LargeTitle(title: t("mobile.home")) { model.settingsOpen = true }
-        }
-        // Listed folders alone keep it too: from another view the menu is the way back to them
-        if !searching && !(model.summaries.isEmpty && model.listedProjects.isEmpty) {
-          ListViewMenu(view: $view, pinPlace: $pinPlace, unread: model.summaries.contains { $0.unread == true || $0.state == .unread },
-                       onMarkAllRead: model.markAllRead)
-        }
         if ordered.isEmpty && !(byProject && !model.listedProjects.isEmpty) {
           // Waiting on the conversation search, the empty list says so rather than "no match"
           // The whole list is empty, not one project's ("session.noneWorkspace" is the IDE's workspace-scoped list)
@@ -89,11 +88,8 @@ struct SessionListScreen: View {
     .scrollIndicators(.hidden)
     .background(Palette.bg0)
     .modifier(SystemListBar(query: $query, onNew: onNew))
-    // The large title is the list's first row; a pushed chat shows back without a word beside it
-    .navigationTitle("")
-    // Rows blur and dim gradually as they scroll up under the status bar
-    .topFade(tail: 0)
-    .hiddenNavigationBar()
+    // Rows blur and dim gradually as they scroll up under the bar's glass buttons
+    .topFade()
     .alert(t("common.rename"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
       TextField(text: $newTitle) { Text(web: t("session.titleAria")) }
       Button(t("mobile.cancel"), role: .cancel) {}
@@ -154,11 +150,18 @@ struct SessionListScreen: View {
     let pins = pinsInProject ? all.filter { $0.pinned == true }.sorted { $0.updatedAt > $1.updatedAt } : []
     let sessions = all.filter { $0.pinned != true }.sorted { $0.updatedAt > $1.updatedAt }
     let open = model.openProjects.contains(cwd)
-    let rows = !open ? [] : fullProjects.contains(cwd) || sessions.count <= Self.perProject + 1
-      ? sessions : Array(sessions.prefix(Self.perProject))
-    let more = open ? sessions.count - rows.count : 0
-    VStack(spacing: 0) {
+    // The latest few (all of them when only one more would hide), then the pages "N more" brought out
+    let cut = sessions.count <= Self.perProject + 1 ? sessions.count : Self.perProject
+    let extra = moreShown[cwd] ?? 0
+    let rows = open ? Array(sessions.prefix(cut + extra)) : []
+    let rest = Array(sessions.dropFirst(rows.count))
+    // The "N more" row stays once paging began, reading "show less" with everything out
+    let paged = open && sessions.count > cut
+    // A group rather than a stack: the lazy list then builds a project's rows as they scroll in, not all of them on
+    // any change (a project of hundreds hitched on every tap)
+    Group {
       ProjectHeader(cwd: cwd, first: model.listedProjects.first == cwd, open: open, sessions: all,
+                    host: model.host(of: cwd),
                     onToggle: { withAnimation(Motion.ease) { model.toggleOpen(cwd) } },
                     onMoveTop: { withAnimation(Motion.ease) { model.moveProjectToTop(cwd) } },
                     onRemove: { withAnimation(Motion.ease) { model.removeProject(cwd) } },
@@ -169,13 +172,15 @@ struct SessionListScreen: View {
         ForEach(pins, id: \.id) { s in
           row(s, place: nil, time: sessionTime(s.updatedAt, now: now), divider: false, nested: true)
         }
-        if !pins.isEmpty && (!rows.isEmpty || more > 0) { PinRule() }
+        if !pins.isEmpty && (!rows.isEmpty || paged) { PinRule() }
       }
       ForEach(rows, id: \.id) { s in
         row(s, place: nil, time: sessionTime(s.updatedAt, now: now), divider: false, nested: true)
       }
-      if more > 0 {
-        MoreRow(count: more) { _ = withAnimation(Motion.ease) { fullProjects.insert(cwd) } }
+      if paged {
+        MoreRow(rest: rest, nameOf: { model.agent($0).name }) {
+          withAnimation(Motion.ease) { moreShown[cwd] = rest.isEmpty ? nil : extra + Self.morePage }
+        }
       }
     }
   }
@@ -242,9 +247,9 @@ struct SessionListScreen: View {
   }
 }
 
-/// The list's grouping under the title (date, project, channel or none): a system menu ticking the current one. By
-/// project it also says where pins sit (the desktop view menu's Pinned), and while anything is unread it marks all as
-/// read
+/// The list's grouping (date, project, channel or none): a filter button at the bar's start opening a system menu that
+/// ticks the current one. By project it also says where pins sit (the desktop view menu's Pinned), and while anything
+/// is unread it marks all as read
 struct ListViewMenu: View {
   @Binding var view: SessionListView
   @Binding var pinPlace: PinPlace
@@ -282,18 +287,10 @@ struct ListViewMenu: View {
         }
       }
     } label: {
-      HStack(spacing: Metrics.s1) {
-        Text(web: name(view), paragraph: false)
-          .textStyle(TypeScale.text2, weight: .semibold)
-          .foregroundStyle(Palette.fg1)
-        Icon(.chevronDown, size: Metrics.chevron, strokeWidth: 2).foregroundStyle(Palette.fg3)
-      }
-      .contentShape(Rectangle())
+      Image(systemName: "line.3.horizontal.decrease")
     }
-    .menuStyle(.button)
-    .buttonStyle(.plain)
-    .padding(.horizontal, Metrics.pad)
-    .frame(minHeight: Metrics.groupCaption, alignment: .leading)
+    .accessibilityLabel(Text(web: t("session.view.group")))
+    .accessibilityValue(Text(web: name(view)))
   }
 }
 
@@ -342,9 +339,7 @@ func marked(_ text: String, terms: [String], size: CGFloat) -> AttributedString 
 
 // MARK: - Pieces
 
-/// The list's large title is its first row and the page has no navigation bar (a bar holding only settings read as an
-/// empty row over the title; settings sits at the title row's end). The system search field and new session ride the
-/// bottom bar (iOS 26 Mail / Notes)
+/// The system search field and new session ride the bottom bar (iOS 26 Mail / Notes); the top bar is `ListTopBar`
 struct SystemListBar: ViewModifier {
   @Binding var query: String
   var onNew: () -> Void
@@ -382,24 +377,31 @@ struct SessionGroup: Identifiable {
   var dated = false
 }
 
-/// The list's iOS large title, with settings as a glass circle at the row's end (the page has no bar)
-struct LargeTitle: View {
-  let title: String
-  var onSettings: (() -> Void)?
+/// The list's bar: the grouping filter at the start, what the list shows centred (the followed computer, whose menu
+/// switches computers), settings at the end. A system bar rather than a title row, so it stays while the list scrolls
+/// under it and the computer and grouping are always in reach
+struct ListTopBar: ViewModifier {
+  /// The grouping menu; none while the hero covers the list, during a search or with nothing to group
+  var filter: ListViewMenu?
+  var onSettings: () -> Void
 
-  var body: some View {
-    Text(web: title, paragraph: false).lineLimit(1).truncationMode(.tail)
-      .textStyle(TypeScale.title, weight: .bold)
-      .foregroundStyle(Palette.fgStrong)
-      .accessibilityAddTraits(.isHeader)
-      // A long title truncates before the button instead of running under it
-      .padding(.trailing, onSettings == nil ? 0 : Metrics.glassCtl + Metrics.s2)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .overlay(alignment: .trailing) {
-        if let onSettings { GlassIconButton(icon: .settings, label: t("session.settings"), action: onSettings) }
+  func body(content: Content) -> some View {
+    content
+      // A pushed chat shows back without a word beside it
+      .navigationTitle("")
+      .navigationBarTitleDisplayModeInline()
+      .toolbar {
+        #if os(iOS)
+        if let filter { ToolbarItem(placement: .topBarLeading) { filter } }
+        ToolbarItem(placement: .principal) { ListBarTitle() }
+          // The title is text, not a control: no glass capsule behind it
+          .sharedBackgroundVisibility(.hidden)
+        ToolbarItem(placement: .topBarTrailing) {
+          Button(action: onSettings) { Image(systemName: "gearshape") }
+            .accessibilityLabel(Text(web: t("session.settings")))
+        }
+        #endif
       }
-      .padding(.horizontal, Metrics.pad)
-      .frame(maxWidth: .infinity, minHeight: Metrics.largeTitle, alignment: .leading)
   }
 }
 
@@ -494,14 +496,17 @@ struct SessionRow<Pins: View>: View {
 }
 
 /// A project's header in the by-project view: the folder in the marks' column, the name and a chevron turning down
-/// while open; folded, the project's most pressing state sits in the rows' state column. A tap folds it open or shut;
-/// its menu moves it to the top of the user's order, starts a session in it, or takes it off the list
+/// while open; folded, the project's most pressing state sits in the rows' state column. A folder on an SSH host wears
+/// the globe and ends in its host's alias and connection dot, as on the desktop. A tap folds it open or shut; its menu
+/// moves it to the top of the user's order, starts a session in it, or takes it off the list
 struct ProjectHeader: View {
   let cwd: String
   /// It leads the list already, so "move to top" is not offered
   let first: Bool
   let open: Bool
   let sessions: [SessionSummary]
+  /// The SSH host the folder lives on (`AppModel.host(of:)`); nil for a local folder
+  var host: (folder: RemoteFolder, view: ConnectionView?)?
   var onToggle: () -> Void
   var onMoveTop: () -> Void
   var onRemove: () -> Void
@@ -513,10 +518,16 @@ struct ProjectHeader: View {
         // The folder in the top-level session marks' column (its own sessions sit a step in): the desktop list's
         // glyph, shut or open with the fold (SessionList.tsx), so both lists draw one folder. A pin never takes its
         // place (it says "pinned", not "project")
-        ZStack {
-          // Icon's defaults are the desktop's: the icon size, a 1.5 stroke
-          Icon(.folder).opacity(open ? 0 : 1)
-          Icon(.folderOpen).opacity(open ? 1 : 0)
+        Group {
+          if host != nil {
+            RemoteFolderGlyph(open: open).breathing(host?.view?.state == .connecting)
+          } else {
+            ZStack {
+              // Icon's defaults are the desktop's: the icon size, a 1.5 stroke
+              Icon(.folder).opacity(open ? 0 : 1)
+              Icon(.folderOpen).opacity(open ? 1 : 0)
+            }
+          }
         }
         .foregroundStyle(Palette.fg3)
         .frame(width: Metrics.rowMark)
@@ -529,6 +540,8 @@ struct ProjectHeader: View {
             .rotationEffect(.degrees(open ? 90 : 0))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // The alias keeps its room (up to `hostAlias`); the project's name truncates first, as on the desktop
+        if let host { HostTag(alias: host.folder.alias, view: host.view).layoutPriority(1) }
         // Open, each row shows its own state; the slot stays either way, as in the rows
         Color.clear.frame(width: Metrics.stateSlot, height: Metrics.stateSlot).overlay {
           if !open, let mark = Self.pressing(sessions) { StateMark(state: mark.state, unread: mark.unread) }
@@ -556,26 +569,141 @@ struct ProjectHeader: View {
   }
 }
 
-/// "N more" under an open project's latest few, in the rows' text column; a tap shows the rest in place
-struct MoreRow: View {
-  let count: Int
-  var action: () -> Void
+/// RemoteFolderIcon.tsx: the folder with a small globe on its lower right corner. The folder is cut away under the
+/// globe, so the badge reads on any fill behind it (a pressed row's included); the globe hangs past the folder's box
+struct RemoteFolderGlyph: View {
+  var open: Bool
 
   var body: some View {
+    let badge = Metrics.remoteBadge, out = Metrics.remoteOverhang
+    ZStack(alignment: .bottomTrailing) {
+      ZStack {
+        Icon(.folder).opacity(open ? 0 : 1)
+        Icon(.folderOpen).opacity(open ? 1 : 0)
+      }
+      .mask {
+        Rectangle()
+          .overlay(alignment: .bottomTrailing) {
+            Circle().frame(width: badge, height: badge).offset(x: out, y: out).blendMode(.destinationOut)
+          }
+          .compositingGroup()
+      }
+      Icon(.globe, size: Metrics.remoteGlobe, strokeWidth: 2)
+        .frame(width: badge, height: badge)
+        .offset(x: out, y: out)
+    }
+  }
+}
+
+/// A host folder's header end (SessionList.tsx GroupHeader): the host's alias, then its connection as a dot: green
+/// connected, amber failed, breathing while connecting, faint when off. No dot until the engine has said how the host
+/// is (an older gateway keeps the hosts from devices)
+struct HostTag: View {
+  let alias: String
+  let view: ConnectionView?
+
+  var body: some View {
+    HStack(spacing: Metrics.s1_5) {
+      Text(verbatim: alias).lineLimit(1).truncationMode(.middle)
+        .textStyle(TypeScale.text3)
+        .foregroundStyle(Palette.fg3)
+        .frame(maxWidth: Metrics.hostAlias, alignment: .trailing)
+        .fixedSize(horizontal: false, vertical: true)
+      if let view {
+        Circle().fill(Self.dot(view.state)).frame(width: Metrics.hostDot, height: Metrics.hostDot)
+          .breathing(view.state == .connecting)
+      }
+    }
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel(Text(web: spoken))
+  }
+
+  /// The alias and, once known, the connection's state in words
+  private var spoken: String {
+    guard let view, view.state != .unknown else { return alias }
+    let state = t("connections.state." + view.state.rawValue)
+    return "\(alias), \(state)"
+  }
+
+  static func dot(_ state: ConnectionState) -> Color {
+    switch state {
+    case .connected: Palette.ok
+    case .error: Palette.warn
+    case .connecting: Palette.fg3
+    case .off, .unknown: Palette.fg3.opacity(0.4)
+    }
+  }
+}
+
+extension View {
+  /// `remote-breathe`: the view breathes while `on`, unless motion is off
+  func breathing(_ on: Bool) -> some View { modifier(Breathing(on: on)) }
+}
+
+private struct Breathing: ViewModifier {
+  let on: Bool
+  @Environment(\.motionEnabled) private var motion
+
+  func body(content: Content) -> some View {
+    if on && motion {
+      content.phaseAnimator([1, Motion.breatheLow]) { view, level in view.opacity(level) } animation: { _ in Motion.breathe }
+    } else {
+      content
+    }
+  }
+}
+
+/// SessionList.tsx MoreRow, under an open project's latest few. It tells what the rest holds: how many, the agents among
+/// them (their marks, the first few) and the most urgent state inside, on the rows' state column. A tap brings out the
+/// next page above it; with all of them out it reads "show less", the chevron turned over, and a tap folds them away
+struct MoreRow: View {
+  /// The sessions still hidden, in list order
+  let rest: [SessionSummary]
+  var nameOf: (AgentId) -> String
+  var action: () -> Void
+
+  /// SessionList.tsx MORE_MARKS
+  static let marks = 3
+
+  var body: some View {
+    let all = rest.isEmpty
+    var seen = Set<AgentId>()
+    let agents = Array(rest.map(\.agent).filter { seen.insert($0).inserted }.prefix(Self.marks))
     Button(action: action) {
       HStack(spacing: Metrics.gap) {
-        Color.clear.frame(width: Metrics.lead, height: Metrics.s1)
-        Text(web: t("session.showMore", ["n": String(count)]), paragraph: false)
-          .textStyle(TypeScale.text2).foregroundStyle(Palette.fg3)
+        // The chevron in the sessions' mark column
+        Icon(.chevronDown, size: Metrics.chevron, strokeWidth: 2)
+          .foregroundStyle(Palette.fg3)
+          .rotationEffect(.degrees(all ? 180 : 0))
+          .frame(width: Metrics.rowMark)
+          .frame(width: Metrics.lead, alignment: .leading)
+        ZStack(alignment: .leading) {
+          Text(web: t("session.showMore", ["n": String(rest.count)]), paragraph: false).opacity(all ? 0 : 1)
+          Text(web: t("session.showLess"), paragraph: false).opacity(all ? 1 : 0)
+        }
+        .textStyle(TypeScale.text2)
+        .foregroundStyle(Palette.fg3)
+        .lineLimit(1)
+        HStack(spacing: Metrics.s1) {
+          ForEach(agents, id: \.self) { agent in
+            VendorMark(brand: agent, name: nameOf(agent), size: Metrics.moreMark, fit: true)
+          }
+        }
+        .foregroundStyle(Palette.fg2)
+        .opacity(all ? 0 : 1)
         Spacer(minLength: 0)
+        Color.clear.frame(width: Metrics.stateSlot, height: Metrics.stateSlot).overlay {
+          if let mark = ProjectHeader.pressing(rest) { StateMark(state: mark.state, unread: mark.unread) }
+        }
       }
-      // Only ever inside a project's group: its text on its sessions' titles
+      // Only ever inside a project's group: its chevron on its sessions' marks
       .padding(.leading, Metrics.nest)
       .padding(.horizontal, Metrics.pad)
       .frame(minHeight: Metrics.sheetRow)
       .contentShape(Rectangle())
     }
     .buttonStyle(ListRowStyle(active: false))
+    .accessibilityLabel(Text(web: all ? t("session.showLess") : t("session.showMore", ["n": String(rest.count)])))
   }
 }
 
@@ -690,13 +818,3 @@ struct StateMark: View {
   }
 }
 
-extension View {
-  /// No navigation bar: the list's large title is its first row
-  func hiddenNavigationBar() -> some View {
-    #if os(iOS)
-    toolbar(.hidden, for: .navigationBar)
-    #else
-    self
-    #endif
-  }
-}

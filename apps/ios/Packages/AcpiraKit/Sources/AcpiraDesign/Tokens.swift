@@ -365,6 +365,8 @@ public enum Metrics {
   /// three quarters of the thread, so a long prompt still reads as the right-hand side's and not as a full line
   public static let rBubble: CGFloat = 20
   public static let bubbleInset: CGFloat = 72
+  /// A queued prompt's bubble over the composer stays this faint until it is sent
+  public static let queuedBubble: Double = 0.55
   /// The thread's inset on top of the messages' own `pad`: prose, rows and cards sit a little inside the edge the bar's
   /// buttons, the dock and the composer share, as ChatGPT and Claude set their text inside their bar buttons
   public static let threadInset: CGFloat = 4
@@ -372,11 +374,20 @@ public enum Metrics {
   public static let rComposer: CGFloat = 26
   /// A card (alert, question): rounder than the desktop's, inside the composer's
   public static let rCardRound: CGFloat = 20
-  /// The session list's large title row and the gap under it
-  public static let largeTitle: CGFloat = 52
   /// A bare agent mark leading a session row, and the state dot of the engine's status row
   public static let rowMark: CGFloat = 18
   public static let rowDot: CGFloat = 8
+  /// The agent marks of the sessions an "N more" row still hides (Tailwind size-3 on the desktop, scaled as `icon`)
+  public static let moreMark: CGFloat = 14
+  /// A folder on an SSH host (RemoteFolderIcon.tsx at the phone's `icon`): the globe's round cut out of the folder's
+  /// corner, the globe in it, and how far the cut hangs past the folder's box
+  public static let remoteBadge: CGFloat = 13
+  public static let remoteGlobe: CGFloat = 10
+  public static let remoteOverhang: CGFloat = 5
+  /// A host folder's alias at its header's end, truncated past this (the desktop's max-w-host)
+  public static let hostAlias: CGFloat = 120
+  /// The host's connection dot beside its alias (size-1.5 scaled)
+  public static let hostDot: CGFloat = 7
   /// A caption over a group of sessions (pinned, today, earlier)
   public static let groupCaption: CGFloat = 36
   // Liquid pickers (AcpiraUI/Design/Goo.swift): Liquid Glass pieces in one container
@@ -445,6 +456,10 @@ public enum Motion {
   /// A chip's glyph swapping for × as its pieces leave, and back as they land
   public static let gooSwap = Animation.easeOut(duration: 0.18)
   public static let gooSwapBack = Animation.easeOut(duration: 0.22).delay(0.22)
+  /// A panel swapping its rows for a list and back: what leaves fades out in half a `dur` and what comes in fades in
+  /// after it, so the two never show through each other (the desktop's lead / sidekick views)
+  public static let gooListOut = Animation.easeOut(duration: dur / 2)
+  public static let gooListIn = Animation.easeOut(duration: dur).delay(dur / 2)
   /// The dim lifting behind a closing picker: held while the pieces go home
   public static let gooDimOut = Animation.easeIn(duration: 0.42)
   /// The agent ring moves at the liquid pickers' pace: their spring, and each bubble's lag behind the one before
@@ -478,6 +493,9 @@ public enum Motion {
   public static let toast: Double = 1.8
   /// A toast offering undo stays long enough to reach for it
   public static let toastUndo: Double = 6
+  /// acp-pulse (`remote-breathe`): a host folder connecting breathes down to `breatheLow` and back, half a cycle each way
+  public static let breathe = Animation.easeInOut(duration: 0.8)
+  public static let breatheLow: Double = 0.3
   public static let durOpen: Double = 0.220
   public static let durClose: Double = 0.320
   public static let enter: Double = 0.300

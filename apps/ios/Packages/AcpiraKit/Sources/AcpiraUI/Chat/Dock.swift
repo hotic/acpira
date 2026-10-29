@@ -36,11 +36,7 @@ struct Dock: View {
                   onNewSession: actions.newSession)
       }
       if let external = session.external { ExternalSessionNotice(info: external) } else { SessionNotice(session: session) }
-      ForEach(session.queued ?? []) { item in
-        QueueRow(item: item, steer: session.canSteer == true && session.running,
-                 onSend: { actions.sendQueued(item.id) }, onEdit: { actions.editQueued(item.id) },
-                 onRemove: { actions.removeQueued(item.id) })
-      }
+      // Queued prompts are faint bubbles at the end of the thread (ThreadContent.queue)
       // A ChatGPT mirror is a receiver: nothing to send or stop. While a plan waits, a send revises it. While a sent
       // prompt is being rewritten, the same composer (so focus holds) edits it: its pickers act on the edit's own
       // selections and send rewrites the turn
@@ -196,79 +192,64 @@ struct PlanDock: View {
 
 // MARK: - Queue
 
-/// One queued prompt (Queue.tsx QueuedRow): the queue glyph, attachment pills, the first line of the text, then send
-/// now (or steer, when the agent takes it mid-turn), edit and remove, on the --cmp-bg queue surface
-struct QueueRow: View {
+/// A queued prompt as the phone shows it: the sent prompt's bubble (UserMessageCard), right-aligned after the running
+/// turn and faint until it goes, so it reads as a message on its way rather than a control. Several follow in send order.
+/// Queue.tsx's send / edit / remove buttons read as a desktop toolbar on a phone, so a tap opens a system menu instead:
+/// send now (or steer, when the agent takes it mid-turn), edit and remove, under the line saying when it goes
+struct QueueBubble: View {
   let item: QueuedPrompt
   var steer: Bool
-  var onSend: () -> Void = {}
-  var onEdit: () -> Void = {}
-  var onRemove: () -> Void = {}
+  var onSend: () -> Void
+  var onEdit: () -> Void
+  var onRemove: () -> Void
+
+  /// The lines a long queued prompt shows before it ends in an ellipsis
+  private static let lines = 3
 
   var body: some View {
-    let first = item.text.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n").first ?? ""
-    let attachments = item.attachments ?? []
-    let busy = item.sending == true
-    Row {
-      Icon(.listEnd, size: Metrics.icon)
-    } content: {
-      if !attachments.isEmpty {
-        HStack(spacing: Metrics.s1) {
-          ForEach(Array(attachments.enumerated()), id: \.offset) { _, attachment in QueueAttachment(attachment: attachment) }
+    Menu {
+      Section {
+        Button(action: onSend) {
+          Label(t(steer ? "queue.steer" : "queue.sendNow"), systemImage: steer ? "arrow.triangle.merge" : "arrow.up")
         }
-        .fixedSize()
-        .alignmentGuide(.firstTextBaseline) {
-          // items-center: the pills sit on the middle of the text's line box, its baseline that far below the middle
-          $0[VerticalAlignment.center] + TypeScale.text1.baselineDepth - TypeScale.text1.lineHeight / 2
-        }
+        Button(action: onEdit) { Label(t("queue.edit"), systemImage: "pencil") }
+        Button(role: .destructive, action: onRemove) { Label(t("queue.remove"), systemImage: "trash") }
+      } header: {
+        Text(t(item.sending == true ? "queue.sending" : "queue.title"))
       }
-      if !first.isEmpty {
-        Button(action: onEdit) {
-          // cssBaseline: the baseline the pills line up against is the CSS one in the text-1 line box
-          Text(web: first)
-            .cssBaseline()
-            .textStyle(TypeScale.text1)
-            .foregroundStyle(Palette.fg1.opacity(0.85))
-            .lineLimit(1)
-            .truncationMode(.tail)
-            // px-1.5 py-0.5: the text's tap target
-            .padding(.horizontal, Metrics.s1_5)
-            .padding(.vertical, Metrics.s0_5)
-        }
-        .buttonStyle(.plain)
-        .disabled(busy)
-        // truncate: the target gives way down to nothing beside wide pills, clipped like the webview's overflow
-        .frame(minWidth: 0, alignment: .leading)
-        .clipped()
-        .layoutPriority(-1)
-      }
-    } trailing: {
-      IconButton(steer ? .merge : .arrowUp, label: steer ? t("queue.steer") : t("queue.sendNow"), action: onSend)
-      IconButton(.pencil, label: t("queue.edit"), action: onEdit).disabled(busy)
-      IconButton(.trash2, label: t("queue.remove"), action: onRemove).disabled(busy)
+    } label: {
+      bubble
     }
-    .accessibilityLabel(Text(web: busy ? t("queue.sending") : t("queue.title")))
-    .padding(.horizontal, Metrics.pad)
-    .padding(.vertical, Metrics.s1)
-    .background(RoundedRectangle(cornerRadius: Metrics.rMd).fill(Palette.cmpBg))
-    .overlay(RoundedRectangle(cornerRadius: Metrics.rMd).strokeBorder(Palette.conversationLine))
+    .menuStyle(.button)
+    .buttonStyle(.plain)
+    .disabled(item.sending == true)
+    .padding(.leading, Metrics.bubbleInset)
+    .frame(maxWidth: .infinity, alignment: .trailing)
+    .accessibilityLabel(Text(web: item.text))
+    .accessibilityHint(Text(web: t("queue.title")))
   }
-}
 
-/// A queued prompt's attachment as the small pill the turn shows
-private struct QueueAttachment: View {
-  let attachment: Attachment
-  var body: some View {
-    switch attachment {
-    case .image(let blob, _, let name):
-      AttachmentThumbnail(blob: blob, name: name, side: Metrics.ctlSm)
-    case .file(_, let name), .text(_, let name, _):
-      AttachmentPill(name: name, icon: .fileText)
-    case .selection(_, let name, let start, let end, _):
-      AttachmentPill(name: "\(name) \(start == end ? "L\(start)" : "L\(start)-\(end)")", icon: .textSelect)
-    case .quote, .unknown:
-      EmptyView()
+  /// Laid out as UserMessageCard lays the sent turn (attachments over the bubble, outside it), so it lands in place
+  private var bubble: some View {
+    let shown = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let attachments = item.attachments ?? []
+    let shape = RoundedRectangle(cornerRadius: Metrics.rBubble)
+    return VStack(alignment: .trailing, spacing: Metrics.s2) {
+      if !attachments.isEmpty { TurnAttachments(attachments: attachments).fixedSize() }
+      if !shown.isEmpty {
+        Text(web: shown)
+          .textStyle(WebType.text1)
+          .foregroundStyle(Palette.fgStrong)
+          .lineLimit(Self.lines)
+          .truncationMode(.tail)
+          .fixedSize(horizontal: false, vertical: true)
+          .padding(.horizontal, Metrics.s3 + Metrics.s0_5)
+          .padding(.vertical, Metrics.s2_5)
+          .background(shape.fill(Palette.bg0).overlay(shape.fill(Palette.bubbleBg)))
+      }
     }
+    .contentShape(Rectangle())
+    .opacity(Metrics.queuedBubble)
   }
 }
 

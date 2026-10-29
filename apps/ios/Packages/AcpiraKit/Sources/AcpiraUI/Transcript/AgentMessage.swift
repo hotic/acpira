@@ -140,7 +140,11 @@ struct CodexFold: View {
     let foldable = parts.contains { if case .items = $0 { true } else { false } }
     if !(retired && blocks.isEmpty) {
       VStack(alignment: .leading, spacing: 0) {
-        if !retired { EntranceOnce(id: "fold-head") { head(open: open, foldable: foldable) } }
+        if !retired {
+          EntranceOnce(id: "fold-head") { head(open: open, foldable: foldable) }
+            // `-popup fold:N` reaches the process fold too, so a recording shows it open and close
+            .foldProbe { toggle(from: manual ?? (running || preOpen.contains(.fold))) }
+        }
         if !blocks.isEmpty {
           VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(parts.enumerated()), id: \.element.id) { i, part in
@@ -164,10 +168,19 @@ struct CodexFold: View {
           }
           .environment(\.imageInFold, open)
         }
-        // Generated and shown images stay in view once the fold closes (Turns.tsx)
-        if !open { FoldImageResults(blocks: blocks) }
+        // Generated and shown images stay in view once the fold closes (Turns.tsx). They fold the other way on the same
+        // curve, cross-fading with their copies in the body, rather than being inserted or removed: a transition there
+        // ran on its own and slid them up while the body above opened downward
+        FoldImageResults(blocks: blocks).reveal(!open, handOff: true)
       }
     }
+  }
+
+  /// A tap on the head: the thread holds its offset, then the fold turns on its direction's curve
+  private func toggle(from open: Bool) {
+    let next = !open
+    holdScroll()
+    withAnimation(foldAnimation(opening: next, motion: motion)) { manual = next }
   }
 
   @ViewBuilder
@@ -186,11 +199,7 @@ struct CodexFold: View {
   @ViewBuilder
   private func rowHead(open: Bool, foldable: Bool, running: Bool, activity: LiveActivity, outcome: String?, label: String,
                        elapsed: String?) -> some View {
-    Button {
-      let next = !open
-      holdScroll()
-      withAnimation(foldAnimation(opening: next, motion: motion)) { manual = next }
-    } label: {
+    Button { toggle(from: open) } label: {
       Row {
         if running {
           switch activity.lead {
@@ -237,25 +246,31 @@ enum FoldPart: Identifiable {
   }
 }
 
-/// processParts (processGroups.ts)
+/// processParts (processGroups.ts). The open run is built in place and closed into a part when another kind starts:
+/// copying it out of the last part to append made the pass quadratic, and it runs on every streamed patch
 func processParts(_ items: [ProcessItem]) -> [FoldPart] {
   var out: [FoldPart] = []
+  var rows: [ProcessItem] = []
+  var children: [String] = []
+  var runId = ""
+  func close() {
+    if !rows.isEmpty { out.append(.items(id: runId, items: rows)); rows = [] }
+    if !children.isEmpty { out.append(.subagents(id: runId, ids: children)); children = [] }
+  }
   for item in items {
     if case .block(let id, .steer(let s)) = item {
+      close()
       out.append(.steer(id: id, block: s))
     } else if case .block(let id, let block) = item, let child = block.toolCall?.subagentId {
-      if case .subagents(let first, var ids)? = out.last {
-        ids.append(child)
-        out[out.count - 1] = .subagents(id: first, ids: ids)
-      } else {
-        out.append(.subagents(id: id, ids: [child]))
-      }
-    } else if case .items(let id, var list)? = out.last {
-      list.append(item)
-      out[out.count - 1] = .items(id: id, items: list)
+      if !rows.isEmpty { close() }
+      if children.isEmpty { runId = id }
+      children.append(child)
     } else {
-      out.append(.items(id: item.id, items: [item]))
+      if !children.isEmpty { close() }
+      if rows.isEmpty { runId = item.id }
+      rows.append(item)
     }
   }
+  close()
   return out
 }

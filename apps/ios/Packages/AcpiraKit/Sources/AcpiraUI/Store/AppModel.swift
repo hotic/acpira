@@ -76,6 +76,9 @@ final class AppModel {
   /// The desktop app's sections ("Work", "Personal"), each holding whole projects in its own order; the by-project
   /// view lists them as the desktop does. Made and filled on the desktop only
   var sections: [SessionSection] = []
+  /// The SSH hosts set up on the computer (HostMsg `connections`): each host folder's state and run mode. Empty until
+  /// the engine answers, and for a gateway that keeps the list from devices; a host folder then shows its alias only
+  var connections: [ConnectionView] = []
   /// The history search's content hits, for the query they answered
   var hits: SessionHits?
   /// Projects folded open in the by-project view
@@ -210,6 +213,24 @@ final class AppModel {
     var seen = Set(removedProjects)
     let used = summaries.sorted { $0.updatedAt > $1.updatedAt }.map(\.cwd)
     return (addedProjects + used + projectOrder).filter { !$0.isEmpty && seen.insert($0).inserted }
+  }
+
+  /// The SSH host a folder lives on, nil for a local folder; `view` is nil until the engine has said how that host is
+  func host(of cwd: String) -> (folder: RemoteFolder, view: ConnectionView?)? {
+    guard let folder = RemoteFolder.parse(cwd) else { return nil }
+    return (folder, connections.first { $0.alias == folder.alias })
+  }
+
+  /// The built-in agent (BUILTIN_AGENT_ID)
+  static let builtinAgent: AgentId = "acpira"
+
+  /// The agent a new session in `cwd` starts with (Shell.tsx agentIn): under local run only the built-in agent works in
+  /// a folder on an SSH host (the engine refuses others with host.remoteBuiltinOnly), so it takes that one whatever was
+  /// picked; a host the phone has not heard of yet counts as local run, the default
+  func startAgent(_ agent: AgentId, in cwd: String) -> AgentId {
+    guard let host = host(of: cwd), host.view?.mode != .remote,
+          agents.contains(where: { $0.id == Self.builtinAgent && $0.available != false }) else { return agent }
+    return Self.builtinAgent
   }
 
   /// The by-project view's projects (sessionTree.ts buildSessionTree): the user's order first, then every other folder a

@@ -100,6 +100,8 @@ private struct InspectorThread: View {
   @State private var position = ScrollPosition(edge: .bottom)
   @State private var follow = true
   @State private var dragging = false
+  /// Rows mounting while the reader scrolls skip their entrance (`ScrollGesture`)
+  @State private var gesture = ScrollGesture()
   @State private var offset = ScrollOffset()
 
   var body: some View {
@@ -113,6 +115,7 @@ private struct InspectorThread: View {
       VStack(alignment: .leading, spacing: 0) {
         ThreadContent(session: view)
           .environment(\.holdScroll, hold)
+          .environment(\.scrollGesture, gesture)
         if receipt || loading || result != nil || node.state == .disconnected {
           VStack(alignment: .leading, spacing: WebMetrics.msgGap) {
             if receipt {
@@ -138,7 +141,10 @@ private struct InspectorThread: View {
     .scrollPosition($position)
     .defaultScrollAnchor(.bottom, for: .initialOffset)
     .defaultScrollAnchor(.top, for: .alignment)
-    .onScrollPhaseChange { _, phase in dragging = phase == .interacting || phase == .tracking || phase == .decelerating }
+    .onScrollPhaseChange { _, phase in
+      dragging = phase == .interacting || phase == .tracking || phase == .decelerating
+      gesture.active = dragging
+    }
     .onScrollGeometryChange(for: Bool.self) { g in
       g.contentOffset.y + g.containerSize.height - g.contentInsets.bottom >= g.contentSize.height - Metrics.s2
     } action: { _, atBottom in
