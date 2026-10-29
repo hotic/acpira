@@ -61,7 +61,7 @@ struct ChatScreen: View {
     // The keyboard's safe area still lifts the dock; only the container's (the home indicator) is taken over
     .ignoresSafeArea(.container, edges: .bottom)
     .modifier(HomeInset(inset: $homeInset))
-    // The thread blurs and dims gradually as it scrolls up under the bar's glass buttons
+    // The thread fades into the page as it scrolls up under the bar's glass buttons
     .topFade()
     .onAppear {
       if let initialDraft, draft.text.isEmpty { draft.text = initialDraft }

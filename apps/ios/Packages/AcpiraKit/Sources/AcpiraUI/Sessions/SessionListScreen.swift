@@ -90,7 +90,7 @@ struct SessionListScreen: View {
     .scrollIndicators(.hidden)
     .background(Palette.bg0)
     .modifier(SystemListBar(query: $query, onNew: onNew))
-    // Rows blur and dim gradually as they scroll up under the bar's glass buttons
+    // Rows fade into the page as they scroll up under the bar's glass buttons
     .topFade()
     .alert(t("common.rename"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
       TextField(text: $newTitle) { Text(web: t("session.titleAria")) }

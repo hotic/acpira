@@ -89,7 +89,7 @@
   - Paste uses the system `PasteButton`, which reads without the paste prompt. Its label is system text and follows `CFBundleLocalizations` (`Acpira-Info.plist`, which holds the plist arrays the build settings cannot), not the in-app language.
   - The camera card is VisionKit's `DataScannerViewController` set to QR only. It is unsupported on the simulator, where the card shows a quiet stand-in. Whether it reads light-on-dark codes is unverified on a device; Vision's barcode request does in stills.
 - The toast is a `.regular` Liquid Glass capsule dropped below the navigation bar. Over the bar it showed the bar's buttons through it.
-- `Design/TopFade.swift` draws a progressive blur where content scrolls under the bar's glass buttons. The system's own edge effect reaches only the status bar's band, so it is hidden. The blur is stacked materials under a page-colour gradient, because the materials' own tint reads as a grey band.
+- `Design/TopFade.swift` fades scrolling content into the page colour beneath the bar's glass buttons. It uses no materials: even partly covered by a page-colour gradient, their tint leaves a lighter band over an empty dark page. The system's own edge effect is hidden so it cannot add another tinted layer.
 
 ## Composer and liquid pickers
 
