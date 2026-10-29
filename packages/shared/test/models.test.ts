@@ -229,6 +229,9 @@ describe('modelBrand', () => {
     expect(modelBrand('minimax-m3')).toBe('minimax');
     expect(modelBrand('muse-spark-open')).toBe('meta');
     expect(modelBrand('clef')).toBe('cloudflare');
+    expect(modelBrand('Beam')).toBe('reflection');
+    expect(modelBrand('asgard/beam')).toBe('reflection');
+    expect(modelBrand('reflection/beam')).toBe('reflection');
     expect(modelBrand('qwq-plus')).toBe('qwen');
     expect(modelBrand('ministral-14b-2512')).toBe('mistral');
     expect(modelBrand('o4-mini')).toBe('openai');
@@ -250,7 +253,8 @@ describe('modelBrand', () => {
 
   it('returns undefined for unbranded names', () => {
     expect(modelBrand('Inkling')).toBeUndefined();
-    expect(modelBrand('Beam')).toBeUndefined();
+    expect(modelBrand('Sunbeam')).toBeUndefined();
+    expect(modelBrand('Beaming')).toBeUndefined();
   });
 
   it('matches on word boundaries only', () => {
@@ -268,7 +272,7 @@ describe('optionBrand', () => {
     expect(optionBrand({ id: 'asgard', name: 'K3' })).toBe('kimi');
     expect(optionBrand({ id: 'custom-1', name: 'Claude Opus 5' })).toBe('claude');
     expect(optionBrand({ id: 'model-1', name: 'Composer 2.5' })).toBe('cursor');
-    expect(optionBrand({ id: 'model-1', name: 'Beam' })).toBeUndefined();
+    expect(optionBrand({ id: 'model-1', name: 'Beam' })).toBe('reflection');
     // claude-agent-acp's short ids: no "claude" anywhere, the family word alone is the brand
     expect(optionBrand({ id: 'opus[1m]', name: 'Opus 5.5' })).toBe('claude');
     expect(optionBrand({ id: 'sonnet', name: 'Sonnet 5' })).toBe('claude');

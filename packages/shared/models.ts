@@ -205,6 +205,7 @@ const BRAND: [RegExp, string][] = [
   [/\bnemotron(?![a-z])|\bnvidia\b/, 'nvidia'],
   [/\bsonar(?![a-z])|\bperplexity\b|\br1-1776\b/, 'perplexity'],
   [/\bcomposer(?![a-z])/, 'cursor'],
+  [/\bbeam(?![a-z])|\breflection\b/, 'reflection'],
   // o-series ids ("o3", "o4-mini", "o3-deep-research") and OpenAI's media / embedding lines
   [/\bgpt(?![a-z])|\bopenai\b|\bcodex\b|\bchatgpt\b|\bo\d(?![a-z])|\bdall-?e(?![a-z])|\bwhisper(?![a-z])|\btts-\d|\btext-embedding\b|\bsora(?![a-z])/, 'openai'],
   [/\bgemini(?![a-z])|\bgemma(?![a-z])/, 'gemini'],
