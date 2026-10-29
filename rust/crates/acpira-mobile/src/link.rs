@@ -13,6 +13,7 @@ use acpira_net::frame::FrameKind;
 use acpira_net::iroh::endpoint::{Connection, ConnectionError};
 use acpira_net::link::{self, BlobRequest, Control, EnvelopeRx, EnvelopeTx, close};
 use acpira_net::{Endpoint, EndpointAddr};
+use acpira_shared::devices::PushTarget;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
@@ -23,6 +24,19 @@ use crate::{LinkFailure, LinkPath, Welcome, ms, on_runtime};
 const READ_AHEAD: usize = 256;
 /// How long a closed envelope stream waits for the connection's close to say why
 const CLOSE_GRACE: Duration = Duration::from_secs(2);
+
+/// Where a device's notifications go (acpira-shared `devices::PushTarget`)
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PushRegistration {
+  /// The APNs device token, hex
+  pub token: String,
+  /// The app's bundle id
+  pub topic: String,
+  /// The team the app is signed by
+  pub team: String,
+  /// A development build (APNs' sandbox)
+  pub sandbox: bool,
+}
 
 /// What arrives on a link besides its end
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
@@ -240,6 +254,18 @@ impl Link {
     }
   }
 
+  /// Where this device's notifications go (an APNs registration), or `None` to stop them. The gateway keeps it until
+  /// it changes or the device is removed, so sending it on every connect is enough
+  pub async fn set_push(&self, target: Option<PushRegistration>) -> Result<(), LinkFailure> {
+    let target = target.map(|t| PushTarget { token: t.token, topic: t.topic, team: t.team, sandbox: t.sandbox });
+    let tx = self.tx.clone();
+    let sent = on_runtime(async move { tx.lock().await.send(FrameKind::Control, &link::control(&Control::Push { target })).await }).await;
+    match sent {
+      Ok(Ok(())) => Ok(()),
+      _ => Err(self.failure_now("the write failed")),
+    }
+  }
+
   /// The path the link travels on now (none selected yet: `None`)
   pub fn path(&self) -> Option<LinkPath> {
     *self.path_now.lock()
@@ -291,8 +317,8 @@ impl Reader {
           }
           Ok(Control::Addresses { relay, addrs }) => LinkEvent::Addresses { relay, addrs },
           Ok(Control::Denied { what }) => LinkEvent::Denied { what },
-          // A second welcome, or a message a newer gateway sends that this build does not know
-          Ok(Control::Welcome { .. }) | Err(_) => continue,
+          // A second welcome, a device's own message echoed, or one a newer gateway sends that this build does not know
+          Ok(Control::Welcome { .. } | Control::Push { .. }) | Err(_) => continue,
         },
       };
       // The Link was dropped

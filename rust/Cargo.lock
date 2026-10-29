@@ -62,6 +62,7 @@ dependencies = [
  "libc",
  "parking_lot",
  "qrcode",
+ "ring",
  "serde",
  "serde_json",
  "tempfile",

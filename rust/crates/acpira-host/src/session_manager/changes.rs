@@ -115,7 +115,7 @@ impl SessionManager {
     };
     let agent = self.registry().try_get(&s.agent).map(|d| d.name.clone()).unwrap_or_else(|| s.agent.clone());
     if asked {
-      announce(Attention { session_id: id.clone(), title: s.title(), agent: agent.clone(), kind: AttentionKind::Waiting });
+      announce(Attention { session_id: id.clone(), title: s.title(), agent: agent.clone(), kind: AttentionKind::Waiting, detail: s.attention_detail(true) });
     }
     let Some(seq) = settled else { return };
     let me = self.me.clone();
@@ -135,7 +135,7 @@ impl SessionManager {
         Some(TurnStop::Cancelled) | None => return,
         Some(_) => AttentionKind::Done,
       };
-      announce(Attention { session_id: id, title: s.title(), agent, kind });
+      announce(Attention { session_id: id, title: s.title(), agent, kind, detail: s.attention_detail(false) });
     });
   }
 

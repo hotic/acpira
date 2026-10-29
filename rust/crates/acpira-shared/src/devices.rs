@@ -229,6 +229,50 @@ pub enum GatewayRequest {
   /// Read `gateway.json` again (keep-awake; relays need a restart)
   Reload,
   Stop,
+  /// A session wants the user: the gateway pushes it to the paired phones that registered for notifications. Sent by
+  /// the engine that runs the session, whatever its shell; the gateway decides whether the user is at the computer
+  Notify(PushNote),
+}
+
+/// Why a session wants the user (the engine's `AttentionKind`)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PushKind {
+  /// A permission card or a question waits on the user
+  Waiting,
+  Done,
+  Error,
+}
+
+/// One notification for the paired phones, already in the engine's language
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushNote {
+  pub session_id: String,
+  pub kind: PushKind,
+  /// The session's title
+  pub title: String,
+  /// What happened, as the desktop notification says it ("Claude is waiting for you")
+  pub subtitle: String,
+  /// The card's request, the reply's opening or the error; may be empty
+  #[serde(default)]
+  pub body: String,
+}
+
+/// Where a device's notifications go: an APNs device token and what the gateway signs the request for. The device
+/// sends it over its link (acpira-net `Control::Push`); the gateway keeps it beside `devices.json`
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushTarget {
+  /// The APNs device token, hex
+  pub token: String,
+  /// The app's bundle id (`apns-topic`)
+  pub topic: String,
+  /// The developer team the app is signed by: the key the gateway signs with must be this team's
+  pub team: String,
+  /// A development build: APNs' sandbox
+  #[serde(default)]
+  pub sandbox: bool,
 }
 
 /// The settings page's remote access (HostMsg `remoteAccess`)

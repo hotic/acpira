@@ -121,6 +121,8 @@ pub struct Attention {
   /// The agent's display name
   pub agent: String,
   pub kind: AttentionKind,
+  /// The open card's request, the turn's error or its reply's opening (`AcpSession::attention_detail`)
+  pub detail: String,
 }
 
 pub type AttentionFn = Arc<dyn Fn(Attention) + Send + Sync>;
