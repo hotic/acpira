@@ -12,11 +12,15 @@ Planned directions for Acpira.
 - [x] **MCP injection.** Shared MCP servers are passed to every session over ACP, without editing any CLI's configuration.
 - [x] **Steering.** Send a message into a running turn instead of queueing it, on agents that support steering (Claude, Codex).
 - [x] **Cross-harness subagents.** Personas defined once can be summoned from any agent with `@name`, running on another agent.
+- [x] **Desktop app.** A native desktop app for macOS and Windows on the same engine, with a tool panel for files, terminals, and a browser.
+- [x] **Plugins.** Folders under `~/.acpira/plugins` that add tools, hooks, MCP servers, panels, themes, or agents, live without a restart and confirmed per version.
+- [x] **Remote access.** SSH remote folders in the desktop app, and iPhone pairing with the Mac app over LAN, direct links, or an encrypted relay.
 - [ ] **More agent integrations.** Add built-in integration for Cursor CLI and other agents through ACP or adapters.
 - [ ] **Unified model configuration.** Configure providers and models in one place, then adapt and sync those settings to each supported agent's configuration format.
 - [ ] **Skill installation.** Install skills from external sources such as Git repositories and URLs into the shared set.
 - [ ] **Agent-specific instructions.** Add per-agent instructions on top of the shared prompt.
-- [ ] **Desktop app.** Bring the conversations, agent integrations, and shared configuration into a standalone desktop application. A longer-term direction.
+- [ ] **iPhone app on the App Store.** The iPhone app is in testing.
+- [ ] **Remote access beyond macOS.** Device pairing on Windows and Linux, and a Linux desktop release.
 
 ## 简体中文
 
@@ -30,8 +34,12 @@ Acpira 计划中的方向。
 - [x] **MCP 注入。** 共享的 MCP 服务通过 ACP 传给每个会话，不改动任何 CLI 的配置。
 - [x] **中途引导。** 回合进行中可把消息直接送进当前回合，而不只是排队；需 Agent 支持（Claude、Codex）。
 - [x] **跨 Harness 子 Agent。** 定义一次的角色可在任意 Agent 中用 `@名字` 召唤，交给另一个 Agent 执行。
+- [x] **桌面端。** 基于同一套引擎的 macOS 与 Windows 原生桌面应用，带文件、终端和浏览器工具面板。
+- [x] **插件。** `~/.acpira/plugins` 下的文件夹可添加工具、Hooks、MCP 服务、面板、主题或 Agent，无需重启即生效，每个版本单独确认。
+- [x] **远程访问。** 桌面端支持 SSH 远程文件夹；iPhone 可与 Mac 端配对，经局域网、直连或加密中继连接。
 - [ ] **更多 Agent 接入。** 通过 ACP 或适配器，内置支持 Cursor CLI 及其他 Agent。
 - [ ] **统一模型配置。** 在一个入口配置模型服务与模型，自动适配并同步到各 Agent 支持的配置格式。
 - [ ] **Skills 安装。** 从 Git 仓库、URL 等外部来源把 Skills 安装进共享集合。
 - [ ] **单 Agent 补充指令。** 在共享提示词之上为单个 Agent 追加专属指令。
-- [ ] **桌面端。** 将对话、Agent 接入与统一配置带到独立桌面应用中，作为长期方向。
+- [ ] **iPhone 版上架 App Store。** 目前处于测试阶段。
+- [ ] **macOS 以外的远程访问。** Windows 与 Linux 上的设备配对，以及 Linux 桌面端正式发布。
