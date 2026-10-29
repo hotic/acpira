@@ -1,14 +1,14 @@
 # Acpira
 
-[![CI](https://img.shields.io/github/actions/workflow/status/hotic/acpira/windows-compat.yml?branch=main&label=CI&logo=github)](https://github.com/hotic/acpira/actions/workflows/windows-compat.yml)
+[![Release](https://img.shields.io/github/v/release/hotic/acpira?label=Release&color=2F81F7)](https://github.com/hotic/acpira/releases/latest)
 [![VS Marketplace](https://vsmarketplacebadges.dev/version/hotic.acpira.svg?label=VS%20Marketplace&color=007ACC)](https://marketplace.visualstudio.com/items?itemName=hotic.acpira)
 [![Open VSX](https://img.shields.io/open-vsx/v/hotic/acpira?label=Open%20VSX&color=C160EF)](https://open-vsx.org/extension/hotic/acpira)
 [![JetBrains Plugin](https://img.shields.io/jetbrains/plugin/v/34192?label=JetBrains&color=FE315D)](https://plugins.jetbrains.com/plugin/34192-acpira)
 [![License](https://img.shields.io/github/license/hotic/acpira)](LICENSE)
 
-**原生的 Agent Harness，讲究的交互体验。**
+**轻量的编程 Agent 图形工作台。**
 
-在 VS Code、Cursor 与 IntelliJ IDEA 中使用 Grok、Devin、Kimi Code、Codex、Claude、OpenCode、Antigravity、Pi 及其他 ACP Agent。保留各自的执行引擎，也可以通过 Acpira 内置 Agent 直接使用任意模型 API。无论用哪个 Agent，都能清晰查看执行过程、审批操作，在任务进行时继续安排下一步。
+Acpira 可以用自带的 Agent 对接任意模型 API，也可以驱动 Claude Code、Codex 等 Agent CLI，让它们跑在各自的原生 Harness 上。它是一个约 16 MB 的原生桌面应用，同一套引擎也运行在 VS Code、Cursor 和 IntelliJ IDEA 里。iPhone 版正在测试中。
 
 [English](README.md) ｜ **简体中文**
 
@@ -18,12 +18,12 @@
   <img src="media/readme/hero-light.png" alt="Acpira 编程对话：展开的执行过程、文件修改对比和模型控制。" width="960">
 </picture>
 
-- **执行记录。** 在对话中查看文件读取、代码修改和命令输出。
-- **消息队列、引导与审批。** Agent 工作时可追加排队消息；在 Claude、Codex 和内置 Agent 上还能把消息直接插入正在运行的回合。计划审阅和权限审批在对话中完成。
-- **跨 Agent 子代理。** 把其他 Agent CLI 设为子代理，用 `@名称` 召唤；每个子代理都在自己的 CLI 会话中运行，完成后把结果交回对话。
-- **切换 Agent，保留熟悉的操作。** 支持 Grok、Devin、Kimi Code、Codex、Claude、OpenCode、DSH、Antigravity、Pi 及其他兼容 ACP 的 CLI，共用会话管理与模型控制界面。
-- **内置 Agent，任意模型都能用。** 接入 OpenAI 或 Anthropic 兼容的端点，例如 DeepSeek、GLM、OpenRouter 或本机 Ollama，即可直接用它写代码，无需额外安装。
-- **一套配置，全部 Agent 共享。** `~/.agents` 里的 Skills、MCP 服务与指令对每个 Agent 生效。项目的 `.agents/hooks.json` 用同一套规则检查提示词、代码修改和已完成的回合，不论运行的是哪个 Agent。
+- **小巧，原生。** 引擎用 Rust 编写，桌面端用系统自带的 WebView 绘制界面，不带 Electron，也不需要 Node.js 运行时。
+- **自带 Agent。** 内置 Agent 接上任何 OpenAI 或 Anthropic 兼容的端点，就能读文件、改代码、跑命令、联网搜索和制定计划。厂商的 CLI 保留自己的 Harness，与它并列可选。
+- **热插拔插件。** 一个插件就是一个文件夹，可以加工具、Hooks、MCP 服务、面板、主题，甚至一整个 Agent。无需构建、无需重启即可生效；每个版本都要你确认，也都能回滚。
+- **内置远程。** 桌面端可以直接打开 SSH 主机上的文件夹。iPhone 扫码即可与 Mac 配对，不用注册任何账号。
+- **一套配置，所有 Agent 通用。** Skills、MCP 服务、指令和工作区 Hooks 对每个 Agent 生效。在一个 Agent 里用 `@名称` 召唤另一个，完成后结果交回对话。
+- **执行过程一目了然。** 文件读取、代码差异和命令输出都显示在对话中。Agent 工作时可以排队或插入后续消息，计划和操作在原地审批。
 
 <table width="100%">
   <tr>
@@ -70,13 +70,24 @@
 
 *使用示例对话录制，画面来自 Acpira 实际界面。引导需在「设置 → 常规 → 排队消息改为引导」中开启。点击图片查看大图。*
 
+## 在哪里用
+
+桌面端和各 IDE 插件运行同一套引擎，共用 `~/.acpira` 里的会话、账号与设置。iPhone 版驱动的是你 Mac 上的引擎。
+
+| | 平台 | 获取 |
+| --- | --- | --- |
+| **桌面端** | Apple 芯片的 macOS、Windows x64 | [GitHub Releases](https://github.com/hotic/acpira/releases/latest) |
+| **VS Code 与 Cursor** | macOS、Linux、Alpine、Windows，x64 与 arm64 | [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=hotic.acpira)、[Open VSX](https://open-vsx.org/extension/hotic/acpira) |
+| **IntelliJ IDEA** 2026.1 及以上 | macOS、Linux、Windows，支持远程开发 | [JetBrains Marketplace](https://plugins.jetbrains.com/plugin/34192-acpira) |
+| **iPhone** | iOS，与 Mac 端配对使用 | 测试中，尚未上架 App Store |
+
+桌面端在对话旁边多了一个工具面板，内含文件、终端和浏览器，另外还支持 SSH 远程文件夹和设备配对。Linux 版桌面端已经能用，但还没有正式发布。
+
 ## 为什么保留原生 Agent
 
 Harness 会影响模型在实际任务中能发挥到什么程度。它负责驱动 agentic loop：调用模型、执行工具、回传结果，再组织上下文继续下一步。同一个模型，这套循环的实现不同，任务通过率、成本与速度都可能发生变化。
 
-Acpira 通过 ACP 连接 Agent CLI，把模型调用与执行留在所选 Agent 中。Kimi Code 运行 `kimi acp`，Devin 运行 `devin acp`，Grok 运行 `grok agent stdio`。工具与上下文压缩继续由各自的 CLI 负责。
-
-Acpira 负责这套执行流程周围的界面：代码差异、可展开的执行细节、待办、审批和排队消息。切换 Agent 后，这些操作保持一致。
+Acpira 通过 [ACP](https://agentclientprotocol.com) 连接 Agent CLI，把模型调用与执行留在所选 Agent 中。Claude Code、Codex、Kimi Code 等继续各自负责工具与上下文压缩。Acpira 负责它们周围的部分：代码差异、执行细节、待办、审批、排队消息、账号与上下文预算。
 
 有些模型没有自己的 Harness。为此 Acpira 自带一个运行在引擎内部的内置 Agent，覆盖读文件、改代码、执行命令、联网搜索和制定计划这些日常循环。模型只提供 API 时选它；厂商有官方 CLI 时，优先用官方 CLI。
 
@@ -97,27 +108,40 @@ Acpira 负责这套执行流程周围的界面：代码差异、可展开的执�
 
 </details>
 
-## 工作原理
+## 插件
 
-Acpira 位于活动栏，通过 [ACP](https://agentclientprotocol.com)（JSON-RPC over stdio）驱动官方 Agent CLI：
+插件是 `~/.acpira/plugins/<id>/` 下的一个文件夹，里面有一个 `plugin.json`。它可以添加脚本工具、MCP 服务、作用于提示词、代码修改和内置 Agent 循环的 Hooks、斜杠命令、Skills、模型来源、主题、桌面端工具面板里的标签页，或者基于内置循环的专用 Agent。
 
-- `grok agent stdio`
-- `devin acp`
-- `kimi acp`
-- `codex-acp`
-- `claude-agent-acp`
-- `opencode acp`
-- `dsh --profile acp`
-- `pi-acp`
-- Google Antigravity 的 ACP 服务（由 Acpira 下载）
-- `acpira agent`，即由 Acpira 引擎自身提供的内置 Agent
-- 任何兼容 ACP 的命令（在 Agent 所在机器的 `~/.acpira/agents.json` 中添加，可从 Acpira 设置 → 常规 → Agent 启动配置打开）
+- **不用重启就生效。** 插件确认后立即作用于所有打开的窗口，不需要构建，也不需要重新加载。
+- **每个版本都由你确认。** 插件确认后才会运行，确认的版本会被冻结。之后的修改要重新确认，旧版本保留，随时可以回滚。
+- **Agent 也能写插件。** Agent 可以为自己起草插件并提交，你在对话里的卡片上确认。
+- **安全模式。** 一个开关就能卸下所有用户插件，即使某个插件把界面挡住了也能操作。
 
-界面、会话、权限审批、账号与上下文预算由 Acpira 管理；使用 CLI Agent 时，模型调用、Agent 执行与上下文压缩仍由该 CLI 完成。Acpira 的引擎是随各平台安装包附带的原生小程序，VS Code、Cursor 与 IntelliJ IDEA 共用同一套实现；Acpira 本身不需要 Node.js。
+`acpira plugin new` 可以生成 TypeScript 或 Python 插件骨架。设置中的「插件」页负责列出、确认、回滚和移除插件。格式说明见[插件文档](docs/dev/plugins.md)。
 
-支持为每个 Agent 保存多个账号、粘贴或拖入图片，以及通过 `@` 附加工作区文件。对话可在侧栏或编辑器标签页中打开。
+## 远程访问
 
-Agent 启动配置保存在 Agent 所在机器上。远程工作区读取远程的 `~/.acpira/agents.json`，不继承客户端 IDE 的 Agent 配置。文件按 Agent ID 保存定义，例如：
+- **SSH 主机。** 在桌面端设置的「连接」页从 `~/.ssh/config` 添加主机，然后像本地一样打开主机上的文件夹。「本机运行」把登录和内置 Agent 留在你的电脑上，只在主机上执行工具；「远端运行」使用主机自己的登录和主机上装好的所有 Agent。每个主机文件夹只保留一份会话历史。VS Code 和 IntelliJ IDEA 继续使用它们自己的远程开发功能。
+- **配对设备。** 「设备」卡片会显示配对码，用 iPhone 版扫码后，手机就能操作 Mac 上的会话：对话、审批、计划、终端和审阅。配对不需要账号。在家走局域网，能直连时走 Tailscale 或直连，否则走中继，每条路径都端到端加密。远程访问目前仅支持 macOS。
+
+## Agent
+
+**Acpira** Agent 是内置的，只需要一个模型端点和它的密钥，详见 [内置 Agent](#内置-agent)。其他 Agent 是通过 ACP 驱动的官方 CLI，安装对应 CLI 并保证它在 `PATH` 上即可：
+
+- [Claude](https://code.claude.com)：`claude-agent-acp`（`npm install -g @agentclientprotocol/claude-agent-acp`）
+- [Codex](https://developers.openai.com/codex)：`codex-acp`（`npm install -g @agentclientprotocol/codex-acp`）
+- [Grok](https://x.ai)：`grok`（`grok agent stdio`）
+- [Devin](https://devin.ai)：`devin`（`devin acp`）
+- [Kimi Code](https://www.kimi.com)：`kimi`（`kimi acp`）
+- [OpenCode](https://opencode.ai)：`opencode`（`opencode acp`）
+- [DSH](https://deepseekdocs.com/en/docs/guides/acp-automation-server)：`dsh`（`npm install -g @deepseek-ai/dsh`）
+- [Pi](https://github.com/svkozak/pi-acp)：`pi` 与 `pi-acp`（`npm install -g @earendil-works/pi-coding-agent pi-acp`）
+- [Antigravity](https://antigravity.google/docs/ide/extensions)：在它的设置页安装，下载的原生包会经过校验和核对。它使用独立的 Google 登录，与 `agy` CLI 的登录互不相通。
+- 其他任何兼容 ACP 的命令，在 `~/.acpira/agents.json` 中添加
+
+未安装 CLI 的 Agent 在菜单中显示为灰色；它的设置页可在后台直接安装并实时显示日志，也给出官方安装命令，可复制或在终端中运行。新装好的 CLI 会被自动识别。网络需要代理时，在常规设置中设置「网络代理」，Agent 及其模型请求、登录和安装都会走这个代理。
+
+Agent 启动配置保存在 Agent 所在机器上，可从设置 → 常规 → Agent 启动配置打开。文件按 Agent ID 保存定义，例如：
 
 ```json
 {
@@ -129,29 +153,18 @@ Agent 启动配置保存在 Agent 所在机器上。远程工作区读取远程�
 }
 ```
 
-可选字段包括 `env`、`login`、`install`、`requires`、`subagents` 和 `terminalAuth`。使用内置 Agent ID 会替换该 Agent 的完整定义；保存后对新会话生效，清空为 `{}` 则恢复内置定义。本地旧 `acpira.agents` 仅在文件不存在时迁移一次；远程已有自定义定义可手动复制到远程文件中。
+可选字段包括 `env`、`login`、`install`、`requires`、`subagents` 和 `terminalAuth`。使用内置 Agent ID 会替换该 Agent 的完整定义；保存后对新会话生效，清空为 `{}` 则恢复内置定义。远程工作区读取远程的 `~/.acpira/agents.json`，不继承本地的 Agent 配置。
 
 ## 安装
 
-1. 从 [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=hotic.acpira)（VS Code）或 [Open VSX](https://open-vsx.org/extension/hotic/acpira)（Cursor 及其他基于 VS Code 的编辑器）安装 **Acpira**。每个 [GitHub Release](https://github.com/hotic/acpira/releases) 也附有 macOS、Linux、Alpine、Windows（x64 与 arm64）的单平台 `.vsix`，可用 **从 VSIX 安装…** 安装。IntelliJ IDEA 2026.1 及以上可从 JetBrains Marketplace 安装插件，或从 `acpira-<version>-universal.zip` 安装（**Settings → Plugins → ⚙ → Install Plugin from Disk…**）；通用包内置各支持平台的原生后端，无需 Node.js，并支持客户端与后端操作系统不同的远程开发。GitHub 上另有体积更小的单平台包。
-2. 选择要用的 Agent。内置 Agent 不需要 CLI，只要一个模型端点和它的密钥，详见 [内置 Agent](#内置-agent)。要使用厂商的 Agent，请安装对应 CLI，并保证它在 `PATH` 上：
-   - [Grok](https://x.ai) — `grok`（`grok agent stdio`）
-   - [Devin](https://devin.ai) — `devin`（`devin acp`）
-   - [Kimi Code](https://www.kimi.com) — `kimi`（`kimi acp`）
-   - [Codex](https://developers.openai.com/codex) — `codex-acp`（`npm install -g @agentclientprotocol/codex-acp`）
-   - [Claude](https://code.claude.com) — `claude-agent-acp`（`npm install -g @agentclientprotocol/claude-agent-acp`）
-   - [OpenCode](https://opencode.ai) — `opencode`（`opencode acp`）
-   - [DSH](https://deepseekdocs.com/en/docs/guides/acp-automation-server) — `dsh`（`npm install -g @deepseek-ai/dsh`）
-   - [Pi](https://github.com/svkozak/pi-acp) — `pi` 与 `pi-acp`（`npm install -g @earendil-works/pi-coding-agent pi-acp`）
-   - [Antigravity](https://antigravity.google/docs/ide/extensions) — 在它的设置页安装，下载的原生包会经过校验和核对。它使用独立的 Google 登录，与 `agy` CLI 的登录互不相通。
-
-   未安装 CLI 的 Agent 在菜单中显示为灰色；它的设置页可在后台直接安装并实时显示日志，也给出官方安装命令，可复制或在终端中运行。新装好的 CLI 会被自动识别，无需重新加载窗口。网络需要代理时，在常规设置中设置「网络代理」，Agent 及其模型请求、登录和安装都会走这个代理。
-3. 点击**活动栏**（左侧）的 Acpira 图标。若未显示，在活动栏空白处右键勾选 **Acpira**。也可把视图拖到副侧栏。IntelliJ IDEA 中打开右侧的 **Acpira** 工具窗，标题栏按钮可把对话开成编辑器标签。
+- **桌面端。** 从[最新 Release](https://github.com/hotic/acpira/releases/latest) 下载 macOS 的 dmg 或 Windows 的 zip。macOS 版经过签名与公证。Windows 版是单个便携的 `Acpira.exe`，暂未代码签名。应用会自行更新。
+- **VS Code 与 Cursor。** 从 [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=hotic.acpira) 或 [Open VSX](https://open-vsx.org/extension/hotic/acpira) 安装 **Acpira**。每个 Release 也附有各平台的 `.vsix`，可用 **从 VSIX 安装…** 安装。点击**活动栏**中的 Acpira 图标打开；若未显示，在活动栏空白处右键勾选 **Acpira**。也可把视图拖到副侧栏。
+- **IntelliJ IDEA。** 从 JetBrains Marketplace 安装插件，或从 `acpira-<version>-universal.zip` 安装（**Settings → Plugins → ⚙ → Install Plugin from Disk…**）。通用包内置各支持平台的原生后端，并支持客户端与后端操作系统不同的远程开发。打开右侧的 **Acpira** 工具窗，标题栏按钮可把对话开成编辑器标签。
 
 ## 开始使用
 
 1. 安装 Agent CLI 并登录，或为内置 Agent 添加模型来源。在 Agent 菜单中添加或切换账号，详见 [账号](#账号)。
-2. 从活动栏打开 Acpira，或运行 **Acpira: 打开聊天**。
+2. 打开一个对话。桌面端可以选择项目，也可以不选项目直接开始聊天。
 3. 在输入框下方的工具栏中选择 Agent、模式与模型，然后发送消息。回合进行中发送的后续消息会进入队列。点击方形按钮可取消当前回合。
 
 ### 内置 Agent
@@ -169,12 +182,12 @@ Agent 启动配置保存在 Agent 所在机器上。远程工作区读取远程�
 ### 图片与文件
 
 - 支持粘贴或拖入 PNG、JPEG、GIF、WebP 图片（最大 10 MB），图片会随消息发送。
-- 从资源管理器拖入文件，或输入 `@` 搜索工作区文件，由 Agent 自行读取。从资源管理器拖入的图片文件会作为图片发送。
+- 把文件拖入输入框，或输入 `@` 搜索工作区文件，由 Agent 自行读取。这样拖入的图片文件会作为图片发送。
 - 从系统文件管理器拖入的文本文件（最大 256 KB）会嵌入消息。不支持二进制文件。
 
 ### 会话与历史
 
-- 会话、账号和密钥保存在 `~/.acpira`（可用 `ACPIRA_HOME` 覆盖）。VS Code、Cursor 与 IntelliJ IDEA 共用该目录，同时打开也不会互相覆盖。
+- 会话、账号和密钥保存在 `~/.acpira`（可用 `ACPIRA_HOME` 覆盖）。桌面端与各 IDE 共用该目录，同时打开也不会互相覆盖。
 - 重启后，若 Agent 支持恢复，Acpira 会继续该会话；否则历史记录以只读方式保留。
 - 历史列表中的「导入」会列出该 Agent 在当前项目下的原生会话，选中一项即可带着回放的历史导入 Acpira（需要 Agent 支持列出与加载会话）。
 - 可以编辑或重试之前的消息，从已完成的回复分叉出新会话，或把对话导出为 Markdown / JSON。
@@ -198,7 +211,7 @@ Acpira 可为 Devin、Codex、Claude 保存多份登录，并在创建会话时�
 - **共享 Skills、MCP 与提示词。** 在 `~/.agents` 以及项目的 `.agents/skills`、`.mcp.json`、`AGENTS.md` 中维护一套，Acpira 会按各 Agent 的格式链接过去。设置中的「共享」页可新建和删除 Skills、管理 MCP 服务、编辑共享提示词，还能让所有 Agent 统一使用共享内容，支持撤销。
 - **MCP 注入。** 共享的 MCP 服务通过 ACP 传给每个会话，不改动任何 CLI 的配置。
 - **工作区 Hooks。** 项目的 `.agents/hooks.json` 可以补充上下文、在发送前检查提示词、在审批卡片出现前检查代码修改，并在每个回合结束后复查。它对所有 Agent 一视同仁。Hook 脚本的应答方式与 Claude Code hooks 相同，现有脚本可以直接复用。
-- **子代理。** 在设置的「子代理」页定义跨 Agent 子代理，指定它使用的 CLI、模型、推理强度与模式。
+- **子代理。** 在设置的「编排」页定义跨 Agent 子代理，指定它使用的 CLI、模型、推理强度与模式。
 
 ### 设置
 
@@ -212,7 +225,7 @@ Acpira 可为 Devin、Codex、Claude 保存多份登录，并在创建会话时�
 - 统一模型配置入口，自动同步到不同 Agent；内置 Agent 的模型来源是第一步。
 - 从 Git 仓库、URL 安装 Skills 到共享集合。
 - 在共享提示词之上为单个 Agent 追加专属指令。
-- 长期方向：独立桌面端。
+- iPhone 版上架 App Store，远程访问支持 macOS 以外的系统。
 
 具体方向见[路线图](docs/roadmap.md#简体中文)。
 
@@ -224,14 +237,17 @@ pnpm build          # VS Code 外壳（esbuild）+ webview（Vite）
 pnpm probe grok     # 直接对 CLI 跑 initialize + session/new
 pnpm probe devin --import-local "Reply pong"   # 走账号层：导入本机登录 → authenticate → 一轮
 pnpm typecheck && pnpm test
-pnpm package        # 打本机平台的 .vsix（含 Rust sidecar）
+pnpm package        # 一次构建，打本机平台的 .vsix，arm64 Mac 上再打桌面端；package:vsix / package:desktop 只打一个
+pnpm install:local  # 安装：.vsix 装进 VS Code / Cursor，Acpira.app 装进 /Applications
 (cd rust && cargo test --workspace)                  # 引擎
 cd apps/intellij && ./gradlew test buildPlugin verifyPlugin   # IntelliJ 插件；buildMarketplacePlugin 打通用 ZIP；buildPluginVariants 打单平台 ZIP
+cd apps/desktop && node scripts/smoke.mjs            # 用假 Agent 端到端跑桌面端
+apps/ios/scripts/check.sh                            # iOS 应用的测试
 ```
 
-按 F5 启动 Extension Development Host。日志在 Output → Acpira。架构与协议说明见 [AGENTS.md](AGENTS.md)。
+在 VS Code 中按 F5 启动 Extension Development Host，日志在 Output → Acpira。架构与协议说明见 [AGENTS.md](AGENTS.md)。
 
-发布正式版 GitHub Release 后，可自动将各平台 VSIX 发布到 VS Code Marketplace 和 Open VSX，并把 IntelliJ 插件发布到 JetBrains Marketplace。首次凭据配置、版本发布和失败重试见 [发布说明](docs/releasing.md)。
+发布正式版 GitHub Release 后，各平台 VSIX 会发布到 VS Code Marketplace 和 Open VSX，IntelliJ 插件发布到 JetBrains Marketplace，桌面端附在 Release 上。首次凭据配置、版本发布和失败重试见 [发布说明](docs/releasing.md)。
 
 ## 许可证
 
