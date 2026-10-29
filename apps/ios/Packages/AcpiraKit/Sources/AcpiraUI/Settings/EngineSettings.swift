@@ -111,24 +111,33 @@ func pickDefaultAgent(_ agents: [AgentInfo], _ preferred: AgentId) -> AgentId {
   return (open.first { $0.available != false } ?? (own.disabled == true ? open.first : nil))?.id ?? preferred
 }
 
-/// Every agent with its state; Edit reorders them (the order every list follows)
+/// Every agent with its state, each row opening the agent's page. Edit works as Mail's mailbox list: a check circle
+/// before each agent turns it on or off and a handle after it reorders (the order every list follows); the rows stop
+/// opening their pages meanwhile, so a row never offers a handle and a chevron at once
 struct AgentsSettingsPage: View {
   @Environment(AppModel.self) private var model
+  @Environment(\.initialPopup) private var initialPopup
+  #if os(iOS)
+  @State private var editMode = EditMode.inactive
+  private var editing: Bool { editMode.isEditing }
+  #else
+  private let editing = false
+  #endif
 
   var body: some View {
+    let agents = model.settingsAgents
+    // The last agent on stays on: a new session needs one
+    let lastOn = agents.filter { $0.disabled != true }.map(\.id)
     List {
       Section {
-        ForEach(model.settingsAgents) { a in
-          NavigationLink(value: SettingsRoute.agent(a.id)) {
-            LabeledContent {
-              if a.disabled == true { Text(web: t("mobile.settings.agentOff"), paragraph: false) }
-            } label: {
-              Label {
-                Text(verbatim: a.name).lineLimit(1)
-              } icon: {
-                VendorMark(brand: a.id, name: a.name, size: Metrics.rowMark, fit: true).foregroundStyle(Palette.fg2)
-              }
+        ForEach(agents) { a in
+          if editing {
+            HStack(spacing: Metrics.s3) {
+              check(a, locked: lastOn == [a.id])
+              row(a, showOff: false)
             }
+          } else {
+            NavigationLink(value: SettingsRoute.agent(a.id)) { row(a, showOff: true) }
           }
         }
         .onMove { model.moveAgents(from: $0, to: $1) }
@@ -141,7 +150,44 @@ struct AgentsSettingsPage: View {
     .navigationBarTitleDisplayModeInline()
     #if os(iOS)
     .toolbar { EditButton() }
+    // Outside the toolbar too, so EditButton flips the same mode the rows read
+    .environment(\.editMode, $editMode)
+    // `-popup agents.edit`: the page in Edit on launch (screenshots)
+    .onAppear { if initialPopup == "agents.edit" { editMode = .active } }
     #endif
+  }
+
+  /// The agent's mark and name, and "Off" while it is switched off (the check says so in Edit)
+  private func row(_ a: AgentInfo, showOff: Bool) -> some View {
+    LabeledContent {
+      if showOff && a.disabled == true { Text(web: t("mobile.settings.agentOff"), paragraph: false) }
+    } label: {
+      Label {
+        Text(verbatim: a.name).lineLimit(1)
+      } icon: {
+        VendorMark(brand: a.id, name: a.name, size: Metrics.rowMark, fit: true).foregroundStyle(Palette.fg2)
+      }
+    }
+  }
+
+  /// Edit's check circle: filled in the switches' green while the agent is offered for new sessions, grey on the last
+  /// agent on, which cannot be turned off
+  private func check(_ a: AgentInfo, locked: Bool) -> some View {
+    let on = a.disabled != true
+    return Button { model.setAgentEnabled(a.id, !on) } label: {
+      // The bar glyph's size, inside the row's own height: Edit must not make the rows taller
+      Image(systemName: on ? "checkmark.circle.fill" : "circle")
+        .resizable()
+        .scaledToFit()
+        .symbolRenderingMode(on ? .palette : .monochrome)
+        .foregroundStyle(on ? Color.white : Palette.fg3, locked ? Palette.fg3 : Color.green)
+        .frame(width: Metrics.barIcon, height: Metrics.barIcon)
+        .contentShape(Circle())
+    }
+    .buttonStyle(.plain)
+    .disabled(locked)
+    .accessibilityLabel(Text(web: t("settings.agent.enabled", ["agent": a.name])))
+    .accessibilityAddTraits(on ? .isSelected : [])
   }
 }
 
@@ -273,10 +319,11 @@ enum ModelSettings {
   struct Catalog { var control: ConfigControl; var families: [ModelFamily] }
   struct Group { var control: ConfigControl; var key: String; var title: String; var rows: [ModelFamily]; var sources: [String] }
 
-  /// The controls whose options are models (no reasoning levels, no switches), their families newest first; nil
-  /// before the engine answered
+  /// The controls whose options are models (no reasoning levels, no switches, not the built-in agent's sidekick pick
+  /// and its levels), their families newest first; nil before the engine answered
   static func catalogs(_ controls: [ConfigControl]?) -> [Catalog]? {
-    controls?.filter { !ComposerControls.isReasoning($0) && $0.type != "boolean" }
+    let sidekick = [ComposerControls.sidekickCategory, ComposerControls.sidekickEffortCategory]
+    return controls?.filter { !ComposerControls.isReasoning($0) && $0.type != "boolean" && !sidekick.contains($0.category ?? "") }
       .map { Catalog(control: $0, families: ModelCatalog.prioritize(ModelCatalog.group($0.options))) }
   }
 

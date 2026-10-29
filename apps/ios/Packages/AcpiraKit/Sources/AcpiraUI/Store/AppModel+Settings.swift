@@ -17,10 +17,11 @@ extension AppModel {
   /// One setting changed; `name` is its SettingKey
   func setSetting<T: Encodable>(_ key: WritableKeyPath<SettingsView, T>, _ name: String, _ value: T) {
     settings?[keyPath: key] = value
-    guard let data = try? JSONEncoder().encode(value), let json = try? JSONDecoder().decode(JSONValue.self, from: data) else { return }
-    if post(.setSetting(key: name, value: json)) { return }
-    // The engine re-sorts and flags its agents itself (arrangeAgents); the demo does it here
+    // The engine re-sorts and flags its agents itself (arrangeAgents) and pushes them back; they are arranged here too,
+    // so an agent's switch (which reads the agent's flag) does not spring back while the push is on its way
     if name == "agentOrder" || name == "disabledAgents", let settings { agents = arrangeAgents(agents, settings) }
+    guard let data = try? JSONEncoder().encode(value), let json = try? JSONDecoder().decode(JSONValue.self, from: data) else { return }
+    _ = post(.setSetting(key: name, value: json))
   }
 
   /// The agents the settings list and reorder: every one but the external entries (ChatGPT's bridge)

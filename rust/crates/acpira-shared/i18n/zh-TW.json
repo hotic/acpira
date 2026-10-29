@@ -1470,7 +1470,7 @@
   "mobile.engine.updateComputer": "電腦上的 Acpira 比這個 App 舊，請先在電腦上更新。",
   "mobile.engine.updateApp": "電腦上的 Acpira 比這個 App 新，請更新 App。",
   "mobile.settings.agents": "Agent",
-  "mobile.settings.agents.desc": "點「編輯」調整順序，所有 agent 列表都按這個順序；關掉的 agent 不再出現在新增工作階段裡。",
+  "mobile.settings.agents.desc": "點「編輯」勾選要用的 agent，拖動調整順序。所有 agent 列表都按這個順序；沒勾選的 agent 不會出現在新增工作階段裡。",
   "mobile.settings.sessions": "工作階段",
   "mobile.settings.engine.desc": "儲存在電腦上的引擎裡，與電腦上的 Acpira 共用。",
   "mobile.settings.agentOff": "已關閉",
