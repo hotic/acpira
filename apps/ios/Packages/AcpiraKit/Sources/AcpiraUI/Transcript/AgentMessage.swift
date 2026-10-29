@@ -152,9 +152,9 @@ struct CodexFold: View {
             ForEach(Array(parts.enumerated()), id: \.element.id) { i, part in
               switch part {
               case .steer(_, let block):
+                // User prompts stay visible while the surrounding process parts fold, as on the desktop.
                 EntranceOnce(id: itemEntrance(part.id)) { SteeredMessage(block: block) }
                   .padding(.top, Metrics.processProseGap)
-                  .reveal(open)
               case .subagents(_, let ids):
                 // The rows of a delegation stay in view: in the stream while the parts show, under the head once they
                 // have folded away, never a fold of their own
