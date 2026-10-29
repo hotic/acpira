@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 use std::time::SystemTime;
 
-use acpira_shared::model_catalog::{Catalog, CatalogFile, CatalogModel, Cost, model_key};
+use acpira_shared::model_catalog::{Catalog, CatalogFile, CatalogModel, Cost};
 use acpira_shared::providers::ProviderModel;
 
 static SNAPSHOT: LazyLock<Arc<Catalog>> = LazyLock::new(|| Arc::new(Catalog::new(CatalogFile::snapshot())));
@@ -42,14 +42,15 @@ impl CatalogCache {
   }
 }
 
-/// The catalogue entry for a configured model id (gateway prefixes, case, separators and date suffixes ignored)
-pub fn lookup<'a>(catalog: &'a Catalog, id: &str) -> Option<&'a CatalogModel> {
-  catalog.get(&model_key(id))
+/// The catalogue entry for a configured model: its id (gateway prefixes, case, separators and date suffixes ignored),
+/// else its display name, as discovery matched it
+pub fn lookup<'a>(catalog: &'a Catalog, model: &ProviderModel) -> Option<&'a CatalogModel> {
+  catalog.lookup(&model.id, model.name.as_deref())
 }
 
 /// Fill the limits the configuration leaves open from the catalogue, marked as estimated; returns the list prices
 pub fn complete(model: &mut ProviderModel, catalog: &Catalog) -> Option<Cost> {
-  let entry = lookup(catalog, &model.id)?;
+  let entry = lookup(catalog, model)?;
   for (field, slot, value) in [("context", &mut model.context, entry.context), ("output", &mut model.output, entry.output)] {
     if slot.is_none()
       && let Some(v) = value

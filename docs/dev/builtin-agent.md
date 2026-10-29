@@ -136,8 +136,11 @@ A step is seconds of model time against milliseconds of tool time, so tools take
 
 ## Model discovery
 
-- `llm/discover.rs` serves the settings page (`providerProbe`). Metadata: endpoint fields, then the catalogue by `model_key`, then defaults; anything not reported is marked `estimated` and never sent as a limit.
-- A model the endpoint flags as reasoning but the catalogue has no levels for gets `DEFAULT_EFFORTS` on the wire: otherwise its thinking stays `auto` and nothing turns it on (`gemini-4-argon` on a gateway's Responses route ran with 0 reasoning tokens).
+- `llm/discover.rs` serves the settings page (`providerProbe`). Metadata: endpoint fields, then the catalogue by `model_key` of the id, then of the listed name (a gateway's `k3.1-pro` named Kimi K3.1 Pro), then defaults; anything not reported is marked `estimated` and never sent as a limit.
+- Effort levels from the endpoint are taken as listed: `capabilities.reasoning.effort` or Codex-style `supported_reasoning_levels` (a gateway's `/v1/models` sends both, plus a `default_reasoning_level` the agent ignores: the family's level wins).
+- `ProviderModel::offered_efforts` is the only scale rule: the composer, the sidekick, the summon roster (through the agent's select) and the settings view (`providers.rs` `view`) all read it. A listed or saved scale stays; a guessed (`estimated`) or empty one takes the catalogue's when it knows the model, so a refreshed catalogue corrects an early guess.
+- Trap: an empty scale on a model the catalogue knows cannot mean "send no level"; the dialog lights the catalogue's again. Switching thinking off is the way to send none.
+- A model the endpoint flags as reasoning but nothing gives levels for gets `DEFAULT_EFFORTS` on the wire: otherwise its thinking stays `auto` and nothing turns it on (`gemini-4-argon` on a gateway's Responses route ran with 0 reasoning tokens).
 - Ollama's `/api/show` context is the trained window, not the served `num_ctx`, so it is always estimated; LM Studio's loaded window wins over its maximum.
 - No vendor presets: every source is a custom endpoint; a URL ending in `/chat/completions`, `/responses` or `/messages` is used as typed. The family comes from the model id, then the base URL (`family.rs`); an old `preset` still counts as a hint.
 
@@ -192,4 +195,5 @@ Wire behaviour the agent relies on or works around. `scripts/probe/agent-host.ts
 - Compaction on Anthropic Messages and an overflow on Anthropic's own API.
 - Interactive jobs on Windows (ConPTY); background jobs beyond the unit tests.
 - GLM's handling of `reasoning_effort` next to `thinking.type`; Responses against OpenAI's own endpoint.
+- `reasoning_effort` on Chat from the Kimi, MiniMax and Qwen families (sent whenever a level is picked, since their own switch has none) against Moonshot's and DashScope's own APIs.
 - Release binary size and RSS during a turn; `kimi-k2.8`'s real window (larger than the catalogue's 262k).

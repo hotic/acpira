@@ -8,6 +8,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::model_catalog::Catalog;
+
 pub const PROVIDERS_FILE: &str = "providers.json";
 pub const PROVIDERS_VERSION: u32 = 1;
 pub const PROVIDER_SECRET_PREFIX: &str = "acpira.provider.";
@@ -252,7 +254,36 @@ impl ProviderModel {
   pub fn takes_images(&self) -> bool {
     self.input.iter().any(|i| i == "image")
   }
+
+  /// Whether the levels are still a guess (catalogue or defaults) rather than reported by the endpoint or saved in the
+  /// settings dialog, which clears `estimated`
+  pub fn efforts_guessed(&self) -> bool {
+    self.estimated.iter().any(|e| e == EFFORTS_FIELD)
+  }
+
+  /// The levels the effort select offers. This is the one rule the composer, the sidekick, the summon roster and the
+  /// settings dialog all follow, so they always show the same scale. None while thinking is off. A list reported by the
+  /// endpoint or saved in the dialog stays as it is. A guessed list, or none at all (a model added by id, a plugin's
+  /// source, a hand-written file), takes the catalogue's levels when the catalogue knows the model (by id, then name):
+  /// without levels no thinking switch is sent, and Claude added by id ran without thinking
+  pub fn offered_efforts(&self, catalog: &Catalog) -> Vec<String> {
+    if self.thinking == Thinking::Off {
+      return vec![];
+    }
+    match self.catalogue_efforts(catalog) {
+      Some(levels) => levels.to_vec(),
+      None => self.efforts.clone(),
+    }
+  }
+
+  /// The catalogue's levels where they stand in for this model's own (`offered_efforts`)
+  pub fn catalogue_efforts<'a>(&self, catalog: &'a Catalog) -> Option<&'a [String]> {
+    (self.efforts.is_empty() || self.efforts_guessed()).then(|| catalog.efforts(&self.id, self.name.as_deref())).flatten()
+  }
 }
+
+/// The `estimated` entry naming guessed effort levels
+pub const EFFORTS_FIELD: &str = "efforts";
 
 impl Provider {
   pub fn api_format(&self) -> Option<ApiFormat> {
@@ -427,6 +458,26 @@ pub enum ProviderAction {
 mod tests {
   use super::*;
   use serde_json::json;
+
+  #[test]
+  fn offered_efforts_keep_a_confirmed_scale_and_replace_a_guess() {
+    use crate::model_catalog::{Catalog, trim_models_dev};
+    let api = json!({ "moonshotai": { "models": { "kimi-k3.1-pro": { "name": "Kimi K3.1 Pro", "reasoning": true,
+      "reasoning_options": [{ "type": "effort", "values": ["low", "high", "max"] }] } } } });
+    let catalog = Catalog::new(trim_models_dev(&api, "2026-10-28T00:00:00Z", None));
+    let model = |v: serde_json::Value| -> ProviderModel { serde_json::from_value(v).unwrap() };
+    // Guessed defaults on a gateway id the catalogue knows by name: the catalogue's scale
+    let guessed = model(json!({ "id": "k3.1-pro", "name": "Kimi K3.1 Pro", "efforts": ["low", "medium", "high"], "estimated": ["efforts"] }));
+    assert_eq!(guessed.offered_efforts(&catalog), ["low", "high", "max"]);
+    // Saved in the dialog (or reported by the endpoint): as it is
+    let saved = model(json!({ "id": "kimi-k3.1-pro", "efforts": ["low", "medium", "high"] }));
+    assert_eq!(saved.offered_efforts(&catalog), ["low", "medium", "high"]);
+    // None at all: the catalogue's; unknown to it: none
+    assert_eq!(model(json!({ "id": "kimi-k3.1-pro" })).offered_efforts(&catalog), ["low", "high", "max"]);
+    assert!(model(json!({ "id": "mystery" })).offered_efforts(&catalog).is_empty());
+    // Thinking off: no scale whatever the list holds
+    assert!(model(json!({ "id": "kimi-k3.1-pro", "thinking": "off", "efforts": ["low"] })).offered_efforts(&catalog).is_empty());
+  }
 
   #[test]
   fn the_view_flattens_the_entry_and_actions_are_tagged() {

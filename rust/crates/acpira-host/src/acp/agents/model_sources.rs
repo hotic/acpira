@@ -15,7 +15,7 @@ use acpira_shared::model_catalog::{Level, NativeLevels, clip_efforts};
 use acpira_shared::model_sources::{ALL, ModelSources, apply_model_sources};
 use acpira_shared::transcript::{ConfigControl, OptionSource, SourceKind};
 
-use crate::acp::agents::registry::AgentDef;
+use crate::acp::agents::registry::{AgentDef, SELF_AGENT_ID};
 use crate::acp::vendors::pi_usage;
 use crate::inventory::parse_json_loose;
 use crate::store::data_dir::home_dir;
@@ -199,10 +199,14 @@ fn facts(agent: &str, env: &HashMap<String, String>, cwd: &Path) -> ModelFacts {
 }
 
 /// Label the model options by source, then narrow the reasoning selects to what the current model takes; idempotent, so
-/// every publish may run it
+/// every publish may run it. The built-in agent is not narrowed: its scale is the settings page's
+/// (`ProviderModel::offered_efforts`, which already takes the catalogue's levels for a guessed list), and cutting it
+/// again hid levels the page shows lit (a Medium saved for a model the catalogue lists as low / high / max)
 pub fn refine_controls(agent: &str, options: &mut [ConfigControl], facts: &ModelFacts) {
   apply_model_sources(agent, options, &facts.sources);
-  clip_efforts(options, &crate::model_catalog::current(), &facts.native);
+  if agent != SELF_AGENT_ID {
+    clip_efforts(options, &crate::model_catalog::current(), &facts.native);
+  }
 }
 
 /// Everything the engine needs to label and narrow one agent's model controls; blocking reads, off the async threads

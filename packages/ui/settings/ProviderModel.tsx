@@ -105,13 +105,16 @@ function TokenField({ value, onChange, quick, label }: { value: string; onChange
   );
 }
 
-// The levels every family spells this way, in rising order; a model's own other spellings follow them
+// The levels every family spells this way, in rising order; a model's own other spellings go around them, its off
+// level (`none`, which OpenAI lists) first and anything past Max (`ultra`) last
 const LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+const OFF_LEVELS = ['none', 'off'];
 
 // The thinking levels as one segmented row of toggles. A lit level is offered in the composer's effort select; none
 // lit leaves the provider's default. Thinking itself is switched off by the switch above the row, which hides it
 function ThinkingLevels({ levels, onChange }: { levels: string[]; onChange: (levels: string[]) => void }) {
-  const all = [...LEVELS, ...levels.filter(l => !LEVELS.includes(l))];
+  const own = levels.filter(l => !LEVELS.includes(l));
+  const all = [...own.filter(l => OFF_LEVELS.includes(l)), ...LEVELS, ...own.filter(l => !OFF_LEVELS.includes(l))];
   return (
     <div role="group" aria-label={t('settings.providers.model.efforts')} className="flex min-w-0 flex-wrap gap-0.5 rounded-md bg-hover p-0.5">
       {all.map(level => {

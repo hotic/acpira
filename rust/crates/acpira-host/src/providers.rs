@@ -12,7 +12,7 @@ use tokio::fs;
 
 use acpira_agent::llm::discover;
 use acpira_shared::providers::{
-  APPROVAL_LEVELS, LocalSource, PROVIDERS_FILE, PROVIDERS_VERSION, ProbeOutcome, Provider, ProviderAction, ProviderProbe, ProviderView, ProvidersFile,
+  APPROVAL_LEVELS, EFFORTS_FIELD, LocalSource, PROVIDERS_FILE, Thinking, PROVIDERS_VERSION, ProbeOutcome, Provider, ProviderAction, ProviderProbe, ProviderView, ProvidersFile,
   COMPACTION_STRATEGIES, ProvidersView, WEB_SEARCH_BACKENDS, provider_secret_key, web_secret_key,
 };
 
@@ -43,8 +43,19 @@ impl ProviderStore {
       Ok(f) => f,
       Err(error) => return ProvidersView { providers: vec![], error: Some(error), ..tables() },
     };
+    let catalog = crate::model_catalog::current();
     let mut providers = Vec::with_capacity(file.providers.len());
-    for provider in file.providers {
+    for mut provider in file.providers {
+      // A guessed or empty scale shows as the agent offers it (the catalogue's levels when it knows the model), so the
+      // dialog lights what the composer offers; it is marked as a guess until the dialog saves it
+      for m in provider.models.iter_mut().filter(|m| m.thinking != Thinking::Off) {
+        if let Some(levels) = m.catalogue_efforts(&catalog) {
+          m.efforts = levels.to_vec();
+          if !m.efforts_guessed() {
+            m.estimated.push(EFFORTS_FIELD.into());
+          }
+        }
+      }
       let has_key = self.vault.get(&provider_secret_key(&provider.id)).await.ok().flatten().is_some_and(|k| !k.is_empty());
       providers.push(ProviderView { provider, has_key });
     }
@@ -328,6 +339,28 @@ mod tests {
     let mut p: Provider = serde_json::from_value(json!({ "id": "", "name": name, "baseUrl": url })).unwrap();
     p.models = models.iter().map(|m| ProviderModel::new(*m)).collect();
     p
+  }
+
+  /// The settings dialog lights what the composer offers: a guessed or empty scale shows the catalogue's (kimi-k3 is in
+  /// the built-in snapshot as low / high / max) marked as a guess, a saved one is shown as saved
+  #[tokio::test]
+  async fn the_view_shows_the_scale_the_agent_offers() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = json!({ "providers": [{ "id": "gw", "baseUrl": "https://gw.test/v1", "models": [
+      { "id": "k3-gw", "name": "Kimi K3", "efforts": ["low", "medium", "high"], "estimated": ["efforts"] },
+      { "id": "kimi-k3" },
+      { "id": "kimi-k3-saved", "name": "Kimi K3", "efforts": ["low", "medium", "high"] },
+      { "id": "kimi-k3-off", "name": "Kimi K3", "thinking": "off" },
+    ] }] });
+    std::fs::write(dir.path().join(PROVIDERS_FILE), file.to_string()).unwrap();
+    let v = store(dir.path()).view().await;
+    let shown: Vec<_> = v.providers[0].provider.models.iter().map(|m| (m.efforts.join(" "), m.efforts_guessed())).collect();
+    assert_eq!(shown, [
+      ("low high max".to_owned(), true),
+      ("low high max".to_owned(), true),
+      ("low medium high".to_owned(), false),
+      (String::new(), false),
+    ]);
   }
 
   #[tokio::test]

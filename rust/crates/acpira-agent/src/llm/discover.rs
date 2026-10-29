@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use acpira_shared::model_catalog::{Catalog, model_key};
-use acpira_shared::providers::{ApiFormat, Provider, ProviderModel, Thinking};
+use acpira_shared::model_catalog::Catalog;
+use acpira_shared::providers::{ApiFormat, EFFORTS_FIELD, Provider, ProviderModel, Thinking};
 
 use super::family::ThinkingParam;
 use super::{Endpoint, Event, Item, LlmError, Part, Request, StopReason, Usage, error_message};
@@ -31,6 +31,8 @@ pub struct Listed {
   pub images: Option<bool>,
   pub tools: Option<bool>,
   pub reasoning: Option<bool>,
+  /// The effort levels the endpoint lists for the model, in its order and spelling
+  pub efforts: Option<Vec<String>>,
   /// An embedding / speech / image model: no use as a chat model
   pub not_chat: bool,
 }
@@ -182,8 +184,15 @@ pub fn parse_entry(e: &Value) -> Option<Listed> {
   };
   // Besides OpenRouter's parameters and Ollama's capabilities, gateways flag a reasoning model with a boolean: `reasoning`
   // (models.dev's name), `supportsReasoning` / `supportsThinking`, or `capabilities.supports_reasoning`
-  let flagged = ["/reasoning", "/supportsReasoning", "/supportsThinking", "/capabilities/supports_reasoning"].iter().any(|p| e.pointer(p) == Some(&Value::Bool(true)));
-  let reasoning = if flagged || params.iter().any(|p| p == "reasoning" || p == "include_reasoning") || caps.iter().any(|c| c == "thinking") { Some(true) } else { None };
+  let flagged = ["/reasoning", "/supportsReasoning", "/supportsThinking", "/capabilities/supports_reasoning", "/capabilities/reasoning/supported"]
+    .iter()
+    .any(|p| e.pointer(p) == Some(&Value::Bool(true)));
+  let efforts = listed_efforts(e);
+  let reasoning = if flagged || efforts.is_some() || params.iter().any(|p| p == "reasoning" || p == "include_reasoning") || caps.iter().any(|c| c == "thinking") {
+    Some(true)
+  } else {
+    None
+  };
   let methods = strings(e.get("supportedGenerationMethods"));
   let lower = id.to_lowercase();
   let not_chat = kind == "embeddings"
@@ -197,14 +206,30 @@ pub fn parse_entry(e: &Value) -> Option<Listed> {
     .map(|n| n.strip_prefix("models/").unwrap_or(n).trim())
     .find(|n| !n.is_empty() && *n != id)
     .map(str::to_owned);
-  Some(Listed { id, name, context, output, images, tools, reasoning, not_chat })
+  Some(Listed { id, name, context, output, images, tools, reasoning, efforts, not_chat })
+}
+
+/// The effort levels a listing reports, where gateways put them: `capabilities.reasoning.effort` (a list of levels) or
+/// Codex's `supported_reasoning_levels` (`{ effort, description }` objects, or plain levels). None when neither lists one
+fn listed_efforts(e: &Value) -> Option<Vec<String>> {
+  let level = |v: &Value| v.as_str().or_else(|| v.get("effort").and_then(Value::as_str)).map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty());
+  ["/capabilities/reasoning/effort", "/supported_reasoning_levels"].iter().find_map(|p| {
+    let mut out: Vec<String> = vec![];
+    for l in e.pointer(p)?.as_array()?.iter().filter_map(level) {
+      if !out.contains(&l) {
+        out.push(l);
+      }
+    }
+    (!out.is_empty()).then_some(out)
+  })
 }
 
 /// The catalogue and default tiers over what the endpoint said
 pub fn complete(listed: &Listed, catalog: &Catalog) -> ProviderModel {
   let mut m = ProviderModel::new(listed.id.clone());
   m.name = listed.name.clone();
-  let entry = catalog.get(&model_key(&listed.id));
+  // By id, then by the listed name: a gateway's own id (`k3.1-pro`) still finds the vendor's entry
+  let entry = catalog.lookup(&listed.id, listed.name.as_deref());
   let mut estimated: Vec<&str> = vec![];
   m.context = listed.context.or_else(|| {
     estimated.push("context");
@@ -224,10 +249,12 @@ pub fn complete(listed: &Listed, catalog: &Catalog) -> ProviderModel {
   if images {
     m.input.push("image".into());
   }
-  // Effort levels come from the catalogue (no listing reports them); reasoning stays the provider's default
-  if let Some(c) = entry.filter(|c| c.reasoning && !c.efforts.is_empty()) {
+  // Effort levels the endpoint lists are taken as they are; else the catalogue's, as a guess
+  if let Some(levels) = &listed.efforts {
+    m.efforts = levels.clone();
+  } else if let Some(c) = entry.filter(|c| c.reasoning && !c.efforts.is_empty()) {
     m.efforts = c.efforts.clone();
-    estimated.push("efforts");
+    estimated.push(EFFORTS_FIELD);
   }
   if m.name.is_none() {
     m.name = entry.map(|c| c.name.clone()).filter(|n| n != &listed.id);
@@ -240,10 +267,11 @@ pub fn complete(listed: &Listed, catalog: &Catalog) -> ProviderModel {
 /// than the catalogue): the three every `reasoning.effort` / `reasoning_effort` takes
 pub const DEFAULT_EFFORTS: [&str; 3] = ["low", "medium", "high"];
 
-/// `complete`, then the default levels for a model the endpoint flags as reasoning and the catalogue gives none, where
-/// a level reaches the wire: always on Responses and Anthropic Messages, on Chat only for a family whose thinking
-/// switch takes one (Kimi, MiniMax and Qwen on Chat would show a level select that changes nothing). Without levels a
-/// model's thinking stays `auto` and no request turns it on, so a new reasoning model would never think
+/// `complete`, then the default levels for a model the endpoint flags as reasoning and nothing gives levels for, where
+/// the family documents a level: always on Responses and Anthropic Messages, on Chat only for a family whose own
+/// thinking switch takes one (a guessed scale is not offered to Kimi, MiniMax and Qwen on Chat, whose older models
+/// take none). Without levels a model's thinking stays `auto` and no request turns it on, so a new reasoning model
+/// would never think
 pub fn complete_for(provider: &Provider, listed: &Listed, catalog: &Catalog) -> ProviderModel {
   let mut m = complete(listed, catalog);
   if listed.reasoning == Some(true) && m.efforts.is_empty() {
@@ -251,7 +279,7 @@ pub fn complete_for(provider: &Provider, listed: &Listed, catalog: &Catalog) -> 
       || matches!(super::family::resolve(provider, &m).thinking, ThinkingParam::ReasoningEffort | ThinkingParam::ThinkingType | ThinkingParam::OpenRouter);
     if takes_level {
       m.efforts = DEFAULT_EFFORTS.map(str::to_owned).to_vec();
-      m.estimated.push("efforts".into());
+      m.estimated.push(EFFORTS_FIELD.into());
     }
   }
   m

@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use acpira_rpc::cancel::Cancel;
 use acpira_rpc::rpc::{BoxFuture, Connection, Inbound, RpcError};
 use acpira_shared::model_catalog::Catalog;
-use acpira_shared::providers::{Thinking, split_pick};
+use acpira_shared::providers::split_pick;
 
 use crate::config::{Config, ConfigCache};
 use crate::llm::Item;
@@ -748,14 +748,10 @@ impl Server {
 
 }
 
-/// The configured levels; a model entered without any (added by id rather than fetched) gets the catalogue's, as model
-/// discovery would have given it, unless its thinking is switched off
+/// The levels a configured model offers (`ProviderModel::offered_efforts`, the rule the settings page shows too); none
+/// for a pick that is not configured
 fn efforts_of(config: &Config, catalog: &Catalog, pick: Option<&str>) -> Vec<String> {
-  let Some((_, m)) = pick.and_then(|p| config.find(p)) else { return vec![] };
-  if !m.efforts.is_empty() || m.thinking == Thinking::Off {
-    return m.efforts.clone();
-  }
-  crate::catalog::lookup(catalog, &m.id).filter(|c| c.reasoning).map(|c| c.efforts.clone()).unwrap_or_default()
+  pick.and_then(|p| config.find(p)).map(|(_, m)| m.offered_efforts(catalog)).unwrap_or_default()
 }
 
 /// The model family's preferred level when offered, else the last (strongest) level
