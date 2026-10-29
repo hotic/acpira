@@ -8,6 +8,9 @@ import Foundation
 import ImageIO
 import Synchronization
 import Testing
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Counts what a fake store was asked for, across the loads the tests run concurrently
 actor Calls {
@@ -260,7 +263,40 @@ struct LightboxGeometryTests {
     #expect(LightboxGeometry.closes(dy: 30, velocity: 1200, height: 800))
     #expect(!LightboxGeometry.closes(dy: -30, velocity: 1200, height: 800))
   }
+
+  @Test func departureKeepsTheReleaseDirection() {
+    let move = CGPoint(x: 60, y: 200)
+    #expect(LightboxGeometry.departure(from: move, velocity: .zero, height: 800) == CGPoint(x: 240, y: 800))
+    #expect(LightboxGeometry.departure(from: move, velocity: CGPoint(x: -200, y: 1000), height: 800)
+            == CGPoint(x: -60, y: 800))
+    // An upward release after crossing the threshold still departs along the pull, not back into the screen.
+    #expect(LightboxGeometry.departure(from: move, velocity: CGPoint(x: 0, y: -100), height: 800)
+            == CGPoint(x: 240, y: 800))
+    #expect(LightboxGeometry.departure(from: .zero, velocity: .zero, height: 800) == .zero)
+  }
 }
+
+#if canImport(UIKit)
+@MainActor
+struct LightboxLayoutTests {
+  @Test func layoutDuringAPullPreservesTheTransformAndCenter() throws {
+    let image = try #require(UIImage(data: Data(base64Encoded: dotPNG)!))
+    let view = ZoomView(image: image)
+    view.frame = CGRect(x: 0, y: 0, width: 400, height: 800)
+    view.layoutIfNeeded()
+    let scroll = try #require(view.subviews.first as? UIScrollView)
+    let transform = CGAffineTransform(translationX: 60, y: 200).scaledBy(x: 0.875, y: 0.875)
+    scroll.transform = transform
+    for _ in 0..<3 {
+      view.setNeedsLayout()
+      view.layoutIfNeeded()
+      #expect(scroll.transform == transform)
+      #expect(scroll.center == CGPoint(x: 200, y: 400))
+      #expect(scroll.bounds.size == view.bounds.size)
+    }
+  }
+}
+#endif
 
 /// The store's side: imageBlob requests answered by seq, the blob base InitState names
 @MainActor

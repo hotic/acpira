@@ -55,6 +55,14 @@ nonisolated enum LightboxGeometry {
   static func closes(dy: CGFloat, velocity: CGFloat, height: CGFloat) -> Bool {
     dy > height * closeShare || (dy > 0 && velocity > closeSpeed)
   }
+
+  /// Continue along the release direction rather than steering a diagonal pull straight down
+  static func departure(from move: CGPoint, velocity: CGPoint, height: CGFloat) -> CGPoint {
+    let direction = velocity.y > 0 ? velocity : move
+    guard direction.y > 0 else { return move }
+    let remaining = max(0, height - move.y)
+    return CGPoint(x: move.x + remaining * direction.x / direction.y, y: move.y + remaining)
+  }
 }
 
 struct Lightbox: View {
@@ -63,6 +71,9 @@ struct Lightbox: View {
   @Environment(\.motionEnabled) private var motion
   /// Faded in once on screen, out before the cover goes
   @State private var shown = false
+  /// System bars must not overlap the chat's bars through the transparent cover during its fade.
+  @State private var chrome = false
+  @State private var closing = false
   /// The swipe-down's progress, 0 at rest
   @State private var pull: CGFloat = 0
   @State private var bars = true
@@ -87,13 +98,19 @@ struct Lightbox: View {
           }
         }
         #if os(iOS)
-        .toolbarVisibility(bars && pull == 0 ? .visible : .hidden, for: .navigationBar)
+        .toolbarVisibility(chrome && bars && pull == 0 ? .visible : .hidden, for: .navigationBar)
         .containerBackground(.clear, for: .navigation)
         #endif
     }
     .environment(\.colorScheme, .dark)
     .presentationBackground(.clear)
-    .onAppear { withAnimation(motion ? Motion.open : nil) { shown = true } }
+    .allowsHitTesting(!closing)
+    .onAppear {
+      // Wait until black is opaque before exposing the preview's glass controls.
+      withAnimation(motion ? Motion.open : nil) { shown = true } completion: {
+        if !closing { chrome = true }
+      }
+    }
   }
 
   private func toggleBars() {
@@ -101,6 +118,14 @@ struct Lightbox: View {
   }
 
   private func close() {
+    guard !closing else { return }
+    var quiet = Transaction()
+    quiet.disablesAnimations = true
+    // Hide the system bar before the background reveals the chat; the image alone fades away.
+    withTransaction(quiet) {
+      closing = true
+      chrome = false
+    }
     guard motion else { onClose(); return }
     withAnimation(Motion.close) { shown = false } completion: { onClose() }
   }
@@ -169,7 +194,9 @@ final class ZoomView: UIView, UIScrollViewDelegate {
 
   override func layoutSubviews() {
     super.layoutSubviews()
-    scroll.frame = bounds
+    // A transformed view's frame is undefined; changing it during a pull shifts the picture toward a corner.
+    scroll.bounds.size = bounds.size
+    scroll.center = CGPoint(x: bounds.midX, y: bounds.midY)
     guard bounds.size != fitted, bounds.width > 0, let size = picture.image?.size else { return }
     fitted = bounds.size
     scroll.zoomScale = 1
@@ -213,14 +240,15 @@ final class ZoomView: UIView, UIScrollViewDelegate {
     let move = recognizer.translation(in: self)
     let progress = LightboxGeometry.pull(move.y, height: bounds.height)
     switch recognizer.state {
-    case .changed:
+    case .began, .changed:
       let shrink = 1 - progress * LightboxGeometry.pullShrink
       scroll.transform = CGAffineTransform(translationX: move.x, y: move.y).scaledBy(x: shrink, y: shrink)
       onPull(progress)
     case .ended where LightboxGeometry.closes(dy: move.y, velocity: recognizer.velocity(in: self).y, height: bounds.height):
-      // The picture carries on down while the Lightbox fades out
-      let away = CGAffineTransform(translationX: move.x, y: bounds.height).scaledBy(x: 1 - LightboxGeometry.pullShrink,
-                                                                                    y: 1 - LightboxGeometry.pullShrink)
+      // Keep the release direction while the Lightbox fades out.
+      let target = LightboxGeometry.departure(from: move, velocity: recognizer.velocity(in: self), height: bounds.height)
+      let away = CGAffineTransform(translationX: target.x, y: target.y).scaledBy(x: 1 - LightboxGeometry.pullShrink,
+                                                                                y: 1 - LightboxGeometry.pullShrink)
       if motion { UIView.animate(withDuration: Motion.durClose) { self.scroll.transform = away } }
       onClose()
     case .ended, .cancelled, .failed:
