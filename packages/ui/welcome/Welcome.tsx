@@ -27,7 +27,7 @@ type Stage = 'intro' | number | 'consent' | 'done';
 type Phase = 'intro' | 'tour' | 'consent' | 'done';
 type Lead = 'right' | 'below' | 'above' | 'up-right';
 interface Rect { x: number; y: number; w: number; h: number }
-interface Step { find: (root: HTMLElement) => Element[]; lead: Lead; pad: number; title: () => string; lines: () => ReactNode[] }
+interface Step { find: (root: HTMLElement) => Element[]; lead: Lead; pad: number; title: () => string; lines: (menuSettings: boolean) => ReactNode[] }
 // tx/ty: where the leader leaves the target; ex/ey: where it ends, fading out, just short of the caption
 interface Geo { d: string; tx: number; ty: number; ex: number; ey: number; center: boolean; above?: boolean; note: CSSProperties }
 
@@ -44,8 +44,6 @@ const NOTE_GAP = 10;
 const NOTE_LIFT = 12;
 const NOTE_W = 320;
 const NOTE_W_CENTER = 520;
-// The session rows the first step lights: those of the side column, left of this line
-const COLUMN_MAX = 320;
 // The hole's travel between targets, and how long the step being left keeps its leader
 const GLIDE_MS = 680;
 const LEAVE_MS = 320;
@@ -63,6 +61,21 @@ const DOCK_A = 'M88 0H266C286 0 300 14 300 36V60C300 84 285 98 261 98H145C121 98
 const DOCK_B = 'M316 50C370 50 407 91 407 145V299C407 344 372 380 326 380H152C127 380 113 366 113 342V332C113 311 127 298 150 298H264C285 298 298 282 298 261V168C298 151 291 145 276 145H244C229 145 222 135 222 121V114H266C297 114 316 94 316 64Z';
 
 const shown = <T extends Element>(e: T | null | undefined): e is T => !!e && e.getBoundingClientRect().width > 0;
+// The sample wrapper is inert on purpose; only hidden branches inside the shell disqualify a target. A folded header
+// action can still give its SVG a box, and a closed drawer can keep its rows laid out outside the viewport.
+function targets(root: HTMLElement, selector: string): Element[] {
+  const box = root.getBoundingClientRect();
+  return [...root.querySelectorAll(selector)].filter(el => {
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height || r.right <= box.left || r.left >= box.right || r.bottom <= box.top || r.top >= box.bottom) return false;
+    for (let at: Element | null = el; at && at !== root; at = at.parentElement) {
+      if (at.hasAttribute('inert') || (at !== el && at.getAttribute('aria-hidden') === 'true')) return false;
+      const style = getComputedStyle(at);
+      if (style.visibility === 'hidden' || style.display === 'none') return false;
+    }
+    return true;
+  });
+}
 // The nearest ancestor (self included) that passes `ok`
 function upTo(e: Element | null | undefined, ok: (el: HTMLElement) => boolean): HTMLElement | undefined {
   for (let el = e as HTMLElement | null | undefined; el; el = el.parentElement) if (ok(el)) return el;
@@ -78,15 +91,18 @@ function withKeys(text: string): ReactNode {
 // Steps over the sample session. Targets are found by structure, so they match in every locale
 const STEPS: Step[] = [
   {
-    // The session rows of the side column
-    find: r => { const left = r.getBoundingClientRect().left; return [...r.querySelectorAll('div.group.min-h-row')].filter(e => shown(e) && e.getBoundingClientRect().right - left < COLUMN_MAX); },
+    // The docked rows, or the visible list toggle when the narrow layout keeps them in a closed drawer
+    find: r => {
+      const rows = targets(r, '[data-session-panel] div.group.min-h-row');
+      return rows.length ? rows : targets(r, '[data-session-toggle]');
+    },
     lead: 'right', pad: 6, title: () => t('welcome.sessions.title'),
     lines: () => [t('welcome.sessions.1'), t('welcome.sessions.2')],
   },
   {
     // The permission card: up from its title (the agent's own English words) to the first box with a border
     find: r => {
-      const title = [...r.querySelectorAll('div, span')].find(e => e.childElementCount === 0 && /^(Edit|Run|Write) /.test(e.textContent ?? '') && shown(e));
+      const title = targets(r, 'div, span').find(e => e.childElementCount === 0 && /^(Edit|Run|Write) /.test(e.textContent ?? ''));
       const card = upTo(title, el => el.classList.contains('border') || getComputedStyle(el).borderTopWidth !== '0px');
       return card ? [card] : [];
     },
@@ -94,41 +110,62 @@ const STEPS: Step[] = [
     lines: () => [t('welcome.approvals.1'), t('welcome.approvals.2', { more: t('permission.more') })],
   },
   {
-    // The composer with the queue above it: the dock column that holds both
+    // Measure the painted surfaces, not their dock: its horizontal and bottom padding is not part of the controls.
     find: r => {
-      const field = [...r.querySelectorAll('.composer-field')].find(shown);
-      const dock = upTo(field, el => el.getBoundingClientRect().height > (field?.getBoundingClientRect().height ?? 0) + 30);
-      return dock ? [dock] : field ? [field] : [];
+      const queue = targets(r, 'svg.lucide-list-end').map(e => upTo(e, el => el.classList.contains('min-h-row'))).filter(shown);
+      return [...queue, ...targets(r, '.composer-field')];
     },
     lead: 'above', pad: 2, title: () => t('welcome.composer.title'),
     lines: () => [t('welcome.composer.1'), withKeys(t('welcome.composer.2'))],
   },
   {
-    // The gear: the desktop column's foot draws `Settings`, the IDE layouts `Settings2`; the last one shown is the foot's
-    find: r => [[...r.querySelectorAll('svg.lucide-settings, svg.lucide-settings-2')].filter(shown).pop()].filter(shown),
+    // Prefer the column's gear. In a narrow desktop window settings live in the session's visible “…” menu.
+    find: r => {
+      const gears = targets(r, 'svg.lucide-settings, svg.lucide-settings-2');
+      const gear = gears.find(e => e.closest('[data-session-panel]')) ?? gears[0];
+      if (!gear) return targets(r, '[data-sheet-header] button svg.lucide-ellipsis');
+      // The IDE's docked settings action has a label; keep it lit too, so the leader never crosses its text.
+      const button = !r.hasAttribute('data-desktop') && gear.closest('[data-session-panel]') && gear.closest('button');
+      return [gear, ...(button ? targets(button, 'span.truncate') : [])];
+    },
     lead: 'up-right', pad: 12, title: () => t('welcome.settings.title'),
-    lines: () => [t('welcome.settings.1'), t('welcome.settings.2')],
+    lines: menu => [t('welcome.settings.1', { plugins: t('settings.nav.plugins'), sources: t('settings.agentTab.sources'), add: t('settings.providers.add') }), ...(menu ? [t('welcome.settings.menu')] : []), t('welcome.settings.2')],
   },
 ];
 
 // Where the leader runs and the caption sits, from the lit rect: beside it, under it, or out of a corner and up. `size` is
 // the layer's, so a caption never leaves the window
-function geometry(lead: Lead, r: Rect, edge: number, size: { w: number; h: number }): Geo {
+function geometry(lead: Lead, r: Rect, edge: number, size: { w: number; h: number }, dock?: Rect): Geo {
   const clampX = (x: number, w: number) => Math.max(NOTE_GAP, Math.min(x, size.w - w - NOTE_GAP));
+  // A drawer toggle or a header menu needs the caption below it, not outside the window or above its title bar.
+  if ((lead === 'right' && (r.y < LEAD_SHORT || r.x + r.w + LEAD_SIDE + NOTE_GAP + NOTE_W > size.w))
+    || (lead === 'up-right' && (r.y < LEAD_UP || r.x > size.w / 2))) lead = 'below';
+  // A wide saved column can leave less room beside its caption than the default sample column does.
+  if (lead === 'up-right' && Math.max(r.x + r.w + LEAD_ELBOW + LEAD_SHORT, edge) + NOTE_GAP + NOTE_W > size.w) lead = 'above';
   if (lead === 'below' || lead === 'above') {
     const above = lead === 'above';
-    const tx = r.x + r.w / 2, ty = above ? r.y : r.y + r.h, ey = above ? ty - LEAD_SHORT : ty + LEAD_SHORT;
+    const tx = r.x + r.w / 2, ty = above ? r.y : r.y + r.h;
+    let ex = tx, ey = above ? ty - LEAD_SHORT : ty + LEAD_SHORT, d = `M${tx} ${ty}V${ey}`;
+    // Keep header captions below the controls' reserved row and route their leader around, never through, the capsule.
+    if (!above && dock && ty < dock.y + dock.h) {
+      ey = Math.max(ey, dock.y + dock.h + NOTE_GAP);
+      if (tx >= dock.x - NOTE_GAP && tx <= dock.x + dock.w + NOTE_GAP) {
+        ex = Math.max(NOTE_GAP, dock.x - NOTE_GAP);
+        const turn = Math.min(ty + NOTE_GAP, dock.y - NOTE_GAP);
+        d = `M${tx} ${ty}V${turn}H${ex}V${ey}`;
+      } else d = `M${tx} ${ty}V${ey}`;
+    }
     const w = Math.min(NOTE_W_CENTER, size.w - 2 * NOTE_GAP);
     // An above caption hangs from its top edge by a transform (is-above), so its height need not be known
-    return { d: `M${tx} ${ty}V${ey}`, tx, ty, ex: tx, ey, center: true, above, note: { left: clampX(tx - w / 2, w), top: above ? ey - NOTE_GAP : ey + NOTE_GAP, width: w } };
+    return { d, tx, ty, ex, ey, center: true, above, note: { left: clampX(ex - w / 2, w), top: above ? ey - NOTE_GAP : ey + NOTE_GAP, width: w } };
   }
   const tx = r.x + r.w, ty = r.y + r.h / 2;
   if (lead === 'right') {
     const ex = tx + LEAD_SIDE;
-    return { d: `M${tx} ${ty}H${ex}`, tx, ty, ex, ey: ty, center: false, note: { left: ex + NOTE_GAP, top: ty - NOTE_LIFT, width: NOTE_W } };
+    return { d: `M${tx} ${ty}H${ex}`, tx, ty, ex, ey: ty, center: false, note: { left: clampX(ex + NOTE_GAP, NOTE_W), top: ty - NOTE_LIFT, width: NOTE_W } };
   }
   const k = tx + LEAD_ELBOW, ay = Math.max(NOTE_LIFT * 4, ty - LEAD_UP), ax = Math.max(k + LEAD_SHORT, edge), c = LEAD_TURN;
-  return { d: `M${tx} ${ty}H${k - c}Q${k} ${ty} ${k} ${ty - c}V${ay + c}Q${k} ${ay} ${k + c} ${ay}H${ax}`, tx, ty, ex: ax, ey: ay, center: false, note: { left: ax + NOTE_GAP, top: ay - NOTE_LIFT, width: NOTE_W } };
+  return { d: `M${tx} ${ty}H${k - c}Q${k} ${ty} ${k} ${ty - c}V${ay + c}Q${k} ${ay} ${k + c} ${ay}H${ax}`, tx, ty, ex: ax, ey: ay, center: false, note: { left: clampX(ax + NOTE_GAP, NOTE_W), top: ay - NOTE_LIFT, width: NOTE_W } };
 }
 
 // The blur layer's mask: everything but the hole's rect (two layers, the hole one excluded from the full one)
@@ -213,6 +250,10 @@ export function Welcome(p: WelcomeProps) {
   const index = typeof stage === 'number' ? stage : -1;
   const layer = useRef<HTMLDivElement>(null);
   const ctaRef = useRef<HTMLButtonElement>(null);
+  const dockRef = useRef<HTMLDivElement>(null);
+  const [compact, setCompact] = useState(false);
+  const [menuSettings, setMenuSettings] = useState(false);
+  const [dock, setDock] = useState<Rect>();
   const [targets, setTargets] = useState<(Rect | undefined)[]>([]);
   const [cta, setCta] = useState<Rect>();
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -229,11 +270,16 @@ export function Welcome(p: WelcomeProps) {
     const root = p.scope();
     if (!box || box.width === 0 || box.height === 0) return;
     setSize({ w: box.width, h: box.height });
+    setCompact(root?.querySelector('[data-session-panel]')?.getAttribute('data-docked') === 'false');
+    setMenuSettings(!!root?.hasAttribute('data-desktop') && root.hasAttribute('data-narrow'));
+    const controls = dockRef.current;
+    // Offset geometry ignores the capsule's entrance translate, so routing stays stable while it fades in.
+    if (controls) setDock({ x: controls.offsetLeft, y: controls.offsetTop, w: controls.offsetWidth, h: controls.offsetHeight });
     const rel = (els: Element[], pad: number): Rect | undefined => {
       if (!els.length) return undefined;
       const rs = els.map(e => e.getBoundingClientRect());
-      const x = Math.min(...rs.map(r => r.left)) - box.left - pad, y = Math.min(...rs.map(r => r.top)) - box.top - pad;
-      return { x, y, w: Math.max(...rs.map(r => r.right)) - box.left + pad - x, h: Math.max(...rs.map(r => r.bottom)) - box.top + pad - y };
+      const x = Math.max(0, Math.min(...rs.map(r => r.left)) - box.left - pad), y = Math.max(0, Math.min(...rs.map(r => r.top)) - box.top - pad);
+      return { x, y, w: Math.min(box.width, Math.max(...rs.map(r => r.right)) - box.left + pad) - x, h: Math.min(box.height, Math.max(...rs.map(r => r.bottom)) - box.top + pad) - y };
     };
     setTargets(root ? STEPS.map(s => rel(s.find(root), s.pad)) : []);
     if (ctaRef.current) setCta(rel([ctaRef.current], 0));
@@ -242,9 +288,15 @@ export function Welcome(p: WelcomeProps) {
     measure();
     const ro = new ResizeObserver(measure);
     if (layer.current) ro.observe(layer.current);
+    if (dockRef.current) ro.observe(dockRef.current);
+    // The layer can resize before Shell commits its new dock/drawer tier (notably in WKWebView). Measure again after
+    // that commit, so a target never stays on the old, now-hidden column until the next tour step.
+    const root = p.scope();
+    const mo = new MutationObserver(measure);
+    if (root) mo.observe(root, { subtree: true, attributes: true, attributeFilter: ['inert', 'data-narrow', 'data-docked'] });
     const settle = setTimeout(measure, SETTLE_MS);
-    return () => { ro.disconnect(); clearTimeout(settle); };
-  }, [measure]);
+    return () => { ro.disconnect(); mo.disconnect(); clearTimeout(settle); };
+  }, [measure, compact, phase]);
   // The sample shell may still be laying out (fonts, entrances) when a step comes up: each step measures afresh
   useEffect(() => { if (phase === 'tour') measure(); }, [phase, index, measure]);
 
@@ -264,7 +316,7 @@ export function Welcome(p: WelcomeProps) {
   }, [index]);
 
   const end = () => { setStage('done'); p.onEnd(); };
-  const start = () => setStage(0);
+  const start = () => { setFrom('tour'); setStage(0); };
   const skip = () => { if (mode === 'replay') { end(); return; } setFrom('skip'); setStage('consent'); };
   const next = () => { if (index + 1 < STEPS.length) setStage(index + 1); else if (mode === 'replay') end(); else setStage('consent'); };
   const back = () => { if (index > 0) setStage(index - 1); };
@@ -295,10 +347,10 @@ export function Welcome(p: WelcomeProps) {
   // The left edge the column's captions share: where the session rows' caption starts its leader's end
   const col = targets[0];
   const edge = col ? col.x + col.w + LEAD_SIDE : 0;
-  const geo = (i: number) => { const r = targets[i]; return r && geometry(STEPS[i]!.lead, r, edge, size); };
+  const geo = (i: number) => { const r = targets[i]; return r && geometry(STEPS[i]!.lead, r, edge, size, dock); };
   const shownSteps = [...(prev !== undefined ? [prev] : []), ...(index >= 0 ? [index] : [])];
   return (
-    <div ref={layer} className="acp-shell wl-layer" data-theme={p.theme} {...appearanceDataAttrs(p.appearance)} {...lookAttrs(p.look)}>
+    <div ref={layer} className="acp-shell wl-layer" data-compact={compact || undefined} data-theme={p.theme} {...appearanceDataAttrs(p.appearance)} {...lookAttrs(p.look)}>
       <div className="wl-root" data-phase={phase}>
         <div className="wl-wash" />
         <div className="wl-blur" style={hole && phase === 'tour' ? holeMask(hole) : undefined} />
@@ -313,11 +365,11 @@ export function Welcome(p: WelcomeProps) {
           {hole && phase === 'tour' && <rect x={hole.x} y={hole.y} width={hole.w} height={hole.h} rx={HOLE_R} className="wl-hole-edge" />}
           {shownSteps.map(i => <Leader key={i} id={i} geo={geo(i)} out={i !== index} />)}
         </svg>
-        {shownSteps.map(i => <Note key={i} index={i} geo={geo(i)} out={i !== index} />)}
+        {shownSteps.map(i => <Note key={i} index={i} geo={geo(i)} menuSettings={menuSettings} out={i !== index} />)}
         {/* The window's title bar stays draggable under the flow (the desktop shell reads data-drag-region) */}
         <div className="wl-drag" data-drag-region />
         {introOn && <Intro open={phase === 'intro'} agents={p.agents} ctaRef={ctaRef} onStart={start} onSkip={skip} />}
-        {dockOn && <Dock open={phase === 'tour'} index={Math.max(0, index)} last={mode === 'replay' ? 'done' : 'consent'} onPrev={back} onNext={next} onSkip={skip} />}
+        {dockOn && <Dock dockRef={dockRef} open={phase === 'tour'} index={Math.max(0, index)} last={mode === 'replay' ? 'done' : 'consent'} onPrev={back} onNext={next} onSkip={skip} />}
         {consentOn && <Consent open={phase === 'consent'} home={p.home} theme={p.theme} motion={p.appearance.motion} error={p.error} busy={creating}
           back={mode === 'consent' ? undefined : from === 'tour' ? { label: t('welcome.back'), go: () => setStage(STEPS.length - 1) } : { label: t('welcome.consent.seeTour'), go: () => setStage('intro') }}
           onCreate={create} />}
@@ -350,7 +402,7 @@ function Leader({ id, geo, out }: { id: number; geo?: Geo; out?: boolean }) {
 }
 
 // A step's caption, set on the veil itself: its number, the title written in glyph by glyph, one or two lines under it
-function Note({ index, geo, out }: { index: number; geo?: Geo; out?: boolean }) {
+function Note({ index, geo, menuSettings, out }: { index: number; geo?: Geo; menuSettings: boolean; out?: boolean }) {
   if (!geo) return null;
   const s = STEPS[index]!;
   return (
@@ -359,7 +411,7 @@ function Note({ index, geo, out }: { index: number; geo?: Geo; out?: boolean }) 
         <span className="wl-num font-mono">{String(index + 1).padStart(2, '0')}</span>
         <span className="wl-note-title"><Chars text={s.title()} at={0.56} /></span>
       </div>
-      <div className="wl-note-body">{s.lines().map((l, i) => <span key={i} className="block">{l}</span>)}</div>
+      <div className="wl-note-body">{s.lines(menuSettings).map((l, i) => <span key={i} className="block">{l}</span>)}</div>
     </div>
   );
 }
@@ -416,11 +468,11 @@ function Intro({ open, agents, ctaRef, onStart, onSkip }: { open: boolean; agent
 // the foot): close, the step dots, back and forward. Icons only; their keys are in the tooltips and the arrows answer
 // the keyboard's arrows. Back stays (disabled) on the first step so nothing shifts; the last forward is a check when the
 // tour ends there (replay) and an arrow when the consent card follows
-function Dock({ open, index, last, onPrev, onNext, onSkip }: { open: boolean; index: number; last: 'done' | 'consent'; onPrev: () => void; onNext: () => void; onSkip: () => void }) {
+function Dock({ dockRef, open, index, last, onPrev, onNext, onSkip }: { dockRef: RefObject<HTMLDivElement | null>; open: boolean; index: number; last: 'done' | 'consent'; onPrev: () => void; onNext: () => void; onSkip: () => void }) {
   const finish = index === STEPS.length - 1 && last === 'done';
   const nextLabel = finish ? t('common.done') : t('welcome.next');
   return (
-    <div className="wl-dock popup-surface" data-open={open || undefined}>
+    <div ref={dockRef} className="wl-dock popup-surface" data-open={open || undefined}>
       <IconButton size="sm" onClick={onSkip} title={`${t('welcome.skipTour')}  ${ESC}`} aria-label={t('welcome.skipTour')}><X className="size-icon" strokeWidth={1.75} /></IconButton>
       <span className="wl-sep" />
       <div className="wl-steps" role="img" aria-label={t('welcome.stepOf', { step: index + 1, total: STEPS.length })}>

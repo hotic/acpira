@@ -1,7 +1,7 @@
 /* The first-run flow and the interface tour (welcome/Welcome.tsx): a fixed sheet over the window, beside the shell rather
-   than inside it, so the sample shell under it can give way to the real one. Over everything the shell draws (z-40 at
-   most) and under the window's own caption buttons (Windows, Linux: z-50). Every element's own style is its final,
-   visible state and entrance keyframes only say where it comes from (fill backwards): the motion kill switch (motion.css:
+   than inside it, so the sample shell under it can give way to the real one. It covers the shell's isolated stacking
+   context, including the inert sample's page-drawn caption buttons; native window controls stay outside the page.
+   Every element's own style is its final, visible state and entrance keyframes only say where it comes from (fill backwards): the motion kill switch (motion.css:
    the OS preference, appearance motion = none) drops every animation and transition, and nothing may stay hidden then.
    Layered below the utilities like every feature sheet; the kbd override that must beat base.css lives there */
 @layer components {
@@ -182,6 +182,9 @@
     .wl-bigmark { opacity: .45; }
     .wl-lede { white-space: normal; }
   }
+
+  /* Narrow headers keep the list toggle and session menu at the edges; the tour controls must not cover either. */
+  .wl-layer[data-compact] { --wl-dock-x: var(--page); --wl-dock-y: calc(var(--hdr) + var(--gap)); }
 
   /* Consent: the card rising into the wash */
   /* One column as wide as the window, so the card's own width can be a share of it (an auto column would size to the card) */
