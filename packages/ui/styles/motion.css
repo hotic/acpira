@@ -130,6 +130,12 @@
 .process-row-enter > .row-trailing { animation: acp-row-part-in var(--row-enter-duration) var(--row-part-delay) ease-out both; }
 @keyframes acp-row-part-in { from { opacity: 0; } to { opacity: 1; } }
 
+/* Fade dock entries inside the clip, faster than the fold closes, so text does not look sliced.
+   The current entry stays open and never replays the fade when neighbouring entries toggle. */
+.plan-entry-fold { opacity: 1; transition-property: grid-template-rows; }
+.plan-entry-fold .plan-dock-entry { transition: opacity var(--plan-entry-fade-in) ease; }
+.plan-entry-fold[data-closed] .plan-dock-entry { opacity: 0; transition-duration: var(--plan-entry-fade-out); }
+
 /* One measured path from the icon to a short solid-dot endpoint. The segment's own
    height is the single source of length: the line fills it and the dot hangs off its
    bottom edge. ConnectedRail eases --rail-length itself (see the note there); a CSS
