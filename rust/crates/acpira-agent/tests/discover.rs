@@ -122,6 +122,36 @@ fn a_gateway_reasoning_flag_without_catalogue_levels_gets_the_default_levels() {
 }
 
 #[test]
+fn levels_the_endpoint_lists_are_taken_as_reported() {
+  // The asgard gateway's /v1/models entry for Kimi K3.1 Pro (trimmed; recorded 2026-10-29): both spellings of the scale
+  let entry = json!({ "id": "kimi-k3.1-pro", "name": "Kimi K3.1 Pro", "reasoning": true, "context_length": 1048576, "max_output_tokens": 131072,
+    "capabilities": { "supports_reasoning": true, "reasoning": { "supported": true, "effort": ["low", "high", "max"], "default": "max" } },
+    "supported_reasoning_levels": [{ "effort": "low", "description": "Fast responses with lighter reasoning" }, { "effort": "high" }, { "effort": "max" }],
+    "default_reasoning_level": "max" });
+  let l = listed(entry);
+  assert_eq!(l.efforts, Some(vec!["low".to_owned(), "high".into(), "max".into()]));
+  let responses = provider("openai-responses", "https://gw.example/v1", "custom");
+  let m = discover::complete_for(&responses, &l, &catalog());
+  assert_eq!(m.efforts, ["low", "high", "max"]);
+  assert!(!m.estimated.iter().any(|e| e == "efforts"), "{:?}", m.estimated);
+  // Codex's shape on its own flags the model as reasoning, and levels outside the usual scale stay
+  let codex = listed(json!({ "id": "gpt-x", "supported_reasoning_levels": [{ "effort": "low" }, { "effort": "ULTRA" }] }));
+  assert_eq!((codex.efforts, codex.reasoning), (Some(vec!["low".to_owned(), "ultra".into()]), Some(true)));
+  // The endpoint wins over the catalogue's low / high / max
+  let ds = listed(json!({ "id": "deepseek-v4-flash", "capabilities": { "reasoning": { "effort": ["high", "max"] } } }));
+  assert_eq!(discover::complete(&ds, &catalog()).efforts, ["high", "max"]);
+  // An empty list is no list
+  assert_eq!(listed(json!({ "id": "y", "supported_reasoning_levels": [] })).efforts, None);
+}
+
+#[test]
+fn a_gateway_id_finds_the_catalogue_through_the_listed_name() {
+  let m = model(json!({ "id": "ds-flash", "name": "DeepSeek V4 Flash" }));
+  assert_eq!((m.context, m.efforts.clone()), (Some(1000000), vec!["low".to_owned(), "high".into(), "max".into()]));
+  assert!(m.estimated.iter().any(|e| e == "efforts"));
+}
+
+#[test]
 fn ollama_show_fills_the_window_and_capabilities() {
   let mut l = listed(json!({ "id": "qwen3:8b", "object": "model", "owned_by": "library" }));
   discover::apply_ollama_show(

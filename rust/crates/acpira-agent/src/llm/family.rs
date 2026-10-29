@@ -11,11 +11,11 @@ use acpira_shared::providers::{Provider, ProviderModel, Thinking};
 /// How a request turns thinking on / off and picks a level
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThinkingParam {
-  /// No switch; the model id decides (Kimi's -thinking models)
+  /// No switch; the model id decides (Kimi's -thinking models). A picked level still goes out as `reasoning_effort`
   None,
   /// `thinking: { type: "enabled" | "disabled" }` plus `reasoning_effort` for the level (GLM, DeepSeek)
   ThinkingType,
-  /// `enable_thinking: bool` (Qwen on DashScope)
+  /// `enable_thinking: bool` (Qwen on DashScope), a picked level beside it as `reasoning_effort`
   EnableThinking,
   /// `reasoning_effort: <level>` (OpenAI-style servers)
   ReasoningEffort,
@@ -165,15 +165,23 @@ pub fn resolve(provider: &Provider, model: &ProviderModel) -> Family {
   family
 }
 
-/// Add the thinking switch and level to a request body. `Auto` without a level leaves the provider's default
+/// Add the thinking switch and level to a request body. `Auto` without a level leaves the provider's default. A level
+/// is only ever picked from the scale the model offers (the endpoint's list, the catalogue's or the settings dialog's),
+/// so a family whose switch has no level of its own still sends it as `reasoning_effort`: Kimi K3 and Qwen 3.8 list
+/// effort levels, and dropping the pick made the composer's scale change nothing
 pub fn apply_thinking(body: &mut Map<String, Value>, family: &Family, thinking: Thinking, effort: Option<&str>) {
   let on = match thinking {
     Thinking::On => Some(true),
     Thinking::Off => Some(false),
     Thinking::Auto => None,
   };
+  let level = effort.filter(|_| on != Some(false));
   match family.thinking {
-    ThinkingParam::None => {}
+    ThinkingParam::None => {
+      if let Some(e) = level {
+        body.insert("reasoning_effort".into(), Value::from(e));
+      }
+    }
     ThinkingParam::ThinkingType => {
       if let Some(on) = on {
         body.insert("thinking".into(), json!({ "type": if on { "enabled" } else { "disabled" } }));
@@ -189,6 +197,9 @@ pub fn apply_thinking(body: &mut Map<String, Value>, family: &Family, thinking: 
     ThinkingParam::EnableThinking => {
       if let Some(on) = on {
         body.insert("enable_thinking".into(), Value::Bool(on));
+      }
+      if let Some(e) = level {
+        body.insert("reasoning_effort".into(), Value::from(e));
       }
     }
     ThinkingParam::ReasoningEffort => {
@@ -264,9 +275,19 @@ mod tests {
     let mut b = Map::new();
     apply_thinking(&mut b, &by_name("glm").unwrap(), Thinking::Off, None);
     assert_eq!(b["thinking"], json!({ "type": "disabled" }));
+    // A family whose switch has no level of its own still sends a picked one, and nothing without a pick
     let mut b = Map::new();
-    apply_thinking(&mut b, &by_name("qwen").unwrap(), Thinking::Auto, Some("high"));
-    assert!(b.is_empty(), "auto without a family level leaves the default");
+    apply_thinking(&mut b, &by_name("qwen").unwrap(), Thinking::Auto, Some("xhigh"));
+    assert_eq!(Value::Object(b), json!({ "reasoning_effort": "xhigh" }));
+    let mut b = Map::new();
+    apply_thinking(&mut b, &by_name("qwen").unwrap(), Thinking::Off, Some("xhigh"));
+    assert_eq!(Value::Object(b), json!({ "enable_thinking": false }));
+    let mut b = Map::new();
+    apply_thinking(&mut b, &by_name("kimi").unwrap(), Thinking::Auto, Some("max"));
+    assert_eq!(Value::Object(b), json!({ "reasoning_effort": "max" }));
+    let mut b = Map::new();
+    apply_thinking(&mut b, &by_name("kimi").unwrap(), Thinking::Auto, None);
+    assert!(b.is_empty(), "auto without a level leaves the default");
     let mut b = Map::new();
     apply_thinking(&mut b, &GENERIC, Thinking::Auto, Some("low"));
     assert_eq!(b["reasoning_effort"], "low");

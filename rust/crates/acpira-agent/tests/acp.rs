@@ -59,3 +59,27 @@ async fn a_model_added_by_id_takes_its_levels_from_the_catalogue() {
   let r = h.conn.request("session/set_config_option", json!({ "sessionId": sid, "configId": "model", "value": "mock/gpt-6.1-sol" })).await.unwrap();
   assert_eq!(r["configOptions"][1]["currentValue"], "high");
 }
+
+#[tokio::test]
+async fn a_guessed_scale_takes_the_catalogues_and_a_saved_one_is_kept() {
+  let h = Harness::start().await;
+  // A gateway's own id the catalogue only knows by its name, still holding the default levels guessed when it was
+  // added, beside the same model whose levels were saved in the settings dialog
+  h.providers(
+    "http://127.0.0.1:1",
+    json!([
+      { "id": "k3-gw", "name": "Kimi K3", "efforts": ["low", "medium", "high"], "estimated": ["efforts"] },
+      { "id": "kimi-k3", "efforts": ["low", "medium", "high"] },
+    ]),
+  );
+  let levels = |r: &serde_json::Value| -> Vec<String> {
+    r["configOptions"][1]["options"].as_array().unwrap().iter().map(|o| o["value"].as_str().unwrap().to_owned()).collect()
+  };
+  let s = h.new_session().await;
+  let sid = s["sessionId"].as_str().unwrap();
+  assert_eq!(levels(&s), ["low", "high", "max"]);
+  let r = h.conn.request("session/set_config_option", json!({ "sessionId": sid, "configId": "effort", "value": "max" })).await.unwrap();
+  assert_eq!(r["configOptions"][1]["currentValue"], "max");
+  let r = h.conn.request("session/set_config_option", json!({ "sessionId": sid, "configId": "model", "value": "mock/kimi-k3" })).await.unwrap();
+  assert_eq!(levels(&r), ["low", "medium", "high"]);
+}

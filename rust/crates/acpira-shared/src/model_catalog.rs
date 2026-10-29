@@ -233,7 +233,19 @@ impl Catalog {
 
   /// The catalogue entry an option stands for: its id first, then its display name
   pub fn resolve(&self, option: &SessionOption) -> Option<&CatalogModel> {
-    self.get(&model_key(&option.id)).or_else(|| self.get(&model_key(&option.name)))
+    self.lookup(&option.id, Some(&option.name))
+  }
+
+  /// The catalogue entry a model id stands for, else its display name: a gateway's own id (`k3.1-pro`) still finds
+  /// `kimi-k3.1-pro` through the name it lists. The same order `resolve` uses, so discovery, the built-in agent and the
+  /// narrowing agree on which entry a model is
+  pub fn lookup(&self, id: &str, name: Option<&str>) -> Option<&CatalogModel> {
+    self.get(&model_key(id)).or_else(|| name.filter(|n| !n.trim().is_empty()).and_then(|n| self.get(&model_key(n))))
+  }
+
+  /// The effort levels the catalogue lists for a model it knows as reasoning; None when it lists none
+  pub fn efforts(&self, id: &str, name: Option<&str>) -> Option<&[String]> {
+    self.lookup(id, name).filter(|c| c.reasoning && !c.efforts.is_empty()).map(|c| c.efforts.as_slice())
   }
 }
 
