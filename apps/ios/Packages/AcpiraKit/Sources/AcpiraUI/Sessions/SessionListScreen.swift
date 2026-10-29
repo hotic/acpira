@@ -510,14 +510,17 @@ struct ProjectHeader: View {
   var body: some View {
     Button(action: onToggle) {
       HStack(spacing: Metrics.gap) {
-        // The folder in the top-level session marks' column (its own sessions sit a step in), the system's filled
-        // folder so it weighs what the filled logos weigh. A pin never takes its place (it says "pinned", not "project")
-        Image(systemName: "folder.fill").resizable().scaledToFit()
-          .frame(width: Metrics.iconCtl, height: Metrics.iconCtl)
-          .foregroundStyle(Palette.fg2)
-          // Centred on the marks' column, which it overhangs evenly by its extra width
-          .frame(width: Metrics.rowMark)
-          .frame(width: Metrics.lead, alignment: .leading)
+        // The folder in the top-level session marks' column (its own sessions sit a step in): the desktop list's
+        // glyph, shut or open with the fold (SessionList.tsx), so both lists draw one folder. A pin never takes its
+        // place (it says "pinned", not "project")
+        ZStack {
+          // Icon's defaults are the desktop's: the icon size, a 1.5 stroke
+          Icon(.folder).opacity(open ? 0 : 1)
+          Icon(.folderOpen).opacity(open ? 1 : 0)
+        }
+        .foregroundStyle(Palette.fg3)
+        .frame(width: Metrics.rowMark)
+        .frame(width: Metrics.lead, alignment: .leading)
         HStack(spacing: Metrics.s1_5) {
           Text(web: projectName(cwd), paragraph: false).lineLimit(1).truncationMode(.tail)
             .textStyle(TypeScale.field, weight: .semibold)

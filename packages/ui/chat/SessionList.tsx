@@ -658,25 +658,31 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
     const late = list.slice(cut + extra).find(s => s.id === activeId);
     const rest = late ? list.slice(cut).filter(s => s !== late) : list.slice(cut);
     const shown = Math.min(extra, rest.length);
-    return <>
-      {list.slice(0, cut).map(renderItem)}
-      {/* One fold per page, so each click opens only the page it adds (a closed fold releases its rows) */}
-      {rest.length > 0 && pages(rest).map((page, i) => <Fold key={i} open={shown > i * MORE_PAGE}>{page.map(renderItem)}</Fold>)}
-      {late && renderItem(late)}
-      {rest.length > 0 && <MoreRow flush={flush} open={shown >= rest.length} rest={rest.slice(shown)} nameOf={nameOf} onToggle={() => stepMore(key, rest.length)} />}
-    </>;
+    // A flat keyed array, not a fragment: a project's pinned rows are its siblings, so a row pinned or unpinned in place
+    // keeps its element (renderBody)
+    return [
+      ...list.slice(0, cut).map(renderItem),
+      // One fold per page, so each click opens only the page it adds (a closed fold releases its rows)
+      ...(rest.length > 0 ? pages(rest).map((page, i) => <Fold key={`fold:${i}`} open={shown > i * MORE_PAGE}>{page.map(renderItem)}</Fold>) : []),
+      late && renderItem(late),
+      rest.length > 0 && <MoreRow key="more" flush={flush} open={shown >= rest.length} rest={rest.slice(shown)} nameOf={nameOf} onToggle={() => stepMore(key, rest.length)} />,
+    ];
   };
   const renderBody = (p: ProjectNode) => {
     // A filed session of this project being dragged needs somewhere to land even when nothing is loose
     const strip = !p.loose.length && !!heldSession && heldSession.cwd === p.cwd && !!categoryOf(heldSession, categories);
     return <>
-      {/* Pinned first, outside the "more" cut and the loose drop zone (pinned rows never drag) */}
-      {p.pinned.map(renderItem)}
-      {/* The pinned rows end at a short faded rule, the IDE list's, instead of a pin glyph on each row's tail */}
-      {!flat && <PinDivider on={p.pinned.length > 0 && (p.loose.length > 0 || strip || p.categories.length > 0)} />}
-      {(p.loose.length > 0 || strip) && (
+      {/* Pinned first, outside the "more" cut (pinned rows never drag). They share one keyed list with the loose rows:
+          under separate parents a row pinned or unpinned in place was remounted, and the new element, painted unhovered
+          under the pointer, flashed its time and turned its mark over again as the hover came back */}
+      {(p.pinned.length > 0 || p.loose.length > 0 || strip) && (
         <div data-drop={`loose:${p.cwd}`} data-loose={p.cwd} className={cn('flex flex-col rounded-lg', FRAME)}>
-          {cutRows(p.cwd, p.loose)}
+          {[
+            ...p.pinned.map(renderItem),
+            // The pinned rows end at a short faded rule, the IDE list's, instead of a pin glyph on each row's tail
+            !flat && <PinDivider key="pin-divider" on={p.pinned.length > 0 && (p.loose.length > 0 || strip || p.categories.length > 0)} />,
+            ...cutRows(p.cwd, p.loose),
+          ]}
           {strip && <div className="flex min-h-row items-center px-2 text-3 text-fg-3">{t('session.category.remove')}</div>}
         </div>
       )}
@@ -1007,13 +1013,14 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   );
 });
 
-// The rule between the pinned rows and the rest. Kept mounted so both pinning and unpinning can transition
+// The rule between the pinned rows and the rest. Kept mounted so both pinning and unpinning can fade it. Its room changes
+// at once: the rows around it slide through FlipRows, and a height transition under those slides made them overshoot
 function PinDivider({ on }: { on: boolean }) {
   return (
     <div
       role="presentation"
       className={cn(
-        'shrink-0 bg-linear-to-r from-transparent via-line to-transparent transition-[height,margin,opacity,scale] duration-(--dur-open) ease-out',
+        'shrink-0 bg-linear-to-r from-transparent via-line to-transparent transition-[opacity,scale] duration-(--dur-open) ease-out',
         on ? 'my-1 h-px scale-x-100 opacity-100' : 'my-0 h-0 scale-x-0 opacity-0',
       )}
     />
