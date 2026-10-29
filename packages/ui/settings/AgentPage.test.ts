@@ -67,7 +67,7 @@ describe('agent installation settings', () => {
     const markup = renderAgent({ id: 'codex', name: 'Codex', available: false, missing: ['codex-acp'], searched: ['/preview/.local/bin', '/usr/local/bin'] });
     expect(markup).toContain('Searched');
     expect(markup).toContain('~/.local/bin  /usr/local/bin');
-    expect(markup).toContain('login shell profile');
+    expect(markup).toContain('login shell’s PATH');
   });
 
   // Reported 2026-10-14: the Status row arrived with the first probe's reply and pushed the page down
