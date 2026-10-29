@@ -234,8 +234,10 @@ struct SystemChatBar: ViewModifier {
 ///
 /// Shell.tsx Thread: stick-to-bottom following. While a turn runs, growth of the transcript (new content, paced
 /// text) keeps the bottom in view until the reader drags the thread; dragging away from the bottom releases the
-/// follow, dragging back to it restores it. A settled session never moves on its own, so a fold opened by a tap keeps
-/// the row under the finger in place
+/// follow, dragging back to it restores it. A turn ending under a following thread keeps the bottom in view while the
+/// reply's last lines pace out and the process folds away; one that ended while the app was in the background lands on
+/// the bottom on the way back, wherever the reader had left it. Otherwise a settled session never moves on its own, so
+/// a fold opened by a tap keeps the row under the finger in place
 struct Thread: View {
   let session: SessionView
   /// `-open`: folds pre-opened in the last exchange, as in the full-length render
@@ -247,6 +249,11 @@ struct Thread: View {
   @State private var gesture = ScrollGesture()
   /// The offset the thread is at, kept outside SwiftUI's state so scrolling does not redraw the thread
   @State private var offset = ScrollOffset()
+  /// The turn just ended under a following thread: growth still follows until the reader drags or a fold moves
+  @State private var settling = false
+  /// A turn was running as the app went to the background; cleared once it ends or the reader drags after coming back
+  @State private var leftRunning = false
+  @Environment(\.scenePhase) private var scenePhase
 
   var body: some View {
     ScrollView(.vertical) {
@@ -264,6 +271,10 @@ struct Thread: View {
     .onScrollPhaseChange { _, phase in
       dragging = phase == .interacting || phase == .tracking || phase == .decelerating
       gesture.active = dragging
+      if dragging {
+        settling = false
+        leftRunning = false
+      }
     }
     .onScrollGeometryChange(for: Bool.self) { g in
       // At the bottom within a hair: the last line may sit a fraction of a point short after a layout pass
@@ -272,8 +283,20 @@ struct Thread: View {
       if dragging { follow = atBottom }
     }
     .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { old, new in
-      guard session.running, follow, !dragging, new > old else { return }
+      guard session.running || settling, follow, !dragging, new > old else { return }
       position.scrollTo(edge: .bottom)
+    }
+    // The turn's end: in view, a following thread stays on the bottom; ended while away, the thread goes there whatever
+    // the reader had left, as the reply is what they came back for
+    .onChange(of: session.running) { was, now in
+      guard was, !now, follow || leftRunning else { return }
+      leftRunning = false
+      follow = true
+      settling = true
+      position.scrollTo(edge: .bottom)
+    }
+    .onChange(of: scenePhase) { _, now in
+      if now == .background { leftRunning = session.running }
     }
     // `scrollTo(y:)` takes the point under the content's top inset; `contentOffset` counts from the frame's top edge
     .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { _, y in offset.y = y }
@@ -285,8 +308,10 @@ struct Thread: View {
   /// by the fold's height (iOS 27 simulator, 2026-10-27)
   private var hold: HoldScroll {
     let pinned = session.running && follow
-    let position = $position, offset = offset
+    let position = $position, offset = offset, settled = $settling
     return HoldScroll {
+      // A fold the reader moved ends the settling follow: the row under the finger stays put from now on
+      settled.wrappedValue = false
       guard !pinned else { return }
       position.wrappedValue.scrollTo(y: offset.y)
     }
