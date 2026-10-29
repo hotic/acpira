@@ -1,5 +1,6 @@
 import AcpiraDesign
 import AcpiraModels
+import QuickLook
 import SwiftUI
 
 // The user's prompt card (Turns.tsx UserMessage + Attachments.tsx TurnAttachments), the permission card
@@ -93,35 +94,55 @@ struct SteeredMessage: View {
 /// Attachment pills and image tiles, wrapping
 struct TurnAttachments: View {
   let attachments: [Attachment]
+  @State private var preview: URL?
+  @Environment(\.media) private var media
+  @Environment(AppModel.self) private var model: AppModel?
 
   var body: some View {
+    let opener = FileOpener(model: model, session: media.session) { preview = $0 }
     FlowLayout(spacing: Metrics.gap) {
       ForEach(Array(attachments.enumerated()), id: \.offset) { _, item in
         switch item {
         case .image(let blob, _, let name):
           // Inline pixels when the app staged the photo itself, else the engine's blob
           AttachmentThumbnail(blob: blob, name: name)
-        case .file(_, let name), .text(_, let name, _):
+        // A file on the computer opens in the chat's file page, as a staged one does (FileOpener)
+        case .file(let uri, let name):
+          AttachmentPill(name: name, icon: .fileText, onOpen: opener.open(uri: uri))
+        case .text(_, let name, _):
           AttachmentPill(name: name, icon: .fileText)
-        case .selection(_, let name, let start, let end, _):
-          AttachmentPill(name: "\(name) \(start == end ? "L\(start)" : "L\(start)-\(end)")", icon: .textSelect)
+        case .selection(let uri, let name, let start, let end, _):
+          AttachmentPill(name: "\(name) \(start == end ? "L\(start)" : "L\(start)-\(end)")", icon: .textSelect,
+                         onOpen: opener.open(uri: uri, line: start))
         case .quote, .unknown:
           EmptyView()
         }
       }
     }
+    .quickLookPreview($preview)
   }
 }
 
 struct AttachmentPill: View {
   let name: String
   let icon: LucideIcon
+  /// What a tap on the glyph and name opens (FileOpener), if the file can be shown here
+  var onOpen: (() -> Void)? = nil
   /// A staged pill's ✕, after the name
   var onRemove: (() -> Void)? = nil
   var body: some View {
     HStack(spacing: Metrics.s1) {
-      Icon(icon, size: WebMetrics.icon).foregroundStyle(Palette.fg3)
-      Text(web: name).lineLimit(1).truncationMode(.middle)
+      let label = HStack(spacing: Metrics.s1) {
+        Icon(icon, size: WebMetrics.icon).foregroundStyle(Palette.fg3)
+        Text(web: name).lineLimit(1).truncationMode(.middle)
+      }
+      if let onOpen {
+        Button(action: onOpen) { label.contentShape(Rectangle()) }
+          .buttonStyle(.plain)
+          .accessibilityHint(Text(web: t("common.open")))
+      } else {
+        label
+      }
       if let onRemove {
         Button(action: onRemove) {
           Icon(.x, size: Metrics.chevron, strokeWidth: 2)

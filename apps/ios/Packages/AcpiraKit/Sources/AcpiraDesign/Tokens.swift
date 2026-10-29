@@ -402,6 +402,8 @@ public enum Metrics {
   public static let gooChipInset: CGFloat = 12
   /// The dim behind an open picker: a square wider and taller than any screen, centred on the composer
   public static let gooScrim: CGFloat = 3000
+  /// How much of a composer card's text, attachments and send still show while a picker's beans lie over it
+  public static let gooRecede: Double = 0.35
   /// A panel row's inset
   public static let gooPadX: CGFloat = 14
   /// The scale a chip's glyph swaps from (the model's mark and ×)
@@ -453,6 +455,10 @@ public enum Motion {
   public static let gooStagger: CGFloat = 0.18
   /// The longest lag the last piece may have, however many pieces there are
   public static let gooStaggerMax: CGFloat = 0.45
+  /// The composer growing from the bar into the card and back: no bounce, about as long as the keyboard's own rise
+  /// (0.38 s on iOS 27), so the card and the keyboard land together. On `gooSpring` the card kept growing for most of
+  /// a second after the keyboard had settled
+  public static let composerMorph = Animation.smooth(duration: 0.38)
   /// A chip's glyph swapping for × as its pieces leave, and back as they land
   public static let gooSwap = Animation.easeOut(duration: 0.18)
   public static let gooSwapBack = Animation.easeOut(duration: 0.22).delay(0.22)
@@ -462,6 +468,8 @@ public enum Motion {
   public static let gooListIn = Animation.easeOut(duration: dur).delay(dur / 2)
   /// The dim lifting behind a closing picker: held while the pieces go home
   public static let gooDimOut = Animation.easeIn(duration: 0.42)
+  /// When a closing picker's last drop is home in its chip (`gooSwapBack` brings the chip's glyph back then)
+  public static let gooHome: Double = 0.44
   /// The agent ring moves at the liquid pickers' pace: their spring, and each bubble's lag behind the one before
   /// (clockwise out, the last one first on the way home, at half the lag). A 0.46 s spring with a 0.03 s lag put the
   /// whole ring out in a quarter of a second and read as a pop with no transition, as the beans once did

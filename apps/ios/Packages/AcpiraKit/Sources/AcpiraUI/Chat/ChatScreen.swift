@@ -57,6 +57,10 @@ struct ChatScreen: View {
       DockSeat(homeInset: homeInset) {
         Dock(session: session, draft: Bindable(draft).text, staged: Bindable(draft).staged, edit: Bindable(draft).edit)
       }
+      // The dock takes the height it asks for and the thread scrolls in what is left. Offered an even share of the
+      // stack instead, a tall card (a long draft under a staged strip, with the keyboard up) came out shorter than its
+      // content and the text ran under the chips and send
+      .layoutPriority(1)
     }
     // The keyboard's safe area still lifts the dock; only the container's (the home indicator) is taken over
     .ignoresSafeArea(.container, edges: .bottom)
@@ -69,7 +73,10 @@ struct ChatScreen: View {
       // switching to the agent's first account
       if initialPopup == "account" { accountOpen = true }
       if initialPopup == "quotes" { model.seedQuotes(id) }
-      if initialPopup == "staged" { model.seedStaged(id) }
+      // `staged`, `staged.expand`, and any popup ending in `.staged` (`focus.model.staged`) seed the staged strip
+      if let popup = initialPopup, popup == "staged" || popup == "staged.expand" || popup.hasSuffix(".staged") {
+        model.seedStaged(id)
+      }
       if initialPopup == "edit" { model.beginEditLast(id) }
       if initialPopup == "toast", let account = model.accounts.first(where: { $0.agent == agent.id }) {
         Task {
@@ -180,7 +187,8 @@ struct ChatScreen: View {
 
 // MARK: - Header
 
-/// What the header's buttons and its "…" menu do; `account` is nil when the agent has no account menu
+/// What the header's buttons and its "…" menu do; `account` is nil when the agent has no account menu. The session list's
+/// row menu is the same menu with the chat's own entries (account, changes, subagents, terminal, settings) left nil
 struct HeaderActions {
   var back: () -> Void = {}
   var new: () -> Void = {}
@@ -267,7 +275,15 @@ struct Thread: View {
     .scrollPosition($position)
     .defaultScrollAnchor(.bottom, for: .initialOffset)
     .defaultScrollAnchor(.top, for: .alignment)
-    .scrollDismissesKeyboard(.interactively)
+    // Interactive dismissal waits for the finger to reach the keyboard; even a short drag should end typing.
+    .scrollDismissesKeyboard(.immediately)
+    .contentShape(Rectangle())
+    .simultaneousGesture(TapGesture().onEnded {
+      // Keep transcript buttons and links working on the same tap that dismisses the composer keyboard.
+      #if canImport(UIKit)
+      UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+      #endif
+    })
     .onScrollPhaseChange { _, phase in
       dragging = phase == .interacting || phase == .tracking || phase == .decelerating
       gesture.active = dragging

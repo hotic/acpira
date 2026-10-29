@@ -1,6 +1,7 @@
 import AcpiraDesign
 import AcpiraFixtures
 import AcpiraModels
+import QuickLook
 import SwiftUI
 #if canImport(PhotosUI)
 import PhotosUI
@@ -29,6 +30,10 @@ struct Composer: View {
   /// A new value focuses the field (a sent prompt taken in for editing, HistoryEditor's autoFocus)
   var focusKey: Int?
   @FocusState private var focused: Bool
+  /// The card form, owned here rather than read off `focused`. FocusState turns true only once the text view has
+  /// become first responder, a round trip through the keyboard service: 140–250 ms after the tap in the simulator, and
+  /// on a phone after the keyboard had already risen, so the card began to grow late, in a transaction of its own
+  @State private var card = false
   @Environment(\.snapshot) private var snapshot
   @Environment(\.motionEnabled) private var motion
   /// The liquid chip that is open (attach, model), if any, the bean whose panel is out (1…, 0 for none), the list the
@@ -39,8 +44,6 @@ struct Composer: View {
   @State private var source: AttachSource?
   /// The width of the bar's group of `+` and the mark (the mark is gone when the agent offers nothing to pick)
   @State private var lead = Metrics.barCtl * 2
-  /// The bar's height, so the beans rise over the card while typing
-  @State private var tall = Metrics.barCtl
   /// The chips' top on the screen below its bar (`GooColumn.space`): how far their beans may rise
   @State private var chipTop = CGFloat.infinity
   @Environment(\.initialPopup) private var initialPopup
@@ -57,6 +60,10 @@ struct Composer: View {
   @State private var stripHeight: CGFloat = 0
   /// The draft is open in the whole-screen editor (ExpandedComposer)
   @State private var fullEditor = false
+  /// The editor closed for a file page rather than back to the card
+  @State private var leftEditor = false
+  /// The card shows a plain plate for its glass: from the moment a picker opens over it until the last drop is home
+  @State private var plate = false
   @Environment(FileSearch.self) private var files: FileSearch?
   @Environment(\.mentionPersonas) private var personas
   @Environment(\.compactAt) private var compactAt
@@ -73,9 +80,12 @@ struct Composer: View {
 
   private var filled: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !staged.isEmpty }
 
+  /// The card form: opened for typing, or a draft waiting
+  private var expanded: Bool { card || filled }
+
   /// The field: a snapshot draws the placeholder (or the draft) where the field would be
   private var field: some View {
-    let rest = !(focused || filled)
+    let rest = !expanded
     return Group {
       if snapshot {
         Text(web: text.isEmpty ? rest ? restHint : hint : text)
@@ -98,6 +108,9 @@ struct Composer: View {
           .overlay(alignment: .topLeading) {
             if rest && text.isEmpty {
               Text(web: restHint).foregroundStyle(Palette.fg3).allowsHitTesting(false)
+                // Gone at once, the frame the field's own hint appears: faded over the card's growth it showed under
+                // that hint, set with other spacing, and the two read as garbled doubled text
+                .transition(.identity)
             }
           }
           .accessibilityLabel(Text(web: hint))
@@ -132,7 +145,7 @@ struct Composer: View {
 
   /// The card holds enough lines to offer the whole-screen editor
   private var offersExpand: Bool {
-    (focused || filled) && fieldHeight >= TypeScale.field.lineHeight * CGFloat(Self.expandLines) - Metrics.hairline
+    expanded && fieldHeight >= TypeScale.field.lineHeight * CGFloat(Self.expandLines) - Metrics.hairline
   }
 
   /// The expand corner at the card's top trailing side, centred on the first line, in the column the card keeps free
@@ -174,10 +187,8 @@ struct Composer: View {
   /// lights only the circle under the finger, and the beans melt out of a chip. The beans are glass in the same
   /// container (`gooGlass()`), over a dim the bar spreads under itself
   var body: some View {
-    let expanded = focused || filled
     let corner = expanded ? Metrics.rComposer : Metrics.barCtl / 2
     let line = (Metrics.barCtl - TypeScale.field.lineHeight) / 2
-    let lift = beanLift
     let room = chipTop - Metrics.s2
     return VStack(alignment: .leading, spacing: Metrics.s1_5) {
       suggestions
@@ -205,18 +216,37 @@ struct Composer: View {
               // In the card the text stops short of the expand corner's column
               .padding(.trailing, expanded ? Metrics.s3 + Metrics.icon + Metrics.s1 : Metrics.barCtl + Metrics.s1)
           }
+          // While a picker is out the card's text and strip recede with the page, so only the picker reads. Under
+          // beans lying on the draft they blur as well, or the lines read through between the beans
+          .animation(recedeCurve) { $0.opacity(goo != nil ? Metrics.gooRecede : 1).blur(radius: receded ? Metrics.s1 : 0) }
           // Strip tiles scrolled to the side end at the card's rounded edge
           .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
-          .glassEffect(GlassStyle.control, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+          // Under the beans the glass gives way to a plain plate, dimmed with the page: beans over glass in the same
+          // container melt into it, over a plate they stay whole. The chips keep their own glass circles, so the beans
+          // still leave the chip. Glass cannot fade, so the plate stands in for it at once, outlined as a card, and the
+          // glass only comes back once the last drop is home: dropped while the plate faded in, the card was gone for
+          // a moment, and back as the beans left, the drops crossed sharp glass on their way home
+          .background {
+            let shape = RoundedRectangle(cornerRadius: corner, style: .continuous)
+            ZStack {
+              shape.fill(Palette.cardBg)
+                .overlay(shape.strokeBorder(Palette.cardLine))
+                .opacity(plate ? 1 : 0)
+                .transaction { $0.animation = nil }
+              shape.fill(Palette.gooDim)
+                .animation(recedeCurve) { $0.opacity(receded ? 1 : 0) }
+            }
+          }
+          .glassEffect(plate ? .identity : GlassStyle.control, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
           .contentShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
-          .onTapGesture { focused = true }
+          .onTapGesture(perform: focusField)
           // The chips' row at the start; the room after them takes no taps, so they reach the field under it
           HStack(spacing: 0) {
             HStack(spacing: 0) {
-              LiquidAttach(open: $goo, stage: $gooStage, lift: lift, room: room, paste: paste, personas: personas,
+              LiquidAttach(open: $goo, stage: $gooStage, room: room, paste: paste, personas: personas,
                            onSummon: summon) { source = $0 }
-              LiquidControls(controls: session.controls, open: $goo, stage: $gooStage, deeper: $gooDeeper, lift: lift,
-                             room: room, onSetMode: onSetMode, onSetConfig: onSetConfig)
+              LiquidControls(controls: session.controls, open: $goo, stage: $gooStage, deeper: $gooDeeper, room: room,
+                             onSetMode: onSetMode, onSetConfig: onSetConfig)
             }
             .gooGlass()
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { lead = $0 }
@@ -236,18 +266,22 @@ struct Composer: View {
           send
         }
         .padding([.trailing, .bottom], expanded ? Metrics.s1 : 0)
+        .animation(recedeCurve) { $0.opacity(goo != nil ? Metrics.gooRecede : 1) }
       }
       // Over the container for the same reason as send
-      .overlay(alignment: .topTrailing) { expandCorner }
-      .animation(motion ? Motion.gooSpring : nil, value: expanded)
+      .overlay(alignment: .topTrailing) {
+        expandCorner.animation(recedeCurve) { $0.opacity(goo != nil ? Metrics.gooRecede : 1) }
+      }
+      .animation(motion ? Motion.composerMorph : nil, value: expanded)
       .animation(motion ? Motion.quick : nil, value: offersExpand)
     }
-    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { tall = $0 }
-    // The dim under an open picker, as Messages dims its page under `+`: under the bar's glass, over the transcript.
-    // Taps on it go to the screen's `gooLayer()`
+    // The backdrop under an open picker, as Messages blurs and dims its page under `+`: under the bar's glass, over the
+    // transcript. Blurred as well as dimmed, so a caption never reads against the words or cards behind it (a dim alone
+    // left the floating to-do card legible under the beans). Taps on it go to the screen's `gooLayer()`
     .background {
       Rectangle()
-        .fill(Palette.gooDim)
+        .fill(.ultraThinMaterial)
+        .overlay(Palette.gooDim)
         .frame(width: Metrics.gooScrim, height: Metrics.gooScrim)
         .opacity(goo == nil ? 0 : 1)
         .allowsHitTesting(false)
@@ -255,13 +289,17 @@ struct Composer: View {
         .animation(motion ? goo == nil ? Motion.gooDimOut : Motion.gooSpring : nil, value: goo)
     }
     .onAppear(perform: startPopup)
-    .modifier(FullEditorCover(open: $fullEditor, onDismiss: { focused = true }) {
-      ExpandedComposer(text: $text, filled: filled, onSend: {
+    // Collapsing gives the card its focus back; leaving for a file page does not, or the keyboard rose over that page
+    .modifier(FullEditorCover(open: $fullEditor, onDismiss: { if leftEditor { leftEditor = false } else { focused = true } }) {
+      ExpandedComposer(text: $text, staged: $staged, filled: filled, onSend: {
         onSend(text, staged)
         text = ""
         staged = []
         fullEditor = false
-      }, onCollapse: { fullEditor = false })
+      }, onCollapse: { fullEditor = false }, onLeave: {
+        leftEditor = true
+        fullEditor = false
+      })
     })
     .modifier(AttachPickers(staged: $staged, source: $source))
     .modifier(PasteWatch(ready: $pasteReady, forced: initialPopup == "attach.paste"))
@@ -273,25 +311,47 @@ struct Composer: View {
       typed = now
       selection = TextSelection(insertionPoint: now.endIndex)
     }
-    .onChange(of: focusKey) { _, key in if key != nil { focused = true } }
-    // A tall card under the keyboard leaves a column no room to rise over it: a chip open there lowers the keyboard,
-    // so the card sinks and the beans rise clear of the bar (checked again as the card moves: the keyboard may rise
-    // after the chip opened)
-    .onChange(of: goo) { lowerKeyboardForBeans() }
-    .onChange(of: chipTop) { lowerKeyboardForBeans() }
+    .onChange(of: focusKey) { _, key in if key != nil { focusField() } }
+    // The plate stands in for the card's glass as a picker opens over it, until its last drop is home
+    .onChange(of: goo) { _, now in if now != nil, expanded { plate = true } }
+    .task(id: goo) {
+      guard goo == nil, plate, (try? await Task.sleep(for: .seconds(motion ? Motion.gooHome : 0))) != nil else { return }
+      plate = false
+    }
+    // The card follows focus that comes or goes some other way (the keyboard swiped away, a pick that sets `focused`)
+    .onChange(of: focused) { _, now in
+      guard now != card else { return }
+      withAnimation(motion ? Motion.composerMorph : nil) { card = now }
+    }
+    // A focus that never lands gives the card back
+    .task(id: card) {
+      guard card, !focused, (try? await Task.sleep(for: Self.focusGrace)) != nil, card, !focused else { return }
+      withAnimation(motion ? Motion.composerMorph : nil) { card = false }
+    }
+    // A screen with something of its own over the composer's beans (the new session's hero) hides it while they are out
+    .preference(key: ComposerPickerKey.self, value: goo != nil)
     .environment(\.composerInk, true)
   }
 
-  /// In the card the beans rest over its top edge, not inside it
-  private var beanLift: CGFloat { focused || filled ? max(0, tall - Metrics.s1 - Metrics.barCtl) : 0 }
-
-  /// The beans a long column holds (`+` with the paste bean, the mark with a sidekick)
-  private static let tallColumn = 4
-
-  private func lowerKeyboardForBeans() {
-    let need = CGFloat(Self.tallColumn) * (Metrics.barCtl + Metrics.gooGap)
-    if goo != nil, focused, chipTop - Metrics.s2 - beanLift < need { focused = false }
+  /// The bar's tap and every other way in: the card opens at once, in an animated transaction that also moves the
+  /// thread above it, and the field asks for the keyboard. The card no longer waits for focus to land, so it grows as
+  /// the keyboard rises instead of after it
+  private func focusField() {
+    if !card { withAnimation(motion ? Motion.composerMorph : nil) { card = true } }
+    focused = true
   }
+
+  /// How long the card stays open waiting for a focus that has not landed
+  private static let focusGrace = Duration.seconds(2)
+
+  /// A picker is out over the card: its beans rise from the chip straight over the draft, and the card recedes under
+  /// them. Lifted over the card's top edge instead they stood in a pile over the thread whenever the keyboard was up;
+  /// the keyboard stays, so the draft is still being written when the picker closes
+  private var receded: Bool { goo != nil && expanded }
+
+  /// What the card recedes and comes back on: the picker's spring on the way out, the page's dim on the way home, so
+  /// the draft is only clear again once the beans are back in their chip
+  private var recedeCurve: Animation? { motion ? goo == nil ? Motion.gooDimOut : Motion.gooSpring : nil }
 
   /// The context window ring beside send, once the agent has reported usage
   @ViewBuilder private var ring: some View {
@@ -387,7 +447,7 @@ struct Composer: View {
   /// SummonMenu: `@name ` at the caret
   private func summon(_ persona: MentionPersona) {
     apply(SlashCommands.summon(text, name: persona.name, at: caret.at))
-    focused = true
+    focusField()
   }
 
   /// The edited prompt, the caret after what was written (set again once the field has taken the new text)
@@ -416,12 +476,14 @@ struct Composer: View {
   /// frame by frame
   private func startPopup() {
     guard var popup = initialPopup else { return }
+    // A `.staged` suffix only has the chat seed the strip (`demo.staged`, `focus.model.staged`)
+    if popup.hasSuffix(".staged") { popup = String(popup.dropLast(".staged".count)) }
     if popup == "demo" {
       Task { await demo() }
       return
     }
-    // `-popup expand`: the draft in the whole-screen editor
-    if popup == "expand" {
+    // `-popup expand`: the draft in the whole-screen editor (`staged.expand` with the staged attachments the chat seeds)
+    if popup == "expand" || popup == "staged.expand" {
       Task {
         if motion { try? await Task.sleep(for: .seconds(1)) }
         fullEditor = true
@@ -466,6 +528,12 @@ struct Composer: View {
       withAnimation(motion ? Motion.gooSpring : nil) { step() }
     }
   }
+}
+
+/// Whether a composer's liquid picker is out, for the screen around it
+struct ComposerPickerKey: PreferenceKey {
+  static let defaultValue = false
+  static func reduce(value: inout Bool, nextValue: () -> Bool) { value = value || nextValue() }
 }
 
 /// Whether the pasteboard holds an image, checked without reading it (which would ask the paste permission): on
@@ -580,10 +648,42 @@ enum AttachmentFile {
   }
 }
 
-/// The attachments picked for the next prompt: image tiles and file pills, each with its ✕
+/// What a tap on an attached file opens, wherever its pill is (the composer's strip, the whole-screen editor, a sent
+/// prompt): the phone's own copy of a picked file in Quick Look, a file on the computer in the chat's file page at its
+/// line. Nil when neither applies: a copy already cleaned up, or a session that does not exist yet (the new-session
+/// screen's draft has no project file reads)
+struct FileOpener {
+  var model: AppModel?
+  var session: String?
+  /// Runs before the file page is pushed: a screen covering the chat (the whole-screen editor) gets out of its way
+  var leave: (() -> Void)? = nil
+  var preview: (URL) -> Void
+
+  func open(uri: String, line: Int? = nil) -> (() -> Void)? {
+    guard let url = URL(string: uri), url.isFileURL else { return nil }
+    if AttachmentFile.isCopy(url) {
+      return FileManager.default.fileExists(atPath: url.path) ? { preview(url) } : nil
+    }
+    guard let model, let session, model.views[session] != nil else { return nil }
+    return { [leave] in
+      leave?()
+      model.path.append(.file(session: session, path: url.path, line: line))
+    }
+  }
+}
+
+/// The attachments picked for the next prompt: image tiles and file pills, each with its ✕. A tile opens its picture in
+/// the Lightbox and a pill its file (FileOpener), as a sent prompt's do
 struct StagedAttachments: View {
   @Binding var items: [Attachment]
+  /// Runs before a file opens in the chat's file page (FileOpener `leave`)
+  var onNavigate: (() -> Void)? = nil
+  @State private var preview: URL?
+  @Environment(\.media) private var media
+  @Environment(AppModel.self) private var model: AppModel?
+
   var body: some View {
+    let opener = FileOpener(model: model, session: media.session, leave: onNavigate) { preview = $0 }
     ScrollView(.horizontal) {
       HStack(spacing: Metrics.s2) {
         // Quotes from the transcript lead as one annotations chip; its ✕ drops them all
@@ -596,17 +696,20 @@ struct StagedAttachments: View {
         ForEach(Array(items.enumerated()), id: \.offset) { i, item in
           if !Self.quote(item) {
             switch item {
-            case .image(let blob, _, _):
-              AttachmentThumbnail(blob: blob)
+            case .image(let blob, _, let name):
+              AttachmentThumbnail(blob: blob, name: name)
                 .overlay(alignment: .topTrailing) {
                   RemoveBadge(label: t("common.remove")) { items.remove(at: i) }
                 }
             // A pill is lower than the badge, which covered the end of its name: its ✕ sits inside it, after the name
-            case .file(_, let name), .text(_, let name, _):
+            case .file(let uri, let name):
+              AttachmentPill(name: name, icon: .fileText, onOpen: opener.open(uri: uri)) { items.remove(at: i) }
+            case .text(_, let name, _):
               AttachmentPill(name: name, icon: .fileText) { items.remove(at: i) }
             // Only a sent prompt taken in for editing brings a selection back
-            case .selection(_, let name, let start, let end, _):
-              AttachmentPill(name: "\(name) \(start == end ? "L\(start)" : "L\(start)-\(end)")", icon: .textSelect) {
+            case .selection(let uri, let name, let start, let end, _):
+              AttachmentPill(name: "\(name) \(start == end ? "L\(start)" : "L\(start)-\(end)")", icon: .textSelect,
+                             onOpen: opener.open(uri: uri, line: start)) {
                 items.remove(at: i)
               }
             default:
@@ -620,6 +723,7 @@ struct StagedAttachments: View {
       .padding(.horizontal, Metrics.s1)
     }
     .scrollIndicators(.hidden)
+    .quickLookPreview($preview)
   }
 
   private static func quote(_ item: Attachment) -> Bool { if case .quote = item { true } else { false } }
