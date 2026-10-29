@@ -119,6 +119,12 @@ public final class RemoteConnection: PairedConnection, PairedBlobs {
     }
   }
 
+  public func registerPush(_ target: PushTarget?) async {
+    let registration = target.map { PushRegistration(token: $0.token, topic: $0.topic, team: $0.team, sandbox: $0.sandbox) }
+    // A failed write means the link is going; the next connection sends it again
+    try? await link.setPush(target: registration)
+  }
+
   public func endReason() -> ConnectionError? {
     state.withLock { $0.failure }
   }

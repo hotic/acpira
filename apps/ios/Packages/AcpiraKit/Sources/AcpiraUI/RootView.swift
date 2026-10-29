@@ -20,7 +20,7 @@ public struct LaunchOptions: Sendable {
   public var screen: String
   /// `-render closed|open|all`: draw the fixture's full-length chat into tmp/acpira-render.png instead of the screens
   public var render: String?
-  /// `-popup attach|attach.N|attach.paste|model|model.N|sidekick|sidekick.N|focus…|demo|ring|ring.pick|account|toast|code|lightbox|context|quotes|
+  /// `-popup attach|attach.N|attach.paste|model|model.N|model.N.model|focus…|demo|ring|ring.pick|account|toast|code|lightbox|context|quotes|
   /// fold:N|menu:X,Y`: open that picker, sheet, card or fold, or play the liquid transitions, on launch (screenshots and
   /// recordings, docs/dev/ios.md)
   public var popup: String?
@@ -80,6 +80,8 @@ public struct RootView: View {
   @State private var model: AppModel
   /// Paired remote access; nil while this build has no pairing service (`-pairing preview` selects the preview fake)
   @State private var pairing: PairingModel?
+  /// Notifications from the paired computers: permission, APNs registration, an opened one waiting for its wire
+  @State private var push = PushCenter.shared
   @AppStorage(Prefs.theme) private var theme = "system"
   @AppStorage(Prefs.locale) private var locale = "auto"
   @AppStorage(Prefs.motion) private var motion = true
@@ -117,11 +119,40 @@ public struct RootView: View {
       next.computer = computer.id
       if model.live, model.computer == computer.id { next.resume(from: model) }
       next.onClosed = { [weak pairing] in pairing?.connectionEnded(wire.endReason() ?? .offline, of: wire) }
+      // An opened notification from this computer: its chat over whatever the stack holds
+      if let open = push.opening, open.computer == computer.id {
+        push.opening = nil
+        if next.path.last != .chat(open.session) { next.path.append(.chat(open.session)) }
+      }
+      push.showing = { [weak next] computer, session in next?.computer == computer && next?.path.last == .chat(session) }
       model = next
+      // The first wire asks for permission; every wire tells its computer where notifications go
+      Task {
+        await push.activate()
+        if push.settled { await wire.registerPush(push.target) }
+      }
     }
     pairing.onConnection = { computer, wire in adopt(computer, wire) }
     // Dialled before this view appeared
     if let wire = pairing.connection, let computer = pairing.selected { adopt(computer, wire) }
+  }
+
+  /// An opened notification: its chat at once when its computer is on screen, else follow that computer and let the
+  /// new wire open it (`followPairing`). One from a computer no longer paired is dropped
+  private func openNotified() {
+    guard let open = push.opening else { return }
+    // A development engine has no pairing: the session is that engine's
+    guard let pairing, !(model.live && model.computer == open.computer) else {
+      push.opening = nil
+      if let url = URL(string: SessionLinks.link(open.session)) { _ = model.openLink(url) }
+      return
+    }
+    guard pairing.loaded else { return }
+    guard pairing.computers.contains(where: { $0.id == open.computer }) else {
+      push.opening = nil
+      return
+    }
+    if pairing.selected?.id != open.computer { pairing.select(open.computer) }
   }
 
   private var scheme: ColorScheme? {
@@ -164,7 +195,19 @@ public struct RootView: View {
       if now == .active, let pairing, pairing.connection == nil, pairing.selected != nil, pairing.link != .connecting {
         pairing.connectSelected()
       }
+      // Notifications may have been switched in the system's Settings meanwhile
+      if now == .active { Task { await push.refresh() } }
     }
+    // A registration that changed (a new token, permission given or taken) goes to the computer on the wire now; the
+    // others hear it on their next connection
+    .onChange(of: push.target) { _, target in
+      if push.settled, let wire = pairing?.connection { Task { await wire.registerPush(target) } }
+    }
+    .onChange(of: push.permission) { _, _ in
+      if push.settled, let wire = pairing?.connection { Task { await wire.registerPush(push.target) } }
+    }
+    .onChange(of: push.opening, initial: true) { _, _ in openNotified() }
+    .onChange(of: pairing?.loaded) { _, _ in openNotified() }
     // A wire ending as suspended once the app is back (a background close that never ran, a dial that lost the race
     // with the service's return) leaves the link idle: nothing else would dial it
     .onChange(of: pairing?.link) { _, link in
@@ -203,9 +246,11 @@ public struct RootView: View {
     case .chat(let id):
       ChatScreen(id: id)
     case .new(let agent, let cwd):
-      let start = agent ?? model.summaries.max { $0.updatedAt < $1.updatedAt }?.agent
-        ?? launchable(model.agents).first { $0.available != false }?.id ?? ""
-      NewSessionScreen(agent: start, cwd: cwd ?? model.projects.first ?? "", controls: model.controls(for: start))
+      let folder = cwd ?? model.projects.first ?? ""
+      // A folder on an SSH host under local run opens on the built-in agent (Shell.tsx agentIn)
+      let start = model.startAgent(agent ?? model.summaries.max { $0.updatedAt < $1.updatedAt }?.agent
+        ?? launchable(model.agents).first { $0.available != false }?.id ?? "", in: folder)
+      NewSessionScreen(agent: start, cwd: folder, controls: model.controls(for: start))
     case .changes(let id):
       ChangesScreen(sessionId: id)
     case let .file(id, path, line):

@@ -1,5 +1,8 @@
 import AcpiraDesign
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 // The phone's settings: the webview's appearance and language preferences that make sense on a phone (theme, motion,
 // the interface language), the engine's settings a phone may change (EngineSettings.swift), the engine connection and
@@ -76,6 +79,7 @@ struct SettingsScreen: View {
       if let pairing {
         // Paired remote access: the paired computers take the engine row's place
         PairComputersSection(pairing: pairing)
+        NotificationsSection()
       } else {
         Section {
           // One fact: the state, with its dot; what it means goes in the footnote
@@ -112,6 +116,44 @@ struct SettingsScreen: View {
   private var version: String {
     let info = Bundle.main.infoDictionary
     return "\(info?["CFBundleShortVersionString"] as? String ?? "0") (\(info?["CFBundleVersion"] as? String ?? "0"))"
+  }
+}
+
+/// Notifications from the paired computers: the system's word on them, one tap to ask or to change it there. Sound,
+/// banners and Focus are the system's settings, so the app keeps no switches of its own
+struct NotificationsSection: View {
+  @State private var push = PushCenter.shared
+
+  var body: some View {
+    Section {
+      Button(action: act) {
+        LabeledContent(t("mobile.notify")) {
+          Text(web: t(state), paragraph: false)
+        }
+      }
+      .foregroundStyle(Palette.fg1)
+    } footer: {
+      Text(web: t("mobile.notify.desc"))
+    }
+    .task { await push.refresh() }
+  }
+
+  private var state: String {
+    switch push.permission {
+    case .on: "mobile.notify.on"
+    case .off: "mobile.notify.off"
+    case .notAsked, .unknown: "mobile.notify.ask"
+    }
+  }
+
+  private func act() {
+    switch push.permission {
+    case .notAsked, .unknown: Task { await push.activate() }
+    case .on, .off:
+      #if canImport(UIKit)
+      if let url = URL(string: UIApplication.openNotificationSettingsURLString) { UIApplication.shared.open(url) }
+      #endif
+    }
   }
 }
 
