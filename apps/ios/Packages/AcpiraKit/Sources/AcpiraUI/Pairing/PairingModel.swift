@@ -45,10 +45,30 @@ final class PairingModel {
   @ObservationIgnored var onConnection: ((PairedComputer, any PairedConnection) -> Void)?
   @ObservationIgnored private var dialing: Task<Void, Never>?
   @ObservationIgnored private var watching: Task<Void, Never>?
+  /// The next dial after a wire that ended on its own (`ended`)
+  @ObservationIgnored private var redial: Task<Void, Never>?
+  /// Wires in a row that failed or ended before they settled
+  @ObservationIgnored private var failures = 0
+  /// Dialing again after a wire that was up got lost, as opposed to a computer that never answered
+  @ObservationIgnored private var reconnecting = false
+  /// When the current wire came up
+  @ObservationIgnored private var wiredAt: ContinuousClock.Instant?
   /// Whether the followed computer survives a relaunch (the preview service starts from its scenario every time)
   @ObservationIgnored private let remembers: Bool
 
   static let selectedKey = "acpira.pair.selected"
+  /// The waits before dialing again after a wire was lost (a network switch, a relay gone quiet). The screens stay as
+  /// they were meanwhile, and the link reads as connecting
+  static let quickRedials: [Duration] = [.milliseconds(300), .seconds(1), .seconds(2), .seconds(4), .seconds(8)]
+  /// Past those the offline page shows with its Retry, and a quiet dial every so often brings the computer back by
+  /// itself once it answers: soon for the first few (a node that just started may not have reached its relay yet),
+  /// then seldom
+  static let slowRedial: Duration = .seconds(15)
+  static let firstQuietRedial: Duration = .seconds(3)
+  static let firstQuietRedials = 2
+  /// A wire up this long counts as a success, so the next loss starts the quick dials over; one that keeps dropping
+  /// sooner (an engine that fails right away) runs out of them
+  static let settled: Duration = .seconds(10)
 
   init(service: any PairingService, camera: PairCamera = .auto, remembers: Bool = true) {
     self.service = service
@@ -101,6 +121,15 @@ final class PairingModel {
 
   /// Dials the followed computer, dropping any wire to the previous one
   func connectSelected() {
+    failures = 0
+    reconnecting = false
+    dial(quiet: false)
+  }
+
+  /// quiet: keep the offline page up while it dials (the slow redial), so a computer still away changes nothing
+  private func dial(quiet: Bool) {
+    redial?.cancel()
+    redial = nil
     dialing?.cancel()
     watching?.cancel()
     connection?.close()
@@ -109,7 +138,7 @@ final class PairingModel {
       link = .idle
       return
     }
-    link = .connecting
+    if !quiet { link = .connecting }
     let service = service
     dialing = Task {
       do {
@@ -119,6 +148,7 @@ final class PairingModel {
           return
         }
         connection = wire
+        wiredAt = .now
         onConnection?(computer, wire)
         watch(wire, of: computer)
       } catch {
@@ -135,7 +165,8 @@ final class PairingModel {
         link = .online(path)
         presence[computer.id] = .online(path)
       }
-      guard !Task.isCancelled, selected?.id == computer.id else { return }
+      // Only the current wire: the app model may have reported its end already
+      guard !Task.isCancelled, selected?.id == computer.id, let connection, connection as AnyObject === wire as AnyObject else { return }
       // The paths can end before the frames report why (a background close is not the computer going offline)
       ended(wire.endReason() ?? .offline, computer.id)
     }
@@ -151,17 +182,53 @@ final class PairingModel {
 
   private func ended(_ error: ConnectionError, _ id: String) {
     connection = nil
+    if let up = wiredAt {
+      // A wire that was up and is lost: the quick dials, counted afresh once it had settled
+      reconnecting = true
+      if ContinuousClock.now - up >= Self.settled { failures = 0 }
+    }
+    wiredAt = nil
     // The app's own background close: coming back dials again (RootView), so nothing failed and the screens wait as for
     // a dial rather than offer Retry on every return
     if error == .suspended {
+      reconnecting = false
       link = .idle
       return
+    }
+    // A lost wire (the network moved, the relay went quiet, no network for a moment) is dialed again at once, then
+    // with growing waits, and the screens keep what they showed. A computer that did not answer in the first place
+    // shows as offline at once and is dialed quietly. A removal or another protocol version will not mend itself
+    let transient = switch error {
+    case .offline, .other: true
+    case .revoked, .incompatible, .suspended: false
+    }
+    if transient {
+      failures += 1
+      if reconnecting, failures <= Self.quickRedials.count {
+        link = .connecting
+        scheduleRedial(after: Self.quickRedials[failures - 1], quiet: false, id)
+        return
+      }
+      reconnecting = false
+      scheduleRedial(after: failures <= Self.firstQuietRedials ? Self.firstQuietRedial : Self.slowRedial, quiet: true, id)
+    } else {
+      reconnecting = false
     }
     link = .failed(error)
     switch error {
     case .offline: presence[id] = .offline
     case .revoked: presence[id] = .revoked
     case .incompatible, .suspended, .other: presence[id] = nil
+    }
+  }
+
+  private func scheduleRedial(after wait: Duration, quiet: Bool, _ id: String) {
+    redial?.cancel()
+    redial = Task {
+      try? await Task.sleep(for: wait)
+      // Another computer followed, a Retry tap or a new wire meanwhile
+      guard !Task.isCancelled, selected?.id == id, connection == nil else { return }
+      dial(quiet: quiet)
     }
   }
 

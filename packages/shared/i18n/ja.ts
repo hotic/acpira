@@ -1445,6 +1445,7 @@ export const ja = {
   'mobile.view.agent': 'チャネル別',
   'mobile.view.none': 'グループなし',
   'mobile.forked': '新しいセッションに分岐しました',
+  'mobile.sending': '送信中…',
   'mobile.project.moveTop': '先頭に移動',
   'mobile.project.removed': '{name} をリストから外しました',
   'mobile.engineNeeded': 'エンジンへの接続が必要です',

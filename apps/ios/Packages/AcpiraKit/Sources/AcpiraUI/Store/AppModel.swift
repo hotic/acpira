@@ -65,6 +65,8 @@ final class AppModel {
   var agentControls: [AgentId: [ConfigControl]] = [:]
   var summaries: [SessionSummary]
   var views: [String: SessionView]
+  /// Prompts sent to the engine that their session does not show yet, by session (Outgoing.swift)
+  var outgoing: [String: [Outgoing]] = [:]
   var path: [Route] = []
   var toast: Toast?
   /// Folders added by hand, ahead of the ones sessions use
@@ -94,6 +96,13 @@ final class AppModel {
   /// The screens and lists came over from the wire before to the same computer, until this one's init replaces them
   /// (AppModel+Engine.swift `resume`)
   var resumed = false
+  /// The session the engine's view was last told this screen shows (`open`); nil once it was told the screen left it
+  /// (AppModel+Engine.swift `syncWatching`)
+  @ObservationIgnored var watching: String?
+  /// The app is in the background: the engine's view counts no session as watched until it comes back
+  @ObservationIgnored var away = false
+  /// This model's wire ended; the screens keep what it showed until the next wire's model takes them over
+  var ended = false
   /// Each chat's unsent draft (AppModel+Composer.swift): the map is not observed, each draft is
   @ObservationIgnored var drafts: [String: ComposerDraft] = [:]
   /// The composer's `@` file search, answered by the engine's `files`
@@ -101,6 +110,9 @@ final class AppModel {
     self?.post(.searchFiles(query: query, seq: seq)) ?? false
   }
 
+  /// Session actions for this wire to send once its init is in (AppModel+Engine.swift `flushReplay`): the ones the
+  /// wire before may not have delivered, and the ones posted before this wire's view could show their session
+  @ObservationIgnored var replay: [WebviewMsg] = []
   /// The live engine; nil in the demo
   @ObservationIgnored let link: EngineLink?
   /// Told when the live engine's wire ends (a paired computer's connection reports it to the pairing model)
@@ -389,6 +401,10 @@ final class AppModel {
     if link != nil {
       let drafts = Self.drafts(attachments)
       post(.send(sessionId: id, text: trimmed, attachments: drafts.isEmpty ? nil : drafts, steer: steering(id) ? true : nil))
+      // Reads as sent until the engine shows it; behind a running turn the engine's queue row already says where it is
+      if let view = views[id], !view.running {
+        outgoing[id, default: []].append(Outgoing(text: trimmed, attachments: attachments, after: view))
+      }
       return
     }
     guard var view = views[id] else { return }

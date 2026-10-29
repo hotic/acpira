@@ -71,6 +71,9 @@ extension EnvironmentValues {
   /// Seconds the app's clock runs ahead of the real one: the fixtures' clock runs on from launch (`AppModel.now`), so a
   /// live counter reads the time the demo turns are stamped with; 0 on the real clock
   @Entry var clockOffset: TimeInterval = 0
+  /// The screens show what an ended wire left (`AppModel.current` false): live marks stop moving and stop is off until
+  /// the engine's own state is back, so a turn that ended meanwhile does not read as still running
+  @Entry var syncing = false
 }
 
 /// The app's root: the session list, pushing a chat or the new-session screen, the settings over it as a sheet; the app
@@ -188,9 +191,14 @@ public struct RootView: View {
     // Fixtures carry their own clock (quota resets count down from it); an engine runs on the real one
     .environment(\.now, model.live ? .now : Fixtures.now)
     .environment(\.clockOffset, model.clockOffset)
+    .environment(\.syncing, !model.current)
     .tint(Palette.fg1)
     .onAppear(perform: followPairing)
+    // A chat that left the screen is no longer watched from the engine's view (its turn ending gets the unread dot)
+    .onChange(of: model.path) { _, _ in model.syncWatching() }
     .onChange(of: phase) { _, now in
+      // Away in the background, back once active; a passing inactive phase (the app switcher, a sheet) changes nothing
+      if now == .background { model.setAway(true) } else if now == .active { model.setAway(false) }
       // Back from the background, where the service closed the wire: dial the followed computer again
       if now == .active, let pairing, pairing.connection == nil, pairing.selected != nil, pairing.link != .connecting {
         pairing.connectSelected()

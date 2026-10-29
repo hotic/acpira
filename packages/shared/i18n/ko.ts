@@ -1440,6 +1440,7 @@ export const ko = {
   'mobile.view.agent': '채널별',
   'mobile.view.none': '그룹 없음',
   'mobile.forked': '새 세션으로 분기했습니다',
+  'mobile.sending': '보내는 중…',
   'mobile.project.moveTop': '맨 위로 이동',
   'mobile.project.removed': '{name}을(를) 목록에서 뺐습니다',
   'mobile.engineNeeded': '엔진 연결이 필요합니다',

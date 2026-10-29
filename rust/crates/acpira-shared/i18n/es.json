@@ -1422,6 +1422,7 @@
   "mobile.view.agent": "Por canal",
   "mobile.view.none": "Sin agrupar",
   "mobile.forked": "Bifurcada en una sesión nueva",
+  "mobile.sending": "Enviando…",
   "mobile.project.moveTop": "Mover al principio",
   "mobile.project.removed": "Se quitó {name} de la lista",
   "mobile.engineNeeded": "Necesita un motor conectado",

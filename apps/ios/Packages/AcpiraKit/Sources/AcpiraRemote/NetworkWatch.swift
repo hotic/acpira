@@ -9,11 +9,14 @@ struct NetworkState: Equatable, Sendable {
   var local: Bool
   /// The interfaces in use; a different set (Wi-Fi to cellular, a VPN coming up) is a change iroh must hear about
   var interfaces: [String]
+  /// The routers they lead to: one Wi-Fi network for another keeps the interface (`en0`) and changes these
+  var gateways: [String]
 
   init(_ path: NWPath) {
     satisfied = path.status == .satisfied
     local = path.usesInterfaceType(.wifi) || path.usesInterfaceType(.wiredEthernet)
     interfaces = path.availableInterfaces.map(\.name)
+    gateways = path.gateways.map { String(describing: $0) }
   }
 }
 

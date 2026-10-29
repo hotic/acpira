@@ -28,6 +28,8 @@ public final class RemoteConnection: PairedConnection, PairedBlobs {
     var ended = false
     /// Why this side ended the link (a dead probe, the app going to the background), reported instead of a clean end
     var failure: ConnectionError?
+    /// When the link last brought anything in
+    var heard = ContinuousClock.now
   }
 
   init(link: Link, computerId: String, hooks: Hooks) {
@@ -43,6 +45,7 @@ public final class RemoteConnection: PairedConnection, PairedBlobs {
       let pump = Task { [self] in
         do {
           while let event = try await link.recv() {
+            state.withLock { $0.heard = .now }
             switch event {
             case .envelope(let line): continuation.yield(line)
             case .addresses(let relay, let addrs): hooks.addresses(relay, addrs)
@@ -117,6 +120,15 @@ public final class RemoteConnection: PairedConnection, PairedBlobs {
     } catch {
       throw ConnectionError(error)
     }
+  }
+
+  /// Whether the link still carries anything: the probe's answer, or any frame that came in while it waited. The pong
+  /// queues behind every envelope the gateway sent first, so on a slow path a link busy delivering a large view missed
+  /// the deadline and was ended for nothing
+  func alive(withinMs: UInt64) async -> Bool {
+    let asked = ContinuousClock.now
+    if (try? await probe(withinMs: withinMs)) != nil { return true }
+    return state.withLock { !$0.ended && $0.failure == nil && $0.heard > asked }
   }
 
   public func registerPush(_ target: PushTarget?) async {

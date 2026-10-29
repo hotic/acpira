@@ -1478,6 +1478,7 @@ export const en = {
   'mobile.view.agent': 'By channel',
   'mobile.view.none': 'Ungrouped',
   'mobile.forked': 'Forked into a new session',
+  'mobile.sending': 'Sending…',
   'mobile.project.moveTop': 'Move to top',
   'mobile.project.removed': 'Removed {name} from the list',
   'mobile.engineNeeded': 'Needs a connected engine',

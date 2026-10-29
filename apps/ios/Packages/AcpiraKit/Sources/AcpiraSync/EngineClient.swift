@@ -1,5 +1,6 @@
 import AcpiraModels
 import Foundation
+import Synchronization
 
 /// What the client hands the app
 public enum EngineEvent: Sendable {
@@ -33,9 +34,28 @@ public actor EngineClient {
   private let initial: InitialView?
   private var reader: Task<Void, Never>?
   private var writer: Task<Void, Never>?
+  /// The wire ended: what is still queued goes to `unsent()` instead of out
+  private var ended = false
+  /// What this wire may not have delivered (`unsent()`); `post` writes it from any thread
+  private nonisolated let ledger = Mutex(Ledger())
+
+  private struct Ledger {
+    /// Posted after the wire ended
+    var late: [WebviewMsg] = []
+    /// Queued but never written
+    var leftover: [WebviewMsg] = []
+    /// Written actions carrying a clientId, newest last
+    var written: [(at: ContinuousClock.Instant, message: WebviewMsg)] = []
+    var endedAt: ContinuousClock.Instant?
+  }
 
   /// The platform methods the app answers; hello's capabilities name exactly these, so the engine asks for no other
   public static let capabilities = ["toast", "notify"]
+  /// How long before a wire's end a written action counts as maybe lost. A link can sit dead this long before anything
+  /// notices (QUIC's idle timeout, a probe's deadline); the engine claims each clientId once, so a resend costs nothing
+  static let unsureWindow: Duration = .seconds(45)
+  /// The written actions kept for that window, at most
+  static let writtenKept = 64
 
   /// initial: what the view opens on; `.empty` never starts a session by itself, which a phone opening on its list wants
   public init(transport: any EngineTransport, hello: Hello, viewId: String = "phone", initial: InitialView? = .empty) {
@@ -53,14 +73,27 @@ public actor EngineClient {
     reader = Task { await run() }
   }
 
-  /// Sends an action, in posting order; before the view is attached (the page's `ready` usually comes first) it waits
+  /// Sends an action, in posting order; before the view is attached (the page's `ready` usually comes first) it waits.
+  /// An action that drives a session gets a clientId here, so a resend on the next wire runs once
   public nonisolated func post(_ message: WebviewMsg) {
-    outbox.yield(message)
+    let message = message.stamped()
+    if case .terminated = outbox.yield(message) {
+      ledger.withLock { $0.late.append(message) }
+    }
   }
 
   public nonisolated func stop() {
     outbox.finish()
     transport.close()
+  }
+
+  /// Once the wire ended, what it may not have delivered and is worth sending on the next one (`replayable`), oldest
+  /// first: clientId actions written shortly before the end, actions still queued, actions posted after it
+  public nonisolated func unsent() -> [WebviewMsg] {
+    ledger.withLock { l in
+      let unsure = l.endedAt.map { end in l.written.filter { end - $0.at <= Self.unsureWindow }.map(\.message) } ?? []
+      return (unsure + l.leftover + l.late).filter(\.replayable)
+    }
   }
 
   private func run() async {
@@ -69,34 +102,53 @@ public actor EngineClient {
       let frames = transport.frames()
       try await transport.send(Self.encode(.hello(hello)))
       for try await frame in frames {
-        for line in frame.split(whereSeparator: \.isNewline) where !line.allSatisfy(\.isWhitespace) {
-          try await receive(String(line))
+        // Envelopes end at "\n" alone. JSON leaves U+0085 and U+2028 / U+2029 unescaped inside strings, and Swift's
+        // isNewline counts them, so splitting on it cut a view holding one into pieces that all failed to decode
+        for line in frame.utf8.split(separator: UInt8(ascii: "\n")) where line.contains(where: { !Self.blank($0) }) {
+          try await receive(Data(line))
         }
       }
     } catch {
       failure = (error as? EngineError)?.description ?? error.localizedDescription
     }
-    writer?.cancel()
+    ended = true
     outbox.finish()
+    // The writer drains what is still queued into the ledger (`deliver`); a write stuck on the dead wire is given up
+    if let writer {
+      let deadline = Task {
+        try? await Task.sleep(for: .seconds(2))
+        writer.cancel()
+      }
+      await writer.value
+      deadline.cancel()
+    } else {
+      // Never attached: everything posted is still in the outbox
+      for await action in actions { ledger.withLock { $0.leftover.append(action) } }
+    }
+    ledger.withLock { $0.endedAt = .now }
     sink.yield(.closed(failure))
     sink.finish()
   }
 
-  private func receive(_ line: String) async throws {
+  private static func blank(_ byte: UInt8) -> Bool {
+    byte == UInt8(ascii: " ") || byte == UInt8(ascii: "\t") || byte == UInt8(ascii: "\r")
+  }
+
+  private func receive(_ line: Data) async throws {
     let message: SidecarMsg
     do {
-      message = try JSONDecoder().decode(SidecarMsg.self, from: Data(line.utf8))
+      message = try JSONDecoder().decode(SidecarMsg.self, from: line)
     } catch {
-      sink.yield(.dropped("\(line.prefix(120)): \(error)"))
+      sink.yield(.dropped("\(String(decoding: line.prefix(120), as: UTF8.self)): \(error)"))
       return
     }
     switch message {
     case .helloOk(let ok):
       guard writer == nil else { return }
       await write(.attachView(viewId: viewId, host: .sidebar, initial: initial))
-      let actions = actions, viewId = viewId
+      let actions = actions
       writer = Task {
-        for await action in actions { await write(.webviewMessage(viewId: viewId, message: action)) }
+        for await action in actions { await deliver(action) }
       }
       sink.yield(.connected(ok))
     case .helloReject(_, let version, let reason):
@@ -113,6 +165,21 @@ public actor EngineClient {
     case .hostMessage, .shutdownOk, .unknown:
       break
     }
+  }
+
+  /// Writes one queued action; once the wire ended it stays in the ledger instead
+  private func deliver(_ action: WebviewMsg) async {
+    if ended {
+      ledger.withLock { $0.leftover.append(action) }
+      return
+    }
+    if action.clientId != nil {
+      ledger.withLock { l in
+        l.written.append((.now, action))
+        if l.written.count > Self.writtenKept { l.written.removeFirst(l.written.count - Self.writtenKept) }
+      }
+    }
+    await write(.webviewMessage(viewId: viewId, message: action))
   }
 
   /// A failed write ends nothing by itself: the reader sees the wire close
