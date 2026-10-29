@@ -101,56 +101,98 @@ func dockPlan(_ turns: [Turn], running: Bool) -> [PlanEntry]? {
 
 /// PlanBar's card: the to-do title (shimmering while the turn works) with the done count and a caret; folded it shows
 /// the current entry only (or "all n done"), unfolded every entry, scrolling past seven rows. A session goal takes the
-/// head row (GoalHead), so goal and to-dos share one card; with a goal and no list the card is the goal line alone
+/// head row (GoalHead), so goal and to-dos share one card; with a goal and no list the card is the goal line alone.
+/// As on the desktop the title leads with the list glyph and every entry with its status dot, and every row stays
+/// mounted: folding collapses the rows around the current one rather than swapping one list for another, so the
+/// current entry never moves and no outgoing list is left drawn over the head
 struct PlanCard: View {
   let entries: [PlanEntry]?
   var live: Bool
   var goal: GoalDock?
   @State private var open = false
+  @Environment(\.motionEnabled) private var motion
+  @Environment(\.initialPopup) private var initialPopup
 
   var body: some View {
     let done = entries?.filter { $0.status == .completed }.count ?? 0
-    let current = entries?.first { $0.status == .in_progress } ?? entries?.first { $0.status == .pending }
+    let current: Int? = entries.flatMap(Self.current)
     VStack(alignment: .leading, spacing: Metrics.planSectionGap) {
       if let goal {
         GoalHead(goal: goal.goal, actions: goal.actions, running: goal.running, onAction: goal.onAction,
-                 onToggle: entries == nil ? nil : { open.toggle() }) {
+                 onToggle: entries == nil ? nil : { toggle() }) {
           if let entries { count(done, entries.count) }
         }
       } else if let entries {
-        Button { open.toggle() } label: {
-          Row(dense: true) {
-            RowLabel(t("plan.todoTitle"), shimmer: live && current != nil)
-          } trailing: {
-            count(done, entries.count)
-          }
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(.isHeader)
+        head(done: done, total: entries.count, working: current != nil)
       }
-      if let entries {
-        Group {
-          if open {
-            ScrollView(.vertical) {
-              PlanEntries(entries: entries, showStatus: false, docked: true)
-            }
-            .scrollIndicators(.hidden)
-            .frame(maxHeight: Metrics.planMax)
-            .fixedSize(horizontal: false, vertical: true)
-          } else if let current {
-            PlanEntries(entries: [current], showStatus: false, docked: true)
-          } else {
-            // Every entry done: one summary line in place of the list
-            Row(dense: true) { Text(web: t("plan.completed", ["n": entries.count])).foregroundStyle(Palette.fg2) }
-              .environment(\.rowDenseHeight, TypeScale.text2.lineHeight)
-              .padding(.vertical, Metrics.planEntryPadY)
-          }
-        }
-      }
+      if let entries { list(entries, current: current) }
     }
     .padding(.horizontal, Metrics.pad)
     .padding(.vertical, Metrics.planPadY)
     .modifier(CardSurface())
+    // The card rises from the dock, so folding moves its top edge; as one geometry group its rows move with that edge
+    // instead of each leaf interpolating its own place on the page, where the text (drawn by its line renderer) ran
+    // ahead of the icons and the card and the head slid over the first entry
+    .geometryGroup()
+    // `-popup todo`: the list open on launch (screenshots); `todo.demo` folds it open and shut twice (recordings)
+    .onAppear { if initialPopup == "todo" { open = true } }
+    .task {
+      guard initialPopup == "todo.demo" else { return }
+      for _ in 0..<2 {
+        try? await Task.sleep(for: .seconds(1.2))
+        toggle()
+        try? await Task.sleep(for: .seconds(1.4))
+        toggle()
+      }
+    }
+  }
+
+  /// The entry folded to: the one in progress, else the first still pending
+  private static func current(_ entries: [PlanEntry]) -> Int? {
+    entries.firstIndex { $0.status == .in_progress } ?? entries.firstIndex { $0.status == .pending }
+  }
+
+  /// The title row without a goal: the list glyph, the title (shimmering while the turn works), the count and caret
+  private func head(done: Int, total: Int, working: Bool) -> some View {
+    Button(action: toggle) {
+      Row(dense: true) {
+        Icon(.listTodo, size: WebMetrics.icon, strokeWidth: 1.5)
+      } content: {
+        RowLabel(t("plan.todoTitle"), shimmer: live && working)
+      } trailing: {
+        count(done, total)
+      }
+    }
+    .buttonStyle(.plain)
+    .accessibilityAddTraits(.isHeader)
+  }
+
+  /// Every entry, those away from the current one collapsed while folded; "all n done" in their place once all are
+  private func list(_ entries: [PlanEntry], current: Int?) -> some View {
+    ScrollView(.vertical) {
+      VStack(alignment: .leading, spacing: 0) {
+        Row(dense: true, leadTop: true) {
+          PlanDot(status: .completed)
+        } content: {
+          Text(web: t("plan.completed", ["n": entries.count])).foregroundStyle(Palette.fg2)
+        }
+        .environment(\.rowDenseHeight, WebType.text2.lineHeight)
+        .padding(.vertical, Metrics.planEntryPadY)
+        .modifier(PlanFold(shown: !open && current == nil))
+        ForEach(Array(entries.enumerated()), id: \.offset) { i, entry in
+          PlanEntries(entries: [entry], docked: true)
+            .modifier(PlanFold(shown: open || i == current))
+        }
+      }
+    }
+    .scrollDisabled(!open)
+    .scrollIndicators(.hidden)
+    .frame(maxHeight: Metrics.planMax)
+    .fixedSize(horizontal: false, vertical: true)
+  }
+
+  private func toggle() {
+    withAnimation(motion ? (open ? Motion.close : Motion.open) : nil) { open.toggle() }
   }
 
   /// The done count and the caret that folds the list
@@ -158,6 +200,20 @@ struct PlanCard: View {
     Text(web: "\(done)/\(total)")
     Icon(.chevronDown, size: Metrics.icon)
       .rotationEffect(.degrees(open ? 180 : 0))
+  }
+}
+
+/// One row of the docked list, collapsed to nothing while folded away (ui/Collapsible): its height runs to zero under
+/// a clip and it fades, so the rows above and below close in around the one that stays
+private struct PlanFold: ViewModifier {
+  var shown: Bool
+  func body(content: Content) -> some View {
+    content
+      .fixedSize(horizontal: false, vertical: true)
+      .frame(height: shown ? nil : 0, alignment: .top)
+      .clipped()
+      .opacity(shown ? 1 : 0)
+      .accessibilityHidden(!shown)
   }
 }
 
