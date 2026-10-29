@@ -223,7 +223,7 @@ fn a_phone_pairs_drives_a_session_and_is_revoked() {
     assert_eq!((turns(&last), last["running"].clone()), (4, json!(false)));
 
     // What only the computer may send never reaches the engine
-    p.msg("V", json!({ "type": "setSetting", "key": "defaultAgent", "value": "x" })).await;
+    p.msg("V", json!({ "type": "setSetting", "key": "proxy", "value": "http://x" })).await;
     let (at, d) = p.wait(at, "denied", |k, v| k == FrameKind::Control && v["type"] == "denied").await;
     assert_eq!(d["what"], "setSetting");
     p.msg("V", json!({ "type": "imageBlob", "sessionId": id, "path": "/etc/hosts", "seq": 1 })).await;

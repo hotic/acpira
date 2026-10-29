@@ -556,6 +556,7 @@ enum ContractSamples {
     .setMode(sessionId: "s1", id: "plan"),
     .setConfig(sessionId: "s1", configId: "effort", value: "high"),
     .selectSession(id: "s1"),
+    .deselectSession(id: "s1"),
     .newSession(agent: "claude", category: "c1", cwd: "/w", chat: true),
     .renameSession(id: "s1", title: "Renamed"),
     .deleteSession(id: "s1"),

@@ -539,6 +539,9 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   case setMode(sessionId: String?, id: String)
   case setConfig(sessionId: String?, configId: String, value: String)
   case selectSession(id: String)
+  /// The screen stops showing `id` without showing another (the session list, the app in the background), so a turn
+  /// ending there gets its unread mark. The engine ignores it unless `id` is the session its view shows
+  case deselectSession(id: String)
   /// category: file it under that category from the start; cwd: the project folder to start in
   /// `chat`: a session in a fresh folder of its own under InitState.chats (project shells), `cwd` ignored
   case newSession(agent: AgentId? = nil, category: String? = nil, cwd: String? = nil, chat: Bool? = nil)
@@ -636,7 +639,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   /// The `type` literals this build mirrors: the actions the app can send
   public static let types = [
     "ready", "resync", "send", "stop", "permission", "answer", "buildPlan", "setMode", "setConfig", "selectSession",
-    "newSession", "renameSession", "deleteSession", "restoreSession", "pinSession", "markAllRead", "searchSessions",
+    "deselectSession", "newSession", "renameSession", "deleteSession", "restoreSession", "pinSession", "markAllRead", "searchSessions",
     "forkSession", "selectAccount", "refreshQuota", "compact", "retry", "takeOverSession", "dequeue", "sendQueued",
     "steerQueued", "editQueued", "categoryOp", "moveSession", "sessionMarkdown", "addAccount", "removeAccount",
     "unlockCredentials", "login", "reconnect", "retryTurn", "editTurn", "observeSubagent", "unobserveSubagent",
@@ -658,6 +661,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case .setMode: "setMode"
     case .setConfig: "setConfig"
     case .selectSession: "selectSession"
+    case .deselectSession: "deselectSession"
     case .newSession: "newSession"
     case .renameSession: "renameSession"
     case .deleteSession: "deleteSession"
@@ -741,6 +745,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case "setMode": self = .setMode(sessionId: try opt(.sessionId), id: try str(.id))
     case "setConfig": self = .setConfig(sessionId: try opt(.sessionId), configId: try str(.configId), value: try str(.value))
     case "selectSession": self = .selectSession(id: try str(.id))
+    case "deselectSession": self = .deselectSession(id: try str(.id))
     case "newSession": self = .newSession(agent: try opt(.agent), category: try opt(.category), cwd: try opt(.cwd), chat: try c.decodeIfPresent(Bool.self, forKey: .chat))
     case "renameSession": self = .renameSession(id: try str(.id), title: try str(.title))
     case "deleteSession": self = .deleteSession(id: try str(.id))
@@ -847,7 +852,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
       try c.encodeIfPresent(sessionId, forKey: .sessionId)
       try c.encode(configId, forKey: .configId)
       try c.encode(value, forKey: .value)
-    case .selectSession(let id), .deleteSession(let id), .restoreSession(let id):
+    case .selectSession(let id), .deselectSession(let id), .deleteSession(let id), .restoreSession(let id):
       try c.encode(id, forKey: .id)
     case let .newSession(agent, category, cwd, chat):
       try c.encodeIfPresent(agent, forKey: .agent)

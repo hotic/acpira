@@ -777,6 +777,12 @@ pub enum WebviewMsg {
   SelectSession {
     id: String,
   },
+  /// The view stops showing `id` without showing another (a phone back on its session list, or its app gone to the
+  /// background), so a turn ending there is no longer watched from it. Ignored unless `id` is what the view shows, so a
+  /// late one never clears the next pick
+  DeselectSession {
+    id: String,
+  },
   NewSession {
     agent: Option<AgentId>,
     /// File the new session under this category (one of the window's project) from the start

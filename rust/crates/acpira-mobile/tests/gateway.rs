@@ -191,7 +191,7 @@ fn pairs_by_link_reaches_the_engine_and_learns_it_was_revoked() {
     assert!(l.fetch_blob("s1".into(), "../../agents.json".into(), 5_000).await.is_err());
 
     // What only the computer may send is turned back with its name
-    l.send(json!({ "type": "webviewMessage", "viewId": "V", "message": { "type": "setSetting", "key": "defaultAgent", "value": "x" } }).to_string()).await.unwrap();
+    l.send(json!({ "type": "webviewMessage", "viewId": "V", "message": { "type": "setSetting", "key": "proxy", "value": "http://x" } }).to_string()).await.unwrap();
     let denied = tokio::time::timeout(Duration::from_secs(10), async {
       loop {
         if let Ok(Some(LinkEvent::Denied { what })) = l.recv().await {

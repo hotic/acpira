@@ -6,11 +6,26 @@ use serde::{Deserialize, Serialize};
 
 use crate::protocol::WebviewMsg;
 
+/// The settings a paired device may write: how new sessions start and run, which agents are offered and in what order,
+/// and which models their menus list. They steer sessions the device already drives; keys, model sources, MCP, the
+/// proxy, appearance and the rest stay on the computer
+pub const DEVICE_SETTINGS: &[&str] = &[
+  "defaultAgent",
+  "agentOrder",
+  "disabledAgents",
+  "steerQueued",
+  "autoCompact",
+  "compactAtTokens",
+  "accountSwitch",
+  "planAutoApprove",
+  "hiddenOptions",
+];
+
 /// Whether a paired device may send this message. A device has one permission, control: it drives sessions the way the
 /// user would at the computer (an agent it starts can run any command anyway). What stays on the computer is what
-/// changes the machine rather than a session (settings, accounts, installs, plugins, storage, SSH hosts), what puts
-/// something on the computer's screen (every `open…`, exports, terminals), and reads of arbitrary local paths.
-/// Exhaustive on purpose: a new message does not compile until it is decided here.
+/// changes the machine rather than a session (settings outside `DEVICE_SETTINGS`, accounts, installs, plugins, storage,
+/// SSH hosts), what puts something on the computer's screen (every `open…`, exports, terminals), and reads of arbitrary
+/// local paths. Exhaustive on purpose: a new message does not compile until it is decided here.
 pub fn device_allowed(m: &WebviewMsg) -> bool {
   use WebviewMsg as W;
   match m {
@@ -42,6 +57,7 @@ pub fn device_allowed(m: &WebviewMsg) -> bool {
     | W::CancelSubagent { .. } => true,
     // The session list. Deleting is undoable (`restoreSession`)
     W::SelectSession { .. }
+    | W::DeselectSession { .. }
     | W::NewSession { .. }
     | W::RenameSession { .. }
     | W::PinSession { .. }
@@ -87,6 +103,8 @@ pub fn device_allowed(m: &WebviewMsg) -> bool {
     | W::TerminalAck { .. }
     | W::TerminalClose { .. }
     | W::TerminalKill { .. } => false,
+    // The phone's settings page: session and agent preferences only
+    W::SetSetting { key, .. } => DEVICE_SETTINGS.contains(&key.as_str()),
     // Changes the machine: credentials need its keychain or browser, the rest is its configuration
     W::AddAccount { .. }
     | W::RemoveAccount { .. }
@@ -94,7 +112,6 @@ pub fn device_allowed(m: &WebviewMsg) -> bool {
     | W::Login { .. }
     | W::InstallAgent { .. }
     | W::CancelInstall { .. }
-    | W::SetSetting { .. }
     | W::SetAppearance { .. }
     | W::Shared
     | W::SharedAction { .. }
@@ -337,6 +354,9 @@ mod tests {
     assert!(allowed(json!({ "type": "permission", "sessionId": "s", "blockId": "b", "optionId": "o" })));
     assert!(allowed(json!({ "type": "deleteSession", "id": "s" })));
     assert!(!allowed(json!({ "type": "setSetting", "key": "k", "value": 1 })));
+    assert!(!allowed(json!({ "type": "setSetting", "key": "proxy", "value": "http://x" })));
+    assert!(allowed(json!({ "type": "setSetting", "key": "disabledAgents", "value": ["kimi"] })));
+    assert!(allowed(json!({ "type": "setSetting", "key": "agentOrder", "value": ["claude", "codex"] })));
     assert!(!allowed(json!({ "type": "openFile", "sessionId": "s", "path": "a" })));
     assert!(!allowed(json!({ "type": "imageBlob", "sessionId": "s", "path": "/etc/passwd", "seq": 1 })));
     assert!(!allowed(json!({ "type": "terminalOpen", "id": "t" })));
@@ -344,5 +364,12 @@ mod tests {
     assert!(allowed(json!({ "type": "connections" })));
     assert!(!allowed(json!({ "type": "connectionOp", "op": { "op": "remove", "alias": "h" } })));
     assert!(!allowed(json!({ "type": "remoteDir", "alias": "h", "path": "/", "seq": 1 })));
+  }
+
+  #[test]
+  fn device_settings_are_setting_keys() {
+    for key in DEVICE_SETTINGS {
+      assert!(crate::settings::SETTING_KEYS.contains(key), "{key}");
+    }
   }
 }
