@@ -51,13 +51,25 @@ OpenSSH behaviour the code relies on (OpenSSH 10.3 client, Ubuntu and macOS serv
 
 ## Built-in agent
 
-Under local run only the built-in agent works in an `ssh://` folder; others are refused with `host.remoteBuiltinOnly` (the start page greys them out to match). Engine side `acp/session/remote.rs`, agent side `acpira_agent::remote`.
+Under local run the built-in agent and Claude Code (next section) work in an `ssh://` folder; others are refused with `host.remoteBuiltinOnly` (the start page greys them out to match, `LOCAL_RUN_AGENTS`). Engine side `acp/session/remote.rs`, agent side `acpira_agent::remote`.
 
 - The agent process starts in this machine's home; session requests carry the host path as `cwd` and `_meta["acpira/remote"] = { alias, places }`. Prompt files, slash commands and skills come only from `places` (read on the host at open), never this disk.
 - File and command tools go to the host as `_acpira/remoteTool` (`prepare` then `run`), which the helper runs with the same `acpira_agent::tools` code. Paths under the local data root (session outputs, plan, staged attachments) stay local and are never sent to the host.
 - Under full access no card shows the gate, so the engine asks `beforeEdit` before every remote write (`remote_write_gate`); an unreachable host denies the edit.
 - A call whose channel drops returns "outcome unknown" to the model; nothing is replayed. Background jobs live in the helper per session and stop with it.
 - Tests run the real helper behind a fake ssh with `ACPIRA_REMOTE_ROOT_MAP`, so a host path leaking to the local side shows. Unverified against a real host or model.
+
+## Claude Code
+
+Claude Code's file and shell tools live in its own process, so under local run it runs here with them swapped for Acpira's (`acp/vendors/claude_remote.rs`, `acp/session/remote_claude.rs`). Codex, Devin, Grok, Kimi and the rest offer no such seam.
+
+- The CLI starts in a stand-in folder, `<data root>/remote/hosts/<alias>/<host path>`, which must stay empty; the warm pool spawns there too (`process_cwd`), never in the `ssh://` folder. The host path and the host's instructions (CLAUDE.md, else AGENTS.md, at the project root and the folder, `@file` lines expanded) go in `systemPrompt` append, since the CLI reads neither from there.
+- `_meta.claudeCode.options`: every native tool that touches this machine's files or shell goes in `disallowedTools`; `toolAliases` maps the native names onto `mcp__acpira__<Name>` (`alwaysLoad`), so the model and its subagents call them as usual; the read-only ones go in `allowedTools`, which also keeps them from `canUseTool`.
+- A call goes `acpira mcp` → relay hub `RemoteTool` → session → helper `tool` op, run by the built-in agent's tool code with `keep` (outputs return whole, nothing spills on the host). A cancelled MCP request closes the hub socket, which cancels the call and kills its host process group; the user's stop cancels every call still running, since a host command outlived a stop on CLI 2.1.300.
+- Paths under Claude's own directories (`~/.claude`, `CLAUDE_CONFIG_DIR`, `/tmp/claude-*`) and the data root are run here; a path inside the stand-in means the host folder. Plan mode writes its plan file through the aliased Write, so it lands in `~/.claude/plans` here and is allowed without a card.
+- Rows and permission cards are rewritten to read as the native tools; command output streams onto the row. Host writes pass the `beforeEdit` gate like the built-in agent's; under acceptEdits the engine answers their cards allow-once.
+- Observed on claude-agent-acp 0.93.0 / Claude Code 2.1.300: the adapter spreads `_meta.claudeCode.options` into the SDK options and takes `systemPrompt: { mode: "append" }` on new / load / resume; a `tools/call` carries `_meta["claudecode/toolUseId"]`, which ties the call to its row. Besides the title, a row names the MCP call in a top-level `name`, and an AIR permission request repeats it as its heading in `_meta.jetbrains.air.permission.title`; each is rewritten, or the row reads "Call Acpira".
+- Known limits: a slash command's inline `!` shell finds no Bash and the turn ends without a word; no background Bash, Monitor or worktrees; the host project's `.claude/` settings, hooks and commands are not read; a Claude child summoned into a host folder is still refused.
 
 ## Workspace seam
 

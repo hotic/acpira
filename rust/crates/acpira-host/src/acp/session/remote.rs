@@ -3,7 +3,7 @@
 //! requests, which go to the host's helper (`remote::helper`, the `tool` op) over the host's connection. The helper's
 //! progress chunks go back to the agent as `_acpira/remoteProgress` notifications, its spilled outputs ride in the
 //! answer. A turn's cancel reaches the agent's request as `$/cancel_request`, which drops the helper call and with it
-//! the command's process group on the host
+//! the command's process group on the host. Claude Code's project tools take the same path (`remote_claude.rs`)
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -63,8 +63,12 @@ impl AcpSession {
   }
 
   /// Where the agent process starts and reads files of its own (model facts, a warm process): the session folder, or
-  /// for a folder on an SSH host this machine's home
+  /// for a folder on an SSH host this machine's home; Claude Code there gets its stand-in folder (`remote_claude.rs`)
   pub(crate) fn process_cwd(&self) -> String {
+    if let Some(stand) = self.claude_stand() {
+      let _ = std::fs::create_dir_all(&stand.local);
+      return stand.local.to_string_lossy().into_owned();
+    }
     crate::workspace::process_folder(self.cwd.clone())
   }
 
@@ -81,11 +85,11 @@ impl AcpSession {
     FileReader::Host(crate::workspace::Workspace::open(&self.cwd, self.deps.remote.as_deref()).await.ok())
   }
 
-  /// Refuse an agent that cannot work in the session's folder: under local run only the built-in agent's tools go to
-  /// the host
+  /// Refuse an agent that cannot work in the session's folder: under local run only the built-in agent's tools and
+  /// Claude Code's project tools (`remote_claude.rs`) go to the host
   pub(crate) fn check_remote_agent(&self, name: &str) -> anyhow::Result<()> {
     match self.remote_folder() {
-      Some(f) if self.agent != crate::acp::agents::registry::SELF_AGENT_ID => {
+      Some(f) if self.agent != crate::acp::agents::registry::SELF_AGENT_ID && self.claude_stand().is_none() => {
         anyhow::bail!(crate::i18n::tp("host.remoteBuiltinOnly", &[("agent", name), ("host", &f.alias)]))
       }
       _ => Ok(()),

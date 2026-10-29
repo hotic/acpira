@@ -848,6 +848,8 @@ impl AcpSession {
   }
 
   async fn cancel_turn(self: &Arc<Self>, requeue: bool) {
+    // Claude Code's project tools still running on an SSH host stop with the turn
+    self.stop_remote_calls();
     let mut c = self.core.lock();
     // Summoned children outlive the tool call that started them, not the user's stop: each gets its own cancel, whatever
     // state the root turn is in

@@ -28,6 +28,7 @@ pub mod prompt;
 pub mod queue;
 pub mod relay;
 pub mod remote;
+pub mod remote_claude;
 pub mod restore_turns;
 pub mod tasks;
 pub mod turn_usage;
@@ -271,6 +272,9 @@ pub struct AcpSession {
   /// The project stdio MCP servers on the folder's SSH host this session's agent was given, by name: the only commands
   /// an `acpira mcp-host` shim holding its grant can start there (`HubOp::HostStdio`)
   pub(crate) host_stdio: parking_lot::Mutex<std::collections::HashMap<String, remote::HostStdio>>,
+  /// A Claude Code session's calls of the project tools on its SSH host, by the model's call id, until their rows
+  /// complete (`remote_claude.rs`)
+  pub(crate) remote_calls: parking_lot::Mutex<std::collections::HashMap<String, remote_claude::RemoteCall>>,
   /// The `clientId`s of the actions this instance ran, newest last (`claim_client_id`)
   client_ids: parking_lot::Mutex<std::collections::VecDeque<String>>,
 }
@@ -412,6 +416,7 @@ impl AcpSession {
         epoch,
         shown: Default::default(),
         host_stdio: Default::default(),
+        remote_calls: Default::default(),
         client_ids: Default::default(),
       }
     })

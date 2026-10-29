@@ -77,8 +77,9 @@ impl SessionManager {
         _ => {}
       }
     }
+    // The next session's process, warmed where this one's runs (an SSH host's folder is no folder here)
     if s.status() == SessionStatus::Ready {
-      self.pool.ensure(&s.agent, &s.cwd, s.account_id().as_deref());
+      self.pool.ensure(&s.agent, &s.process_cwd(), s.account_id().as_deref());
     }
   }
 

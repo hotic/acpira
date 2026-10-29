@@ -107,7 +107,9 @@ impl AcpSession {
       req = crate::acp::vendors::claude_workflow::with_raw_progress(req);
     }
     // After thinking and the raw progress filter: all three merge into the same `_meta.claudeCode`
-    self.with_ultracode(req)
+    let req = self.with_ultracode(req);
+    // Claude Code in a folder on an SSH host: its stand-in, its own tools off, the host's instructions
+    self.with_claude_stand(req).await
   }
 
   /// Kill the current CLI; its exit / updates must not touch the session after this. session/close goes out first

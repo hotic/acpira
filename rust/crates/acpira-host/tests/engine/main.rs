@@ -25,6 +25,7 @@ mod preview;
 mod questions;
 mod registry;
 mod relay;
+mod remote_claude;
 mod remote_connections;
 mod remote_peer;
 mod remote_workspace;

@@ -67,6 +67,16 @@ pub enum HubOp {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     result: Option<serde_json::Value>,
   },
+  /// A project tool of a Claude Code session in a folder on an SSH host (`host_tools::REMOTE`, `vendors::claude_remote`),
+  /// run there or, for Claude's own files, here; `tool_use_id` is the model's call (`_meta["claudecode/toolUseId"]`),
+  /// which ties it to its row. Answered `Tool` (the MCP result) or `Error`. The caller closing the socket cancels it
+  RemoteTool {
+    name: String,
+    #[serde(default)]
+    arguments: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tool_use_id: Option<String>,
+  },
 }
 
 /// `search_sessions`' arguments (`session_library.rs`)
@@ -177,6 +187,8 @@ pub enum HubReply {
   Error(String),
   /// The answer to `Features`
   Features(HostFeatures),
+  /// A whole MCP tool result (`RemoteTool`)
+  Tool(serde_json::Value),
   /// The answer to `Plugins`: the MCP definitions of the plugin tools in effect, the tool groups switched off
   Plugins {
     tools: Vec<serde_json::Value>,
@@ -198,4 +210,8 @@ pub struct HostFeatures {
   /// The session's folder is on an SSH host: the files a tool names are read there (`HubOp::HostFiles`)
   #[serde(default)]
   pub remote: bool,
+  /// The host's alias when the session's agent (Claude Code under local run) gets the project tools that run there
+  /// (`HubOp::RemoteTool`)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub remote_tools: Option<String>,
 }

@@ -263,6 +263,9 @@ struct Out {
   /// By the call's JSON-RPC id: the tool and its arguments
   after: parking_lot::Mutex<std::collections::HashMap<String, (String, Value)>>,
   relay: Option<Relay>,
+  /// The hub sockets of the project tool calls running on an SSH host, by the call's JSON-RPC id: the client's cancel
+  /// shuts one down, which cancels the run there
+  running: parking_lot::Mutex<std::collections::HashMap<String, std::net::TcpStream>>,
 }
 
 impl Out {
@@ -281,7 +284,7 @@ impl Out {
 
 pub fn run(version: &str) -> i32 {
   let relay = Relay::from_env();
-  let out = Arc::new(Out { stdout: parking_lot::Mutex::new(std::io::stdout()), after: Default::default(), relay: relay.clone() });
+  let out = Arc::new(Out { stdout: parking_lot::Mutex::new(std::io::stdout()), after: Default::default(), relay: relay.clone(), running: Default::default() });
   let write = |out: &Out, v: &Value| {
     let reviewed = out.reviewed(v);
     let v = reviewed.as_ref().unwrap_or(v);
@@ -348,6 +351,10 @@ pub fn run(version: &str) -> i32 {
           tools.push(browser_tool_def());
         }
         tools.extend(session_tool_defs());
+        // A Claude Code session in a folder on an SSH host: the project tools that run there
+        if let Some(alias) = &features.remote_tools {
+          tools.extend(crate::acp::vendors::claude_remote::tool_defs(alias));
+        }
         // The tool groups the plugin page switched off leave every agent's list; the plugins' own tools join it
         let (plugin_tools, off) = plugins.unwrap_or_default();
         tools.retain(|t| t["name"].as_str().and_then(acpira_shared::host_tools::group_of).is_none_or(|g| !off.iter().any(|o| o == g)));
@@ -408,6 +415,31 @@ pub fn run(version: &str) -> i32 {
       }
       // Session reads answer from the sidecar's warm caches, but each still gets its own thread (a model reads several at once)
       let name = msg.get("params").and_then(|p| p.get("name")).and_then(Value::as_str);
+      // A project tool of a Claude Code session on an SSH host: run there through the hub, each on a thread of its own (the
+      // model reads several files at once). A cancelled call gets no answer, as MCP asks
+      if method == "tools/call"
+        && name.is_some_and(|n| acpira_shared::host_tools::REMOTE.contains(&n))
+        && let Some(id) = msg.get("id").cloned()
+      {
+        let (relay, out, params, key) = (relay.clone(), out.clone(), msg.get("params").cloned().unwrap_or(Value::Null), id.to_string());
+        std::thread::spawn(move || {
+          let result = relay.remote_tool(&params, |sock| {
+            if let Ok(s) = sock.try_clone() {
+              out.running.lock().insert(key.clone(), s);
+            }
+          });
+          if out.running.lock().remove(&key).is_some() {
+            write(&out, &json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+          }
+        });
+        continue;
+      }
+      if method == "notifications/cancelled" {
+        if let Some(sock) = msg.pointer("/params/requestId").and_then(|id| out.running.lock().remove(&id.to_string())) {
+          let _ = sock.shutdown(std::net::Shutdown::Both);
+        }
+        continue;
+      }
       if method == "tools/call"
         && matches!(name, Some(SEARCH_SESSIONS_TOOL | READ_SESSION_TOOL))
         && let Some(id) = msg.get("id").cloned()

@@ -679,7 +679,7 @@ export const zhCN = {
 
   // Host-side, user-visible (toasts / error texts / titles); log lines are not translated
   'host.notFound': '找不到 {command}，请先安装 {agent} CLI',
-  'host.remoteBuiltinOnly': '本机运行下，{agent} 不能在 {host} 上的文件夹里工作，只有 Acpira 自带的 agent 可以',
+  'host.remoteBuiltinOnly': '本机运行下，{agent} 不能在 {host} 上的文件夹里工作，只有 Acpira 自带的 agent 和 Claude Code 可以',
   'host.remoteFile': '{path} 在 {host} 上，项目里的文件可以在工具面板中打开',
   'host.remoteUnreachable': '{host} 暂时连不上，等它连上后再试',
   'host.exited': '{agent} 进程退出（{code}）',

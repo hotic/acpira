@@ -4,6 +4,11 @@
 
 export const REMOTE_SCHEME = 'ssh://';
 
+/** The agents that work in a folder on an SSH host under local run, the engine refusing the rest (host.remoteBuiltinOnly):
+ * the built-in agent, whose tools run on the host, and Claude Code, whose own file and shell tools are swapped for
+ * Acpira's there (rust vendors/claude_remote.rs). The built-in agent first: it is the fallback. AppModel.swift mirrors it */
+export const LOCAL_RUN_AGENTS: readonly string[] = ['acpira', 'claude'];
+
 export interface RemoteFolder { alias: string; path: string }
 
 /** Whether a folder string names a remote folder at all: local paths never start with the scheme */

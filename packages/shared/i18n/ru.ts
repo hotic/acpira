@@ -670,7 +670,7 @@ export const ru = {
   'mention.noFiles': 'Подходящих файлов нет',
 
   'host.notFound': '{command} не найден — сначала установите CLI {agent}',
-  'host.remoteBuiltinOnly': '{agent} не может работать в папке на {host} при локальном запуске; это умеет только встроенный агент Acpira',
+  'host.remoteBuiltinOnly': '{agent} не может работать в папке на {host} при локальном запуске; это умеют только встроенный агент Acpira и Claude Code',
   'host.remoteFile': '{path} находится на {host}. Файлы проекта открываются в панели инструментов',
   'host.remoteUnreachable': '{host} сейчас недоступен; повторите попытку, когда соединение восстановится',
   'host.exited': 'Процесс {agent} завершился ({code})',

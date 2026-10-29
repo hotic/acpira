@@ -659,7 +659,7 @@ export const de = {
   'mention.noFiles': 'Keine passenden Dateien',
 
   'host.notFound': '{command} nicht gefunden – zuerst das {agent}-CLI installieren',
-  'host.remoteBuiltinOnly': '{agent} kann bei lokaler Ausführung nicht in einem Ordner auf {host} arbeiten; das kann nur Acpiras eigener Agent',
+  'host.remoteBuiltinOnly': '{agent} kann bei lokaler Ausführung nicht in einem Ordner auf {host} arbeiten; das können nur Acpiras eigener Agent und Claude Code',
   'host.remoteFile': '{path} liegt auf {host}. Dateien des Projekts öffnen sich im Werkzeugbereich',
   'host.remoteUnreachable': '{host} ist gerade nicht erreichbar; versuche es erneut, sobald die Verbindung steht',
   'host.exited': 'Der {agent}-Prozess wurde beendet ({code})',

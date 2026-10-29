@@ -5,6 +5,7 @@
 pub mod antigravity;
 pub mod claude_auth;
 pub mod claude_autonomous;
+pub mod claude_remote;
 pub mod claude_thinking;
 pub mod claude_ultracode;
 pub mod claude_workflow;

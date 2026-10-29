@@ -677,7 +677,7 @@ export const zhTW = {
 
   // Host-side, user-visible (toasts / error texts / titles); log lines are not translated
   'host.notFound': '找不到 {command}，請先安裝 {agent} CLI',
-  'host.remoteBuiltinOnly': '本機執行時，{agent} 無法在 {host} 上的資料夾裡工作，只有 Acpira 內建的 agent 可以',
+  'host.remoteBuiltinOnly': '本機執行時，{agent} 無法在 {host} 上的資料夾裡工作，只有 Acpira 內建的 agent 和 Claude Code 可以',
   'host.remoteFile': '{path} 在 {host} 上，專案裡的檔案可以在工具面板中開啟',
   'host.remoteUnreachable': '{host} 暫時連不上，等它連上後再試',
   'host.exited': '{agent} 程序退出（{code}）',
