@@ -25,6 +25,7 @@ struct ChatScreen: View {
   @State private var diffMemo = Memo<((DiffLocation) async -> FullDiffSource?)?>()
   @Environment(\.initialPopup) private var initialPopup
   @Environment(\.initialDraft) private var initialDraft
+  @Environment(\.syncing) private var syncing
 
   var body: some View {
     Group {
@@ -47,7 +48,10 @@ struct ChatScreen: View {
     let draft = model.draft(for: id)
     return VStack(spacing: 0) {
       // A prompt the session itself holds back (starting, replaying remembered controls) shows as sent (HeldPrompt.swift)
-      Thread(session: heldPrompt(session))
+      // and so does the phone's own prompt still on its way to the engine, under the stage pill's "Sending…"
+      let sent = model.outgoing[id] ?? []
+      Thread(session: heldPrompt(session, outgoing: sent))
+        .environment(\.promptSending, sent.contains { !$0.settled(in: session) })
       // The dock reaches down into the home indicator's band and rests where the list's system bottom bar does
       // (Metrics.barSink), leaving the thread more room; on a phone without the indicator it keeps the plain gap
       DockSeat(homeInset: homeInset) {
@@ -80,6 +84,8 @@ struct ChatScreen: View {
     .background(Palette.bg0)
     .environment(\.agentAccent, Palette.accent(for: session.agent))
     .environment(\.chatAgent, agent)
+    // A view carried over from the wire before stays syncing until this wire sends the session again
+    .environment(\.syncing, syncing || !model.shown(id))
     .environment(\.sessionActions, actionsMemo(memoKey) { sessionActions })
     // A subagent row pushes that child's inspector
     .environment(\.inspectSubagent, SubagentInspect(session: id) { model.path.append(.subagent(session: id, id: $0)) })

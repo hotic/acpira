@@ -189,4 +189,103 @@ struct EngineModelTests {
     #expect(model.synced && model.summaries.isEmpty)
     #expect(wire.sent.last?.contains(#""id":"s1""#) == true)
   }
+
+  /// A prompt sent as the wire was lost goes out again on the next one with the same clientId (the engine runs it once),
+  /// after the session is shown again; an action posted before the new wire's init waits for it too
+  @Test func aReconnectSendsAgainWhatTheLostWireMayNotHaveDelivered() async throws {
+    let (before, lost) = try await connected()
+    before.path = [.chat("s1")]
+    before.open("s1")
+    before.send("s1", text: "hello", attachments: [])
+    try await until { lost.types.last == "webviewMessage:send" }
+    let first = try #require(lost.sent.last)
+    lost.feed.finish(throwing: CancellationError())
+    try await until { before.link?.client.unsent().isEmpty == false }
+    let wire = FakeTransport()
+    let model = AppModel(link: EngineLink(transport: wire, language: "en"), options: LaunchOptions.current(["app"]))
+    model.resume(from: before)
+    model.stop("s1")
+    wire.feed.yield(EngineClientTests.helloOk)
+    push(wire, #"{"type":"init","state":{"host":"sidebar","agents":[],"accounts":[],"hidden":{},"sessions":[\#(Self.summary)],"settings":{},"locale":"en","home":"/h","cwd":"/w"}}"#)
+    try await until { wire.types.last == "webviewMessage:stop" }
+    #expect(Array(wire.types.suffix(3)) == ["webviewMessage:selectSession", "webviewMessage:send", "webviewMessage:stop"])
+    let id = try #require(first.firstMatch(of: /"clientId":"([^"]+)"/)?.1)
+    #expect(wire.sent.contains { $0.contains(#""type":"send""#) && $0.contains(String(id)) })
+  }
+
+  /// An action for a session off screen switches the view to it and back
+  @Test func aReplayedActionForAnotherSessionSwitchesTheViewThere() async throws {
+    let (before, _) = try await connected()
+    let wire = FakeTransport()
+    let model = AppModel(link: EngineLink(transport: wire, language: "en"), options: LaunchOptions.current(["app"]))
+    model.resume(from: before)
+    model.path = [.chat("s1")]
+    model.choosePermission("s2", block: "p1", option: "allow")
+    wire.feed.yield(EngineClientTests.helloOk)
+    push(wire, #"{"type":"init","state":{"host":"sidebar","agents":[],"accounts":[],"hidden":{},"sessions":[],"settings":{},"locale":"en","home":"/h","cwd":"/w"}}"#)
+    try await until { wire.types.filter { $0 == "webviewMessage:selectSession" }.count == 3 }
+    #expect(Array(wire.types.suffix(4)) == ["webviewMessage:selectSession", "webviewMessage:selectSession", "webviewMessage:permission",
+                                            "webviewMessage:selectSession"])
+    #expect(wire.sent.last?.contains(#""id":"s1""#) == true)
+  }
+
+  /// The engine's view counts a chat as watched only while it is on screen: back on the list, or in the background, the
+  /// view lets it go, so its turn ending gets the unread dot; coming back selects it again and follows its child again
+  @Test func theViewWatchesOnlyTheChatOnScreen() async throws {
+    let (model, wire) = try await connected()
+    model.path = [.chat("s1")]
+    model.open("s1")
+    // A page over the chat keeps it watched
+    model.path = [.chat("s1"), .subagent(session: "s1", id: "n1")]
+    model.observeSubagent("s1", "n1")
+    model.syncWatching()
+    try await until { wire.types.last == "webviewMessage:observeSubagent" }
+    model.setAway(true)
+    try await until { wire.types.last == "webviewMessage:deselectSession" }
+    #expect(wire.sent.last?.contains(#""id":"s1""#) == true)
+    model.setAway(false)
+    try await until { wire.types.last == "webviewMessage:observeSubagent" }
+    #expect(Array(wire.types.suffix(2)) == ["webviewMessage:selectSession", "webviewMessage:observeSubagent"])
+    model.path = []
+    model.syncWatching()
+    try await until { wire.types.last == "webviewMessage:deselectSession" }
+    // Nothing watched, nothing to say on the way out and back
+    let count = wire.types.count
+    model.setAway(true)
+    model.setAway(false)
+    model.syncWatching()
+    try await Task.sleep(for: .milliseconds(30))
+    #expect(wire.types.count == count)
+  }
+
+  /// A replayed action for a session while the list is on screen leaves the view on no session, not on that one
+  @Test func aReplayedActionWithNoChatOnScreenLeavesTheViewOnNone() async throws {
+    let (before, _) = try await connected()
+    let wire = FakeTransport()
+    let model = AppModel(link: EngineLink(transport: wire, language: "en"), options: LaunchOptions.current(["app"]))
+    model.resume(from: before)
+    model.choosePermission("s2", block: "p1", option: "allow")
+    wire.feed.yield(EngineClientTests.helloOk)
+    push(wire, #"{"type":"init","state":{"host":"sidebar","agents":[],"accounts":[],"hidden":{},"sessions":[],"settings":{},"locale":"en","home":"/h","cwd":"/w"}}"#)
+    try await until { wire.types.last == "webviewMessage:deselectSession" }
+    #expect(Array(wire.types.suffix(3)) == ["webviewMessage:selectSession", "webviewMessage:permission", "webviewMessage:deselectSession"])
+    #expect(wire.sent.last?.contains(#""id":"s2""#) == true)
+  }
+
+  /// What the screens show is current only over a wire that is up and, for one that took over the screens, after its init
+  @Test func theScreensAreCurrentOnlyOverALiveWireAfterItsInit() async throws {
+    let (before, lost) = try await connected()
+    #expect(before.current)
+    lost.feed.finish(throwing: CancellationError())
+    try await until { !before.current }
+    #expect(!before.current)
+    let wire = FakeTransport()
+    let model = AppModel(link: EngineLink(transport: wire, language: "en"), options: LaunchOptions.current(["app"]))
+    model.resume(from: before)
+    #expect(!model.current)
+    wire.feed.yield(EngineClientTests.helloOk)
+    push(wire, #"{"type":"init","state":{"host":"sidebar","agents":[],"accounts":[],"hidden":{},"sessions":[],"settings":{},"locale":"en","home":"/h","cwd":"/w"}}"#)
+    try await until { model.synced }
+    #expect(model.current)
+  }
 }

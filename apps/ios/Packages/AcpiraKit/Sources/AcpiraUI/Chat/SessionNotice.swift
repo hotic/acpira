@@ -209,7 +209,7 @@ struct ExternalSessionNotice: View {
 }
 
 /// What floats over the thread's lower edge rather than taking a dock slot, so neither shrinks the thread or pushes
-/// its history up: the connecting row while a session starts, then the docked to-do card
+/// its history up: the stage pill while a prompt is on its way or a session starts, then the docked to-do card
 struct ThreadDock: View {
   let session: SessionView
   var body: some View {
@@ -220,43 +220,56 @@ struct ThreadDock: View {
   }
 }
 
-/// How long a session may be starting before the connecting row shows
+extension EnvironmentValues {
+  /// The phone's own prompt is still on its way to the engine (Outgoing.swift): the stage pill says "Sending…"
+  @Entry var promptSending = false
+}
+
+/// How long a stage may last before the pill shows
 private let connectingDelay = Duration.milliseconds(400)
 
-/// ConnectingNotice: "Starting Codex…" once a start has taken a moment, so a warm agent does not flash it; only the
-/// glyph loops. A zero-height anchor above the docked to-do card: the row rises from it at the composer's text inset
-/// and takes no layout space
+/// ConnectingNotice at phone width: "Sending…" while the phone's prompt is on its way, then "Starting Codex…" while
+/// the session starts, once a stage has taken a moment, so a warm agent or a quick send does not flash it; only the
+/// glyph loops. The webview's row along the composer's edge read as a desktop status line on a phone, so it is a
+/// glass pill centred a little above the composer, the way a phone floats a passing state. A zero-height anchor above
+/// the docked to-do card: the pill rises from it and takes no layout space
 struct ConnectingNotice: View {
   let session: SessionView
   @Environment(\.chatAgent) private var agent
   @Environment(\.snapshot) private var snapshot
+  @Environment(\.promptSending) private var sending
   @State private var late = false
 
   var body: some View {
     let starting = session.status == .starting
+    // One delay over both stages, so going from sending to starting changes the words in place
+    let active = sending || starting
+    let label = sending ? t("mobile.sending") : t("notice.connecting", ["agent": agent?.name ?? session.agent])
     Color.clear
       .frame(height: 0)
       .overlay(alignment: .bottom) {
-        if starting && (late || snapshot) {
-          Row {
+        if active && (late || snapshot) {
+          HStack(spacing: Metrics.s2) {
             Orb()
-          } content: {
-            Text(web: t("notice.connecting", ["agent": agent?.name ?? session.agent])).lineLimit(1)
+            Text(web: label, paragraph: false).lineLimit(1)
           }
+          .textStyle(TypeScale.text2, weight: .medium)
           .foregroundStyle(Palette.fg2)
-          // px-dock, then the row's own px-pad
-          .padding(.horizontal, Metrics.pad * 2)
-          .padding(.bottom, Metrics.gapHalf)
-          .fixedSize(horizontal: false, vertical: true)
+          .padding(.horizontal, Metrics.pad)
+          .frame(height: Metrics.mCtl)
+          .glassEffect(.regular, in: Capsule())
+          .animation(Motion.ease, value: label)
+          .padding(.horizontal, Metrics.page)
+          .padding(.bottom, Metrics.pad * 2)
           .transition(.opacity)
           .accessibilityElement(children: .combine)
           .accessibilityAddTraits(.updatesFrequently)
         }
       }
       .allowsHitTesting(false)
-      .task(id: starting) {
+      .task(id: active) {
         late = false
-        guard starting else { return }
+        guard active else { return }
         try? await Task.sleep(for: connectingDelay)
         withAnimation(Motion.ease) { late = true }
       }

@@ -763,17 +763,22 @@ struct ListRowStyle: ButtonStyle {
 /// verb to shimmer). Waiting: an amber dot beating like a heart. Error: a red dot that double-flashes every few seconds.
 /// Unread (a turn finished unwatched): a white dot with a halo rippling out of it. Background (the turn ended, a task it
 /// started still runs): the ring at rest with a dot orbiting it slowly, lit white with a dot inside once a reply came in
-/// meanwhile. Motion off stops all but the ring on their resting frame (full dot, lit dot, orbit dot at the top)
+/// meanwhile. Motion off stops all but the ring on their resting frame (full dot, lit dot, orbit dot at the top).
+/// Syncing, the live states (working, waiting, background) rest and breathe like a connecting glyph: what the last wire
+/// said may have ended since
 struct StateMark: View {
   let state: SessionState
   var unread = false
   @Environment(\.motionEnabled) private var motion
+  @Environment(\.syncing) private var syncing
 
   var body: some View {
-    let moving = motion || state == .working
+    let held = syncing && (state == .working || state == .waiting || state == .background)
+    let moving = !held && (motion || state == .working)
     TimelineView(.animation(paused: !moving || state == .unknown)) { context in
       glyph(moving ? context.date.timeIntervalSinceReferenceDate : nil)
     }
+    .breathing(held)
     .frame(width: Metrics.stateSlot, height: Metrics.stateSlot)
     .accessibilityElement()
     .accessibilityLabel(Text(web: t(state == .background && unread ? "session.state.backgroundUnread" : "session.state.\(state.rawValue)")))

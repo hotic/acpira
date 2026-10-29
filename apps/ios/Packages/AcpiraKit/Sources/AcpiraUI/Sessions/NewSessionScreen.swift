@@ -72,8 +72,9 @@ struct NewSessionScreen: View {
     .ignoresSafeArea(.container, edges: .bottom)
     .modifier(HomeInset(inset: $homeInset))
     // The agent's models as the engine knows them (its probe or its newest session), so the model chip is there
-    // before the first prompt; they fill the draft once they arrive unless something was picked meanwhile
-    .task(id: draft.agent) { model.loadControls(draft.agent) }
+    // before the first prompt; they fill the draft once they arrive unless something was picked meanwhile. Asked
+    // again on every new wire: an answer the lost one never brought left the page without a model chip for good
+    .task(id: ControlsAsk(agent: draft.agent, wire: ObjectIdentifier(model))) { model.loadControls(draft.agent) }
     .onChange(of: model.agentControls[draft.agent]) { _, _ in
       guard !picked else { return }
       let known = model.controls(for: draft.agent)
@@ -90,6 +91,12 @@ struct NewSessionScreen: View {
 
   /// The page's coordinate space, for the hero and the composer to meet in
   nonisolated private static let page = "new.page"
+
+  /// What the controls are asked for: the agent, on this wire's app model (every wire brings a new one)
+  private struct ControlsAsk: Equatable {
+    var agent: AgentId
+    var wire: ObjectIdentifier
+  }
 
   /// Another agent: its own controls (models and modes differ per CLI)
   private func pickAgent(_ id: AgentId) {

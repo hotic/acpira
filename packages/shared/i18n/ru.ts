@@ -1470,6 +1470,7 @@ export const ru = {
   'mobile.view.agent': 'По каналам',
   'mobile.view.none': 'Без группировки',
   'mobile.forked': 'Ответвлено в новый сеанс',
+  'mobile.sending': 'Отправка…',
   'mobile.project.moveTop': 'Переместить в начало',
   'mobile.project.removed': '{name} убран из списка',
   'mobile.engineNeeded': 'Нужен подключённый движок',

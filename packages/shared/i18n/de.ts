@@ -1435,6 +1435,7 @@ export const de = {
   'mobile.view.agent': 'Nach Kanal',
   'mobile.view.none': 'Ohne Gruppen',
   'mobile.forked': 'In eine neue Sitzung abgezweigt',
+  'mobile.sending': 'Wird gesendet…',
   'mobile.project.moveTop': 'Nach oben verschieben',
   'mobile.project.removed': '{name} aus der Liste entfernt',
   'mobile.engineNeeded': 'Braucht eine verbundene Engine',

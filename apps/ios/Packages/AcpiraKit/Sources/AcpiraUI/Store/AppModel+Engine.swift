@@ -10,6 +10,10 @@ import os
 extension AppModel {
   var live: Bool { link != nil }
 
+  /// What the screens show is the engine's own, pushed over a wire that is up: false from a wire's end until the next
+  /// one's init replaces what the screens carried over (the demo is always current)
+  var current: Bool { link == nil || (!ended && (!resumed || synced)) }
+
   /// The loader the chat's images ask: the engine's, else the demo's (fixture blobs from the bundle)
   var media: MediaLoader { link?.media ?? .demo }
 
@@ -17,6 +21,12 @@ extension AppModel {
   @discardableResult
   func post(_ message: WebviewMsg) -> Bool {
     guard let link else { return false }
+    // A resumed wire's view shows no session until its init and the reopen after it, and the engine refuses a session
+    // action before that: it waits in the replay
+    if resumed, !synced, message.replayable {
+      replay.append(message.stamped())
+      return true
+    }
     link.client.post(message)
     return true
   }
@@ -55,6 +65,7 @@ extension AppModel {
       }
     case .closed(let reason):
       EngineLink.log.notice("closed \(reason ?? "", privacy: .public)")
+      ended = true
       // A paired computer's wire has its own screens for an ended connection; the development engine gets a toast,
       // unless the version notice already said why
       if let onClosed { onClosed() } else if !incompatible {
@@ -77,7 +88,10 @@ extension AppModel {
       synced = true
       // The hosts' state for the host folders; the engine pushes it again on every change
       post(.connections)
-      if resumed { reopen() }
+      if resumed {
+        reopen()
+        flushReplay()
+      }
     case .agents(let list):
       agents = list
     case .sessions(let list):
@@ -132,6 +146,11 @@ extension AppModel {
       let kept = Set(link.feed.views.kept)
       views = views.filter { kept.contains($0.key) }
       views[view.id] = view
+      // A prompt still on its way gives up its place once the session shows the engine's copy
+      if let sent = outgoing[view.id] {
+        let left = sent.filter { !$0.settled(in: view) }
+        if left.count != sent.count { outgoing[view.id] = left.isEmpty ? nil : left }
+      }
       if let awaiting = link.awaiting, view.id != awaiting.from {
         link.awaiting = nil
         awaiting.then(view.id)
@@ -154,6 +173,8 @@ extension AppModel {
     agentControls = previous.agentControls
     summaries = previous.summaries
     views = previous.views
+    // The replay below sends them again, so they keep reading as sent
+    outgoing = previous.outgoing
     path = Array(previous.path.prefix { if case .terminal = $0 { false } else { true } })
     addedProjects = previous.addedProjects
     projectOrder = previous.projectOrder
@@ -164,14 +185,67 @@ extension AppModel {
     settingsOpen = previous.settingsOpen
     shared = previous.shared
     drafts = previous.drafts
+    // What the wire before may not have delivered (a prompt sent as the network moved), and anything it had still
+    // waiting for its own init; the engine runs each clientId once, so a resend that did arrive changes nothing
+    replay = previous.replay + (previous.link?.client.unsent() ?? [])
+    away = previous.away
     resumed = true
   }
 
   /// After a resumed wire's init: its view starts on no session, so the one on screen is opened again (a chat opens
-  /// itself on appear, which a screen carried over never repeats)
+  /// itself on appear, which a screen carried over never repeats). In the background it waits for the way back
   private func reopen() {
-    guard let id = path.reversed().lazy.compactMap(\.session).first else { return }
+    guard !away, let id = onScreenSession else { return }
     open(id)
+  }
+
+  /// The chat the stack shows, or the nearest one under the page on top
+  private var onScreenSession: String? { path.reversed().lazy.compactMap(\.session).first }
+
+  /// Sends the held session actions in order, after the reopen. An action for a session off screen switches the view
+  /// to it first and back after, since the engine acts only on the session the view shows
+  private func flushReplay() {
+    let held = replay
+    replay = []
+    let shown = watching
+    for message in held {
+      guard let target = message.sessionTarget, target != shown else {
+        post(message)
+        continue
+      }
+      post(.selectSession(id: target))
+      post(message)
+      // Back to what the screen shows; with no chat on screen the view must not stay on the target as if watching it
+      post(shown.map { .selectSession(id: $0) } ?? .deselectSession(id: target))
+    }
+  }
+
+  /// The chat the engine's view should count as watched: the one on screen (or under the page on top), none while the
+  /// list is on top or the app is in the background
+  private var watchable: String? { away ? nil : onScreenSession }
+
+  /// The stack changed or the app went to the background: a chat that left the screen is no longer watched from this
+  /// view, so a turn ending there gets its unread dot. The view used to keep the last chat opened, under the list and in
+  /// the background alike. A chat coming on screen selects itself (`open`); `back` selects the one on screen again on
+  /// the way back from the background, whose view may have moved on meanwhile
+  func syncWatching(back: Bool = false) {
+    guard let link, !resumed || synced else { return }
+    let want = watchable
+    if let was = watching, was != want {
+      watching = nil
+      link.client.post(.deselectSession(id: was))
+    }
+    guard back, let want, watching == nil else { return }
+    open(want)
+    // The engine drops the observed child with its session: the inspector on screen follows it again
+    if let again = subagentFeed.renewal(session: want) { link.client.post(again) }
+  }
+
+  /// The app went to the background (true) or came back
+  func setAway(_ now: Bool) {
+    guard now != away else { return }
+    away = now
+    syncWatching(back: !now)
   }
 
   /// The session's view came on this wire: a view carried over from the wire before waits for the engine to show it
@@ -184,6 +258,7 @@ extension AppModel {
   func open(_ id: String) {
     guard let link else { return }
     if let kept = link.feed.select(id) { views[id] = kept }
+    watching = id
     link.client.post(.selectSession(id: id))
   }
 

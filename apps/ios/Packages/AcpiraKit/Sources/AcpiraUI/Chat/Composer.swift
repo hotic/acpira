@@ -740,12 +740,14 @@ func modeLabel(_ mode: SessionOption) -> String {
 /// bar's glass already frames it. The bar-tall slot keeps the bar's layout
 struct SendButton: View {
   @Environment(\.motionEnabled) private var motion
+  /// Syncing, stop rests unlit: the run it would stop may be over, and the engine's answer is a moment away
+  @Environment(\.syncing) private var syncing
   var running: Bool
   var filled: Bool
   var action: () -> Void
 
   var body: some View {
-    let on = running || filled
+    let on = (running && !syncing) || filled
     let side = Metrics.barCtl - Metrics.s1 * 2
     Button(action: action) {
       Group {

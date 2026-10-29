@@ -1491,6 +1491,7 @@ export const zhCN = {
   'mobile.view.agent': '按渠道',
   'mobile.view.none': '不分组',
   'mobile.forked': '已分叉为新会话',
+  'mobile.sending': '正在发送…',
   'mobile.project.moveTop': '移到最前',
   'mobile.project.removed': '已将 {name} 移出列表',
   'mobile.engineNeeded': '需要先连接引擎',

@@ -129,6 +129,8 @@ struct CodexFold: View {
   @Environment(\.holdScroll) private var holdScroll
   @Environment(\.preOpen) private var preOpen
   @Environment(\.subagentTranscript) private var staticLead
+  /// The view came from a wire that ended: the head's motion rests until the engine's own state is back
+  @Environment(\.syncing) private var syncing
 
   var body: some View {
     // A turn with no process worth a head (a plain reply, or only a compaction status) shows no head
@@ -204,7 +206,7 @@ struct CodexFold: View {
         if running {
           switch activity.lead {
           // The root turn owns the only Orb; a child's transcript leads with a static mark
-          case .orb: if staticLead { Icon(.bot, size: WebMetrics.icon) } else { Orb() }
+          case .orb: if staticLead { Icon(.bot, size: WebMetrics.icon) } else { Orb(paused: syncing) }
           case .hand: Icon(.hand, size: WebMetrics.icon)
           case .question: Icon(.messageCircleQuestion, size: WebMetrics.icon)
           case .plan: Icon(.listTodo, size: WebMetrics.icon)
@@ -215,7 +217,7 @@ struct CodexFold: View {
       } content: {
         // The live counter rides with the label as one part, so it brings its own gap only once it shows
         HStack(alignment: .firstTextBaseline, spacing: 0) {
-          RowLabel(label, shimmer: running && activity.active)
+          RowLabel(label, shimmer: running && activity.active && !syncing)
           // The clock stops while the plan card waits on the user
           if running && !activity.quiet, let since = clockStart(turn) { LiveElapsed(since: since) }
         }

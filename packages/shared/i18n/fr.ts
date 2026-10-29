@@ -1438,6 +1438,7 @@ export const fr = {
   'mobile.view.agent': 'Par canal',
   'mobile.view.none': 'Sans groupes',
   'mobile.forked': 'Dérivée dans une nouvelle session',
+  'mobile.sending': 'Envoi…',
   'mobile.project.moveTop': 'Placer en premier',
   'mobile.project.removed': '{name} retiré de la liste',
   'mobile.engineNeeded': 'Nécessite un moteur connecté',

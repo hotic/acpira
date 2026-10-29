@@ -288,6 +288,79 @@ struct EngineClientTests {
     #expect(wire.sent.contains { $0.contains(#""requestId":"r1""#) && $0.contains("openResolvedFile is not supported") })
   }
 
+  /// JSON leaves U+0085 and U+2028 / U+2029 unescaped inside strings (a tool's output that printed a binary): the
+  /// envelope stays one line, and only "\n" separates two
+  @Test func anEnvelopeHoldingUnicodeLineBreaksStaysWhole() async throws {
+    let wire = FakeTransport()
+    let c = client(wire)
+    await c.start()
+    let text = "a\u{85}b\u{2028}c\u{2029}d"
+    wire.feed.yield(Self.helloOk + "\n" + #"{"type":"platformRequest","request":{"method":"toast","level":"info","text":"\#(text)"}}"#)
+    wire.feed.finish()
+    var toasts: [String] = []
+    var dropped = 0
+    for await event in c.events {
+      if case .platform(.toast(_, let t, _)) = event { toasts.append(t) }
+      if case .dropped = event { dropped += 1 }
+    }
+    #expect(toasts == [text])
+    #expect(dropped == 0)
+  }
+
+  /// The actions that drive a session leave with a clientId, so a resend after a lost wire runs once
+  @Test func sessionActionsLeaveWithAClientId() async throws {
+    let wire = FakeTransport()
+    let c = client(wire)
+    await c.start()
+    wire.feed.yield(Self.helloOk)
+    c.post(.send(sessionId: "s", text: "hi"))
+    c.post(.markAllRead)
+    _ = try await sent(wire, 4)
+    let send = try #require(wire.sent.first { $0.contains(#""type":"send""#) })
+    #expect(send.contains(#""clientId":""#))
+    #expect(!(wire.sent.first { $0.contains("markAllRead") } ?? "").contains("clientId"))
+    // A resend keeps the id it was given
+    let stamped = WebviewMsg.send(sessionId: "s", text: "hi", clientId: "c1").stamped()
+    #expect(stamped.clientId == "c1")
+    c.stop()
+  }
+
+  /// A lost wire hands over what it may not have delivered: the session actions written shortly before its end (with
+  /// the same clientId), and the ones posted after it; reads and view switches stay with the wire that asked
+  @Test func aLostWireReportsWhatItMayNotHaveDelivered() async throws {
+    let wire = FakeTransport()
+    let c = client(wire)
+    await c.start()
+    wire.feed.yield(Self.helloOk)
+    c.post(.send(sessionId: "s", text: "first"))
+    c.post(.selectSession(id: "s"))
+    _ = try await sent(wire, 4)
+    var events = c.events.makeAsyncIterator()
+    wire.feed.finish(throwing: CancellationError())
+    while let event = await events.next() { if case .closed = event { break } }
+    c.post(.stop(sessionId: "s"))
+    c.post(.searchFiles(query: "x", seq: 1))
+    let unsent = c.unsent()
+    #expect(unsent.map(\.sessionTarget) == ["s", "s"])
+    guard case .send(_, "first", _, _, let id?) = unsent.first, case .stop = unsent.last else {
+      Issue.record("not the send then the stop: \(unsent)")
+      return
+    }
+    #expect(wire.sent.contains { $0.contains(id) })
+  }
+
+  /// A wire that never got its helloOk wrote nothing: everything worth replaying is still to send
+  @Test func aWireThatNeverAttachedKeepsItsActions() async throws {
+    let wire = FakeTransport()
+    let c = client(wire)
+    c.post(.ready(patches: true))
+    c.post(.permission(sessionId: "s", blockId: "b", optionId: "o"))
+    await c.start()
+    wire.feed.finish()
+    for await _ in c.events {}
+    #expect(c.unsent().map(\.type) == ["permission"])
+  }
+
   @Test func aRejectedHelloClosesWithTheReason() async throws {
     let wire = FakeTransport()
     let c = client(wire)

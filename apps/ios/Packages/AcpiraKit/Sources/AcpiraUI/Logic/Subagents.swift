@@ -207,6 +207,13 @@ struct SubagentFeed {
     return [.unobserveSubagent(sessionId: session, subagentId: id)]
   }
 
+  /// The engine's view left `session` and came back, which ends its observation: the observe to send again for the child
+  /// followed there, if any
+  func renewal(session: String) -> WebviewMsg? {
+    guard let observed, observed.session == session else { return nil }
+    return .observeSubagent(sessionId: observed.session, subagentId: observed.id)
+  }
+
   /// A `subagent` push: kept unless what is held is as new or newer. Answers whether it changed anything
   @discardableResult
   mutating func receive(session: String, id: String, transcript: SubagentTranscript) -> Bool {

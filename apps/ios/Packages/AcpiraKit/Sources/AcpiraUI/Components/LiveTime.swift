@@ -25,18 +25,28 @@ struct LiveTime<Content: View>: View {
 struct LiveElapsed: View {
   /// `clockStart`
   let since: Double
+  @Environment(\.clockOffset) private var offset
+  /// Syncing, the counter stands still where it was: the turn may have ended since
+  @Environment(\.syncing) private var syncing
 
   var body: some View {
-    LiveTime(since: since) { ms in
-      if ms >= 1000 {
-        // Tabular digits keep the width steady between ticks
-        Text(web: durationText(ms: ms))
-          .foregroundStyle(Palette.fg3)
-          .monospacedDigit()
-          .lineLimit(1)
-          .fixedSize()
-          .padding(.leading, Metrics.s2)
-      }
+    if syncing {
+      label((Date().timeIntervalSince1970 + offset) * 1000 - since)
+    } else {
+      LiveTime(since: since) { label($0) }
+    }
+  }
+
+  @ViewBuilder
+  private func label(_ ms: Double) -> some View {
+    if ms >= 1000 {
+      // Tabular digits keep the width steady between ticks
+      Text(web: durationText(ms: ms))
+        .foregroundStyle(Palette.fg3)
+        .monospacedDigit()
+        .lineLimit(1)
+        .fixedSize()
+        .padding(.leading, Metrics.s2)
     }
   }
 }

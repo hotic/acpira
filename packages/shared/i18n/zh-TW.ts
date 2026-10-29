@@ -1475,6 +1475,7 @@ export const zhTW = {
   'mobile.view.agent': '按頻道',
   'mobile.view.none': '不分組',
   'mobile.forked': '已分叉為新工作階段',
+  'mobile.sending': '正在傳送…',
   'mobile.project.moveTop': '移到最前',
   'mobile.project.removed': '已將 {name} 移出列表',
   'mobile.engineNeeded': '需要先連線引擎',
