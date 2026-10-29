@@ -969,7 +969,9 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   return (
     <div className={cn('flex flex-col', fill ? 'min-h-0 flex-1' : 'max-h-[60vh]')} onKeyDown={onEscape}>
       <div className="flex items-center gap-1 px-1 pt-1">
-        <label className="flex h-ctl min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-fg-3 focus-within:bg-hover">
+        {/* No focus fill: the panel autofocuses the field, so a fill would sit there permanently as an off-centre box.
+            Like the inline rename input, the caret alone marks it */}
+        <label className="flex h-ctl min-w-0 flex-1 cursor-text items-center gap-2 px-2 text-fg-3">
           <Search className="size-icon shrink-0" strokeWidth={1.5} />
           {searchInput}
         </label>
