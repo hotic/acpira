@@ -74,7 +74,7 @@ Claude Code's file and shell tools live in its own process, so under local run i
 ## Workspace seam
 
 - Everything outside the agent that touches a session folder goes through `workspace.rs` `Workspace::{Local, Remote}`; on a host the helper runs the same code. `workspace::tests::no_direct_folder_io` lists the allowed callers: review a new one against this seam.
-- Attached files are read from the host or not at all, never a same-named local file. `openFile` outside the project is a toast (`host.remoteFile`).
+- Attached files are read from the host or not at all, never a same-named local file. `openFile` that reaches the engine (no Files panel, VS Code, "open in editor") fetches the host file into a read-only copy under `run/remote/files/<alias>/` on every click and opens that with the usual opener; never the Claude stand-in folder, which must stay empty. Reveal and `~` paths stay a toast (`host.remoteFile`).
 - Project MCP servers: the project's `.mcp.json` is read on the host and shadows the user's; a stdio server runs through `acpira mcp-host` and the helper's `exec`. `${VAR}` expands from this machine's environment; a loopback http URL is refused because it would mean this machine.
 - Terminal tabs run on a host pty (`TerminalHub::spawn_remote`). Preview proxies are keyed by host and origin so two hosts' `localhost:3000` never share; the helper's `tcp` op allows loopback targets only.
 - A VS Code browser panel restored after reload forgets its remote folder.
