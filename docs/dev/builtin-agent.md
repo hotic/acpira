@@ -102,6 +102,7 @@ A step is seconds of model time against milliseconds of tool time, so tools take
 - `read` on an image (by signature) sends it to the model only when the model takes images and it is within 5 MB and 8000 px a side: Anthropic refuses more, and a refused image stays in the history failing every later request. An animated GIF goes as a frame sheet (`frames.rs`, the engine's).
 - `read` on a PDF (`tools/pdf.rs`) uses pdf-extract, as lopdf's own extraction garbled CJK. Shipped builds abort on panic, so parsing runs in a child (`acpira pdf-pages`, `acpira-host/tests/pdf_child.rs`).
 - Interactive `bash` jobs run in a pty (portable-pty); typing with `job` needs no card, since approving the command approved talking to it (as Codex's `write_stdin`).
+- `job` rows: the starting `bash` answers `rawOutput.job`, which the host maps to the command, so checks read as "wait for background command <command>" (`verb.wait` / `verb.kill`, shared with Devin's parked shells); a check's card carries only new output and the exit, and the webview folds consecutive checks of one command. GPT polls with `wait: 1`, as it does in Codex.
 - grep `context` is off by default: under half of greps were followed by a read of a hit file.
 - Left out: OpenCode's batch meta-tool (removed upstream), exploration on the fast model, an `apply_patch` dialect. No read-only `git` allowlist: `git status` runs `core.fsmonitor` and `git diff` runs `diff.external` and textconv from the repository's config.
 

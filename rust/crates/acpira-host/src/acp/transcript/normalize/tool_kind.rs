@@ -36,8 +36,13 @@ pub fn verb_of(kind: ToolKind) -> String {
 pub(super) static TODO_TITLE: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)^todo([_\s-]?(write|update|read|list))?$"));
 pub(super) static ASK_TITLE: LazyLock<Regex> =
   LazyLock::new(|| acpira_shared::re::compile(r"(?i)^(ask_?user_?questions?|ask(ed|ing)?\s+(the\s+)?(user\s+)?(\d+\s+)?questions?\b)"));
-static SHELL_WAIT: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)^(get_output|read(ing)?\s+shell(\s+output)?)$"));
-static SHELL_KILL: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)^(kill_shell|kill(ing)?\s+shell)$"));
+/// Devin's `get_output` / `kill_shell`, and the built-in agent's `job` tool: the bare name its row opens with, then
+/// "Check job 3 (wait 30s)" / "Stop job 3" once the arguments are known (`acpira-agent` `tools/mod.rs`)
+static SHELL_WAIT: LazyLock<Regex> =
+  LazyLock::new(|| acpira_shared::re::compile(r"(?i)^(get_output|read(ing)?\s+shell(\s+output)?|job|check\s+job\s+\S+(\s+\(wait\s+\d+s\))?)$"));
+static SHELL_KILL: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)^(kill_shell|kill(ing)?\s+shell|stop\s+job\s+\S+)$"));
+/// The built-in agent's `job` typing into an interactive job: the typed text is the row's point, so it keeps its title
+pub(super) static JOB_INPUT: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)^type\s+into\s+job\s"));
 /// Image generation tools by name: codex-acp's "Image generation" title, Grok's `image_gen` / `image_edit` (`x.ai/tool` name)
 pub(super) static IMAGE_GEN: LazyLock<Regex> =
   LazyLock::new(|| acpira_shared::re::compile(r"(?i)^(image[_\s-]?gen(eration)?|generate[_\s-]?image|image[_\s-]?edit)$"));

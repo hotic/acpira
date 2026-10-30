@@ -3,20 +3,25 @@ import { toolFiles, visibleToolContents } from './toolDetails';
 import { parseFileLink, type FileLink } from './fileLinks';
 import { sessionRead, splitSessionTarget, type SessionRead } from '@acpira/shared/sessionLinks';
 
-// One item of a turn's process list: a block on its own, or a run of consecutive reads / edits / session reads under one head.
+// One item of a turn's process list: a block on its own, or a run of consecutive reads / edits / session reads / checks
+// of one background command under one head.
 // `id` names the item for its fold and entrance: a group goes by its first call, so a single call that gains a
 // neighbour keeps its identity; unkeyed blocks go by transcript position
 export type ProcessItem =
   | { type: 'block'; id: string; block: AgentBlock }
   | { type: 'group'; id: string; kind: GroupKind; blocks: ToolCallBlock[] };
-export type GroupKind = 'read' | 'edit' | 'session';
+export type GroupKind = 'read' | 'edit' | 'session' | 'wait';
 
 // Failed and cancelled calls stay visible on their own row; a completed read without a file reference has nothing
 // to list. Running calls join, so a group grows as the agent works instead of a live row trailing it.
 // read_session calls are `other` to the engine; an agent paging through a session reads it in a burst of calls, and a
-// group holds one session (`sameRun`) so its head names it once and every entry is just the turns read
+// group holds one session (`runKey`) so its head names it once and every entry is just the turns read.
+// An agent polling a background command checks it again and again (GPT every second); the checks of one command fold
+// under one head, its last check's state included: a failed check is the command's own exit
 function groupKind(block: AgentBlock): GroupKind | undefined {
-  if (block.type !== 'tool_call' || block.status === 'failed' || block.status === 'cancelled' || block.asyncTask || isDelegation(block)) return;
+  if (block.type !== 'tool_call' || block.asyncTask || isDelegation(block)) return;
+  if (block.verbKey === 'verb.wait') return block.status === 'cancelled' ? undefined : 'wait';
+  if (block.status === 'failed' || block.status === 'cancelled') return;
   if (block.verbKey === 'verb.readSession') return 'session';
   if (block.kind === 'read') return block.status !== 'completed' || toolFiles(block).length ? 'read' : undefined;
   if (block.kind === 'edit') return 'edit';
@@ -72,7 +77,7 @@ export function groupProcess(blocks: AgentBlock[]): ProcessItem[] {
   };
   blocks.forEach((block, at) => {
     const kind = groupKind(block);
-    if (kind && kind === runKind && (kind !== 'session' || sessionOf(block as ToolCallBlock) === sessionOf(run[0]!))) { run.push(block as ToolCallBlock); return; }
+    if (kind && kind === runKind && runKey(kind, block as ToolCallBlock) === runKey(kind, run[0]!)) { run.push(block as ToolCallBlock); return; }
     flush();
     runKind = kind;
     if (kind) { run.push(block as ToolCallBlock); runAt = at; } else out.push({ type: 'block', id: blockItemId(block, at), block });
@@ -155,6 +160,11 @@ export function editReference(blocks: ToolCallBlock[]): FileLink | undefined {
 // The files a group names in its head, first-seen order
 export function groupNames(blocks: ToolCallBlock[]): string[] {
   return [...new Set(blocks.map(fileName).filter(Boolean))];
+}
+
+// What a run must share to stay one group: a session group's session, a wait group's command
+function runKey(kind: GroupKind, block: ToolCallBlock): string {
+  return kind === 'session' ? sessionOf(block) : kind === 'wait' ? block.target ?? '' : '';
 }
 
 // The session a read_session call read: its id, else the raw target of a call that named no link
