@@ -343,3 +343,26 @@ async fn a_rebuilt_peer_reusing_tool_call_ids_keeps_them_on_the_new_turn() {
   assert_eq!(ids, [json!("tc1"), json!("tc2")]);
   expect_match(last["blocks"].as_array().unwrap().iter().find(|b| b["id"] == "tc1").unwrap(), json!({ "status": "completed" }));
 }
+
+// An edit sent while the agent still answers stops that turn and replaces it; a prompt queued behind it waits for the
+// edited turn instead of taking the freed slot first
+#[tokio::test(flavor = "multi_thread")]
+async fn an_edit_during_a_running_turn_stops_it_and_keeps_the_queue_behind_the_edit() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let s = started(&h, "/tmp").await;
+  prompt(&s, "earlier-context").await;
+  let running = spawn_prompt(&s, "slow");
+  until(|| view(&s)["running"] == true && turn_count(&s) == 4, 5000).await;
+  prompt(&s, "queued-later").await;
+  s.edit_turn(history_edit(&s, 2, "inspect-history")).await.unwrap();
+  running.await.unwrap();
+  until(|| !s.is_running() && turn_count(&s) == 6 && !last_turn(&view(&s))["stop"].is_null(), 5000).await;
+  let vw = view(&s);
+  let users: Vec<_> = vw["turns"].as_array().unwrap().iter().filter(|t| t["role"] == "user").map(|t| t["text"].clone()).collect();
+  assert_eq!(users, [json!("earlier-context"), json!("inspect-history"), json!("queued-later")]);
+  expect_match(&vw["turns"][2], json!({ "edited": true }));
+  expect_match(&vw["turns"][3], json!({ "stop": "end_turn" }));
+  let reply = vw["turns"][3].to_string();
+  assert!(reply.contains("earlier-context") && !reply.contains("\"slow\""), "{reply}");
+}

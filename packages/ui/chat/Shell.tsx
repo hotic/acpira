@@ -821,7 +821,9 @@ export function Shell(p: ShellProps) {
       : undefined,
   }), [p.controls, p.hidden, p.agent.id, p.running, p.status, p.theme, permissions, p.activeSessionId, on.buildPlan, on.openPlan, filePanelRoot]);
   // Stable across stream pushes (every prompt card subscribes); the composer props go through their own context to the open editor
-  const editable = !composerProps.disabled && !composerProps.running && !held.running;
+  // Editable while the agent answers too (the edit stops that turn first); a held prompt's synthetic turn is not in the
+  // engine's transcript yet, so nothing is editable while one stands in
+  const editable = !composerProps.disabled && (p.running || !held.running);
   const history = useMemo(() => on.editTurn && p.activeSessionId ? {
     sessionId: p.activeSessionId, edit: on.editTurn, editable, shapes: p.modelShapes,
     editing: editing?.sessionId === p.activeSessionId ? editing.index : undefined,
