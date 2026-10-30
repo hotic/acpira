@@ -23,8 +23,6 @@
 @keyframes dv-come { from { opacity: 0; transform: scale(.97); filter: blur(1.2px); } }
 @keyframes dv-glyph-in { from { opacity: 0; transform: scale(.82); filter: blur(3px); } }
 @keyframes dv-check-in { from { opacity: 0; transform: scale(.35); } }
-@keyframes dv-card-in { from { opacity: 0; transform: translateY(6px) scale(.94); } }
-@keyframes dv-card-out { to { opacity: 0; transform: translateY(4px) scale(.96); } }
 @keyframes dv-new { from { opacity: 1; } }
 @keyframes dv-row-in { from { opacity: 0; transform: translateY(4px); } }
 @keyframes dv-fade { from { opacity: 0; } }
@@ -145,9 +143,9 @@
   .dv-lock { display: inline-flex; color: var(--fg-3); }
   .dv-lock svg { width: 11px; height: 11px; }
 
-  /* The foot card: Base UI's popup without its own surface; the clip and the surface in it are the card */
-  .dv-card { transform-origin: var(--transform-origin); animation: dv-card-in 240ms cubic-bezier(.2, .8, .2, 1) backwards; }
-  .dv-card[data-ending-style] { animation: dv-card-out 150ms ease-in forwards; }
+  /* The foot card: Base UI's popup without its own surface; the clip and the surface in it are the card. It comes and
+     goes at once, as the gear's menu beside it does: no entrance of its own, so the two read as one family. Changes of
+     view inside it (pair ↔ list) still move, on .dv-surface / .dv-view below */
   /* The shadow follows whatever shape the clipped surface has right now */
   .dv-shadow { filter: drop-shadow(0 10px 22px rgb(0 0 0 / .42)) drop-shadow(0 1px 2px rgb(0 0 0 / .35)); }
   .acp-shell[data-theme="light"] .dv-shadow { filter: drop-shadow(0 10px 24px rgb(0 0 0 / .14)) drop-shadow(0 1px 2px rgb(0 0 0 / .1)); }
