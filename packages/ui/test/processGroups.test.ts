@@ -32,6 +32,16 @@ describe('process groups', () => {
     expect(editReference([{ ...block, locations: [{ path: '/repo/a.ts' }, { path: '/repo/b.ts' }] }])).toBeUndefined();
   });
 
+  it('folds consecutive checks of one background command, the failed exit included', () => {
+    const wait = (id: string, target: string, status: ToolCallBlock['status'] = 'completed'): ToolCallBlock => ({
+      type: 'tool_call', id, kind: 'execute', verb: 'Wait for background command', verbKey: 'verb.wait', status, target, targetMono: true,
+    });
+    const items = groupProcess([wait('w1', 'cargo test'), wait('w2', 'cargo test'), wait('w3', 'cargo test', 'failed'), wait('w4', 'cargo clippy'), search, wait('w5', 'cargo clippy')]);
+    expect(items.map(i => [i.type, i.id, i.type === 'group' ? i.blocks.length : undefined])).toEqual([
+      ['group', 'w1', 3], ['block', 'w4', undefined], ['block', 's', undefined], ['block', 'w5', undefined],
+    ]);
+  });
+
   it('groups consecutive reads and consecutive edits, keyed by their first call', () => {
     const items = groupProcess([read('r1', '/a.ts'), read('r2', '/b.ts'), search, read('r3', '/c.ts'), thought, edit('e1', '/a.ts'), edit('e2', '/b.ts')]);
     expect(items.map(i => [i.type, i.id, i.type === 'group' ? i.kind : undefined])).toEqual([

@@ -1,5 +1,5 @@
 import { memo, useContext, useState, type ReactNode } from 'react';
-import { MessagesSquare } from 'lucide-react';
+import { MessagesSquare, Terminal } from 'lucide-react';
 import { splitSessionTarget } from '@acpira/shared/sessionLinks';
 import { toolImages } from '@acpira/shared/imageTools';
 import type { ToolCallBlock } from '@acpira/shared/transcript';
@@ -27,7 +27,8 @@ function namesLabel(names: string[]): string {
 }
 
 // A run of consecutive reads, edits or session reads under one head: the verb, the files (sessions) it touched, an edit
-// run's total change. A session group reads one session: the head names it and counts the turns read in the same text a
+// run's total change. A wait group is the checks of one background command: the head names the command, the body
+// stacks what each check printed. A session group reads one session: the head names it and counts the turns read in the same text a
 // read group counts its files with, one entry per turn.
 // Entries hang on the head's rail; each takes its first call's entrance identity, so the row that was a single call
 // before the group formed keeps still. The grouping array is rebuilt on every render, so compare its members
@@ -39,12 +40,12 @@ export const ToolGroup = memo(function ToolGroup({ kind, blocks }: { kind: Group
   const lead = useLead(kind);
   const titleOf = useContext(SessionTitleContext);
   const session = kind === 'session' ? splitSessionTarget(blocks[0]!.target).id : undefined;
-  const names = kind === 'session' ? (session ? [titleOf?.(session) ?? session] : []) : groupNames(blocks);
+  const names = kind === 'session' ? (session ? [titleOf?.(session) ?? session] : []) : kind === 'wait' ? [] : groupNames(blocks);
   const stat = kind === 'edit' ? diffStatOf(blocks) : undefined;
   const reads = kind === 'session' ? sessionEntries(blocks) : undefined;
   // The count holds only when every turn read is listed; an open or long range leaves it out
   const turns = reads && reads.entries.every(e => e.read.type === 'turns' || e.read.type === 'outline') ? reads.turns : 0;
-  const body = <div className="tool-results flex flex-col">{kind === 'read'
+  const body = kind === 'wait' ? <WaitOutputs blocks={blocks} /> : <div className="tool-results flex flex-col">{kind === 'read'
     ? blocks.map(block => <EntranceOnce key={block.id} id={itemEntrance(block.id)}><ReadEntry block={block} /></EntranceOnce>)
     : kind === 'session'
       ? reads!.entries.map(entry => <EntranceOnce key={entry.key} id={`${itemEntrance(entry.blocks[0]!.id)}:${entry.key}`}><SessionReadEntry entry={entry} /></EntranceOnce>)
@@ -53,8 +54,9 @@ export const ToolGroup = memo(function ToolGroup({ kind, blocks }: { kind: Group
   // Entries follow the head directly, so the head and its first entry keep the entries' own rhythm
   return (
     <Disclosure className="action-details" bodyClassName="pt-0" tone="action" lead={lead} trailing={stat && <DiffStat {...stat} />}
-      indent={false} rail="rows" open={fold?.open} onToggle={fold?.onToggle} body={body}>
+      indent={kind === 'wait'} rail={kind === 'wait' ? 'body' : 'rows'} open={fold?.open} onToggle={fold?.onToggle} body={body}>
       <RowLabel shimmer={live(current)}>{toolVerb(current)}</RowLabel>
+      {kind === 'wait' && current.target && <RowTarget mono>{current.target}</RowTarget>}
       {turns > 0 ? <TurnsTarget title={names[0]!} n={turns} /> : names.length > 0 && <RowTarget mono={kind !== 'session'}>{namesLabel(names)}</RowTarget>}
     </Disclosure>
   );
@@ -73,7 +75,7 @@ function TurnsTarget({ title, n }: { title: string; n: number }) {
 }
 
 function useLead(kind: GroupKind) {
-  const Icon = kind === 'session' ? MessagesSquare : TOOL_ICON[kind];
+  const Icon = kind === 'session' ? MessagesSquare : kind === 'wait' ? Terminal : TOOL_ICON[kind];
   return <Icon className="size-icon" strokeWidth={1.5} />;
 }
 
@@ -83,6 +85,13 @@ function ReadEntry({ block }: { block: ToolCallBlock }) {
   const files = toolFiles(block);
   if (files.length) return <ResultList items={files} kind="read" rail={false} images={toolImages(block)} />;
   return <Row tone="action" dense lead={lead}><RowTarget mono className="text-fg-2"><Shimmer active={live(block)}>{block.target ?? toolVerb(block)}</Shimmer></RowTarget></Row>;
+}
+
+// A wait group's body: what the checks printed, in call order, as one output card like a single command's, since each
+// check returns only what is new since the last one
+function WaitOutputs({ blocks }: { blocks: ToolCallBlock[] }) {
+  const text = blocks.flatMap(block => visibleToolContents(block).flatMap(item => item.type === 'text' && item.text.trim() ? [item.text.trimEnd()] : [])).join('\n');
+  return text ? <ToolOutput block={blocks.at(-1)!} text={text} /> : null;
 }
 
 // One entry of a session group: a turn, the outline, or an open / long range; one format for every entry

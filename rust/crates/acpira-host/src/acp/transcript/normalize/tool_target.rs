@@ -89,8 +89,13 @@ pub(super) fn pick_target(u: &Value, kind: ToolKind) -> Option<Target> {
 
 pub(super) fn shell_target(raw: Option<&Map<String, Value>>, ctx: Option<&ToolCtx>) -> Option<Target> {
   let raw = raw?;
-  let shell_id = ["shell_id", "shellId", "id"].iter().find_map(|k| raw.get(*k).and_then(Value::as_str).filter(|v| !v.is_empty()))?;
-  let text = ctx.and_then(|c| c.shells.get(shell_id)).cloned().unwrap_or_else(|| shell_id.to_owned());
+  // The built-in agent's model may write a job id as a number
+  let shell_id = ["shell_id", "shellId", "id"].iter().find_map(|k| match raw.get(*k)? {
+    Value::String(v) if !v.is_empty() => Some(v.clone()),
+    Value::Number(n) => Some(n.to_string()),
+    _ => None,
+  })?;
+  let text = ctx.and_then(|c| c.shells.get(&shell_id)).cloned().unwrap_or(shell_id);
   Some(Target { text, mono: true, from_title: false })
 }
 

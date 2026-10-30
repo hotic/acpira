@@ -162,6 +162,8 @@ impl Jobs {
     let _ = tokio::time::timeout(START_WAIT, wait_for_end(&buf, &changed)).await;
     let mut out = self.report(&id, ctx).unwrap_or_else(|| Output::error("the job vanished"));
     out.model = format!("Started background job {id}. Check it with job (id \"{id}\"), with wait to wait for more output.\n{}", out.model);
+    // The host names later checks of this id after the command (`rawOutput.job`)
+    out.raw_output = Some(json!({ "job": id }));
     out
   }
 
@@ -239,6 +241,7 @@ impl Jobs {
       "Started interactive job {id} in a terminal. Type into it with job (id \"{id}\", input; \\n is Enter), check it with job and wait.\n{}",
       out.model
     );
+    out.raw_output = Some(json!({ "job": id }));
     out
   }
 
@@ -304,14 +307,23 @@ impl Jobs {
       Some(None) => format!("[job {id} was ended by a signal]"),
     };
     let failed = matches!(b.exit, Some(Some(c)) if c != 0) && !b.killed;
+    let running = b.exit.is_none();
     drop(b);
     let mut model = String::new();
     if skipped > 0 {
       model.push_str(&format!("[{skipped} bytes of older output were dropped]\n"));
     }
     model.push_str(if fresh.trim().is_empty() { "(no new output)" } else { fresh.trim_end() });
-    let model = format!("{}\n{status}", budgeted(&model, Keep::HeadTail, ctx));
-    Some(Output { model, is_error: failed, content: vec![], raw_output: Some(json!({ "job": id })) })
+    let model = budgeted(&model, Keep::HeadTail, ctx);
+    // The row's card: only what the command printed, plus how it ended. The row already names the command (the host
+    // maps the job id to it), and a check that found nothing new shows no card, so a model polling every second adds
+    // a quiet row, not a card per poll
+    let mut shown = if fresh.trim().is_empty() { String::new() } else { budgeted(fresh.trim_end(), Keep::HeadTail, ctx) };
+    if !running {
+      shown = if shown.is_empty() { status.clone() } else { format!("{shown}\n{status}") };
+    }
+    let content = if shown.is_empty() { vec![] } else { vec![super::text_content(&shown)] };
+    Some(Output { model: format!("{model}\n{status}"), is_error: failed, content, raw_output: None })
   }
 }
 

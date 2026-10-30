@@ -273,6 +273,34 @@ fn devin_background_shell_parks_the_exec_and_get_output_waits_on_that_command() 
   expect_match(block(&s, 0, 2), json!({ "status": "completed", "target": "python3 snap.py save" }));
 }
 
+// The built-in agent: `bash` with background answers `rawOutput.job`; each `job` row opens under the bare tool name,
+// then takes its "Check job 2 (wait 1s)" title with the arguments
+#[test]
+fn builtin_job_checks_name_the_background_command() {
+  let mut s = state();
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "bash", "kind": "execute", "status": "pending" }));
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "call-1", "title": "cargo test", "kind": "execute",
+    "rawInput": { "command": "cargo test", "background": true } }));
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "completed", "rawOutput": { "job": "2" } }));
+  expect_absent(block(&s, 0, 0), "content");
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "call-2", "title": "job", "kind": "execute", "status": "pending" }));
+  expect_match(block(&s, 0, 1), json!({ "verbKey": "verb.wait" }));
+  expect_absent(block(&s, 0, 1), "target");
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "call-2", "title": "Check job 2 (wait 1s)", "kind": "execute",
+    "rawInput": { "id": 2, "wait": 1 } }));
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "call-2", "status": "completed", "rawOutput": { "job": "2" } }));
+  expect_match(block(&s, 0, 1), json!({ "verbKey": "verb.wait", "target": "cargo test", "targetMono": true, "status": "completed" }));
+  expect_absent(block(&s, 0, 1), "content");
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "call-3", "title": "job", "kind": "execute", "status": "pending" }));
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "call-3", "title": "Stop job 2", "rawInput": { "id": "2", "kill": true } }));
+  expect_match(block(&s, 0, 2), json!({ "verbKey": "verb.kill", "target": "cargo test" }));
+  // Typing into an interactive job keeps its title, the typed text being the point
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "call-4", "title": "job", "kind": "execute", "status": "pending" }));
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "call-4", "title": "Type into job 2: y\\n", "rawInput": { "id": "2", "input": "y\n" } }));
+  expect_absent(block(&s, 0, 3), "verbKey");
+  expect_match(block(&s, 0, 3), json!({ "verb": "Run", "target": "Type into job 2: y\\n" }));
+}
+
 #[test]
 fn a_wait_on_an_unknown_shell_falls_back_to_the_shell_id() {
   let mut s = state();

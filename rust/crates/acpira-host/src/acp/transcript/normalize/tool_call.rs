@@ -18,7 +18,7 @@ use super::content::{
 };
 use super::tool_kind::{
   ASK_TITLE, IMAGE_GEN, IMAGE_GEN_TITLE, IMAGE_GEN_VERB, READ_SESSION_VERB, SEARCH_SESSIONS_VERB, SHOW_IMAGE_VERB, SHOW_WIDGET_VERB,
-  TODO_TITLE, WEB_SEARCH_VERB, WebTool, infer_kind, is_show_image_call, is_show_widget_call, mcp_identity, mcp_label, session_tool_target,
+  JOB_INPUT, TODO_TITLE, WEB_SEARCH_VERB, WebTool, infer_kind, is_show_image_call, is_show_widget_call, mcp_identity, mcp_label, session_tool_target,
   session_tool_verb, shell_verb, show_image_args, verb_of, web_search_query, web_tool,
 };
 use super::tool_target::{
@@ -110,6 +110,10 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
   }
   if let Some(shell) = shell_verb(meta, title) {
     set_verb(b, shell);
+  } else if title.is_some_and(|x| JOB_INPUT.is_match(x.trim())) && b.verb_key.as_deref() == Some("verb.wait") {
+    // The row opened as a check under the bare tool name; typing reads as the command it is, with the typed text
+    b.verb_key = None;
+    b.verb = verb_of(b.kind);
   }
   let image_gen_title = title.map(str::trim).is_some_and(|x| IMAGE_GEN.is_match(x) || IMAGE_GEN_TITLE.is_match(x));
   if image_gen_title || tool_name.and_then(Value::as_str).is_some_and(|n| IMAGE_GEN.is_match(n)) {
@@ -254,6 +258,15 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
     b.target = Some(tg.text);
     b.target_mono = Some(tg.mono);
   }
+  // The built-in agent's `bash` with `background` answers with the job id (`rawOutput.job`): later checks of that id
+  // name the command, as Devin's parked shells do
+  if let Some(ctx) = ctx.as_deref_mut()
+    && b.kind == ToolKind::Execute
+    && !named
+    && let (Some(id), Some(command)) = (u.get("rawOutput").and_then(|o| o.get("job")).and_then(Value::as_str), b.target.as_ref())
+  {
+    ctx.shells.insert(id.to_owned(), command.clone());
+  }
   let status_completed = str_of(u, "status") == Some("completed");
   let pending_write = match ctx.as_deref_mut() {
     Some(ctx) if status_completed && !matches!(b.content, Some(ToolContent::Diff { .. })) => ctx.pending_writes.remove(&b.id),
@@ -350,8 +363,10 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
   {
     b.content = Some(ToolContent::Text { text: tp("host.terminalNotWired", &[("id", str_of(term, "terminalId").unwrap_or("undefined"))]) });
   }
+  // The built-in agent's `{ "job": id }` only links a background command to its checks; it is no output
+  let job_link = |o: &Value| o.as_object().is_some_and(|m| m.len() == 1 && m.contains_key("job"));
   if b.content.is_none()
-    && let Some(out) = u.get("rawOutput").filter(|v| !v.is_null())
+    && let Some(out) = u.get("rawOutput").filter(|v| !v.is_null() && !job_link(v))
   {
     let text = match formatted_output(out) {
       Some((text, Some(code))) => append_exit_code(&text, &code),
