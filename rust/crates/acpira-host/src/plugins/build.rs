@@ -835,7 +835,9 @@ mod tests {
     assert!(out.join("runtime/__acpira/plugin.mjs").is_file());
     if node() {
       let got = run_node(&format!("const m = await import({}); console.log(JSON.stringify(m.default));", js_string(&file_url(&compiled))));
-      assert_eq!(got, format!("{{\"v\":\"  42{}\"}}", std::path::MAIN_SEPARATOR));
+      // JSON.stringify escapes the Windows separator, so build the expectation the same way
+      let want = serde_json::json!({ "v": format!("  42{}", std::path::MAIN_SEPARATOR) }).to_string();
+      assert_eq!(got, want);
     }
     // A second call reuses the output
     assert_eq!(runtime(&dir, "plugin.ts", &out).unwrap(), boot);
