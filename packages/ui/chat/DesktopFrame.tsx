@@ -263,10 +263,11 @@ export function AppMenu({ onOpenSettings, onOpenExternal, quick }: { onOpenSetti
   useLocale();
   // With the devices row (remote/DevicesCard.tsx) the foot is one line across the column: the gear first, on the rows'
   // icon column, then the devices row filling the rest (its card rising from it). Without it the gear stands alone at the
-  // left, its glyph a size up (--foot-icon) so it does not read as a stray mark
+  // left, its glyph a size up (--foot-icon) so it does not read as a stray mark. The foot sits by the chat sheet's bottom
+  // edge (--foot-bottom), its icons as far off the window's bottom as the traffic lights off its top
   const row = devicesShown(useRemoteAccess());
   return (
-    <div className="flex shrink-0 items-center p-gap-half">
+    <div className="flex shrink-0 items-center px-gap-half pt-gap-half pb-(--foot-bottom)">
       <DropdownMenu.Root>
         <DropdownMenu.Trigger render={<button type="button" title={t('desktop.appMenu')} aria-label={t('desktop.appMenu')} className={row ? GEAR_START : GEAR}>
           {row ? <Settings strokeWidth={1.5} /> : <span className="flex size-lead items-center justify-center"><Settings className="size-(--foot-icon)" strokeWidth={1.5} /></span>}

@@ -31,7 +31,7 @@ import { TerminalFrame } from './TerminalFrame';
 
 export const TOGGLE_KEY = macOS ? '⌥⌘B' : 'Ctrl+Alt+B';
 // The open and close ease, as long as the session column's fold (desktop.css)
-export const MOVE_MS = 340;
+export const MOVE_MS = 400;
 
 // A path a tool call names, relative to the project when inside it (undefined outside). A folder on an SSH host is named
 // by its path there, as the agent's tools name its files
@@ -123,7 +123,7 @@ export const ToolPanelDock = memo(function ToolPanelDock(p: ToolPanelDockProps) 
   const anyEnabled = anyModule(s);
   const aside = useRef<HTMLElement>(null);
   const shown = anyEnabled && s.open && !!p.cwd && !!p.sessionId;
-  const [moving, setMoving] = useState(false);
+  const [moving, setMoving] = useState(0);
   // A drag writes the width straight onto the aside: a state update per frame re-rendered the dock and every panel tab
   // under it. The release commits it to the store, whose render writes the same value
   const dragTo = useCallback((w: number) => { aside.current?.style.setProperty('width', panelWidth(w)); }, []);
@@ -132,7 +132,9 @@ export const ToolPanelDock = memo(function ToolPanelDock(p: ToolPanelDockProps) 
   const bounds = useCallback((): PaneBounds => {
     const element = aside.current ?? document.documentElement;
     const px = (name: string) => Number.parseFloat(getComputedStyle(element).getPropertyValue(name));
-    const room = (p.sheet.current?.offsetWidth ?? 0) + (aside.current?.offsetWidth ?? 0);
+    const sheet = p.sheet.current;
+    const inset = sheet ? Number.parseFloat(getComputedStyle(sheet).marginRight) || 0 : 0;
+    const room = (sheet?.offsetWidth ?? 0) + (aside.current?.offsetWidth ?? 0) + inset;
     return fitPaneBounds(aside.current, { min: px('--tool-panel-min'), max: room - px('--tool-main-min'), initial: px('--tool-panel-w') });
   }, [p.sheet]);
   // Opening or closing eases the width; meanwhile the content keeps the width it has open, clipped instead of re-wrapped
@@ -142,13 +144,14 @@ export const ToolPanelDock = memo(function ToolPanelDock(p: ToolPanelDockProps) 
     if (!p.narrow) {
       const b = bounds();
       const open = shown ? clamp(s.width ?? b.initial, b.min, b.max) : aside.current?.offsetWidth;
-      if (open) aside.current?.style.setProperty('--tool-panel-open', `${open}px`);
-      if (!moving) setMoving(true);
+      // A reversal keeps the full content width instead of freezing it at a half-open frame.
+      if (open && (!moving || shown)) aside.current?.style.setProperty('--tool-panel-open', `${open}px`);
+      setMoving(m => m + 1);
     }
   }
   useEffect(() => {
     if (!moving) return;
-    const timer = setTimeout(() => setMoving(false), MOVE_MS);
+    const timer = setTimeout(() => setMoving(0), MOVE_MS);
     return () => clearTimeout(timer);
   }, [moving]);
   // ⌥⌘B, VS Code's secondary side bar key (⌘B stays with the session column)

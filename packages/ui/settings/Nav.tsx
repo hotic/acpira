@@ -76,7 +76,7 @@ export function PageRail({ page, onPage, onBack, desktop, width, opening, connec
   // the step under the strip), so the rows' fills line up with its rows. Its widths come from desktop.css there, where the folded rail must still sit under the lights
   const inset = desktop ? 'px-gap-half' : 'px-pad @max-[600px]/settings-shell:px-2';
   return (
-    <aside data-settings-rail data-opening={opening || undefined} style={width ? { '--rail-w': width } as CSSProperties : undefined} className={cn('flex shrink-0 flex-col', desktop ? 'gap-gap-half pb-gap-half' : cn('gap-(--section-gap)', inset, 'w-(--settings-nav-w) py-pad-y @max-[600px]/settings-shell:w-(--settings-rail-w)'))}>
+    <aside data-settings-rail data-opening={opening || undefined} style={width ? { '--rail-w': width } as CSSProperties : undefined} className={cn('flex shrink-0 flex-col', desktop ? 'gap-gap-half pb-(--foot-bottom)' : cn('gap-(--section-gap)', inset, 'w-(--settings-nav-w) py-pad-y @max-[600px]/settings-shell:w-(--settings-rail-w)'))}>
       {/* Desktop: the window's pinned title row sits here; Back to chat leads the list below */}
       {desktop ? <TitleSpace /> : back}
       <nav aria-label={t('settings.title')} className={cn('flex min-h-0 flex-col gap-1 overflow-y-auto', desktop && inset)}>
@@ -95,8 +95,8 @@ export function PageRail({ page, onPage, onBack, desktop, width, opening, connec
         {connections && item('connections', t('settings.nav.connections'), <Network />)}
         {item('storage', t('settings.nav.storage'), <HardDrive />)}
       </nav>
-      {/* Desktop: About (the version and its updates) at the rail's foot, where apps keep it, half a gap off the window's edge
-          like the chat column's gear (chat/DesktopFrame.tsx AppMenu), so the two foot glyphs share a line; the IDE shells'
+      {/* Desktop: About (the version and its updates) at the rail's foot, where apps keep it, by the page sheet's bottom edge like
+          the chat column's gear (chat/DesktopFrame.tsx AppMenu, --foot-bottom), so the two foot glyphs share a line; the IDE shells'
           extension is updated by their marketplace */}
       {desktop && <div className={cn('mt-auto flex flex-col', inset)}>{item('about', t('settings.nav.about'), <Info />)}</div>}
     </aside>
