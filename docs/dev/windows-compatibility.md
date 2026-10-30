@@ -17,11 +17,12 @@ Windows platform boundaries the code works around, how they are regression-check
 - ChatGPT bridge commands use raw CMD arguments and drain output after exit, since a helper can hold the pipe open.
 - Remote / WSL: the backend OS decides command syntax; `agents.json` keeps local Windows and remote Linux config apart.
 - Release sidecars use the MSVC target with a static CRT; Windows x64 / arm64 are in `scripts/release/sidecar-targets.mjs`.
+- Remote access: the gateway runs from a logon task (or the HKCU Run key) with `--supervise`, a GUI-subsystem program so the task opens no console; its control channel is an owner-only pipe, and `devices/` and `apns/` get an owner-only inherited DACL (host-architecture.md, Remote access gateway).
 
 ## Regression checks
 
 - `scripts/ci/test-windows.ps1` is the single entry for native tests and Clippy on Windows targets, run by push / PR CI and release CI. Compiling, or a GNU cross-build run over SSH, does not prove the MSVC release build.
-- Native tests: `tests/windows_launch.rs`, `tests/windows_compat.rs`, `platform::*` unit tests, `test/devin-install.test.ps1`, `test/windowsTerminal.test.mjs`.
+- Native tests: `tests/windows_launch.rs`, `tests/windows_compat.rs`, `platform::*` unit tests, `test/devin-install.test.ps1`, `test/windowsTerminal.test.mjs`, `cargo test -p acpira-gateway` (its end-to-end test needs `pnpm install` first). `login_service_round_trip` (`--ignored`) registers a real logon task.
 - On Windows, Rust engine tests locate the repo through `canonical_for_cli` and the fake agent loader is passed as a file URL; `\\?\` and `S:\…` paths otherwise fail Node.
 
 ## Open gaps
@@ -30,6 +31,7 @@ Windows platform boundaries the code works around, how they are regression-check
 - Some native Rust engine tests and the POSIX-only `pnpm test` cases (file modes, `fileLock`, `acpira serve` socket, bridge CLI) fail on Windows and are not addressed.
 - Unverified: real OAuth per vendor, terminal TTY interaction, IDE button and browser-callback acceptance.
 - Unverified: native arm64 execution; how each vendor's Windows CLI launches a stdio MCP command.
+- Unverified for remote access: the firewall prompt on the fixed gateway path, `DnsServiceRegister` seen from an iPhone, Modern Standby with the power request held.
 - Unverified: shared drives, redirected Known Folders, enterprise restrictions / antivirus, terminals with PowerShell or WSL interop disabled.
 - Desktop Commander process detection reports `unknown` on Windows; presence of an executable is not shown as connected.
 - Claude on Windows may pick up a user-level `ANTHROPIC_API_KEY`, so "not signed in" in Acpira does not mean the CLI lacks credentials; handling is in `agent-quirks.md`.
