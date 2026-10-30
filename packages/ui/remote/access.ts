@@ -22,6 +22,15 @@ export function watchRemoteAccess() {
 /** The latest view; undefined until the engine answered */
 export const useRemoteAccess = () => useSyncExternalStore(subscribe, () => view);
 
+const UNAVAILABLE = {
+  component: 'devices.unavailable.component',
+  service: 'devices.unavailable.service',
+  platform: 'devices.unavailable.platform',
+} as const satisfies Record<NonNullable<RemoteAccessView['unavailable']>, MsgKey>;
+
+/** Why remote access is not offered here, as the note says it */
+export const unavailableKey = (v: RemoteAccessView): MsgKey => UNAVAILABLE[v.unavailable ?? 'platform'];
+
 /** Every op answers with a pushed view; a failure also shows the engine's toast */
 export function remoteAccessOp(op: RemoteAccessOp) {
   vscodeApi().postMessage({ type: 'remoteAccessOp', op });

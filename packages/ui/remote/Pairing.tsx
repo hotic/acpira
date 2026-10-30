@@ -4,6 +4,7 @@ import type { DeviceKind, DeviceStatus, GatewayStatus, PathKind } from '@acpira/
 import { cn } from '../ui/cn';
 import { ChipTag } from '../ui/Button';
 import { MarkSvg } from '../chat/marks';
+import { windowsOS } from '../desktop';
 import { t } from '../i18n';
 import { PATHS, PATH_NAME, pairingDeadline, remoteAccessOp, useRemoteAccess } from './access';
 import { BAND_COUNT, QR_BOX, QUIET, RING, RING_STROKE, STRIP_H, WAIT_HOLE, qrShape, slide, walk } from './pairGeometry';
@@ -323,7 +324,9 @@ export function PairingCore({ pairing, glyphRef, className }: PairingCoreProps) 
     <div className="dv-slot mt-pad w-full" data-success={success || undefined}>
       <span className="dv-slot-bg" />
       <span className="dv-slot-code">
-        <span className="text-2 text-fg-2">{t('devices.code')}</span>
+        {/* Windows Firewall can turn away a phone pairing by the code (a direct LAN connection) where the QR code's relay
+            still gets through: said on hover, the card keeps its lines */}
+        <span className="text-2 text-fg-2" title={windowsOS ? t('devices.firewallHint') : undefined}>{t('devices.code')}</span>
         {/* A fresh code's digits come in as the old ones leave, with the modules' ripple */}
         <span className="dv-swap items-center justify-items-end">
           {shown?.prev && <span key={shown.prev.key} data-off aria-hidden className="dv-digits">{spaced(shown.prev.key)}</span>}

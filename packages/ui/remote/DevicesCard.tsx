@@ -8,7 +8,7 @@ import { Row } from '../ui/Row';
 import { PanelHeader } from '../ui/Panel';
 import type { SettingsPage } from '../settings/Nav';
 import { t } from '../i18n';
-import { deviceOrder, PATH_NAME, remoteAccessOp, useRemoteAccess } from './access';
+import { deviceOrder, PATH_NAME, remoteAccessOp, unavailableKey, useRemoteAccess } from './access';
 import { MarkSvg } from '../chat/marks';
 import { DeviceGlyph, PairingCore, usePairing } from './Pairing';
 import { seenLine } from './seen';
@@ -53,9 +53,10 @@ function PhoneGlyph({ online, pairing }: { online: boolean; pairing: boolean }) 
 // short left pad keeps the phone close to the gear, so gear, phone and name read as one group
 const FOOT_ROW = 'flex min-h-row min-w-0 flex-1 items-center gap-gap rounded-md pr-2 pl-1 text-left text-2 text-fg-1 transition-colors hover:bg-hover focus-visible:bg-hover data-[popup-open]:bg-hover';
 
-/** Whether the foot shows the devices row: not until the engine answered for remote access, and not on a platform the
- *  gateway does not run on (a row that can only say so is noise). The gear's layout follows it (chat/DesktopFrame.tsx) */
-export const devicesShown = (view: RemoteAccessView | undefined): view is RemoteAccessView => !!view && view.unavailable !== 'platform';
+/** Whether the foot shows the devices row: once the engine answered for remote access. Until remote access is on, the row
+ *  announces the mobile app (`soon`) on every system, one the gateway cannot run on included. The gear's layout follows
+ *  it (chat/DesktopFrame.tsx) */
+export const devicesShown = (view: RemoteAccessView | undefined): view is RemoteAccessView => !!view;
 
 /** The foot's devices row (this computer's name and how many devices are online) and its card */
 export function DevicesButton({ onOpenSettings }: { onOpenSettings?: (page?: SettingsPage) => void }) {
@@ -278,7 +279,7 @@ function Note({ view, onRetry }: { view: RemoteAccessView; onRetry: () => void }
   let title: string, desc: string, action: ReactNode = null;
   if (!view.available) {
     title = t('devices.unavailable.title');
-    desc = t(view.unavailable === 'component' ? 'devices.unavailable.component' : 'devices.unavailable.platform');
+    desc = t(unavailableKey(view));
   } else {
     title = t('devices.failed.title');
     desc = view.error ?? '';
