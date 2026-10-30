@@ -143,13 +143,20 @@ impl App {
     });
   }
 
-  /// The page's data, when the first-run flow is on: the folder as the consent card names it and the language to use
+  /// Missing data always requires the full welcome, even for a returning profile. A new desktop profile also gets
+  /// the intro when an IDE already made the shared folder, without consent or blocking engine initialization.
   pub fn first_run_page(&self) -> Option<FirstRunPage> {
-    if !self.first_run.load(Ordering::SeqCst) {
+    let needs_home = self.first_run.load(Ordering::SeqCst);
+    if !needs_home && !self.welcome_pending.load(Ordering::SeqCst) {
       return None;
     }
-    let home = first_run::display_home(&self.paths.data_home, &self.paths.home, cfg!(unix));
+    let home = needs_home.then(|| first_run::display_home(&self.paths.data_home, &self.paths.home, cfg!(unix)));
     Some(FirstRunPage { home, locale: self.locale().tag().to_owned() })
+  }
+
+  /// The intro and tour were completed or skipped; later windows need not replay them.
+  pub fn tour_done(&self) {
+    self.welcome_pending.store(false, Ordering::SeqCst);
   }
 
   /// Runs `acpira agents --json` and answers the windows that asked meanwhile
@@ -203,6 +210,7 @@ impl App {
     }
     log(&format!("first run: created {}", self.paths.data_home.display()));
     self.first_run.store(false, Ordering::SeqCst);
+    self.tour_done();
     if self.env_ready.load(Ordering::SeqCst) {
       // Off the page's message callback: starting may spawn and connect to the engine
       std::thread::spawn(|| app().client().start());

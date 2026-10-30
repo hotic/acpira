@@ -189,14 +189,14 @@ pub struct PageConfig {
   /// A browser tab of a chat window's tool panel (host browser in a frame): the page talks through its parent
   /// (webview/panel/browserTabs.ts), there being no shell transport in a frame
   pub tab: Option<String>,
-  /// The data folder is missing and no engine runs: the page starts the first-run flow (first_run.rs)
+  /// A first launch of the desktop profile, or a missing data folder: play the first-run flow (first_run.rs)
   pub first_run: Option<FirstRunPage>,
 }
 
-/// What the first-run flow needs before any engine: the folder as the consent card names it, and the language to speak
+/// The welcome language and, only when data is missing, the folder to ask consent for creating.
 #[derive(Debug, Clone)]
 pub struct FirstRunPage {
-  pub home: String,
+  pub home: Option<String>,
   pub locale: String,
 }
 
@@ -248,7 +248,10 @@ pub fn page_html_on(c: &PageConfig, origin: &str, platform: &str) -> String {
     config["font"] = json!(f);
   }
   if let Some(f) = &c.first_run {
-    config["firstRun"] = json!({ "home": f.home, "locale": f.locale });
+    config["firstRun"] = json!({ "locale": f.locale });
+    if let Some(home) = &f.home {
+      config["firstRun"]["home"] = json!(home);
+    }
   }
   let mut boot = format!("window.__acpira={}", script_json(&config));
   if let Some(tab) = &c.tab {
@@ -463,9 +466,18 @@ mod tests {
       dark: true,
       font: None,
       tab: None,
-      first_run: Some(FirstRunPage { home: "~/.acpira</script>".into(), locale: "zh-CN".into() }),
+      first_run: Some(FirstRunPage { home: Some("~/.acpira</script>".into()), locale: "zh-CN".into() }),
     });
-    assert!(first.contains(r#""firstRun":{"home":"~/.acpira\u003c/script>","locale":"zh-CN"}"#));
+    assert!(first.contains(r#""firstRun":{"locale":"zh-CN","home":"~/.acpira\u003c/script>"}"#));
+    let existing = page_html(&PageConfig {
+      host: PageHost::Editor,
+      locale: "en".into(),
+      dark: true,
+      font: None,
+      tab: None,
+      first_run: Some(FirstRunPage { home: None, locale: "en".into() }),
+    });
+    assert!(existing.contains(r#""firstRun":{"locale":"en"}"#));
   }
 
   #[test]

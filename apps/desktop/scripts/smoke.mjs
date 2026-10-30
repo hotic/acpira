@@ -162,22 +162,12 @@ async function main() {
 
     const probeEnv = { ...env, ACPIRA_HOME: join(root, 'agents-probe') };
     const builtins = JSON.parse(execFileSync(agentsBin, ['agents', '--json'], { encoding: 'utf8', env: probeEnv })).agents.map(a => a.id);
-    writeFileSync(join(user, 'settings.json'), `${JSON.stringify({
-      sessionListPosition: 'left',
-      sessionScope: 'all',
-      language: 'en',
-      defaultAgent: 'fake',
-      agentOrder: ['fake'],
-      disabledAgents: builtins,
-      agents: { fake: { name: 'Fake', command: process.execPath, args: [fakeAgent] } },
-    }, null, 2)}\n`);
-
     const launch = extra => spawn(bin, extra, { env, stdio: ['ignore', 'pipe', 'pipe'] });
     app = launch([]);
     const collect = chunk => { const s = chunk.toString(); appLog += s; appendFileSync(logFile, s); };
     app.stdout.on('data', collect);
     app.stderr.on('data', collect);
-    const appExit = new Promise(r => app.once('exit', r));
+    let appExit = new Promise(r => app.once('exit', r));
     say(`app ${appArg ?? basename(bin)} on ${engine ?? 'its bundled engine'}, temp ${root}`);
 
     page = await Hook.connect(hookPath);
@@ -189,14 +179,15 @@ async function main() {
     // consent card's yes creates the folder, private to the user, then starts the engine, whose init swaps the sample
     // shell for the real one
     await page.waitFor('the first-run intro', `!!document.querySelector('.wl-intro[data-open]')`);
-    const firstRun = await page.eval('JSON.stringify(window.__acpira.firstRun)');
-    if (firstRun !== JSON.stringify({ home: data, locale: 'en' })) fail(`the first-run page says ${firstRun}`);
+    const firstRun = await page.eval('window.__acpira.firstRun');
+    if (firstRun?.home !== data || typeof firstRun?.locale !== 'string') fail(`the first-run page says ${JSON.stringify(firstRun)}`);
     await page.waitFor('the intro\'s agent row', `!!document.querySelector('.wl-agent, .wl-none')`);
     if (existsSync(data)) fail('the data folder exists before the consent card');
     if (shotDir) { await sleep(1600); await page.shot(join(shotDir, 'welcome-intro.png')); }
     await page.click('the intro\'s skip', `document.querySelector('.wl-intro .wl-quiet')`);
     await page.waitFor('consent after skipping', `!!document.querySelector('.wl-center[data-open]')`);
     if (existsSync(data)) fail('skipping the intro created the data folder before consent');
+    const seeTour = await page.eval(`document.querySelector('.wl-center[data-open] button').textContent`);
     await page.click('see the tour after skipping', `document.querySelector('.wl-center[data-open] button')`);
     await page.waitFor('the intro again', `!!document.querySelector('.wl-intro[data-open]')`);
     await page.click('the intro\'s start', `document.querySelector('.wl-intro[data-open] .wl-cta')`);
@@ -247,17 +238,49 @@ async function main() {
     await checkTour(0, 'sessions-widened', `document.querySelector('[data-sample-shell] [data-session]')`);
     for (let i = 0; i < 4; i++) await page.click('the tour\'s next', `document.querySelector('.wl-next')`);
     await page.waitFor('the consent card', `!!document.querySelector('.wl-center[data-open]')`);
-    if (!(await page.eval(`document.querySelector('.wl-center[data-open] button')?.textContent.includes('Back')`))) fail('finishing the tour after skipping kept the see-tour action');
+    if (await page.eval(`document.querySelector('.wl-center[data-open] button')?.textContent === ${JSON.stringify(seeTour)}`)) fail('finishing the tour after skipping kept the see-tour action');
     await page.click('back to the last tour step', `document.querySelector('.wl-center[data-open] button')`);
     await checkTour(3, 'settings-after-consent-back', `document.querySelector('[data-sample-shell] [data-session-panel] svg.lucide-settings')`);
     await page.click('finish the tour again', `document.querySelector('.wl-next')`);
     await page.waitFor('consent after returning', `!!document.querySelector('.wl-center[data-open]')`);
     if (shotDir) { await sleep(800); await page.shot(join(shotDir, 'welcome-consent.png')); }
+    // A desktop profile alone is not initialized data. Quitting before consent must replay the full welcome on
+    // the next launch. Seed the fake agent only now, while the profile is not in use.
+    await page.call({ op: 'quit' }).catch(() => {});
+    page.close();
+    page = undefined;
+    await within('the app to quit before consent', appExit, 15_000);
+    app = undefined;
+    writeFileSync(join(user, 'settings.json'), `${JSON.stringify({
+      sessionListPosition: 'left',
+      sessionScope: 'all',
+      language: 'en',
+      defaultAgent: 'fake',
+      agentOrder: ['fake'],
+      disabledAgents: builtins,
+      agents: { fake: { name: 'Fake', command: process.execPath, args: [fakeAgent] } },
+    }, null, 2)}\n`);
+    if (!WIN) rmSync(hookPath, { force: true });
+    app = launch([]);
+    app.stdout.on('data', collect);
+    app.stderr.on('data', collect);
+    appExit = new Promise(r => app.once('exit', r));
+    page = await Hook.connect(hookPath);
+    await page.waitFor('the full welcome after quitting before authorization', `!!document.querySelector('.wl-intro[data-open] .wl-bigmark')`);
+    if (existsSync(data) || (await page.call({ op: 'windows' })).some(w => w.ready)) fail('the returning profile started the engine before consent');
+    if (shotDir) { await sleep(1800); await page.shot(join(shotDir, 'welcome-returning-intro.png')); }
+    await page.click('start the returning profile tour', `document.querySelector('.wl-intro[data-open] .wl-cta')`);
+    for (let step = 0; step < 4; step++) {
+      await page.waitFor('the returning profile tour step', `document.querySelectorAll('.wl-step')[${step}]?.classList.contains('is-now')`);
+      await page.click('advance the returning profile tour', `document.querySelector('.wl-next')`);
+    }
+    await page.waitFor('consent after the returning profile tour', `!!document.querySelector('.wl-center[data-open]')`);
+    if (existsSync(data)) fail('the returning tour created the folder before consent');
     await page.press('the create button', `[...document.querySelectorAll('.wl-center button')].find(b => b.innerText.includes('Create and start'))`);
     await waitUntil('the data folder', () => existsSync(data), 10_000);
     if (!WIN && (statSync(data).mode & 0o777) !== 0o700) fail(`the data folder has mode ${(statSync(data).mode & 0o777).toString(8)}`);
     await page.waitFor('the first-run layer to go', `!document.querySelector('.wl-layer') && !document.querySelector('[data-sample-shell]')`);
-    say('first launch: intro with no engine, the data folder created on consent, then the real shell');
+    say('missing data always shows the full intro and tour, including after quitting before consent; consent alone creates the folder and starts the engine');
 
     await page.waitFor('the empty state', `document.body.innerText.includes('Open a folder to start')`);
     await sleep(1000);
@@ -636,6 +659,64 @@ document.addEventListener('securitypolicyviolation', () => { seen.blocked = true
     const saved = JSON.parse(readFileSync(join(user, 'windows.json'), 'utf8'));
     if (saved.windows?.length !== 1 || !saved.windows[0].bounds) fail(`windows.json kept no window: ${JSON.stringify(saved)}`);
     say(`quit saved ${saved.windows.length} window place(s)`);
+
+    // A new desktop profile must welcome an IDE user whose shared data already exists. The engine may initialize
+    // behind it, but must not dismiss the intro; finishing or skipping asks no folder consent.
+    const freshUser = join(root, 'new-desktop-profile');
+    const freshHook = WIN ? `${hookPath}-fresh` : join(root, 'fresh.sock');
+    let freshApp;
+    let freshPage;
+    try {
+      for (const launchKind of ['first', 'again', 'missing-home']) {
+        const freshData = launchKind === 'missing-home' ? join(root, 'missing-home') : data;
+        freshApp = spawn(bin, [], { env: { ...env, ACPIRA_HOME: freshData, ACPIRA_DESKTOP_USER_DATA: freshUser, ACPIRA_DESKTOP_HOOK: freshHook }, stdio: ['ignore', 'pipe', 'pipe'] });
+        freshApp.stdout.on('data', collect);
+        freshApp.stderr.on('data', collect);
+        const exit = new Promise(r => freshApp.once('exit', r));
+        freshPage = await Hook.connect(freshHook);
+        if (launchKind === 'first') {
+          await freshPage.waitFor('the new desktop profile intro', `!!document.querySelector('.wl-intro[data-open]')`);
+          const boot = await freshPage.eval('window.__acpira.firstRun');
+          if (boot?.home !== undefined || boot?.locale !== 'en') fail(`an existing home asks consent: ${JSON.stringify(boot)}`);
+          await waitUntil('the engine behind the intro', async () => (await freshPage.call({ op: 'windows' }))[0]?.ready, 20_000);
+          if (!(await freshPage.eval(`!!document.querySelector('.wl-intro[data-open]')`))) fail('engine init dismissed the intro');
+          if (shotDir) { await sleep(1800); await freshPage.shot(join(shotDir, 'welcome-existing-home.png')); }
+          await freshPage.click('start the existing-home tour', `document.querySelector('.wl-intro[data-open] .wl-cta')`);
+          for (let step = 0; step < 4; step++) {
+            await freshPage.waitFor('the current tour step', `document.querySelectorAll('.wl-step')[${step}]?.classList.contains('is-now')`);
+            await freshPage.click('advance the existing-home tour', `document.querySelector('.wl-next')`);
+          }
+          await freshPage.waitFor('the tour to finish without consent', `!document.querySelector('.wl-layer') && !document.querySelector('[data-sample-shell]')`);
+          await freshPage.eval(`window.postMessage({ type: 'shellCommand', command: 'about' }, '*')`);
+          await freshPage.waitFor('the interface tour settings action', `!![...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Start')`);
+          await freshPage.click('replay the interface tour', `[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Start')`);
+          await freshPage.waitFor('replay starts with the animated intro', `!!document.querySelector('.wl-intro[data-open] .wl-bigmark')`);
+          await freshPage.click('skip the replay intro', `document.querySelector('.wl-intro[data-open] .wl-quiet')`);
+          await freshPage.waitFor('skip ends without consent', `!document.querySelector('.wl-layer')`);
+          await freshPage.eval('location.reload()');
+          await freshPage.waitFor('a new page after the tour', `!!document.querySelector('.acp-shell') && !window.__acpira.firstRun && !document.querySelector('.wl-layer')`);
+        } else if (launchKind === 'missing-home') {
+          await freshPage.waitFor('the full welcome when an old profile changes to a missing home', `!!document.querySelector('.wl-intro[data-open] .wl-bigmark')`);
+          const boot = await freshPage.eval('window.__acpira.firstRun');
+          if (boot?.home !== freshData || existsSync(freshData) || (await freshPage.call({ op: 'windows' })).some(w => w.ready)) fail('the old profile did not wait for the new home consent');
+          await freshPage.click('skip the missing-home intro', `document.querySelector('.wl-intro[data-open] .wl-quiet')`);
+          await freshPage.waitFor('skipping still requires folder consent', `!!document.querySelector('.wl-center[data-open]')`);
+          if (existsSync(freshData)) fail('skipping the returning welcome created the new home');
+        } else {
+          await freshPage.waitFor('the returning desktop profile', `!!document.querySelector('.acp-shell') && !window.__acpira.firstRun && !document.querySelector('.wl-layer')`);
+        }
+        await freshPage.call({ op: 'quit' }).catch(() => {});
+        freshPage.close();
+        freshPage = undefined;
+        await within('the fresh-profile app to quit', exit, 15_000);
+        freshApp = undefined;
+        if (!WIN) rmSync(freshHook, { force: true });
+      }
+    } finally {
+      freshPage?.close();
+      if (freshApp) { freshApp.kill('SIGTERM'); await Promise.race([new Promise(r => freshApp.once('exit', r)), sleep(5000)]); }
+    }
+    say('an existing shared home keeps the first desktop intro and tour, skips consent, replays from the intro and stays quiet on reload and relaunch; a missing home restores the full welcome even for a returning profile');
 
     // A relaunch within the engine's idle grace: the saved window comes back on its session, on the same engine process
     const before = appLog.length;

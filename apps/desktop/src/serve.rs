@@ -95,7 +95,7 @@ pub fn handle(request: Request<Vec<u8>>, responder: tauri::UriSchemeResponder) {
   let blobs = app.client().sessions_dir().map(std::path::PathBuf::from);
   match route(&path, uri.query(), &app.paths.webview, blobs.as_deref()) {
     Route::Page { host, tab } => {
-      // Only a chat window's page runs the first-run flow; a browser page has no engine view to wait for
+      // Only a chat window gets the welcome flow; browser pages never show the intro or ask folder consent
       let first_run = if host == PageHost::Editor && tab.is_none() { app.first_run_page() } else { None };
       let html = page_html(&PageConfig {
         host,

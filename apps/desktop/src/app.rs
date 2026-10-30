@@ -207,6 +207,8 @@ pub struct App {
   page_ended: Mutex<HashMap<String, Instant>>,
   /// The data folder was missing at launch and the user has not said yes yet (acpira_desktop::first_run): no engine runs
   first_run: AtomicBool,
+  /// A new desktop profile still needs its intro and tour, independently of the shared data folder
+  welcome_pending: AtomicBool,
   /// The login shell's environment is in, so a yes starts the engine at once
   env_ready: AtomicBool,
   /// The first-run intro's agent row
@@ -249,6 +251,7 @@ impl App {
     let log_file = paths.logs.join("desktop.log");
     let background = std::env::var("ACPIRA_DESKTOP_BACKGROUND").as_deref() == Ok("1");
     let first_run = !paths.data_home.exists();
+    let welcome_pending = settings.fresh;
     let app = Arc::new(App {
       handle,
       paths,
@@ -277,6 +280,7 @@ impl App {
       page_menu: Mutex::new(None),
       page_ended: Mutex::new(HashMap::new()),
       first_run: AtomicBool::new(first_run),
+      welcome_pending: AtomicBool::new(welcome_pending),
       env_ready: AtomicBool::new(false),
       detection: Mutex::new(Detection::Running(vec![])),
     });

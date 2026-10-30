@@ -1,6 +1,7 @@
-//! The first launch: the data folder (ACPIRA_HOME, ~/.acpira) does not exist, so the app starts no engine, which would
-//! create it, and the page runs its first-run flow (packages/ui/welcome/) until the user says yes. Until then nothing
-//! writes the folder; `acpira agents --json` only reads it. See docs/dev/desktop.md
+//! The first-run folder consent: when ACPIRA_HOME is missing the app starts no engine, which would create it, until
+//! the user says yes. A new desktop profile still plays the intro and tour when shared data already exists, without
+//! consent. Missing data always plays the full welcome, even for a returning profile. Before consent nothing writes the folder;
+//! `acpira agents --json` only reads it. See docs/dev/desktop.md
 
 use std::path::Path;
 use std::process::{Command, Stdio};
