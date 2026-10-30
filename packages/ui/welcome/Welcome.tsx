@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
+import { useCallback, type MouseEvent, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { BorderBeam } from 'border-beam';
 import { Check, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import type { DetectedAgent } from '@acpira/shared/protocol';
@@ -15,7 +15,7 @@ import { cn } from '../ui/cn';
 // The intro draws the Acpira mark (two docks sharing an open centre) in outline with light travelling round it; each
 // tour step lights its target through a soft-edged hole in the veil and runs a leader line from it to a caption set
 // straight on the veil, no card; the controls stay put in one small capsule at the top of the window, so the pointer never
-// chases a moving "next". The tour plays over the staged sample session (sample.ts), so it has something to show before
+// chases a moving "next", and a click anywhere else on the veil moves on too. The tour plays over the staged sample session (sample.ts), so it has something to show before
 // any folder is open. The data folder consent closes the first run: nothing is written before "Create and start".
 // The layer is its own fixed sheet beside the shell, not inside it, so it stays put while the sample shell under it
 // gives way to the real one; it carries the shell's theme, appearance and look attributes for the tokens
@@ -31,7 +31,6 @@ interface Step { find: (root: HTMLElement) => Element[]; lead: Lead; pad: number
 // tx/ty: where the leader leaves the target; ex/ey: where it ends, fading out, just short of the caption
 interface Geo { d: string; tx: number; ty: number; ex: number; ey: number; center: boolean; above?: boolean; note: CSSProperties }
 
-const ENTER = windowsOS ? 'Enter' : '↵';
 const ESC = windowsOS ? 'Esc' : 'esc';
 
 // The leader's run and the caption's offsets from it (px, in the layer's own coordinates)
@@ -321,6 +320,12 @@ export function Welcome(p: WelcomeProps) {
   const next = () => { if (index + 1 < STEPS.length) setStage(index + 1); else if (mode === 'replay') end(); else setStage('consent'); };
   const back = () => { if (index > 0) setStage(index - 1); };
   const create = () => { if (creating) return; setCreating(true); p.onCreate(); };
+  // During the tour a click anywhere on the veil moves on, so the pointer never has to travel to the capsule. The
+  // capsule's own buttons and the title bar's drag strip keep their meaning
+  const veilClick = (e: MouseEvent) => {
+    if (phase !== 'tour' || (e.target as Element).closest('.wl-dock, [data-drag-region]')) return;
+    next();
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -351,7 +356,7 @@ export function Welcome(p: WelcomeProps) {
   const shownSteps = [...(prev !== undefined ? [prev] : []), ...(index >= 0 ? [index] : [])];
   return (
     <div ref={layer} className="acp-shell wl-layer" data-compact={compact || undefined} data-theme={p.theme} {...appearanceDataAttrs(p.appearance)} {...lookAttrs(p.look)}>
-      <div className="wl-root" data-phase={phase}>
+      <div className="wl-root" data-phase={phase} onClick={veilClick}>
         <div className="wl-wash" />
         <div className="wl-blur" style={hole && phase === 'tour' ? holeMask(hole) : undefined} />
         <svg className="wl-veil" width="100%" height="100%" aria-hidden>
@@ -634,7 +639,8 @@ function SmallMark({ className }: { className?: string }) {
 }
 
 // Intro copy, sober and product-facing: what the product is, no slogan, metaphor or joke. The first line is the quieter
-// one. The agents row shows what the shell found on PATH; its room is held while the shell looks, so nothing moves
+// one. Three text blocks at most (brand, headline, agents): a lede under the headline made the column read crowded. The
+// agents row shows what the shell found on PATH; its room is held while the shell looks, so nothing moves
 function Intro({ open, still, agents, ctaRef, onStart, onSkip }: { open: boolean; still: boolean; agents?: DetectedAgent[]; ctaRef: RefObject<HTMLButtonElement | null>; onStart: () => void; onSkip: () => void }) {
   const hero = [t('welcome.hero.1'), t('welcome.hero.2')];
   return (
@@ -645,7 +651,6 @@ function Intro({ open, still, agents, ctaRef, onStart, onSkip }: { open: boolean
         <h1 className="wl-hero">
           {hero.map((line, i) => <span key={i} className={cn('block', i === 0 && 'wl-hero-dim')}><Chars text={line} at={0.3 + i * 0.24} /></span>)}
         </h1>
-        <p className="wl-lede"><span className="block">{t('welcome.lede.1')}</span><span className="block">{t('welcome.lede.2')}</span></p>
         <div className="wl-found">
           <div className="wl-label">{t('welcome.found')}</div>
           <div className="wl-agents">
@@ -715,19 +720,20 @@ function Consent({ open, home, theme, motion, error, busy, back, onCreate }: { o
               {TREE.map(([name, what], i) => (
                 <div key={name} className="wl-line flex items-baseline gap-gap px-pad" style={{ animationDelay: `${0.3 + i * 0.09}s` }}>
                   <span className="wl-branch shrink-0 text-fg-3">{i === TREE.length - 1 ? '└' : '├'}</span>
-                  <span className="wl-file shrink-0 text-fg-2">{name}</span>
-                  <span className="min-w-0 font-sans text-fg-3">{what()}</span>
+                  {/* A description too long for the room beside its file drops whole under the file name, never mid-phrase */}
+                  <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-gap">
+                    <span className="wl-file shrink-0 text-fg-2">{name}</span>
+                    <span className="wl-desc min-w-0 font-sans text-fg-3">{what()}</span>
+                  </span>
                 </div>
               ))}
             </div>
           </div>
-          {error
-            ? <div className="text-3 leading-relaxed text-danger [overflow-wrap:anywhere]">{t('welcome.consent.failed', { path: home, error })}</div>
-            : <div className="text-3 leading-relaxed text-fg-3">{t('welcome.consent.note', { storage: t('storage.title') })}</div>}
+          {error && <div className="text-3 leading-relaxed text-danger [overflow-wrap:anywhere]">{t('welcome.consent.failed', { path: home, error })}</div>}
           <div className="flex items-center gap-gap">
             {back && <Button onClick={back.go}>{back.label}</Button>}
             <span className="flex-1" />
-            <Button variant="primary" kbd={busy ? undefined : ENTER} onClick={onCreate} disabled={busy}>{busy ? t('welcome.consent.creating') : t('welcome.consent.create')}</Button>
+            <Button variant="primary" onClick={onCreate} disabled={busy}>{busy ? t('welcome.consent.creating') : t('welcome.consent.create')}</Button>
           </div>
         </div>
         {motion !== 'none' && (
