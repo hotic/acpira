@@ -5,14 +5,14 @@ import { fileURLToPath } from 'node:url';
 import { crc32, deflateRawSync } from 'node:zlib';
 
 // The Windows x64 app: one portable Acpira.exe that carries the engine (`acpira_host::cli`) and the page (build.rs embeds
-// dist/webview and dist/picker.js), plus Acpira-<version>-windows-x86_64.zip holding it. On Windows the shell builds
+// dist/webview and dist/picker.js), plus Acpira-<version>-windows-x86_64-portable.zip holding it. On Windows the shell builds
 // natively (MSVC); elsewhere through cargo-xwin, which needs clang-cl and llvm-rc on PATH (docs/dev/desktop.md, Windows).
 // The page and the picker must already be built in the repository.
 //
 //   node scripts/package-windows.mjs [--smoke]
 //
 // --smoke compiles the smoke hook in (`node scripts/smoke.mjs --app <Acpira.exe>`); never ship it.
-// Output: target/windows/Acpira.exe and target/windows/Acpira-<version>-windows-x86_64.zip (unsigned)
+// Output: target/windows/Acpira.exe and target/windows/Acpira-<version>-windows-x86_64-portable.zip (unsigned)
 const TRIPLE = 'x86_64-pc-windows-msvc';
 const shell = fileURLToPath(new URL('..', import.meta.url));
 const repo = join(shell, '..', '..');
@@ -39,7 +39,7 @@ const out = join(shell, 'target', 'windows');
 mkdirSync(out, { recursive: true });
 const exe = join(out, 'Acpira.exe');
 copyFileSync(join(shell, 'target', TRIPLE, 'release', 'acpira-desktop-tauri.exe'), exe);
-const zip = join(out, `Acpira-${version}-windows-x86_64${smoke ? '-smoke' : ''}.zip`);
+const zip = join(out, `Acpira-${version}-windows-x86_64-portable${smoke ? '-smoke' : ''}.zip`);
 rmSync(zip, { force: true });
 if (!zipWith7z(zip, exe)) writeFileSync(zip, zipOne('Acpira.exe', readFileSync(exe), statSync(exe).mtime));
 
