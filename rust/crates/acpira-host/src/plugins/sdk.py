@@ -17,11 +17,15 @@
 #   def ping(params, ctx):
 #       return "pong"
 #
+#   @p.schedule("daily")
+#   def daily(ctx):
+#       p.ui.toast("Morning")
+#
 #   p.run()
 #
-# Every name used here must also be declared in plugin.json (`hooks`, `events`, `methods`): the engine calls only
-# what the manifest lists, which is what the user confirmed. Handlers run on worker threads, so one may wait on a
-# request to the engine (`p.storage.get`) without holding up the others.
+# Every name used here must also be declared in plugin.json (`hooks`, `events`, `methods`, `tools`, `schedules`): the
+# engine calls only what the manifest lists, which is what the user confirmed. Handlers run on worker threads, so one
+# may wait on a request to the engine (`p.storage.get`) without holding up the others.
 
 import json
 import os
@@ -58,6 +62,8 @@ class Plugin:
         self._write = threading.Lock()
         self._hooks = {}
         self._methods = {}
+        self._tools = {}
+        self._schedules = {}
         self._listeners = []
         self._closers = []
         self._waits = {}
@@ -83,7 +89,7 @@ class Plugin:
             "toast": lambda text, level="info": r("ui/toast", {"text": text, "level": level}),
             "ask": lambda **params: r("ui/ask", params),
             "post": lambda message: r("ui/post", {"message": message}),
-            "composer": lambda text, replace=False: r("ui/composer", {"text": text, "replace": replace}),
+            "composer": lambda text, replace=False, session=None: r("ui/composer", {"text": text, "replace": replace, **({"session": session} if session else {})}),
         })
         self.model = _Calls({"generate": lambda prompt, **rest: r("model/generate", {"prompt": prompt, **rest})})
         self.providers = _Calls({"set": lambda providers: r("providers/set", {"providers": providers})})
@@ -108,6 +114,22 @@ class Plugin:
         """Offer a method to pages and other plugins: `fn(params, ctx)`, `ctx["from"]` naming the caller"""
         def wrap(fn):
             self._methods[name] = fn
+            return fn
+        return wrap
+
+    def tool(self, name):
+        """Answer a tool of plugin.json that has no `command`: `fn(args, ctx)` returns its text (anything else is sent
+        as JSON); `ctx` holds `workspace` and `session`"""
+        def wrap(fn):
+            self._tools[name] = fn
+            return fn
+        return wrap
+
+    def schedule(self, id):
+        """Run a schedule of plugin.json when the engine starts it: `fn(ctx)`, `ctx["due"]` the occurrence in
+        milliseconds"""
+        def wrap(fn):
+            self._schedules[id] = fn
             return fn
         return wrap
 
@@ -164,6 +186,12 @@ class Plugin:
                 result = self._hooks[method[5:]](params, {"cancelled": flag})
             elif method.startswith("rpc/") and method[4:] in self._methods:
                 result = self._methods[method[4:]](params.get("params"), {"from": params.get("from"), "cancelled": flag})
+            elif method.startswith("tool/") and method[5:] in self._tools:
+                ctx = {"workspace": params.get("workspace"), "session": params.get("session"), "cancelled": flag}
+                out = self._tools[method[5:]](params.get("arguments") or {}, ctx)
+                result = {"text": out if isinstance(out, str) else json.dumps(out, ensure_ascii=False)}
+            elif method.startswith("schedule/") and method[9:] in self._schedules:
+                result = self._schedules[method[9:]]({"due": params.get("due"), "cancelled": flag})
             else:
                 self._send({"id": rid, "error": {"code": -32601, "message": "no handler for " + method}})
                 return

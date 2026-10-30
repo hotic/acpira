@@ -219,7 +219,17 @@ impl AcpSession {
       .commands
       .iter()
       .filter(|c| !own.iter().any(|o| o.name == c.def.name))
-      .map(|c| SlashCommand { name: c.def.name.clone(), description: c.def.description.clone(), input: c.def.hint.clone().map(|hint| CommandInput { hint }) })
+      .map(|c| SlashCommand {
+        name: c.def.name.clone(),
+        description: c.def.description.clone(),
+        input: c.def.hint.clone().map(|hint| CommandInput { hint }),
+        plugin: Some(c.plugin.clone()),
+        button: c.def.button.clone(),
+        draft: c.def.draft,
+        icon: c.def.icon.clone(),
+        look: c.def.look.clone(),
+        takes_draft: c.def.button.is_some() && c.def.takes_draft(),
+      })
       .collect();
     if extra.is_empty() {
       return None;
@@ -229,21 +239,37 @@ impl AcpSession {
     Some(all)
   }
 
+  /// Whether `text` runs a plugin's command: `/name` that a plugin contributes and the agent's own `commands` lack
+  pub(crate) fn runs_plugin_command(&self, commands: &[SlashCommand], text: &str) -> bool {
+    let (Some(rt), Some(name)) = (self.deps.plugin_runtime.as_ref(), command_name(text)) else { return false };
+    !commands.iter().any(|c| c.name == name) && rt.contributed().commands.iter().any(|c| c.def.name == name)
+  }
+
   /// `/name …` naming a plugin's command (and none of the agent's): Some(Ok(Some(text))) is the prompt to send in its
   /// place, Some(Ok(None)) its process answered without one, Some(Err) the reason nothing was sent
   async fn plugin_command(&self, text: &str) -> Option<Result<Option<String>, String>> {
+    let name = command_name(text)?;
+    let args = text.get(name.len() + 1..).unwrap_or_default().trim();
+    self.run_plugin_command(name, args, false).await
+  }
+
+  /// A plugin's command `name` (one the agent has none of) run with `args`: its template filled in, or its process's
+  /// answer. `draft`: run from its composer button for text that replaces the draft, which the hook is told
+  pub async fn run_plugin_command(&self, name: &str, args: &str, draft: bool) -> Option<Result<Option<String>, String>> {
     let rt = self.deps.plugin_runtime.clone()?;
-    let name = command_name(text)?.to_owned();
     if self.core.lock().state.commands.iter().any(|c| c.name == name) {
       return None;
     }
     let contributed = rt.contributed();
     let cmd = contributed.commands.iter().find(|c| c.def.name == name)?;
-    let args = text.get(name.len() + 1..).unwrap_or_default().trim();
     if let Some(template) = cmd.def.prompt.as_deref().filter(|p| !p.trim().is_empty()) {
       return Some(Ok(Some(expand(template, args))));
     }
-    let payload = self.plugin_payload(json!({ "name": name, "arguments": args }));
+    let mut call = json!({ "name": name, "arguments": args });
+    if draft {
+      call["draft"] = json!(true);
+    }
+    let payload = self.plugin_payload(call);
     Some(match rt.hook_of(&cmd.plugin, "command", payload).await {
       None => Err(format!("{}: /{name} needs its process, which is not running", cmd.plugin)),
       Some(Err(e)) => Err(format!("{}: {e}", cmd.plugin)),

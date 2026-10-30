@@ -112,12 +112,14 @@ fn kind_tag(k: StorageResidueKind) -> &'static str {
     StorageResidueKind::Unreadable => "unreadable",
     StorageResidueKind::Backup => "backup",
     StorageResidueKind::Legacy => "legacy",
+    StorageResidueKind::PluginFiles => "pluginFiles",
+    StorageResidueKind::PluginData => "pluginData",
   }
 }
 
 fn leftover(kind: StorageResidueKind, shown: &Path, d: Du, targets: Vec<PathBuf>, session: Option<String>) -> Residue {
   let path = shown.to_string_lossy().into_owned();
-  let preselected = matches!(kind, StorageResidueKind::AgentLog | StorageResidueKind::EngineLog);
+  let preselected = matches!(kind, StorageResidueKind::AgentLog | StorageResidueKind::EngineLog | StorageResidueKind::PluginFiles);
   Residue {
     item: StorageResidue { id: format!("{}:{path}", kind_tag(kind)), kind, path, bytes: d.bytes, modified_at: iso(d.newest), preselected },
     targets,
@@ -331,6 +333,23 @@ pub fn scan(input: &ScanInput) -> Scan {
     }
   }
 
+  // Plugins: per plugin, what nothing in effect needs, and an uninstalled plugin's data apart (plugins/store.rs)
+  let plugins = root.join(crate::plugins::DIR);
+  let mut plugin_residue = 0;
+  for l in crate::plugins::store::leftovers(&plugins, &|p| plugin_fresh(p, now)) {
+    let mut d = Du::default();
+    for target in &l.targets {
+      d.add(du(target));
+    }
+    plugin_residue += d.bytes;
+    let (kind, shown) = if l.data {
+      (StorageResidueKind::PluginData, plugins.join(crate::plugins::store::DATA).join(&l.id))
+    } else {
+      (StorageResidueKind::PluginFiles, plugins.join(&l.id))
+    };
+    residue.push(leftover(kind, &shown, d, l.targets, None));
+  }
+
   // Everything else at the top level; the agent folder beyond its sessions (the built-in agent's own settings)
   for (name, path) in names(root) {
     if path == *sessions_dir {
@@ -343,6 +362,8 @@ pub fn scan(input: &ScanInput) -> Scan {
           t.other("agent", &path, du(&p).bytes);
         }
       }
+      // Hard-linked shared files make this an estimate: a file two versions link counts twice
+      n if n == crate::plugins::DIR => t.other(&name, &path, du(&path).bytes.saturating_sub(plugin_residue)),
       _ => t.other(&name, &path, du(&path).bytes),
     }
   }
@@ -483,6 +504,10 @@ pub fn clean(root: &Path, residue: &[&Residue]) -> (u64, Vec<(String, String)>) 
         error = Some(format!("{} is outside {}", target.display(), root.display()));
         break;
       }
+      // Frozen plugin versions are read-only
+      if matches!(r.item.kind, StorageResidueKind::PluginFiles) {
+        let _ = crate::plugins::store::make_removable(target);
+      }
       let res = match std::fs::symlink_metadata(target) {
         Ok(m) if m.is_dir() => std::fs::remove_dir_all(target),
         Ok(_) => std::fs::remove_file(target),
@@ -500,6 +525,24 @@ pub fn clean(root: &Path, residue: &[&Residue]) -> (u64, Vec<(String, String)>) 
     }
   }
   (freed, failed)
+}
+
+/// A plugin version or build output a freeze may be about to name: judged by the folder's own mtime, since a frozen
+/// copy keeps its files' times (and links shared ones), and a freeze reusing a copy touches the folder
+fn plugin_fresh(p: &Path, now: SystemTime) -> bool {
+  std::fs::symlink_metadata(p).and_then(|m| m.modified()).ok().and_then(|m| now.duration_since(m).ok()).is_none_or(|a| a < FRESH)
+}
+
+/// `clean` for plugin leftovers, each checked again first: one the plugin state needs by now (or that a freeze just
+/// touched) is kept and its id returned apart. Run it holding the plugin state's lock (`plugins::store::with_state_lock`)
+/// so no enable lands between the check and the removal
+pub fn clean_plugins(root: &Path, residue: &[&Residue]) -> (u64, Vec<(String, String)>, Vec<String>) {
+  let now = SystemTime::now();
+  let still: HashSet<PathBuf> =
+    crate::plugins::store::leftovers(&root.join(crate::plugins::DIR), &|p| plugin_fresh(p, now)).into_iter().flat_map(|l| l.targets).collect();
+  let (go, kept): (Vec<&Residue>, Vec<&Residue>) = residue.iter().copied().partition(|r| r.targets.iter().all(|t| still.contains(t)));
+  let (freed, failed) = clean(root, &go);
+  (freed, failed, kept.into_iter().map(|r| r.item.id.clone()).collect())
 }
 
 /// `target` resolves (its parent, for the link itself) under the canonical root

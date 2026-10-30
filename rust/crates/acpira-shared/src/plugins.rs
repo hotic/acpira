@@ -72,6 +72,46 @@ pub struct PluginInfo {
   pub findings: Option<PluginFindings>,
   /// The source folder
   pub path: String,
+  /// `contributes.schedules` with when they ran and run next
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub schedules: Vec<PluginScheduleInfo>,
+  /// The plugins it depends on and whether each is in effect at a version its range accepts
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub dependencies: Vec<PluginDependencyInfo>,
+}
+
+/// One schedule of a plugin, as the plugin page shows it
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginScheduleInfo {
+  pub id: String,
+  pub cron: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub description: Option<String>,
+  /// Milliseconds since the epoch
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub next: Option<i64>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub last: Option<i64>,
+  #[serde(default)]
+  pub running: bool,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub error: Option<String>,
+  /// Stopped after failing runs in a row, until the plugin changes
+  #[serde(default)]
+  pub paused: bool,
+}
+
+/// One plugin another depends on (`dependencies`, `optionalDependencies`)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginDependencyInfo {
+  pub id: String,
+  pub range: String,
+  #[serde(default)]
+  pub optional: bool,
+  /// In effect at a version the range accepts
+  pub met: bool,
 }
 
 /// A built-in tool group of Acpira's MCP server
@@ -164,6 +204,9 @@ pub const STYLE_HOOKS: &[&str] = &[
   "[data-part=\"composer\"]",
   "[data-tool-panel-wrap]",
   "[data-plugin-slot]",
+  "[data-session]",
+  "[data-session][data-state]",
+  "[data-session][data-done]",
 ];
 
 /// One interface piece of a plugin in effect, as the page renders it: the HTML runs in a sandboxed frame of its own,

@@ -315,6 +315,8 @@ const KIND_LABEL: Record<StorageResidueKind, MsgKey> = {
   unreadable: 'storage.kind.unreadable',
   backup: 'storage.kind.backup',
   legacy: 'storage.kind.legacy',
+  pluginFiles: 'storage.kind.pluginFiles',
+  pluginData: 'storage.kind.pluginData',
 };
 const KIND_DESC: Record<StorageResidueKind, MsgKey> = {
   agentLog: 'storage.kind.agentLog.desc',
@@ -323,6 +325,8 @@ const KIND_DESC: Record<StorageResidueKind, MsgKey> = {
   unreadable: 'storage.kind.unreadable.desc',
   backup: 'storage.kind.backup.desc',
   legacy: 'storage.kind.legacy.desc',
+  pluginFiles: 'storage.kind.pluginFiles.desc',
+  pluginData: 'storage.kind.pluginData.desc',
 };
 
 // The leftovers by kind; the kinds nothing can miss start ticked. Removal is for good, so the page says so up front

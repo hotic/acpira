@@ -3,7 +3,7 @@
 //! the change is kept as the state's `last`, and `changes.jsonl` gets its line afterwards. A crash between the two
 //! writes leaves the line missing, which the next commit (or `reconcile` at start) appends
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -16,6 +16,9 @@ use crate::store::file_lock::{with_file_lock, write_atomic};
 use crate::util::now_ms;
 
 pub const STATE: &str = "state.json";
+/// The start of the error a commit gives when the frozen copy went meanwhile (the storage page's clean): freezing again
+/// and retrying is safe
+pub const GONE: &str = "the frozen copy was removed meanwhile";
 pub const CHANGES: &str = "changes.jsonl";
 pub const VERSIONS: &str = ".versions";
 pub const DATA: &str = ".data";
@@ -26,8 +29,16 @@ const HISTORY: usize = 10;
 /// Freezing stops past these: a plugin is a script and a manifest, not a checkout
 pub const MAX_FILES: usize = 500;
 pub const MAX_BYTES: u64 = 8 << 20;
-/// Names never frozen, at any depth: version control, caches a run leaves, dependency trees
-const SKIPPED: &[&str] = &[".git", "__pycache__", "node_modules", ".DS_Store", ".venv"];
+/// What `node_modules` may add on top: npm packages the author installed are frozen with the plugin
+pub const DEP_MAX_FILES: usize = 30_000;
+pub const DEP_MAX_BYTES: u64 = 256 << 20;
+/// Files of `node_modules` stored once by content and linked into every snapshot holding them
+pub const BLOBS: &str = ".blobs";
+/// Names never frozen, at any depth: version control, caches a run leaves, Python environments (links to the
+/// interpreter)
+const SKIPPED: &[&str] = &[".git", "__pycache__", ".DS_Store", ".venv"];
+/// Inside `node_modules`: npm's links to package binaries and the tools' own caches
+const SKIPPED_IN_DEPS: &[&str] = &[".bin", ".cache", ".vite"];
 const SKIPPED_SUFFIXES: &[&str] = &[".pyc", ".tmp"];
 
 /// Who made a change: the user on a page, a session's agent through its card, or the command line
@@ -258,21 +269,26 @@ impl PluginStore {
     let files = list_files(&source)?;
     let hash = digest(&source, &files)?;
     let dir = self.snapshot_dir(id, &hash);
-    if !(dir.is_dir() && verify(&dir, &hash).is_ok()) {
+    if dir.is_dir() && verify(&dir, &hash).is_ok() {
+      // Reused: the storage page reads the folder's time to leave a freeze under way alone. Best effort (Windows
+      // cannot open a folder to set its time)
+      let _ = std::fs::File::open(&dir).and_then(|f| f.set_modified(std::time::SystemTime::now()));
+    } else {
       if dir.exists() {
-        // A copy that no longer matches its name: put aside, never loaded
-        let _ = make_writable(&dir);
+        // A copy that no longer matches its name: put aside, never loaded (its folders writable; its files may be
+        // links into the shared store, which keep their mode)
+        let _ = make_removable(&dir);
         let aside = dir.with_extension(format!("bad-{}", crate::util::random_hex(4)));
         std::fs::rename(&dir, &aside)?;
       }
       let parent = dir.parent().ok_or_else(|| anyhow!("snapshot path"))?;
       std::fs::create_dir_all(parent)?;
       let tmp = parent.join(format!(".tmp-{}", crate::util::random_hex(8)));
-      copy_files(&source, &tmp, &files)?;
+      copy_files(&source, &tmp, &files, &self.root.join(BLOBS))?;
       make_read_only(&tmp)?;
       if let Err(e) = std::fs::rename(&tmp, &dir) {
         // Another engine froze the same files first
-        let _ = make_writable(&tmp);
+        let _ = make_removable(&tmp);
         let _ = std::fs::remove_dir_all(&tmp);
         if !dir.is_dir() {
           return Err(e.into());
@@ -281,6 +297,9 @@ impl PluginStore {
     }
     let (manifest, mut findings) = manifest::read(&dir).map_err(|e| anyhow!(e))?;
     manifest::check(&manifest, id, &dir, which, &mut findings);
+    // TypeScript / TSX sources compile now, from the frozen copy: a failure is an error of the check, and the output is
+    // what the engine loads once the user confirms. Compiling only rewrites text; nothing of the plugin runs
+    findings.errors.extend(crate::plugins::build::check(&dir, &manifest, &crate::plugins::build::output_dir(&self.root, id, &hash)));
     Ok(Frozen { id: id.to_owned(), hash, dir, manifest, files, findings })
   }
 
@@ -329,11 +348,12 @@ impl PluginStore {
         if reskin {
           s.skin = Some(id.to_owned());
         }
-        let entry = s.plugins.entry(id.to_owned()).or_default();
-        if entry.enabled && entry.snapshot == hash {
+        if s.plugins.get(id).is_some_and(|e| e.enabled && e.snapshot == hash) {
           s.proposals.remove(id);
           return Ok(reskin.then(|| Change { id: id.to_owned(), action: "skin".into(), snapshot: Some(hash.to_owned()), provenance, ..Default::default() }));
         }
+        self.guard(s, id, hash)?;
+        let entry = s.plugins.entry(id.to_owned()).or_default();
         if !entry.snapshot.is_empty() && entry.snapshot != hash {
           let old = std::mem::take(&mut entry.snapshot);
           entry.previous.retain(|p| *p != old && p != hash);
@@ -422,8 +442,11 @@ impl PluginStore {
   pub async fn rollback(&self, id: &str, provenance: Provenance) -> Result<Option<Change>> {
     self
       .commit(|s| {
+        let entry = s.plugins.get(id).ok_or_else(|| anyhow!("plugin {id} was never enabled"))?;
+        let Some(back) = entry.previous.last().cloned() else { bail!("plugin {id} has no earlier version") };
+        self.guard(s, id, &back)?;
         let entry = s.plugins.get_mut(id).ok_or_else(|| anyhow!("plugin {id} was never enabled"))?;
-        let Some(back) = entry.previous.pop() else { bail!("plugin {id} has no earlier version") };
+        entry.previous.pop();
         entry.snapshot = back.clone();
         entry.enabled = true;
         entry.provenance = provenance.clone();
@@ -433,8 +456,42 @@ impl PluginStore {
       .await
   }
 
+  /// Checked inside a commit, so against what every engine committed and with no clean running: the frozen copy is
+  /// still there (the storage page removes versions under this lock), and enabling it closes no ring of plugins
+  /// requiring each other (optional dependencies count: once both are in effect they call each other the same way)
+  fn guard(&self, s: &State, id: &str, hash: &str) -> Result<()> {
+    let dir = self.snapshot_dir(id, hash);
+    if !dir.is_dir() {
+      bail!("{GONE}: {}", dir.display());
+    }
+    let requires = |dir: &Path| {
+      manifest::read(dir).map(|(m, _)| m.dependencies.into_keys().chain(m.optional_dependencies.into_keys()).collect::<Vec<_>>()).unwrap_or_default()
+    };
+    let mut seen = BTreeSet::new();
+    let mut stack: Vec<(String, Vec<String>)> = requires(&dir).into_iter().map(|d| (d.clone(), vec![id.to_owned(), d])).collect();
+    while let Some((dep, path)) = stack.pop() {
+      if dep == id {
+        bail!("its dependencies form a ring: {}", path.join(" -> "));
+      }
+      if !seen.insert(dep.clone()) {
+        continue;
+      }
+      let Some(e) = s.plugins.get(&dep).filter(|e| e.enabled && !e.snapshot.is_empty()) else { continue };
+      for next in requires(&self.snapshot_dir(&dep, &e.snapshot)) {
+        let mut p = path.clone();
+        p.push(next.clone());
+        stack.push((next, p));
+      }
+    }
+    Ok(())
+  }
+
   /// Drop `id` from the state and move its source folder aside
   pub async fn remove(&self, id: &str, provenance: Provenance) -> Result<Option<Change>> {
+    // The id becomes a path below: never let it leave the plugins folder
+    if !manifest::valid_id(id) {
+      bail!("`{id}` is not a plugin id");
+    }
     let change = self
       .commit(|s| {
         let had = s.plugins.remove(id).is_some() | s.proposals.remove(id).is_some();
@@ -530,32 +587,46 @@ fn skipped(name: &str) -> bool {
   SKIPPED.contains(&name) || SKIPPED_SUFFIXES.iter().any(|s| name.ends_with(s))
 }
 
-/// The files to freeze, relative with `/`, sorted. Symbolic links are refused: a frozen copy holds only its own bytes
+/// The files to freeze, relative with `/`, sorted. Symbolic links are refused: a frozen copy holds only its own bytes.
+/// `node_modules` counts apart, against its own limits
 fn list_files(root: &Path) -> Result<Vec<String>> {
   let mut out = vec![];
-  let mut bytes = 0u64;
-  let mut stack = vec![PathBuf::new()];
-  while let Some(rel) = stack.pop() {
+  let (mut own, mut own_bytes, mut deps, mut dep_bytes) = (0usize, 0u64, 0usize, 0u64);
+  let mut stack = vec![(PathBuf::new(), false)];
+  while let Some((rel, in_deps)) = stack.pop() {
     let dir = root.join(&rel);
     for e in std::fs::read_dir(&dir).with_context(|| format!("read {}", dir.display()))? {
       let e = e?;
       let name = e.file_name().to_string_lossy().into_owned();
-      if skipped(&name) {
+      if skipped(&name) || (in_deps && SKIPPED_IN_DEPS.contains(&name.as_str())) {
         continue;
       }
       let rel = rel.join(&name);
       let t = e.file_type()?;
       if t.is_symlink() {
+        if in_deps {
+          bail!("{} is a symbolic link: install the packages with npm (or pnpm with `node-linker=hoisted`), so node_modules holds the files", rel.display());
+        }
         bail!("{} is a symbolic link; a plugin holds its own files", rel.display());
       }
       if t.is_dir() {
-        stack.push(rel);
+        stack.push((rel, in_deps || name == "node_modules"));
         continue;
       }
-      bytes += e.metadata()?.len();
+      let len = e.metadata()?.len();
       out.push(rel.to_string_lossy().replace('\\', "/"));
-      if out.len() > MAX_FILES || bytes > MAX_BYTES {
-        bail!("the plugin folder holds more than {MAX_FILES} files or {} MB (dependency folders belong in .data)", MAX_BYTES >> 20);
+      if in_deps {
+        deps += 1;
+        dep_bytes += len;
+        if deps > DEP_MAX_FILES || dep_bytes > DEP_MAX_BYTES {
+          bail!("node_modules holds more than {DEP_MAX_FILES} files or {} MB; keep the plugin's packages few", DEP_MAX_BYTES >> 20);
+        }
+      } else {
+        own += 1;
+        own_bytes += len;
+        if own > MAX_FILES || own_bytes > MAX_BYTES {
+          bail!("the plugin folder holds more than {MAX_FILES} files or {} MB besides node_modules (run-time data belongs in .data)", MAX_BYTES >> 20);
+        }
       }
     }
   }
@@ -592,29 +663,212 @@ fn digest(root: &Path, files: &[String]) -> Result<String> {
   Ok(h.finalize().iter().take(16).map(|b| format!("{b:02x}")).collect())
 }
 
+/// Copies this process has verified: a copy is read-only and hashed once per engine run, not on every reload (a copy
+/// with a large node_modules would otherwise be read whole each time the state changes)
+static VERIFIED: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashSet<PathBuf>>> = std::sync::LazyLock::new(Default::default);
+
 /// The copy still hashes to its name (files a run left behind under skipped names do not count)
 fn verify(dir: &Path, hash: &str) -> Result<()> {
   if !dir.is_dir() {
     bail!("the frozen copy {} is missing", dir.display());
+  }
+  if VERIFIED.lock().contains(dir) {
+    return Ok(());
   }
   let files = list_files(dir)?;
   let got = digest(dir, &files)?;
   if got != hash {
     bail!("the frozen copy {} was changed after it was frozen", dir.display());
   }
+  VERIFIED.lock().insert(dir.to_path_buf());
   Ok(())
 }
 
-fn copy_files(from: &Path, to: &Path, files: &[String]) -> Result<()> {
+/// Copy the files into a new snapshot. A file of `node_modules` is stored once under `blobs` by its content and linked
+/// in, so versions and plugins holding the same packages share their bytes; where links fail it is copied
+fn copy_files(from: &Path, to: &Path, files: &[String], blobs: &Path) -> Result<()> {
   for rel in files {
     let dst = to.join(rel);
     if let Some(p) = dst.parent() {
       std::fs::create_dir_all(p)?;
     }
-    std::fs::copy(from.join(rel), &dst).with_context(|| format!("copy {rel}"))?;
+    let src = from.join(rel);
+    // Unix only: on Windows the read-only flag belongs to the file, so freezing or removing one copy would flip it for
+    // every snapshot linking the same bytes
+    if cfg!(unix)
+      && (rel.starts_with("node_modules/") || rel.contains("/node_modules/"))
+      && let Ok(blob) = blob_of(&src, blobs)
+      && std::fs::hard_link(&blob, &dst).is_ok()
+    {
+      continue;
+    }
+    std::fs::copy(&src, &dst).with_context(|| format!("copy {rel}"))?;
   }
   std::fs::create_dir_all(to)?;
   Ok(())
+}
+
+/// The shared copy of a file's content (its executable bit is part of the name, since links share it)
+fn blob_of(src: &Path, blobs: &Path) -> Result<PathBuf> {
+  use sha2::Digest as _;
+  let meta = std::fs::metadata(src)?;
+  let content = std::fs::read(src)?;
+  let mut h = sha2::Sha256::new();
+  h.update(&content);
+  let name: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
+  let blob = blobs.join(name.get(..2).unwrap_or("00")).join(format!("{name}{}", if executable(&meta) { ".x" } else { "" }));
+  if !blob.is_file() {
+    if let Some(p) = blob.parent() {
+      std::fs::create_dir_all(p)?;
+    }
+    let tmp = blob.with_extension(format!("tmp-{}", crate::util::random_hex(6)));
+    std::fs::write(&tmp, &content)?;
+    let mut perm = std::fs::metadata(&tmp)?.permissions();
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt;
+      perm.set_mode(if executable(&meta) { 0o555 } else { 0o444 });
+    }
+    #[cfg(not(unix))]
+    perm.set_readonly(true);
+    std::fs::set_permissions(&tmp, perm)?;
+    if std::fs::rename(&tmp, &blob).is_err() {
+      let _ = std::fs::remove_file(&tmp);
+    }
+  }
+  Ok(blob)
+}
+
+/// What the storage page may clean under the plugins root: per plugin id, the files nothing in effect needs (the
+/// folders `.removed` keeps, frozen versions outside the state's current, earlier and proposed ones, compiled output
+/// of those or of an older engine), and apart from them the data of a plugin that is gone (no entry, proposal or source)
+#[derive(Debug, Clone, PartialEq)]
+pub struct Leftover {
+  pub id: String,
+  pub data: bool,
+  pub targets: Vec<PathBuf>,
+}
+
+/// Run `f` (blocking) holding the lock of the state under `root`, so no commit lands meanwhile
+pub async fn with_state_lock<T: Send + 'static>(root: &Path, f: impl FnOnce() -> T + Send + 'static) -> Result<T> {
+  std::fs::create_dir_all(root)?;
+  with_file_lock(&root.join(STATE), move || async move { tokio::task::spawn_blocking(f).await.map_err(|e| anyhow!("{e}")) }).await
+}
+
+/// `fresh` holds back a version or output that may belong to a freeze under way (not yet in the state)
+pub fn leftovers(root: &Path, fresh: &dyn Fn(&Path) -> bool) -> Vec<Leftover> {
+  let store = PluginStore::new(root.to_path_buf());
+  // An unreadable state names nothing as needed: offer nothing rather than everything
+  let Ok(state) = store.load() else { return vec![] };
+  let sources = store.sources();
+  let known = |id: &str| state.plugins.contains_key(id) || state.proposals.contains_key(id) || sources.iter().any(|s| s == id);
+  let needed = |id: &str, hash: &str| {
+    state.plugins.get(id).is_some_and(|e| e.snapshot == hash || e.previous.iter().any(|p| p == hash)) || state.proposals.get(id).is_some_and(|p| p.snapshot == hash)
+  };
+  let dirs = |p: &Path| -> Vec<(String, PathBuf)> {
+    let Ok(rd) = std::fs::read_dir(p) else { return vec![] };
+    let mut out: Vec<_> = rd.flatten().map(|e| (e.file_name().to_string_lossy().into_owned(), e.path())).collect();
+    out.sort();
+    out
+  };
+  let mut files: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
+  for (name, path) in dirs(&root.join(REMOVED)) {
+    // `<id>.<ms>`
+    let id = name.rsplit_once('.').map_or(name.as_str(), |(id, _)| id).to_owned();
+    files.entry(id).or_default().push(path);
+  }
+  for (id, dir) in dirs(&root.join(VERSIONS)) {
+    if !known(&id) {
+      files.entry(id).or_default().push(dir);
+      continue;
+    }
+    for (hash, path) in dirs(&dir) {
+      if !needed(&id, &hash) && !fresh(&path) {
+        files.entry(id.clone()).or_default().push(path);
+      }
+    }
+  }
+  for (id, dir) in dirs(&root.join(crate::plugins::build::BUILD)) {
+    if !known(&id) {
+      files.entry(id).or_default().push(dir);
+      continue;
+    }
+    for (name, path) in dirs(&dir) {
+      let hash = name.split('-').next().unwrap_or_default();
+      // Output of a needed version stays whichever engine built it: an older engine may still run from it
+      if !needed(&id, hash) && !fresh(&path) && !fresh(&root.join(VERSIONS).join(&id).join(hash)) {
+        files.entry(id.clone()).or_default().push(path);
+      }
+    }
+  }
+  let mut out: Vec<Leftover> = files.into_iter().map(|(id, targets)| Leftover { id, data: false, targets }).collect();
+  let mut data: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
+  for (name, path) in dirs(&root.join(DATA)) {
+    let id = name.strip_suffix(".kv.json").unwrap_or(&name).to_owned();
+    if manifest::valid_id(&id) && !known(&id) {
+      data.entry(id).or_default().push(path);
+    }
+  }
+  out.extend(data.into_iter().map(|(id, targets)| Leftover { id, data: true, targets }));
+  out
+}
+
+/// Let a frozen copy be deleted: its folders writable again. Its files keep their mode, since on Unix they are the
+/// same inodes other versions and the shared store link (deleting a link needs only its folder writable); Windows
+/// clears the read-only flag of everything, as deleting there requires
+pub fn make_removable(dir: &Path) -> std::io::Result<()> {
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt;
+    fn walk_dirs(d: &Path) -> std::io::Result<()> {
+      let meta = std::fs::symlink_metadata(d)?;
+      if !meta.is_dir() {
+        return Ok(());
+      }
+      let mut perm = meta.permissions();
+      perm.set_mode(perm.mode() | 0o700);
+      std::fs::set_permissions(d, perm)?;
+      for e in std::fs::read_dir(d)?.flatten() {
+        if e.file_type()?.is_dir() {
+          walk_dirs(&e.path())?;
+        }
+      }
+      Ok(())
+    }
+    walk_dirs(dir)
+  }
+  #[cfg(not(unix))]
+  {
+    if std::fs::symlink_metadata(dir)?.is_dir() { make_writable(dir) } else { Ok(()) }
+  }
+}
+
+/// Shared files no snapshot links any more (Unix: a link count of one); the bytes freed. Windows keeps them
+pub fn prune_blobs(root: &Path) -> u64 {
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::MetadataExt;
+    let mut freed = 0;
+    let Ok(dirs) = std::fs::read_dir(root.join(BLOBS)) else { return 0 };
+    for d in dirs.flatten() {
+      let Ok(files) = std::fs::read_dir(d.path()) else { continue };
+      for f in files.flatten() {
+        if let Ok(m) = f.metadata()
+          && m.is_file()
+          && m.nlink() <= 1
+          && std::fs::remove_file(f.path()).is_ok()
+        {
+          freed += m.len();
+        }
+      }
+    }
+    freed
+  }
+  #[cfg(not(unix))]
+  {
+    let _ = root;
+    0
+  }
 }
 
 fn walk(dir: &Path, f: &mut dyn FnMut(&Path, bool) -> std::io::Result<()>) -> std::io::Result<()> {
@@ -683,6 +937,30 @@ mod tests {
 
   fn any(_: &str) -> bool {
     true
+  }
+
+  #[tokio::test]
+  async fn a_commit_refuses_a_ring_another_engine_closed_and_a_copy_cleaned_meanwhile() {
+    let tmp = tempfile::tempdir().unwrap();
+    for (id, dep, optional) in [("a", "b", false), ("b", "a", true)] {
+      write_plugin(tmp.path(), id, "echo");
+      let path = tmp.path().join(id).join("plugin.json");
+      let mut m: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+      m[if optional { "optionalDependencies" } else { "dependencies" }] = json!({ dep: "*" });
+      std::fs::write(&path, m.to_string()).unwrap();
+    }
+    // Two engines, each with its own view: the second commit still sees the first through the shared state
+    let (one, two) = (PluginStore::new(tmp.path().to_path_buf()), PluginStore::new(tmp.path().to_path_buf()));
+    let (a, b) = (one.freeze("a", &any).unwrap(), two.freeze("b", &any).unwrap());
+    one.enable_as("a", &a.hash, Provenance::user(), false).await.unwrap();
+    let err = two.enable_as("b", &b.hash, Provenance::user(), false).await.unwrap_err().to_string();
+    assert!(err.contains("ring: b -> a -> b"), "{err}");
+    // A version the storage page removed after the freeze is refused at the commit, never enabled half there
+    make_removable(&b.dir).unwrap();
+    std::fs::remove_dir_all(&b.dir).unwrap();
+    std::fs::remove_dir_all(tmp.path().join("a")).unwrap();
+    one.remove("a", Provenance::user()).await.unwrap();
+    assert!(two.enable_as("b", &b.hash, Provenance::user(), false).await.unwrap_err().to_string().starts_with(GONE));
   }
 
   #[tokio::test]
@@ -797,6 +1075,49 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn the_storage_page_may_clean_what_nothing_in_effect_needs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let store = PluginStore::new(root.to_path_buf());
+    // `keep`: a, then b in effect (a is its earlier version), and c frozen but never enabled
+    write_plugin(root, "keep", "echo a");
+    let a = store.freeze("keep", &any).unwrap().hash;
+    store.enable("keep", &a, Provenance::user()).await.unwrap();
+    write_plugin(root, "keep", "echo b");
+    let b = store.freeze("keep", &any).unwrap().hash;
+    store.enable("keep", &b, Provenance::user()).await.unwrap();
+    write_plugin(root, "keep", "echo c");
+    let c = store.freeze("keep", &any).unwrap();
+    // `gone`: enabled, wrote data, then uninstalled
+    write_plugin(root, "gone", "echo g");
+    let g = store.freeze("gone", &any).unwrap().hash;
+    store.enable("gone", &g, Provenance::user()).await.unwrap();
+    std::fs::write(root.join(DATA).join("gone.kv.json"), "{}").unwrap();
+    std::fs::write(root.join(DATA).join("keep.kv.json"), "{}").unwrap();
+    store.remove("gone", Provenance::user()).await.unwrap();
+    let removed = std::fs::read_dir(root.join(REMOVED)).unwrap().next().unwrap().unwrap().path();
+
+    let found = leftovers(root, &|_| false);
+    assert_eq!(
+      found,
+      [
+        Leftover { id: "gone".into(), data: false, targets: vec![removed, root.join(VERSIONS).join("gone")] },
+        Leftover { id: "keep".into(), data: false, targets: vec![c.dir.clone()] },
+        Leftover { id: "gone".into(), data: true, targets: vec![root.join(DATA).join("gone"), root.join(DATA).join("gone.kv.json")] },
+      ]
+    );
+    // A version frozen moments ago may be a card still waiting
+    assert!(leftovers(root, &|_| true).iter().all(|l| !l.targets.contains(&c.dir)));
+    // Read-only copies delete once their folders are writable; the versions in effect stay read-only
+    for t in found.iter().filter(|l| !l.data).flat_map(|l| l.targets.iter()) {
+      make_removable(t).unwrap();
+      std::fs::remove_dir_all(t).unwrap();
+    }
+    assert!(std::fs::metadata(store.snapshot_dir("keep", &b).join("go.sh")).unwrap().permissions().readonly());
+    assert!(store.open("keep", &a).is_ok() && store.open("keep", &b).is_ok());
+  }
+
+  #[tokio::test]
   async fn proposals_wait_and_removal_moves_the_source_aside() {
     let tmp = tempfile::tempdir().unwrap();
     let store = PluginStore::new(tmp.path().to_path_buf());
@@ -830,5 +1151,46 @@ mod tests {
     }
     assert!(store.freeze("demo", &any).unwrap_err().to_string().contains("more than"));
     assert!(store.freeze("Nope", &any).is_err());
+  }
+
+  #[test]
+  fn node_modules_freezes_with_the_plugin_and_versions_share_its_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = PluginStore::new(tmp.path().to_path_buf());
+    write_plugin(tmp.path(), "demo", "echo 1");
+    let pkg = tmp.path().join("demo/node_modules/left-pad");
+    std::fs::create_dir_all(&pkg).unwrap();
+    std::fs::write(pkg.join("index.js"), "module.exports = 1;").unwrap();
+    std::fs::write(tmp.path().join("demo/package.json"), r#"{ "dependencies": { "left-pad": "1" } }"#).unwrap();
+    std::fs::write(tmp.path().join("demo/package-lock.json"), "{}").unwrap();
+    #[cfg(unix)]
+    {
+      // npm's links to package binaries are left out; any other link in node_modules says how to install instead
+      std::fs::create_dir_all(tmp.path().join("demo/node_modules/.bin")).unwrap();
+      std::os::unix::fs::symlink("../left-pad/index.js", tmp.path().join("demo/node_modules/.bin/left-pad")).unwrap();
+    }
+    let a = store.freeze("demo", &any).unwrap();
+    assert!(a.findings.ok(), "{:?}", a.findings);
+    assert!(a.files.iter().any(|f| f == "node_modules/left-pad/index.js"), "{:?}", a.files);
+    assert!(!a.files.iter().any(|f| f.contains(".bin")));
+    // A new version shares the package's bytes with the first
+    std::fs::write(tmp.path().join("demo/go.sh"), "echo 2").unwrap();
+    let b = store.freeze("demo", &any).unwrap();
+    assert_ne!(a.hash, b.hash);
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::MetadataExt;
+      let ia = std::fs::metadata(a.dir.join("node_modules/left-pad/index.js")).unwrap().ino();
+      let ib = std::fs::metadata(b.dir.join("node_modules/left-pad/index.js")).unwrap().ino();
+      assert_eq!(ia, ib);
+      std::os::unix::fs::symlink("index.js", pkg.join("main.js")).unwrap();
+      assert!(store.freeze("demo", &any).unwrap_err().to_string().contains("node-linker"));
+    }
+    // Without a lockfile the check refuses it
+    #[cfg(unix)]
+    std::fs::remove_file(pkg.join("main.js")).unwrap();
+    std::fs::remove_file(tmp.path().join("demo/package-lock.json")).unwrap();
+    let c = store.freeze("demo", &any).unwrap();
+    assert!(c.findings.text().contains("lockfile"), "{:?}", c.findings);
   }
 }

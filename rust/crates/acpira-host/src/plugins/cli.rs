@@ -1,4 +1,4 @@
-//! `acpira plugin list|new|propose|disable|rollback` and `acpira safe-mode on|off`, for scripts, tests and the extension
+//! `acpira plugin list|new|propose|disable|rollback|remove|vendor` and `acpira safe-mode on|off`, for scripts, tests and the extension
 //! bench. Nothing here enables a plugin: `propose` files the frozen version for the user to confirm on the plugin page
 //! (`docs/dev/plugins.md`, Activation), so a model with a shell cannot skip the card
 
@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crate::plugins::host::{PluginHost, describe};
 use crate::plugins::store::Provenance;
 
-const USAGE: &str = "usage: acpira plugin list [--json] | new <id> [--kind runtime,tool,command,skill,provider,theme,ui,agent] [--lang node|python] [--scene deepsea|inkhills|fireflies|aurora] | propose <id> | disable <id> | rollback <id>";
+const USAGE: &str = "usage: acpira plugin list [--json] | new <id> [--kind runtime,tool,command,skill,provider,theme,ui,agent] [--lang ts|node|python] [--scene deepsea|inkhills|fireflies|aurora] | propose <id> | disable <id> | rollback <id> | remove <id> | vendor <id>";
 
 fn host(home: &Path) -> Arc<PluginHost> {
   PluginHost::new(home.join(crate::plugins::DIR), false, Arc::new(|line| eprintln!("[acpira] {line}")))
@@ -88,6 +88,32 @@ pub async fn plugin(args: &[String], home: &Path) -> i32 {
         }
       }
     }
+    // The folder moves to `.removed` and the data stays (Settings → Storage clears both)
+    (Some("remove"), Some(id)) => match host.action(acpira_shared::plugins::PluginAction::Remove { id: id.to_owned() }).await {
+      Ok(_) => {
+        println!("{id}: removed; its data stays until Settings → Storage clears it");
+        0
+      }
+      Err(e) => {
+        eprintln!("{e:#}");
+        1
+      }
+    },
+    (Some("vendor"), Some(id)) => match host.vendor(id) {
+      Ok(done) => {
+        for d in &done {
+          println!("{}/{d}", crate::plugins::build::VENDORED_SCOPE);
+        }
+        if done.is_empty() {
+          println!("{id}: no plugin dependencies to vendor");
+        }
+        0
+      }
+      Err(e) => {
+        eprintln!("{e:#}");
+        1
+      }
+    },
     _ => {
       eprintln!("{USAGE}");
       2

@@ -4,6 +4,7 @@
     { "path": "./packages/shared" },
     { "path": "./packages/engine-client" },
     { "path": "./packages/picker" },
+    { "path": "./packages/plugin-ui" },
     { "path": "./packages/ui" },
     { "path": "./apps/vscode" },
     { "path": "./test" },

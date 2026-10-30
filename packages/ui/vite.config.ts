@@ -1,4 +1,4 @@
-import { defineConfig, type Plugin } from 'vite';
+import { build, defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { dirname } from 'node:path';
@@ -22,12 +22,36 @@ const katexWoff2Only: Plugin = {
   },
 };
 
+const outDir = fileURLToPath(new URL('../../dist/webview', import.meta.url));
+
+// The runtime a plugin's component piece runs on in its sandboxed frame (packages/plugin-ui/lib.ts): React and the kit as
+// one classic script, beside main.js, which the page fetches and sends into the frame (pluginSlots.ts). Built after the
+// page, since the page's build empties the folder first
+const pluginUiRuntime: Plugin = {
+  name: 'acpira:plugin-ui-runtime',
+  apply: 'build',
+  async closeBundle() {
+    await build({
+      configFile: false,
+      logLevel: 'warn',
+      plugins: [react()],
+      define: { 'process.env.NODE_ENV': '"production"' },
+      build: {
+        outDir,
+        emptyOutDir: false,
+        sourcemap: false,
+        lib: { entry: fileURLToPath(new URL('../plugin-ui/lib.ts', import.meta.url)), formats: ['iife'], name: 'acpiraPluginUi', fileName: () => 'plugin-ui.js' },
+      },
+    });
+  },
+};
+
 export default defineConfig({
   root,
   base: './',
-  plugins: [katexWoff2Only, react(), tailwindcss()],
+  plugins: [katexWoff2Only, react(), tailwindcss(), pluginUiRuntime],
   build: {
-    outDir: fileURLToPath(new URL('../../dist/webview', import.meta.url)),
+    outDir,
     emptyOutDir: true,
     sourcemap: false,
     cssCodeSplit: false,

@@ -45,6 +45,19 @@ libc = "0.2"
 # acpira-shared's i18n dictionaries, stored DEFLATE-compressed (build.rs packs, i18n.rs inflates); the version flate2 and png
 # already link
 miniz_oxide = "0.8"
+# Plugins written in TypeScript / TSX (acpira-host plugins/build.rs): parse, strip types, lower JSX and rewrite modules,
+# after the freeze and before the user confirms; nothing of the plugin runs. The resolver follows Node's rules
+oxc_allocator = "0.156"
+oxc_ast = "0.156"
+oxc_ast_visit = "0.156"
+oxc_codegen = "0.156"
+oxc_diagnostics = "0.156"
+oxc_parser = "0.156"
+oxc_resolver = { version = "11.24", default-features = false }
+oxc_semantic = "0.156"
+oxc_span = "0.156"
+oxc_transformer = "0.156"
+oxc_transformer_plugins = "0.156"
 parking_lot = "0.12"
 # The built-in agent's `read` on a PDF: the text of each page (CID fonts through their ToUnicode maps)
 pdf-extract = "0.12"
@@ -55,6 +68,10 @@ regex = "1.12"
 # The desktop app's update manifest: Ed25519 signatures (already in the tree through rustls)
 ring = "0.17"
 same-file = "1.0"
+# Plugin dependency ranges (`dependencies` in plugin.json): npm's caret / tilde ranges, already in the tree
+semver = "1.0"
+# Plugin schedules: cron times in the machine's own zone, already in the tree
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["preserve_order", "raw_value"] }
 sha2 = "0.10"

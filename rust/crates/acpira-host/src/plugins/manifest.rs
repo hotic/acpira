@@ -1,6 +1,7 @@
 //! `plugin.json`, schema 1 (`docs/dev/plugins.md`): what a plugin contributes, and the static check that reads the
 //! manifest and the frozen files alone, without running any of the plugin's code
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -14,8 +15,8 @@ pub const NAME_MAX: usize = 24;
 /// Default and longest run of a script tool: inside the 50 s every client but Claude gets an answer in (`host_mcp.rs`)
 pub const TOOL_TIMEOUT_SECS: f64 = 45.0;
 
-const KEYS: &[&str] = &["schema", "id", "version", "name", "description", "requires", "layer", "check", "contributes"];
-const CONTRIBUTION_KEYS: &[&str] = &["tools", "mcp", "hooks", "theme", "prompts", "agent", "runtime", "skills", "commands", "providers", "ui"];
+const KEYS: &[&str] = &["schema", "id", "version", "name", "description", "requires", "layer", "check", "contributes", "dependencies", "optionalDependencies", "exports"];
+const CONTRIBUTION_KEYS: &[&str] = &["tools", "mcp", "hooks", "theme", "style", "prompts", "agent", "runtime", "skills", "commands", "providers", "ui", "schedules"];
 
 /// The hooks a plugin's resident process may declare (`contributes.runtime.hooks`, docs/dev/plugins.md, Runtime). The
 /// engine calls only those it implements; a name it does not know yet is a note, so a plugin written for a newer
@@ -65,6 +66,16 @@ pub struct Manifest {
   pub check: Option<Vec<String>>,
   #[serde(default)]
   pub contributes: Contributes,
+  /// Other plugins this one needs, by id, with an npm-style version range (`^1.2`, `~0.3`, `*`): it calls only these
+  /// and the user enables them first. npm packages belong in `package.json`
+  #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+  pub dependencies: BTreeMap<String, String>,
+  /// Plugins it uses when they are there (`ctx.plugins.get`)
+  #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+  pub optional_dependencies: BTreeMap<String, String>,
+  /// The module other plugins import as `@acpira-plugin/<id>` once copied into theirs (`acpira plugin vendor`)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub exports: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -80,6 +91,10 @@ pub struct Contributes {
   pub hooks: Option<Value>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub theme: Option<Theme>,
+  /// A stylesheet of the plugin laid over the page whatever the skin, through `STYLE_HOOKS` only; every plugin's in
+  /// effect applies, after the skin's
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub style: Option<String>,
   /// A folder of prompt sections, relative to the plugin
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub prompts: Option<String>,
@@ -102,6 +117,43 @@ pub struct Contributes {
   /// Interface pieces: an HTML file shown in a sandboxed frame in one of the page's slots
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub ui: Vec<UiDef>,
+  /// Jobs the engine starts on a cron schedule, answered by the runtime (`schedule/<id>`)
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub schedules: Vec<ScheduleDef>,
+}
+
+/// `contributes.schedules[]`: `cron` is five fields (minute hour day-of-month month day-of-week) in the machine's zone
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduleDef {
+  pub id: String,
+  pub cron: String,
+  #[serde(default, skip_serializing_if = "String::is_empty")]
+  pub description: String,
+  /// A run missed while no engine ran (asleep, closed): `once` runs it when one starts again (the default), `skip`
+  /// waits for the next time
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub catch_up: Option<String>,
+  /// Seconds one run may take, at most `SCHEDULE_TIMEOUT_MAX_SECS`
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub timeout: Option<f64>,
+}
+
+/// The longest a scheduled run may take
+pub const SCHEDULE_TIMEOUT_MAX_SECS: f64 = 3600.0;
+/// When a scheduled run declares no timeout
+pub const SCHEDULE_TIMEOUT_SECS: f64 = 600.0;
+pub const CATCH_UP: &[&str] = &["once", "skip"];
+
+impl ScheduleDef {
+  pub fn timeout(&self) -> std::time::Duration {
+    let secs = self.timeout.filter(|t| t.is_finite() && *t > 0.0).unwrap_or(SCHEDULE_TIMEOUT_SECS).min(SCHEDULE_TIMEOUT_MAX_SECS);
+    std::time::Duration::from_secs_f64(secs)
+  }
+
+  pub fn catches_up(&self) -> bool {
+    self.catch_up.as_deref() != Some("skip")
+  }
 }
 
 /// `contributes.ui[]`: `html` is a file of the plugin, at most `UI_HTML_MAX_BYTES`, for the slot `slot`
@@ -115,6 +167,10 @@ pub struct UiDef {
   pub title: String,
   #[serde(default)]
   pub html: String,
+  /// A component module (`.tsx`, `.jsx`, `.ts`, `.js`) whose default export the frame renders with React, compiled by
+  /// the engine (`build.rs`) in place of an `html` file
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub entry: Option<String>,
   /// The piece's box in CSS pixels, along the sides the slot does not size (`slot_box`)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub width: Option<u32>,
@@ -140,7 +196,8 @@ pub const UI_HTML_MAX_BYTES: u64 = 256 * 1024;
 
 /// `contributes.commands[]`: `/name` in the composer of every session. `prompt` is sent in its place with `$ARGUMENTS`
 /// replaced by what follows the name (appended when the template has no `$ARGUMENTS`); without one the runtime's
-/// `command` hook answers
+/// `command` hook answers. With `button` it is also a button of that label in the composer's toolbar, run with the draft
+/// as its arguments: sent like `/name <draft>`, or with `draft` its text put in place of the draft for the user to send
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandDef {
@@ -151,14 +208,58 @@ pub struct CommandDef {
   pub hint: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub prompt: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub button: Option<String>,
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub draft: bool,
+  /// The button's glyph, one of `BUTTON_ICONS`; absent: a bolt, or a wand for a `draft` command
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub icon: Option<String>,
+  /// The button's look, one of `BUTTON_LOOKS`; absent: `brand`
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub look: Option<String>,
+  /// Whether the button takes the draft as its arguments: `draft` or `none`. Absent: it does when `draft` is set or the
+  /// template has `$ARGUMENTS`, so a fixed prompt never sweeps up what the user is still writing
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub input: Option<String>,
 }
+
+impl CommandDef {
+  /// `input` as it applies (see there)
+  pub fn takes_draft(&self) -> bool {
+    match self.input.as_deref() {
+      Some(i) => i == "draft",
+      None => self.draft || self.prompt.as_deref().is_some_and(|p| p.contains("$ARGUMENTS")),
+    }
+  }
+}
+
+/// Largest stylesheet a theme's `css` or a `style` may be: a longer one is refused by the check and cut where served
+pub const CSS_MAX_BYTES: u64 = 64 * 1024;
+
+/// Longest composer button label, in characters: a chip beside the mode, not a sentence
+pub const BUTTON_MAX_CHARS: usize = 16;
+/// The glyphs a command button may carry (`plugins/CommandButtons.tsx` draws each; a contract test keeps the two lists equal)
+pub const BUTTON_ICONS: &[&str] = &[
+  "bolt", "wand", "sparkles", "git-commit", "git-branch", "git-pull-request", "check", "play", "rocket", "bug", "test", "search",
+  "eye", "file", "list", "message", "languages", "refresh", "terminal", "package", "star", "heart", "flame", "bot",
+];
+/// `brand`: a tint of the theme's brand colour; `solid`: the mode chip's fill; `outline`: a hairline; `icon`: the glyph
+/// alone, the label in its tooltip
+pub const BUTTON_LOOKS: &[&str] = &["brand", "solid", "outline", "icon"];
 
 /// `contributes.runtime`: a process the engine keeps running while the plugin is in effect, spoken to over ndjson
 /// JSON-RPC on its stdio (docs/dev/plugins.md, Runtime)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeDef {
+  /// The program and its arguments; empty with `main`
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub command: Vec<String>,
+  /// A module (`.ts`, `.js`, …) whose default export is the plugin's definition (`definePlugin`), compiled by the
+  /// engine and run with Node in place of a `command`
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub main: Option<String>,
   /// Hook names from `RUNTIME_HOOKS`; only these are ever called
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub hooks: Vec<String>,
@@ -210,6 +311,9 @@ impl Contributes {
     if self.theme.is_some() {
       out.push("theme");
     }
+    if self.style.is_some() {
+      out.push("style");
+    }
     if self.prompts.is_some() {
       out.push("prompts");
     }
@@ -231,6 +335,9 @@ impl Contributes {
     if !self.ui.is_empty() {
       out.push("ui");
     }
+    if !self.schedules.is_empty() {
+      out.push("schedules");
+    }
     out
   }
 }
@@ -244,6 +351,8 @@ pub struct ToolDef {
   /// The JSON Schema of the arguments
   #[serde(default = "object_schema")]
   pub input: Value,
+  /// The script run per call; empty: the runtime answers it (`tools` of its definition)
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub command: Vec<String>,
   #[serde(default)]
   pub read_only: bool,
@@ -307,7 +416,7 @@ impl Manifest {
     }
     match self.contributes.kinds().first().copied() {
       Some("agent" | "providers") => "agents",
-      Some("theme" | "ui") => "interface",
+      Some("theme" | "style" | "ui") => "interface",
       Some("hooks" | "runtime") => "automation",
       _ => "tools",
     }
@@ -486,11 +595,18 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
     if t.timeout.is_some_and(|s| s > TOOL_TIMEOUT_SECS) {
       findings.notes.push(format!("{at}: timeout cut to {TOOL_TIMEOUT_SECS} s"));
     }
-    command_exists(&t.command, dir, which, &at, findings);
+    if !t.command.is_empty() {
+      command_exists(&t.command, dir, which, &at, findings);
+    } else if m.contributes.runtime.is_none() {
+      err(findings, format!("{at}: needs a `command`, or a runtime whose definition answers it (`tools` in `definePlugin`)"));
+    }
+  }
+  if let Some(css) = &m.contributes.style {
+    css_file(dir, css, "style css", findings);
   }
   if let Some(theme) = &m.contributes.theme {
     if let Some(css) = &theme.css {
-      file_inside(dir, css, "theme css", findings);
+      css_file(dir, css, "theme css", findings);
     }
     for k in theme.tokens.keys() {
       if !THEME_TOKENS.contains(&k.as_str()) {
@@ -538,7 +654,8 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
     err(findings, format!("skills folder `{p}` not found in the plugin"));
   }
   let mut names = std::collections::HashSet::new();
-  let hooked = m.contributes.runtime.as_ref().is_some_and(|r| r.hooks.iter().any(|h| h == "command"));
+  // A `main` definition answers its commands in code (`commands` of `definePlugin`) without listing the hook
+  let hooked = m.contributes.runtime.as_ref().is_some_and(|r| r.main.is_some() || r.hooks.iter().any(|h| h == "command"));
   for c in &m.contributes.commands {
     let at = format!("command `/{}`", c.name);
     if !valid_command_name(&c.name) {
@@ -549,6 +666,20 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
     }
     if c.prompt.as_deref().is_none_or(|p| p.trim().is_empty()) && !hooked {
       err(findings, format!("{at}: needs a `prompt`, or a runtime that answers the `command` hook"));
+    }
+    match c.button.as_deref().map(str::trim) {
+      Some(b) if b.is_empty() || b.chars().count() > BUTTON_MAX_CHARS => err(findings, format!("{at}: `button` is the label, 1 to {BUTTON_MAX_CHARS} characters")),
+      None if c.draft || c.icon.is_some() || c.look.is_some() || c.input.is_some() => err(findings, format!("{at}: `draft`, `icon`, `look` and `input` need a `button`")),
+      _ => {}
+    }
+    if let Some(i) = c.icon.as_deref().filter(|i| !BUTTON_ICONS.contains(i)) {
+      err(findings, format!("{at}: icon `{i}` is not one of {}", BUTTON_ICONS.join(", ")));
+    }
+    if let Some(l) = c.look.as_deref().filter(|l| !BUTTON_LOOKS.contains(l)) {
+      err(findings, format!("{at}: look `{l}` is not one of {}", BUTTON_LOOKS.join(", ")));
+    }
+    if let Some(i) = c.input.as_deref().filter(|i| !["draft", "none"].contains(i)) {
+      err(findings, format!("{at}: input `{i}` is not `draft` or `none`"));
     }
   }
   let mut pieces = std::collections::HashSet::new();
@@ -572,8 +703,8 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
         }
         Some(_) => {}
       }
-      if !u.html.is_empty() {
-        err(findings, format!("{at}: a `message.actions` piece is a button, not a document; drop `html`"));
+      if !u.html.is_empty() || u.entry.is_some() {
+        err(findings, format!("{at}: a `message.actions` piece is a button, not a document; drop `html` and `entry`"));
       }
       if u.title.trim().is_empty() {
         err(findings, format!("{at}: the button needs a `title`"));
@@ -583,10 +714,15 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
     if u.method.is_some() {
       err(findings, format!("{at}: only a `message.actions` piece calls a `method`"));
     }
-    match inside(dir, &u.html).and_then(|p| std::fs::metadata(p).ok()).filter(std::fs::Metadata::is_file) {
-      None => err(findings, format!("{at}: html file `{}` not found in the plugin", u.html)),
-      Some(meta) if meta.len() > UI_HTML_MAX_BYTES => err(findings, format!("{at}: `{}` is over {} KB", u.html, UI_HTML_MAX_BYTES / 1024)),
-      Some(_) => {}
+    match (u.html.is_empty(), u.entry.as_deref()) {
+      (false, Some(_)) => err(findings, format!("{at}: `html` and `entry` exclude each other")),
+      (true, None) => err(findings, format!("{at}: needs an `html` file or a component `entry`")),
+      (false, None) => match inside(dir, &u.html).and_then(|p| std::fs::metadata(p).ok()).filter(std::fs::Metadata::is_file) {
+        None => err(findings, format!("{at}: html file `{}` not found in the plugin", u.html)),
+        Some(meta) if meta.len() > UI_HTML_MAX_BYTES => err(findings, format!("{at}: `{}` is over {} KB", u.html, UI_HTML_MAX_BYTES / 1024)),
+        Some(_) => {}
+      },
+      (true, Some(entry)) => source_file(dir, entry, &format!("{at}: entry"), findings),
     }
     for (name, v) in [("width", u.width), ("height", u.height)] {
       if v.is_some_and(|v| v == 0 || v > UI_SIZE_MAX) {
@@ -642,9 +778,22 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
     }
   }
   if let Some(rt) = &m.contributes.runtime {
-    command_exists(&rt.command, dir, which, "runtime", findings);
-    if rt.hooks.is_empty() && rt.events.is_empty() && rt.methods.is_empty() {
-      err(findings, "runtime: declares no `hooks`, `events` or `methods`, so it would never be called".into());
+    match (rt.command.is_empty(), rt.main.as_deref()) {
+      (false, Some(_)) => err(findings, "runtime: `command` and `main` exclude each other".into()),
+      (true, None) => err(findings, "runtime: needs a `command`, or a `main` module whose default export is the plugin's definition".into()),
+      (false, None) => command_exists(&rt.command, dir, which, "runtime", findings),
+      (true, Some(main)) => {
+        source_file(dir, main, "runtime: main", findings);
+        if !which("node") {
+          err(findings, "runtime: `main` runs with Node 18 or newer, which is not on PATH".into());
+        }
+      }
+    }
+    let served = m.contributes.tools.iter().any(|t| t.command.is_empty())
+      || !m.contributes.schedules.is_empty()
+      || m.contributes.commands.iter().any(|c| c.prompt.is_none());
+    if rt.hooks.is_empty() && rt.events.is_empty() && rt.methods.is_empty() && !served {
+      err(findings, "runtime: declares no `hooks`, `events`, `methods`, tools, schedules or prompt-less commands, so it would never be called".into());
     }
     for name in rt.methods.iter().filter(|n| !valid_method_name(n)) {
       err(findings, format!("runtime: method `{name}` must be lowercase letters, digits, `_`, `.` and `-`, starting with a letter, at most 48 characters"));
@@ -669,6 +818,33 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
       findings.notes.push(format!("runtime: timeout cut to {RUNTIME_TIMEOUT_SECS} s"));
     }
   }
+  let mut jobs = std::collections::HashSet::new();
+  for j in &m.contributes.schedules {
+    let at = format!("schedule `{}`", j.id);
+    if !valid_command_name(&j.id) {
+      err(findings, format!("{at}: the id must be lowercase letters, digits, `-` and `_`, starting with a letter, at most {NAME_MAX} characters"));
+    }
+    if !jobs.insert(j.id.as_str()) {
+      err(findings, format!("{at} is declared twice"));
+    }
+    if let Err(e) = crate::plugins::schedule::Cron::parse(&j.cron) {
+      err(findings, format!("{at}: cron {e}"));
+    }
+    if let Some(c) = j.catch_up.as_deref().filter(|c| !CATCH_UP.contains(c)) {
+      err(findings, format!("{at}: catchUp `{c}` is not one of {}", CATCH_UP.join(", ")));
+    }
+    if j.timeout.is_some_and(|t| t > SCHEDULE_TIMEOUT_MAX_SECS) {
+      findings.notes.push(format!("{at}: timeout cut to {SCHEDULE_TIMEOUT_MAX_SECS} s"));
+    }
+    if m.contributes.runtime.is_none() {
+      err(findings, format!("{at}: needs a runtime to run it (`schedules` in `definePlugin`, or the SDK's `schedule`)"));
+    }
+  }
+  check_dependencies(m, findings);
+  if let Some(e) = &m.exports {
+    source_file(dir, e, "exports", findings);
+  }
+  check_packages(dir, findings);
   if let Some(mcp) = &m.contributes.mcp {
     for (name, entry) in mcp {
       if name == acpira_shared::host_tools::SERVER {
@@ -683,6 +859,145 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
         err(findings, format!("mcp `{name}`: needs a `command` or a `url`"));
       }
     }
+  }
+}
+
+/// `dependencies` / `optionalDependencies`: plugin ids with npm-style ranges. Whether they are installed and in effect is
+/// the host's check (`PluginHost::check_dependencies`), against the state
+fn check_dependencies(m: &Manifest, findings: &mut Findings) {
+  let mut seen = std::collections::HashSet::new();
+  for (kind, map) in [("dependencies", &m.dependencies), ("optionalDependencies", &m.optional_dependencies)] {
+    for (id, range) in map {
+      if !valid_id(id) {
+        findings.errors.push(format!("{kind}: `{id}` is not a plugin id; npm packages go in package.json"));
+        continue;
+      }
+      if *id == m.id {
+        findings.errors.push(format!("{kind}: a plugin cannot depend on itself"));
+      }
+      if !seen.insert(id.as_str()) {
+        findings.errors.push(format!("`{id}` is in both dependencies and optionalDependencies"));
+      }
+      if let Err(e) = version_req(range) {
+        findings.errors.push(format!("{kind} `{id}`: {e}"));
+      }
+    }
+  }
+}
+
+/// `version` satisfies the npm-style `range`. `version` is free text in the manifest: `1` and `1.2` count as `1.0.0`
+/// and `1.2.0`, a leading `v` is dropped, anything else satisfies nothing
+pub fn version_meets(version: &str, range: &str) -> bool {
+  let Some(v) = coerce_version(version) else { return false };
+  version_req(range).is_ok_and(|r| r.matches(&v))
+}
+
+fn coerce_version(text: &str) -> Option<semver::Version> {
+  let t = text.trim().trim_start_matches(['v', 'V']);
+  if let Ok(v) = semver::Version::parse(t) {
+    return Some(v);
+  }
+  let parts: Vec<u64> = t.split('.').map(|p| p.parse().ok()).collect::<Option<_>>()?;
+  match parts.as_slice() {
+    [major] => Some(semver::Version::new(*major, 0, 0)),
+    [major, minor] => Some(semver::Version::new(*major, *minor, 0)),
+    _ => None,
+  }
+}
+
+/// An npm range: `^1.2`, `~0.3.1`, `>=1.2 <2` (comparators by space or comma), `1.x`, `*`. A bare version, partial
+/// or not, means that version as npm reads it: `1.2.3` exactly, `1.2` any `1.2.x`, `1` any `1.x` (the semver crate
+/// alone would read a bare `1.2` as `^1.2`). `||` alternatives and hyphen ranges are refused
+pub fn version_req(range: &str) -> Result<semver::VersionReq, String> {
+  let r = range.trim();
+  if r.is_empty() || r == "latest" || r == "*" || r == "x" {
+    return Ok(semver::VersionReq::STAR);
+  }
+  if r.contains("||") {
+    return Err(format!("`{r}`: alternatives (`||`) are not supported; use one range"));
+  }
+  if r.contains(" - ") {
+    return Err(format!("`{r}`: hyphen ranges are not supported; write `>=a <=b`"));
+  }
+  let bad = || format!("`{r}` is not a version range (`^1.2`, `~0.3`, `>=1 <2`, `1.x`, `*`)");
+  // Comparators, an operator written apart from its version (`>= 1.2`) joined back to it
+  let mut comparators: Vec<String> = vec![];
+  let mut pending = String::new();
+  for token in r.split([' ', ',']).filter(|t| !t.is_empty()) {
+    if token.chars().all(|c| "<>=^~".contains(c)) {
+      pending.push_str(token);
+      continue;
+    }
+    let token = token.trim_start_matches(['v', 'V']).replace(".x", ".*").replace(".X", ".*");
+    let op_len = token.find(|c: char| !"<>=^~".contains(c)).unwrap_or(token.len());
+    let (op, ver) = token.split_at(op_len);
+    let op = format!("{pending}{op}");
+    pending.clear();
+    let ver = ver.trim_start_matches(['v', 'V']);
+    if ver.is_empty() {
+      return Err(bad());
+    }
+    comparators.push(if op.is_empty() { format!("={ver}") } else { format!("{op}{ver}") });
+  }
+  if !pending.is_empty() || comparators.is_empty() {
+    return Err(bad());
+  }
+  semver::VersionReq::parse(&comparators.join(", ")).map_err(|_| bad())
+}
+
+/// Lockfiles that pin what `node_modules` holds
+const LOCKFILES: &[&str] = &["package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb"];
+
+/// npm packages: `package.json` lists them, the author installs them (Acpira never runs an install or its scripts), and
+/// the lockfile pins them. Native code in them is named, since it runs with the user's rights like the rest
+fn check_packages(dir: &Path, findings: &mut Findings) {
+  let Ok(bytes) = std::fs::read(dir.join("package.json")) else { return };
+  let pkg: Value = match serde_json::from_slice(&bytes) {
+    Ok(v) => v,
+    Err(e) => {
+      findings.errors.push(format!("package.json: {e}"));
+      return;
+    }
+  };
+  let listed = ["dependencies", "optionalDependencies"].iter().any(|k| pkg.get(k).and_then(Value::as_object).is_some_and(|d| !d.is_empty()));
+  if !listed {
+    return;
+  }
+  if !dir.join("node_modules").is_dir() {
+    findings.errors.push("package.json lists dependencies but node_modules is missing: run `npm install --ignore-scripts` in the plugin folder".into());
+  }
+  if !LOCKFILES.iter().any(|f| dir.join(f).is_file()) {
+    findings.errors.push("package.json lists dependencies without a lockfile: install with npm, pnpm, yarn or bun so the versions are pinned".into());
+  }
+  let mut native = vec![];
+  let _ = walk_files(&dir.join("node_modules"), &mut |p| {
+    if p.extension().is_some_and(|e| e == "node") && native.len() < 5 {
+      native.push(p.strip_prefix(dir).unwrap_or(p).to_string_lossy().replace('\\', "/"));
+    }
+  });
+  if !native.is_empty() {
+    findings.notes.push(format!("native code in node_modules ({}): it runs in the plugin's process with your rights", native.join(", ")));
+  }
+}
+
+fn walk_files(dir: &Path, f: &mut dyn FnMut(&Path)) -> std::io::Result<()> {
+  for e in std::fs::read_dir(dir)?.flatten() {
+    let t = e.file_type()?;
+    if t.is_dir() {
+      walk_files(&e.path(), f)?;
+    } else if t.is_file() {
+      f(&e.path());
+    }
+  }
+  Ok(())
+}
+
+/// A module the engine compiles (`runtime.main`, `ui[].entry`, `exports`)
+fn source_file(dir: &Path, rel: &str, at: &str, findings: &mut Findings) {
+  if !inside(dir, rel).is_some_and(|p| p.is_file()) {
+    findings.errors.push(format!("{at} `{rel}` not found in the plugin"));
+  } else if !crate::plugins::build::compiled_source(rel) {
+    findings.errors.push(format!("{at} `{rel}` must be a .ts, .tsx, .js, .jsx or .mjs module"));
   }
 }
 
@@ -703,9 +1018,12 @@ pub fn program_in(dir: &Path, program: &str) -> Option<std::path::PathBuf> {
   inside(dir, program).filter(|p| p.is_file())
 }
 
-fn file_inside(dir: &Path, rel: &str, what: &str, findings: &mut Findings) {
-  if !inside(dir, rel).is_some_and(|p| p.is_file()) {
-    findings.errors.push(format!("{what} `{rel}` not found in the plugin"));
+/// A stylesheet of the plugin, within `CSS_MAX_BYTES`
+fn css_file(dir: &Path, rel: &str, what: &str, findings: &mut Findings) {
+  match inside(dir, rel).and_then(|p| p.metadata().ok()).filter(|m| m.is_file()) {
+    None => findings.errors.push(format!("{what} `{rel}` not found in the plugin")),
+    Some(m) if m.len() > CSS_MAX_BYTES => findings.errors.push(format!("{what} `{rel}` is over {} KB", CSS_MAX_BYTES / 1024)),
+    Some(_) => {}
   }
 }
 
@@ -793,7 +1111,7 @@ mod tests {
     }));
     check(&m, "other", dir.path(), &|_| false, &mut f);
     let text = f.text();
-    for needle in ["id `Bad_Id`", "folder's name", "requires `nope`", "tool `Go`: the name", "declared twice", "a description is needed", "type object", "`../escape.sh`", "`command` is empty", "`--ctl-w`", "`--bg-0`", "missing.css", "Acpira's own", "unknown key `extra`", "unknown contribution `widgets`"] {
+    for needle in ["id `Bad_Id`", "folder's name", "requires `nope`", "tool `Go`: the name", "declared twice", "a description is needed", "type object", "`../escape.sh`", "needs a `command`", "`--ctl-w`", "`--bg-0`", "missing.css", "Acpira's own", "unknown key `extra`", "unknown contribution `widgets`"] {
       assert!(text.contains(needle), "{needle} missing in\n{text}");
     }
   }
@@ -878,16 +1196,16 @@ mod tests {
     let base = |commands: Value, runtime: Value, skills: &str| {
       json!({ "schema": 1, "id": "cmds", "version": "0.1.0", "description": "x", "contributes": { "commands": commands, "runtime": runtime, "skills": skills } })
     };
-    let ok = base(json!([{ "name": "review", "prompt": "Review $ARGUMENTS" }, { "name": "ping-me" }]), json!({ "command": ["node", "run.mjs"], "hooks": ["command"] }), "skills");
+    let ok = base(json!([{ "name": "review", "prompt": "Review $ARGUMENTS", "button": "Review" }, { "name": "ping-me", "button": "Polish", "draft": true, "icon": "wand", "look": "icon" }]), json!({ "command": ["node", "run.mjs"], "hooks": ["command"] }), "skills");
     let (m, mut f) = manifest(ok);
     check(&m, "cmds", dir.path(), &|p| p == "node", &mut f);
     assert!(f.ok(), "{f:?}");
     assert_eq!(m.contributes.kinds(), ["runtime", "skills", "commands"]);
-    let bad = base(json!([{ "name": "Review" }, { "name": "x", "prompt": "a" }, { "name": "x", "prompt": "b" }]), json!({ "command": ["node", "run.mjs"], "events": ["turn.*"] }), "nope");
+    let bad = base(json!([{ "name": "Review" }, { "name": "x", "prompt": "a" }, { "name": "x", "prompt": "b" }, { "name": "y", "prompt": "a", "button": " " }, { "name": "z", "prompt": "a", "draft": true }, { "name": "w", "prompt": "a", "button": "W", "icon": "unicorn", "look": "neon" }]), json!({ "command": ["node", "run.mjs"], "events": ["turn.*"] }), "nope");
     let (m, mut f) = manifest(bad);
     check(&m, "cmds", dir.path(), &|p| p == "node", &mut f);
     let text = f.text();
-    for needle in ["command `/Review`: the name", "needs a `prompt`", "`/x` is declared twice", "skills folder `nope`"] {
+    for needle in ["command `/Review`: the name", "needs a `prompt`", "`/x` is declared twice", "skills folder `nope`", "`/y`: `button` is the label", "`/z`: `draft`, `icon`, `look` and `input` need a `button`", "icon `unicorn`", "look `neon`"] {
       assert!(text.contains(needle), "{needle} missing in\n{text}");
     }
   }
@@ -949,6 +1267,20 @@ mod tests {
   fn an_unknown_schema_is_refused_whole() {
     assert!(parse(br#"{"schema":2,"id":"x"}"#).unwrap_err().contains("schema 2"));
     assert!(parse(b"{").unwrap_err().contains("invalid JSON"));
+  }
+
+  #[test]
+  fn ranges_read_as_npm_reads_them() {
+    let meets = |v: &str, r: &str| version_meets(v, r);
+    // A bare partial version pins what it names, never a caret
+    assert!(meets("1.2.9", "1.2") && !meets("1.3.0", "1.2") && meets("1.9.0", "1") && !meets("2.0.0", "1"));
+    assert!(meets("1.2.3", "1.2.3") && !meets("1.2.4", "1.2.3"));
+    // Space-separated comparators, an operator apart from its version, `x` wildcards
+    assert!(meets("1.5.0", ">=1.2 <2") && !meets("2.0.0", ">=1.2 <2") && meets("1.5.0", ">= 1.2, < 2"));
+    assert!(meets("0.3.4", "0.3.x") && meets("0.3.4", "^0.3") && !meets("0.4.0", "~0.3.1"));
+    // Free-form versions in a manifest
+    assert!(meets("1", "^1") && meets("v1.2", "~1.2") && !meets("soon", "*") && meets("1.0.0", ""));
+    assert!(version_req("1 || 2").is_err() && version_req("1 - 2").is_err() && version_req(">=").is_err());
   }
 
   #[test]

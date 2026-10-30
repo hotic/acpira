@@ -25,8 +25,9 @@ import { deliverRemoteAccess, watchRemoteAccess } from './remote/access';
 import type { QuickSettings } from './chat/DesktopFrame';
 import { SettingsShell, type SettingsHandlers } from './settings/SettingsShell';
 import { contextDrafts, sameContext, sameRange, selectionDraft, setContextSelection, setEditorCopy, setEditorSelection } from './chat/editorContext';
-import { updateMainComposer } from './chat/useComposerDraft';
+import { updateMainComposer, writeMainComposer } from './chat/useComposerDraft';
 import { playChime } from './effects/chime';
+import { setWhooshOn } from './effects/whoosh';
 import { probeUrl } from './probeUrl';
 import { isWidgetFrame } from './chat/AgentWidget';
 import { receivePluginBackdrop, receivePluginTheme, setPluginsView, useSkin } from './plugins/skin';
@@ -220,6 +221,9 @@ export function App() {
   const fromSettings = view === 'chat' && lastView.current === 'settings';
   useEffect(() => { lastView.current = view; }, [view]);
   const [settings, setSettings] = useState<SettingsView>();
+  // The arrival whoosh follows the chime's switch
+  const notifySound = settings?.notifySound;
+  useEffect(() => { if (notifySound !== undefined) setWhooshOn(notifySound); }, [notifySound]);
   const [locale, setLoc] = useState<Locale>(bootLocale ?? 'en');
   // Missing data always starts the desktop's full welcome, even for a returning profile. A new desktop profile
   // with shared data plays the intro and tour without consent; only VS Code's sidebar uses the card alone
@@ -347,6 +351,7 @@ export function App() {
         case 'pluginUi': setPluginSlots(m.slots); panel.syncPlugins(); break;
         case 'pluginCalled': deliverPluginCalled(m); break;
         case 'pluginPost': deliverPluginPost(m); break;
+        case 'pluginComposer': writeMainComposer(m.text, m.replace, m.session); break;
         case 'updateState': setUpdateState(m.state); break;
         case 'desktopMenu': setDesktopMenu(m.menus); break;
         case 'windowState': setWindowMaximized(m.maximized); break;
@@ -516,6 +521,8 @@ export function App() {
     deleteSession,
     restoreSession: id => post({ type: 'restoreSession', id }),
     pinSession: (id, pinned) => post({ type: 'pinSession', id, pinned }),
+    archiveSession: (id, archived) => post({ type: 'archiveSession', id, archived }),
+    setSessionUnread: (id, unread) => post({ type: 'setSessionUnread', id, unread }),
     moveSession: (id, to) => post({ type: 'moveSession', id, ...to }),
     setSessionCategory: (id, category) => post({ type: 'setSessionCategory', id, category }),
     categoryOp: (op, file) => post({ type: 'categoryOp', ...op, ...(file ? { file } : {}) }),

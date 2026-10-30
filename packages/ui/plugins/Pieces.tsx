@@ -1,11 +1,12 @@
 import { memo, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import type { PluginSlot, PluginUiSlot } from '@acpira/shared/plugins';
-import { flyInto } from '../effects/magic';
+import { flyInto, motionOff } from '../effects/magic';
 import { usePluginPieces } from '../pluginSlots';
 import { cn } from '../ui/cn';
 import { digest } from '../panel/PluginFrame';
 import { SandboxFrame, type FrameState } from './SandboxFrame';
 import { takeArrival } from './arrivals';
+import { playWhoosh } from '../effects/whoosh';
 import { backdropsShown } from './skin';
 
 // The interface slots a plugin piece fills with a frame of its own (docs/dev/plugins.md Interface). Only the desktop
@@ -14,12 +15,14 @@ import { backdropsShown } from './skin';
 
 // A piece applied from a card arrives by flight: unseen until the stand-in from the card's thumbnail (arrivals.ts) lands
 // on its box. Returns whether it is in place
-export function useArrival(plugin: string, slot: string, box: RefObject<HTMLElement | null>): boolean {
-  const [from] = useState(() => takeArrival(plugin, slot));
+export function useArrival(plugin: string, slot: string, box: RefObject<HTMLElement | null>, session?: string): boolean {
+  const [from] = useState(() => takeArrival(plugin, slot, session));
   const [landed, setLanded] = useState(!from);
   useLayoutEffect(() => {
     if (!from || !box.current) return;
     const stop = new AbortController();
+    // The sound goes with the flight: none where the motion switches leave the piece to appear in place
+    if (!motionOff()) playWhoosh('piece');
     flyStandIn(from, box.current, () => box.current?.getBoundingClientRect(), () => setLanded(true), stop.signal);
     return () => stop.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps

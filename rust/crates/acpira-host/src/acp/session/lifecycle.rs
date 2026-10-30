@@ -36,8 +36,8 @@ impl AcpSession {
     if !layers.is_empty() {
       req["_meta"][acpira_agent::acp::LAYERS_META] = json!(layers);
     }
-    // Its skills too, which it lists and loads like the user's own
-    let skills = self.deps.plugin_runtime.as_ref().map(|rt| rt.contributed().skills.clone()).unwrap_or_default();
+    // Its skills too, which it lists and loads like the user's own; the author skill first
+    let skills: Vec<_> = self.deps.plugin_runtime.as_ref().map(|rt| rt.author_skills().into_iter().chain(rt.contributed().skills.iter().cloned()).collect()).unwrap_or_default();
     if !skills.is_empty() {
       req["_meta"][acpira_agent::acp::SKILLS_META] = json!(skills);
     }

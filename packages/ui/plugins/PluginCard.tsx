@@ -1,5 +1,5 @@
 import { memo, useContext, useEffect, useRef, type CSSProperties, type MouseEvent } from 'react';
-import { Bot, Blocks, ExternalLink, LayoutPanelLeft, Palette, SquareTerminal, type LucideIcon } from 'lucide-react';
+import { Bot, Blocks, Clock, ExternalLink, LayoutPanelLeft, Palette, SquareTerminal, type LucideIcon } from 'lucide-react';
 import type { PluginsView } from '@acpira/shared/plugins';
 import type { PluginCard as Card_ } from '@acpira/shared/transcript';
 import { Button, IconButton } from '../ui/Button';
@@ -66,7 +66,7 @@ export const PluginCard = memo(function PluginCard({ card }: { card: Card_ }) {
     if (card.kind === 'skin') expectReveal({ x: r.left + r.width / 2, y: r.top + r.height / 2 }, undo, card.plugin);
     // Any card with pieces, one that also runs a program (exec) included
     if (!undo && card.slots?.length) {
-      for (const el of thumb.current?.querySelectorAll<HTMLElement>('[data-piece]') ?? []) expectArrival(card.plugin, el.dataset.piece!, el.getBoundingClientRect());
+      for (const el of thumb.current?.querySelectorAll<HTMLElement>('[data-piece]') ?? []) expectArrival(card.plugin, el.dataset.piece!, el.getBoundingClientRect(), sessionId);
     }
     if (!sessionId) return;
     vscodeApi().postMessage({ type: 'pluginCard', sessionId, card: card.id, op: undo ? 'undo' : 'apply' });
@@ -96,6 +96,12 @@ export const PluginCard = memo(function PluginCard({ card }: { card: Card_ }) {
           <Kind className="size-icon shrink-0" strokeWidth={1.5} />
           <span className="shrink-0">{kindLabel(card.kind)}</span>
           {card.runs && <span className="ml-1.5 min-w-0 truncate">{t('plugin.card.runs')} <code className="rounded-xs bg-active px-1 font-mono text-mono text-fg-2">{card.runs}</code></span>}
+          {/* A plugin with schedules acts while nobody watches: said on the card it is enabled from */}
+          {!!card.schedules?.length && (
+            <span className="ml-1.5 flex shrink-0 items-center gap-1" title={t('plugin.card.scheduledHint', { cron: card.schedules.join(', ') })}>
+              <Clock className="size-icon" strokeWidth={1.5} />{t('plugin.card.scheduled')}
+            </span>
+          )}
         </span>
         {note && <span className="shrink-0 px-1.5 text-3 text-fg-3">{note}</span>}
         <Button variant="primary" className="h-ctl-sm shrink-0 justify-center" disabled={!view || view.safeMode || !sessionId} onClick={act}>
@@ -111,8 +117,8 @@ export const PluginCard = memo(function PluginCard({ card }: { card: Card_ }) {
 // is its mark on the brand tint, an interface plugin's a map of where its pieces go, anything else its kind
 function Thumb({ card }: { card: Card_ }) {
   if (card.kind === 'skin') return <SkinThumb plugin={card.plugin} snapshot={card.snapshot} name={card.name} />;
-  // A program with interface pieces shows where they go; the card's foot still names what it runs
-  if (card.kind === 'ui' || (card.kind === 'exec' && card.slots?.length)) return <UiThumb slots={card.slots ?? []} />;
+  // Interface pieces (a command's button among them) show where they go; a program's foot still names what it runs
+  if (card.kind === 'ui' || card.slots?.length) return <UiThumb slots={card.slots ?? []} />;
   const Kind = KIND[card.kind] ?? Blocks;
   return (
     <div className="absolute inset-0 flex items-center justify-center bg-[color-mix(in_srgb,var(--brand)_14%,var(--bg-1))] text-brand">

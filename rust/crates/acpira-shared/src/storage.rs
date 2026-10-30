@@ -86,6 +86,11 @@ pub enum StorageResidueKind {
   Backup,
   /// The old globalStorage copy a migration left behind
   Legacy,
+  /// What an uninstalled plugin left (its moved-aside folder, frozen versions, compiled output) and versions or output
+  /// nothing in effect uses
+  PluginFiles,
+  /// The data of an uninstalled plugin
+  PluginData,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

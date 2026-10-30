@@ -63,11 +63,21 @@ function onMessage(e: MessageEvent) {
   const m = e.data as { acpira?: unknown; id?: unknown; method?: unknown; params?: unknown; turn?: unknown } | null;
   if (!m || typeof m !== 'object') return;
   if (m.acpira === 'ready') {
-    const html = f.html ? f.html() : pluginPiece(f.plugin, f.piece)?.html ?? '';
-    const state = f.state?.();
-    // A document the page holds hears nothing of the session either
-    const session = !f.html && outline ? { session: outline } : {};
-    win.postMessage({ acpira: 'load', html, css: f.css(), kit: FRAME_KIT, ...(f.options !== undefined ? { options: f.options } : {}), ...(state !== undefined ? { state } : {}), ...session }, '*');
+    // Read when sent, so state, theme and session that changed while the runtime was fetched are not sent stale
+    const send = (lib?: string) => {
+      // The frame may have gone meanwhile, or registered again with new callbacks
+      const f = frames.get(win);
+      if (!f) return;
+      const html = f.html ? f.html() : pluginPiece(f.plugin, f.piece)?.html ?? '';
+      const state = f.state?.();
+      // A document the page holds hears nothing of the session either
+      const session = !f.html && outline ? { session: outline } : {};
+      win.postMessage({ acpira: 'load', html, css: f.css(), kit: FRAME_KIT, ...(f.options !== undefined ? { options: f.options } : {}), ...(state !== undefined ? { state } : {}), ...session, ...(lib !== undefined ? { lib } : {}) }, '*');
+    };
+    // A component piece gets the React runtime with it; without one (an older build, a failed fetch) its loader says so
+    const first = f.html ? f.html() : pluginPiece(f.plugin, f.piece)?.html ?? '';
+    if (first.includes(RUNTIME_MARK)) pluginRuntime().then(lib => send(lib), () => send());
+    else send();
   } else if (m.acpira === 'scrollTo' && typeof m.turn === 'number' && !f.html) {
     scrollToExchange?.(m.turn);
   } else if (m.acpira === 'drawn') {
@@ -77,6 +87,25 @@ function onMessage(e: MessageEvent) {
     calls.set(id, { win, id: m.id });
     vscodeApi().postMessage({ type: 'pluginCall', id, plugin: f.plugin, method: m.method, ...(m.params !== undefined ? { params: m.params } : {}) });
   }
+}
+
+// What a document carries to ask for the runtime: every piece the engine compiles from an `entry` (plugins/build.rs)
+const RUNTIME_MARK = '<meta name="acpira-runtime" content="react">';
+// Built beside main.js by packages/ui's build (packages/plugin-ui/lib.ts); a variable so the bundler leaves the URL alone
+const RUNTIME_FILE = 'plugin-ui.js';
+let runtime: Promise<string> | undefined;
+
+// The runtime's text, fetched once per page; a `</script` inside it would end the frame's script element early and a
+// `<!--` change how the rest is read (the same escapes as the engine's documents, plugins/build.rs `script_safe`)
+function pluginRuntime(): Promise<string> {
+  runtime ??= fetch(new URL(RUNTIME_FILE, import.meta.url))
+    .then(r => (r.ok ? r.text() : Promise.reject(new Error(`plugin runtime: ${r.status}`))))
+    .then(t => t.replace(/<\/script/gi, '<\\/script').replace(/<!--/g, '<\\!--'))
+    .catch(e => {
+      runtime = undefined;
+      throw e;
+    });
+  return runtime;
 }
 
 // A frame of `plugin`'s piece; `css` gives the page's theme tokens as declarations for the frame's root; `own` for a
@@ -97,6 +126,18 @@ export function callPluginMethod(plugin: string, method: string, params?: unknow
   return new Promise((resolve, reject) => {
     ownCalls.set(id, { resolve, reject });
     vscodeApi().postMessage({ type: 'pluginCall', id, plugin, method, ...(params !== undefined ? { params } : {}) });
+  });
+}
+
+// A command button with `draft` (plugins/CommandButtons.tsx): the text that replaces the draft, if the command gave one
+export function callPluginCommand(sessionId: string, name: string, args: string): Promise<string | undefined> {
+  const id = `pc-${++seq}`;
+  return new Promise<unknown>((resolve, reject) => {
+    ownCalls.set(id, { resolve, reject });
+    vscodeApi().postMessage({ type: 'pluginCommand', id, sessionId, name, arguments: args });
+  }).then(r => {
+    const text = (r as { text?: unknown } | undefined)?.text;
+    return typeof text === 'string' ? text : undefined;
   });
 }
 

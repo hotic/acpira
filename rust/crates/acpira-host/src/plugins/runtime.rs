@@ -59,6 +59,46 @@ struct Want {
   hash: String,
   dir: PathBuf,
   def: RuntimeDef,
+  /// Tools of the manifest without a `command`: the process answers them (`tool/<name>`)
+  tools: Vec<crate::plugins::manifest::ToolDef>,
+  schedules: Vec<crate::plugins::manifest::ScheduleDef>,
+  /// `dependencies` then `optionalDependencies`: the only plugins it may call
+  dependencies: BTreeMap<String, String>,
+  optional: BTreeMap<String, String>,
+  /// A `runtime.main` plugin whose commands have no prompt answers the `command` hook without listing it
+  commands_hooked: bool,
+}
+
+impl Want {
+  fn of(id: &str, hash: &str, dir: &Path, m: &crate::plugins::manifest::Manifest) -> Option<Want> {
+    let def = m.contributes.runtime.clone()?;
+    let commands_hooked = def.main.is_some() && m.contributes.commands.iter().any(|c| c.prompt.as_deref().is_none_or(|p| p.trim().is_empty()));
+    Some(Want {
+      id: id.to_owned(),
+      version: m.version.clone(),
+      hash: hash.to_owned(),
+      dir: dir.to_path_buf(),
+      def,
+      tools: m.contributes.tools.iter().filter(|t| t.command.is_empty()).cloned().collect(),
+      schedules: m.contributes.schedules.clone(),
+      dependencies: m.dependencies.clone(),
+      optional: m.optional_dependencies.clone(),
+      commands_hooked,
+    })
+  }
+
+  /// The hooks the user confirmed: the manifest's list, plus `command` when its commands are answered in code
+  fn hooks(&self) -> Vec<String> {
+    let mut hooks = self.def.hooks.clone();
+    if self.commands_hooked && !hooks.iter().any(|h| h == "command") {
+      hooks.push("command".into());
+    }
+    hooks
+  }
+
+  fn may_call(&self, plugin: &str) -> bool {
+    plugin == self.id || self.dependencies.contains_key(plugin) || self.optional.contains_key(plugin)
+  }
 }
 
 struct Proc {
@@ -104,6 +144,8 @@ struct Worker {
   dropped: Arc<AtomicU64>,
   /// Set when the engine stops it on purpose, so its exit is not taken for a crash
   stopping: AtomicBool,
+  /// What `initialize` told it of its dependencies: a change restarts it, so `ctx.plugins` stays true
+  deps: Value,
 }
 
 impl Worker {
@@ -117,13 +159,18 @@ impl Worker {
   }
 
   async fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+    self.call_for(method, params, self.want.def.timeout()).await
+  }
+
+  /// A call with its own time limit (a tool's, a schedule's)
+  async fn call_for(&self, method: &str, params: Value, limit: Duration) -> Result<Value, String> {
     if self.tripped.lock().is_some_and(|at| at.elapsed() < TRIP_FOR) {
       return Err(format!("plugin {} is paused after {TRIP_AFTER} failed calls in a row", self.want.id));
     }
-    let r = match tokio::time::timeout(self.want.def.timeout(), self.conn.request_cancellable(method, params)).await {
+    let r = match tokio::time::timeout(limit, self.conn.request_cancellable(method, params)).await {
       Ok(Ok(v)) => Ok(v),
       Ok(Err(e)) => Err(e.message),
-      Err(_) => Err(format!("timed out after {} s", self.want.def.timeout().as_secs_f64())),
+      Err(_) => Err(format!("timed out after {} s", limit.as_secs_f64())),
     };
     match &r {
       Ok(_) => {
@@ -223,6 +270,8 @@ pub struct Runtimes {
   host_coming: AtomicBool,
   sync: tokio::sync::Mutex<()>,
   data_root: PathBuf,
+  /// The plugins in effect with their versions, whatever they contribute: what a dependency's `present` says
+  present: parking_lot::RwLock<BTreeMap<String, String>>,
   log: LogFn,
 }
 
@@ -247,6 +296,7 @@ impl Runtimes {
       host_coming: AtomicBool::new(false),
       sync: Default::default(),
       data_root,
+      present: Default::default(),
       log,
     })
   }
@@ -262,6 +312,13 @@ impl Runtimes {
   pub fn enable_before_host(&self) {
     self.host_coming.store(true, Ordering::Relaxed);
     self.enabled.store(true, Ordering::Relaxed);
+  }
+
+  /// The author skill's folder (`sdk::AUTHOR_SKILL`), for the built-in agent in safe mode too: it is how a broken
+  /// plugin gets fixed. Other agents learn the same from Acpira's MCP server instructions, so they are not sent it
+  pub fn author_skills(&self) -> Option<PathBuf> {
+    let dir = self.data_root.parent()?.join(crate::plugins::sdk::SDK_DIR).join(crate::plugins::sdk::SKILLS_DIR);
+    dir.is_dir().then_some(dir)
   }
 
   pub fn contributed(&self) -> Arc<Contributed> {
@@ -333,7 +390,7 @@ impl Runtimes {
 
   /// Ask `plugin`'s process alone (a command it contributed); None when it does not answer `hook`
   pub async fn hook_of(&self, plugin: &str, hook: &str, payload: Value) -> Option<Result<Value, String>> {
-    let w = self.workers.read().get(plugin).filter(|w| w.answers(hook)).cloned()?;
+    let w = self.worker_of(plugin).await.filter(|w| w.answers(hook))?;
     let r = w.call(&format!("hook/{hook}"), payload).await;
     if let Err(e) = &r {
       (self.log)(&format!("plugin {plugin}: hook {hook}: {e}"));
@@ -366,27 +423,76 @@ impl Runtimes {
     pages.len()
   }
 
-  /// Call a method `plugin`'s process offers (`runtime.methods`): `rpc/<method>` with `{ params, from }`, `from` being
-  /// the calling plugin's id or `page`. Under the process's own time limit and failure count
-  pub async fn rpc(&self, plugin: &str, method: &str, params: Value, from: &str) -> Result<Value, String> {
-    // A page frame opens as its plugin is enabled, and its first call may come before the process answered
-    // `initialize`: a wanted process (starting, or restarting after an exit) is waited for
+  /// `plugin`'s process, waited for while it is wanted but not up yet (starting, or restarting after an exit): a piece
+  /// or a command button can be used the moment its plugin is enabled, before the process answered `initialize`
+  async fn worker_of(&self, plugin: &str) -> Option<Arc<Worker>> {
     let t = std::time::Instant::now();
-    let w = loop {
+    loop {
       if let Some(w) = self.workers.read().get(plugin).cloned() {
-        break w;
+        return Some(w);
       }
       let wanted = self.wanted.lock().iter().any(|w| w.id == plugin);
       if !wanted || t.elapsed() >= START_WAIT {
-        let why = self.errors.read().get(plugin).map(|e| format!(": {e}")).unwrap_or_default();
-        return Err(format!("plugin {plugin} has no running process{why}"));
+        return None;
       }
       tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+  }
+
+  /// Call a method `plugin`'s process offers (`runtime.methods`): `rpc/<method>` with `{ params, from }`, `from` being
+  /// the calling plugin's id or `page`. Under the process's own time limit and failure count
+  pub async fn rpc(&self, plugin: &str, method: &str, params: Value, from: &str) -> Result<Value, String> {
+    let Some(w) = self.worker_of(plugin).await else {
+      let why = self.errors.read().get(plugin).map(|e| format!(": {e}")).unwrap_or_default();
+      return Err(format!("plugin {plugin} has no running process{why}"));
     };
     if !w.want.def.methods.iter().any(|m| m == method) {
       return Err(format!("plugin {plugin} offers no method `{method}`"));
     }
     w.call(&format!("rpc/{method}"), json!({ "params": params, "from": from })).await
+  }
+
+  /// What `initialize` tells a process of the plugins it depends on: the range it asked for and whether one is in effect
+  fn dependencies_of(&self, want: &Want) -> Value {
+    let present = self.present.read();
+    let mut out = serde_json::Map::new();
+    for (id, range) in want.dependencies.iter().chain(want.optional.iter()) {
+      let version = present.get(id);
+      let fits = version.is_some_and(|v| crate::plugins::manifest::version_meets(v, range));
+      out.insert(id.clone(), json!({ "range": range, "present": fits, "version": version }));
+    }
+    Value::Object(out)
+  }
+
+  /// A tool of `plugin` its process answers (a manifest tool without a `command`): the text for the model
+  pub async fn tool(&self, plugin: &str, name: &str, arguments: &Value, ctx: &crate::plugins::run::CallContext) -> Result<String, String> {
+    let Some(w) = self.worker_of(plugin).await else {
+      let why = self.errors.read().get(plugin).map(|e| format!(": {e}")).unwrap_or_default();
+      return Err(format!("plugin {plugin} has no running process{why}"));
+    };
+    let Some(def) = w.want.tools.iter().find(|t| t.name == name) else {
+      return Err(format!("plugin {plugin} answers no tool `{name}`"));
+    };
+    let params = json!({ "arguments": arguments, "workspace": ctx.workspace, "session": ctx.session });
+    let answer = w.call_for(&format!("tool/{name}"), params, def.timeout()).await?;
+    Ok(answer.get("text").and_then(Value::as_str).map(str::to_owned).unwrap_or_else(|| answer.to_string()))
+  }
+
+  /// Start a run of `plugin`'s schedule `id` for the occurrence `due` (milliseconds); waits for it to end
+  pub async fn run_schedule(&self, plugin: &str, id: &str, due: i64) -> Result<Value, String> {
+    let Some(w) = self.worker_of(plugin).await else {
+      let why = self.errors.read().get(plugin).map(|e| format!(": {e}")).unwrap_or_default();
+      return Err(format!("plugin {plugin} has no running process{why}"));
+    };
+    let Some(def) = w.want.schedules.iter().find(|j| j.id == id) else {
+      return Err(format!("plugin {plugin} has no schedule `{id}`"));
+    };
+    w.call_for(&format!("schedule/{id}"), json!({ "due": due }), def.timeout()).await
+  }
+
+  /// The schedules of the processes wanted here, with the snapshot each belongs to
+  pub fn schedules(&self) -> Vec<(String, String, crate::plugins::manifest::ScheduleDef)> {
+    self.wanted.lock().iter().flat_map(|w| w.schedules.iter().map(move |j| (w.id.clone(), w.hash.clone(), j.clone()))).collect()
   }
 
   pub fn set_redirect(&self, f: crate::acp::session::plugin_hooks::RedirectFn) {
@@ -495,9 +601,10 @@ impl Runtimes {
     let wanted: Vec<Want> = active
       .iter()
       .filter_map(|a| {
-        a.manifest.contributes.runtime.clone().map(|def| Want { id: a.id.clone(), version: a.manifest.version.clone(), hash: a.hash.clone(), dir: a.dir.clone(), def })
+        Want::of(&a.id, &a.hash, &a.dir, &a.manifest)
       })
       .collect();
+    *self.present.write() = active.iter().map(|a| (a.id.clone(), a.manifest.version.clone())).collect();
     *self.wanted.lock() = wanted;
     if !self.enabled() {
       return;
@@ -516,7 +623,7 @@ impl Runtimes {
     let mut stopped = vec![];
     for want in &wanted {
       let current = self.workers.read().get(&want.id).cloned();
-      if current.as_ref().is_some_and(|w| w.want.hash == want.hash && !w.conn.is_closed()) {
+      if current.as_ref().is_some_and(|w| w.want.hash == want.hash && !w.conn.is_closed() && w.deps == self.dependencies_of(want)) {
         continue;
       }
       match self.start(want).await {
@@ -575,8 +682,25 @@ impl Runtimes {
   }
 
   async fn start(self: &Arc<Self>, want: &Want) -> Result<Arc<Worker>, String> {
+    self.start_as(want, false).await
+  }
+
+  /// `probe`: the activation check, which only proves the process starts and speaks the protocol; it is told so, and
+  /// a definition then runs neither `migrate` nor `activate` (no data changes for a version not yet confirmed)
+  async fn start_as(self: &Arc<Self>, want: &Want, probe: bool) -> Result<Arc<Worker>, String> {
     let data = self.data_dir(&want.id);
-    let mut cmd = crate::plugins::run::command(&want.def.command, &want.dir, &data, "").await?;
+    // A `main` module runs compiled (`build.rs`); the output is rebuilt when missing, from the frozen copy alone
+    let command = match want.def.main.as_deref() {
+      Some(main) => {
+        let root = self.data_root.parent().unwrap_or(&self.data_root);
+        let out = crate::plugins::build::output_dir(root, &want.id, &want.hash);
+        let (dir, main) = (want.dir.clone(), main.to_owned());
+        let boot = tokio::task::spawn_blocking(move || crate::plugins::build::runtime(&dir, &main, &out)).await.map_err(|e| e.to_string())??;
+        vec!["node".to_owned(), boot.to_string_lossy().into_owned()]
+      }
+      None => want.def.command.clone(),
+    };
+    let mut cmd = crate::plugins::run::command(&command, &want.dir, &data, "").await?;
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     #[cfg(unix)]
     cmd.process_group(0);
@@ -589,7 +713,7 @@ impl Runtimes {
     let stdout = child.stdout.take().ok_or("stdout is not piped")?;
     let stderr = child.stderr.take().ok_or("stderr is not piped")?;
     self.pipe_stderr(&want.id, stderr);
-    let inbound: Arc<dyn Inbound> = Arc::new(PluginInbound { id: want.id.clone(), kv: self.kv(&want.id), runtimes: Arc::downgrade(self) });
+    let inbound: Arc<dyn Inbound> = Arc::new(PluginInbound { id: want.id.clone(), kv: self.kv(&want.id), runtimes: Arc::downgrade(self), want: want.clone() });
     let log = self.log.clone();
     let id = want.id.clone();
     let conn = Connection::start(stdout, stdin, Arc::new(move || inbound.clone()), Arc::new(move |l: &str| log(&format!("plugin {id}: {l}"))));
@@ -599,14 +723,21 @@ impl Runtimes {
       #[cfg(windows)]
       job,
     };
-    let init = json!({
+    let deps = self.dependencies_of(want);
+    let mut init = json!({
       "protocolVersion": PROTOCOL_VERSION,
       "plugin": { "id": want.id, "version": want.version, "snapshot": want.hash, "dir": want.dir, "data": data },
       "engine": { "name": "acpira", "version": env!("CARGO_PKG_VERSION") },
-      "hooks": want.def.hooks,
+      "hooks": want.hooks(),
       "events": want.def.events,
       "methods": want.def.methods,
+      "tools": want.tools.iter().map(|t| t.name.clone()).collect::<Vec<_>>(),
+      "schedules": want.schedules.iter().map(|j| j.id.clone()).collect::<Vec<_>>(),
+      "dependencies": deps,
     });
+    if probe {
+      init["probe"] = json!(true);
+    }
     let answer = match tokio::time::timeout(INIT_TIMEOUT, conn.request("initialize", init)).await {
       Ok(Ok(v)) => v,
       Ok(Err(e)) => {
@@ -627,8 +758,8 @@ impl Runtimes {
     }
     // The answer may narrow what it handles, never widen what the user confirmed
     let hooks = match answer.get("hooks").and_then(Value::as_array) {
-      Some(list) => want.def.hooks.iter().filter(|h| list.iter().any(|v| v.as_str() == Some(h.as_str()))).cloned().collect(),
-      None => want.def.hooks.clone(),
+      Some(list) => want.hooks().into_iter().filter(|h| list.iter().any(|v| v.as_str() == Some(h.as_str()))).collect(),
+      None => want.hooks(),
     };
     let (tx, rx) = mpsc::channel(EVENT_QUEUE);
     let worker = Arc::new(Worker {
@@ -641,6 +772,7 @@ impl Runtimes {
       events: tx,
       dropped: Arc::new(AtomicU64::new(0)),
       stopping: AtomicBool::new(false),
+      deps,
     });
     self.pump_events(&worker, rx);
     self.watch_exit(&worker);
@@ -749,10 +881,10 @@ impl Runtimes {
 
 /// Start the process of a frozen plugin, answer `initialize`, stop it: the dynamic check before a plugin with a
 /// runtime is enabled
-pub async fn probe(id: &str, version: &str, hash: &str, dir: &Path, def: &RuntimeDef, data_root: &Path, log: LogFn) -> Result<(), String> {
+pub async fn probe(id: &str, hash: &str, dir: &Path, manifest: &crate::plugins::manifest::Manifest, data_root: &Path, log: LogFn) -> Result<(), String> {
   let rt = Runtimes::new(data_root.to_path_buf(), log);
-  let want = Want { id: id.to_owned(), version: version.to_owned(), hash: hash.to_owned(), dir: dir.to_path_buf(), def: def.clone() };
-  let w = rt.start(&want).await?;
+  let want = Want::of(id, hash, dir, manifest).ok_or("no runtime")?;
+  let w = rt.start_as(&want, true).await?;
   w.stop().await;
   Ok(())
 }
@@ -774,6 +906,8 @@ struct PluginInbound {
   id: String,
   kv: Arc<Kv>,
   runtimes: std::sync::Weak<Runtimes>,
+  /// The version this process runs: what it may call is what that version's card showed, not the newest version's
+  want: Want,
 }
 
 impl Inbound for PluginInbound {
@@ -808,6 +942,30 @@ impl Inbound for PluginInbound {
           .map_err(|e| RpcError::new(-32000, e))
         });
       }
+      // Compare and set under the same lock: `value` goes in only while the key still holds `expect` (null: absent).
+      // What the SDK's migration lock is made of, so two engines starting one plugin migrate its data once
+      "storage/swap" => {
+        let (kv, expect, value) = (self.kv.clone(), params.get("expect").cloned().unwrap_or(Value::Null), params.get("value").cloned().unwrap_or(Value::Null));
+        let key = key();
+        return Box::pin(async move {
+          let key = key?;
+          let swapped = Arc::new(AtomicBool::new(false));
+          let done = swapped.clone();
+          kv.change(move |m| {
+            if m.get(&key).cloned().unwrap_or(Value::Null) == expect {
+              if value.is_null() {
+                m.remove(&key);
+              } else {
+                m.insert(key, value);
+              }
+              done.store(true, Ordering::Relaxed);
+            }
+          })
+          .await
+          .map(|()| json!({ "swapped": swapped.load(Ordering::Relaxed) }))
+          .map_err(|e| RpcError::new(-32000, e))
+        });
+      }
       "storage/list" => Ok(json!({ "keys": self.kv.keys(params.get("prefix").and_then(Value::as_str).unwrap_or("")) })),
       // To the plugin's own frames on every page of this engine, and text for the composer on screen
       "ui/post" => match (params.get("message"), self.runtimes.upgrade()) {
@@ -820,7 +978,8 @@ impl Inbound for PluginInbound {
         (_, None) => Err(RpcError::new(-32000, "the engine is closing")),
         (Some(text), Some(rt)) => {
           let replace = params.get("replace").and_then(Value::as_bool).unwrap_or(false);
-          let msg = acpira_shared::protocol::HostMsg::PluginComposer { plugin: self.id.clone(), text: text.chars().take(COMPOSER_MAX_CHARS).collect(), replace };
+          let session = params.get("session").and_then(Value::as_str).map(str::to_owned);
+          let msg = acpira_shared::protocol::HostMsg::PluginComposer { plugin: self.id.clone(), text: text.chars().take(COMPOSER_MAX_CHARS).collect(), replace, session };
           Ok(json!({ "pages": rt.to_pages(msg) }))
         }
       },
@@ -830,6 +989,10 @@ impl Inbound for PluginInbound {
           return Box::pin(async { Err(RpcError::new(-32602, "`plugin` and `method` are needed")) });
         };
         let (plugin, name, args, from) = (plugin.to_owned(), name.to_owned(), params.get("params").cloned().unwrap_or(Value::Null), self.id.clone());
+        // Only the plugins its manifest names (`dependencies`, `optionalDependencies`): what the user saw on its card
+        if !self.want.may_call(&plugin) {
+          return Box::pin(async move { Err(RpcError::new(-32000, format!("plugin {from} does not list `{plugin}` in its dependencies"))) });
+        }
         return Box::pin(async move { rt.rpc(&plugin, &name, args, &from).await.map_err(|e| RpcError::new(-32000, e)) });
       }
       "providers/set" => match (params.get("providers").and_then(Value::as_array), self.runtimes.upgrade()) {
@@ -930,6 +1093,7 @@ impl Kv {
 mod tests {
   use super::*;
   use crate::plugins::manifest;
+  use chrono::TimeZone;
 
   // A resident plugin in node: answers initialize (narrowing its hooks to those it handles), echoes `hook/prompt` with
   // its version and a stored counter, sleeps through `hook/permission`, exits on `hook/tool.before`, writes every event
@@ -1041,17 +1205,17 @@ createInterface({ input: process.stdin }).on('close', () => process.exit(0)).on(
   #[tokio::test]
   async fn a_runtime_offers_its_declared_methods_to_pages_and_other_plugins() {
     let Some((root, rt)) = setup() else { return };
-    let plugin = |id: &str, methods: &str| {
+    let plugin = |id: &str, methods: &str, deps: &str| {
       let dir = root.path().join(id);
       std::fs::create_dir_all(&dir).unwrap();
       std::fs::write(dir.join("rpc.mjs"), RPC).unwrap();
-      let json = format!(r#"{{ "schema": 1, "id": "{id}", "version": "1.0.0", "description": "d", "contributes": {{ "runtime": {{ "command": ["node", "rpc.mjs"], "methods": {methods} }} }} }}"#);
+      let json = format!(r#"{{ "schema": 1, "id": "{id}", "version": "1.0.0", "description": "d", "dependencies": {deps}, "contributes": {{ "runtime": {{ "command": ["node", "rpc.mjs"], "methods": {methods} }} }} }}"#);
       let (m, mut f) = manifest::parse(json.as_bytes()).unwrap();
       manifest::check(&m, id, &dir, &|p| p == "node", &mut f);
       assert!(f.ok(), "{f:?}");
       Arc::new(Active { id: id.into(), hash: "h".into(), dir, manifest: m })
     };
-    rt.sync(&[plugin("rates", r#"["rates.get"]"#), plugin("caller", r#"["relay"]"#)]).await;
+    rt.sync(&[plugin("rates", r#"["rates.get"]"#, "{}"), plugin("caller", r#"["relay"]"#, r#"{ "rates": "^1" }"#), plugin("loner", r#"["relay"]"#, "{}")]).await;
     let page = rt.rpc("rates", "rates.get", json!({ "to": "EUR" }), "page").await.unwrap();
     assert_eq!(page, json!({ "eur": 0.92, "from": "page", "asked": { "to": "EUR" } }));
     // Through the engine from another plugin, which is named as the caller
@@ -1062,6 +1226,9 @@ createInterface({ input: process.stdin }).on('close', () => process.exit(0)).on(
     let refused = rt.rpc("caller", "relay", json!({ "plugin": "rates", "method": "secret" }), "page").await.unwrap();
     assert!(refused["error"].as_str().is_some_and(|e| e.contains("no method `secret`")), "{refused}");
     assert!(rt.rpc("gone", "x", json!({}), "page").await.unwrap_err().contains("no running process"));
+    // A plugin calls only what its manifest lists in `dependencies`
+    let stranger = rt.rpc("loner", "relay", json!({ "plugin": "rates", "method": "rates.get" }), "page").await.unwrap();
+    assert!(stranger["error"].as_str().is_some_and(|e| e.contains("does not list `rates`")), "{stranger}");
     rt.stop_all().await;
   }
 
@@ -1203,20 +1370,132 @@ createInterface({ input: process.stdin }).on('close', () => process.exit(0)).on(
     rt.stop_all().await;
   }
 
+  // A plugin written as a TypeScript definition: compiled by the engine, run with Node through the SDK's `start`
+  const DEFINED: &str = r#"import { definePlugin } from '@acpira/plugin';
+import { label } from './label';
+
+type Ctx = { storage: { get(k: string): Promise<unknown>; set(k: string, v: unknown): Promise<unknown> } };
+
+let active = false;
+export default definePlugin({
+  async activate(ctx: Ctx) {
+    active = true;
+    await ctx.storage.set('activated', true);
+    return () => { active = false; };
+  },
+  migrate: async (from: string, to: string, ctx: Ctx) => ctx.storage.set('migrated', `${from}->${to}`),
+  hooks: { prompt: ({ text }: { text: string }) => (text.includes('deploy') ? { context: label('ship') } : null) },
+  methods: {
+    ping: async (_p: unknown, ctx: Ctx) => ({ active, migrated: await ctx.storage.get('migrated') }),
+  },
+  tools: { stat: async (args: { n?: number }) => `n=${args.n ?? 0}` },
+  schedules: { daily: async (ctx: { due: number }) => ({ ran: ctx.due }) },
+  commands: { review: (args: string) => `Review ${args || 'everything'}` },
+});
+"#;
+
+  #[tokio::test]
+  async fn a_typescript_definition_runs_compiled_through_the_sdk() {
+    let Some((root, rt)) = setup() else { return };
+    let dir = root.path().join("defined");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("plugin.ts"), DEFINED).unwrap();
+    std::fs::write(dir.join("label.ts"), "export const label = (s: string): string => `Use make ${s}.`;\n").unwrap();
+    let manifest_for = |version: &str| {
+      let json = format!(
+        r#"{{ "schema": 1, "id": "defined", "version": "{version}", "description": "d",
+          "contributes": {{
+            "runtime": {{ "main": "plugin.ts", "hooks": ["prompt"], "methods": ["ping"] }},
+            "tools": [{{ "name": "stat", "description": "Stat", "input": {{ "type": "object" }} }}],
+            "schedules": [{{ "id": "daily", "cron": "0 9 * * *" }}],
+            "commands": [{{ "name": "review", "description": "Review" }}]
+          }} }}"#
+      );
+      let (m, mut f) = manifest::parse(json.as_bytes()).unwrap();
+      manifest::check(&m, "defined", &dir, &|p| p == "node", &mut f);
+      assert!(f.ok(), "{f:?}");
+      m
+    };
+    // A first version, then a second one, so `migrate` is told where it came from
+    for (hash, version) in [("v1", "1.0.0"), ("v2", "1.1.0")] {
+      rt.sync(&[Arc::new(Active { id: "defined".into(), hash: hash.into(), dir: dir.clone(), manifest: manifest_for(version) })]).await;
+      assert_eq!(rt.running().len(), 1, "{:?}", rt.errors.read());
+    }
+    assert!(root.path().join(crate::plugins::build::BUILD).join("defined").is_dir(), "compiled under the plugins root");
+    let ping = rt.rpc("defined", "ping", json!(null), "page").await.unwrap();
+    assert_eq!(ping, json!({ "active": true, "migrated": "1.0.0->1.1.0" }));
+    let replies = rt.hook("prompt", &json!({ "text": "deploy it" })).await;
+    assert_eq!(replies[0].result.as_ref().unwrap(), &json!({ "context": "Use make ship." }));
+    let ctx = crate::plugins::run::CallContext::default();
+    assert_eq!(rt.tool("defined", "stat", &json!({ "n": 3 }), &ctx).await.unwrap(), "n=3");
+    assert_eq!(rt.run_schedule("defined", "daily", 42).await.unwrap(), json!({ "ran": 42 }));
+    // The loop: at 9:00 the day's run starts once; the next morning at 9:30 the missed 9:00 catches up
+    let records = Arc::new(crate::plugins::schedule::Records::new(root.path()));
+    let log: LogFn = Arc::new(|_: &str| {});
+    let nine = chrono::Local.with_ymd_and_hms(2026, 3, 4, 9, 0, 5).earliest().unwrap();
+    for (now, runs) in [(nine, 1), (nine, 0), (nine + chrono::Duration::minutes(24 * 60 + 30), 1)] {
+      let started = crate::plugins::schedule::tick(&rt, &records, now, &log).await;
+      assert_eq!(started.len(), runs, "at {now}");
+      for h in started {
+        h.await.unwrap();
+      }
+    }
+    let r = records.read().remove(&crate::plugins::schedule::key("defined", "daily")).unwrap();
+    assert_eq!((r.last_due, r.error, r.failures, r.running_until), (Some((nine + chrono::Duration::days(1)).timestamp_millis() - 5000), None, 0, None));
+    // A command without a prompt is answered in code, though the manifest does not list the `command` hook
+    let answer = rt.hook_of("defined", "command", json!({ "name": "review", "arguments": "the diff" })).await.unwrap().unwrap();
+    assert_eq!(answer, json!({ "text": "Review the diff" }));
+    rt.stop_all().await;
+  }
+
+  #[tokio::test]
+  async fn two_engines_starting_a_new_version_migrate_its_data_once() {
+    let Some((root, rt)) = setup() else { return };
+    let dir = root.path().join("mig");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+      dir.join("plugin.ts"),
+      "import { definePlugin } from '@acpira/plugin';\nexport default definePlugin({\n  migrate: async (_from: string, _to: string, ctx: any) => {\n    await new Promise(r => setTimeout(r, 300));\n    await ctx.storage.set('ran-' + process.pid, true);\n  },\n});\n",
+    )
+    .unwrap();
+    let active = |hash: &str, version: &str| {
+      let json = format!(r#"{{ "schema": 1, "id": "mig", "version": "{version}", "description": "d", "contributes": {{ "runtime": {{ "main": "plugin.ts" }} }} }}"#);
+      Arc::new(Active { id: "mig".into(), hash: hash.into(), dir: dir.clone(), manifest: manifest::parse(json.as_bytes()).unwrap().0 })
+    };
+    rt.sync(&[active("v1", "1.0.0")]).await;
+    rt.stop_all().await;
+    // A second engine on the same data folder
+    let (a, b) = (Runtimes::new(root.path().join(".data"), Arc::new(|_: &str| {})), Runtimes::new(root.path().join(".data"), Arc::new(|_: &str| {})));
+    a.enable(None);
+    b.enable(None);
+    let v2 = [active("v2", "2.0.0")];
+    tokio::join!(a.sync(&v2), b.sync(&v2));
+    assert_eq!((a.running().len(), b.running().len()), (1, 1), "{:?} {:?}", a.errors.read(), b.errors.read());
+    let kv: Value = serde_json::from_slice(&std::fs::read(root.path().join(".data/mig.kv.json")).unwrap()).unwrap();
+    let runs = kv.as_object().unwrap().keys().filter(|k| k.starts_with("ran-")).count();
+    assert_eq!((runs, kv["__acpira.version"].clone(), kv.get("__acpira.migrating")), (1, json!("2.0.0"), None), "{kv}");
+    a.stop_all().await;
+    b.stop_all().await;
+  }
+
   #[tokio::test]
   async fn the_check_refuses_a_runtime_that_speaks_another_protocol() {
     let Some((root, _rt)) = setup() else { return };
     let a = active(&root.path().join("a"), "h1", "");
-    let def = a.manifest.contributes.runtime.clone().unwrap();
-    probe("rt", "1.0.0", "h1", &a.dir, &def, &root.path().join(".data"), Arc::new(|_: &str| {})).await.unwrap();
-    let mut bad = def.clone();
-    bad.command = vec!["sh".into(), "-c".into(), "PROTO=2 exec node plugin.mjs".into()];
-    let e = probe("rt", "1.0.0", "h1", &a.dir, &bad, &root.path().join(".data"), Arc::new(|_: &str| {})).await.unwrap_err();
+    let with = |command: Option<Vec<String>>| {
+      let mut m = a.manifest.clone();
+      if let (Some(rt), Some(c)) = (m.contributes.runtime.as_mut(), command) {
+        rt.command = c;
+      }
+      m
+    };
+    probe("rt", "h1", &a.dir, &with(None), &root.path().join(".data"), Arc::new(|_: &str| {})).await.unwrap();
+    let bad = with(Some(vec!["sh".into(), "-c".into(), "PROTO=2 exec node plugin.mjs".into()]));
+    let e = probe("rt", "h1", &a.dir, &bad, &root.path().join(".data"), Arc::new(|_: &str| {})).await.unwrap_err();
     assert!(e.contains("protocol 2"), "{e}");
-    let mut silent = def;
-    silent.command = vec!["sleep".into(), "30".into()];
+    let silent = with(Some(vec!["sleep".into(), "30".into()]));
     let t = Instant::now();
-    let e = probe("rt", "1.0.0", "h1", &a.dir, &silent, &root.path().join(".data"), Arc::new(|_: &str| {})).await.unwrap_err();
+    let e = probe("rt", "h1", &a.dir, &silent, &root.path().join(".data"), Arc::new(|_: &str| {})).await.unwrap_err();
     assert!(e.contains("no answer") && t.elapsed() < INIT_TIMEOUT + Duration::from_secs(4), "{e}");
   }
 }

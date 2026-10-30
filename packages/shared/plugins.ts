@@ -4,7 +4,7 @@
 export type PluginLayer = 'agents' | 'tools' | 'interface' | 'automation';
 export const PLUGIN_LAYERS: readonly PluginLayer[] = ['agents', 'tools', 'interface', 'automation'];
 
-export type PluginContribution = 'tools' | 'mcp' | 'hooks' | 'theme' | 'prompts' | 'agent' | 'runtime' | 'skills' | 'commands' | 'providers' | 'ui';
+export type PluginContribution = 'tools' | 'mcp' | 'hooks' | 'theme' | 'style' | 'prompts' | 'agent' | 'runtime' | 'skills' | 'commands' | 'providers' | 'ui' | 'schedules';
 
 // Who made a change: user (a page), session (a card in a session, with its agent and model) or cli
 export interface PluginProvenance {
@@ -52,6 +52,30 @@ export interface PluginInfo {
   findings?: PluginFindings;
   // The source folder
   path: string;
+  // `contributes.schedules` with when they ran and run next
+  schedules?: PluginScheduleInfo[];
+  // The plugins it depends on, met when one is in effect at a version the range accepts
+  dependencies?: PluginDependencyInfo[];
+}
+
+export interface PluginScheduleInfo {
+  id: string;
+  cron: string;
+  description?: string;
+  // Milliseconds since the epoch
+  next?: number;
+  last?: number;
+  running: boolean;
+  error?: string;
+  // Stopped after failing runs in a row, until the plugin changes
+  paused: boolean;
+}
+
+export interface PluginDependencyInfo {
+  id: string;
+  range: string;
+  optional: boolean;
+  met: boolean;
 }
 
 export type ToolGroupId = 'summon' | 'sessions' | 'display' | 'browser';
