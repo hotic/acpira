@@ -4,13 +4,13 @@
 //! APNs key and posts it. The key is the user's own file under `<ACPIRA_HOME>/apns/` (`AuthKey_<KEY ID>.p8`, as Apple's
 //! portal names it) and never leaves this computer; without it nothing is sent.
 //!
-//! APNs speaks HTTP/2 only. The request goes through the system `curl` (HTTP/2 through nghttp2 on macOS) rather than a
-//! client linked in here: a notification is rare, and the gateway already links a network stack that has no HTTP/2
-//! client enabled.
+//! APNs speaks HTTP/2 only, which Windows' own curl lacks: the request goes through reqwest with its HTTP/2 enabled, on
+//! the rustls and ring the network stack links already, trusting the bundled Mozilla roots as the stack's relay client
+//! does (a static Linux build finds no system store it could rely on).
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use acpira_desktop::json_file::{read_json, write_json_strict};
@@ -19,7 +19,6 @@ use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use serde_json::{Value, json};
-use tokio::io::AsyncWriteExt;
 
 use crate::engine::Log;
 
@@ -27,8 +26,6 @@ use crate::engine::Log;
 const TOKEN_LIFE: Duration = Duration::from_secs(40 * 60);
 /// The same session and kind again within this is the same news (two engines, a repeated edge)
 const REPEAT: Duration = Duration::from_secs(5);
-/// Input this recent on an unlocked console means the user is at the computer, where its own windows tell them
-const AT_COMPUTER: Duration = Duration::from_secs(60);
 const SEND_WAIT: Duration = Duration::from_secs(20);
 /// What the alert carries: APNs takes 4 KB in all, and a lock screen shows a few lines
 const MAX_TITLE: usize = 120;
@@ -110,7 +107,7 @@ impl Push {
     }
     let me = self.clone();
     tokio::spawn(async move {
-      if at_computer().await {
+      if crate::presence::at_computer().await {
         return;
       }
       let payload = payload(&note, &computer);
@@ -125,19 +122,17 @@ impl Push {
   async fn post(&self, device: &str, target: &PushTarget, note: &PushNote, payload: &Value) -> Result<()> {
     let jwt = self.provider_token(&target.team)?;
     let host = if target.sandbox { "api.sandbox.push.apple.com" } else { "api.push.apple.com" };
-    let config = curl_config(&[
-      ("url", format!("https://{host}/3/device/{}", target.token)),
-      ("header", format!("authorization: bearer {jwt}")),
-      ("header", format!("apns-topic: {}", target.topic)),
-      ("header", "apns-push-type: alert".to_owned()),
+    let req = client()?
+      .post(format!("https://{host}/3/device/{}", target.token))
+      .header("authorization", format!("bearer {jwt}"))
+      .header("apns-topic", &target.topic)
+      .header("apns-push-type", "alert")
       // At once: priority 5 lets APNs hold an alert back to save the phone's power
-      ("header", "apns-priority: 10".to_owned()),
+      .header("apns-priority", "10")
       // A session's later news replaces its earlier one in the notification list
-      ("header", format!("apns-collapse-id: {}", clip(&note.session_id, 64))),
-      ("data-binary", payload.to_string()),
-      ("write-out", "\n%{http_code}".to_owned()),
-    ]);
-    let (status, body) = curl(&config).await?;
+      .header("apns-collapse-id", clip(&note.session_id, 64))
+      .body(payload.to_string());
+    let (status, body) = send(req).await?;
     match status {
       200 => Ok(()),
       // The app was removed or the token belongs to another environment: it never works again
@@ -172,15 +167,13 @@ pub async fn check(home: &Path, team: &str, topic: &str, sandbox: bool) -> Resul
   let (key_id, pem) = find_key(&home.join("apns"))?;
   let jwt = sign_jwt(&pem, &key_id, team, crate::store::now_ms() / 1000)?;
   let host = if sandbox { "api.sandbox.push.apple.com" } else { "api.push.apple.com" };
-  let config = curl_config(&[
-    ("url", format!("https://{host}/3/device/{}", "0".repeat(64))),
-    ("header", format!("authorization: bearer {jwt}")),
-    ("header", format!("apns-topic: {topic}")),
-    ("header", "apns-push-type: alert".to_owned()),
-    ("data-binary", json!({ "aps": { "alert": "check" } }).to_string()),
-    ("write-out", "\n%{http_code}".to_owned()),
-  ]);
-  let (status, body) = curl(&config).await?;
+  let req = client()?
+    .post(format!("https://{host}/3/device/{}", "0".repeat(64)))
+    .header("authorization", format!("bearer {jwt}"))
+    .header("apns-topic", topic)
+    .header("apns-push-type", "alert")
+    .body(json!({ "aps": { "alert": "check" } }).to_string());
+  let (status, body) = send(req).await?;
   match (status, reason(&body).as_str()) {
     (400, "BadDeviceToken") => Ok(format!("APNs accepts key {key_id} for team {team} ({host})")),
     (_, why) => bail!("APNs answered {status} {why} for key {key_id}, team {team}, topic {topic}"),
@@ -229,37 +222,42 @@ fn payload(note: &PushNote, computer: &str) -> Value {
   })
 }
 
-/// curl's config syntax (`--config -`): one `name = "value"` per line, quotes and backslashes escaped. The token and
-/// payload go on stdin rather than the command line, where other processes could read them
-fn curl_config(entries: &[(&str, String)]) -> String {
-  let mut out = String::new();
-  for (name, value) in entries {
-    let v = value.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t");
-    out.push_str(&format!("{name} = \"{v}\"\n"));
-  }
-  out
+/// The HTTP/2 client, made once: TLS through rustls on ring with the bundled roots, HTTP/2 from the first byte (APNs
+/// offers nothing else)
+fn client() -> Result<&'static reqwest::Client> {
+  static CLIENT: OnceLock<std::result::Result<reqwest::Client, String>> = OnceLock::new();
+  CLIENT
+    .get_or_init(|| {
+      let roots = rustls::RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
+      let mut tls = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_safe_default_protocol_versions()
+        .map_err(|e| e.to_string())?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+      tls.alpn_protocols = vec![b"h2".to_vec()];
+      reqwest::Client::builder().use_preconfigured_tls(tls).http2_prior_knowledge().timeout(SEND_WAIT).build().map_err(|e| e.to_string())
+    })
+    .as_ref()
+    .map_err(|e| anyhow!("no HTTP/2 client: {e}"))
 }
 
-/// Runs curl over HTTP/2 with the config on stdin: the status and the response body
-async fn curl(config: &str) -> Result<(u16, String)> {
-  let mut child = tokio::process::Command::new("curl")
-    .args(["--http2", "--silent", "--show-error", "--max-time", &SEND_WAIT.as_secs().to_string(), "--config", "-"])
-    .stdin(std::process::Stdio::piped())
-    .stdout(std::process::Stdio::piped())
-    .stderr(std::process::Stdio::piped())
-    .kill_on_drop(true)
-    .spawn()
-    .context("start curl")?;
-  if let Some(mut stdin) = child.stdin.take() {
-    stdin.write_all(config.as_bytes()).await?;
+/// Sends the request: the status and the response body
+async fn send(req: reqwest::RequestBuilder) -> Result<(u16, String)> {
+  let res = req.send().await.map_err(|e| anyhow!("{}", error_chain(&e)))?;
+  let status = res.status().as_u16();
+  Ok((status, res.text().await.unwrap_or_default()))
+}
+
+/// reqwest's error with its causes ("error sending request: … : connection refused")
+fn error_chain(e: &dyn std::error::Error) -> String {
+  let mut out = e.to_string();
+  let mut cur = e.source();
+  while let Some(c) = cur {
+    out.push_str(": ");
+    out.push_str(&c.to_string());
+    cur = c.source();
   }
-  let out = child.wait_with_output().await?;
-  let text = String::from_utf8_lossy(&out.stdout);
-  let (body, code) = text.rsplit_once('\n').unwrap_or(("", &text));
-  match code.trim().parse::<u16>() {
-    Ok(c) if c > 0 => Ok((c, body.to_owned())),
-    _ => bail!("curl: {}", String::from_utf8_lossy(&out.stderr).trim()),
-  }
+  out
 }
 
 /// APNs' `reason` from an error body
@@ -278,40 +276,6 @@ fn clip(s: &str, max: usize) -> String {
 
 fn short(id: &str) -> String {
   id.chars().take(10).collect()
-}
-
-/// Whether the user is at this computer: its console is this user's, unlocked, and had input a moment ago. Then the
-/// computer's own windows and notifications speak; the phone stays quiet. Unknown (another system) counts as away
-async fn at_computer() -> bool {
-  #[cfg(target_os = "macos")]
-  {
-    let ioreg = |args: &'static [&'static str]| async move {
-      let out = tokio::process::Command::new("/usr/sbin/ioreg").args(args).output().await.ok()?;
-      Some(String::from_utf8_lossy(&out.stdout).into_owned())
-    };
-    // SAFETY: getuid has no preconditions
-    let uid = unsafe { libc::getuid() };
-    let (Some(root), Some(hid)) = (ioreg(&["-n", "Root", "-d1"]).await, ioreg(&["-c", "IOHIDSystem", "-d", "4"]).await) else { return false };
-    console_unlocked(&root, uid) && idle_time(&hid).is_some_and(|idle| idle < AT_COMPUTER)
-  }
-  #[cfg(not(target_os = "macos"))]
-  false
-}
-
-/// `ioreg -n Root -d1`: this user's entry in `IOConsoleUsers` is on the console and not locked
-fn console_unlocked(root: &str, uid: u32) -> bool {
-  let Some(users) = root.lines().find_map(|l| l.split_once("\"IOConsoleUsers\" = (").map(|(_, rest)| rest)) else { return false };
-  let me = format!("\"kCGSSessionUserIDKey\"={uid}");
-  users.split("},{").any(|entry| {
-    entry.split(',').any(|f| f.trim_end_matches(['}', ')']) == me) && entry.contains("\"kCGSSessionOnConsoleKey\"=Yes") && !entry.contains("\"CGSSessionScreenIsLocked\"=Yes")
-  })
-}
-
-/// `ioreg -c IOHIDSystem`: the time since the last keyboard or pointer input (nanoseconds)
-fn idle_time(hid: &str) -> Option<Duration> {
-  let line = hid.lines().find(|l| l.contains("\"HIDIdleTime\" = "))?;
-  let ns = line.rsplit("= ").next()?.trim().parse::<u64>().ok()?;
-  Some(Duration::from_nanos(ns))
 }
 
 #[cfg(test)]
@@ -334,12 +298,6 @@ mod tests {
     let long = "x".repeat(5000);
     let p = payload(&note(PushKind::Done, &long), "gw");
     assert_eq!(p["aps"]["alert"]["body"].as_str().unwrap().chars().count(), MAX_BODY);
-  }
-
-  #[test]
-  fn the_config_escapes_what_the_payload_holds() {
-    let c = curl_config(&[("data-binary", r#"{"a":"q\"\\ "}"#.to_owned()), ("write-out", "\n%{http_code}".to_owned())]);
-    assert_eq!(c, "data-binary = \"{\\\"a\\\":\\\"q\\\\\\\"\\\\\\\\ \\\"}\"\nwrite-out = \"\\n%{http_code}\"\n");
   }
 
   #[test]
@@ -381,21 +339,5 @@ mod tests {
     assert_eq!(again.targets.lock().clone(), BTreeMap::from([("dev1".to_owned(), t)]));
     again.forget("dev1");
     assert!(Push::load(dir.path(), log).targets.lock().is_empty());
-  }
-
-  #[test]
-  fn the_console_reads_as_this_users_and_unlocked() {
-    let line = |locked: &str| {
-      format!(
-        r#"  | "IOConsoleUsers" = ({{"kCGSSessionOnConsoleKey"=No,"kCGSSessionUserIDKey"=502}},{{"kCGSSessionOnConsoleKey"=Yes,{locked}"kCGSSessionUserIDKey"=501,"kCGSSessionGroupIDKey"=20}})"#
-      )
-    };
-    assert!(console_unlocked(&line(""), 501));
-    assert!(!console_unlocked(&line(r#""CGSSessionScreenIsLocked"=Yes,"#), 501));
-    assert!(!console_unlocked(&line(""), 502));
-    assert!(!console_unlocked(&line(""), 50));
-    assert!(!console_unlocked("nothing", 501));
-    assert_eq!(idle_time("    | |     \"HIDIdleTime\" = 79178916\n"), Some(Duration::from_nanos(79_178_916)));
-    assert_eq!(idle_time("none"), None);
   }
 }

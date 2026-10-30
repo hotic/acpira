@@ -32,11 +32,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
+      # Before the Rust suites: the gateway's end-to-end test builds the fake agent from node_modules (skipped without)
+      - uses: pnpm/action-setup@v6
+      - run: pnpm install --frozen-lockfile
       - name: Native process, storage and PowerShell 5.1 regressions
         shell: powershell
         run: ./scripts/ci/test-windows.ps1
-      - uses: pnpm/action-setup@v6
-      - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm exec vitest run packages/ui/test/fileLinks.test.ts apps/vscode/test/terminalLaunch.test.ts
       - run: pnpm build

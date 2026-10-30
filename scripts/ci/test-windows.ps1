@@ -12,6 +12,8 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Windows unit regressions failed' }
         & cargo test -p acpira-host --test windows_launch --test windows_compat --locked
         if ($LASTEXITCODE -ne 0) { throw 'Windows process regressions failed' }
+        & cargo test -p acpira-gateway --locked
+        if ($LASTEXITCODE -ne 0) { throw 'Windows gateway regressions failed' }
         & cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
         if ($LASTEXITCODE -ne 0) { throw 'Windows target checks failed' }
     } finally { Pop-Location }

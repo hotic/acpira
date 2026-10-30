@@ -104,6 +104,49 @@ pub fn current_user_sid_string() -> io::Result<String> {
   Ok(s)
 }
 
+/// Give a directory an ACL that admits this user alone, inherited by the files and directories in it, and none inherited
+/// from above (the way mode 700 keeps a Unix directory private)
+pub fn owner_only_dir(dir: &std::path::Path) -> io::Result<()> {
+  use std::os::windows::ffi::OsStrExt;
+  use windows_sys::Win32::Security::Authorization::{SE_FILE_OBJECT, SetNamedSecurityInfoW};
+  use windows_sys::Win32::Security::{ACL, DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, PROTECTED_DACL_SECURITY_INFORMATION};
+  let sid = current_user_sid_string()?;
+  // P: protected from inheritance; OICI: inherited by files and subdirectories; FA: full access
+  let sddl: Vec<u16> = format!("D:P(A;OICI;FA;;;{sid})").encode_utf16().chain(Some(0)).collect();
+  let mut descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+  // SAFETY: a NUL-terminated SDDL string in, a LocalAlloc'd descriptor out (freed below)
+  if unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.as_ptr(), SDDL_REVISION_1, &mut descriptor, std::ptr::null_mut()) } == 0 {
+    return Err(io::Error::last_os_error());
+  }
+  let (mut present, mut defaulted) = (0, 0);
+  let mut dacl: *mut ACL = std::ptr::null_mut();
+  // SAFETY: the descriptor made above; the DACL points into it and is used before it is freed
+  let got = unsafe { GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted) };
+  let path: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
+  let err = if got == 0 {
+    io::Error::last_os_error().raw_os_error().unwrap_or(1) as u32
+  } else {
+    // SAFETY: a NUL-terminated path and the DACL above; owner, group and SACL untouched
+    unsafe {
+      SetNamedSecurityInfoW(
+        path.as_ptr(),
+        SE_FILE_OBJECT,
+        DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+        dacl,
+        std::ptr::null(),
+      )
+    }
+  };
+  // SAFETY: allocated by ConvertStringSecurityDescriptorToSecurityDescriptorW
+  unsafe { LocalFree(descriptor) };
+  if err != 0 {
+    return Err(io::Error::from_raw_os_error(err as i32));
+  }
+  Ok(())
+}
+
 /// Whether the process at the other end of a connected pipe client runs as this user. False when it cannot be told (the
 /// process belongs to someone else and cannot be opened)
 pub fn served_by_this_user(pipe: &impl std::os::windows::io::AsRawHandle) -> bool {
@@ -137,5 +180,11 @@ mod tests {
     assert!(sid.starts_with("S-1-"), "{sid}");
     let o = OwnerOnly::new().unwrap();
     assert!(!o.as_ptr().is_null());
+    let dir = std::env::temp_dir().join(format!("acpira-owner-only-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    owner_only_dir(&dir).unwrap();
+    std::fs::write(dir.join("key"), "secret").unwrap();
+    assert_eq!(std::fs::read_to_string(dir.join("key")).unwrap(), "secret");
+    std::fs::remove_dir_all(&dir).unwrap();
   }
 }

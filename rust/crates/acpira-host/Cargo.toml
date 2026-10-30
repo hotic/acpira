@@ -11,7 +11,7 @@ name = "acpira"
 path = "src/bin/acpira.rs"
 
 [dependencies]
-acpira-shared.workspace = true
+acpira-shared = { workspace = true, features = ["local-ipc"] }
 acpira-rpc.workspace = true
 acpira-agent.workspace = true
 anyhow.workspace = true

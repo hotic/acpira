@@ -48,13 +48,16 @@ export interface GatewayStatus {
   relayConnected: boolean;
   devices: DeviceStatus[];
   pairing?: PairingStatus;
+  /** Keeping the computer awake was asked for and could not be had: why */
+  awakeError?: string;
 }
 
 export interface RemoteAccessView {
-  /** Remote access can be turned on here; `unavailable` says why not (`platform`: not macOS yet; `component`: this
-   * build has no gateway binary) */
+  /** Remote access can be turned on here; `unavailable` says why not (`component`: this build has no gateway binary;
+   * `service`: no login service to run it from, such as a Linux user manager that ends with an SSH session;
+   * `platform`: a system the gateway does not run on) */
   available: boolean;
-  unavailable?: 'platform' | 'component';
+  unavailable?: 'platform' | 'component' | 'service';
   /** The switch: the gateway starts at login */
   enabled: boolean;
   /** An install, uninstall or restart is under way */

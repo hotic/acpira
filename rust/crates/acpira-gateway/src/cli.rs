@@ -1,14 +1,20 @@
-//! acpira-gateway run [--home DIR] [--engine PATH] [--relays n0|off]   the gateway (a LaunchAgent runs this)
+//! acpira-gateway run [--home DIR] [--engine PATH] [--relays n0|off] [--log FILE] [--supervise]
+//!                                                                      the gateway (the login service runs this)
 //! acpira-gateway pair [--home DIR]                                     open a pairing window; QR code and link
 //! acpira-gateway devices | status [--json] [--home DIR]                paired devices, who is online on which path
 //! acpira-gateway revoke ID [--home DIR]                                forget a device (an id prefix will do)
 //! acpira-gateway stop [--home DIR]
 //! acpira-gateway try LINK [--home DIR]                                 act as a device: pair, connect, list sessions
 //! acpira-gateway push-check TEAM [--topic ID] [--sandbox] [--home DIR]  whether APNs takes the key in <home>/apns/
+//!
+//! The Windows desktop exe runs the same command line behind its `gateway` role (`Acpira.exe gateway run …`). There the
+//! gateway is a GUI program, so a login task opens no console; the other commands attach to the console they were typed
+//! in, which does not wait for them (debugging aids on Windows).
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::control::{self, Request};
@@ -24,24 +30,58 @@ use acpira_net::identity;
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 
+/// A gateway that exits with an error is started again after this, as launchd's `ThrottleInterval` and systemd's
+/// `RestartSec` do for theirs
+const RESTART_THROTTLE: Duration = Duration::from_secs(10);
+/// The exit code of a `run` that found another gateway serving the data root: its supervisor stops too
+const ALREADY_RUNNING: i32 = 3;
+/// `--log` starts over beside a `.1` once it grows past this
+const LOG_ROTATE_BYTES: u64 = 4 * 1024 * 1024;
+
+/// The arguments before the gateway's own: none for `acpira-gateway`, `gateway` for the Windows desktop exe. A supervisor
+/// starts its gateway with them
+static PREFIX: OnceLock<Vec<String>> = OnceLock::new();
+
 fn flag(args: &[String], name: &str) -> Option<String> {
   args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
 }
 
+/// The data root as the engine resolves it: `--home`, else ACPIRA_HOME, else `.acpira` in the user's home
+/// (USERPROFILE on Windows)
 fn home(args: &[String]) -> (PathBuf, bool) {
   if let Some(h) = flag(args, "--home") {
     return (std::path::absolute(&h).unwrap_or_else(|_| PathBuf::from(h)), true);
   }
+  let user = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).unwrap_or_default();
   let h = std::env::var("ACPIRA_HOME")
     .ok()
     .filter(|s| !s.trim().is_empty())
     .map(PathBuf::from)
-    .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".acpira"));
+    .unwrap_or_else(|| PathBuf::from(user).join(".acpira"));
   (h, false)
 }
 
-pub async fn main() {
-  let args: Vec<String> = std::env::args().skip(1).collect();
+/// Runs the command line `args` (without the program name and `prefix`) to its end; the exit code. `prefix` is what
+/// comes before them on this binary's command line
+pub fn main(prefix: Vec<String>, args: Vec<String>) -> i32 {
+  let _ = PREFIX.set(prefix);
+  if args.first().map(String::as_str) != Some("run") {
+    acpira_desktop::console::attach_parent();
+  }
+  if args.first().map(String::as_str) == Some("run") && args.iter().any(|a| a == "--supervise") {
+    return supervise(&args);
+  }
+  let rt = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+    Ok(rt) => rt,
+    Err(e) => {
+      eprintln!("acpira-gateway: {e}");
+      return 1;
+    }
+  };
+  rt.block_on(dispatch(args))
+}
+
+async fn dispatch(args: Vec<String>) -> i32 {
   let r = match args.first().map(String::as_str) {
     Some("run") => run(&args).await,
     Some("pair") => pair_cmd(&args).await,
@@ -56,12 +96,82 @@ pub async fn main() {
     }
     _ => {
       eprintln!("usage: acpira-gateway run | pair | devices | status [--json] | revoke ID | stop | try LINK | push-check TEAM   [--home DIR]");
-      std::process::exit(2);
+      return 2;
     }
   };
-  if let Err(e) = r {
-    eprintln!("acpira-gateway: {e:#}");
-    std::process::exit(1);
+  match r {
+    Ok(()) => 0,
+    Err(e) => {
+      eprintln!("acpira-gateway: {e:#}");
+      if e.downcast_ref::<control::AlreadyRunning>().is_some() { ALREADY_RUNNING } else { 1 }
+    }
+  }
+}
+
+/// `run --supervise`: the gateway as a child, started again `RESTART_THROTTLE` after the last start when it exits with
+/// an error or crashes, and not after a clean exit (`stop`, the engine turning remote access off) or when another
+/// gateway serves this data root already. The restart launchd and systemd give theirs, for the login services that have
+/// none (Windows' task, the autostart entries). The child writes `--log`; its stderr (a panic) goes there too
+fn supervise(args: &[String]) -> i32 {
+  let exe = match std::env::current_exe() {
+    Ok(e) => e,
+    Err(e) => {
+      eprintln!("acpira-gateway: {e}");
+      return 1;
+    }
+  };
+  let child_args: Vec<String> = PREFIX.get().cloned().unwrap_or_default().into_iter().chain(args.iter().filter(|a| *a != "--supervise").cloned()).collect();
+  let log_path = flag(args, "--log").map(PathBuf::from);
+  let note = |line: &str| match &log_path {
+    Some(p) => append_line(p, &format!("supervisor: {line}")),
+    None => eprintln!("[{}] supervisor: {line}", acpira_shared::time::iso_of_ms(crate::store::now_ms() as i64)),
+  };
+  loop {
+    let started = Instant::now();
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.args(&child_args).stdin(std::process::Stdio::null());
+    if let Some(f) = log_path.as_deref().and_then(open_log) {
+      if let Ok(f2) = f.try_clone() {
+        cmd.stdout(f2);
+      }
+      cmd.stderr(f);
+    }
+    match cmd.status() {
+      Ok(s) if s.success() => return 0,
+      Ok(s) if s.code() == Some(ALREADY_RUNNING) => {
+        note("another gateway serves this data root");
+        return 0;
+      }
+      Ok(s) => note(&format!("the gateway exited ({s}); starting it again")),
+      Err(e) => note(&format!("could not start the gateway: {e}")),
+    }
+    std::thread::sleep(RESTART_THROTTLE.saturating_sub(started.elapsed()));
+  }
+}
+
+/// The log file, opened for appending (rotated once it is large), or none when it cannot be
+fn open_log(path: &Path) -> Option<std::fs::File> {
+  if let Some(dir) = path.parent() {
+    let _ = std::fs::create_dir_all(dir);
+  }
+  if std::fs::metadata(path).is_ok_and(|m| m.len() > LOG_ROTATE_BYTES) {
+    let mut old = path.as_os_str().to_owned();
+    old.push(".1");
+    let _ = std::fs::rename(path, old);
+  }
+  let mut open = std::fs::OpenOptions::new();
+  open.create(true).append(true);
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::OpenOptionsExt;
+    open.mode(0o600);
+  }
+  open.open(path).ok()
+}
+
+fn append_line(path: &Path, line: &str) {
+  if let Some(mut f) = open_log(path) {
+    let _ = writeln!(f, "[{}] {line}", acpira_shared::time::iso_of_ms(crate::store::now_ms() as i64));
   }
 }
 
@@ -72,8 +182,12 @@ async fn push_check(args: &[String]) -> Result<()> {
   Ok(())
 }
 
-fn stderr_log() -> Log {
-  Arc::new(|line: &str| eprintln!("[{}] {line}", acpira_shared::time::iso_of_ms(crate::store::now_ms() as i64)))
+/// Lines with a timestamp, on stderr or appended to `--log`
+fn run_log(file: Option<PathBuf>) -> Log {
+  match file {
+    Some(p) => Arc::new(move |line: &str| append_line(&p, line)),
+    None => Arc::new(|line: &str| eprintln!("[{}] {line}", acpira_shared::time::iso_of_ms(crate::store::now_ms() as i64))),
+  }
 }
 
 /// The engine binary: `--engine`, else what `gateway.json` names, else an `acpira` next to this binary
@@ -84,9 +198,14 @@ fn engine_binary(args: &[String], paths: &Paths) -> Result<PathBuf> {
   if let Some(e) = crate::store::Config::load(&paths.config).engine {
     return Ok(PathBuf::from(e));
   }
-  let beside = std::env::current_exe()?.with_file_name(if cfg!(windows) { "acpira.exe" } else { "acpira" });
+  let exe = std::env::current_exe()?;
+  let beside = exe.with_file_name(if cfg!(windows) { "acpira.exe" } else { "acpira" });
   if beside.is_file() {
     return Ok(beside);
+  }
+  // The Windows desktop exe: the engine is this binary's own role
+  if PREFIX.get().is_some_and(|p| !p.is_empty()) {
+    return Ok(exe);
   }
   bail!("no engine binary: pass --engine, or set \"engine\" in {}", paths.config.display())
 }
@@ -95,7 +214,7 @@ async fn run(args: &[String]) -> Result<()> {
   let (home, explicit_home) = home(args);
   let paths = Paths::new(&home);
   let binary = engine_binary(args, &paths)?;
-  let log = stderr_log();
+  let log = run_log(flag(args, "--log").map(PathBuf::from));
   // The control socket first: a second gateway stops here, before it touches the network
   let listener = control::bind(&paths.socket).await?;
   // The login shell's environment, once (agents started from a device see the variables ~/.zshrc exports)
@@ -140,24 +259,36 @@ async fn run(args: &[String]) -> Result<()> {
       let mut a = crate::awake::Awake::new();
       let mut rx = g.watch();
       loop {
-        a.set(g.keep_awake() && g.status().devices.iter().any(|d| d.online));
+        a.set(g.keep_awake() && g.status().devices.iter().any(|d| d.online)).await;
+        g.set_awake_error(a.error());
         if rx.changed().await.is_err() {
           return;
         }
       }
     })
   };
-  let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
   tokio::select! {
     _ = tokio::signal::ctrl_c() => {}
-    _ = term.recv() => {}
+    () = terminated() => {}
     () = stop.notified() => {}
   }
   log("stopping");
   awake.abort();
   g.stop().await;
+  #[cfg(unix)]
   let _ = std::fs::remove_file(&g.paths.socket);
   Ok(())
+}
+
+/// SIGTERM (launchd, systemd and `kill` stop a gateway with it). Windows has no such signal: the engine stops the
+/// gateway over its control channel first
+async fn terminated() {
+  #[cfg(unix)]
+  if let Ok(mut term) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+    term.recv().await;
+    return;
+  }
+  std::future::pending::<()>().await
 }
 
 async fn pair_cmd(args: &[String]) -> Result<()> {

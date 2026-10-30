@@ -1,11 +1,7 @@
-#[cfg(unix)]
-#[tokio::main]
-async fn main() {
-  acpira_gateway::cli::main().await;
-}
+// A GUI program on Windows: a login task starts it without a console window (cli.rs attaches the other commands to the
+// console they were typed in)
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
-#[cfg(not(unix))]
 fn main() {
-  eprintln!("acpira-gateway runs on macOS and Linux only for now");
-  std::process::exit(2);
+  std::process::exit(acpira_gateway::cli::main(Vec::new(), std::env::args().skip(1).collect()));
 }

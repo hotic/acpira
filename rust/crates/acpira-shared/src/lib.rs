@@ -14,6 +14,8 @@ pub mod export_transcript;
 pub mod host_tools;
 pub mod i18n;
 pub mod inventory;
+#[cfg(feature = "local-ipc")]
+pub mod local_ipc;
 pub mod model_catalog;
 pub mod model_shapes;
 pub mod model_sources;
