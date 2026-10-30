@@ -47,12 +47,12 @@ declare global {
   // `tab`: a browser page shown as a tab of the desktop tool panel (rust/crates/acpira-desktop/src/page.rs), whose transport comes from the chat
   // `remote`: the page offers SSH hosts without being the desktop app (the browser harness, test/host-preview/shim.js)
   // `fileBase`: where the tool panel loads a local media file by absolute path (the desktop app's /file route)
-  // `firstRun`: the shell found no data folder and started no engine; the first-run flow (welcome/) shows the folder as
-  // `home`, in the shell's `locale`, until the user says yes (createDataHome) and the engine's init arrives
+  // `firstRun`: desktop welcome is required while data is missing or the desktop profile is new. `home` means the
+  // engine waits for folder consent; without it, shared data exists and the intro and tour need no consent
   // `tourPage`: VS Code's tab of the interface tour (openTour), which has no engine view at all
   // `opensTour`: the shell plays the tour in a tab of its own when the General page asks (VS Code)
   // `imageCopy`: the shell answers copyImage with copiedImage, putting an image on the system clipboard (VS Code, local)
-  interface Window { __acpira?: { host: 'sidebar' | 'editor' | 'browser'; font?: Appearance['font']; sessionLinkBase?: string; shell?: 'desktop'; platform?: 'mac' | 'win' | 'linux'; tab?: string; remote?: boolean; fileBase?: string; firstRun?: { home: string; locale: string }; tourPage?: { locale: string }; opensTour?: boolean; imageCopy?: boolean } }
+  interface Window { __acpira?: { host: 'sidebar' | 'editor' | 'browser'; font?: Appearance['font']; sessionLinkBase?: string; shell?: 'desktop'; platform?: 'mac' | 'win' | 'linux'; tab?: string; remote?: boolean; fileBase?: string; firstRun?: { home?: string; locale: string }; tourPage?: { locale: string }; opensTour?: boolean; imageCopy?: boolean } }
 }
 
 // Always through the memo: acquireVsCodeApi() throws when called twice, and other components (Link) reach the api via vscodeApi()
@@ -213,11 +213,14 @@ export function App() {
   useEffect(() => { lastView.current = view; }, [view]);
   const [settings, setSettings] = useState<SettingsView>();
   const [locale, setLoc] = useState<Locale>(bootLocale ?? 'en');
-  // The first-run flow or the interface tour over the sample session (welcome/): which, and whether a replay has ended (the
-  // real shell is back under the fading layer). The desktop's first launch gets the intro and the tour; VS Code's sidebar
-  // only the folder card
-  const [welcome, setWelcome] = useState<{ mode: WelcomeMode; ended: boolean } | undefined>(() =>
-    tourPage ? { mode: 'replay', ended: false } : firstRun ? { mode: desktop ? 'first' : 'consent', ended: false } : undefined);
+  // Missing data always starts the desktop's full welcome, even for a returning profile. A new desktop profile
+  // with shared data plays the intro and tour without consent; only VS Code's sidebar uses the card alone
+  const [welcome, setWelcome] = useState<{ mode: WelcomeMode; ended: boolean } | undefined>(() => {
+    if (tourPage) return { mode: 'replay', ended: false };
+    if (!firstRun) return undefined;
+    const mode = !desktop ? 'consent' : firstRun.home === undefined ? 'replay' : 'first';
+    return { mode, ended: false };
+  });
   const [detected, setDetected] = useState<DetectedAgent[]>();
   const [firstRunError, setFirstRunError] = useState<string>();
   const [chatgptStatus, setChatgptStatus] = useState<ChatGptIntegrationStatus>();
@@ -438,7 +441,7 @@ export function App() {
     window.addEventListener('message', onMsg);
     post({ type: 'ready', patches: true });
     // The intro's agent row: the shell looks on PATH itself, there being no engine yet
-    if (firstRun && desktop) post({ type: 'detectAgents' });
+    if (firstRun?.home !== undefined && desktop) post({ type: 'detectAgents' });
     // The shell routes "Add to Chat" to the chat used last; a click into an already visible view changes no visibility it could see
     const onFocus = () => post({ type: 'viewFocus' });
     window.addEventListener('focus', onFocus);
@@ -617,15 +620,16 @@ export function App() {
 
   cwdRef.current = session?.cwd ?? init?.cwd ?? '';
   // The first-run flow / tour layer sits beside whatever shell is under it (the second child below, in every branch),
-  // so it outlives the swap from the sample shell to the real one and fades out over the real one. The first run ends
-  // when the engine's init is in; a replay when the user finishes or skips it
+  // so it outlives the swap from the sample shell to the real one. Folder consent waits for init; the intro and tour
+  // without consent finish only on the user's action, even when init arrives behind them
   const ready = !!init && !!settings;
   const layer = welcome && (
     <LocaleContext.Provider value={locale}>
-      <Welcome mode={welcome.mode} scope={sampleScope} home={firstRun?.home ?? ''} agents={detected} error={firstRunError}
+      <Welcome mode={welcome.mode} scope={sampleScope} home={firstRun?.home ?? ''}
+        agents={detected ?? (ready ? agents.filter(a => a.available && a.id !== 'acpira') : undefined)} error={firstRunError}
         closing={welcome.mode === 'replay' ? welcome.ended : ready} appearance={appearance} theme={theme} look={look}
         onCreate={() => { setFirstRunError(undefined); post({ type: 'createDataHome' }); }}
-        onEnd={() => { setWelcome(w => w && { ...w, ended: true }); if (tourPage) post({ type: 'tourDone' }); }}
+        onEnd={() => { setWelcome(w => w && { ...w, ended: true }); if (tourPage || desktop) post({ type: 'tourDone' }); }}
         onGone={() => setWelcome(undefined)} />
     </LocaleContext.Provider>
   );

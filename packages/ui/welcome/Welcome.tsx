@@ -20,8 +20,8 @@ import { cn } from '../ui/cn';
 // The layer is its own fixed sheet beside the shell, not inside it, so it stays put while the sample shell under it
 // gives way to the real one; it carries the shell's theme, appearance and look attributes for the tokens
 
-// first: the desktop's first launch (intro, tour, consent); consent: the VS Code first run, the card alone (the sidebar
-// is too narrow for the intro and the tour); replay: the tour from Settings, its last step and skipping both end it
+// first: intro, tour and missing-folder consent, even for a returning desktop profile; consent: the card alone for
+// VS Code's narrow sidebar; replay: intro and tour without consent, also used by a new desktop profile with shared data.
 export type WelcomeMode = 'first' | 'consent' | 'replay';
 type Stage = 'intro' | number | 'consent' | 'done';
 type Phase = 'intro' | 'tour' | 'consent' | 'done';
@@ -243,7 +243,7 @@ export interface WelcomeProps {
 
 export function Welcome(p: WelcomeProps) {
   const { mode, closing } = p;
-  const [stage, setStage] = useState<Stage>(mode === 'first' ? 'intro' : mode === 'consent' ? 'consent' : 0);
+  const [stage, setStage] = useState<Stage>(mode === 'consent' ? 'consent' : 'intro');
   const [from, setFrom] = useState<'tour' | 'skip'>('tour');
   const [creating, setCreating] = useState(false);
   const phase: Phase = typeof stage === 'number' ? 'tour' : stage;
@@ -495,7 +495,7 @@ const TREE: [string, () => string][] = [
 ];
 
 // The data folder consent. The location is fixed (the engine's default home): no picker. Two kinds of button only, back as
-// a plain one and create as the primary; there is no quit, closing the window declines. VS Code's card has no back
+// a plain one and create as the primary; there is no quit, closing the window declines. Consent-only cards have no back
 function Consent({ open, home, theme, motion, error, busy, back, onCreate }: { open: boolean; home: string; theme: Theme; motion: Appearance['motion']; error?: string; busy: boolean; back?: { label: string; go: () => void }; onCreate: () => void }) {
   // The light runs round the card's own corner (rounded-lg, which the density's radius sets)
   const surface = useRef<HTMLDivElement>(null);

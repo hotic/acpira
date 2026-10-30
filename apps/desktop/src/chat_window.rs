@@ -95,6 +95,7 @@ impl ChatWindow {
       // The first-run flow runs before any engine (acpira_desktop::first_run), so the shell answers it
       "detectAgents" => app.detect_agents(self),
       "createDataHome" => app.create_data_home(self),
+      "tourDone" => app.tour_done(),
       "pickFolder" => crate::app::pick_folder(self.clone()),
       // The updater stays in the shell too (About, the restart toast)
       "updateCheck" | "updateInstall" | "updateAuto" => {
