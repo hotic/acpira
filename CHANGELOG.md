@@ -11,6 +11,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [2.0.0] - 2026-10-30
+
+### Added
+
+- **The Acpira desktop app, first public release.** A standalone app with the same Rust engine, sessions, accounts and settings in `~/.acpira` as the VS Code and JetBrains plugins, drawn with the system WebView instead of Electron. macOS on Apple silicon (macOS 26 or later) gets a Developer ID signed and notarized dmg. Windows x64 gets one portable `Acpira.exe` in a zip; it is not Authenticode-signed yet, so SmartScreen may ask before the first start. Linux packages (deb, rpm, AppImage) build from source but are not published yet.
+- **The desktop app updates itself.** It reads a signed update manifest from the latest GitHub Release, downloads a delta from the installed version where one exists, verifies every file and the macOS code signature, and swaps the app in place. Turns that are running when the update applies finish on the previous engine.
+- **A tool panel beside the desktop chat.** Files, Terminal and Browser tabs open from the new-tab page and stay mounted across session and project switches. The file viewer previews images, audio, video and PDF and offers "Open with default app" for the rest. Settings choose whether the panel follows the project, the session or the whole window, and which modules it offers. The panel folds away for an empty chat.
+- **SSH remote folders in the desktop app.** Open a folder on any host your `ssh` reaches. Under local run the agent loop stays on this machine and only tools run on the host, now including Claude Code's file and shell tools beside the built-in agent's. Under remote run the host's own engine runs the session. Each host folder keeps one session history in the host's own store, missing helper builds are fetched and verified on demand, and opening a host file opens a read-only local copy.
+- **First-run welcome.** A short intro and an interface tour run over a sample session, and nothing is written to `~/.acpira` until the data folder is approved on the consent card. The tour can be replayed from Settings.
+- **Plugins.** A plugin is a folder with a `plugin.json` that can add script tools served to every agent, MCP servers, workspace hooks, slash commands, skills, model sources for the built-in agent, a theme layer, interface pieces, tool panel tabs, or a whole specialised agent on the built-in loop. Plugins go live without a build or a restart. An agent proposes one with `plugin_activate`, the user approves it on a card in the chat, and each version is frozen as a read-only copy that can be rolled back. Settings has a Plugins page, and `acpira plugin list|propose|disable|rollback` covers the command line.
+- **Plugin runtimes.** A plugin can keep a resident process that receives session, turn, tool, permission and usage events, hooks into prompts, permissions, retries and the built-in agent's loop, reads and drives sessions through an allowlisted session API, asks the user questions, and offers methods to pages and other plugins. A new version starts before the old one stops. Hooks can deny or insist on a permission card but can never approve one. `acpira plugin new` scaffolds a plugin in JavaScript or Python with a dependency-free SDK.
+- **Skins from the chat.** A plugin card in a reply can apply a skin or interface pieces with one click and undo them later. One skin is active at a time.
+- **Safe Mode.** `acpira safe-mode on|off`, the VS Code command and engine failure toast, the desktop Help menu and the IntelliJ gear menu all turn every plugin off at once, even while the engine is stuck or down.
+- **Chats without a project.** The start page and the empty desktop window offer a chat with no project folder, listed in their own section.
+- **Edit a message while the agent is still replying.** The running turn stops, settles as cancelled, and the conversation continues from the edited message, for every ACP agent. Queued prompts wait for the edit. Clicking outside the inline editor keeps its draft for the next open.
+- **Pinned sessions inside their project.** The view menu's Pinned row places pinned sessions first in their own project or at the top of the list. Projects can be dragged within and across sections, and view filters keep project folds.
+- **Image file references open in the Lightbox**, with wheel zoom and drag to pan. Image and file references get a menu with Open in editor, Reveal in Finder or Explorer, and Copy path.
+- **Copied GIFs stay animated.** In the desktop app and in VS Code on local macOS and Windows, copying a GIF puts the file on the system clipboard instead of a single PNG frame.
+- **Paired remote access, groundwork for the mobile app.** The engine can pair devices by scanning a code over an end-to-end encrypted connection with no account, and the macOS builds ship the `acpira-gateway` process for it. The iPhone and iPad app is not released yet, so the devices row in the desktop column only announces it until remote access is turned on in Settings → Connections.
+- The picked sidekick shows on the model chip, which steps its labels down to fit a narrow toolbar.
+- Settings pages follow the window's back and forward, including ⌘[ and ⌘] on macOS.
+- Subagent replies in the inspector offer copy and stats.
+- Reflection Beam models are recognised, with their vendor mark.
+
+### Changed
+
+- **Settings are redesigned.** A Plugins page holds a tile per agent with its switch, order and version, opening a tabbed agent dialog. Editors for model sources, subagents, groups, SSH hosts, ChatGPT and storage reviews open as sub-pages, and ChatGPT moves onto Connections. Models are managed per source with searchable selects, and General and Appearance are grouped into titled cards.
+- Optimized engine and desktop builds abort on a panic instead of unwinding, which makes the binaries smaller. The built-in agent parses PDFs in a child process, so a parser crash fails that file rather than the engine.
+- Packages carry only the woff2 KaTeX fonts, about 0.9 MB less each.
+- Streaming in WebKit hosts no longer relays out whole paragraphs and code fences on every reveal, which cuts the desktop app's page memory growth during long replies. Syntax highlighting runs in budgeted slices for the active theme only, and long file views and trees render only near the viewport.
+- Background job checks are named after their command, and repeated checks fold into one row.
+- Picks made while a new session is still starting apply to its first turn instead of being dropped.
+- Deleting a session is confirmed only after it completes, and Undo is offered only by the engine that owns the session.
+
+### Fixed
+
+- Permission requests are approved automatically in agents' own full-access modes, and new option labels are localized.
+- The @ and / lists open right after CJK text, and WebKit IME composition keys no longer act as shortcuts.
+- Claude subagents appear where they were delegated, summoned CLIs sign in with a saved account, and subagent reasoning efforts match by exact value or equivalent level.
+- Reasoning levels stay consistent from model discovery to requests.
+- A task notification the model wrote renders as one quiet row, and a fenced tool error renders as plain text with one copy button.
+- The built-in agent counts every non-keepalive stream event toward its idle watchdog and allows only the engine's own MCP tools without a card.
+- Pinned rows, the devices card, the Set as goal strip and the reply stats card no longer jump while they update.
+- Session list rows and headers no longer select text on drag or double click, and a project's extra sessions reset when its fold reopens.
+- The gear menu and memoized views refresh on a language switch.
+- The composer beam has its inner glow and bloom back.
+- On macOS the desktop app opens file types no app claims in the text editor.
+
 ## [1.11.0] - 2026-10-25
 
 ### Added
