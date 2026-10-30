@@ -664,7 +664,8 @@ export const fr = {
 
   'host.notFound': '{command} introuvable — installez d’abord la CLI {agent}',
   'host.remoteBuiltinOnly': '{agent} ne peut pas travailler dans un dossier sur {host} en exécution locale ; seuls l\'agent intégré d\'Acpira et Claude Code le peuvent',
-  'host.remoteFile': '{path} se trouve sur {host}. Les fichiers du projet s’ouvrent dans le panneau d’outils',
+  'host.remoteFile': '{path} se trouve sur {host}, pas sur cette machine',
+  'host.remoteFileFailed': 'Impossible de récupérer {path} depuis {host}',
   'host.remoteUnreachable': '{host} est injoignable pour le moment ; réessayez une fois la connexion rétablie',
   'host.exited': 'Le processus {agent} s’est terminé ({code})',
   'host.emptyResponse': 'La CLI a terminé la requête sans réponse ni détail d’erreur (ACP: end_turn). Réessayez ou consultez les journaux de la CLI.',

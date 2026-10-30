@@ -665,7 +665,8 @@ export const de = {
 
   'host.notFound': '{command} nicht gefunden – zuerst das {agent}-CLI installieren',
   'host.remoteBuiltinOnly': '{agent} kann bei lokaler Ausführung nicht in einem Ordner auf {host} arbeiten; das können nur Acpiras eigener Agent und Claude Code',
-  'host.remoteFile': '{path} liegt auf {host}. Dateien des Projekts öffnen sich im Werkzeugbereich',
+  'host.remoteFile': '{path} liegt auf {host}, nicht auf diesem Rechner',
+  'host.remoteFileFailed': '{path} konnte nicht von {host} geholt werden',
   'host.remoteUnreachable': '{host} ist gerade nicht erreichbar; versuche es erneut, sobald die Verbindung steht',
   'host.exited': 'Der {agent}-Prozess wurde beendet ({code})',
   'host.emptyResponse': 'Das CLI hat die Anfrage ohne Antwort und ohne Fehlerdetails beendet (ACP: end_turn). Erneut versuchen oder die CLI-Logs prüfen.',

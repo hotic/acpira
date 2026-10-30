@@ -76,7 +76,7 @@ pub(crate) fn slim_gain(raw: &[u8]) -> Option<u64> {
 
 impl SessionManager {
   /// ACPIRA_HOME, where the leases live too
-  fn data_root(&self) -> PathBuf {
+  pub(crate) fn data_root(&self) -> PathBuf {
     self.deps.lease_root.clone()
   }
 

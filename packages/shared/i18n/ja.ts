@@ -671,7 +671,8 @@ export const ja = {
 
   'host.notFound': '{command} が見つかりません。先に {agent} CLI をインストールしてください',
   'host.remoteBuiltinOnly': 'ローカル実行では {agent} は {host} 上のフォルダーで作業できません。使えるのは Acpira 内蔵のエージェントと Claude Code だけです',
-  'host.remoteFile': '{path} は {host} 上にあります。プロジェクトのファイルはツールパネルで開けます',
+  'host.remoteFile': '{path} は {host} 上にあり、このマシンにはありません',
+  'host.remoteFileFailed': '{host} から {path} を取得できませんでした',
   'host.remoteUnreachable': '{host} に今は接続できません。接続されてからもう一度お試しください',
   'host.exited': '{agent} のプロセスが終了しました（{code}）',
   'host.emptyResponse': 'CLI は返信もエラーの詳細もないままリクエストを終了しました（ACP: end_turn）。再試行するか、CLI のログを確認してください。',

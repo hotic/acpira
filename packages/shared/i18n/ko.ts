@@ -666,7 +666,8 @@ export const ko = {
 
   'host.notFound': '{command}을(를) 찾을 수 없습니다 — 먼저 {agent} CLI를 설치하세요',
   'host.remoteBuiltinOnly': '로컬 실행에서는 {agent}이(가) {host}의 폴더에서 작업할 수 없습니다. Acpira 내장 에이전트와 Claude Code만 가능합니다',
-  'host.remoteFile': '{path}은(는) {host}에 있습니다. 프로젝트 파일은 도구 패널에서 열 수 있습니다',
+  'host.remoteFile': '{path}은(는) 이 컴퓨터가 아닌 {host}에 있습니다',
+  'host.remoteFileFailed': '{host}에서 {path}을(를) 가져오지 못했습니다',
   'host.remoteUnreachable': '지금은 {host}에 연결할 수 없습니다. 연결된 뒤 다시 시도하세요',
   'host.exited': '{agent} 프로세스가 종료되었습니다 ({code})',
   'host.emptyResponse': 'CLI가 응답이나 오류 정보 없이 요청을 끝냈습니다 (ACP: end_turn). 다시 시도하거나 CLI 로그를 확인하세요.',
