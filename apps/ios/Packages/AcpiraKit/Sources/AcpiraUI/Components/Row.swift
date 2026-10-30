@@ -250,25 +250,28 @@ public struct RowTarget: View {
   }
 }
 
-/// A faint note beside a target: a line range, a hit's line
+/// A note beside a target (a line range, a hit's line): a size smaller, in the row's own ink, so a row reads in one grey
 public struct Aside: View {
+  @Environment(\.actionTone) private var action
   let text: String
   public init(_ text: String) { self.text = text }
   public var body: some View {
     // cssBaseline inside textStyle reads the text-3 line box
     Text(web: text).cssBaseline().textStyle(WebType.text3).monospacedDigit()
-      .foregroundStyle(Palette.fg3.opacity(0.7)).lineLimit(1).fixedSize()
+      .foregroundStyle(action ? Palette.actionFg : Palette.fg2).lineLimit(1).fixedSize()
   }
 }
 
-/// +add in the ok colour, −del in danger
+/// DiffStat: only the sides that changed, +add in ok, −del in danger toned down to the green's weight
 public struct DiffStatView: View {
   let add: Int, del: Int
   public init(add: Int, del: Int) { self.add = add; self.del = del }
   public var body: some View {
-    let plus = Text(web: "+\(add)").foregroundStyle(Palette.ok)
-    let minus = Text(web: "−\(del)").foregroundStyle(Palette.danger)
-    Text("\(plus) \(minus)").monospacedDigit()
+    HStack(spacing: Metrics.s1) {
+      if add > 0 { Text(web: "+\(add)").foregroundStyle(Palette.ok) }
+      if del > 0 { Text(web: "−\(del)").foregroundStyle(Palette.danger.opacity(0.8)) }
+    }
+    .monospacedDigit()
   }
 }
 

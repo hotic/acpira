@@ -82,7 +82,7 @@ extension AppModel {
       agents = state.agents
       accounts = state.accounts
       settings = state.settings
-      summaries = state.sessions
+      summaries = state.sessions.map { pendingSummary($0, fresh: resumed) }
       if let categories = state.categories { follow(categories) }
       present(link.feed.receive(message))
       synced = true
@@ -95,7 +95,7 @@ extension AppModel {
     case .agents(let list):
       agents = list
     case .sessions(let list):
-      summaries = list
+      summaries = list.map { pendingSummary($0) }
     case .categories(let categories):
       follow(categories)
     case .connections(let hosts):
@@ -146,11 +146,13 @@ extension AppModel {
       let kept = Set(link.feed.views.kept)
       views = views.filter { kept.contains($0.key) }
       views[view.id] = view
-      // A prompt still on its way gives up its place once the session shows the engine's copy
+      // A prompt still on its way gives up its place once the session shows the engine's copy; the ones sent after it
+      // keep theirs until their own copies arrive
       if let sent = outgoing[view.id] {
-        let left = sent.filter { !$0.settled(in: view) }
-        if left.count != sent.count { outgoing[view.id] = left.isEmpty ? nil : left }
+        let left = sent.left(after: view)
+        if left != sent { outgoing[view.id] = left.isEmpty ? nil : left }
       }
+      settleSummary(view)
       if let awaiting = link.awaiting, view.id != awaiting.from {
         link.awaiting = nil
         awaiting.then(view.id)
@@ -173,8 +175,10 @@ extension AppModel {
     agentControls = previous.agentControls
     summaries = previous.summaries
     views = previous.views
-    // The replay below sends them again, so they keep reading as sent
+    // The replay below sends them again, so they keep reading as sent, and this wire's loader keeps their photos too
     outgoing = previous.outgoing
+    pendingSummaries = previous.pendingSummaries
+    for (id, sent) in outgoing { sent.forEach { media.adopt($0.attachments, session: id) } }
     path = Array(previous.path.prefix { if case .terminal = $0 { false } else { true } })
     addedProjects = previous.addedProjects
     projectOrder = previous.projectOrder

@@ -121,7 +121,8 @@ private struct InspectorThread: View {
             if receipt {
               Text(web: t("subagents.receiptOnly")).foregroundStyle(Palette.fg3).fixedSize(horizontal: false, vertical: true)
             } else if loading {
-              Row { Shimmer(t("subagents.loading")).foregroundStyle(Palette.fg3) }
+              // Led by the Orb and labelled like a working turn's head, which takes its place once the turns arrive
+              Row { Orb() } content: { RowLabel(t("subagents.loading"), shimmer: true) }
             }
             if let result { ResultSection(markdown: result) }
             if node.state == .disconnected {
@@ -141,14 +142,17 @@ private struct InspectorThread: View {
     .scrollPosition($position)
     .defaultScrollAnchor(.bottom, for: .initialOffset)
     .defaultScrollAnchor(.top, for: .alignment)
-    .onScrollPhaseChange { _, phase in
+    .onScrollPhaseChange { _, phase, context in
+      let wasDragging = dragging
       dragging = phase == .interacting || phase == .tracking || phase == .decelerating
       gesture.active = dragging
-    }
-    .onScrollGeometryChange(for: Bool.self) { g in
-      g.contentOffset.y + g.containerSize.height - g.contentInsets.bottom >= g.contentSize.height - Metrics.s2
-    } action: { _, atBottom in
-      if dragging { follow = atBottom }
+      // Release immediately, even when streamed growth already changed atBottom before the gesture (Thread).
+      if dragging {
+        follow = false
+      } else if wasDragging, phase == .idle {
+        let g = context.geometry
+        follow = g.contentOffset.y + g.containerSize.height - g.contentInsets.bottom >= g.contentSize.height - Metrics.s2
+      }
     }
     // Stick to the bottom while the child streams, as the main thread does; dragging away releases the follow
     .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { old, new in

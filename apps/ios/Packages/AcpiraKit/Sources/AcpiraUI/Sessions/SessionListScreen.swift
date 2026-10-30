@@ -32,9 +32,15 @@ struct SessionListScreen: View {
   @State private var query = UserDefaults.standard.string(forKey: "search") ?? ""
   @State private var renaming: SessionSummary?
   @State private var newTitle = ""
+  /// The session whose move menu asked for a folder typed in
+  @State private var movingTo: SessionSummary?
+  /// The row standing swiped open, Delete bared (SwipeToDelete.swift)
+  @State private var swiped: String?
   /// Per open project, how many sessions past its latest few are out (SessionList.tsx `more`): "N more" adds a page,
   /// and once all are out it folds them away again
   @State private var moreShown: [String: Int] = [:]
+  /// The view menu's "archived": the list shows the archived sessions, and only those
+  @State private var archivedOnly = false
   @Environment(\.now) private var now
 
   /// Sessions an open project shows before "N more" (the desktop view menu's default)
@@ -50,6 +56,7 @@ struct SessionListScreen: View {
     let filter = !covered && searchTerms(query).isEmpty && !(model.summaries.isEmpty && model.listedProjects.isEmpty)
     PairListGate(pairing: pairing) { list }
       .modifier(ListTopBar(filter: filter ? ListViewMenu(view: $view, pinPlace: $pinPlace,
+                                                         archived: $archivedOnly,
                                                          unread: model.summaries.contains { $0.unread == true || $0.state == .unread },
                                                          onMarkAllRead: model.markAllRead) : nil,
                            onSettings: { model.settingsOpen = true }))
@@ -60,10 +67,12 @@ struct SessionListScreen: View {
     let searching = !terms.isEmpty
     // Content hits count for the query they answered only
     let snippets = model.hits?.query == terms.joined(separator: " ") ? model.hits?.snippets : nil
-    let shown = searching ? filtered(model.summaries, terms: terms, snippets: snippets) : model.summaries
+    let pool = listed
+    let shown = searching ? filtered(pool, terms: terms, snippets: snippets) : pool
     // Pinned first, then the latest
     let ordered = shown.sorted { ($0.pinned == true ? 1 : 0, $0.updatedAt) > ($1.pinned == true ? 1 : 0, $1.updatedAt) }
-    let byProject = view == .project && !searching
+    // The archived sessions read as one flat list, newest first
+    let byProject = view == .project && !searching && !archivedOnly
     let pinsInProject = byProject && pinPlace == .project
     let groups = groups(ordered, searching: searching, byProject: byProject, pinsInProject: pinsInProject)
     // The folders the rows' menus move a session to, sorted once per render rather than in every row
@@ -88,6 +97,10 @@ struct SessionListScreen: View {
       .animation(Motion.ease, value: view)
     }
     .scrollIndicators(.hidden)
+    // A scroll puts a swiped row back, as in the system's lists
+    .onScrollPhaseChange { _, phase in
+      if phase == .interacting && swiped != nil { swiped = nil }
+    }
     .background(Palette.bg0)
     .modifier(SystemListBar(query: $query, onNew: onNew))
     // Rows fade into the page as they scroll up under the bar's glass buttons
@@ -97,6 +110,12 @@ struct SessionListScreen: View {
       Button(t("mobile.cancel"), role: .cancel) {}
       Button(t("mobile.save")) { if let s = renaming { model.rename(s.id, to: newTitle) } }
     }
+    // The move menu's "Add folder", as in the new session's folder menu: the folder joins the list, the session moves in
+    .modifier(AddProjectAlert(isPresented: Binding(get: { movingTo != nil }, set: { if !$0 { movingTo = nil } })) { folder in
+      guard let s = movingTo else { return }
+      model.addProject(folder)
+      model.move(s.id, to: folder)
+    })
     // The conversation search goes out once typing pauses (SessionList.tsx SEARCH_DEBOUNCE)
     .task(id: query) {
       if !query.isEmpty { try? await Task.sleep(for: .milliseconds(180)) }
@@ -148,7 +167,7 @@ struct SessionListScreen: View {
   /// pin rule) and its other sessions, the latest few only until "N more" is tapped
   @ViewBuilder
   private func projectGroup(_ cwd: String, pinsInProject: Bool, projects: [String]) -> some View {
-    let all = model.summaries.filter { $0.cwd == cwd }
+    let all = listed.filter { $0.cwd == cwd }
     let pins = pinsInProject ? all.filter { $0.pinned == true }.sorted { $0.updatedAt > $1.updatedAt } : []
     let sessions = all.filter { $0.pinned != true }.sorted { $0.updatedAt > $1.updatedAt }
     let open = model.openProjects.contains(cwd)
@@ -164,7 +183,7 @@ struct SessionListScreen: View {
     Group {
       ProjectHeader(cwd: cwd, first: model.listedProjects.first == cwd, open: open, sessions: all,
                     host: model.host(of: cwd), sections: model.sections,
-                    onToggle: { withAnimation(Motion.ease) { model.toggleOpen(cwd) } },
+                    onToggle: { if !closeSwipe() { withAnimation(Motion.ease) { model.toggleOpen(cwd) } } },
                     onMoveTop: { withAnimation(Motion.ease) { model.moveProjectToTop(cwd) } },
                     onRemove: { withAnimation(Motion.ease) { model.removeProject(cwd) } },
                     onNew: { model.path.append(.new(agent: nil, cwd: cwd)) },
@@ -183,6 +202,7 @@ struct SessionListScreen: View {
       }
       if paged {
         MoreRow(rest: rest, nameOf: { model.agent($0).name }) {
+          if closeSwipe() { return }
           withAnimation(Motion.ease) { moreShown[cwd] = rest.isEmpty ? nil : extra + Self.morePage }
         }
       }
@@ -190,23 +210,37 @@ struct SessionListScreen: View {
   }
 
   /// One session with its menu: the chat's "…" menu without the chat's own pages, as the desktop's row menu is its
-  /// header's (pin, rename, copy, move, export, delete)
+  /// header's (pin, rename, copy, move, export). Delete is the row's swipe, as in the system's lists
   private func row(_ s: SessionSummary, place: String?, time: String?, divider: Bool, nested: Bool = false,
                    snippet: String? = nil, terms: [String] = [], projects: [String]) -> some View {
     SessionRow(session: s, agentName: model.agent(s.agent).name, place: place, time: time, divider: divider,
                nested: nested, snippet: snippet, terms: terms,
-               onSelect: { model.path.append(.chat(s.id)) }) {
-      NativeSessionMenu(pinned: s.pinned == true, actions: HeaderActions(
+               // A tap while a row stands swiped open only puts it back
+               onSelect: { if !closeSwipe() { model.path.append(.chat(s.id)) } }) {
+      NativeSessionMenu(pinned: s.pinned == true, unread: isUnread(s), archived: s.archived == true, actions: HeaderActions(
         pin: { model.togglePin(s.id) },
+        unread: { model.setUnread(s.id, $0) },
+        archive: { archived in withAnimation(Motion.ease) { model.setArchived(s.id, archived) } },
         rename: { newTitle = s.title; renaming = s },
-        export: { model.export(s.id, json: $0) },
+        export: { model.export(s.id, format: $0) },
         exportJSON: model.holdsView(s.id),
-        // Deleted at once, as on the desktop: the toast's undo brings it back
-        delete: { withAnimation(Motion.ease) { model.delete(s.id) } },
         copy: { kind in Task { await model.copy(s.id, kind) } },
         cwd: s.cwd, projects: projects,
-        move: { model.move(s.id, to: $0) }))
+        move: { model.move(s.id, to: $0) },
+        addFolder: { movingTo = s }))
     }
+    // Deleted at once, as on the desktop: the toast's undo brings it back
+    .modifier(SwipeToDelete(id: s.id, open: $swiped) { withAnimation(Motion.ease) { model.delete(s.id) } })
+  }
+
+  /// The sessions the list draws from: archived ones only while the view menu asks for them
+  private var listed: [SessionSummary] { model.summaries.filter { ($0.archived == true) == archivedOnly } }
+
+  /// Puts a swiped row back; true when one stood open, so the tap that did it does nothing else
+  private func closeSwipe() -> Bool {
+    guard swiped != nil else { return false }
+    swiped = nil
+    return true
   }
 
   /// By time: pinned, then today / yesterday / this week / this month / older, captions over each. By project: the
@@ -262,6 +296,7 @@ struct SessionListScreen: View {
 struct ListViewMenu: View {
   @Binding var view: SessionListView
   @Binding var pinPlace: PinPlace
+  @Binding var archived: Bool
   var unread = false
   var onMarkAllRead: () -> Void = {}
 
@@ -290,8 +325,9 @@ struct ListViewMenu: View {
           choice(.project, of: $pinPlace, t("session.view.pinned.project"), "folder")
         }
       }
-      if unread {
-        Section {
+      Section {
+        Toggle(isOn: $archived) { Label(t("session.view.status.archived"), systemImage: "archivebox") }
+        if unread {
           Button(t("session.view.markAllRead"), systemImage: "envelope.open", action: onMarkAllRead)
         }
       }

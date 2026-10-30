@@ -445,33 +445,47 @@ func replyMarkdown(_ turn: AgentTurn) -> String {
     .trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
-/// StatsCard: the title, the reported rows in their groups under thin dividers, and the vendor's request id with its
-/// copy action at the foot
+/// StatsCard: the title with the model, the timing tiles, the token lines with their share chips, the context under a
+/// thin divider, and the vendor's request id with its copy action at the foot
 struct TurnStats: View {
   let turn: AgentTurn
   var model: String?
   @State private var copied = false
 
   var body: some View {
-    let groups = turnStatGroups(turn, model: model)
+    let content = turnStatsContent(turn)
     VStack(alignment: .leading, spacing: Metrics.s1) {
-      Text(web: t("turn.stats"))
-        .textStyle(WebType.text2, weight: .medium)
-        .foregroundStyle(Palette.fg1)
-        .padding(.horizontal, Metrics.s2)
-        .frame(minHeight: WebMetrics.ctl)
-      VStack(alignment: .leading, spacing: 0) {
-        ForEach(Array(groups.enumerated()), id: \.offset) { i, rows in
-          if i > 0 { divider.padding(.vertical, Metrics.s1) }
-          ForEach(rows, id: \.label) { stat($0.label, $0.value) }
+      HStack(spacing: Metrics.s3) {
+        Text(web: t("turn.stats"))
+          .textStyle(WebType.text2, weight: .medium)
+          .foregroundStyle(Palette.fg1)
+          .fixedSize()
+        Spacer(minLength: 0)
+        if let model {
+          Text(web: model).textStyle(WebType.text3).foregroundStyle(Palette.fg3).lineLimit(1).truncationMode(.middle)
+        }
+      }
+      .padding(.horizontal, Metrics.s2)
+      .frame(minHeight: WebMetrics.ctl)
+      if !content.tiles.isEmpty { tiles(content.tiles) }
+      if !content.tokens.isEmpty || content.context != nil {
+        VStack(alignment: .leading, spacing: 0) {
+          ForEach(content.tokens, id: \.label) { stat($0.label, Text(web: $0.value), chip: $0.chip) }
+          if let c = content.context {
+            if !content.tokens.isEmpty { divider.padding(.vertical, Metrics.s1) }
+            stat(t("stats.contextShort"), Text(web: c.used) + Text(web: " / \(c.size)").foregroundStyle(Palette.fg3), chip: c.share)
+          }
         }
       }
       if let requestId = turn.usage?.requestId { footer(requestId) }
     }
     .monospacedDigit()
-    .padding(Metrics.s1)
-    // A set width: the popover sizes itself from the card's ideal size, which must already hold the wrapped labels
-    .frame(width: Metrics.popLg)
+    // Clear of the popover's large corner radius, so no corner runs into the title, the model or the copy button
+    .padding(.horizontal, Metrics.s2)
+    .padding(.vertical, Metrics.s3)
+    // A set width: the popover sizes itself from the card's ideal size, which must already hold the wrapped labels.
+    // Wider than the web's, since three tiles at the phone's reading size overflow it
+    .frame(width: Metrics.popWide)
     .task(id: copied) {
       guard copied else { return }
       try? await Task.sleep(for: .milliseconds(1500))
@@ -483,12 +497,59 @@ struct TurnStats: View {
     Rectangle().fill(Palette.line).frame(height: Metrics.hairline).padding(.horizontal, Metrics.s2)
   }
 
-  func stat(_ label: String, _ value: String) -> some View {
-    // The figure keeps its width; a label longer than the phone's popover leaves wraps under itself
-    HStack(alignment: .firstTextBaseline, spacing: Metrics.s3) {
-      Text(web: label).foregroundStyle(Palette.fg1).fixedSize(horizontal: false, vertical: true)
+  /// Equal tiles on one sheet, hairlines between them: the figure strong, its label faint beneath. A translucent lift,
+  /// not the web's opaque --bg-2: over the popover's glass an opaque fill read as a dark hole
+  private func tiles(_ tiles: [StatLine]) -> some View {
+    HStack(spacing: 0) {
+      ForEach(Array(tiles.enumerated()), id: \.offset) { i, tile in
+        if i > 0 { Rectangle().fill(Palette.line).frame(width: Metrics.hairline) }
+        VStack(alignment: .leading, spacing: Metrics.s0_5) {
+          figure(tile.value).lineLimit(1).minimumScaleFactor(0.8)
+          Text(web: tile.label).textStyle(WebType.text4).foregroundStyle(Palette.popFg3).lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, Metrics.s2)
+        .padding(.vertical, Metrics.s1_5)
+      }
+    }
+    .fixedSize(horizontal: false, vertical: true)
+    .background(Palette.active, in: RoundedRectangle(cornerRadius: Metrics.rMd))
+  }
+
+  /// Figure: the digits large, the unit words between them small and faint ("2 分钟 24 秒", "33 tok/s")
+  private func figure(_ text: String) -> Text {
+    var out = AttributedString()
+    var rest = Substring(text)
+    while !rest.isEmpty {
+      let digits = rest.firstMatch(of: /\d(?:[\d.,\u{a0}\u{202f}]*\d)?/)
+      let unit = digits.map { rest[rest.startIndex..<$0.range.lowerBound] } ?? rest
+      if !unit.isEmpty {
+        var run = CJKWidth.attributed(String(unit), size: WebType.text4.size, paragraph: false)
+        run.font = WebType.text4.font()
+        run.foregroundColor = Palette.popFg3
+        out += run
+      }
+      guard let digits else { break }
+      var run = AttributedString(String(digits.output))
+      run.font = WebType.text2.font(.semibold)
+      run.foregroundColor = Palette.fg1
+      out += run
+      rest = rest[digits.range.upperBound...]
+    }
+    return Text(out)
+  }
+
+  /// A label / value line; the chip (cache share, context share) rides with the value on the right
+  private func stat(_ label: String, _ value: Text, chip: String?) -> some View {
+    HStack(alignment: .firstTextBaseline, spacing: Metrics.s2) {
+      Text(web: label).foregroundStyle(Palette.fg2).lineLimit(1).truncationMode(.tail)
       Spacer(minLength: 0)
-      Text(web: value).foregroundStyle(Palette.fg2).lineLimit(1).truncationMode(.middle).layoutPriority(1)
+      if let chip {
+        Text(web: chip).foregroundStyle(Palette.fg2).lineLimit(1).fixedSize()
+          .padding(.horizontal, Metrics.s1)
+          .background(Palette.active, in: RoundedRectangle(cornerRadius: Metrics.rSm))
+      }
+      value.foregroundStyle(Palette.fg1).lineLimit(1).fixedSize()
     }
     .textStyle(WebType.text3)
     .padding(.horizontal, Metrics.s2)

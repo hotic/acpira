@@ -53,6 +53,7 @@ extension AppModel {
     if link != nil {
       let request = UUID().uuidString
       draft.pending = (request, edit, text, attachments)
+      media.adopt(attachments, session: id)
       post(.editTurn(requestId: request, edit: editTurnRequest(sessionId: id, edit: edit, text: text, staged: attachments)))
       return
     }

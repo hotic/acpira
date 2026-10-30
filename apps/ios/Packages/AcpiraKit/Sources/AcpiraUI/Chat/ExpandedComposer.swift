@@ -18,6 +18,7 @@ struct ExpandedComposer: View {
   /// Closes the editor for a file page the strip opens
   var onLeave: () -> Void = {}
   @FocusState private var focused: Bool
+  @State private var appeared = false
 
   var body: some View {
     NavigationStack {
@@ -35,7 +36,7 @@ struct ExpandedComposer: View {
           .padding(.horizontal, Metrics.pad)
       }
       .background(Palette.bg0)
-      .modifier(LightboxHost())
+      .modifier(LightboxHost(onOpen: { focused = false }))
       .toolbar {
         ToolbarItem(placement: .primaryAction) {
           Button(action: onCollapse) {
@@ -54,7 +55,12 @@ struct ExpandedComposer: View {
         .padding(.vertical, Metrics.s2)
       }
     }
-    .onAppear { focused = true }
+    .onAppear {
+      // A full-screen photo cover makes this appear again on close; autofocus only on the editor's first entry.
+      guard !appeared else { return }
+      appeared = true
+      focused = true
+    }
   }
 }
 

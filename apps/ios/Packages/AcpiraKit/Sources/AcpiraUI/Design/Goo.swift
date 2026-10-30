@@ -226,7 +226,7 @@ private struct GooGlass: View, Animatable {
               .scaleEffect(f.scale)
               .opacity(f.glyph)
               .frame(width: f.size.width, height: f.size.height)
-              .glassEffect(GlassStyle.control, in: RoundedRectangle(cornerRadius: f.radius, style: .continuous))
+              .glassEffect(GlassStyle.bar, in: RoundedRectangle(cornerRadius: f.radius, style: .continuous))
               // A bean comes and goes inside the chip, where nothing shows: the system's own morph on insertion would
               // run its own clock over the spring
               .glassEffectTransition(.identity)
@@ -412,7 +412,7 @@ struct GooChip<Glyph: View>: View {
     // bar and the container merges it away: at full size its outline ran along the bar's round end and swelled it
     // On the card the chip is a bare glyph, as at rest: once the card's glass gave way to its plate under the beans,
     // the circles stood out as two small buttons, and a press swelled one into a bright disc across the card's edge
-    .glassEffect(bare ? .identity : GlassStyle.control.interactive(), in: Circle().inset(by: Metrics.gooChipInset))
+    .glassEffect(bare ? .identity : GlassStyle.bar.interactive(), in: Circle().inset(by: Metrics.gooChipInset))
     // The glass's shape is also the button's hit shape, so only the inset circle (half the slot) took taps: a touch a
     // little below the glyph fell through to the bar or card under it and only focused the field. The whole slot takes
     // them again
@@ -632,6 +632,8 @@ struct LiquidControls: View {
   @Binding var deeper: String?
   /// How far a panel may rise above the chip (`GooColumn.panelHeight`)
   var room: CGFloat = .infinity
+  /// The built-in agent's sidekick is working a round
+  var sidekickLive = false
   var onSetMode: (String) -> Void
   var onSetConfig: (String, String) -> Void
   @Environment(\.motionEnabled) private var motion
@@ -651,7 +653,7 @@ struct LiquidControls: View {
               .id(stage > 0)
               .transition(.scale(scale: Metrics.gooSeed).combined(with: .opacity))
           } else {
-            ChipMark(cur: c.cur, fast: c.fast?.on == true)
+            ChipMark(cur: c.cur, fast: c.fast?.on == true, sidekick: sidekickLive ? sidekickTint(c) : nil)
               .transition(.scale(scale: Metrics.gooSeed).combined(with: .opacity))
           }
         }
@@ -661,6 +663,15 @@ struct LiquidControls: View {
         .accessibilityLabel(Text(web: open == "model" ? t(stage > 0 ? "common.back" : "common.close") : c.cur?.name ?? t("stats.model")))
       }
     }
+  }
+
+  /// The live sidekick's colour on the chip: its model vendor's own, else the neutral ink; no dot while the select
+  /// reads None (ModelPicker.tsx shows the live tail only with a sidekick picked)
+  private func sidekickTint(_ c: ModelChoices) -> Color? {
+    guard let picked = c.sidekick.flatMap({ sk in sk.options.first { $0.id == sk.value && $0.id != ComposerControls.noSidekick } }) else {
+      return nil
+    }
+    return VendorBrand.color(ModelCatalog.optionBrand(picked)) ?? Palette.fg1
   }
 
   private func beans(_ c: ModelChoices) -> [GooBean] {
@@ -1060,6 +1071,9 @@ struct ModelChoices {
 struct ChipMark: View {
   var cur: ModelFamily?
   var fast: Bool
+  /// The sidekick's colour while it works a round: a dot in it breathes on the mark's foot, as the desktop chip lights
+  /// its sidekick half (the bar has no sidekick half at rest); nil while it does not
+  var sidekick: Color?
 
   var body: some View {
     Group {
@@ -1072,6 +1086,33 @@ struct ChipMark: View {
     .overlay(alignment: .topTrailing) {
       if fast { FastGlyph(on: true, size: Metrics.chevron).offset(x: Metrics.s1, y: -Metrics.s1) }
     }
+    .overlay(alignment: .bottomTrailing) {
+      if let sidekick { SidekickPulse(tint: sidekick).offset(x: Metrics.s1, y: Metrics.s1).transition(.scale.combined(with: .opacity)) }
+    }
+    .animation(Motion.quick, value: sidekick != nil)
+  }
+}
+
+/// The sidekick's live dot (`.sidekick-pulse`), ringed in the page colour so it stands off the mark; it holds still
+/// with motion off
+private struct SidekickPulse: View {
+  let tint: Color
+  @Environment(\.motionEnabled) private var motion
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var low = false
+
+  var body: some View {
+    Circle()
+      .fill(tint)
+      .frame(width: Metrics.sidekickPulse, height: Metrics.sidekickPulse)
+      .padding(Metrics.hairline)
+      .background(Circle().fill(Palette.bg0))
+      .opacity(low ? Motion.breatheLow : 1)
+      .onAppear {
+        guard motion && !reduceMotion else { return }
+        withAnimation(Motion.breathe.repeatForever(autoreverses: true)) { low = true }
+      }
+      .accessibilityHidden(true)
   }
 }
 

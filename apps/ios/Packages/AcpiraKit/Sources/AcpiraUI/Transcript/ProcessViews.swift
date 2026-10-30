@@ -151,6 +151,10 @@ struct ThoughtView: View {
   @Environment(\.rowHeight) private var row
   @Environment(\.preOpen) private var preOpen
   @State private var manual: Bool?
+  @State private var overflow: Edge.Set = []
+  @State private var position = ScrollPosition()
+  @State private var follow = true
+  @State private var dragging = false
 
   var body: some View {
     let live = block.streaming == true
@@ -167,7 +171,45 @@ struct ThoughtView: View {
       // --thought-body-max: min(--row × 8, 45dvh)
       .frame(maxHeight: row * 8)
       .fixedSize(horizontal: false, vertical: true)
-      .defaultScrollAnchor(live ? .bottom : .top)
+      .scrollPosition($position)
+      .defaultScrollAnchor(live ? .bottom : .top, for: .initialOffset)
+      .onScrollPhaseChange { _, phase, context in
+        let wasDragging = dragging
+        dragging = phase == .interacting || phase == .tracking || phase == .decelerating
+        if dragging {
+          follow = false
+        } else if wasDragging, phase == .idle {
+          let g = context.geometry
+          follow = g.contentOffset.y + g.containerSize.height - g.contentInsets.bottom >= g.contentSize.height - Metrics.s2
+        }
+      }
+      .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { old, new in
+        guard live, follow, !dragging, new > old else { return }
+        position.scrollTo(edge: .bottom)
+      }
+      .onScrollGeometryChange(for: Edge.Set.self) { g in
+        var edges: Edge.Set = []
+        if g.contentOffset.y + g.contentInsets.top > Metrics.hairline { edges.insert(.top) }
+        if g.contentOffset.y + g.containerSize.height - g.contentInsets.bottom < g.contentSize.height - Metrics.hairline {
+          edges.insert(.bottom)
+        }
+        return edges
+      } action: { _, edges in overflow = edges }
+      // Like scroll-fade on the desktop, only hide an edge with more text beyond it. The mask follows the page's
+      // background in either theme and never intercepts a drag inside the thought.
+      .mask {
+        VStack(spacing: 0) {
+          if overflow.contains(.top) {
+            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+              .frame(height: Metrics.scrollFade)
+          }
+          Rectangle().fill(.black)
+          if overflow.contains(.bottom) {
+            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+              .frame(height: Metrics.scrollFade)
+          }
+        }
+      }
     }
     }
   }

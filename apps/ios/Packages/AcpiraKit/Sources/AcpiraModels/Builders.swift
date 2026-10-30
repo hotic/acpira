@@ -52,6 +52,12 @@ extension QueuedPrompt {
   }
 }
 
+extension SteerBlock {
+  public init(_ id: String, text: String, attachments: [Attachment]? = nil) {
+    self.id = id; self.text = text; self.attachments = attachments
+  }
+}
+
 extension SessionSummary {
   public init(id: String, title: String, agent: AgentId, cwd: String, updatedAt: String, accountId: String? = nil,
               pinned: Bool? = nil, state: SessionState? = nil, unread: Bool? = nil) {

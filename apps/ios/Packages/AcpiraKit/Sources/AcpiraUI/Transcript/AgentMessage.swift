@@ -128,9 +128,10 @@ struct CodexFold: View {
   @Environment(\.motionEnabled) private var motion
   @Environment(\.holdScroll) private var holdScroll
   @Environment(\.preOpen) private var preOpen
-  @Environment(\.subagentTranscript) private var staticLead
   /// The view came from a wire that ended: the head's motion rests until the engine's own state is back
   @Environment(\.syncing) private var syncing
+  /// Sending or starting, while the reply is the thread's stand-in for a held prompt (`heldStage`)
+  @Environment(\.liveStage) private var stage
 
   var body: some View {
     // A turn with no process worth a head (a plain reply, or only a compaction status) shows no head
@@ -187,7 +188,7 @@ struct CodexFold: View {
 
   @ViewBuilder
   private func head(open: Bool, foldable: Bool) -> some View {
-    let activity = liveActivity(turn)
+    let activity = staged(liveActivity(turn))
     let outcome = turnOutcome(turn)
     let label = running ? activity.label : outcome ?? t("turns.done")
     // A turn that rounds to 0s shows the bare Done label, as the live counter stays hidden for its first second
@@ -198,6 +199,14 @@ struct CodexFold: View {
             elapsed: elapsed)
   }
 
+  /// The stage takes the plain working label only; approvals, questions and retries keep their own
+  private func staged(_ activity: LiveActivity) -> LiveActivity {
+    guard let stage, activity.lead == .orb, turn.retry == nil else { return activity }
+    var out = activity
+    out.label = stage
+    return out
+  }
+
   @ViewBuilder
   private func rowHead(open: Bool, foldable: Bool, running: Bool, activity: LiveActivity, outcome: String?, label: String,
                        elapsed: String?) -> some View {
@@ -205,8 +214,9 @@ struct CodexFold: View {
       Row {
         if running {
           switch activity.lead {
-          // The root turn owns the only Orb; a child's transcript leads with a static mark
-          case .orb: if staticLead { Icon(.bot, size: WebMetrics.icon) } else { Orb(paused: syncing) }
+          // A child's transcript is a pushed page with the root out of view, so its running turn takes the Orb too:
+          // one glyph says "working" on every screen
+          case .orb: Orb(paused: syncing)
           case .hand: Icon(.hand, size: WebMetrics.icon)
           case .question: Icon(.messageCircleQuestion, size: WebMetrics.icon)
           case .plan: Icon(.listTodo, size: WebMetrics.icon)

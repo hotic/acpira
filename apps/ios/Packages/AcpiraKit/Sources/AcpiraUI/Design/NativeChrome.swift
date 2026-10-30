@@ -12,11 +12,17 @@ import UIKit
 
 // MARK: - Session "…"
 
-/// The session's "…" menu: the account and the session's changes, pin and rename, copy / move / export in submenus,
-/// the project's terminal, settings, delete. A list row's long press shows it too, without the chat's own entries (the
-/// desktop's row menu: pin, rename, move, copy, export, delete)
+/// The session's "…" menu: the account and the session's changes, pin, unread and rename, copy / move / export in
+/// submenus, the project's terminal, settings, archive and delete. A list row's long press shows it too, without the
+/// chat's own entries (the desktop's row menu) and without delete, which the row's swipe offers
+/// Whether the list shows the session's unread mark (a background session carries it beside its ring)
+func isUnread(_ s: SessionSummary) -> Bool { s.state == .unread || s.unread == true }
+
 struct NativeSessionMenu: View {
   var pinned: Bool
+  /// The session carries the list's unread mark: the entry reads "mark as read"
+  var unread = false
+  var archived = false
   var actions = HeaderActions()
 
   var body: some View {
@@ -28,6 +34,11 @@ struct NativeSessionMenu: View {
     }
     Section {
       Button(action: actions.pin) { Label(pinned ? t("common.unpin") : t("common.pin"), systemImage: pinned ? "pin.slash" : "pin") }
+      if let mark = actions.unread {
+        Button { mark(!unread) } label: {
+          Label(t(unread ? "session.markRead" : "session.markUnread"), systemImage: unread ? "envelope.open" : "envelope.badge")
+        }
+      }
       Button(action: actions.rename) { Label(t("common.rename"), systemImage: "pencil") }
       Menu {
         Button { actions.copy(.link) } label: { Label(t("session.copy.link"), systemImage: "link") }
@@ -38,24 +49,24 @@ struct NativeSessionMenu: View {
       } label: {
         Label(t("session.copy"), systemImage: "doc.on.doc")
       }
-      if let move = actions.move, actions.projects.contains(where: { $0 != actions.cwd }) {
+      if let move = actions.move, actions.addFolder != nil || actions.projects.contains(where: { $0 != actions.cwd }) {
         Menu {
-          // The other known folders, the latest first; the session's own is left out
-          ForEach(actions.projects.filter { $0 != actions.cwd }, id: \.self) { folder in
-            Button { move(folder) } label: {
-              Text(verbatim: folderName(folder))
-              Text(verbatim: folder)
-            }
-          }
+          // The new session's folder menu: this computer's folders, each SSH host's, then a folder typed in. The
+          // session's own folder is the ticked one, so picking it moves nothing
+          NativeProjectMenu(cwd: actions.cwd, recent: actions.projects,
+                            onSelect: { if $0 != actions.cwd { move($0) } }, onAdd: actions.addFolder)
         } label: {
-          Label(t("session.moveToProject"), systemImage: "folder.badge.arrow.forward")
+          // SF Symbols has no folder.badge.arrow.forward: an unknown name draws no icon at all
+          Label(t("session.moveToProject"), systemImage: "arrow.forward.folder")
         }
       }
       Menu {
-        Button { actions.export(false) } label: { Label(t("session.export.markdown"), systemImage: "doc.text") }
+        Button { actions.export(.markdown) } label: { Label(t("session.export.markdown"), systemImage: "doc.text") }
         if actions.exportJSON {
-          Button { actions.export(true) } label: { Label(t("session.export.json"), systemImage: "curlybraces") }
+          Button { actions.export(.json) } label: { Label(t("session.export.json"), systemImage: "curlybraces") }
         }
+        // Only what was said, prompts and replies without tools or thinking (session.export.textHint)
+        Button { actions.export(.text) } label: { Label(t("session.export.text"), systemImage: "text.alignleft") }
       } label: {
         Label(t("session.export"), systemImage: "square.and.arrow.up")
       }
@@ -63,7 +74,21 @@ struct NativeSessionMenu: View {
     if actions.subagents != nil || actions.terminal != nil || actions.settings != nil {
       chatSection
     }
-    Section { Button(role: .destructive, action: actions.delete) { Label(t("common.delete"), systemImage: "trash") } }
+    // Archive keeps the session, delete is the one with no way back; a list row leaves delete to its swipe
+    if actions.archive != nil || actions.delete != nil {
+      Section {
+        if let archive = actions.archive {
+          Button { archive(!archived) } label: {
+            Label(t(archived ? "session.unarchive" : "session.archive"), systemImage: archived ? "arrow.up.bin" : "archivebox")
+          }
+        }
+        if let delete = actions.delete {
+          Button(role: .destructive, action: delete) {
+            Label(t(actions.archive != nil ? "session.deleteForever" : "common.delete"), systemImage: "trash")
+          }
+        }
+      }
+    }
   }
 
   /// The chat's own pages: the subagent graph, the project's terminal, settings
@@ -88,12 +113,13 @@ struct NativeSessionMenu: View {
 
 // MARK: - Project / agent
 
-/// Native project menus: local folders, or an SSH host's folders, then Add (the caller raises its alert).
+/// Native project menus: local folders, or an SSH host's folders, then Add (the caller raises its alert; none without
+/// `onAdd`). The new session's folder picker and the session menu's "Move to project".
 struct NativeProjectMenu: View {
   let cwd: String
   let recent: [String]
   var onSelect: (String) -> Void
-  var onAdd: () -> Void
+  var onAdd: (() -> Void)?
 
   var body: some View {
     var seen = Set<String>()
@@ -122,7 +148,7 @@ struct NativeProjectMenu: View {
       }
       .disabled(remote.isEmpty)
     }
-    Button(action: onAdd) { Label(t("mobile.projects.add"), systemImage: "folder.badge.plus") }
+    if let onAdd { Button(action: onAdd) { Label(t("mobile.projects.add"), systemImage: "folder.badge.plus") } }
   }
 
   private func projects(_ folders: [String]) -> some View {

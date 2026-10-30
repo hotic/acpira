@@ -31,6 +31,17 @@ struct SyntaxTests {
     #expect(SyntaxHighlighter.shared.tokenize("x", language: nil, theme: .dark) == nil)
   }
 
+  @Test func cachedDiffNeverTokenizesMissingSegments() throws {
+    let highlighter = SyntaxHighlighter()
+    let first = [DiffLine(kind: .add, text: "+const first = 1")]
+    let missing = [DiffLine(kind: .hunk, text: "@@"), DiffLine(kind: .add, text: "+const unseen = 2")]
+    #expect(highlighter.cachedDiff(first, path: "x.ts", theme: .dark) == nil)
+    let expected = try #require(highlighter.diff(first, path: "x.ts", theme: .dark))
+    #expect(highlighter.cachedDiff(first, path: "x.ts", theme: .dark) == expected)
+    #expect(highlighter.cachedDiff(first + missing, path: "x.ts", theme: .dark) == nil)
+    #expect(highlighter.cached("const unseen = 2", language: "typescript", theme: .dark) == nil)
+  }
+
   @Test func diffSides() throws {
     // A deleted line takes the old side's tokens and never shifts the new side's grammar: the old side's open comment
     // must not colour the added line as a comment

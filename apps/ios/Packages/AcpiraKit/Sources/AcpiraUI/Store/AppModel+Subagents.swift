@@ -108,6 +108,57 @@ extension AppModel {
     change(&views[session]!.subagents![at])
   }
 
+  /// `-popup sidekick.demo` (recordings): the session's sidekick round replayed from its handoff in the demo, its steps
+  /// arriving one by one in a live turn, then the handback and the rest of the reply
+  func replaySidekick(_ session: String) async {
+    guard link == nil, let original = views[session], let node = original.subagents?.first(where: isSidekick),
+          original.turns.indices.contains(node.turnIndex), case .agent(let turn) = original.turns[node.turnIndex],
+          let at = turn.blocks.firstIndex(where: { $0.toolCall?.subagentId == node.id }) else { return }
+    let ms = { self.now.timeIntervalSince1970 * 1000 }
+    func show(_ blocks: ArraySlice<AgentBlock>, running: Bool, _ round: SubagentSummary?) {
+      var view = original
+      var t = turn
+      t.blocks = Array(blocks)
+      t.stop = running ? nil : turn.stop
+      view.turns[node.turnIndex] = .agent(t)
+      view.running = running
+      view.subagents = original.subagents?.compactMap { $0.id == node.id ? round : $0 }
+      views[session] = view
+    }
+    show(turn.blocks[..<at], running: true, nil)
+    try? await Task.sleep(for: .seconds(1.2))
+    var round = node
+    round.state = .running
+    round.announcedAt = ms()
+    round.endedAt = nil
+    round.result = nil
+    round.toolCount = 0
+    round.steps = []
+    show(turn.blocks[...at], running: true, round)
+    for var step in node.steps ?? [] {
+      try? await Task.sleep(for: .seconds(0.7))
+      step.status = .in_progress
+      step.startedAt = ms()
+      step.endedAt = nil
+      round.steps = Array(((round.steps ?? []) + [step]).suffix(4))
+      round.toolCount += 1
+      show(turn.blocks[...at], running: true, round)
+      try? await Task.sleep(for: .seconds(0.45))
+      step.status = .completed
+      step.endedAt = ms()
+      round.steps = round.steps?.map { $0.id == step.id ? step : $0 }
+      show(turn.blocks[...at], running: true, round)
+    }
+    try? await Task.sleep(for: .seconds(0.6))
+    round.state = node.state
+    round.endedAt = ms()
+    round.result = node.result
+    round.toolCount = node.toolCount
+    show(turn.blocks[...at], running: true, round)
+    try? await Task.sleep(for: .seconds(1.6))
+    show(turn.blocks[...], running: false, round)
+  }
+
   /// The child's transcript in whichever fixture carries it (fixtures are looked up by subagent id, so a renamed or
   /// forked demo session still finds its children)
   private static func fixtureTranscript(_ id: String) -> SubagentTranscript? {

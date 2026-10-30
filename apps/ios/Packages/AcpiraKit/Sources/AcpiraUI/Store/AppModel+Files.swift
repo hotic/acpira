@@ -61,12 +61,21 @@ extension AppModel {
     return nil
   }
 
-  /// The session as Markdown, the engine's own export (the desktop's Copy → Markdown); the demo exports its view
-  func sessionMarkdown(_ sessionId: String) async -> String? {
+  /// The session as Markdown, the engine's own export (the desktop's Copy → Markdown), or as another of its exports
+  /// (`format`, the plain text); the demo exports its view
+  func sessionMarkdown(_ sessionId: String, format: ExportFormat = .markdown) async -> String? {
     guard live else {
-      return views[sessionId].map { SessionExport.markdown($0, agentName: agent($0.agent).name, exportedAt: now) }
+      return views[sessionId].map { view in
+        let name = agent(view.agent).name
+        return format == .text ? SessionExport.text(view, agentName: name)
+          : SessionExport.markdown(view, agentName: name, exportedAt: now)
+      }
     }
-    if case let .sessionMarkdown(_, markdown?, _)? = await ask({ .sessionMarkdown(id: sessionId, seq: $0) }) { return markdown }
+    // Markdown asks without the field, as before it existed
+    let asked = format == .markdown ? nil : format
+    if case let .sessionMarkdown(_, markdown?, _)? = await ask({ .sessionMarkdown(id: sessionId, seq: $0, format: asked) }) {
+      return markdown
+    }
     return nil
   }
 

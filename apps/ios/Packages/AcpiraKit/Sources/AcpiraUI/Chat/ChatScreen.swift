@@ -19,6 +19,8 @@ struct ChatScreen: View {
   @State private var renaming = false
   @State private var newTitle = ""
   @State private var deleting = false
+  /// The move menu's "Add folder" alert
+  @State private var addingFolder = false
   @State private var accountOpen = false
   /// The closures the chat hands its views, made once per session and app model (`Memo`): a reconnect swaps the model
   @State private var actionsMemo = Memo<SessionActions>()
@@ -32,8 +34,17 @@ struct ChatScreen: View {
       if let session = model.views[id] {
         screen(session)
       } else {
-        // Deleted while on screen (the stack pops it on the same pass), or the engine's view still on its way
-        Palette.bg0.ignoresSafeArea()
+        // The list arrives before the transcript, which can take a while over a paired link. There is no byte
+        // progress on this wire, so keep an indeterminate indicator until the session itself arrives.
+        ProgressView {
+          Text(web: t("session.import.loading")).textStyle(TypeScale.text2).foregroundStyle(Palette.fg3)
+        }
+        .tint(Palette.fg2)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Palette.bg0.ignoresSafeArea())
+        .navigationTitle("")
+        .navigationBarTitleDisplayModeInline()
+        .backWithoutTitle()
       }
     }
     // Coming on screen, pushed or popped back to, switches the engine's view to this session
@@ -43,25 +54,25 @@ struct ChatScreen: View {
 
   private func screen(_ session: SessionView) -> some View {
     let agent = model.agent(session.agent)
-    let pinned = model.summaries.first { $0.id == id }?.pinned == true
+    let summary = model.summaries.first { $0.id == id }
+    let pinned = summary?.pinned == true
     // The unsent prompt and attachments live in the app model, so leaving the chat and coming back keeps them
     let draft = model.draft(for: id)
-    return VStack(spacing: 0) {
-      // A prompt the session itself holds back (starting, replaying remembered controls) shows as sent (HeldPrompt.swift)
-      // and so does the phone's own prompt still on its way to the engine, under the stage pill's "Sending…"
-      let sent = model.outgoing[id] ?? []
-      Thread(session: heldPrompt(session, outgoing: sent))
-        .environment(\.promptSending, sent.contains { !$0.settled(in: session) })
-      // The dock reaches down into the home indicator's band and rests where the list's system bottom bar does
-      // (Metrics.barSink), leaving the thread more room; on a phone without the indicator it keeps the plain gap
-      DockSeat(homeInset: homeInset) {
-        Dock(session: session, draft: Bindable(draft).text, staged: Bindable(draft).staged, edit: Bindable(draft).edit)
+    // A prompt the session itself holds back (starting, replaying remembered controls) shows as sent (HeldPrompt.swift)
+    // and so does the phone's own prompt still on its way to the engine; its working row says which stage holds it
+    let sent = model.outgoing[id] ?? []
+    return Thread(session: heldPrompt(session, outgoing: sent))
+      .environment(\.liveStage, heldStage(session, outgoing: sent, agent: agent.name))
+      // An inset reserves scroll clearance without clipping the transcript at the composer's rectangular top edge.
+      // Messages pass behind the glass and remain visible beside its rounded corners, as under the navigation bar.
+      .safeAreaInset(edge: .bottom, spacing: 0) {
+        DockSeat(homeInset: homeInset) {
+          Dock(session: session, draft: Bindable(draft).text, staged: Bindable(draft).staged, edit: Bindable(draft).edit)
+        }
+        // The inset takes the dock's ideal height, including long drafts and attachments above the keyboard.
+        .fixedSize(horizontal: false, vertical: true)
       }
-      // The dock takes the height it asks for and the thread scrolls in what is left. Offered an even share of the
-      // stack instead, a tall card (a long draft under a staged strip, with the keyboard up) came out shorter than its
-      // content and the text ran under the chips and send
-      .layoutPriority(1)
-    }
+      .scrollEdgeEffectHidden(true, for: .bottom)
     // The keyboard's safe area still lifts the dock; only the container's (the home indicator) is taken over
     .ignoresSafeArea(.container, edges: .bottom)
     .modifier(HomeInset(inset: $homeInset))
@@ -78,6 +89,8 @@ struct ChatScreen: View {
         model.seedStaged(id)
       }
       if initialPopup == "edit" { model.beginEditLast(id) }
+      // `-popup sidekick.demo` (recordings): the sidekick's round replayed from its handoff
+      if initialPopup == "sidekick.demo" { Task { await model.replaySidekick(id) } }
       if initialPopup == "toast", let account = model.accounts.first(where: { $0.agent == agent.id }) {
         Task {
           try? await Task.sleep(for: .seconds(1))
@@ -87,7 +100,8 @@ struct ChatScreen: View {
     }
     // The composer's liquid pickers, drawn over the whole screen so every piece takes taps
     .gooLayer()
-    .modifier(SystemChatBar(pinned: pinned, actions: headerActions(session, agent)))
+    .modifier(SystemChatBar(pinned: pinned, unread: summary.map(isUnread) ?? false, archived: summary?.archived == true,
+                            actions: headerActions(session, agent)))
     .background(Palette.bg0)
     .environment(\.agentAccent, Palette.accent(for: session.agent))
     .environment(\.chatAgent, agent)
@@ -120,7 +134,14 @@ struct ChatScreen: View {
       Button(t("common.delete"), role: .destructive) { model.delete(id) }
       Button(t("mobile.cancel"), role: .cancel) {}
     }
+    // As in the new session's folder menu, a typed folder joins the project list; the session moves into it
+    .modifier(AddProjectAlert(isPresented: $addingFolder) { folder in
+      model.addProject(folder)
+      model.move(id, to: folder)
+    })
   }
+
+  private func helpers(_ session: SessionView) -> [SubagentSummary] { (session.subagents ?? []).filter { !isSidekick($0) } }
 
   private func headerActions(_ session: SessionView, _ agent: AgentInfo) -> HeaderActions {
     HeaderActions(
@@ -128,18 +149,26 @@ struct ChatScreen: View {
       new: { model.path.append(.new(agent: session.agent, cwd: session.cwd)) },
       account: hasAccountMenu(agent) ? { accountOpen = true } : nil,
       pin: { model.togglePin(id) },
+      unread: { model.setUnread(id, $0) },
+      // An archived chat leaves the list; going back shows where it went
+      archive: { archived in
+        model.setArchived(id, archived)
+        if archived && !model.path.isEmpty { model.path.removeLast() }
+      },
       rename: { newTitle = session.title; renaming = true },
-      export: { model.export(id, json: $0) },
+      export: { model.export(id, format: $0) },
       terminal: { model.openTerminal(session.cwd) },
-      subagents: (session.subagents ?? []).isEmpty ? nil : { model.path.append(.subagents(session: id)) },
-      subagentCounts: countsLabel(session.subagents ?? []),
+      // The sidekick's rounds are the lead's own relay, not subagents: they neither offer the graph nor count in it
+      subagents: helpers(session).isEmpty ? nil : { model.path.append(.subagents(session: id)) },
+      subagentCounts: countsLabel(helpers(session)),
       settings: { model.settingsOpen = true },
       delete: { deleting = true },
       changes: session.cwd.isEmpty ? nil : { model.path.append(.changes(id)) },
       copy: { kind in Task { await model.copy(id, kind) } },
       cwd: session.cwd,
       projects: model.projects,
-      move: { model.move(id, to: $0) })
+      move: { model.move(id, to: $0) },
+      addFolder: { addingFolder = true })
   }
 
   /// What the memoised closures are bound to: this session on this app model
@@ -194,8 +223,12 @@ struct HeaderActions {
   var new: () -> Void = {}
   var account: (() -> Void)?
   var pin: () -> Void = {}
+  /// "Mark as unread / read"; nil where it is not offered
+  var unread: ((Bool) -> Void)?
+  /// "Archive / unarchive"; nil where it is not offered
+  var archive: ((Bool) -> Void)?
   var rename: () -> Void = {}
-  var export: (Bool) -> Void = { _ in }
+  var export: (ExportFormat) -> Void = { _ in }
   /// JSON export is offered: it is built from the view the phone holds, which a list row's session may not have
   var exportJSON = true
   /// The project's terminal page
@@ -204,7 +237,8 @@ struct HeaderActions {
   var subagents: (() -> Void)?
   var subagentCounts = ""
   var settings: (() -> Void)?
-  var delete: () -> Void = {}
+  /// Nil in a list row's menu, where the row's swipe deletes
+  var delete: (() -> Void)?
   /// The files the session changed (panel.changes)
   var changes: (() -> Void)?
   var copy: (SessionCopy) -> Void = { _ in }
@@ -212,12 +246,16 @@ struct HeaderActions {
   var cwd = ""
   var projects: [String] = []
   var move: ((String) -> Void)?
+  /// "Add folder" in the move menu: the screen raises its path alert, then moves the session there
+  var addFolder: (() -> Void)?
 }
 
 /// The chat's navigation bar: the system back button on the left, new session and the "…" menu as bar buttons on the
 /// right (the system groups them on one glass capsule), no title: the thread scrolls under the glass
 struct SystemChatBar: ViewModifier {
   var pinned: Bool
+  var unread = false
+  var archived = false
   var actions: HeaderActions
 
   func body(content: Content) -> some View {
@@ -229,7 +267,7 @@ struct SystemChatBar: ViewModifier {
         ToolbarItemGroup(placement: .primaryAction) {
           Button(action: actions.new) { Image(systemName: "square.and.pencil") }
             .accessibilityLabel(Text(web: t("session.new")))
-          Menu { NativeSessionMenu(pinned: pinned, actions: actions) } label: { Image(systemName: "ellipsis") }
+          Menu { NativeSessionMenu(pinned: pinned, unread: unread, archived: archived, actions: actions) } label: { Image(systemName: "ellipsis") }
             .accessibilityLabel(Text(web: t("session.more")))
         }
       }
@@ -243,8 +281,8 @@ struct SystemChatBar: ViewModifier {
 /// Shell.tsx Thread: stick-to-bottom following. While a turn runs, growth of the transcript (new content, paced
 /// text) keeps the bottom in view until the reader drags the thread; dragging away from the bottom releases the
 /// follow, dragging back to it restores it. A turn ending under a following thread keeps the bottom in view while the
-/// reply's last lines pace out and the process folds away; one that ended while the app was in the background lands on
-/// the bottom on the way back, wherever the reader had left it. Otherwise a settled session never moves on its own, so
+/// reply's last lines pace out and the process folds away. Reading history stays put even when the turn ends in the
+/// background. Otherwise a settled session never moves on its own, so
 /// a fold opened by a tap keeps the row under the finger in place
 struct Thread: View {
   let session: SessionView
@@ -259,9 +297,6 @@ struct Thread: View {
   @State private var offset = ScrollOffset()
   /// The turn just ended under a following thread: growth still follows until the reader drags or a fold moves
   @State private var settling = false
-  /// A turn was running as the app went to the background; cleared once it ends or the reader drags after coming back
-  @State private var leftRunning = false
-  @Environment(\.scenePhase) private var scenePhase
 
   var body: some View {
     ScrollView(.vertical) {
@@ -284,35 +319,32 @@ struct Thread: View {
       UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
       #endif
     })
-    .onScrollPhaseChange { _, phase in
+    .onScrollPhaseChange { _, phase, context in
+      let wasDragging = dragging
       dragging = phase == .interacting || phase == .tracking || phase == .decelerating
       gesture.active = dragging
       if dragging {
+        // Release on touch, not on a geometry Boolean changing: a stream may already have made atBottom false
+        // before the drag, in which case that callback never fires and the next chunk pulls the reader back.
+        follow = false
         settling = false
-        leftRunning = false
+      } else if wasDragging, phase == .idle {
+        let g = context.geometry
+        follow = g.contentOffset.y + g.containerSize.height - g.contentInsets.bottom >= g.contentSize.height - Metrics.s2
+        // The turn may have ended during the drag while its paced tail is still arriving.
+        settling = follow
+        if follow { position.scrollTo(edge: .bottom) }
       }
-    }
-    .onScrollGeometryChange(for: Bool.self) { g in
-      // At the bottom within a hair: the last line may sit a fraction of a point short after a layout pass
-      g.contentOffset.y + g.containerSize.height - g.contentInsets.bottom >= g.contentSize.height - Metrics.s2
-    } action: { _, atBottom in
-      if dragging { follow = atBottom }
     }
     .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { old, new in
       guard session.running || settling, follow, !dragging, new > old else { return }
       position.scrollTo(edge: .bottom)
     }
-    // The turn's end: in view, a following thread stays on the bottom; ended while away, the thread goes there whatever
-    // the reader had left, as the reply is what they came back for
+    // Only a following thread settles at the end; finishing (including in the background) never overrides a drag.
     .onChange(of: session.running) { was, now in
-      guard was, !now, follow || leftRunning else { return }
-      leftRunning = false
-      follow = true
+      guard was, !now, follow, !dragging else { return }
       settling = true
       position.scrollTo(edge: .bottom)
-    }
-    .onChange(of: scenePhase) { _, now in
-      if now == .background { leftRunning = session.running }
     }
     // `scrollTo(y:)` takes the point under the content's top inset; `contentOffset` counts from the frame's top edge
     .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { _, y in offset.y = y }
@@ -357,11 +389,13 @@ struct ThreadContent: View {
         // A prompt bubble does not stick (it would sit under the floating glass with the thread showing beside it)
         LazyVStack(alignment: .leading, spacing: 0) {
           sections(groups, activeAgent, nodes)
+          StartingReply(session: session)
           queue
         }
       } else {
         VStack(alignment: .leading, spacing: 0) {
           sections(groups, activeAgent, nodes)
+          StartingReply(session: session)
           queue
         }
       }
@@ -373,6 +407,7 @@ struct ThreadContent: View {
     .padding(.bottom, WebMetrics.msgGap)
     .environment(\.planContext, PlanContext(controls: session.controls, running: session.running, ready: session.status == .ready))
     .environment(\.allSubagents, session.subagents ?? [])
+    .environment(\.sidekickModels, SidekickModels(session.controls))
   }
 
   @ViewBuilder private func sections(_ groups: [Exchange], _ activeAgent: Int?, _ nodes: [Int: [SubagentSummary]]) -> some View {
@@ -453,6 +488,7 @@ public struct ChatPoster: View {
     .frame(width: width)
     .fixedSize(horizontal: false, vertical: true)
     .background(Palette.bg0)
+    .environment(\.liveStage, heldStage(session, agent: Fixtures.agents.first { $0.id == session.agent }?.name ?? session.agent))
     .environment(\.agentAccent, Palette.accent(for: session.agent))
     .environment(\.media, MediaScope(session: session.id))
     .environment(\.chatAgent, Fixtures.agents.first { $0.id == session.agent })

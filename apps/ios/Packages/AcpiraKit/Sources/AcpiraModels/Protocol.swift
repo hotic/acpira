@@ -184,6 +184,13 @@ public enum AddAccountVia: String, TolerantEnum, CaseIterable {
   public static var unknownCase: Self { .unknown }
 }
 
+/// An export's format (ExportFormat): the Markdown for reading, the record as JSON, or plain text holding only what was
+/// said (prompts and replies)
+public enum ExportFormat: String, TolerantEnum, CaseIterable {
+  case markdown, json, text, unknown
+  public static var unknownCase: Self { .unknown }
+}
+
 /// One edit of the category list, applied by the engine to what is on disk so concurrent windows compose (transcript.ts
 /// CategoryOp), as the subset the phone sends: the project list's own ops
 public enum CategoryOp: Codable, Hashable, Sendable {
@@ -454,7 +461,7 @@ public struct SettingsView: Codable, Hashable, Sendable {
     accountSwitch = try c.decode(.accountSwitch, or: "off")
     theme = try c.decode(.theme, or: "auto")
     steerQueued = try c.decode(.steerQueued, or: false)
-    notifySound = try c.decode(.notifySound, or: false)
+    notifySound = try c.decode(.notifySound, or: true)
     notifySystem = try c.decode(.notifySystem, or: false)
     planAutoApprove = try c.decode(.planAutoApprove, or: [])
     subagents = try c.decode(.subagents, or: [])
@@ -559,6 +566,10 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   case deleteSession(id: String, requestId: String? = nil)
   case restoreSession(id: String)
   case pinSession(id: String, pinned: Bool)
+  /// Archive a session (left out of the list, kept on disk) or bring it back
+  case archiveSession(id: String, archived: Bool)
+  /// "Mark as unread / read" for one session
+  case setSessionUnread(id: String, unread: Bool)
   /// Every unread mark goes, for every engine and window on the machine
   case markAllRead
   /// Full-text search over saved conversations, answered with `sessionHits` echoing seq
@@ -586,8 +597,9 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   /// Re-home a session into another project folder (absent: the view's workspace folder), the agent working there from
   /// the next open on; `category`, one of that project's, files it there in the same step
   case moveSession(id: String, cwd: String? = nil, category: String? = nil)
-  /// "Copy as Markdown": the export's Markdown as text, answered with `sessionMarkdown` echoing seq
-  case sessionMarkdown(id: String, seq: Int)
+  /// "Copy as Markdown": the export's Markdown as text, answered with `sessionMarkdown` echoing seq. `format` asks for
+  /// another export's content instead; an older engine ignores it and answers Markdown
+  case sessionMarkdown(id: String, seq: Int, format: ExportFormat? = nil)
   case addAccount(agent: AgentId, via: AddAccountVia)
   case removeAccount(id: String)
   /// AgentInfo.credentialsLocked: unlock the credential store in a terminal, then reconnect the agent's sessions stuck
@@ -649,7 +661,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   /// The `type` literals this build mirrors: the actions the app can send
   public static let types = [
     "ready", "resync", "send", "stop", "permission", "answer", "buildPlan", "setMode", "setConfig", "selectSession",
-    "deselectSession", "newSession", "renameSession", "deleteSession", "restoreSession", "pinSession", "markAllRead", "searchSessions",
+    "deselectSession", "newSession", "renameSession", "deleteSession", "restoreSession", "pinSession", "archiveSession", "setSessionUnread", "markAllRead", "searchSessions",
     "forkSession", "selectAccount", "refreshQuota", "compact", "retry", "takeOverSession", "dequeue", "sendQueued",
     "steerQueued", "editQueued", "categoryOp", "moveSession", "sessionMarkdown", "addAccount", "removeAccount",
     "unlockCredentials", "login", "reconnect", "retryTurn", "editTurn", "observeSubagent", "unobserveSubagent",
@@ -677,6 +689,8 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case .deleteSession: "deleteSession"
     case .restoreSession: "restoreSession"
     case .pinSession: "pinSession"
+    case .archiveSession: "archiveSession"
+    case .setSessionUnread: "setSessionUnread"
     case .markAllRead: "markAllRead"
     case .connections: "connections"
     case .searchSessions: "searchSessions"
@@ -727,9 +741,9 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
 
   private enum Keys: String, CodingKey {
     case type, patches, sessionId, text, attachments, steer, blockId, optionId, answers, skip, planId, model, id, configId
-    case value, agent, category, cwd, chat, title, pinned, query, seq, turnIndex, retainedAttachments, clientId
+    case value, agent, category, cwd, chat, title, pinned, archived, unread, query, seq, turnIndex, retainedAttachments, clientId
     case file, via, methodId, requestId, edit, subagentId, taskId, action, objective, key, fresh, dir, path, base
-    case toolCallId, nth, cols, rows, data, binary, chars
+    case toolCallId, nth, cols, rows, data, binary, chars, format
   }
 
   public init(from decoder: Decoder) throws {
@@ -761,6 +775,8 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case "deleteSession": self = .deleteSession(id: try str(.id), requestId: try opt(.requestId))
     case "restoreSession": self = .restoreSession(id: try str(.id))
     case "pinSession": self = .pinSession(id: try str(.id), pinned: try c.decode(Bool.self, forKey: .pinned))
+    case "archiveSession": self = .archiveSession(id: try str(.id), archived: try c.decode(Bool.self, forKey: .archived))
+    case "setSessionUnread": self = .setSessionUnread(id: try str(.id), unread: try c.decode(Bool.self, forKey: .unread))
     case "markAllRead": self = .markAllRead
     case "connections": self = .connections
     case "searchSessions": self = .searchSessions(query: try str(.query), seq: try c.decode(Int.self, forKey: .seq))
@@ -780,7 +796,8 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
                          attachments: try c.decode([Draft].self, forKey: .attachments))
     case "categoryOp": self = .categoryOp(op: try CategoryOp(from: decoder), file: try opt(.file))
     case "moveSession": self = .moveSession(id: try str(.id), cwd: try opt(.cwd), category: try opt(.category))
-    case "sessionMarkdown": self = .sessionMarkdown(id: try str(.id), seq: try int(.seq))
+    case "sessionMarkdown":
+      self = .sessionMarkdown(id: try str(.id), seq: try int(.seq), format: try c.decodeIfPresent(ExportFormat.self, forKey: .format))
     case "addAccount": self = .addAccount(agent: try str(.agent), via: try c.decode(AddAccountVia.self, forKey: .via))
     case "removeAccount": self = .removeAccount(id: try str(.id))
     case "unlockCredentials": self = .unlockCredentials(agent: try str(.agent))
@@ -878,6 +895,12 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case let .pinSession(id, pinned):
       try c.encode(id, forKey: .id)
       try c.encode(pinned, forKey: .pinned)
+    case let .archiveSession(id, archived):
+      try c.encode(id, forKey: .id)
+      try c.encode(archived, forKey: .archived)
+    case let .setSessionUnread(id, unread):
+      try c.encode(id, forKey: .id)
+      try c.encode(unread, forKey: .unread)
     case let .searchSessions(query, seq):
       try c.encode(query, forKey: .query)
       try c.encode(seq, forKey: .seq)
@@ -907,9 +930,10 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
       try c.encode(id, forKey: .id)
       try c.encodeIfPresent(cwd, forKey: .cwd)
       try c.encodeIfPresent(category, forKey: .category)
-    case let .sessionMarkdown(id, seq):
+    case let .sessionMarkdown(id, seq, format):
       try c.encode(id, forKey: .id)
       try c.encode(seq, forKey: .seq)
+      try c.encodeIfPresent(format, forKey: .format)
     case let .addAccount(agent, via):
       try c.encode(agent, forKey: .agent)
       try c.encode(via, forKey: .via)

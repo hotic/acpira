@@ -2,14 +2,17 @@ import AcpiraModels
 import Foundation
 
 // chat/turnActionHelpers.ts and TurnActions.tsx StatsCard: what a reply's statistics card lists, only the rows the peer
-// reported, in the card's three groups (the response, its token accounting, the context it left).
+// reported: the timing tiles, the token lines, the context it left.
 
 /// modelLabel: the model that answered. The peer's own id when it reported one, else the selection captured on the
-/// prompt, named through the model control's options; an unknown id shows as is
+/// prompt, named through the model control's options as its family (effort, Thinking, Fast and 1M left out; a Fusion
+/// pair keeps its whole name); an unknown id shows as is
 func modelLabel(_ usage: TurnUsage?, settings: TurnSettings?, controls: SessionControls) -> String? {
   let control = controls.options.first { $0.category == "model" }
   guard let id = usage?.model ?? control.flatMap({ settings?.config[$0.id] }) else { return nil }
-  return control?.options.first { $0.id == id }?.name ?? id
+  guard let name = control?.options.first(where: { $0.id == id })?.name else { return id }
+  let parsed = ModelCatalog.parse(name)
+  return parsed.lead == nil ? parsed.family : name
 }
 
 /// turnTtft: from the prompt going out to the first streamed block. Imported history has neither stamp, and a turn
@@ -72,35 +75,59 @@ func turnOutputTps(_ turn: AgentTurn) -> Int? {
   return tps > 0 ? tps : nil
 }
 
-/// One line of the statistics card
+/// One timing tile (duration, first token, output speed) or one token line; `chip` is the share riding beside the value
 struct StatLine: Equatable {
   var label: String
   var value: String
+  var chip: String? = nil
 }
 
-/// The card's groups, empty ones left out: the response (model, duration, time to first token, speed, tool and model
-/// calls), the tokens (input and output whenever reported, the cache and reasoning counts only when above zero, since
-/// Grok reports a cache write of 0 on every turn), then the context the turn left
-func turnStatGroups(_ turn: AgentTurn, model: String?) -> [[StatLine]] {
+/// The context the turn left: its share as the chip, then used over size
+struct StatContext: Equatable {
+  var share: String
+  var used: String
+  var size: String
+}
+
+/// What StatsCard shows, only what the peer reported: the timing tiles, the token lines with the cache share as a chip on
+/// the input line, then the post-turn context
+struct TurnStatsContent: Equatable {
+  var tiles: [StatLine] = []
+  var tokens: [StatLine] = []
+  var context: StatContext?
+}
+
+func turnStatsContent(_ turn: AgentTurn) -> TurnStatsContent {
   let usage = turn.usage
   let locale = Locale(identifier: L10n.locale)
   func number(_ n: Int) -> String { n.formatted(.number.locale(locale)) }
-  var response: [StatLine] = []
-  if let model { response.append(StatLine(label: t("stats.model"), value: model)) }
-  if turn.startedAt != nil && turn.endedAt != nil { response.append(StatLine(label: t("stats.duration"), value: elapsedDuration(turn))) }
-  if let ttft = turnTtft(turn) { response.append(StatLine(label: t("stats.ttft"), value: ttft)) }
-  if let tps = turnOutputTps(turn) { response.append(StatLine(label: t("stats.outputSpeed"), value: "\(number(tps)) tok/s")) }
-  let calls = turn.blocks.filter { $0.toolCall != nil }.count
-  if calls > 0 { response.append(StatLine(label: t("stats.toolCalls"), value: number(calls))) }
-  if let rounds = usage?.modelCalls, rounds > 0 { response.append(StatLine(label: t("stats.modelCalls"), value: number(rounds))) }
-  let fields: [(Int?, String, Bool)] = [
-    (usage?.input, "stats.input", true), (usage?.output, "stats.output", true), (usage?.cachedRead, "stats.cachedRead", false),
-    (usage?.cachedWrite, "stats.cachedWrite", false), (usage?.reasoning, "stats.reasoning", false),
-  ]
-  let tokens = fields.compactMap { value, key, always -> StatLine? in
-    guard let value, always || value > 0 else { return nil }
-    return StatLine(label: t(key), value: number(value))
+  // Floored, so a 99.6% hit never reads as a full 100%
+  func share(_ part: Int, _ whole: Int) -> String {
+    (floor(Double(part) / Double(whole) * 100) / 100).formatted(.percent.precision(.fractionLength(0)).locale(locale))
   }
-  let context = usage?.context.map { [StatLine(label: t("stats.context"), value: "\(number($0.used)) / \(number($0.size))")] } ?? []
-  return [response, tokens, context].filter { !$0.isEmpty }
+  var out = TurnStatsContent()
+  if turn.startedAt != nil && turn.endedAt != nil { out.tiles.append(StatLine(label: t("stats.duration"), value: elapsedDuration(turn))) }
+  if let ttft = turnTtft(turn) { out.tiles.append(StatLine(label: t("stats.firstToken"), value: ttft)) }
+  if let tps = turnOutputTps(turn) { out.tiles.append(StatLine(label: t("stats.outputShort"), value: "\(number(tps)) tok/s")) }
+  // A stopped turn whose counts are all zero reported nothing (claude-agent-acp answers a cancel with zeros)
+  let counts = [usage?.input, usage?.output, usage?.cachedRead, usage?.cachedWrite, usage?.reasoning]
+  let unreported = turn.stop == .cancelled && !counts.contains { ($0 ?? 0) > 0 }
+  if !unreported {
+    // input / output whenever reported, 0 included; cache write / reasoning only above zero (Grok reports a 0 write
+    // on every turn); the cache read is the input line's chip, not a line of its own
+    let fields: [(Int?, String, Bool)] = [
+      (usage?.input, "stats.input", true), (usage?.cachedWrite, "stats.cachedWrite", false),
+      (usage?.output, "stats.output", true), (usage?.reasoning, "stats.reasoning", false),
+    ]
+    out.tokens = fields.compactMap { value, key, always in
+      guard let value, always || value > 0 else { return nil }
+      var line = StatLine(label: t(key), value: number(value))
+      if key == "stats.input", let read = usage?.cachedRead, read > 0, value > 0 {
+        line.chip = t("stats.cacheHit", ["pct": share(read, value)])
+      }
+      return line
+    }
+  }
+  if let c = usage?.context, c.size > 0 { out.context = StatContext(share: share(c.used, c.size), used: number(c.used), size: number(c.size)) }
+  return out
 }

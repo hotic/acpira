@@ -3,6 +3,9 @@ import AcpiraMarkdown
 import AcpiraModels
 import Observation
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 // chat/AgentImage.tsx, GeneratedImage.tsx and the image parts of Attachments.tsx and Prose.tsx at the phone's caps. A
 // transcript image takes a card `agentImage` tall from its first pass, loading or loaded, so nothing below moves when
@@ -40,6 +43,11 @@ final class LightboxPresenter {
 
   /// The cover appears without the system's slide; the Lightbox fades itself in
   func open(_ item: LightboxItem) {
+    // End editing before UIKit presents the cover, so dismissal cannot restore its former first responder.
+    // The composers also clear their FocusState when the item arrives, keeping SwiftUI from requesting it again.
+    #if canImport(UIKit)
+    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    #endif
     var quiet = Transaction()
     quiet.disablesAnimations = true
     withTransaction(quiet) { self.item = item }
@@ -401,12 +409,14 @@ enum LightboxProbe {
 /// A Lightbox of its own for a screen that covers the chat (the whole-screen editor): a cover only rises from the
 /// screen on top, so the chat's own Lightbox cannot open over it. The session and loader stay the chat's
 struct LightboxHost: ViewModifier {
+  var onOpen: () -> Void = {}
   @State private var lightbox = LightboxPresenter()
   @Environment(\.media) private var media
 
   func body(content: Content) -> some View {
     content
       .environment(\.media, MediaScope(session: media.session, loader: media.loader, lightbox: lightbox))
+      .onChange(of: lightbox.item?.id) { _, item in if item != nil { onOpen() } }
       #if os(iOS)
       .fullScreenCover(item: Bindable(lightbox).item) { item in Lightbox(item: item) { lightbox.close() } }
       #else

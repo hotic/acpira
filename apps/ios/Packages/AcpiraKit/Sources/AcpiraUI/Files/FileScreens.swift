@@ -70,14 +70,19 @@ struct DiffCounts: View {
   var body: some View {
     HStack(spacing: Metrics.s1) {
       if add > 0 { Text(verbatim: "+\(add)").foregroundStyle(Palette.ok) }
-      if del > 0 { Text(verbatim: "−\(del)").foregroundStyle(Palette.danger) }
+      if del > 0 { Text(verbatim: "−\(del)").foregroundStyle(Palette.danger.opacity(0.8)) }
     }
     .textStyle(TypeScale.text2)
     .monospacedDigit()
   }
 }
 
-/// One project file, read-only, its changes marked; opens at `line` or else at the first change
+/// The last preview choice, carried to the next Markdown file opened (FileViewer.tsx previewMarkdown). Rendered
+/// first: on a phone the source is the slower way to read a document
+@MainActor private var previewMarkdown = true
+
+/// One project file, read-only, its changes marked; opens at `line` or else at the first change. A Markdown file
+/// opens rendered unless a link named its line, with a bar toggle back to the marked source
 struct FileScreen: View {
   let sessionId: String
   let path: String
@@ -88,10 +93,21 @@ struct FileScreen: View {
   @State private var tokens: [[CodeToken]?]?
   /// The change the navigator last went to
   @State private var at: Int?
+  @State private var preview: Bool
+
+  init(sessionId: String, path: String, line: Int? = nil) {
+    self.sessionId = sessionId
+    self.path = path
+    self.line = line
+    // A linked line can only be placed in the source
+    _preview = State(initialValue: isMarkdownPath(path) && line == nil && previewMarkdown)
+  }
 
   var body: some View {
     Group {
       switch content {
+      case .lines(let lines)? where preview:
+        markdownPreview(lines)
       case .lines(let lines)?:
         rows(lines)
       case .failed(let error)?:
@@ -105,6 +121,20 @@ struct FileScreen: View {
     .navigationTitle(fileName(path))
     .navigationBarTitleDisplayModeInline()
     .task { content = await model.file(sessionId, path: path) }
+    .toolbar {
+      if isMarkdownPath(path), case .lines? = content {
+        ToolbarItem(placement: .primaryAction) {
+          Button {
+            preview.toggle()
+            previewMarkdown = preview
+          } label: {
+            Image(systemName: preview ? "book.fill" : "book")
+          }
+          .accessibilityLabel(Text(web: t("panel.markdownPreview")))
+          .accessibilityAddTraits(preview ? .isSelected : [])
+        }
+      }
+    }
     // Coloured again when the scheme changes: the first pass can run before a pinned theme reaches the page
     .task(id: Highlight(content: content, theme: CodeTheme(scheme))) {
       guard case .lines(let lines)? = content, codeLanguage(path) != nil else { return }
@@ -172,6 +202,31 @@ struct FileScreen: View {
     }
   }
 
+  /// The file as it is now, rendered the way a reply is; its file links open from the file's folder
+  private func markdownPreview(_ lines: [DiffLine]) -> some View {
+    let text = lines.filter { $0.kind != .del }.map(\.code).joined(separator: "\n")
+    return ScrollView(.vertical) {
+      Prose(markdown: markdownPreviewText(text))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Metrics.pad)
+    }
+    .environment(\.openURL, OpenURLAction { url in
+      guard let link = FileLinks.decode(url) else { return model.openLink(url) ? .handled : .systemAction }
+      Task { await open(link) }
+      return .handled
+    })
+  }
+
+  /// FileViewer's link from a preview (ToolPanel.tsx openMarkdownLink): a relative path from the file's folder, or from
+  /// the project's root when nothing is there
+  private func open(_ link: FileLink) async {
+    var target = link.path
+    if let near = joinPath(folderOf(path), link.path), near != link.path {
+      if case .failed(.missing) = await model.file(sessionId, path: near) {} else { target = near }
+    }
+    model.path.append(.file(session: sessionId, path: target, line: link.line))
+  }
+
   /// The previous or next change, wrapping around
   private func go(_ step: Int, _ starts: [Int], _ proxy: ScrollViewProxy) {
     let current = at.flatMap { starts.firstIndex(of: $0) } ?? (step > 0 ? -1 : 0)
@@ -195,6 +250,37 @@ struct FileScreen: View {
 /// Where each run of changed lines starts
 nonisolated func changeStarts(_ lines: [DiffLine]) -> [Int] {
   lines.indices.filter { i in lines[i].kind != .ctx && (i == 0 || lines[i - 1].kind == .ctx) }
+}
+
+/// Files the page can show rendered as well as as source (FileViewer.tsx isMarkdown)
+nonisolated func isMarkdownPath(_ path: String) -> Bool {
+  let name = fileName(path)
+  guard let dot = name.lastIndex(of: ".") else { return false }
+  return ["md", "markdown", "mdx"].contains(name[name.index(after: dot)...].lowercased())
+}
+
+/// FileViewer.tsx previewText: YAML front matter (a plan's or a skill's header) would render as a rule and a setext
+/// heading, so it shows as a YAML block
+nonisolated func markdownPreviewText(_ text: String) -> String {
+  guard let m = text.prefixMatch(of: /---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/) else { return text }
+  return "```yaml\n\(m.1)\n```\n\n" + text[m.range.upperBound...]
+}
+
+/// `target` from the folder `dir`, `.` and `..` resolved; nil for an absolute target or one that climbs out of the root
+nonisolated func joinPath(_ dir: String, _ target: String) -> String? {
+  if target.hasPrefix("/") || target.hasPrefix("\\") || target.wholeMatch(of: /[A-Za-z]:[\\\/].*/) != nil { return nil }
+  var parts = dir.split(whereSeparator: { $0 == "/" || $0 == "\\" }).map(String.init)
+  for part in target.split(whereSeparator: { $0 == "/" || $0 == "\\" }) {
+    if part == "." { continue }
+    if part == ".." {
+      guard !parts.isEmpty else { return nil }
+      parts.removeLast()
+    } else {
+      parts.append(String(part))
+    }
+  }
+  let joined = parts.joined(separator: "/")
+  return dir.hasPrefix("/") ? "/" + joined : joined
 }
 
 nonisolated func fileName(_ path: String) -> String { path.split(whereSeparator: { $0 == "/" || $0 == "\\" }).last.map(String.init) ?? path }

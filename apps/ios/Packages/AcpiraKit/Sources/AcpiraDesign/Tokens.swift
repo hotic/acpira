@@ -70,6 +70,9 @@ public enum Swatches {
   /// (Chrome's computed values, LAB)
   public static let cmpFg2 = Swatch(RGBA(0.930184, 0.930184, 0.930184, 0.788627), RGBA(0.0613625, 0.0613625, 0.0613625, 0.788627))
   public static let fgStrong = Swatch(RGBA(hex: 0xf5f5f5), RGBA(hex: 0x000000))
+  /// The composer's hint on the bar's glass: the ink the list's bottom search field gives its own hint there (the
+  /// glass's vibrant secondary label, measured on the iOS 27 simulator), so the bar and the field it turns into match
+  public static let barHint = Swatch(.white(0.4), .black(0.42))
   public static let actionFg = Swatch(RGBA(hex: 0x858585), RGBA(hex: 0x707070))
   // Surfaces
   /// The phone departs from --bg-0 in dark: list, chat and settings share one near-black page (Grok's settings grey),
@@ -160,6 +163,7 @@ public enum Palette {
   public static var fg2: Color { Swatches.fg2.color }
   public static var fg3: Color { Swatches.fg3.color }
   public static var fgStrong: Color { Swatches.fgStrong.color }
+  public static var barHint: Color { Swatches.barHint.color }
   public static var actionFg: Color { Swatches.actionFg.color }
   public static var bg0: Color { Swatches.bg0.color }
   public static var bg1: Color { Swatches.bg1.color }
@@ -329,8 +333,10 @@ public enum Metrics {
   public static let planEntryPadY: CGFloat = 2
   /// max-h-plan: the docked list scrolls past seven dense rows
   public static var planMax: CGFloat { 7 * rowDense }
-  /// A popover's width (the stats card)
+  /// A popover's width (--pop-w-lg)
   public static let popLg: CGFloat = 300
+  /// The widest card a compact-adapted popover shows unclipped on a 402 pt screen (the stats card's three tiles)
+  public static let popWide: CGFloat = 336
   // The phone composer (iOS only: the webview has no such layout). The desktop card's radius, controls sized for a
   // thumb: 36 pt (Apple's minimum comfortable target less the card's own inset)
   public static let mCtl: CGFloat = 36
@@ -342,6 +348,8 @@ public enum Metrics {
   public static let sheetRow: CGFloat = 52
   /// A session in the phone's list: two lines beside the agent's mark with room above and below
   public static let sessionRow: CGFloat = 68
+  /// How far a list row slides to bare its swipe action (Delete), the capsule and its margins included
+  public static let swipeAction: CGFloat = 96
   /// The page-colour fade over a scrolled page's top (Design/TopFade.swift): how far it reaches past the bar's
   /// buttons before it is gone
   public static let topFadeTail: CGFloat = 28
@@ -416,8 +424,9 @@ public enum Metrics {
   /// glyphs this large (Messages and ChatGPT's bar)
   public static let barCtl: CGFloat = 48
   /// How far the composer's field sits below its line box's centre: the CSS line box keeps room under the baseline
-  /// that most glyphs leave empty, so a centred line read about this much high in the bar, in Chinese and English alike
-  public static let fieldInkDrop: CGFloat = 2
+  /// that most glyphs leave empty. Set so the hint's ink stands where the list's bottom search field sets its own
+  /// (measured on the iOS 27 simulator): at 2 the bar's hint sat lower than the field it turns into
+  public static let fieldInkDrop: CGFloat = 0.5
   public static let barIcon: CGFloat = 22
   /// The model chip's × and ‹ in place of the model's mark: at `barIcon` the thin × came out a size smaller than the
   /// mark it stood in for and than the `+` beside it
@@ -434,6 +443,8 @@ public enum Metrics {
   /// --pair-notch, scaled to the bar's glyph
   public static let sidekickBadge: CGFloat = 10
   public static let sidekickNotch: CGFloat = 2
+  /// The dot on the composer's model mark while the sidekick works a round (the desktop's `.sidekick-pulse`)
+  public static let sidekickPulse: CGFloat = 6
   /// The user card's text cap: five body lines
   public static var userMessageMax: CGFloat { 5 * TypeScale.text1.lineHeight }
 }
@@ -446,6 +457,10 @@ public enum Metrics {
 /// bar no longer merged and drew pinched necks between them. The toast carries text over content and keeps `.regular`
 public enum GlassStyle {
   public static let control: Glass = .clear
+  /// The composer's bar, card, chips and beans: the system's `.regular`, the glass of the list's bottom search field,
+  /// so the bar the list hands over to and from changes only its shape, never its colour. Frosted enough that the
+  /// transcript scrolling behind needs no plate under it. One variant for the whole container, as above
+  public static let bar: Glass = .regular
 }
 
 // MARK: - Motion
@@ -527,6 +542,28 @@ public enum Motion {
   public static let subagentBarStagger: Double = 0.33
   /// A child finishing in front of the reader: the bars gather onto the ✓ and it draws (icons.tsx playFinish)
   public static let subagentFinish: Double = 1
+  /// A command ending on screen: its ✓ / ✗ draws in with a small pop (CommandOutcome.tsx)
+  public static let outcomeDraw: Double = 0.42
+  /// …and its final run time fades in over the ticking one, a beat after the draw starts
+  public static let outcomeTime: Double = 0.28, outcomeTimeDelay: Double = 0.1
+  /// The sidekick relay (subagents.css `.sidekick-*`): the handoff's flip, light, words and clock, a step sliding in
+  /// from the gutter, the window's push, and the handback's mark, light, words and tally, in seconds from their mount
+  public static let sidekickFlip: Double = 0.72, sidekickFlipDelay: Double = 0.08
+  public static let sidekickSheen: Double = 0.9, sidekickSheenDelay: Double = 0.14
+  public static let sidekickLabel: Double = 0.48, sidekickLabelDelay: Double = 0.3
+  public static let sidekickTrail: Double = 0.3, sidekickTrailDelay: Double = 0.52
+  public static let sidekickStep: Double = 0.42
+  public static let sidekickSlide: Double = 0.44
+  public static let sidekickPop: Double = 0.56
+  public static let sidekickBackText: Double = 0.64
+  public static let sidekickBackTrail: Double = 0.36, sidekickBackTrailDelay: Double = 0.28
+  /// How far the words and a new step travel in from the gutter
+  public static let sidekickNudge: CGFloat = 8
+  /// --sidekick-spring / --sidekick-expo / --sidekick-sweep and the window's push, as unit curves
+  public static let sidekickSpring = UnitCurve.bezier(startControlPoint: UnitPoint(x: 0.34, y: 1.5), endControlPoint: UnitPoint(x: 0.6, y: 1))
+  public static let sidekickExpo = UnitCurve.bezier(startControlPoint: UnitPoint(x: 0.16, y: 1), endControlPoint: UnitPoint(x: 0.3, y: 1))
+  public static let sidekickSweep = UnitCurve.bezier(startControlPoint: UnitPoint(x: 0.3, y: 0.6), endControlPoint: UnitPoint(x: 0.3, y: 1))
+  public static let sidekickPush = UnitCurve.bezier(startControlPoint: UnitPoint(x: 0.3, y: 1.25), endControlPoint: UnitPoint(x: 0.5, y: 1))
 
   /// A pressed send button: the webview's hover `brightness(1.08)`, and a slight sink
   public static let pressBrightness: Double = 0.08
@@ -544,4 +581,8 @@ public enum Motion {
   public static var press: Animation { .spring(response: 0.22, dampingFraction: 0.7) }
   /// `transition: … var(--dur) ease`: CSS `ease` is cubic-bezier(.25, .1, .25, 1)
   public static var ease: Animation { .timingCurve(0.25, 0.1, 0.25, 1, duration: dur) }
+  /// A swiped list row settling open or shut: no bounce, about UIKit's own swipe actions' pace
+  public static let swipe = Animation.smooth(duration: 0.3)
+  /// A release faster than this (points a second) opens or shuts a swiped row whatever its distance
+  public static let swipeFlick: CGFloat = 300
 }

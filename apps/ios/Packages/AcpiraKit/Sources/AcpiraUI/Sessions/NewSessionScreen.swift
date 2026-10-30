@@ -23,6 +23,9 @@ struct NewSessionScreen: View {
   /// A composer picker is out: its beans and panels rise into the hero's place, so the hero steps aside meanwhile
   @State private var picking = false
   @Environment(\.motionEnabled) private var motion
+  /// The list hand-over: its stand-in takes the composer's place while the page comes from the list or goes back to it
+  /// (BarHandoff.swift)
+  @Environment(BarHandoff.self) private var handoff: BarHandoff?
   /// `-draft TEXT`: the composer pre-filled, as in a chat
   @Environment(\.initialDraft) private var initialDraft
 
@@ -66,6 +69,10 @@ struct NewSessionScreen: View {
           Composer(session: draft, text: $text, staged: $staged, onSend: start,
                    onSetMode: { picked = true; draft.controls.modeId = $0 }, onSetConfig: setConfig,
                    placeholder: t("mobile.new.placeholder"))
+            .opacity(handoff?.hidden == draft.id ? 0 : 1)
+            #if os(iOS)
+            .background { BarHandoffProbe(session: draft, placeholder: t("mobile.new.placeholder")) }
+            #endif
             .padding(.horizontal, Metrics.pad)
             .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(Self.page)).minY } action: { composerTop = $0 }
         }

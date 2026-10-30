@@ -25,8 +25,8 @@ final class TerminalKeysState {
   var ctrl = false
 }
 
-/// The bar as the terminal's input accessory view: a clear strip the system lays over the keyboard, holding the SwiftUI
-/// keys, with the keyboard's click on each key
+/// The terminal's input accessory view, holding the SwiftUI keys with the keyboard's click on each key.
+/// TerminalSurface gives this separate keyboard-window surface the terminal's background.
 final class TerminalKeysBar: UIView, UIInputViewAudioFeedback {
   weak var terminal: TerminalView? {
     didSet { watchCtrl() }
@@ -102,9 +102,22 @@ struct TerminalKeys: View {
           }
         }
         .padding(.horizontal, Metrics.s2)
+        // Keep the pressed glass inside the scroll viewport, not clipped at the key's resting height.
+        .padding(.vertical, Metrics.s1_5)
       }
       .scrollIndicators(.hidden)
+      // Fade keys that continue offscreen instead of cutting a glass capsule against the fixed keyboard key.
+      .mask {
+        HStack(spacing: 0) {
+          LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing)
+            .frame(width: Metrics.s2)
+          Rectangle()
+          LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
+            .frame(width: Metrics.s2)
+        }
+      }
       key(.hide) { Image(systemName: "keyboard.chevron.compact.down") }
+        .fixedSize()
         .accessibilityLabel(Text(web: t("mobile.terminal.hideKeyboard")))
         .padding(.trailing, Metrics.s2)
     }

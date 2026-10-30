@@ -113,4 +113,33 @@ public enum VendorMarks {
     (#"\bskywork(?![a-z])"#, "skywork"),
     (#"\bllama(?![a-z])"#, "llama"),
   ]
+
+  /// A vendor's own colour (shared/models.ts `BRAND_COLOR`); absent: the mark keeps the neutral ink
+  public static let colors: [String: UInt32] = [
+    "claude": 0xd97757,
+    "openai": 0x10a37f,
+    "gemini": 0x3186ff,
+    "zhipu": 0x3859ff,
+    "nvidia": 0x74b71b,
+    "perplexity": 0x22b8cd,
+    "deepseek": 0x4d6bfe,
+    "qwen": 0x615ced,
+    "mistral": 0xfa520f,
+    "minimax": 0xf23f5d,
+    "cloudflare": 0xf38020,
+    "ai21": 0xe91e63,
+    "microsoft": 0x00a4ef,
+    "wenxin": 0x167adf,
+    "stepfun": 0x005aff,
+    "baichuan": 0xff6933,
+    "ibm": 0x0f62fe,
+    "arcee": 0x008c8c,
+    "upstage": 0x908af9,
+    "dbrx": 0xee3d2c,
+  ]
+
+  /// A colour logo's washes over its base colour, on the 24 grid (shared/models.ts `BRAND_LAYERS`)
+  public static let layers: [String: [(from: (Double, Double), to: (Double, Double), color: UInt32, fade: Double)]] = [
+    "gemini": [(from: (7, 15.5), to: (11, 12), color: 0x08b962, fade: 1), (from: (8, 5.5), to: (11.5, 11), color: 0xf94543, fade: 1), (from: (3.5, 13.5), to: (17.5, 12), color: 0xfabc12, fade: 0.46)],
+  ]
 }

@@ -35,6 +35,8 @@ struct Composer: View {
   /// on a phone after the keyboard had already risen, so the card began to grow late, in a transaction of its own
   @State private var card = false
   @Environment(\.snapshot) private var snapshot
+  /// The face alone, for the list hand-over's stand-in, which draws its own glass under it (BarHandoff.swift)
+  @Environment(\.composerBare) private var bare
   @Environment(\.motionEnabled) private var motion
   /// The liquid chip that is open (attach, model), if any, the bean whose panel is out (1…, 0 for none), the list the
   /// sidekick's panel opened in place of its rows, and the picker `+` opened
@@ -68,6 +70,8 @@ struct Composer: View {
   @Environment(\.mentionPersonas) private var personas
   @Environment(\.compactAt) private var compactAt
   @Environment(\.sessionActions) private var actions
+  @Environment(\.media) private var media
+  @State private var popupStarted = false
 
   private var hint: String { placeholder ?? (session.running ? t("composer.placeholder.queue") : t("composer.placeholder")) }
 
@@ -88,9 +92,10 @@ struct Composer: View {
     let rest = !expanded
     return Group {
       if snapshot {
-        Text(web: text.isEmpty ? rest ? restHint : hint : text)
-          .foregroundStyle(text.isEmpty ? Palette.fg3 : Palette.fgStrong)
-          .frame(maxWidth: .infinity, alignment: .leading)
+        Group {
+          if text.isEmpty { hintText(rest ? restHint : hint) } else { Text(web: text).foregroundStyle(Palette.fgStrong) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
       } else {
         VStack(alignment: .leading, spacing: 0) {
           // The card's cap in whole lines of the field's own line box. lineLimit's cap counts the font's natural line
@@ -98,7 +103,7 @@ struct Composer: View {
           FieldHeight(cap: rest ? TypeScale.field.lineHeight : CGFloat(Self.maxLines) * TypeScale.field.lineHeight) {
             TextField(text: fieldText, selection: $selection, axis: .vertical) {
               // At rest the hint is drawn over the field instead (below)
-              Text(web: rest ? "" : hint).foregroundStyle(Palette.fg3)
+              hintText(rest ? "" : hint)
             }
             .focused($focused)
           }
@@ -107,7 +112,7 @@ struct Composer: View {
           .allowsHitTesting(!rest)
           .overlay(alignment: .topLeading) {
             if rest && text.isEmpty {
-              Text(web: restHint).foregroundStyle(Palette.fg3).allowsHitTesting(false)
+              hintText(restHint).allowsHitTesting(false)
                 // Gone at once, the frame the field's own hint appears: faded over the card's growth it showed under
                 // that hint, set with other spacing, and the two read as garbled doubled text
                 .transition(.identity)
@@ -129,6 +134,13 @@ struct Composer: View {
     // The field's height comes from FieldHeight; this bound only has to sit past anything it lets through
     .lineLimit(rest ? 1...1 : 1...Self.growLines)
     .frame(minHeight: TypeScale.field.lineHeight, alignment: .topLeading)
+  }
+
+  /// The hint as the list's bottom search field sets its own, medium and in its ink, so the bar reads as the same field
+  /// on both pages and on the way between them (BarHandoff.swift). Not `.secondary`: under the field's strong
+  /// foreground that came out brighter than the system's vibrant hint in dark and darker in light
+  private func hintText(_ hint: String) -> Text {
+    Text(web: hint).fontWeight(.medium).foregroundStyle(Palette.barHint)
   }
 
   /// The lines the card grows to before the field scrolls inside itself
@@ -229,6 +241,9 @@ struct Composer: View {
           .background {
             let shape = RoundedRectangle(cornerRadius: corner, style: .continuous)
             ZStack {
+              // No plate under the glass at rest: the transcript scrolling behind the dock is frosted by the glass
+              // itself (`GlassStyle.bar`), and a plate would set the bar apart from the list's search field it turns
+              // into on the way back
               shape.fill(Palette.cardBg)
                 .overlay(shape.strokeBorder(Palette.cardLine))
                 .opacity(plate ? 1 : 0)
@@ -237,7 +252,7 @@ struct Composer: View {
                 .animation(recedeCurve) { $0.opacity(receded ? 1 : 0) }
             }
           }
-          .glassEffect(plate ? .identity : GlassStyle.control, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+          .glassEffect(plate || bare ? .identity : GlassStyle.bar, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
           .contentShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
           .onTapGesture(perform: focusField)
           // The chips' row at the start; the room after them takes no taps, so they reach the field under it
@@ -246,11 +261,12 @@ struct Composer: View {
               LiquidAttach(open: $goo, stage: $gooStage, room: room, paste: paste, personas: personas,
                            onSummon: summon) { source = $0 }
               LiquidControls(controls: session.controls, open: $goo, stage: $gooStage, deeper: $gooDeeper, room: room,
+                             sidekickLive: session.subagents?.contains { isSidekick($0) && $0.state == .running } == true,
                              onSetMode: onSetMode, onSetConfig: onSetConfig)
             }
             .gooGlass()
             // On the card the chips are bare glyphs with no glass circle of their own (`GooChip`)
-            .environment(\.gooBare, expanded)
+            .environment(\.gooBare, expanded || bare)
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { lead = $0 }
             .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(GooColumn.space)).minY } action: { chipTop = $0 }
             Spacer(minLength: 0)
@@ -314,6 +330,8 @@ struct Composer: View {
       selection = TextSelection(insertionPoint: now.endIndex)
     }
     .onChange(of: focusKey) { _, key in if key != nil { focusField() } }
+    // A photo preview ends typing; closing it must not request the keyboard again after the chat has reappeared.
+    .onChange(of: media.lightbox?.item?.id) { _, item in if item != nil { focused = false } }
     // The plate stands in for the card's glass as a picker opens over it, until its last drop is home
     .onChange(of: goo) { _, now in if now != nil, expanded { plate = true } }
     .task(id: goo) {
@@ -477,7 +495,8 @@ struct Composer: View {
   /// so a recording shows them change. `-popup demo` plays every liquid transition in turn, for a recording read
   /// frame by frame
   private func startPopup() {
-    guard var popup = initialPopup else { return }
+    guard !popupStarted, var popup = initialPopup else { return }
+    popupStarted = true
     // A `.staged` suffix only has the chat seed the strip (`demo.staged`, `focus.model.staged`)
     if popup.hasSuffix(".staged") { popup = String(popup.dropLast(".staged".count)) }
     if popup == "demo" {
@@ -809,6 +828,9 @@ func folderName(_ path: String) -> String {
 
 /// modeIcons.ts: the glyph is inferred from keywords in id + name; first match wins
 func modeIcon(_ mode: SessionOption) -> LucideIcon {
+  if mode.kind == "full_access" { return .shieldOff }
+  if mode.kind == "auto_review" { return .sparkles }
+  if mode.id == "auto_edit" || mode.id == "acceptEdits" { return .code }
   let key = "\(mode.id) \(mode.name)".lowercased()
   let rules: [(String, LucideIcon)] = [
     (#"bypass|yolo|auto[\s-]?accept|full[\s-]?access|unsafe"#, .shieldOff),
@@ -817,6 +839,7 @@ func modeIcon(_ mode: SessionOption) -> LucideIcon {
     (#"\bask\b|chat|question"#, .messageCircleQuestionMark),
     (#"smart|\bauto\b"#, .sparkles),
     (#"code|edit|build"#, .code),
+    (#"\bteam\b|multitask|orchestrat"#, .users),
     (#"agent|default|normal"#, .infinity),
   ]
   return rules.first { key.range(of: $0.0, options: .regularExpression) != nil }?.1 ?? .circleDashed
@@ -826,15 +849,17 @@ func modeIcon(_ mode: SessionOption) -> LucideIcon {
 /// exact id (never the display name, so a user's own agent keeps its name), in the app's language and one length in
 /// CJK; anything unknown shows the agent's own name
 func modeLabel(_ mode: SessionOption) -> String {
+  if mode.kind == "full_access" { return t("composer.modeShort.full") }
+  if mode.kind == "auto_review" { return t("composer.modeShort.auto") }
   let short: [String: String] = [
-    "default": "composer.modeShort.default", "agent": "composer.modeShort.default", "build": "composer.modeShort.build",
-    "plan": "composer.modeShort.plan", "raw": "composer.modeShort.raw", "acceptEdits": "composer.modeShort.autoEdit",
+    "default": "composer.modeShort.default", "agent": "composer.modeShort.agent", "build": "composer.modeShort.build",
+    "plan": "composer.modeShort.plan", "raw": "composer.modeShort.raw", "team": "composer.modeShort.team", "acceptEdits": "composer.modeShort.autoEdit", "auto_edit": "composer.modeShort.autoEdit",
     "auto": "composer.modeShort.auto", "smart": "composer.modeShort.smart", "bypassPermissions": "composer.modeShort.full",
     "bypass": "composer.modeShort.full", "yolo": "composer.modeShort.full", "agent-full-access": "composer.modeShort.full",
     "read-only": "composer.modeShort.readOnly", "workspace-write": "composer.modeShort.workspace",
-    "ask": "composer.modeShort.ask", "code": "composer.modeShort.code",
+    "ask": "composer.modeShort.ask", "code": "composer.modeShort.code", "accept-edits": "composer.modeShort.code",
   ]
-  guard let key = short[mode.id] ?? (mode.kind == "full_access" ? "composer.modeShort.full" : nil) else { return mode.name }
+  guard let key = short[mode.id] else { return mode.name }
   return t(key)
 }
 

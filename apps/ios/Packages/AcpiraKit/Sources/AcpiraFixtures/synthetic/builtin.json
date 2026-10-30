@@ -30,7 +30,7 @@
         ]
       },
       {
-        "id": "sidekick", "name": "Sidekick", "category": "_sidekick", "value": "gateway/gpt-6-1-sol",
+        "id": "sidekick", "name": "Sidekick", "category": "_sidekick", "value": "gateway/claude-opus-5-5",
         "options": [
           { "id": "none", "name": "None" },
           { "id": "gateway/gemini-4-argon", "name": "Gemini 4 Argon", "description": "Gateway" },
@@ -61,10 +61,15 @@
       "blocks": [
         { "type": "thought", "text": "先读发布脚本，确认哪几步会改动远端；回滚只撤销已经完成的步骤。", "durationSec": 6 },
         { "type": "tool_call", "id": "b1-read", "kind": "read", "verb": "读取", "target": "scripts/release.sh", "targetMono": true, "status": "completed", "meta": "64 行" },
+        { "type": "tool_call", "id": "b1-edit", "kind": "edit", "verb": "编辑", "target": "scripts/release.sh", "targetMono": true, "status": "completed", "diffStat": { "add": 18, "del": 2 } },
+        { "type": "tool_call", "id": "b1-ask", "kind": "other", "verb": "调用", "target": "ask_agent", "status": "completed", "subagentId": "sk1" },
         { "type": "text", "markdown": "回滚已经加上：打标签和推送之后的任何一步失败，都会删除这次的标签并恢复 `package.json` 的版本号。副手复查时指出推送失败那条路径少删了远端标签，也一并补上了。" }
       ],
       "stop": "end_turn"
     }
+  ],
+  "subagents": [
+    {"id": "sk1", "turnIndex": 1, "visibility": "session", "title": "复查回滚路径", "task": "复查 scripts/release.sh 新加的失败回滚：每条失败路径是否只撤销已完成的步骤", "role": "Sidekick", "state": "completed", "stateSource": "agent", "controls": {"cancel": false}, "announcedAt": 1791535620000, "endedAt": 1791535686000, "model": "gateway/claude-opus-5-5", "peer": {}, "toolCount": 5, "result": "推送失败那条路径少删了远端标签，其余回滚步骤顺序正确", "harness": {"agent": "acpira", "persona": "sidekick", "mode": "work", "thread": "sk1", "round": 1, "effort": "medium"}, "steps": [{"type": "tool_call", "id": "sk1-2", "kind": "read", "verb": "读取", "target": "scripts/release.sh", "targetMono": true, "status": "completed", "startedAt": 1791535632000, "endedAt": 1791535633000}, {"type": "tool_call", "id": "sk1-3", "kind": "search", "verb": "搜索", "target": "git push --tags", "targetMono": false, "status": "completed", "startedAt": 1791535640000, "endedAt": 1791535641000}, {"type": "tool_call", "id": "sk1-4", "kind": "execute", "verb": "运行", "target": "bash -n scripts/release.sh", "targetMono": true, "status": "completed", "startedAt": 1791535650000, "endedAt": 1791535651000}, {"type": "tool_call", "id": "sk1-5", "kind": "execute", "verb": "运行", "target": "scripts/release.sh --dry-run --fail-at push", "targetMono": true, "status": "completed", "startedAt": 1791535660000, "endedAt": 1791535672000}]}
   ],
   "createdAt": "2026-10-09T08:40:00Z",
   "updatedAt": "2026-10-09T08:52:00Z"
