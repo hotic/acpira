@@ -205,6 +205,13 @@ struct ProtocolTests {
     try roundTrip(HostMsg.editTurnResult(requestId: "continue-request"), #"{"type":"editTurnResult","requestId":"continue-request"}"#)
   }
 
+  @Test func deletionCompletionIdentifiesItsUndoOwner() throws {
+    try roundTrip(WebviewMsg.deleteSession(id: "s1", requestId: "d1"), #"{"type":"deleteSession","id":"s1","requestId":"d1"}"#)
+    try roundTrip(WebviewMsg.deleteSession(id: "s1"), #"{"type":"deleteSession","id":"s1"}"#)
+    try roundTrip(HostMsg.deleteSessionResult(requestId: "d1", undo: true), #"{"type":"deleteSessionResult","requestId":"d1","undo":true}"#)
+    try roundTrip(HostMsg.deleteSessionResult(requestId: "d2", undo: false, error: "busy"), #"{"type":"deleteSessionResult","requestId":"d2","undo":false,"error":"busy"}"#)
+  }
+
   /// test/sidecarContract.test.ts: a terminal opened at 100×30 and its state, keys, then the exit of `exit 5`
   @Test func terminalAsTheSidecarContractRunsIt() throws {
     try roundTrip(WebviewMsg.terminalOpen(id: "T", cwd: "/w", cols: 100, rows: 30),

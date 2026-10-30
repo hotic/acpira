@@ -240,6 +240,13 @@ pub enum HostMsg {
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
   },
+  DeleteSessionResult {
+    request_id: String,
+    /// Only the engine holding this deletion's undo may offer Restore.
+    undo: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+  },
   Init {
     state: Box<InitState>,
   },
@@ -501,6 +508,7 @@ impl HostMsg {
   pub fn batch_key(&self) -> String {
     match self {
       HostMsg::Subagent { session_id, subagent_id, .. } => format!("subagent:{session_id}:{subagent_id}"),
+      HostMsg::DeleteSessionResult { request_id, .. } => format!("deleteSessionResult:{request_id}"),
       other => other.type_name().to_owned(),
     }
   }
@@ -509,6 +517,7 @@ impl HostMsg {
     match self {
       HostMsg::ChatgptStatus { .. } => "chatgptStatus",
       HostMsg::EditTurnResult { .. } => "editTurnResult",
+      HostMsg::DeleteSessionResult { .. } => "deleteSessionResult",
       HostMsg::Init { .. } => "init",
       HostMsg::Appearance { .. } => "appearance",
       HostMsg::Agents { .. } => "agents",
@@ -801,6 +810,9 @@ pub enum WebviewMsg {
   },
   DeleteSession {
     id: String,
+    /// Absent on older clients and fire-and-forget plugin actions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    request_id: Option<String>,
   },
   RestoreSession {
     id: String,
@@ -1119,5 +1131,7 @@ mod tests {
     assert_eq!(v, serde_json::json!({ "type": "files", "seq": 2, "files": [] }));
     let v = serde_json::to_value(HostMsg::EditTurnResult { request_id: "r".into(), error: None }).unwrap();
     assert_eq!(v, serde_json::json!({ "type": "editTurnResult", "requestId": "r" }));
+    let v = serde_json::to_value(HostMsg::DeleteSessionResult { request_id: "d".into(), undo: true, error: None }).unwrap();
+    assert_eq!(v, serde_json::json!({ "type": "deleteSessionResult", "requestId": "d", "undo": true }));
   }
 }

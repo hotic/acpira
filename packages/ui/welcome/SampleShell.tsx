@@ -10,7 +10,7 @@ import { sampleSession } from './sample';
 const noop = () => {};
 const HANDLERS: ShellHandlers = {
   send: noop, searchFiles: () => Promise.resolve([]), stop: noop, permission: noop, setMode: noop, setConfig: noop,
-  selectSession: noop, newSession: noop, renameSession: noop, deleteSession: noop, restoreSession: noop, pinSession: noop,
+  selectSession: noop, newSession: noop, renameSession: noop, deleteSession: async () => false, restoreSession: noop, pinSession: noop,
   selectAccount: noop, addAccount: noop, removeAccount: noop, compact: noop, login: noop, retry: noop, retryTurn: noop,
 };
 

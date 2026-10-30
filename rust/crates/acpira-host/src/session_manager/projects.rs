@@ -293,6 +293,12 @@ impl SessionManager {
             // A mirrored session deleted by the engine driving it goes the same way
             let mirrors: Vec<String> = me.state.lock().mirrors.keys().cloned().collect();
             gone.extend(mirrors.into_iter().filter(|id| !merged.iter().any(|m| &m.id == id)));
+            // A local lifecycle operation owns these records until it commits: a trash move or an in-flight load is
+            // not an external deletion, and must not be forgotten or rehomed by this reconcile.
+            {
+              let st = me.state.lock();
+              gone.retain(|id| !st.loading.contains_key(id));
+            }
             for id in &gone {
               me.forget(id);
             }
@@ -306,6 +312,7 @@ impl SessionManager {
             sort_index(&mut merged);
             let changed = {
               let mut st = me.state.lock();
+              merged.retain(|s| !st.trash.contains_key(&s.id));
               let changed = st.index != merged;
               if changed {
                 st.index = merged;

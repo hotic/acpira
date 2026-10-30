@@ -62,6 +62,7 @@ impl MsgBatch {
         let idle = self.running.replace(*running) != Some(false) && !*running;
         switched || idle
       }
+      HostMsg::DeleteSessionResult { .. } => true,
       _ => false,
     };
     let key = m.batch_key();

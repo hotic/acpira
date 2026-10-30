@@ -42,11 +42,11 @@ pub(super) async fn flush_loop(weak: Weak<SessionManager>) {
 
 impl SessionManager {
   pub fn sessions(&self) -> Vec<SessionSummary> {
-    let (index, live, unread, elsewhere) = {
+    let (index, live, unread, elsewhere, deleting, trash) = {
       let st = self.state.lock();
       // Run by another engine: its entry as that engine announced it (one owner per session, so ids never collide)
       let elsewhere: HashMap<String, SessionSummary> = st.elsewhere.values().flatten().map(|s| (s.id.clone(), s.clone())).collect();
-      (st.index.clone(), st.live.clone(), st.unread.clone(), elsewhere)
+      (st.index.clone(), st.live.clone(), st.unread.clone(), elsewhere, st.deleting.clone(), st.trash.keys().cloned().collect::<HashSet<_>>())
     };
     let mark = |mut s: SessionSummary, live_state: Option<SummaryState>| {
       let seen = !unread.contains(&s.id);
@@ -71,6 +71,14 @@ impl SessionManager {
     for e in elsewhere.values().filter(|e| !known.contains(&e.id) && !live.contains_key(&e.id)) {
       merged.push(mark(e.clone(), e.state));
     }
+    // A handover drops the old owner's announcement before the requesting engine finishes the disk move.
+    for snapshot in deleting.into_values() {
+      match merged.iter().position(|s| s.id == snapshot.id) {
+        Some(i) => merged[i] = snapshot,
+        None => merged.push(snapshot),
+      }
+    }
+    merged.retain(|s| !trash.contains(&s.id));
     if let Some(c) = &self.deps.chatgpt {
       merged.extend(c.summaries());
     }
@@ -121,9 +129,16 @@ impl SessionManager {
   }
 
   pub(super) fn most_recent(&self) -> Option<String> {
+    self.most_recent_except(None)
+  }
+
+  pub(super) fn most_recent_except(&self, except: Option<&str>) -> Option<String> {
     let scope = (self.deps.scope)();
     let cwd = (self.deps.cwd)();
-    self.sessions().into_iter().find(|s| scope == "all" || in_workspace(&s.cwd, &cwd)).map(|s| s.id)
+    let deleting: HashSet<String> = self.state.lock().deleting.keys().cloned().collect();
+    self.sessions().into_iter()
+      .find(|s| except != Some(s.id.as_str()) && !deleting.contains(&s.id) && (scope == "all" || in_workspace(&s.cwd, &cwd)))
+      .map(|s| s.id)
   }
 
   /// Attach a viewer: `initial` is the session it opens on, or the newest listed one

@@ -107,7 +107,8 @@ export interface ShellHandlers {
   // `cwd` (a project shell, the desktop app) starts it in that folder; `chat` in a fresh folder of its own (no project)
   newSession: (agent?: AgentInfo['id'], category?: string, cwd?: string, chat?: boolean) => void;
   renameSession: (id: string, title: string) => void;
-  deleteSession: (id: string) => void;
+  // Resolves only when deletion commits; true means this engine can undo it. Errors are shown by the host.
+  deleteSession: (id: string) => Promise<boolean> | void;
   restoreSession: (id: string) => void;
   pinSession: (id: string, pinned: boolean) => void;
   // Project scoping of the list: re-home a session into another project (absent: this window's workspace folder), optionally
@@ -498,12 +499,18 @@ export function Shell(p: ShellProps) {
     return () => on.unobserveSubagent?.(sid, id);
   }, [inspect?.id, p.activeSessionId, on.observeSubagent, on.unobserveSubagent]);
   const onInspect = useCallback((id: string) => setInspect({ id }), []);
-  // Deletion applies immediately, with an undoable toast floating at the bottom (modeled on Codex's archive), no confirmation dialog; refused attachments show up the same way
+  // Only this request's completion can offer undo: another engine's list change is not a deletion receipt.
+  // Refused deletions show the host's error instead. Refused attachments share this stack.
   const [toasts, setToasts] = useState<ToastState[]>([]);
+  const deleting = useRef(new Set<string>());
   // The desktop shell's own toasts share the stack (packages/ui/desktop.ts)
   const shellToasts = useShellToasts();
   const dropToast = useCallback((key: string) => setToasts(ts => ts.filter(t => t.key !== key)), []);
   const pushToast = useCallback((t: ToastState) => setToasts(ts => [...ts.filter(x => x.key !== t.key), t]), []);
+  useEffect(() => {
+    const pending = deleting.current;
+    return () => pending.clear();
+  }, []);
   const notice = useCallback((text: string) => pushToast({ key: `n${Date.now()}`, text, icon: <Paperclip className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} /> }), [pushToast]);
   // A copy's confirmation, or why it failed. One toast slot: a fresh key per copy restarts the toast's timer and the
   // previous confirmation goes
@@ -516,10 +523,21 @@ export function Shell(p: ShellProps) {
   }, []);
   const handlers = useMemo<ShellHandlers>(() => ({
     ...on,
-    deleteSession: id => {
-      const title = p.sessions.find(s => s.id === id)?.title ?? t('session.fallbackTitle');
-      on.deleteSession(id);
-      pushToast({ key: id, text: t('session.deleted', { title }), undo: () => { on.restoreSession(id); dropToast(id); } });
+    deleteSession: async id => {
+      if (deleting.current.has(id)) return false;
+      const target = p.sessions.find(s => s.id === id);
+      deleting.current.add(id);
+      try {
+        const undo = await on.deleteSession(id) === true;
+        // An unsent, unlisted session has no saved record to undo. Unmounting also discards the pending toast.
+        if (undo && target && deleting.current.has(id)) {
+          const title = target.title || t('session.fallbackTitle');
+          pushToast({ key: id, text: t('session.deleted', { title }), undo: () => { on.restoreSession(id); dropToast(id); } });
+        }
+        return undo;
+      } finally {
+        deleting.current.delete(id);
+      }
     },
     // The link and the folder are written inside the click; the Markdown is handed over as pending text (writeClipboardLater)
     copySession: (id, what) => {

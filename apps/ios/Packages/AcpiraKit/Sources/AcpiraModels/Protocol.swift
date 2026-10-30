@@ -556,7 +556,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   /// `chat`: a session in a fresh folder of its own under InitState.chats (project shells), `cwd` ignored
   case newSession(agent: AgentId? = nil, category: String? = nil, cwd: String? = nil, chat: Bool? = nil)
   case renameSession(id: String, title: String)
-  case deleteSession(id: String)
+  case deleteSession(id: String, requestId: String? = nil)
   case restoreSession(id: String)
   case pinSession(id: String, pinned: Bool)
   /// Every unread mark goes, for every engine and window on the machine
@@ -758,7 +758,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case "deselectSession": self = .deselectSession(id: try str(.id))
     case "newSession": self = .newSession(agent: try opt(.agent), category: try opt(.category), cwd: try opt(.cwd), chat: try c.decodeIfPresent(Bool.self, forKey: .chat))
     case "renameSession": self = .renameSession(id: try str(.id), title: try str(.title))
-    case "deleteSession": self = .deleteSession(id: try str(.id))
+    case "deleteSession": self = .deleteSession(id: try str(.id), requestId: try opt(.requestId))
     case "restoreSession": self = .restoreSession(id: try str(.id))
     case "pinSession": self = .pinSession(id: try str(.id), pinned: try c.decode(Bool.self, forKey: .pinned))
     case "markAllRead": self = .markAllRead
@@ -862,8 +862,11 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
       try c.encodeIfPresent(sessionId, forKey: .sessionId)
       try c.encode(configId, forKey: .configId)
       try c.encode(value, forKey: .value)
-    case .selectSession(let id), .deselectSession(let id), .deleteSession(let id), .restoreSession(let id):
+    case .selectSession(let id), .deselectSession(let id), .restoreSession(let id):
       try c.encode(id, forKey: .id)
+    case let .deleteSession(id, requestId):
+      try c.encode(id, forKey: .id)
+      try c.encodeIfPresent(requestId, forKey: .requestId)
     case let .newSession(agent, category, cwd, chat):
       try c.encodeIfPresent(agent, forKey: .agent)
       try c.encodeIfPresent(category, forKey: .category)
@@ -1038,6 +1041,8 @@ public enum HostMsg: Codable, Hashable, Sendable {
                      exit: TerminalExit? = nil, error: String? = nil)
   /// The answer to editTurn with the same requestId; error: why the edit was refused
   case editTurnResult(requestId: String, error: String? = nil)
+  /// Only a completed deletion whose engine holds the undo may offer Restore.
+  case deleteSessionResult(requestId: String, undo: Bool, error: String? = nil)
   /// The appearance axes changed
   case appearance(appearance: Appearance)
   /// The SSH hosts, after `connections` was asked and on every change since
@@ -1050,7 +1055,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
     "init", "agents", "sessions", "categories", "noSession", "session", "sessionPatch", "accounts", "accountActions",
     "hidden", "settings", "controls", "sessionHits", "subagent", "files", "diffSource", "imageBlob", "sessionMarkdown",
     "projectDir", "projectStatus", "projectFile", "sessionChanges", "terminalOutput", "terminalState", "editTurnResult",
-    "appearance", "connections",
+    "deleteSessionResult", "appearance", "connections",
   ]
 
   /// The wire `type`
@@ -1081,6 +1086,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case .terminalOutput: "terminalOutput"
     case .terminalState: "terminalState"
     case .editTurnResult: "editTurnResult"
+    case .deleteSessionResult: "deleteSessionResult"
     case .appearance: "appearance"
     case .connections: "connections"
     case .unknown(let t): t
@@ -1091,7 +1097,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case type, state, agents, sessions, categories, session, patch, accounts, actions, hidden, settings, locale, agent
     case controls, shapes, seq, hits
     case sessionId, subagentId, rev, running, turns, files, source, blob, markdown, error, entries, root, marks, text
-    case hunks, id, data, title, cols, rows, replay, exit, requestId, appearance, connections
+    case hunks, id, data, title, cols, rows, replay, exit, requestId, undo, appearance, connections
   }
 
   public init(from decoder: Decoder) throws {
@@ -1138,6 +1144,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
                             rows: try c.decodeIfPresent(Int.self, forKey: .rows), replay: try opt(.replay),
                             exit: try c.decodeIfPresent(TerminalExit.self, forKey: .exit), error: try opt(.error))
     case "editTurnResult": self = .editTurnResult(requestId: try str(.requestId), error: try opt(.error))
+    case "deleteSessionResult": self = .deleteSessionResult(requestId: try str(.requestId), undo: try c.decode(Bool.self, forKey: .undo), error: try opt(.error))
     case "appearance": self = .appearance(appearance: try c.decode(Appearance.self, forKey: .appearance))
     case "connections": self = .connections(connections: try c.decode([ConnectionView].self, forKey: .connections))
     case let type: self = .unknown(type)
@@ -1215,6 +1222,10 @@ public enum HostMsg: Codable, Hashable, Sendable {
       try c.encodeIfPresent(error, forKey: .error)
     case let .editTurnResult(requestId, error):
       try c.encode(requestId, forKey: .requestId)
+      try c.encodeIfPresent(error, forKey: .error)
+    case let .deleteSessionResult(requestId, undo, error):
+      try c.encode(requestId, forKey: .requestId)
+      try c.encode(undo, forKey: .undo)
       try c.encodeIfPresent(error, forKey: .error)
     case .appearance(let appearance):
       try c.encode(appearance, forKey: .appearance)

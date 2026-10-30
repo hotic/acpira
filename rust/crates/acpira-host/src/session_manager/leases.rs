@@ -36,7 +36,7 @@ impl Drop for LeaseHold<'_> {
 }
 
 impl SessionManager {
-  /// Record edits (rename, pin, delete, move) hold the session's lease until they are on disk: refused while another
+  /// Record edits (rename, pin, move) hold the session's lease until they are on disk: refused while another
   /// engine drives the session (or this one only mirrors it), since they would race that engine's saves. A short hold
   /// (another engine opening the session or saving an edit of its own) is waited out rather than refused
   pub(super) async fn hold_record<'a>(&'a self, id: &'a str) -> Result<LeaseHold<'a>> {
@@ -54,8 +54,24 @@ impl SessionManager {
     }
   }
 
+  /// Deletion ends the session wherever it runs. Keep its undo in the requesting engine rather than forwarding the
+  /// delete to an owner whose lease (and action route) goes away with it. Other machines' copies stay read-only
+  pub(super) async fn hold_deletion<'a>(&'a self, id: &'a str) -> Result<LeaseHold<'a>> {
+    if self.mirror_of(id).is_some_and(|s| !s.can_take_over_elsewhere()) {
+      return Err(anyhow!(t("host.sessionBusyElsewhere")));
+    }
+    match self.leases.claim(id) {
+      Claim::Held(pin) => Ok(LeaseHold { leases: &self.leases, id, pin }),
+      Claim::Elsewhere => self.take_lease_elsewhere(id).await,
+      Claim::Failed(e) => Err(anyhow!(tp("host.sessionLeaseFailed", &[("error", &e)]))),
+    }
+  }
+
   /// The session's `claim` hook: the lease for a turn about to start
   pub(super) fn claim_turn(&self, id: &str) -> Result<u64, String> {
+    if self.yielding.lock().contains(id) || self.state.lock().deleting.contains_key(id) {
+      return Err(t("host.sessionBusyElsewhere"));
+    }
     match self.leases.claim(id) {
       Claim::Held(pin) => Ok(pin),
       Claim::Elsewhere => Err(t("host.sessionBusyElsewhere")),
@@ -138,6 +154,7 @@ impl SessionManager {
   /// Another engine takes this session over: the running turn stops, the record is written, the agent ends and the lease
   /// goes; whoever was looking at it here keeps a read-only copy that can take it back
   async fn yield_session(self: &Arc<Self>, id: &str) {
+    let _op = self.session_op(id).await;
     let Some(s) = self.live(id) else { return };
     self.log(&format!("session {id}: another engine takes it over, letting go"));
     if s.is_running() {
@@ -147,8 +164,13 @@ impl SessionManager {
         tokio::time::sleep(Duration::from_millis(50)).await;
       }
     }
+    if s.is_running() {
+      self.log(&format!("session {id}: turn has not settled, lease kept"));
+      return;
+    }
     if let Err(e) = self.deps.store.flush(s.clone() as Arc<dyn RecordSource>).await {
       self.log(&format!("session {id}: save before handing over failed: {e}"));
+      return;
     }
     let record = s.to_record();
     self.forget(id);
@@ -177,9 +199,13 @@ impl SessionManager {
     }
   }
 
-  /// Take over a session another engine has open: ask it to let go, wait for the lease, then open the session here
-  pub(super) async fn take_over_elsewhere(self: &Arc<Self>, id: &str) -> Result<()> {
-    self.leases.request_takeover(id).map_err(|e| anyhow!(tp("host.sessionLeaseFailed", &[("error", &e.to_string())])))?;
+  /// Ask the owner to stop and save, then hold its lease without opening an agent here. Deletion uses the same
+  /// handshake as a takeover but must not resume the session just to close it again
+  async fn take_lease_elsewhere<'a>(&'a self, id: &'a str) -> Result<LeaseHold<'a>> {
+    if let Err(e) = self.leases.request_takeover(id) {
+      self.leases.clear_takeover(id);
+      return Err(anyhow!(tp("host.sessionLeaseFailed", &[("error", &e.to_string())])));
+    }
     let deadline = tokio::time::Instant::now() + TAKEOVER_WAIT;
     let pin = loop {
       match self.leases.claim(id) {
@@ -195,8 +221,13 @@ impl SessionManager {
         }
       }
     };
-    let hold = LeaseHold { leases: &self.leases, id, pin };
     self.leases.clear_takeover(id);
+    Ok(LeaseHold { leases: &self.leases, id, pin })
+  }
+
+  /// Take over a session another engine has open: ask it to let go, wait for the lease, then open the session here
+  pub(super) async fn take_over_elsewhere(self: &Arc<Self>, id: &str) -> Result<()> {
+    let hold = self.take_lease_elsewhere(id).await?;
     self.log(&format!("session {id}: taken over from another engine"));
     self.state.lock().mirrors.remove(id);
     // The first viewer loads it (fresh from disk, the other engine's last word); the rest find it live
@@ -288,8 +319,14 @@ impl SessionManager {
       loop {
         tokio::time::sleep(MIRROR_POLL).await;
         let Some(m) = me.upgrade() else { return };
-        if m.state.lock().disposed {
-          return;
+        {
+          let st = m.state.lock();
+          if st.disposed {
+            return;
+          }
+          if st.loading.contains_key(&id) {
+            continue;
+          }
         }
         // Replaced by the session itself (taken over, deleted): this poll is done
         if m.mirror_of(&id).is_none() {
@@ -308,7 +345,13 @@ impl SessionManager {
         // Free and nobody else is about to take it (a takeover in flight frees it for the requester, not for this copy).
         // Another machine's copy is never free here
         if !m.state.lock().copies.contains(&id) && !m.leases.held_elsewhere(&id) && !m.leases.takeover_requested(&id) {
-          m.state.lock().mirrors.remove(&id);
+          {
+            let mut st = m.state.lock();
+            if st.loading.contains_key(&id) {
+              continue;
+            }
+            st.mirrors.remove(&id);
+          }
           m.leases.clear_handover(&id);
           m.end_remote(&id);
           m.log(&format!("session {id}: the other engine let go, opening it here"));

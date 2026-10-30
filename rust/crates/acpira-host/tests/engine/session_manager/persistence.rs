@@ -215,12 +215,18 @@ async fn a_copy_another_machine_left_here_is_read_only() {
   let m = Mgr::new(dir.path(), Opts::fake(&fake));
   m.init().await;
 
+  // A list deletion must inspect copyOf before the record has ever been opened (and entered the mirrors/copies maps).
+  m.handle(json!({ "type": "deleteSession", "id": "s-far" })).await;
+  assert_eq!(std::fs::read(dir.path().join("s-far.json")).unwrap(), record("s-far", "machine-elsewhere"));
+  assert!(m.session_ids().contains(&"s-far".to_owned()));
+  assert!(!dir.path().join("trash/s-far.json").exists());
   m.handle(json!({ "type": "selectSession", "id": "s-far" })).await;
   until(|| m.active().is_some_and(|a| a["id"] == "s-far" && a["status"] == "readonly"), 5000).await;
   let shown = m.active().unwrap();
   assert!(shown["error"].as_str().unwrap_or_default().contains("Studio"), "{shown}");
   m.handle(json!({ "type": "send", "text": "hi" })).await;
   m.handle(json!({ "type": "renameSession", "id": "s-far", "title": "Renamed here" })).await;
+  m.handle(json!({ "type": "deleteSession", "id": "s-far" })).await;
   tokio::time::sleep(std::time::Duration::from_millis(300)).await;
   assert_eq!(std::fs::read(dir.path().join("s-far.json")).unwrap(), record("s-far", "machine-elsewhere"), "the record is the other machine's");
 

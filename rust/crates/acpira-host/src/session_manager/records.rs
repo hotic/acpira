@@ -128,48 +128,108 @@ impl SessionManager {
 
   /// Soft deletion with a 30-second undo window; viewers showing it move on
   pub async fn delete_session(self: &Arc<Self>, id: &str) -> Result<()> {
+    self.delete_record(id).await?;
+    self.rehome(id).await;
+    Ok(())
+  }
+
+  /// Commit the deletion before navigation can start another agent. True means this engine holds the undo; a record
+  /// already deleted elsewhere has no undo here, even though its stale list entry also goes away.
+  pub(super) async fn delete_record(self: &Arc<Self>, id: &str) -> Result<bool> {
     if !is_session_id(id) {
-      return Ok(());
+      return Ok(false);
     }
-    let _hold = self.hold_record(id).await?;
-    self.plugin_event("session.deleted", || serde_json::json!({ "session": id }));
+    // A repeated request waits for the same operation; it must neither confirm early nor delete an immediate undo again.
+    let repeated = self.state.lock().deleting.contains_key(id);
+    let op = self.session_op(id).await;
+    let undo = self.state.lock().trash.contains_key(id);
+    if repeated || undo {
+      return Ok(undo);
+    }
     if let Some(c) = self.deps.chatgpt.clone().filter(|c| c.owns(id)) {
+      let _hold = self.hold_record(id).await?;
       c.delete(id).await?;
-      self.rehome(id).await;
-      return Ok(());
+      self.plugin_event("session.deleted", || serde_json::json!({ "session": id }));
+      return Ok(true);
     }
+    let snapshot = self.sessions().into_iter().find(|s| s.id == id)
+      .or_else(|| self.live(id).or_else(|| self.mirror_of(id)).map(|s| s.summary()));
+    if let Some(summary) = snapshot {
+      self.state.lock().deleting.insert(id.to_owned(), summary);
+    }
+    // Not every foreign copy has been opened here: check the record as well as the mirror before asking any owner to yield.
+    if self.deps.store.load(id).await.is_some_and(|r| r.copy_of.is_some_and(|c| c.machine != crate::remote::host_store::this_machine().0)) {
+      return Err(anyhow!(t("host.sessionBusyElsewhere")));
+    }
+    let hold = self.hold_deletion(id).await?;
     if let Some(live) = self.live(id) {
-      self.deps.store.flush(live as Arc<dyn RecordSource>).await.ok();
+      live.cancel_for_handover().await;
+      let until = tokio::time::Instant::now() + super::YIELD_SETTLE;
+      while live.is_running() && tokio::time::Instant::now() < until {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+      }
+      if live.is_running() {
+        return Err(anyhow!(t("host.takeOverTimeout")));
+      }
+      if let Err(e) = self.deps.store.flush(live.clone() as Arc<dyn RecordSource>).await {
+        self.release_after_save(live, hold.keep());
+        return Err(anyhow!(tp("host.saveFailed", &[("error", &e.to_string())])));
+      }
     }
     self.forget(id);
-    let sum = {
-      let mut st = self.state.lock();
-      let sum = st.index.iter().find(|s| s.id == id).cloned();
-      st.index.retain(|s| s.id != id);
-      sum
+    self.sync_leases();
+    let closing = self.state.lock().closing.get(id).cloned();
+    if let Some(mut rx) = closing {
+      let _ = rx.wait_for(|done| *done).await;
+    }
+    // Read only after taking the lease: this is the former owner's last record. A second deleting engine must not
+    // arm a timer from its stale list entry when the first one has already moved the record to the trash.
+    let sum = match self.deps.store.load_detailed(id).await {
+      Ok(record) => {
+        if record.copy_of.as_ref().is_some_and(|c| c.machine != crate::remote::host_store::this_machine().0) {
+          return Err(anyhow!(t("host.sessionBusyElsewhere")));
+        }
+        Some(record.summary())
+      }
+      Err(error) if error.is_missing() => None,
+      Err(error) => return Err(anyhow!(error.detail())),
     };
+    self.deps.store.trash(id).await?;
+    let undo = sum.is_some();
     if let Some(summary) = sum {
       let weak = self.me.clone();
       let tid = id.to_owned();
       let timer = tokio::spawn(async move {
         tokio::time::sleep(TRASH_TTL).await;
         let Some(m) = weak.upgrade() else { return };
+        let _op = m.session_op(&tid).await;
         let gone = m.state.lock().trash.remove(&tid);
-        m.deps.store.remove(&tid).await;
         if let Some(t) = gone {
+          m.deps.store.remove(&tid).await;
           m.remove_chat_folder(&t.summary.cwd, false).await;
         }
       });
       self.state.lock().trash.insert(id.to_owned(), Trash { summary, timer: timer.abort_handle() });
     }
-    self.deps.store.trash(id).await?;
+    {
+      let mut st = self.state.lock();
+      st.index.retain(|s| s.id != id);
+      st.deleting.remove(id);
+      for list in st.elsewhere.values_mut() {
+        list.retain(|s| s.id != id);
+      }
+    }
+    self.plugin_event("session.deleted", || serde_json::json!({ "session": id }));
     // Read by nobody any more; the other engines drop it from their lists now rather than on their next refresh
     self.mark_read(id);
     self.bus.touch("index");
     self.save_index();
-    self.rehome(id).await;
+    drop(hold);
+    self.sync_leases();
     self.emit_sessions();
-    Ok(())
+    // Rehoming can load a different record: release this operation before the caller confirms and navigates away.
+    drop(op);
+    Ok(undo)
   }
 
   /// Close a live session and drop every trace of it in memory; out of the live map first, so its dispose callback
@@ -177,6 +237,13 @@ impl SessionManager {
   pub(super) fn forget(&self, id: &str) {
     // The unread mark stays: it is the user's, shared by every engine, and outlives this engine's copy (a session handed to
     // another engine is just as unread there)
+    // Keep the native-session lock until session/close and process exit, just like idle release. Undo can immediately
+    // reopen the record in this or another engine, so releasing the lease at forget() would be too early.
+    let close_pin = self.live(id).and_then(|_| match self.leases.claim(id) {
+      crate::store::session_lease::Claim::Held(pin) => Some(pin),
+      _ => None,
+    });
+    let (closed_tx, closed_rx) = tokio::sync::watch::channel(false);
     let live = {
       let mut st = self.state.lock();
       st.was_running.remove(id);
@@ -188,13 +255,33 @@ impl SessionManager {
       st.dirty.remove(id);
       st.mirrors.remove(id);
       st.idle_since.remove(id);
-      st.live.remove(id)
+      let live = st.live.remove(id);
+      if live.is_some() {
+        st.closing.insert(id.to_owned(), closed_rx);
+      }
+      live
     };
     if let Some(s) = live {
       if let Some(pin) = s.drop_lease() {
         self.leases.release(id, pin);
       }
-      s.dispose();
+      let (_, closing) = s.shutdown();
+      let weak = self.me.clone();
+      let id = id.to_owned();
+      tokio::spawn(async move {
+        if let Some(f) = closing {
+          f.await;
+        }
+        if let Some(m) = weak.upgrade() {
+          if let Some(pin) = close_pin {
+            m.leases.release(&id, pin);
+          }
+          m.state.lock().closing.remove(&id);
+        }
+        let _ = closed_tx.send(true);
+      });
+    } else if let Some(pin) = close_pin {
+      self.leases.release(id, pin);
     }
   }
 
@@ -208,7 +295,7 @@ impl SessionManager {
       }
       for v in me.viewers_on(&id, None) {
         me.set_active(&v, None);
-        match me.most_recent() {
+        match me.most_recent_except(Some(&id)) {
           Some(next) => me.select_session_for(&v, &next).await,
           // A project shell whose last session went and that has no project left shows its empty state
           None if me.folder_for(Some(&v), None).is_none() => v.emit(HostMsg::NoSession),
@@ -328,16 +415,24 @@ impl SessionManager {
     if !is_session_id(id) {
       return Ok(());
     }
+    let _op = self.session_op(id).await;
     if let Some(c) = self.deps.chatgpt.as_ref().filter(|c| c.owns(id)) {
       return c.restore(id).await;
     }
+    if !self.state.lock().trash.contains_key(id) {
+      return Ok(());
+    }
+    let _hold = self.hold_record(id).await?;
+    // The expiry task takes the same session_op, so it cannot remove the undo while this move is in flight. On failure
+    // the entry and timer remain intact for retry; a missing trash record must not resurrect only its list summary.
+    self.deps.store.restore(id).await?;
+    let restored = self.deps.store.load_detailed(id).await.map_err(|e| anyhow!(e.detail()))?;
     let Some(entry) = self.state.lock().trash.remove(id) else { return Ok(()) };
     entry.timer.abort();
-    self.deps.store.restore(id).await;
     self.bus.touch("index");
     {
       let mut st = self.state.lock();
-      st.index.push(entry.summary);
+      st.index.push(restored.summary());
       sort_index(&mut st.index);
       st.touched.insert(id.to_owned());
     }

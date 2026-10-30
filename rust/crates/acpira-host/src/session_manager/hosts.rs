@@ -56,6 +56,10 @@ struct HostRun {
   shown: parking_lot::Mutex<HashMap<String, Shown>>,
   /// Views that asked the host for a new session, by view id: the viewer to put on it once it shows
   asked: parking_lot::Mutex<HashMap<String, Weak<Viewer>>>,
+  /// Delete completions return to the requesting page, even after its shown session was detached.
+  deletions: parking_lot::Mutex<HashMap<String, (String, Weak<Viewer>)>>,
+  /// Keep the route to an undo after the session has left the host's list.
+  deleted: parking_lot::Mutex<HashMap<String, tokio::time::Instant>>,
   /// The host engine's pid while connected (tests stop it)
   pid: parking_lot::Mutex<Option<u32>>,
   seq: AtomicU64,
@@ -93,7 +97,12 @@ impl HostRun {
   }
 
   fn owns(&self, id: &str) -> bool {
-    self.items.lock().iter().any(|s| s.id == id) || self.shown.lock().contains_key(id)
+    let undo = {
+      let mut deleted = self.deleted.lock();
+      deleted.retain(|_, until| *until > tokio::time::Instant::now());
+      deleted.contains_key(id)
+    };
+    self.items.lock().iter().any(|s| s.id == id) || self.shown.lock().contains_key(id) || undo
   }
 }
 
@@ -102,7 +111,7 @@ impl HostRun {
 fn list_target(m: &WebviewMsg) -> Option<String> {
   use WebviewMsg as W;
   match m {
-    W::RenameSession { id, .. } | W::DeleteSession { id } | W::RestoreSession { id } | W::PinSession { id, .. } => Some(id.clone()),
+    W::RenameSession { id, .. } | W::DeleteSession { id, .. } | W::RestoreSession { id } | W::PinSession { id, .. } => Some(id.clone()),
     _ => None,
   }
 }
@@ -223,6 +232,8 @@ impl SessionManager {
           items: parking_lot::Mutex::new(self.cached_host_list(alias)),
           shown: Default::default(),
           asked: Default::default(),
+          deletions: Default::default(),
+          deleted: Default::default(),
           pid: Default::default(),
           seq: Default::default(),
           task: Default::default(),
@@ -334,9 +345,27 @@ impl SessionManager {
     let target = explicit.clone().or_else(|| v.active_id().filter(|_| is_forwarded(m)))?;
     let run = self.host_of(&target)?;
     let msg = serde_json::to_value(m).ok()?;
-    // Shown here: through its own view, as the page would act on it there; else the list view, for list actions
-    let view_id = run.shown.lock().get(&target).map(|s| s.view_id.clone()).unwrap_or_else(|| LIST_VIEW.to_owned());
-    Some(if run.send_to_view(&view_id, msg) { Ok(()) } else { Err(anyhow!(crate::i18n::tp("host.remoteUnreachable", &[("host", &run.alias)]))) })
+    let delete_request = match m {
+      W::DeleteSession { request_id, .. } => request_id.as_ref(),
+      _ => None,
+    };
+    if let Some(request_id) = delete_request {
+      run.deletions.lock().insert(request_id.clone(), (target.clone(), Arc::downgrade(v)));
+    }
+    // Deletion must outlive its shown view: that view can be detached while the host closes and saves the session.
+    let view_id = if matches!(m, W::DeleteSession { .. }) {
+      LIST_VIEW.to_owned()
+    } else {
+      run.shown.lock().get(&target).map(|s| s.view_id.clone()).unwrap_or_else(|| LIST_VIEW.to_owned())
+    };
+    Some(if run.send_to_view(&view_id, msg) {
+      Ok(())
+    } else {
+      if let Some(request_id) = delete_request {
+        run.deletions.lock().remove(request_id);
+      }
+      Err(anyhow!(crate::i18n::tp("host.remoteUnreachable", &[("host", &run.alias)])))
+    })
   }
 
   /// A viewer lands on a session: a host's own is shown through the host's engine. False when it is not a host's
@@ -412,7 +441,20 @@ impl SessionManager {
       Some("hostMessage") => {
         let view_id = env.get("viewId").and_then(Value::as_str).unwrap_or("").to_owned();
         let msg = env.get("message").cloned().unwrap_or(Value::Null);
-        if view_id == LIST_VIEW {
+        if msg.get("type").and_then(Value::as_str) == Some("deleteSessionResult") {
+          let Some(request_id) = msg.get("requestId").and_then(Value::as_str) else { return };
+          let Some(undo) = msg.get("undo").and_then(Value::as_bool) else { return };
+          let error = msg.get("error").and_then(Value::as_str).map(str::to_owned);
+          let waiting = run.deletions.lock().remove(request_id);
+          if let Some((id, viewer)) = waiting {
+            if undo && error.is_none() {
+              run.deleted.lock().insert(id, tokio::time::Instant::now() + super::TRASH_TTL);
+            }
+            if let Some(v) = viewer.upgrade() {
+              v.emit(HostMsg::DeleteSessionResult { request_id: request_id.to_owned(), undo, error });
+            }
+          }
+        } else if view_id == LIST_VIEW {
           self.on_host_list(run, &msg);
         } else {
           self.on_host_view(run, &view_id, &msg);
@@ -453,6 +495,7 @@ impl SessionManager {
     if *run.items.lock() == items {
       return;
     }
+    run.deleted.lock().retain(|id, until| *until > tokio::time::Instant::now() && !items.iter().any(|s| &s.id == id));
     self.save_host_list(&run.alias, &items);
     *run.items.lock() = items;
     self.emit_sessions();
@@ -595,6 +638,13 @@ async fn drive(weak: Weak<SessionManager>, run: Arc<HostRun>) {
         *run.pid.lock() = None;
         if let Some(m) = weak.upgrade() {
           m.log(&format!("remote run: lost {}'s engine", run.alias));
+          let error = crate::i18n::tp("host.remoteUnreachable", &[("host", &run.alias)]);
+          let pending: Vec<_> = run.deletions.lock().drain().collect();
+          for (request_id, (_, viewer)) in pending {
+            if let Some(v) = viewer.upgrade() {
+              v.emit(HostMsg::DeleteSessionResult { request_id, undo: false, error: Some(error.clone()) });
+            }
+          }
         }
       }
     }

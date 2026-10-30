@@ -560,7 +560,7 @@ enum ContractSamples {
     .deselectSession(id: "s1"),
     .newSession(agent: "claude", category: "c1", cwd: "/w", chat: true),
     .renameSession(id: "s1", title: "Renamed"),
-    .deleteSession(id: "s1"),
+    .deleteSession(id: "s1", requestId: "d1"),
     .restoreSession(id: "s1"),
     .pinSession(id: "s1", pinned: true),
     .markAllRead,
@@ -669,6 +669,7 @@ enum ContractSamples {
     #"{"type":"terminalOutput","id":"T","data":"term-42\r\n"}"#,
     #"{"type":"terminalState","id":"T","title":"sh","cols":100,"rows":30,"replay":"","exit":{"code":5,"signal":"SIGHUP"},"error":"no shell"}"#,
     #"{"type":"editTurnResult","requestId":"e1","error":"stale"}"#,
+    #"{"type":"deleteSessionResult","requestId":"d1","undo":false,"error":"busy"}"#,
     #"{"type":"appearance","appearance":{"density":"airy","motion":"none"}}"#,
     #"{"type":"connections","connections":[{"alias":"gen1","mode":"local","disabled":false,"state":"error","error":{"message":"denied"}}]}"#,
   ]

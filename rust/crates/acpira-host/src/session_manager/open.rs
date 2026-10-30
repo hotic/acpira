@@ -32,7 +32,53 @@ fn keep_empty(cur: &AcpSession, agent: &str, account: Option<&str>, cwd: &str) -
   matches!(cur.status(), SessionStatus::Starting | SessionStatus::Ready)
 }
 
+/// One record's lifecycle operation. Dropping it also wakes waiters after cancellation or an early error.
+pub(super) struct SessionOp<'a> {
+  manager: &'a SessionManager,
+  id: &'a str,
+  done: tokio::sync::watch::Sender<bool>,
+}
+
+impl Drop for SessionOp<'_> {
+  fn drop(&mut self) {
+    let failed_delete = {
+      let mut st = self.manager.state.lock();
+      st.loading.remove(self.id);
+      // A failed handover or disk move must not make a bus-only entry look successfully deleted.
+      let snapshot = st.deleting.remove(self.id);
+      if let Some(summary) = &snapshot
+        && !st.index.iter().any(|s| s.id == self.id)
+      {
+        st.index.push(summary.clone());
+      }
+      snapshot.is_some()
+    };
+    let _ = self.done.send(true);
+    if failed_delete {
+      self.manager.emit_sessions();
+    }
+  }
+}
+
 impl SessionManager {
+  pub(super) async fn session_op<'a>(&'a self, id: &'a str) -> SessionOp<'a> {
+    loop {
+      let pending = {
+        let mut st = self.state.lock();
+        match st.loading.entry(id.to_owned()) {
+          std::collections::hash_map::Entry::Occupied(entry) => entry.get().clone(),
+          std::collections::hash_map::Entry::Vacant(entry) => {
+            let (done, rx) = tokio::sync::watch::channel(false);
+            entry.insert(rx);
+            return SessionOp { manager: self, id, done };
+          }
+        }
+      };
+      let mut pending = pending;
+      let _ = pending.wait_for(|done| *done).await;
+    }
+  }
+
   /// With no session (or a gone one) start a new one; otherwise bring its session live
   pub async fn ensure_active_for(self: &Arc<Self>, v: &Arc<Viewer>) {
     let active = v.active_id();
@@ -197,11 +243,17 @@ impl SessionManager {
       if me.open_on_host(&v, &id) {
         return;
       }
-      if v.active_id().as_deref() == Some(id.as_str()) && me.live(&id).is_some() {
-        return;
-      }
       let previous = v.active_id();
       me.set_active(&v, Some(id.clone()));
+      let _op = me.session_op(&id).await;
+      // A delete may have rehomed this viewer while this pick waited. Never reopen its trashed record afterwards.
+      if v.active_id().as_deref() != Some(id.as_str()) {
+        return;
+      }
+      if me.state.lock().trash.contains_key(&id) {
+        me.set_active(&v, previous.filter(|old| old != &id));
+        return;
+      }
       if let Some(live) = me.live(&id) {
         v.emit(live.view_msg());
         me.emit_sessions();
@@ -214,25 +266,7 @@ impl SessionManager {
         me.emit_sessions();
         return;
       }
-      // A load already running for this record: wait for it instead of building a second session on the same id
-      let pending = me.state.lock().loading.get(&id).cloned();
-      if let Some(mut rx) = pending {
-        let _ = rx.wait_for(|done| *done).await;
-        if let Some(s) = me.live(&id).or_else(|| me.mirror_of(&id))
-          && v.active_id().as_deref() == Some(id.as_str())
-        {
-          v.emit(s.view_msg());
-          me.emit_sessions();
-        } else if v.active_id().as_deref() == Some(id.as_str()) {
-          me.set_active(&v, previous.filter(|old| old != &id));
-        }
-        return;
-      }
-      let (tx, rx) = tokio::sync::watch::channel(false);
-      me.state.lock().loading.insert(id.clone(), rx);
       me.load_session(&v, &id, previous).await;
-      me.state.lock().loading.remove(&id);
-      let _ = tx.send(true);
     })
   }
 

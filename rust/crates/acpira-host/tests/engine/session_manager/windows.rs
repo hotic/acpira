@@ -90,6 +90,322 @@ async fn a_session_deleted_in_one_manager_closes_its_read_only_copy_in_the_other
   b.dispose().await;
 }
 
+// A background engine (for example the phone gateway) can own a session with only one desktop window visible. Deleting
+// from that window closes the owner, and undo belongs to the engine that received the delete rather than a vanished owner
+#[tokio::test(flavor = "multi_thread")]
+async fn deleting_a_session_held_by_another_engine_keeps_undo_in_the_requesting_engine() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let a = Mgr::new(dir.path(), Opts::fake(&fake).no_bus());
+  let b = Mgr::new(dir.path(), Opts::fake(&fake).no_bus());
+  a.init().await;
+  b.init().await;
+  a.new_session(None).await;
+  a.handle(json!({ "type": "send", "text": "from the phone" })).await;
+  let id = a.active_id().unwrap();
+  until(|| dir.path().join(format!("{id}.json")).exists(), 3000).await;
+  b.m.refresh_index().await;
+  // Delete straight from the list without opening the session (and without changing the current conversation).
+  b.new_session(None).await;
+  b.handle(json!({ "type": "send", "text": "keep this one" })).await;
+  let current = b.active_id();
+  b.handle(json!({ "type": "deleteSession", "id": id })).await;
+  assert!(b.toasts().is_empty(), "{:?}", b.toasts());
+  assert_eq!(b.active_id(), current);
+  assert!(!dir.path().join(format!("{id}.json")).exists());
+  assert!(dir.path().join("trash").join(format!("{id}.json")).exists());
+  assert!(!b.session_ids().contains(&id));
+  a.m.refresh_index().await;
+  assert!(!a.session_ids().contains(&id));
+  assert!(a.view_of(&id).is_none());
+  until(|| !a.m.leased().contains(&id), 3000).await;
+  // The former owner may exit before the user clicks Undo; it must not own that undo timer.
+  a.dispose().await;
+  assert!(dir.path().join("trash").join(format!("{id}.json")).exists());
+  b.handle(json!({ "type": "restoreSession", "id": id })).await;
+  assert!(dir.path().join(format!("{id}.json")).exists());
+  assert!(!dir.path().join("trash").join(format!("{id}.json")).exists());
+  assert!(b.session_ids().contains(&id));
+  assert_eq!(b.active_id(), current);
+  let record = b.store.load(&id).await.unwrap();
+  assert_eq!(record.turns.len(), 2);
+  b.dispose().await;
+}
+
+// A shown session can also be deleted mid-turn through its pushed view: the owner's last saved word is what undo
+// restores, and both engines move their viewers off the deleted session instead of reopening it during the handover
+#[tokio::test(flavor = "multi_thread")]
+async fn deleting_a_mirrored_running_session_stops_its_owner_and_restores_its_latest_record() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let native = dir.path().join("native");
+  std::fs::create_dir(&native).unwrap();
+  let close_log = dir.path().join("close.log");
+  let meta_log = dir.path().join("meta.log");
+  let owner = Opts::with_agents(fake.setting(json!({ "env": {
+    "FAKE_SLOW_STEP_MS": "150", "FAKE_SESSION_DIR": native, "FAKE_CLOSE_LOG": close_log, "FAKE_CLOSE_DELAY_MS": "1500"
+  } })), "fake");
+  let requester = Opts::with_agents(fake.setting(json!({ "env": { "FAKE_SESSION_DIR": native, "FAKE_META_LOG": meta_log } })), "fake");
+  let a = Mgr::new(dir.path(), owner);
+  let b = Mgr::new(dir.path(), requester);
+  a.init().await;
+  b.init().await;
+  until(|| a.m.bus_connected() && b.m.bus_connected(), 3000).await;
+  a.new_session(None).await;
+  a.handle(json!({ "type": "send", "text": "first" })).await;
+  let id = a.active_id().unwrap();
+  until(|| dir.path().join(format!("{id}.json")).exists(), 3000).await;
+  let native_id = a.store.load(&id).await.unwrap().acp_session_id.unwrap();
+  b.m.select_session_for(&b.v, &id).await;
+  until(|| b.active().is_some_and(|s| s["id"] == id.as_str() && s["status"] == "ready"), 3000).await;
+  let running = a.spawn_handle(json!({ "type": "send", "text": "slow" }));
+  until(|| b.active().is_some_and(|s| s["running"] == true), 5000).await;
+  a.handle(json!({ "type": "renameSession", "id": id, "title": "Latest title" })).await;
+  b.handle(json!({ "type": "deleteSession", "id": id })).await;
+  running.await.unwrap();
+  assert!(b.toasts().is_empty(), "{:?}", b.toasts());
+  until(|| !a.session_ids().contains(&id) && !b.session_ids().contains(&id), 5000).await;
+  until(|| a.view_of(&id).is_none() && b.view_of(&id).is_none(), 5000).await;
+  assert_ne!(a.active_id().as_deref(), Some(id.as_str()));
+  assert_ne!(b.active_id().as_deref(), Some(id.as_str()));
+  let record: Value = serde_json::from_slice(&std::fs::read(dir.path().join("trash").join(format!("{id}.json"))).unwrap()).unwrap();
+  assert_eq!(record["title"], "Latest title");
+  assert_eq!(turns_in(&record), 4);
+  assert_eq!(last_turn(&record)["stop"], "cancelled");
+  assert!(last_turn(&record)["endedAt"].is_number());
+  a.dispose().await;
+  b.handle(json!({ "type": "restoreSession", "id": id })).await;
+  let restored = b.store.load(&id).await.unwrap();
+  assert_eq!(restored.title, "Latest title");
+  assert_eq!(restored.turns.len(), 4);
+  assert!(b.sessions().iter().any(|s| s["id"] == id.as_str() && s["title"] == "Latest title"));
+  assert!(b.m.live_session(&id).is_none(), "undo does not start an agent");
+  assert!(std::fs::read_to_string(&close_log).unwrap_or_default().contains(&native_id), "the owner must close its native session before undo");
+  let requests = std::fs::read_to_string(&meta_log).unwrap_or_default();
+  assert!(!requests.contains("\"method\":\"resume\"") && !requests.contains("\"method\":\"load\""), "a deleting mirror must never start the target: {requests}");
+  b.m.select_session_for(&b.v, &id).await;
+  assert_eq!(b.active().unwrap()["status"], "ready", "{:?}", b.logs());
+  assert!(b.logs().iter().any(|l| l.contains("session/resume ok")), "{:?}", b.logs());
+  b.dispose().await;
+}
+
+// A bus announcement may be the only list entry here. The owner going away is not the delete's commit: while the store
+// finishes moving it, the entry stays listed and an overlapping undo waits for this delete rather than being lost.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_bus_only_delete_keeps_its_entry_until_the_trash_and_undo_are_ready() {
+  use std::sync::atomic::{AtomicBool, Ordering};
+  use std::time::Duration;
+  use acpira_host::store::transcript_store::RecordChange;
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let a = Mgr::new(dir.path(), Opts::fake(&fake));
+  let b = Mgr::new(dir.path(), Opts::fake(&fake));
+  a.init().await;
+  b.init().await;
+  until(|| a.m.bus_connected() && b.m.bus_connected(), 3000).await;
+  a.new_session(None).await;
+  a.handle(json!({ "type": "send", "text": "bus only" })).await;
+  let id = a.active_id().unwrap();
+  until(|| b.session_ids().contains(&id), 3000).await;
+  assert!(!b.store.knew(&id), "no local record or index refresh supplied the entry");
+  let entered = Arc::new(AtomicBool::new(false));
+  let e = entered.clone();
+  let (tx, rx) = std::sync::mpsc::channel();
+  let rx = Mutex::new(rx);
+  b.store.set_change_hook(Arc::new(move |_, change| {
+    if matches!(change, RecordChange::Gone { .. }) && !e.swap(true, Ordering::SeqCst) {
+      rx.lock().unwrap().recv_timeout(Duration::from_secs(5)).unwrap();
+    }
+  }));
+  let deletion = b.spawn_handle(json!({ "type": "deleteSession", "id": id }));
+  until(|| entered.load(Ordering::SeqCst), 5000).await;
+  // Let the owner's live announcement disappear while the delete is still inside the store.
+  tokio::time::sleep(Duration::from_millis(250)).await;
+  let listed_before_commit = b.session_ids().contains(&id);
+  let duplicate = b.spawn_handle(json!({ "type": "deleteSession", "id": id }));
+  let undo = b.spawn_handle(json!({ "type": "restoreSession", "id": id }));
+  tokio::time::sleep(Duration::from_millis(100)).await;
+  let undo_waited = !undo.is_finished();
+  tx.send(()).unwrap();
+  deletion.await.unwrap();
+  duplicate.await.unwrap();
+  undo.await.unwrap();
+  assert!(listed_before_commit, "a handover gap must not confirm deletion");
+  assert!(undo_waited, "undo must not overtake the delete's commit");
+  assert!(dir.path().join(format!("{id}.json")).exists());
+  assert!(!dir.path().join("trash").join(format!("{id}.json")).exists());
+  assert!(b.toasts().is_empty(), "{:?}", b.toasts());
+  a.dispose().await;
+  b.dispose().await;
+}
+
+// A failed final save must not hand a stale record to the deleting engine. Once the disk works again the same request
+// can finish, and undo recovers the latest in-memory title rather than the older record.
+#[tokio::test(flavor = "multi_thread")]
+async fn deletion_waits_for_the_owners_final_save_to_succeed() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let a = Mgr::new(dir.path(), Opts::fake(&fake).no_bus());
+  let b = Mgr::new(dir.path(), Opts::fake(&fake).no_bus());
+  a.init().await;
+  b.init().await;
+  a.new_session(None).await;
+  a.handle(json!({ "type": "send", "text": "saved before" })).await;
+  let id = a.active_id().unwrap();
+  let live = a.m.live_session(&id).unwrap();
+  a.store.flush(live.clone()).await.unwrap();
+  b.m.refresh_index().await;
+  let file = dir.path().join(format!("{id}.json"));
+  let backup = dir.path().join("record-backup");
+  std::fs::rename(&file, &backup).unwrap();
+  std::fs::create_dir(&file).unwrap();
+  live.rename("Latest unsaved title");
+  let deletion = b.spawn_handle(json!({ "type": "deleteSession", "id": id }));
+  until(|| a.logs().iter().any(|l| l.contains("save before handing over failed")), 5000).await;
+  let kept_live = a.m.live_session(&id).is_some();
+  let kept_lease = a.m.leased().contains(&id);
+  let still_waiting = !deletion.is_finished();
+  std::fs::remove_dir(&file).unwrap();
+  std::fs::rename(&backup, &file).unwrap();
+  deletion.await.unwrap();
+  assert!(kept_live && kept_lease && still_waiting, "a failed save must keep the owner and lease");
+  assert!(b.toasts().is_empty(), "{:?}", b.toasts());
+  b.handle(json!({ "type": "restoreSession", "id": id })).await;
+  assert_eq!(b.store.load(&id).await.unwrap().title, "Latest unsaved title");
+  a.dispose().await;
+  b.dispose().await;
+}
+
+// Two requesters may both wait on the same owner. The second one must not create another trash timer once the first
+// has already moved the record, or shutting down that second engine would remove the first engine's undo.
+#[tokio::test(flavor = "multi_thread")]
+async fn two_deleting_engines_do_not_steal_each_others_undo() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let a = Mgr::new(dir.path(), Opts::fake(&fake).no_bus());
+  let b = Mgr::new(dir.path(), Opts::fake(&fake).no_bus());
+  let c = Mgr::new(dir.path(), Opts::fake(&fake).no_bus());
+  a.init().await;
+  b.init().await;
+  c.init().await;
+  a.new_session(None).await;
+  a.handle(json!({ "type": "send", "text": "one undo" })).await;
+  let id = a.active_id().unwrap();
+  b.m.refresh_index().await;
+  c.m.refresh_index().await;
+  use std::sync::atomic::{AtomicBool, Ordering};
+  use std::time::Duration;
+  use acpira_host::store::transcript_store::RecordChange;
+  let entered = Arc::new(AtomicBool::new(false));
+  let e = entered.clone();
+  let (tx, rx) = std::sync::mpsc::channel();
+  let rx = Mutex::new(rx);
+  b.store.set_change_hook(Arc::new(move |_, change| {
+    if matches!(change, RecordChange::Gone { .. }) && !e.swap(true, Ordering::SeqCst) {
+      rx.lock().unwrap().recv_timeout(Duration::from_secs(5)).unwrap();
+    }
+  }));
+  let first = b.spawn_handle(json!({ "type": "deleteSession", "id": id, "requestId": "first" }));
+  until(|| entered.load(Ordering::SeqCst), 5000).await;
+  let second = c.spawn_handle(json!({ "type": "deleteSession", "id": id, "requestId": "second" }));
+  tokio::time::sleep(Duration::from_millis(150)).await;
+  tx.send(()).unwrap();
+  first.await.unwrap();
+  second.await.unwrap();
+  assert!(b.toasts().is_empty() && c.toasts().is_empty(), "B: {:?}, C: {:?}", b.toasts(), c.toasts());
+  let completions = |m: &Mgr| m.events.lock().unwrap().iter().filter(|e| e["type"] == "deleteSessionResult").cloned().collect::<Vec<_>>();
+  assert_eq!(completions(&b), [json!({ "type": "deleteSessionResult", "requestId": "first", "undo": true })]);
+  assert_eq!(completions(&c), [json!({ "type": "deleteSessionResult", "requestId": "second", "undo": false })]);
+  assert!(dir.path().join("trash").join(format!("{id}.json")).exists());
+  // B did the move. C must not own a timer whose shutdown would erase B's undo.
+  c.dispose().await;
+  assert!(dir.path().join("trash").join(format!("{id}.json")).exists());
+  b.m.restore_session(&id).await.unwrap();
+  assert_eq!(b.store.load(&id).await.unwrap().turns.len(), 2);
+  b.dispose().await;
+  assert!(dir.path().join(format!("{id}.json")).exists());
+  a.dispose().await;
+}
+
+// Starting an agent is itself a lifecycle operation: deletion must wait for an in-flight restore before forgetting it,
+// not let a late start put the target back into live or save it over the trash.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_delete_waits_for_an_inflight_open_and_never_recreates_the_record() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let a = Mgr::new(dir.path(), Opts::fake(&fake).no_bus());
+  a.init().await;
+  a.new_session(None).await;
+  a.handle(json!({ "type": "send", "text": "saved" })).await;
+  let id = a.active_id().unwrap();
+  a.dispose().await;
+  let b = Mgr::new(dir.path(), Opts::with_agents(fake.setting(json!({ "env": { "FAKE_NEW_DELAY_MS": "16500" } })), "fake").no_bus());
+  // Force session/new: a fake native id from the former process would otherwise become read-only without this delay.
+  let mut record = b.store.load(&id).await.unwrap();
+  record.acp_session_id = None;
+  b.store.flush(Arc::new(record)).await.unwrap();
+  b.init().await;
+  let opening = b.spawn_handle(json!({ "type": "selectSession", "id": id }));
+  until(|| b.m.live_session(&id).is_some_and(|s| s.status() == acpira_shared::transcript::SessionStatus::Starting), 3000).await;
+  let deletion = b.spawn_handle(json!({ "type": "deleteSession", "id": id, "requestId": "slow-delete" }));
+  tokio::time::sleep(std::time::Duration::from_millis(15200)).await;
+  assert!(!deletion.is_finished(), "deletion must wait for the in-flight start even beyond the old UI timeout");
+  assert!(!b.events.lock().unwrap().iter().any(|e| e["type"] == "deleteSessionResult"));
+  opening.await.unwrap();
+  until(|| b.events.lock().unwrap().iter().any(|e| e == &json!({ "type": "deleteSessionResult", "requestId": "slow-delete", "undo": true })), 5000).await;
+  // Rehoming starts another slow agent. Undo must be ready before that navigation finishes.
+  assert!(!deletion.is_finished());
+  b.handle(json!({ "type": "restoreSession", "id": id })).await;
+  assert_eq!(b.store.load(&id).await.unwrap().turns.len(), 2);
+  deletion.await.unwrap();
+  // Delete the restored record again to check the vanished-record and late-save invariants below.
+  b.handle(json!({ "type": "deleteSession", "id": id })).await;
+  assert!(b.toasts().is_empty(), "{:?}", b.toasts());
+  b.m.refresh_index().await;
+  assert!(!b.session_ids().contains(&id));
+  assert!(b.m.live_session(&id).is_none());
+  assert!(!dir.path().join(format!("{id}.json")).exists());
+  assert!(dir.path().join("trash").join(format!("{id}.json")).exists());
+  b.handle(json!({ "type": "restoreSession", "id": id })).await;
+  assert_eq!(b.store.load(&id).await.unwrap().turns.len(), 2);
+  b.dispose().await;
+}
+
+// A failed trash move must not arm a timer or publish an absent list entry. Retrying once the blocker is gone still
+// works, and an unsuccessful restore leaves the same undo available for another try.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_trash_or_restore_keeps_the_session_and_allows_retry() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let m = Mgr::new(dir.path(), Opts::fake(&fake).no_bus());
+  m.init().await;
+  m.new_session(None).await;
+  m.handle(json!({ "type": "send", "text": "kept" })).await;
+  let id = m.active_id().unwrap();
+  let file = dir.path().join(format!("{id}.json"));
+  let trash = dir.path().join("trash").join(format!("{id}.json"));
+  std::fs::create_dir_all(&trash).unwrap();
+  std::fs::write(trash.join("block"), "kept").unwrap();
+  m.handle(json!({ "type": "deleteSession", "id": id, "requestId": "blocked" })).await;
+  assert!(m.events.lock().unwrap().iter().any(|e| e["type"] == "deleteSessionResult" && e["requestId"] == "blocked" && e["undo"] == false && e["error"].is_string()));
+  assert!(m.session_ids().contains(&id));
+  assert!(file.exists());
+  std::fs::remove_file(trash.join("block")).unwrap();
+  std::fs::remove_dir(&trash).unwrap();
+  m.m.delete_session(&id).await.unwrap();
+  assert!(!m.session_ids().contains(&id));
+  std::fs::create_dir(&file).unwrap();
+  std::fs::write(file.join("block"), "kept").unwrap();
+  assert!(m.m.restore_session(&id).await.is_err());
+  assert!(trash.exists());
+  std::fs::remove_file(file.join("block")).unwrap();
+  std::fs::remove_dir(&file).unwrap();
+  m.m.restore_session(&id).await.unwrap();
+  assert_eq!(m.store.load(&id).await.unwrap().turns.len(), 2);
+  assert!(m.session_ids().contains(&id));
+  m.dispose().await;
+}
+
 // One session, two engines: A has it open, so B shows it read-only and cannot edit it. Taking it over stops A's turn, turns
 // A's view read-only (it can take the session back) and opens the session in B with the whole transcript (store::session_lease)
 #[tokio::test(flavor = "multi_thread")]
