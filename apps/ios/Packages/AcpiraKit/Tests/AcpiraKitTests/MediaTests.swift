@@ -106,6 +106,23 @@ struct MediaSourceTests {
     #expect(fileOfURI("C:\\shots\\a.png") == "C:\\shots\\a.png")
   }
 
+  /// ToolCall.tsx FileRef: the call's saved copy first, the path only where the link stages files, never a line
+  @Test func fileRowsOpenTheirImages() throws {
+    let refs = try JSONDecoder().decode([ImageRef].self, from: Data(#"""
+    [{"blob":"a1.png","mimeType":"image/png","uri":"/w/shots/a.png"},{"blob":"b1.png","mimeType":"image/png"}]
+    """#.utf8))
+    #expect(fileRowImage("/w/a.png", image: refs[0], session: "s", canStage: false) == .blob(session: "s", name: "a1.png"))
+    // A paired wire stages nothing, so a row without a saved copy stays plain there
+    #expect(fileRowImage("/w/b.png", image: nil, session: "s", canStage: false) == nil)
+    #expect(fileRowImage("/w/b.png", image: nil, session: "s", canStage: true) == .file(session: "s", path: "/w/b.png"))
+    #expect(fileRowImage("/w/notes.md", image: nil, session: "s", canStage: true) == nil)
+    #expect(fileRowImage("/w/a.png:12", image: refs[0], session: "s", canStage: true) == nil)
+    // Rows pair with images by the uri's file, else by place when there is one per row
+    #expect(rowImage("/w/x/a.png", at: 1, of: ["/w/b.png", "/w/x/a.png"], images: refs) == refs[0])
+    #expect(rowImage("/w/b.png", at: 0, of: ["/w/b.png", "/w/c.png"], images: refs) == refs[0])
+    #expect(rowImage("/w/c.png", at: 1, of: ["/w/b.png", "/w/c.png", "/w/d.png"], images: refs) == nil)
+  }
+
   @Test func aWidgetsHTMLIsItsPageNotAnImage() throws {
     let json = #"{"id":"w","kind":"other","verb":"Widget","verbKey":"verb.showWidget","status":"completed","contents":["#
       + #"{"type":"image","blob":"a.html","mimeType":"text/html"},{"type":"image","blob":"b.png","mimeType":"image/png"}]}"#
@@ -319,6 +336,8 @@ struct EngineMediaTests {
     let image = try await link.media.image(.blob(session: "s1", name: "dot.png"))
     #expect(image.width == 1)
     #expect(wire.asked.withLock { $0 } == ["s1/dot.png"])
+    // The gateway refuses imageBlob from devices: files on the computer are never staged over this link
+    #expect(!link.media.canStage)
   }
 
   @Test func initNamesTheBlobBase() async throws {

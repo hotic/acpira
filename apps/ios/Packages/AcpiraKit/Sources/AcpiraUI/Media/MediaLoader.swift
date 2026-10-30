@@ -126,6 +126,9 @@ final class MediaLoader {
   private let web: WebFetch
   private let cache: MediaCache<MediaSource, DecodedImage>
 
+  /// Whether files on the engine's machine can be staged at all; nil `stage` fails them at once
+  var canStage: Bool { stage != nil }
+
   init(fetch: @escaping BlobFetch, stage: Stage? = nil, web: WebFetch? = nil, budget: Int = MediaLoader.budget,
               limit: Int = MediaLoader.limit) {
     self.fetch = fetch
