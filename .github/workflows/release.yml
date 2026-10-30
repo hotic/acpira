@@ -440,7 +440,7 @@ jobs:
             --version "$version" --base-url "https://github.com/$GH_REPO/releases/download/v$version" --out out \
             --notes-file notes.md "${prev[@]}" --unsigned
           mv out/desktop-update.json part/
-          cp "apps/desktop/target/windows/Acpira-$version-windows-x86_64.zip" out/
+          cp "apps/desktop/target/windows/Acpira-$version-windows-x86_64-portable.zip" out/
           (cd out && sha256sum Acpira* > desktop-windows.sha256)
           cat out/desktop-windows.sha256 >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
@@ -531,7 +531,7 @@ jobs:
           done
 
   release-asset:
-    needs: [build]
+    needs: [build, build-idea]
     if: github.event_name == 'release' || inputs.publish
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -541,7 +541,13 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: extension-vsix
-      # The VSIXes only: the IntelliJ plugin is installed from the JetBrains Marketplace, so its zips stay CI artifacts
+      - uses: actions/download-artifact@v8
+        with:
+          name: intellij-plugin
+          path: idea
+      # The per-platform zips and SHA256SUMS must stay on the Release: an engine connecting to an SSH host without its
+      # platform's build downloads acpira-<version>-<platform>.zip from here and checks it against SHA256SUMS
+      # (rust/crates/acpira-host/src/remote/fetch.rs). The universal zip only goes to the JetBrains Marketplace
       - name: Attach packages to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -549,9 +555,10 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.ref }}
         run: |
           sha256sum --check vsix.sha256
+          (cd idea && sha256sum --check SHA256SUMS --ignore-missing)
           # Keep original release assets on retries instead of replacing a published package.
           gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' > assets.txt
-          for file in *.vsix vsix.sha256; do
+          for file in *.vsix vsix.sha256 $(ls idea/*.zip | grep -v -- '-universal\.zip$') idea/SHA256SUMS; do
             if ! grep -Fxq "$(basename "$file")" assets.txt; then
               gh release upload "$RELEASE_TAG" "$file"
             fi
@@ -580,7 +587,7 @@ jobs:
           version: ${{ needs.build.outputs.version }}
         run: |
           sha256sum --check SHA256SUMS --ignore-missing
-          # One version works across different client/backend platforms. Per-platform archives stay CI artifacts.
+          # One version works across different client/backend platforms. Per-platform archives stay on the GitHub Release.
           curl -fsS "https://plugins.jetbrains.com/plugins/list?pluginId=com.github.hotic.acpira" > published.xml
           if grep -Fq "<version>$version</version>" published.xml; then
             echo "$version is already on the Marketplace"
