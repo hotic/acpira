@@ -18,6 +18,12 @@ export interface AlertProps {
   onNewSession?: () => void;
 }
 
+// Shared by the dock's alert cards (this one and chat/Notice): the glyph sits in a Row-sized lead slot so the text below
+// starts at the title's column (pl-indent), and actions are the small in-card buttons, so the title row stays one text
+// line tall instead of growing to a full control
+export const DOCK_LEAD = 'flex w-lead shrink-0 items-center justify-center text-fg-3';
+export const DOCK_BUTTON = 'h-ctl-sm px-2 text-3';
+
 // A turn stopped short (the same card Cursor pins above its composer, in our own tones): one row holds a colorless glyph, what happened,
 // the copyable detail, and the action — retry for an error, carry on for a limit, nothing for a refusal —
 // with ✕ hiding the card (the transcript keeps the row); the agent's words sit below in small type when there are any
@@ -31,21 +37,21 @@ export function Alert({ turn, onRetry, onContinue, onDismiss, onCompact, onNewSe
     : stop === 'error' ? err?.message || t('alert.error.unknown') : TEXT[stop] && t(TEXT[stop]);
   return (
     <div className="px-dock">
-      <Card role="alert" className="flex flex-col gap-1.5 px-pad py-2.5">
-        <div className="flex items-center gap-2">
-          <TriangleAlert className="size-icon shrink-0 text-fg-3" strokeWidth={1.75} />
+      <Card role="alert" className="flex flex-col gap-1 px-pad py-2.5">
+        <div className="flex min-h-ctl-sm items-center gap-gap">
+          <span className={DOCK_LEAD}><TriangleAlert className="size-icon" strokeWidth={1.75} /></span>
           <span className="shrink-0 text-2 font-medium text-fg-1">{t(contextTooLong ? 'alert.contextLength.title' : TITLE[stop])}</span>
           {copyable && <CopyDetail text={copyable} label={detail} />}
           <span className="flex-1" />
           {/* An AIR sessionFailure names its own remedies; 'login' has no button here because the Notice card owns sign-in.
               Retry is the only remedy otherwise: it continues where the turn stopped and reconnects by itself on a repeat failure */}
-          {stop === 'error' && !contextTooLong && (err?.actions === undefined || err.actions.includes('retry')) && <Button variant="primary" title={t('alert.retryHint')} onClick={onRetry}>{t('common.retry')}</Button>}
-          {stop === 'error' && !contextTooLong && err?.actions?.includes('new_session') === true && onNewSession && <Button variant="secondary" onClick={onNewSession}>{t('notice.continueNew')}</Button>}
-          {(stop === 'max_tokens' || stop === 'max_turn_requests') && <Button variant="primary" onClick={onContinue}>{t('alert.continue')}</Button>}
-          <IconButton aria-label={t('common.close')} onClick={onDismiss} className="-my-1 -mr-ctl-bleed"><X strokeWidth={1.5} /></IconButton>
+          {stop === 'error' && !contextTooLong && (err?.actions === undefined || err.actions.includes('retry')) && <Button variant="primary" className={DOCK_BUTTON} title={t('alert.retryHint')} onClick={onRetry}>{t('common.retry')}</Button>}
+          {stop === 'error' && !contextTooLong && err?.actions?.includes('new_session') === true && onNewSession && <Button variant="secondary" className={DOCK_BUTTON} onClick={onNewSession}>{t('notice.continueNew')}</Button>}
+          {(stop === 'max_tokens' || stop === 'max_turn_requests') && <Button variant="primary" className={DOCK_BUTTON} onClick={onContinue}>{t('alert.continue')}</Button>}
+          <IconButton size="sm" aria-label={t('common.close')} onClick={onDismiss} className="-mr-ctl-sm-bleed"><X strokeWidth={1.5} /></IconButton>
         </div>
-        {message && <p className="m-0 whitespace-pre-wrap text-3 text-fg-2 [overflow-wrap:anywhere]">{message}</p>}
-        {contextTooLong && onCompact && <div className="flex justify-end pt-1"><Button variant="primary" onClick={onCompact}>{t('alert.contextLength.compact')}</Button></div>}
+        {message && <p className="m-0 whitespace-pre-wrap pl-indent text-3 text-fg-2 [overflow-wrap:anywhere]">{message}</p>}
+        {contextTooLong && onCompact && <div className="flex justify-end pt-1"><Button variant="primary" className={DOCK_BUTTON} onClick={onCompact}>{t('alert.contextLength.compact')}</Button></div>}
       </Card>
     </div>
   );
