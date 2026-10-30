@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The Windows desktop download is now `Acpira-<version>-windows-x86_64-portable.zip`, so it no longer collides with the IntelliJ plugin's zip name.
-- The GitHub Release carries only the VSIX packages and the per-platform engine zips for SSH remote hosts. The IntelliJ plugin installs from the JetBrains Marketplace.
+- The IntelliJ plugin's universal zip is no longer attached to the GitHub Release; the plugin installs from the JetBrains Marketplace. The per-platform zips stay, since SSH remote hosts download their engine from them.
 - The turn stats card is quieter and names the model family alone.
 - A running command holds its outcome slot, and the thread keeps room for the connecting row, so the transcript no longer shifts when either appears.
 - The welcome tour moves on with a click anywhere on the veil. The intro and consent pages are shorter, and the intro mark's light draws as one continuous stroke.
