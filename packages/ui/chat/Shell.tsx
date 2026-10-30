@@ -1115,7 +1115,8 @@ export function Shell(p: ShellProps) {
                     {/* Plugin pieces on the dock's top edge (plugins/ComposerAbove.tsx): over the plan card when there is
                         one, else over the question, the queue or the composer, never on top of their controls */}
                     {!p.external && <ComposerAbove running={p.running} waiting={waitingOnUser} />}
-                    {!p.external && <ConnectingNotice status={p.status} agent={p.agent} />}
+                    {/* A held prompt already owns a Working row; the floating startup row would duplicate and overlap it. */}
+                    {!p.external && !held.running && <ConnectingNotice status={p.status} agent={p.agent} />}
                     <div ref={planDock}>
                       {/* The session goal heads the floating to-do card, so the dock keeps one silhouette */}
                       <PlanBar key={`plan:${p.activeSessionId}`} turns={p.turns} running={p.running}
