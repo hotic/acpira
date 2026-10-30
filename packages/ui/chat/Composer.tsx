@@ -1,6 +1,6 @@
-import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { Plus, SquareDashedMousePointer, TextSelect, X } from 'lucide-react';
-import type { Draft, SessionControls, SessionOption, SlashCommand, Turn, Usage } from '@acpira/shared/transcript';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { Plus, ShieldAlert, SquareDashedMousePointer, TextSelect, X } from 'lucide-react';
+import type { ConfigControl, Draft, SessionControls, SessionOption, SlashCommand, Turn, Usage } from '@acpira/shared/transcript';
 import type { EditorSelection, FileHit } from '@acpira/shared/protocol';
 import type { HiddenMap } from '@acpira/shared/settings';
 import { composerControls } from '@acpira/shared/composerControls';
@@ -9,28 +9,36 @@ import { collectPastedText } from '@acpira/shared/pastedText';
 import { useAppearance } from '../appearance';
 import { getLocale, t, useLocale } from '../i18n';
 import { cn } from '../ui/cn';
-import { Chip, IconButton } from '../ui/Button';
+import { Chip, ChipTag, IconButton } from '../ui/Button';
 import { DropdownMenu, optionClass } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
 import { WorkingBeam } from '../effects/WorkingBeam';
 import { SendButton } from '../effects/SendButton';
 import { DraftChips } from './Attachments';
+import { CommandButtons } from '../plugins/CommandButtons';
 import { collectDrafts, collectImageSources, hasPayload, hiddenText, imageSources, pastedText, pathlessWorkbenchDrag, typeInto, type Collected } from './drafts';
-import { hostDragPaths } from '../vscodeApi';
+import { droppedPathResolver, hostDragPaths } from '../vscodeApi';
 import { MentionList, mentionAt, personaHits, personaOfHit, useMentionHits, type MentionPersona } from './Mention';
 import { SummonMenu } from './SummonMenu';
 import { SlashList, commandAt, commandHint, completeCommand, promptMarks, useSlashHits } from './Slash';
-import { modeIcon, modeLabel } from './modeIcons';
+import { accessLabel, modeIcon, modeLabel } from './modeIcons';
+import { SegmentScale } from '../ui/Field';
 import { ModelControl, OptionControl, ReasoningControl } from './ModelPicker';
 import { ContextRing } from './ContextUsage';
-import { useComposerDraft } from './useComposerDraft';
+import { parkDraftText, useComposerDraft } from './useComposerDraft';
+import { PromptRecall } from './promptHistory';
 import { contextDrafts, copiedSelection, markContextSent, markSelectionSent, sameContext, sameRange, selectionDraft, selectionKey, useEditorSelection, useLiveContexts, type LiveContext } from './editorContext';
 import { PromptInput } from './PromptInput';
 import { imeKey } from '../ui/ime';
 import { SlotPieces } from '../plugins/Pieces';
 
+// motion.css acp-rewrite-in, and a frame to spare: the field drops data-rewritten once the wipe is over
+const REWRITE_WIPE_MS = 600;
+
 export interface ComposerProps {
   running: boolean;
+  // The built-in agent's sidekick is working a round: the model chip lights its half
+  sidekickLive?: boolean;
   // Text + send locked for login / error / read-only. Starting still accepts a first prompt into the queue
   disabled?: boolean;
   // Mode / model chips stay inert until session/new has real controls
@@ -38,6 +46,8 @@ export interface ComposerProps {
   theme: 'dark' | 'light';
   controls: SessionControls;
   turns?: Turn[];
+  // Typed messages from this session only, oldest first; provided only to the main composer.
+  promptHistory?: readonly string[];
   turnCount?: number;
   compacting?: boolean;
   // Option families hidden for the current agent (settings page): configOption id → family names
@@ -45,6 +55,8 @@ export interface ComposerProps {
   usage?: Usage;
   // Slash commands the agent advertised for this session: the / completion list, and `compact` among them enables the context panel's button
   commands?: SlashCommand[];
+  // The session this composer sends into: where a plugin command button runs (plugins/CommandButtons.tsx)
+  sessionId?: string;
   // Auto-compact threshold: the ring fills against this budget when it is smaller than the agent's window
   compactAt?: number;
   // Workspace root: dropped and mentioned files are labeled relative to it
@@ -107,7 +119,21 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
   const { composer } = useAppearance();
   const textarea = useRef<HTMLTextAreaElement>(null);
   const focusInput = useCallback(() => textarea.current?.focus(), []);
-  const { text, setText, drafts, setDrafts } = useComposerDraft(p.draftKey, p.edit?.text, p.main ? { focus: focusInput } : undefined);
+  // Text from a plugin: typed into the field, so the field's own undo takes it back; state alone where that fails
+  const typedFallback = useRef<(value: string) => void>(() => {});
+  const writeInput = useCallback((value: string, replace: boolean) => {
+    const el = textarea.current;
+    if (!el || (!value && !replace)) return;
+    el.focus();
+    if (replace) el.select();
+    const [start, end] = replace ? [0, el.value.length] : [el.selectionStart, el.selectionEnd];
+    const typed = value ? document.execCommand('insertText', false, value) : !el.value || document.execCommand('delete');
+    if (!typed) typedFallback.current(el.value.slice(0, start) + value + el.value.slice(end));
+  }, []);
+  const { text, setText: updateText, drafts, setDrafts } = useComposerDraft(p.draftKey, p.edit?.text, p.main ? { focus: focusInput, write: writeInput } : undefined);
+  typedFallback.current = updateText;
+  const recall = useRef(new PromptRecall());
+  const setText = (value: string) => { recall.current.reset(); updateText(value); };
   // The editor's live selection: offered as a chip beside the mode, clicked away to leave it out of this prompt
   const live = useEditorSelection();
   const offered = p.main && p.shareSelection && !p.edit ? live : undefined;
@@ -146,8 +172,40 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
   // A follow-up uses the same send path as Enter; pending attachment reads / sends keep it from becoming a stop action.
   const showStop = p.running && !hasContent && reading === 0 && !sending;
   const sendingRef = useRef(false);
-  const send = async () => {
-    if (!canSend || sendingRef.current) return;
+  // A plugin's draft command at work on the draft, then its text wiping in (motion.css composer-field[data-rewriting])
+  const [rewrite, setRewrite] = useState<'busy' | 'done'>();
+  const rewritten = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(rewritten.current), []);
+  // The draft as it is now, for a result that lands after the field has moved on
+  const textNow = useRef(text);
+  textNow.current = text;
+  // `from`: the draft the command was given. A field gone since (another session opened) gets the text as that session's
+  // parked draft; a draft that changed meanwhile is the user's and stays
+  const onRewritten = (value: string, from: string) => {
+    if (!textarea.current) { if (p.draftKey) parkDraftText(p.draftKey, value); return; }
+    if (textNow.current.trim() !== from) return;
+    writeInput(value, true);
+    setRewrite('done');
+    clearTimeout(rewritten.current);
+    rewritten.current = setTimeout(() => setRewrite(undefined), REWRITE_WIPE_MS);
+  };
+  // A command button that takes no draft: its command alone, leaving the draft and its attachments where they are
+  const sendBare = async (command: string) => {
+    if (sendingRef.current || p.disabled || sending) return;
+    sendingRef.current = true;
+    setSending(true);
+    try {
+      await p.onSend(command, []);
+    } catch (e) {
+      p.onNotice(e instanceof Error ? e.message : String(e));
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
+    }
+  };
+  // `as`: what a command button sends in the draft's place, with the draft's attachments
+  const send = async (as?: string) => {
+    if (sendingRef.current || rewrite === 'busy' || (as === undefined ? !canSend : p.disabled || sending || reading > 0)) return;
     sendingRef.current = true;
     setSending(true);
     try {
@@ -155,7 +213,7 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
       const included = contexts.filter(contextOn);
       const offeredDrafts = [...(sel ? [sel] : []), ...included.flatMap(c => contextDrafts(c.source, c.items))]
         .filter(l => !drafts.some(d => sameRange(d, l) || sameContext(d, l)));
-      await p.onSend(text, [...drafts, ...offeredDrafts]);
+      await p.onSend(as ?? text, [...drafts, ...offeredDrafts]);
       if (offeredOn) markSelectionSent(offered);
       for (const c of included) markContextSent(c);
       setText('');
@@ -206,7 +264,7 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
     }
     if (!takes(e.dataTransfer)) return;
     e.preventDefault();
-    void addFrom(collectDrafts(e.dataTransfer, p.cwd, hostDragPaths()?.()));
+    void addFrom(collectDrafts(e.dataTransfer, p.cwd, hostDragPaths()?.(), droppedPathResolver()));
   };
   // A paste can carry attachments and text together (a chat message copied with its screenshot, a web selection with images): both are kept.
   // Real files win over the <img> copies in the HTML flavour. Large text bypasses textarea layout entirely.
@@ -321,6 +379,24 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
         if (hits[active]) { e.preventDefault(); pick(hits[active]!); return; }
       }
     }
+    // Recall never steals selection / modified arrows, completion navigation, or cursor movement inside a message.
+    const el = e.currentTarget;
+    if (p.main && !p.edit && !p.disabled && !sending && p.promptHistory &&
+      (e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey &&
+      el.selectionStart === el.selectionEnd && (el.selectionStart === 0 || el.selectionStart === text.length)) {
+      const next = recall.current.move(p.promptHistory, text, e.key === 'ArrowUp' ? -1 : 1);
+      if (next !== undefined) {
+        e.preventDefault();
+        updateText(next);
+        setCaret(next.length);
+        setCollapsed(true);
+        // A recalled /command or @name is already complete; keep its list closed so arrows keep browsing history.
+        setDismissed(mentionAt(next, next.length)?.start);
+        setSlashDismissed(commandAt(next, next.length)?.start);
+        requestAnimationFrame(() => textarea.current?.setSelectionRange(next.length, next.length));
+        return;
+      }
+    }
     if (e.key === 'Escape' && p.edit && !sending) { e.preventDefault(); p.edit.onCancel(); return; }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); }
   };
@@ -335,6 +411,8 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
     <div
       ref={fieldRef}
       data-busy={dim || undefined}
+      data-rewriting={rewrite === 'busy' || undefined}
+      data-rewritten={rewrite === 'done' || undefined}
       data-drag={dragging || undefined}
       data-focused={beamActive || undefined}
       className={cn('composer-field flex flex-col', flush ? 'rounded-none' : 'rounded-lg')}
@@ -355,6 +433,7 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
         rows={1}
         value={text}
         disabled={p.disabled || sending}
+        readOnly={rewrite === 'busy'}
         autoFocus={!!p.edit}
         aria-label={p.edit ? t('history.edit') : t('composer.placeholder')}
         onChange={e => { setText(e.target.value); syncCaret(e.target); }}
@@ -392,11 +471,13 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
               <ModeMenu key={c.id} title={c.name} value={c.value} onOpenChange={onOpenChange} onSelect={v => p.onSetConfig(c.id, v)}
                 modes={c.options} labelOf={o => (o.id === 'default' ? t('composer.modeShort.build') : modeLabel(o))} />
             ))}
+            {/* A permission level offered as a config option (custom category `_permission_mode`) rides in the mode menu,
+                under the modes; without modes it is a chip of its own */}
             {p.controls.modes.length > 0 && (
-              <ModeMenu title={t('composer.mode')} modes={p.controls.modes} value={p.controls.modeId} onOpenChange={onOpenChange} onSelect={p.onSetMode} />
+              <ModeMenu title={t('composer.mode')} modes={p.controls.modes} value={p.controls.modeId} onOpenChange={onOpenChange} onSelect={p.onSetMode}
+                access={permission[0]} onAccess={v => { if (permission[0]) p.onSetConfig(permission[0].id, v); }} />
             )}
-            {/* A permission level offered as a config option (custom category `_permission_mode`) follows the working mode */}
-            {permission.map(c => (
+            {(p.controls.modes.length > 0 ? permission.slice(1) : permission).map(c => (
               <ModeMenu key={c.id} title={c.name} value={c.value} onOpenChange={onOpenChange} onSelect={v => p.onSetConfig(c.id, v)} modes={c.options} />
             ))}
           </div>
@@ -411,6 +492,10 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
             : contexts.map(c => <ContextChip key={c.source.id} context={c} on={contextOn(c)} narrow={liveNarrow} onToggle={() => toggleContext(c)} />)}
         </div>}
         {!p.edit && p.toolbarStart}
+        {!p.edit && p.main && (
+          <CommandButtons commands={p.commands} sessionId={p.sessionId} draft={text} disabled={p.disabled || p.controlsLocked || sending}
+            onSend={as => { void send(as); }} onSendBare={command => { void sendBare(command); }} onDraft={onRewritten} onRewriting={busy => setRewrite(busy ? 'busy' : undefined)} onNotice={p.onNotice} />
+        )}
         {/* Plugin chips (plugins/Pieces.tsx) after the built-in ones, on the main composer only */}
         {!p.edit && p.main && <SlotPieces slot="composer.toolbar" className="flex shrink-0 items-center gap-1" />}
         {!p.edit && p.main && !!personas?.length && <SummonMenu personas={personas} onOpenChange={onOpenChange} onPick={persona => summon(persona.name, caret)} />}
@@ -424,6 +509,7 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
           {models.map((c, i) => (
             <ModelControl key={c.id} control={c} hidden={p.hidden?.[c.id]} reasoning={i === 0 ? reasoning : undefined}
               modelConfig={i === 0 ? modelConfig : undefined} sidekick={i === 0 ? sidekick[0] : undefined} sidekickEffort={i === 0 ? sidekickEffort[0] : undefined}
+              sidekickLive={i === 0 && p.sidekickLive}
               hiddenConfig={p.hidden}
               onSetConfig={p.onSetConfig} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />
           ))}
@@ -435,7 +521,7 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
           ))}
         </fieldset>
         {p.edit && !p.edit.dismissOnOutside && <IconButton title={t('history.cancel')} aria-label={t('history.cancel')} onClick={p.edit.onCancel}><X /></IconButton>}
-        <SendButton running={showStop} filled={canSend} theme={p.theme} onClick={showStop ? p.onStop : () => { void send(); }} />
+        <SendButton running={showStop} filled={canSend && rewrite !== 'busy'} theme={p.theme} onClick={showStop ? p.onStop : () => { void send(); }} />
       </div>
     </div>
   );
@@ -444,8 +530,10 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
 });
 
 // One mode chip and its menu: single-line rows with a glyph each, the agent's own name and description ride along as a tooltip.
-// Chip and rows use the same short label (`modeLabel`); the full_access glyph carries the warning color
-function ModeMenu({ modes, value, title, onSelect, onOpenChange, labelOf = modeLabel }: {
+// Chip and rows use the same short label (`modeLabel`); the full_access glyph carries the warning color.
+// `access`, a permission level (the built-in agent's approval), sits under the modes as an even segmented scale, the way
+// effort sits under the models; a level past the first rides on the chip as a tag, gliding in and out (Chip `tagsKey`)
+function ModeMenu({ modes, value, title, onSelect, onOpenChange, labelOf = modeLabel, access, onAccess }: {
   modes: SessionOption[];
   value?: string;
   title: string;
@@ -453,17 +541,24 @@ function ModeMenu({ modes, value, title, onSelect, onOpenChange, labelOf = modeL
   onOpenChange: (open: boolean) => void;
   // Codex's collaboration `default` is its Build mode, not the permission default beside it
   labelOf?: (mode: SessionOption) => string;
+  access?: ConfigControl;
+  onAccess?: (value: string) => void;
 }) {
   const mode = modes.find(m => m.id === value);
   const ModeIcon = mode ? modeIcon(mode) : undefined;
+  const level = access?.options.find(o => o.id === access.value);
+  // The first level is the default and shows no tag
+  const tagged = level && level.id !== access!.options[0]?.id ? level : undefined;
   return (
     <DropdownMenu.Root onOpenLifecycle={onOpenChange}>
       <DropdownMenu.Trigger render={<Chip variant="solid" className="ml-0.5 shrink-0" narrow="icon"
-        title={mode ? [mode.name, mode.description].filter(Boolean).join(t('common.metaSep')) : title}
-        icon={ModeIcon && <ModeIcon strokeWidth={1.75} className={mode?.kind === 'full_access' ? 'text-warn' : undefined} />}>
+        title={[mode ? [mode.name, mode.description].filter(Boolean).join(t('common.metaSep')) : title, level && accessLabel(level)].filter(Boolean).join('\n')}
+        icon={ModeIcon && <ModeIcon strokeWidth={1.75} className={mode?.kind === 'full_access' ? 'text-warn' : undefined} />}
+        tags={tagged && [<ChipTag key="access" icon={tagged.kind === 'full_access' ? <ShieldAlert className="size-2.5 shrink-0" strokeWidth={2.25} aria-hidden /> : undefined}>{accessLabel(tagged)}</ChipTag>]}
+        tagsKey={access ? tagged?.id ?? '' : undefined}>
         {mode ? labelOf(mode) : title}
       </Chip>} />
-      <DropdownMenu.Portal><DropdownMenu.Positioner side="top" width="sm"><DropdownMenu.Popup>
+      <DropdownMenu.Portal><DropdownMenu.Positioner side="top" width={access ? 'md' : 'sm'}><DropdownMenu.Popup>
         <DropdownMenu.RadioGroup value={value} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
           {modes.map(m => {
             const Icon = modeIcon(m);
@@ -473,6 +568,11 @@ function ModeMenu({ modes, value, title, onSelect, onOpenChange, labelOf = modeL
             </DropdownMenu.RadioItem>;
           })}
         </DropdownMenu.RadioGroup>
+        {/* A level pick keeps the menu open, like an effort pick in the model panel */}
+        {access && onAccess && <div className="mt-1 border-t border-line pt-1.5">
+          <SegmentScale bare equal label={t('composer.access')} options={access.options.map(o => ({ value: o.id, label: accessLabel(o) }))}
+            value={access.value ?? ''} onChange={onAccess} />
+        </div>}
       </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
     </DropdownMenu.Root>
   );

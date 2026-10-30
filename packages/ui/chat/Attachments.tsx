@@ -1,11 +1,12 @@
 import { useContext, useState, type ReactNode } from 'react';
-import { FileText, Image as ImageIcon, SquareDashedMousePointer, TextSelect, X } from 'lucide-react';
+import { FileText, Folder, Image as ImageIcon, SquareDashedMousePointer, TextSelect, X } from 'lucide-react';
 import type { Attachment, Draft } from '@acpira/shared/transcript';
 import { attachmentLabel, imageMimeOf } from '@acpira/shared/attachments';
 import { t } from '../i18n';
 import { cn } from '../ui/cn';
 import { Lightbox } from './Lightbox';
 import { TextPeek } from './TextPeek';
+import { isFolderUri } from './drafts';
 import { OpenBlobContext, OpenToolFileContext, parseFileLink } from './fileLinks';
 import { QuoteChip } from './Quotes';
 
@@ -102,7 +103,8 @@ function openFor(a: Draft | Attachment, ctx: {
     const url = a.blob && ctx.blobUrl ? ctx.blobUrl(a.blob) : undefined;
     return url ? () => ctx.peek.openBlob(a.name, url, comment) : undefined;
   }
-  if ((a.kind === 'file' || a.kind === 'selection') && ctx.openFile) {
+  // A folder link (a dropped folder) has nothing to open as a file
+  if ((a.kind === 'file' || a.kind === 'selection') && ctx.openFile && !(a.kind === 'file' && isFolderUri(a.uri))) {
     const file = parseFileLink(a.uri);
     const open = ctx.openFile;
     const line = a.kind === 'selection' ? a.startLine : file?.line;
@@ -121,8 +123,9 @@ function chipKey(a: Named, i: number): string {
   return ('blob' in a && a.blob) || `${a.name ?? a.kind}-${i}`;
 }
 
-const isImage = (a: Named) => a.kind === 'image' || (a.kind === 'file' && !!imageMimeOf(a.name));
+const isImage = (a: Named) => a.kind === 'image' || (a.kind === 'file' && !isFolderUri(a.uri) && !!imageMimeOf(a.name));
 const chipIcon = (a: Named) => (a.kind === 'selection' ? <TextSelect strokeWidth={1.5} />
+  : a.kind === 'file' && isFolderUri(a.uri) ? <Folder strokeWidth={1.5} />
   : a.kind === 'text' && a.context ? <SquareDashedMousePointer strokeWidth={1.5} /> : undefined);
 const chipTitle = (a: Named) => {
   if (a.kind === 'file') return 'data' in a && a.data ? a.name : a.uri;
@@ -157,7 +160,7 @@ export function DraftChips({ drafts, before, onRemove, onUpdate }: {
   if (!drafts.length && !before) return null;
   const { quotes, named } = split(drafts);
   return (
-    <div className="flex flex-wrap items-start gap-gap px-pad pt-gap">
+    <div className="flex flex-wrap items-start gap-chip-gap px-pad pt-gap">
       {before}
       {quotes.length > 0 && (
         <Removable label={t('quote.removeAll')} onRemove={onRemove ? () => onRemove(quotes.map(q => q.index)) : undefined}>
@@ -195,7 +198,7 @@ export function TurnAttachments({ attachments, blobUrl }: { attachments: Attachm
   const openBlob = useContext(OpenBlobContext);
   const { quotes, named } = split(attachments);
   return (
-    <div className="flex shrink-0 flex-wrap items-start gap-gap">
+    <div className="flex shrink-0 flex-wrap items-start gap-chip-gap">
       {quotes.length > 0 && <QuoteChip quotes={quotes.map(q => q.item)} />}
       {named.map(({ item: a, index: i }) => (
         <AttachmentTag

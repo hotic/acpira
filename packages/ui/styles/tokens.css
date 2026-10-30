@@ -545,6 +545,8 @@
   --spacing-chat-column: calc(var(--content-w) + 2 * min(var(--scrollbar), calc(var(--page) - var(--scrollbar))));
   --spacing-gap: var(--gap);
   --spacing-gap-half: calc(var(--gap) / 2);
+  /* Between attachment chips in a row: a little tighter than --gap, so a row of files reads as one group */
+  --spacing-chip-gap: calc(var(--gap) * 2 / 3);
   /* A docked list's right padding beside its stable thin gutter: padding and gutter together match the left padding (gap-half) */
   --spacing-list-gutter: max(0px, calc(var(--gap) / 2 - var(--scrollbar-thin)));
   /* A dialog body's right padding beside its stable thin gutter: padding and gutter together match the left padding (pad) */
