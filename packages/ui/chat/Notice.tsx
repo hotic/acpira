@@ -8,7 +8,7 @@ import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
 import { Row, RowEntranceContext } from '../ui/Row';
 import { Orb } from '../effects/Orb';
-import { CopyDetail } from './Alert';
+import { CopyDetail, DOCK_BUTTON, DOCK_LEAD } from './Alert';
 import { t, tOr } from '../i18n';
 
 export interface NoticeProps {
@@ -58,7 +58,6 @@ interface Way {
   run: () => void;
 }
 
-const glyph = 'size-icon shrink-0 text-fg-3';
 const rowIcon = (Icon: typeof UserRound) => <Icon strokeWidth={1.5} />;
 
 // Floats over the thread's lower edge rather than taking a slot in DockStack, so opening a stored session never shrinks
@@ -170,26 +169,28 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
   // state; next to a localized explanation it sits behind "Copy details" in the title row, as on chat/Alert
   const detail = error && (status === 'auth_required' || (status === 'error' && takeOver)) ? error : undefined;
   const Glyph = body.icon;
-  const text = 'm-0 basis-full text-3 text-fg-2 [overflow-wrap:anywhere]';
+  // The text line starts at the title's column, under the glyph's lead slot
+  const text = 'm-0 basis-full pl-indent text-3 text-fg-2 [overflow-wrap:anywhere]';
   return (
     <div className="px-dock">
-      <Card className="@container flex flex-wrap items-center gap-x-gap gap-y-1.5 px-pad py-2.5">
+      <Card className="@container flex flex-wrap items-center gap-x-gap gap-y-1 px-pad py-2.5">
         {/* One growing group with a zero basis: a long title shrinks inside it instead of wrapping retry onto a line of its own */}
-        <span className="flex min-w-0 flex-1 items-center gap-gap">
-          <Glyph className={glyph} strokeWidth={1.75} />
+        <span className="flex min-h-ctl-sm min-w-0 flex-1 items-center gap-gap">
+          <span className={DOCK_LEAD}><Glyph className="size-icon" strokeWidth={1.75} /></span>
           <span className="min-w-0 truncate text-2 font-medium text-fg-1" title={body.title}>{body.title}</span>
         </span>
-        {/* "Copy details" leads the actions: before the buttons on the title row, at the start of the actions row once they wrap */}
-        <div className="flex min-w-0 items-center justify-end gap-gap @max-notice:order-1 @max-notice:basis-full">
+        {/* "Copy details" leads the actions: before the buttons on the title row, at the start of the actions row (from the
+            title's column) once they wrap */}
+        <div className="flex min-w-0 items-center justify-end gap-gap @max-notice:order-1 @max-notice:basis-full @max-notice:pl-indent">
           {detail && <span className="mr-auto flex min-w-0"><CopyDetail text={detail} label="" /></span>}
           <fieldset disabled={busy} aria-busy={busy} className="m-0 flex min-w-0 items-center gap-gap border-0 p-0 disabled:opacity-60">
             {otherCount === 1
-              ? others[0]!.map(w => <Button key={w.key} title={w.title} disabled={w.disabled} onClick={w.run}>{w.label}</Button>)
+              ? others[0]!.map(w => <Button key={w.key} className={DOCK_BUTTON} title={w.title} disabled={w.disabled} onClick={w.run}>{w.label}</Button>)
               : otherCount > 1 && <OtherWays groups={others} />}
-            {primary && <Button variant="primary" title={primary.title} onClick={primary.run}>{primary.label}</Button>}
+            {primary && <Button variant="primary" className={DOCK_BUTTON} title={primary.title} onClick={primary.run}>{primary.label}</Button>}
           </fieldset>
         </div>
-        {showRetry && <IconButton aria-label={retry.label} title={retry.label} onClick={onRetry} className="-my-1 -mr-ctl-bleed"><RotateCw strokeWidth={1.5} /></IconButton>}
+        {showRetry && <IconButton size="sm" aria-label={retry.label} title={retry.label} onClick={onRetry} className="-mr-ctl-sm-bleed"><RotateCw strokeWidth={1.5} /></IconButton>}
         {feedback
           ? <p role="status" className={text}>{feedback}</p>
           : <p className={text}>{body.text}</p>}
@@ -203,7 +204,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
 function OtherWays({ groups }: { groups: Way[][] }) {
   return (
     <DropdownMenu.Root>
-      <DropdownMenu.Trigger render={<Button className="group/chip">{t('notice.moreWays')}<ChevronDown className={`size-3 shrink-0 text-fg-3 ${CARET_TURN}`} strokeWidth={1.75} /></Button>} />
+      <DropdownMenu.Trigger render={<Button className={`group/chip ${DOCK_BUTTON}`}>{t('notice.moreWays')}<ChevronDown className={`size-3 shrink-0 text-fg-3 ${CARET_TURN}`} strokeWidth={1.75} /></Button>} />
       <DropdownMenu.Portal><DropdownMenu.Positioner width="lg" align="end"><DropdownMenu.Popup>
         {groups.map((group, i) => <Fragment key={group[0]!.key}>
           {i > 0 && <DropdownMenu.Separator className="my-1 h-px bg-line" />}
