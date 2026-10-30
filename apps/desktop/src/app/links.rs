@@ -26,11 +26,11 @@ impl App {
   }
 
   pub(crate) fn update_attention(&self) {
-    if self.background {
-      return;
-    }
+    // Only macOS has a Dock badge; background (bench) runs leave the Dock alone
     #[cfg(target_os = "macos")]
-    crate::mac::set_dock_badge(self.attention.lock().len());
+    if !self.background {
+      crate::mac::set_dock_badge(self.attention.lock().len());
+    }
   }
 
   /// A notification or a session link: the window already showing it, else the focused one switches, else a new one
