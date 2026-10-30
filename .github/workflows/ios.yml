@@ -20,7 +20,8 @@ concurrency:
 
 jobs:
   check:
-    runs-on: macos-26
+    # GitHub's Xcode 27 runner image (macos-26 stops at Xcode 26.6)
+    runs-on: xcode-27
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
