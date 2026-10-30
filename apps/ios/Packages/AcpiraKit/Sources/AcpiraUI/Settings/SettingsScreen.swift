@@ -100,6 +100,10 @@ struct SettingsScreen: View {
         LabeledContent(t("settings.fact.version"), value: version)
       }
     }
+    // The sheet sits outside the root's `.id(locale)`, and its sections are views of their own whose inputs a language
+    // pick leaves unchanged, so SwiftUI keeps their old text (and a menu picker its old value label); a new identity
+    // rebuilds the whole form in the new table. The language row sits in the first section, so the reset scroll is moot
+    .id(locale)
     .formPage()
     .pairSettingsHooks(pairing)
     .navigationDestination(for: SettingsRoute.self) { route in
