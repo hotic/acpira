@@ -333,6 +333,14 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
     else next.set(cwd, shown + MORE_PAGE);
     return next;
   });
+  // Like Codex, a fold forgets its pages: reopening a project (or the chats) starts from the latest few again. Cleared on the
+  // way open, not shut, so the closing fold keeps its height while it animates
+  const resetMore = (key: string) => setMore(prev => {
+    if (!prev.has(key)) return prev;
+    const next = new Map(prev);
+    next.delete(key);
+    return next;
+  });
   const nameOf = (id: string) => agents.find(a => a.id === id)?.name ?? id;
   const here = (s: SessionSummary) => !workspace || inWorkspace(s, workspace);
   const filing = !!onFile && !!onCategoryOp;
@@ -741,7 +749,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
           open={p.open}
           state={p.open ? undefined : aggregate(all)}
           fresh={fresh === p.cwd}
-          onToggle={filing ? () => onCategoryOp?.({ op: 'collapseProject', cwd: p.cwd, collapsed: p.open }) : undefined}
+          onToggle={filing ? () => { if (!p.open) resetMore(p.cwd); onCategoryOp?.({ op: 'collapseProject', cwd: p.cwd, collapsed: p.open }); } : undefined}
           onNewCategory={filing && !desktop ? () => createCategory(p.cwd) : undefined}
           onNewSession={desktop && onNewIn ? () => onNewIn(p.cwd) : undefined}
           newSessionLabel={t('session.project.newSession')}
@@ -831,7 +839,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
     const chatOpen = !!q || !folded.includes('chats');
     const chatSection = desktop && !!chats && !flat && (tree.chats.length > 0 || !filtering) && (
       <div className="flex flex-col" role="group" aria-label={t('session.group.chats')}>
-        <SectionLabel open={chatOpen} onToggle={() => flip('chats')} quiet actions={onNewChat && (
+        <SectionLabel open={chatOpen} onToggle={() => { if (!chatOpen) resetMore(CHATS); flip('chats'); }} quiet actions={onNewChat && (
           <button type="button" title={t('session.chat.new')} aria-label={t('session.chat.new')} onClick={onNewChat} className={SECTION_ACT}>
             <SquarePen className="size-icon" strokeWidth={1.5} />
           </button>
