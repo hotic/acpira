@@ -112,6 +112,17 @@ export function parseFileLink(text: string): FileLink | undefined {
   return parsePathAndLine(raw);
 }
 
+// A link target as a file. The Markdown parser percent-encodes spaces and non-ASCII in an href (`素材` → `%E7%B4%A0…`), and
+// models often encode a path themselves, so a plain path is decoded the way a file: URL already is: after the line suffix
+// is read, so an encoded `#` stays in the name
+export function parseLinkTarget(href: string): FileLink | undefined {
+  const file = parseFileLink(href);
+  const raw = href.trim();
+  if (!file || raw.startsWith(FILE_HREF_PREFIX) || /^file:/i.test(raw)) return file;
+  const path = safeDecode(file.path);
+  return path === file.path ? file : { ...file, path };
+}
+
 // A whole Markdown link inside inline code (`[Shell.tsx:12](file:///repo/Shell.tsx)`): the target is the file, the label is what was
 // meant to show. A line number comes from the target first, then from the label.
 export type WrappedLink = { label: string; file: FileLink };
@@ -122,7 +133,7 @@ export function parseWrappedLink(text: string): WrappedLink | undefined {
   const hit = WRAPPED_LINK.exec(text.trim());
   if (!hit) return;
   const label = hit[1]!.trim();
-  const target = parseFileLink(hit[2]!);
+  const target = parseLinkTarget(hit[2]!);
   if (!label || !target) return;
   const line = target.line ?? parsePathAndLine(label)?.line;
   return { label, file: line != null ? { path: target.path, line } : { path: target.path } };
@@ -148,7 +159,7 @@ export function parseCodeSessionLink(text: string): { id: string; label?: string
 }
 
 export function toFileHref(url: string): string {
-  const file = parseFileLink(url);
+  const file = parseLinkTarget(url);
   return file ? encodeFileHref(file.path, file.line) : url;
 }
 
@@ -173,7 +184,7 @@ function walk(node: HastNode): void {
     const session = href.startsWith('#') ? undefined : sessionIdOfLink(href);
     if (session) node.properties.href = `${SESSION_HREF_PREFIX}${session}`;
     else if (!href.startsWith(FILE_HREF_PREFIX)) {
-      const file = parseFileLink(href);
+      const file = parseLinkTarget(href);
       if (file) node.properties.href = encodeFileHref(file.path, file.line);
     }
   }
@@ -228,3 +239,6 @@ function isFilePath(path: string): boolean {
   const ext = /^[^\s/\\]+\.([A-Za-z][\w-]{1,15})$/.exec(path);
   return !!ext && !WEB_TLD.test(ext[1]!);
 }
+
+// What a skill does, from the description the agent advertised with its slash command; skill rows show it on hover
+export const SkillDescriptionContext = createContext<((name: string) => string | undefined) | undefined>(undefined);
