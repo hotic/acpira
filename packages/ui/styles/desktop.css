@@ -16,6 +16,10 @@
   /* The dock's side margin (the spacing-dock token, spelled out: theme tokens are inlined, not runtime variables) */
   --start-x: max(var(--scrollbar), calc(var(--page) - var(--scrollbar)));
   --start-ease: cubic-bezier(.3, .7, .2, 1);
+  /* Docked sidebars share one timeline, including their contents and the sheet's adjoining edge. */
+  --sidebar-duration: 320ms;
+  --sidebar-fade-duration: 260ms;
+  --sidebar-ease: var(--start-ease);
   /* The sheet header's leading and trailing padding (Header reads them): the dock's margin beside the column and the tool panel */
   --sheet-lead: var(--start-x);
   --sheet-trail: var(--start-x);
@@ -23,6 +27,9 @@
      toggle 2 px apart, then a breath */
   /* The gear at the column's foot (chat/DesktopFrame.tsx AppMenu): a size up from the rows' icons */
   --foot-icon: 18px;
+  /* The column foot's and the settings rail's bottom inset (AppMenu, settings/Nav.tsx): a pixel under the sheet's, since
+     the sheet's 1 px ring is drawn outside its box; a row's fill (hover, the current page) then ends on the ring's outer edge */
+  --foot-bottom: calc(var(--sheet-inset) - 1px);
   --title-w: calc(max(var(--gap), var(--lights-w)) + 3 * var(--ctl) + 4px + var(--gap));
   /* The edge a narrow window's list page casts over the chat as it slides */
   --page-edge: 0 0 40px rgb(0 0 0 / 0.45);
@@ -33,7 +40,9 @@
 .acp-shell[data-desktop][data-narrow] :is([data-sheet-header], [data-stage-tabs], [data-settings-rail]) { --title-w: calc(max(var(--gap), var(--lights-w)) + var(--ctl) + var(--gap)); }
 /* The lights span x 17-77 (14 pt each, 9 pt apart on macOS 27); the first button after them leaves a breath of about 15 px
    to its icon */
-.acp-shell[data-desktop][data-os="mac"] { --lights-w: 84px; }
+/* macOS: the header line is 32 px so the lights' centre sits as far off the window's top (the sheet's inset and half the
+   line, 24) as off its left edge, and about as far as the column foot's icons off its bottom (--foot-bottom) */
+.acp-shell[data-desktop][data-os="mac"] { --lights-w: 84px; --hdr: 32px; }
 /* Windows and Linux (data-caption: the page draws the window's caption and menu): no lights; the title row also holds
    the menu button (chat/DesktopFrame.tsx AppMenus). The header line is the window's title bar (as Codex draws it on Windows): it sits at the window's top on the canvas, the raised
    card begins under it (below), and the caption's three buttons (WindowCaption, 46 px each as Windows 11 draws them) take
@@ -171,10 +180,10 @@
      zero width wins over the drag's inline width by importance. The column carries its own moving flag (data-moving), set in
      the same write as data-column-hidden */
   .acp-shell[data-desktop] [data-session-panel][data-column-hidden] { width: 0 !important; opacity: 0; overflow: hidden; }
-  .acp-shell[data-desktop] [data-session-panel][data-moving] { overflow: hidden; transition: width 320ms var(--start-ease), opacity 260ms var(--start-ease); }
+  .acp-shell[data-desktop] [data-session-panel][data-moving] { overflow: hidden; transition: width var(--sidebar-duration) var(--sidebar-ease), opacity var(--sidebar-fade-duration) var(--sidebar-ease); }
   .acp-shell[data-desktop] [data-session-panel][data-moving] > :not([role="separator"]) { min-width: var(--column-w, auto); }
-  .acp-shell[data-desktop][data-column-moving] [data-sheet] { transition: margin 320ms var(--start-ease); }
-  .acp-shell[data-desktop][data-column-moving] [data-sheet-header] { transition: padding 320ms var(--start-ease); }
+  .acp-shell[data-desktop][data-column-moving] [data-sheet] { transition: margin var(--sidebar-duration) var(--sidebar-ease); }
+  .acp-shell[data-desktop][data-column-moving] [data-sheet-header] { transition: padding var(--sidebar-duration) var(--sidebar-ease); }
   /* No focus-coloured line on a resize edge under the pointer or a drag: the cursor is the cue, and the line sat on the
      canvas beside the sheet's rim (owner's call, 2026-10-23). Keyboard focus still shows it */
   .acp-shell[data-desktop] .subagent-splitter:not(:focus-visible)::after { opacity: 0; }

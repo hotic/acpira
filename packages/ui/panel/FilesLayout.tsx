@@ -53,18 +53,18 @@ export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
     return fitPaneBounds(aside.current, { min: px('--explorer-min'), max: px('--explorer-max'), initial: px('--explorer-w') }, px('--explorer-max'));
   }, []);
   // Folding and unfolding ease the width, the explorer's content keeping its open width meanwhile, as the session column does
-  const [moving, setMoving] = useState(false);
+  const [moving, setMoving] = useState(0);
   const wasHidden = useRef(hidden);
   if (wasHidden.current !== hidden) {
     wasHidden.current = hidden;
     const b = bounds();
     const open = hidden ? aside.current?.offsetWidth : clamp(s.explorerW ?? b.initial, b.min, b.max);
-    if (open) aside.current?.style.setProperty('--explorer-open', `${open}px`);
-    if (!moving) setMoving(true);
+    if (open && (!moving || !hidden)) aside.current?.style.setProperty('--explorer-open', `${open}px`);
+    setMoving(m => m + 1);
   }
   useEffect(() => {
     if (!moving) return;
-    const timer = setTimeout(() => setMoving(false), MOVE_MS);
+    const timer = setTimeout(() => setMoving(0), MOVE_MS);
     return () => clearTimeout(timer);
   }, [moving]);
   // ⌥⌘B folds the session column here, the key the tool panel takes in the conversation layout

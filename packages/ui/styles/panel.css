@@ -87,10 +87,13 @@
   .acp-shell[data-desktop]:not([data-narrow]):has(> [data-tool-panel-wrap][data-shown]) [data-sheet] { margin-right: 0; }
   /* Opening and closing ease the panel's width and the sheet's margin; meanwhile the panel's content keeps its open width
      (--tool-panel-open, written by ToolPanelDock), clipped instead of re-wrapped */
-  [data-tool-panel-wrap][data-moving] { overflow: hidden; transition: width 320ms var(--start-ease); }
+  [data-tool-panel-wrap]:not([data-shown]) { opacity: 0; }
+  [data-tool-panel-wrap][data-moving] { overflow: hidden; transition: width var(--sidebar-duration) var(--sidebar-ease), opacity var(--sidebar-fade-duration) var(--sidebar-ease); }
+  /* Animate to the fitted width, not a larger flex basis that reaches the available room early. */
+  [data-tool-panel-wrap][data-moving][data-shown] { width: var(--tool-panel-open) !important; }
   [data-tool-panel-wrap][data-moving] > [data-tool-panel] { min-width: var(--tool-panel-open, auto); }
-  .acp-shell[data-desktop]:has(> [data-tool-panel-wrap][data-moving]) [data-sheet] { transition: margin 320ms var(--start-ease); }
-  .acp-shell[data-desktop]:has(> [data-tool-panel-wrap][data-moving]) [data-sheet-header] { transition: padding 320ms var(--start-ease); }
+  .acp-shell[data-desktop]:has(> [data-tool-panel-wrap][data-moving]) [data-sheet] { transition: margin var(--sidebar-duration) var(--sidebar-ease); }
+  .acp-shell[data-desktop]:has(> [data-tool-panel-wrap][data-moving]) [data-sheet-header] { transition: padding var(--sidebar-duration) var(--sidebar-ease); }
   /* A narrow window: the panel is a page over the window, its tabs after the traffic lights */
   .acp-shell[data-desktop][data-narrow] [data-panel-tabs] { padding-left: calc(max(var(--gap), var(--lights-w)) + var(--gap) / 2); }
 
@@ -100,7 +103,7 @@
   [data-explorer] { --panel-bg: var(--canvas, var(--bg-0)); }
   [data-explorer]:not([data-hidden], [data-moving]) { min-width: var(--explorer-fit-min, var(--explorer-min)); }
   [data-explorer][data-hidden] { opacity: 0; overflow: hidden; }
-  [data-explorer][data-moving] { overflow: hidden; transition: width 320ms var(--start-ease), opacity 260ms var(--start-ease); }
+  [data-explorer][data-moving] { overflow: hidden; transition: width var(--sidebar-duration) var(--sidebar-ease), opacity var(--sidebar-fade-duration) var(--sidebar-ease); }
   [data-explorer][data-moving] > :not([role="separator"]) { min-width: var(--explorer-open, auto); }
   [data-explorer] > .subagent-splitter { z-index: 2; }
   /* The stage: the one raised sheet, as the chat is in the conversation layout, between the explorer (the window's edge
@@ -115,8 +118,8 @@
     z-index: 1;
   }
   [data-stage][data-edge] { margin-left: var(--sheet-inset); }
-  [data-stage][data-moving] { transition: margin 320ms var(--start-ease); }
-  [data-stage][data-moving] [data-stage-tabs] { transition: padding 320ms var(--start-ease); }
+  [data-stage][data-moving] { transition: margin var(--sidebar-duration) var(--sidebar-ease); }
+  [data-stage][data-moving] [data-stage-tabs] { transition: padding var(--sidebar-duration) var(--sidebar-ease); }
 
   /* Every tree row: a tint (hover, selected) over a base. Plain file rows use background-color directly; sticky open
      folders composite the tint over the opaque canvas base so rows scrolling under them stay hidden, while only --tint
