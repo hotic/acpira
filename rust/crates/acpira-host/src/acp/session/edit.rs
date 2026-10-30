@@ -878,7 +878,8 @@ impl AcpSession {
       return Ok(());
     }
     if user.edited && !has_output {
-      let settings = user.settings.clone().unwrap_or_else(|| capture_turn_settings(&self.core.lock().state.controls));
+      // Retry follows the composer's live selections, just like an unedited failed prompt.
+      let settings = capture_turn_settings(&self.core.lock().state.controls);
       let n = user.attachments.as_ref().map(Vec::len).unwrap_or(0);
       return self
         .edit_turn(EditTurnRequest {

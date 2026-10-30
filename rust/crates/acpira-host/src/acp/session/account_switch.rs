@@ -68,6 +68,7 @@ impl AcpSession {
           title: tp("host.accountSwitched", &[("from", &from), ("to", &to)]),
           details: None,
           actions: vec![],
+          retry: None,
         }));
         let saved = ExhaustedTurn { stop: turn.stop, error: turn.error.take(), notice, switch_notice };
         turn.stop = Some(TurnStop::EndTurn);

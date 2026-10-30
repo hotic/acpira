@@ -14,6 +14,7 @@ fn unfinished(b: &AgentBlock) -> bool {
     AgentBlock::Compaction(x) => x.status == CompactionStatus::InProgress,
     AgentBlock::Permission(_) => true,
     AgentBlock::Question(x) => x.outcome.is_none(),
+    AgentBlock::Notice(x) => x.retry.as_ref().is_some_and(|r| r.status == ToolStatus::InProgress),
     _ => false,
   }
 }
@@ -65,6 +66,12 @@ pub fn restore_interrupted_turns(mut turns: Vec<Turn>, updated_at: &str) -> Vec<
         }
         AgentBlock::Compaction(x) => x.status = CompactionStatus::Cancelled,
         AgentBlock::Question(x) => x.outcome = Some(QuestionOutcome::Cancelled),
+        AgentBlock::Notice(x) => {
+          if let Some(r) = x.retry.as_mut() {
+            r.status = ToolStatus::Cancelled;
+            r.next_at = None;
+          }
+        }
         _ => {}
       }
     }

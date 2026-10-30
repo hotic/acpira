@@ -11,10 +11,13 @@ async fn failure_retry_upserts_the_warning_revision_and_the_error_settles_the_tu
   let turn = last_turn(&view(&s));
   expect_match(&turn, json!({ "stop": "error", "error": { "kind": "limit", "retryable": true, "failureId": "turn-1:error", "actions": ["retry"] } }));
   assert_eq!(turn["error"]["message"], "Rate limit exceeded\nTry again in a minute");
-  // the retry warning (rev 1) is no row; the error (rev 2) is the only notice
+  // the retry warning (rev 1) only logs its attempt on the retry row; the reply text after it means that retry got
+  // through, so the row reads recovered and the error (rev 2) is the only failure notice
   let notices: Vec<&Value> = turn["blocks"].as_array().unwrap().iter().filter(|b| b["type"] == "notice").collect();
-  assert_eq!(notices.len(), 1);
-  expect_match(notices[0], json!({ "type": "notice", "id": "turn-1:error", "revision": 2, "severity": "error", "category": "limit",
+  assert_eq!(notices.len(), 2);
+  expect_match(notices[0], json!({ "type": "notice", "severity": "warning", "retry": { "status": "completed" } }));
+  assert_eq!(notices[0]["retry"]["attempts"].as_array().unwrap().len(), 1);
+  expect_match(notices[1], json!({ "type": "notice", "id": "turn-1:error", "revision": 2, "severity": "error", "category": "limit",
     "title": "Rate limit exceeded", "details": "Try again in a minute", "actions": ["retry"] }));
 }
 

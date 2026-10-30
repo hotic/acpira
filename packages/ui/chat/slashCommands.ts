@@ -56,6 +56,19 @@ export function matchCommands(commands: readonly SlashCommand[], query: string, 
 // the first copy in ranking order, so `/claude:` still surfaces the claude copies; the picked name is sent verbatim
 const SKILL_SCOPE = /^(?:agents|claude):/;
 
+// A skill's command under each CLI's spelling (Codex `$dig`, Kimi `skill:dig`, Devin `agents:dig` / `claude:dig`) → its
+// description, for the rows that load a skill by its bare name
+const SKILL_SPELLING = /^(?:\$|skill:|agents:|claude:)/;
+
+export function skillDescriptions(commands: readonly SlashCommand[] | undefined): (name: string) => string | undefined {
+  const byName = new Map<string, string>();
+  for (const c of commands ?? []) {
+    const name = c.name.replace(SKILL_SPELLING, '');
+    if (c.description && !byName.has(name)) byName.set(name, c.description);
+  }
+  return name => byName.get(name);
+}
+
 function mergeSkillCopies(commands: SlashCommand[]): SlashCommand[] {
   const seen = new Set<string>();
   return commands.filter(c => {

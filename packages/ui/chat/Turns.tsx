@@ -21,6 +21,7 @@ import { TOOL_ICON } from './icons';
 import { Thought } from './Thought';
 import { Plan } from './Plan';
 import { ToolCall } from './ToolCall';
+import { RetryRow } from './RetryRow';
 import { ToolGroup } from './ToolGroup';
 import { blockItemId, blockSettled, foldStates, groupProcess, isDelegation, itemEntrance, itemSettled, processParts, type FoldPart, type ProcessItem } from './processGroups';
 import { useTailWindow } from './tailWindow';
@@ -168,6 +169,8 @@ function NoticeDetails({ text }: { text: string }) {
 // The adapter's own actions render as small secondary buttons under the fold, in payload order
 function NoticeRow({ block }: { block: NoticeBlock }) {
   const ctx = useContext(NoticeActionContext);
+  // A run of provider retries is an action row with its attempt log, not a notice
+  if (block.retry) return <RetryRow log={block.retry} />;
   if (block.id === ctx?.suppressId || ctx?.absorbed?.includes(block)) return null;
   const error = block.severity === 'error';
   const buttons = error && ctx?.showActions && ctx.onAction ? block.actions : [];
@@ -432,9 +435,9 @@ function liveActivity(turn: AgentTurn, leadKind: 'orb' | 'static' = 'orb'): { la
   }
   // The Orb belongs to the root turn only; observed child transcripts get a static lead
   const lead = leadKind === 'static' ? <Bot className="size-icon" strokeWidth={1.5} /> : <Orb kind="think" />;
-  // A provider retry (network blip, overload) only relabels the working row; the adapter's wording stays in the tooltip
+  // A provider retry (network blip, overload) relabels the working row, unless the turn's retry row already says so
   const retry = turn.retry;
-  if (retry) {
+  if (retry && !turn.blocks.some(b => b.type === 'notice' && b.retry?.status === 'in_progress')) {
     const label = retry.attempt !== undefined && retry.max !== undefined
       ? t('turns.retryingAttempt', { attempt: retry.attempt, max: retry.max }) : t('turns.retrying');
     return { label, title: retry.detail, active: true, lead };

@@ -13,7 +13,8 @@ use crate::acp::session::queue::PeerTurn;
 use crate::acp::transport::cancel::Cancel;
 use crate::acp::transport::process::ClientHandlers;
 use crate::acp::transport::rpc::{BoxFuture, RpcError};
-use crate::acp::vendors::Vendor;
+use crate::acp::transcript::normalize::{RetryText, refine_retry, report_retry};
+use crate::acp::vendors::{Vendor, claude_retry, claude_workflow_log};
 use crate::i18n::{t, tp};
 
 /// The client handlers of one process generation: a replaced process's late callbacks are ignored
@@ -56,6 +57,40 @@ impl ClientHandlers for SessionHandlers {
     if let Some(closing) = closing {
       tokio::spawn(closing);
     }
+  }
+
+  fn on_api_retry(&self, params: Value) {
+    let Some(s) = self.live().filter(|s| s.vendor == Vendor::Claude) else { return };
+    let Some(report) = claude_retry::report_of(&params) else { return };
+    let attempt = report.attempt;
+    let sid = {
+      let mut c = s.core.lock();
+      // Only the root's live turn: a child's retries and late frames have no row of their own here
+      if c.proc_gen != self.gen_id || c.replaying || !c.phase.running
+        || params.get("sessionId").and_then(Value::as_str) != c.acp_session_id.as_deref() {
+        return;
+      }
+      if report_retry(&mut c.state, report) {
+        s.touch(&mut c);
+      }
+      c.acp_session_id.clone()
+    };
+    // The frame has no response body; the CLI's session log does, a moment later
+    let (Some(sid), Some(attempt)) = (sid, attempt) else { return };
+    let config = claude_workflow_log::config_dir_of(
+      s.def().env.as_ref().and_then(|e| e.get(claude_workflow_log::CONFIG_DIR_ENV).cloned())
+        .or_else(|| std::env::var(claude_workflow_log::CONFIG_DIR_ENV).ok()),
+    );
+    let cwd = s.cwd.clone();
+    let gen_id = self.gen_id;
+    tokio::spawn(async move {
+      let read = tokio::task::spawn_blocking(move || claude_retry::read_logged(&config, &cwd, &sid, attempt)).await;
+      let Ok(Some(text)) = read else { return };
+      let mut c = s.core.lock();
+      if c.proc_gen == gen_id && refine_retry(&mut c.state, attempt, &text, RetryText::Raw) {
+        s.touch(&mut c);
+      }
+    });
   }
 
   fn on_update(&self, params: Value) {

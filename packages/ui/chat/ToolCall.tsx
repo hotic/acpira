@@ -1,4 +1,4 @@
-import { Check, FileText, Globe, Square, X } from 'lucide-react';
+import { FileText, Globe, Square } from 'lucide-react';
 import { memo, useContext, type ReactNode } from 'react';
 import type { AsyncTaskInfo, AsyncTaskState, ImageRef, ToolCallBlock } from '@acpira/shared/transcript';
 import type { MsgKey } from '@acpira/shared/i18n';
@@ -20,12 +20,13 @@ import { FileMenu } from './ImageMenu';
 import { GeneratedImages, ImageInFoldContext } from './GeneratedImage';
 import { ShownWidget } from './AgentWidget';
 import { TerminalOutput, ToolOutput } from './Terminal';
-import { isWorkflowRun, toolTarget, toolVerb } from './folding';
-import { AsyncTaskStopContext, OpenToolFileContext, SessionTitleContext, ToolFileActionsContext, WorkflowProgressContext } from './fileLinks';
+import { isSkillTool, isWorkflowRun, toolTarget, toolVerb } from './folding';
+import { AsyncTaskStopContext, OpenToolFileContext, SessionTitleContext, SkillDescriptionContext, ToolFileActionsContext, WorkflowProgressContext } from './fileLinks';
 import { isSessionTool, splitSessionTarget } from '@acpira/shared/sessionLinks';
 import { compactTokens } from './goalText';
 import { diffIndex, fileReference, toolFiles, visibleToolContents } from './toolDetails';
 import { useToolSeconds } from './useToolSeconds';
+import { CommandOutcome } from './CommandOutcome';
 import { commandDuration } from './commandDuration';
 import { useAutoFold } from './autoFold';
 import { editReference, editSpan } from './processGroups';
@@ -92,10 +93,6 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
 
   // The diff stat is not decoration — every harness shows it — so it escapes the toolLine axis; 'rich' adds the rest of the meta
   const stat = block.diffStat && <DiffStat {...block.diffStat} />;
-  const glyph = <>
-    {block.status === 'completed' && <Check className="size-3 text-ok" strokeWidth={2} aria-hidden="true" />}
-    {block.status === 'failed' && <X className="size-3 text-danger" strokeWidth={2} aria-hidden="true" />}
-  </>;
   // Commands always end their row with the outcome and run time; an async task's state tag stands in for the glyph.
   // A live command ticks in whole seconds, a finished one reads its host timestamps, and no timer means no duration
   const duration = seconds === undefined ? undefined
@@ -106,22 +103,21 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
         {toolLine === 'rich' && block.meta && <span>{block.meta}</span>}
         {taskTag}
         {taskStop}
-        {!task && glyph}
-        {duration && <span>{duration}</span>}
+        <CommandOutcome status={block.status} duration={duration} glyph={!task} />
       </>
     : toolLine === 'rich'
       ? <>
           {stat || (block.meta && <span>{block.meta}</span>)}
           {taskTag}
           {taskStop}
-          {glyph}
+          <CommandOutcome status={block.status} />
         </>
       : (stat || taskTag || taskStop ? <>{stat}{taskTag}{taskStop}</> : undefined);
 
   // An edit names where it landed, first to last changed line, the way a read names its range
   const span = block.kind === 'edit' ? editSpan([block]) : undefined;
   const editFile = block.kind === 'edit' ? editReference([block]) : undefined;
-  const target = isSessionTool(block) ? <SessionToolTarget block={block} /> : <RowTarget mono={block.targetMono}>{toolTarget(block)}</RowTarget>;
+  const target = isSessionTool(block) ? <SessionToolTarget block={block} /> : isSkillTool(block) ? <SkillTarget block={block} /> : <RowTarget mono={block.targetMono}>{toolTarget(block)}</RowTarget>;
   const label = <>
     <RowLabel shimmer={running}>{toolVerb(block)}</RowLabel>
     {command
@@ -131,6 +127,8 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
         : span ? <span className="flex min-w-0 items-baseline gap-1">{target}<Aside>{span}</Aside></span> : target)}
   </>;
   if (todos !== undefined) return <PlanDetails entries={todos} label={label} trailing={trailing} />;
+  // A skill load is one row naming the skill; only a failure opens to its message below
+  if (isSkillTool(block) && !(block.status === 'failed' && visibleContent.length)) return <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
   // Image generation: the row names the call and its text (codex-acp's revised prompt) opens on demand. In the
   // process fold the images stay below this row while it is open; the fold owner moves them outside when it closes.
   if (isImageGenTool(block)) {
@@ -372,12 +370,25 @@ function SessionToolTarget({ block }: { block: ToolCallBlock }) {
   );
 }
 
-export function Aside({ children }: { children: ReactNode }) {
-  return <span className="shrink-0 whitespace-nowrap text-3 text-fg-3/70 tabular-nums">{children}</span>;
+// A skill row's name: hover tells what the skill does (the description its slash command was advertised with), a click
+// opens its SKILL.md when the agent said where it is
+function SkillTarget({ block }: { block: ToolCallBlock }) {
+  const describe = useContext(SkillDescriptionContext);
+  const name = <RowTarget><span title={block.target ? describe?.(block.target) : undefined}>{block.target}</span></RowTarget>;
+  const path = block.locations?.[0]?.path;
+  return path ? <FileRef hit={path}>{name}</FileRef> : name;
 }
 
+// A note beside a target (line range, host): a size smaller, in the row's own ink, so a row reads in one grey
+export function Aside({ children }: { children: ReactNode }) {
+  return <span className="shrink-0 whitespace-nowrap text-3 tabular-nums">{children}</span>;
+}
+
+// Only the sides that changed: a zero count carries nothing, and a red "−0" was the loudest thing in the row. The red
+// is toned down to the green's weight; elsewhere --danger keeps full strength
 export function DiffStat({ add, del }: { add: number; del: number }) {
-  return <span><span className="text-ok">+{add}</span> <span className="text-danger">−{del}</span></span>;
+  if (!add && !del) return null;
+  return <span className="inline-flex gap-1">{add > 0 && <span className="text-ok">+{add}</span>}{del > 0 && <span className="text-danger/80">−{del}</span>}</span>;
 }
 
 function splitHit(hit: string): { main: string; aside?: string } {

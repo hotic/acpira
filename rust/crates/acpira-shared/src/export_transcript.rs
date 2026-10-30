@@ -194,6 +194,17 @@ fn block(b: &AgentBlock, labels: &ExportLabels, blob_path: &dyn Fn(&str) -> Opti
       }
     }
     AgentBlock::PlanDocument(p) => format!("#### {}\n\n{}", p.title, p.markdown),
+    // A retry row quotes every failed attempt verbatim, one quoted line each
+    AgentBlock::Notice(NoticeBlock { title, retry: Some(r), .. }) => {
+      let mut out = format!("> Notice: {title}");
+      for a in &r.attempts {
+        let head = a.attempt.map(|n| format!("#{n} ")).unwrap_or_default();
+        for (i, line) in a.text.lines().enumerate() {
+          out.push_str(&format!("\n> {}{line}", if i == 0 { head.as_str() } else { "" }));
+        }
+      }
+      out
+    }
     AgentBlock::Notice(n) => format!(
       "> {}: {}{}",
       if n.severity == Severity::Error { labels.error.as_str() } else { "Notice" },

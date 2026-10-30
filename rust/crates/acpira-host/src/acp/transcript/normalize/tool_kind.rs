@@ -268,3 +268,55 @@ pub(super) fn strip_verb(title: &str) -> String {
   let s = s.trim();
   if s.is_empty() { title.to_owned() } else { s.to_owned() }
 }
+
+/// A skill load reads "Load skill <name>" whichever way the agent ran it
+pub const SKILL_VERB: &str = "verb.skill";
+/// claude-agent-acp's `Skill` ("Load skill" until the input is known, then "Load skill: <name>"), the built-in agent's
+/// `skill` ("Skill <name>") and OpenCode's bare `skill`; group 1 or 2 is the name when the title carries it
+static SKILL_TITLE: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)^(?:load\s+skill(?::\s*(\S.*))?|skill(?:\s+(\S+))?)$"));
+/// A skill's instructions file: `.../skills/<name>/SKILL.md`; group 1 is the name
+static SKILL_FILE: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?:^|[\\/])skills[\\/]([^\\/]+)[\\/]SKILL\.md$"));
+/// A command that only prints one SKILL.md (Codex, Kimi and Grok load a skill this way); group 1 is the file
+static SKILL_PRINT: LazyLock<Regex> = LazyLock::new(|| {
+  acpira_shared::re::compile(
+    r#"^(?:cat|head(?:\s+-n\s*\d+|\s+-\d+)?|sed\s+-n\s+['"]?\d+(?:,\d+)?p['"]?|nl\s+-ba)\s+['"]?([^\s'"]*[\\/]skills[\\/][^\\/\s'"]+[\\/]SKILL\.md)['"]?$"#,
+  )
+});
+
+pub(super) struct SkillLoad {
+  pub(super) name: Option<String>,
+  pub(super) path: Option<String>,
+}
+
+/// Whether a call loads a skill, and which: claude-agent-acp names its tool in `_meta.claudeCode.toolName` and, for an
+/// AIR client, the skill and its file in `_meta.jetbrains.air.skill { name, path }` (0.84 source); the built-in agent and
+/// OpenCode by title; any other agent by reading one `skills/<name>/SKILL.md`, as a read or a one-file print command.
+/// A row that already has another identity (to-do, MCP, …) is left alone
+pub(super) fn skill_load(b: &ToolCallBlock, meta: Option<&Map<String, Value>>, title: Option<&str>, raw: Option<&Map<String, Value>>) -> Option<SkillLoad> {
+  if b.mcp_server.is_some() || b.verb_key.as_deref().is_some_and(|k| k != SKILL_VERB) {
+    return None;
+  }
+  let text = |v: Option<&Value>| v.and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned);
+  let air = meta.and_then(|m| m.get("jetbrains")).and_then(|j| j.get("air")).and_then(|a| a.get("skill"));
+  let claude = meta.and_then(|m| m.get("claudeCode")).and_then(|c| c.get("toolName")).and_then(Value::as_str) == Some("Skill");
+  let titled = title.map(str::trim).and_then(|x| SKILL_TITLE.captures(x));
+  let file = |path: &str| SKILL_FILE.captures(path).map(|c| (c[1].to_owned(), path.to_owned()));
+  // The file the call read: its one location, or the one file a print command names
+  let read = match b.kind {
+    ToolKind::Read => b.locations.as_deref().filter(|l| l.len() == 1).and_then(|l| file(&l[0].path)),
+    ToolKind::Execute if b.target_mono == Some(true) => {
+      b.target.as_deref().and_then(|c| SKILL_PRINT.captures(c.trim())).and_then(|c| file(&c[1]))
+    }
+    _ => None,
+  };
+  if b.verb_key.is_none() && air.is_none() && !claude && titled.is_none() && read.is_none() {
+    return None;
+  }
+  let name = text(air.and_then(|a| a.get("name")))
+    .or_else(|| text(raw.and_then(|r| r.get("skill"))))
+    .or_else(|| text(raw.and_then(|r| r.get("name"))))
+    .or_else(|| titled.as_ref().and_then(|c| c.get(1).or_else(|| c.get(2))).map(|m| m.as_str().trim().to_owned()))
+    .or_else(|| read.as_ref().map(|(n, _)| n.clone()));
+  let path = text(air.and_then(|a| a.get("path"))).or_else(|| read.map(|(_, p)| p));
+  Some(SkillLoad { name, path })
+}

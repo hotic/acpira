@@ -456,7 +456,9 @@ impl TranscriptStore {
           base.acp_session_id = fresh.acp_session_id;
           base.cwd = fresh.cwd;
           base.updated_at = fresh.updated_at;
+          base.completed_at = fresh.completed_at;
           base.pinned = fresh.pinned;
+          base.archived = fresh.archived;
           base.category = fresh.category;
           base.model = fresh.model;
           base
@@ -536,8 +538,9 @@ impl TranscriptStore {
       Err(e) => return Err(RecordLoadError::Unreadable { reason: e.to_string() }),
     };
     match serde_json::from_slice::<SessionRecord>(&raw) {
-      Ok(r) if r.id == id && is_session_id(&r.id) => {
+      Ok(mut r) if r.id == id && is_session_id(&r.id) => {
         self.state.lock().known.insert(id.to_owned());
+        r.fold_turn_usage();
         Ok(r)
       }
       Ok(r) => Err(RecordLoadError::IdMismatch { actual: r.id }),
