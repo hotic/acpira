@@ -105,7 +105,6 @@
   .wl-ch { display: inline-block; white-space: pre; animation: wl-ch .6s var(--wl-ease) backwards; }
   @keyframes wl-ch { from { opacity: 0; translate: 0 .22em; } }
   @keyframes wl-rise { from { opacity: 0; translate: 0 6px; } }
-  @keyframes wl-appear { from { opacity: 0; } }
 
   /* One small capsule for the controls in the header's empty right half, left of its own icons, frosted over the veil */
   .wl-dock {
@@ -158,23 +157,17 @@
   /* Over Button's own size utilities, which outrank this layer */
   .wl-cta { height: 34px !important; gap: 10px !important; padding: 0 14px 0 16px !important; }
 
-  .wl-bigmark { position: absolute; right: var(--wl-mark-crop); top: 50%; height: var(--wl-mark-h); translate: 0 -50%; overflow: visible; pointer-events: none; }
+  .wl-bigmark {
+    position: absolute; right: var(--wl-mark-crop); top: 50%; height: var(--wl-mark-h); aspect-ratio: 455 / 428; translate: 0 -50%;
+    pointer-events: none; color: var(--fg-1); transform-origin: 30% 50%;
+  }
+  .wl-bigmark > * { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
   /* Stroke widths are in the mark's own units: the 428-unit viewBox is drawn 660 px tall, so 0.65 is one pixel. (A
      non-scaling stroke would keep them in pixels but breaks pathLength-normalised dashes in Chromium) */
-  .wl-outline {
-    fill: none; stroke: color-mix(in srgb, var(--fg-1) 17%, transparent); stroke-width: .65;
-    stroke-dasharray: 1; stroke-dashoffset: 0; animation: wl-draw 2.2s cubic-bezier(.6, 0, .2, 1) .15s backwards;
-  }
-  .wl-arm-b .wl-outline { animation-delay: .45s; }
-  /* Light running round each dock, the two in opposite senses; parked part way round when motion is off */
-  .wl-comet {
-    fill: none; stroke: var(--fg-1); stroke-width: .95; stroke-linecap: round;
-    stroke-dasharray: .07 .93; stroke-dashoffset: -.2;
-    animation: wl-run 11s linear 2.2s infinite, wl-appear 1.4s ease 2.2s backwards;
-  }
-  .wl-arm-b .wl-comet { stroke-dashoffset: -.58; animation-direction: reverse, normal; }
-  .wl-comet.is-glow { stroke-width: 5.5; opacity: .18; }
-  @keyframes wl-run { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -1; } }
+  .wl-outline { fill: none; stroke: color-mix(in srgb, var(--fg-1) 17%, transparent); stroke-width: .65; }
+  /* The pointer's spotlight: the docks' faces and a brighter outline, masked to a soft disc that follows the pointer
+     (Welcome.tsx BigMark moves the gradient and fades the group in and out) */
+  .wl-lit path { fill: color-mix(in srgb, var(--fg-1) 7%, transparent); stroke: var(--fg-1); stroke-width: 1; }
 
   /* A window too narrow for type and mark side by side: the mark steps back behind the type */
   @media (max-width: 900px) {
