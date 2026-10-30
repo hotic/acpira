@@ -194,6 +194,7 @@ async fn run(cmd: Value) -> (bool, Value) {
       .await;
       (true, json!(list.unwrap_or_default()))
     }
+    "attention" => (true, json!(a.attention.lock().clone())),
     "resize" => {
       let Some(w) = window(&cmd) else { return (false, json!("no such window")) };
       let (wd, ht) = (cmd["width"].as_f64().unwrap_or(1180.0), cmd["height"].as_f64().unwrap_or(820.0));

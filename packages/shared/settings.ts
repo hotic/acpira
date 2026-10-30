@@ -103,7 +103,7 @@ export interface SettingsView {
   shareEditorSelection: boolean;
   // A queued prompt's send button steers it into the running turn on agents that support `_session/steering`
   steerQueued: boolean;
-  // A chime / a system notification when a session needs the user or finishes while they are not looking (both off by default)
+  // A chime / a system notification when a session needs the user or finishes while they are not looking (the chime on by default, the notification off)
   notifySound: boolean;
   notifySystem: boolean;
   // Agents whose Plan mode approves tool requests without a card (plan approvals and adapter safety asks still ask)
@@ -170,7 +170,7 @@ export const DEFAULT_SETTINGS: SettingsView = {
   fontSmoothing: false,
   shareEditorSelection: true,
   steerQueued: false,
-  notifySound: false,
+  notifySound: true,
   notifySystem: false,
   planAutoApprove: [],
   subagents: [],

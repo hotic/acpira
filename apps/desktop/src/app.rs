@@ -2,7 +2,7 @@
 //! number of chat windows (each an engine view), browser panel windows (no view; this side holds their preview leases),
 //! and the system side of the IDE actions; see docs/dev/desktop.md
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, OnceLock};
@@ -197,6 +197,8 @@ pub struct App {
   window_seq: AtomicU64,
   pub background: bool,
   notifier: OnceLock<Option<crate::os::Notifier>>,
+  /// Shell-local attention, not the engine's shared unread marks: a covered window can still show the session
+  pub(crate) attention: Mutex<HashSet<String>>,
   updater: OnceLock<Arc<Updater>>,
   /// The updater's phase as the menu and the toast last saw it
   update_phase: Mutex<Phase>,
@@ -275,6 +277,7 @@ impl App {
       window_seq: AtomicU64::new(0),
       background,
       notifier: OnceLock::new(),
+      attention: Mutex::new(HashSet::new()),
       updater: OnceLock::new(),
       update_phase: Mutex::new(Phase::Idle),
       page_menu: Mutex::new(None),

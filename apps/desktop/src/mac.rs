@@ -698,6 +698,28 @@ pub fn send_action(selector: &CStr) {
   }
 }
 
+/// App-wide, so the badge still works after the last chat window closes. Main thread only.
+pub fn set_dock_badge(count: usize) {
+  // SAFETY: documented NSApplication / NSDockTile messages on the main thread; setBadgeLabel copies its string.
+  unsafe {
+    let Some(cls) = AnyClass::get(c"NSApplication") else { return };
+    let app: *mut AnyObject = msg_send![cls, sharedApplication];
+    let tile: *mut AnyObject = msg_send![app, dockTile];
+    let label = (count > 0).then(|| NSString::from_str(&count.to_string()));
+    let _: () = msg_send![tile, setBadgeLabel: label.as_deref()];
+  }
+}
+
+/// One informational bounce, never a focus change; AppKit ignores it while the app is active. Main thread only.
+pub fn request_attention() {
+  // SAFETY: documented NSApplication message; NSInformationalRequest is 10 (NSInteger).
+  unsafe {
+    let Some(cls) = AnyClass::get(c"NSApplication") else { return };
+    let app: *mut AnyObject = msg_send![cls, sharedApplication];
+    let _: isize = msg_send![app, requestUserAttention: 10isize];
+  }
+}
+
 /// Whether the process runs from an app bundle: UNUserNotificationCenter aborts the process without one (a `cargo run`)
 pub fn bundled() -> bool {
   // SAFETY: documented NSBundle messages on the class looked up just before; nil answers 0 / nil

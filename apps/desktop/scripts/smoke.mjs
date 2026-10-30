@@ -303,6 +303,20 @@ async function main() {
     if (b === a) fail('both projects show the same session');
     say(`project smoke-beta: session ${b}, one round trip`);
 
+    // Both optional alerts default off. Background windows still need the icon mark, and multiple attention edges in
+    // one session count once (the native badge and bounce stay suppressed in this background run).
+    const pending = async () => (await page.call({ op: 'attention' })).sort();
+    const expected = [a, b].sort();
+    await waitUntil('quiet attention for both completed sessions', async () => JSON.stringify(await pending()) === JSON.stringify(expected), 10_000);
+    await page.call({ op: 'platform', request: { method: 'notify', sessionId: a, title: 'Done again', body: '', open: 'Open', sound: false, system: false } });
+    if (JSON.stringify(await pending()) !== JSON.stringify(expected)) fail('repeated attention counted one session twice');
+    say('completed sessions mark the app icon with sound and banners off; repeated attention is deduplicated');
+    await page.eval(`window.__acpiraApi.postMessage({ type: 'deleteSession', id: ${JSON.stringify(b)} })`);
+    await waitUntil('a deleted session to leave the icon count', async () => JSON.stringify(await pending()) === JSON.stringify([a]), 10_000);
+    await page.eval(`window.__acpiraApi.postMessage({ type: 'restoreSession', id: ${JSON.stringify(b)} })`);
+    await page.waitFor('session B restored', `!!document.querySelector('[data-session="${b}"]')`);
+    say('deleting an unseen session removes its icon mark; restoring it does not resurrect the mark');
+
     // A second launch with the link hands it to this instance (single instance socket), which brings session A back
     await waitUntil('session A\'s record', () => existsSync(join(data, 'sessions', `${a}.json`)), 10_000);
     const second = launch([`acpira://session/${a}`]);
@@ -519,7 +533,8 @@ document.addEventListener('securitypolicyviolation', () => { seen.blocked = true
     // A skin from the scaffold (a deep-sea backdrop and the cat on the composer): enabled as the plugin page does, its
     // tokens and scheme take the page, its backdrop runs behind the shell in the frame document, the cat sits on the
     // composer; switched off, all of it goes
-    execFileSync(agentsBin, ['plugin', 'new', 'smoke-skin', '--kind', 'theme,ui', '--scene', 'deepsea', '--home', data], { stdio: 'ignore' });
+    // `--lang node`: the ui kind is then the HTML cat, which the pieces below reuse (the TypeScript default writes a component)
+    execFileSync(agentsBin, ['plugin', 'new', 'smoke-skin', '--kind', 'theme,ui', '--lang', 'node', '--scene', 'deepsea', '--home', data], { stdio: 'ignore' });
     // The same piece in the toolbar, the header and the column's foot, each at the box its slot asks for
     const skinManifest = join(data, 'plugins', 'smoke-skin', 'plugin.json');
     const manifest = JSON.parse(readFileSync(skinManifest, 'utf8'));

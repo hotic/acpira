@@ -3,7 +3,7 @@
 //! messages go to the view, host messages to the page, and a page that already initialized starts over when the engine
 //! comes back
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -34,6 +34,8 @@ pub struct ChatWindow {
   shell_queue: Mutex<Vec<String>>,
   /// The session the page shows, as last pushed
   shown: Mutex<Option<String>>,
+  /// Last unscoped list: only an id disappearing from a known list proves it was removed.
+  listed: Mutex<HashSet<String>>,
   watch: Mutex<Option<Watch>>,
   /// The tool panel's browser tabs by tab id; their pages are frames of this window's page, so a reload ends them all
   tabs: Mutex<HashMap<String, Arc<BrowserRelay>>>,
@@ -59,6 +61,7 @@ impl ChatWindow {
       maximized: AtomicBool::new(false),
       shell_queue: Mutex::new(vec![]),
       shown: Mutex::new(None),
+      listed: Mutex::new(HashSet::new()),
       watch: Mutex::new(watch),
       tabs: Mutex::new(HashMap::new()),
     }
@@ -308,8 +311,48 @@ impl ShellView for ChatWindow {
     let init = m.kind == "init";
     self.transport.send(m.raw.get().to_owned());
     let app = crate::app::app();
+    if m.kind == "sessions" {
+      // A fresh session can finish before it enters the list; only disappearance proves removal.
+      #[derive(serde::Deserialize)]
+      struct Entry {
+        id: String,
+      }
+      #[derive(serde::Deserialize)]
+      struct List {
+        sessions: Vec<Entry>,
+      }
+      if let Ok(list) = serde_json::from_str::<List>(m.raw.get()) {
+        let ids: HashSet<_> = list.sessions.into_iter().map(|s| s.id).collect();
+        let removed: HashSet<_> = {
+          let mut listed = self.listed.lock();
+          let removed = listed.difference(&ids).cloned().collect();
+          *listed = ids;
+          removed
+        };
+        let _ = app.handle.run_on_main_thread(move || {
+          let a = crate::app::app();
+          let changed = {
+            let mut pending = a.attention.lock();
+            let before = pending.len();
+            pending.retain(|id| !removed.contains(id));
+            before != pending.len()
+          };
+          if changed {
+            a.update_attention();
+          }
+        });
+      }
+    }
     if self.session_id() != before {
       app.schedule_save();
+      // Engine pushes arrive off the main thread; AppKit and focus checks stay on the event loop.
+      let label = self.label.clone();
+      let _ = app.handle.run_on_main_thread(move || {
+        let a = crate::app::app();
+        if let Some(w) = a.window_by_label(&label) {
+          a.acknowledge_attention(&w);
+        }
+      });
     }
     if !init {
       return;
