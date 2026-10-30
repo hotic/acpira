@@ -191,13 +191,27 @@ pub struct CommandInput {
   pub hint: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SlashCommand {
   pub name: String,
   #[serde(default)]
   pub description: String,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub input: Option<CommandInput>,
+  /// A plugin's command: the plugin, and the composer button it also is (`CommandDef::button` / `draft`)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub plugin: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub button: Option<String>,
+  #[serde(default, skip_serializing_if = "is_false")]
+  pub draft: bool,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub icon: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub look: Option<String>,
+  /// The button runs with the draft as its arguments (`CommandDef::takes_draft`); otherwise it leaves the draft alone
+  #[serde(default, rename = "takesDraft", skip_serializing_if = "is_false")]
+  pub takes_draft: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -405,6 +419,41 @@ pub struct NoticeBlock {
   pub details: Option<String>,
   #[serde(default)]
   pub actions: Vec<FailureAction>,
+  /// Set on the row that logs one run of provider retries. An optional field on an existing block rather than a block
+  /// of its own: older engines skip the field and read a plain warning notice, where an unknown block type would fail
+  /// the whole record
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub retry: Option<RetryLog>,
+}
+
+/// One run of provider retries inside a turn: every failed attempt with the provider's own error text, open until the
+/// stream resumes or the turn ends
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RetryLog {
+  /// `in_progress` while retrying; `completed` once the stream resumed, `failed` when the turn errored, `cancelled`
+  /// when it was stopped
+  pub status: ToolStatus,
+  /// The attempt budget the agent announced
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub max: Option<u32>,
+  /// When the next attempt starts (epoch ms), while one is scheduled
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub next_at: Option<Num>,
+  /// The last attempt lost the connection rather than getting an error answer
+  #[serde(default, skip_serializing_if = "is_false")]
+  pub reconnect: bool,
+  pub attempts: Vec<RetryAttempt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RetryAttempt {
+  /// When the failure was reported (epoch ms)
+  pub at: Num,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub attempt: Option<u32>,
+  /// The error as the provider or the CLI worded it, verbatim
+  pub text: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1084,6 +1133,30 @@ pub struct TurnUsage {
   pub context: Option<ContextUse>,
 }
 
+impl TurnUsage {
+  /// `input` always counts the whole prompt, cache reads and writes included (OpenAI semantics, which Devin and the
+  /// built-in agent report). claude-agent-acp, codex-acp and OpenCode report Anthropic semantics instead, where `input` is
+  /// only the uncached remainder. The tally tells which one it is: a cache larger than `input` cannot be a part of it,
+  /// and an exclusive tally adds up as `total = input + cache + output`. Folding makes `total = input + output`, so a
+  /// second pass (a record saved after folding) leaves it alone
+  pub fn fold_cache_into_input(&mut self) {
+    let Some(input) = self.input else { return };
+    let cache = self.cached_read.map_or(0.0, Num::get) + self.cached_write.map_or(0.0, Num::get);
+    if cache <= 0.0 {
+      return;
+    }
+    let output = self.output.map_or(0.0, Num::get);
+    let reasoning = self.reasoning.map_or(0.0, Num::get);
+    let sums_apart = self.total.is_some_and(|t| {
+      let rest = t.get() - input.get() - cache - output;
+      rest == 0.0 || rest == reasoning
+    });
+    if cache > input.get() || sums_apart {
+      self.input = Some(Num(input.get() + cache));
+    }
+  }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Activity {
   pub kind: ToolKind,
@@ -1159,6 +1232,9 @@ pub struct PluginCard {
   /// The slots its interface pieces take, for the thumbnail's map
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub slots: Vec<String>,
+  /// The cron expressions of its schedules: it runs unattended, and may act on sessions while nobody watches
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub schedules: Vec<String>,
   /// The source folder, which the corner button reveals
   #[serde(default)]
   pub folder: String,
@@ -1254,11 +1330,18 @@ pub struct SessionSummary {
   pub cwd: String,
   #[serde(default)]
   pub updated_at: String,
+  /// When the last turn ended finished (`TurnStop::EndTurn`), epoch ms (`completed_at`); absent while the last turn is
+  /// anything else. A rename, a pin or a read leaves it alone, unlike `updated_at`, so a style can age a finished session
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub completed_at: Option<i64>,
   /// When the session was started, for the list's "created" order; absent on index entries written before the field
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub created_at: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub pinned: Option<bool>,
+  /// Archived: left out of the list until its archive filter is on; kept like any other session
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub archived: Option<bool>,
   /// The user category (`SessionCategory.id`) the session is filed under; pinned and filed are exclusive. An id no
   /// category carries any more (deleted in some window) reads as unfiled
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1268,10 +1351,21 @@ pub struct SessionSummary {
   /// Only beside `Background`: a turn ended there that nobody has looked at yet (`Unread` itself would read as finished)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub unread: Option<bool>,
+  /// Only beside `Waiting`: only questions wait; a permission card waiting too wins, as it holds up a tool
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub question: Option<bool>,
   /// The model the session last ran (`model_shapes::session_model`); absent while no model control is known and on index
   /// entries written before the field existed
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub model: Option<SessionModel>,
+}
+
+/// `SessionSummary::completed_at` of a session's turns: the end of the last one when it finished
+pub fn completed_at<'a>(mut turns: impl DoubleEndedIterator<Item = &'a Turn>) -> Option<i64> {
+  match turns.next_back()? {
+    Turn::Agent(a) if a.stop == Some(TurnStop::EndTurn) => a.ended_at,
+    _ => None,
+  }
 }
 
 /// A session's current model for the list: the wire id is its real identity (the vendor is read from it, "kimi-code/k3"),

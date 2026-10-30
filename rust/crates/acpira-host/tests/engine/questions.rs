@@ -152,8 +152,12 @@ async fn grok_turns_the_request_into_a_card_and_answers_go_back_keyed_by_questio
   assert_eq!(shape, [json!(["What should the file be called?", "single", true]), json!(["Where should it go?", "multiple", true])]);
   expect_eq(&card["questions"][0]["options"][0], json!({ "id": "report", "label": "report", "description": "A generic report" }));
   expect_match(last_turn(&view(&s)), json!({ "role": "agent", "activity": { "label": "Waiting for your answers" } }));
+  // The list tells a question from a permission card, and a turn still going has not finished
+  assert_eq!(s.list_marks(), (Some(acpira_shared::transcript::SummaryState::Waiting), true));
+  assert_eq!(s.completed_at(), None);
   s.answer_questions(card["id"].as_str().unwrap(), &answers(json!({ "What should the file be called?": "my-own-name", "Where should it go?": ["src", "docs"] })), false);
   p.await.unwrap();
+  assert!(s.completed_at().is_some() && s.summary().completed_at == s.completed_at());
   expect_eq(reply(&s), json!({ "outcome": "accepted", "answers": { "What should the file be called?": "my-own-name", "Where should it go?": ["src", "docs"] } }));
   // The card stays in the transcript as the record, and is persisted
   expect_match(&questions(&s)[0], json!({ "outcome": "answered", "answers": { "What should the file be called?": "my-own-name" } }));

@@ -5,7 +5,8 @@ import type { SessionSummary } from '@acpira/shared/transcript';
 
 export type ViewGroup = 'project' | 'time' | 'agent' | 'none';
 export type ViewOrder = 'updated' | 'created' | 'title';
-export type ViewStatus = 'working' | 'waiting' | 'unread' | 'error' | 'background';
+// archived: not a state but where an archived session shows up again, since the list leaves archived ones out otherwise
+export type ViewStatus = 'working' | 'waiting' | 'unread' | 'error' | 'background' | 'archived';
 export type ViewSince = 'all' | 'today' | 'week' | 'month';
 // Sessions an open project lists before its "more" row (desktop); 0 lists them all
 export type ViewPer = 5 | 10 | 0;
@@ -28,7 +29,7 @@ export const DEFAULT_VIEW: ListView = { group: 'project', order: 'updated', per:
 export const VIEW_KEY = 'sessionListView';
 export const VIEW_GROUPS: readonly ViewGroup[] = ['project', 'time', 'agent', 'none'];
 export const VIEW_ORDERS: readonly ViewOrder[] = ['updated', 'created', 'title'];
-export const VIEW_STATUSES: readonly ViewStatus[] = ['working', 'waiting', 'unread', 'error', 'background'];
+export const VIEW_STATUSES: readonly ViewStatus[] = ['working', 'waiting', 'unread', 'error', 'background', 'archived'];
 export const VIEW_SINCE: readonly ViewSince[] = ['all', 'today', 'week', 'month'];
 export const VIEW_PER: readonly ViewPer[] = [5, 10, 0];
 export const VIEW_PINS: readonly ViewPin[] = ['top', 'project'];
@@ -71,11 +72,14 @@ export function timeOf(s: SessionSummary, order: ViewOrder): string {
 }
 
 // Whether a session passes the view's filters. Within one kind the picks are alternatives (any status picked), across
-// kinds all must hold. "Unread" also takes a background session with a reply nobody has looked at
+// kinds all must hold. "Unread" also takes a background session with a reply nobody has looked at. An archived session
+// passes only while "archived" is picked
 export function passes(s: SessionSummary, v: ListView, now: Date): boolean {
+  const archived = v.status.includes('archived');
+  if (s.archived && !archived) return false;
   if (v.status.length) {
     const state = s.state;
-    const ok = (!!state && v.status.includes(state)) || (state === 'background' && !!s.unread && v.status.includes('unread'));
+    const ok = (archived && !!s.archived) || (!!state && v.status.includes(state)) || (state === 'background' && !!s.unread && v.status.includes('unread'));
     if (!ok) return false;
   }
   if (v.agents.length && !v.agents.includes(s.agent)) return false;

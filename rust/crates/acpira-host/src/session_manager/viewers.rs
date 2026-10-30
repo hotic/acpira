@@ -53,13 +53,18 @@ impl SessionManager {
       s.state = live_state.or_else(|| (!seen).then_some(SummaryState::Unread));
       // A reply that came in while background work runs: the ring brightens instead of the finished dot showing
       s.unread = (live_state == Some(SummaryState::Background) && !seen).then_some(true);
+      if s.state != Some(SummaryState::Waiting) {
+        s.question = None;
+      }
       s
     };
     let mut merged: Vec<SessionSummary> = index
       .into_iter()
       .map(|s| match (live.get(&s.id), elsewhere.get(&s.id)) {
         (Some(l), _) => {
-          let state = l.list_state();
+          let (state, question) = l.list_marks();
+          // The index entry is written with the record; the live session knows a turn's end first
+          let s = SessionSummary { question: question.then_some(true), completed_at: l.completed_at(), ..s };
           mark(s, state)
         }
         (None, Some(e)) => mark(e.clone(), e.state),

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { ArrowDownWideNarrow, Calendar, ChevronRight, Circle, CircleDot, Clock, Eye, Folder, Layers, List, ListFilter, LoaderCircle, MailCheck, Pin } from 'lucide-react';
+import { Archive, ArrowDownWideNarrow, Calendar, ChevronRight, Circle, CircleDot, Clock, Eye, Folder, Layers, List, ListFilter, LoaderCircle, MailCheck, Pin } from 'lucide-react';
 import type { AgentInfo } from '@acpira/shared/transcript';
 import { cn } from '../ui/cn';
 import { DropdownMenu } from '../ui/DropdownMenu';
@@ -19,6 +19,7 @@ const STATUS_MARK: Record<ViewStatus, ReactNode> = {
   unread: <span className="size-unread-dot rounded-full bg-fg-strong" />,
   error: <span className="size-1.5 rounded-full bg-danger" />,
   background: <Circle className="text-fg-3" strokeWidth={2.5} />,
+  archived: <Archive className="text-fg-3" strokeWidth={1.5} />,
 };
 
 // A row opening a nested menu: its label, then the current value (or a dot while a filter inside is on), then the chevron.

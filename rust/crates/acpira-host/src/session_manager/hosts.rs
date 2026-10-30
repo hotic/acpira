@@ -111,7 +111,12 @@ impl HostRun {
 fn list_target(m: &WebviewMsg) -> Option<String> {
   use WebviewMsg as W;
   match m {
-    W::RenameSession { id, .. } | W::DeleteSession { id, .. } | W::RestoreSession { id } | W::PinSession { id, .. } => Some(id.clone()),
+    W::RenameSession { id, .. }
+    | W::DeleteSession { id, .. }
+    | W::RestoreSession { id }
+    | W::PinSession { id, .. }
+    | W::ArchiveSession { id, .. }
+    | W::SetSessionUnread { id, .. } => Some(id.clone()),
     _ => None,
   }
 }

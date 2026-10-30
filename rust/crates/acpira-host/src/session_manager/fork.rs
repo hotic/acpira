@@ -160,8 +160,10 @@ impl SessionManager {
       usage: None,
       commands: vec![],
       pinned: None,
+      archived: None,
       // A fork stays in its source's category
       category: source.category.clone(),
+      renamed: false,
       history_pending: true,
       forked_from: Some(ForkedFrom { session_id: source.id.clone(), turn_index, agent: target.as_ref().map(|_| source.agent.clone()), model }),
       import_pending: false,

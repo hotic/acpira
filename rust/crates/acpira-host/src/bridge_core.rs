@@ -8,7 +8,7 @@ use std::time::Duration;
 use serde_json::Value;
 
 use acpira_shared::appearance::Appearance;
-use acpira_shared::protocol::{FileHit, HostMsg, InitState, ProjectBase, WebviewHost, WebviewMsg, is_safe_external_url};
+use acpira_shared::protocol::{ExportFormat, FileHit, HostMsg, InitState, ProjectBase, WebviewHost, WebviewMsg, is_safe_external_url};
 use acpira_shared::remote::normalize_remote_path;
 use acpira_shared::session_patch::{Delivery, SentViews};
 use acpira_shared::settings::is_setting_key;
@@ -630,8 +630,8 @@ impl BridgeCore {
         });
       }
       // Always answered, like diffSource: the page's clipboard write waits on it
-      W::SessionMarkdown { id, seq } => {
-        let (markdown, error) = match manager.session_markdown(&id).await {
+      W::SessionMarkdown { id, seq, format } => {
+        let (markdown, error) = match manager.session_markdown(&id, format.unwrap_or(ExportFormat::Markdown)).await {
           Ok(m) => (Some(m), None),
           Err(e) => (None, Some(e.to_string())),
         };

@@ -44,7 +44,11 @@ impl SessionManager {
       live.rename(&t);
       return self.save_now(live, hold).await;
     }
-    self.patch_record(id, |r| r.title = t).await
+    self.patch_record(id, |r| {
+      r.title = t;
+      r.renamed = true;
+    })
+    .await
   }
 
   /// The transcript a session's owner pushed for one of its subagents (a session shown here read-only)
@@ -71,6 +75,20 @@ impl SessionManager {
       }
     })
     .await
+  }
+
+  /// Archive `id` (left out of the list, kept on disk) or bring it back; pin and category stay for its return. ChatGPT
+  /// mirrors have no archive here
+  pub async fn archive_session(&self, id: &str, archived: bool) -> Result<()> {
+    if !is_session_id(id) || self.deps.chatgpt.as_ref().is_some_and(|c| c.owns(id)) {
+      return Ok(());
+    }
+    let hold = self.hold_record(id).await?;
+    if let Some(live) = self.live(id) {
+      live.set_archived(archived);
+      return self.save_now(live, hold).await;
+    }
+    self.patch_record(id, |r| r.archived = archived.then_some(true)).await
   }
 
   /// File `id` under `category` (or take it out). A category of another project, or one gone meanwhile, is ignored.

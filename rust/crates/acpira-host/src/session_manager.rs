@@ -186,7 +186,9 @@ impl SessionSnapshot {
         usage: v.usage,
         commands: v.commands,
         pinned: None,
+        archived: None,
         category: None,
+        renamed: false,
         history_pending: false,
         forked_from: None,
         import_pending: false,
@@ -301,6 +303,8 @@ struct State {
   was_running: HashSet<String>,
   // Sessions whose turn ended while no viewer showed them; cleared once a viewer lands on one
   unread: HashSet<String>,
+  // Marked unread from the row menu: a page already showing one does not clear the mark, only selecting it again does
+  kept_unread: HashSet<String>,
   // Attention edges (`watch_attention`): sessions inside a turn, sessions showing a card for the user, and a counter per
   // session so a settle check started for an earlier turn stays quiet once another turn has begun
   was_busy: HashSet<String>,
@@ -435,6 +439,7 @@ impl SessionManager {
           health_seen: HashMap::new(),
           was_running: HashSet::new(),
           unread: HashSet::new(),
+          kept_unread: HashSet::new(),
           was_busy: HashSet::new(),
           was_waiting: HashSet::new(),
           settle_seq: HashMap::new(),

@@ -34,7 +34,7 @@ export interface HeaderProps {
   sessionScope?: SessionScope;
   // The import popover's current listing, handed on to the session list
   nativeSessions?: NativeSessionsState;
-  on: Pick<ShellHandlers, 'selectSession' | 'newSession' | 'renameSession' | 'deleteSession' | 'pinSession' | 'moveSession' | 'exportSession' | 'copySession' | 'openInEditor' | 'selectAccount' | 'addAccount' | 'removeAccount' | 'refreshQuota' | 'unlockCredentials' | 'listNativeSessions' | 'importNativeSession' | 'searchSessions' | 'setSessionCategory' | 'categoryOp' | 'markAllRead'>;
+  on: Pick<ShellHandlers, 'selectSession' | 'newSession' | 'renameSession' | 'deleteSession' | 'pinSession' | 'archiveSession' | 'setSessionUnread' | 'moveSession' | 'exportSession' | 'copySession' | 'openInEditor' | 'selectAccount' | 'addAccount' | 'removeAccount' | 'refreshQuota' | 'unlockCredentials' | 'listNativeSessions' | 'importNativeSession' | 'searchSessions' | 'setSessionCategory' | 'categoryOp' | 'markAllRead'>;
   onToggleDrawer?: () => void;
   drawerOpen?: boolean;
   sessionPanel?: 'hidden' | 'left' | 'right';
@@ -186,7 +186,7 @@ export const Header = memo(function Header({ title, sessions, categories, agent,
           <Popover.Portal><Popover.Positioner side="bottom" align="end" width="xl"><Popover.Popup initialFocus={interaction => interaction === 'keyboard'}>
             <SessionList sessions={sessions} agents={agents} activeId={activeSessionId} workspace={workspace} scope={sessionScope}
               onSelect={id => { on.selectSession(id); setHistoryOpen(false); }}
-              onRename={on.renameSession} onDelete={on.deleteSession} onPin={on.pinSession} onMove={on.moveSession} onExport={on.exportSession} onCopy={on.copySession}
+              onRename={on.renameSession} onDelete={on.deleteSession} onPin={on.pinSession} onArchive={on.archiveSession} onUnread={on.setSessionUnread} onMove={on.moveSession} onExport={on.exportSession} onCopy={on.copySession}
               activeAgent={agent.id} nativeSessions={nativeSessions} onListNative={on.listNativeSessions} onImportNative={on.importNativeSession}
               onSearch={on.searchSessions}
               categories={categories} onFile={on.setSessionCategory} onCategoryOp={on.categoryOp} onMarkAllRead={on.markAllRead}
@@ -203,6 +203,8 @@ export const Header = memo(function Header({ title, sessions, categories, agent,
             trigger={<IconButton title={t('session.more')} aria-label={t('session.more')}><Ellipsis strokeWidth={1.5} /></IconButton>}
             onOpenInEditor={on.openInEditor ? () => on.openInEditor!(activeSessionId) : undefined}
             onPin={() => on.pinSession(activeSessionId, !(sessions.find(s => s.id === activeSessionId)?.pinned))}
+            onUnread={on.setSessionUnread ? unread => on.setSessionUnread!(activeSessionId, unread) : undefined}
+            onArchive={on.archiveSession ? archived => on.archiveSession!(activeSessionId, archived) : undefined}
             onExport={on.exportSession ? format => on.exportSession!(activeSessionId, format) : undefined}
             onCopy={on.copySession ? what => on.copySession!(activeSessionId, what) : undefined}
             onDelete={() => on.deleteSession(activeSessionId)}

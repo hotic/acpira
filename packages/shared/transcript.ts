@@ -116,6 +116,15 @@ export interface SlashCommand {
   name: string;
   description: string;
   input?: { hint: string };
+  // A plugin's command: the plugin, and the composer button it also is (its label; `draft`: its text replaces the draft)
+  plugin?: string;
+  button?: string;
+  draft?: boolean;
+  // The button's glyph and look (manifest BUTTON_ICONS / BUTTON_LOOKS); absent: a bolt (a wand for `draft`), `brand`
+  icon?: string;
+  look?: 'brand' | 'solid' | 'outline' | 'icon';
+  // The button runs with the draft as its arguments; otherwise it leaves the draft and its attachments alone
+  takesDraft?: boolean;
 }
 
 export interface AuthMethodInfo {
@@ -188,6 +197,29 @@ export interface NoticeBlock {
   title: string;
   details?: string;
   actions: FailureAction[];
+  // Set on the row that logs one run of provider retries. An optional field rather than a block type of its own, so
+  // older engines still read the record (as a plain warning with the latest error)
+  retry?: RetryLog;
+}
+
+// One run of provider retries inside a turn: every failed attempt with the provider's own error text. `in_progress`
+// while retrying; `completed` once the stream resumed, `failed` when the turn errored, `cancelled` when it was stopped
+export interface RetryLog {
+  status: ToolStatus;
+  max?: number;
+  // When the next attempt starts (epoch ms), while one is scheduled
+  nextAt?: number;
+  // The last attempt lost the connection rather than getting an error answer
+  reconnect?: boolean;
+  attempts: RetryAttempt[];
+}
+
+export interface RetryAttempt {
+  // When the failure was reported (epoch ms)
+  at: number;
+  attempt?: number;
+  // The error as the provider or the CLI worded it, verbatim
+  text: string;
 }
 
 // JetBrains AIR asyncTasks state: background work the adapter reports independently of the prompt
@@ -504,6 +536,7 @@ export interface TurnError {
 // Token accounting the agent reported for one prompt (ACP PromptResponse.usage, Grok's _meta), plus the context snapshot the last
 // usage_update left after it. Every field is present only when the peer reported it: Kimi 0.41.0 reports no per-prompt tokens at all
 export interface TurnUsage {
+  // The whole prompt, cache reads and writes included, whichever semantics the agent reported (the engine folds them)
   input?: number;
   output?: number;
   cachedRead?: number;
@@ -563,6 +596,8 @@ export interface PluginCard {
   runs?: string;
   // The slots its interface pieces take, for the thumbnail's map
   slots?: string[];
+  // The cron expressions of its schedules: it runs unattended, and may act on sessions while nobody watches
+  schedules?: string[];
   // The source folder, which the corner button reveals
   folder: string;
   at: number;
@@ -592,10 +627,15 @@ export interface SessionSummary {
   cwd: string;
   // ISO timestamp; the webview formats it itself
   updatedAt: string;
+  // When the last turn ended finished, epoch ms; absent while the last turn is anything else. A rename, a pin or a read
+  // leaves it alone, unlike updatedAt, so a plugin style can age a finished session (styleClock.ts)
+  completedAt?: number;
   // When the session was started (ISO), for the list's "created" order; absent on index entries written before the field
   // existed, which order by updatedAt instead
   createdAt?: string;
   pinned?: boolean;
+  // Archived: left out of the list unless its view filter asks for archived sessions
+  archived?: boolean;
   // The user category (SessionCategory.id) the session is filed under; pinned and filed are exclusive. An id no category
   // carries any more (deleted in some window) reads as unfiled
   category?: string;
@@ -603,6 +643,8 @@ export interface SessionSummary {
   state?: 'working' | 'waiting' | 'unread' | 'error' | 'background';
   // Only beside `background`: a turn ended there that nobody has looked at yet ('unread' itself would read as finished)
   unread?: boolean;
+  // Only beside `waiting`: only questions wait; a permission card waiting too wins, as it holds up a tool
+  question?: boolean;
   // The model the session last ran: the wire id is its identity (the vendor is read from it), the name its label. Absent
   // while no model control is known and on index entries written before the field existed
   model?: { id: string; name: string };

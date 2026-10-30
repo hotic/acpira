@@ -16,9 +16,26 @@ impl SessionManager {
 
   /// A page landed on the session, in any window of any engine: read everywhere
   pub(super) fn mark_read(&self, id: &str) {
-    if self.state.lock().unread.remove(id) {
+    let removed = {
+      let mut st = self.state.lock();
+      st.kept_unread.remove(id);
+      st.unread.remove(id)
+    };
+    if removed {
       self.persist_unread(UnreadOp::Remove(id.to_owned()));
     }
+  }
+
+  /// The row menu's "mark as unread / read". A session a page here shows keeps the mark until a page selects it again,
+  /// where a reply's mark would be cleared at once
+  pub(super) fn set_unread(&self, id: &str, unread: bool) {
+    if unread {
+      self.state.lock().kept_unread.insert(id.to_owned());
+      self.mark_unread(id);
+    } else {
+      self.mark_read(id);
+    }
+    self.emit_sessions();
   }
 
   /// Unread marks reach the shared store in order, one batch at a time. Once the queue is drained the store's marks (other
@@ -72,13 +89,16 @@ impl SessionManager {
     if st.unread == next {
       return false;
     }
+    // A kept mark another engine cleared is gone here too
+    st.kept_unread.retain(|id| next.contains(id));
     st.unread = next;
     true
   }
 
   /// A mark another engine set on a session a page here shows (it could not see that page) is cleared again
   fn read_shown(&self) {
-    let shown: Vec<String> = self.viewers().iter().filter_map(|v| v.active_id()).collect();
+    let kept = self.state.lock().kept_unread.clone();
+    let shown: Vec<String> = self.viewers().iter().filter_map(|v| v.active_id()).filter(|id| !kept.contains(id)).collect();
     for id in shown {
       self.mark_read(&id);
     }
