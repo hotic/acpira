@@ -242,6 +242,21 @@ async fn a_plugins_commands_join_every_menu_and_its_skills_reach_an_agent_that_d
   assert_eq!(turns(&m.view_of(&id).unwrap()), before);
   assert_eq!(calls(plugins.path(), "hook/command").len(), 2);
 
+  // A command's button with `draft`: the text comes back for the composer, the template filled in or the process's
+  // answer (told it is for the draft), and nothing is sent
+  let entry = m.view_of(&id).unwrap()["commands"].as_array().unwrap().iter().find(|c| c["name"] == "review").cloned().unwrap();
+  assert_eq!(entry["plugin"], "hooker");
+  m.handle(json!({ "type": "pluginCommand", "id": "c1", "sessionId": id, "name": "review", "arguments": "my draft" })).await;
+  m.handle(json!({ "type": "pluginCommand", "id": "c2", "sessionId": id, "name": "ping", "arguments": "soon" })).await;
+  m.handle(json!({ "type": "pluginCommand", "id": "c3", "sessionId": id, "name": "nope", "arguments": "" })).await;
+  let called = |call: &str| m.events.lock().unwrap().iter().find(|e| e["type"] == "pluginCalled" && e["id"] == call).cloned();
+  until(|| ["c1", "c2", "c3"].iter().all(|c| called(c).is_some()), 5000).await;
+  assert_eq!(called("c1").unwrap()["result"]["text"], "echo-text Please review my draft");
+  assert_eq!(called("c2").unwrap()["result"]["text"], "echo-text pong soon");
+  assert!(called("c3").unwrap()["error"].as_str().is_some_and(|e| e.contains("/nope")));
+  assert_eq!(calls(plugins.path(), "hook/command").last().unwrap()["draft"], true);
+  assert_eq!(turns(&m.view_of(&id).unwrap()), before);
+
   // A command added while the session is open shows in its menu at once
   let mut more = commands;
   more.push(command("hooker", "later", Some("echo-text later")));

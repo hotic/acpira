@@ -12,7 +12,7 @@ use super::{SessionManager, Viewer, is_forwarded, lower_first, session_id_of};
 use crate::acp::session::AcpSession;
 use crate::acp::session::errors::error_text;
 use crate::external::chatgpt_events::CHATGPT_ID;
-use crate::i18n::t;
+use crate::i18n::{t, tp};
 use crate::store::transcript_store::{UnreadOp, is_session_id};
 
 pub(super) fn is_execution(m: &WebviewMsg) -> bool {
@@ -47,7 +47,7 @@ pub(super) fn is_execution(m: &WebviewMsg) -> bool {
 pub(super) fn list_edit_target(m: &WebviewMsg) -> Option<&str> {
   use WebviewMsg as W;
   match m {
-    W::RenameSession { id, .. } | W::PinSession { id, .. } | W::SetSessionCategory { id, .. } => Some(id),
+    W::RenameSession { id, .. } | W::PinSession { id, .. } | W::ArchiveSession { id, .. } | W::SetSessionCategory { id, .. } => Some(id),
     _ => None,
   }
 }
@@ -199,6 +199,22 @@ impl SessionManager {
           s.plugin_card(&card, op).await;
         }
       }
+      // A plugin's process may take its full time limit: off the message loop, answered to this page by id
+      W::PluginCommand { id, session_id, name, arguments } => {
+        let (s, v) = (valid(&session_id).then(|| self.live(&session_id)).flatten(), v.clone());
+        tokio::spawn(async move {
+          let outcome = match &s {
+            Some(s) => s.run_plugin_command(&name, &arguments, true).await,
+            None => Some(Err(t("plugin.command.noSession"))),
+          };
+          let (result, error) = match outcome {
+            None => (None, Some(tp("plugin.command.gone", &[("name", name.as_str())]))),
+            Some(Ok(text)) => (Some(serde_json::json!({ "text": text })), None),
+            Some(Err(e)) => (None, Some(e)),
+          };
+          v.emit(HostMsg::PluginCalled { id, result, error });
+        });
+      }
       W::BuildPlan { session_id, plan_id, option_id, model } => {
         if valid(&session_id)
           && let Some(s) = self.live(&session_id)
@@ -244,6 +260,8 @@ impl SessionManager {
       }
       W::RestoreSession { id } => self.restore_session(&id).await?,
       W::PinSession { id, pinned } => self.pin_session(&id, pinned).await?,
+      W::ArchiveSession { id, archived } => self.archive_session(&id, archived).await?,
+      W::SetSessionUnread { id, unread } => self.set_unread(&id, unread),
       W::SetSessionCategory { id, category } => self.set_session_category(&id, category).await?,
       W::CategoryOp { op, file } => {
         self.category_op(&op).await?;
@@ -253,7 +271,11 @@ impl SessionManager {
       }
       // Unread marks are shared: cleared for every engine and window on the machine, and on the SSH hosts in remote run
       W::MarkAllRead => {
-        self.state.lock().unread.clear();
+        {
+          let mut st = self.state.lock();
+          st.unread.clear();
+          st.kept_unread.clear();
+        }
         self.persist_unread(UnreadOp::Clear);
         self.mark_hosts_read();
         self.emit_sessions();

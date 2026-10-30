@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { Blocks, Bot, FolderOpen, LayoutPanelLeft, Palette, PanelTop, Undo2, Workflow, Wrench, type LucideIcon } from 'lucide-react';
+import { Blocks, Bot, Clock, FolderOpen, LayoutPanelLeft, Paintbrush, Palette, PanelTop, Trash2, Undo2, Workflow, Wrench, type LucideIcon } from 'lucide-react';
 import type { PluginAction, PluginContribution, PluginInfo, PluginsView } from '@acpira/shared/plugins';
 import { Card } from '../ui/Card';
-import { IconButton } from '../ui/Button';
+import { Button, IconButton } from '../ui/Button';
 import { Switch } from '../ui/Switch';
 import { cn } from '../ui/cn';
-import { t } from '../i18n';
+import { dateFormat, getLocale, t } from '../i18n';
 import { vscodeApi } from '../vscodeApi';
 import { usePluginPieces } from '../pluginSlots';
 import { SkinThumb } from '../plugins/PluginCard';
 import { SandboxFrame } from '../plugins/SandboxFrame';
 import { backdropsShown, expectReveal, useSkin } from '../plugins/skin';
-import { DialogBody, SettingsDialog } from './controls';
+import { DangerAction, DialogBody, Note, SettingsDialog } from './controls';
 
 // Settings → Plugins, the user's plugins (docs/dev/plugins.md): the skin picker heading the page, and a tile per plugin in
 // the layer it belongs to, beside the built-in modules. Read from the plugins view (plugins/skin.ts), so the page, every
@@ -22,7 +22,7 @@ const centre = (el: Element) => { const r = el.getBoundingClientRect(); return {
 const themed = (p: PluginInfo) => p.contributes.includes('theme');
 
 // What a plugin adds, as the mark on its tile: the first kind it contributes that has a glyph
-const MARK: [kind: PluginContribution, icon: LucideIcon][] = [['theme', Palette], ['ui', LayoutPanelLeft], ['agent', Bot], ['tools', Wrench], ['mcp', Wrench], ['hooks', Workflow], ['runtime', Workflow]];
+const MARK: [kind: PluginContribution, icon: LucideIcon][] = [['theme', Palette], ['style', Paintbrush], ['ui', LayoutPanelLeft], ['agent', Bot], ['tools', Wrench], ['mcp', Wrench], ['hooks', Workflow], ['schedules', Clock], ['runtime', Workflow]];
 const markOf = (p: PluginInfo) => MARK.find(([k]) => p.contributes.includes(k))?.[1] ?? Blocks;
 
 // The skins: one choice among the themes in effect, or none. Picking one uncovers it from the tile (plugins/skin.ts
@@ -84,18 +84,30 @@ function SkinTile({ name, sub, on, onPick, children }: { name: string; sub: stri
   );
 }
 
+// A schedule's line in the tile's tooltip: its id, and when it runs next (or why it does not)
+const when = (ms: number) => dateFormat(getLocale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(ms);
+const scheduleLine = (s: NonNullable<PluginInfo['schedules']>[number]) =>
+  `${s.id}: ${s.paused ? t('settings.plugins.schedulePaused') : s.running ? t('settings.plugins.scheduleRunning') : s.next ? t('settings.plugins.scheduleNext', { when: when(s.next) }) : s.cron}`;
+
 // One user plugin: what it adds as its mark, name and description (or why it is not in effect), the switch; the foot
 // holds its version and whether the folder has changes not enabled, then its page, the earlier version and its folder
 export function UserPluginTile({ plugin: p, safeMode }: { plugin: PluginInfo; safeMode: boolean }) {
   const Mark = markOf(p);
   const [page, setPage] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const pages = usePluginPieces('page').filter(x => x.plugin === p.id);
   const toggle = (on: boolean) => act(on ? (p.proposal ? { op: 'confirm', id: p.id, snapshot: p.proposal.snapshot } : { op: 'enable', id: p.id }) : { op: 'disable', id: p.id });
   // Why it is not in effect, or what its last check found wrong
-  const why = p.error ?? p.findings?.errors?.[0] ?? (p.enabled && !p.loaded && safeMode ? t('settings.plugins.safeMode') : undefined);
+  const missing = p.dependencies?.find(d => !d.optional && !d.met);
+  const stopped = p.schedules?.find(s => s.paused);
+  const why = p.error ?? p.findings?.errors?.[0] ?? (p.enabled && !p.loaded && safeMode ? t('settings.plugins.safeMode') : undefined)
+    ?? (missing && t('settings.plugins.missingDependency', { id: missing.id, range: missing.range }))
+    ?? (stopped && t('settings.plugins.scheduleStopped', { id: stopped.id, error: stopped.error ?? '' }));
+  const schedules = p.enabled && p.loaded ? p.schedules ?? [] : [];
   const openPage = t('settings.plugins.openPage', { name: p.name });
   const rollback = t('settings.plugins.rollback');
   const reveal = t('settings.plugins.reveal');
+  const uninstall = t('settings.plugins.uninstall');
   return (
     <Card data-plugin-tile={p.id} className="flex h-full flex-col shadow-none">
       <div className="flex items-center gap-gap p-pad">
@@ -114,6 +126,11 @@ export function UserPluginTile({ plugin: p, safeMode }: { plugin: PluginInfo; sa
         <span className="flex min-w-0 items-baseline gap-2 text-3 text-fg-3">
           <span className="truncate font-mono tabular-nums">{p.version}</span>
           {p.changed && <span className="shrink-0">{t('settings.plugins.changed')}</span>}
+          {schedules.length > 0 && (
+            <span className="flex shrink-0 items-center self-center" title={schedules.map(scheduleLine).join('\n')} aria-label={schedules.map(scheduleLine).join(', ')}>
+              <Clock className="size-icon" strokeWidth={1.75} />
+            </span>
+          )}
         </span>
         <span className="-mr-ctl-sm-bleed flex shrink-0 items-center">
           {backdropsShown && p.loaded && pages.length > 0 && (
@@ -121,8 +138,20 @@ export function UserPluginTile({ plugin: p, safeMode }: { plugin: PluginInfo; sa
           )}
           {p.canRollback && <IconButton size="sm" title={rollback} aria-label={rollback} onClick={() => act({ op: 'rollback', id: p.id })} className="text-fg-2"><Undo2 strokeWidth={1.75} /></IconButton>}
           <IconButton size="sm" title={reveal} aria-label={reveal} onClick={() => act({ op: 'reveal', id: p.id })} className="text-fg-2"><FolderOpen strokeWidth={1.75} /></IconButton>
+          <IconButton size="sm" title={uninstall} aria-label={uninstall} aria-haspopup="dialog" onClick={() => setRemoving(true)} className="text-fg-2"><Trash2 strokeWidth={1.75} /></IconButton>
         </span>
       </div>
+      {removing && (
+        // Uninstalling moves the folder aside and keeps the data; the storage page clears both
+        <SettingsDialog icon={<Mark />} title={t('settings.plugins.uninstallTitle', { name: p.name })} onClose={() => setRemoving(false)}
+          footer={<>
+            <DangerAction onClick={() => { act({ op: 'remove', id: p.id }); setRemoving(false); }}>{uninstall}</DangerAction>
+            <span className="flex-1" />
+            <Button onClick={() => setRemoving(false)}>{t('common.cancel')}</Button>
+          </>}>
+          <DialogBody><Note>{t('settings.plugins.uninstallNote')}</Note></DialogBody>
+        </SettingsDialog>
+      )}
       {page && pages[0] && (
         // The plugin's own page (the `page` slot): its first one, filling a tall dialog
         <SettingsDialog wide tall icon={<Mark />} title={pages[0].title || p.name} sub={p.version} onClose={() => setPage(false)}>

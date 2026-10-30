@@ -18,12 +18,38 @@ pub const SDK_PY_FILE: &str = "acpira_plugin.py";
 pub const SDK_DIR: &str = ".sdk";
 
 /// What `acpira plugin new --kind` takes, the default first
-pub const KINDS: &[&str] = &["runtime", "tool", "command", "skill", "provider", "theme", "ui", "agent"];
+pub const KINDS: &[&str] = &["runtime", "tool", "command", "skill", "provider", "theme", "style", "ui", "agent", "schedule"];
+
+/// The editor's types for a TypeScript plugin (`@acpira/plugin`, `@acpira/plugin-ui`); packages/plugin-ui's tests keep
+/// its names equal to what the SDK and the frame kit export
+pub const TYPES: &str = include_str!("acpira.d.ts");
+pub const TYPES_FILE: &str = "acpira.d.ts";
 
 /// The backdrop runtime and the scenes `plugin new --kind theme --scene` starts from (`backdrop/`)
 const BACKDROP_RUNTIME: &str = include_str!("backdrop/runtime.js");
 const BACKDROP_HELPERS: &str = include_str!("backdrop/helpers.js");
 const CAT: &str = include_str!("backdrop/cat.html");
+
+/// What `--kind style` starts from: the session list's rows tinted by state, and a finished one's fill shrinking over an
+/// hour. Tints are background images, so the row's own hover and selection fills still show beneath
+const STYLE_CSS: &str = r#"/* Session rows by what they are waiting for */
+[data-session][data-state] { --tint: transparent; background-image: linear-gradient(var(--tint), var(--tint)); }
+[data-session][data-state="working"] { --tint: color-mix(in srgb, var(--command) 18%, transparent); }
+[data-session][data-state="background"] { --tint: color-mix(in srgb, color-mix(in srgb, var(--command), var(--ok)) 14%, transparent); }
+[data-session][data-state="permission"] { --tint: color-mix(in srgb, var(--warn) 18%, transparent); }
+[data-session][data-state="question"] { --tint: color-mix(in srgb, oklch(66% 0.17 300) 20%, transparent); }
+[data-session][data-state="error"] { --tint: color-mix(in srgb, var(--danger) 16%, transparent); }
+
+/* A finished session: a fill from the right edge that is gone an hour after the turn ended (--now and --done-at are
+   seconds, so their difference over 3600 is hours) */
+[data-session][data-done]:is(:not([data-state]), [data-state="unread"]) {
+  --fill: color-mix(in srgb, var(--fg-3) 16%, transparent);
+  background-image: linear-gradient(var(--fill), var(--fill));
+  background-repeat: no-repeat;
+  background-position: right;
+  background-size: calc(max(0, 1 - (var(--now) - var(--done-at)) / 3600) * 100%) 100%;
+}
+"#;
 
 /// A built-in scene: its script and the skin it comes with (name, base, seed tokens, one line)
 pub struct Scene {
@@ -82,19 +108,26 @@ pub fn backdrop_html(scene: &str) -> String {
   )
 }
 
-/// What `acpira plugin new --lang` takes for the runtime and the tool, the default first
-pub const LANGS: &[&str] = &["node", "python"];
+/// What `acpira plugin new --lang` takes for the runtime and the tool, the default first: TypeScript the engine
+/// compiles, or a plain Node / Python process with the SDK file copied in
+pub const LANGS: &[&str] = &["ts", "node", "python"];
 
-/// Keep `<plugins>/.sdk/` holding the SDKs this build ships; each written only when it differs. The folder
+/// The skill that teaches an agent to write a plugin, offered in every session like a plugin's skills
+pub const AUTHOR_SKILL: &str = include_str!("skill/SKILL.md");
+/// Under `<plugins>/.sdk/`: a skills folder (`<name>/SKILL.md`) holding `AUTHOR_SKILL`
+pub const SKILLS_DIR: &str = "skills";
+const AUTHOR_SKILL_FILE: &str = "skills/acpira-plugin/SKILL.md";
+
+/// Keep `<plugins>/.sdk/` holding the SDKs and the author skill this build ships; each written only when it differs. The folder
 pub fn install(root: &Path) -> Result<PathBuf> {
   let dir = root.join(SDK_DIR);
-  for (name, text) in [(SDK_FILE, SDK), (SDK_PY_FILE, SDK_PY)] {
+  std::fs::create_dir_all(dir.join(AUTHOR_SKILL_FILE).parent().unwrap_or(&dir)).with_context(|| format!("create {}", dir.display()))?;
+  for (name, text) in [(SDK_FILE, SDK), (SDK_PY_FILE, SDK_PY), (AUTHOR_SKILL_FILE, AUTHOR_SKILL)] {
     let path = dir.join(name);
     if std::fs::read_to_string(&path).is_ok_and(|t| t == text) {
       continue;
     }
-    std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
-    let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+    let tmp = path.with_file_name(format!(".{}.{}.tmp", path.file_name().unwrap_or_default().to_string_lossy(), std::process::id()));
     std::fs::write(&tmp, text).and_then(|()| std::fs::rename(&tmp, &path)).with_context(|| format!("write {}", path.display()))?;
   }
   Ok(dir)
@@ -162,6 +195,95 @@ args = json.load(sys.stdin)["arguments"]
 print(f"Hello, {args['name']}!")
 "#;
 
+const TS_HEAD: &str = r#"// The plugin's process: the engine compiles this file and runs it with Node. Every name below is also declared in
+// plugin.json; the engine calls only those, which is what the user confirmed.
+import { definePlugin } from '@acpira/plugin';
+
+export default definePlugin({
+  // Runs once when the plugin starts; what it returns runs when it stops
+  activate(ctx) {
+    ctx.log(`started ${ctx.plugin.version}`);
+  },
+"#;
+
+const TS_RUNTIME: &str = r#"  // Before every prompt of every agent: add a line of context, or null to leave the prompt alone
+  hooks: {
+    prompt: ({ text }) => (text.includes('TODO') ? { context: 'List the TODOs you leave behind.' } : null),
+  },
+  // After every turn: count them in the plugin's own store
+  events: {
+    'turn.ended': async (_event, ctx) => {
+      await ctx.storage.set('turns', ((await ctx.storage.get<number>('turns')) ?? 0) + 1);
+    },
+  },
+  // Called by interface pieces (`rpc.ping()`) and by plugins that depend on this one
+  methods: {
+    ping: async (_params, ctx) => ({ pong: true, turns: (await ctx.storage.get<number>('turns')) ?? 0 }),
+  },
+"#;
+
+const TS_TOOL: &str = r#"  // The tool `hello` of plugin.json: the model's arguments in, the text it reads out
+  tools: {
+    hello: ({ name }: { name: string }) => `Hello, ${name}!`,
+  },
+"#;
+
+const TS_SCHEDULE: &str = r#"  // The schedule `daily` of plugin.json: weekdays at 9:00 while Acpira runs; a run missed meanwhile happens once later
+  schedules: {
+    daily: async ctx => {
+      await ctx.ui.toast(`Good morning: ${(await ctx.storage.get<number>('turns')) ?? 0} turns so far`);
+    },
+  },
+"#;
+
+const TS_PANEL: &str = r#"// An interface piece: a React component in a sandboxed frame above the composer. React and `@acpira/plugin-ui` come
+// from Acpira (nothing to install), and its components follow the theme
+import { useState } from 'react';
+import { Button, Dot, Stack, Text, useSessionState } from '@acpira/plugin-ui';
+
+export default function Panel() {
+  const { working, waiting } = useSessionState();
+  const [clicks, setClicks] = useState(0);
+  return (
+    <Stack row>
+      <Dot tone={waiting ? 'warn' : working ? 'brand' : 'ok'} />
+      <Text muted>{waiting ? 'Waiting for you' : working ? 'Working' : 'Idle'}</Text>
+      <Button onClick={() => setClicks(clicks + 1)}>Clicked {clicks}</Button>
+    </Stack>
+  );
+}
+"#;
+
+const TS_CONFIG: &str = r#"{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["**/*.ts", "**/*.tsx"]
+}
+"#;
+
+const SCHEDULE_NODE: &str = r#"
+// The schedule `daily` of plugin.json: weekdays at 9:00 while Acpira runs; a run missed meanwhile happens once later
+p.schedule('daily', async () => {
+  await p.ui.toast('Good morning');
+});
+"#;
+
+const SCHEDULE_PY: &str = r#"# The schedule `daily` of plugin.json: weekdays at 9:00 while Acpira runs; a run missed meanwhile happens once later
+@p.schedule("daily")
+def daily(ctx):
+    p.ui.toast("Good morning")
+
+
+"#;
+
 const SKILL: &str = "---\nname: hello\ndescription: Say what the plugin is for. Replace this with when an agent should use the skill.\n---\n\nThe steps an agent follows.\n";
 
 /// The starting prompt of `--kind agent`: it replaces Acpira's own, so it says everything the agent is
@@ -190,9 +312,10 @@ pub fn files_with(id: &str, kinds: &[&str], lang: &str, scene: &str) -> Result<(
   let Some(scene) = SCENES.iter().find(|s| s.id == scene) else {
     bail!("`{scene}` is not a scene: {}", SCENES.iter().map(|s| s.id).collect::<Vec<_>>().join(", "));
   };
-  let py = match lang {
-    "node" => false,
-    "python" => true,
+  let (ts, py) = match lang {
+    "ts" => (true, false),
+    "node" => (false, false),
+    "python" => (false, true),
     other => bail!("`{other}` is not a language: {}", LANGS.join(", ")),
   };
   if !manifest::valid_id(id) {
@@ -203,6 +326,9 @@ pub fn files_with(id: &str, kinds: &[&str], lang: &str, scene: &str) -> Result<(
   let mut requires = vec![];
   for kind in kinds {
     match *kind {
+      // TypeScript: one definition (plugin.ts) answers the hooks, tools and schedules, assembled below
+      "runtime" | "tool" | "schedule" if ts => requires.push("node"),
+      "schedule" => {}
       "runtime" => {
         let (program, main) = if py { ("python3", "main.py") } else { ("node", "main.mjs") };
         contributes.insert("runtime".into(), json!({ "command": [program, main], "hooks": ["prompt"], "events": ["turn.ended"], "methods": ["ping"] }));
@@ -226,7 +352,7 @@ pub fn files_with(id: &str, kinds: &[&str], lang: &str, scene: &str) -> Result<(
         requires.push(program);
       }
       "command" => {
-        contributes.insert("commands".into(), json!([{ "name": "hello", "description": "Ask for a short greeting", "hint": "name", "prompt": "Write a one-line greeting for $ARGUMENTS." }]));
+        contributes.insert("commands".into(), json!([{ "name": "hello", "description": "Ask for a short greeting", "hint": "name", "prompt": "Write a one-line greeting for $ARGUMENTS.", "button": "Hello", "icon": "message" }]));
       }
       "skill" => {
         contributes.insert("skills".into(), json!("skills"));
@@ -248,7 +374,16 @@ pub fn files_with(id: &str, kinds: &[&str], lang: &str, scene: &str) -> Result<(
         );
         files.push(("scene.js", format!("{SCENE_HEAD}{}", scene.script)));
       }
+      // A style over whatever skin is on: the session list's rows by state
+      "style" => {
+        contributes.insert("style".into(), json!("style.css"));
+        files.push(("style.css", STYLE_CSS.into()));
+      }
       // An interface piece sized for the composer's top edge: a glyph cat that follows the session's state
+      "ui" if ts => {
+        contributes.insert("ui".into(), json!([{ "id": "panel", "slot": "composer.above", "title": "Panel", "entry": "Panel.tsx", "width": 280, "height": 40 }]));
+        files.push(("Panel.tsx", TS_PANEL.into()));
+      }
       "ui" => {
         contributes.insert("ui".into(), json!([{ "id": "cat", "slot": "composer.above", "title": "Cat", "html": "cat.html", "width": 180, "height": 60 }]));
         files.push(("cat.html", CAT.into()));
@@ -268,6 +403,58 @@ pub fn files_with(id: &str, kinds: &[&str], lang: &str, scene: &str) -> Result<(
       other => bail!("`{other}` is not a kind: {}", KINDS.join(", ")),
     }
   }
+  if kinds.contains(&"schedule") {
+    contributes.insert("schedules".into(), json!([{ "id": "daily", "cron": "0 9 * * 1-5", "description": "A weekday morning note" }]));
+    // Node and Python: the schedule is answered by the runtime process, started without hooks when none was asked
+    if !ts {
+      let (program, main, sdk_file, sdk, base) = if py { ("python3", "main.py", SDK_PY_FILE, SDK_PY, "from acpira_plugin import Plugin\n\np = Plugin()\n\n\np.run()\n") } else { ("node", "main.mjs", SDK_FILE, SDK, "import { plugin } from './acpira-plugin.mjs';\n\nconst p = plugin();\n") };
+      if !contributes.contains_key("runtime") {
+        contributes.insert("runtime".into(), json!({ "command": [program, main] }));
+        files.push((main, base.into()));
+        files.push((sdk_file, sdk.into()));
+        requires.push(program);
+      }
+      if let Some((_, text)) = files.iter_mut().find(|(n, _)| *n == main) {
+        if py {
+          let at = text.rfind("p.run()").unwrap_or(text.len());
+          text.insert_str(at, SCHEDULE_PY);
+        } else {
+          text.push_str(SCHEDULE_NODE);
+        }
+      }
+    }
+  }
+  if ts {
+    let (runtime, tool, schedule) = (kinds.contains(&"runtime"), kinds.contains(&"tool"), kinds.contains(&"schedule"));
+    if runtime || tool || schedule {
+      let mut def = TS_HEAD.to_owned();
+      let mut rt = json!({ "main": "plugin.ts" });
+      if runtime {
+        def.push_str(TS_RUNTIME);
+        rt = json!({ "main": "plugin.ts", "hooks": ["prompt"], "events": ["turn.ended"], "methods": ["ping"] });
+      }
+      if tool {
+        def.push_str(TS_TOOL);
+        // No `command`: the definition's `tools.hello` answers it
+        contributes.insert(
+          "tools".into(),
+          json!([{ "name": "hello", "description": "Greet someone by name", "readOnly": true,
+            "input": { "type": "object", "properties": { "name": { "type": "string", "description": "Who to greet" } }, "required": ["name"] } }]),
+        );
+      }
+      if schedule {
+        def.push_str(TS_SCHEDULE);
+      }
+      def.push_str("});\n");
+      contributes.insert("runtime".into(), rt);
+      files.push(("plugin.ts", def));
+    }
+    if files.iter().any(|(n, _)| n.ends_with(".ts") || n.ends_with(".tsx")) {
+      files.push((TYPES_FILE, TYPES.into()));
+      files.push(("tsconfig.json", TS_CONFIG.into()));
+    }
+  }
+  requires.sort_unstable();
   requires.dedup();
   // With its own agent, the plugin's hooks guard that agent's sessions only
   if kinds.contains(&"agent")
@@ -328,7 +515,7 @@ mod tests {
     assert!(pf.ok() && pf.notes.is_empty(), "{pf:?}");
     assert_eq!(std::fs::read_to_string(py.join(SDK_PY_FILE)).unwrap(), SDK_PY);
     assert!(scaffold(tmp.path(), "rb", &["tool"], "ruby").unwrap_err().to_string().contains("not a language"));
-    assert_eq!(m.contributes.kinds(), ["tools", "theme", "agent", "runtime", "skills", "commands", "providers", "ui"]);
+    assert_eq!(m.contributes.kinds(), ["tools", "theme", "style", "agent", "runtime", "skills", "commands", "providers", "ui", "schedules"]);
     // The agent lists the plugin's own tool and skill, and the runtime guards that agent alone
     let agent = m.contributes.agent.as_ref().unwrap();
     assert_eq!(agent["builtin"]["tools"], json!(["read", "grep", "todo", "question", "plugin:hello", "skill"]));
@@ -338,6 +525,36 @@ mod tests {
     assert_eq!(m.contributes.providers[0]["keyEnv"], "MY_KIT_API_KEY");
     assert!(scaffold(tmp.path(), "my-kit", &["tool"], "node").unwrap_err().to_string().contains("exists already"));
     assert!(scaffold(tmp.path(), "Bad", &["tool"], "node").is_err() && scaffold(tmp.path(), "ok", &["widget"], "node").is_err());
+  }
+
+  #[test]
+  fn a_typescript_plugin_scaffolds_compiled_and_typed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = scaffold(tmp.path(), "ts-kit", KINDS, LANGS[0]).unwrap();
+    let (m, mut f) = manifest::parse(&std::fs::read(dir.join(manifest::FILE)).unwrap()).unwrap();
+    manifest::check(&m, "ts-kit", &dir, &|p| p == "node", &mut f);
+    assert!(f.ok() && f.notes.is_empty(), "{f:?}");
+    // One definition answers the hooks, the tool and the schedule; the piece is a component; nothing is copied in
+    let rt = m.contributes.runtime.as_ref().unwrap();
+    assert_eq!((rt.main.as_deref(), rt.command.is_empty()), (Some("plugin.ts"), true));
+    assert!(m.contributes.tools[0].command.is_empty() && m.contributes.ui[0].entry.as_deref() == Some("Panel.tsx"));
+    assert_eq!(m.contributes.schedules[0].id, "daily");
+    assert!(!dir.join(SDK_FILE).exists() && std::fs::read_to_string(dir.join(TYPES_FILE)).unwrap() == TYPES);
+    let errors = crate::plugins::build::check(&dir, &m, &tmp.path().join("out"));
+    assert!(errors.is_empty(), "{errors:?}");
+    let def = std::fs::read_to_string(dir.join("plugin.ts")).unwrap();
+    for key in ["activate(", "hooks:", "events:", "methods:", "tools:", "schedules:"] {
+      assert!(def.contains(key), "{key}");
+    }
+    // A schedule alone in Node gets a runtime that answers it
+    let node = scaffold(tmp.path(), "node-cron", &["schedule"], "node").unwrap();
+    let (nm, mut nf) = manifest::parse(&std::fs::read(node.join(manifest::FILE)).unwrap()).unwrap();
+    manifest::check(&nm, "node-cron", &node, &|p| p == "node", &mut nf);
+    assert!(nf.ok() && nf.notes.is_empty(), "{nf:?}");
+    assert!(std::fs::read_to_string(node.join("main.mjs")).unwrap().contains("p.schedule('daily'"));
+    let py = scaffold(tmp.path(), "py-cron", &["runtime", "schedule"], "python").unwrap();
+    let main = std::fs::read_to_string(py.join("main.py")).unwrap();
+    assert!(main.find("@p.schedule").unwrap() < main.rfind("p.run()").unwrap());
   }
 
   #[test]
@@ -364,6 +581,9 @@ mod tests {
     let tmp = tempfile::tempdir().unwrap();
     let dir = install(tmp.path()).unwrap();
     assert_eq!(std::fs::read_to_string(dir.join(SDK_PY_FILE)).unwrap(), SDK_PY);
+    // The author skill is a skills folder like a plugin's
+    let skills = acpira_agent::skills::scan_dirs(&[dir.join(SKILLS_DIR)]);
+    assert_eq!(skills.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["acpira-plugin"]);
     std::fs::write(dir.join(SDK_FILE), "old").unwrap();
     install(tmp.path()).unwrap();
     assert_eq!(std::fs::read_to_string(dir.join(SDK_FILE)).unwrap(), SDK);

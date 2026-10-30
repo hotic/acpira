@@ -240,7 +240,11 @@ impl AcpSession {
         && !c.peer.idle
         && !c.peer.detached
         && self.can_steer_of(&c);
-      match c.queue.entries.iter().find(|q| q.id == id) {
+      let entry = c.queue.entries.iter().find(|q| q.id == id);
+      // A plugin's command is expanded on its way to the agent (`plugin_command`), so it waits for the turn to end
+      // rather than being steered in as the literal `/name`
+      let steerable = steerable && entry.is_none_or(|e| !self.runs_plugin_command(&c.state.commands, &e.text));
+      match entry {
         None => return Ok(()),
         Some(_) if !steerable && !send_now => return Ok(()),
         Some(_) if !steerable => None,

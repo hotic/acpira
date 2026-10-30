@@ -68,7 +68,8 @@ body.vscode-light {
 /// page sends the piece's HTML, which replaces this document and keeps the `acpira` object: `call(method, params)` reaches
 /// the plugin's own methods, `on(fn)` hears what its runtime posts (`ui/post`), `onState(fn)` hears whether the session on
 /// screen is working or waiting for the user (nothing of its content), `options` holds what the page set for this frame
-/// (a backdrop's cell size and frame cap). Not a boundary against the plugin itself,
+/// (a backdrop's cell size and frame cap); `lib`, when the page sends it, is Acpira's React runtime for component pieces
+/// (`packages/plugin-ui`), written before the piece. Not a boundary against the plugin itself,
 /// whose code runs with the user's rights anyway; it keeps the page's state and the session out of the piece's reach
 pub const PLUGIN_FRAME_HTML: &str = r#"<!doctype html>
 <html>
@@ -105,7 +106,10 @@ pub const PLUGIN_FRAME_HTML: &str = r#"<!doctype html>
       if (m.state) window.acpira.state = m.state;
       if (m.session) window.acpira.session = m.session;
       document.open();
-      document.write(m.html || '');
+      // A piece built from components (`entry`, or a document that asks for it) gets Acpira's React runtime first,
+      // after the piece's doctype: anything before it puts the document in quirks mode
+      var html = m.html || '', lead = (/^\s*<!doctype[^>]*>/i.exec(html) || [''])[0];
+      document.write(m.lib ? lead + '<script>' + m.lib + '<\/script>' + html.slice(lead.length) : html);
       document.close();
       style(m.css);
       kit(m.kit);

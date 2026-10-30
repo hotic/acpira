@@ -15,7 +15,7 @@ use acpira_shared::storage::{StorageAction, StorageBlock, StorageDetail, Storage
 
 use super::SessionManager;
 use crate::i18n::t;
-use crate::store::storage::{Scan, ScanInput, clean, scan};
+use crate::store::storage::{Residue, Scan, ScanInput, clean, clean_plugins, scan};
 
 /// What the Storage tab's reply carries back
 pub struct StorageReply {
@@ -218,13 +218,38 @@ impl SessionManager {
         files.push(r.clone());
       }
     }
+    use acpira_shared::storage::StorageResidueKind as Kind;
+    let (plugin, other): (Vec<Residue>, Vec<Residue>) = files.iter().cloned().partition(|r| matches!(r.item.kind, Kind::PluginFiles | Kind::PluginData));
     let root2 = root.clone();
-    let picked = files.clone();
-    let (freed, failed) = tokio::task::spawn_blocking(move || clean(&root2, &picked.iter().collect::<Vec<_>>())).await.unwrap_or_else(|e| {
-      (0, files.iter().map(|r| (r.item.id.clone(), e.to_string())).collect())
+    let (freed, mut failed) = tokio::task::spawn_blocking(move || clean(&root2, &other.iter().collect::<Vec<_>>())).await.unwrap_or_else(|e| {
+      (0, files.iter().filter(|r| !matches!(r.item.kind, Kind::PluginFiles | Kind::PluginData)).map(|r| (r.item.id.clone(), e.to_string())).collect())
     });
     outcome.freed += freed;
+    let mut kept = vec![];
+    if !plugin.is_empty() {
+      // Under the plugin state's lock, checked again: an enable since the scan may need a version again
+      let plugins = root.join(crate::plugins::DIR);
+      let (root2, ids) = (root.clone(), plugin.iter().map(|r| r.item.id.clone()).collect::<Vec<_>>());
+      let done = crate::plugins::store::with_state_lock(&plugins, move || {
+        let (freed, failed, kept) = clean_plugins(&root2, &plugin.iter().collect::<Vec<_>>());
+        // Versions gone, the shared files only they linked go too
+        (freed + crate::plugins::store::prune_blobs(&root2.join(crate::plugins::DIR)), failed, kept)
+      })
+      .await;
+      match done {
+        Ok((freed, f, k)) => {
+          outcome.freed += freed;
+          failed.extend(f);
+          kept = k;
+        }
+        Err(e) => failed.extend(ids.into_iter().map(|id| (id, format!("{e:#}")))),
+      }
+    }
     for r in &files {
+      if kept.contains(&r.item.id) {
+        outcome.skipped.push(StorageSkip { id: r.item.id.clone(), reason: t("host.storage.gone") });
+        continue;
+      }
       match failed.iter().find(|(id, _)| id == &r.item.id) {
         Some((id, e)) => {
           self.log(&format!("storage: removing {id} failed: {e}"));

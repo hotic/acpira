@@ -212,3 +212,28 @@
   .acp-shell .shimmer { color: var(--fg-2); }
   .acp-shell .shimmer-sweep { display: none; }
 }
+
+/* A plugin command button (plugins/CommandButtons.tsx): pressed in, then a ring of the brand colour out of it. The ring's
+   rest pose is already invisible, so the kill switches leave nothing behind */
+.command-press { transition: transform 120ms ease-out, background-color 150ms, color 150ms; }
+.command-press:active { transform: scale(0.94); }
+.command-ring { position: absolute; inset: 0; border-radius: inherit; pointer-events: none; box-shadow: 0 0 0 8px transparent; animation: acp-command-ring 560ms ease-out; }
+@keyframes acp-command-ring { from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 70%, transparent); } }
+/* A draft command rewriting the draft: the text steps back while a soft glow of the field's own foreground drifts across
+   the whole field. It is the field's background, so the field's radius clips it, and a radial falloff fades it out on
+   every side instead of ending in an edge. The new text is wiped in from the left. The glow rests off the field and the
+   wipe ends unmasked, so with motion off only the dimming and the swap remain. A plugin's style layer may restyle both */
+.composer-field[data-rewriting] {
+  background-image: radial-gradient(closest-side, color-mix(in srgb, var(--fg-1) 13%, transparent), color-mix(in srgb, var(--fg-1) 5%, transparent) 55%, transparent);
+  background-size: 55% 170%;
+  background-position: -120% 50%;
+  background-repeat: no-repeat;
+  animation: acp-rewrite-sweep 1600ms cubic-bezier(.45, 0, .55, 1) infinite;
+}
+.composer-field[data-rewriting] textarea { color: var(--fg-3); }
+@keyframes acp-rewrite-sweep { from { background-position: -120% 50%; } to { background-position: 220% 50%; } }
+.composer-field[data-rewritten] textarea { animation: acp-rewrite-in 560ms ease-out; }
+@keyframes acp-rewrite-in {
+  from { mask-image: linear-gradient(90deg, #000 40%, transparent 60%); mask-size: 250% 100%; mask-repeat: no-repeat; mask-position: 100% 0; }
+  to { mask-image: linear-gradient(90deg, #000 40%, transparent 60%); mask-size: 250% 100%; mask-repeat: no-repeat; mask-position: 0 0; }
+}

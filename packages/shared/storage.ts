@@ -47,9 +47,11 @@ export interface StorageSession {
 
 // agentLog: a built-in agent log no record drives; engineLog: the log of an engine that is not running; blob: an
 // attachment no record names; unreadable: a record that does not parse (hidden from the list); backup: a Shared tab
-// backup older than 30 days nothing can put back; legacy: the old globalStorage copy a migration left behind
-export type StorageResidueKind = 'agentLog' | 'engineLog' | 'blob' | 'unreadable' | 'backup' | 'legacy';
-export const STORAGE_RESIDUE_KINDS: readonly StorageResidueKind[] = ['agentLog', 'engineLog', 'blob', 'unreadable', 'backup', 'legacy'];
+// backup older than 30 days nothing can put back; legacy: the old globalStorage copy a migration left behind;
+// pluginFiles: an uninstalled plugin's folder, versions and compiled output, or versions nothing in effect uses;
+// pluginData: an uninstalled plugin's data
+export type StorageResidueKind = 'agentLog' | 'engineLog' | 'blob' | 'unreadable' | 'backup' | 'legacy' | 'pluginFiles' | 'pluginData';
+export const STORAGE_RESIDUE_KINDS: readonly StorageResidueKind[] = ['agentLog', 'engineLog', 'blob', 'unreadable', 'backup', 'legacy', 'pluginFiles', 'pluginData'];
 
 export interface StorageResidue {
   // Stable across scans: the kind and the path

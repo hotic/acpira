@@ -26,9 +26,9 @@ a page goes on with offset). detail \"full\" adds \
 tool output and diffs. `session` takes a link (acpira://session/<id>, vscode://hotic.acpira/session/<id>), an id, or the \
 agent's own session id.";
 
-const PLUGIN_GUIDE_DESCRIPTION: &str = "How to write an Acpira plugin (the plugin.json format, script tools, themes, hooks, \
-with complete examples) and the state of every plugin here, with what its last check found. Read it before writing or \
-fixing a plugin.";
+const PLUGIN_GUIDE_DESCRIPTION: &str = "How to write an Acpira plugin (the plugin.json format, TypeScript definitions and React \
+pieces, tools, hooks, commands, schedules, dependencies, themes, with complete examples) and the state of every plugin \
+here, with what its last check found. Read it before writing or fixing a plugin.";
 
 const PLUGIN_ACTIVATE_DESCRIPTION: &str = "Offer the plugin in ~/.acpira/plugins/<id>/ that you wrote or changed. It is \
 frozen and checked first; a problem comes back for you to fix, nothing is offered. Otherwise a card for it joins your \
@@ -115,9 +115,10 @@ pub(super) fn ask_tool_def(personas: &[acpira_shared::subagents::SubagentPersona
     .collect();
   let description = format!(
     "Summon another coding agent that runs in its own CLI on this same repository, and answer with its reply. \
-Use it when one of the agents below fits the task better (a second opinion, a review, fast mechanical edits), and always when \
-the user names one with @name: those names are these agents, not your own subagents, so call this tool directly without \
-listing or searching for agents. To ask several agents, make one call per agent in the same message; they run in parallel.\n\n\
+Call it when the user names one with @name (those names are these agents, not your own subagents, so call this tool \
+directly without listing or searching for agents), when the user asks you to hand work to another agent or has set one up \
+for you (a sidekick), or when your current mode makes you lead a team. Otherwise do the work yourself, even when an agent \
+below looks suited to it. To ask several agents, make one call per agent in the same message; they run in parallel.\n\n\
 It cannot see this conversation but reads files and runs commands itself, so the prompt is its whole brief: state the goal, \
 the constraints, what counts as done, what you already know (point at paths instead of pasting code) and what its reply \
 should contain. To have work reviewed, give the original requirement and where the change is, not your own account of it, so \

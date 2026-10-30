@@ -3,7 +3,7 @@
 //! the script tools Acpira's MCP server serves (`docs/dev/plugins.md`)
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
@@ -22,7 +22,7 @@ use crate::store::transcript_store::LogFn;
 /// Longest a plugin's `check` may run once the user confirmed
 const CHECK_TIMEOUT: Duration = Duration::from_secs(45);
 /// The most of one plugin's theme style sheet a page gets
-const THEME_CSS_MAX_BYTES: usize = 64 * 1024;
+const THEME_CSS_MAX_BYTES: usize = manifest::CSS_MAX_BYTES as usize;
 /// Changes the plugin page lists
 const CHANGES_SHOWN: usize = 30;
 /// `ACPIRA_SAFE_MODE=1` (or `--safe-mode`): the engine starts with every user plugin unloaded, whatever the switch says
@@ -114,6 +114,8 @@ pub struct PluginHost {
   last_error: parking_lot::Mutex<Option<String>>,
   /// The resident processes of the plugins in effect (`contributes.runtime`)
   runtimes: Arc<crate::plugins::runtime::Runtimes>,
+  /// The schedule loop started (once per engine, by `enable_runtimes`)
+  scheduling: std::sync::atomic::AtomicBool,
 }
 
 impl PluginHost {
@@ -131,6 +133,7 @@ impl PluginHost {
       log,
       last_error: Default::default(),
       runtimes,
+      scheduling: Default::default(),
     })
   }
 
@@ -154,6 +157,9 @@ impl PluginHost {
   pub fn enable_runtimes(&self, host_call: Option<crate::plugins::runtime::HostCall>) {
     self.runtimes.enable(host_call);
     self.sync_runtimes();
+    if !self.scheduling.swap(true, Ordering::Relaxed) {
+      crate::plugins::schedule::spawn(Arc::downgrade(&self.runtimes), self.store.root().to_path_buf(), self.log.clone());
+    }
   }
 
   /// Safe mode from the launch of this process: `--safe-mode` (`force_safe_mode`) or `ACPIRA_SAFE_MODE`
@@ -199,10 +205,9 @@ impl PluginHost {
     if let Err(e) = self.store.reconcile().await {
       (self.log)(&format!("plugins: {e:#}"));
     }
-    // The SDK copy plugins written by hand take theirs from (`sdk.rs`); only when the plugins folder is there
-    if self.store.root().is_dir()
-      && let Err(e) = crate::plugins::sdk::install(self.store.root())
-    {
+    // The SDK copy plugins written by hand take theirs from, and the skill that teaches an agent to write the first
+    // plugin, so it is there before any plugin is (`sdk.rs`)
+    if let Err(e) = crate::plugins::sdk::install(self.store.root()) {
       (self.log)(&format!("plugins: {e:#}"));
     }
     self.reload();
@@ -284,6 +289,10 @@ impl PluginHost {
     let Some((plugin, tool)) = loaded.tool(served) else {
       return Err(format!("`{served}` is not a tool of an enabled plugin (it may have been switched off)."));
     };
+    // A tool without a `command` is answered by the plugin's process
+    if tool.command.is_empty() {
+      return self.runtimes.tool(&plugin.id, &tool.name, arguments, ctx).await;
+    }
     run::call(&tool, &plugin.dir, &self.store.data_dir(&plugin.id), arguments, ctx).await
   }
 
@@ -342,9 +351,10 @@ impl PluginHost {
     let c = &m.contributes;
     let runs = c
       .tools
-      .first()
+      .iter()
+      .find(|t| !t.command.is_empty())
       .map(|t| t.command.join(" "))
-      .or_else(|| c.runtime.as_ref().map(|r| r.command.join(" ")))
+      .or_else(|| c.runtime.as_ref().map(|r| r.main.as_ref().map(|m| format!("node {m}")).unwrap_or_else(|| r.command.join(" "))))
       .or_else(|| c.mcp.as_ref().and_then(|m| m.values().next()).and_then(|v| v.get("command")).and_then(Value::as_str).map(str::to_owned))
       .or_else(|| c.agent.as_ref().and_then(|a| a.get("command")).and_then(Value::as_str).map(str::to_owned))
       .or_else(|| m.check.as_ref().map(|c| c.join(" ")));
@@ -356,7 +366,9 @@ impl PluginHost {
       description: m.description.clone(),
       kind: card_kind(m).into(),
       runs: runs.filter(|r| !r.trim().is_empty()),
-      slots: c.ui.iter().map(|u| u.slot.clone()).collect(),
+      // A command's button is a piece of the composer's toolbar, so it flies in like one
+      slots: c.ui.iter().map(|u| u.slot.clone()).chain(c.commands.iter().any(|x| x.button.is_some()).then(|| "composer.toolbar".to_owned())).collect(),
+      schedules: c.schedules.iter().map(|j| j.cron.clone()).collect(),
       folder: wire_path(&self.store.source(&frozen.id)),
       at: crate::util::now_ms(),
       undo: None,
@@ -421,7 +433,21 @@ impl PluginHost {
           out.push(piece(String::new()));
           continue;
         }
-        let Some(html) = read_capped(&a.dir, &u.html, manifest::UI_HTML_MAX_BYTES) else { continue };
+        // A component `entry` is the compiled document (`build.rs`), built again if its output is gone
+        let html = match u.entry.as_deref() {
+          Some(entry) => {
+            let out_dir = crate::plugins::build::output_dir(self.store.root(), &a.id, &a.hash);
+            match crate::plugins::build::ui(&a.dir, entry, &u.id, &out_dir) {
+              Ok(doc) => Some(doc),
+              Err(e) => {
+                (self.log)(&format!("plugin {}: ui {}: {e}", a.id, u.id));
+                None
+              }
+            }
+          }
+          None => read_capped(&a.dir, &u.html, manifest::UI_HTML_MAX_BYTES),
+        };
+        let Some(html) = html else { continue };
         out.push(piece(html));
       }
     }
@@ -494,23 +520,44 @@ impl PluginHost {
     if let Some(mcp) = manifest.contributes.mcp.as_ref().filter(|m| !m.is_empty()) {
       crate::plugins::mcp::check(mcp, &dir, &self.store.data_dir(id), CHECK_TIMEOUT).await.map_err(|e| anyhow!("the check failed: {e}"))?;
     }
+    self.check_dependencies(&manifest)?;
     // A runtime must start and answer `initialize` from the frozen copy before it is enabled
-    if let Some(rt) = &manifest.contributes.runtime {
+    if manifest.contributes.runtime.is_some() {
       let data_root = self.store.root().join(crate::plugins::store::DATA);
-      crate::plugins::runtime::probe(id, &manifest.version, hash, &dir, rt, &data_root, self.log.clone()).await.map_err(|e| anyhow!("the check failed: the runtime {e}"))?;
+      crate::plugins::runtime::probe(id, hash, &dir, &manifest, &data_root, self.log.clone()).await.map_err(|e| anyhow!("the check failed: the runtime {e}"))?;
     }
     let change = self.store.enable_as(id, hash, provenance, manifest.contributes.theme.is_some()).await?;
     self.committed(&change);
     Ok(change)
   }
 
+  /// Every plugin `manifest` requires is in effect at a version its range accepts. A ring of plugins requiring each
+  /// other is refused by the commit itself (`PluginStore::guard`), against the state every engine shares
+  fn check_dependencies(&self, manifest: &Manifest) -> Result<()> {
+    let loaded = self.loaded();
+    for (dep, range) in &manifest.dependencies {
+      let Some(a) = loaded.active.iter().find(|a| a.id == *dep) else { bail!("it needs the plugin `{dep}` ({range}), which is not enabled") };
+      if !manifest::version_meets(&a.manifest.version, range) {
+        bail!("it needs the plugin `{dep}` {range}, but {} is enabled", a.manifest.version);
+      }
+    }
+    Ok(())
+  }
+
   /// Freeze, check and enable `id` in one go: what the plugin page's switch does (the switch is the confirmation)
   pub async fn activate(&self, id: &str, provenance: Provenance) -> Result<Option<Change>> {
-    let frozen = self.prepare(id)?;
-    if !frozen.findings.ok() {
-      bail!("{}", frozen.findings.text());
+    let mut retried = false;
+    loop {
+      let frozen = self.prepare(id)?;
+      if !frozen.findings.ok() {
+        bail!("{}", frozen.findings.text());
+      }
+      match self.confirm(id, &frozen.hash, provenance.clone()).await {
+        // The storage page cleaned a reused copy between the freeze and the commit: freeze it again, once
+        Err(e) if !retried && format!("{e:#}").contains(crate::plugins::store::GONE) => retried = true,
+        done => return done,
+      }
     }
-    self.confirm(id, &frozen.hash, provenance).await
   }
 
   /// File the current source of `id` for the user to confirm on the plugin page (`acpira plugin propose`)
@@ -524,9 +571,69 @@ impl PluginHost {
     Ok((frozen, change))
   }
 
+  /// Copy the enabled version of every plugin the source of `id` depends on into its
+  /// `node_modules/@acpira-plugin/<dep>/`, with a package.json whose `exports` is the dependency's `exports`, so
+  /// `import { x } from '@acpira-plugin/<dep>'` resolves in the editor and compiles into the plugin (`acpira plugin
+  /// vendor`). The copy is frozen with the plugin: it changes only when vendored again. Returns what was copied
+  pub fn vendor(&self, id: &str) -> Result<Vec<String>> {
+    if !manifest::valid_id(id) {
+      bail!("`{id}` is not a plugin id");
+    }
+    let source = self.store.source(id);
+    let (m, _) = manifest::read(&source).map_err(|e| anyhow!("{e}"))?;
+    let loaded = self.loaded();
+    let scope = source.join("node_modules").join(crate::plugins::build::VENDORED_SCOPE);
+    // Copies are deleted and written below `scope`: a link on the way there could point them anywhere
+    for dir in [source.join("node_modules"), scope.clone()] {
+      if std::fs::symlink_metadata(&dir).is_ok_and(|m| m.file_type().is_symlink()) {
+        bail!("{} is a link; vendoring writes only into real folders of the plugin", dir.display());
+      }
+    }
+    let mut done = vec![];
+    let deps = m.dependencies.iter().map(|d| (d, false)).chain(m.optional_dependencies.iter().map(|d| (d, true)));
+    for ((dep, range), optional) in deps {
+      if !manifest::valid_id(dep) {
+        bail!("`{dep}` is not a plugin id");
+      }
+      let Some(a) = loaded.active.iter().find(|a| &a.id == dep) else {
+        if optional {
+          continue;
+        }
+        bail!("`{dep}` is not enabled: enable it first, then vendor again");
+      };
+      if !manifest::version_meets(&a.manifest.version, range) {
+        bail!("`{dep}` {} is enabled, outside {range}", a.manifest.version);
+      }
+      let Some(exports) = a.manifest.exports.as_deref() else { bail!("`{dep}` shares no code: its plugin.json has no `exports`") };
+      let to = scope.join(dep);
+      if std::fs::symlink_metadata(&to).is_ok_and(|m| m.file_type().is_symlink()) {
+        std::fs::remove_file(&to)?;
+      } else if to.exists() {
+        crate::plugins::store::make_writable(&to)?;
+        std::fs::remove_dir_all(&to)?;
+      }
+      copy_tree(&a.dir, &to)?;
+      crate::plugins::store::make_writable(&to)?;
+      let pkg = json!({ "name": format!("{}/{dep}", crate::plugins::build::VENDORED_SCOPE), "version": a.manifest.version, "private": true, "type": "module", "exports": format!("./{}", exports.trim_start_matches("./")) });
+      std::fs::write(to.join("package.json"), serde_json::to_vec_pretty(&pkg)?)?;
+      done.push(format!("{dep} {}", a.manifest.version));
+    }
+    Ok(done)
+  }
+
   /// One of the plugin page's actions (`Reveal` is the shell's; the source folder is returned for it)
   pub async fn action(&self, action: PluginAction) -> Result<Option<PathBuf>> {
     let user = Provenance::user();
+    // Ids come from the page or the command line and some become paths: refuse anything that is not a plugin id
+    let id = match &action {
+      PluginAction::Enable { id } | PluginAction::Confirm { id, .. } | PluginAction::Dismiss { id } | PluginAction::Disable { id } => Some(id),
+      PluginAction::Rollback { id } | PluginAction::Remove { id } | PluginAction::Reveal { id } => Some(id),
+      PluginAction::Skin { id } => id.as_ref(),
+      PluginAction::SafeMode { .. } | PluginAction::ToolGroup { .. } => None,
+    };
+    if let Some(id) = id.filter(|id| !manifest::valid_id(id)) {
+      bail!("`{id}` is not a plugin id");
+    }
     let change = match action {
       PluginAction::Enable { id } => self.activate(&id, user).await?,
       PluginAction::Confirm { id, snapshot } => self.confirm(&id, &snapshot, user).await?,
@@ -624,6 +731,10 @@ impl PluginHost {
       error = self.runtimes.error(id);
     }
     let tools = m.map(|m| m.contributes.tools.iter().map(|t| manifest::served_name(id, &t.name)).collect()).unwrap_or_default();
+    let records = m.filter(|m| !m.contributes.schedules.is_empty()).map(|_| crate::plugins::schedule::Records::new(self.store.root()).read()).unwrap_or_default();
+    let now = chrono::Local::now();
+    let schedules = m.map(|m| m.contributes.schedules.iter().map(|d| crate::plugins::schedule::view(d, records.get(&crate::plugins::schedule::key(id, &d.id)), now)).collect()).unwrap_or_default();
+    let dependencies = m.map(|m| dependency_view(m, &loaded.active)).unwrap_or_default();
     PluginInfo {
       id: id.to_owned(),
       name: m.map(|m| m.display_name().to_owned()).unwrap_or_else(|| id.to_owned()),
@@ -643,8 +754,38 @@ impl PluginHost {
       error,
       findings,
       path: wire_path(&source),
+      schedules,
+      dependencies,
     }
   }
+}
+
+/// Each plugin `m` depends on, met when one in effect has a version its range accepts
+fn dependency_view(m: &Manifest, active: &[Arc<Active>]) -> Vec<acpira_shared::plugins::PluginDependencyInfo> {
+  let deps = m.dependencies.iter().map(|d| (d, false)).chain(m.optional_dependencies.iter().map(|d| (d, true)));
+  deps
+    .map(|((id, range), optional)| {
+      let met = active.iter().find(|a| &a.id == id).is_some_and(|a| manifest::version_meets(&a.manifest.version, range));
+      acpira_shared::plugins::PluginDependencyInfo { id: id.clone(), range: range.clone(), optional, met }
+    })
+    .collect()
+}
+
+fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+  std::fs::create_dir_all(to)?;
+  for e in std::fs::read_dir(from)?.flatten() {
+    let (src, dst) = (e.path(), to.join(e.file_name()));
+    let kind = e.file_type()?;
+    if kind.is_dir() {
+      copy_tree(&src, &dst)?;
+    } else if kind.is_symlink() {
+      // A frozen copy holds no links; skip one rather than copy what it points at
+      continue;
+    } else {
+      std::fs::copy(&src, &dst)?;
+    }
+  }
+  Ok(())
 }
 
 fn provenance_view(p: &Provenance) -> PluginProvenance {
@@ -658,8 +799,9 @@ fn change_view(c: Change) -> PluginChange {
 /// A file of a plugin's frozen copy as text, none when missing or over `max` bytes
 fn theme_css_of(loaded: &Loaded) -> String {
   let mut out = String::new();
-  if let Some(a) = loaded.skin() {
-    let Some(theme) = &a.manifest.contributes.theme else { return out };
+  if let Some(a) = loaded.skin()
+    && let Some(theme) = &a.manifest.contributes.theme
+  {
     out.push_str(&format!("/* Acpira plugin {} */\n", a.id));
     // Checked when it was enabled; checked again here, since this text goes into every page
     let tokens: Vec<String> = theme
@@ -671,16 +813,30 @@ fn theme_css_of(loaded: &Loaded) -> String {
     if !tokens.is_empty() {
       out.push_str(&format!(":root, .acp-shell, [data-theme], .acp-shell.acp-shell[data-skin] {{\n{}\n}}\n", tokens.join("\n")));
     }
-    if let Some(css) = theme.css.as_deref().and_then(|c| manifest::inside(&a.dir, c)).and_then(|p| std::fs::read_to_string(p).ok()) {
-      let mut end = css.len().min(THEME_CSS_MAX_BYTES);
-      while !css.is_char_boundary(end) {
-        end -= 1;
-      }
-      out.push_str(css.get(..end).unwrap_or_default());
-      out.push('\n');
+    if let Some(css) = theme.css.as_deref() {
+      push_css(&mut out, &a.dir, css);
+    }
+  }
+  // The styles stack over the skin, each plugin's in turn
+  for a in loaded.active.iter() {
+    if let Some(css) = a.manifest.contributes.style.as_deref() {
+      out.push_str(&format!("/* Acpira plugin {} style */\n", a.id));
+      push_css(&mut out, &a.dir, css);
     }
   }
   out
+}
+
+/// A plugin's stylesheet, cut at `THEME_CSS_MAX_BYTES`
+fn push_css(out: &mut String, dir: &Path, rel: &str) {
+  let Some(css) = manifest::inside(dir, rel).and_then(|p| std::fs::read_to_string(p).ok()) else { return };
+  let mut end = css.len().min(THEME_CSS_MAX_BYTES);
+  while !css.is_char_boundary(end) {
+    end -= 1;
+  }
+  out.push_str(css.get(..end).unwrap_or_default());
+  // Closes a comment the sheet (or the cut) left open, which would swallow the next plugin's sheet
+  out.push_str("\n/* */\n");
 }
 
 fn skin_of(loaded: &Loaded) -> Option<acpira_shared::plugins::PluginSkin> {
@@ -731,7 +887,7 @@ fn card_kind(m: &manifest::Manifest) -> &'static str {
     "exec"
   } else if c.theme.is_some() {
     "skin"
-  } else if !c.ui.is_empty() {
+  } else if !c.ui.is_empty() || c.style.is_some() || c.commands.iter().any(|x| x.button.is_some()) {
     "ui"
   } else if c.agent.is_some() {
     "agent"
@@ -748,10 +904,20 @@ pub fn describe(frozen: &Frozen) -> String {
     lines.push(m.description.clone());
   }
   for t in &m.contributes.tools {
-    lines.push(format!("tool {}: {}", manifest::served_name(&m.id, &t.name), t.command.join(" ")));
+    let by = if t.command.is_empty() { "answered by the runtime".to_owned() } else { t.command.join(" ") };
+    lines.push(format!("tool {}: {by}", manifest::served_name(&m.id, &t.name)));
   }
-  for k in m.contributes.kinds().into_iter().filter(|k| *k != "tools") {
+  for k in m.contributes.kinds().into_iter().filter(|k| *k != "tools" && *k != "schedules") {
     lines.push(format!("contributes {k}"));
+  }
+  for j in &m.contributes.schedules {
+    lines.push(format!("schedule {}: {} (runs unattended while an Acpira engine runs)", j.id, j.cron));
+  }
+  for (dep, range) in &m.dependencies {
+    lines.push(format!("needs plugin {dep} {range}"));
+  }
+  for (dep, range) in &m.optional_dependencies {
+    lines.push(format!("uses plugin {dep} {range} when enabled"));
   }
   lines.push(format!("files: {}", frozen.files.join(", ")));
   lines.push(format!("version {}", frozen.hash));
@@ -878,9 +1044,36 @@ mod tests {
     h.action(PluginAction::Enable { id: "warm".into() }).await.unwrap();
     let css = h.theme_css();
     assert!(css.contains(":root, .acp-shell, [data-theme], .acp-shell.acp-shell[data-skin] {\n  --bg-0: #1b1a18;\n  --brand: oklch(70% 0.1 60);\n}"), "{css}");
-    assert!(css.trim_end().ends_with(".acp-shell { letter-spacing: 0.01em; }"), "{css}");
+    assert!(css.trim_end().ends_with(".acp-shell { letter-spacing: 0.01em; }\n/* */"), "{css}");
     h.action(PluginAction::SafeMode { on: true }).await.unwrap();
     assert_eq!(h.theme_css(), "");
+  }
+
+  #[tokio::test]
+  async fn styles_stack_over_the_skin_and_survive_a_skin_change() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = host(tmp.path());
+    h.start().await;
+    write_theme(tmp.path(), "warm", "#201810", false);
+    for id in ["rows", "dots"] {
+      let dir = tmp.path().join(id);
+      std::fs::create_dir_all(&dir).unwrap();
+      let m = json!({ "schema": 1, "id": id, "version": "1", "description": id, "contributes": { "style": "style.css" } });
+      std::fs::write(dir.join("plugin.json"), m.to_string()).unwrap();
+      std::fs::write(dir.join("style.css"), format!("[data-session] {{ --{id}: 1; }}")).unwrap();
+      h.action(PluginAction::Enable { id: id.into() }).await.unwrap();
+    }
+    // No skin yet: the styles alone
+    let css = h.theme_css();
+    assert!(css.contains("--rows: 1") && css.contains("--dots: 1"), "{css}");
+    h.action(PluginAction::Enable { id: "warm".into() }).await.unwrap();
+    let css = h.theme_css();
+    let (skin, rows) = (css.find("#201810").unwrap(), css.find("--rows: 1").unwrap());
+    assert!(skin < rows && css.contains("--dots: 1"), "{css}");
+    h.action(PluginAction::Skin { id: None }).await.unwrap();
+    let css = h.theme_css();
+    assert!(!css.contains("#201810") && css.contains("--rows: 1"), "{css}");
+    assert_eq!(h.view().plugins.iter().find(|p| p.id == "rows").map(|p| p.layer.as_str()), Some("interface"));
   }
 
   /// A skin with a document of its own, or (`scene`) a scene for Acpira's renderer

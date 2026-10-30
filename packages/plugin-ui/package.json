@@ -1,0 +1,20 @@
+{
+  "name": "@acpira/plugin-ui",
+  "private": true,
+  "description": "The React runtime and component kit a plugin's interface piece runs on inside its sandboxed frame; packages/ui builds it into dist/webview/plugin-ui.js",
+  "type": "module",
+  "exports": {
+    ".": "./index.tsx",
+    "./lib": "./lib.ts"
+  },
+  "dependencies": {
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "vitest": "catalog:"
+  }
+}

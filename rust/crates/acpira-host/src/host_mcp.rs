@@ -62,8 +62,10 @@ with the conclusion only. When you mention a session, write the Markdown link th
 
 /// Appended with the relay env: the model learns that it may extend Acpira itself (`docs/dev/plugins.md`)
 const PLUGINS_INSTRUCTIONS: &str = "You can extend Acpira for every agent without a build or a restart: a plugin is a folder \
-under ~/.acpira/plugins/<id>/ with a plugin.json (script tools, MCP servers, hooks, a theme, prompt sections or an agent). \
-Call plugin_guide for the format and examples, write the folder, then call plugin_activate: the user confirms on a card.";
+under ~/.acpira/plugins/<id>/ with a plugin.json, written in TypeScript with React for its interface (Acpira compiles it), \
+or as plain scripts. It can add tools, hooks into every prompt and permission, slash commands and composer buttons, \
+interface pieces, schedules, skills, model sources, a theme or style, MCP servers or a specialised agent. Call plugin_guide \
+for the format and examples, write the folder, then call plugin_activate: the user confirms on a card.";
 
 pub use acpira_shared::host_tools::{PLUGIN_ACTIVATE, PLUGIN_GUIDE};
 

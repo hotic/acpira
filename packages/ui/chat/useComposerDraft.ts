@@ -6,7 +6,7 @@ import type { Draft } from '@acpira/shared/transcript';
 const DRAFTS = new Map<string, { text: string; drafts: Draft[] }>();
 
 type Update = (drafts: Draft[]) => Draft[];
-interface Sink { update: (u: Update) => void; focus: () => void }
+interface Sink { update: (u: Update) => void; focus: () => void; write?: (text: string, replace: boolean) => void; key?: string }
 
 // The main composer (never an inline history / queue editor) also takes drafts from outside it: the editor's "Add to chat" and quotes
 // picked in the transcript. Updates made while no main composer is mounted wait for the next one
@@ -19,7 +19,21 @@ export function updateMainComposer(update: Update, focus = false) {
   if (focus) sink.focus();
 }
 
-export function useComposerDraft(draftKey?: string, editText?: string, main?: { focus: () => void }) {
+// Text for the main composer from a plugin's process (`ui/composer`): at the caret, or in place of the draft. With a
+// session, only while the main composer shows it; without, only in the focused window (the push reaches every page).
+// Dropped when no main composer takes it: it was meant for the field on screen
+export function writeMainComposer(text: string, replace: boolean, session?: string) {
+  if (session !== undefined ? sink?.key !== session : !document.hasFocus()) return;
+  sink?.write?.(text, replace);
+}
+
+// A draft command's text that came back after its composer went (the user switched sessions): parked as that
+// session's draft, so it is there on the way back
+export function parkDraftText(draftKey: string, text: string) {
+  DRAFTS.set(draftKey, { text, drafts: DRAFTS.get(draftKey)?.drafts ?? [] });
+}
+
+export function useComposerDraft(draftKey?: string, editText?: string, main?: { focus: () => void; write?: (text: string, replace: boolean) => void }) {
   const parked = draftKey ? DRAFTS.get(draftKey) : undefined;
   // An inline history editor parks under its own key too, so what was typed there outlives a click elsewhere and wins over the
   // original message text on the next open
@@ -31,13 +45,14 @@ export function useComposerDraft(draftKey?: string, editText?: string, main?: { 
   }, [draftKey, text, drafts]);
   const isMain = !!main;
   const focus = main?.focus;
+  const write = main?.write;
   useEffect(() => {
     if (!isMain || !focus) return;
-    const own: Sink = { update: u => setDrafts(u), focus };
+    const own: Sink = { update: u => setDrafts(u), focus, write, key: draftKey };
     sink = own;
     for (const u of pending.splice(0)) setDrafts(u);
     return () => { if (sink === own) sink = undefined; };
-  }, [isMain, focus]);
+  }, [isMain, focus, write, draftKey]);
   return { text, setText, drafts, setDrafts };
 }
 

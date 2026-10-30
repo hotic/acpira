@@ -4,6 +4,7 @@ import type { PluginSkin, PluginsView } from '@acpira/shared/plugins';
 import type { HostMsg } from '@acpira/shared/protocol';
 import { desktopShell } from '../desktop';
 import { motionOff, revealKeepsOld, revealSkin, type Point } from '../effects/magic';
+import { playWhoosh } from '../effects/whoosh';
 import { applyPluginTheme } from '../pluginTheme';
 import { vscodeApi } from '../vscodeApi';
 
@@ -110,6 +111,7 @@ async function bringIn(m: Extract<HostMsg, { type: 'pluginTheme' }>) {
   }
   // The edge glows in the colour of the skin it uncovers, or of the one it takes away
   const ring = (o.back ? state.shown?.brand : skin?.brand) || getComputedStyle(document.querySelector('.acp-shell') ?? document.documentElement).getPropertyValue('--brand').trim();
+  playWhoosh('skin');
   if (revealKeepsOld()) {
     await revealSkin(o.at, () => flushSync(commit), { back: o.back, ring });
     return;
