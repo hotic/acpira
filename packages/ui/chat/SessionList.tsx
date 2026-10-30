@@ -1,4 +1,4 @@
-import { Component, createRef, Fragment, memo, useDeferredValue, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { Component, createRef, Fragment, memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, Circle, Copy, Ellipsis, Folder, FolderInput, FolderOpen, FolderPlus, Import, Layers, ListFilter, LoaderCircle, Pencil, Pin, PinOff, Plus, Search, Server, SquarePen, Trash2, Undo2, X } from 'lucide-react';
 import type { AgentId, AgentInfo, CategoryOp, NativeSessionInfo, SessionCategories, SessionCategory, SessionSection, SessionSummary } from '@acpira/shared/transcript';
 import type { ExportFormat, NativeSessionsState, SessionHit } from '@acpira/shared/protocol';
@@ -27,6 +27,7 @@ import { markParts, matchesTitle, searchTerms } from './sessionSearch';
 import { buildSessionTree, categoryOf, draggable, dropAction, isChatFolder, offList, type CategoryNode, type MoveTarget, type ProjectNode, type SessionTree } from './sessionTree';
 import { clearFilters, filterCount, groupSessions, passes, readView, sortSessions, VIEW_KEY, type FlatGroup, type ListView, type TimeBucket } from './sessionView';
 import { ViewMenu } from './ViewMenu';
+import { clockRoot, rowDone, rowState } from './styleClock';
 import { CONNECTION_STATE_NAME, useConnections, useFolderHost } from '../remote/api';
 import { RemoteFolderIcon } from '../remote/RemoteFolderIcon';
 
@@ -47,6 +48,10 @@ const LATEST = 5;
 const MORE_MARKS = 3;
 // Each click on the "more" row shows this many more, as Codex does; once all are out it reads "show less"
 const MORE_PAGE = 10;
+// Running sessions (a turn on, waiting on the user, or background work) older than the latest few stay out of the "more"
+// fold, up to this many; past that the list would stop being a short one and they fold like the rest
+const LIVE_KEEP = 5;
+const isLive = (s: SessionSummary) => s.state === 'working' || s.state === 'waiting' || s.state === 'background';
 
 // Ring and dots share one fixed slot so every mark sits on the same centre line, and each names its meaning on hover.
 // The ring is drawn smaller than the slot: at full size its arc outweighed even an 8 px dot
@@ -155,7 +160,9 @@ class FlipRows extends Component<{ on: boolean; layout: string; children: ReactN
 // What decides where every row sits; FlipRows measures only when it changed
 function layoutOf(tree: SessionTree, folded: string[], more: Map<string, number>, active?: string): string {
   const ids = (list: SessionSummary[]) => list.map(s => s.id).join();
-  return [folded.join(), active, ids(tree.pinned), `chats>${more.get(CHATS) ?? 0}>${ids(tree.chats)}`, ...tree.projects.map(p =>
+  // A session that starts or stops running leaves or rejoins the "more" fold (cutRows)
+  const live = (list: SessionSummary[]) => list.filter(isLive).map(s => s.id).join();
+  return [folded.join(), live(tree.chats), ...tree.projects.map(p => live(p.loose)), active, ids(tree.pinned), `chats>${more.get(CHATS) ?? 0}>${ids(tree.chats)}`, ...tree.projects.map(p =>
     `${p.cwd}>${p.open}${more.get(p.cwd) ?? 0}>${ids(p.pinned)}>${ids(p.loose)}>${p.categories.map(n => `${n.category.id}${n.open}:${ids(n.sessions)}`).join(';')}`)].join('|');
 }
 
@@ -185,6 +192,9 @@ export interface SessionListProps {
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
   onPin: (id: string, pinned: boolean) => void;
+  // The row menu's "archive" (beside delete) and "mark as unread"; absent where the host does not offer them
+  onArchive?: (id: string, archived: boolean) => void;
+  onUnread?: (id: string, unread: boolean) => void;
   // Re-home a session: into this window's workspace (no target: the "move here" action) or, dragged onto another project's
   // group under "all", into that project (and its category when dropped on one)
   onMove?: (id: string, to?: MoveTarget) => void;
@@ -298,7 +308,7 @@ function perKey<T>(compute: (key: string) => T): (key: string) => T {
 // (FlipRows). The desktop app (DesktopContext) lists its registered projects in their own order without categories, each
 // open project its latest sessions with the rest behind one row.
 // Deletion applies immediately, undo lives on the Toast at the shell's bottom
-export const SessionList = memo(function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, activeAgent, nativeSessions, onListNative, onImportNative, onSelect, onRename, onDelete, onPin, onMove, onExport, onCopy, onSearch, categories: categoryState, onFile, onCategoryOp, onNewInCategory, nav, onNew, onNewIn, onAddProject, onAddRemote, onRevealPath, onCopyPath, fresh, onMarkAllRead, chats, onNewChat }: SessionListProps) {
+export const SessionList = memo(function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, activeAgent, nativeSessions, onListNative, onImportNative, onSelect, onRename, onDelete, onPin, onArchive, onUnread, onMove, onExport, onCopy, onSearch, categories: categoryState, onFile, onCategoryOp, onNewInCategory, nav, onNew, onNewIn, onAddProject, onAddRemote, onRevealPath, onCopyPath, fresh, onMarkAllRead, chats, onNewChat }: SessionListProps) {
   const locale = useLocale();
   const desktop = useDesktop();
   // The SSH hosts the add menu offers folders on; undefined until the engine answered for them
@@ -325,6 +335,12 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   // Desktop: per project, how many sessions past the latest few are shown. A click on the "more" row adds a page; with
   // nothing left to show it folds them all away again
   const listFade = useScrollFade<HTMLDivElement>();
+  // The desktop column's list fades at its edges as well as carrying the style clock
+  const listRoot = useCallback((el: HTMLDivElement | null) => {
+    const clock = clockRoot(el);
+    const fade = desktop ? listFade(el) : undefined;
+    return () => { clock?.(); fade?.(); };
+  }, [desktop, listFade]);
   const [more, setMore] = useState<Map<string, number>>(() => new Map());
   const stepMore = (cwd: string, total: number) => setMore(prev => {
     const next = new Map(prev);
@@ -573,6 +589,8 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
     rename: (s, title) => { setEditing(undefined); if (title.trim() && title.trim() !== s.title) onRename(s.id, title); },
     delete: s => { setEditing(undefined); onDelete(s.id); },
     pin: s => onPin(s.id, !s.pinned),
+    archive: (s, archived) => onArchive?.(s.id, archived),
+    unread: (s, unread) => onUnread?.(s.id, unread),
     move: (s, to) => onMove?.(s.id, to),
     export: (s, format) => onExport?.(s.id, format),
     copy: (s, what) => onCopy?.(s.id, what),
@@ -606,6 +624,8 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
       moveTo={!!onMove && !s.external}
       exportable={!!onExport}
       copyable={!!onCopy}
+      archivable={!!onArchive && !s.external}
+      markable={!!onUnread}
       fileable={filing && !desktop && !s.external}
       projects={projectsBesides(s.cwd)}
       categories={categoriesIn(s.cwd)}
@@ -662,9 +682,15 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   const cutRows = (key: string, list: SessionSummary[], flush?: boolean) => {
     const cut = desktop && !q && view.per ? view.per : list.length;
     const extra = more.get(key) ?? 0;
-    // An active session still folded behind "more" sits above it on its own instead of stretching the list down to it
-    const late = list.slice(cut + extra).find(s => s.id === activeId);
-    const rest = late ? list.slice(cut).filter(s => s !== late) : list.slice(cut);
+    // The active session and running ones still folded behind "more" sit above it on their own, in list order, instead
+    // of stretching the list down to them; a crowd of running ones folds like the rest (LIVE_KEEP)
+    const beyond = list.slice(cut + extra);
+    const live = beyond.filter(isLive);
+    const kept = live.length <= LIVE_KEEP ? new Set(live) : new Set<SessionSummary>();
+    const active = beyond.find(s => s.id === activeId);
+    if (active) kept.add(active);
+    const late = beyond.filter(s => kept.has(s));
+    const rest = late.length ? list.slice(cut).filter(s => !kept.has(s)) : list.slice(cut);
     const shown = Math.min(extra, rest.length);
     // A flat keyed array, not a fragment: a project's pinned rows are its siblings, so a row pinned or unpinned in place
     // keeps its element (renderBody)
@@ -672,7 +698,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
       ...list.slice(0, cut).map(renderItem),
       // One fold per page, so each click opens only the page it adds (a closed fold releases its rows)
       ...(rest.length > 0 ? pages(rest).map((page, i) => <Fold key={`fold:${i}`} open={shown > i * MORE_PAGE}>{page.map(renderItem)}</Fold>) : []),
-      late && renderItem(late),
+      ...late.map(renderItem),
       rest.length > 0 && <MoreRow key="more" flush={flush} open={shown >= rest.length} rest={rest.slice(shown)} nameOf={nameOf} onToggle={() => stepMore(key, rest.length)} />,
     ];
   };
@@ -732,6 +758,10 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   // `list`: the run the project sits in (a section's or the unsectioned ones), whose previous entry sets the spacing
   const renderProject = (p: ProjectNode, i: number, list: ProjectNode[]) => {
     const all = [...p.pinned, ...p.categories.flatMap(n => n.sessions), ...p.loose];
+    // Preview the most-used agents across the folded project's sessions, including idle ones.
+    const counts = new Map<AgentId, number>();
+    if (!p.open) for (const s of all) counts.set(s.agent, (counts.get(s.agent) ?? 0) + 1);
+    const marks = [...counts].sort((a, b) => b[1] - a[1]).slice(0, MORE_MARKS);
     // A session of another project dropped anywhere on the group (its categories keep their own zones) moves here: the
     // group is framed (`data-group`); a held project's insert line sits on its edge
     return (
@@ -748,6 +778,9 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
           count={desktop ? undefined : p.count}
           open={p.open}
           state={p.open ? undefined : aggregate(all)}
+          preview={marks.map(([id]) => (
+            <AgentMark key={id} id={id} name={nameOf(id)} className="size-3" />
+          ))}
           fresh={fresh === p.cwd}
           onToggle={filing ? () => { if (!p.open) resetMore(p.cwd); onCategoryOp?.({ op: 'collapseProject', cwd: p.cwd, collapsed: p.open }); } : undefined}
           onNewCategory={filing && !desktop ? () => createCategory(p.cwd) : undefined}
@@ -886,7 +919,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
             to the window's foot, so the list fades out at its bottom edge, and under the rows on top once it scrolled (rows
             cut off by a hard edge there read as sliced). No top margin of its own: the first section label's mt-gap is the
             step, the same one as between later sections */}
-        <div ref={desktop ? listFade : undefined} className={cn('scroll-thin scroll-stable -mx-gap-half flex min-h-0 flex-col overflow-y-auto pl-gap-half pr-list-gutter', desktop ? 'flex-1 pb-gap list-fade' : 'pb-1')}
+        <div ref={listRoot} className={cn('scroll-thin scroll-stable -mx-gap-half flex min-h-0 flex-col overflow-y-auto pl-gap-half pr-list-gutter', desktop ? 'flex-1 pb-gap list-fade' : 'pb-1')}
           role="listbox" aria-label={t('session.listAria')}
           style={timeCh ? { '--session-time': `${timeCh}ch` } as CSSProperties : undefined}
           onDragOver={onDragOver} onDrop={onDrop}>
@@ -997,7 +1030,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
       {/* The scroller bleeds through its container's padding (docked panel p-gap-half, popover p-1) and pads it back, so the
           thumb rides the panel edge, the divider runs edge to edge and the rows stay where they were. The gutter stays
           reserved, so a search that ends the overflow does not shift the times */}
-      <div className={cn('scroll-thin scroll-stable mt-1 flex min-h-0 flex-col overflow-y-auto border-t border-line pb-1', fill ? '-mx-gap-half pl-gap-half pr-list-gutter' : '-mx-1 pl-1 pr-0')} role="listbox" aria-label={t('session.listAria')}
+      <div ref={clockRoot} className={cn('scroll-thin scroll-stable mt-1 flex min-h-0 flex-col overflow-y-auto border-t border-line pb-1', fill ? '-mx-gap-half pl-gap-half pr-list-gutter' : '-mx-1 pl-1 pr-0')} role="listbox" aria-label={t('session.listAria')}
         style={timeCh ? { '--session-time': `${timeCh}ch` } as CSSProperties : undefined}
         onDragOver={onDragOver} onDrop={onDrop}>
         <LazyPanelContext.Provider value>
@@ -1159,7 +1192,7 @@ function MoreRow({ open, rest, nameOf, onToggle, flush }: { open: boolean; rest:
 // menu, which right-click opens too. Collapsed, both still show the most urgent state inside. A project on an SSH host
 // (`folder` is `ssh://…`) has the monochrome globe-badged folder and, right-aligned in the tail, the host's name and its
 // connection dot (green connected, breathing while connecting, dimmed when off, amber when failed)
-function GroupHeader({ project, sub, name, title, folder, badge, count, open, state, fresh, dragging, editing, onDragStart, onDragEnd, onToggle, onRename, onNewSession, newSessionLabel = t('session.category.newSession'), onNewCategory, menu }: {
+function GroupHeader({ project, sub, name, title, folder, badge, count, open, state, preview, fresh, dragging, editing, onDragStart, onDragEnd, onToggle, onRename, onNewSession, newSessionLabel = t('session.category.newSession'), onNewCategory, menu }: {
   project?: boolean;
   sub?: boolean;
   name: string;
@@ -1171,6 +1204,7 @@ function GroupHeader({ project, sub, name, title, folder, badge, count, open, st
   count?: number;
   open: boolean;
   state?: Mark;
+  preview?: ReactNode;
   // A project just added: the row flashes once and its group scrolls into view, clear of the list's faded bottom edge
   fresh?: boolean;
   dragging?: boolean;
@@ -1254,6 +1288,7 @@ function GroupHeader({ project, sub, name, title, folder, badge, count, open, st
       {!editing && (
         <span className={cn(STACK, 'ml-auto shrink-0 items-center text-3 font-normal text-fg-3 tabular-nums')}>
           <span className={cn('flex items-center justify-end gap-1.5', actions && CONCEAL)}>
+            {preview && <span className="flex items-center gap-1 opacity-70 empty:hidden">{preview}</span>}
             {state && <StateMark {...state} />}
             {host && <>
               <span title={hostTitle || host.alias} className="max-w-host truncate text-fg-3/70">{host.alias}</span>
@@ -1449,6 +1484,9 @@ interface ItemProps {
   projects?: MoveProject[];
   exportable?: boolean;
   copyable?: boolean;
+  // The menu's "archive" (never a ChatGPT mirror) and "mark as unread / read"
+  archivable?: boolean;
+  markable?: boolean;
   // Native drag: the row may be filed by dragging (not pinned, not a ChatGPT mirror)
   drag?: boolean;
   dragging?: boolean;
@@ -1464,6 +1502,8 @@ interface RowActions {
   rename: (s: SessionSummary, title: string) => void;
   delete: (s: SessionSummary) => void;
   pin: (s: SessionSummary) => void;
+  archive: (s: SessionSummary, archived: boolean) => void;
+  unread: (s: SessionSummary, unread: boolean) => void;
   // No target: into this window's workspace ("move here")
   move: (s: SessionSummary, to?: MoveTarget) => void;
   export: (s: SessionSummary, format: ExportFormat) => void;
@@ -1483,7 +1523,7 @@ interface RowActions {
 // (`mark-flip`, motion.css), so a pointer sweeping down the list flips nothing.
 // Memoized: a push re-renders only the rows whose summary (kept by reference while unchanged, App's reuseById) or
 // place-dependent props changed
-const Item = memo(function Item({ session: s, agentName, terms, snippet, active, time, project, model, nudge, editing, actions, moveHere, moveTo, projects, exportable, copyable, drag, dragging, fileable, categories }: ItemProps) {
+const Item = memo(function Item({ session: s, agentName, terms, snippet, active, time, project, model, nudge, editing, actions, moveHere, moveTo, projects, exportable, copyable, archivable, markable, drag, dragging, fileable, categories }: ItemProps) {
   // Memo / a cached parent can skip this on a language switch: subscribe so the strings follow the new locale
   useLocale();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1497,6 +1537,8 @@ const Item = memo(function Item({ session: s, agentName, terms, snippet, active,
     session: s,
     onRename: () => actions.current.edit(s),
     onPin: () => actions.current.pin(s),
+    onUnread: markable ? unread => actions.current.unread(s, unread) : undefined,
+    onArchive: archivable ? archived => actions.current.archive(s, archived) : undefined,
     onMove: moveHere ? () => actions.current.move(s) : undefined,
     projects,
     onMoveTo: moveTo ? cwd => actions.current.move(s, { cwd }) : undefined,
@@ -1514,6 +1556,9 @@ const Item = memo(function Item({ session: s, agentName, terms, snippet, active,
       aria-selected={active}
       tabIndex={0}
       data-session={s.id}
+      data-state={rowState(s)}
+      data-done={s.completedAt !== undefined || undefined}
+      style={rowDone(s)}
       data-menu-open={menuOpen || undefined}
       draggable={!!drag}
       onDragStart={drag ? e => actions.current.dragStart(s, e) : undefined}

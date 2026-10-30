@@ -351,8 +351,14 @@ pub enum HostMsg {
   /// A message a plugin's process sends its frames (`ui/post`), for the page to hand to that plugin's frames only
   PluginPost { plugin: String, message: Value },
   /// Text a plugin's process puts into the composer of the session on screen (`ui/composer`): at the cursor, or in
-  /// place of the draft
-  PluginComposer { plugin: String, text: String, replace: bool },
+  /// place of the draft. With `session` only a page showing that session takes it; without, only the focused page
+  PluginComposer {
+    plugin: String,
+    text: String,
+    replace: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session: Option<String>,
+  },
   /// The answer to `PluginCall` with the same id: the method's result, or why there is none
   PluginCalled {
     id: String,
@@ -821,6 +827,17 @@ pub enum WebviewMsg {
     id: String,
     pinned: bool,
   },
+  /// Archive a session (left out of the list, kept on disk) or bring it back
+  ArchiveSession {
+    id: String,
+    archived: bool,
+  },
+  /// The row menu's "mark as unread / read" for one session; a mark set on a session a page shows holds until a page
+  /// selects it again
+  SetSessionUnread {
+    id: String,
+    unread: bool,
+  },
   /// File a session under a category of its own project, or take it out (`None`); filing unpins it
   SetSessionCategory {
     id: String,
@@ -858,11 +875,14 @@ pub enum WebviewMsg {
     id: String,
     format: ExportFormat,
   },
-  /// "Copy as Markdown": the export's Markdown as text, answered with a `sessionMarkdown` message echoing `seq`
+  /// "Copy as Markdown": the export's Markdown as text, answered with a `sessionMarkdown` message echoing `seq`. `format`
+  /// asks for another export's content instead (a device saves it itself); an engine without the field answers Markdown
   SessionMarkdown {
     id: String,
     #[serde(deserialize_with = "crate::num::lenient_i64")]
     seq: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    format: Option<ExportFormat>,
   },
   SelectAccount {
     session_id: Option<String>,
@@ -1029,6 +1049,15 @@ pub enum WebviewMsg {
     method: String,
     #[serde(default)]
     params: Value,
+  },
+  /// A plugin command's composer button with `draft`: run it with the draft as its arguments for the text that replaces
+  /// it; answered by `PluginCalled` with `{ text }` (absent when the command gave none)
+  PluginCommand {
+    id: String,
+    session_id: String,
+    name: String,
+    #[serde(default)]
+    arguments: String,
   },
   /// The built-in agent's model sources: read them, or apply an edit and get the view back
   Providers,

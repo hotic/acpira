@@ -20,8 +20,13 @@ describe('session list view', () => {
       s('bg', { state: 'background', unread: true }),
       s('done', { state: 'unread', agent: 'codex', model: { id: 'gpt-6-astra', name: 'GPT-6 Astra' } }),
       s('old', { updatedAt: ago(10) }),
+      s('shelf', { state: 'unread', archived: true }),
     ];
     const kept = (v: ListView) => list.filter(x => passes(x, v, now)).map(x => x.id);
+    // Archived sessions stay out of every view until "archived" is picked, which is one more alternative of its kind
+    expect(kept(DEFAULT_VIEW)).toEqual(['run', 'bg', 'done', 'old']);
+    expect(kept(view({ status: ['archived'] }))).toEqual(['shelf']);
+    expect(kept(view({ status: ['archived', 'working'] }))).toEqual(['run', 'shelf']);
     // "Unread" takes the background session with a reply nobody looked at too
     expect(kept(view({ status: ['unread'] }))).toEqual(['bg', 'done']);
     expect(kept(view({ status: ['working', 'unread'], agents: ['codex'] }))).toEqual(['done']);

@@ -1,6 +1,6 @@
 import { cloneElement, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactElement, type ReactNode } from 'react';
 import { ContextMenu } from '@base-ui/react/context-menu';
-import { AppWindow, ChevronRight, Copy, FileDown, FileJson, FileText, Folder, FolderInput, Inbox, LetterText, Link, Pencil, Pin, PinOff, SquareArrowOutUpRight, Trash2, Undo2 } from 'lucide-react';
+import { AppWindow, Archive, ArchiveRestore, ChevronRight, Copy, FileDown, FileJson, FileText, Folder, FolderInput, Inbox, LetterText, Link, Mail, MailCheck, Pencil, Pin, PinOff, SquareArrowOutUpRight, Trash2, Undo2 } from 'lucide-react';
 import type { ExportFormat } from '@acpira/shared/protocol';
 import type { SessionCategory, SessionSummary } from '@acpira/shared/transcript';
 import { t } from '../i18n';
@@ -25,6 +25,10 @@ export interface SessionMenuItemsProps {
   // Row only: starts the inline RenameInput
   onRename?: () => void;
   onPin: () => void;
+  // "Mark as unread", or "mark as read" while the session carries the mark
+  onUnread?: (unread: boolean) => void;
+  // "Archive", or "unarchive" for an archived session; sits beside delete as its keeping alternative
+  onArchive?: (archived: boolean) => void;
   // "Move to this project", only when the row offers it and there is no "move to project" submenu (which lists this project)
   onMove?: () => void;
   // "Move to project": every other project the list knows (the window's first), the pick re-homes the session there
@@ -73,17 +77,24 @@ export function Submenu({ icon, label, value, side = 'inline-start', children }:
   );
 }
 
-// The session menu's rows (Cursor's shape): session actions, copy and export, delete. Shared by the "…" dropdown of the list row and the
+// Whether the list shows the session's unread mark (a background session carries it beside its ring)
+export const isUnread = (s: SessionSummary) => s.state === 'unread' || !!s.unread;
+
+// The session menu's rows (Cursor's shape): session actions, copy and export, archive and delete. Shared by the "…" dropdown of the list row and the
 // header and by the row's right-click menu; Base UI's context menu is built from the same Menu parts, so the rows are one set.
 // An item only renders when its handler exists; a separator only between two non-empty groups
 // `inWindow`: the desktop app, where "open in editor" opens the session in a window of its own
-function sessionMenuItems({ session, onOpenInEditor, onRename, onPin, onMove, projects = [], onMoveTo, onExport, onCopy, onDelete, categories = [], onFile, onNewCategory }: SessionMenuItemsProps, inWindow = false): ReactElement[] {
+function sessionMenuItems({ session, onOpenInEditor, onRename, onPin, onUnread, onArchive, onMove, projects = [], onMoveTo, onExport, onCopy, onDelete, categories = [], onFile, onNewCategory }: SessionMenuItemsProps, inWindow = false): ReactElement[] {
   const top: ReactElement[] = [];
   if (onOpenInEditor) {
     top.push(<DropdownMenu.Item key="editor" onClick={onOpenInEditor}><OptionContent icon={inWindow ? <AppWindow strokeWidth={1.5} /> : <SquareArrowOutUpRight strokeWidth={1.5} />}>{t(inWindow ? 'session.openInWindow' : 'session.openInEditor')}</OptionContent></DropdownMenu.Item>);
   }
   if (onRename) top.push(<DropdownMenu.Item key="rename" onClick={onRename}><OptionContent icon={<Pencil strokeWidth={1.5} />}>{t('common.rename')}</OptionContent></DropdownMenu.Item>);
   top.push(<DropdownMenu.Item key="pin" onClick={onPin}><OptionContent icon={session.pinned ? <PinOff strokeWidth={1.5} /> : <Pin strokeWidth={1.5} />}>{session.pinned ? t('common.unpin') : t('common.pin')}</OptionContent></DropdownMenu.Item>);
+  if (onUnread) {
+    const unread = isUnread(session);
+    top.push(<DropdownMenu.Item key="unread" onClick={() => onUnread(!unread)}><OptionContent icon={unread ? <MailCheck strokeWidth={1.5} /> : <Mail strokeWidth={1.5} />}>{t(unread ? 'session.markRead' : 'session.markUnread')}</OptionContent></DropdownMenu.Item>);
+  }
   if (onFile && !session.pinned) {
     const filed = categories.some(c => c.id === session.category);
     top.push(<Submenu key="file" icon={<Inbox strokeWidth={1.5} />} label={t('session.category.moveTo')}>{[
@@ -136,7 +147,9 @@ function sessionMenuItems({ session, onOpenInEditor, onRename, onPin, onMove, pr
     ...top.length > 0 && middle.length > 0 ? [separator('sep-top')] : [],
     ...middle,
     separator('sep-delete'),
-    <DropdownMenu.Item key="delete" className="text-danger" onClick={onDelete}><OptionContent icon={<Trash2 strokeWidth={1.5} />}>{t('common.delete')}</OptionContent></DropdownMenu.Item>,
+    // Archive keeps the session (the list's archived filter shows it again); delete is the one with no way back once its undo is gone
+    ...onArchive ? [<DropdownMenu.Item key="archive" onClick={() => onArchive(!session.archived)}><OptionContent icon={session.archived ? <ArchiveRestore strokeWidth={1.5} /> : <Archive strokeWidth={1.5} />}>{t(session.archived ? 'session.unarchive' : 'session.archive')}</OptionContent></DropdownMenu.Item>] : [],
+    <DropdownMenu.Item key="delete" className="text-danger" onClick={onDelete}><OptionContent icon={<Trash2 strokeWidth={1.5} />}>{t(onArchive ? 'session.deleteForever' : 'common.delete')}</OptionContent></DropdownMenu.Item>,
   ];
 }
 

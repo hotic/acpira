@@ -32,9 +32,12 @@ impl AcpSession {
       updated_at: c.updated_at.clone(),
       created_at: Some(self.created_at.clone()).filter(|c| !c.is_empty()),
       pinned: c.pinned,
+      archived: c.archived,
       category: c.category.clone(),
       state: None,
       unread: None,
+      question: None,
+      completed_at: completed_at(visible_turns(&c)),
       model: session_model(&c.state.controls),
     }
   }
@@ -43,25 +46,33 @@ impl AcpSession {
   /// running. A permission card or question keeps its turn running, so waiting is checked first: otherwise a turn blocked
   /// on the user shows the same spinner as one at work
   pub fn list_state(&self) -> Option<SummaryState> {
+    self.list_marks().0
+  }
+
+  /// `SessionSummary::completed_at` now, before the record carrying it is written
+  pub fn completed_at(&self) -> Option<i64> {
+    completed_at(visible_turns(&self.core.lock()))
+  }
+
+  /// `list_state`, and beside `Waiting` whether only questions wait (`SessionSummary::question`)
+  pub fn list_marks(&self) -> (Option<SummaryState>, bool) {
     let c = self.core.lock();
     // A child's card (a summoned one may ask long after the root turn ended) waits on the user just the same
-    let waiting = visible_turns(&c).any(|t| {
-      t.as_agent().is_some_and(|a| {
-        a.blocks.iter().any(|b| matches!(b, AgentBlock::Permission(_)) || matches!(b, AgentBlock::Question(q) if q.outcome.is_none()))
-      })
-    }) || c.perms.pending.iter().any(|p| p.node_id.is_some())
-      || c.questions.pending.iter().any(|q| q.node_id.is_some());
-    if waiting {
-      return Some(SummaryState::Waiting);
+    let blocks = || visible_turns(&c).filter_map(Turn::as_agent).flat_map(|a| a.blocks.iter());
+    let permission = blocks().any(|b| matches!(b, AgentBlock::Permission(_))) || c.perms.pending.iter().any(|p| p.node_id.is_some());
+    let question = blocks().any(|b| matches!(b, AgentBlock::Question(q) if q.outcome.is_none())) || c.questions.pending.iter().any(|q| q.node_id.is_some());
+    if permission || question {
+      return (Some(SummaryState::Waiting), !permission);
     }
     if c.phase.running {
-      return Some(SummaryState::Working);
+      return (Some(SummaryState::Working), false);
     }
-    match visible_turns(&c).last() {
+    let state = match visible_turns(&c).last() {
       Some(Turn::Agent(a)) if a.stop == Some(TurnStop::Error) => Some(SummaryState::Error),
       _ if has_live_async_task(&c.state) || Self::relay_background(&c) => Some(SummaryState::Background),
       _ => None,
-    }
+    };
+    (state, false)
   }
 
   /// What a notification about this session says below its title (`SessionManager::watch_attention`): the open card's
@@ -362,7 +373,11 @@ struct RecordRef<'a> {
   #[serde(skip_serializing_if = "Option::is_none")]
   pinned: Option<bool>,
   #[serde(skip_serializing_if = "Option::is_none")]
+  archived: Option<bool>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   category: Option<&'a str>,
+  #[serde(skip_serializing_if = "std::ops::Not::not")]
+  renamed: bool,
   #[serde(skip_serializing_if = "std::ops::Not::not")]
   history_pending: bool,
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -402,7 +417,9 @@ impl RecordSource for AcpSession {
       usage: c.state.usage.as_ref(),
       commands: &c.state.commands,
       pinned: c.pinned,
+      archived: c.archived,
       category: c.category.as_deref(),
+      renamed: c.lineage.renamed,
       history_pending: c.lineage.history_pending,
       forked_from: c.lineage.forked_from.as_ref(),
       import_pending: c.lineage.import_pending,

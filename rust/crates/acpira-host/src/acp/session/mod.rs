@@ -161,6 +161,8 @@ pub(crate) struct Lineage {
   pub import_pending: bool,
   pub imported_from: Option<ImportedFrom>,
   pub agent_title_muted: bool,
+  /// The user renamed the session (`SessionRecord::renamed`): the agent's titles stay ignored for good
+  pub renamed: bool,
 }
 
 impl Lineage {
@@ -179,6 +181,7 @@ pub(crate) struct Core {
   pub account_id: Option<String>,
   pub updated_at: String,
   pub pinned: Option<bool>,
+  pub archived: Option<bool>,
   pub category: Option<String>,
   pub acp_session_id: Option<String>,
   /// The native session came from session/new and no prompt has reached it yet. Claude Code has written no transcript,
@@ -360,6 +363,7 @@ impl AcpSession {
           account_id: record.account_id,
           updated_at: record.updated_at,
           pinned: record.pinned,
+          archived: record.archived,
           category: record.category,
           acp_session_id: record.acp_session_id,
           proc: None,
@@ -400,6 +404,7 @@ impl AcpSession {
           lineage: Lineage {
             history_pending: record.history_pending,
             agent_title_muted: record.forked_from.is_some(),
+            renamed: record.renamed,
             forked_from: record.forked_from,
             import_pending: record.import_pending,
             imported_from: record.imported_from,
@@ -461,7 +466,9 @@ impl AcpSession {
         usage: None,
         commands: vec![],
         pinned: None,
+        archived: None,
         category: None,
+        renamed: false,
         history_pending: false,
         forked_from: None,
         import_pending: false,
@@ -503,9 +510,10 @@ impl AcpSession {
   }
 
 
-  /// A user-initiated message moves the session to the top of the list
+  /// A user-initiated message moves the session to the top of the list, and back out of the archive
   pub(crate) fn bump(&self, c: &mut Core) {
     c.updated_at = now_iso();
+    c.archived = None;
     self.touch(c);
   }
 
@@ -613,6 +621,7 @@ impl AcpSession {
     }
     let mut c = self.core.lock();
     c.state.title = Some(crate::util::clip(t, crate::limits::RENAME_MAX));
+    c.lineage.renamed = true;
     self.touch(&mut c);
   }
 
@@ -623,6 +632,13 @@ impl AcpSession {
     if pinned {
       c.category = None;
     }
+    self.touch(&mut c);
+  }
+
+  /// Archiving keeps the session's time, pin and category, so bringing it back puts it where it was
+  pub fn set_archived(&self, archived: bool) {
+    let mut c = self.core.lock();
+    c.archived = archived.then_some(true);
     self.touch(&mut c);
   }
 

@@ -422,6 +422,7 @@ pub fn chatgpt_summary(r: &ChatGptRecord, now: i64) -> SessionSummary {
     updated_at: r.updated_at.clone(),
     created_at: Some(r.created_at.clone()).filter(|c| !c.is_empty()),
     pinned: r.pinned,
+    archived: None,
     category: None,
     state: if v.running {
       Some(SummaryState::Working)
@@ -431,6 +432,8 @@ pub fn chatgpt_summary(r: &ChatGptRecord, now: i64) -> SessionSummary {
       None
     },
     unread: None,
+    question: None,
+    completed_at: completed_at(v.turns.iter()),
     model: None,
   }
 }

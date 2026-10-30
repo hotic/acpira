@@ -213,7 +213,9 @@ impl SessionManager {
       .into_iter()
       .filter_map(|s| {
         let mut sum = s.summary();
-        sum.state = s.list_state();
+        let (state, question) = s.list_marks();
+        sum.state = state;
+        sum.question = question.then_some(true);
         serde_json::to_value(&sum).ok().map(|v| (s.id.clone(), v))
       })
       .collect();

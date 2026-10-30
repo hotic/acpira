@@ -305,7 +305,8 @@ export type HostMsg =
   // A message a plugin's process sends its frames (ui/post), for that plugin's frames only
   | { type: 'pluginPost'; plugin: string; message: unknown }
   // Text a plugin's process puts into the composer on screen (ui/composer): at the cursor, or in place of the draft
-  | { type: 'pluginComposer'; plugin: string; text: string; replace: boolean }
+  // With `session` only a page showing that session takes it; without, only the focused page
+  | { type: 'pluginComposer'; plugin: string; text: string; replace: boolean; session?: string }
   // The answer to the pluginCall with the same id: the method's result, or why there is none
   | { type: 'pluginCalled'; id: string; result?: unknown; error?: string }
   // shapes: the agent's remembered per-model parameters (modelShapes.ts), so a model picked in settings shows its own efforts
@@ -484,6 +485,10 @@ export type WebviewMsg =
   | { type: 'deleteSession'; id: string; requestId?: string }
   | { type: 'restoreSession'; id: string }
   | { type: 'pinSession'; id: string; pinned: boolean }
+  // Archive a session (left out of the list, kept on disk) or bring it back; a new prompt there brings it back too
+  | { type: 'archiveSession'; id: string; archived: boolean }
+  // The row menu's "mark as unread / read"; a session a page shows keeps the mark until a page selects it again
+  | { type: 'setSessionUnread'; id: string; unread: boolean }
   // File a session under a category of its own project, or take it out (null); filing unpins it
   | { type: 'setSessionCategory'; id: string; category: string | null }
   // `file` with a create: file that session under the new category in the same step
@@ -499,8 +504,9 @@ export type WebviewMsg =
   | { type: 'forkSession'; sessionId: string; turnIndex: number; agent?: string }
   // Write the session as a file under the data dir's exports/ folder (an unchanged transcript reuses its last export); the toast offers to open it
   | { type: 'exportSession'; id: string; format: ExportFormat }
-  // "Copy as Markdown": the export's Markdown as text, nothing written; answered with a `sessionMarkdown` message echoing seq
-  | { type: 'sessionMarkdown'; id: string; seq: number }
+  // "Copy as Markdown": the export's Markdown as text, nothing written; answered with a `sessionMarkdown` message echoing seq.
+  // `format` asks for another export's content instead (a device saves it itself); an older engine answers Markdown
+  | { type: 'sessionMarkdown'; id: string; seq: number; format?: ExportFormat }
   // Rebind the session to this account (also becomes the agent's default account)
   | { type: 'selectAccount'; sessionId?: string; id: string }
   | { type: 'addAccount'; agent: AgentId; via: AddAccountVia }
@@ -572,6 +578,8 @@ export type WebviewMsg =
   | { type: 'pluginBackdrop'; plugin: string; snapshot: string }
   // Call a method a plugin's process offers (runtime.methods); answered by pluginCalled
   | { type: 'pluginCall'; id: string; plugin: string; method: string; params?: unknown }
+  // A plugin command's button with `draft`: its text for the draft, answered by pluginCalled with { text }
+  | { type: 'pluginCommand'; id: string; sessionId: string; name: string; arguments: string }
   // The built-in agent's model sources: read them, or apply an edit and get the view back
   | { type: 'providers' }
   | { type: 'providerAction'; action: ProviderAction }

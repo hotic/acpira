@@ -4,7 +4,9 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync }
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { AgentBlock, AgentTurn, SessionView, Turn } from '@acpira/shared/transcript';
+import type { HostMsg } from '@acpira/shared/protocol';
+import type { SidecarMsg } from '@acpira/shared/sidecar';
+import type { AgentBlock, AgentTurn, SessionSummary, SessionView, Turn } from '@acpira/shared/transcript';
 import { FAKE, Shell } from './sidecarShell';
 
 // Session-loop contract at the envelope level against the Rust sidecar: only what a shell / webview can observe is asserted
@@ -106,6 +108,12 @@ describe('sidecar session contract', () => {
     const ok = await s.hostMsg('V', 'sessionMarkdown', m => m.seq === 7);
     expect(ok.error).toBeUndefined();
     expect(ok.markdown).toContain('copy me as markdown');
+    expect(ok.markdown?.startsWith('# ')).toBe(true);
+    // A device's plain-text export: what was said, without the Markdown title
+    s.view('V', { type: 'sessionMarkdown', id, seq: 9, format: 'text' });
+    const text = await s.hostMsg('V', 'sessionMarkdown', m => m.seq === 9);
+    expect(text.markdown).toContain('copy me as markdown');
+    expect(text.markdown?.startsWith('# ')).toBe(false);
     s.view('V', { type: 'sessionMarkdown', id: 'no-such-session', seq: 8 });
     const missing = await s.hostMsg('V', 'sessionMarkdown', m => m.seq === 8);
     expect(missing.markdown).toBeUndefined();
@@ -305,6 +313,28 @@ describe('sidecar session contract', () => {
     await s.hostMsg('V', 'sessions', m => m.sessions.some(x => x.id === id && x.title === 'Renamed'));
     s.view('V', { type: 'pinSession', id, pinned: true });
     await s.hostMsg('V', 'sessions', m => m.sessions.some(x => x.id === id && x.pinned === true));
+
+    // The next session list from now on (the recorded history already holds lists that would match)
+    const nextList = (pred: (l: SessionSummary[]) => boolean) => s.upcoming((m): m is Extract<SidecarMsg, { type: 'hostMessage' }> =>
+      m.type === 'hostMessage' && m.viewId === 'V' && m.message.type === 'sessions' && pred(m.message.sessions))
+      .then(m => (m.message as Extract<HostMsg, { type: 'sessions' }>).sessions);
+    // Archived: still listed, flagged; a new prompt there brings it back out
+    s.view('V', { type: 'archiveSession', id, archived: true });
+    await s.hostMsg('V', 'sessions', m => m.sessions.some(x => x.id === id && x.archived === true && x.pinned === true));
+    const unarchived = nextList(l => l.some(x => x.id === id && !x.archived));
+    s.view('V', { type: 'send', sessionId: id, text: 'again' });
+    await unarchived;
+    await s.hostMsg('V', 'session', idle(4));
+    // "Mark as unread" on the session this page shows holds across later lists, until the page selects it again
+    s.view('V', { type: 'setSessionUnread', id, unread: true });
+    await s.hostMsg('V', 'sessions', m => m.sessions.some(x => x.id === id && x.state === 'unread'));
+    const kept = nextList(l => l.some(x => x.id === id && x.title === 'Kept'));
+    s.view('V', { type: 'renameSession', id, title: 'Kept' });
+    expect((await kept).find(x => x.id === id)?.state).toBe('unread');
+    const read = nextList(l => l.some(x => x.id === id && x.state !== 'unread'));
+    s.view('V', { type: 'selectSession', id });
+    await read;
+    s.view('V', { type: 'renameSession', id, title: 'Renamed' });
 
     s.view('V', { type: 'forkSession', sessionId: id, turnIndex: 1 });
     const fork = await s.hostMsg('V', 'session', m => m.session.id !== id && m.session.turns.length === 2);

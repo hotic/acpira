@@ -59,10 +59,22 @@ impl SessionManager {
     )
   }
 
-  /// "Copy as Markdown": the export's Markdown as text, nothing written
-  pub async fn session_markdown(&self, id: &str) -> Result<String> {
+  /// An export's content in `format`: the record as JSON, the Markdown, or the plain text of what was said
+  fn snapshot_content(&self, id: &str, snap: &SessionSnapshot, agent_name: &str, format: ExportFormat) -> Result<String> {
+    Ok(match format {
+      ExportFormat::Json => snap.json()?,
+      ExportFormat::Markdown => self.snapshot_markdown(id, snap, agent_name),
+      ExportFormat::Text => export_text(
+        &ExportInput { title: snap.title(), agent_name, cwd: snap.cwd(), exported_at: "", turns: snap.turns() },
+        &t("export.label.user"),
+      ),
+    })
+  }
+
+  /// "Copy as Markdown", or a device's export: the content as text, nothing written
+  pub async fn session_markdown(&self, id: &str, format: ExportFormat) -> Result<String> {
     let snap = self.snapshot(id).await?;
-    Ok(self.snapshot_markdown(id, &snap, &self.agent_name(snap.agent())))
+    self.snapshot_content(id, &snap, &self.agent_name(snap.agent()), format)
   }
 
   pub async fn export_session(&self, id: &str, format: ExportFormat) -> Result<std::path::PathBuf> {
@@ -85,13 +97,10 @@ impl SessionManager {
     {
       return Ok(path.clone());
     }
+    // The JSON is already serialized for the fingerprint
     let content = match format {
       ExportFormat::Json => json,
-      ExportFormat::Markdown => self.snapshot_markdown(id, &snap, &agent_name),
-      ExportFormat::Text => export_text(
-        &ExportInput { title: snap.title(), agent_name: &agent_name, cwd: snap.cwd(), exported_at: "", turns: snap.turns() },
-        &t("export.label.user"),
-      ),
+      _ => self.snapshot_content(id, &snap, &agent_name, format)?,
     };
     let path = self.deps.store.write_export(&export_file_name(snap.title(), format.extension(), &local_stamp()), &content).await?;
     exports.insert(key, (fingerprint, path.clone()));
