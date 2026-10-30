@@ -130,7 +130,12 @@ pub fn plist(label: &str, gateway: &Path, root: &Path) -> String {
 
 fn domain() -> String {
   // SAFETY: getuid has no preconditions
-  format!("gui/{}", unsafe { libc::getuid() })
+  #[cfg(unix)]
+  let uid = unsafe { libc::getuid() };
+  // launchd exists only on macOS; other platforms never reach launchctl, this only keeps them compiling
+  #[cfg(not(unix))]
+  let uid = 0;
+  format!("gui/{uid}")
 }
 
 async fn launchctl(args: &[&str]) -> Result<std::process::Output> {
