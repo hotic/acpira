@@ -159,7 +159,7 @@ Agent 启动配置保存在 Agent 所在机器上，可从设置 → 常规 → 
 
 - **桌面端。** 从[最新 Release](https://github.com/hotic/acpira/releases/latest) 下载 macOS 的 dmg 或 Windows 的 zip。macOS 版经过签名与公证。Windows 版是单个便携的 `Acpira.exe`，暂未代码签名。应用会自行更新。
 - **VS Code 与 Cursor。** 从 [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=hotic.acpira) 或 [Open VSX](https://open-vsx.org/extension/hotic/acpira) 安装 **Acpira**。每个 Release 也附有各平台的 `.vsix`，可用 **从 VSIX 安装…** 安装。点击**活动栏**中的 Acpira 图标打开；若未显示，在活动栏空白处右键勾选 **Acpira**。也可把视图拖到副侧栏。
-- **IntelliJ IDEA。** 从 JetBrains Marketplace 安装插件，或从 `acpira-<version>-universal.zip` 安装（**Settings → Plugins → ⚙ → Install Plugin from Disk…**）。通用包内置各支持平台的原生后端，并支持客户端与后端操作系统不同的远程开发。打开右侧的 **Acpira** 工具窗，标题栏按钮可把对话开成编辑器标签。
+- **IntelliJ IDEA。** 从 [JetBrains Marketplace](https://plugins.jetbrains.com/plugin/34192-acpira) 安装插件。插件内置各支持平台的原生后端，并支持客户端与后端操作系统不同的远程开发。打开右侧的 **Acpira** 工具窗，标题栏按钮可把对话开成编辑器标签。
 
 ## 开始使用
 
