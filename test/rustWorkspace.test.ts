@@ -20,10 +20,9 @@ describe('rust workspace', () => {
   });
 
   // The Windows desktop exe compiles the engine crates inside apps/desktop's own workspace, so its Cargo.lock must hold
-  // every registry crate those crates reach at the version rust/Cargo.lock (what the engine's suites ran against) locks;
-  // Tauri's own extra versions may sit beside them, and crates only the engine workspace's other members reach (the
-  // gateway's network stack) are not the desktop's. A lock that drifted: seed apps/desktop/Cargo.lock with
-  // rust/Cargo.lock's entries
+  // every registry crate those crates reach at the version rust/Cargo.lock (what the engine's suites ran against) locks,
+  // the gateway's network stack included (the exe's `gateway` role); Tauri's own extra versions may sit beside them. A
+  // lock that drifted: seed apps/desktop/Cargo.lock with rust/Cargo.lock's entries
   it('locks the engine crates of the desktop app at the versions the engine tests', () => {
     interface Pkg { name: string; version: string; registry: boolean; deps: string[] }
     const parse = (lock: string): Pkg[] => lock.split('\n[[package]]\n').slice(1).map(block => ({

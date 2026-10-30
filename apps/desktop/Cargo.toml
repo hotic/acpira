@@ -56,6 +56,8 @@ gtk = "0.18"
 # and wry already link
 [target.'cfg(windows)'.dependencies]
 acpira-host = { path = "../../rust/crates/acpira-host" }
+# Remote access's gateway as the exe's `gateway` role (main.rs). macOS and Linux ship acpira-gateway as a file of its own
+acpira-gateway = { path = "../../rust/crates/acpira-gateway" }
 # WebView2 events Tauri does not expose (the clipboard permission), at the version wry links
 webview2-com = "0.39"
 windows = { version = "0.62", features = ["Data_Xml_Dom", "UI_Notifications", "Win32_Foundation", "Win32_Globalization", "Win32_System_Com", "Win32_System_Console", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

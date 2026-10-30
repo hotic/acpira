@@ -6,7 +6,6 @@ use std::ffi::c_void;
 
 use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL, HWND};
 use windows::Win32::Globalization::GetUserPreferredUILanguages;
-use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_OUTPUT_HANDLE};
 use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData};
 use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
 use windows::Win32::System::Ole::{CF_HDROP, CF_UNICODETEXT};
@@ -23,13 +22,7 @@ pub fn attach_console(command: Option<&str>) {
   if matches!(command, Some("stdio" | "serve" | "agent" | "mcp" | "mcp-host" | "remote")) {
     return;
   }
-  // SAFETY: plain handle queries; attaching fails harmlessly when there is no parent console
-  unsafe {
-    if GetStdHandle(STD_OUTPUT_HANDLE).is_ok_and(|h| !h.is_invalid() && !h.0.is_null()) {
-      return;
-    }
-    let _ = AttachConsole(ATTACH_PARENT_PROCESS);
-  }
+  acpira_desktop::console::attach_parent();
 }
 
 /// Wheel notches: WebView2 is Chromium, which eases them itself

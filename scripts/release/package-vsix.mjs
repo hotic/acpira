@@ -3,7 +3,7 @@ import { chmodSync, copyFileSync, existsSync, globSync, mkdirSync, mkdtempSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { GATEWAY_EXE, SIDECAR_TARGETS, exeName, hostPlatform, targetFor } from './sidecar-targets.mjs';
+import { SIDECAR_TARGETS, exeName, gatewayName, hostPlatform, targetFor } from './sidecar-targets.mjs';
 
 // Packages VSIXes from an existing build (`pnpm build` + dist/sidecar/<platform>/ from build-sidecar.mjs):
 //   node scripts/release/package-vsix.mjs                 this machine's platform package
@@ -60,7 +60,7 @@ try {
     if (!t) throw new Error(`unknown VS Code target ${target}; one of ${allTargets.join(', ')}`);
     mkdirSync(bin);
     // The engine, and the paired-remote gateway it looks for beside itself where the target ships one
-    for (const exe of [exeName(t.platform), ...(t.gateway ? [GATEWAY_EXE] : [])]) {
+    for (const exe of [exeName(t.platform), ...(t.gateway ? [gatewayName(t.platform)] : [])]) {
       const from = join(root, 'dist', 'sidecar', t.platform, exe);
       if (!existsSync(from)) throw new Error(`${from} is missing: run \`node scripts/release/build-sidecar.mjs ${t.platform}\` first`);
       copyFileSync(from, join(bin, exe));

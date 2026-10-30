@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, mkdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { GATEWAY_EXE, SIDECAR_TARGETS, exeName, hostPlatform, targetFor } from './sidecar-targets.mjs';
+import { GATEWAY_EXE, SIDECAR_TARGETS, exeName, gatewayName, hostPlatform, targetFor } from './sidecar-targets.mjs';
 
 // Builds the release Rust sidecar into dist/sidecar/<platform>/ (with acpira-gateway beside it where the target ships one):
 // `node scripts/release/build-sidecar.mjs [--dist] [--all | <platform>...]`, this machine's
@@ -38,7 +38,7 @@ for (const platform of platforms) {
   run('cargo', [zig ? 'zigbuild' : 'build', '--profile', profile, '--locked', '--target', triple, ...bins, ...fastFlags], join(root, 'rust'));
   const out = join(root, 'dist', 'sidecar', platform);
   mkdirSync(out, { recursive: true });
-  for (const exe of [exeName(platform), ...(gateway ? [GATEWAY_EXE] : [])]) {
+  for (const exe of [exeName(platform), ...(gateway ? [gatewayName(platform)] : [])]) {
     copyFileSync(join(root, 'rust', 'target', triple, profile, exe), join(out, exe));
     if (!exe.endsWith('.exe')) chmodSync(join(out, exe), 0o755);
     console.log(`${platform}: ${(statSync(join(out, exe)).size / 1e6).toFixed(1)} MB → dist/sidecar/${platform}/${exe}`);
