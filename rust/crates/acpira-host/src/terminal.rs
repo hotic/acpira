@@ -177,7 +177,7 @@ impl TerminalHub {
       return self.spawn_remote(id, folder, (cols, rows));
     }
     let pair = native_pty_system().openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })?;
-    let cmd = command(self.program.as_deref(), cwd);
+    let cmd = command(self.program.as_deref(), cwd)?;
     let shell = shell_name(&cmd);
     let mut child = pair.slave.spawn_command(cmd)?;
     // The child holds the only slave end: once it and its jobs are gone, the reader sees the end of the output
@@ -714,9 +714,17 @@ async fn pump(term: Arc<Term>, mut rx: mpsc::Receiver<Vec<u8>>, mut exit_rx: one
   }
 }
 
-/// The shell as a terminal emulator starts it: the user's login shell (PowerShell on Windows) in `cwd` (home when that is
-/// not a folder), the variables a terminal sets, none of the engine's own host's
-pub(crate) fn command(program: Option<&[String]>, cwd: Option<&str>) -> CommandBuilder {
+/// The shell as a terminal emulator starts it: the user's login shell (PowerShell on Windows) in `cwd` (home when
+/// omitted), the variables a terminal sets, none of the engine's own host's
+pub(crate) fn command(program: Option<&[String]>, cwd: Option<&str>) -> anyhow::Result<CommandBuilder> {
+  if let Some(cwd) = cwd {
+    // portable-pty silently substitutes home for a missing cwd; reject invalid folders on both local and SSH starts.
+    anyhow::ensure!(!acpira_shared::remote::is_remote_folder(cwd), "invalid SSH terminal folder: {cwd}");
+    anyhow::ensure!(
+      Path::new(cwd).is_absolute() && Path::new(cwd).is_dir(),
+      "terminal folder must be an existing absolute directory: {cwd}"
+    );
+  }
   let mut cmd = match program {
     Some([bin, args @ ..]) => {
       let mut c = CommandBuilder::new(bin);
@@ -725,7 +733,7 @@ pub(crate) fn command(program: Option<&[String]>, cwd: Option<&str>) -> CommandB
     }
     _ => default_shell(),
   };
-  match cwd.filter(|d| Path::new(d).is_dir()) {
+  match cwd {
     Some(dir) => cmd.cwd(dir),
     None => cmd.cwd(crate::store::data_dir::home_dir()),
   }
@@ -752,7 +760,7 @@ pub(crate) fn command(program: Option<&[String]>, cwd: Option<&str>) -> CommandB
       None => cmd.env_remove(k),
     }
   }
-  cmd
+  Ok(cmd)
 }
 
 const INHERITED_TERMINAL_VARS: &[&str] = &[
@@ -1070,6 +1078,27 @@ mod tests {
       }
       h.dispose();
       assert!(h.get("t6").is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_invalid_starting_folder_is_reported_without_starting_a_shell() {
+      let h = hub("echo must-not-start");
+      let dir = tempfile::tempdir().unwrap();
+      let file = dir.path().join("file");
+      std::fs::write(&file, "file").unwrap();
+      for cwd in [
+        dir.path().join("missing").to_string_lossy().into_owned(),
+        file.to_string_lossy().into_owned(),
+        ".".into(),
+        "".into(),
+        "ssh://host/project/../elsewhere".into(),
+        "ssh://-option/project".into(),
+      ] {
+        let (log, s) = sink();
+        h.open(1, s, "invalid", Some(&cwd), None);
+        assert!(matches!(&log.lock()[0], HostMsg::TerminalState { error: Some(_), .. }), "cwd: {cwd}");
+        assert!(h.get("invalid").is_none(), "cwd: {cwd}");
+      }
     }
 
     #[tokio::test(flavor = "multi_thread")]

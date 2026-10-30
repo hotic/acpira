@@ -321,7 +321,7 @@ async fn serve_device(g: Arc<Gateway>, conn: Connection, device: Device) {
     })
   };
   let sessions_dir = Arc::new(parking_lot::Mutex::new(None::<PathBuf>));
-  let who = Who { device: device.name.clone(), kind: device.kind, computer: g.name(), version: VERSION.to_owned() };
+  let who = Who { id: id.clone(), device: device.name.clone(), kind: device.kind, computer: g.name(), version: VERSION.to_owned() };
   let mut current: Option<tokio::task::JoinHandle<()>> = None;
   loop {
     let incoming = tokio::select! {

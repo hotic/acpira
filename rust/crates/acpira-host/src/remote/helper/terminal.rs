@@ -44,7 +44,7 @@ pub(super) async fn pty(a: &Value, id: u64, out: &Out, stdin_rx: Option<mpsc::Un
   let program: Option<Vec<String>> = a.get("program").and_then(|p| serde_json::from_value(p.clone()).ok());
   let failed = |e: anyhow::Error| WireError::new("io", format!("{e:#}"));
   let pair = native_pty_system().openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }).map_err(failed)?;
-  let cmd = crate::terminal::command(program.as_deref(), cwd.as_deref());
+  let cmd = crate::terminal::command(program.as_deref(), cwd.as_deref()).map_err(failed)?;
   let shell = crate::terminal::shell_name(&cmd);
   let mut child = pair.slave.spawn_command(cmd).map_err(failed)?;
   drop(pair.slave);

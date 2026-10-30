@@ -24,8 +24,9 @@ pub const DEVICE_SETTINGS: &[&str] = &[
 /// Whether a paired device may send this message. A device has one permission, control: it drives sessions the way the
 /// user would at the computer (an agent it starts can run any command anyway). What stays on the computer is what
 /// changes the machine rather than a session (settings outside `DEVICE_SETTINGS`, accounts, installs, plugins, storage,
-/// SSH hosts), what puts something on the computer's screen (every `open…`, exports, terminals), and reads of arbitrary
-/// local paths. Exhaustive on purpose: a new message does not compile until it is decided here.
+/// SSH hosts), what puts something on the computer's screen (every `open…`, exports), and reads of arbitrary local
+/// paths. Device terminals use the same control grant; the gateway isolates their ids by authenticated device, and
+/// their working directory is not a filesystem sandbox. Exhaustive on purpose: a new message needs a decision here.
 pub fn device_allowed(m: &WebviewMsg) -> bool {
   use WebviewMsg as W;
   match m {
@@ -33,6 +34,8 @@ pub fn device_allowed(m: &WebviewMsg) -> bool {
     W::Ready { .. } | W::Resync => true,
     // Driving a session. The ones that act on a session another engine runs are forwarded there over the push bus
     W::Send { .. }
+    // A command button with `draft`: what sending `/name` runs, its text coming back instead of going out
+    | W::PluginCommand { .. }
     | W::Stop { .. }
     | W::Permission { .. }
     | W::Answer { .. }
@@ -61,6 +64,8 @@ pub fn device_allowed(m: &WebviewMsg) -> bool {
     | W::NewSession { .. }
     | W::RenameSession { .. }
     | W::PinSession { .. }
+    | W::ArchiveSession { .. }
+    | W::SetSessionUnread { .. }
     | W::DeleteSession { .. }
     | W::RestoreSession { .. }
     | W::SetSessionCategory { .. }
@@ -96,13 +101,13 @@ pub fn device_allowed(m: &WebviewMsg) -> bool {
     | W::InstallInTerminal { .. } => false,
     // Stages any local path into the blob store; a device fetches blobs over its link instead
     W::ImageBlob { .. } => false,
-    // A shell on the computer: not offered to devices yet
+    // A shell viewed on the device; the gateway namespaces its id, never trusting a client-supplied prefix
     W::TerminalOpen { .. }
     | W::TerminalInput { .. }
     | W::TerminalResize { .. }
     | W::TerminalAck { .. }
     | W::TerminalClose { .. }
-    | W::TerminalKill { .. } => false,
+    | W::TerminalKill { .. } => true,
     // The phone's settings page: session and agent preferences only
     W::SetSetting { key, .. } => DEVICE_SETTINGS.contains(&key.as_str()),
     // Changes the machine: credentials need its keychain or browser, the rest is its configuration
@@ -363,7 +368,6 @@ mod tests {
     assert!(allowed(json!({ "type": "setSetting", "key": "agentOrder", "value": ["claude", "codex"] })));
     assert!(!allowed(json!({ "type": "openFile", "sessionId": "s", "path": "a" })));
     assert!(!allowed(json!({ "type": "imageBlob", "sessionId": "s", "path": "/etc/passwd", "seq": 1 })));
-    assert!(!allowed(json!({ "type": "terminalOpen", "id": "t" })));
     assert!(!allowed(json!({ "type": "removeAccount", "id": "a" })));
     assert!(allowed(json!({ "type": "connections" })));
     assert!(!allowed(json!({ "type": "connectionOp", "op": { "op": "remove", "alias": "h" } })));
@@ -374,6 +378,29 @@ mod tests {
   fn device_settings_are_setting_keys() {
     for key in DEVICE_SETTINGS {
       assert!(crate::settings::SETTING_KEYS.contains(key), "{key}");
+    }
+  }
+
+  #[test]
+  fn paired_devices_can_drive_terminals_without_host_configuration_access() {
+    for message in [
+      json!({ "type": "terminalOpen", "id": "phone:/project", "cwd": "/project", "cols": 80, "rows": 24 }),
+      json!({ "type": "terminalInput", "id": "phone:/project", "data": "pwd\r" }),
+      json!({ "type": "terminalResize", "id": "phone:/project", "cols": 90, "rows": 30 }),
+      json!({ "type": "terminalAck", "id": "phone:/project", "chars": 5000 }),
+      json!({ "type": "terminalClose", "id": "phone:/project" }),
+      json!({ "type": "terminalKill", "id": "phone:/project" }),
+    ] {
+      assert!(allowed(message.clone()), "{message}");
+    }
+    for message in [
+      json!({ "type": "installInTerminal", "agent": "fake" }),
+      json!({ "type": "connectionOp", "op": { "op": "connect", "alias": "h" } }),
+      json!({ "type": "setSetting", "key": "proxy", "value": "http://x" }),
+      json!({ "type": "plugins" }),
+      json!({ "type": "storage" }),
+    ] {
+      assert!(!allowed(message.clone()), "{message}");
     }
   }
 }

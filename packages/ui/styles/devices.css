@@ -24,7 +24,6 @@
 @keyframes dv-glyph-in { from { opacity: 0; transform: scale(.82); filter: blur(3px); } }
 @keyframes dv-check-in { from { opacity: 0; transform: scale(.35); } }
 @keyframes dv-new { from { opacity: 1; } }
-@keyframes dv-row-in { from { opacity: 0; transform: translateY(4px); } }
 @keyframes dv-fade { from { opacity: 0; } }
 @keyframes dv-wait { to { opacity: .35; } }
 @keyframes dv-digits-in { from { opacity: 0; transform: translateY(3px); filter: blur(2px); } }
@@ -170,7 +169,8 @@
   .dv-flight > * { display: block; transform-origin: 0 0; }
   .dv-flight svg { width: 100%; height: 100%; }
   .dv-row-new { position: absolute; inset: 0; border-radius: var(--r-md); background: var(--active); opacity: 0; pointer-events: none; animation: dv-new 1800ms ease-out 500ms backwards; }
-  .dv-row { position: relative; animation: dv-row-in 360ms cubic-bezier(.2, .7, .2, 1) backwards; animation-delay: calc(140ms + var(--i, 0) * 45ms); }
+  /* Existing devices appear at once with the card; only a newly paired device gets success feedback. */
+  .dv-row { position: relative; }
   /* From the success moment: the head and the new row's text come in around the flown glyph, which hands over to the
      row's own glyph on its last frame (DevicesCard.tsx) */
   .dv-view[data-from] .dv-head { animation: dv-fade 260ms ease 320ms backwards; }

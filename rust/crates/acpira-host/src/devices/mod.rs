@@ -309,7 +309,17 @@ impl RemoteAccess {
     let staged = stage::plan(&self.root, VERSION, exe, &program.exe).await?;
     let target = Program { exe: staged.gateway.clone(), prefix: program.prefix.clone() };
     let engine_str = staged.engine.to_string_lossy().into_owned();
-    self.edit_config(move |c| c["engine"] = Value::String(engine_str)).await?;
+    let built = stage::built(exe);
+    self
+      .edit_config(move |c| {
+        c["engine"] = Value::String(engine_str);
+        // What `refresh_installed` compares a later build of the same version with
+        match built {
+          Some(b) => c["engineBuilt"] = Value::from(b),
+          None => drop(c.as_object_mut().map(|o| o.remove("engineBuilt"))),
+        }
+      })
+      .await?;
     // Installed from these binaries and answering (switched on from another window, the desktop card opening while it
     // starts): a restart would only cut off its devices. A gateway still starting answers once it does
     if staged.engine.is_file() && staged.gateway.is_file() && self.service.current(&target).await && self.wait_up(REQUEST_WAIT).await.is_ok() {
@@ -370,15 +380,20 @@ impl RemoteAccess {
     Ok(())
   }
 
-  /// At engine start: a gateway installed by an older version is reinstalled from this one (an extension upgrade must
-  /// not leave devices talking to the old engine). An older engine still running beside a newer one leaves it alone.
-  /// Switched on but not running (a load that failed, a stop by hand): started again, as the switch says
+  /// At engine start: a gateway installed by an older version, or by an earlier build of this version (a local package,
+  /// an extension and the desktop app updated apart), is reinstalled from this one, so devices never keep talking to an
+  /// old engine. An older engine still running beside a newer one leaves it alone, and so does an earlier build: two
+  /// engines of one version never take turns reinstalling it. Switched on but not running (a load that failed, a stop
+  /// by hand): started again, as the switch says
   pub async fn refresh_installed(&self) {
     if !self.service.installed() {
       return;
     }
-    let installed = self.config().get("engine").and_then(Value::as_str).and_then(|e| stage::installed_version(Path::new(e)));
-    if installed.as_deref().is_some_and(|v| !stage::newer(VERSION, v)) {
+    let config = self.config();
+    let installed = config.get("engine").and_then(Value::as_str).and_then(|e| stage::installed_version(Path::new(e)));
+    let mine = self.exe.as_deref().filter(|exe| !stage::is_staged(&self.root, exe)).and_then(stage::built);
+    let theirs = config.get("engineBuilt").and_then(Value::as_u64);
+    if stage::keeps_installed(VERSION, mine, installed.as_deref(), theirs) {
       if self.wait_up(REQUEST_WAIT).await.is_err()
         && let Err(e) = self.service.start().await
       {

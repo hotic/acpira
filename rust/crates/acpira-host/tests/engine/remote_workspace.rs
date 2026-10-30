@@ -70,6 +70,10 @@ async fn a_terminal_in_a_folder_on_the_host_runs_there() {
   lab.map_root(VIRT, &real);
   let connections = lab.engine("engine");
   connections.op(ConnectionOp::Add { alias: "gen1".into(), mode: RunMode::Local }).await.unwrap();
+  let client = connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
+  let missing =
+    client.call("pty", serde_json::json!({ "cwd": format!("{VIRT}/missing") })).await.expect_err("no fallback to the host's home");
+  assert!(missing.to_string().contains("terminal folder"), "{missing}");
   let hub = acpira_host::terminal::TerminalHub::new();
   hub.set_remote(connections.clone());
   let log: Arc<Mutex<Vec<HostMsg>>> = Arc::default();

@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Plus } from 'lucide-react';
 import type { DeviceStatus, RemoteAccessView } from '@acpira/shared/devices';
 import { cn } from '../ui/cn';
@@ -175,7 +175,7 @@ function Card({ view, open, onClose, onOpenSettings }: { view: RemoteAccessView;
     const src = glyphRef.current, root = rootRef.current, list = listRef.current, svg = src?.querySelector('svg');
     const lead = list?.querySelector<HTMLElement>('[data-fresh-lead]'), leadSvg = lead?.querySelector('svg');
     if (!landing || !src || !root || !list || !svg || !lead || !leadSvg || still(root)) return;
-    // The row's glyph where it comes to rest, not where this first frame has it: the list slides in, the row rises
+    // The row's glyph where it comes to rest, not where this first frame has it: the list slides in
     const a = svg.getBoundingClientRect(), b = settled(list, () => leadSvg.getBoundingClientRect()), box = root.getBoundingClientRect();
     const outer = document.createElement('div');
     const inner = src.cloneNode(true) as HTMLElement;
@@ -211,10 +211,7 @@ function Card({ view, open, onClose, onOpenSettings }: { view: RemoteAccessView;
         <PairingCore pairing={pairing} glyphRef={glyphRef} className="p-pad" />
       </div>
       <div ref={listRef} className="dv-view" data-view="list" data-off={shown !== 'list' || undefined} data-from={arrived || undefined}>
-        {/* Keyed by the view, so its rows replay their entrance each time the list comes up */}
-        <div key={shown === 'list' ? 'on' : 'off'}>
-          <List view={view} fresh={fresh} onAdd={add} onDevice={openDevice} />
-        </div>
+        <List view={view} fresh={fresh} onAdd={add} onDevice={openDevice} />
       </div>
       <div ref={noteRef} className="dv-view" data-view="note" data-off={shown !== 'note' || undefined}>
         <Note view={view} onRetry={start} />
@@ -223,7 +220,7 @@ function Card({ view, open, onClose, onOpenSettings }: { view: RemoteAccessView;
   </div>;
 }
 
-// A layout read as it will stand once every finite animation under `el` has ended (a view sliding in, a row rising):
+// A layout read as it will stand once every finite animation under `el` has ended (a view sliding in):
 // each one is moved to its end for the read and put back, all before the frame paints
 function settled<T>(el: Element, read: () => T): T {
   const moved = el.getAnimations({ subtree: true }).flatMap(anim => {
@@ -260,11 +257,11 @@ function List({ view, fresh, onAdd, onDevice }: { view: RemoteAccessView; fresh?
   const name = view.gateway?.name ?? t('devices.title');
   return <div className="flex flex-col p-1">
     <div className="dv-head"><PanelHeader action={{ label: t('devices.add'), icon: <Plus strokeWidth={1.75} />, onClick: onAdd }}><span title={name}>{name}</span></PanelHeader></div>
-    {rows.map((d, i) => {
+    {rows.map(d => {
       const live = d.online && d.path;
       return <Row key={d.id} as="button" interactive data-fresh={d.id === fresh || undefined} onClick={() => onDevice(d)}
         // The lead slot is the glyph's own box, so the glyph stands on the text edge the bar's title starts on
-        className="dv-row mx-0 w-full px-2 [&>.row-lead]:size-icon-ctl" style={{ '--i': i } as CSSProperties}
+        className="dv-row mx-0 w-full px-2 [&>.row-lead]:size-icon-ctl"
         lead={<span data-fresh-lead={d.id === fresh || undefined} className={cn('flex', d.online ? 'text-fg-2' : 'text-fg-3')}><DeviceGlyph kind={d.kind} online={d.online} /></span>}
         trailing={<span className="dv-row-text" title={live ? `${t(PATH_NAME[d.path!])}${t('common.metaSep')}${t('devices.encrypted')}` : undefined}>{live ? t(PATH_NAME[d.path!]) : seenLine(d)}</span>}>
         {d.id === fresh && <span className="dv-row-new" />}
