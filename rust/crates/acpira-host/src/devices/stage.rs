@@ -30,6 +30,35 @@ pub fn newer(a: &str, b: &str) -> bool {
   parts(a) > parts(b)
 }
 
+/// When a binary was built or installed: its modification time, in ms since the epoch. Builds of one version carry no
+/// other order, and the latest one installed is the one meant to run
+pub fn built(exe: &Path) -> Option<u64> {
+  let t = std::fs::metadata(exe).and_then(|m| m.modified()).ok()?;
+  t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_millis() as u64)
+}
+
+/// Whether `exe` is one of the copies under `bin_root`: the gateway's own engine, which is what is installed. Its
+/// modification time is the copy's, never a build's
+pub fn is_staged(root: &Path, exe: &Path) -> bool {
+  let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_owned());
+  canon(exe).starts_with(canon(&bin_root(root)))
+}
+
+/// Whether an engine of `version` built at `mine` leaves the copies installed from `installed` (built at `theirs`) in
+/// place. An older version is replaced and a newer one kept. Within one version only a strictly later build takes over,
+/// so the earlier engine never reinstalls it back. An install from before the build time was recorded is replaced once.
+/// An engine that cannot tell its own build time keeps what is there
+pub fn keeps_installed(version: &str, mine: Option<u64>, installed: Option<&str>, theirs: Option<u64>) -> bool {
+  let Some(v) = installed else { return false };
+  if newer(version, v) {
+    return false;
+  }
+  if newer(v, version) {
+    return true;
+  }
+  !mine.is_some_and(|m| theirs.is_none_or(|t| m > t))
+}
+
 /// Where `stage` puts the copies of `engine` and `gateway` (the same file for the Windows desktop exe), without copying:
 /// what an install compares the installed service with
 pub struct Staged {
@@ -138,6 +167,30 @@ mod tests {
     assert!(newer("0.10.0", "0.9.3"));
     assert!(!newer("0.9.3", "0.9.3"));
     assert!(!newer("0.9.3-dev", "0.9.3"));
+  }
+
+  #[test]
+  fn two_builds_of_one_version_settle_on_the_later() {
+    // The VS Code engine (built at 10) and the desktop app's (built at 20) both start with remote access on
+    assert!(!keeps_installed("2.0.0", Some(10), Some("1.11.0"), Some(5)), "an older version is replaced");
+    assert!(!keeps_installed("2.0.0", Some(10), Some("2.0.0"), None), "an install without a build time is replaced once");
+    assert!(!keeps_installed("2.0.0", Some(20), Some("2.0.0"), Some(10)), "the later build takes over");
+    assert!(keeps_installed("2.0.0", Some(10), Some("2.0.0"), Some(20)), "the earlier build leaves it alone");
+    assert!(keeps_installed("2.0.0", Some(20), Some("2.0.0"), Some(20)), "the same build changes nothing");
+    assert!(keeps_installed("2.0.0", None, Some("2.0.0"), Some(20)), "the gateway's own engine keeps its copy");
+    assert!(keeps_installed("2.0.0", Some(99), Some("2.1.0"), Some(1)), "a newer version is never replaced");
+    assert!(!keeps_installed("2.0.0", Some(1), None, None), "no install recorded: installed from this engine");
+  }
+
+  #[test]
+  fn the_gateways_own_engine_is_a_staged_copy() {
+    let root = tempfile::tempdir().unwrap();
+    let copy = bin_root(root.path()).join("2.0.0-ab12cd").join("acpira");
+    std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+    std::fs::write(&copy, "engine").unwrap();
+    assert!(is_staged(root.path(), &copy));
+    assert!(!is_staged(root.path(), &root.path().join("acpira")));
+    assert!(built(&copy).is_some());
   }
 
   #[tokio::test]

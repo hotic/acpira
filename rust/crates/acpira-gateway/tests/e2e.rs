@@ -99,18 +99,20 @@ async fn serve_engine(engine: Arc<Engine>, mut listener: Listener) {
 struct Phone {
   tx: EnvelopeTx,
   seen: Arc<parking_lot::Mutex<Vec<(FrameKind, Value)>>>,
+  #[cfg_attr(not(unix), allow(dead_code, reason = "used by the Unix-only terminal tests"))]
+  reader: tokio::task::JoinHandle<()>,
 }
 
 impl Phone {
   fn start(tx: EnvelopeTx, mut rx: EnvelopeRx) -> Phone {
     let seen = Arc::new(parking_lot::Mutex::new(Vec::new()));
     let s = seen.clone();
-    tokio::spawn(async move {
+    let reader = tokio::spawn(async move {
       while let Ok(Some((kind, body))) = rx.next().await {
         s.lock().push((kind, serde_json::from_slice(&body).unwrap()));
       }
     });
-    Phone { tx, seen }
+    Phone { tx, seen, reader }
   }
 
   async fn send(&mut self, v: Value) {
@@ -119,6 +121,43 @@ impl Phone {
 
   async fn msg(&mut self, view: &str, m: Value) {
     self.send(json!({ "type": "webviewMessage", "viewId": view, "message": m })).await;
+  }
+
+  #[cfg(unix)]
+  async fn boot(&mut self) {
+    self
+      .send(json!({
+        "type": "hello", "protocolVersion": acpira_shared::sidecar::SIDECAR_PROTOCOL_VERSION, "requestId": "terminal-hello",
+        "client": { "name": "iPhone", "version": "test", "capabilities": [] }, "env": {}, "settings": {},
+      }))
+      .await;
+    self.wait(0, "helloOk", |_, v| v["type"] == "helloOk").await;
+    self.send(json!({ "type": "attachView", "viewId": "V", "host": "editor", "initial": { "empty": true } })).await;
+    self.msg("V", json!({ "type": "ready", "patches": false })).await;
+    self.wait(0, "init", |_, v| v["type"] == "hostMessage" && v["message"]["type"] == "init").await;
+  }
+
+  #[cfg(unix)]
+  async fn terminal_text(&self, id: &str, needle: &str) -> String {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+      let text: String = self
+        .seen
+        .lock()
+        .iter()
+        .filter(|(k, v)| *k == FrameKind::Envelope && v["type"] == "hostMessage" && v["message"]["id"] == id)
+        .filter_map(|(_, v)| match v["message"]["type"].as_str() {
+          Some("terminalOutput") => v["message"]["data"].as_str(),
+          Some("terminalState") => v["message"]["replay"].as_str(),
+          _ => None,
+        })
+        .collect();
+      if text.contains(needle) {
+        return text;
+      }
+      assert!(Instant::now() < deadline, "timed out waiting for terminal output: {needle}");
+      tokio::time::sleep(Duration::from_millis(20)).await;
+    }
   }
 
   /// The first frame from `from` on that `pred` accepts, and the index after it
@@ -270,6 +309,73 @@ fn a_phone_pairs_drives_a_session_and_is_revoked() {
       tokio::time::sleep(Duration::from_millis(20)).await;
     }
 
+    // The terminal runs POSIX sh commands; the link it ends on is the one revoked below
+    #[cfg(unix)]
+    let conn = {
+      // A terminal's state, input, cwd, output and resize all cross the real paired link with the client's original id.
+      let tid = format!("phone:{cwd}");
+      let open = || json!({ "type": "terminalOpen", "id": tid, "cwd": cwd, "cols": 91, "rows": 25 });
+      p.msg("V", json!({ "type": "terminalOpen", "id": "missing-cwd" })).await;
+      p.wait(0, "a renderable refusal", |_, v| v["message"]["id"] == "missing-cwd" && v["message"]["error"].is_string()).await;
+      p.msg("V", json!({ "type": "terminalOpen", "id": "bad-cwd", "cwd": project.path().join("missing") })).await;
+      p.wait(0, "a failed start", |_, v| v["message"]["id"] == "bad-cwd" && v["message"]["error"].is_string()).await;
+      p.msg("V", open()).await;
+      p.wait(0, "terminal state and title", |_, v| v["message"]["id"] == tid && v["message"]["title"].is_string()).await;
+      p.msg("V", json!({ "type": "terminalInput", "id": tid, "data": "ACPIRA_TERMINAL_OWNER=first; printf 'owner:%s\\n' \"$ACPIRA_TERMINAL_OWNER\"; pwd; stty size\r" })).await;
+      p.terminal_text(&tid, "owner:first").await;
+      p.terminal_text(&tid, &project.path().canonicalize().unwrap().to_string_lossy()).await;
+      let text = p.terminal_text(&tid, "25 91").await;
+      p.msg("V", json!({ "type": "terminalAck", "id": tid, "chars": text.encode_utf16().count() })).await;
+      p.msg("V", json!({ "type": "terminalResize", "id": tid, "cols": 103, "rows": 32 })).await;
+      p.msg("V", json!({ "type": "terminalInput", "id": tid, "data": "stty size\r" })).await;
+      p.terminal_text(&tid, "32 103").await;
+
+      // A second key with the same display name and terminal id gets a different shell, and cannot address the first's
+      // engine id by passing its prefix back as a client id.
+      let other = endpoint::bind(Options { secret: SecretKey::generate(), relays: Relays::Off, alpns: vec![], bind: Some("127.0.0.1:0".parse().unwrap()) }).await.unwrap();
+      let ticket2 = PairTicket::decode(&g.open_pairing().link).unwrap();
+      let paired = pair::pair_with(&other, &ticket2, "Spark 的 iPhone", DeviceKind::Phone, "1.0", Duration::from_secs(10)).await.unwrap();
+      assert!(matches!(paired, PairReply::Paired { .. }));
+      let conn2 = endpoint::dial(&other, ticket2.endpoint_addr(), ALPN_LINK, Duration::from_secs(10)).await.unwrap();
+      let (tx, rx) = link::open_envelopes(&conn2).await.unwrap();
+      let mut p2 = Phone::start(tx, rx);
+      p2.boot().await;
+      p2.msg("V", open()).await;
+      let (_, state2) = p2.wait(0, "the second terminal", |_, v| v["message"]["id"] == tid && v["message"]["replay"].is_string()).await;
+      assert!(!state2["message"]["replay"].as_str().unwrap().contains("owner:first"));
+      p2.msg("V", json!({ "type": "terminalInput", "id": tid, "data": "printf 'owner:%s\\n' \"${ACPIRA_TERMINAL_OWNER:-second}\"\r" })).await;
+      p2.terminal_text(&tid, "owner:second").await;
+      p2.msg("V", json!({ "type": "terminalKill", "id": format!("device:{}:{tid}", phone.id()) })).await;
+      p2.msg("V", json!({ "type": "terminalKill", "id": tid })).await;
+      p.msg("V", json!({ "type": "terminalInput", "id": tid, "data": "printf 'still:%s\\n' \"$ACPIRA_TERMINAL_OWNER\"\r" })).await;
+      p.terminal_text(&tid, "still:first").await;
+      assert!(g.revoke(&other.id().to_string()).unwrap());
+      other.close().await;
+
+      // A new connection from the same authenticated key replays its shell, then close/reopen and kill/restart retain
+      // their existing meaning without granting access to another client's terminal.
+      let conn = endpoint::dial(&phone, ticket.endpoint_addr(), ALPN_LINK, Duration::from_secs(10)).await.unwrap();
+      let (tx, rx) = link::open_envelopes(&conn).await.unwrap();
+      p = Phone::start(tx, rx);
+      p.boot().await;
+      p.msg("V", open()).await;
+      p.terminal_text(&tid, "owner:first").await;
+      p.msg("V", json!({ "type": "terminalClose", "id": tid })).await;
+      let next = p.seen.lock().len();
+      p.msg("V", open()).await;
+      p.wait(next, "replay after detaching", |_, v| v["message"]["id"] == tid && v["message"]["replay"].as_str().is_some_and(|s| s.contains("owner:first"))).await;
+      p.msg("V", json!({ "type": "terminalKill", "id": tid })).await;
+      let next = p.seen.lock().len();
+      p.msg("V", open()).await;
+      let (_, fresh) = p.wait(next, "a fresh terminal", |_, v| v["message"]["id"] == tid && v["message"]["replay"].is_string()).await;
+      assert!(!fresh["message"]["replay"].as_str().unwrap().contains("owner:first"));
+      p.msg("V", json!({ "type": "terminalInput", "id": tid, "data": "printf 'owner:%s\\n' \"${ACPIRA_TERMINAL_OWNER:-fresh}\"; exit 7\r" })).await;
+      p.terminal_text(&tid, "owner:fresh").await;
+      p.wait(next, "terminal exit", |_, v| v["message"]["id"] == tid && v["message"]["exit"]["code"] == 7).await;
+      p.msg("V", json!({ "type": "terminalKill", "id": tid })).await;
+      conn
+    };
+
     // Revoked: the link drops at once, and the next dial is turned away
     assert!(g.revoke(&phone.id().to_string()).unwrap());
     assert_eq!(registrations(), Some(json!({})));
@@ -285,6 +391,127 @@ fn a_phone_pairs_drives_a_session_and_is_revoked() {
     acceptor.abort();
     engine.stop("test over").await;
     let _ = std::fs::remove_file(Path::new(&fake));
+  });
+}
+
+// The terminal runs a POSIX sh script
+#[cfg(unix)]
+#[test]
+fn replacing_an_envelope_stream_keeps_terminal_acks_flowing() {
+  let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+  rt.block_on(async move {
+    let home = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let run = tempfile::Builder::new().prefix("acgw").tempdir_in("/tmp").unwrap();
+    // Wait in the same pty across replacement, then emit 330 KB: well above the terminal's ACK high-water mark.
+    let line = "0123456789012345678901234567890123456789012345678901234567890123";
+    std::fs::write(
+      project.path().join("emit.sh"),
+      format!(
+        r#"stty -echo opost onlcr
+printf 'swap-ready\n'
+read -r start
+printf '\036'
+i=0
+while [ "$i" -lt 5000 ]; do
+  printf '%s\n' '{line}'
+  i=$((i + 1))
+done
+printf '\037'
+"#
+      ),
+    )
+    .unwrap();
+    let socket = run.path().join("e.sock");
+    let engine = Engine::persistent(ServerOpts {
+      version: "test".into(),
+      home: home.path().to_path_buf(),
+      log: Arc::new(|_: &str| {}),
+      ignore_client_agents: false,
+      bridge_exe: None,
+    });
+    let acceptor = tokio::spawn(serve_engine(engine.clone(), Listener::bind(&socket).await.unwrap()));
+    let g = Gateway::start(Opts {
+      home: home.path().to_path_buf(),
+      engine: EngineSpec {
+        binary: "/nonexistent/acpira".into(),
+        home: home.path().to_path_buf(),
+        explicit_home: true,
+        env: Default::default(),
+        socket: Some(socket),
+      },
+      relays: Some(Relays::Off),
+      bind: Some("127.0.0.1:0".parse().unwrap()),
+      log: Arc::new(|l: &str| eprintln!("gateway: {l}")),
+    })
+    .await
+    .unwrap();
+    let ticket = PairTicket::decode(&g.open_pairing().link).unwrap();
+    let phone = endpoint::bind(Options {
+      secret: SecretKey::generate(),
+      relays: Relays::Off,
+      alpns: vec![],
+      bind: Some("127.0.0.1:0".parse().unwrap()),
+    })
+    .await
+    .unwrap();
+    let paired = pair::pair_with(&phone, &ticket, "Stream replacement", DeviceKind::Phone, "test", Duration::from_secs(10)).await.unwrap();
+    assert!(matches!(paired, PairReply::Paired { .. }));
+    let conn = endpoint::dial(&phone, ticket.endpoint_addr(), ALPN_LINK, Duration::from_secs(10)).await.unwrap();
+    let (tx, rx) = link::open_envelopes(&conn).await.unwrap();
+    let mut old = Phone::start(tx, rx);
+    old.boot().await;
+    let id = "stream-swap";
+    let open = || json!({ "type": "terminalOpen", "id": id, "cwd": project.path(), "cols": 80, "rows": 24 });
+    old.msg("V", open()).await;
+    old.wait(0, "the original terminal", |_, v| v["message"]["id"] == id && v["message"]["replay"].is_string()).await;
+    old.msg("V", json!({ "type": "terminalInput", "id": id, "data": "/bin/sh emit.sh\r" })).await;
+    old.terminal_text(id, "swap-ready\r\n").await;
+
+    // Keep both halves of the old stream alive. Only the replacement viewer acknowledges the output.
+    let (tx, rx) = link::open_envelopes(&conn).await.unwrap();
+    let mut p = Phone::start(tx, rx);
+    p.boot().await;
+    p.msg("V", open()).await;
+    let (mut next, _) = p
+      .wait(0, "the same terminal's replay", |_, v| {
+        v["message"]["id"] == id && v["message"]["replay"].as_str().is_some_and(|s| s.contains("swap-ready\r\n"))
+      })
+      .await;
+    p.msg("V", json!({ "type": "terminalInput", "id": id, "data": "go\r" })).await;
+    let mut text = String::new();
+    // Less than the terminal's ten-second ACK valve, so a leaked viewer cannot pass through its timeout recovery.
+    let output = tokio::time::timeout(Duration::from_secs(5), async {
+      loop {
+        let (at, v) =
+          p.wait(next, "acknowledged terminal output", |_, v| v["message"]["type"] == "terminalOutput" && v["message"]["id"] == id).await;
+        next = at;
+        let data = v["message"]["data"].as_str().unwrap();
+        text.push_str(data);
+        p.msg("V", json!({ "type": "terminalAck", "id": id, "chars": data.encode_utf16().count() })).await;
+        if text.contains('\u{1f}') {
+          break;
+        }
+      }
+    })
+    .await;
+    let wires = engine.wire_count();
+    let old_closed = tokio::time::timeout(Duration::from_secs(2), &mut old.reader).await;
+    p.msg("V", json!({ "type": "terminalKill", "id": id })).await;
+    phone.close().await;
+    g.stop().await;
+    acceptor.abort();
+    engine.stop("test over").await;
+
+    assert!(
+      output.is_ok(),
+      "terminal output stalled after {} bytes despite ACKs from the new viewer; {wires} engine wires remain",
+      text.len()
+    );
+    let payload = text.split_once('\u{1e}').and_then(|(_, rest)| rest.split_once('\u{1f}')).expect("complete output markers").0;
+    assert_eq!(payload, format!("{line}\r\n").repeat(5000), "the replacement must receive the whole 330 KB output in order");
+    assert_eq!(wires, 1, "the replaced stream must release its engine wire and terminal viewer");
+    assert!(matches!(old_closed, Ok(Ok(()))), "the replaced stream's writer must close");
   });
 }
 
