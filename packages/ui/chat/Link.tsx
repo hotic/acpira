@@ -4,7 +4,7 @@ import { vscodeApi } from '../vscodeApi';
 import { cn } from '../ui/cn';
 import { sessionIdOfLink } from '@acpira/shared/sessionLinks';
 import { FileMenu } from './ImageMenu';
-import { OpenSessionContext, OpenToolFileContext, decodeFileHref, decodeSessionHref, parseCodeSessionLink, parseFileLink, parseWrappedLink, type FileLink } from './fileLinks';
+import { OpenSessionContext, OpenToolFileContext, decodeSessionHref, parseCodeSessionLink, parseFileLink, parseLinkTarget, parseWrappedLink, type FileLink } from './fileLinks';
 
 // Links in agent output: the webview cannot navigate, so clicks are forwarded to the host.
 // Workspace paths go through openFile, session links switch to that session; http(s)/mailto stay on openExternal.
@@ -18,7 +18,7 @@ function openExternal(url: string) {
 }
 
 function fileFromHref(href: string) {
-  return decodeFileHref(href) ?? parseFileLink(href);
+  return parseLinkTarget(href);
 }
 
 // ExtraProps: streamdown passes the hast node along; unused here but part of the component contract

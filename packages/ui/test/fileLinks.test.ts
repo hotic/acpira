@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeFileHref, decodeLocalImageSrc, decodeSessionHref, encodeFileHref, parseCodeSessionLink, parseFileLink, parseWrappedLink, resolveSessionPath, rewriteFileHrefs, sameImageSource, toFileHref } from '../chat/fileLinks';
+import { decodeFileHref, decodeLocalImageSrc, decodeSessionHref, encodeFileHref, parseCodeSessionLink, parseFileLink, parseLinkTarget, parseWrappedLink, resolveSessionPath, rewriteFileHrefs, sameImageSource, toFileHref } from '../chat/fileLinks';
 
 describe('parseFileLink', () => {
   it('keeps an encoded line-like filename literal and accepts UNC directories', () => {
@@ -96,6 +96,18 @@ describe('file href encoding', () => {
     };
     rewriteFileHrefs()(tree);
     expect(tree.children[0]!.properties.href).toBe(encodeFileHref('/repo/a.ts', 4));
+  });
+
+  it('decodes the percent-encoding the Markdown parser puts on non-ASCII and spaces in a plain path href', () => {
+    expect(parseLinkTarget('C:/Users/Tea/materials/%E7%B4%A0%E6%9D%90-1031/README.md')).toEqual({ path: 'C:/Users/Tea/materials/素材-1031/README.md' });
+    expect(parseLinkTarget('docs/my%20notes.md:7')).toEqual({ path: 'docs/my notes.md', line: 7 });
+    expect(parseLinkTarget('/a/100%25.md')).toEqual({ path: '/a/100%.md' });
+    // An encoded `#` is part of the name, not a line anchor; a malformed escape keeps the path as written
+    expect(parseLinkTarget('/repo/a%23L12')).toEqual({ path: '/repo/a#L12' });
+    expect(parseLinkTarget('/repo/bad%zz.md')).toEqual({ path: '/repo/bad%zz.md' });
+    const a = { type: 'element', tagName: 'a', properties: { href: '/repo/%E6%A0%B8%E5%AF%B9/README.md' }, children: [] };
+    rewriteFileHrefs()({ type: 'root', children: [a] });
+    expect(a.properties.href).toBe(encodeFileHref('/repo/核对/README.md'));
   });
 
   it('marks local image sources path-relative (harden blocks hash image URLs) and turns their paragraph into a div', () => {
