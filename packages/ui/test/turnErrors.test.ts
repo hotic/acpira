@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentTurn, NoticeBlock } from '@acpira/shared/transcript';
 import { isContextLengthError } from '@acpira/shared/turnErrors';
-import { absorbedNotices, hasTurnContent } from '../chat/turnOutcome';
+import { absorbedNotices, hasTurnContent, hasTurnStats } from '../chat/turnOutcome';
 
 // claude-agent-acp, stored transcript 2026-10-04: a session-scoped connection notice offering new_session, then the
 // prompt failed with -32000 and no AIR failure behind it
@@ -22,6 +22,14 @@ describe('failure notices on an errored turn', () => {
   it('offers no turn actions for a turn holding only failure notices', () => {
     expect(hasTurnContent(authFailed)).toBe(false);
     expect(hasTurnContent({ ...authFailed, blocks: [lost, { type: 'text', markdown: 'partial' }] })).toBe(true);
+  });
+
+  // claude-agent-acp, stored transcript 2026-10-30: a stop pressed before anything streamed leaves an empty turn
+  it('keeps the stats of a turn stopped before anything streamed, not of one that failed', () => {
+    const stopped: AgentTurn = { role: 'agent', stop: 'cancelled', blocks: [], startedAt: 0, endedAt: 680 };
+    expect(hasTurnStats(stopped)).toBe(true);
+    expect(hasTurnStats({ ...stopped, startedAt: undefined, endedAt: undefined })).toBe(false);
+    expect(hasTurnStats({ ...authFailed, startedAt: 0, endedAt: 680 })).toBe(false);
   });
 });
 
