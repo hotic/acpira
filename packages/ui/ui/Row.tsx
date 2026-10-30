@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type HTMLAttributes, type ReactNode, type Ref } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type HTMLAttributes, type ReactNode, type Ref, type RefObject } from 'react';
 import { cn } from './cn';
 import { useMergedRefs } from './mergeRefs';
 import { cva } from 'class-variance-authority';
@@ -54,7 +54,31 @@ function nextListStep(list: Element): number {
 }
 
 // True while the page draws no frames (occluded window, background tab). Absent `document` (tests without a DOM) counts as visible
-const pageHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
+export const pageHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
+
+// Ends an entrance that is not Row's own (the sidekick relay, a command's outcome) once the named CSS animations under
+// `ref` have finished or were cancelled, at once when none run (motion off, reduced motion) and as soon as the page goes
+// hidden, for the reasons Row drops its own: a flag left behind replays the entrance on every return to the window
+export function useEntranceEnd(on: boolean, ref: RefObject<Element | null>, names: readonly string[], end: () => void) {
+  const latest = useRef(end);
+  latest.current = end;
+  useEffect(() => {
+    if (!on) return;
+    const finish = () => latest.current();
+    if (pageHidden()) { finish(); return; }
+    const pending = ref.current?.getAnimations?.({ subtree: true })
+      .filter(a => a instanceof CSSAnimation && names.includes(a.animationName) && a.playState !== 'finished') ?? [];
+    if (!pending.length) { finish(); return; }
+    let disposed = false;
+    const onVisibility = () => { if (pageHidden() && !disposed) finish(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    void Promise.allSettled(pending.map(a => a.finished)).then(() => { if (!disposed) finish(); });
+    return () => {
+      disposed = true;
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [on]);
+}
 
 // The one shared "row": thought / plan / tool / status / session items all grow on this row.
 // Row height --row; lead slot --lead (icon 14 or Orb 20 centered); label area gap --gap; trailing meta right-aligned.

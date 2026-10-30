@@ -39,6 +39,23 @@
 @property --thread-fade-clear { syntax: '<length>'; inherits: false; initial-value: 0px; }
 @property --thread-fade-span { syntax: '<length>'; inherits: false; initial-value: 0px; }
 
+/* The connecting row (chat/Notice.tsx ConnectingNotice) floats over the transcript's tail instead of taking a slot, so
+   the tail must leave it room: the whole row (its --row plus the dock's half-gap under it) and a row gap above it. The
+   room is reserved always, never only while starting, so the history does not move when the row comes or goes. Every
+   tail ends at the same distance from the dock: a reply's action row (TurnActions) already holds part of the room and
+   gets the rest, so a reply finishing (a running tail has no action row) does not shift the thread either. Read by the
+   body's tail clearance (threadClearance in chat/Shell.tsx); one rule on the thread body, so no kind of tail misses it. */
+@property --thread-tail-room { syntax: '<length>'; inherits: false; initial-value: 0px; }
+@layer components {
+  [data-thread-body] {
+    --thread-tail-room: calc(var(--row) + var(--gap) * 1.5 - var(--msg-gap));
+    /* The action row's own room: its height after a row gap, less the message gap the exchange gives back (Shell.tsx) */
+    &:has(> section:last-child > :last-child > [data-turn-actions]:last-child) {
+      --thread-tail-room: calc(var(--row) + var(--gap) / 2 - var(--ctl-sm));
+    }
+  }
+}
+
 /* Scroll containers fade the edge that still hides content; useScrollFade sets the data flags.
    Only apply mask-image when an edge actually overflows, so short prompt cards never allocate GPU mask layers. */
 @utility scroll-fade {
@@ -282,3 +299,17 @@
     transition: opacity var(--dur-open) ease-out calc(var(--dur) / 2), transform var(--dur-open) ease-out, visibility 0s;
   }
 }
+
+/* A command's outcome (chat/CommandOutcome.tsx): the glyph's slot is held while the command runs; ending on screen, the
+   stroke draws with a small pop and the final run time fades in over the ticking one. The resting dash covers every
+   lucide Check / X stroke, so the kill switch leaves the whole glyph */
+@layer components {
+  .cmd-outcome path { stroke-dasharray: 24; }
+  .cmd-outcome[data-enter] svg { animation: cmd-pop 420ms cubic-bezier(0.3, 1.5, 0.5, 1) backwards; }
+  .cmd-outcome[data-enter] path { animation: cmd-draw 360ms 60ms cubic-bezier(0.3, 0.7, 0.2, 1) backwards; }
+  .cmd-time[data-enter] { animation: cmd-time-in 280ms 100ms ease-out backwards; }
+}
+
+@keyframes cmd-draw { from { stroke-dashoffset: 24; } }
+@keyframes cmd-pop { from { transform: scale(0.6); } }
+@keyframes cmd-time-in { from { opacity: 0; transform: translateY(2px); } }
