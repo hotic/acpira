@@ -505,4 +505,3 @@ async fn dispatch(op: &str, a: Value, id: u64, out: &Out, stdin: Option<mpsc::Un
     other => Err(WireError::new("unknownOp", format!("unknown operation \"{other}\""))),
   }
 }
-
