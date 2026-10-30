@@ -531,7 +531,7 @@ jobs:
           done
 
   release-asset:
-    needs: [build, build-idea]
+    needs: [build]
     if: github.event_name == 'release' || inputs.publish
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -541,10 +541,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: extension-vsix
-      - uses: actions/download-artifact@v8
-        with:
-          name: intellij-plugin
-          path: idea
+      # The VSIXes only: the IntelliJ plugin is installed from the JetBrains Marketplace, so its zips stay CI artifacts
       - name: Attach packages to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -552,10 +549,9 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.ref }}
         run: |
           sha256sum --check vsix.sha256
-          (cd idea && sha256sum --check SHA256SUMS --ignore-missing)
           # Keep original release assets on retries instead of replacing a published package.
           gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' > assets.txt
-          for file in *.vsix vsix.sha256 idea/*.zip idea/SHA256SUMS; do
+          for file in *.vsix vsix.sha256; do
             if ! grep -Fxq "$(basename "$file")" assets.txt; then
               gh release upload "$RELEASE_TAG" "$file"
             fi
@@ -584,7 +580,7 @@ jobs:
           version: ${{ needs.build.outputs.version }}
         run: |
           sha256sum --check SHA256SUMS --ignore-missing
-          # One version works across different client/backend platforms. Per-platform archives remain GitHub downloads only.
+          # One version works across different client/backend platforms. Per-platform archives stay CI artifacts.
           curl -fsS "https://plugins.jetbrains.com/plugins/list?pluginId=com.github.hotic.acpira" > published.xml
           if grep -Fq "<version>$version</version>" published.xml; then
             echo "$version is already on the Marketplace"
