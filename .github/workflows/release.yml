@@ -63,14 +63,17 @@ jobs:
       - name: Install musl-gcc
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
-      # The engine suites drive test/fake-agent.ts, which needs the repository's node_modules
+      # The engine suites drive test/fake-agent.ts, which needs the repository's node_modules. They run in the dry run
+      # (workflow_dispatch) only: the release checks the candidate beforehand on macOS and Linux (verify-candidate.sh)
+      # and windows-compat runs on every push, so a published Release builds straight away instead of waiting on the
+      # slowest, flakiest suite of the critical path
       - uses: pnpm/action-setup@v6
-        if: matrix.platform == 'linux-x86_64'
+        if: matrix.platform == 'linux-x86_64' && github.event_name == 'workflow_dispatch'
       - name: Install node_modules for the engine suites
-        if: matrix.platform == 'linux-x86_64'
+        if: matrix.platform == 'linux-x86_64' && github.event_name == 'workflow_dispatch'
         run: pnpm install --frozen-lockfile
       - name: Rust tests
-        if: matrix.platform == 'linux-x86_64'
+        if: matrix.platform == 'linux-x86_64' && github.event_name == 'workflow_dispatch'
         working-directory: rust
         run: cargo test --workspace --locked
       - name: Build the sidecar
