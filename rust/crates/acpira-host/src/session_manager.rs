@@ -775,4 +775,3 @@ fn lower_first(s: &str) -> String {
     None => String::new(),
   }
 }
-

@@ -220,4 +220,3 @@ pub enum PluginCardOp {
   Apply,
   Undo,
 }
-
