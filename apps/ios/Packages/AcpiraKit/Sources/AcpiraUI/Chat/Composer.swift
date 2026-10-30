@@ -249,6 +249,8 @@ struct Composer: View {
                              onSetMode: onSetMode, onSetConfig: onSetConfig)
             }
             .gooGlass()
+            // On the card the chips are bare glyphs with no glass circle of their own (`GooChip`)
+            .environment(\.gooBare, expanded)
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { lead = $0 }
             .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(GooColumn.space)).minY } action: { chipTop = $0 }
             Spacer(minLength: 0)

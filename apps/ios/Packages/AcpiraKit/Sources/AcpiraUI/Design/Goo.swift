@@ -91,6 +91,11 @@ enum GooGeometry {
   static let gone: CGFloat = 0.001
   /// A bean's glyph shows over the last part of its way out
   private static let glyphFrom: CGFloat = 0.5, glyphSpan: CGFloat = 0.4
+  /// From a bare chip (no glass for the bean to melt out of) the first bean's glyph, and a panel's closing with the
+  /// picker once its rows are gone (`rowsFrom`), ride their drop: shown from this share of a bean's height and sized
+  /// with it. Grown out of nothing, the bean rose as an empty grey dot over the chip, and the panel shrank home as an
+  /// empty grey drop
+  private static let bareFrom: CGFloat = 0.15, bareSpan: CGFloat = 0.25
   /// Captions come last on the way out and go first on the way in (the chip's own value has to be nearly 1)
   private static let captionFrom: CGFloat = 0.7, captionMain: CGFloat = 0.85
   /// A panel's rows show once it is mostly grown; the other beans are gone by `swallow` of the way
@@ -103,7 +108,7 @@ enum GooGeometry {
   /// A bean leaves the chip as the chip's own glass circle and reaches full size by this share of its way out
   private static let grown: CGFloat = 0.5
 
-  static func frames(_ pieces: [GooPiece], _ progress: GooProgress, chip: CGSize) -> [GooFrame] {
+  static func frames(_ pieces: [GooPiece], _ progress: GooProgress, chip: CGSize, seed: CGFloat) -> [GooFrame] {
     let main = progress[0]
     let stages = pieces.indices.map { max(0, progress[$0 + 1]) }
     let opened = unit(stages.max() ?? 0)
@@ -135,9 +140,9 @@ enum GooGeometry {
       // panel) keeps it inside, so the panel goes home as one drop instead of spilling the beans on the way
       let swallowed = main > GooGeometry.gone ? unit(max(0, others - s) / (swallow * min(1, main))) : 1
       let scale = 1 - swallowed
-      // The bean swells out of the chip's own glass circle and shrinks back into it, so near home it lies inside the
-      // bar. At full size it stood out of the bar as a dome through the spring's slow tail, then vanished at once
-      let seed = chip.height - Metrics.gooChipInset * 2
+      // The bean swells out of the chip's own glass circle (`seed`) and shrinks back into it, so near home it lies
+      // inside the bar. At full size it stood out of the bar as a dome through the spring's slow tail, then vanished
+      // at once
       let side = seed + (chip.height - seed) * unit(t / grown)
       let bean = CGSize(width: side + chip.width - chip.height, height: side)
       // The bean, or its panel part of the way out, then shrunk into the panel that swallows it
@@ -158,7 +163,14 @@ enum GooGeometry {
                        radius: radius * scale, glyph: 0, scale: scale, caption: 0, panel: own, rows: 0,
                        live: t > arrived && opened < uncovered, panelLive: s > arrived)
       let kept = 1 - unit(swallowed / glyphSwallowed)
-      f.glyph = Double(unit((t - glyphFrom) / glyphSpan) * (1 - unit(s / glyphOut)) * kept)
+      if seed == 0 && (i == 0 || s > 0) {
+        let held = unit(size.height / chip.height)
+        let leave = main < 1 ? rowsFrom : glyphOut
+        f.glyph = Double(unit((held - bareFrom) / bareSpan) * (1 - unit(s / leave)) * kept)
+        f.scale = scale * held
+      } else {
+        f.glyph = Double(unit((t - glyphFrom) / glyphSpan) * (1 - unit(s / glyphOut)) * kept)
+      }
       f.caption = Double(min(unit((t - captionFrom) / (1 - captionFrom)), unit((main - captionMain) / (1 - captionMain)))
                          * (1 - unit(opened / captionOut)))
       f.rows = Double(unit((s - rowsFrom) / rowsSpan) * kept)
@@ -184,6 +196,7 @@ private struct GooGlass: View, Animatable {
   /// The chip's frame in this view's space
   var chip: CGRect
   var pieces: [GooPiece]
+  var seed: CGFloat
 
   var animatableData: GooProgress {
     get { progress }
@@ -191,7 +204,7 @@ private struct GooGlass: View, Animatable {
   }
 
   var body: some View {
-    let frames = GooGeometry.frames(pieces, progress, chip: chip.size)
+    let frames = GooGeometry.frames(pieces, progress, chip: chip.size, seed: seed)
     ZStack(alignment: .topLeading) {
       if progress[0] > GooGeometry.gone {
         // Plain views under the glass: a panel growing out of its bean fills with the page's colour, so the title or
@@ -238,6 +251,7 @@ private struct GooControls: View, Animatable {
   /// The layer's width: a caption never runs past the screen's edge, so a chip far along the bar wraps its note
   var room: CGFloat
   var pieces: [GooPiece]
+  var seed: CGFloat
   var close: () -> Void
   var back: () -> Void
 
@@ -247,7 +261,7 @@ private struct GooControls: View, Animatable {
   }
 
   var body: some View {
-    let frames = GooGeometry.frames(pieces, progress, chip: chip.size)
+    let frames = GooGeometry.frames(pieces, progress, chip: chip.size, seed: seed)
     ZStack(alignment: .topLeading) {
       if progress[0] > GooGeometry.gone {
         Color.clear
@@ -313,6 +327,8 @@ struct GooItem {
   let anchor: Anchor<CGRect>
   let progress: GooProgress
   let pieces: [GooPiece]
+  /// The bean's size as it leaves the chip: the chip's glass circle, or nothing for a bare chip
+  let seed: CGFloat
   let close: () -> Void
   let back: () -> Void
 }
@@ -330,7 +346,7 @@ extension View {
       GeometryReader { proxy in
         ForEach(items, id: \.id) { item in
           GooSpring(progress: item.progress) {
-            GooGlass(progress: item.progress, chip: proxy[item.anchor], pieces: item.pieces)
+            GooGlass(progress: item.progress, chip: proxy[item.anchor], pieces: item.pieces, seed: item.seed)
           }
         }
       }
@@ -345,7 +361,7 @@ extension View {
         ForEach(items, id: \.id) { item in
           GooSpring(progress: item.progress) {
             GooControls(progress: item.progress, open: item.progress[0] > 0, chip: proxy[item.anchor], room: proxy.size.width,
-                        pieces: item.pieces, close: item.close, back: item.back)
+                        pieces: item.pieces, seed: item.seed, close: item.close, back: item.back)
           }
         }
       }
@@ -378,6 +394,7 @@ struct GooChip<Glyph: View>: View {
   var pieces: [GooPiece]
   @ViewBuilder var glyph: () -> Glyph
   @Environment(\.motionEnabled) private var motion
+  @Environment(\.gooBare) private var bare
 
   private var isOpen: Bool { open == id }
 
@@ -393,13 +410,16 @@ struct GooChip<Glyph: View>: View {
     .buttonStyle(.plain)
     // A glass circle of its own, so a press lights this chip alone. Inset so that at rest it lies wholly inside the
     // bar and the container merges it away: at full size its outline ran along the bar's round end and swelled it
-    .glassEffect(GlassStyle.control.interactive(), in: Circle().inset(by: Metrics.gooChipInset))
+    // On the card the chip is a bare glyph, as at rest: once the card's glass gave way to its plate under the beans,
+    // the circles stood out as two small buttons, and a press swelled one into a bright disc across the card's edge
+    .glassEffect(bare ? .identity : GlassStyle.control.interactive(), in: Circle().inset(by: Metrics.gooChipInset))
     // The glass's shape is also the button's hit shape, so only the inset circle (half the slot) took taps: a touch a
     // little below the glyph fell through to the bar or card under it and only focused the field. The whole slot takes
     // them again
     .contentShape(Circle())
     .anchorPreference(key: GooKey.self, value: .bounds) { anchor in
-      [GooItem(id: id, anchor: anchor, progress: progress, pieces: pieces, close: { set(nil) }, back: back)]
+      [GooItem(id: id, anchor: anchor, progress: progress, pieces: pieces,
+               seed: bare ? 0 : Metrics.barCtl - Metrics.gooChipInset * 2, close: { set(nil) }, back: back)]
     }
   }
 
@@ -627,7 +647,7 @@ struct LiquidControls: View {
         // beans, ‹ over a panel
         ZStack {
           if open == "model" {
-            Icon(stage > 0 ? .chevronLeft : .x, size: Metrics.barIcon, strokeWidth: 1.75)
+            Icon(stage > 0 ? .chevronLeft : .x, size: Metrics.gooBack, strokeWidth: 1.75)
               .id(stage > 0)
               .transition(.scale(scale: Metrics.gooSeed).combined(with: .opacity))
           } else {
@@ -1129,4 +1149,6 @@ struct FastGlyph: View {
 extension EnvironmentValues {
   /// The chat agent's hidden model families by option id (settings → Agents → Models), for the model chip's lists
   @Entry var hiddenModels: [String: [String]] = [:]
+  /// The chips sit bare on the composer's card: no glass circle of their own, and their beans grow out of nothing
+  @Entry var gooBare = false
 }
