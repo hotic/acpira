@@ -128,22 +128,24 @@ impl Harness {
     self.providers_in("openai-chat", base_url, models);
   }
 
-  /// One source of this API format
+  /// One source of this API format. The fast model is off, so no title call takes one of the scripted replies
   pub fn providers_in(&self, format: &str, base_url: &str, models: Value) {
     std::fs::write(
       self.home().join("providers.json"),
-      json!({ "version": 1, "providers": [{ "id": "mock", "name": "Mock", "format": format, "baseUrl": base_url, "models": models }] }).to_string(),
+      json!({ "version": 1, "fastModel": "off", "providers": [{ "id": "mock", "name": "Mock", "format": format, "baseUrl": base_url, "models": models }] }).to_string(),
     )
     .unwrap();
     std::fs::write(self.home().join("secrets.json"), json!({ "acpira.provider.mock": "sk-test" }).to_string()).unwrap();
   }
 
   /// The approval level as the settings page sets it: a field of providers.json, read at the start of every turn
-  pub fn approval(&self, level: &str) {
+  /// The session's approval level, and the level later sessions start on (providers.json)
+  pub async fn approval(&self, sid: &str, level: &str) {
     let path = self.home().join("providers.json");
     let mut file: Value = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_else(|| json!({ "version": 1 }));
     file["approval"] = json!(level);
     std::fs::write(&path, file.to_string()).unwrap();
+    self.conn.request("session/set_config_option", json!({ "sessionId": sid, "configId": "approval", "value": level })).await.unwrap();
   }
 
   pub async fn new_session(&self) -> Value {

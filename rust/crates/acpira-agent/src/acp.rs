@@ -16,7 +16,7 @@ use acpira_shared::providers::split_pick;
 use crate::config::{Config, ConfigCache};
 use crate::llm::Item;
 use crate::modes;
-use crate::permission::Rule;
+use crate::permission::{Approval, Rule};
 use crate::store::{self, Store};
 
 pub const PROTOCOL_VERSION: i64 = 1;
@@ -56,6 +56,8 @@ pub struct SessionState {
   pub landed: Vec<(String, String)>,
   /// The running turn's cancel signal
   pub turn: Option<Cancel>,
+  /// How much runs without a card (the `approval` select), read at the start of each turn
+  pub approval: Approval,
   /// Rules the user added from permission cards ("always allow"), for this session only
   pub allowed: Vec<Rule>,
   /// What the last model request's prefix was built from (`turn/request.rs` logs a `view` event when it changes)
@@ -153,7 +155,7 @@ impl Session {
   pub fn save_state(&self, st: &SessionState) {
     self.store.prelude(json!({
       "type": "state", "mode": st.mode, "announced": st.announced, "model": st.model, "effort": st.effort, "fast": st.fast,
-      "sidekick": st.sidekick, "sidekick_effort": st.sidekick_effort,
+      "sidekick": st.sidekick, "sidekick_effort": st.sidekick_effort, "approval": st.approval.id(),
     }));
   }
 
@@ -243,10 +245,12 @@ impl Server {
     modes::find(mode).is_some() && self.profile.as_ref().is_none_or(|p| p.offers_mode(mode))
   }
 
-  fn modes_of(&self, st: &SessionState) -> Value {
+  /// The mode picker: Raw mode only while the settings page offers it, or while the session is in it
+  fn modes_of(&self, config: &Config, st: &SessionState) -> Value {
+    let shown = |id: &str| self.offers_mode(id) && (id != modes::RAW || config.raw_mode() || st.mode == modes::RAW);
     json!({
       "currentModeId": st.mode,
-      "availableModes": modes::MODES.iter().filter(|m| self.offers_mode(m.id)).map(|m| json!({ "id": m.id, "name": m.name, "description": m.description })).collect::<Vec<_>>(),
+      "availableModes": modes::MODES.iter().filter(|m| shown(m.id)).map(|m| json!({ "id": m.id, "name": m.name, "description": m.description })).collect::<Vec<_>>(),
     })
   }
 
@@ -398,6 +402,8 @@ impl Server {
     let id = uuid::Uuid::new_v4().to_string();
     let mut state = SessionState { mode: modes::AGENT.to_owned(), announced: modes::AGENT.to_owned(), ..Default::default() };
     state.model = self.default_pick(&config);
+    // The settings file's level until the host replays the user's last pick
+    state.approval = config.approval();
     let remote = crate::remote::Remote::of(params);
     let layers = layers_of(params);
     let places = self.places_of(std::path::Path::new(cwd), remote.as_deref(), layers.clone());
@@ -405,7 +411,7 @@ impl Server {
     state.effort = default_effort(&config, &catalog, state.model.as_deref());
     let response = json!({
       "sessionId": id,
-      "modes": self.modes_of(&state),
+      "modes": self.modes_of(&config, &state),
       "configOptions": sent_options(&config, &catalog, &mut state, self.offers()),
     });
     let store = Store::new(self.session_file(&id), &id, std::path::Path::new(cwd));
@@ -477,7 +483,7 @@ impl Server {
     if reconcile(&config, &catalog, &mut st) {
       session.save_state(&st);
     }
-    Ok(json!({ "modes": self.modes_of(&st), "configOptions": sent_options(&config, &catalog, &mut st, self.offers()) }))
+    Ok(json!({ "modes": self.modes_of(&config, &st), "configOptions": sent_options(&config, &catalog, &mut st, self.offers()) }))
   }
 
   /// A session object from its file: the history, the controls and the system prompt as they were
@@ -502,6 +508,8 @@ impl Server {
     st.fast = loaded.state.get("fast").and_then(Value::as_bool).unwrap_or(false);
     st.sidekick = s("sidekick");
     st.sidekick_effort = s("sidekick_effort");
+    // A record from before the level was the session's starts on the settings file's
+    st.approval = s("approval").and_then(|a| Approval::parse(&a)).unwrap_or_else(|| config.approval());
     // An active goal comes back paused: its run ended with the process that ran it (`goal::revive`)
     st.goal = loaded.goal.clone();
     let paused = crate::goal::revive(&mut st.goal);
@@ -615,6 +623,9 @@ impl Server {
           return Err(RpcError::new(-32602, format!("Unknown effort: {value}")));
         }
         st.effort = Some(value.to_owned());
+      }
+      APPROVAL => {
+        st.approval = Approval::parse(value).ok_or_else(|| RpcError::new(-32602, format!("Unknown approval level: {value}")))?;
       }
       FAST => {
         if !st.model.as_deref().and_then(|p| config.find(p)).is_some_and(|(p, m)| crate::llm::fast::offered(p, m)) {
@@ -787,6 +798,11 @@ fn sent_options(config: &Config, catalog: &Catalog, st: &mut SessionState, offer
   options
 }
 
+/// The approval select: its id and its category (custom, ACP leaves names starting with `_` free). The composer folds it
+/// into the mode chip's menu, so modes and the level read as one control
+pub const APPROVAL: &str = "approval";
+const APPROVAL_CATEGORY: &str = "_permission_mode";
+
 /// The Fast switch's id, and its values as a select for a client without boolean options (the shape Devin uses)
 const FAST: &str = "fast";
 const STANDARD: &str = "standard";
@@ -841,8 +857,8 @@ pub fn session_paths(home: &Path, id: &str) -> [PathBuf; 2] {
 /// The full configOptions set: the model select (every usable model, labelled with its source), the effort select when
 /// the current model offers levels, the Fast switch when it has a fast tier (a boolean, or a Standard / Fast select
 /// for a client that does not take booleans; the composer shows either as its Fast toggle), and for a client that runs
-/// one the sidekick select (none, or any usable model) and, while the sidekick's model has levels, its effort select. The approval level is not a session control: it is the agent's
-/// setting in `providers.json` (`Config::approval`), so the composer shows one mode chip and nothing beside it
+/// one the sidekick select (none, or any usable model) and, while the sidekick's model has levels, its effort select;
+/// last the approval level, with `full` marked `full_access`
 pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState, offers: Offers) -> Vec<Value> {
   let mut out = vec![];
   let current = st.model.as_deref().filter(|p| config.find(p).is_some()).map(str::to_owned).or_else(|| config.default_pick());
@@ -893,6 +909,16 @@ pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState, off
       }
     }
   }
+  out.push(json!({
+    "id": APPROVAL, "name": "Approval", "category": APPROVAL_CATEGORY, "type": "select", "currentValue": st.approval.id(),
+    "options": Approval::ALL.iter().map(|a| {
+      let mut o = json!({ "value": a.id(), "name": a.name() });
+      if *a == Approval::Full {
+        o["_meta"] = json!({ "kind": "full_access" });
+      }
+      o
+    }).collect::<Vec<_>>(),
+  }));
   out
 }
 

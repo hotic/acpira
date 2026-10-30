@@ -26,9 +26,10 @@ pub struct Generated {
 /// Ask `pick` (or the fast model, else the first usable one) once. `home` is the built-in agent's home
 pub async fn generate(home: &Path, pick: Option<&str>, system: &str, prompt: &str, max_tokens: Option<u64>) -> Result<Generated, String> {
   let config = ConfigCache::new(home.to_path_buf()).get();
+  let catalog = crate::catalog::CatalogCache::new(home).get();
   let found = match pick {
     Some(p) => config.find(p).ok_or_else(|| format!("no usable model `{p}` in the model sources"))?,
-    None => config.fast_model().or_else(|| config.default_pick().and_then(|p| config.find(&p))).ok_or("no model source is set up for Acpira's built-in agent")?,
+    None => config.fast_model(&catalog).or_else(|| config.default_pick().and_then(|p| config.find(&p))).ok_or("no model source is set up for Acpira's built-in agent")?,
   };
   let (provider, model) = found;
   let endpoint = Endpoint::of(provider, model, config.api_key(&provider.id)).ok_or_else(|| format!("`{}` has no key or address", provider.id))?;

@@ -378,7 +378,7 @@ async fn always_allow_covers_the_command_pattern_for_the_rest_of_the_session() {
 #[tokio::test]
 async fn full_access_runs_commands_but_edits_to_agent_config_still_ask() {
   let (h, server, sid) = setup(json!([{ "id": "m1" }])).await;
-  h.approval("full");
+  h.approval(&sid, "full").await;
   server.push(mock::tools(&[
     ("c1", "write", json!({ "path": "notes.txt", "content": "hi\n" })),
     ("c2", "write", json!({ "path": ".agents/hooks.json", "content": "{}" })),
@@ -394,7 +394,7 @@ async fn full_access_runs_commands_but_edits_to_agent_config_still_ask() {
 #[tokio::test]
 async fn auto_edit_writes_without_a_card_and_a_reject_still_stops_commands() {
   let (h, server, sid) = setup(json!([{ "id": "m1" }])).await;
-  h.approval("auto-edit");
+  h.approval(&sid, "auto-edit").await;
   *h.client.answer.lock() = Answer::Reject;
   server.push(mock::tools(&[("c1", "write", json!({ "path": "a.txt", "content": "x" })), ("c2", "bash", json!({ "command": "echo hi" }))]));
   let r = prompt(&h, &sid, "go").await;

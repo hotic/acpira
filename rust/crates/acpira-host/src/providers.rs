@@ -13,7 +13,7 @@ use tokio::fs;
 use acpira_agent::llm::discover;
 use acpira_shared::providers::{
   APPROVAL_LEVELS, EFFORTS_FIELD, LocalSource, PROVIDERS_FILE, Thinking, PROVIDERS_VERSION, ProbeOutcome, Provider, ProviderAction, ProviderProbe, ProviderView, ProvidersFile,
-  COMPACTION_STRATEGIES, ProvidersView, WEB_SEARCH_BACKENDS, provider_secret_key, web_secret_key,
+  COMPACTION_STRATEGIES, FAST_MODEL_OFF, ProvidersView, WEB_SEARCH_BACKENDS, model_pick, provider_secret_key, web_secret_key,
 };
 
 use crate::accounts::account_store::FileVault;
@@ -45,7 +45,7 @@ impl ProviderStore {
     };
     let catalog = crate::model_catalog::current();
     let mut providers = Vec::with_capacity(file.providers.len());
-    for mut provider in file.providers {
+    for mut provider in file.providers.iter().cloned() {
       // A guessed or empty scale shows as the agent offers it (the catalogue's levels when it knows the model), so the
       // dialog lights what the composer offers; it is marked as a guess until the dialog saves it
       for m in provider.models.iter_mut().filter(|m| m.thinking != Thinking::Off) {
@@ -59,6 +59,11 @@ impl ProviderStore {
       let has_key = self.vault.get(&provider_secret_key(&provider.id)).await.ok().flatten().is_some_and(|k| !k.is_empty());
       providers.push(ProviderView { provider, has_key });
     }
+    // What "automatic" resolves to, from the same rule the agent applies (keyed sources only)
+    let fast_model_auto = {
+      let keyed: Vec<&str> = providers.iter().filter(|p| p.has_key).map(|p| p.provider.id.as_str()).collect();
+      file.auto_fast_model(&catalog, |p| keyed.contains(&p.id.as_str())).map(|(p, m)| model_pick(&p.id, &m.id))
+    };
     // Which search backends hold a key; the page shows "saved" without ever receiving one
     let mut web_keys = vec![];
     for backend in WEB_SEARCH_BACKENDS.into_iter().skip(1) {
@@ -66,7 +71,7 @@ impl ProviderStore {
         web_keys.push(backend.to_owned());
       }
     }
-    ProvidersView { providers, error: None, approval: file.approval, fast_model: file.fast_model, web_search: file.web_search, web_search_via: file.web_search_via, web_keys, compaction: file.compaction, raw_system_prompt: file.raw_system_prompt, ..tables() }
+    ProvidersView { providers, error: None, approval: file.approval, raw_mode: file.raw_mode == Some(true), fast_model: file.fast_model, fast_model_auto, web_search: file.web_search, web_search_via: file.web_search_via, web_keys, compaction: file.compaction, raw_system_prompt: file.raw_system_prompt, ..tables() }
   }
 
   /// The key a probe uses: one typed into the form, else the stored key of the source with that id
@@ -157,12 +162,21 @@ impl ProviderStore {
           })
           .await
       }
+      ProviderAction::RawMode { on } => {
+        self
+          .edit(|file| {
+            // Off is written as no entry, like the other defaults
+            file.raw_mode = on.then_some(true);
+            Ok(())
+          })
+          .await
+      }
       ProviderAction::FastModel { pick } => {
         let pick = pick.map(|p| p.trim().to_owned()).filter(|p| !p.is_empty());
         self
           .edit(|file| {
-            // Only a model the agent could call; a source edited away later just turns the job off again
-            if let Some(p) = &pick
+            // Only a model the agent could call, or off; a source edited away later falls back to the automatic pick
+            if let Some(p) = pick.as_deref().filter(|p| *p != FAST_MODEL_OFF)
               && file.find(p).is_none()
             {
               bail!("Unknown model: {p}");

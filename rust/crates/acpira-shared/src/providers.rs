@@ -59,12 +59,15 @@ pub struct ProvidersFile {
   pub version: u32,
   #[serde(default)]
   pub providers: Vec<Provider>,
-  /// How much the agent runs without a permission card, one of `APPROVAL_LEVELS`; absent (or unknown) is `ask`. A
-  /// setting of the agent, not of a session: the agent reads it at the start of every turn
+  /// The approval level a session starts on when the host has no pick of the user's to replay, one of
+  /// `APPROVAL_LEVELS`; absent (or unknown) is `ask`. The level itself belongs to the session (its `approval` select)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub approval: Option<String>,
-  /// The model for quick side jobs such as naming a session (`<provider id>/<model id>`); absent, or a model no longer
-  /// usable, turns them off
+  /// Raw mode (`acpira_agent::modes::RAW`) is offered in the mode picker; absent is off. Read when a session opens
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub raw_mode: Option<bool>,
+  /// The model for quick side jobs such as naming a session (`<provider id>/<model id>`), or `FAST_MODEL_OFF`; absent,
+  /// or a model no longer usable, picks one (`ProvidersFile::fast_pick`)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub fast_model: Option<String>,
   /// The `websearch` backend, one of `WEB_SEARCH_BACKENDS` other than `default`; absent (or unknown) is `default`
@@ -85,6 +88,9 @@ pub struct ProvidersFile {
   #[serde(flatten)]
   pub extra: Map<String, Value>,
 }
+
+/// `ProvidersFile::fast_model`'s value that turns the side jobs' model off
+pub const FAST_MODEL_OFF: &str = "off";
 
 /// The approval levels `ProvidersFile::approval` takes, the default first: `ask` (edits and commands ask), `auto-edit`
 /// (edits run, commands ask), `full` (everything runs, except edits to Acpira's own configuration)
@@ -290,6 +296,11 @@ impl Provider {
     ApiFormat::parse(&self.format)
   }
 
+  /// A local server found on this machine, which takes no key
+  pub fn keyless(&self) -> bool {
+    matches!(self.preset.as_str(), "ollama" | "lmstudio")
+  }
+
   pub fn display_name(&self) -> &str {
     if self.name.trim().is_empty() { &self.id } else { &self.name }
   }
@@ -322,6 +333,32 @@ impl ProvidersFile {
     let (p, m) = split_pick(pick)?;
     self.usable().find(|(pp, mm)| pp.id == p && mm.id == m)
   }
+
+  /// The fast model in effect: none when turned off, the pick while it is usable, else `auto_fast_model`.
+  /// `keyed` says whether a source has its key stored
+  pub fn fast_pick(&self, catalog: &Catalog, keyed: impl Fn(&Provider) -> bool) -> Option<(&Provider, &ProviderModel)> {
+    match self.fast_model.as_deref() {
+      Some(FAST_MODEL_OFF) => None,
+      pick => pick.and_then(|p| self.find(p)).or_else(|| self.auto_fast_model(catalog, keyed)),
+    }
+  }
+
+  /// The fast model when none is picked, so sessions get named without a trip to the settings: the usable model with
+  /// the lowest catalogue price among sources that can be called (a key stored, or a local server), else the first of
+  /// them. A zero price is read as unlisted, since the catalogue writes 0 for models it has no price for
+  pub fn auto_fast_model(&self, catalog: &Catalog, keyed: impl Fn(&Provider) -> bool) -> Option<(&Provider, &ProviderModel)> {
+    let ready = || self.usable().filter(|(p, _)| keyed(p) || p.keyless());
+    ready()
+      .filter_map(|(p, m)| {
+        let cost = catalog.lookup(&m.id, m.name.as_deref())?.cost.as_ref()?;
+        let price = cost.input + cost.output;
+        (price > 0.0).then_some((price, p, m))
+      })
+      // The first of equally priced models, in file order
+      .min_by(|a, b| a.0.total_cmp(&b.0))
+      .map(|(_, p, m)| (p, m))
+      .or_else(|| ready().next())
+  }
 }
 
 /// One source as the settings page sees it: the file's entry plus whether a key is stored. The key itself never
@@ -347,9 +384,15 @@ pub struct ProvidersView {
   /// The file's approval level as written (absent reads as `ask`)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub approval: Option<String>,
+  /// Raw mode is offered in the mode picker (`ProvidersFile::raw_mode`)
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub raw_mode: bool,
   /// The file's fast model pick as written (`ProvidersFile::fast_model`)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub fast_model: Option<String>,
+  /// The model the automatic pick lands on now (`ProvidersFile::auto_fast_model`), whatever the file holds
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub fast_model_auto: Option<String>,
   /// The file's search backend as written (`ProvidersFile::web_search`)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub web_search: Option<String>,
@@ -428,9 +471,11 @@ pub enum ProviderAction {
   },
   /// Remove the source and its key
   Delete { id: String },
-  /// Set the agent's approval level (one of `APPROVAL_LEVELS`)
+  /// Set the approval level new sessions start on (one of `APPROVAL_LEVELS`)
   Approval { level: String },
-  /// Set the fast model (a usable `<provider id>/<model id>`); absent or empty turns it off
+  /// Offer Raw mode in the mode picker, or stop offering it
+  RawMode { on: bool },
+  /// Set the fast model (a usable `<provider id>/<model id>`, or `FAST_MODEL_OFF`); absent or empty picks one
   FastModel {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pick: Option<String>,
@@ -458,6 +503,35 @@ pub enum ProviderAction {
 mod tests {
   use super::*;
   use serde_json::json;
+
+  #[test]
+  fn the_fast_model_is_picked_when_none_is_set_and_stays_off_when_turned_off() {
+    use crate::model_catalog::{Catalog, trim_models_dev};
+    let api = json!({ "deepseek": { "models": {
+      "deepseek-big": { "name": "DeepSeek Big", "cost": { "input": 5.0, "output": 25.0 } },
+      "deepseek-small": { "name": "DeepSeek Small", "cost": { "input": 0.1, "output": 0.4 } },
+      "deepseek-unpriced": { "name": "DeepSeek Unpriced", "cost": { "input": 0.0, "output": 0.0 } } } } });
+    let catalog = Catalog::new(trim_models_dev(&api, "2026-10-28T00:00:00Z", None));
+    let mut file: ProvidersFile = serde_json::from_value(json!({ "providers": [
+      { "id": "nokey", "format": "openai-chat", "baseUrl": "https://a", "models": [{ "id": "deepseek-small" }] },
+      { "id": "gw", "format": "openai-chat", "baseUrl": "https://b", "models": [{ "id": "deepseek-big" }, { "id": "deepseek-unpriced" }, { "id": "deepseek-small" }] },
+    ] })).unwrap();
+    let keyed = |p: &Provider| p.id == "gw";
+    let pick = |f: &ProvidersFile| f.fast_pick(&catalog, keyed).map(|(p, m)| model_pick(&p.id, &m.id));
+    // Unset: the cheapest priced model of a source with a key; a source without one is passed over
+    assert_eq!(pick(&file).as_deref(), Some("gw/deepseek-small"));
+    // A usable pick wins; one edited away falls back to the automatic pick
+    file.fast_model = Some("gw/deepseek-big".into());
+    assert_eq!(pick(&file).as_deref(), Some("gw/deepseek-big"));
+    file.fast_model = Some("gw/gone".into());
+    assert_eq!(pick(&file).as_deref(), Some("gw/deepseek-small"));
+    file.fast_model = Some(FAST_MODEL_OFF.into());
+    assert_eq!(pick(&file), None);
+    // Nothing priced: the first callable model
+    file.fast_model = None;
+    file.providers[1].models.retain(|m| m.id == "deepseek-unpriced");
+    assert_eq!(pick(&file).as_deref(), Some("gw/deepseek-unpriced"));
+  }
 
   #[test]
   fn offered_efforts_keep_a_confirmed_scale_and_replace_a_guess() {

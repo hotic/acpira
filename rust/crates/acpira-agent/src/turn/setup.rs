@@ -105,7 +105,8 @@ pub(super) fn setup(server: &Server, session: &Session, params: &Value, mcp: &[c
     }
     st.prompt.clone()
   };
-  let approval = config.approval();
+  // The session's level as the turn starts; a pick made during the turn applies from the next one
+  let approval = session.state.lock().approval;
   let defaults = &composed.sampling;
   let sampling = Sampling {
     temperature: model.sampling.temperature.or(defaults.temperature),
@@ -174,17 +175,18 @@ pub(super) fn setup(server: &Server, session: &Session, params: &Value, mcp: &[c
   })
 }
 
-/// A compaction's models: the turn's model sets the tail; the summary is written by the fast model of the settings
-/// page when one is set and usable (read at the moment, like the title's), then by the turn's model when that fails
+/// A compaction's models: the turn's model sets the tail; the summary is written by the fast model in effect (the
+/// settings page's pick or the automatic one, read at the moment, like the title's), then by the turn's model when that
+/// fails
 pub(super) fn summary_call<'a>(server: &Server, s: &'a Setup) -> compact::Call<'a> {
   let mut writers = Vec::with_capacity(2);
   let config = server.config.get();
-  if let Some((provider, model)) = config.fast_model()
+  let catalog = server.catalog.get();
+  if let Some((provider, model)) = config.fast_model(&catalog)
     && model_pick(&provider.id, &model.id) != s.pick
     && let Some(endpoint) = Endpoint::of(provider, model, config.api_key(&provider.id))
   {
     let mut model = model.clone();
-    let catalog = server.catalog.get();
     let cost = crate::catalog::complete(&mut model, &catalog);
     let pick = model_pick(&provider.id, &model.id);
     // The fast model thinks at the level a new session on it would start with

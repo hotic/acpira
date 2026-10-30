@@ -1,7 +1,8 @@
-//! Session titles from the fast model (`ProvidersFile::fast_model`, set on the settings page). On a session's first
-//! prompt the prompt's own text goes to that model in one small call beside the turn; its answer, cleaned up, is sent
-//! as `session_info_update { title }` and logged as a `title` event, which `session/list` and the replay read back.
-//! Without a fast model, or when the call fails, nothing is sent and the host keeps the title it made from the prompt.
+//! Session titles from the fast model (`ProvidersFile::fast_pick`: the settings page's pick, else an automatic one).
+//! On a session's first prompt the prompt's own text goes to that model in one small call beside the turn; its answer,
+//! cleaned up, is sent as `session_info_update { title }` and logged as a `title` event, which `session/list` and the
+//! replay read back. With the fast model turned off, or when the call fails, nothing is sent and the host keeps the
+//! title it made from the prompt.
 //! A session is named once, from its first prompt only: a later turn never renames it, so a title the user set in the
 //! meantime stays
 
@@ -46,12 +47,13 @@ pub fn source_of(prompt: &Value) -> Option<String> {
 /// was started (the caller may try again on a later first prompt)
 pub fn spawn(server: &Arc<Server>, session: &Arc<Session>, prompt: &Value) -> bool {
   let config = server.config.get();
-  let Some((provider, model)) = config.fast_model() else { return false };
+  let catalog = server.catalog.get();
+  let Some((provider, model)) = config.fast_model(&catalog) else { return false };
   let Some(source) = source_of(prompt) else { return false };
   let Some(endpoint) = Endpoint::of(provider, model, config.api_key(&provider.id)) else { return false };
   let pick = model_pick(&provider.id, &model.id);
   let mut model = model.clone();
-  let cost = crate::catalog::complete(&mut model, &server.catalog.get());
+  let cost = crate::catalog::complete(&mut model, &catalog);
   let request = Request {
     model: model.id.clone(),
     system: SYSTEM.to_owned(),

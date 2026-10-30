@@ -30,6 +30,11 @@ async fn raw_mode_sends_the_conversation_alone_and_agent_mode_takes_over_without
   let h = Harness::start().await;
   let server = MockModel::start();
   h.providers(&server.base_url(), json!([{ "id": "m1" }]));
+  // The settings page offers Raw mode in the picker
+  let path = h.home().join("providers.json");
+  let mut file: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+  file["rawMode"] = json!(true);
+  std::fs::write(&path, file.to_string()).unwrap();
   // Project instructions and a skill that Raw mode must leave out
   std::fs::write(h.cwd().join("AGENTS.md"), "Always answer in rhymes.").unwrap();
   let skill = h.cwd().join(".agents/skills/greet");
@@ -38,7 +43,7 @@ async fn raw_mode_sends_the_conversation_alone_and_agent_mode_takes_over_without
   let session = h.new_session().await;
   let sid = session["sessionId"].as_str().unwrap().to_owned();
   let modes: Vec<&str> = session["modes"]["availableModes"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
-  assert_eq!(modes, ["agent", "plan", "raw"]);
+  assert_eq!(modes, ["agent", "plan", "team", "raw"]);
   set_mode(&h, &sid, "raw").await.unwrap();
 
   server.push(mock::text("hello"));

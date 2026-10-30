@@ -16,6 +16,7 @@ use crate::tools::{BASH as T_BASH, EDIT as T_EDIT, EXIT_PLAN, GLOB, GREP, HISTOR
 
 pub const AGENT: &str = "agent";
 pub const PLAN: &str = "plan";
+pub const TEAM: &str = "team";
 pub const RAW: &str = "raw";
 
 pub struct Mode {
@@ -45,8 +46,10 @@ pub const MODES: &[Mode] = &[
   Mode {
     id: AGENT,
     name: "Agent",
-    description: "Reads, edits and runs commands; what asks first is the approval level in settings",
-    overlay: "Plan mode is off. You are in Agent mode again: you can edit files and run commands, within the permission rules.",
+    description: "Reads, edits and runs commands; what asks first is the session's approval level",
+    // Also the note after Team mode, so it says again that summoning is the user's call
+    overlay: "You are in Agent mode (Plan and Team mode are off): you can edit files and run commands, within the permission \
+rules. Do the work yourself; summon another agent only when the user names one or asks for it.",
     rules: &[],
   },
   Mode {
@@ -78,6 +81,40 @@ in the order they must be done, one checkable change each. Keep the list in step
     // An MCP tool its server does not mark read-only may change anything, so it asks like a command (the engine's own
     // tools excepted)
     rules: &[(EDIT, "*", Decision::Deny), (EDIT, "{plan}", Decision::Allow), (BASH, "*", Decision::Ask), (MCP, "*", Decision::Ask), (MCP, ENGINE_MCP, Decision::Allow)],
+  },
+  // The lead of a team: the roster of `acpira_ask_agent` does the substantial work. The rules follow Cursor's Multitask
+  // mode (one coherent worker before many narrow ones, end the turn instead of waiting) and Qoder's Experts (disjoint
+  // ownership for parallel edits, one shared contract, a reply is a claim checked against the diff). Same tools and
+  // rules as Agent mode, so a switch keeps the prompt cache; the host's tool description defers to this mode
+  Mode {
+    id: TEAM,
+    name: "Team",
+    description: "Leads the summoned agents: hands them the work, then checks and merges what they did",
+    overlay: "Team mode is on. You lead a team: the agents listed by acpira_ask_agent do the substantial work, while you \
+divide it, brief them, check their results and put them together.
+- If acpira_ask_agent is not offered (no agent is set up), say so in one line and do the work yourself as in Agent mode.
+- Small tasks stay with you: a question, a one-file fix, anything one quick look settles. Read and search as much as you \
+need to divide the work well, then hand off implementation, long investigations, test runs and reviews.
+- Prefer one agent that owns a whole piece of work (investigate, change, test) over several narrow ones. Split only along \
+real seams: separate modules or services, separate asks from the user, or independent answers worth comparing. Never give \
+one agent both a change and its review.
+- Pick agents by what the roster says: their duty, whether they are read-only, and when to use them. A read-only agent \
+gets research or review, never edits.
+- Agents editing at the same time get disjoint files or modules, named in their briefs; work that may touch the same \
+files runs one after another. Where two pieces meet, write the interface once and put the same text in both briefs.
+- A brief stands alone, since the agent cannot see this conversation: the goal, what you already know (paths, not pasted \
+code), the exact scope and what is out of it, the files it owns, how to verify, and what the reply must hold (files \
+changed, commands run with their results, open problems). For a review, hand over `changes` and the original \
+requirement, not your account of the change.
+- Keep the to-do list as the team's board: one item per handoff, in dependency order, in_progress when sent, completed \
+only after you checked the result.
+- Send independent handoffs together in one message, then end your turn: each reply arrives as a message. Do not poll, and \
+do not redo delegated work meanwhile; when a result falls short, say so in the same thread.
+- A reply is a claim. Read the actual diff and rerun the deciding check before you mark it done, then check the pieces \
+against each other (interfaces, types, tests). After parallel edits, run the full checks once at the end, yourself or \
+through one agent.
+- Report to the user only when every handoff is back and checked: who did what, what you verified, what is still open.",
+    rules: &[],
   },
   // The plain endpoint: the turn sends the conversation alone (`turn::setup` leaves the tools, the composed prompt and
   // the variant's sampling out; compaction only runs on /compact). No overlay: the model is told nothing on entering
@@ -153,6 +190,8 @@ mod tests {
     assert_eq!(evaluate(&[&defaults, &allowed, &get(PLAN).rules(plan, cwd, Approval::Ask)], BASH, "ls -la"), Decision::Ask);
     assert!(get(PLAN).overlay(plan).contains("/h/agent/sessions/s/plan.md"));
     assert!(get(AGENT).rules(plan, cwd, Approval::Full).is_empty() && get("nope").id == AGENT);
+    // Team mode only changes what the model is told, never what it may do
+    assert!(get(TEAM).rules(plan, cwd, Approval::Ask).is_empty());
     assert!(TOOLS.contains(&EXIT_PLAN) && TOOLS.contains(&QUESTION));
     // Every list carries the goal tools at the same place, behind question
     for list in [TOOLS, TOOLS_WITH_SKILL, TOOLS_CHUNKED, TOOLS_CHUNKED_WITH_SKILL] {

@@ -526,8 +526,9 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
           _ => return Err(describe(s.provider.display_name(), &e)),
         }
       }
-      server.update(&session.id, retry_notice(s.provider.display_name(), &e, attempt + 1));
-      tokio::time::sleep(retry_delay(&e, attempt)).await;
+      let wait = retry_delay(&e, attempt);
+      server.update(&session.id, retry_notice(s.provider.display_name(), &e, attempt + 1, wait));
+      tokio::time::sleep(wait).await;
     };
     // A window edited while the call ran decides this step's compaction already
     refresh_limits(server, &mut s);

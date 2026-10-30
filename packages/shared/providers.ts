@@ -69,10 +69,15 @@ export interface ProvidersView {
   error?: string;
   // The families a model can be pinned to (llm/family.rs), the generic one first
   families: string[];
-  // The agent's approval level as the file holds it; absent reads as 'ask'
+  // The approval level a new session starts on when no pick of the user's is remembered; absent reads as 'ask'
   approval?: string;
-  // The model for quick side jobs such as naming a session (`<provider id>/<model id>`); absent turns them off
+  // Raw mode is offered in the mode picker
+  rawMode?: boolean;
+  // The model for quick side jobs such as naming a session (`<provider id>/<model id>`), or FAST_MODEL_OFF; absent picks
+  // one (`fastModelAuto`)
   fastModel?: string;
+  // The model the automatic pick lands on now: the cheapest catalogued model of a source with a key, else the first one
+  fastModelAuto?: string;
   // The websearch backend as the file holds it; absent reads as 'default'
   webSearch?: string;
   // The model source DeepSeek-shaped search goes through (a gateway serving /v1/tools/search); absent is DeepSeek's API
@@ -84,6 +89,9 @@ export interface ProvidersView {
   // The system prompt of the agent's Raw mode; absent sends none
   rawSystemPrompt?: string;
 }
+
+// `fastModel`'s value that turns the side jobs' model off (`FAST_MODEL_OFF` in acpira-shared/src/providers.rs)
+export const FAST_MODEL_OFF = 'off';
 
 // How the built-in agent compacts its history (`COMPACTION_STRATEGIES` in acpira-shared/src/providers.rs), the default
 // first: a model-written summary, or chunks of the finished turns (no model call)
@@ -107,14 +115,9 @@ export function webSearchOf(view?: ProvidersView): WebSearchBackend {
 }
 
 // How much the built-in agent runs without a permission card (`APPROVAL_LEVELS` in acpira-shared/src/providers.rs),
-// the default first. A setting of the agent, not a session control
+// the default first. The session's `approval` select; `ProvidersView.approval` is only where a new session starts
 export const APPROVAL_LEVELS = ['ask', 'auto-edit', 'full'] as const;
 export type ApprovalLevel = typeof APPROVAL_LEVELS[number];
-
-// The view's level, unknown or absent values reading as the default
-export function approvalOf(view?: ProvidersView): ApprovalLevel {
-  return APPROVAL_LEVELS.find(l => l === view?.approval) ?? APPROVAL_LEVELS[0];
-}
 
 // The formats the agent speaks (`ApiFormat::parse`; an empty format reads as openai-chat)
 const KNOWN_FORMATS = new Set(['', 'openai-chat', 'openai-responses', 'anthropic']);
@@ -156,7 +159,8 @@ export type ProviderAction =
   | { kind: 'save'; provider: Provider; key?: string }
   | { kind: 'delete'; id: string }
   | { kind: 'approval'; level: ApprovalLevel }
-  // pick: a usable `<provider id>/<model id>`; absent turns the fast model off
+  | { kind: 'rawMode'; on: boolean }
+  // pick: a usable `<provider id>/<model id>` or FAST_MODEL_OFF; absent picks one automatically
   | { kind: 'fastModel'; pick?: string }
   // key: that backend's; absent keeps the stored key, empty removes it. via: the model source DeepSeek-shaped search goes
   // through; absent keeps it, empty goes back to DeepSeek's own API

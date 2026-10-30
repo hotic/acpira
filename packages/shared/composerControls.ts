@@ -174,8 +174,8 @@ export function levelShort(label: string): string {
 // ACP capabilities choose the contents of one composer, never its layout.
 // Recognize native reasoning and model parameters before applying model-name decomposition.
 // Codex's `collaboration_mode` (default / plan) is a working mode next to the permission modes, so it sits on the left,
-// and so does a permission level offered as a config option (custom category `_permission_mode`, after the modes): the right side
-// is the model's. The built-in agent no longer sends one; its approval level is a settings-page setting
+// and so does a permission level offered as a config option (custom category `_permission_mode`, the built-in agent's
+// approval level): the composer folds it into the mode chip's menu when the agent has modes. The right side is the model's
 export function composerControls(options: ConfigControl[]) {
   const models: ConfigControl[] = [], reasoning: ConfigControl[] = [], modelConfig: ConfigControl[] = [], collaboration: ConfigControl[] = [], permission: ConfigControl[] = [], sidekick: ConfigControl[] = [], sidekickEffort: ConfigControl[] = [], other: ConfigControl[] = [];
   for (const c of options) {
