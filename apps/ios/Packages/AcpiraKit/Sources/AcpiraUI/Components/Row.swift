@@ -233,10 +233,15 @@ public struct RowTarget: View {
   var mono: Bool
   /// An explicit ink (`text-fg-2`, `text-fg-3`); `nil` is the default fg-1 at 85 %
   var ink: Color?
-  public init(_ text: String, mono: Bool = false, ink: Color? = nil) { self.text = text; self.mono = mono; self.ink = ink }
+  /// A target that opens something on a tap (a file row's image), underlined in its own ink
+  var underline: Bool
+  public init(_ text: String, mono: Bool = false, ink: Color? = nil, underline: Bool = false) {
+    self.text = text; self.mono = mono; self.ink = ink; self.underline = underline
+  }
   public var body: some View {
     Text(web: text)
       .inlineFont(mono ? WebType.mono : WebType.text2)
+      .underline(underline)
       .foregroundStyle(action ? Palette.actionFg : (ink ?? Palette.fg1.opacity(0.85)))
       .lineLimit(1)
       .truncationMode(.tail)

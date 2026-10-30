@@ -72,18 +72,13 @@ struct ToolCallView: View {
         ResultList(items: files, kind: block.kind).environment(\.rowEnterDelay, Motion.rowEnterFile)
       }
     } else if files.count == 1 && block.kind == .read {
-      let hit = splitHit(files[0])
-      Row(tone: .action) { LeadIcon(icon) } content: {
-        label
-        HStack(alignment: .firstTextBaseline, spacing: Metrics.s1) {
-          RowTarget(hit.main, mono: true, ink: Palette.fg2)
-          if let aside = hit.aside { Aside(aside) }
-        }
-      } trailing: { trailing }
+      FileRow(hit: files[0], image: toolImages(block).first, icon: icon) { label } trailing: { trailing }
     } else if !files.isEmpty {
       VStack(alignment: .leading, spacing: 0) {
         Row(tone: .action) { LeadIcon(icon) } content: { label } trailing: { trailing }
-        EntranceOnce(id: "\(block.id):files") { ResultList(items: files, kind: block.kind) }
+        EntranceOnce(id: "\(block.id):files") {
+          ResultList(items: files, kind: block.kind, images: block.kind == .read ? toolImages(block) : [])
+        }
       }
       .connectedRail(enabled: true, endAtLastRow: true)
     } else if block.kind == .read || block.kind == .search || (block.kind == .edit && visible.isEmpty && block.asyncTask == nil)
@@ -305,24 +300,21 @@ struct ToolBody: View {
 
 // MARK: - Result list
 
-/// File / hit rows under a read or search: dense action rows, the name in mono fg-2 and the line as a faint note
+/// File / hit rows under a read or search: dense action rows, the name in mono fg-2 and the line as a faint note.
+/// `images`: a read's saved images, which its file rows open
 struct ResultList: View {
   let items: [String]
   let kind: ToolKind
+  var images: [ImageRef] = []
 
   var body: some View {
     let icon: LucideIcon = kind == .fetch ? .globe : .fileText
     VStack(alignment: .leading, spacing: 0) {
-      ForEach(items, id: \.self) { item in
-        let hit = splitHit(item)
+      ForEach(Array(items.enumerated()), id: \.element) { i, item in
         if kind == .read || kind == .search {
-          Row(tone: .action, dense: true) { LeadIcon(icon) } content: {
-            HStack(alignment: .firstTextBaseline, spacing: Metrics.s1) {
-              RowTarget(hit.main, mono: true, ink: Palette.fg2)
-              if let aside = hit.aside { Aside(aside) }
-            }
-          }
+          FileRow(hit: item, image: rowImage(item, at: i, of: items, images: images), dense: true, icon: icon)
         } else {
+          let hit = splitHit(item)
           Row(tone: .action, dense: true) { LeadIcon(icon) } content: {
             RowTarget(hit.main, mono: kind != .fetch, ink: Palette.fg2)
           } trailing: {
@@ -331,6 +323,145 @@ struct ResultList: View {
         }
       }
     }
+  }
+}
+
+/// ResultList's pairing of a file row with the call's saved images: the one image of a lone row, else the image whose
+/// uri names the row's file, else the image at the row's place when there is one per row
+func rowImage(_ item: String, at index: Int, of items: [String], images: [ImageRef]) -> ImageRef? {
+  guard !images.isEmpty else { return nil }
+  if items.count == 1 && images.count == 1 { return images[0] }
+  let main = splitHit(item).main
+  let named = images.first { image in
+    guard let uri = image.uri else { return false }
+    return uri == item || (!main.isEmpty && uri.hasSuffix("/\(main)"))
+  }
+  return named ?? (images.count == items.count ? images[index] : nil)
+}
+
+/// What a file row opens in the Lightbox (ToolCall.tsx FileRef): the call's saved copy of the image, else the file
+/// itself where the link can stage it. nil for a line reference and any other file: the row stays plain, since the
+/// phone opens nothing else from a process row
+func fileRowImage(_ hit: String, image: ImageRef?, session: String?, canStage: Bool) -> MediaSource? {
+  let file = fileReference(hit)
+  guard file.line == nil, let session else { return nil }
+  if let stored = MediaSource.stored(image?.blob, session: session) { return stored }
+  guard canStage, imageMimeOf(file.path) != nil else { return nil }
+  return .file(session: session, path: file.path)
+}
+
+/// attachments.ts imageMimeOf: the image types the engine stages (`image_mime_of`), by extension
+func imageMimeOf(_ name: String) -> String? {
+  guard let dot = name.lastIndex(of: "."), !name[dot...].contains(where: { $0 == "/" || $0 == "\\" }) else { return nil }
+  let mimes = ["png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"]
+  return mimes[name[name.index(after: dot)...].lowercased()]
+}
+
+/// A read or search row's file (FileResultRow / FileRef): its name in mono fg-2 and the line as a faint note. A file
+/// with an image to show (`fileRowImage`) is underlined, as the desktop underlines it under the pointer (a phone has no
+/// hover), and the whole row opens it in the Lightbox. Its pixels may still have to come over the link: the file glyph
+/// then turns into the desktop's spinner until they land, and a picture that cannot load says so in a toast
+struct FileRow<Label: View, Trailing: View>: View {
+  let hit: String
+  var image: ImageRef?
+  var dense: Bool
+  var icon: LucideIcon
+  let label: Label
+  let trailing: Trailing
+  @Environment(\.media) private var media
+  @Environment(\.sessionActions) private var actions
+  @Environment(\.motionEnabled) private var motion
+  @Environment(\.initialPopup) private var initialPopup
+  /// The tap's load while the pixels are on their way
+  @State private var pending: Task<Void, Never>?
+
+  init(hit: String, image: ImageRef? = nil, dense: Bool = false, icon: LucideIcon = .fileText,
+       @ViewBuilder label: () -> Label, @ViewBuilder trailing: () -> Trailing) {
+    self.hit = hit; self.image = image; self.dense = dense; self.icon = icon
+    self.label = label(); self.trailing = trailing()
+  }
+
+  var body: some View {
+    let split = splitHit(hit)
+    let source = fileRowImage(hit, image: image, session: media.session, canStage: media.loader.canStage)
+    let loading = pending != nil
+    Row(tone: .action, dense: dense) {
+      // The glyph stays in place, hidden, so the rail keeps measuring the file icon under the spinner
+      LeadIcon(icon)
+        .opacity(loading ? 0 : 1)
+        .overlay { if loading { LoadingGlyph(size: WebMetrics.icon).transition(.opacity) } }
+    } content: {
+      label
+      HStack(alignment: .firstTextBaseline, spacing: Metrics.s1) {
+        RowTarget(split.main, mono: true, ink: Palette.fg2, underline: source != nil)
+        if let aside = split.aside { Aside(aside) }
+      }
+    } trailing: { trailing }
+    .onTapGesture { if let source { open(source, name: split.main) } }
+    .accessibilityAddTraits(source != nil ? .isButton : [])
+    .onDisappear { settle() }
+    .task {
+      // `-popup readimage` taps the first file row with an image, for screenshots
+      guard initialPopup == "readimage", let source, !ReadImageProbe.claimed else { return }
+      ReadImageProbe.claimed = true
+      try? await Task.sleep(for: .seconds(1))
+      open(source, name: split.main)
+    }
+  }
+
+  /// Opens the picture at once when it is at hand, else after its load; a second tap while it loads does nothing
+  private func open(_ source: MediaSource, name: String) {
+    guard pending == nil, let lightbox = media.lightbox else { return }
+    if let image = media.loader.peek(source) {
+      lightbox.open(LightboxItem(image: image, name: name))
+      return
+    }
+    let (loader, toast, motion) = (media.loader, actions.toast, motion)
+    let task = Task {
+      let image = try? await loader.image(source)
+      // A row that left the screen meanwhile opens nothing: the reader has moved on (the load still fills the cache)
+      guard !Task.isCancelled else { return }
+      withAnimation(motion ? Motion.quick : nil) { pending = nil }
+      if let image {
+        lightbox.open(LightboxItem(image: image, name: name))
+      } else {
+        toast(t("attach.loadFailed", ["name": name]), .image)
+      }
+    }
+    withAnimation(motion ? Motion.quick : nil) { pending = task }
+  }
+
+  private func settle() {
+    pending?.cancel()
+    pending = nil
+  }
+}
+
+extension FileRow where Label == EmptyView, Trailing == EmptyView {
+  init(hit: String, image: ImageRef? = nil, dense: Bool = false, icon: LucideIcon = .fileText) {
+    self.init(hit: hit, image: image, dense: dense, icon: icon, label: { EmptyView() }, trailing: { EmptyView() })
+  }
+}
+
+/// `-popup readimage` opens once per launch
+enum ReadImageProbe {
+  static var claimed = false
+}
+
+/// The desktop's loading glyph (Loader2 under animate-spin: one turn a second, linear) at a row icon's size and stroke.
+/// It keeps turning with motion off, as the list's working ring does: a still one reads as stuck. Drawn as a bare shape,
+/// so it offers no rail anchor of its own
+struct LoadingGlyph: View {
+  var size: CGFloat
+
+  var body: some View {
+    TimelineView(.animation) { context in
+      IconShape(icon: .loaderCircle)
+        .stroke(style: StrokeStyle(lineWidth: 1.5 * size / 24, lineCap: .round, lineJoin: .round))
+        .frame(width: size, height: size)
+        .rotationEffect(.degrees(context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1) * 360))
+    }
+    .accessibilityLabel(Text(web: t("attach.loading")))
   }
 }
 
@@ -374,7 +505,7 @@ struct ReadEntry: View {
   var body: some View {
     let files = toolFiles(block)
     if !files.isEmpty {
-      ResultList(items: files, kind: .read)
+      ResultList(items: files, kind: .read, images: toolImages(block))
     } else {
       Row(tone: .action, dense: true) { LeadIcon(.fileText) } content: {
         Shimmer(block.target ?? toolVerb(block), active: block.status == .pending || block.status == .in_progress)

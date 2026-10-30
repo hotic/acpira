@@ -297,6 +297,24 @@
     },
     {
      "type": "tool_call",
+     "id": "m2-read",
+     "kind": "read",
+     "verb": "读取",
+     "target": "after.png",
+     "status": "completed",
+     "locations": [
+      {
+       "path": "/Users/dev/projects/acpira/settings/after.png"
+      }
+     ],
+     "content": {
+      "type": "image",
+      "blob": "0483733ab40fd77d.png",
+      "mimeType": "image/png"
+     }
+    },
+    {
+     "type": "tool_call",
      "id": "m2-sim",
      "kind": "other",
      "verb": "调用",
