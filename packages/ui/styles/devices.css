@@ -28,6 +28,7 @@
 @keyframes dv-fade { from { opacity: 0; } }
 @keyframes dv-wait { to { opacity: .35; } }
 @keyframes dv-digits-in { from { opacity: 0; transform: translateY(3px); filter: blur(2px); } }
+@keyframes dv-soon-sheen { from { transform: translateX(-130%) skewX(-18deg); } }
 
 @layer components {
   /* The foot button's phone: the presence dot in its notch, a scan line while a pairing window is open */
@@ -174,4 +175,19 @@
      row's own glyph on its last frame (DevicesCard.tsx) */
   .dv-view[data-from] .dv-head { animation: dv-fade 260ms ease 320ms backwards; }
   .dv-view[data-from] .dv-row[data-fresh] .dv-row-text { animation: dv-fade 260ms ease 520ms backwards; }
+
+  /* The mobile app's announcement (DevicesCard.tsx SoonButton): one card, the app icon over a title, a line and a badge.
+     The tile keeps the app icon's own dark ground in both themes, as the icon on a home screen would */
+  .dv-soon { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 26px var(--pad) 20px; border: 1px solid var(--popup-border);
+    border-radius: var(--r-lg); background: var(--popup-bg); }
+  .dv-soon-tile { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; width: 64px; height: 64px; border-radius: 15px;
+    background: linear-gradient(180deg, #34363e, #1d1e23); color: #f4f4f4;
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / .14), inset 0 0 0 1px rgb(255 255 255 / .06), 0 6px 18px rgb(0 0 0 / .35); }
+  .dv-soon-mark { display: block; width: 40px; height: 40px; }
+  /* One faint pass per opening, never looped. At rest the sheen sits past the tile's right edge, so the motion kill switch
+     leaves a plain tile */
+  .dv-soon-sheen { position: absolute; top: -10%; bottom: -10%; left: 0; width: 45%; transform: translateX(260%) skewX(-18deg); pointer-events: none;
+    background: linear-gradient(90deg, transparent, rgb(255 255 255 / .06), transparent); animation: dv-soon-sheen 1300ms cubic-bezier(.4, 0, .2, 1) 160ms backwards; }
+  .dv-soon-badge { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: var(--r-sm); background: var(--chip); font-weight: 500;
+    color: var(--fg-2); font-size: var(--text-3); }
 }
