@@ -4,7 +4,7 @@ import type { DeviceStatus, Relays, RemoteAccessView } from '@acpira/shared/devi
 import { Button } from '../ui/Button';
 import { StableText } from '../ui/StableText';
 import { t } from '../i18n';
-import { deviceOrder, remoteAccessOp } from '../remote/access';
+import { deviceOrder, remoteAccessOp, unavailableKey } from '../remote/access';
 import { DeviceGlyph, KIND_ICON, PairingCore, PathTag, usePairing } from '../remote/Pairing';
 import { seenLine } from '../remote/seen';
 import { StateCell } from './ConnectionsPage';
@@ -21,6 +21,7 @@ export function RemoteAccessSection({ view }: { view: RemoteAccessView }) {
   const [pairing, setPairing] = useState(false);
   const [open, setOpen] = useState<string>();
   const gateway = view.gateway;
+  const awakeError = (view.keepAwake ?? true) ? gateway?.awakeError : undefined;
   const devices = deviceOrder(gateway?.devices ?? []);
   const running = !!gateway;
   // The switch shows the pick at once; the pushed view confirms it
@@ -47,7 +48,7 @@ export function RemoteAccessSection({ view }: { view: RemoteAccessView }) {
           <Switch checked={on} disabled={view.busy} label={t('devices.allow')}
             onChange={v => { setOn(v); remoteAccessOp({ op: v ? 'enable' : 'disable' }); }} />
         </Field>
-        : <Note>{t(view.unavailable === 'component' ? 'devices.unavailable.component' : 'devices.unavailable.platform')}</Note>}
+        : <Note>{t(unavailableKey(view))}</Note>}
       {view.enabled && <Field label={t('devices.relays')} desc={t('devices.relaysDesc')}>
         <Select<RelayPick> label={t('devices.relays')} value={relay}
           onChange={mode => { if (mode !== 'custom') remoteAccessOp({ op: 'setRelays', relays: { mode } }); }}
@@ -58,7 +59,9 @@ export function RemoteAccessSection({ view }: { view: RemoteAccessView }) {
             { value: 'off', label: t('devices.relays.off') },
           ]} />
       </Field>}
-      {view.enabled && <Field label={t('devices.keepAwake')}>
+      {view.enabled && <Field label={t('devices.keepAwake')}
+        // A hold the system refused: the switch is on, the computer may still sleep
+        desc={awakeError && <span className="flex items-center gap-1.5" title={awakeError}><Dot ok={false} warn />{t('devices.keepAwakeFailed')}</span>}>
         <Switch checked={view.keepAwake ?? true} label={t('devices.keepAwake')} onChange={v => remoteAccessOp({ op: 'setKeepAwake', on: v })} />
       </Field>}
     </Section>
