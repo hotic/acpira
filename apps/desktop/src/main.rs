@@ -34,6 +34,10 @@ pub static INIT_SCRIPT: std::sync::LazyLock<String> = std::sync::LazyLock::new(|
     .replace("'__ACPIRA_STATE_SCOPE__'", &serde_json::json!(profile.trim()).to_string())
 });
 
+/// The first argument that runs `acpira-gateway`'s command line inside this exe (Windows)
+#[cfg(windows)]
+const GATEWAY_ROLE: &str = "gateway";
+
 fn main() {
   let args: Vec<String> = std::env::args().collect();
   // Windows ships one exe: its first argument picks the engine's roles (`serve`, `agent`, `stdio`, …), anything else (no
@@ -41,7 +45,15 @@ fn main() {
   #[cfg(windows)]
   if acpira_host::cli::is_engine_command(args.get(1).map(String::as_str)) {
     win::attach_console(args.get(1).map(String::as_str));
+    // The engine installs remote access from this exe's `gateway` role when no acpira-gateway.exe sits beside it
+    acpira_host::devices::set_gateway_role(GATEWAY_ROLE);
     std::process::exit(acpira_host::cli::run(args[1..].to_vec()));
+  }
+  // The paired-device gateway (`gateway run …`, what remote access's login task starts), before the single instance and
+  // the WebView2 check: it has no window
+  #[cfg(windows)]
+  if args.get(1).map(String::as_str) == Some(GATEWAY_ROLE) {
+    std::process::exit(acpira_gateway::cli::main(vec![GATEWAY_ROLE.to_owned()], args[2..].to_vec()));
   }
   // A panic aborts (Cargo.toml's release profile): its message goes to the app's log first, since a window process's
   // stderr reaches no one on Windows or when started from the Dock

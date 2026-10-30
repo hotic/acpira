@@ -7,7 +7,8 @@ import { packPage } from './pack-page.mjs';
 // The Linux x64 packages through the Tauri CLI (tauri.conf.json's bundle.linux): a .deb (Debian, Ubuntu), an .rpm
 // (Fedora, openSUSE) and an AppImage (one file that carries WebKitGTK with it). The page, the picker and the static musl
 // engine must already be built in the repository. The engine goes to <prefix>/libexec/acpira/acpira-engine (where
-// src/app.rs looks for it), the page and the picker under <prefix>/lib/Acpira. Not into <prefix>/bin as Tauri's
+// src/app.rs looks for it) with remote access's acpira-gateway beside it (where the engine looks for that), the page and
+// the picker under <prefix>/lib/Acpira. Not into <prefix>/bin as Tauri's
 // external binary: linuxdeploy, which builds the AppImage, sets an rpath with patchelf on every ELF file under usr/bin
 // and usr/lib, and the static-pie engine it rewrites crashes at start (linuxdeploy 1-alpha 07333c6, 2026-10-26).
 // The shell links the system's glibc, GTK 3 and WebKitGTK 4.1, so build on the oldest system the packages should run
@@ -31,6 +32,7 @@ const inputs = [
   ['dist/webview/main.js', 'pnpm build'],
   ['dist/picker.js', 'pnpm build'],
   ['dist/sidecar/linux-x86_64/acpira', 'node scripts/release/build-sidecar.mjs --dist'],
+  ['dist/sidecar/linux-x86_64/acpira-gateway', 'node scripts/release/build-sidecar.mjs --dist'],
 ];
 const missing = inputs.filter(([path]) => !existsSync(join(repo, path)));
 if (missing.length) {
@@ -45,14 +47,16 @@ for (const [path] of inputs) {
 mkdirSync(join(shell, 'binaries'), { recursive: true });
 const engine = join(shell, 'binaries', `acpira-engine-${TRIPLE}`);
 copyFileSync(join(repo, 'dist/sidecar/linux-x86_64/acpira'), engine);
+const gateway = join(shell, 'binaries', `acpira-gateway-${TRIPLE}`);
+copyFileSync(join(repo, 'dist/sidecar/linux-x86_64/acpira-gateway'), gateway);
 packPage(repo, join(shell, 'target', 'webview-packed'));
 
 const smoke = process.argv.includes('--smoke');
 const bundles = option('--bundles') ?? (smoke ? 'appimage' : 'deb,rpm,appimage');
 // --config is merged into tauri.conf.json as a JSON merge patch: null drops the plain page from the resources
 const resources = { '../../dist/webview/': null, 'target/webview-packed/': 'webview/' };
-// Every package carries the engine at the same place (bundle.linux.<format>.files: package path → file)
-const files = { '/usr/libexec/acpira/acpira-engine': engine };
+// Every package carries the engine and the gateway at the same place (bundle.linux.<format>.files: package path → file)
+const files = { '/usr/libexec/acpira/acpira-engine': engine, '/usr/libexec/acpira/acpira-gateway': gateway };
 const config = { bundle: { resources, linux: { deb: { files }, rpm: { files }, appimage: { files } } } };
 // linuxdeploy, which builds the AppImage, is an AppImage itself: extracted and run where FUSE is missing (containers)
 const env = { ...process.env, APPIMAGE_EXTRACT_AND_RUN: '1' };
