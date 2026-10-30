@@ -9,6 +9,7 @@ import { PanelHeader } from '../ui/Panel';
 import type { SettingsPage } from '../settings/Nav';
 import { t } from '../i18n';
 import { deviceOrder, PATH_NAME, remoteAccessOp, useRemoteAccess } from './access';
+import { MarkSvg } from '../chat/marks';
 import { DeviceGlyph, PairingCore, usePairing } from './Pairing';
 import { seenLine } from './seen';
 
@@ -18,7 +19,8 @@ import { seenLine } from './seen';
 // its new row as the card becomes the list. Remote access off or not running is started as the card opens, the pairing
 // view waiting for its code meanwhile; only a start that failed, or a build without the gateway, shows one quiet note.
 // The card's views lie in one bottom-anchored clip: a change of view is a translate of the surface and a cross-fade, so
-// nothing jumps. Shown once the engine answered for remote access (remote/access.ts)
+// nothing jumps. Shown once the engine answered for remote access (remote/access.ts). Until remote access is
+// turned on, the row only announces the mobile app (SoonButton)
 
 // How long the success moment holds before the card settles into the list; the phone's sheet holds as long
 // (apps/ios PairingTokens.swift Motion.pairHold), so both screens move on together
@@ -60,6 +62,7 @@ export function DevicesButton({ onOpenSettings }: { onOpenSettings?: (page?: Set
   const view = useRemoteAccess();
   const [open, setOpen] = useState(false);
   if (!devicesShown(view)) return null;
+  if (soon(view)) return <SoonButton open={open} setOpen={setOpen} />;
   const devices = view.gateway?.devices ?? [];
   const online = devices.filter(d => d.online).length;
   const pairing = !!view.gateway?.pairing;
@@ -78,6 +81,43 @@ export function DevicesButton({ onOpenSettings }: { onOpenSettings?: (page?: Set
       <Popover.Positioner side="top" align="start" collisionPadding={0} className="w-(--dv-card-w)">
         <Popover.Popup aria-label={t('devices.title')} className="dv-card relative overflow-visible rounded-none border-0 bg-transparent p-0 shadow-none">
           <Card view={view} open={open} onClose={() => setOpen(false)} onOpenSettings={onOpenSettings} />
+        </Popover.Popup>
+      </Popover.Positioner>
+    </Popover.Portal>
+  </Popover.Root>;
+}
+
+// The mobile app (iPhone, iPad) is not out yet: until remote access is turned on (Settings → Connections, which still offers the switch),
+// the row and its card only announce the app. Nothing is started from here, so a user with nothing to pair never runs
+// the gateway; once the switch is on, the row and card below take over as before
+const soon = (view: RemoteAccessView) => !view.enabled;
+
+function SoonButton({ open, setOpen }: { open: boolean; setOpen: (open: boolean) => void }) {
+  const name = t('devices.soon.name');
+  return <Popover.Root open={open} onOpenChange={setOpen}>
+    <Popover.Trigger render={<button type="button" title={name} aria-label={name} className={FOOT_ROW}>
+      <span className="-mr-gap-half flex size-lead shrink-0 items-center justify-center text-fg-2"><PhoneGlyph online={false} pairing={false} /></span>
+      <span className="min-w-0 truncate">{name}</span>
+      <span className="ml-auto shrink-0 text-3 text-fg-3">{t('devices.soon.badge')}</span>
+    </button>} />
+    <Popover.Portal>
+      <Popover.Positioner side="top" align="start" collisionPadding={0} className="w-(--dv-card-w)">
+        <Popover.Popup aria-label={name} className="dv-card relative overflow-visible rounded-none border-0 bg-transparent p-0 shadow-none">
+          <div className="dv-shadow">
+            <div className="dv-soon">
+              {/* The app's icon: the mark on its dark tile. The card comes at once, as the gear's menu; only a faint sheen
+                  crosses the tile once per opening */}
+              <span className="dv-soon-tile" aria-hidden>
+                <span className="dv-soon-mark"><MarkSvg id="acpira" className="size-full" /></span>
+                <span className="dv-soon-sheen" />
+              </span>
+              <span className="flex flex-col items-center gap-(--stack-gap) text-center">
+                <span className="text-2 font-medium text-fg-1">{name}</span>
+                <span className="text-3 text-fg-3">{t('devices.soon.desc')}</span>
+              </span>
+              <span className="dv-soon-badge">{t('devices.soon.badge')}</span>
+            </div>
+          </div>
         </Popover.Popup>
       </Popover.Positioner>
     </Popover.Portal>
