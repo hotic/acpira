@@ -368,7 +368,7 @@ export function Welcome(p: WelcomeProps) {
         {shownSteps.map(i => <Note key={i} index={i} geo={geo(i)} menuSettings={menuSettings} out={i !== index} />)}
         {/* The window's title bar stays draggable under the flow (the desktop shell reads data-drag-region) */}
         <div className="wl-drag" data-drag-region />
-        {introOn && <Intro open={phase === 'intro'} agents={p.agents} ctaRef={ctaRef} onStart={start} onSkip={skip} />}
+        {introOn && <Intro open={phase === 'intro'} still={still} agents={p.agents} ctaRef={ctaRef} onStart={start} onSkip={skip} />}
         {dockOn && <Dock dockRef={dockRef} open={phase === 'tour'} index={Math.max(0, index)} last={mode === 'replay' ? 'done' : 'consent'} onPrev={back} onNext={next} onSkip={skip} />}
         {consentOn && <Consent open={phase === 'consent'} home={p.home} theme={p.theme} motion={p.appearance.motion} error={p.error} busy={creating}
           back={mode === 'consent' ? undefined : from === 'tour' ? { label: t('welcome.back'), go: () => setStage(STEPS.length - 1) } : { label: t('welcome.consent.seeTour'), go: () => setStage('intro') }}
@@ -416,18 +416,216 @@ function Note({ index, geo, menuSettings, out }: { index: number; geo?: Geo; men
   );
 }
 
-// The mark in outline at poster scale, cropped by the window's edge, with light running round each dock
-function BigMark() {
+// The mark's viewBox (its own units): the docks plus room for the light's halo
+const VIEW = { x: -24, y: -24, w: 455, h: 428 };
+// One light per dock that draws the outline and then keeps going round it: dock A forward, dock B backward and slower.
+// `delay` and `period` in seconds; `rest` is where it is parked when motion is off. DRAW_S is the draw-in, an ease in-out
+// on top of the cruise speed, so the light leaves and arrives at the cruise speed and never jumps between the two
+const ARMS = [{ dir: 1, delay: 0.2, period: 9, rest: 0.2 }, { dir: -1, delay: 0.5, period: 13, rest: 0.42 }];
+const DRAW_S = 2.1;
+// The light, in laps of its dock and in mark units: a tail that fades out smoothly behind the head, a soft halo round the
+// head. The tail is drawn as PASSES strokes of growing length at a low alpha each, the longer ones fainter, so their
+// overlap fades it out with no seams or steps; the glow is the same at three widths, so its edge is soft too. While fast
+// the light stretches and brightens a little, settling as it slows into the orbit
+const TAIL = 0.2;
+const PASSES = 40;
+const PASS_ALPHA = 0.08;
+const PASS_FADE = 0.8;
+const LINE_W = 1.05;
+const GLOW_WS = [7, 4.5, 2.6];
+const GLOW_PASSES = 10;
+const GLOW_ALPHA = 0.006;
+const HALO_R = 7;
+const HALO_ALPHA = 0.32;
+const STRETCH = 0.25;
+const STRETCH_MAX = 1.7;
+// Points sampled per dock: the tail follows the outline's curves through them
+const SAMPLES = 1600;
+// The pointer's spotlight on the outline (mark units) and the mark's tilt toward it (degrees at the window's edge)
+const SPOT_R = 120;
+const TILT = 5;
+const FOLLOW = 0.12;
+
+const smoother = (x: number) => x * x * x * (x * (6 * x - 15) + 10);
+const smootherSlope = (x: number) => 30 * x * x * (x - 1) * (x - 1);
+
+// The light's run round its dock: how far it has gone (p, in laps) and how fast against the cruise speed (f)
+function run(t: number, arm: typeof ARMS[number]) {
+  const v = 1 / arm.period;
+  const at = Math.max(0, t - arm.delay);
+  const x = Math.min(1, at / DRAW_S), extra = 1 - v * DRAW_S;
+  return { p: v * at + extra * smoother(x), f: 1 + (x < 1 ? extra * smootherSlope(x) / DRAW_S / v : 0) };
+}
+
+// A dock's outline as evenly spaced points (x, y pairs), so the light can be drawn along it on a canvas
+function sample(path: SVGPathElement): Float32Array {
+  const total = path.getTotalLength();
+  const pts = new Float32Array(SAMPLES * 2);
+  for (let i = 0; i < SAMPLES; i++) {
+    const pt = path.getPointAtLength((i / SAMPLES) * total);
+    pts[i * 2] = pt.x;
+    pts[i * 2 + 1] = pt.y;
+  }
+  return pts;
+}
+
+// The polyline from the head back along the tail (`dir` is the running sense), `len` laps long
+function trail(ctx: CanvasRenderingContext2D, pts: Float32Array, head: number, dir: number, len: number) {
+  const steps = Math.max(2, Math.ceil(len * SAMPLES));
+  ctx.beginPath();
+  for (let i = 0; i <= steps; i++) {
+    const at = (((head - dir * (len * i) / steps) % 1) + 1) % 1 * SAMPLES;
+    const k = Math.floor(at), r = at - k, j = (k + 1) % SAMPLES;
+    const x = pts[k * 2]! + (pts[j * 2]! - pts[k * 2]!) * r, y = pts[k * 2 + 1]! + (pts[j * 2 + 1]! - pts[k * 2 + 1]!) * r;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
+// The mark in outline at poster scale, cropped by the window's edge. A light with a fading tail draws each dock's outline
+// and, without stopping, settles into running round it (ARMS): one loop moves the outline's draw (an SVG dash) and the
+// light (a canvas over the SVG, which can fade a stroke along its length) together. The pointer carries a spotlight that
+// lights the outline and the docks' faces under it, and tilts the mark toward itself. Motion off: the outline whole, the
+// lights drawn once where they rest, no spotlight or tilt
+function BigMark({ still }: { still: boolean }) {
+  const box = useRef<HTMLDivElement>(null);
+  const svg = useRef<SVGSVGElement>(null);
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const spot = useRef<SVGRadialGradientElement>(null);
+  const lit = useRef<SVGGElement>(null);
+  useEffect(() => {
+    const el = svg.current, cv = canvas.current, ctx = cv?.getContext('2d');
+    if (!el || !cv || !ctx) return;
+    const outlines = [...el.querySelectorAll<SVGPathElement>('.wl-outline')];
+    const arms = ARMS.map((a, i) => ({ ...a, outline: outlines[i]!, pts: sample(el.querySelector<SVGPathElement>(`.wl-geo-${i}`)!) }));
+    let color = '';
+    let scale = 1;
+    const fit = () => {
+      const dpr = devicePixelRatio || 1;
+      cv.width = Math.round(cv.clientWidth * dpr);
+      cv.height = Math.round(cv.clientHeight * dpr);
+      scale = cv.width / VIEW.w;
+      color = getComputedStyle(el).color;
+    };
+    const paint = (t: number | undefined) => {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      ctx.setTransform(scale, 0, 0, scale, -VIEW.x * scale, -VIEW.y * scale);
+      ctx.lineCap = 'butt';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      for (const a of arms) {
+        const { p, f } = t === undefined ? { p: 1 + a.rest, f: 1 } : run(t, a);
+        const drawing = p < 1;
+        // The drawn stretch runs from the dock's start to the light; once closed the outline is whole
+        if (drawing) { a.outline.style.strokeDasharray = `${p} ${1 - p}`; a.outline.style.strokeDashoffset = String(a.dir > 0 ? 0 : p - 1); }
+        else if (a.outline.style.strokeDasharray) { a.outline.style.strokeDasharray = ''; a.outline.style.strokeDashoffset = ''; }
+        if (t !== undefined && t < a.delay) continue;
+        const head = a.dir > 0 ? p % 1 : 1 - (p % 1);
+        const boost = Math.min(1, (f - 1) / 4);
+        // Never longer than what is drawn, so the tail does not show on the outline still to come
+        const len = Math.min(drawing ? p : 1, TAIL * Math.min(STRETCH_MAX, 1 + (f - 1) * STRETCH));
+        ctx.globalAlpha = GLOW_ALPHA * (1 + boost);
+        for (const w of GLOW_WS) {
+          ctx.lineWidth = w;
+          for (let i = 1; i <= GLOW_PASSES; i++) trail(ctx, a.pts, head, a.dir, (len * 0.6 * i) / GLOW_PASSES);
+        }
+        ctx.lineWidth = LINE_W;
+        for (let i = 1; i <= PASSES; i++) {
+          ctx.globalAlpha = PASS_ALPHA * (1 - PASS_FADE * i / PASSES) * (1 + 0.4 * boost);
+          trail(ctx, a.pts, head, a.dir, (len * i) / PASSES);
+        }
+        // The halo: a soft radial light round the head, no hard edge
+        const at = Math.floor(head * SAMPLES) % SAMPLES, hx = a.pts[at * 2]!, hy = a.pts[at * 2 + 1]!;
+        const halo = ctx.createRadialGradient(hx, hy, 0, hx, hy, HALO_R * (1 + 0.3 * boost));
+        halo.addColorStop(0, color);
+        halo.addColorStop(1, 'transparent');
+        ctx.globalAlpha = HALO_ALPHA * (1 + 0.5 * boost);
+        ctx.fillStyle = halo;
+        ctx.fillRect(hx - HALO_R * 2, hy - HALO_R * 2, HALO_R * 4, HALO_R * 4);
+        ctx.fillStyle = color;
+      }
+    };
+    fit();
+    const ro = new ResizeObserver(() => { fit(); if (still) paint(undefined); });
+    ro.observe(cv);
+    if (still) { paint(undefined); return () => ro.disconnect(); }
+    const t0 = performance.now();
+    let raf = 0, frames = 0;
+    const tick = (now: number) => {
+      // The theme may change under the intro; its colour is read again now and then, not every frame
+      if (++frames % 60 === 0) color = getComputedStyle(el).color;
+      paint((now - t0) / 1000);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); };
+  }, [still]);
+  useEffect(() => {
+    const el = svg.current, wrap = box.current, grad = spot.current, glow = lit.current;
+    const host = wrap?.closest('.wl-intro');
+    if (still || !el || !wrap || !grad || !glow || !host) return;
+    // Pointer in mark units and as -1..1 of the window; `on` while it is over the window
+    const want = { x: 0, y: 0, nx: 0, ny: 0, on: 0 };
+    const cur = { ...want };
+    let raf = 0;
+    const tick = () => {
+      let moving = false;
+      for (const k of ['x', 'y', 'nx', 'ny', 'on'] as const) {
+        const d = want[k] - cur[k];
+        cur[k] += d * FOLLOW;
+        if (Math.abs(d) > (k === 'x' || k === 'y' ? 0.2 : 0.002)) moving = true;
+      }
+      grad.setAttribute('cx', String(cur.x));
+      grad.setAttribute('cy', String(cur.y));
+      glow.style.opacity = String(cur.on);
+      wrap.style.transform = `perspective(1600px) rotateX(${(-cur.ny * TILT).toFixed(3)}deg) rotateY(${(cur.nx * TILT).toFixed(3)}deg)`;
+      raf = moving ? requestAnimationFrame(tick) : 0;
+    };
+    const kick = () => { if (!raf) raf = requestAnimationFrame(tick); };
+    const move = (e: PointerEvent) => {
+      const m = el.getScreenCTM();
+      if (!m) return;
+      const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(m.inverse());
+      // The first sighting jumps there, so the light fades in where the pointer is instead of sliding in from a corner
+      if (!want.on && !cur.on) { cur.x = pt.x; cur.y = pt.y; }
+      Object.assign(want, { x: pt.x, y: pt.y, nx: e.clientX / innerWidth * 2 - 1, ny: e.clientY / innerHeight * 2 - 1, on: 1 });
+      kick();
+    };
+    const leave = () => { Object.assign(want, { nx: 0, ny: 0, on: 0 }); kick(); };
+    host.addEventListener('pointermove', move as EventListener);
+    document.documentElement.addEventListener('pointerleave', leave);
+    return () => {
+      host.removeEventListener('pointermove', move as EventListener);
+      document.documentElement.removeEventListener('pointerleave', leave);
+      cancelAnimationFrame(raf);
+    };
+  }, [still]);
   return (
-    <svg className="wl-bigmark" viewBox="-24 -24 455 428" aria-hidden>
-      {[DOCK_A, DOCK_B].map((d, i) => (
-        <g key={i} className={i ? 'wl-arm-b' : 'wl-arm-a'}>
-          <path className="wl-outline" d={d} pathLength={1} />
-          <path className="wl-comet is-glow" d={d} pathLength={1} />
-          <path className="wl-comet" d={d} pathLength={1} />
-        </g>
-      ))}
-    </svg>
+    <div ref={box} className="wl-bigmark" aria-hidden>
+      <svg ref={svg} viewBox={`${VIEW.x} ${VIEW.y} ${VIEW.w} ${VIEW.h}`}>
+        <defs>
+          {/* Geometry only, without pathLength, for sampling in the mark's own units */}
+          {[DOCK_A, DOCK_B].map((d, i) => <path key={i} className={`wl-geo-${i}`} d={d} />)}
+          <radialGradient ref={spot} id="wl-spot-g" gradientUnits="userSpaceOnUse" cx="0" cy="0" r={SPOT_R}>
+            <stop offset="0" stopColor="#fff" />
+            <stop offset=".45" stopColor="#fff" stopOpacity=".55" />
+            <stop offset="1" stopColor="#fff" stopOpacity="0" />
+          </radialGradient>
+          <mask id="wl-spot" maskUnits="userSpaceOnUse" x={VIEW.x} y={VIEW.y} width={VIEW.w} height={VIEW.h}>
+            <rect x={VIEW.x} y={VIEW.y} width={VIEW.w} height={VIEW.h} fill="url(#wl-spot-g)" />
+          </mask>
+        </defs>
+        {!still && (
+          <g ref={lit} className="wl-lit" mask="url(#wl-spot)" style={{ opacity: 0 }}>
+            {[DOCK_A, DOCK_B].map((d, i) => <path key={i} d={d} />)}
+          </g>
+        )}
+        {[DOCK_A, DOCK_B].map((d, i) => <path key={i} className="wl-outline" d={d} pathLength={1} />)}
+      </svg>
+      <canvas ref={canvas} />
+    </div>
   );
 }
 
@@ -437,11 +635,11 @@ function SmallMark({ className }: { className?: string }) {
 
 // Intro copy, sober and product-facing: what the product is, no slogan, metaphor or joke. The first line is the quieter
 // one. The agents row shows what the shell found on PATH; its room is held while the shell looks, so nothing moves
-function Intro({ open, agents, ctaRef, onStart, onSkip }: { open: boolean; agents?: DetectedAgent[]; ctaRef: RefObject<HTMLButtonElement | null>; onStart: () => void; onSkip: () => void }) {
+function Intro({ open, still, agents, ctaRef, onStart, onSkip }: { open: boolean; still: boolean; agents?: DetectedAgent[]; ctaRef: RefObject<HTMLButtonElement | null>; onStart: () => void; onSkip: () => void }) {
   const hero = [t('welcome.hero.1'), t('welcome.hero.2')];
   return (
     <div className="wl-intro" data-open={open || undefined}>
-      <BigMark />
+      <BigMark still={still} />
       <div className="wl-copy">
         <div className="wl-brand"><SmallMark className="wl-brand-mark" />Acpira</div>
         <h1 className="wl-hero">
@@ -456,8 +654,8 @@ function Intro({ open, agents, ctaRef, onStart, onSkip }: { open: boolean; agent
           </div>
         </div>
         <div className="wl-actions">
-          <Button ref={ctaRef} variant="primary" kbd={ENTER} className="wl-cta" onClick={onStart}>{t('welcome.start')}</Button>
-          <button type="button" className="wl-quiet" onClick={onSkip}>{t('welcome.skip')}<kbd>{ESC}</kbd></button>
+          <Button ref={ctaRef} variant="primary" className="wl-cta" onClick={onStart}>{t('welcome.start')}</Button>
+          <button type="button" className="wl-quiet" onClick={onSkip}>{t('welcome.skip')}</button>
         </div>
       </div>
     </div>
