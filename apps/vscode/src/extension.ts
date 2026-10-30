@@ -360,7 +360,7 @@ export async function activate(context: vscode.ExtensionContext) {
     return page ? page.probe(url) : Promise.resolve(undefined);
   }
 
-  // A session needs the user or has settled (`notify`, sent only for the switches that are on). Nothing while this window is
+  // A session needs the user or has settled (`notify`); its switches gate the chime and banner below. Nothing while this window is
   // focused and a visible chat shows that session. The chime plays in one page (the chat used last when it is up); the system
   // notification is the OS's own, except in a remote window (the extension host runs on the remote machine) or where the OS
   // command is missing or fails: there VS Code's message stands in, and its button brings the session up

@@ -71,6 +71,20 @@ impl Platform for App {
     self.windows().iter().any(|w| w.watching(session_id))
   }
 
+  fn attention(&self, session_id: &str) {
+    self.attention.lock().insert(session_id.to_owned());
+    self.update_attention();
+    if self.background {
+      return;
+    }
+    #[cfg(target_os = "macos")]
+    crate::mac::request_attention();
+    #[cfg(not(target_os = "macos"))]
+    if let Some(w) = self.focused_window() {
+      let _ = w.window.request_user_attention(Some(tauri::UserAttentionType::Informational));
+    }
+  }
+
   fn chime(&self) {
     if let Some(w) = self.focused_window() {
       w.post(json!({ "type": "chime" }));

@@ -33,6 +33,8 @@ pub trait Platform: Send + Sync {
   fn log(&self, line: &str);
   /// Whether a window has focus and shows this session: the user is looking at it, so no chime or notification
   fn watching(&self, session_id: &str) -> bool;
+  /// A session needs attention even when sound and system banners are off (the app icon has its own indicator)
+  fn attention(&self, session_id: &str);
   /// The page that plays the chime: the most recently focused one
   fn chime(&self);
   /// A system notification that brings the session up when clicked
@@ -89,6 +91,7 @@ pub fn handle_request(r: PlatformRequest, p: &dyn Platform) -> Result<Value, Str
       if p.watching(&session_id) {
         return Ok(Value::Null);
       }
+      p.attention(&session_id);
       if sound {
         p.chime();
       }
@@ -345,6 +348,9 @@ mod tests {
     fn watching(&self, _: &str) -> bool {
       self.watching
     }
+    fn attention(&self, session_id: &str) {
+      self.did(format!("attention {session_id}"));
+    }
     fn chime(&self) {
       self.did("chime".into());
     }
@@ -418,7 +424,18 @@ mod tests {
     assert!(p.calls().is_empty());
     let p = Fake::default();
     handle_request(req(n), &p).unwrap();
-    assert_eq!(p.calls(), ["chime", "notify Done S"]);
+    assert_eq!(p.calls(), ["attention S", "chime", "notify Done S"]);
+  }
+
+  #[test]
+  fn the_app_icon_gets_attention_without_enabling_sound_or_system_banners() {
+    let p = Fake::default();
+    handle_request(
+      req(json!({ "method": "notify", "sessionId": "S", "title": "Done", "body": "b", "open": "Open", "sound": false, "system": false })),
+      &p,
+    )
+    .unwrap();
+    assert_eq!(p.calls(), ["attention S"]);
   }
 
   #[test]

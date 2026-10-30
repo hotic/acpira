@@ -17,6 +17,22 @@ pub fn session_clicked(id: String) {
 }
 
 impl App {
+  /// Only reading the corresponding session clears its icon mark; activating another window leaves the others alone.
+  pub fn acknowledge_attention(&self, w: &crate::chat_window::ChatWindow) {
+    let Some(id) = w.session_id() else { return };
+    if w.watching(&id) && self.attention.lock().remove(&id) {
+      self.update_attention();
+    }
+  }
+
+  pub(crate) fn update_attention(&self) {
+    if self.background {
+      return;
+    }
+    #[cfg(target_os = "macos")]
+    crate::mac::set_dock_badge(self.attention.lock().len());
+  }
+
   /// A notification or a session link: the window already showing it, else the focused one switches, else a new one
   pub fn show_session(self: &Arc<Self>, id: &str) {
     if let Some(on) = self.windows().into_iter().find(|w| w.session_id().as_deref() == Some(id)) {

@@ -256,8 +256,8 @@ impl HostRuntime {
         plugin_runtime: Some(plugins.runtimes().clone()),
         host_mcp,
         // The paired phones hear of every edge (the gateway skips them while the user is at this computer); this
-        // computer's own chime and notification follow their switches, both off by default (`notifySound` /
-        // `notifySystem`) and read at each edge, so a change applies to the next one
+        // computer's own chime and notification follow their switches, the chime on and the banner off by default
+        // (`notifySound` / `notifySystem`) and read at each edge, so a change applies to the next one
         attention: Some(Arc::new(move |a: Attention| {
           let (key, kind) = match a.kind {
             AttentionKind::Waiting => ("host.attention.waiting", PushKind::Waiting),
@@ -266,11 +266,10 @@ impl HostRuntime {
           };
           let said = tp(key, &[("agent", &a.agent)]);
           notify_ra.notify(PushNote { session_id: a.session_id.clone(), kind, title: a.title.clone(), subtitle: said.clone(), body: a.detail });
-          let on = |k: &str| notify_p.read_setting(k).and_then(|v| v.as_bool()).unwrap_or(false);
-          let (sound, system) = (on("notifySound"), on("notifySystem"));
-          if sound || system {
-            notify_p.attention(&a.session_id, &a.title, &said, sound, system);
-          }
+          let on = |k: &str, default: bool| notify_p.read_setting(k).and_then(|v| v.as_bool()).unwrap_or(default);
+          let (sound, system) = (on("notifySound", true), on("notifySystem", false));
+          // The desktop app also keeps a quiet icon badge when both optional alerts are off; other shells ignore it.
+          notify_p.attention(&a.session_id, &a.title, &said, sound, system);
         })),
       },
     );
