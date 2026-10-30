@@ -187,7 +187,7 @@ async fn run(cmd: Value) -> (bool, Value) {
             let scale = w.window.scale_factor().unwrap_or(1.0);
             let size = w.window.inner_size().map(|s| s.to_logical::<f64>(scale)).ok();
             json!({ "label": w.label, "session": w.session_id(), "ready": w.ready(), "visible": w.window.is_visible().unwrap_or(false),
-              "width": size.map(|s| s.width), "height": size.map(|s| s.height) })
+              "focused": w.window.is_focused().unwrap_or(false), "width": size.map(|s| s.width), "height": size.map(|s| s.height) })
           })
           .collect::<Vec<_>>()
       })
