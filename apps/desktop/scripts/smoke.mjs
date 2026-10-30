@@ -563,14 +563,21 @@ document.addEventListener('securitypolicyviolation', () => { seen.blocked = true
 
     // The View menu's layout item goes to the page as a shell command; files first lays out explorer, stage, chat, column
     const filesLayout = `!!document.querySelector('.acp-shell[data-layout="files"]')`;
-    await page.call({ op: 'menu', item: 'layout.files' });
-    await page.waitFor('the files layout', `${filesLayout} && !!document.querySelector('[data-explorer] [data-tree]')`);
-    const columns = await page.eval(`['[data-explorer]', '[data-stage]', '[data-sheet]', '[data-session-panel]'].map(s => Math.round(document.querySelector(s)?.getBoundingClientRect().left ?? -1))`);
-    if (columns.some((x, i) => x < 0 || (i > 0 && x <= columns[i - 1]))) fail(`the files layout's columns are out of order: ${columns.join(' ')}`);
-    if (shotDir) await page.shot(join(shotDir, 'layout-files.png'));
-    await page.call({ op: 'menu', item: 'layout.chat' });
-    await page.waitFor('the conversation layout again', `!${filesLayout} && !${panelShown}`);
-    say(`View › Layout switches to files first and back (x ${columns.join(' / ')})`);
+    // Below --files-layout-min the page keeps the conversation layout by design; a CI desktop (GitHub's Windows runners
+    // are 1024 px wide) cannot hold a window that wide, so the check needs a window that reaches the minimum
+    const [wide, need] = await page.eval(`(s => [s.clientWidth, parseFloat(getComputedStyle(s).getPropertyValue('--files-layout-min'))])(document.querySelector('.acp-shell'))`);
+    if (!(wide >= need)) {
+      say(`View › Layout files first skipped: the window is ${wide} px wide, the layout needs ${need} px (screen ${await page.eval('screen.availWidth')} px)`);
+    } else {
+      await page.call({ op: 'menu', item: 'layout.files' });
+      await page.waitFor('the files layout', `${filesLayout} && !!document.querySelector('[data-explorer] [data-tree]')`);
+      const columns = await page.eval(`['[data-explorer]', '[data-stage]', '[data-sheet]', '[data-session-panel]'].map(s => Math.round(document.querySelector(s)?.getBoundingClientRect().left ?? -1))`);
+      if (columns.some((x, i) => x < 0 || (i > 0 && x <= columns[i - 1]))) fail(`the files layout's columns are out of order: ${columns.join(' ')}`);
+      if (shotDir) await page.shot(join(shotDir, 'layout-files.png'));
+      await page.call({ op: 'menu', item: 'layout.chat' });
+      await page.waitFor('the conversation layout again', `!${filesLayout} && !${panelShown}`);
+      say(`View › Layout switches to files first and back (x ${columns.join(' / ')})`);
+    }
 
     // A narrow window, really resized: the list becomes a page over the window, a pick closes it on that session
     await page.call({ op: 'resize', width: 480, height: 760 });
