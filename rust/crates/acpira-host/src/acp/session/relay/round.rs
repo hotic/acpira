@@ -15,6 +15,7 @@ use super::controls::{current_mode, relay_controls, relay_mode, running_controls
 use super::texts::{change_note, compose_brief, round_edits, short, wake_text};
 use super::{MAX_WAKES, NOTE_FILES, Owed, PACK_LINE, PACK_NAME, RelayHandlers, RelayProc, Round, Starting, route_key};
 use crate::acp::session::attachments::{prepare_prompt, prompt_caps_of};
+use crate::acp::session::turn_usage::turn_usage_of;
 use crate::acp::session::updates::current_turn_index;
 use crate::acp::session::{AcpSession, Core};
 use crate::acp::transcript::normalize::runtime_info_of;
@@ -64,7 +65,7 @@ impl AcpSession {
     if let Some(n) = handed {
       self.core.lock().relays.notes.entry(r.node.clone()).or_default().push(n);
     }
-    let end = self.relay_prompt(&proc, &sid, blocks).await;
+    let end = self.relay_prompt(&proc, &sid, &r.node, blocks).await;
     let end = match end {
       Ok(stop) => self.relay_follow_ups(&proc, &sid, r, stop).await,
       Err(e) => Err(e),
@@ -95,8 +96,14 @@ impl AcpSession {
     end
   }
 
-  async fn relay_prompt(&self, proc: &AgentProcess, sid: &str, blocks: Vec<Value>) -> Result<String> {
+  /// One session/prompt of the round; its token tally goes on the turn it closes in the node's transcript
+  async fn relay_prompt(&self, proc: &AgentProcess, sid: &str, node: &str, blocks: Vec<Value>) -> Result<String> {
     let answer = proc.request("session/prompt", json!({ "sessionId": sid, "prompt": blocks })).await.map_err(anyhow::Error::new)?;
+    {
+      let mut c = self.core.lock();
+      c.tree.relay_turn_usage(node, turn_usage_of(&answer));
+      self.touch(&mut c);
+    }
     Ok(answer.get("stopReason").and_then(Value::as_str).unwrap_or("end_turn").to_owned())
   }
 
@@ -200,7 +207,7 @@ impl AcpSession {
       match text {
         Some(text) => {
           self.log(&format!("relay {}: follow-up {sent} with the rounds it sent off", short(&r.thread)));
-          stop = self.relay_prompt(proc, sid, vec![json!({ "type": "text", "text": text })]).await?;
+          stop = self.relay_prompt(proc, sid, &r.node, vec![json!({ "type": "text", "text": text })]).await?;
         }
         None => {
           tokio::select! {

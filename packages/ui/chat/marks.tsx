@@ -1,3 +1,5 @@
+import { useId } from 'react';
+import { brandLayers } from '@acpira/shared/models';
 import { cn } from '../ui/cn';
 
 // Vendor marks (plus Acpira's own): monochrome versions of each official logo (paths taken from @lobehub/icons-static-svg 1.95.1,
@@ -205,13 +207,23 @@ const MARK_ALIAS: Record<string, string> = {
 
 // Brand logo by key, or the name's initial in a rounded square when the key is unknown — every caller gets an icon,
 // so menu rows with and without a known brand stay left-aligned
-export function MarkSvg({ id, name, className }: { id: string | undefined; name?: string; className?: string }) {
+// `colored`: a colour logo's washes over the mark (brandLayers), as where the mark stands for its vendor in that colour
+export function MarkSvg({ id, name, className, colored }: { id: string | undefined; name?: string; className?: string; colored?: boolean }) {
   const paths = id ? MARKS[MARK_ALIAS[id] ?? id] : undefined;
   const cls = cn('size-icon shrink-0', className);
+  const uid = useId();
   if (paths) {
+    const layers = colored ? brandLayers(MARK_ALIAS[id!] ?? id) : undefined;
     return (
       <svg viewBox="0 0 24 24" className={cls} fill="currentColor" fillRule="evenodd" aria-hidden>
         {paths.map((d, i) => <path key={i} d={d} />)}
+        {layers?.map((l, k) => paths.map((d, i) => <path key={`${k}-${i}`} d={d} fill={`url(#${uid}-${k})`} />))}
+        {layers && <defs>{layers.map((l, k) => (
+          <linearGradient key={k} id={`${uid}-${k}`} gradientUnits="userSpaceOnUse" x1={l.from[0]} y1={l.from[1]} x2={l.to[0]} y2={l.to[1]}>
+            <stop stopColor={l.color} />
+            <stop offset={l.fade} stopColor={l.color} stopOpacity={0} />
+          </linearGradient>
+        ))}</defs>}
       </svg>
     );
   }

@@ -84,6 +84,9 @@ async fn a_summoned_round_runs_in_its_own_process_and_its_thread_continues_the_s
   let (turns, _, running) = s.subagent_transcript(list[0]["id"].as_str().unwrap()).unwrap();
   assert!(!running);
   assert!(turns.0.get().contains("reply to relay: look at the diff"));
+  // The turn carries its usage like a root turn, so the inspector's stats card names the model it ran on
+  let turns: Value = serde_json::from_str(turns.0.get()).unwrap();
+  assert_eq!(turns.as_array().unwrap().last().unwrap()["usage"]["model"], "Model 1");
 
   // Round 2 on the same thread: a node of its own, the same native session (its prompt counter says 2)
   let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), ..ask("", "relay: and now?") }).await);
@@ -708,7 +711,7 @@ async fn a_childs_card_and_round_outlive_the_root_turn_that_left_it_running() {
   // The root turn ends meanwhile: the child's card stays, and the list says the session waits on the user
   prompt(&s, "say:handed it off").await;
   assert_eq!(nodes(&s)[0]["permissions"].as_array().map(Vec::len), Some(1));
-  assert_eq!(s.list_state(), Some(SummaryState::Waiting));
+  assert_eq!(s.list_marks(), (Some(SummaryState::Waiting), false));
   let block = nodes(&s)[0]["permissions"][0]["id"].as_str().unwrap().to_owned();
   s.resolve_permission(&block, "yes");
   // Still working with the root idle: background, not idle

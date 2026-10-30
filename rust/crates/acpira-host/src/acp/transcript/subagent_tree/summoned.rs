@@ -1,15 +1,66 @@
 //! Summoned children (`acp/session/relay.rs`): a `session` node per round, bound to the child's native session once it
 //! is known, and what the relay reads back of it (its thread, reply, controls and outcome)
 
-use acpira_shared::subagents::{SubagentHarness, SubagentPeer, SubagentState, SubagentVisibility};
-use acpira_shared::transcript::{AgentBlock, AgentTurn, Turn, TurnStop};
+use acpira_shared::subagents::{SIDEKICK_ID, SubagentHarness, SubagentPeer, SubagentState, SubagentVisibility};
+use acpira_shared::num::Num;
+use acpira_shared::transcript::{AgentBlock, AgentTurn, ContextUse, ToolCallBlock, Turn, TurnStop, TurnUsage};
 
-use super::{RelayOpen, RouteCtx, SubagentTree};
+use super::{Node, RelayOpen, RouteCtx, SubagentTree};
+use crate::acp::session::prompt::merge_usage;
 use crate::acp::transcript::normalize::end_turn;
 use crate::i18n::t;
 use crate::util::now_ms;
 
+/// Tool rows the root transcript keeps of a sidekick round: its fixed-height window shows the latest few
+const SIDEKICK_STEPS: usize = 4;
+
 impl SubagentTree {
+  /// A round of the built-in agent's sidekick (`relay/hub.rs`), which the root transcript draws as a relay, not a row
+  pub(super) fn is_sidekick(n: &Node) -> bool {
+    n.harness.as_ref().is_some_and(|h| h.persona.as_deref() == Some(SIDEKICK_ID))
+  }
+
+  /// The round's latest foreground tool rows, oldest first, stripped to what a row shows
+  pub(super) fn sidekick_steps(turns: &[Turn]) -> Vec<ToolCallBlock> {
+    let mut steps: Vec<ToolCallBlock> = turns
+      .iter()
+      .rev()
+      .filter_map(Turn::as_agent)
+      .flat_map(|t| t.blocks.iter().rev())
+      .filter_map(|b| match b {
+        AgentBlock::ToolCall(tc) if tc.background != Some(true) => Some(tc),
+        _ => None,
+      })
+      .take(SIDEKICK_STEPS)
+      // Field by field, so a long output is never cloned only to be dropped
+      .map(|tc| ToolCallBlock {
+        observation: tc.observation,
+        id: tc.id.clone(),
+        kind: tc.kind,
+        verb: tc.verb.clone(),
+        verb_key: tc.verb_key.clone(),
+        mcp_server: tc.mcp_server.clone(),
+        target: tc.target.clone(),
+        target_mono: tc.target_mono,
+        locations: None,
+        read_range: None,
+        status: tc.status,
+        background: tc.background,
+        async_task: None,
+        started_at: tc.started_at,
+        ended_at: tc.ended_at,
+        meta: None,
+        diff_stat: tc.diff_stat,
+        todo_entries: None,
+        content: None,
+        contents: None,
+        subagent_id: tc.subagent_id.clone(),
+      })
+      .collect();
+    steps.reverse();
+    steps
+  }
+
   /// A child Acpira is about to run in another CLI: a `session` node without a peer yet (`relay_bind` adds it once
   /// session/new answers). `parent` is another node when a summoned child summons in turn
   /// An empty `harness.thread` starts a new thread named after this node
@@ -159,6 +210,29 @@ impl SubagentTree {
     self.bump(id);
   }
 
+  /// The child's session/prompt answered: its token tally lands on the turn it closes, as the root's own does, so the
+  /// inspector's stats card has more than the timings. The model falls back to what the round runs on, the context
+  /// mark to the child's last usage_update
+  pub fn relay_turn_usage(&mut self, id: &str, usage: Option<TurnUsage>) {
+    let Some(i) = self.idx(id) else { return };
+    let n = &mut self.nodes[i];
+    let (model, context) = (n.model.clone(), n.usage);
+    let Some(Turn::Agent(turn)) = n.state.turns.last_mut() else { return };
+    let into = turn.usage.get_or_insert_with(Default::default);
+    if let Some(u) = usage {
+      merge_usage(into, u);
+    }
+    if into.model.is_none() {
+      into.model = model;
+    }
+    if into.context.is_none()
+      && let Some((used, size)) = context.filter(|(_, size)| *size > 0.0)
+    {
+      into.context = Some(ContextUse { used: Num(used), size: Num(size) });
+    }
+    self.bump(id);
+  }
+
   /// Mark a running summoned node cancelled-on-request, bound to its native session or not yet (a round still
   /// connecting checks `relay_cancel_requested` before it sends the prompt)
   pub fn relay_cancel(&mut self, id: &str) -> bool {
@@ -217,5 +291,29 @@ impl SubagentTree {
       .filter(|n| n.harness.is_some() && n.status == SubagentState::Running && n.turn_index >= turn_index as u64)
       .map(|n| n.id.clone())
       .collect()
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use acpira_shared::transcript::{AgentBlock, AgentTurn, ToolContent, Turn};
+
+  use crate::acp::transcript::subagent_tree::SubagentTree;
+  use crate::acp::transcript::normalize::empty_tool;
+
+  // The window keeps the newest foreground rows across follow-up turns, oldest first, and never carries their output
+  #[test]
+  fn sidekick_steps_keep_the_latest_foreground_rows_without_output() {
+    let tool = |id: &str, background: bool| {
+      let mut tc = empty_tool(id.into());
+      tc.background = background.then_some(true);
+      tc.content = Some(ToolContent::Text { text: "long output".into() });
+      AgentBlock::ToolCall(tc)
+    };
+    let turn = |blocks: Vec<AgentBlock>| Turn::Agent(AgentTurn { blocks, ..Default::default() });
+    let turns = vec![turn(vec![tool("a", false), tool("b", false)]), turn(vec![tool("c", false), tool("bg", true), tool("d", false), tool("e", false)])];
+    let steps = SubagentTree::sidekick_steps(&turns);
+    assert_eq!(steps.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["b", "c", "d", "e"]);
+    assert!(steps.iter().all(|s| s.content.is_none()));
   }
 }

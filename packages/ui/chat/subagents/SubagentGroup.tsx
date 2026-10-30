@@ -9,6 +9,7 @@ import { AgentMark } from '../AgentMark';
 import { stateIcon } from './icons';
 import { descendantCount, isWaiting, rootRows, secondLine, stateLabel, subagentTitle } from './subagentState';
 import { useElapsed } from './useElapsed';
+import { SidekickRelay, isSidekick } from './SidekickRelay';
 
 interface GroupProps {
   // Every node anchored to this turn, including descendants counted in the accessible label.
@@ -28,7 +29,10 @@ export function SubagentGroup({ nodes, all, onInspect }: GroupProps) {
     // No gap between rows: each row carries its own vertical padding, so the hover fills abut like a menu list
     // and the text keeps the spacing it had when the gap sat between unpadded rows
     <div className="flex flex-col" aria-label={t('subagents.group', { n: nodes.length })}>
-      {rows.map(n => <SubagentRow key={n.id} node={n} all={all} onInspect={onInspect} />)}
+      {/* The lead's sidekick reads as a relay, never as a summoned helper's row */}
+      {rows.map(n => isSidekick(n)
+        ? <SidekickRelay key={n.id} node={n} onInspect={onInspect} />
+        : <SubagentRow key={n.id} node={n} all={all} onInspect={onInspect} />)}
     </div>
   );
 }
