@@ -189,10 +189,31 @@ async fn the_fast_model_names_a_session_once_from_its_first_prompt() {
 }
 
 #[tokio::test]
-async fn without_a_usable_fast_model_the_session_keeps_its_prompt_title() {
+async fn with_no_fast_model_picked_the_cheapest_catalogued_one_names_the_session() {
   let h = Harness::start().await;
   let (main, fast) = (MockModel::start(), MockModel::start());
-  two_sources(&h, &main, &fast, "fast/gone");
+  // Nothing on the settings page: of the two callable sources, only the second's model has a catalogue price
+  let source = |id: &str, url: String, model: &str| json!({ "id": id, "name": id, "baseUrl": url, "models": [{ "id": model }] });
+  std::fs::write(
+    h.home().join("providers.json"),
+    json!({ "version": 1, "providers": [source("mock", main.base_url(), "m1"), source("fast", fast.base_url(), "deepseek-v4-flash")] }).to_string(),
+  )
+  .unwrap();
+  std::fs::write(h.home().join("secrets.json"), json!({ "acpira.provider.mock": "sk-main", "acpira.provider.fast": "sk-fast" }).to_string()).unwrap();
+  let sid = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
+  fast.push(mock::text("Fix the build"));
+  main.push(mock::text("Done."));
+  prompt(&h, &sid, "the build fails on Windows, please fix it").await;
+  let ev = title_event(&h, &sid).await;
+  assert_eq!((ev["title"].as_str(), ev["model"].as_str()), (Some("Fix the build"), Some("fast/deepseek-v4-flash")));
+  assert_eq!(main.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn with_the_fast_model_off_the_session_keeps_its_prompt_title() {
+  let h = Harness::start().await;
+  let (main, fast) = (MockModel::start(), MockModel::start());
+  two_sources(&h, &main, &fast, "off");
   let sid = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
   main.push(mock::text("Done."));
   prompt(&h, &sid, "the build fails").await;

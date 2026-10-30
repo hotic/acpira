@@ -53,8 +53,8 @@ pub fn engine_rules(decision: Decision) -> impl Iterator<Item = Rule> {
   acpira_shared::host_tools::ALL.iter().map(move |tool| Rule::new(MCP, &format!("{}/{tool}", acpira_shared::host_tools::SERVER), decision))
 }
 
-/// The approval level: how much runs without a card. A setting of the agent (`ProvidersFile::approval`, ids as in
-/// `APPROVAL_LEVELS`), read at the start of each turn
+/// The approval level: how much runs without a card. The session's `approval` select (ids as in `APPROVAL_LEVELS`),
+/// read at the start of each turn; a new session starts on `ProvidersFile::approval`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Approval {
   /// Edits and commands ask
@@ -74,6 +74,15 @@ impl Approval {
       Approval::Ask => "ask",
       Approval::AutoEdit => "auto-edit",
       Approval::Full => "full",
+    }
+  }
+
+  /// The select's option name; the composer shows its own label for each id
+  pub fn name(self) -> &'static str {
+    match self {
+      Approval::Ask => "Ask",
+      Approval::AutoEdit => "Auto-edit",
+      Approval::Full => "Full access",
     }
   }
 

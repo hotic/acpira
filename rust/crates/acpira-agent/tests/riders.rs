@@ -64,7 +64,7 @@ async fn the_tools_offer_the_riders() {
 #[tokio::test]
 async fn a_to_do_list_riding_on_an_edit_shows_as_a_todo_row_of_its_own() {
   let (h, server, sid) = setup().await;
-  h.approval("full");
+  h.approval(&sid, "full").await;
   std::fs::write(h.cwd().join("a.txt"), "hello world\n").unwrap();
   let todos = json!([{ "content": "fix the greeting", "status": "completed" }, { "content": "run the tests", "status": "in_progress" }]);
   server.push(mock::tools(&[("c1", "edit", json!({ "path": "a.txt", "old_string": "world", "new_string": "there", "todos": todos }))]));
@@ -102,7 +102,7 @@ async fn a_to_do_list_riding_on_an_edit_shows_as_a_todo_row_of_its_own() {
 #[tokio::test]
 async fn a_list_on_a_call_before_another_one_keeps_the_rows_where_the_stream_put_them() {
   let (h, server, sid) = setup().await;
-  h.approval("full");
+  h.approval(&sid, "full").await;
   std::fs::write(h.cwd().join("a.txt"), "a\n").unwrap();
   let todos = json!([{ "content": "read", "status": "in_progress" }]);
   server.push(mock::tools(&[("c1", "read", json!({ "path": "a.txt", "todos": todos })), ("c2", "read", json!({ "path": "a.txt", "offset": 1 }))]));
@@ -119,7 +119,7 @@ async fn a_list_on_a_call_before_another_one_keeps_the_rows_where_the_stream_put
 #[tokio::test]
 async fn a_ranged_read_names_the_line_each_window_starts_at() {
   let (h, server, sid) = setup().await;
-  h.approval("full");
+  h.approval(&sid, "full").await;
   std::fs::write(h.cwd().join("a.txt"), (1..=50).map(|n| format!("l{n}\n")).collect::<String>()).unwrap();
   std::fs::write(h.cwd().join("b.txt"), "b\n").unwrap();
   server.push(mock::tools(&[("c1", "read", json!({ "path": "a.txt:10-12", "paths": ["a.txt:30", "b.txt"] }))]));
@@ -160,7 +160,7 @@ async fn then_run_runs_after_the_change_on_a_command_row_with_its_own_card() {
 #[tokio::test]
 async fn then_run_is_skipped_when_the_change_fails_or_changes_nothing() {
   let (h, server, sid) = setup().await;
-  h.approval("full");
+  h.approval(&sid, "full").await;
   std::fs::write(h.cwd().join("a.txt"), "same\n").unwrap();
   server.push(mock::tools(&[
     ("c1", "edit", json!({ "path": "a.txt", "old_string": "missing", "new_string": "x", "then_run": "touch ran1" })),
@@ -183,7 +183,7 @@ async fn then_run_is_skipped_when_the_change_fails_or_changes_nothing() {
 async fn a_rejected_then_run_ends_the_turn_and_the_change_stays_made() {
   let (h, server, sid) = setup().await;
   // Edits run without a card, commands ask: the only card is the command's
-  h.approval("auto-edit");
+  h.approval(&sid, "auto-edit").await;
   *h.client.answer.lock() = Answer::Reject;
   std::fs::write(h.cwd().join("a.txt"), "v1\n").unwrap();
   server.push(mock::tools(&[
@@ -207,7 +207,7 @@ async fn a_rejected_then_run_ends_the_turn_and_the_change_stays_made() {
 #[tokio::test]
 async fn a_cancel_during_then_run_tells_the_model_the_change_was_made() {
   let (h, server, sid) = setup().await;
-  h.approval("full");
+  h.approval(&sid, "full").await;
   std::fs::write(h.cwd().join("a.txt"), "v1\n").unwrap();
   server.push(mock::tools(&[("c1", "edit", json!({ "path": "a.txt", "old_string": "v1", "new_string": "v2", "then_run": "sleep 30" }))]));
   let conn = h.conn.clone();

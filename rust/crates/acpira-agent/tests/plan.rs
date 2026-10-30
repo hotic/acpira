@@ -46,7 +46,7 @@ fn tool_result(server: &MockModel, request: usize, nth_from_end: usize) -> Strin
 async fn plan_mode_writes_only_the_plan_and_an_approval_builds_in_the_same_turn() {
   let (h, server, sid) = setup().await;
   let modes = h.new_session().await["modes"].clone();
-  assert_eq!(modes["availableModes"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect::<Vec<_>>(), ["agent", "plan", "raw"]);
+  assert_eq!(modes["availableModes"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect::<Vec<_>>(), ["agent", "plan", "team"], "Raw mode only once the settings page offers it");
   set_mode(&h, &sid, "plan").await;
   let plan = h.home().join("agent/sessions").join(&sid).join("plan.md");
   server.push(mock::tools(&[
@@ -82,7 +82,7 @@ async fn plan_mode_writes_only_the_plan_and_an_approval_builds_in_the_same_turn(
   ]));
 
   assert!(h.updates().iter().any(|u| u["sessionUpdate"] == "current_mode_update" && u["currentModeId"] == "agent"));
-  assert!(tool_result(&server, 2, 0).starts_with("The user approved the plan. Plan mode is off."));
+  assert!(tool_result(&server, 2, 0).starts_with("The user approved the plan. You are in Agent mode"));
   // From the approval on, the turn runs with Agent mode's rules; the tools stay as they were, so the prefix holds
   assert_eq!(tool_names(&server, 2), tool_names(&server, 0));
   // The third card is the build's own edit, which Plan mode denied and Agent mode asks for (approval level `ask`)
@@ -95,7 +95,7 @@ async fn plan_mode_writes_only_the_plan_and_an_approval_builds_in_the_same_turn(
 async fn full_access_runs_plan_mode_commands_without_a_card() {
   let (h, server, sid) = setup().await;
   set_mode(&h, &sid, "plan").await;
-  h.approval("full");
+  h.approval(&sid, "full").await;
   let plan = h.home().join("agent/sessions").join(&sid).join("plan.md");
   server.push(mock::tools(&[
     ("c1", "write", json!({ "path": "src.txt", "content": "x" })),
@@ -137,7 +137,7 @@ async fn an_unapproved_plan_ends_the_turn_and_leaving_plan_mode_is_announced() {
   set_mode(&h, &sid, "agent").await;
   server.push(mock::text("ok"));
   prompt(&h, &sid, "just do it").await;
-  assert!(user_text(&server, 3).starts_with("<mode>\nPlan mode is off.") && user_text(&server, 3).ends_with("just do it"));
+  assert!(user_text(&server, 3).starts_with("<mode>\nYou are in Agent mode") && user_text(&server, 3).ends_with("just do it"));
   // Within one mode the request prefix stays byte for byte
   let (a, b) = (server.requests()[1].body["messages"].as_array().unwrap().clone(), server.requests()[2].body["messages"].as_array().unwrap().clone());
   assert!(a.iter().zip(&b).all(|(x, y)| x == y) && b.len() > a.len());

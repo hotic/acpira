@@ -109,19 +109,23 @@ export interface SegmentScaleProps<V extends string> {
   onChange: (value: V) => void;
   // Header controls at the end of the label row, e.g. the panel's Fast toggle
   actions?: ReactNode;
+  // No label row (the label stays the group's accessible name): the mode menu's approval scale, whose labels say enough
+  bare?: boolean;
+  // Every segment the same width instead of sized to its label (equal-length labels, as the approval levels are)
+  equal?: boolean;
 }
 
 // An ordinal single-select (reasoning effort) as one segmented capsule with every level spelled out; the current segment is raised.
 // The header carries only the label and `actions` at its end: the raised segment already names the current level, so it is not repeated.
 // Segments size to their labels and share the spare width, so six Codex levels fit a --pop-w-lg panel on one line.
 // Arrow keys move between segments (Base UI radio group)
-export function SegmentScale<V extends string>({ label, options, value, onChange, actions }: SegmentScaleProps<V>) {
+export function SegmentScale<V extends string>({ label, options, value, onChange, actions, bare, equal }: SegmentScaleProps<V>) {
   return (
-    <div className="flex flex-col gap-1 px-2 pb-1">
-      <div className="flex min-h-ctl-sm items-center gap-2 text-2">
+    <div className={cn('flex flex-col gap-1 px-2 pb-1', bare && 'pt-0.5')}>
+      {!bare && <div className="flex min-h-ctl-sm items-center gap-2 text-2">
         <span className="min-w-0 flex-1 truncate text-fg-2">{label}</span>
         {actions && <span className="flex shrink-0 items-center gap-1">{actions}</span>}
-      </div>
+      </div>}
       <RadioGroup value={value} onValueChange={v => onChange(v as V)} aria-label={label}
         className="flex min-w-0 gap-0.5 rounded-md bg-hover p-0.5">
         {options.map(o => {
@@ -140,7 +144,8 @@ export function SegmentScale<V extends string>({ label, options, value, onChange
                 }
               }}
               className={cn(
-                'inline-flex h-ctl-sm min-w-0 flex-auto items-center justify-center gap-0.5 rounded-sm px-1 text-3 outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg-2 disabled:opacity-50',
+                'inline-flex h-ctl-sm min-w-0 items-center justify-center gap-0.5 rounded-sm px-1 text-3 outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg-2 disabled:opacity-50',
+                equal ? 'flex-1 basis-0' : 'flex-auto',
                 o.ultra
                   ? on ? 'bg-ultra/15 text-ultra' : 'text-fg-3 enabled:hover:bg-hover enabled:hover:text-ultra'
                   : on ? 'bg-active text-fg-1' : 'text-fg-2 enabled:hover:bg-hover enabled:hover:text-fg-1',

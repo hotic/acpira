@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { newModel, type Provider } from '@acpira/shared/providers';
+import { FAST_MODEL_OFF, newModel, type Provider } from '@acpira/shared/providers';
 import { Shell } from './sidecarShell';
 
 // The built-in agent's model sources against the Rust sidecar: the page edits providers.json through actions, the key
@@ -50,7 +50,10 @@ describe('providers contract', () => {
     expect(model?.value).toBe('deep-seek/deepseek-chat');
     expect(model?.options.map(o => o.id)).toEqual(['deep-seek/deepseek-chat']);
 
-    // The fast model takes only a usable pick, lands in the file as `fastModel`, and an absent pick turns it off
+    // The fast model takes only a usable pick or off, lands in the file as `fastModel`, and an absent pick is automatic:
+    // the only keyed model here
+    expect(saved.view.fastModel).toBeUndefined();
+    expect(saved.view.fastModelAuto).toBe('deep-seek/deepseek-chat');
     s.view('V', { type: 'providerAction', action: { kind: 'fastModel', pick: 'deep-seek/gone' } });
     expect((await s.hostMsg('V', 'providers', m => !!m.error?.includes('gone'))).view.fastModel).toBeUndefined();
     s.view('V', { type: 'providerAction', action: { kind: 'fastModel', pick: 'deep-seek/deepseek-chat' } });
@@ -60,6 +63,9 @@ describe('providers contract', () => {
     const earlier = new Set(s.hostMsgs('V'));
     s.view('V', { type: 'providerAction', action: { kind: 'fastModel' } });
     await s.hostMsg('V', 'providers', m => !earlier.has(m) && m.view.fastModel === undefined && !m.error);
+    s.view('V', { type: 'providerAction', action: { kind: 'fastModel', pick: FAST_MODEL_OFF } });
+    await s.hostMsg('V', 'providers', m => m.view.fastModel === FAST_MODEL_OFF);
+    expect(JSON.parse(readFileSync(join(data, 'providers.json'), 'utf8')).fastModel).toBe(FAST_MODEL_OFF);
 
     // Web search: Jina with a key stores the key in the vault (never in the view), and back to default keeps it
     s.view('V', { type: 'providerAction', action: { kind: 'webSearch', backend: 'jina', key: 'jina-contract' } });

@@ -13,15 +13,16 @@ Acpira's own agent (`acpira`) for models without an official harness: OpenAI-com
 ## ACP surface
 
 - `initialize` advertises `loadSession`, `list`, `resume`, image and embedded-context prompts, `mcpCapabilities.http` (not `sse`), `_meta.steering.supported` and `_meta.goal`.
-- Modes `agent`, `plan`, `raw`. Agent and Plan offer the identical tool table (`modes::TOOLS`; `exit_plan` errors outside Plan), so switching never changes the request prefix. A mode change reaches the model as a `<mode>` note in the next user message, never as a system prompt change.
+- Modes `agent`, `plan`, `team`, `raw`. Agent, Plan and Team offer the identical tool table (`modes::TOOLS`; `exit_plan` errors outside Plan), so switching never changes the request prefix. A mode change reaches the model as a `<mode>` note in the next user message, never as a system prompt change.
 - Effort defaults to the family's level (`Family::effort`, see Harness comparison). With no level and thinking `auto` no thinking switch is sent, which on Claude means no thinking.
-- The approval level (`approval` in `providers.json`: `ask` default, `auto-edit`, `full`) is agent-wide and read at each turn start, not a session option: `set_config_option approval` is refused, so the host's pref replay skips it, and an old record's `approval` is ignored.
+- The approval level is the session's `approval` select (custom category `_permission_mode`, `full` marked `full_access`), read at each turn start and kept in the session record. A new session (or a record from before) starts on `providers.json` `approval` until the host's pref replay sends the last pick; the composer folds the select into the mode menu. The host never treats it as a full-access mode (the agent still asks for edits to its own config), but a plugin may not pick `full` (`grants_full_access`).
 - Edits to the agent's own configuration (`providers.json`, `secrets.json`, prompt override folders, `.agents/hooks.json`) always ask, even under `full`, including through symlinks (`Guard` checks the written and the resolved path).
 - `Server::watch_controls` polls `providers.json` and the catalogue once a second and sends `config_option_update`, so a model saved in settings reaches already open sessions.
 - `acp::reconcile` (on resume, every `set_config_option`, `push_controls`, turn start) makes the session hold exactly what the picker shows; without it a session opened before any model existed refused remembered efforts with `Unknown effort`. A model no longer configured is not replaced: the turn refuses with "no longer configured".
 - Permissions follow OpenCode: layered (permission, pattern, decision) rules (defaults, approval level, session allows, mode), last match wins. Under `full` the mode layer drops its `ask` rules, but what a mode denies holds at any level and "always allow" never widens a mode rule.
 - Trap: an allow narrower than `*` never matches a command line with shell structure (`;`, `&`, `|`, `<`, `>`, backtick, `$(`, newline; quoting not parsed), so such a command always asks and is offered no always-allow.
-- Titles (`title.rs`): `fastModel` names the session from its first prompt in a side call outside the turn's cancel, logged as a `title` event, not a `request`, since it shares no prefix. Only the first prompt; on failure the host keeps its own title. Claude's and Codex's adapters do the same.
+- Titles (`title.rs`): the fast model (`ProvidersFile::fast_pick`) names the session from its first prompt in a side call outside the turn's cancel, logged as a `title` event, not a `request`, since it shares no prefix. Only the first prompt; on failure the host keeps its own title. Claude's and Codex's adapters do the same.
+- Fast model: unset is automatic, so titles work with no settings visit; `off` is the only way to turn it off, and a pick no longer usable falls back to automatic. Automatic takes the cheapest catalogue-priced model of a keyed (or local) source, else the first one; the engine's view resolves it with its vault (`fastModelAuto`), the agent with `secrets.json`, so plugin sources count only for the agent.
 - Fast (`llm/fast.rs`, which lists the tiered models; a model's `fast` in `providers.json` overrides): a `boolean` option when the client advertises `configOptions.boolean`, else a select.
 - Fast on the wire: Anthropic `speed: "fast"` plus the fast-mode beta header; Chat and Responses `service_tier: "priority"`, the spelling older models and gateways accept. Toggling is a `view` change because Anthropic documents a speed change invalidates the cache.
 - Sidekick (`acp.rs` `sidekick_of`, `turn/setup.rs` `sidekick_note`): offered only to a client declaring `clientCapabilities._meta["acpira/sidekick"]`, as `sidekick` and `sidekick_effort` selects in custom categories so no client takes them for the lead's controls. The engine runs it (`transcript-pipeline.md`, Sidekick); the agent only keeps the pick and tells the model.
@@ -80,9 +81,16 @@ Added after a model told the user it could not open a link, then reached it with
 - `exit_plan` goes through `session/request_permission` with `_meta["acpira/planApproval"]` and a `switch_mode` tool call (`rawInput.plan`, `planFilePath`), so the host's plan card works unchanged. Approving switches to Agent mode inside the same turn.
 - The reminder (`modes.rs`) follows Cursor's plan mode as the `cursor-plan` skill records it. Steps go on the to-do list via `todo` before `exit_plan`, not into a frontmatter block, so the engine parses nothing.
 
+## Team mode
+
+- Summoning other agents unprompted belongs to Team mode only: the host's `ask_agent` description tells every agent to summon only when the user names one, asks for a handoff or set up a sidekick, or its mode makes it lead a team. Agent mode's note repeats that, so leaving Team mode takes the habit back.
+- Team mode changes only the note (`modes.rs`), never tools or rules, so a switch keeps the prompt cache. The note follows Cursor's Multitask mode (one coherent worker before many narrow ones, end the turn instead of waiting) and Qoder's Experts (disjoint ownership for parallel edits, one shared interface text, replies checked against the diff).
+- Profiles never offer it (`Profile::offers_mode`); approving a plan switches to Agent mode, not back to Team.
+
 ## Raw mode
 
 - `modes::RAW` sends no tools and only `rawSystemPrompt` as the system prompt; the family variant's sampling and thinking defaults stay out, while the model's own settings, effort and Fast apply. Entering or leaving changes the prefix once.
+- Listed in `availableModes` only while `providers.json` `rawMode` is on (read when a session opens; ACP has no update for the mode list) or the session is in it; `set_mode` still accepts it.
 - `session/set_mode` to `raw` is refused once the history holds a tool call or result, because Anthropic refuses `tool_use` / `tool_result` without `tools` (recalled from the API, not re-verified).
 
 ## Questions

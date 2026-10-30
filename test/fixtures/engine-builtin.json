@@ -9,6 +9,7 @@
     "settings": {
      "modeId": "agent",
      "config": {
+      "approval": "ask",
       "model": "mock/m1",
       "sidekick": "none"
      }
@@ -26,6 +27,7 @@
     "settings": {
      "modeId": "agent",
      "config": {
+      "approval": "ask",
       "model": "mock/m1",
       "sidekick": "none"
      }
@@ -68,6 +70,7 @@
     "settings": {
      "modeId": "agent",
      "config": {
+      "approval": "ask",
       "model": "mock/m1",
       "sidekick": "none"
      }
@@ -161,6 +164,7 @@
     "settings": {
      "modeId": "agent",
      "config": {
+      "approval": "ask",
       "model": "mock/m1",
       "sidekick": "none"
      }
@@ -224,6 +228,7 @@
     "settings": {
      "modeId": "agent",
      "config": {
+      "approval": "ask",
       "model": "mock/m1",
       "sidekick": "none"
      }
@@ -315,6 +320,7 @@
     "settings": {
      "modeId": "plan",
      "config": {
+      "approval": "ask",
       "model": "mock/m1",
       "sidekick": "none"
      }
@@ -451,6 +457,7 @@
     "settings": {
      "modeId": "agent",
      "config": {
+      "approval": "ask",
       "model": "mock/m1",
       "sidekick": "none"
      }
@@ -550,6 +557,7 @@
     "settings": {
      "modeId": "agent",
      "config": {
+      "approval": "ask",
       "model": "mock/m1",
       "sidekick": "none"
      }

@@ -42,11 +42,19 @@ pub(crate) fn in_full_access(controls: &SessionControls) -> bool {
 
 impl AcpSession {
   /// Whether picking `value` grants full access: a mode when `config_id` is None or names the mode select, yolo, a
-  /// known bypass mode or one the agent marks `full_access`. A plugin may not pick one (`plugins/host_api.rs`)
+  /// known bypass mode or one the agent marks `full_access`; for another select, an option the agent marks so (the
+  /// built-in agent's approval level). A plugin may not pick one (`plugins/host_api.rs`)
   pub fn grants_full_access(&self, config_id: Option<&str>, value: &str) -> bool {
     let c = self.core.lock();
     let controls = &c.state.controls;
-    config_id.is_none_or(|id| controls.mode_config_id.as_deref() == Some(id)) && is_full_access(controls, value)
+    match config_id {
+      Some(id) if controls.mode_config_id.as_deref() != Some(id) => controls
+        .options
+        .iter()
+        .find(|o| o.id == id)
+        .is_some_and(|o| o.options.iter().any(|m| m.id == value && m.kind.as_deref() == Some("full_access"))),
+      _ => is_full_access(controls, value),
+    }
   }
 
   /// Controls from a start response (session/new / resume / load, an edit's fresh peer). Protocol modes are dropped for an

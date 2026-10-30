@@ -36,7 +36,8 @@ impl Env {
     let root = tempfile::tempdir().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let server = MockModel::start();
-    let providers = json!({ "version": 1, "providers": [{ "id": "mock", "name": "Mock", "format": "openai-chat", "baseUrl": server.base_url(),
+    // The fast model is off, so no title call takes one of the scripted replies
+    let providers = json!({ "version": 1, "fastModel": "off", "providers": [{ "id": "mock", "name": "Mock", "format": "openai-chat", "baseUrl": server.base_url(),
       "models": [{ "id": "m1", "name": "Mock One", "context": 64000 }] }] });
     std::fs::write(root.path().join("providers.json"), providers.to_string()).unwrap();
     std::fs::write(root.path().join("secrets.json"), json!({ "acpira.provider.mock": "sk-test" }).to_string()).unwrap();
@@ -921,7 +922,7 @@ async fn a_plugins_model_sources_reach_the_picker_and_serve_its_turns() {
   }
   let mut env = Env::new();
   // The user's own file is left without sources, so the plugin's model is the session's default
-  std::fs::write(env.root.path().join("providers.json"), json!({ "version": 1, "providers": [] }).to_string()).unwrap();
+  std::fs::write(env.root.path().join("providers.json"), json!({ "version": 1, "fastModel": "off", "providers": [] }).to_string()).unwrap();
   let plugins = env.root.path().join("plugins");
   let script = SOURCER.replace("BASE_URL", &env.server.base_url());
   let rt = crate::acp_session::plugin_runtime::plugin(&plugins, "sourcer", &script, &[], &[]).await;

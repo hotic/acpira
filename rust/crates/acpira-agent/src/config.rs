@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use acpira_shared::model_catalog::Catalog;
 use acpira_shared::providers::{KEY_ENV_FIELD, PROVIDERS_FILE, Provider, ProviderModel, ProvidersFile, plugin_providers_path, provider_secret_key, web_secret_key};
 
 use crate::permission::Approval;
@@ -30,9 +31,14 @@ impl Config {
     self.providers.find(pick)
   }
 
-  /// The approval level set on the settings page; absent or unknown asks
+  /// The approval level a new session starts on (an older record without one too); absent or unknown asks
   pub fn approval(&self) -> Approval {
     self.providers.approval.as_deref().and_then(Approval::parse).unwrap_or_default()
+  }
+
+  /// Raw mode is offered in the mode picker (a switch on the settings page)
+  pub fn raw_mode(&self) -> bool {
+    self.providers.raw_mode == Some(true)
   }
 
   /// Chunk compaction is picked on the settings page (`chunk.rs`); otherwise the summary
@@ -65,9 +71,10 @@ impl Config {
     SearchSetup { jina_key: key("jina"), deepseek, deepseek_first: pick == Some("deepseek") }
   }
 
-  /// The fast model picked on the settings page, while it is still usable
-  pub fn fast_model(&self) -> Option<(&Provider, &ProviderModel)> {
-    self.providers.fast_model.as_deref().and_then(|p| self.find(p))
+  /// The fast model in effect (`ProvidersFile::fast_pick`): the settings page's pick while usable, none when turned
+  /// off, else the cheapest model a source with a key offers
+  pub fn fast_model(&self, catalog: &Catalog) -> Option<(&Provider, &ProviderModel)> {
+    self.providers.fast_pick(catalog, |p| self.api_key(&p.id).is_some())
   }
 
   /// The first usable model, the default of a new session

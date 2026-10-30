@@ -25,7 +25,7 @@ import {
 } from './controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 import { ProvidersSection, type ProvidersState } from './ProvidersSection';
-import { APPROVAL_LEVELS, approvalOf, BUILTIN_AGENT_ID, COMPACTION_STRATEGIES, compactionOf, usableModels, WEB_SEARCH_BACKENDS, webSearchOf, type ApprovalLevel, type CompactionStrategy, type WebSearchBackend } from '@acpira/shared/providers';
+import { BUILTIN_AGENT_ID, COMPACTION_STRATEGIES, compactionOf, FAST_MODEL_OFF, usableModels, WEB_SEARCH_BACKENDS, webSearchOf, type CompactionStrategy, type WebSearchBackend } from '@acpira/shared/providers';
 
 // One agent's settings, opened from its tile on the Plugins page as a tabbed dialog. A CLI agent: Overview (runtime facts,
 // install, permissions, its config files), Models (the option families shown in the composer menus), Accounts (when it
@@ -190,8 +190,9 @@ function AccountsTab({ agent, accounts, on }: { agent: AgentInfo; accounts: Acco
   </>;
 }
 
-// The built-in agent's behaviour, one list: the fast model, how it compacts, how much it asks, where it searches the
-// web (with that backend's key); Raw mode's system prompt in a block of its own. Each pick shows at once and gives way
+// The built-in agent's behaviour, one list: the fast model, how it compacts, where it searches the web (with that
+// backend's key); Raw mode's switch and system prompt in a block of their own. The approval level is the session's, in
+// the composer's mode menu. Each pick shows at once and gives way
 // to the file's once the host answers with a new view
 function BehaviorTab({ state, on }: { state?: ProvidersState; on: SettingsHandlers }) {
   if (!state) return <Group><Note shimmer>{t('settings.loading')}</Note></Group>;
@@ -199,10 +200,10 @@ function BehaviorTab({ state, on }: { state?: ProvidersState; on: SettingsHandle
     <Group>
       <FastModelField state={state} on={on} />
       <CompactionField state={state} on={on} />
-      <ApprovalField state={state} on={on} />
       <WebSearchFields state={state} on={on} />
     </Group>
     <Section title={t('settings.agent.raw')} desc={t('settings.agent.rawPrompt.desc')}>
+      <RawModeField state={state} on={on} />
       <div className="flex py-(--setting-row-pad)">
         <TextBox multiline value={state.view.rawSystemPrompt ?? ''} label={t('settings.agent.rawPrompt')} placeholder={t('settings.agent.rawPrompt.placeholder')}
           onCommit={text => on.providerAction?.({ kind: 'rawSystemPrompt', text: text.trim() ? text : undefined })} />
@@ -220,16 +221,19 @@ function usePick<V>(state: ProvidersState, stored: V): [V, (v: V) => boolean] {
 }
 
 // The fast model (`fastModel` in providers.json): a cheap model for side jobs such as naming a session from its first
-// message. A pick no longer usable reads as off, as the agent treats it
+// message. Unset is automatic, and a pick no longer usable reads as automatic, as the agent treats it
 function FastModelField({ state, on }: { state: ProvidersState; on: SettingsHandlers }) {
   const models = usableModels(state.view);
   const stored = state.view.fastModel ?? '';
-  const [value, pick] = usePick(state, models.some(m => m.pick === stored) ? stored : '');
+  const [value, pick] = usePick(state, stored === FAST_MODEL_OFF || models.some(m => m.pick === stored) ? stored : '');
   const name = (m: (typeof models)[number]) => m.model.name?.trim() || m.model.id;
   const names = models.map(name);
+  const auto = models.find(m => m.pick === state.view.fastModelAuto);
   const options = [
-    // No icon: off is a plain word in the field, as the other selects' picks; the list keeps it on the marks' column
-    { value: '', label: t('settings.agent.fastModel.off') },
+    // No icon: automatic and off are plain words in the field, as the other selects' picks; the list keeps them on the
+    // marks' column. Automatic names the model it lands on now
+    { value: '', label: auto ? t('settings.agent.fastModel.autoModel', { model: name(auto) }) : t('settings.agent.fastModel.auto') },
+    { value: FAST_MODEL_OFF, label: t('settings.agent.fastModel.off') },
     // The model on the row; its source as the caption only when two sources offer the same name, one line otherwise
     ...models.map((m, i) => ({
       value: m.pick,
@@ -265,21 +269,13 @@ function CompactionField({ state, on }: { state: ProvidersState; on: SettingsHan
   );
 }
 
-// The approval level: a setting of the agent in providers.json, not a composer control, so the composer shows only the
-// mode chip. Read at the start of every turn; Plan mode's limits hold under any level
-const APPROVAL_KEYS: Record<ApprovalLevel, { label: MsgKey; desc: MsgKey }> = {
-  ask: { label: 'settings.agent.approval.ask', desc: 'settings.agent.approval.ask.desc' },
-  'auto-edit': { label: 'settings.agent.approval.autoEdit', desc: 'settings.agent.approval.autoEdit.desc' },
-  full: { label: 'settings.agent.approval.full', desc: 'settings.agent.approval.full.desc' },
-};
-
-function ApprovalField({ state, on }: { state: ProvidersState; on: SettingsHandlers }) {
-  const [level, pick] = usePick(state, approvalOf(state.view));
+// Raw mode in the mode menu (`rawMode`): off by default, since it is for talking to a model with nothing around it.
+// Sessions pick it up when they open; one already in Raw mode keeps it either way
+function RawModeField({ state, on }: { state: ProvidersState; on: SettingsHandlers }) {
+  const [shown, pick] = usePick(state, !!state.view.rawMode);
   return (
-    // Every level's description is laid out, so a pick never changes the row's height
-    <Field label={t('settings.agent.approval')} desc={<StableText current={level} items={APPROVAL_LEVELS.map(v => ({ key: v, text: t(APPROVAL_KEYS[v].desc) }))} />}>
-      <Select options={APPROVAL_LEVELS.map(v => ({ value: v, label: t(APPROVAL_KEYS[v].label) }))} value={level} label={t('settings.agent.approval')}
-        onChange={v => { if (pick(v)) on.providerAction?.({ kind: 'approval', level: v }); }} />
+    <Field label={t('settings.agent.rawMode')} desc={t('settings.agent.rawMode.desc')}>
+      <Switch checked={shown} onChange={v => { if (pick(v)) on.providerAction?.({ kind: 'rawMode', on: v }); }} label={t('settings.agent.rawMode')} />
     </Field>
   );
 }

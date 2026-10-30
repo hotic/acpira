@@ -160,9 +160,10 @@ pub(super) fn retry_delay(e: &LlmError, attempt: u32) -> std::time::Duration {
   }
 }
 
-/// A retry in progress, in the shape the host already labels for other agents (an AIR `sessionFailure` warning
-/// titled "attempt N of M", see `retry_of_failure` on the host): the working label shows it until the stream resumes
-pub(super) fn retry_notice(source: &str, e: &LlmError, next: u32) -> Value {
+/// A retry in progress, in the shape the host already reads for other agents (an AIR `sessionFailure` warning titled
+/// "attempt N of M", see `retry_of_failure` on the host): the error goes verbatim in `details` for the host's retry row,
+/// and `retryAfterMs` (an Acpira extension) is the wait before the next attempt
+pub(super) fn retry_notice(source: &str, e: &LlmError, next: u32, wait: std::time::Duration) -> Value {
   let category = match e {
     LlmError::Http { status: 429, .. } => "limit",
     LlmError::Http { .. } | LlmError::Api(_) | LlmError::Rejected(_) => "service",
@@ -178,6 +179,7 @@ pub(super) fn retry_notice(source: &str, e: &LlmError, next: u32) -> Value {
       "title": format!("Retrying {source}, attempt {next} of {MAX_ATTEMPTS}"),
       "details": e.to_string(),
       "actions": [],
+      "retryAfterMs": u64::try_from(wait.as_millis()).unwrap_or(u64::MAX),
     } } } },
   })
 }

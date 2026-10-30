@@ -139,7 +139,7 @@ async fn a_protected_config_write_through_a_symlink_still_asks() {
   h.providers(&server.base_url(), json!([{"id":"m1"}]));
   std::os::unix::fs::symlink(h.home(), h.cwd().join("alias")).unwrap();
   let sid = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
-  h.approval("full");
+  h.approval(&sid, "full").await;
   server.push(mock::tools(&[("c1", "write", json!({"path":"alias/secrets.json","content":"{}"}))]));
   server.push(mock::text("done"));
   prompt(&h, &sid).await;
