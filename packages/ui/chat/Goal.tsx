@@ -135,11 +135,14 @@ export function GoalRow({ block }: { block: GoalBlock }) {
 // height, so the button touches neither the prompt nor the reply (tuned in lab/set-goal-tune, 2026-10-10); with the time
 // alone it is one message gap, so the prompt and its reply keep their usual spacing.
 // Hidden like a reply's action row: it fades in while the prompt above (`peer/prompt` on HistoryMessage) or the strip
-// itself is hovered / focused; touch screens without hover always show it
-export function PromptFooter({ sentAt, onSetGoal }: { sentAt?: number; onSetGoal?: () => void }) {
+// itself is hovered / focused; touch screens without hover always show it.
+// `goalRoom` keeps the button's height without the button: a stored session reopening on an agent that offered the
+// button last time holds the strip at its final height while the CLI starts, so the reply below does not shift when
+// the agent's goal capability arrives
+export function PromptFooter({ sentAt, onSetGoal, goalRoom }: { sentAt?: number; onSetGoal?: () => void; goalRoom?: boolean }) {
   return (
     <div data-set-goal={onSetGoal ? '' : undefined} className={cn('-my-msg flex items-center justify-end gap-0.5 opacity-0 transition-opacity duration-(--code-copy-duration) ease-out peer-hover/prompt:opacity-100 peer-focus-within/prompt:opacity-100 hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100 motion-reduce:transition-none',
-      onSetGoal ? 'h-ctl-sm' : 'h-msg')}>
+      onSetGoal || goalRoom ? 'h-ctl-sm' : 'h-msg')}>
       {sentAt !== undefined && <SentTime at={sentAt} />}
       {onSetGoal && (
         <IconButton size="sm" title={t('goal.setFromPromptHint')} aria-label={t('goal.setFromPrompt')} onClick={onSetGoal}>

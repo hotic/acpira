@@ -935,6 +935,12 @@ export function Shell(p: ShellProps) {
   // "Set as goal" under the last prompt: only where the agent takes `set` and no goal is running yet
   const setGoal = useMemo(() => p.activeSessionId && on.goal && !p.external && !p.goal && p.goalActions?.includes('set')
     ? (objective: string) => on.goal!(p.activeSessionId!, 'set', objective) : undefined, [p.activeSessionId, on.goal, p.external, p.goal, p.goalActions]);
+  // The capability arrives with the agent process, so a stored session reopening shows no button until the CLI is up.
+  // Remember per agent whether its last ready session offered `set`, and hold the button's room while one starts
+  useEffect(() => {
+    if (p.status === 'ready') goalSetByAgent.set(p.agent.id, !!p.goalActions?.includes('set'));
+  }, [p.status, p.agent.id, p.goalActions]);
+  const goalRoom = !setGoal && p.status === 'starting' && !!on.goal && !p.external && !p.goal && goalSetByAgent.get(p.agent.id) === true;
   const stopAsyncTask = useMemo(() => p.activeSessionId && on.stopAsyncTask
     ? (taskId: string) => on.stopAsyncTask!(p.activeSessionId!, taskId) : undefined, [p.activeSessionId, on.stopAsyncTask]);
   // Diff sources of the session on screen; the inspector's diffs are looked up in the inspected subagent's transcript,
@@ -1120,7 +1126,7 @@ export function Shell(p: ShellProps) {
                       <OpenToolFileContext.Provider value={openToolFile}>
                         <TurnActionsContext.Provider value={turnActions}>
                           <Thread key={p.activeSessionId} session={p.activeSessionId} turns={held.turns} running={held.running} wide={wide} replayKey={p.replayKey} catchingUp={p.catchingUp} blobUrl={blobUrl} contentRef={contentRef} commands={p.commands} summons={summons}
-                            onSetGoal={setGoal} subagents={p.subagents} onInspect={onInspect} onFailureAction={failureAction}
+                            onSetGoal={setGoal} goalRoom={goalRoom} subagents={p.subagents} onInspect={onInspect} onFailureAction={failureAction}
                             forkedFrom={p.external ? undefined : p.forkedFrom} agents={p.agents} agentId={p.agent.id}
                             onPermission={onPermission} />
                         </TurnActionsContext.Provider>
@@ -1307,6 +1313,8 @@ interface ThreadProps {
   onFailureAction?: (action: FailureAction) => void;
   // Offers "Set as goal" under the last typed prompt (absent: no goal can be set now)
   onSetGoal?: (objective: string) => void;
+  // The button is expected once the starting agent reports its goal capability: keep its room meanwhile
+  goalRoom?: boolean;
 }
 
 // The thread's tail clearance under the floating plan dock: the dock's height on top of the message gap, so the
@@ -1383,7 +1391,10 @@ function useExchangeWindow(
 // Conversation flow: stick-to-bottom following happens on transcript changes (new content / streaming growth) and on async growth
 // (images, diagrams) until the user touches the thread; user actions like expand / collapse never touch the scroll position —
 // the toggle under the mouse stays put while the content below it moves. Scrolling away from the bottom releases the follow; scrolling back to the bottom restores it
-const Thread = memo(function Thread({ session, turns, running, wide, replayKey, catchingUp, blobUrl, contentRef, commands, summons, subagents, forkedFrom, agents, agentId, onInspect, onPermission, onFailureAction, onSetGoal }: ThreadProps) {
+// Whether each agent's last ready session offered "Set as goal" (see goalRoom in Shell)
+const goalSetByAgent = new Map<AgentId, boolean>();
+
+const Thread = memo(function Thread({ session, turns, running, wide, replayKey, catchingUp, blobUrl, contentRef, commands, summons, subagents, forkedFrom, agents, agentId, onInspect, onPermission, onFailureAction, onSetGoal, goalRoom }: ThreadProps) {
   useLocale();
   const ref = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
@@ -1433,7 +1444,7 @@ const Thread = memo(function Thread({ session, turns, running, wide, replayKey, 
   const starts = exchangeSlots.map(e => e.key);
   useSessionOutline(ref, session, turns, starts, running, { mount: turn => window.showFrom(starts.indexOf(turn)), release: () => follow.release() });
   // The prompt "Set as goal" hangs under: the last one the user typed, unless it was a slash command
-  const goalPrompt = onSetGoal ? lastTypedPrompt(turns) : undefined;
+  const goalPrompt = onSetGoal || goalRoom ? lastTypedPrompt(turns) : undefined;
   // The fork boundary follows the exchange that holds the last copied turn, as a row of its own: inside that exchange it
   // would stand after the reply's action row, which the exchange spacing keys off
   const forkAfter = forkedFrom ? exchangeSlots.filter(e => e.key <= forkedFrom.turnIndex).length - 1 : -1;
@@ -1466,11 +1477,12 @@ const Thread = memo(function Thread({ session, turns, running, wide, replayKey, 
             // A user turn carries no time of its own; the reply it started began the moment it went out (absent on old transcripts)
             const sentAt = turn.role === 'user' && next?.role === 'agent' ? next.startedAt : undefined;
             // The strip under a prompt: its send time and, on the last typed one, Set as goal (both shown on hover)
-            const goal = ti === goalPrompt && turn.role === 'user' ? () => onSetGoal?.(turn.text.trim()) : undefined;
-            if (turn.role === 'user' && !turn.auto && (sentAt !== undefined || goal)) {
+            const goalSlot = ti === goalPrompt && turn.role === 'user';
+            const goal = goalSlot && onSetGoal ? () => onSetGoal(turn.text.trim()) : undefined;
+            if (turn.role === 'user' && !turn.auto && (sentAt !== undefined || goalSlot)) {
               messages.push(
                 <HistoryMessage key={turn.id ?? ti} turn={turn} turnIndex={ti} index={index} blobUrl={blobUrl} commands={commands} summons={summons} />,
-                <PromptFooter key={`footer${ti}`} sentAt={sentAt} onSetGoal={goal} />,
+                <PromptFooter key={`footer${ti}`} sentAt={sentAt} onSetGoal={goal} goalRoom={goalSlot} />,
               );
               continue;
             }
