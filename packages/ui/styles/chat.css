@@ -114,9 +114,14 @@
 }
 
 @layer components {
-  /* Session list rows (SessionList's Item): a store lists hundreds of them, and the ones out of sight skip style, layout and
+  /* Session list rows (SessionList's Item): a store lists hundreds of them, and the ones out of sight skip layout and
      paint (a mark's 3D flip card is a compositor layer each) until they near the viewport. One row tall until laid out once */
   [data-session] { content-visibility: auto; contain-intrinsic-block-size: auto var(--row); }
+  /* Keep WebKit's row contents in the paint tree: skipped descendants can stay blank while the row's own hover fill
+     still paints. This WebKit-only property leaves Chromium's off-screen optimization intact. */
+  @supports (-webkit-nbsp-mode: space) {
+    [data-session] { content-visibility: visible; }
+  }
 
   /* Transcript and to-do dock rows put the icon's box on the text edge, so row icons and the prose or composer text around
      them share one keyline (a 14 px icon centred in the 20 px lead sat 3 px in). The slot moves out by the difference and
