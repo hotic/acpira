@@ -70,6 +70,17 @@ if (bootLocale) setLocale(bootLocale);
 // What the tour's steps light: the sample shell's root (welcome/SampleShell.tsx)
 const sampleScope = () => document.querySelector<HTMLElement>('[data-sample-shell] .acp-shell');
 
+// Whether a message came from a frame nested anywhere inside this page; a cross-origin WindowProxy still allows
+// `length` and indexed access, so the walk covers frames of every origin
+function isOwnFrame(source: MessageEventSource | null, parent: Window = window): boolean {
+  if (!source || source === window) return false;
+  for (let i = 0; i < parent.length; i++) {
+    const child = parent[i];
+    if (child === source || isOwnFrame(source, child)) return true;
+  }
+  return false;
+}
+
 // Replies return to the originating webview. Drafts survive a rejected edit.
 const editWaits = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
 const editTurn = (edit: EditTurnRequest) => new Promise<void>((resolve, reject) => {
@@ -273,9 +284,10 @@ export function App() {
     const onMsg = (e: MessageEvent<HostMsg>) => {
       // A widget frame (show_widget) runs an agent's page: whatever it posts is never a host message
       if (isWidgetFrame(e.source)) return;
-      // Host messages come from the page itself (the desktop shell's bridge), the webview's outer frame (VS Code) or a
-      // dispatched event (no source); a child frame (a plugin piece, a thumbnail, a browser tab) never speaks as the host
-      if (e.source && e.source !== window && e.source !== window.parent) return;
+      // A frame inside this page (a plugin piece, a thumbnail, a browser tab) never speaks as the host. The host is not
+      // matched by identity: VS Code's webview script sets `window.parent = window`, so its relaying frame is neither
+      // `window` nor `window.parent` (browser/BrowserPanel.tsx)
+      if (isOwnFrame(e.source)) return;
       const m = e.data;
       switch (m.type) {
         case 'editTurnResult': {
