@@ -185,3 +185,35 @@ async fn remembered_choices_show_from_the_first_frame_and_a_prompt_waits_for_the
   assert!(markdown.contains("\\\"model\\\":\\\"m2\\\"") && markdown.contains("\\\"mode\\\":\\\"plan\\\""), "{markdown}");
   m.dispose().await;
 }
+
+// A new-session screen sends its picks as soon as the session appears, while the agent still starts: they replace the
+// remembered values the replay sets, the first prompt runs under them, and they are remembered like any pick
+#[tokio::test(flavor = "multi_thread")]
+async fn picks_made_while_a_new_session_starts_win_over_the_remembered_ones() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let m = Mgr::new(dir.path(), Opts::with_agents(fake.setting(json!({ "env": { "FAKE_NEW_DELAY_MS": "400" } })), "fake"));
+  m.init().await;
+  m.new_session(None).await;
+  m.handle(json!({ "type": "setConfig", "configId": "effort", "value": "low" })).await;
+  m.handle(json!({ "type": "send", "text": "hello" })).await;
+  let first = m.active_id().unwrap();
+
+  let (mgr, viewer) = (m.m.clone(), m.v.clone());
+  let opening = tokio::spawn(async move { mgr.new_session_for(&viewer, None, None, None, None).await.unwrap() });
+  until(|| m.active_id().is_some_and(|id| id != first) && m.active().is_some_and(|a| a["status"] == "starting"), 5000).await;
+  m.handle(json!({ "type": "setConfig", "configId": "effort", "value": "high" })).await;
+  m.handle(json!({ "type": "setMode", "id": "plan" })).await;
+  // shown at once, before the agent is up
+  let shown = m.active().unwrap();
+  assert_eq!(shown["status"], "starting");
+  assert_eq!(option_values(&shown)[1], json!("high"));
+  m.handle(json!({ "type": "send", "text": "inspect-history" })).await;
+  opening.await.unwrap();
+  until(|| m.active().is_some_and(|a| a["running"] == false && turns_len(Some(a.clone())) == 2), 5000).await;
+
+  let markdown = last_turn(&m.active().unwrap())["blocks"].to_string();
+  assert!(markdown.contains("\\\"effort\\\":\\\"high\\\"") && markdown.contains("\\\"mode\\\":\\\"plan\\\""), "{markdown}");
+  assert_eq!(v(m.m.last_settings("fake")), json!({ "modeId": "plan", "config": { "model": "m1", "effort": "high" } }));
+  m.dispose().await;
+}
