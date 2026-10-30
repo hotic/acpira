@@ -18,8 +18,8 @@ use super::content::{
 };
 use super::tool_kind::{
   ASK_TITLE, IMAGE_GEN, IMAGE_GEN_TITLE, IMAGE_GEN_VERB, READ_SESSION_VERB, SEARCH_SESSIONS_VERB, SHOW_IMAGE_VERB, SHOW_WIDGET_VERB,
-  JOB_INPUT, TODO_TITLE, WEB_SEARCH_VERB, WebTool, infer_kind, is_show_image_call, is_show_widget_call, mcp_identity, mcp_label, session_tool_target,
-  session_tool_verb, shell_verb, show_image_args, verb_of, web_search_query, web_tool,
+  JOB_INPUT, SKILL_VERB, TODO_TITLE, WEB_SEARCH_VERB, WebTool, infer_kind, is_show_image_call, is_show_widget_call, mcp_identity, mcp_label, session_tool_target,
+  session_tool_verb, shell_verb, show_image_args, skill_load, verb_of, web_search_query, web_tool,
 };
 use super::tool_target::{
   Target, path_from_raw, pick_target, prompt_target, read_range_from_raw, shell_target, show_image_target, show_widget_target,
@@ -83,6 +83,8 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
   let raw = u.get("rawInput").and_then(Value::as_object);
   let raw_present = crate::json::truthy(u.get("rawInput"));
   let title = str_of(u, "title");
+  // A skill row keeps the name it got from an earlier packet; this one may carry only a status or the command again
+  let skill_before = (b.verb_key.as_deref() == Some(SKILL_VERB)).then(|| b.target.clone()).flatten();
   // An MCP row stays `other`: codex-acp files every MCP call as `execute`
   if let Some(k) = kind_field(u).filter(|_| b.mcp_server.is_none()) {
     b.kind = k;
@@ -230,7 +232,18 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
   }
   let named = matches!(
     b.verb_key.as_deref(),
-    Some("verb.todo" | "verb.ask" | "verb.wait" | "verb.kill" | IMAGE_GEN_VERB | SHOW_IMAGE_VERB | SHOW_WIDGET_VERB | SEARCH_SESSIONS_VERB | READ_SESSION_VERB)
+    Some(
+      "verb.todo"
+        | "verb.ask"
+        | "verb.wait"
+        | "verb.kill"
+        | IMAGE_GEN_VERB
+        | SHOW_IMAGE_VERB
+        | SHOW_WIDGET_VERB
+        | SEARCH_SESSIONS_VERB
+        | READ_SESSION_VERB
+        | SKILL_VERB
+    )
   );
   let target = if matches!(b.verb_key.as_deref(), Some("verb.wait" | "verb.kill")) {
     shell_target(raw, ctx.as_deref())
@@ -388,6 +401,23 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
     });
     if entries.is_some() {
       b.todo_entries = entries;
+    }
+  }
+  // A skill load is one row naming the skill, its SKILL.md as the location: the receipt ("Launching skill: …") or the
+  // instructions it printed are for the model. A failure keeps its message. Re-applied on every packet, since a later
+  // `kind` or command would otherwise turn the row back into a read or a shell command
+  if let Some(skill) = skill_load(b, meta, title, raw) {
+    set_verb(b, SKILL_VERB);
+    b.kind = ToolKind::Other;
+    b.target = skill.name.or(skill_before);
+    b.target_mono = Some(false);
+    if let Some(path) = skill.path {
+      b.locations = Some(vec![Location { path, line: None }]);
+    }
+    b.read_range = None;
+    if b.status != ToolStatus::Failed {
+      b.content = None;
+      b.contents = None;
     }
   }
 }

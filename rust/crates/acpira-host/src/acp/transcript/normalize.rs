@@ -31,8 +31,8 @@ mod tool_target;
 
 use self::content::{image_content, resolve_markdown_images};
 pub use self::controls::{apply_config_options, config_option_set_value, init_controls};
-use self::notices::{apply_compaction_markers, apply_notice, apply_retry_marker, clear_retry, find_compaction};
-pub use self::notices::{apply_goal, apply_session_failure};
+use self::notices::{apply_compaction_markers, apply_notice, apply_retry_marker, clear_retry, find_compaction, settle_retry};
+pub use self::notices::{RetryReport, RetryText, apply_goal, apply_session_failure, refine_retry, report_retry};
 pub use self::tasks::{
   apply_async_task, async_task_live, disconnect_async_tasks, find_tool, find_tool_mut, has_live_async_task, set_stop_requested,
 };
@@ -81,6 +81,8 @@ pub struct NormalizeState {
   pub agent: Option<String>,
   /// The agent's current goal (`vendors::goal`), persisted with the record
   pub goal: Option<SessionGoal>,
+  /// How good the text kept for each attempt of the open retry row is (`notices::report_retry`)
+  pub retry_quality: Vec<(u32, RetryText)>,
 }
 
 impl NormalizeState {
@@ -235,7 +237,7 @@ fn apply_update_kind(s: &mut NormalizeState, u: &Value) -> bool {
         return true;
       }
       if let Some(found) = s.agent.as_deref().and_then(|a| retry_text::marker(a, &text)) {
-        apply_retry_marker(s, &found);
+        apply_retry_marker(s, &found, &text);
         return true;
       }
       if !text.trim().is_empty() {
@@ -393,6 +395,7 @@ fn apply_update_kind(s: &mut NormalizeState, u: &Value) -> bool {
           name: str_of(c, "name").unwrap_or("").to_owned(),
           description: str_of(c, "description").unwrap_or("").to_owned(),
           input: c.get("input").and_then(|i| text_of(i, "hint")).map(|h| CommandInput { hint: h.to_owned() }),
+          ..Default::default()
         })
         .collect();
       true
@@ -445,6 +448,8 @@ fn apply_update_kind(s: &mut NormalizeState, u: &Value) -> bool {
 
 /// Turn ended: seal streaming blocks, record how it ended; tools still running are marked per stop reason
 pub fn end_turn(s: &mut NormalizeState, stop: TurnStop) {
+  // Content after a retry row closes it as recovered, so one still open when the turn ends never got through
+  settle_retry(s, if stop == TurnStop::Cancelled { ToolStatus::Cancelled } else { ToolStatus::Failed });
   clear_retry(s);
   let NormalizeState { turns, thought_started_at, .. } = s;
   let Some(Turn::Agent(t)) = turns.last_mut() else { return };
@@ -468,6 +473,7 @@ pub fn end_turn(s: &mut NormalizeState, stop: TurnStop) {
 
 /// session/prompt itself failed: wrap up like a cancellation and keep the error on the turn
 pub fn fail_turn(s: &mut NormalizeState, error: TurnError) {
+  settle_retry(s, ToolStatus::Failed);
   end_turn(s, TurnStop::Cancelled);
   if let Some(Turn::Agent(t)) = s.turns.last_mut() {
     t.stop = Some(TurnStop::Error);
@@ -489,6 +495,10 @@ pub fn seal_replay(s: &mut NormalizeState) {
         AgentBlock::Text(x) => x.streaming = None,
         AgentBlock::Thought(x) => x.streaming = None,
         AgentBlock::ToolCall(x) if x.status.is_open() => x.status = ToolStatus::Cancelled,
+        AgentBlock::Notice(NoticeBlock { retry: Some(r), .. }) if r.status == ToolStatus::InProgress => {
+          r.status = ToolStatus::Cancelled;
+          r.next_at = None;
+        }
         _ => {}
       }
     }

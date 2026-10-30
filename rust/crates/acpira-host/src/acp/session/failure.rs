@@ -14,6 +14,8 @@ pub struct SessionFailure {
   pub title: String,
   pub details: Option<String>,
   pub actions: Vec<FailureAction>,
+  /// `retryAfterMs`, an Acpira extension the built-in agent puts on its retry warnings: the wait before the next attempt
+  pub retry_after_ms: Option<u64>,
 }
 
 fn text(v: Option<&Value>) -> Option<String> {
@@ -65,7 +67,8 @@ pub fn failure_of(meta: Option<&Value>, log: Option<&dyn Fn(&str)>) -> Option<Se
     }
   }
   let details = text(p.get("details")).or_else(|| text(p.get("reason")));
-  Some(SessionFailure { id, revision, category, severity, title, details, actions })
+  let retry_after_ms = p.get("retryAfterMs").and_then(Value::as_u64);
+  Some(SessionFailure { id, revision, category, severity, title, details, actions, retry_after_ms })
 }
 
 fn category_name(c: FailureCategory) -> String {

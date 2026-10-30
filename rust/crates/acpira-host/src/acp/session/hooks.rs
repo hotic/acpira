@@ -252,6 +252,7 @@ fn notice(severity: Severity, title: String, details: Option<String>) -> AgentBl
     title,
     details,
     actions: vec![],
+    retry: None,
   })
 }
 

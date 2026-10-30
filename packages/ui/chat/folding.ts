@@ -28,7 +28,8 @@ export function splitCodexBlocks(blocks: AgentBlock[], live = false) {
   // (warning, category unknown, no remedy) is the exception: codex-acp sends "Heads up: Long threads and multiple
   // compactions …" after every automatic compaction inside a turn, each under a new id, and lifted out they would
   // stack under the live fold for the rest of the turn, so they keep their place after the compaction row instead
-  const lifted = (b: AgentBlock): b is NoticeBlock => b.type === 'notice' && !isAdvisory(b);
+  // A retry row is process too: a step of the work like a tool call, folding away with it once the turn is done
+  const lifted = (b: AgentBlock): b is NoticeBlock => b.type === 'notice' && !isAdvisory(b) && !b.retry;
   const notices = blocks.filter(lifted);
   // Goal milestones are status rows too: the ones before any other content (a `/goal` prompt's own "Goal set") open
   // the turn above the fold, the ones after the last action (met, cleared …) follow the reply. A milestone that more
@@ -83,6 +84,11 @@ export function toolVerb(block: ToolCallBlock): string {
   const verb = block.mcpServer && !block.verbKey ? t('verb.mcp', { server: block.mcpServer })
     : t(block.verbKey ?? (isWorkflowRun(block) ? 'verb.workflow' : `verb.${block.kind}`));
   return t(FOLD_KEY[block.status], { verb });
+}
+
+// A skill load (`verb.skill`): one row naming the skill, whichever agent ran it
+export function isSkillTool(block: ToolCallBlock): boolean {
+  return block.verbKey === 'verb.skill';
 }
 
 // Claude's Workflow tool reaches the transcript as a generic `other` call titled "Workflow"; its async task says what

@@ -164,6 +164,28 @@ fn groks_meta_gives_token_counts_the_usage_object_model_and_request_ids() {
 }
 
 #[test]
+fn an_input_that_leaves_the_cache_out_is_folded_to_count_it() {
+  // claude-agent-acp: Anthropic semantics, total = input + read + write + output
+  expect_eq(turn_usage_of(&json!({ "stopReason": "end_turn", "usage": {
+    "inputTokens": 4, "outputTokens": 1036, "cachedReadTokens": 53635, "cachedWriteTokens": 32205, "totalTokens": 86880 } })),
+    json!({ "input": 85844, "output": 1036, "cachedRead": 53635, "cachedWrite": 32205, "total": 86880 }));
+  // codex-acp / OpenCode: same semantics with an uncached remainder larger than the cache can be told apart by the total
+  expect_eq(turn_usage_of(&json!({ "stopReason": "end_turn", "usage": {
+    "inputTokens": 5000, "outputTokens": 100, "cachedReadTokens": 3000, "totalTokens": 8100 } })),
+    json!({ "input": 8000, "output": 100, "cachedRead": 3000, "total": 8100 }));
+  // Devin: input already counts the cache, total = input + output
+  expect_eq(turn_usage_of(&json!({ "stopReason": "end_turn", "usage": {
+    "inputTokens": 306150, "outputTokens": 1973, "cachedReadTokens": 301079, "cachedWriteTokens": 5069, "totalTokens": 308123 } })),
+    json!({ "input": 306150, "output": 1973, "cachedRead": 301079, "cachedWrite": 5069, "total": 308123 }));
+  // A folded tally (a record saved after folding, loaded again) stays as it is
+  let mut folded = turn_usage_of(&json!({ "stopReason": "end_turn", "usage": {
+    "inputTokens": 4, "outputTokens": 1036, "cachedReadTokens": 53635, "cachedWriteTokens": 32205, "totalTokens": 86880 } })).unwrap();
+  let once = folded.clone();
+  folded.fold_cache_into_input();
+  assert_eq!(folded, once);
+}
+
+#[test]
 fn the_standard_fields_win_over_meta() {
   expect_eq(turn_usage_of(&json!({ "stopReason": "end_turn", "usage": { "totalTokens": 10, "inputTokens": 8, "outputTokens": 2 },
     "_meta": { "inputTokens": 999, "modelId": "m", "requestId": "r" } })), json!({ "input": 8, "output": 2, "total": 10, "model": "m", "requestId": "r" }));

@@ -32,6 +32,8 @@ pub fn client_version() -> &'static str {
 pub trait ClientHandlers: Send + Sync + 'static {
   fn on_update(&self, params: Value);
   fn on_auth_retry(&self, _params: Value) {}
+  /// Any other raw Claude `api_retry` frame: the attempt's status, error kind and wait (`vendors/claude_retry.rs`)
+  fn on_api_retry(&self, _params: Value) {}
   fn on_permission(&self, req: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>>;
   fn on_elicitation(&self, req: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>>;
   fn on_grok_question(&self, req: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>>;
@@ -84,6 +86,8 @@ impl Inbound for Router {
         handler.on_update(update);
       } else if claude_auth::repeated_auth_retry(&params) {
         handler.on_auth_retry(params);
+      } else {
+        handler.on_api_retry(params);
       }
     }
   }

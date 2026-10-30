@@ -146,7 +146,7 @@ async fn an_edit_ignores_the_rebuilt_peers_title_so_a_renamed_session_keeps_its_
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn retrying_a_failed_edited_prompt_rebuilds_context_again() {
+async fn retrying_a_failed_edited_prompt_rebuilds_context_with_current_composer_settings() {
   let fake = fake_or_skip!();
   let h = Harness::new(&fake, json!({}));
   let s = started(&h, "/tmp").await;
@@ -155,14 +155,25 @@ async fn retrying_a_failed_edited_prompt_rebuilds_context_again() {
   s.edit_turn(history_edit(&s, 2, "please fail")).await.unwrap();
   until(|| !s.is_running() && last_turn(&view(&s))["role"] == "agent" && !last_turn(&view(&s))["stop"].is_null(), 5000).await;
   expect_match(&view(&s)["turns"][3], json!({ "stop": "error" }));
+  expect_match(&view(&s)["turns"][2], json!({ "settings": { "modeId": "agent", "config": { "model": "m1", "effort": "high" } } }));
   let failed_peer = s.to_record().acp_session_id;
+  // Retry follows the composer, not the snapshot saved when the edited prompt failed.
+  s.select_config("model".into(), "m2".into()).await.unwrap();
+  s.select_config("effort".into(), "low".into()).await.unwrap();
+  s.set_mode("plan".into()).await.unwrap();
   s.retry_turn().await.unwrap();
   until(|| !s.is_running() && !last_turn(&view(&s))["stop"].is_null(), 5000).await;
   assert_ne!(s.to_record().acp_session_id, failed_peer);
   let vw = view(&s);
   assert_eq!(turns_in(&vw), 4);
   expect_match(&vw["turns"][0], json!({ "text": "earlier-context" }));
-  expect_match(&vw["turns"][2], json!({ "text": "please fail", "edited": true }));
+  expect_match(&vw["turns"][2], json!({ "text": "please fail", "edited": true,
+    "settings": { "modeId": "plan", "config": { "model": "m2", "effort": "low" } } }));
+  assert_eq!(option_value(&vw, "model"), "m2");
+  assert_eq!(option_value(&vw, "effort"), "low");
+  assert_eq!(vw["controls"]["modeId"], "plan");
+  prompt(&s, "inspect-history").await;
+  expect_match(wire_prompt(&last_turn(&view(&s))), json!({ "mode": "plan", "config": { "model": "m2", "effort": "low" } }));
 }
 
 #[tokio::test(flavor = "multi_thread")]

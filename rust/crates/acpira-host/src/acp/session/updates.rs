@@ -156,7 +156,7 @@ impl AcpSession {
       return;
     }
     if kind == "session_info_update"
-      && c.lineage.agent_title_muted
+      && (c.lineage.agent_title_muted || c.lineage.renamed)
       && let Some(title) = u.get("title").and_then(Value::as_str).filter(|x| !x.is_empty())
     {
       let head: String = title.chars().take(60).collect();

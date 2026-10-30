@@ -40,6 +40,24 @@ async fn one_prompt_turn_merges_thought_plan_and_text_and_updates_title_and_comm
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_user_rename_outlives_the_agents_own_titles_and_a_reopen() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let s = started(&h, "/tmp").await;
+  prompt(&s, "hi").await;
+  assert_eq!(view(&s)["title"], "Fake title");
+  s.rename("Mine");
+  // The fake agent re-announces 'Fake title' every turn, as claude-agent-acp does after a restart
+  prompt(&s, "again").await;
+  assert_eq!(view(&s)["title"], "Mine");
+  let record = s.to_record();
+  assert!(record.renamed);
+  let s = reopened(&h, record).await;
+  prompt(&s, "once more").await;
+  assert_eq!(view(&s)["title"], "Mine");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn attachments_are_stored_as_blobs_and_sent_as_image_resource_and_link_blocks() {
   use base64::Engine;
   let fake = fake_or_skip!();

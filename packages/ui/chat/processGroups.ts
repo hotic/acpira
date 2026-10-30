@@ -94,6 +94,7 @@ export function itemSettled(item: ProcessItem): boolean {
 
 export function blockSettled(b: AgentBlock): boolean {
   return b.type === 'thought' ? !b.streaming
+    : b.type === 'notice' ? b.retry?.status !== 'in_progress'
     : b.type !== 'tool_call' || !!b.background || (b.status !== 'pending' && b.status !== 'in_progress');
 }
 

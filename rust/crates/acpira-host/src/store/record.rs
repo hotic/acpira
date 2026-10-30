@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use acpira_shared::model_shapes::session_model;
 use acpira_shared::subagents::SubagentRecord;
-use acpira_shared::transcript::{AgentId, SessionControls, SessionGoal, SessionSummary, SlashCommand, Turn, Usage};
+use acpira_shared::transcript::{AgentId, SessionControls, SessionGoal, SessionSummary, SlashCommand, Turn, Usage, completed_at};
 
 fn is_false(v: &bool) -> bool {
   !*v
@@ -53,6 +53,10 @@ pub struct SessionRecord {
   pub cwd: String,
   #[serde(default)]
   pub title: String,
+  /// The user renamed the session: the agent's own titles are ignored from then on, since an adapter re-announces
+  /// the title it keeps (claude-agent-acp after every restart)
+  #[serde(default, skip_serializing_if = "is_false")]
+  pub renamed: bool,
   #[serde(default)]
   pub created_at: String,
   pub updated_at: String,
@@ -65,6 +69,8 @@ pub struct SessionRecord {
   pub commands: Vec<SlashCommand>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub pinned: Option<bool>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub archived: Option<bool>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub category: Option<String>,
   #[serde(default, skip_serializing_if = "is_false")]
@@ -86,6 +92,18 @@ pub struct SessionRecord {
 }
 
 impl SessionRecord {
+  /// Records written before `TurnUsage::fold_cache_into_input` carry the vendor's own `input` semantics; folding on
+  /// load is idempotent, so already folded turns stay as they are
+  pub fn fold_turn_usage(&mut self) {
+    for turn in &mut self.turns {
+      if let Turn::Agent(a) = turn
+        && let Some(u) = a.usage.as_mut()
+      {
+        u.fold_cache_into_input();
+      }
+    }
+  }
+
   pub fn summary(&self) -> SessionSummary {
     SessionSummary {
       id: self.id.clone(),
@@ -98,9 +116,12 @@ impl SessionRecord {
       updated_at: self.updated_at.clone(),
       created_at: Some(self.created_at.clone()).filter(|c| !c.is_empty()),
       pinned: self.pinned,
+      archived: self.archived,
       category: self.category.clone(),
       state: None,
       unread: None,
+      question: None,
+      completed_at: completed_at(self.turns.iter()),
       model: session_model(&self.controls),
     }
   }

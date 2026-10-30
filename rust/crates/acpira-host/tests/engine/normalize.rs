@@ -888,30 +888,51 @@ fn retry_of(s: &NormalizeState) -> Value {
   v(&s.turns[s.turns.len() - 1])["retry"].clone()
 }
 
-// pi-acp 0.0.33 forwards pi's auto_retry_start / auto_retry_end as prose; neither becomes a row, the live turn is
-// labelled as retrying until the resume line
+fn retry_rows(s: &NormalizeState) -> Vec<Value> {
+  let blocks = v(&s.turns[s.turns.len() - 1])["blocks"].clone();
+  blocks.as_array().unwrap().iter().filter(|b| b["type"] == "notice" && b.get("retry").is_some()).cloned().collect()
+}
+
+// pi-acp 0.0.33 forwards pi's auto_retry_start / auto_retry_end as prose: never reply text. The live turn is labelled
+// as retrying until the resume line, and one retry row logs the adapter's lines until content follows
 #[test]
-fn adapter_retry_prose_labels_the_turn_instead_of_adding_rows() {
+fn adapter_retry_prose_labels_the_turn_and_logs_one_retry_row() {
   let mut s = NormalizeState { agent: Some("pi".into()), ..state() };
   apply(&mut s, chunk("Reading"));
   apply(&mut s, chunk("Retrying (attempt 1/3, waiting 2s)..."));
   apply(&mut s, chunk("Retrying (attempt 2/3, waiting 4s)..."));
   expect_match(retry_of(&s), json!({ "attempt": 2, "max": 3 }));
   assert!(retry_of(&s)["detail"].as_str().unwrap().contains("2/3"));
+  let rows = retry_rows(&s);
+  assert_eq!(rows.len(), 1);
+  expect_match(&rows[0], json!({ "severity": "warning", "retry": { "status": "in_progress", "max": 3, "attempts": [
+    { "attempt": 1, "text": "Retrying (attempt 1/3, waiting 2s)..." },
+    { "attempt": 2, "text": "Retrying (attempt 2/3, waiting 4s)..." },
+  ] } }));
+  assert!(rows[0]["retry"]["nextAt"].as_f64().is_some());
+  // The resume line drops the label but leaves the row open: pi-acp sends it after a last failed attempt too
   apply(&mut s, chunk("Retry finished, resuming."));
   assert!(retry_of(&s).is_null());
-  apply(&mut s, chunk("Retry finished, resuming."));
+  expect_eq(&retry_rows(&s)[0]["retry"]["status"], json!("in_progress"));
   apply(&mut s, chunk("Retrying..."));
   expect_match(retry_of(&s), json!({ "detail": "Model request failed; retrying…" }));
+  // Content after it: the retries worked
   apply(&mut s, chunk(" Done"));
   let blocks = v(&s.turns[0])["blocks"].clone();
-  assert_eq!(blocks.as_array().unwrap().len(), 1);
-  expect_eq(&blocks[0]["markdown"], json!("Reading Done"));
+  assert_eq!(blocks.as_array().unwrap().len(), 3);
+  expect_eq(&blocks[0]["markdown"], json!("Reading"));
+  expect_match(&blocks[1], json!({ "type": "notice", "retry": { "status": "completed" } }));
+  assert_eq!(blocks[1]["retry"]["attempts"].as_array().unwrap().len(), 3);
+  assert!(blocks[1]["retry"].get("nextAt").is_none());
+  expect_eq(&blocks[2]["markdown"], json!(" Done"));
   assert!(retry_of(&s).is_null());
-  // A turn that ends mid-retry drops the label with the rest of its live state
+  // A turn that ends mid-retry drops the label, and its row never got through
   apply(&mut s, chunk("Retrying..."));
   end_turn(&mut s, TurnStop::EndTurn);
   assert!(retry_of(&s).is_null());
+  let rows = retry_rows(&s);
+  assert_eq!(rows.len(), 2);
+  expect_eq(&rows[1]["retry"]["status"], json!("failed"));
 }
 
 fn air_failure(id: &str, revision: u32, severity: &str, category: &str, title: &str, actions: Value) -> Value {
@@ -920,39 +941,90 @@ fn air_failure(id: &str, revision: u32, severity: &str, category: &str, title: &
 }
 
 // claude-agent-acp 0.81.0 api_retry: a session-scoped id per attempt (`…:session-error:<epoch>:<n>`, seen in stored
-// transcripts 2026-09-26). No row at all: the live turn's label carries the attempt until the stream resumes
+// transcripts 2026-09-26). The live turn's label carries the attempt, and every attempt lands on one retry row
 #[test]
-fn air_retry_warnings_only_label_the_live_turn() {
+fn air_retry_warnings_label_the_live_turn_and_share_one_retry_row() {
   let mut s = state();
   apply(&mut s, json!({ "sessionUpdate": "agent_thought_chunk", "content": { "type": "text", "text": "Planning" } }));
   for n in 1..=3 {
     apply(&mut s, air_failure(&format!("s:session-error:e:{n}"), 1, "warning", "connection", &format!("Reconnecting to Claude, attempt {n} of 10."), json!([])));
   }
   expect_eq(retry_of(&s), json!({ "attempt": 3, "max": 10, "detail": "Reconnecting to Claude, attempt 3 of 10." }));
+  let rows = retry_rows(&s);
+  assert_eq!(rows.len(), 1);
+  expect_match(&rows[0], json!({ "category": "connection", "retry": { "status": "in_progress", "max": 10, "reconnect": true } }));
+  assert_eq!(rows[0]["retry"]["attempts"].as_array().unwrap().len(), 3);
   // An advisory is still a row of its own
   apply(&mut s, air_failure("s:notice:e:1", 1, "warning", "unknown", "Switched to the fallback model.", json!([])));
   apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "t1", "title": "Read", "kind": "read", "status": "in_progress" }));
   let types: Vec<Value> = v(&s.turns[0])["blocks"].as_array().unwrap().iter().map(|b| b["type"].clone()).collect();
-  expect_eq(types, json!(["thought", "notice", "tool_call"]));
+  expect_eq(types, json!(["thought", "notice", "notice", "tool_call"]));
+  expect_eq(&retry_rows(&s)[0]["retry"]["status"], json!("completed"));
   assert!(retry_of(&s).is_null());
-  // Between turns there is nothing to label
+  // Between turns there is nothing to label or log
   end_turn(&mut s, TurnStop::EndTurn);
   apply(&mut s, air_failure("s:session-error:e:4", 1, "warning", "connection", "Reconnecting to Claude, attempt 1 of 10.", json!([])));
   assert!(retry_of(&s).is_null());
   assert_eq!(s.turns.len(), 1);
+  assert_eq!(retry_rows(&s).len(), 1);
 }
 
-// Retries that end in a real error: the error row appears and the retry label goes
+// Retries that end in a real error: the error row appears, the label goes and the retry row reads as failed
 #[test]
-fn an_air_error_clears_the_retry_label() {
+fn an_air_error_clears_the_retry_label_and_fails_the_retry_row() {
   let mut s = state();
   apply(&mut s, chunk("Working"));
   apply(&mut s, air_failure("turn-1:error", 1, "warning", "service", "Retrying Claude, attempt 1 of 2.", json!([])));
   apply(&mut s, air_failure("turn-1:error", 2, "error", "service", "Claude is temporarily overloaded.", json!(["retry"])));
   let blocks = v(&s.turns[0])["blocks"].clone();
-  assert_eq!(blocks.as_array().unwrap().len(), 2);
-  expect_match(&blocks[1], json!({ "type": "notice", "severity": "error", "id": "turn-1:error", "revision": 2 }));
+  assert_eq!(blocks.as_array().unwrap().len(), 3);
+  expect_match(&blocks[1], json!({ "type": "notice", "retry": { "status": "failed", "attempts": [{ "attempt": 1, "text": "Retrying Claude, attempt 1 of 2." }] } }));
+  expect_match(&blocks[2], json!({ "type": "notice", "severity": "error", "id": "turn-1:error", "revision": 2 }));
   assert!(retry_of(&s).is_null());
+}
+
+// The same attempt reported by several sources is one entry with the best text: the adapter's title, the raw SDK
+// frame's status and kind, then the body from the CLI's log, which also reaches a row that already settled
+#[test]
+fn a_better_report_of_an_attempt_replaces_its_text_and_a_vaguer_one_never_does() {
+  let mut s = state();
+  apply(&mut s, chunk("Working"));
+  let frame = |n: u32| RetryReport {
+    attempt: Some(n), max: Some(10), text: format!("529 overloaded #{n}"), quality: RetryText::Summary, reconnect: false, wait_ms: Some(12_000),
+  };
+  apply(&mut s, air_failure("e1", 1, "warning", "service", "Retrying Claude, attempt 1 of 10.", json!([])));
+  assert!(report_retry(&mut s, frame(1)));
+  apply(&mut s, air_failure("e2", 1, "warning", "service", "Retrying Claude, attempt 2 of 10.", json!([])));
+  assert!(report_retry(&mut s, frame(2)));
+  // The adapter's title for attempt 2 arriving late does not undo the frame's text
+  apply(&mut s, air_failure("e2b", 1, "warning", "service", "Retrying Claude, attempt 2 of 10.", json!([])));
+  let row = &retry_rows(&s)[0];
+  expect_match(&row["retry"]["attempts"], json!([{ "attempt": 1, "text": "529 overloaded #1" }, { "attempt": 2, "text": "529 overloaded #2" }]));
+  assert!(row["retry"]["nextAt"].as_f64().is_some());
+  apply(&mut s, chunk(" again"));
+  let body = r#"529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
+  assert!(refine_retry(&mut s, 2, body, RetryText::Raw));
+  assert!(!refine_retry(&mut s, 2, "529 overloaded", RetryText::Summary));
+  assert!(!refine_retry(&mut s, 7, body, RetryText::Raw));
+  let row = &retry_rows(&s)[0];
+  expect_match(row, json!({ "details": body, "retry": { "status": "completed", "attempts": [{ "attempt": 1 }, { "attempt": 2, "text": body }] } }));
+}
+
+// The built-in agent puts the provider's error in `details` and the wait in `retryAfterMs`
+#[test]
+fn a_retry_warning_with_details_logs_them_and_schedules_the_next_attempt() {
+  let mut s = state();
+  apply(&mut s, chunk("Working"));
+  let mut u = air_failure("acpira-retry-1", 1, "warning", "service", "Retrying Gateway, attempt 2 of 4", json!([]));
+  u["_meta"]["jetbrains"]["air"]["sessionFailure"]["details"] = json!("HTTP 503: upstream connect error");
+  u["_meta"]["jetbrains"]["air"]["sessionFailure"]["retryAfterMs"] = json!(2000);
+  apply(&mut s, u);
+  let row = &retry_rows(&s)[0];
+  expect_match(row, json!({ "retry": { "max": 4, "attempts": [{ "attempt": 2, "text": "HTTP 503: upstream connect error" }] } }));
+  assert!(row["retry"]["nextAt"].as_f64().is_some());
+  // A stopped turn leaves it stopped, not failed
+  end_turn(&mut s, TurnStop::Cancelled);
+  expect_eq(&retry_rows(&s)[0]["retry"]["status"], json!("cancelled"));
 }
 
 // Devin: start and outcome arrive as separate whole chunks; a failure keeps its reason; Kimi's statistics are absorbed
@@ -1131,6 +1203,49 @@ fn the_host_show_widget_tool_reads_its_html_into_the_row_in_every_adapter_naming
   apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "n1", "title": "show_widget", "status": "completed", "rawInput": { "path": "/tmp/notes.txt" } }));
   expect_match(block(&s, 0, 3), json!({ "verbKey": "verb.showWidget" }));
   expect_absent(block(&s, 0, 3), "content");
+}
+
+#[test]
+fn a_skill_load_is_one_row_naming_the_skill_whichever_agent_ran_it() {
+  let mut s = state();
+  // claude-agent-acp: "Load skill" before the input is known, then the name; the receipt is for the model
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "c1", "title": "Load skill", "kind": "other", "status": "pending",
+    "rawInput": {}, "_meta": { "claudeCode": { "toolName": "Skill" } } }));
+  expect_match(block(&s, 0, 0), json!({ "verbKey": "verb.skill", "kind": "other" }));
+  expect_absent(block(&s, 0, 0), "target");
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "c1", "title": "Load skill: lab-shot", "rawInput": { "skill": "lab-shot" },
+    "_meta": { "claudeCode": { "toolName": "Skill" }, "jetbrains": { "air": { "version": 1, "skill": { "name": "lab-shot", "path": "/repo/.claude/skills/lab-shot/SKILL.md" } } } } }));
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "c1", "status": "completed",
+    "content": [{ "type": "content", "content": { "type": "text", "text": "Launching skill: lab-shot" } }] }));
+  expect_match(block(&s, 0, 0), json!({ "verbKey": "verb.skill", "kind": "other", "target": "lab-shot", "targetMono": false,
+    "locations": [{ "path": "/repo/.claude/skills/lab-shot/SKILL.md" }], "status": "completed" }));
+  expect_absent(block(&s, 0, 0), "content");
+  // The built-in agent's `skill`: a read of the SKILL.md that answers with the instructions
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "b1", "title": "Skill ui-pick", "kind": "read", "status": "completed",
+    "rawInput": { "name": "ui-pick" }, "locations": [{ "path": "/repo/.agents/skills/ui-pick/SKILL.md" }],
+    "content": [{ "type": "content", "content": { "type": "text", "text": "# UI pick\n..." } }] }));
+  expect_match(block(&s, 0, 1), json!({ "verbKey": "verb.skill", "kind": "other", "target": "ui-pick", "locations": [{ "path": "/repo/.agents/skills/ui-pick/SKILL.md" }] }));
+  expect_absent(block(&s, 0, 1), "content");
+  // Codex: a command that only prints the SKILL.md, its output streamed through _meta; a later packet repeating the kind
+  // and command keeps the skill row
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "x1", "title": "sed -n '1,200p' /home/u/.agents/skills/dig/SKILL.md", "kind": "execute",
+    "status": "in_progress", "rawInput": { "command": "sed -n '1,200p' /home/u/.agents/skills/dig/SKILL.md" } }));
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "x1", "kind": "execute", "status": "completed",
+    "_meta": { "terminal_output_delta": { "data": "---\nname: dig\n---\n" } } }));
+  expect_match(block(&s, 0, 2), json!({ "verbKey": "verb.skill", "kind": "other", "target": "dig", "targetMono": false,
+    "locations": [{ "path": "/home/u/.agents/skills/dig/SKILL.md" }] }));
+  expect_absent(block(&s, 0, 2), "content");
+  // A failed load keeps its message
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "f1", "title": "Skill nope", "kind": "read", "status": "failed", "rawInput": { "name": "nope" },
+    "content": [{ "type": "content", "content": { "type": "text", "text": "Unknown skill \"nope\"." } }] }));
+  expect_match(block(&s, 0, 3), json!({ "verbKey": "verb.skill", "target": "nope", "content": { "type": "text", "text": "Unknown skill \"nope\"." } }));
+  // Anything more than printing the one file stays what it is
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "g1", "title": "grep -n name /home/u/.agents/skills/dig/SKILL.md", "kind": "execute",
+    "status": "completed", "rawInput": { "command": "grep -n name /home/u/.agents/skills/dig/SKILL.md" } }));
+  expect_absent(block(&s, 0, 4), "verbKey");
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "r1", "title": "Read README.md", "kind": "read", "status": "completed",
+    "locations": [{ "path": "/repo/.agents/skills/dig/README.md" }] }));
+  expect_absent(block(&s, 0, 5), "verbKey");
 }
 
 #[test]

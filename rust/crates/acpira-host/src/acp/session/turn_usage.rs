@@ -45,5 +45,6 @@ pub fn turn_usage_of(r: &Value) -> Option<TurnUsage> {
       out.request_id = label(meta.get("requestId")).or_else(|| label(meta.get("cognition.ai/userMessageId")));
     }
   }
+  out.fold_cache_into_input();
   (out != TurnUsage::default()).then_some(out)
 }
