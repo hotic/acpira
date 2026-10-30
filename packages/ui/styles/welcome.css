@@ -48,6 +48,8 @@
     transition: opacity .55s var(--wl-ease) .24s;
   }
   .wl-root:is([data-phase="intro"], [data-phase="consent"]) .wl-wash { opacity: 1; transition-delay: 0s; }
+  /* The intro hides the sample session outright: it first shows through the tour's veil, never behind the headline */
+  .wl-root[data-phase="intro"] .wl-wash { background: var(--bg-0); }
   /* Ending from the card (the engine answered): the wash stays until the whole layer has faded */
   .wl-root[data-phase="done"] .wl-wash { transition-delay: 0s; }
 
@@ -144,7 +146,6 @@
   .wl-brand-mark { width: 15px; height: 14px; color: var(--fg-1); }
   .wl-hero { margin: 22px 0 0; font-size: var(--wl-hero); line-height: 1.18; font-weight: 600; letter-spacing: -.02em; color: var(--fg-strong); }
   .wl-hero-dim { color: var(--fg-3); }
-  .wl-lede { margin: 18px 0 0; font-size: calc(var(--ui-font-size) + 1px); line-height: 1.75; color: var(--fg-2); white-space: nowrap; animation: wl-rise .6s var(--wl-ease) .85s backwards; }
   .wl-found { margin-top: 30px; display: flex; flex-direction: column; gap: 10px; }
   .wl-label { font-size: var(--text-3); color: var(--fg-3); animation: wl-rise .5s var(--wl-ease) .95s backwards; }
   /* The row's room is held while the shell looks for agents, so the column never shifts when they arrive */
@@ -173,7 +174,6 @@
   @media (max-width: 900px) {
     .wl-layer { --wl-copy-x: var(--page); --wl-mark-crop: -260px; }
     .wl-bigmark { opacity: .45; }
-    .wl-lede { white-space: normal; }
   }
 
   /* Narrow headers keep the list toggle and session menu at the edges; the tour controls must not cover either. */
@@ -187,7 +187,10 @@
   @keyframes wl-card { from { opacity: 0; translate: 0 14px; scale: .985; } }
   .wl-title { font-size: calc(var(--ui-font-size) + 5px); letter-spacing: -.01em; }
   .wl-dir { padding-block: 7px; }
-  .wl-tree { padding-block: 6px; }
+  .wl-tree { padding-block: 6px; container-type: inline-size; }
+  /* A narrow tree (VS Code's sidebar) stacks every description under its file, so the lines never mix one-line and
+     two-line entries; wider, only a description that does not fit drops (Welcome.tsx) */
+  @container (max-width: 360px) { .wl-desc { flex-basis: 100%; } }
   .wl-line { padding-block: 3px; animation: wl-line .45s var(--wl-ease) backwards; }
   .wl-branch { width: var(--wl-branch-w); }
   .wl-file { width: var(--wl-file-w); }
