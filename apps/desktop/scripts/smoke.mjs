@@ -773,8 +773,10 @@ document.addEventListener('securitypolicyviolation', () => { seen.blocked = true
       page = await Hook.connect(hookPath);
       await waitUntil('the updated app on the same session', async () => (await page.call({ op: 'windows' }).catch(() => []))[0]?.session === session, 30_000);
       await page.waitFor('its conversation after the update', `document.body.innerText.includes('hello world')`);
-      // Windows quotes the program in the command line it records
-      const updatedPid = processes().find(p => p.command.replace(/^"/, '').startsWith(bin) && !/ (serve|stdio)( |$)/.test(p.command))?.pid;
+      // Windows quotes the program in the command line it records, and the app names itself by its long path where the
+      // run's temp folder may be an 8.3 one (C:\Users\RUNNER~1 on CI), so both spellings count, in any case
+      const spellings = [bin, ...(WIN ? [realpathSync.native(bin)] : [])].map(s => s.toLowerCase());
+      const updatedPid = processes().find(p => spellings.some(s => p.command.replace(/^"/, '').toLowerCase().startsWith(s)) && !/ (serve|stdio)( |$)/.test(p.command))?.pid;
       if (!updatedPid || updatedPid === oldPid) fail(`no new process runs ${bin}`);
       const fresh = readFileSync(desktopLog, 'utf8').slice(logBefore);
       const newEngine = Number(/sidecar ready: pid (\d+)/.exec(fresh)?.[1]);
@@ -1089,3 +1091,5 @@ class Hook {
 }
 
 await main();
+// A failure after the update's restart leaves the updated app and the release server running; neither may hold the run open
+if (process.exitCode) process.exit();
