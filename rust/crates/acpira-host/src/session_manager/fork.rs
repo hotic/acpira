@@ -214,10 +214,13 @@ impl SessionManager {
       Some(id) => {
         self.state.lock().probed.remove(id);
         if let Some(last) = last {
-          s.adopt_controls(last).await;
+          let picked = s.adopt_controls(last).await;
+          self.remember_picked(&s, &picked);
         }
       }
-      None if s.status() == SessionStatus::Ready => s.adopt_controls(capture_turn_settings(&source.controls)).await,
+      None if s.status() == SessionStatus::Ready => {
+        s.adopt_controls(capture_turn_settings(&source.controls)).await;
+      }
       None => {}
     }
     Ok(())

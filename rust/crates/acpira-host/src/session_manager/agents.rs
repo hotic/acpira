@@ -123,6 +123,16 @@ impl SessionManager {
     self.save_prefs(&s.agent);
   }
 
+  /// What a session took over its remembered values while it started (`adopt_controls`) is remembered like a pick
+  pub(super) fn remember_picked(&self, s: &AcpSession, picked: &TurnSettings) {
+    if !picked.config.is_empty() {
+      self.remember(s);
+    }
+    if let Some(mode) = picked.mode_id.as_deref().filter(|m| s.agent_controls().mode_id.as_deref() == Some(*m)) {
+      self.remember_mode(&s.agent, mode);
+    }
+  }
+
   pub(super) fn remember_mode(&self, agent: &str, mode: &str) {
     {
       let mut st = self.state.lock();

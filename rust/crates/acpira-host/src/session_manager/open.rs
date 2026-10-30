@@ -110,9 +110,10 @@ impl SessionManager {
         s.set_category(category);
       }
       s.preview_controls(&me.known_start_controls(&id).await, last.as_ref());
-      if let Some(last) = &last {
-        s.hold_settings(last);
-      }
+      // Held even with nothing remembered: a pick made while the session starts then waits for the replay instead of
+      // being dropped
+      let held = last.unwrap_or_default();
+      s.hold_settings(&held);
       me.state.lock().live.insert(s.id.clone(), s.clone());
       me.set_active(&v, Some(s.id.clone()));
       me.process_change(&s.id);
@@ -120,9 +121,8 @@ impl SessionManager {
       s.start().await;
       // A real session just read the current configOptions; the probe snapshot retires
       me.state.lock().probed.remove(&id);
-      if let Some(last) = last {
-        s.adopt_controls(last).await;
-      }
+      let picked = s.adopt_controls(held).await;
+      me.remember_picked(&s, &picked);
       Ok(())
     })
   }
@@ -303,7 +303,8 @@ impl SessionManager {
     s.emit("session.opened", || serde_json::json!({}));
     s.start().await;
     // Also on a failed start: it releases the hold and the prompts it queued
-    s.adopt_controls(settings).await;
+    let picked = s.adopt_controls(settings).await;
+    self.remember_picked(&s, &picked);
     // A draining engine keeps the lease of every live agent: synced before the load's own hold goes
     self.sync_leases();
     drop(hold);

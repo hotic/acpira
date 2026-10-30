@@ -219,6 +219,9 @@ impl AcpSession {
   /// The composer's click path: same validation as set_config, then an optimistic overlay in front of the request
   pub async fn select_config(self: &Arc<Self>, config_id: String, value: String) -> Result<()> {
     self.editing_guard()?;
+    if self.defer_pick(&config_id, &value) {
+      return Ok(());
+    }
     let mut refused = None;
     let held = {
       let mut c = self.core.lock();
@@ -274,6 +277,9 @@ impl AcpSession {
 
   pub async fn select_mode(self: &Arc<Self>, id: String) -> Result<()> {
     self.editing_guard()?;
+    if self.defer_pick(MODE_PICK, &id) {
+      return Ok(());
+    }
     let ok = {
       let c = self.core.lock();
       c.proc.is_some() && c.status == SessionStatus::Ready && c.state.controls.modes.iter().any(|m| m.id == id)
@@ -348,6 +354,45 @@ impl AcpSession {
     }
   }
 
+  /// A pick made while a session whose remembered choices await their replay is still starting: no request can go out
+  /// yet, so the pick takes the held value's place and `adopt_controls` replays it once the agent is up. Without this a
+  /// new-session screen's picks, sent right after the session appears, were dropped and the first turn ran on the
+  /// remembered values. False when no replay is pending (or it already runs) and the pick takes the usual path
+  fn defer_pick(&self, key: &str, value: &str) -> bool {
+    let mut c = self.core.lock();
+    let up = c.proc.is_some() && c.status == SessionStatus::Ready;
+    if up || !c.picks.adopt_pending || c.picks.adopting {
+      return false;
+    }
+    c.picks.seq += 1;
+    let token = c.picks.seq;
+    c.picks.values.insert(key.to_owned(), (value.to_owned(), token));
+    c.picks.holds.retain(|(k, _)| k != key);
+    c.picks.holds.push((key.to_owned(), token));
+    self.touch(&mut c);
+    true
+  }
+
+  /// The settings to replay with the holds' current values laid over them, and the values among those that
+  /// `defer_pick` put in place of the remembered ones
+  fn held_settings(&self, mut settings: TurnSettings) -> (TurnSettings, TurnSettings) {
+    let c = self.core.lock();
+    let mut picked = TurnSettings::default();
+    for (key, token) in &c.picks.holds {
+      let Some((value, _)) = c.picks.values.get(key).filter(|(_, t)| t == token) else { continue };
+      if key == MODE_PICK {
+        if settings.mode_id.as_ref() != Some(value) {
+          settings.mode_id = Some(value.clone());
+          picked.mode_id = Some(value.clone());
+        }
+      } else if settings.config.get(key) != Some(value) {
+        settings.config.insert(key.clone(), value.clone());
+        picked.config.insert(key.clone(), value.clone());
+      }
+    }
+    (settings, picked)
+  }
+
   /// A held key the user has picked over since: the replay leaves it to that pick
   fn superseded(&self, key: &str) -> bool {
     let c = self.core.lock();
@@ -374,18 +419,20 @@ impl AcpSession {
 
   /// Replay what was chosen last time in this agent, one request per difference in control order; choices the agent
   /// no longer offers are skipped, a refused one is logged and the rest go on. Runs under the pick lock, so a composer
-  /// pick made meanwhile lands after the replay and wins
-  pub async fn adopt_controls(self: &Arc<Self>, settings: TurnSettings) {
+  /// pick made meanwhile lands after the replay and wins. Picks made while the session started replace the values they
+  /// held and are returned, for the caller to remember like any other pick
+  pub async fn adopt_controls(self: &Arc<Self>, settings: TurnSettings) -> TurnSettings {
     {
       let mut c = self.core.lock();
       if c.status != SessionStatus::Ready || c.proc.is_none() {
         drop(c);
         self.release_holds();
-        return;
+        return TurnSettings::default();
       }
       c.picks.adopting = true;
     }
     let serial = self.pick_lock.lock().await;
+    let (settings, picked) = self.held_settings(settings);
     let effort = self.core.lock().state.controls.options.iter().find(|o| acpira_shared::composer_controls::is_reasoning_control(o)).map(|o| o.id.clone());
     if !effort.is_some_and(|id| self.superseded(&id)) {
       self.adopt_ultracode(&settings).await;
@@ -394,6 +441,7 @@ impl AcpSession {
     self.core.lock().picks.adopting = false;
     drop(serial);
     self.release_holds();
+    picked
   }
 
   /// Set the given values again, one request per difference in control order (model before effort), then the mode;

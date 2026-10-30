@@ -85,6 +85,7 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // other model drops `speed` entirely and narrows effort to `high` (SWE-2 has no speed control and only medium / high / max);
 // FAKE_CONFIG_LOG → append the raw session/set_config_option payload (configId / type / value) to that file;
 // FAKE_CONFIG_DELAY_MS → setConfigOption and setMode wait that long before answering (rejections too), so tests can watch in-flight picks;
+// FAKE_NEW_DELAY_MS → session/new waits that long before answering, so tests can pick while a session is still starting;
 // FAKE_BYPASS_START → sessions also offer `bypassPermissions`, start in it and refuse to leave it (a CLI stuck in full access);
 // =only offers no other mode, so there is nothing to switch to;
 // FAKE_SESSION_DIR → a native session store on disk: sessions persist as <id>.json, resume/load restore them (load replays a
@@ -300,6 +301,8 @@ const app = acp.agent({ name: 'fake-agent' })
   })
   .onRequest(acp.methods.agent.session.new, async ({ params, client }) => {
     logMcp('new', params.mcpServers);
+    // FAKE_NEW_DELAY_MS: a slow session/new, so a test can act while the session is still starting
+    await new Promise(r => setTimeout(r, Number(process.env.FAKE_NEW_DELAY_MS) || 0));
     // FAKE_STARTUP_BANNER: pi-acp's prelude — the response carries _meta.piAcp.startupInfo and the same text is re-sent
     // as one agent_message_chunk a tick later; =early keeps the old pre-response timing (before any session exists)
     const banner = process.env.FAKE_STARTUP_BANNER ? 'pi v0.0 banner' : undefined;
