@@ -80,7 +80,7 @@ const outputFollows = (block: ToolCallBlock) =>
 // `copyLabel` is given (the command card puts its own at the card corner instead), and while `follow` it sticks to the
 // bottom until the user scrolls up inside it
 // `prose` swaps the monospace <pre> for a block container that hosts rendered markdown
-function OutputPane({ text, follow, label, copyLabel, className, prose = false, children }: {
+export function OutputPane({ text, follow, label, copyLabel, className, prose = false, children }: {
   text: string; follow: boolean; label: string; copyLabel?: string; className?: string; prose?: boolean; children: ReactNode;
 }) {
   const ref = useRef<HTMLElement>(null);

@@ -130,7 +130,7 @@ describe('PlanBar dock visibility', () => {
     expect(shellSource).toContain('content.style.paddingBottom');
     // The clearance keeps the message gap on top of the dock height, so the last message sits one
     // message gap from the first dock surface with or without the plan
-    expect(shellSource).toContain('calc(var(--msg-gap) + ${dockHeight}px)');
+    expect(shellSource).toContain('calc(var(--msg-gap) + var(--thread-tail-room) + ${dockHeight}px)');
     expect(shellSource).not.toContain('threadArea');
     expect(planBarSource).toContain('pointer-events-none px-dock pb-(--dock-gap)');
     expect(planBarSource).toContain('pointer-events-auto');
