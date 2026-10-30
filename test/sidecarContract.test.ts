@@ -313,8 +313,12 @@ describe('sidecar session contract', () => {
     expect(fork.session.title).not.toBe('Renamed');
     await s.hostMsg('V', 'sessions', m => m.sessions.some(x => x.id === forkId) && m.sessions.some(x => x.id === id));
 
-    s.view('V', { type: 'deleteSession', id });
+    s.view('V', { type: 'deleteSession', id, requestId: 'delete-original' });
+    const deleted = await s.hostMsg('V', 'deleteSessionResult', m => m.requestId === 'delete-original');
+    expect(deleted).toEqual({ type: 'deleteSessionResult', requestId: 'delete-original', undo: true });
     await s.hostMsg('V', 'sessions', m => !m.sessions.some(x => x.id === id));
+    s.view('V', { type: 'deleteSession', id: 'already-gone', requestId: 'delete-gone' });
+    expect(await s.hostMsg('V', 'deleteSessionResult', m => m.requestId === 'delete-gone')).toEqual({ type: 'deleteSessionResult', requestId: 'delete-gone', undo: false });
     s.view('V', { type: 'restoreSession', id });
     const restored = await s.hostMsg('V', 'sessions', m => m.sessions.some(x => x.id === id && x.title === 'Renamed'));
 

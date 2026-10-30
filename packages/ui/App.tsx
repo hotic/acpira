@@ -89,6 +89,14 @@ const editTurn = (edit: EditTurnRequest) => new Promise<void>((resolve, reject) 
   post({ type: 'editTurn', requestId, edit });
 });
 
+// A slow agent start can delay deletion indefinitely; only its completion may settle the undo, not a timer or list push.
+const deleteWaits = new Map<string, (undo: boolean) => void>();
+const deleteSession = (id: string) => new Promise<boolean>(resolve => {
+  const requestId = crypto.randomUUID();
+  deleteWaits.set(requestId, resolve);
+  post({ type: 'deleteSession', id, requestId });
+});
+
 // Request/response pairs over postMessage: file search for @ mentions and the history list's conversation search. Each
 // request gets a seq; the matching `files` / `sessionHits` reply resolves it.
 // A reply that never comes (host gone) resolves empty after a while so nothing waits forever
@@ -299,6 +307,12 @@ export function App() {
           if (m.error) wait?.reject(new Error(m.error)); else wait?.resolve();
           break;
         }
+        case 'deleteSessionResult': {
+          const settle = deleteWaits.get(m.requestId);
+          deleteWaits.delete(m.requestId);
+          settle?.(!m.error && m.undo);
+          break;
+        }
         // A sidecar that came back answers nothing it was asked before: pending controls requests go out again
         case 'init': controlsAsked.current.clear(); setInit({ host: m.state.host, home: m.state.home, cwd: m.state.cwd, blobBase: m.state.blobBase, chats: m.state.chats }); setAppearance(m.state.appearance); lastAgents.current = m.state.agents; setAgents(m.state.agents); setSessions(m.state.sessions); setCategories(m.state.categories); setAccounts(m.state.accounts); setAccountActions(m.state.accountActions ?? []); setAgentInstalls(m.state.agentInstalls ?? []); setHidden(m.state.hidden); setSession(views.init(m.state.active)); setNoProject(!m.state.active); setSettings(syncPanelScope(m.state.settings)); setLocale(m.state.locale); setLoc(m.state.locale); terminalsConnected(m.state.home); watchConnections(); watchRemoteAccess(); break;
         case 'appearance': setAppearance(m.appearance); break;
@@ -499,7 +513,7 @@ export function App() {
     },
     newSession: (agent, category, cwd, chat) => post({ type: 'newSession', ...(agent ? { agent } : {}), ...(category ? { category } : {}), ...(cwd ? { cwd } : {}), ...(chat ? { chat } : {}) }),
     renameSession: (id, title) => post({ type: 'renameSession', id, title }),
-    deleteSession: id => post({ type: 'deleteSession', id }),
+    deleteSession,
     restoreSession: id => post({ type: 'restoreSession', id }),
     pinSession: (id, pinned) => post({ type: 'pinSession', id, pinned }),
     moveSession: (id, to) => post({ type: 'moveSession', id, ...to }),

@@ -200,7 +200,7 @@ async fn trash_moves_record_and_blobs_out_and_back_and_sweep_honours_the_window(
   assert!(store.load_index().await.unwrap().is_empty());
   store.sweep_trash(Duration::from_secs(60)).await;
   assert!(d.join("trash/t.json").exists());
-  store.restore("t").await;
+  store.restore("t").await.unwrap();
   assert!(d.join("t.json").exists());
   assert_eq!(std::fs::read_dir(d.join("t")).unwrap().count(), 1);
   assert_eq!(ids(&store.load_index().await.unwrap()), ["t"]);
@@ -209,6 +209,119 @@ async fn trash_moves_record_and_blobs_out_and_back_and_sweep_honours_the_window(
   assert!(!d.join("trash/t.json").exists());
   assert!(!d.join("trash/t").exists());
   store.remove("t").await;
+}
+
+fn blob_count(dir: &Path) -> usize {
+  std::fs::read_dir(dir).unwrap().count()
+}
+
+// A move that fails used to be ignored: the delete reported success while the record stayed listed, or the record went
+// to the trash without its blobs
+#[tokio::test(flavor = "multi_thread")]
+async fn a_trash_move_that_fails_is_an_error_and_puts_back_what_it_moved() {
+  let (dir, _, store) = fixture();
+  let d = dir.path();
+  // The record's place in the trash is taken by a non-empty directory: nothing moves
+  store.flush(record("t", "T")).await.unwrap();
+  store.save_blob("t", ".png", &[1]).await.unwrap();
+  std::fs::create_dir_all(d.join("trash/t.json")).unwrap();
+  std::fs::write(d.join("trash/t.json/keep"), "keep").unwrap();
+  assert!(store.trash("t").await.unwrap_err().to_string().contains("already exists"));
+  assert_eq!(title_of(&d.join("t.json")), "T");
+  assert_eq!(blob_count(&d.join("t")), 1);
+  assert!(d.join("trash/t.json/keep").exists() && !d.join("trash/t").exists());
+  // A directory blocks the blobs once the record has moved: the record comes back
+  store.flush(record("u", "U")).await.unwrap();
+  store.save_blob("u", ".png", &[2]).await.unwrap();
+  std::fs::create_dir_all(d.join("trash/u")).unwrap();
+  std::fs::write(d.join("trash/u/old.png"), "old").unwrap();
+  assert!(store.trash("u").await.is_err());
+  assert_eq!(title_of(&d.join("u.json")), "U");
+  assert_eq!(blob_count(&d.join("u")), 1);
+  assert!(!d.join("trash/u.json").exists());
+  assert_eq!(std::fs::read_to_string(d.join("trash/u/old.png")).unwrap(), "old");
+  assert_eq!(sorted(ids(&store.load_index().await.unwrap())), ["t", "u"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn deleting_again_is_a_no_op_and_never_replaces_what_the_trash_holds() {
+  let (dir, _, store) = fixture();
+  let d = dir.path();
+  // No blob folder is fine, and so is a second delete or one of an id never stored
+  store.flush(record("r", "R")).await.unwrap();
+  store.trash("r").await.unwrap();
+  store.trash("r").await.unwrap();
+  assert_eq!(title_of(&d.join("trash/r.json")), "R");
+  store.trash("nobody").await.unwrap();
+  store.restore("nobody").await.unwrap();
+  // A record written again after its delete is refused rather than put over the trashed one
+  store.flush(record("s", "first")).await.unwrap();
+  store.save_blob("s", ".png", &[3]).await.unwrap();
+  store.trash("s").await.unwrap();
+  std::fs::write(d.join("s.json"), serde_json::to_string(&*record("s", "again")).unwrap()).unwrap();
+  assert!(store.trash("s").await.is_err());
+  assert_eq!(title_of(&d.join("trash/s.json")), "first");
+  assert_eq!(blob_count(&d.join("trash/s")), 1);
+  assert_eq!(title_of(&d.join("s.json")), "again");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restore_that_would_replace_a_live_entry_fails_and_leaves_the_trash_whole() {
+  let (dir, _, store) = fixture();
+  let d = dir.path();
+  // A blob saved after the delete took the blob folder's place: nothing moves
+  store.flush(record("a", "A")).await.unwrap();
+  store.save_blob("a", ".png", &[1]).await.unwrap();
+  store.trash("a").await.unwrap();
+  store.save_blob("a", ".png", &[9]).await.unwrap();
+  assert!(store.restore("a").await.unwrap_err().to_string().contains("already exists"));
+  assert_eq!(title_of(&d.join("trash/a.json")), "A");
+  assert_eq!(blob_count(&d.join("trash/a")), 1);
+  assert!(!d.join("a.json").exists());
+  // The record was written again: the blobs that moved first go back to the trash
+  store.flush(record("b", "B")).await.unwrap();
+  store.save_blob("b", ".png", &[2]).await.unwrap();
+  store.trash("b").await.unwrap();
+  std::fs::write(d.join("b.json"), serde_json::to_string(&*record("b", "again")).unwrap()).unwrap();
+  assert!(store.restore("b").await.is_err());
+  assert_eq!(title_of(&d.join("trash/b.json")), "B");
+  assert_eq!(blob_count(&d.join("trash/b")), 1);
+  assert!(!d.join("b").exists());
+  assert_eq!(title_of(&d.join("b.json")), "again");
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn trash_and_restore_move_symlinks_as_links_and_refuse_a_trash_outside_the_store() {
+  use std::os::unix::fs::symlink;
+  let is_link = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink());
+  let (dir, _, store) = fixture();
+  let d = dir.path();
+  let outside = tempfile::tempdir().unwrap();
+  std::fs::write(outside.path().join("secret.txt"), "secret").unwrap();
+  // A blob folder linked out of the store moves as the link, there and back
+  store.flush(record("l", "L")).await.unwrap();
+  symlink(outside.path(), d.join("l")).unwrap();
+  store.trash("l").await.unwrap();
+  assert!(is_link(&d.join("trash/l")) && !d.join("l").exists());
+  store.restore("l").await.unwrap();
+  assert!(is_link(&d.join("l")) && !d.join("trash/l").exists());
+  assert_eq!(std::fs::read_to_string(outside.path().join("secret.txt")).unwrap(), "secret");
+  // One linked to another session's blobs never takes them along
+  store.flush(record("a", "A")).await.unwrap();
+  store.save_blob("b", ".png", &[1]).await.unwrap();
+  symlink(d.join("b"), d.join("a")).unwrap();
+  store.trash("a").await.unwrap();
+  assert!(is_link(&d.join("trash/a")));
+  assert_eq!(blob_count(&d.join("b")), 1);
+  // A trash directory linked out of the store is refused before anything moves
+  let (other, _, linked) = fixture();
+  let away = tempfile::tempdir().unwrap();
+  symlink(away.path(), other.path().join("trash")).unwrap();
+  linked.flush(record("x", "X")).await.unwrap();
+  assert!(linked.trash("x").await.is_err());
+  assert!(other.path().join("x.json").exists());
+  assert_eq!(blob_count(away.path()), 0);
 }
 
 // The same session live in two windows: one deletes it, the other's debounced save lands afterwards and used to recreate the record
@@ -234,7 +347,7 @@ async fn a_save_of_a_record_another_store_removed_is_dropped_but_first_writes_an
   assert!(!d.join("s.json").exists());
   a.flush(record("s", "v1")).await.unwrap();
   a.trash("s").await.unwrap();
-  a.restore("s").await;
+  a.restore("s").await.unwrap();
   b.flush(record("s", "v4 from B")).await.unwrap();
   assert_eq!(title_of(&d.join("s.json")), "v4 from B");
   // A record the store never had on disk is created as usual

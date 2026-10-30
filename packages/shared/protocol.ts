@@ -264,6 +264,8 @@ export type HostMsg =
   | { type: 'showSession'; id: string }
   | { type: 'chatgptStatus'; status: ChatGptIntegrationStatus }
   | { type: 'editTurnResult'; requestId: string; error?: string }
+  // Completion belongs to this delete request; only the engine holding its undo may offer Restore.
+  | { type: 'deleteSessionResult'; requestId: string; undo: boolean; error?: string }
   | { type: 'init'; state: InitState }
   | { type: 'appearance'; appearance: Appearance }
   | { type: 'agents'; agents: AgentInfo[] }
@@ -479,7 +481,7 @@ export type WebviewMsg =
   // `chat` (project shells): the engine makes the session a fresh folder under InitState.chats, `cwd` ignored
   | { type: 'newSession'; agent?: AgentId; category?: string; cwd?: string; chat?: boolean }
   | { type: 'renameSession'; id: string; title: string }
-  | { type: 'deleteSession'; id: string }
+  | { type: 'deleteSession'; id: string; requestId?: string }
   | { type: 'restoreSession'; id: string }
   | { type: 'pinSession'; id: string; pinned: boolean }
   // File a session under a category of its own project, or take it out (null); filing unpins it

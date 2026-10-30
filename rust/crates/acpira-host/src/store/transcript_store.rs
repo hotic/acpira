@@ -753,7 +753,9 @@ impl TranscriptStore {
     }
   }
 
-  /// Soft deletion into trash/, surviving a crash (sweep_trash cleans up on the next start)
+  /// Soft deletion into trash/, surviving a crash (sweep_trash cleans up on the next start). An error means the record
+  /// was not moved: whatever this call had moved is back in place, unless the error says otherwise. Nothing here
+  /// (an id already trashed or never stored) and an illegal id are no-ops; a trashed copy is never replaced
   pub async fn trash(&self, id: &str) -> Result<()> {
     if !is_session_id(id) {
       return Ok(());
@@ -762,28 +764,52 @@ impl TranscriptStore {
     self.settle_inflight(id).await;
     let trash = self.dir.join(TRASH_DIR);
     fs::create_dir_all(&trash).await?;
-    move_record(&self.dir, &trash, id).await;
-    // rename keeps the mtime; stamp the moment it was trashed
-    if let Some(stamped) = confined(&trash, &format!("{id}.json")).await
+    let file = format!("{id}.json");
+    // The record leaves first: an entry left behind by a failed undo is then a stray blob folder, not a listed session
+    let moved = async {
+      real_dir(&trash).await?;
+      move_entries(&self.dir, &trash, [file.as_str(), id]).await
+    }
+    .await
+    .map_err(|e| anyhow!("session {id}: not moved to the trash ({e:#})"))?;
+    // rename keeps the mtime; stamp the moment it was trashed (a regular file only, so a symlink's target is not touched)
+    let stamped = trash.join(&file);
+    if moved.contains(&file.as_str())
+      && fs::symlink_metadata(&stamped).await.is_ok_and(|m| m.file_type().is_file())
       && let Ok(f) = std::fs::File::options().write(true).open(&stamped)
     {
       let _ = f.set_modified(SystemTime::now());
     }
     if self.on_change.read().is_some() {
-      let cwd = cwd_of(&trash.join(format!("{id}.json"))).await;
+      let cwd = cwd_of(&stamped).await;
       self.changed(id, RecordChange::Gone { cwd: &cwd });
     }
     Ok(())
   }
 
-  pub async fn restore(&self, id: &str) {
-    if is_session_id(id) {
-      move_record(&self.dir.join(TRASH_DIR), &self.dir, id).await;
-      if self.on_change.read().is_some() {
-        let cwd = cwd_of(&self.dir.join(format!("{id}.json"))).await;
-        self.changed(id, RecordChange::Restored { cwd: &cwd });
-      }
+  /// Undo `trash`. An error means the record is still in the trash: whatever this call had moved is back there, unless
+  /// the error says otherwise. Nothing in the trash and an illegal id are no-ops; a record in the live directory (written
+  /// again since) is never replaced
+  pub async fn restore(&self, id: &str) -> Result<()> {
+    if !is_session_id(id) {
+      return Ok(());
     }
+    let trash = self.dir.join(TRASH_DIR);
+    let file = format!("{id}.json");
+    // The record arrives last: an entry left behind by a failed undo is then a stray blob folder, not a listed session
+    async {
+      if real_dir(&trash).await? {
+        move_entries(&trash, &self.dir, [id, file.as_str()]).await?;
+      }
+      anyhow::Ok(())
+    }
+    .await
+    .map_err(|e| anyhow!("session {id}: not restored from the trash ({e:#})"))?;
+    if self.on_change.read().is_some() {
+      let cwd = cwd_of(&self.dir.join(&file)).await;
+      self.changed(id, RecordChange::Restored { cwd: &cwd });
+    }
+    Ok(())
   }
 
   /// Remove what was trashed more than `older_than` ago
@@ -901,13 +927,70 @@ async fn rm_confined(root: &Path, name: &str, recursive: bool) {
   }
 }
 
-async fn move_record(from: &Path, to: &Path, id: &str) {
-  if let (Some(a), Some(b)) = (confined(from, &format!("{id}.json")).await, confined(to, &format!("{id}.json")).await) {
-    let _ = fs::rename(a, b).await;
+/// Whether an entry is at `path` itself; a symlink there counts, whatever it points at
+async fn entry_exists(path: &Path) -> Result<bool> {
+  match fs::symlink_metadata(path).await {
+    Ok(_) => Ok(true),
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+    Err(e) => Err(anyhow!("{}: {e}", path.display())),
   }
-  if let (Some(a), Some(b)) = (confined(from, id).await, confined(to, id).await) {
-    let _ = fs::rename(a, b).await;
+}
+
+/// Whether `dir` is there as a real directory. Anything else in its place is an error, a symlink above all: the trash
+/// behind one could carry records out of the store or pull outside entries in
+async fn real_dir(dir: &Path) -> Result<bool> {
+  match fs::symlink_metadata(dir).await {
+    Ok(m) if m.file_type().is_dir() => Ok(true),
+    Ok(_) => Err(anyhow!("{} is not a directory", dir.display())),
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+    Err(e) => Err(anyhow!("{}: {e}", dir.display())),
   }
+}
+
+/// Moves a session's entries (`<id>.json`, `<id>/`) between two store directories in the given order and returns the
+/// ones it moved. Names are session ids, so each entry is a direct child, and nothing is followed: a symlink moves as the
+/// link, its target untouched. An absent entry is skipped (blobs are optional, a repeated call finds nothing); one
+/// already at the destination is never replaced. On a failure the entries this call moved go back before the error is
+/// returned; any that cannot are named in it
+async fn move_entries<'a>(from: &Path, to: &Path, names: [&'a str; 2]) -> Result<Vec<&'a str>> {
+  let mut moved: Vec<&str> = vec![];
+  for name in names {
+    let (src, dst) = (from.join(name), to.join(name));
+    let step = async {
+      if !entry_exists(&src).await? {
+        return Ok(false);
+      }
+      if entry_exists(&dst).await? {
+        return Err(anyhow!("{} already exists", dst.display()));
+      }
+      fs::rename(&src, &dst).await.map_err(|e| anyhow!("moving {} to {}: {e}", src.display(), dst.display()))?;
+      anyhow::Ok(true)
+    };
+    match step.await {
+      Ok(true) => moved.push(name),
+      Ok(false) => {}
+      Err(e) => return Err(undo_moves(from, to, &moved, e).await),
+    }
+  }
+  Ok(moved)
+}
+
+/// Puts back what a failed `move_entries` moved, newest first, under the same rule: a place taken again meanwhile is
+/// not replaced. Whatever stays out of place is added to the error
+async fn undo_moves(from: &Path, to: &Path, moved: &[&str], error: anyhow::Error) -> anyhow::Error {
+  let mut stuck = vec![];
+  for name in moved.iter().rev() {
+    let (src, dst) = (from.join(name), to.join(name));
+    let back = match entry_exists(&src).await {
+      Ok(false) => fs::rename(&dst, &src).await.map_err(|e| anyhow!("{e}")),
+      Ok(true) => Err(anyhow!("{} was taken meanwhile", src.display())),
+      Err(e) => Err(e),
+    };
+    if let Err(e) = back {
+      stuck.push(format!("{} left at {} ({e:#})", src.display(), dst.display()));
+    }
+  }
+  if stuck.is_empty() { error } else { anyhow!("{error:#}; not put back: {}", stuck.join("; ")) }
 }
 
 #[cfg(test)]
@@ -1039,7 +1122,7 @@ mod tests {
     assert_eq!(idx.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(), ["b", "a"]);
     s.trash("a").await.unwrap();
     assert_eq!(s.load_index().await.unwrap().len(), 1);
-    s.restore("a").await;
+    s.restore("a").await.unwrap();
     assert_eq!(s.load_index().await.unwrap().len(), 2);
     // Deleted by another window: never written back
     std::fs::remove_file(dir.path().join("b.json")).unwrap();
@@ -1099,7 +1182,7 @@ mod tests {
     s.load_index().await.unwrap();
     // The undo window keeps it; a restore finds the log untouched
     s.trash("a").await.unwrap();
-    s.restore("a").await;
+    s.restore("a").await.unwrap();
     assert!(log_exists("acp-1"));
     s.trash("a").await.unwrap();
     s.load_index().await.unwrap();

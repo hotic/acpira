@@ -99,6 +99,10 @@ impl SessionManager {
 
   pub async fn handle_for(self: &Arc<Self>, v: &Arc<Viewer>, m: WebviewMsg) {
     let kind = format!("{m:?}").split([' ', '{', '(']).next().unwrap_or("").to_owned();
+    let delete_request = match &m {
+      WebviewMsg::DeleteSession { request_id, .. } => request_id.clone(),
+      _ => None,
+    };
     let moves = matches!(
       m,
       WebviewMsg::SelectSession { .. }
@@ -117,6 +121,9 @@ impl SessionManager {
     if let Err(e) = done {
       let text = error_text(&e);
       self.log(&format!("handle {} failed: {text}", lower_first(&kind)));
+      if let Some(request_id) = delete_request {
+        v.emit(HostMsg::DeleteSessionResult { request_id, undo: false, error: Some(text.clone()) });
+      }
       (self.deps.toast)("error", &text);
     }
   }
@@ -228,7 +235,13 @@ impl SessionManager {
       }
       W::NewSession { agent, category, cwd, .. } => self.new_session_for(v, agent, None, category, cwd).await?,
       W::RenameSession { id, title } => self.rename_session(&id, &title).await?,
-      W::DeleteSession { id } => self.delete_session(&id).await?,
+      W::DeleteSession { id, request_id } => {
+        let undo = self.delete_record(&id).await?;
+        if let Some(request_id) = request_id {
+          v.emit(HostMsg::DeleteSessionResult { request_id, undo, error: None });
+        }
+        self.rehome(&id).await;
+      }
       W::RestoreSession { id } => self.restore_session(&id).await?,
       W::PinSession { id, pinned } => self.pin_session(&id, pinned).await?,
       W::SetSessionCategory { id, category } => self.set_session_category(&id, category).await?,

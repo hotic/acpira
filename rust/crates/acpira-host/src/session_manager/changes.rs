@@ -22,6 +22,9 @@ impl SessionManager {
     let sum = s.summary();
     {
       let mut st = self.state.lock();
+      if st.deleting.contains_key(id) || !st.live.get(id).is_some_and(|live| Arc::ptr_eq(live, &s)) {
+        return;
+      }
       match st.index.iter().position(|x| x.id == sum.id) {
         Some(i) => st.index[i] = sum,
         None => st.index.insert(0, sum),

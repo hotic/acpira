@@ -290,7 +290,10 @@ struct State {
   index: Vec<SessionSummary>,
   trash: HashMap<String, Trash>,
   viewers: Vec<Arc<Viewer>>,
+  // Opening, deleting and restoring the same record run one at a time (including an in-flight agent start).
   loading: HashMap<String, tokio::sync::watch::Receiver<bool>>,
+  // Keep a bus-only entry visible until its delete has reached the trash and its undo is ready.
+  deleting: HashMap<String, SessionSummary>,
   account_actions: Vec<AccountAction>,
   probed: HashMap<String, ProbeResult>,
   health: HashMap<String, AgentHealth>,
@@ -425,6 +428,7 @@ impl SessionManager {
           trash: HashMap::new(),
           viewers: vec![],
           loading: HashMap::new(),
+          deleting: HashMap::new(),
           account_actions: vec![],
           probed: HashMap::new(),
           health: HashMap::new(),

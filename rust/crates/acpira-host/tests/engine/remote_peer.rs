@@ -128,6 +128,16 @@ async fn a_host_in_remote_run_has_its_sessions_in_the_local_list() {
   assert_eq!(view["cwd"], folder.as_str());
   assert!(!m.logs().iter().any(|l| l.contains("out of step")), "every patch from the host applied: {:?}", m.logs());
 
+  // A deletion completes through the list view, so leaving the shown view cannot swallow its receipt. Undo still routes
+  // to the host after the id has left its list (and the shown view was detached here).
+  m.handle(json!({ "type": "deleteSession", "id": id, "requestId": "host-delete" })).await;
+  wait(&m, "the delete receipt", 15_000, || m.events.lock().unwrap().iter().any(|e| e == &json!({ "type": "deleteSessionResult", "requestId": "host-delete", "undo": true }))).await;
+  wait(&m, "the removed host entry", 15_000, || !m.session_ids().contains(&id)).await;
+  m.handle(json!({ "type": "deselectSession", "id": id })).await;
+  m.handle(json!({ "type": "restoreSession", "id": id })).await;
+  wait(&m, "undo on the host", 15_000, || m.sessions().iter().any(|s| s["id"] == id.as_str() && s["title"] == "On the host")).await;
+  assert!(!dir.path().join(format!("{id}.json")).exists(), "undo must not create a local copy");
+
   // The host's engine goes away: the list keeps what it last said
   let engines = m.m.host_engines();
   assert_eq!(engines.len(), 1, "{engines:?}");

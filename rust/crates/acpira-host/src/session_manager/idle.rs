@@ -89,7 +89,7 @@ impl SessionManager {
       // the viewer, or the lookup finds the session gone and loads it from the record just written
       let mut st = self.state.lock();
       let current = st.live.get(&s.id).is_some_and(|l| Arc::ptr_eq(l, s));
-      if !current || st.viewers.iter().any(|v| v.active_id().as_deref() == Some(s.id.as_str())) {
+      if !current || st.loading.contains_key(&s.id) || st.viewers.iter().any(|v| v.active_id().as_deref() == Some(s.id.as_str())) {
         return false;
       }
       st.live.remove(&s.id);
