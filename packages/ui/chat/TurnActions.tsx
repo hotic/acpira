@@ -106,7 +106,7 @@ function StatChip({ children }: { children: ReactNode }) {
 function Figure({ text }: { text: string }) {
   return <>{text.split(/(\d(?:[\d.,\u00a0\u202f]*\d)?)/).map((part, i) => part && (i % 2
     ? <Fragment key={i}>{part}</Fragment>
-    : <span key={i} className="text-3 font-normal text-fg-3">{part}</span>))}</>;
+    : <span key={i} className="text-4 font-normal text-fg-3/60">{part}</span>))}</>;
 }
 
 // Per-turn response statistics, no colour: the timing facts as tiles (duration, first token, output speed), then the
@@ -147,11 +147,11 @@ function StatsCard({ turn, model }: { turn: AgentTurn; model?: string }) {
         {model && <span className="min-w-0 truncate text-3 text-fg-3" title={model}>{model}</span>}
       </div>
       {tiles.length > 0 && (
-        <div className="grid grid-flow-col auto-cols-fr gap-px overflow-hidden rounded-md bg-line">
+        <div className="mx-1.5 grid grid-flow-col auto-cols-fr gap-px overflow-hidden rounded-md bg-line">
           {tiles.map(tile => (
             <div key={tile.label} className="flex min-w-0 flex-col gap-0.5 bg-bg-2 px-2 py-1.5">
-              <span className="whitespace-nowrap text-h font-medium text-fg-1"><Figure text={tile.value} /></span>
-              <span className="truncate text-4 text-fg-3" title={tile.label}>{tile.label}</span>
+              <span className="whitespace-nowrap text-2 font-semibold text-fg-1"><Figure text={tile.value} /></span>
+              <span className="truncate text-4 text-fg-3/60" title={tile.label}>{tile.label}</span>
             </div>
           ))}
         </div>
