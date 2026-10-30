@@ -45,6 +45,7 @@ import { Queue } from './Queue';
 import { PromptFooter } from './Goal';
 import { lastTypedPrompt } from './goalText';
 import { heldPrompt } from './heldPrompt';
+import { promptHistory } from './promptHistory';
 import { compactingNow } from './usageBreakdown';
 import { BUILTIN_AGENT_ID } from '@acpira/shared/providers';
 import { imageMimeOf } from '@acpira/shared/attachments';
@@ -59,18 +60,20 @@ import { ProjectPick, StartPicker, usePresence } from './StartPage';
 import { AppMenu, NoProject, ShellToastItems, ShellToasts, TitleRow, TitleSpace, useSessionHistory, type QuickSettings } from './DesktopFrame';
 import type { SettingsPage } from '../settings/Nav';
 import { Lightbox } from './Lightbox';
-import { OpenToolFileContext, AsyncTaskStopContext, BlobUrlContext, DiffSourceContext, OpenBlobContext, OpenSessionContext, SessionTitleContext, ToolFileActionsContext, resolveSessionPath, type ToolFileActions } from './fileLinks';
+import { OpenToolFileContext, AsyncTaskStopContext, BlobUrlContext, DiffSourceContext, OpenBlobContext, OpenSessionContext, SessionTitleContext, SkillDescriptionContext, ToolFileActionsContext, resolveSessionPath, type ToolFileActions } from './fileLinks';
+import { skillDescriptions } from './slashCommands';
 import { TurnActionsContext } from './TurnActions';
 import { ForkBoundary } from './ForkBoundary';
 import { SubagentInspector } from './subagents/SubagentInspector';
 import { InspectorSplitter, clamp, fitPaneBounds, usePreferredPaneWidth, type PaneBounds } from './subagents/InspectorSplitter';
-import { ToolPanelDock, openPlanInPanel, projectPath } from '../panel/ToolPanel';
+import { ToolPanelDock, MOVE_MS, openPlanInPanel, projectPath } from '../panel/ToolPanel';
 import { preferMarkdownPreview } from '../panel/FileViewer';
 import { markShellResize } from '../panel/api';
 import { FilesLayout } from '../panel/FilesLayout';
 import { panel, usePanelValue } from '../panel/store';
 import { useChatPanel } from '../panel/chat';
 import { SubagentGraph } from './subagents/SubagentGraph';
+import { SidekickModelsContext, isSidekick, useSidekickModels } from './subagents/SidekickRelay';
 import { breadcrumb, nodesByTurn, subagentTitle } from './subagents/subagentState';
 import { ComposerAbove } from '../plugins/ComposerAbove';
 import { backdropsShown, useSkin } from '../plugins/skin';
@@ -111,6 +114,10 @@ export interface ShellHandlers {
   deleteSession: (id: string) => Promise<boolean> | void;
   restoreSession: (id: string) => void;
   pinSession: (id: string, pinned: boolean) => void;
+  // Archive a session (left out of the list until its archived filter is on) or bring it back
+  archiveSession?: (id: string, archived: boolean) => void;
+  // The row menu's "mark as unread / read"
+  setSessionUnread?: (id: string, unread: boolean) => void;
   // Project scoping of the list: re-home a session into another project (absent: this window's workspace folder), optionally
   // filed under one of that project's categories
   moveSession?: (id: string, to?: MoveTarget) => void;
@@ -288,10 +295,10 @@ export function Shell(p: ShellProps) {
   // settings rail never stands, so coming back from settings it starts folded
   // The sample session always shows its column: the tour's first step lights it
   const [columnHidden, setColumnHidden] = useState(() => desktop && !p.sample && !(p.fromSettings && !filesLayout) && webviewState(COLUMN_HIDDEN_KEY) === true);
-  const [columnMoving, setColumnMoving] = useState(false);
+  const [columnMoving, setColumnMoving] = useState(0);
   useEffect(() => {
     if (!columnMoving) return;
-    const timer = setTimeout(() => setColumnMoving(false), COLUMN_MOVE_MS);
+    const timer = setTimeout(() => setColumnMoving(0), MOVE_MS);
     return () => clearTimeout(timer);
   }, [columnMoving]);
   // Observe the actual panel, not the browser window: IDE sidebars and split editor tabs resize independently.
@@ -368,11 +375,11 @@ export function Shell(p: ShellProps) {
     // While its width eases, the column's content keeps the width it has open (desktop.css), clipped instead of re-wrapped
     const b = sideBounds();
     const open = hidden ? sessionPanel.current?.offsetWidth : clamp(preferredSide ?? b.initial, b.min, b.max);
-    if (open) sessionPanel.current?.style.setProperty('--column-w', `${open}px`);
-    setColumnMoving(true);
+    if (open && (!columnMoving || !hidden)) sessionPanel.current?.style.setProperty('--column-w', `${open}px`);
+    setColumnMoving(m => m + 1);
     setColumnHidden(hidden);
     setWebviewState(COLUMN_HIDDEN_KEY, hidden || undefined);
-  }, [sideBounds, preferredSide]);
+  }, [sideBounds, preferredSide, columnMoving]);
   // Back from settings with the column kept folded: it mounted open at the rail's place, and folds once it has painted
   useEffect(() => {
     if (!desktop || !p.fromSettings || filesLayout || webviewState(COLUMN_HIDDEN_KEY) !== true) return;
@@ -481,6 +488,12 @@ export function Shell(p: ShellProps) {
   useEffect(() => setGraphOpen(false), [p.activeSessionId]);
   useEffect(() => setInspect(undefined), [p.activeSessionId]);
   const inspectNode = inspect !== undefined ? p.subagents?.find(n => n.id === inspect.id) : undefined;
+  // Summoned helpers (the graph and its entry: sidekick rounds live in the transcript alone) and whether the lead's
+  // sidekick holds the baton right now
+  const summoned = useMemo(() => p.subagents?.filter(s => !isSidekick(s)) ?? [], [p.subagents]);
+  const helpers = summoned.length;
+  const sidekickLive = !!p.subagents?.some(s => isSidekick(s) && s.state === 'running');
+  const sidekickModels = useSidekickModels(p.controls.options);
   // Desktop docking follows the window tier, not the room left after opening another pane.
   // The inspector and the other columns share that room without replacing the main conversation.
   const dockInspector = desktop ? canDock : canDockInspector;
@@ -547,6 +560,13 @@ export function Shell(p: ShellProps) {
         : on.sessionMarkdown ? writeClipboardLater(() => on.sessionMarkdown!(id)) : Promise.reject(new Error('unavailable'));
       copied(write, t(`session.copied.${what}`));
     },
+    // An archived session leaves the list at once; the toast takes it back
+    archiveSession: on.archiveSession && ((id, archived) => {
+      on.archiveSession!(id, archived);
+      if (!archived) { dropToast(`a${id}`); return; }
+      const title = p.sessions.find(s => s.id === id)?.title || t('session.fallbackTitle');
+      pushToast({ key: `a${id}`, text: t('session.archived', { title }), undo: () => { on.archiveSession!(id, false); dropToast(`a${id}`); } });
+    }),
     // A moved session leaves a "this project" list at once (or changes group under "all"); the toast says where it went
     moveSession: on.moveSession && ((id, to) => {
       const title = p.sessions.find(s => s.id === id)?.title ?? t('session.fallbackTitle');
@@ -763,6 +783,8 @@ export function Shell(p: ShellProps) {
       onRename={on.renameSession}
       onDelete={handlers.deleteSession}
       onPin={on.pinSession}
+      onArchive={handlers.archiveSession}
+      onUnread={on.setSessionUnread}
       onMove={handlers.moveSession}
       onExport={on.exportSession}
       onCopy={handlers.copySession}
@@ -802,6 +824,7 @@ export function Shell(p: ShellProps) {
   const isCompacting = useMemo(() => compactingNow(p.turns, p.running), [p.turns, p.running]);
   // Enabled persona names for the sent messages' summon pills; memoized so the HistoryMessage memo chain holds
   const summons = useMemo(() => p.personas?.map(x => x.name), [p.personas]);
+  const recalledPrompts = useStableList(useMemo(() => promptHistory(p.turns, p.queued), [p.turns, p.queued]));
   const composerProps: ComposerProps = useMemo(() => ({
     running: p.running, steer: steering, revisePlan: !!reviseChoice, disabled: p.status !== 'ready' && p.status !== 'starting',
     controlsLocked: p.status !== 'ready',
@@ -864,6 +887,8 @@ export function Shell(p: ShellProps) {
     return titles;
   }, [p.sessions, locale]);
   const sessionTitle = useCallback((ref: string) => titlesRef.current.get(ref), []);
+  // Skill rows read what a skill does from the commands this session advertised
+  const skillDescription = useMemo(() => skillDescriptions(p.commands), [p.commands]);
   const [filePreview, setFilePreview] = useState<{ src: string; name?: string; mimeType?: string; path: string } | null>(null);
   useEffect(() => { setFilePreview(null); }, [p.activeSessionId]);
   const openInEditor = useMemo(() => p.activeSessionId && on.openFile
@@ -976,6 +1001,7 @@ export function Shell(p: ShellProps) {
       <ThemeContext.Provider value={p.theme}>
       <OpenSessionContext.Provider value={openSession}>
       <SessionTitleContext.Provider value={sessionTitle}>
+      <SkillDescriptionContext.Provider value={skillDescription}>
       <ShellLayerContext.Provider value={root}>
       <BlobUrlContext.Provider value={blobUrl}>
       <OpenBlobContext.Provider value={openBlob}>
@@ -1125,10 +1151,12 @@ export function Shell(p: ShellProps) {
                     <HistoryComposerContext.Provider value={history?.editing !== undefined ? composerProps : undefined}>
                       <OpenToolFileContext.Provider value={openToolFile}>
                         <TurnActionsContext.Provider value={turnActions}>
+                          <SidekickModelsContext.Provider value={sidekickModels}>
                           <Thread key={p.activeSessionId} session={p.activeSessionId} turns={held.turns} running={held.running} wide={wide} replayKey={p.replayKey} catchingUp={p.catchingUp} blobUrl={blobUrl} contentRef={contentRef} commands={p.commands} summons={summons}
                             onSetGoal={setGoal} goalRoom={goalRoom} subagents={p.subagents} onInspect={onInspect} onFailureAction={failureAction}
                             forkedFrom={p.external ? undefined : p.forkedFrom} agents={p.agents} agentId={p.agent.id}
                             onPermission={onPermission} />
+                          </SidekickModelsContext.Provider>
                         </TurnActionsContext.Provider>
                       </OpenToolFileContext.Provider>
                     </HistoryComposerContext.Provider>
@@ -1194,12 +1222,15 @@ export function Shell(p: ShellProps) {
                       started over with another agent, so the segments slide instead of the page replaying its entrance */}
                   {start.mounted && <StartPicker open={start.shown} agents={p.agents} current={p.agent.id} only={startOnly} onPick={agent => startOver(agent)} />}
                   {/* Sibling keys include the component role; duplicate session-only keys leave stale queue rows after reconciliation. */}
-                  {!p.external && <Composer resetKey={p.activeSessionId} {...composerProps} draftKey={p.activeSessionId} main shareSelection={p.shareEditorSelection}
-                    toolbarStart={!!p.subagents?.length && <Chip narrow="icon" caret={false} className="shrink-0" icon={<Network strokeWidth={1.5} />}
-                      aria-label={`${t('subagents.graph')} · ${t('subagents.entry', { n: p.subagents.length })}`}
-                      title={`${t('subagents.graph')} · ${t('subagents.entry', { n: p.subagents.length })}`}
+                  {/* The sidekick is the lead's own second hand: the model chip lights its half while it works, and only
+                      summoned helpers count towards the graph's entry */}
+                  {!p.external && <Composer resetKey={p.activeSessionId} {...composerProps} draftKey={p.activeSessionId} sessionId={p.activeSessionId} main shareSelection={p.shareEditorSelection}
+                    sidekickLive={sidekickLive} promptHistory={recalledPrompts}
+                    toolbarStart={helpers > 0 && <Chip narrow="icon" caret={false} className="shrink-0" icon={<Network strokeWidth={1.5} />}
+                      aria-label={`${t('subagents.graph')} · ${t('subagents.entry', { n: helpers })}`}
+                      title={`${t('subagents.graph')} · ${t('subagents.entry', { n: helpers })}`}
                       aria-haspopup="dialog" aria-expanded={graphOpen} onClick={() => setGraphOpen(true)}>
-                      {t('subagents.entry', { n: p.subagents.length })}
+                      {t('subagents.entry', { n: helpers })}
                     </Chip>} />}
                 </DockStack>
               </div>
@@ -1262,7 +1293,7 @@ export function Shell(p: ShellProps) {
               ? { open: !explorerHidden, drawer: false, onToggle: () => panel.toggleExplorer() }
               : { open: canDock ? !columnHidden : drawerOpen, drawer: !canDock, onToggle: () => canDock ? hideColumn(!columnHidden) : drawerOpen ? closeDrawer() : openDrawer() }} />}
         </div>
-        <SubagentGraph nodes={p.subagents ?? []} sessionTitle={p.title} open={graphOpen && !!p.subagents?.length} onOpenChange={setGraphOpen} onInspect={onInspect} selectedId={inspect?.id} />
+        <SubagentGraph nodes={summoned} sessionTitle={p.title} open={graphOpen && helpers > 0} onOpenChange={setGraphOpen} onInspect={onInspect} selectedId={inspect?.id} />
         {filePreview && (
           <Lightbox
             src={filePreview.src}
@@ -1281,6 +1312,7 @@ export function Shell(p: ShellProps) {
       </OpenBlobContext.Provider>
       </BlobUrlContext.Provider>
       </ShellLayerContext.Provider>
+      </SkillDescriptionContext.Provider>
       </SessionTitleContext.Provider>
       </OpenSessionContext.Provider>
       </ThemeContext.Provider>
@@ -1318,10 +1350,10 @@ interface ThreadProps {
 }
 
 // The thread's tail clearance under the floating plan dock: the dock's height on top of the message gap, so the
-// last message sits one message gap from the first dock surface whether or not the plan is showing. Empty falls
-// back to the class (`pb-msg`)
+// last message sits one message gap from the first dock surface whether or not the plan is showing, plus the tail
+// room the floating connecting row needs (`--thread-tail-room`, chat.css). Empty falls back to the class
 function threadClearance(dockHeight: number) {
-  return dockHeight ? `calc(var(--msg-gap) + ${dockHeight}px)` : '';
+  return dockHeight ? `calc(var(--msg-gap) + var(--thread-tail-room) + ${dockHeight}px)` : '';
 }
 
 // Entrance stagger caps out at the 12th block, so long sessions don't take seconds
@@ -1454,8 +1486,9 @@ const Thread = memo(function Thread({ session, turns, running, wide, replayKey, 
   // which moved the selection into the composer and copied nothing
   return (
     <div ref={ref} data-thread tabIndex={-1} className="thread-fade scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-dock pr-dock-gutter outline-none [overflow-anchor:none]">
-      {/* The tail clearance equals the message gap, so the last message sits as far from the composer as from the message above it */}
-      <div key={replayKey} ref={bodyRef} className={cn('mx-auto flex flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-chat-column')}><FollowContext.Provider value={follow}><QuietEntranceContext.Provider value={window.quiet}>
+      {/* The tail clearance equals the message gap, so the last message sits as far from the composer as from the message above it,
+          plus the floating connecting row's room when the tail holds no action row (`--thread-tail-room`, chat.css) */}
+      <div key={replayKey} ref={bodyRef} data-thread-body className={cn('mx-auto flex flex-col gap-msg pt-pad-y pb-[calc(var(--msg-gap)+var(--thread-tail-room))]', wide && 'max-w-chat-column')}><FollowContext.Provider value={follow}><QuietEntranceContext.Provider value={window.quiet}>
         {exchangeSlots.slice(window.start).map((slot, offset) => {
           const k = window.start + offset;
           const messages: ReactNode[] = [];
@@ -1515,8 +1548,6 @@ function isContinue(turn: UserTurn): boolean {
   return turn.auto === true && (turn.autoReason === 'accountSwitch' || turn.autoReason === 'retry' || turn.autoReason === 'gate' || (turn.autoReason === 'goal' && turn.goalContinue === true));
 }
 
-// Desktop: how long the column's width eases; how long a new project stays lit
-const COLUMN_MOVE_MS = 400;
 // Outlasts the list page's 320 ms opening (desktop.css): a transition is cut short once its property leaves `transition`
 const DRAWER_MOVE_MS = 450;
 const FRESH_MS = 2400;

@@ -39,27 +39,56 @@ export function pathlessWorkbenchDrag(dt: DataTransfer | null): string[] | undef
 
 // Everything a paste or drop can carry, turned into drafts. Workbench drags arrive as file: URIs and take precedence: those are handed to the host as
 // file drafts (it reads images itself). OS files only exist as blobs here (no path in a webview): accepted images go inline, small text files are embedded, anything else up to MAX_FILE_BYTES is carried as bytes.
-// `hostPaths`: a drop's paths from a host whose webview shows the page none of its files (VsCodeApi.dragPaths), taken like a workbench drag's
-export async function collectDrafts(dt: DataTransfer, cwd: string, hostPaths: readonly string[] = []): Promise<Collected> {
+// `hostPaths`: a drop's paths from a host whose webview shows the page none of its files (VsCodeApi.dragPaths), taken like a workbench drag's.
+// `pathForFile`: the host's OS path of a dropped File (VsCodeApi.pathForFile), which is how a dropped folder becomes a link
+export async function collectDrafts(
+  dt: DataTransfer,
+  cwd: string,
+  hostPaths: readonly string[] = [],
+  pathForFile?: (file: File) => string | undefined | Promise<string | undefined>,
+): Promise<Collected> {
   const out: Collected = { drafts: [], refused: [] };
   const uris = workbenchUris(dt);
-  if (!uris.length && !dt.files.length) uris.push(...hostPaths.flatMap(p => fileUriOf(p.replace(/\/$/, '')) ?? []));
+  // A folder's path ends in '/' (VsCodeApi.dragPaths) and keeps it: the folder link (folderUriOf)
+  if (!uris.length && !dt.files.length) uris.push(...hostPaths.flatMap(p => (p.endsWith('/') ? folderUriOf(p) : fileUriOf(p)) ?? []));
   if (uris.length) {
     for (const uri of uris) out.drafts.push({ kind: 'file', uri, name: nameOf(uri, cwd) });
     return out;
   }
-  for (const f of Array.from(dt.files)) {
+  // Folders are told apart while the event lasts (the entries are gone after the first await). WebKit and WebView2 hand the page
+  // a dropped folder as an empty File whose read fails ("A requested file or directory could not be found" / "The object can
+  // not be found here"), so a folder is never read: it goes out as a link to its path, like a workbench drag, and the agent
+  // reads what it needs. The host's answer may be a promise (WebView2), asked for now for the same reason
+  const folders = new Map<File, string | undefined | Promise<string | undefined>>();
+  for (const item of Array.from(dt.items ?? [])) {
+    if (item.kind !== 'file' || !item.webkitGetAsEntry?.()?.isDirectory) continue;
+    const file = item.getAsFile();
+    if (file) folders.set(file, pathForFile?.(file));
+  }
+  const files = folders.size ? [...folders.keys(), ...Array.from(dt.files).filter(f => !sameFileIn(folders, f))] : Array.from(dt.files);
+  for (const f of files) {
+    if (folders.has(f)) {
+      const uri = folderUriOf(await folders.get(f));
+      if (uri) out.drafts.push({ kind: 'file', uri, name: nameOf(uri, cwd) });
+      else out.refused.push(t('attach.loadFailed', { name: f.name }));
+      continue;
+    }
     const mimeType = imageMimeOf(f.name) ?? (f.type.startsWith('image/') && imageMimeOf(`.${f.type.slice(6)}`));
     if (mimeType) {
       if (f.size > MAX_IMAGE_BYTES) { out.refused.push(t('attach.tooBigImage', { name: f.name, mb: MAX_IMAGE_BYTES >> 20 })); continue; }
       out.drafts.push({ kind: 'image', mimeType, data: await base64Of(f), name: f.name === 'image.png' ? undefined : f.name });
       continue;
     }
-    // Small plain text is embedded; binaries (video, archives …) and oversized text travel as bytes for the host to stage and link
-    const text = f.size <= MAX_TEXT_BYTES ? await f.text() : undefined;
-    if (text !== undefined && !text.includes('\0')) { out.drafts.push({ kind: 'text', name: f.name, text }); continue; }
-    if (f.size > MAX_FILE_BYTES) { out.refused.push(t('attach.tooBigFile', { name: f.name, mb: MAX_FILE_BYTES >> 20 })); continue; }
-    out.drafts.push({ kind: 'file', uri: `attachment:///${encodeURIComponent(f.name)}`, name: f.name, data: await base64Of(f) });
+    // Small plain text is embedded; binaries (video, archives …) and oversized text travel as bytes for the host to stage and link.
+    // A File that cannot be read (a folder the entry check missed, a file gone since the drag) is reported on its own, the rest still attach
+    try {
+      const text = f.size <= MAX_TEXT_BYTES ? await f.text() : undefined;
+      if (text !== undefined && !text.includes('\0')) { out.drafts.push({ kind: 'text', name: f.name, text }); continue; }
+      if (f.size > MAX_FILE_BYTES) { out.refused.push(t('attach.tooBigFile', { name: f.name, mb: MAX_FILE_BYTES >> 20 })); continue; }
+      out.drafts.push({ kind: 'file', uri: `attachment:///${encodeURIComponent(f.name)}`, name: f.name, data: await base64Of(f) });
+    } catch {
+      out.refused.push(t('attach.loadFailed', { name: f.name }));
+    }
   }
   // A workbench drag that named only remote / virtual resources (or nothing readable) would otherwise drop without a trace
   if (!dt.files.length && [...dt.types].some(type => type.toLowerCase() !== 'files' && PAYLOAD_TYPES.has(type.toLowerCase()))) out.refused.push(t('attach.noLocalFiles'));
@@ -236,6 +265,21 @@ export function fileUriOf(path: string): string | undefined {
   return `file://${absolute.split('/').map(encodeURIComponent).join('/').replace(/^\/([a-z])%3A/i, '/$1:')}`;
 }
 
+// A folder's file: URI ends in '/', the URI form of a directory; that slash is what marks a `file` attachment as a folder (isFolderUri)
+export function folderUriOf(path: string | undefined): string | undefined {
+  const trimmed = path?.replace(/[\\/]+$/, '');
+  const uri = trimmed ? fileUriOf(trimmed) : undefined;
+  return uri && `${uri}/`;
+}
+export const isFolderUri = (uri: string): boolean => /^file:.*\/$/i.test(uri);
+
+// The dropped File an item's getAsFile() answered for: browsers may hand out a fresh File object for the same entry
+function sameFileIn(files: Map<File, unknown>, f: File): boolean {
+  if (files.has(f)) return true;
+  for (const g of files.keys()) if (g.name === f.name && g.size === f.size && g.lastModified === f.lastModified) return true;
+  return false;
+}
+
 // `CodeEditors` entries carry `resource` as a serialized URI (`{ scheme, path, external? }`) or, in older builds, as a string
 function uriOfEditor(editor: unknown): string | undefined {
   const resource = (editor as { resource?: unknown } | null)?.resource;
@@ -252,7 +296,8 @@ export function nameOf(uri: string, cwd: string): string {
   try { path = decodeURIComponent(new URL(uri).pathname); } catch { return uri; }
   // Windows: the URI path is `/c:/repo/a.ts` while cwd is `C:\repo`; both become `c:/repo…`-style and compare case-insensitively
   const slashed = (p: string) => p.replace(/\\/g, '/').replace(/^\/([a-z]:)/i, '$1');
-  path = slashed(path);
+  // A folder link's closing slash is not part of its name
+  path = slashed(path).replace(/(.)\/$/, '$1');
   const base = slashed(cwd);
   const root = base.endsWith('/') ? base : `${base}/`;
   const inside = /^[a-z]:/i.test(root) ? path.toLowerCase().startsWith(root.toLowerCase()) : path.startsWith(root);

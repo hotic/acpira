@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, type CSSProperties, type ReactNode, type Ref, type TextareaHTMLAttributes } from 'react';
 import { useMergedRefs } from '../ui/mergeRefs';
 import { cn } from '../ui/cn';
+import { spacedPinyinCommit } from '../ui/ime';
 import { markRoom, type CommandMark } from './slashCommands';
 
 // The pill's horizontal overhang comes from `.prompt-mark` (--mark-room, see markRoom)
@@ -25,12 +26,31 @@ export function commandSegments(value: string, marks: readonly CommandMark[]): R
 
 // Keep the native textarea for selection, IME, undo, paste, and accessibility.
 // Its mirror paints command and summon tokens without changing any character's geometry.
-export function PromptInput({ ref, marks, className, value, onScroll, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement> & {
+export function PromptInput({ ref, marks, className, value, onScroll, onCompositionUpdate, onCompositionEnd, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement> & {
   ref?: Ref<HTMLTextAreaElement>; marks?: readonly CommandMark[]; value: string;
 }) {
   const input = useRef<HTMLTextAreaElement>(null);
   const mirror = useRef<HTMLDivElement>(null);
   const merged = useMergedRefs(input, ref);
+  // The input method's last shown text, to tell a raw commit of it (spaces and all) from a chosen candidate
+  const shown = useRef<string | undefined>(undefined);
+  const commitEnd = (data: string) => {
+    const committed = shown.current;
+    shown.current = undefined;
+    const fixed = spacedPinyinCommit(data, committed);
+    if (fixed === undefined) return;
+    // After the commit settles: WebKit fires compositionend before the input that inserts the text
+    setTimeout(() => {
+      const el = input.current;
+      if (!el || el.selectionStart !== el.selectionEnd) return;
+      const end = el.selectionStart;
+      const start = end - data.length;
+      if (start < 0 || el.value.slice(start, end) !== data) return;
+      el.setSelectionRange(start, end);
+      // insertText keeps the native undo stack and fires input, so the controlled value follows through onChange
+      if (!document.execCommand('insertText', false, fixed)) el.setSelectionRange(end, end);
+    }, 0);
+  };
   const sync = () => {
     if (!input.current || !mirror.current) return;
     // clientWidth excludes the native scrollbar; both layers must wrap there.
@@ -54,6 +74,8 @@ export function PromptInput({ ref, marks, className, value, onScroll, ...props }
       {commandSegments(value, marks)}{'\u200b'}
     </div> : null}
     <textarea {...props} ref={merged} value={value} onScroll={e => { sync(); onScroll?.(e); }}
+      onCompositionUpdate={e => { shown.current = e.data; onCompositionUpdate?.(e); }}
+      onCompositionEnd={e => { commitEnd(e.data); onCompositionEnd?.(e); }}
       className={cn(className, 'relative block w-full', marks?.length && 'text-transparent caret-fg-strong selection:text-fg-strong')} />
   </div>;
 }

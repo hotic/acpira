@@ -1,6 +1,7 @@
-import type { ButtonHTMLAttributes, ReactNode, Ref } from 'react';
+import { useLayoutEffect, useRef, type ButtonHTMLAttributes, type ReactNode, type Ref } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { cn } from './cn';
+import { cssTimeVar } from './cssTime';
 import { cva } from 'class-variance-authority';
 
 type Variant = 'primary' | 'secondary';
@@ -92,6 +93,9 @@ export interface ChipProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   // Small badges after the label (ChipTag: a model's effort / Ultra / Fast). The label keeps its full width; badges that do not fit
   // wrap onto a clipped second line, so the trailing ones give way first
   tags?: ReactNode;
+  // Names what `tags` shows ('' for none) and turns on their motion (TagTrail): they unfold and fold as they come and go, and a
+  // change glides the chip's width and fades the new badges in. Left out on copies laid out only for measuring
+  tagsKey?: string;
   // Content after the badges that never wraps away with them (the built-in agent's sidekick: + mark, name, level)
   trail?: ReactNode;
   // What survives below the sm container tier (the toolbar of a 380 sidebar has ~324px): 'icon' keeps just the icon, 'text' keeps just the label;
@@ -108,12 +112,72 @@ export interface ChipProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 // (a summoned subagent's effort): a shorter box in the row's own faint tone
 export function ChipTag({ tone, icon, short, small, children }: { tone?: 'ultra'; icon?: ReactNode; short?: string; small?: boolean; children: ReactNode }) {
   const compact = short !== undefined;
+  // CJK text skips the cap trim and takes the badge's height as its line, which centres its em box
+  const trim = (text: ReactNode) => (typeof text === 'string' && CJK.test(text) ? (small ? 'leading-3.5' : 'leading-4') : TRIM_CAPS);
   return (
     <span className={cn('inline-flex shrink-0 items-center gap-0.5 rounded-xs px-1 text-4 leading-none', small ? 'h-3.5' : 'h-4',
       tone === 'ultra' ? 'bg-ultra/15 text-ultra' : cn('bg-active', small ? 'text-fg-3' : 'text-fg-2'))}>
       {icon}
-      <span className={cn(TRIM_CAPS, compact && '@max-sm:hidden group-data-[compact]/chip:hidden')}>{children}</span>
-      {short && <span className={cn(TRIM_CAPS, 'hidden @max-sm:inline group-data-[compact]/chip:inline')}>{short}</span>}
+      <span className={cn(trim(children), compact && '@max-sm:hidden group-data-[compact]/chip:hidden')}>{children}</span>
+      {short && <span className={cn(trim(short), 'hidden @max-sm:inline group-data-[compact]/chip:inline')}>{short}</span>}
+    </span>
+  );
+}
+
+const TAGS = 'flex h-4 min-w-0 flex-wrap items-center gap-0.5 overflow-hidden';
+
+// A chip's badges with the sidekick tail's motion (chat/ModelPicker.tsx SidekickTail, `.chip-trail` in chat.css): the slot
+// unfolds through its grid track when badges appear and folds back when they go, keeping the last badges while it closes;
+// a new set while open glides the width from the old one and fades the badges in, so an effort, Fast or access level picked
+// with the panel open reads as a change on the chip instead of a jump. `shrink` lets the slot give way like plain tags
+function TagTrail({ tagsKey, children }: { tagsKey: string; children?: ReactNode }) {
+  const open = tagsKey !== '';
+  const last = useRef(children);
+  if (open) last.current = children;
+  const body = useRef<HTMLSpanElement>(null);
+  const inner = useRef<HTMLSpanElement>(null);
+  const width = useRef(0);
+  const run = useRef<Animation | null>(null);
+  const prev = useRef({ open, tagsKey });
+  // The settled width, kept current while nothing runs: a glide starts from it, since by the layout effect the new badges are in
+  useLayoutEffect(() => {
+    const el = body.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      if (!run.current) width.current = el.getBoundingClientRect().width;
+    });
+    observer.observe(el);
+    return () => { observer.disconnect(); run.current?.cancel(); run.current = null; };
+  }, []);
+  useLayoutEffect(() => {
+    const was = prev.current;
+    prev.current = { open, tagsKey };
+    const el = body.current;
+    if (!el) return;
+    if (!open) {
+      run.current?.cancel();
+      run.current = null;
+      width.current = 0;
+      return;
+    }
+    const from = run.current ? el.getBoundingClientRect().width : width.current;
+    run.current?.cancel();
+    run.current = null;
+    const to = el.scrollWidth;
+    width.current = to;
+    // Unfolding is the grid's transition; only a change between two open sets glides here
+    if (!was.open || was.tagsKey === tagsKey) return;
+    if (el.closest('[data-motion="none"]') || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    if (from > 0 && to > 0 && Math.abs(to - from) > 0.5) {
+      const anim = el.animate([{ width: `${from}px` }, { width: `${to}px` }], { duration: cssTimeVar(el, '--dur-open', 220), easing: 'ease-out' });
+      run.current = anim;
+      anim.onfinish = () => { if (run.current === anim) run.current = null; };
+    }
+    inner.current?.animate([{ opacity: 0, transform: 'translateY(2px)' }, { opacity: 1, transform: 'none' }], { duration: cssTimeVar(el, '--dur', 150), easing: 'ease-out' });
+  }, [open, tagsKey]);
+  return (
+    <span className="chip-trail shrink" data-open={open ? '' : undefined} aria-hidden={!open || undefined}>
+      <span ref={body}><span ref={inner} className={TAGS}>{last.current}</span></span>
     </span>
   );
 }
@@ -121,12 +185,15 @@ export function ChipTag({ tone, icon, short, small, children }: { tone?: 'ultra'
 // The badge text's box is trimmed to cap height and baseline, so centring it centres the capitals; untrimmed, Inter's
 // ascender space sits them about 1px low in the 16px box. Hosts without text-box support keep the untrimmed look
 const TRIM_CAPS = '[text-box:trim-both_cap_alphabetic]';
+// CJK glyphs stand taller than Latin caps, so the cap trim (and the badge's 1em line) left them a pixel or two below the
+// chip's label (标准, 自动编辑)
+const CJK = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af\uff00-\uffef]/;
 
 // Turns a trigger's down arrow over while its menu is open; the trigger carries `group/chip`. Shared by the hand-built
 // triggers (SelectRow, the session list filter) so every dropdown arrow behaves alike
 export const CARET_TURN = 'transition-transform duration-(--dur-open) ease-out group-data-[open]/chip:rotate-180 group-data-[popup-open]/chip:rotate-180';
 
-export function Chip({ className, children, variant = 'quiet', caret = true, icon, meta, tags, trail, narrow, ...rest }: ChipProps) {
+export function Chip({ className, children, variant = 'quiet', caret = true, icon, meta, tags, tagsKey, trail, narrow, ...rest }: ChipProps) {
   return (
     <button
       type="button"
@@ -139,7 +206,7 @@ export function Chip({ className, children, variant = 'quiet', caret = true, ico
         {children}
         {meta && <span className="text-fg-3"> {meta}</span>}
       </span>}
-      {tags && <span className="flex h-4 min-w-0 flex-wrap items-center gap-0.5 overflow-hidden">{tags}</span>}
+      {tagsKey !== undefined ? <TagTrail tagsKey={tagsKey}>{tags}</TagTrail> : tags && <span className={TAGS}>{tags}</span>}
       {trail}
       {caret && <ChevronDown className={cn('size-3 shrink-0 text-fg-3', CARET_TURN, narrow && '@max-sm:hidden')} strokeWidth={1.75} />}
     </button>

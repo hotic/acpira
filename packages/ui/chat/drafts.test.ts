@@ -59,7 +59,7 @@ describe('workbench drags', () => {
     const { drafts, refused } = await collectDrafts(dt, '/w', ['/w/a b.ts', '/w/docs/']);
     expect(drafts).toEqual([
       { kind: 'file', uri: 'file:///w/a%20b.ts', name: 'a b.ts' },
-      { kind: 'file', uri: 'file:///w/docs', name: 'docs' },
+      { kind: 'file', uri: 'file:///w/docs/', name: 'docs' },
     ]);
     expect(refused).toEqual([]);
   });
@@ -125,6 +125,36 @@ describe('OS files', () => {
       { kind: 'file', uri: `attachment:///${encodeURIComponent('录制.mp4')}`, name: '录制.mp4', data: Buffer.from(mp4).toString('base64') },
       { kind: 'file', uri: 'attachment:///big.log', name: 'big.log', data: Buffer.from('x').toString('base64') },
     ]);
+  });
+
+  // WebKit / WebView2 show a dropped folder as an empty File whose read fails; only its entry says it is a directory
+  const folderDrop = (folder: File, files: File[]) => ({
+    types: ['Files'],
+    files: [folder, ...files],
+    items: [folder, ...files].map(f => ({ kind: 'file', getAsFile: () => f, webkitGetAsEntry: () => ({ isDirectory: f === folder }) })),
+    getData: () => '',
+  }) as unknown as DataTransfer;
+  const unreadable = (name: string) => ({ ...osFile(name, ''), text: () => Promise.reject(new Error('NotFoundError')) }) as unknown as File;
+
+  it('links a dropped folder by its host path without reading it', async () => {
+    const folder = unreadable('Feishu');
+    // macOS answers at once, Windows through a promise
+    for (const path of ['/Users/u/Feishu', Promise.resolve('C:\\Users\\u\\Feishu')]) {
+      const { drafts, refused } = await collectDrafts(folderDrop(folder, [osFile('a.md', 'a')]), '/w', [], () => path);
+      expect(refused).toEqual([]);
+      expect(drafts[0]).toMatchObject({ kind: 'file', name: 'Feishu' });
+      expect(drafts[0]!.kind === 'file' && drafts[0]!.uri).toMatch(/^file:\/\/\/.*Feishu\/$/);
+      expect(drafts[1]).toEqual({ kind: 'text', name: 'a.md', text: 'a' });
+    }
+  });
+
+  it('reports an unreadable entry and keeps the rest', async () => {
+    // A folder without a host path (VS Code's webview), and a File whose read fails
+    const { drafts, refused } = await collectDrafts(folderDrop(unreadable('Feishu'), [unreadable('gone.txt'), osFile('a.md', 'a')]), '/w');
+    expect(drafts).toEqual([{ kind: 'text', name: 'a.md', text: 'a' }]);
+    expect(refused).toHaveLength(2);
+    expect(refused[0]).toContain('Feishu');
+    expect(refused[1]).toContain('gone.txt');
   });
 
   it('refuses a file over the byte cap', async () => {
