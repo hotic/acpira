@@ -8,7 +8,7 @@ import { useAppearance, type Appearance } from '../appearance';
 import { getLocale, t, useLocale } from '../i18n';
 import { commandSegments } from './PromptInput';
 import { promptMarks } from './slashCommands';
-import { absorbedNotices, hasTurnContent, revisedPlanEnd, turnOutcome } from './turnOutcome';
+import { absorbedNotices, hasTurnStats, revisedPlanEnd, turnOutcome } from './turnOutcome';
 import { EntranceOnce, Row, RowLabel, RowTarget, RowEntranceContext, EntranceScopeContext, QuietEntranceContext } from '../ui/Row';
 import { Button } from '../ui/Button';
 import { Disclosure } from '../ui/Disclosure';
@@ -270,8 +270,9 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
     })}
     {/* Plugins an agent offered in this turn (plugin_activate): after the reply, clickable for good */}
     {turn.pluginCards?.map(card => <PluginCard key={card.id} card={card} />)}
-    {/* A reply that failed before producing anything still offers the fork: another agent can take the message over */}
-    {actions && !running && !compacting && (hasTurnContent(turn) || turn.stop === 'error') && <TurnActions turn={turn} turnIndex={turnIndex} settings={settings} />}
+    {/* A reply that failed before producing anything still offers the fork: another agent can take the message over.
+        One stopped before anything streamed keeps its stats (`hasTurnStats`) */}
+    {actions && !running && !compacting && (hasTurnStats(turn) || turn.stop === 'error') && <TurnActions turn={turn} turnIndex={turnIndex} settings={settings} />}
   </div></DelegationContext.Provider></WorkflowProgressContext.Provider></NoticeActionContext.Provider></RowEntranceContext.Provider></EntranceScopeContext.Provider></LazyPanelContext.Provider>;
 });
 

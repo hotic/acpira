@@ -572,6 +572,11 @@ export const en = {
   'stats.cachedWrite': 'Cache write tokens',
   'stats.reasoning': 'Reasoning tokens',
   'stats.context': 'Context after this reply',
+  // Short labels for the stats card's narrow tiles and chips
+  'stats.firstToken': 'First token',
+  'stats.outputShort': 'Output speed',
+  'stats.contextShort': 'Context',
+  'stats.cacheHit': 'cached {pct}',
   'stats.copyRequestId': 'Copy request ID',
   'stats.requestIdCopied': 'Request ID copied',
   'turns.elapsed.ms': '{m}m {s}s',

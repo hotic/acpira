@@ -18,6 +18,13 @@ export function hasTurnContent(turn: AgentTurn): boolean {
   return turn.blocks.some(b => b.type !== 'notice' && b.type !== 'goal');
 }
 
+// The stats card follows the content, except for a stop pressed before anything streamed: that turn still took time
+// and may have spent tokens or moved the context, so it keeps its card
+export function hasTurnStats(turn: AgentTurn): boolean {
+  if (hasTurnContent(turn)) return true;
+  return turn.stop === 'cancelled' && ((turn.startedAt !== undefined && turn.endedAt !== undefined) || turn.usage !== undefined);
+}
+
 // Choosing a plan card's Revise ends the turn as cancelled on claude-agent-acp 0.93.0 ("No, keep planning"), with
 // nothing else to show. The card already says the plan awaits changes, so that end reads as a normal one: no
 // "stopped" row and no stop glyph on the fold head. A stop pressed by hand leaves the plan as it was, never rejected
