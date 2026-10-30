@@ -110,9 +110,11 @@ export function StateDot({ state }: { state: ConnectionState }) {
 }
 
 // The run mode as a segmented strip, each segment with its glyph: the whole line in the add dialog, a right-column
-// control (`compact`, words only) on the host's dialog
+// control (`compact`, words only) on the host's dialog. The compact strip is at least the control column wide and grows
+// with longer words (zh-CN, de) instead of pushing its segments out of the card; the Field wraps it under the label
+// when the row cannot hold both
 function ModeSegments({ value, onChange, compact }: { value: RunMode; onChange: (m: RunMode) => void; compact?: boolean }) {
-  return <Segmented<RunMode> label={t('connections.mode.label')} value={value} onChange={onChange} className={compact ? 'w-(--ctl-w)' : 'w-full'}
+  return <Segmented<RunMode> label={t('connections.mode.label')} value={value} onChange={onChange} className={compact ? 'min-w-(--ctl-w)' : 'w-full'}
     items={MODES.map(m => ({ value: m, label: <>{!compact && (m === 'local' ? <Laptop strokeWidth={1.75} /> : <Server strokeWidth={1.75} />)}{t(MODE_NAME[m])}</> }))} />;
 }
 
