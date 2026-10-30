@@ -11,7 +11,7 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use acpira_shared::devices::{GatewayRequest, GatewayStatus, PushNote, RemoteAccessOp, RemoteAccessView};
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use serde_json::Value;
 
 use crate::store::transcript_store::LogFn;
@@ -360,6 +360,7 @@ impl RemoteAccess {
   async fn request(&self, req: &GatewayRequest) -> Result<Value> {
     #[cfg(unix)]
     {
+      use anyhow::Context;
       use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
       let socket = self.socket();
       let exchange = async {

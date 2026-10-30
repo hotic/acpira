@@ -19,7 +19,10 @@ mod inventory;
 mod local_accounts;
 mod normalize;
 mod plans;
+// Plugin runtimes are Node scripts driven over Unix process groups; every case in these two is Unix-only
+#[cfg(unix)]
 mod plugin_hooks;
+#[cfg(unix)]
 mod plugins;
 mod preview;
 mod questions;

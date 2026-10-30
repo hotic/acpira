@@ -868,6 +868,7 @@ async fn a_plugin_s_prompt_folder_reaches_the_built_in_agent_s_system_prompt() {
 }
 
 /// Answers every hook of the built-in agent's loop and writes each call to calls.jsonl in its data folder
+#[cfg(unix)]
 const LOOPER: &str = r#"
 import { createInterface } from 'node:readline';
 import { appendFileSync, mkdirSync } from 'node:fs';
@@ -896,6 +897,7 @@ createInterface({ input: process.stdin }).on('line', line => {
 "#;
 
 /// Sets one model source from its process, the way a plugin that fetched a gateway's models would
+#[cfg(unix)]
 const SOURCER: &str = r#"
 import { createInterface } from 'node:readline';
 const send = m => process.stdout.write(JSON.stringify(m) + '\n');
@@ -975,6 +977,7 @@ async fn a_plugins_skill_loads_through_the_built_in_agents_skill_tool() {
 }
 
 /// Leaves `bash` out of every turn's tools
+#[cfg(unix)]
 const NO_SHELL: &str = r#"
 import { createInterface } from 'node:readline';
 const send = m => process.stdout.write(JSON.stringify(m) + '\n');
@@ -1012,6 +1015,7 @@ async fn a_tool_the_tools_hook_left_out_does_not_run_when_the_model_calls_it() {
 }
 
 /// Rewrites every command, an edit's `then_run` included
+#[cfg(unix)]
 const RIDER: &str = r#"
 import { createInterface } from 'node:readline';
 const send = m => process.stdout.write(JSON.stringify(m) + '\n');
@@ -1054,6 +1058,7 @@ async fn a_plugins_shell_hook_also_rewrites_and_refuses_an_edits_then_run_comman
 }
 
 /// The text of every `tool` message of a model call
+#[cfg(unix)]
 fn tool_results(body: &Value) -> Vec<String> {
   body["messages"].as_array().unwrap().iter().filter(|m| m["role"] == "tool").map(|m| m["content"].as_str().map(str::to_owned).unwrap_or_else(|| m["content"].to_string())).collect()
 }
@@ -1106,6 +1111,7 @@ async fn a_plugin_reshapes_every_request_tool_call_and_summary_of_the_loop() {
 }
 
 // A specialised agent's guard: refuses reading `secret.txt`, asked only in its own agent's sessions (`scope: agent`)
+#[cfg(unix)]
 const LEDGER_GUARD: &str = r#"
 import { createInterface } from 'node:readline';
 const send = m => process.stdout.write(JSON.stringify(m) + '\n');

@@ -63,6 +63,7 @@ struct Want {
 
 struct Proc {
   child: parking_lot::Mutex<Option<tokio::process::Child>>,
+  #[cfg_attr(windows, expect(dead_code, reason = "kills the process group on Unix; the job object ends the tree on Windows"))]
   pid: Option<u32>,
   #[cfg(windows)]
   job: Arc<crate::platform::windows_process::Job>,
