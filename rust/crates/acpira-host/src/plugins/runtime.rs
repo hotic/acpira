@@ -688,10 +688,11 @@ impl Runtimes {
       if !still {
         return;
       }
+      // The reason goes in before the worker leaves, so nobody sees it stopped without one
+      me.errors.write().insert(id.clone(), "the runtime exited; starting it again".into());
       me.workers.write().remove(&id);
       w.proc.stop().await;
       (me.log)(&format!("plugin {id}: the runtime exited"));
-      me.errors.write().insert(id.clone(), "the runtime exited; starting it again".into());
       me.schedule_restart(&id);
     });
   }
