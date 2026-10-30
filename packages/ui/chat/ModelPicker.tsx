@@ -13,6 +13,7 @@ import { Command, SEARCH_FROM } from '../ui/Command';
 import { OptionContent } from '../ui/Panel';
 import { ModelMark } from './ModelMark';
 import { PairSwitch, PairViews, type PairRole } from './SidekickPair';
+import { brandStyle } from './subagents/SidekickRelay';
 import { useFitStage } from './useFitStage';
 import { Collapsible } from '../ui/Collapsible';
 import { cssTimeVar } from '../ui/cssTime';
@@ -49,13 +50,15 @@ export function ModelOptions({ control, hidden, onSelect, close }: {
 
 // Every ACP uses the Devin-style model chip and panel. Native reasoning and model
 // parameters join the footer, while embedded variants retain their wire IDs.
-export function ModelControl({ control, hidden, reasoning = [], modelConfig = [], sidekick, sidekickEffort, hiddenConfig, onSetConfig, onSelect, onOpenChange }: OptionMenuProps & {
+export function ModelControl({ control, hidden, reasoning = [], modelConfig = [], sidekick, sidekickEffort, sidekickLive, hiddenConfig, onSetConfig, onSelect, onOpenChange }: OptionMenuProps & {
   hidden?: string[];
   reasoning?: ConfigControl[];
   modelConfig?: ConfigControl[];
   // The built-in agent's sidekick select and its effort: the panel's second side (PairSwitch); a picked one is spelled out on the chip
   sidekick?: ConfigControl;
   sidekickEffort?: ConfigControl;
+  // The sidekick is working a round (chat/subagents/SidekickRelay.tsx)
+  sidekickLive?: boolean;
   hiddenConfig?: Record<string, string[]>;
   onSetConfig: (id: string, value: string) => void;
 }) {
@@ -93,8 +96,9 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
     const on = CHIP_STAGES[stage]!;
     const skOn = CHIP_STAGES[skPicked ? stage : lastStage]!;
     return <Chip ref={ref} narrow="text" title={chip.title} caret={on.caret} data-compact={on.compact ? '' : undefined} icon={<ModelMark family={chip.family} brand={chip.brand} />}
-      trail={sidekick && <SidekickTail open={!!skPicked} name={shownSk?.name} brand={shownSk && optionBrand(shownSk)} named={skOn.names} level={skOn.levels ? shownSkLevel : undefined} animate={!!ref} />}
-      tags={on.levels && chip.tags.length ? chip.tags.map(tag => <ChipTag key={tag.label} tone={tag.ultra ? 'ultra' : undefined} icon={tag.fast ? <FastIcon /> : undefined} short={tag.short}>{tag.label}</ChipTag>) : undefined}>
+      trail={sidekick && <SidekickTail open={!!skPicked} live={!!skPicked && !!sidekickLive} name={shownSk?.name} brand={shownSk && optionBrand(shownSk)} named={skOn.names} level={skOn.levels ? shownSkLevel : undefined} animate={!!ref} />}
+      tags={on.levels && chip.tags.length ? chip.tags.map(tag => <ChipTag key={tag.label} tone={tag.ultra ? 'ultra' : undefined} icon={tag.fast ? <FastIcon /> : undefined} short={tag.short}>{tag.label}</ChipTag>) : undefined}
+      tagsKey={ref ? (on.levels ? chip.tags.map(tag => tag.label).join(' ') : '') : undefined}>
       {on.names ? chip.name : null}
     </Chip>;
   };
@@ -127,8 +131,9 @@ const CHIP_STAGES = [
 // The sidekick's part of the model chip: + and its mark in the icon tone, then its name and level like the lead's.
 // Unfolds when a sidekick is picked and folds back for None (matching the panel's effort section); switching between
 // two sidekicks or levels while open glides the width and fades the new model in place
-function SidekickTail({ open, name, brand, named, level, animate }: {
-  open: boolean; name?: string; brand?: string; named: boolean; level?: string; animate?: boolean;
+// While it works a round its mark takes its vendor's colour with a breathing dot and its name the chip's strong text
+function SidekickTail({ open, live, name, brand, named, level, animate }: {
+  open: boolean; live: boolean; name?: string; brand?: string; named: boolean; level?: string; animate?: boolean;
 }) {
   const body = useRef<HTMLSpanElement>(null);
   const id = useRef<HTMLSpanElement>(null);
@@ -172,13 +177,13 @@ function SidekickTail({ open, name, brand, named, level, animate }: {
     }
   }, [open, name, level, named, animate]);
   return (
-    <span className="chip-trail" data-open={open ? '' : undefined} aria-hidden={!open || undefined}>
+    <span className="chip-trail sidekick-tail" style={brandStyle(brand)} data-open={open ? '' : undefined} data-live={live ? '' : undefined} aria-hidden={!open || undefined}>
       <span ref={body}>
         {name && <>
           <span className="text-fg-3">+</span>
           <span ref={id} className="flex shrink-0 items-center gap-1">
-            <span className="flex shrink-0 items-center text-fg-3 [&_svg]:size-icon"><ModelMark family={name} brand={brand} /></span>
-            {named && <span className="whitespace-nowrap">{name}</span>}
+            <span className="sidekick-tail-mark relative flex shrink-0 items-center [&_svg]:size-icon"><ModelMark family={name} brand={brand} colored={live} /><i className="sidekick-pulse" aria-hidden /></span>
+            {named && <span className="sidekick-tail-name whitespace-nowrap">{name}</span>}
           </span>
           {level && <ChipTag tone={isUltraLevel(level) ? 'ultra' : undefined} short={levelShort(level)}>{level}</ChipTag>}
         </>}

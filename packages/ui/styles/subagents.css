@@ -141,3 +141,105 @@
     .subagent-mark-bead { animation: none; }
   }
 }
+
+/* Sidekick relay (chat/subagents/SidekickRelay.tsx). Base styles are the end state: every entrance below runs only under
+   [data-enter] and fills backwards, so the motion kill switch still shows the settled relay */
+@layer components {
+  /* The sidekick's colour: its model vendor's own (brandColor, set inline), else the neutral ink */
+  .sidekick-relay,
+  .sidekick-tail { --sidekick: var(--sidekick-brand, var(--fg-1)); }
+  .sidekick-relay {
+    --row: var(--process-row);
+    --sidekick-spring: cubic-bezier(0.34, 1.5, 0.6, 1);
+    --sidekick-expo: cubic-bezier(0.16, 1, 0.3, 1);
+    --sidekick-sweep: cubic-bezier(0.3, 0.6, 0.3, 1);
+    --sidekick-slide: 440ms;
+    display: flex;
+    flex-direction: column;
+    gap: var(--process-row-gap);
+  }
+  .sidekick-head,
+  .sidekick-back { position: relative; }
+  .sidekick-mark { display: flex; color: var(--sidekick); }
+  .sidekick-mark svg,
+  .sidekick-flip svg { width: var(--icon); height: var(--icon); }
+  /* The clock reserves its running form, so the end of the round moves nothing on the row */
+  .sidekick-clock { min-width: 6.5em; text-align: right; }
+
+  /* The handoff mark: one slot, the lead's mark on the front face and the sidekick's on the back, which shows at rest */
+  .sidekick-flip { display: flex; width: var(--icon); height: var(--icon); perspective: 64px; }
+  .sidekick-flip-inner { position: relative; width: 100%; height: 100%; transform-style: preserve-3d; transform: rotateY(180deg); }
+  .sidekick-flip-face { position: absolute; inset: 0; display: flex; backface-visibility: hidden; }
+  .sidekick-flip-front { color: var(--fg-3); }
+  .sidekick-flip-back { transform: rotateY(180deg); color: var(--sidekick); }
+
+  /* The light that crosses a relay row as it lands; invisible at rest */
+  .sidekick-sheen { position: absolute; inset: 0; overflow: hidden; border-radius: inherit; pointer-events: none; }
+  .sidekick-sheen::before {
+    content: '';
+    position: absolute;
+    inset-block: 0;
+    left: 0;
+    width: 40%;
+    opacity: 0;
+    /* A colour logo's light carries all its inks (`--sidekick-sheen`, brandStyle) */
+    background: var(--sidekick-sheen, linear-gradient(90deg, transparent, color-mix(in srgb, var(--sidekick) 18%, transparent) 55%, transparent));
+  }
+  .sidekick-back .sidekick-sheen::before { background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--fg-1) 9%, transparent) 45%, transparent); }
+
+  /* The window: a fixed number of row slots. Once it overflows the rows sit on its bottom edge and the top one fades
+     out under a mask; a new row's push is played back as a slide (useSlide) */
+  .sidekick-window {
+    display: flex;
+    flex-direction: column;
+    height: calc(var(--sidekick-slots) * var(--process-row) + (var(--sidekick-slots) - 1) * var(--process-row-gap));
+    overflow: hidden;
+    margin-inline: calc(-1 * var(--spacing-hit));
+    padding-inline: var(--spacing-hit);
+  }
+  .sidekick-window[data-more] {
+    justify-content: flex-end;
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 calc(var(--process-row) * 1.1));
+    mask-image: linear-gradient(to bottom, transparent, #000 calc(var(--process-row) * 1.1));
+  }
+  .sidekick-window-list { display: flex; flex-direction: column; gap: var(--process-row-gap); }
+
+  /* The composer's model chip while the sidekick works a round */
+  /* The mark's resting tone lives here, not in a utility, so the live tint below can override it */
+  .sidekick-tail-mark { color: var(--fg-3); }
+  .sidekick-tail-mark,
+  .sidekick-tail-name { transition: color var(--dur) ease; }
+  .sidekick-tail[data-live] .sidekick-tail-mark { color: var(--sidekick); }
+  .sidekick-tail[data-live] .sidekick-tail-name { color: var(--fg-1); }
+  .sidekick-pulse {
+    display: none;
+    position: absolute;
+    right: -2px;
+    bottom: -1px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--sidekick);
+    box-shadow: 0 0 0 1.5px var(--cmp-bg, var(--bg-1));
+  }
+  .sidekick-tail[data-live] .sidekick-pulse { display: block; animation: acp-pulse 1.6s ease-in-out infinite; }
+
+  /* Handoff: the mark flips from the lead to the sidekick, the light crosses, then the words and the clock land */
+  .sidekick-head[data-enter] .sidekick-flip-inner { animation: sidekick-flip 720ms 80ms var(--sidekick-spring) backwards; }
+  .sidekick-head[data-enter] .sidekick-sheen::before { animation: sidekick-sheen 900ms 140ms var(--sidekick-sweep) backwards; }
+  .sidekick-head[data-enter] .sidekick-label { animation: sidekick-slide 480ms 300ms var(--sidekick-expo) backwards; }
+  .sidekick-head[data-enter] > .row-trailing { animation: acp-fade-in 300ms 520ms ease-out backwards; }
+  /* A new step comes in from the gutter */
+  .sidekick-step[data-enter] { animation: sidekick-slide 420ms var(--sidekick-expo) backwards; }
+  /* Handback: mark, words and light start on one beat, and the words ride the light's curve across the row, so nothing
+     reads before the light reaches it */
+  .sidekick-back[data-enter] .sidekick-mark { animation: sidekick-pop 560ms var(--sidekick-spring) backwards; }
+  .sidekick-back[data-enter] .sidekick-sheen::before { animation: sidekick-sheen 900ms var(--sidekick-sweep) backwards; }
+  .sidekick-back[data-enter] .sidekick-back-text { animation: sidekick-slide 640ms var(--sidekick-sweep) backwards; }
+  .sidekick-back[data-enter] > .row-trailing { animation: acp-fade-in 360ms 280ms ease-out backwards; }
+}
+
+@keyframes sidekick-flip { from { transform: rotateY(0deg); } }
+@keyframes sidekick-slide { from { opacity: 0; transform: translateX(-8px); } }
+@keyframes sidekick-pop { 0% { opacity: 0; transform: scale(0.5); } 40% { opacity: 1; } 100% { transform: none; } }
+@keyframes sidekick-sheen { 0% { opacity: 0; transform: translateX(-100%); } 30% { opacity: 1; } 100% { opacity: 0; transform: translateX(260%); } }

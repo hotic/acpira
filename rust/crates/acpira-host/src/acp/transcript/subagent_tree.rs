@@ -584,7 +584,8 @@ impl SubagentTree {
         let turns = &n.state.turns;
         core.activity = live_activity(turns).or_else(|| latest_step(turns)).or_else(|| activity_of(turns)).map(|a| a.label);
       }
-      let summary = SubagentSummary { core, permissions: (!permissions.is_empty()).then_some(permissions), question };
+      let steps = Self::is_sidekick(n).then(|| Self::sidekick_steps(&n.state.turns));
+      let summary = SubagentSummary { core, permissions: (!permissions.is_empty()).then_some(permissions), question, steps };
       n.cached = Some((n.rev, summary));
     }
     self.nodes.iter().filter_map(|n| n.cached.as_ref().map(|c| c.1.clone())).collect()

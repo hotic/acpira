@@ -252,6 +252,37 @@ export function modelBrand(family: string): string | undefined {
   return undefined;
 }
 
+// A vendor's own colour (@lobehub/icons' COLOR_PRIMARY, the backdrop of its official avatar), for a mark that should read
+// as that vendor at a glance: the built-in agent's sidekick. OpenAI takes ChatGPT's green and Gemini the base of its colour
+// logo (BRAND_LAYERS paints the rest); logos that are black or white by design (Grok, Kimi, Cursor, Windsurf …) and
+// primaries too dark to show on a dark page (under 3:1 against it: Meta, ByteDance, Hunyuan, TII) are absent: their mark
+// keeps the neutral ink
+const BRAND_COLOR: Record<string, string> = {
+  claude: '#D97757', openai: '#10A37F', gemini: '#3186FF', zhipu: '#3859FF', nvidia: '#74B71B', perplexity: '#22B8CD', deepseek: '#4D6BFE', qwen: '#615CED',
+  mistral: '#FA520F', minimax: '#F23F5D', cloudflare: '#F38020', ai21: '#E91E63', microsoft: '#00A4EF',
+  wenxin: '#167ADF', stepfun: '#005AFF', baichuan: '#FF6933', ibm: '#0F62FE',
+  arcee: '#008C8C', upstage: '#908AF9', dbrx: '#EE3D2C',
+};
+
+export function brandColor(brand: string | undefined): string | undefined {
+  return brand ? BRAND_COLOR[brand] : undefined;
+}
+
+// A colour logo's washes over its base colour, as the vendor's colour mark lays them (@lobehub/icons Color components): each
+// one colour fading out between two points of the 24 grid, by `fade` of the way
+export interface BrandLayer { from: [number, number]; to: [number, number]; color: string; fade: number }
+const BRAND_LAYERS: Record<string, BrandLayer[]> = {
+  gemini: [
+    { from: [7, 15.5], to: [11, 12], color: '#08B962', fade: 1 },
+    { from: [8, 5.5], to: [11.5, 11], color: '#F94543', fade: 1 },
+    { from: [3.5, 13.5], to: [17.5, 12], color: '#FABC12', fade: 0.46 },
+  ],
+};
+
+export function brandLayers(brand: string | undefined): BrandLayer[] | undefined {
+  return brand ? BRAND_LAYERS[brand] : undefined;
+}
+
 // Brand of a session option: the wire id is the real model identity ("kimi-code/k3", "asgard/kimi-k3") while the
 // display name is only a label ("K3"), so the id is checked first and the name is just a fallback for opaque ids
 export function optionBrand(o: Pick<SessionOption, 'id' | 'name'>): string | undefined {

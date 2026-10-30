@@ -1,6 +1,6 @@
 // First-class subagent nodes shared by host and webview: one summary per delegated child, whatever the wire dialect
 
-import type { AgentId, PermissionBlock, QuestionBlock, Turn } from './transcript';
+import type { AgentId, PermissionBlock, QuestionBlock, ToolCallBlock, Turn } from './transcript';
 
 export type SubagentState = 'running' | 'completed' | 'failed' | 'cancelled' | 'disconnected';
 
@@ -37,6 +37,7 @@ export interface SubagentSummary {
   permissions?: PermissionBlock[];  // this child's pending permission cards, mirrored so the root view can show them with provenance
   question?: QuestionBlock;         // this child's open question card, same reason
   harness?: SubagentHarness;  // set when Acpira itself runs the child in another CLI (a summoned persona)
+  steps?: ToolCallBlock[];    // the sidekick's latest foreground tool rows, oldest first, without content; never persisted
 }
 
 // A summoned child: the CLI it runs in, the persona it was summoned as (its name is `role`), and its thread — every

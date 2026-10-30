@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::num::Num;
-use crate::transcript::{PermissionBlock, QuestionBlock, Turn};
+use crate::transcript::{PermissionBlock, QuestionBlock, ToolCallBlock, Turn};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -457,6 +457,10 @@ pub struct SubagentSummary {
   pub permissions: Option<Vec<PermissionBlock>>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub question: Option<QuestionBlock>,
+  /// The sidekick's latest foreground tool rows, oldest first, without their content: the root transcript streams them
+  /// in place of a subagent row. Derived from the turns on every push, never persisted
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub steps: Option<Vec<ToolCallBlock>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

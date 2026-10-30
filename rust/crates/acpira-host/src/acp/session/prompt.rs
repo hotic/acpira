@@ -934,7 +934,8 @@ pub(crate) fn agent_turn_mut(c: &mut Core, idx: usize, started_at: i64) -> Optio
   }
 }
 
-fn merge_usage(into: &mut TurnUsage, u: TurnUsage) {
+/// Fields `u` reports replace the ones `into` holds; the rest stay
+pub(crate) fn merge_usage(into: &mut TurnUsage, u: TurnUsage) {
   macro_rules! take {
     ($($f:ident),*) => { $( if u.$f.is_some() { into.$f = u.$f; } )* };
   }
