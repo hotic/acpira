@@ -119,6 +119,8 @@ final class PhoneTerminalView: TerminalView, TerminalScreen {
     selectedTextBackgroundColor = look.selection.uiColor
     installColors(look.ansi.map(\.terminalColor))
     keyboardAppearance = dark ? .dark : .light
+    // The accessory lives in the keyboard's window, outside the page's background.
+    keys.backgroundColor = look.background.uiColor
     keys.overrideUserInterfaceStyle = dark ? .dark : .light
     if isFirstResponder { reloadInputViews() }
   }

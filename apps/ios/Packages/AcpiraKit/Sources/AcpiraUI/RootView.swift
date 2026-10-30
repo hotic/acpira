@@ -85,6 +85,8 @@ public struct RootView: View {
   @State private var pairing: PairingModel?
   /// Notifications from the paired computers: permission, APNs registration, an opened one waiting for its wire
   @State private var push = PushCenter.shared
+  /// The chat's composer and the list's bottom bar handed over as one bar across a push or pop (BarHandoff.swift)
+  @State private var handoff = BarHandoff()
   @AppStorage(Prefs.theme) private var theme = "system"
   @AppStorage(Prefs.locale) private var locale = "auto"
   @AppStorage(Prefs.motion) private var motion = true
@@ -168,6 +170,8 @@ public struct RootView: View {
       SessionListScreen()
         .navigationDestination(for: Route.self) { route in destination(route) }
     }
+    // Over the whole stack, so it stays put while the pages slide under it
+    .overlay { BarHandoffLayer() }
     // A language switch redraws every screen with the new table (the settings switch the table first)
     .id(locale)
     .toastLayer(model)
@@ -179,6 +183,7 @@ public struct RootView: View {
     // The add-computer sheet and `acpira://pair/…` links (Pairing/)
     .modifier(PairingLayer())
     .environment(model)
+    .environment(handoff)
     .environment(\.pairing, pairing)
     // Session links in replies and from outside open that session; any other link goes to the system
     .environment(\.openURL, OpenURLAction { url in model.openLink(url) ? .handled : .systemAction })

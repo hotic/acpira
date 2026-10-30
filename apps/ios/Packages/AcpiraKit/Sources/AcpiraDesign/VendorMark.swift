@@ -13,6 +13,16 @@ public enum VendorBrand {
     }
     return nil
   }
+
+  /// The vendor's own colour (shared/models.ts brandColor), the same in both themes; nil where its logo is black or
+  /// white by design, so the mark keeps the neutral ink
+  public static func color(_ brand: String?) -> Color? {
+    brand.flatMap { colors[$0] }
+  }
+
+  private static let colors: [String: Color] = VendorMarks.colors.mapValues { hex in
+    Swatch(RGBA(hex: hex), RGBA(hex: hex)).color
+  }
 }
 
 private enum MarkCache {
@@ -37,8 +47,11 @@ public struct VendorMark: View {
   /// different sizes inside their boxes, which shows when several stand in one column (the phone's session list)
   var fit: Bool
 
-  public init(brand: String?, name: String, size: CGFloat = Metrics.icon, fit: Bool = false) {
-    self.brand = brand; self.name = name; self.size = size; self.fit = fit
+  /// A colour logo's washes over the mark (`VendorMarks.layers`), where the mark stands for its vendor in that colour
+  var colored: Bool
+
+  public init(brand: String?, name: String, size: CGFloat = Metrics.icon, fit: Bool = false, colored: Bool = false) {
+    self.brand = brand; self.name = name; self.size = size; self.fit = fit; self.colored = colored
   }
 
   public var body: some View {
@@ -47,7 +60,18 @@ public struct VendorMark: View {
         if fit {
           FittedMarkShape(path: path).fill(style: FillStyle(eoFill: true))
         } else {
-          MarkShape(path: path).fill(style: FillStyle(eoFill: true))
+          let shape = MarkShape(path: path)
+          ZStack {
+            shape.fill(style: FillStyle(eoFill: true))
+            // The washes sit on the 24 grid, which the unfitted shape fills edge to edge
+            ForEach(Array((colored ? VendorMarks.layers[brand] ?? [] : []).enumerated()), id: \.offset) { _, wash in
+              let color = Swatch(RGBA(hex: wash.color), RGBA(hex: wash.color)).color
+              shape.fill(LinearGradient(stops: [.init(color: color, location: 0), .init(color: color.opacity(0), location: wash.fade)],
+                                        startPoint: UnitPoint(x: wash.from.0 / 24, y: wash.from.1 / 24),
+                                        endPoint: UnitPoint(x: wash.to.0 / 24, y: wash.to.1 / 24)),
+                         style: FillStyle(eoFill: true))
+            }
+          }
         }
       }
       .frame(width: size, height: size)

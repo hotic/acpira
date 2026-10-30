@@ -5,12 +5,13 @@ import SwiftUI
 // chat/ToolCall.tsx, ToolGroup.tsx, Terminal.tsx and the DiffBlock of CodeBlock.tsx under toolLine = icon: every
 // process row leads with its kind's icon, and an open row draws its rail (ui/ConnectedRail) from that icon.
 
-/// chat/icons.ts toolIcon: to-do, image generation and shown images by their verb, the rest by kind
+/// chat/icons.ts toolIcon: to-do, image generation, shown images and skill loads by their verb, the rest by kind
 func toolIcon(_ block: ToolCallBlock) -> LucideIcon {
   switch block.verbKey {
   case "verb.todo": .listTodo
   case "verb.imagegen": .imagePlus
   case "verb.showImage": .image
+  case "verb.skill": .bookOpen
   default: kindIcon(block.kind)
   }
 }
@@ -61,6 +62,9 @@ struct ToolCallView: View {
 
     if let todos = block.todoEntries {
       PlanDetails(entries: todos) { label } trailing: { trailing }
+    } else if block.verbKey == "verb.skill" && !(block.status == .failed && !visible.isEmpty) {
+      // A skill load is one row naming the skill; only a failure opens to its message
+      Row(tone: .action) { LeadIcon(icon) } content: { label } trailing: { trailing }
     } else if isImageResult(block) {
       // Generated and shown images: under their row in an open process fold, after the fold once it closes (CodexFold)
       VStack(alignment: .leading, spacing: Metrics.gap) {
@@ -167,25 +171,105 @@ struct ToolTrailing: View {
       TaskTag(task: task)
     } else if execute {
       let duration = block.startedAt.flatMap { start in block.endedAt.map { commandDuration(ms: $0 - start) } }
-      if block.status == .completed {
-        Icon(.check, size: WebMetrics.chevron, strokeWidth: 2).foregroundStyle(Palette.ok)
-      } else if block.status == .failed {
-        Icon(.x, size: WebMetrics.chevron, strokeWidth: 2).foregroundStyle(Palette.danger)
-      }
-      if let duration {
-        Text(web: duration)
-      } else if block.kind == .execute, block.status == .in_progress, let start = block.startedAt {
-        // A live command ticks in whole seconds; a finished one reads its host timestamps
-        CommandSeconds(since: start)
-      } else if block.status != .completed && block.status != .failed {
-        // A command row always has its trailing slot in the webview (ToolCall.tsx), so an empty one still takes the
-        // row's gap and a long command is cut before it; Row drops a slot that renders nothing
-        Color.clear.frame(width: 0, height: 0)
-      }
+      CommandOutcome(status: block.status, duration: duration,
+                     since: block.kind == .execute && block.status == .in_progress ? block.startedAt : nil)
     } else {
       if let stat = block.diffStat { DiffStatView(add: stat.add, del: stat.del) }
       if let task = block.asyncTask { TaskTag(task: task) }
     }
+  }
+}
+
+/// CommandOutcome.tsx: a command's ✓ / ✗ in a slot held while it runs, so its arrival moves nothing on the row, then its
+/// run time (a live command ticks in whole seconds from `since`; a finished one reads its host timestamps). A command that
+/// ends on screen draws its glyph with a small pop and fades its final time in; one already ended when the row mounted
+/// stays still. Two parts, so the row's trailing slot spaces them as its own
+struct CommandOutcome: View {
+  let status: ToolStatus
+  var duration: String?
+  var since: Double?
+  @Environment(\.motionEnabled) private var motion
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.scrollGesture) private var gesture
+  @State private var memo = OutcomeMemo()
+
+  /// Whether the command was seen running, and the ends played so far. A class, so noting the end while the body is
+  /// evaluated starts the draw in the frame the glyph appears; the animators sit on views that never come and go, or a
+  /// new one would take the changed trigger as its first value and play nothing
+  final class OutcomeMemo {
+    var live: Bool?
+    var ends = 0
+  }
+
+  var body: some View {
+    let done = status == .completed || status == .failed
+    let _ = note(done)
+    ZStack {
+      if done { OutcomeGlyph(ok: status == .completed) }
+    }
+    .frame(width: WebMetrics.chevron, height: WebMetrics.chevron)
+    // The stroke runs out along its own path, as the webview's dash offset draws it
+    .keyframeAnimator(initialValue: 1.0, trigger: memo.ends) { glyph, p in
+      glyph.environment(\.outcomeDraw, min(1, max(0, p)))
+        .scaleEffect(OutcomeKeys.popFrom + (1 - OutcomeKeys.popFrom) * p)
+    } keyframes: { _ in
+      KeyframeTrack {
+        MoveKeyframe(0.0)
+        SpringKeyframe(1.0, duration: Motion.outcomeDraw, spring: .bouncy)
+      }
+    }
+    .accessibilityHidden(true)
+    // The slot keeps at least the width of the widest time below a minute ("<0.1 s"), so the ticking whole seconds
+    // turning into the final tenths never shift the command beside them
+    ZStack(alignment: .trailing) {
+      if duration != nil || since != nil { Text(web: commandDuration(ms: 50)).hidden() }
+      if let duration {
+        Text(web: duration)
+      } else if let since {
+        CommandSeconds(since: since)
+      }
+    }
+    .keyframeAnimator(initialValue: 1.0, trigger: memo.ends) { time, p in
+      time.opacity(p).offset(y: (1 - p) * Metrics.hairline * 2)
+    } keyframes: { _ in
+      KeyframeTrack {
+        MoveKeyframe(0.0)
+        LinearKeyframe(0.0, duration: Motion.outcomeTimeDelay)
+        LinearKeyframe(1.0, duration: Motion.outcomeTime, timingCurve: .easeOut)
+      }
+    }
+  }
+
+  private func note(_ done: Bool) {
+    if memo.live == nil { memo.live = !done; return }
+    if done && memo.live == true {
+      memo.live = false
+      if motion && !reduceMotion && !gesture.active { memo.ends += 1 }
+    }
+  }
+}
+
+/// The draw's start: the glyph grows from this scale as its stroke runs out
+private enum OutcomeKeys {
+  static let popFrom = 0.6
+}
+
+// Nonisolated: the draw's keyframe closure forms the key path off the main actor
+nonisolated extension EnvironmentValues {
+  /// How much of the outcome glyph's stroke is drawn, 0 to 1 (at rest)
+  @Entry fileprivate var outcomeDraw: Double = 1
+}
+
+/// The ✓ / ✗ stroke, drawn as far as `outcomeDraw` says
+private struct OutcomeGlyph: View {
+  let ok: Bool
+  @Environment(\.outcomeDraw) private var draw
+
+  var body: some View {
+    IconShape(icon: ok ? .check : .x)
+      .trim(from: 0, to: draw)
+      .stroke(style: StrokeStyle(lineWidth: 2 * WebMetrics.chevron / 24, lineCap: .round, lineJoin: .round))
+      .foregroundStyle(ok ? Palette.ok : Palette.danger)
   }
 }
 
@@ -764,18 +848,19 @@ struct DiffBlockView: View {
   @Environment(\.colorScheme) private var scheme
   @State private var natural: CGFloat = 0
   @State private var viewport: CGFloat = 0
+  @State private var rowWidth: CGFloat = 0
   @State private var colored: Colored?
 
   /// A pass's tokens, one entry per line of `lines`
   struct Colored { var lines: [DiffLine]; var theme: CodeTheme; var tokens: [[CodeToken]?] }
   struct Pass: Equatable { var lines: [DiffLine]; var title: String; var theme: CodeTheme }
 
-  /// The tokens for these lines in this scheme: the last pass's, else the highlighter's cache; the full-length render
-  /// tokenizes in place, as its tasks may not run before the image is taken
-  private func tokens(_ theme: CodeTheme) -> [[CodeToken]?]? {
+  /// Only a completed pass is read while drawing. The full-length render tokenizes in place because it runs no tasks.
+  private func tokens(_ lines: [DiffLine], theme: CodeTheme) -> [[CodeToken]?]? {
     if let colored, colored.theme == theme, colored.lines == lines { return colored.tokens }
-    return snapshot ? SyntaxHighlighter.shared.diff(lines, path: title, theme: theme)
-      : SyntaxHighlighter.shared.cachedDiff(lines, path: title, theme: theme)
+    if snapshot { return SyntaxHighlighter.shared.diff(lines, path: title, theme: theme) }
+    // Only the bounded preview reads synchronously; full diffs never rebuild their cache keys while drawing.
+    return inSheet ? nil : SyntaxHighlighter.shared.cachedDiff(lines, path: title, theme: theme)
   }
 
   var body: some View {
@@ -783,71 +868,98 @@ struct DiffBlockView: View {
     // One `ch` of Menlo (0.602 em), the face the desktop draws code in
     let ch = mono.size * 0.602
     let theme = CodeTheme(scheme)
-    let tokens = tokens(theme)
-    let rows = lines.indices.filter { i in !(lines[i].kind == .hunk && (i == 0 || i == lines.count - 1)) }
+    // The transcript never shows beyond its cap. Do not build or highlight the hidden tail just to clip it later.
+    let display = inSheet ? lines : diffPreview(lines)
+    let tokens = tokens(display, theme: theme)
+    Group {
+      if inSheet {
+        // Short diffs still hug their rows; long ones take the sheet's finite viewport, never their full height.
+        scroller(display, tokens: tokens, ch: ch).frame(maxHeight: natural > 0 ? natural : nil, alignment: .top)
+      } else {
+        scroller(display, tokens: tokens, ch: ch).codeCap(natural: natural, inSheet: false)
+      }
+    }
+    .modifier(CodeOutputFrame())
+    // Full-source cache lookup and tokenization stay off the main actor; a stale pass must not replace a newer source.
+    .task(id: Pass(lines: display, title: title, theme: theme)) {
+      guard !snapshot, tokens == nil, codeLanguage(title) != nil else { return }
+      let title = title
+      let result = await Task.detached(priority: .utility) { SyntaxHighlighter.shared.diff(display, path: title, theme: theme) }.value
+      guard !Task.isCancelled, let result else { return }
+      colored = Colored(lines: display, theme: theme, tokens: result)
+    }
+    // CodeBlock.tsx: copy takes the new file, asked for when the view left its text out, else the visible new code.
+    // The diff owns its viewport: an outer vertical scroller would make even a lazy table lay out its entire height.
+    .codeViewer(title: title, copy: copyText, copyLabel: t(copiesSource ? "code.copySource" : "code.copyVisible"), read: readSource,
+                wrapInScrollView: false) {
+      DiffBlockView(lines: lines, title: title, source: source, locate: locate)
+    }
+  }
+
+  private func scroller(_ display: [DiffLine], tokens: [[CodeToken]?]?, ch: CGFloat) -> some View {
     Scroller([.vertical, .horizontal]) {
-      VStack(alignment: .leading, spacing: 0) {
-        ForEach(rows, id: \.self) { i in
-          let line = lines[i]
-          if line.kind == .hunk {
-            Text(web: "···")
-              .textStyle(WebType.text3)
-              .foregroundStyle(Palette.fg3)
-              .frame(width: (3.7 + 2.2) * ch, height: Metrics.diffHunk)
-              .frame(maxWidth: .infinity, alignment: .leading)
-              .overlay(alignment: .top) { Rectangle().fill(Palette.line).frame(height: 1) }
-              .overlay(alignment: .bottom) { Rectangle().fill(Palette.line).frame(height: 1) }
-              .padding(.vertical, Metrics.gapHalf)
-          } else {
-            HStack(alignment: .firstTextBaseline, spacing: 0) {
-              // diff-gutter: the number right-aligned in --diff-number-width, the sign centred in --diff-sign-width.
-              // A context row keeps the sign's room with a space: an empty Text has no baseline, and aligned by its
-              // line box's bottom it stretched the row
-              Text(web: (line.kind == .del ? line.oldLine : line.newLine).map(String.init) ?? "", size: mono.size)
-                .foregroundStyle(Palette.fg3)
-                .monospacedDigit()
-                .frame(minWidth: 3.7 * ch, alignment: .trailing)
-              Text(web: line.kind == .add ? "+" : line.kind == .del ? "−" : " ", size: mono.size)
-                .foregroundStyle(line.kind == .add ? Palette.ok : line.kind == .del ? Palette.danger : Palette.fg3)
-                .frame(width: 2.2 * ch)
-              Group {
-                if let runs = tokens?[i], !line.code.isEmpty {
-                  Text(codeRuns(runs, size: mono.size))
-                } else {
-                  Text(web: line.code.isEmpty ? "\u{200b}" : line.code, size: mono.size)
-                }
-              }
-                .foregroundStyle(Palette.fg1)
-                .fixedSize()
-                .padding(.trailing, Metrics.pad)
-            }
-            .textStyle(WebType.codeOutput)
-            .frame(minHeight: WebMetrics.codeOutputLine)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            // A plain rectangle: the shape-style background took a rounded container shape and cut the tint's ends
-            .background(Rectangle().fill(line.kind == .add ? Palette.diffAdd : line.kind == .del ? Palette.diffDel : .clear))
-          }
+      Group {
+        if inSheet && !snapshot {
+          LazyVStack(alignment: .leading, spacing: 0) { rows(display, tokens: tokens, ch: ch) }
+        } else {
+          VStack(alignment: .leading, spacing: 0) { rows(display, tokens: tokens, ch: ch) }
         }
       }
-      .frame(minWidth: viewport, alignment: .leading)
+      // Keep the widest mounted row even after it is recycled, so sideways range never shrinks while reading.
+      .frame(minWidth: max(viewport, rowWidth), alignment: .leading)
       .padding(.vertical, Metrics.gapHalf)
       .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { natural = $0 }
     }
     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { viewport = $0 }
     .scrollBounceBehavior(.basedOnSize, axes: [.vertical, .horizontal])
     .scrollIndicators(.hidden)
-    .codeCap(natural: natural, inSheet: inSheet)
-    .modifier(CodeOutputFrame())
-    // Tokenized off the main actor: a first grammar costs a pass over its regexes
-    .task(id: Pass(lines: lines, title: title, theme: theme)) {
-      guard !snapshot, tokens == nil, codeLanguage(title) != nil else { return }
-      let (lines, title) = (lines, title)
-      let result = await Task.detached(priority: .utility) { SyntaxHighlighter.shared.diff(lines, path: title, theme: theme) }.value
-      if let result { colored = Colored(lines: lines, theme: theme, tokens: result) }
-    }
-    // CodeBlock.tsx: copy takes the new file, asked for when the view left its text out, else the visible new code
-    .codeViewer(title: title, copy: copyText, copyLabel: t(copiesSource ? "code.copySource" : "code.copyVisible"), read: readSource) {
-      DiffBlockView(lines: lines, title: title, source: source, locate: locate)
+  }
+
+  private func rows(_ display: [DiffLine], tokens: [[CodeToken]?]?, ch: CGFloat) -> some View {
+    let mono = WebType.mono
+    let rows = display.indices.filter { i in !(display[i].kind == .hunk && (i == 0 || i == display.count - 1)) }
+    return ForEach(rows, id: \.self) { i in
+      let line = display[i]
+      if line.kind == .hunk {
+        Text(web: "···")
+          .textStyle(WebType.text3)
+          .foregroundStyle(Palette.fg3)
+          .frame(width: (3.7 + 2.2) * ch, height: Metrics.diffHunk)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .overlay(alignment: .top) { Rectangle().fill(Palette.line).frame(height: 1) }
+          .overlay(alignment: .bottom) { Rectangle().fill(Palette.line).frame(height: 1) }
+          .padding(.vertical, Metrics.gapHalf)
+      } else {
+        HStack(alignment: .firstTextBaseline, spacing: 0) {
+          // diff-gutter: the number right-aligned in --diff-number-width, the sign centred in --diff-sign-width.
+          // A context row keeps the sign's room with a space: an empty Text has no baseline, and aligned by its
+          // line box's bottom it stretched the row
+          Text(web: (line.kind == .del ? line.oldLine : line.newLine).map(String.init) ?? "", size: mono.size)
+            .foregroundStyle(Palette.fg3)
+            .monospacedDigit()
+            .frame(minWidth: 3.7 * ch, alignment: .trailing)
+          Text(web: line.kind == .add ? "+" : line.kind == .del ? "−" : " ", size: mono.size)
+            .foregroundStyle(line.kind == .add ? Palette.ok : line.kind == .del ? Palette.danger : Palette.fg3)
+            .frame(width: 2.2 * ch)
+          Group {
+            if let runs = tokens?[i], !line.code.isEmpty {
+              Text(codeRuns(runs, size: mono.size))
+            } else {
+              Text(web: line.code.isEmpty ? "\u{200b}" : line.code, size: mono.size)
+            }
+          }
+            .foregroundStyle(Palette.fg1)
+            .fixedSize()
+            .padding(.trailing, Metrics.pad)
+        }
+        .textStyle(WebType.codeOutput)
+        .fixedSize(horizontal: true, vertical: false)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { rowWidth = max(rowWidth, $0) }
+        .frame(minHeight: WebMetrics.codeOutputLine)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // A plain rectangle: the shape-style background took a rounded container shape and cut the tint's ends
+        .background(Rectangle().fill(line.kind == .add ? Palette.diffAdd : line.kind == .del ? Palette.diffDel : .clear))
+      }
     }
   }
 
@@ -897,9 +1009,10 @@ extension View {
 
   /// A tap on a code card opens the whole card in the code sheet; inside the sheet the card stays as it is
   /// read: the text copy takes when it has to be fetched first (a diff's whole file); `copy` until then
+  /// wrapInScrollView: false when the content owns a viewport, so its lazy rows see a bounded height
   func codeViewer<Full: View>(title: String, copy: String, copyLabel: String, read: (() async -> String)? = nil,
-                              @ViewBuilder full: @escaping () -> Full) -> some View {
-    modifier(CodeViewer(title: title, copy: copy, copyLabel: copyLabel, read: read, full: full))
+                              wrapInScrollView: Bool = true, @ViewBuilder full: @escaping () -> Full) -> some View {
+    modifier(CodeViewer(title: title, copy: copy, copyLabel: copyLabel, read: read, wrapInScrollView: wrapInScrollView, full: full))
   }
 }
 
@@ -908,6 +1021,7 @@ private struct CodeViewer<Full: View>: ViewModifier {
   var copy: String
   var copyLabel: String
   var read: (() async -> String)?
+  var wrapInScrollView: Bool
   let full: () -> Full
   @Environment(\.codeSheet) private var inSheet
   @Environment(\.initialPopup) private var initialPopup
@@ -918,7 +1032,9 @@ private struct CodeViewer<Full: View>: ViewModifier {
       content
         .contentShape(Rectangle())
         .onTapGesture { shown = true }
-        .sheet(isPresented: $shown) { CodeSheet(title: title, copy: copy, copyLabel: copyLabel, read: read, content: full) }
+        .sheet(isPresented: $shown) {
+          CodeSheet(title: title, copy: copy, copyLabel: copyLabel, read: read, wrapInScrollView: wrapInScrollView, content: full)
+        }
         .task {
           // `-popup code` opens the first card that shows, for screenshots
           guard initialPopup == "code", !CodeSheetProbe.claimed else { return }
@@ -944,17 +1060,19 @@ struct CodeSheet<Content: View>: View {
   var copy: String
   var copyLabel: String
   var read: (() async -> String)? = nil
+  var wrapInScrollView = true
   let content: () -> Content
   @Environment(\.dismiss) private var dismiss
   @State private var copied = false
 
   var body: some View {
     NavigationStack {
-      ScrollView(.vertical) {
-        content()
-          .environment(\.codeSheet, true)
-          .padding(.horizontal, Metrics.pad)
-          .padding(.vertical, Metrics.s2)
+      Group {
+        if wrapInScrollView {
+          ScrollView(.vertical) { sheetContent }
+        } else {
+          sheetContent
+        }
       }
       .background(Palette.bg0)
       .navigationTitle(title)
@@ -988,6 +1106,22 @@ struct CodeSheet<Content: View>: View {
       copied = false
     }
   }
+
+  private var sheetContent: some View {
+    content()
+      .environment(\.codeSheet, true)
+      .padding(.horizontal, Metrics.pad)
+      .padding(.vertical, Metrics.s2)
+  }
+}
+
+/// Enough rows to paint past the transcript's cut, including a leading hunk header (which is not drawn).
+/// Keep the original array for the sheet and copy; only the preview's layout and highlighter use this prefix.
+nonisolated func diffPreview(_ lines: [DiffLine]) -> [DiffLine] {
+  // Hunk separators can be shorter than code rows; even a card full of them must still paint past the fade.
+  let shortest = min(WebMetrics.codeOutputLine, Metrics.diffHunk + Metrics.gapHalf * 2)
+  let limit = Int((WebMetrics.codeOutputMax / shortest).rounded(.up)) + 1
+  return Array(lines.prefix(limit + (lines.first?.kind == .hunk ? 1 : 0)))
 }
 
 // MARK: - Diff sources

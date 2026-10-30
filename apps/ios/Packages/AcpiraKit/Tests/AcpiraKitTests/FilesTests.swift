@@ -65,6 +65,17 @@ import Testing
     #expect(folderOf("src/ui/App.tsx") == "src/ui")
     #expect(folderOf("README.md") == "")
   }
+
+  @Test func markdownPreview() {
+    #expect(isMarkdownPath("docs/A.MD") && isMarkdownPath("x.mdx") && !isMarkdownPath("md") && !isMarkdownPath("a.ts"))
+    // Front matter turns into a YAML block; a rule later in the file stays
+    #expect(markdownPreviewText("---\nname: x\n---\n# T\n---\n") == "```yaml\nname: x\n```\n\n# T\n---\n")
+    #expect(markdownPreviewText("# T\n---\nname: x\n---\n") == "# T\n---\nname: x\n---\n")
+    #expect(joinPath("docs/dev", "../a.md") == "docs/a.md")
+    #expect(joinPath("/w/docs", "./b/c.md") == "/w/docs/b/c.md")
+    #expect(joinPath("", "../a.md") == nil)
+    #expect(joinPath("docs", "/abs/a.md") == nil)
+  }
 }
 
 @Suite @MainActor struct PluralTests {

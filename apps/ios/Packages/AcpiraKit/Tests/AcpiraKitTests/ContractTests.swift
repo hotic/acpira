@@ -141,14 +141,16 @@ struct ContractTests {
     try checkStruct(patch, try need(TS.interface(Self.source("sessionPatch.ts"), "SessionPatch")))
   }
 
-  /// The transcript structs the messages carry: SessionView, SessionSummary and AgentInfo whole, AccountInfo as a subset
+  /// The transcript structs the messages carry: SessionView and AgentInfo whole, SessionSummary
+  /// but its style-hook fields, AccountInfo as a subset
   /// (it reads addedAt leniently)
   @Test(.enabled(if: readable))
   func transcriptFieldsExist() throws {
     let transcript = try Self.source("transcript.ts")
     guard case .initState(let state) = try decode(ContractSamples.pushes[0]) as HostMsg else { Issue.record("not init"); return }
     try checkStruct(try need(state.active), try need(TS.interface(transcript, "SessionView")))
-    try checkStruct(try need(state.sessions.first), try need(TS.interface(transcript, "SessionSummary")))
+    // completedAt / question feed the page's plugin style hooks (data-done, data-state="question"); the phone has none
+    try checkStruct(try need(state.sessions.first), try need(TS.interface(transcript, "SessionSummary")), leftOut: ["completedAt", "question"])
     try checkStruct(try need(state.accounts.first), try need(TS.interface(transcript, "AccountInfo")), subset: true)
     try checkStruct(try need(state.agents.first), try need(TS.interface(transcript, "AgentInfo")))
   }
@@ -239,6 +241,7 @@ struct ContractTests {
     try check(GoalAction.self, TS.alias(transcript, "GoalAction"), "GoalAction")
     try check(GoalEvent.self, TS.alias(transcript, "GoalEvent"), "GoalEvent")
     try check(AddAccountVia.self, TS.alias(proto, "AddAccountVia"), "AddAccountVia")
+    try check(ExportFormat.self, TS.alias(proto, "ExportFormat"), "ExportFormat")
     try check(ProjectBase.self, TS.alias(proto, "ProjectBase"), "ProjectBase")
     try check(GitMark.self, TS.alias(proto, "GitMark"), "GitMark")
     try check(EditTurnRequest.Intent.self, field(proto, "EditTurnRequest", "intent"), "EditTurnRequest.intent")
@@ -563,6 +566,8 @@ enum ContractSamples {
     .deleteSession(id: "s1", requestId: "d1"),
     .restoreSession(id: "s1"),
     .pinSession(id: "s1", pinned: true),
+    .archiveSession(id: "s1", archived: true),
+    .setSessionUnread(id: "s1", unread: true),
     .markAllRead,
     .searchSessions(query: "zebracorn", seq: 3),
     .forkSession(sessionId: "s1", turnIndex: 1, agent: "codex"),
@@ -577,7 +582,7 @@ enum ContractSamples {
     .editQueued(sessionId: "s1", id: "q1", text: "edited", retainedAttachments: [0], attachments: [drafts[2]]),
     .categoryOp(op: .reorderProject(cwd: "/w/a", before: "/w/b"), file: "s1"),
     .moveSession(id: "s1", cwd: "/w2", category: "c1"),
-    .sessionMarkdown(id: "s1", seq: 4),
+    .sessionMarkdown(id: "s1", seq: 4, format: .text),
     .addAccount(agent: "codex", via: .login),
     .removeAccount(id: "acc-1"),
     .unlockCredentials(agent: "claude"),
@@ -632,7 +637,7 @@ enum ContractSamples {
     ##"{"type":"plan_document","id":"p1","title":"Plan","markdown":"# Plan","path":"/w/plan.md","toolCallId":"call-2","approvalToolCallId":"call-3","status":"ready"}"##,
     #"{"type":"question","id":"q1","toolCallId":"call-4","message":"Pick","questions":[{"id":"a","title":"Kind","text":"Which?","kind":"single","options":[{"id":"x","label":"X","description":"the x"}],"other":true,"numeric":false,"required":true}],"outcome":"answered","answers":{"a":"x"}}"#,
     #"{"type":"image","id":"img-1","blob":"3f2a.png","mimeType":"image/png","uri":"/w/shot.png"}"#,
-    #"{"type":"notice","id":"n-1","revision":2,"category":"limit","severity":"warning","info":true,"title":"Slow down","details":"429","actions":["retry"]}"#,
+    #"{"type":"notice","id":"n-1","revision":2,"category":"limit","severity":"warning","info":true,"title":"Slow down","details":"429","actions":["retry"],"retry":{"status":"in_progress","max":10,"nextAt":1,"reconnect":true,"attempts":[{"at":1,"attempt":1,"text":"529"}]}}"#,
     #"{"type":"steer","id":"st-1","text":"also this","attachments":[{"kind":"quote","text":"x","comment":"y"}]}"#,
     #"{"type":"goal","event":"set","objective":"ship it","iterations":2,"tokensUsed":1200,"timeUsedSeconds":0}"#,
   ]

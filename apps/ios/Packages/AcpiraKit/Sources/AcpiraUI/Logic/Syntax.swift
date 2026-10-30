@@ -63,6 +63,8 @@ nonisolated final class SyntaxHighlighter: @unchecked Sendable {
   static let shared = SyntaxHighlighter()
 
   private let lock = NSLock()
+  // Cache readers must not wait for a grammar load or a long JavaScript tokenization pass.
+  private let cacheLock = NSLock()
   private var api: JSValue?
   private var context: JSContext?
   private var failed = false
@@ -75,11 +77,12 @@ nonisolated final class SyntaxHighlighter: @unchecked Sendable {
     guard let language else { return nil }
     let key = "\(theme.rawValue)\u{0}\(language)\u{0}\(code)"
     lock.lock(); defer { lock.unlock() }
-    if let hit = cache[key] { return hit }
+    if let hit = cached(code, language: language, theme: theme) { return hit }
     guard let api = ready(language) else { return nil }
     guard let json = api.invokeMethod("tokenize", withArguments: [code.replacingOccurrences(of: "\r\n", with: "\n"), language, theme.rawValue])?
       .toString(), let raw = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[[String]]] else { return nil }
     let lines = raw.map { Self.merge($0, theme: theme) }
+    cacheLock.lock(); defer { cacheLock.unlock() }
     cache[key] = lines
     order.append(key)
     if order.count > Self.cacheSize { cache.removeValue(forKey: order.removeFirst()) }
@@ -89,8 +92,9 @@ nonisolated final class SyntaxHighlighter: @unchecked Sendable {
   /// A cached answer only, never tokenizing: what a view can draw at once
   func cached(_ code: String, language: String?, theme: CodeTheme) -> [[CodeToken]]? {
     guard let language else { return nil }
-    lock.lock(); defer { lock.unlock() }
-    return cache["\(theme.rawValue)\u{0}\(language)\u{0}\(code)"]
+    let key = "\(theme.rawValue)\u{0}\(language)\u{0}\(code)"
+    cacheLock.lock(); defer { cacheLock.unlock() }
+    return cache[key]
   }
 
   /// The context with `language` loaded (lock held)
@@ -145,6 +149,16 @@ nonisolated final class SyntaxHighlighter: @unchecked Sendable {
   /// old side for deleted rows and the new side for the rest, so deleted lines never shift the new side's grammar.
   /// One entry per row, `nil` for a hunk header or when nothing could be coloured
   func diff(_ lines: [DiffLine], path: String, theme: CodeTheme) -> [[CodeToken]?]? {
+    diff(lines, path: path, theme: theme, read: tokenize)
+  }
+
+  /// The diff's answer from the cache alone, never falling back to tokenization on a miss or an eviction.
+  func cachedDiff(_ lines: [DiffLine], path: String, theme: CodeTheme) -> [[CodeToken]?]? {
+    diff(lines, path: path, theme: theme, read: cached)
+  }
+
+  private func diff(_ lines: [DiffLine], path: String, theme: CodeTheme,
+                    read: (String, String?, CodeTheme) -> [[CodeToken]]?) -> [[CodeToken]?]? {
     guard let language = codeLanguage(path) else { return nil }
     var out = [[CodeToken]?](repeating: nil, count: lines.count)
     var start = 0
@@ -152,31 +166,15 @@ nonisolated final class SyntaxHighlighter: @unchecked Sendable {
       let segment = Array(start..<end)
       let old = segment.filter { lines[$0].kind != .add }
       let new = segment.filter { lines[$0].kind != .del }
-      if !segment.isEmpty,
-         let oldTokens = tokenize(old.map { lines[$0].code }.joined(separator: "\n"), language: language, theme: theme),
-         let newTokens = tokenize(new.map { lines[$0].code }.joined(separator: "\n"), language: language, theme: theme) {
+      if !segment.isEmpty {
+        guard let oldTokens = read(old.map { lines[$0].code }.joined(separator: "\n"), language, theme),
+              let newTokens = read(new.map { lines[$0].code }.joined(separator: "\n"), language, theme) else { return nil }
         for (i, row) in old.enumerated() where lines[row].kind == .del && i < oldTokens.count { out[row] = oldTokens[i] }
         for (i, row) in new.enumerated() where i < newTokens.count { out[row] = newTokens[i] }
       }
       start = end + 1
     }
     return out
-  }
-
-  /// The diff's answer from the cache alone (both sides of every segment), or nil when any side is still to tokenize
-  func cachedDiff(_ lines: [DiffLine], path: String, theme: CodeTheme) -> [[CodeToken]?]? {
-    guard let language = codeLanguage(path) else { return nil }
-    var start = 0
-    for end in 0...lines.count where end == lines.count || lines[end].kind == .hunk {
-      let segment = Array(start..<end)
-      let old = segment.filter { lines[$0].kind != .add }.map { lines[$0].code }.joined(separator: "\n")
-      let new = segment.filter { lines[$0].kind != .del }.map { lines[$0].code }.joined(separator: "\n")
-      if !segment.isEmpty && (cached(old, language: language, theme: theme) == nil || cached(new, language: language, theme: theme) == nil) {
-        return nil
-      }
-      start = end + 1
-    }
-    return diff(lines, path: path, theme: theme)
   }
 }
 

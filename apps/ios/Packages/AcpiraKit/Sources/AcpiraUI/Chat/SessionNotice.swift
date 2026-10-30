@@ -209,69 +209,49 @@ struct ExternalSessionNotice: View {
 }
 
 /// What floats over the thread's lower edge rather than taking a dock slot, so neither shrinks the thread or pushes
-/// its history up: the stage pill while a prompt is on its way or a session starts, then the docked to-do card
+/// its history up: the docked to-do card
 struct ThreadDock: View {
   let session: SessionView
-  var body: some View {
-    VStack(spacing: 0) {
-      if session.external == nil { ConnectingNotice(session: session) }
-      PlanDock(session: session)
-    }
-  }
+  var body: some View { PlanDock(session: session) }
 }
 
 extension EnvironmentValues {
-  /// The phone's own prompt is still on its way to the engine (Outgoing.swift): the stage pill says "Sending…"
-  @Entry var promptSending = false
+  /// The stage holding the reply the thread draws for a held prompt (`heldStage`): its working row says it in place
+  /// of "Working"
+  @Entry var liveStage: String?
 }
 
-/// How long a stage may last before the pill shows
-private let connectingDelay = Duration.milliseconds(400)
+/// How long the start may last before its row shows
+private let startingDelay = Duration.milliseconds(400)
 
-/// ConnectingNotice at phone width: "Sending…" while the phone's prompt is on its way, then "Starting Codex…" while
-/// the session starts, once a stage has taken a moment, so a warm agent or a quick send does not flash it; only the
-/// glyph loops. The webview's row along the composer's edge read as a desktop status line on a phone, so it is a
-/// glass pill centred a little above the composer, the way a phone floats a passing state. A zero-height anchor above
-/// the docked to-do card: the pill rises from it and takes no layout space
-struct ConnectingNotice: View {
+/// ConnectingNotice at phone width: "Starting Codex" while a session starts with no reply to say it on, drawn as the
+/// working row a held prompt's reply shows (`heldStage`), at the thread's end where that reply would stand, so a start
+/// reads the same whether or not a prompt waits on it. It shows once the start has taken a moment, so a warm agent does
+/// not flash it. A floating pill said the same words in a second form
+struct StartingReply: View {
   let session: SessionView
   @Environment(\.chatAgent) private var agent
   @Environment(\.snapshot) private var snapshot
-  @Environment(\.promptSending) private var sending
   @State private var late = false
 
   var body: some View {
-    let starting = session.status == .starting
-    // One delay over both stages, so going from sending to starting changes the words in place
-    let active = sending || starting
-    let label = sending ? t("mobile.sending") : t("notice.connecting", ["agent": agent?.name ?? session.agent])
-    Color.clear
-      .frame(height: 0)
-      .overlay(alignment: .bottom) {
-        if active && (late || snapshot) {
-          HStack(spacing: Metrics.s2) {
-            Orb()
-            Text(web: label, paragraph: false).lineLimit(1)
-          }
-          .textStyle(TypeScale.text2, weight: .medium)
-          .foregroundStyle(Palette.fg2)
-          .padding(.horizontal, Metrics.pad)
-          .frame(height: Metrics.mCtl)
-          .glassEffect(.regular, in: Capsule())
-          .animation(Motion.ease, value: label)
-          .padding(.horizontal, Metrics.page)
-          .padding(.bottom, Metrics.pad * 2)
+    // `session` is the thread's view: a held prompt makes it running, and that reply's row speaks instead
+    let active = session.status == .starting && !session.running && session.external == nil
+    // A stack, not a Group: a Group hands `.task` to its children, and with none shown the delay would never run
+    VStack(alignment: .leading, spacing: 0) {
+      if active && (late || snapshot) {
+        AgentMessage(turn: AgentTurn(), running: true, scope: "\(session.id):starting", index: session.turns.count, last: true)
+          .environment(\.liveStage, t("mobile.starting", ["agent": agent?.name ?? session.agent]))
+          .padding(.top, session.turns.isEmpty ? 0 : WebMetrics.msgGap)
           .transition(.opacity)
-          .accessibilityElement(children: .combine)
           .accessibilityAddTraits(.updatesFrequently)
-        }
       }
-      .allowsHitTesting(false)
-      .task(id: active) {
-        late = false
-        guard active else { return }
-        try? await Task.sleep(for: connectingDelay)
-        withAnimation(Motion.ease) { late = true }
-      }
+    }
+    .task(id: active) {
+      late = false
+      guard active else { return }
+      try? await Task.sleep(for: startingDelay)
+      withAnimation(Motion.ease) { late = true }
+    }
   }
 }

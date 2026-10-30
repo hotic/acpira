@@ -18,6 +18,8 @@ struct Dock: View {
   /// Hides the alert card for this many turns (the ✕ keeps the transcript row, drops the card)
   @State private var dismissedAlert: Int?
   @Environment(\.sessionActions) private var actions
+  /// The list hand-over: its stand-in takes the composer's place while the chat is pushed or popped (BarHandoff.swift)
+  @Environment(BarHandoff.self) private var handoff: BarHandoff?
 
   var body: some View {
     let question = openQuestion(session)
@@ -42,6 +44,8 @@ struct Dock: View {
       // selections and send rewrites the turn
       if session.external == nil {
         if let editing { EditingBar(original: editing.original, onCancel: actions.cancelEdit) }
+        let placeholder = editing == nil && pendingPlanReview(session.turns).flatMap(reviseOption) != nil
+          ? t("composer.placeholder.revisePlan") : nil
         Composer(session: editing.map { editingView(session, $0) } ?? session, text: $draft, staged: $staged,
                  onSend: editing == nil ? actions.send : actions.sendEdit, onStop: actions.stop,
                  onSetMode: editing == nil ? actions.setMode : { edit.wrappedValue?.controls.modeId = $0 },
@@ -50,9 +54,15 @@ struct Dock: View {
                    edit.wrappedValue?.controls = editTurnConfig(now.controls, live: session.controls, id: id, value: value,
                                                                 shapes: session.modelShapes)
                  },
-                 placeholder: editing == nil && pendingPlanReview(session.turns).flatMap(reviseOption) != nil
-                   ? t("composer.placeholder.revisePlan") : nil,
+                 placeholder: placeholder,
                  focusKey: editing?.turnIndex)
+        // Under the stand-in while the chat comes from the list or goes back to it
+        .opacity(handoff?.hidden == session.id ? 0 : 1)
+        #if os(iOS)
+        .background {
+          BarHandoffProbe(session: session, placeholder: placeholder)
+        }
+        #endif
       }
     }
     // The dock runs closer to the screen edges than the transcript (--page): a phone composer spans the width

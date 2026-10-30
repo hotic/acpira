@@ -98,6 +98,13 @@ func flattenTree(_ all: [SubagentSummary]) -> [(node: SubagentSummary, depth: In
 /// Claude workflow agent whose sidechain log the engine reads)
 func receiptOnly(_ node: SubagentSummary) -> Bool { node.visibility == .receipt && node.hasProcess != true }
 
+/// The id the built-in agent's sidekick goes by (subagents.ts SIDEKICK_ID)
+let sidekickId = "sidekick"
+
+/// isSidekick (SidekickRelay.tsx): a round of the built-in agent's sidekick, the lead's own second hand rather than a
+/// summoned helper. It draws as the relay and never counts among the session's subagents
+func isSidekick(_ node: SubagentSummary) -> Bool { node.harness?.persona == sidekickId }
+
 /// isWaiting: the child is blocked on a card of its own
 func isWaiting(_ node: SubagentSummary) -> Bool { !(node.permissions ?? []).isEmpty || node.question != nil }
 

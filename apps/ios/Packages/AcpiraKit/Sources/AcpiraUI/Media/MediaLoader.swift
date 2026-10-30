@@ -3,6 +3,7 @@ import AcpiraMarkdown
 import AcpiraModels
 import AcpiraSync
 import CoreGraphics
+import CryptoKit
 import Foundation
 import ImageIO
 
@@ -156,6 +157,27 @@ final class MediaLoader {
     cache.keep(source, image)
     return image
   }
+
+  /// Keeps the photos the phone sends under the blob names the engine will store them as. The engine's copy of the
+  /// prompt (queue entry, user turn) names that blob instead of carrying the pixels, and without this the thumbnail
+  /// fell back to its placeholder while the same bytes came back over the link: slow over a relay, and for good once
+  /// the paired fetch passed its deadline. Blob names are content hashes, so a wrong guess is never hit
+  func adopt(_ attachments: [Attachment], session: String) {
+    for case .image(let blob, let mimeType, _) in attachments {
+      guard case .inline(let base64)? = MediaSource.stored(blob, session: session),
+            let bytes = Data(base64Encoded: base64), let image = peek(.inline(base64)) else { continue }
+      cache.keep(.blob(session: session, name: Self.blobName(bytes, mimeType: mimeType)), image)
+    }
+  }
+
+  /// transcript_store.rs blob_name over attachments.rs ext_of_mime: the first 8 bytes of the content's SHA-256 in hex,
+  /// then the MIME type's extension
+  nonisolated static func blobName(_ bytes: Data, mimeType: String) -> String {
+    SHA256.hash(data: bytes).prefix(8).map { String(format: "%02x", $0) }.joined() + (blobExtensions[mimeType] ?? ".bin")
+  }
+
+  /// attachments.rs IMAGE_MIME, the first extension of each type
+  nonisolated static let blobExtensions = ["image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"]
 
   /// Loads and keeps the image; joins a load already under way for the same source
   func image(_ source: MediaSource) async throws -> DecodedImage {

@@ -13,7 +13,8 @@ struct SubagentTreePage: View {
 
   var body: some View {
     let root = model.views[session]
-    let nodes = root?.subagents ?? []
+    // Summoned helpers only: sidekick rounds live in the transcript alone, as on the web
+    let nodes = (root?.subagents ?? []).filter { !isSidekick($0) }
     ScrollView(.vertical) {
       VStack(alignment: .leading, spacing: 0) {
         // The session labels the tree; it is not a node to open

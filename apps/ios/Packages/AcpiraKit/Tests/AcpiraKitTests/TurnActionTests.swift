@@ -42,16 +42,16 @@ private func agentTurns(_ view: SessionView) -> [AgentTurn] {
 
   @Test func statsListOnlyWhatThePeerReported() {
     let turns = agentTurns(Fixtures.session("goal")!)
-    let full = turnStatGroups(turns[1], model: "GPT")
-    #expect(full.count == 3)
-    #expect(full[0].map(\.label) == [t("stats.model"), t("stats.duration"), t("stats.ttft"), t("stats.outputSpeed"),
-                                     t("stats.toolCalls"), t("stats.modelCalls")])
-    #expect(full[1].count == 5)
-    #expect(full[2] == [StatLine(label: t("stats.context"), value: "61,200 / 262,000")])
-    // The first reply reported no cache write, reasoning or context: those rows stay out, and so does the last group
-    let partial = turnStatGroups(turns[0], model: nil)
-    #expect(partial.count == 2)
-    #expect(partial[1].map(\.label) == [t("stats.input"), t("stats.output"), t("stats.cachedRead")])
+    let full = turnStatsContent(turns[1])
+    #expect(full.tiles.map(\.label) == [t("stats.duration"), t("stats.firstToken"), t("stats.outputShort")])
+    // The cache read rides on the input line as its share, not as a line of its own
+    #expect(full.tokens.map(\.label) == [t("stats.input"), t("stats.cachedWrite"), t("stats.output"), t("stats.reasoning")])
+    #expect(full.tokens[0].chip != nil)
+    #expect(full.context == StatContext(share: "23%", used: "61,200", size: "262,000"))
+    // The first reply reported no cache write, reasoning or context: those stay out
+    let partial = turnStatsContent(turns[0])
+    #expect(partial.tokens.map(\.label) == [t("stats.input"), t("stats.output")])
+    #expect(partial.context == nil)
   }
 
   @Test func theModelIsThePeersOrThePromptsSelection() {

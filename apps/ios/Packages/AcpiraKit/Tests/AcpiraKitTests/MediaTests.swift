@@ -212,6 +212,16 @@ struct MediaLoaderTests {
     #expect(MediaLoader.demo.peek(.inline("not base64 at all")) == nil)
   }
 
+  /// The engine names a blob by its content (transcript_store.rs blob_name): the fixtures' PNGs were stored that way
+  @Test func blobNamesFollowTheEngine() throws {
+    for name in ["0483733ab40fd77d.png", "40fabf5efc593792.png"] {
+      #expect(MediaLoader.blobName(try #require(Fixtures.blob(name)), mimeType: "image/png") == name)
+    }
+    let dot = try #require(Data(base64Encoded: dotPNG))
+    #expect(MediaLoader.blobName(dot, mimeType: "image/jpeg") == "c414cd0e204de974.jpg")
+    #expect(MediaLoader.blobName(dot, mimeType: "image/heic") == "c414cd0e204de974.bin")
+  }
+
   /// An animated GIF plays: every frame decoded, on an even beat where a longer frame repeats, and a zero delay plays
   /// at the browsers' 100 ms
   @Test func animatedImagesKeepTheirFrames() throws {
@@ -327,6 +337,26 @@ struct EngineMediaTests {
     #expect(wire.sent.last?.contains("a.png") == true)
     engine.push(wire, #"{"type":"imageBlob","seq":1,"blob":"ab12.png"}"#)
     #expect(await staged.value == "ab12.png")
+  }
+
+  /// The engine's copy of a sent photo names the blob it stored instead of the pixels. The thumbnail draws it on its
+  /// first pass from the photo the phone already holds: this wire has no blob route, so a fetch would leave the
+  /// placeholder for good
+  @Test func aSentPhotoKeepsItsPixelsOnceTheEngineEchoesIt() async throws {
+    let engine = EngineModelTests()
+    let (model, wire) = try await engine.connected()
+    model.open("s1")
+    model.send("s1", text: "look", attachments: [.image(blob: dotPNG, mimeType: "image/png", name: nil)])
+    engine.push(wire, #"{"type":"sessionPatch","patch":{"id":"s1","base":1,"view":{"id":"s1","agent":"fake","rev":2,"running":true},"keep":1,"turns":[{"role":"user","id":"u2","text":"look","attachments":[{"kind":"image","blob":"c414cd0e204de974.png","mimeType":"image/png"}]},{"role":"agent","blocks":[]}]}}"#)
+    try await engine.until { model.views["s1"]?.turns.count == 3 }
+    guard case .user(let echo)? = model.views["s1"]?.turns[1], case .image(let blob, _, _)? = echo.attachments?.first else {
+      Issue.record("no echoed photo")
+      return
+    }
+    let source = try #require(MediaSource.stored(blob, session: "s1"))
+    #expect(source == .blob(session: "s1", name: "c414cd0e204de974.png"))
+    let shown = try #require(model.media.peek(source))
+    #expect(shown == model.media.peek(.inline(dotPNG)))
   }
 
   /// A paired wire brings the session's blobs over its own link: the computer's HTTP route is loopback only

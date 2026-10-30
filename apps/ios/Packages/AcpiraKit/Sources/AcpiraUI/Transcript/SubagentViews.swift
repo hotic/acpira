@@ -39,7 +39,12 @@ struct SubagentGroup: View {
     if !rows.isEmpty {
       VStack(alignment: .leading, spacing: 0) {
         ForEach(rows) { node in
-          EntranceOnce(id: "subagent:\(node.id)") { SubagentRowButton(node: node) }
+          // The sidekick's round is a relay, never a subagent row; it runs its own entrances
+          if isSidekick(node) {
+            SidekickRelay(node: node)
+          } else {
+            EntranceOnce(id: "subagent:\(node.id)") { SubagentRowButton(node: node) }
+          }
         }
       }
       .accessibilityElement(children: .contain)
@@ -180,7 +185,7 @@ private struct Meta: View {
 }
 
 /// ChipTag small: the composer chip's level name on a quiet fill
-private struct EffortTag: View {
+struct EffortTag: View {
   let label: String
 
   var body: some View {
@@ -197,7 +202,7 @@ private struct EffortTag: View {
 }
 
 /// useElapsed: a running child ticks on the app's clock; a finished one reads its engine timestamps
-private struct SubagentElapsed: View {
+struct SubagentElapsed: View {
   let node: SubagentSummary
   @Environment(\.clockOffset) private var offset
 

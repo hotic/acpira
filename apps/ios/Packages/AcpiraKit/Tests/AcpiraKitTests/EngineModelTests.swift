@@ -83,19 +83,30 @@ struct EngineModelTests {
     #expect(model.hits == SessionHits(query: "needle", snippets: ["s1": "…a needle here"]))
   }
 
-  /// A list row's export: the Markdown is the engine's, so a session the phone never opened exports too; JSON, built
-  /// from a held view, is offered only where the phone has one
+  /// A list row's export: the Markdown and the plain text are the engine's, so a session the phone never opened exports
+  /// too; JSON, built from a held view, is offered only where the phone has one
   @Test func exportingAnUnopenedSessionAsksTheEngine() async throws {
     let (model, wire) = try await connected()
     #expect(model.holdsView("s1") && !model.holdsView("s9"))
-    model.export("s9", json: false)
+    model.export("s9", format: .markdown)
     try await until { wire.types.last == "webviewMessage:sessionMarkdown" }
     #expect(wire.sent.last?.contains(#""id":"s9""#) == true)
+    // Markdown asks as before the format existed, so an older engine reads it the same
+    #expect(wire.sent.last?.contains(#""format""#) == false)
     push(wire, #"{"type":"sessionMarkdown","seq":\#(model.askSeq),"markdown":"Notes"}"#)
     try await until { model.shared != nil }
     let file = try #require(model.shared)
     #expect(file.url.pathExtension == "md")
     #expect(try String(contentsOf: file.url, encoding: .utf8) == "Notes")
+
+    model.shared = nil
+    model.export("s9", format: .text)
+    try await until { wire.sent.last?.contains(#""format":"text""#) == true }
+    push(wire, #"{"type":"sessionMarkdown","seq":\#(model.askSeq),"markdown":"Plain"}"#)
+    try await until { model.shared != nil }
+    let text = try #require(model.shared)
+    #expect(text.url.pathExtension == "txt")
+    #expect(try String(contentsOf: text.url, encoding: .utf8) == "Plain")
   }
 
   @Test func attachmentsGoAsDrafts() throws {
@@ -145,6 +156,96 @@ struct EngineModelTests {
     #expect(model.path == [.chat("s2")])
     try await until { wire.types.last == "webviewMessage:send" }
     #expect(wire.sent.last?.contains(#""sessionId":"s2""#) == true)
+  }
+
+  /// The list must acknowledge a send before the remote CLI starts, and stale startup pushes must not undo it.
+  @Test func aFirstPromptImmediatelyTitlesAndSpinsTheList() async throws {
+    let (model, wire) = try await connected()
+    model.path = [.new(agent: nil, cwd: nil)]
+    model.newSession(agent: "fake", cwd: "/w", controls: SessionControls(), text: "First message\nMore detail", attachments: [])
+    try await until { wire.types.last == "webviewMessage:newSession" }
+    let untitled = t("session.untitled")
+    push(wire, #"{"type":"session","session":{"id":"s2","agent":"fake","title":"\#(untitled)","cwd":"/w","status":"starting","rev":1}}"#)
+    try await until { model.path.last == .chat("s2") }
+    model.path = []
+    #expect(model.summaries.first { $0.id == "s2" }?.title == "First message")
+    #expect(model.summaries.first { $0.id == "s2" }?.state == .working)
+    // The engine has queued the prompt, but its list still has no title or working state.
+    push(wire, #"{"type":"session","session":{"id":"s2","agent":"fake","title":"\#(untitled)","cwd":"/w","status":"starting","rev":2,"queued":[{"id":"q1","text":"First message\nMore detail"}]}}"#)
+    try await until { model.views["s2"]?.rev == 2 }
+    #expect(model.outgoing["s2"] == nil)
+    push(wire, #"{"type":"sessions","sessions":[{"id":"s2","agent":"fake","title":"\#(untitled)","cwd":"/w","updatedAt":"later"}]}"#)
+    try await until { model.summaries.first?.updatedAt == "later" }
+    #expect(model.summaries.first?.title == "First message")
+    #expect(model.summaries.first?.state == .working)
+    push(wire, #"{"type":"sessions","sessions":[{"id":"s2","agent":"fake","title":"Generated title","cwd":"/w","updatedAt":"done","state":"working"}]}"#)
+    try await until { model.summaries.first?.title == "Generated title" }
+    #expect(model.pendingSummaries["s2"] == nil)
+    push(wire, #"{"type":"sessions","sessions":[{"id":"s2","agent":"fake","title":"Generated title","cwd":"/w","updatedAt":"done","state":"unread"}]}"#)
+    try await until { model.summaries.first?.state == .unread }
+    #expect(model.summaries.first?.state == .unread)
+  }
+
+  @Test func aSendKeepsAnExistingTitleAndStartupFailureStopsTheSpinner() async throws {
+    let (model, wire) = try await connected()
+    model.send("s1", text: "next", attachments: [])
+    #expect(model.summaries.first?.title == "T")
+    #expect(model.summaries.first?.state == .working)
+    push(wire, #"{"type":"session","session":{"id":"s1","agent":"fake","title":"T","status":"error","rev":2}}"#)
+    try await until { model.views["s1"]?.rev == 2 }
+    #expect(model.outgoing["s1"] == nil)
+    #expect(model.pendingSummaries["s1"] == nil)
+    #expect(model.summaries.first?.state == .error)
+  }
+
+  @Test func oldTerminalListStatesDoNotAcknowledgeANewSend() async throws {
+    let (model, wire) = try await connected()
+    model.send("s1", text: "next", attachments: [])
+    for state in ["unread", "error", "background"] {
+      push(wire, #"{"type":"sessions","sessions":[{"id":"s1","title":"T","agent":"fake","cwd":"/w","updatedAt":"2026-10-28T00:00:00.000Z","state":"\#(state)"}]}"#)
+      // A following push is a barrier: it runs after the list packet on the same event stream.
+      push(wire, #"{"type":"agents","agents":[{"id":"\#(state)","name":"Fake"}]}"#)
+      try await until { model.agents.first?.id == state }
+      #expect(model.summaries.first?.state == .working)
+      #expect(model.pendingSummaries["s1"]?.working == true)
+    }
+    push(wire, #"{"type":"sessions","sessions":[{"id":"s1","title":"T","agent":"fake","cwd":"/w","updatedAt":"2026-10-28T00:01:00.000Z","state":"unread"}]}"#)
+    try await until { model.pendingSummaries["s1"] == nil }
+    #expect(model.summaries.first?.state == .unread)
+  }
+
+  @Test func aFreshInitSettlesAnOffscreenSendWithoutMarkingItRead() async throws {
+    let (before, lost) = try await connected()
+    before.send("s1", text: "next", attachments: [])
+    try await until { lost.types.last == "webviewMessage:send" }
+    // Delivery has already been acknowledged; nothing needs replaying on the next wire.
+    push(lost, #"{"type":"session","session":{"id":"s1","agent":"fake","title":"T","rev":2,"status":"starting","queued":[{"id":"q1","text":"next"}]}}"#)
+    try await until { before.outgoing["s1"] == nil }
+    before.path = []
+    let wire = FakeTransport()
+    let model = AppModel(link: EngineLink(transport: wire, language: "en"), options: LaunchOptions.current(["app"]))
+    model.resume(from: before)
+    #expect(model.replay.isEmpty)
+    wire.feed.yield(EngineClientTests.helloOk)
+    push(wire, #"{"type":"init","state":{"host":"sidebar","agents":[],"accounts":[],"hidden":{},"sessions":[{"id":"s1","title":"T","agent":"fake","cwd":"/w","updatedAt":"2026-10-28T00:01:00.000Z"}],"settings":{},"locale":"en","home":"/h","cwd":"/w"}}"#)
+    try await until { model.synced }
+    #expect(model.summaries.first?.state == nil)
+    #expect(model.pendingSummaries["s1"] == nil)
+    #expect(model.watching == nil)
+    #expect(!wire.types.contains("webviewMessage:selectSession"))
+  }
+
+  @Test func aFreshInitKeepsFeedbackForASendStillWaitingToReplay() async throws {
+    let (before, _) = try await connected()
+    before.send("s1", text: "next", attachments: [])
+    before.replay = [.send(sessionId: "s1", text: "next")]
+    let wire = FakeTransport()
+    let model = AppModel(link: EngineLink(transport: wire, language: "en"), options: LaunchOptions.current(["app"]))
+    model.resume(from: before)
+    var summary = try #require(before.summaries.first)
+    summary.state = nil
+    summary.updatedAt = "2026-10-28T00:01:00.000Z"
+    #expect(model.pendingSummary(summary, fresh: true).state == .working)
   }
 
   @Test func transcriptActionsPostTheEnginesActions() async throws {
@@ -287,5 +388,134 @@ struct EngineModelTests {
     push(wire, #"{"type":"init","state":{"host":"sidebar","agents":[],"accounts":[],"hidden":{},"sessions":[],"settings":{},"locale":"en","home":"/h","cwd":"/w"}}"#)
     try await until { model.synced }
     #expect(model.current)
+  }
+
+  /// The steer cards that end the thread's last turn
+  func steers(_ view: SessionView) -> [SteerBlock] {
+    guard case .agent(let turn)? = view.turns.last else { return [] }
+    return turn.blocks.compactMap { if case .steer(let s) = $0 { s } else { nil } }
+  }
+
+  /// A steer reads as joined the moment it is sent: its card ends the running turn while it crosses the link, the
+  /// engine's queue entry for it stays hidden while the engine steers it in, and the engine's steer block replaces it
+  @Test func aSteerShowsInTheRunningTurnUntilTheEnginesCopyLands() async throws {
+    let (model, wire) = try await connected()
+    model.settings?.steerQueued = true
+    push(wire, #"{"type":"sessionPatch","patch":{"id":"s1","base":1,"view":{"id":"s1","agent":"fake","rev":2,"running":true,"canSteer":true},"keep":1,"turns":[{"role":"agent","blocks":[{"type":"text","markdown":"working"}]}]}}"#)
+    try await until { model.views["s1"]?.running == true }
+    model.send("s1", text: "also this", attachments: [])
+    try await until { wire.types.last == "webviewMessage:send" }
+    #expect(wire.sent.last?.contains(#""steer":true"#) == true)
+    var held = heldPrompt(try #require(model.views["s1"]), outgoing: model.outgoing["s1"] ?? [])
+    #expect(steers(held).map(\.text) == ["also this"])
+    #expect(held.turns.count == 2)
+    // The engine queued it and is steering it in: still one card and no queued row
+    push(wire, #"{"type":"sessionPatch","patch":{"id":"s1","base":2,"view":{"id":"s1","agent":"fake","rev":3,"running":true,"canSteer":true,"queued":[{"id":"e1","text":"also this","sending":true}]},"keep":2,"turns":[]}}"#)
+    try await until { model.views["s1"]?.rev == 3 }
+    held = heldPrompt(try #require(model.views["s1"]), outgoing: model.outgoing["s1"] ?? [])
+    #expect(steers(held).map(\.text) == ["also this"])
+    #expect(held.queued == nil)
+    // The steer block landed: the engine's copy alone
+    push(wire, #"{"type":"sessionPatch","patch":{"id":"s1","base":3,"view":{"id":"s1","agent":"fake","rev":4,"running":true,"canSteer":true},"keep":1,"turns":[{"role":"agent","blocks":[{"type":"text","markdown":"working"},{"type":"steer","id":"e1","text":"also this"}]}]}}"#)
+    try await until { model.views["s1"]?.rev == 4 }
+    #expect(model.outgoing["s1"] == nil)
+    #expect(steers(heldPrompt(try #require(model.views["s1"]), outgoing: [])).map(\.id) == ["e1"])
+  }
+
+  /// A steer the engine shows as anything else gives way to it: the queued row it stays when the steer cannot land, or
+  /// the user turn when the running turn ended first (until then it reads as that sent prompt)
+  @Test func aSteerThatDoesNotLandGivesWayToTheEnginesState() throws {
+    let running = try JSONDecoder().decode(SessionView.self, from: Data(#"{"id":"s1","agent":"fake","rev":2,"running":true,"canSteer":true,"turns":[{"role":"user","id":"u1","text":"hi"},{"role":"agent","blocks":[{"type":"steer","id":"old","text":"earlier"}]}]}"#.utf8))
+    let sent = Outgoing(text: "also this", attachments: [], after: running, steer: true)
+    // An earlier steer block is not this one's
+    #expect(![sent].pending(in: running).isEmpty)
+    #expect(steers(heldPrompt(running, outgoing: [sent])).map(\.text) == ["earlier", "also this"])
+    var queued = running
+    queued.queued = [QueuedPrompt(id: "e1", text: "also this")]
+    #expect([sent].pending(in: queued).isEmpty)
+    #expect(heldPrompt(queued, outgoing: [sent]) == queued)
+    var ended = running
+    ended.running = false
+    let shown = heldPrompt(ended, outgoing: [sent])
+    #expect(shown.running && shown.turns.count == 4)
+    if case .user(let prompt) = shown.turns[2] { #expect(prompt.text == "also this") } else { Issue.record("no sent prompt") }
+    ended.turns.append(.user(UserTurn(text: "also this")))
+    #expect([sent].pending(in: ended).isEmpty)
+  }
+
+  /// Two prompts sent in a row: the first one's copy settles only the first, and the second waits as a queued row
+  /// (where the engine queues it behind the running turn) until its own copy replaces it
+  @Test func theFirstOfTwoPromptsSentInARowDoesNotSettleTheSecond() async throws {
+    let (model, wire) = try await connected()
+    model.send("s1", text: "first", attachments: [])
+    model.send("s1", text: "second", attachments: [])
+    try await until { wire.types.filter { $0 == "webviewMessage:send" }.count == 2 }
+    var held = heldPrompt(try #require(model.views["s1"]), outgoing: model.outgoing["s1"] ?? [])
+    if case .user(let prompt) = held.turns[1] { #expect(prompt.text == "first") } else { Issue.record("no sent prompt") }
+    #expect(held.queued?.map(\.text) == ["second"])
+    // The first one runs; the second has not reached the engine yet
+    push(wire, #"{"type":"sessionPatch","patch":{"id":"s1","base":1,"view":{"id":"s1","agent":"fake","rev":2,"running":true},"keep":1,"turns":[{"role":"user","id":"r1","text":"first"},{"role":"agent","blocks":[]}]}}"#)
+    try await until { model.views["s1"]?.rev == 2 }
+    #expect(model.outgoing["s1"]?.map(\.text) == ["second"])
+    held = heldPrompt(try #require(model.views["s1"]), outgoing: model.outgoing["s1"] ?? [])
+    #expect(held.turns.count == 3)
+    #expect(held.queued?.map(\.text) == ["second"])
+    #expect(held.queued?.first?.sending == true)
+    // The engine queued it: its row alone
+    push(wire, #"{"type":"sessionPatch","patch":{"id":"s1","base":2,"view":{"id":"s1","agent":"fake","rev":3,"running":true,"queued":[{"id":"e2","text":"second"}]},"keep":3,"turns":[]}}"#)
+    try await until { model.views["s1"]?.rev == 3 }
+    #expect(model.outgoing["s1"] == nil)
+    #expect(heldPrompt(try #require(model.views["s1"]), outgoing: []).queued?.map(\.id) == ["e2"])
+  }
+
+  /// A running turn the phone steers twice: returns the model with both steers sent and nothing back yet
+  func steeredTwice() async throws -> (AppModel, FakeTransport) {
+    let (model, wire) = try await connected()
+    model.settings?.steerQueued = true
+    push(wire, #"{"type":"sessionPatch","patch":{"id":"s1","base":1,"view":{"id":"s1","agent":"fake","rev":2,"running":true,"canSteer":true},"keep":1,"turns":[{"role":"agent","blocks":[{"type":"text","markdown":"working"}]}]}}"#)
+    try await until { model.views["s1"]?.running == true }
+    model.send("s1", text: "first", attachments: [])
+    model.send("s1", text: "second", attachments: [])
+    try await until { wire.types.filter { $0 == "webviewMessage:send" }.count == 2 }
+    #expect(steers(heldPrompt(try #require(model.views["s1"]), outgoing: model.outgoing["s1"] ?? [])).map(\.text) == ["first", "second"])
+    return (model, wire)
+  }
+
+  /// The first steer on the wire and the second left queued behind it (another steer is on the wire): each shows once,
+  /// the first as its card and the second as the engine's queued row
+  @Test func aSteerOnTheWireKeepsItsCardWhenTheNextOneQueues() async throws {
+    let (model, wire) = try await steeredTwice()
+    push(wire, #"{"type":"sessionPatch","patch":{"id":"s1","base":2,"view":{"id":"s1","agent":"fake","rev":3,"running":true,"canSteer":true,"queued":[{"id":"e1","text":"first","sending":true},{"id":"e2","text":"second"}]},"keep":2,"turns":[]}}"#)
+    try await until { model.views["s1"]?.rev == 3 }
+    #expect(model.outgoing["s1"]?.map(\.text) == ["first"])
+    var held = heldPrompt(try #require(model.views["s1"]), outgoing: model.outgoing["s1"] ?? [])
+    #expect(steers(held).map(\.text) == ["first"])
+    #expect(held.queued?.map(\.id) == ["e2"])
+    push(wire, #"{"type":"sessionPatch","patch":{"id":"s1","base":3,"view":{"id":"s1","agent":"fake","rev":4,"running":true,"canSteer":true,"queued":[{"id":"e2","text":"second"}]},"keep":1,"turns":[{"role":"agent","blocks":[{"type":"text","markdown":"working"},{"type":"steer","id":"e1","text":"first"}]}]}}"#)
+    try await until { model.views["s1"]?.rev == 4 }
+    #expect(model.outgoing["s1"] == nil)
+    held = heldPrompt(try #require(model.views["s1"]), outgoing: [])
+    #expect(steers(held).map(\.id) == ["e1"])
+    #expect(held.queued?.map(\.id) == ["e2"])
+  }
+
+  /// The first steer lands before the second reaches the engine: the second keeps its card until its own block lands
+  @Test func theFirstSteerLandingDoesNotSettleTheSecond() async throws {
+    let (model, wire) = try await steeredTwice()
+    push(wire, #"{"type":"sessionPatch","patch":{"id":"s1","base":2,"view":{"id":"s1","agent":"fake","rev":3,"running":true,"canSteer":true},"keep":1,"turns":[{"role":"agent","blocks":[{"type":"text","markdown":"working"},{"type":"steer","id":"e1","text":"first"}]}]}}"#)
+    try await until { model.views["s1"]?.rev == 3 }
+    #expect(model.outgoing["s1"]?.map(\.text) == ["second"])
+    var held = heldPrompt(try #require(model.views["s1"]), outgoing: model.outgoing["s1"] ?? [])
+    #expect(steers(held).map(\.text) == ["first", "second"])
+    #expect(steers(held).first?.id == "e1")
+    // Its own copy on the wire is still the card
+    push(wire, #"{"type":"sessionPatch","patch":{"id":"s1","base":3,"view":{"id":"s1","agent":"fake","rev":4,"running":true,"canSteer":true,"queued":[{"id":"e2","text":"second","sending":true}]},"keep":2,"turns":[]}}"#)
+    try await until { model.views["s1"]?.rev == 4 }
+    held = heldPrompt(try #require(model.views["s1"]), outgoing: model.outgoing["s1"] ?? [])
+    #expect(steers(held).map(\.text) == ["first", "second"])
+    #expect(held.queued == nil)
+    push(wire, #"{"type":"sessionPatch","patch":{"id":"s1","base":4,"view":{"id":"s1","agent":"fake","rev":5,"running":true,"canSteer":true},"keep":1,"turns":[{"role":"agent","blocks":[{"type":"text","markdown":"working"},{"type":"steer","id":"e1","text":"first"},{"type":"steer","id":"e2","text":"second"}]}]}}"#)
+    try await until { model.views["s1"]?.rev == 5 }
+    #expect(model.outgoing["s1"] == nil)
   }
 }

@@ -508,6 +508,27 @@ public struct NoticeBlock: Codable, Hashable, Sendable {
   public var title: String
   public var details: String?
   public var actions: [FailureAction]?
+  /// Set on the row that logs one run of provider retries; until this app draws it, the title and the latest error
+  /// in `details` stand for it
+  public var retry: RetryLog?
+}
+
+/// One run of provider retries: every failed attempt with the provider's own error text
+public struct RetryLog: Codable, Hashable, Sendable {
+  /// A tool status: in_progress, completed, failed, cancelled
+  public var status: String
+  public var max: Int?
+  /// When the next attempt starts (epoch ms)
+  public var nextAt: Double?
+  public var reconnect: Bool?
+  public var attempts: [RetryAttempt]
+}
+
+public struct RetryAttempt: Codable, Hashable, Sendable {
+  /// Epoch ms
+  public var at: Double
+  public var attempt: Int?
+  public var text: String
 }
 
 public struct SteerBlock: Codable, Hashable, Sendable {
@@ -807,6 +828,8 @@ public struct SessionSummary: Codable, Hashable, Sendable, Identifiable {
   /// When the session started (ISO), for the list's "created" order; absent on older index entries
   public var createdAt: String?
   public var pinned: Bool?
+  /// Left out of the list until its archived filter is on
+  public var archived: Bool?
   public var category: String?
   public var state: SessionState?
   /// Only beside `.background`: a turn ended there that nobody has looked at yet
@@ -980,6 +1003,8 @@ public struct SubagentSummary: Codable, Hashable, Sendable, Identifiable {
   public var question: QuestionBlock?
   /// Set when Acpira itself runs the child in another CLI
   public var harness: SubagentHarness?
+  /// A sidekick round's latest foreground tool rows, without their output (the relay's window)
+  public var steps: [ToolCallBlock]?
 
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1007,6 +1032,8 @@ public struct SubagentSummary: Codable, Hashable, Sendable, Identifiable {
     permissions = try c.decodeIfPresent([PermissionBlock].self, forKey: .permissions)
     question = try c.decodeIfPresent(QuestionBlock.self, forKey: .question)
     harness = try c.decodeIfPresent(SubagentHarness.self, forKey: .harness)
+    // Only the relay's window reads them: a step this build cannot read leaves the node itself intact
+    steps = (try? c.decodeIfPresent([ToolCallBlock].self, forKey: .steps)) ?? nil
   }
 }
 

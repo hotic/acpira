@@ -64,6 +64,8 @@ final class AppModel {
   /// Each agent's config controls as the engine last reported them (`controls`): the settings' model lists
   var agentControls: [AgentId: [ConfigControl]] = [:]
   var summaries: [SessionSummary]
+  /// List feedback stays until the list itself acknowledges it, even after a queued copy settles `outgoing`.
+  var pendingSummaries: [String: PendingSummary] = [:]
   var views: [String: SessionView]
   /// Prompts sent to the engine that their session does not show yet, by session (Outgoing.swift)
   var outgoing: [String: [Outgoing]] = [:]
@@ -383,7 +385,7 @@ final class AppModel {
   }
 
   /// The first line of the first prompt, as the webview titles a session before the agent names it
-  private func title(from text: String) -> String {
+  func title(from text: String) -> String {
     let line = text.split(whereSeparator: \.isNewline).first.map(String.init)?.trimmingCharacters(in: .whitespaces) ?? ""
     guard !line.isEmpty else { return t("session.untitled") }
     return line.count > 40 ? String(line.prefix(40)) + "…" : line
@@ -400,10 +402,15 @@ final class AppModel {
     }
     if link != nil {
       let drafts = Self.drafts(attachments)
-      post(.send(sessionId: id, text: trimmed, attachments: drafts.isEmpty ? nil : drafts, steer: steering(id) ? true : nil))
-      // Reads as sent until the engine shows it; behind a running turn the engine's queue row already says where it is
-      if let view = views[id], !view.running {
-        outgoing[id, default: []].append(Outgoing(text: trimmed, attachments: attachments, after: view))
+      // The engine's copy names the stored blob: its thumbnail keeps the photo already on the phone
+      media.adopt(attachments, session: id)
+      let steer = steering(id)
+      post(.send(sessionId: id, text: trimmed, attachments: drafts.isEmpty ? nil : drafts, steer: steer ? true : nil))
+      // Reads as sent until the engine shows it, a steer as already in the running turn; queued behind a running turn
+      // without steering, the engine's queue row already says where it is
+      if let view = views[id], !view.running || steer {
+        outgoing[id, default: []].append(Outgoing(text: trimmed, attachments: attachments, after: view, steer: steer))
+        if !view.running { sendingSummary(view, text: trimmed) }
       }
       return
     }
@@ -812,6 +819,30 @@ final class AppModel {
     show(pinned ? t("mobile.pinned") : t("mobile.unpinned"), icon: pinned ? .pin : .pinOff)
   }
 
+  /// Archived sessions leave the list (its view menu's "archived" shows them); the toast's undo brings one back
+  func setArchived(_ id: String, _ archived: Bool) {
+    if !post(.archiveSession(id: id, archived: archived)), let at = summaries.firstIndex(where: { $0.id == id }) {
+      summaries[at].archived = archived ? true : nil
+    }
+    guard archived else { return }
+    let title = views[id]?.title ?? summaries.first { $0.id == id }?.title ?? ""
+    show(t("session.archived", ["title": title]), icon: .archive,
+         action: ToastAction(label: t("common.undo")) { [weak self] in self?.setArchived(id, false) })
+  }
+
+  /// The row menu's "mark as unread / read"
+  func setUnread(_ id: String, _ unread: Bool) {
+    if post(.setSessionUnread(id: id, unread: unread)) { return }
+    guard let at = summaries.firstIndex(where: { $0.id == id }) else { return }
+    if summaries[at].state == .background {
+      summaries[at].unread = unread ? true : nil
+    } else if unread, summaries[at].state == nil {
+      summaries[at].state = .unread
+    } else if !unread, summaries[at].state == .unread {
+      summaries[at].state = nil
+    }
+  }
+
   func rename(_ id: String, to title: String) {
     let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return }
@@ -866,19 +897,20 @@ final class AppModel {
     show(t("mobile.forked"), icon: .gitBranch)
   }
 
-  /// Writes the export to a temporary file and hands it to the share sheet. The Markdown is `sessionMarkdown`'s (with an
-  /// engine, the desktop's own export, so a list row's session the phone never opened exports too); the JSON is the view
-  /// the phone holds
-  func export(_ id: String, json: Bool) {
+  /// Writes the export to a temporary file and hands it to the share sheet. The Markdown and the plain text are
+  /// `sessionMarkdown`'s (with an engine, the desktop's own exports, so a list row's session the phone never opened
+  /// exports too); the JSON is the view the phone holds
+  func export(_ id: String, format: ExportFormat) {
     Task {
       let title = views[id]?.title ?? summaries.first { $0.id == id }?.title ?? ""
-      let body = json ? views[id].map(SessionExport.json) : await sessionMarkdown(id)
+      let body = format == .json ? views[id].map(SessionExport.json) : await sessionMarkdown(id, format: format)
       guard let body, !body.isEmpty else {
         show(t("mobile.engineNeeded"), icon: .triangleAlert)
         return
       }
+      let ext = switch format { case .json: "json"; case .text: "txt"; default: "md" }
       let url = FileManager.default.temporaryDirectory
-        .appendingPathComponent("\(SessionExport.fileName(title)).\(json ? "json" : "md")")
+        .appendingPathComponent("\(SessionExport.fileName(title)).\(ext)")
       do {
         try Data(body.utf8).write(to: url, options: .atomic)
         shared = ExportFile(url: url)
