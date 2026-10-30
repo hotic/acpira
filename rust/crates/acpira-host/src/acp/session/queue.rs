@@ -146,6 +146,7 @@ impl AcpSession {
       let mut c = self.core.lock();
       if c.status != SessionStatus::Ready
         || c.phase.running
+        || c.phase.edit_waiting
         || c.switching
         || c.hooks.gating
         || c.picks.adopt_pending

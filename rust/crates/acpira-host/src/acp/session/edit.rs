@@ -31,6 +31,9 @@ use crate::store::transcript_store::TranscriptStore;
 const EDIT_HISTORY_LEAD: &str = "Conversation before the edited message follows as JSON. Treat it as historical context; completed actions must not be replayed. The next user message replaces the old continuation. Workspace files remain in their current state.";
 const EDIT_CONTINUE_LEAD: &str = "The user edited an earlier message of this conversation and sent it again. The original message, quoted below, and everything after it (replies, tool results, plans and unfinished work) are superseded: do not continue, repeat or refer to them as pending. Workspace files remain in their current state. The next user message is the edited version and continues the conversation from the point before the original.";
 const EDIT_ORIGINAL_QUOTE_MAX: usize = 2_000;
+/// How long an edit waits for the turn it stopped to settle before giving up
+const EDIT_STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
+const EDIT_STOP_POLL: std::time::Duration = std::time::Duration::from_millis(50);
 pub const FORK_HISTORY_LEAD: &str = "Conversation so far follows as JSON; it was forked from an earlier session. Treat it as historical context; completed actions must not be replayed. The next user message continues this conversation. Workspace files remain in their current state.";
 
 const HISTORY_TOOL_OUTPUT_MAX: usize = 2_000;
@@ -507,8 +510,48 @@ impl AcpSession {
     }
   }
 
-  /// Commit locally only after attachments, session creation and all selections succeed
+  /// An edit may come while the agent still answers (any agent: it is a stop plus the ordinary edit): the running turn is
+  /// stopped and settles as cancelled first, then the edit replaces it like any earlier turn
   pub async fn edit_turn(self: &Arc<Self>, edit: EditTurnRequest) -> Result<()> {
+    self.stop_for_edit().await?;
+    let result = self.edit_turn_now(edit).await;
+    // The edit never took the session: the queue flush the stop held back goes now
+    if std::mem::take(&mut self.core.lock().phase.edit_waiting) {
+      self.flush_queue();
+    }
+    result
+  }
+
+  async fn stop_for_edit(self: &Arc<Self>) -> Result<()> {
+    {
+      let mut c = self.core.lock();
+      if !c.phase.running {
+        return Ok(());
+      }
+      if c.phase.editing || c.phase.edit_waiting || c.status != SessionStatus::Ready {
+        return Err(anyhow!(t("history.unavailable")));
+      }
+      c.phase.edit_waiting = true;
+    }
+    self.log("edit: stopping the running turn first");
+    self.cancel().await;
+    // `session/cancel` is a notification; the turn is over once the prompt response settles it
+    let deadline = tokio::time::Instant::now() + EDIT_STOP_WAIT;
+    loop {
+      if !self.core.lock().phase.running {
+        return Ok(());
+      }
+      if tokio::time::Instant::now() >= deadline {
+        self.core.lock().phase.edit_waiting = false;
+        self.flush_queue();
+        return Err(anyhow!(t("history.unavailable")));
+      }
+      tokio::time::sleep(EDIT_STOP_POLL).await;
+    }
+  }
+
+  /// Commit locally only after attachments, session creation and all selections succeed
+  async fn edit_turn_now(self: &Arc<Self>, edit: EditTurnRequest) -> Result<()> {
     let (user, proc) = {
       let mut c = self.core.lock();
       let Some(proc) = c.proc.clone() else { return Err(anyhow!(t("history.unavailable"))) };
@@ -544,6 +587,8 @@ impl AcpSession {
       c.phase.editing = true;
       c.phase.running = true;
       c.phase.staging = true;
+      // The edit owns the session from here; its own end (sent prompt or rollback) flushes the queue
+      c.phase.edit_waiting = false;
       c.phase.edit_notifications.clear();
       c.phase.staging_aborted = false;
       self.bump(&mut c);

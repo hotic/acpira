@@ -144,6 +144,9 @@ pub(crate) struct Phase {
   pub staging: bool,
   pub staging_aborted: bool,
   pub editing: bool,
+  /// An edit sent while a turn ran stopped that turn and waits for it to settle: the queue holds until the edit takes the
+  /// session (or gives up), else a queued prompt would take the freed turn first
+  pub edit_waiting: bool,
   pub edit_notifications: Vec<Value>,
 }
 

@@ -21,7 +21,9 @@ export function updateMainComposer(update: Update, focus = false) {
 
 export function useComposerDraft(draftKey?: string, editText?: string, main?: { focus: () => void }) {
   const parked = draftKey ? DRAFTS.get(draftKey) : undefined;
-  const [text, setText] = useState(editText ?? parked?.text ?? '');
+  // An inline history editor parks under its own key too, so what was typed there outlives a click elsewhere and wins over the
+  // original message text on the next open
+  const [text, setText] = useState(parked?.text ?? editText ?? '');
   const [drafts, setDrafts] = useState<Draft[]>(parked?.drafts ?? []);
   useEffect(() => {
     if (!draftKey) return;
@@ -37,6 +39,11 @@ export function useComposerDraft(draftKey?: string, editText?: string, main?: { 
     return () => { if (sink === own) sink = undefined; };
   }, [isMain, focus]);
   return { text, setText, drafts, setDrafts };
+}
+
+// A history edit that was sent or cancelled leaves nothing parked behind
+export function dropDraft(draftKey: string) {
+  DRAFTS.delete(draftKey);
 }
 
 // The desktop start page starts its empty session over when the agent or project changes: what was typed there moves to the

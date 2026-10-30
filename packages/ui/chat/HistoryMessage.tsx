@@ -6,6 +6,7 @@ import type { ModelShapes } from '@acpira/shared/modelShapes';
 import { useAppearance } from '../appearance';
 import { Composer, type ComposerProps } from './Composer';
 import { EditAttachments } from './Attachments';
+import { dropDraft } from './useComposerDraft';
 import { UserMessage } from './Turns';
 import { cn } from '../ui/cn';
 import { cssTimeVar } from '../ui/cssTime';
@@ -84,13 +85,23 @@ export const HistoryMessage = memo(function HistoryMessage(p: {
   );
 });
 
+// An unsent history edit closed by a click elsewhere keeps its picks here (its text and new attachments park in the composer's
+// draft store under the same key) and reopens with them; only Cancel / Escape or a send drops them. Webview memory only
+const EDIT_PICKS = new Map<string, { controls: ComposerProps['controls']; retained: number[] }>();
+
 function HistoryEditor({ turn, turnIndex, blobUrl, context: c, onClose }: {
   turn: UserTurn; turnIndex: number; blobUrl?: (blob: string) => string; context: HistoryContextValue; onClose: () => void;
 }) {
   // Provided together with HistoryContext by the shell; the editor is the only reader
   const composer = useContext(HistoryComposerContext)!;
-  const [controls, setControls] = useState(() => openTurnControls(composer.controls, turn.settings, c.shapes));
-  const [retained, setRetained] = useState(() => (turn.attachments ?? []).map((_, i) => i));
+  const [key] = useState(() => `edit:${c.sessionId}:${turn.id ?? `${turnIndex}:${turn.text}`}`);
+  const [controls, setControls] = useState(() => EDIT_PICKS.get(key)?.controls ?? openTurnControls(composer.controls, turn.settings, c.shapes));
+  const [retained, setRetained] = useState(() => EDIT_PICKS.get(key)?.retained ?? (turn.attachments ?? []).map((_, i) => i));
+  useEffect(() => { EDIT_PICKS.set(key, { controls, retained }); }, [key, controls, retained]);
+  const discard = () => {
+    EDIT_PICKS.delete(key);
+    dropDraft(key);
+  };
   const [turnCount] = useState(composer.turnCount ?? composer.turns?.length ?? 0);
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
@@ -111,16 +122,18 @@ function HistoryEditor({ turn, turnIndex, blobUrl, context: c, onClose }: {
     try {
       await c.edit({ sessionId: c.sessionId, turnIndex, turnCount, originalText: turn.text, turnId: turn.id,
         text, attachments, retainedAttachments: retained, settings: captureTurnSettings(controls) });
+      discard();
       onClose();
     } finally { setPending(false); }
   };
   return <div className="flex min-w-0 flex-col gap-gap" onPointerDownCapture={() => { insidePointer.current = true; }}>
-    <Composer {...composer} running={false} disabled={pending || composer.disabled || composer.running}
-      controls={controls} usage={undefined} draftKey={undefined}
+    {/* A running turn does not lock the editor: sending stops that turn first (engine `edit_turn`) */}
+    <Composer {...composer} running={false} disabled={pending || composer.disabled}
+      controls={controls} usage={undefined} draftKey={key}
       onNotice={setError}
       onSetMode={modeId => setControls(c => ({ ...c, modeId }))}
       onSetConfig={(id, value) => setControls(cur => editTurnConfig(cur, composer.controls, id, value, c.shapes))}
-      edit={{ text: turn.text, hasAttachments: retained.length > 0, onCancel: onClose, dismissOnOutside: true,
+      edit={{ text: turn.text, hasAttachments: retained.length > 0, onCancel: () => { discard(); onClose(); }, dismissOnOutside: true,
         attachments: <EditAttachments attachments={turn.attachments ?? []} retained={retained} blobUrl={blobUrl} disabled={pending} onRemove={i => setRetained(r => r.filter(n => n !== i))} />,
       }}
       onSend={send}
