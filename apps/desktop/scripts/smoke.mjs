@@ -306,11 +306,16 @@ async function main() {
     // Both optional alerts default off. Background windows still need the icon mark, and multiple attention edges in
     // one session count once (the native badge and bounce stay suppressed in this background run).
     const pending = async () => (await page.call({ op: 'attention' })).sort();
-    const expected = [a, b].sort();
-    await waitUntil('quiet attention for both completed sessions', async () => JSON.stringify(await pending()) === JSON.stringify(expected), 10_000);
-    await page.call({ op: 'platform', request: { method: 'notify', sessionId: a, title: 'Done again', body: '', open: 'Open', sound: false, system: false } });
+    const notifyA = () => page.call({ op: 'platform', request: { method: 'notify', sessionId: a, title: 'Done again', body: '', open: 'Open', sound: false, system: false } });
+    // A focused window watches the session it shows, so its turns mark nothing. Background runs keep the focus away on
+    // macOS, but a Windows runner hands it to the app: there only A, which is not on screen, is marked (by a notify)
+    const focused = (await page.call({ op: 'windows' })).some(w => w.focused);
+    const expected = focused ? [a] : [a, b].sort();
+    if (focused) await notifyA();
+    await waitUntil(focused ? 'quiet attention for the hidden session only' : 'quiet attention for both completed sessions', async () => JSON.stringify(await pending()) === JSON.stringify(expected), 10_000);
+    await notifyA();
     if (JSON.stringify(await pending()) !== JSON.stringify(expected)) fail('repeated attention counted one session twice');
-    say('completed sessions mark the app icon with sound and banners off; repeated attention is deduplicated');
+    say(`${focused ? 'a session the focused window does not show marks' : 'completed sessions mark'} the app icon with sound and banners off; repeated attention is deduplicated`);
     await page.eval(`window.__acpiraApi.postMessage({ type: 'deleteSession', id: ${JSON.stringify(b)} })`);
     await waitUntil('a deleted session to leave the icon count', async () => JSON.stringify(await pending()) === JSON.stringify([a]), 10_000);
     await page.eval(`window.__acpiraApi.postMessage({ type: 'restoreSession', id: ${JSON.stringify(b)} })`);
