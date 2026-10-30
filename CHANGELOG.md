@@ -11,6 +11,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [2.0.1] - 2026-10-31
+
+### Added
+
+- **Archive sessions and mark them unread.** Archived sessions leave the list unless the view filter asks for them. A session marked unread from its menu keeps the mark until it is opened again.
+- **Team mode for the built-in agent.** Only in Team mode does the agent summon other agents on its own. Switching modes keeps the prompt cache.
+- **Per-session approval for the built-in agent.** The approval level is chosen in the mode chip's menu and kept with the session.
+- **An automatic fast model.** When no fast model is set, the built-in agent titles sessions with the cheapest catalogue model that has a key. Setting it to off is the only way to turn titles off.
+- **Retries on one row.** Claude Code's API retries are logged as attempts on a single row that settles as recovered, failed or cancelled.
+- **Skill loads show as skill rows** that name the skill and its description, instead of a file read.
+- **The sidekick's round draws as a relay** tinted with the model vendor's colour, kept out of the subagent tree and counts, with its own usage.
+- **Prompt recall in the composer.** The arrow keys recall the prompts, steers and queued messages typed in the shown session, never a CLI's global history.
+- **Dropped folders attach.** A folder dragged in from the system is sent for the agent to read, instead of as an empty file.
+- **Desktop Dock badge.** The Dock icon counts sessions that finished, failed or are waiting, and clears once a window shows them. The completion chime has its own setting, on by default, separate from system notifications.
+- **TypeScript plugins.** Plugin `.ts` and `.tsx` files are compiled when a version is frozen. `plugin.json` can declare npm dependencies, plugins can run on schedules, and a command can show as a composer toolbar button. Removed plugins' leftover files appear on the storage page.
+- **Remote access on Linux and Windows.** Every engine build now carries the paired-device gateway, which runs as a login service on macOS, Linux and Windows. Paired devices can open terminals of their own. Settings say why remote access cannot run on a system and when the system refused to keep it awake.
+- Strings for plugins, Team mode, retries, archive and the composer in every locale.
+
+### Changed
+
+- The Windows desktop download is now `Acpira-<version>-windows-x86_64-portable.zip`, so it no longer collides with the IntelliJ plugin's zip name.
+- The GitHub Release carries only the VSIX packages and the per-platform engine zips for SSH remote hosts. The IntelliJ plugin installs from the JetBrains Marketplace.
+- The turn stats card is quieter and names the model family alone.
+- A running command holds its outcome slot, and the thread keeps room for the connecting row, so the transcript no longer shifts when either appears.
+- The welcome tour moves on with a click anywhere on the veil. The intro and consent pages are shorter, and the intro mark's light draws as one continuous stroke.
+- A renamed session keeps its name for good, and retrying a turn uses the current composer controls instead of the failed turn's.
+
+### Fixed
+
+- Plain path links with spaces or percent-encoded non-ASCII characters open again.
+- A pinyin IME commit with spaces between syllables lands without them.
+- Turn input counts the whole prompt, cache included.
+- On Windows, installing an agent waits for the installer's exit code.
+- Docked desktop sidebars animate to their fitted width, and the window chrome lines up with the traffic lights.
+
 ## [2.0.0] - 2026-10-30
 
 ### Added

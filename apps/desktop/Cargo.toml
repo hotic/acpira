@@ -1,7 +1,7 @@
 [package]
 name = "acpira-desktop-tauri"
 description = "The Acpira desktop app: the chat webview and the Rust engine outside any IDE, in a Tauri shell"
-version = "2.0.0"
+version = "2.0.1"
 edition = "2024"
 license = "MIT"
 publish = false
