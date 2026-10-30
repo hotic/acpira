@@ -62,14 +62,16 @@ impl Stand {
   /// A path the model wrote, as the host knows it: under the stand-in it moves to the host folder, a relative one is
   /// read against the host folder, anything else is the host's already
   pub fn host_path(&self, p: &str) -> String {
-    let local = self.local.to_string_lossy();
     let base = self.host.trim_end_matches('/');
-    match p.strip_prefix(local.as_ref()) {
-      Some("") => self.host.clone(),
-      Some(rest) if rest.starts_with('/') => format!("{base}{rest}"),
-      _ if p.starts_with('/') => p.to_owned(),
-      _ => format!("{base}/{}", p.trim_start_matches("./")),
+    // By components, not by string: on Windows the stand-in and the paths the CLI writes use either separator
+    if let Ok(rest) = Path::new(p).strip_prefix(&self.local) {
+      let parts: Vec<_> = rest.components().map(|c| c.as_os_str().to_string_lossy()).collect();
+      return if parts.is_empty() { self.host.clone() } else { format!("{base}/{}", parts.join("/")) };
     }
+    if p.starts_with('/') || Path::new(p).is_absolute() {
+      return p.to_owned();
+    }
+    format!("{base}/{}", p.trim_start_matches("./"))
   }
 
   /// Whether `p` names the stand-in or something in it
