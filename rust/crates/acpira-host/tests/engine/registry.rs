@@ -330,7 +330,9 @@ fn antigravity_is_a_native_release_installed_by_this_executable() {
   let install = v(r.install("antigravity"));
   assert!(install["command"].as_str().unwrap().ends_with(" install-agent antigravity"), "{install}");
   assert_eq!(install["docs"], "https://antigravity.google/docs/ide/extensions");
-  assert!(AgentRegistry::with_os(&json!({}), Os::Windows).install("antigravity").unwrap().command.unwrap().starts_with("& '"));
+  // The desktop exe is a GUI program: PowerShell waits for it and takes its exit code only when its output is piped
+  let windows = AgentRegistry::with_os(&json!({}), Os::Windows).install("antigravity").unwrap().command.unwrap();
+  assert!(windows.starts_with("& '") && windows.ends_with(" install-agent antigravity | Out-Host"), "{windows}");
   // A custom entry under the same id is an ordinary command again
   assert!(AgentRegistry::new(&json!({ "antigravity": { "command": "/x/agy" } })).get("antigravity").unwrap().release.is_none());
 }

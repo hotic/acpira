@@ -507,10 +507,17 @@ pub fn extract_zip(archive: &Path, dest: &Path) -> Result<usize> {
   Ok(files)
 }
 
-/// The command line that runs the installer in a host terminal: this executable's own `install-agent`
+/// The command line that runs the installer in a host terminal: this executable's own `install-agent`. On Windows the
+/// output is piped: the desktop app's single exe is a GUI-subsystem program, which PowerShell's `&` neither waits for
+/// nor takes an exit code from unless its output feeds a pipeline. Unpiped, the in-app install reported success at once
+/// and its job object then killed the download midway
 pub fn install_command(agent: &str, windows: bool) -> Option<String> {
   let exe = std::env::current_exe().ok()?.to_string_lossy().into_owned();
-  Some(if windows { format!("& '{}' install-agent {agent}", exe.replace('\'', "''")) } else { format!("'{}' install-agent {agent}", exe.replace('\'', "'\\''")) })
+  Some(if windows {
+    format!("& '{}' install-agent {agent} | Out-Host", exe.replace('\'', "''"))
+  } else {
+    format!("'{}' install-agent {agent}", exe.replace('\'', "'\\''"))
+  })
 }
 
 #[cfg(test)]
