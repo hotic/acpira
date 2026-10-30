@@ -419,6 +419,9 @@ public enum Metrics {
   /// that most glyphs leave empty, so a centred line read about this much high in the bar, in Chinese and English alike
   public static let fieldInkDrop: CGFloat = 2
   public static let barIcon: CGFloat = 22
+  /// The model chip's × and ‹ in place of the model's mark: at `barIcon` the thin × came out a size smaller than the
+  /// mark it stood in for and than the `+` beside it
+  public static let gooBack: CGFloat = 26
   /// The list a bean opens: a rounded panel beside the bean column, rows of the composer's control height
   public static let gooPanelW: CGFloat = 232
   public static let gooRow: CGFloat = 40
