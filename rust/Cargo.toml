@@ -77,7 +77,7 @@ uuid = { version = "1.24", features = ["v4"] }
 # The desktop app's update packages: compression, and binary deltas with the installed file as reference prefix
 zstd = { version = "0.13", default-features = false }
 junction = "1.2"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_Registry", "Win32_System_Environment", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_Registry", "Win32_System_Environment", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Power", "Win32_System_SystemServices", "Win32_System_RemoteDesktop", "Win32_System_SystemInformation", "Win32_UI_Input_KeyboardAndMouse", "Win32_NetworkManagement_Dns"] }
 
 # A panic aborts the process in every optimized build (the dist engine 5 MB smaller on darwin-arm64, the Windows desktop
 # exe 16 MB, 2026-10-26): run-time code returns errors instead of panicking (the panic lints in [workspace.lints]), the

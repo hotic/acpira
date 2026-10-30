@@ -47,6 +47,8 @@ pub struct Gateway {
   engine: EngineSpec,
   /// `gateway.json` `keepAwake`, read again on `reload`
   keep_awake: std::sync::atomic::AtomicBool,
+  /// Why keeping the computer awake failed, while it does
+  awake_error: parking_lot::Mutex<Option<String>>,
   window: parking_lot::Mutex<Option<OpenWindow>>,
   live: parking_lot::Mutex<HashMap<String, Live>>,
   changed: tokio::sync::watch::Sender<u64>,
@@ -68,6 +70,10 @@ impl Gateway {
     let paths = Paths::new(&o.home);
     let cfg = Config::load(&paths.config);
     let relays = o.relays.unwrap_or(cfg.relays.clone());
+    crate::store::private(&paths.dir);
+    if o.home.join("apns").is_dir() {
+      crate::store::private(&o.home.join("apns"));
+    }
     let secret = identity::load_or_create(&paths.identity)?;
     let ep = endpoint::bind(Options { secret, relays: relays.clone(), alpns: vec![ALPN_PAIR.to_vec(), ALPN_LINK.to_vec()], bind: o.bind }).await?;
     let name = display_name(&cfg).into();
@@ -80,6 +86,7 @@ impl Gateway {
       test_bind: o.bind.is_some(),
       engine: o.engine,
       keep_awake: cfg.keep_awake.into(),
+      awake_error: Default::default(),
       window: Default::default(),
       live: Default::default(),
       changed: tokio::sync::watch::channel(0).0,
@@ -106,6 +113,16 @@ impl Gateway {
 
   pub fn name(&self) -> String {
     self.name.lock().clone()
+  }
+
+  /// The keep-awake hold's failure, or none; the status changes only when it does
+  pub fn set_awake_error(&self, e: Option<&str>) {
+    let mut cur = self.awake_error.lock();
+    if cur.as_deref() != e {
+      *cur = e.map(str::to_owned);
+      drop(cur);
+      self.bump();
+    }
   }
 
   /// Read `gateway.json` again. Keep-awake and the name apply at once (an open pairing code shows the new name; paired
@@ -149,6 +166,7 @@ impl Gateway {
       relay_connected: endpoint::relay_connected(&self.ep),
       devices,
       pairing,
+      awake_error: self.awake_error.lock().clone(),
     }
   }
 
@@ -187,7 +205,8 @@ impl Gateway {
   /// LAN addresses for the advertisement: a phone on this network dials one of them
   fn lan_addrs(&self) -> Vec<SocketAddr> {
     let (_, addrs) = endpoint::reachable_at(&self.ep);
-    addrs.into_iter().filter(|a| acpira_net::path::classify_ip(a.ip()) == PathKind::Lan).collect()
+    let bridges = bridge_ips();
+    addrs.into_iter().filter(|a| acpira_net::path::classify_ip(a.ip()) == PathKind::Lan && !bridges.contains(&a.ip())).collect()
   }
 
   pub fn cancel_pairing(&self) {
@@ -384,22 +403,75 @@ async fn relay_watch(g: Arc<Gateway>) {
   }
 }
 
-/// The computer's name as the user set it (macOS: Sharing settings), else the host name
+/// Addresses on Linux's container and VM bridges (Docker, Podman, libvirt, LXC): private, yet no phone reaches the computer
+/// through one, and each takes room in the TXT record's 255-byte `a=` item, which would cut the real address off
+#[cfg(target_os = "linux")]
+fn bridge_ips() -> Vec<std::net::IpAddr> {
+  const BRIDGES: &[&str] = &["docker", "br-", "veth", "virbr", "podman", "cni", "flannel", "lxc", "lxd"];
+  let all = if_addrs::get_if_addrs().unwrap_or_default();
+  all.into_iter().filter(|i| BRIDGES.iter().any(|b| i.name.starts_with(b))).map(|i| i.ip()).collect()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn bridge_ips() -> Vec<std::net::IpAddr> {
+  Vec::new()
+}
+
+/// The computer's name as the user set it (macOS: Sharing settings; Linux: the pretty host name), else the host name
 pub fn computer_name() -> String {
   #[cfg(target_os = "macos")]
-  if let Ok(o) = std::process::Command::new("/usr/sbin/scutil").args(["--get", "ComputerName"]).output()
-    && o.status.success()
-  {
-    let n = String::from_utf8_lossy(&o.stdout).trim().to_owned();
-    if !n.is_empty() {
-      return n;
-    }
+  if let Some(n) = command_line("/usr/sbin/scutil", &["--get", "ComputerName"]) {
+    return n;
   }
+  #[cfg(target_os = "linux")]
+  if let Some(n) = std::fs::read_to_string("/etc/machine-info").ok().as_deref().and_then(pretty_hostname) {
+    return n;
+  }
+  host_name().map(|n| n.trim_end_matches(".local").to_owned()).filter(|n| !n.is_empty()).unwrap_or_else(|| "Computer".into())
+}
+
+/// `PRETTY_HOSTNAME` of systemd's machine-info (what `hostnamectl --pretty` sets; shell quoting allowed)
+#[cfg_attr(not(target_os = "linux"), allow(dead_code, reason = "read on Linux; tested everywhere"))]
+fn pretty_hostname(machine_info: &str) -> Option<String> {
+  let v = machine_info.lines().find_map(|l| l.trim().strip_prefix("PRETTY_HOSTNAME="))?.trim();
+  let v = v.strip_prefix('"').and_then(|v| v.strip_suffix('"')).or_else(|| v.strip_prefix('\'').and_then(|v| v.strip_suffix('\''))).unwrap_or(v);
+  let v = v.replace("\\\"", "\"").replace("\\\\", "\\").trim().to_owned();
+  (!v.is_empty()).then_some(v)
+}
+
+/// A command's first line of output, when it succeeds with one
+#[cfg(target_os = "macos")]
+fn command_line(program: &str, args: &[&str]) -> Option<String> {
+  let o = std::process::Command::new(program).args(args).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output().ok()?;
+  let n = String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").trim().to_owned();
+  (o.status.success() && !n.is_empty()).then_some(n)
+}
+
+#[cfg(unix)]
+pub(crate) fn host_name() -> Option<String> {
   let mut buf = [0u8; 256];
   // SAFETY: the buffer is valid for its length; gethostname NUL-terminates within it on success
   let ok = unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } == 0;
-  let n = if ok { String::from_utf8_lossy(&buf[..buf.iter().position(|b| *b == 0).unwrap_or(0)]).into_owned() } else { String::new() };
-  if n.is_empty() { "Computer".into() } else { n.trim_end_matches(".local").to_owned() }
+  ok.then(|| String::from_utf8_lossy(&buf[..buf.iter().position(|b| *b == 0).unwrap_or(0)]).into_owned())
+}
+
+/// The host name as the user typed it (its DNS label, case kept), not the upper-cased NetBIOS name
+#[cfg(windows)]
+pub(crate) fn host_name() -> Option<String> {
+  use windows_sys::Win32::System::SystemInformation::{ComputerNamePhysicalDnsHostname, GetComputerNameExW};
+  let mut len = 0u32;
+  // SAFETY: the first call only measures (it fails with ERROR_MORE_DATA and sets `len`)
+  unsafe { GetComputerNameExW(ComputerNamePhysicalDnsHostname, std::ptr::null_mut(), &mut len) };
+  let mut buf = vec![0u16; len as usize + 1];
+  len = buf.len() as u32;
+  // SAFETY: the buffer holds `len` characters, as `len` says
+  (unsafe { GetComputerNameExW(ComputerNamePhysicalDnsHostname, buf.as_mut_ptr(), &mut len) } != 0)
+    .then(|| String::from_utf16_lossy(buf.get(..len as usize).unwrap_or_default()))
+}
+
+#[cfg(not(any(unix, windows)))]
+pub(crate) fn host_name() -> Option<String> {
+  None
 }
 
 fn pairing_status(link: String, code: &str, expires_in: Duration) -> PairingStatus {
@@ -431,4 +503,17 @@ pub fn qr_rows(text: &str) -> Vec<String> {
   let Ok(code) = qrcode::QrCode::new(text.as_bytes()) else { return Vec::new() };
   let w = code.width();
   code.to_colors().chunks(w).map(|row| row.iter().map(|c| if *c == qrcode::Color::Dark { '1' } else { '0' }).collect()).collect()
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn the_pretty_host_name_reads_as_hostnamectl_writes_it() {
+    assert_eq!(pretty_hostname("PRETTY_HOSTNAME=\"Spark's \\\"PC\\\"\"\nCHASSIS=desktop\n").as_deref(), Some("Spark's \"PC\""));
+    assert_eq!(pretty_hostname("PRETTY_HOSTNAME=asgard\n").as_deref(), Some("asgard"));
+    assert_eq!(pretty_hostname("PRETTY_HOSTNAME=\"\"\n"), None);
+    assert_eq!(pretty_hostname("CHASSIS=laptop\n"), None);
+  }
 }

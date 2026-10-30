@@ -233,6 +233,9 @@ pub struct GatewayStatus {
   pub devices: Vec<DeviceStatus>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub pairing: Option<PairingStatus>,
+  /// Keeping the computer awake was asked for and could not be had: why (the system's refusal, a missing tool)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub awake_error: Option<String>,
 }
 
 /// A request on the gateway's control socket (`<ACPIRA_HOME>/run/gateway.sock`): one JSON line each, answered by one
@@ -300,8 +303,9 @@ pub struct PushTarget {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteAccessView {
-  /// This engine can turn remote access on here; when not, `unavailable` says why (`platform`: not macOS yet;
-  /// `component`: no gateway binary beside the engine)
+  /// This engine can turn remote access on here; when not, `unavailable` says why (`component`: no gateway binary beside
+  /// the engine; `service`: no login service to run it from, such as a Linux user manager that ends with an SSH
+  /// session; `platform`: a system the gateway does not run on)
   pub available: bool,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub unavailable: Option<String>,

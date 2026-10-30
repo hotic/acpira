@@ -15,7 +15,7 @@ pub struct Paths {
   pub identity: PathBuf,
   pub devices: PathBuf,
   pub config: PathBuf,
-  /// The control socket, beside the engines' sockets
+  /// The control channel: a socket beside the engines' sockets, or this user's pipe on Windows
   pub socket: PathBuf,
 }
 
@@ -26,10 +26,24 @@ impl Paths {
       identity: dir.join("identity.key"),
       devices: dir.join("devices.json"),
       config: dir.join("gateway.json"),
-      socket: home.join("run").join("gateway.sock"),
+      socket: acpira_shared::local_ipc::gateway_endpoint(home),
       dir,
     }
   }
+}
+
+/// A directory of secrets (the gateway's key, the APNs key): on Windows its ACL admits this user alone, inherited by what
+/// it holds, as mode 700 does on Unix (the key files themselves are 600 there). A data root outside the user's profile
+/// may otherwise let other local users read it
+pub fn private(dir: &Path) {
+  let _ = std::fs::create_dir_all(dir);
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+  }
+  #[cfg(windows)]
+  let _ = acpira_shared::win_pipe::owner_only_dir(dir);
 }
 
 pub fn now_ms() -> u64 {

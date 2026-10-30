@@ -1,8 +1,8 @@
-//! The gateway against the real engine (acpira-host's persistent server, in process, on a Unix socket) and the fake ACP
-//! agent, with a phone played by an endpoint on loopback: pairing, the session list, a turn, a resend with the same
-//! clientId, a refused message, a blob, and revocation. No model calls. Skipped without the repository's node_modules
+//! The gateway against the real engine (acpira-host's persistent server, in process, on a Unix socket or a named pipe)
+//! and the fake ACP agent, with a phone played by an endpoint on loopback: pairing, the session list, a turn, a resend
+//! with the same clientId, a refused message, a blob, and revocation. No model calls. Skipped without the repository's
+//! node_modules
 
-#![cfg(unix)]
 #![allow(clippy::unwrap_used, clippy::panic, clippy::string_slice, reason = "test code")]
 
 use std::path::{Path, PathBuf};
@@ -19,13 +19,30 @@ use acpira_net::pair::{self, DeviceKind, PairReply};
 use acpira_net::ticket::PairTicket;
 use acpira_net::SecretKey;
 use serde_json::{Value, json};
+use acpira_shared::local_ipc::Listener;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixListener;
 use tokio::sync::mpsc;
+
+/// A short private directory: a Unix socket path must fit sun_path, which a deep temporary directory may not
+fn short_tmp() -> tempfile::TempDir {
+  let base = if cfg!(unix) { PathBuf::from("/tmp") } else { std::env::temp_dir() };
+  tempfile::Builder::new().prefix("acgw").tempdir_in(base).unwrap_or_else(|_| tempfile::tempdir().unwrap())
+}
+
+/// Where the in-process engine listens: a socket in `dir`, or a pipe of this test's own on Windows
+fn engine_socket(dir: &Path) -> PathBuf {
+  if cfg!(windows) {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static N: AtomicU32 = AtomicU32::new(0);
+    return PathBuf::from(format!(r"\\.\pipe\acpira-gateway-test-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
+  }
+  dir.join("e.sock")
+}
 
 /// test/fake-agent.ts as one ES module node runs directly (acpira-desktop tests/engine.rs builds it the same way)
 fn fake_agent() -> Option<PathBuf> {
-  let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().ok()?;
+  // Not a `\\?\` path on Windows: node and esbuild cannot open one
+  let root = acpira_host::platform::paths::canonical_for_cli(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")).ok()?;
   let esbuild = root.join("node_modules/esbuild/bin/esbuild");
   let source = root.join("test/fake-agent.ts");
   if !esbuild.is_file() || !source.is_file() {
@@ -46,15 +63,16 @@ fn fake_agent() -> Option<PathBuf> {
     .args(["--bundle", "--platform=node", "--format=esm", "--log-level=warning"])
     .arg(format!("--outfile={}", out.display()))
     .status()
-    .ok()?
-    .success();
-  ok.then_some(out)
+    .is_ok_and(|s| s.success());
+  // esbuild is there: a failed bundle is a failure, not a skip
+  assert!(ok, "esbuild could not bundle {}", source.display());
+  Some(out)
 }
 
-async fn serve_engine(engine: Arc<Engine>, listener: UnixListener) {
+async fn serve_engine(engine: Arc<Engine>, mut listener: Listener) {
   loop {
-    let Ok((stream, _)) = listener.accept().await else { return };
-    let (read, mut write) = stream.into_split();
+    let Ok(stream) = listener.accept().await else { return };
+    let (read, mut write) = tokio::io::split(stream);
     let (line_tx, line_rx) = mpsc::unbounded_channel::<String>();
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();
     tokio::spawn(async move {
@@ -157,14 +175,14 @@ fn a_phone_pairs_drives_a_session_and_is_revoked() {
   rt.block_on(async move {
     let home = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
-    let run = tempfile::Builder::new().prefix("acgw").tempdir_in("/tmp").unwrap();
+    let run = short_tmp();
     // The agents and the default every shell shares (written by the shells in real life)
     std::fs::write(home.path().join("agents.json"), json!({ "fake": { "name": "Fake", "command": "node", "args": [fake.to_string_lossy()] } }).to_string()).unwrap();
     std::fs::write(home.path().join("settings.json"), json!({ "defaultAgent": "fake" }).to_string()).unwrap();
 
-    let socket = run.path().join("e.sock");
+    let socket = engine_socket(run.path());
     let engine = Engine::persistent(ServerOpts { version: "test".into(), home: home.path().to_path_buf(), log: Arc::new(|_: &str| {}), ignore_client_agents: false, bridge_exe: None });
-    let acceptor = tokio::spawn(serve_engine(engine.clone(), UnixListener::bind(&socket).unwrap()));
+    let acceptor = tokio::spawn(serve_engine(engine.clone(), Listener::bind(&socket).await.unwrap()));
 
     let g = Gateway::start(Opts {
       home: home.path().to_path_buf(),
@@ -276,7 +294,7 @@ fn the_settings_page_follows_the_gateway() {
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
   rt.block_on(async move {
     // Short: the control socket lives under it
-    let home = tempfile::Builder::new().prefix("acgw").tempdir_in("/tmp").unwrap();
+    let home = short_tmp();
     let user_home = tempfile::tempdir().unwrap();
     let g = Gateway::start(Opts {
       home: home.path().to_path_buf(),
@@ -306,7 +324,8 @@ fn the_settings_page_follows_the_gateway() {
     };
 
     let v = next("the gateway's report", &|v| v.gateway.is_some()).await;
-    assert!(!v.available && v.unavailable.as_deref() == Some(if cfg!(target_os = "macos") { "component" } else { "platform" }));
+    // No engine binary given, so no gateway beside it
+    assert!(!v.available && v.unavailable.as_deref() == Some("component"));
     assert!(!v.enabled);
     assert_eq!(v.gateway.as_ref().unwrap().id, g.endpoint().id().to_string());
 
@@ -425,6 +444,93 @@ fn launch_agent_round_trip() {
     assert!(!root.path().join("devices/bin").read_dir().unwrap().any(|_| true), "copies removed");
     let loaded = std::process::Command::new("/bin/launchctl").args(["print", &target]).output().unwrap();
     assert!(!loaded.status.success(), "unloaded");
+    ra.dispose();
+  });
+}
+
+/// The switch for real on Linux and Windows: the engine copies the binaries, installs the login service (a systemd user
+/// unit, or a logon task) and starts it, the gateway answers, a gateway killed outright is started again by its service
+/// (systemd's restart, the task's supervisor), a relay change restarts it, and turning it off removes the service and
+/// the copies. The service is named after the temporary data root and sits in this user's real service directory, since
+/// that is where the service manager looks. By hand, after a build of `acpira`:
+/// `cargo test -p acpira-gateway --test e2e -- --ignored login_service`
+#[cfg(any(target_os = "linux", windows))]
+#[test]
+#[ignore = "installs a real login service"]
+fn login_service_round_trip() {
+  use acpira_host::devices::RemoteAccess;
+  use acpira_shared::devices::RemoteAccessOp as O;
+  let gateway = PathBuf::from(env!("CARGO_BIN_EXE_acpira-gateway"));
+  let exe = gateway.with_file_name(if cfg!(windows) { "acpira.exe" } else { "acpira" });
+  assert!(exe.is_file(), "build the engine first ({})", exe.display());
+  let user_home = PathBuf::from(std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).unwrap());
+  let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+  rt.block_on(async move {
+    let root = short_tmp();
+    std::fs::create_dir_all(root.path().join("devices")).unwrap();
+    std::fs::write(root.path().join("devices/gateway.json"), json!({ "relays": { "mode": "off" } }).to_string()).unwrap();
+    let ra = RemoteAccess::new(root.path(), &user_home, Some(exe), Arc::new(|l: &str| eprintln!("engine: {l}")));
+    // Removed however the test ends
+    struct Off(Arc<RemoteAccess>, tokio::runtime::Handle);
+    impl Drop for Off {
+      fn drop(&mut self) {
+        let ra = self.0.clone();
+        let _ = std::thread::spawn({
+          let h = self.1.clone();
+          move || h.block_on(async move { ra.op(acpira_shared::devices::RemoteAccessOp::Disable).await })
+        })
+        .join();
+      }
+    }
+    let _off = Off(ra.clone(), tokio::runtime::Handle::current());
+    let (tx, mut views) = mpsc::unbounded_channel();
+    ra.subscribe(Arc::new(move |v| {
+      let _ = tx.send(v.clone());
+    }));
+    let mut next = async |what: &str, pred: &dyn Fn(&acpira_shared::devices::RemoteAccessView) -> bool| {
+      let deadline = Instant::now() + Duration::from_secs(40);
+      loop {
+        let v = tokio::time::timeout_at(deadline.into(), views.recv()).await.unwrap_or_else(|_| panic!("no view: {what}")).unwrap();
+        if pred(&v) {
+          return v;
+        }
+      }
+    };
+    let v = ra.view();
+    assert!(v.available, "{v:?}");
+
+    ra.op(O::Enable).await.unwrap();
+    assert!(ra.view().gateway.is_some(), "running once the op returns");
+    let first = next("the service's gateway", &|v| v.gateway.is_some()).await;
+    assert!(first.enabled);
+    let first = first.gateway.unwrap();
+    let t = Instant::now();
+    ra.op(O::Enable).await.unwrap();
+    assert!(t.elapsed() < Duration::from_secs(5), "turning it on again leaves the running gateway alone");
+
+    // Killed outright: its service starts it again (after its 10 s throttle)
+    let home = root.path().to_string_lossy().into_owned();
+    if cfg!(windows) {
+      let script = format!(
+        "Get-CimInstance Win32_Process | Where-Object {{ $_.CommandLine -like '*run --home*{home}*' -and $_.CommandLine -notlike '*--supervise*' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}"
+      );
+      assert!(std::process::Command::new("powershell").args(["-NoProfile", "-Command", &script]).status().unwrap().success());
+    } else {
+      assert!(std::process::Command::new("pkill").args(["-9", "-f", &format!("acpira-gateway run --home {home}")]).status().unwrap().success());
+    }
+    next("gone after the kill", &|v| v.gateway.is_none()).await;
+    let back = next("started again by its service", &|v| v.gateway.is_some()).await.gateway.unwrap();
+    assert_eq!(back.id, first.id);
+
+    // A relay change restarts it: same identity
+    ra.op(O::SetRelays { relays: Relays::Off }).await.unwrap();
+    let again = next("back after the relay change", &|v| v.gateway.is_some()).await.gateway.unwrap();
+    assert_eq!(again.id, first.id);
+
+    ra.op(O::Disable).await.unwrap();
+    let v = ra.view();
+    assert!(!v.enabled && v.gateway.is_none());
+    assert!(!root.path().join("devices/bin").read_dir().is_ok_and(|mut d| d.next().is_some()), "copies removed");
     ra.dispose();
   });
 }

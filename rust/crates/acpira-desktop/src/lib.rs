@@ -5,6 +5,7 @@
 pub mod browser;
 pub mod client;
 pub mod confine;
+pub mod console;
 pub mod context_api;
 pub mod dirs;
 pub mod editors;
