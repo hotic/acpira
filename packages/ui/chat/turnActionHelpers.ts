@@ -1,5 +1,6 @@
 import type { AgentId, AgentInfo, AgentTurn, SessionControls, TurnSettings, TurnUsage } from '@acpira/shared/transcript';
 import { launchable } from '@acpira/shared/agentOrder';
+import { FUSION, parseModelName } from '@acpira/shared/models';
 import { commandDuration } from './commandDuration';
 import { splitCodexBlocks } from './folding';
 
@@ -17,7 +18,11 @@ export function modelLabel(usage: TurnUsage | undefined, settings: TurnSettings 
   const control = controls.options.find(c => c.category === 'model');
   const id = usage?.model ?? (control ? settings?.config[control.id] : undefined);
   if (!id) return undefined;
-  return control?.options.find(o => o.id === id)?.name ?? id;
+  const name = control?.options.find(o => o.id === id)?.name;
+  if (!name) return id;
+  // The family alone: effort, Thinking, Fast and 1M are the prompt's settings, not the model; a Fusion pair keeps its name
+  const { family } = parseModelName(name);
+  return family === FUSION ? name : family;
 }
 
 // Time from sending the prompt to the first streamed block (TTFT). Only live-streamed turns carry both timestamps;

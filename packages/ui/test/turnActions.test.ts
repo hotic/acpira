@@ -47,6 +47,13 @@ describe('modelLabel', () => {
     expect(modelLabel({ model: 'm-2' }, { config: { model: 'm-1' } }, CONTROLS)).toBe('Model Two');
   });
 
+  it('names the family alone, without effort, Thinking, Fast or 1M', () => {
+    const controls: SessionControls = { modes: [], options: [{ id: 'model', name: 'Model', category: 'model',
+      options: [{ id: 'a', name: 'GPT-6 Astra High Thinking Fast' }, { id: 'f', name: 'Fusion (GPT-6 Astra High + GPT-5.6 Luna High)' }] }] };
+    expect(modelLabel({ model: 'a' }, undefined, controls)).toBe('GPT-6 Astra');
+    expect(modelLabel({ model: 'f' }, undefined, controls)).toBe('Fusion (GPT-6 Astra High + GPT-5.6 Luna High)');
+  });
+
   it('shows an unknown id as-is', () => {
     expect(modelLabel({ model: 'grok-4.6' }, undefined, CONTROLS)).toBe('grok-4.6');
     expect(modelLabel(undefined, { config: { model: 'nightly-build' } }, CONTROLS)).toBe('nightly-build');
