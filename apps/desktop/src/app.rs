@@ -2,7 +2,7 @@
 //! number of chat windows (each an engine view), browser panel windows (no view; this side holds their preview leases),
 //! and the system side of the IDE actions; see docs/dev/desktop.md
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, OnceLock};
@@ -197,8 +197,13 @@ pub struct App {
   window_seq: AtomicU64,
   pub background: bool,
   notifier: OnceLock<Option<crate::os::Notifier>>,
-  /// Shell-local attention, not the engine's shared unread marks: a covered window can still show the session
-  pub(crate) attention: Mutex<HashSet<String>>,
+  /// Shell-local attention, not the engine's shared unread marks: a covered window can still show the session. The flag
+  /// says a window of this app showed the session while it was pending: the engine took that as seen, so only a focused
+  /// look clears it, where the others also clear once the engine's list shows them read elsewhere
+  pub(crate) attention: Mutex<HashMap<String, bool>>,
+  /// Sessions a window of this app stopped showing, and when: a turn's end is announced only after it settles, so the
+  /// window the engine counted as a viewer at that end may have moved on by the time the notification lands
+  pub(crate) left: Mutex<HashMap<String, std::time::Instant>>,
   updater: OnceLock<Arc<Updater>>,
   /// The updater's phase as the menu and the toast last saw it
   update_phase: Mutex<Phase>,
@@ -277,7 +282,8 @@ impl App {
       window_seq: AtomicU64::new(0),
       background,
       notifier: OnceLock::new(),
-      attention: Mutex::new(HashSet::new()),
+      attention: Mutex::new(HashMap::new()),
+      left: Mutex::new(HashMap::new()),
       updater: OnceLock::new(),
       update_phase: Mutex::new(Phase::Idle),
       page_menu: Mutex::new(None),

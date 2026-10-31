@@ -316,12 +316,20 @@ impl ShellView for ChatWindow {
       #[derive(serde::Deserialize)]
       struct Entry {
         id: String,
+        #[serde(default)]
+        state: Option<acpira_shared::transcript::SummaryState>,
+        // Sent as null when unset
+        #[serde(default)]
+        unread: Option<bool>,
       }
       #[derive(serde::Deserialize)]
       struct List {
         sessions: Vec<Entry>,
       }
       if let Ok(list) = serde_json::from_str::<List>(m.raw.get()) {
+        // Listed with nothing left for the user: read or answered somewhere else since it was counted
+        let settled: HashSet<String> =
+          list.sessions.iter().filter(|s| !acpira_desktop::platform::still_wants_user(s.state, s.unread == Some(true))).map(|s| s.id.clone()).collect();
         let ids: HashSet<_> = list.sessions.into_iter().map(|s| s.id).collect();
         let removed: HashSet<_> = {
           let mut listed = self.listed.lock();
@@ -331,10 +339,16 @@ impl ShellView for ChatWindow {
         };
         let _ = app.handle.run_on_main_thread(move || {
           let a = crate::app::app();
+          // A session one of these windows shows reads as seen to the engine even with the app in the background; the
+          // badge keeps it until a window is focused on it (acknowledge_attention)
+          let shown: HashSet<String> = a.windows().iter().filter_map(|w| w.session_id()).collect();
           let changed = {
             let mut pending = a.attention.lock();
             let before = pending.len();
-            pending.retain(|id| !removed.contains(id));
+            pending.retain(|id, here| {
+              *here |= shown.contains(id);
+              !removed.contains(id) && (*here || !settled.contains(id))
+            });
             before != pending.len()
           };
           if changed {
@@ -344,6 +358,9 @@ impl ShellView for ChatWindow {
       }
     }
     if self.session_id() != before {
+      if let Some(left) = before {
+        app.left_session(left);
+      }
       app.schedule_save();
       // Engine pushes arrive off the main thread; AppKit and focus checks stay on the event loop.
       let label = self.label.clone();
