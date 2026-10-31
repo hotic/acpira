@@ -123,10 +123,12 @@ extension AppModel {
       view.turns[node.turnIndex] = .agent(t)
       view.running = running
       view.subagents = original.subagents?.compactMap { $0.id == node.id ? round : $0 }
+      liveSessions.insert(session)
       views[session] = view
     }
     show(turn.blocks[..<at], running: true, nil)
     try? await Task.sleep(for: .seconds(1.2))
+    EntranceLedger.clear(prefix: "\(session):\(node.turnIndex)\u{0}")
     var round = node
     round.state = .running
     round.announcedAt = ms()

@@ -114,7 +114,7 @@ private struct InspectorThread: View {
     let result = receipt || node.visibility == .nested || (loaded && empty && node.state != .running) ? node.result : nil
     ScrollView(.vertical) {
       VStack(alignment: .leading, spacing: 0) {
-        ThreadContent(session: view)
+        ThreadContent(session: view, catchingUp: !loaded, liveStream: loaded)
           .environment(\.holdScroll, hold)
           .environment(\.scrollGesture, gesture)
         if receipt || loading || result != nil || node.state == .disconnected {

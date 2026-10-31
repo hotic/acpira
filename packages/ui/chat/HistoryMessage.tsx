@@ -10,8 +10,10 @@ import { dropDraft } from './useComposerDraft';
 import { UserMessage } from './Turns';
 import { cn } from '../ui/cn';
 import { cssTimeVar } from '../ui/cssTime';
-import { Row, RowLabel, RowTarget } from '../ui/Row';
-import { AtSign } from 'lucide-react';
+import { Row } from '../ui/Row';
+import { AgentMark } from './AgentMark';
+import { BUILTIN_AGENT_ID } from '@acpira/shared/providers';
+import { SIDEKICK_NAME } from '@acpira/shared/subagents';
 import { t, useLocale } from '../i18n';
 
 // Every prompt card reads this, so it must stay stable across stream pushes: editability is a flag,
@@ -142,19 +144,36 @@ function HistoryEditor({ turn, turnIndex, blobUrl, context: c, onClose }: {
   </div>;
 }
 
-// The automatic message that hands summoned agents' replies back to the agent (relay.rs `wake_text`): the message itself
-// is for the agent, the user reads one line naming who reported, from its `## Persona (cli)` headings
+// The automatic message that hands summoned agents' replies (or their questions) back to the agent (relay.rs
+// `wake_text`, one `## Persona (cli)` section each, `## Persona (cli) asks` for a question). The message is for the
+// agent; the reader gets each reporter's return in the sidekick relay's handback shape: its mark, its name, "handed
+// back" and the reply's first line. The sidekick's own return is already its relay's handback row, so a wake with only
+// the sidekick shows nothing and its reply joins the turn above
+export function shownReports(text: string): { name: string; agent: string; asks: boolean; line?: string }[] {
+  return [...text.matchAll(/^## (.+) \(([^()]*)\)( asks)?$/gm)].map((m, i, all) => {
+    const body = text.slice(m.index! + m[0].length, all[i + 1]?.index ?? text.length);
+    const line = body.split('\n').map(s => s.trim()).find(s => s.length > 0);
+    return { name: m[1]!, agent: m[2]!, asks: !!m[3], line };
+  }).filter(r => !(r.agent === BUILTIN_AGENT_ID && r.name === SIDEKICK_NAME));
+}
+
 function SubagentsReported({ text }: { text: string }) {
-  const names = [...text.matchAll(/^## (.+?)(?: \([^()]*\))?$/gm)].map(m => m[1]!);
-  // Same inset and row height as an agent turn's rows (AgentMessage), so the line stays inside the transcript column.
-  // It is a seam inside one exchange, not a message: one row gap after the reply above (`-mt-msg-join`), and the reply
-  // it wakes joins it the same way (`joined` in Shell.tsx)
+  const reports = shownReports(text);
+  if (!reports.length) return null;
+  // Same inset and row height as an agent turn's rows (AgentMessage), so the lines stay inside the transcript column.
+  // A seam inside one exchange, not a message: one row gap after the reply above (`-mt-msg-join`), and the reply it
+  // wakes joins it the same way (`joined` in Shell.tsx)
   return (
     <div className="-mt-msg-join flex min-w-0 flex-col px-pad [--row:var(--chat-row)]">
-      <Row lead={<AtSign className="size-icon" strokeWidth={1.5} />}>
-        <RowLabel>{t('chat.subagentsReported')}</RowLabel>
-        {names.length > 0 && <RowTarget>{names.join(', ')}</RowTarget>}
-      </Row>
+      {reports.map((r, i) => (
+        <Row key={i} lead={<AgentMark id={r.agent} name={r.name} className="size-icon" />}>
+          <span className="flex min-w-0 items-baseline gap-gap">
+            <span className="shrink-0 text-fg-1">{r.name}</span>
+            <span className="shrink-0 text-fg-2">{t(r.asks ? 'chat.subagentAsks' : 'sidekick.handback')}</span>
+            {r.line && <span className="min-w-0 truncate text-fg-3">{r.line}</span>}
+          </span>
+        </Row>
+      ))}
     </div>
   );
 }

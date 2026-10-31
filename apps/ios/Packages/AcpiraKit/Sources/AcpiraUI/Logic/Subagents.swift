@@ -105,6 +105,34 @@ let sidekickId = "sidekick"
 /// summoned helper. It draws as the relay and never counts among the session's subagents
 func isSidekick(_ node: SubagentSummary) -> Bool { node.harness?.persona == sidekickId }
 
+/// The name the sidekick's rounds report under (subagents.ts SIDEKICK_NAME)
+let sidekickName = "Sidekick"
+
+/// One summoned agent's return in the automatic message that wakes the agent (HistoryMessage.tsx shownReports): its
+/// persona name, CLI, whether it asks rather than replies, and its first line
+struct SubagentReport: Equatable {
+  var name: String
+  var agent: String
+  var asks: Bool
+  var line: String?
+}
+
+/// shownReports: the wake message's `## Persona (cli)` / `## Persona (cli) asks` sections, the sidekick's left out (its
+/// relay's handback row already shows its return)
+func shownReports(_ text: String) -> [SubagentReport] {
+  let lines = text.components(separatedBy: "\n")
+  var out: [SubagentReport] = []
+  for line in lines {
+    if let m = line.wholeMatch(of: /## (.+) \(([^()]*)\)( asks)?/) {
+      out.append(SubagentReport(name: String(m.1), agent: String(m.2), asks: m.3 != nil, line: nil))
+    } else if !out.isEmpty, out[out.count - 1].line == nil {
+      let shown = line.trimmingCharacters(in: .whitespaces)
+      if !shown.isEmpty { out[out.count - 1].line = shown }
+    }
+  }
+  return out.filter { !($0.agent == AppModel.builtinAgent && $0.name == sidekickName) }
+}
+
 /// isWaiting: the child is blocked on a card of its own
 func isWaiting(_ node: SubagentSummary) -> Bool { !(node.permissions ?? []).isEmpty || node.question != nil }
 
