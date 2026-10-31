@@ -27,6 +27,17 @@ export function extOfMime(mimeType: string): string {
   return Object.entries(IMAGE_MIME).find(([, m]) => m === mimeType)?.[0] ?? '.bin';
 }
 
+// A staged file attachment belongs to the session store, even when its URI names another machine's data root.
+export function stagedFileBlob(path: string, sessionId: string): string | undefined {
+  if (/^file:/i.test(path)) {
+    try { path = decodeURIComponent(new URL(path).pathname); } catch { return; }
+  }
+  if (!/^(?:[a-z]:[\\/]|\/|\\\\)/i.test(path)) return;
+  const parts = path.replace(/\\/g, '/').split('/');
+  const name = parts.at(-1);
+  return parts.at(-3) === 'sessions' && parts.at(-2) === sessionId && name && /^[a-f0-9]{16}\.[a-z0-9_]+$/i.test(name) ? name : undefined;
+}
+
 // Base64 payload size in bytes (without decoding)
 export function base64Bytes(data: string): number {
   const pad = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;

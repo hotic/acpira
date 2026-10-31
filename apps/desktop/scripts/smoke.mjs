@@ -434,6 +434,21 @@ async function main() {
       if (shotDir) await page.shot(join(shotDir, 'panel-video.png'));
       say('the viewer shows a picture, an SVG from its source, a PDF and a video read by range');
     } else say('the viewer shows a picture, an SVG from its source and a PDF (no ffmpeg: the video check was skipped)');
+    // Pasted media is staged under sessions/, outside the project. It must load from the blob route, including after
+    // opening its chip in the file viewer; treating the URI as a project read used to leave the viewer blank.
+    const attachments = [{ kind: 'image', name: 'pasted-shot.png', mimeType: 'image/png', data: readFileSync(join(alpha, 'docs', 'dot.png')).toString('base64') }];
+    if (clip) attachments.push({ kind: 'file', name: 'pasted-clip.mp4', uri: 'attachment:pasted-clip.mp4', data: readFileSync(join(alpha, 'docs', 'clip.mp4')).toString('base64') });
+    await page.eval(`window.__acpiraApi.postMessage(${JSON.stringify({ type: 'send', sessionId: a, text: 'smoke pasted attachments', attachments })})`);
+    const pasted = `document.querySelector('[data-part="user-message"] img[src*="/blobs/"]')`;
+    await page.waitFor('the pasted image thumbnail', `(() => { const i = ${pasted}; return !!i?.complete && i.naturalWidth === 2; })()`);
+    if (clip) {
+      await page.press('the pasted recording chip', `[...document.querySelectorAll('[data-part="user-message"] button')].find(b => b.textContent.trim() === 'pasted-clip.mp4')`);
+      const video = `${media('video')}?.querySelector('video')`;
+      await page.waitFor('the pasted recording in the viewer', `(() => { const v = ${video}; return !!v && v.src.includes('/blobs/') && v.readyState >= 2 && v.videoWidth === 320 && Math.round(v.duration) === 5; })()`);
+      await page.eval(`(() => { const v = ${video}; v.currentTime = 4.5; return true; })()`);
+      await page.waitFor('the pasted recording seeking near its end', `(() => { const v = ${video}; return !v.seeking && v.readyState >= 2 && v.currentTime > 4; })()`);
+    }
+    say('pasted image thumbnails and staged recording playback load from session blobs');
     await page.press('the new tab button', `document.querySelector('[data-panel-tabs] button[aria-label="New tab"]')`);
     const tiles = await page.waitFor('the new tab\'s tiles', `(() => { const t = [...document.querySelectorAll('[data-new-tab] .grid button')].map(b => b.textContent.trim()); return t.length && t.join(','); })()`);
     if (tiles !== 'Files,Terminal,Browser') fail(`the new tab's tiles read ${tiles}`);

@@ -1,5 +1,6 @@
 import type { GitMark, HostMsg, ProjectBase, ProjectChange, ProjectEntry, ProjectHunk, WebviewMsg } from '@acpira/shared/protocol';
 import { vscodeApi } from '../vscodeApi';
+import { requestTable } from '../requestTable';
 
 // The desktop tool panel's reads of a session's project, answered by the engine (rust/.../project_files.rs) with the
 // request's seq. A read nobody answers (an engine from before these messages) settles empty after the timeout, with
@@ -9,24 +10,13 @@ type ProjectReply = Extract<HostMsg, { type: 'projectDir' | 'projectStatus' | 'p
 type ProjectAsk = Extract<WebviewMsg, { type: ProjectReply['type'] }>;
 
 // A git status of a large tree or a file near the size cap can take a while; nothing waits on it but the panel
-const TIMEOUT = 20000;
-let seq = 0;
-const waits = new Map<number, (m: ProjectReply | undefined) => void>();
+const requests = requestTable<ProjectReply | undefined>(20000, undefined);
 
 // App's message switch hands every reply here
-export function settleProject(m: ProjectReply) {
-  const wait = waits.get(m.seq);
-  waits.delete(m.seq);
-  wait?.(m);
-}
+export const settleProject = (m: ProjectReply) => requests.settle(m.seq, m);
 
 function ask<T extends ProjectReply['type']>(type: T, rest: Omit<Extract<ProjectAsk, { type: T }>, 'seq' | 'type'>): Promise<Extract<ProjectReply, { type: T }> | undefined> {
-  return new Promise(resolve => {
-    const mine = ++seq;
-    waits.set(mine, m => resolve(m as Extract<ProjectReply, { type: T }> | undefined));
-    setTimeout(() => { if (waits.delete(mine)) resolve(undefined); }, TIMEOUT);
-    vscodeApi().postMessage({ type, ...rest, seq: mine });
-  });
+  return requests.ask(seq => vscodeApi().postMessage({ type, ...rest, seq })) as Promise<Extract<ProjectReply, { type: T }> | undefined>;
 }
 
 export interface DirListing { entries: ProjectEntry[]; error?: string }

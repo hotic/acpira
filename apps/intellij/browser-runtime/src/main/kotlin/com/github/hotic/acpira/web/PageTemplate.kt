@@ -46,7 +46,7 @@ object PageTemplate {
             "script-src 'self' 'nonce-${page.nonce}' 'wasm-unsafe-eval'",
             "worker-src blob:",
             // The attention chime is a WAV synthesized in the page and played from a blob: URL (effects/chime.ts)
-            "media-src blob:",
+            "media-src blob: 'self'",
         ).joinToString("; ")
         return """<!doctype html>
 <html lang="${page.locale}">

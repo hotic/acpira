@@ -44,6 +44,9 @@ export function mediaUrl(absolute: string): string | undefined {
   return base ? `${base}?path=${encodeURIComponent(absolute)}` : undefined;
 }
 
+// Blob URLs have no query, whereas the shell's /file URL already carries its path there.
+export const refreshMediaUrl = (src: string, refresh: number): string => `${src}${src.includes('?') ? '&' : '?'}v=${refresh}`;
+
 export function FileGlyph({ name, className }: { name: string; className?: string }) {
   const ext = extOf(name);
   const media = mediaKind(name);

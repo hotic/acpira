@@ -19,7 +19,7 @@ import { project, sameRead, shellResizeIdleIn, type FileRead } from './api';
 import type { LineRange } from './store';
 import { useNearBlocks } from './nearBlocks';
 import { previewParts } from './previewParts';
-import { FileGlyph, dirOf, nameOf, type MediaKind } from './files';
+import { FileGlyph, dirOf, nameOf, refreshMediaUrl, type MediaKind } from './files';
 
 // The Files tab's viewer: one file as it is now with the changes against a base marked (added lines tinted, removed ones
 // put back where they stood), a change navigator, soft wrap with a hanging indent, and line numbers that pick a range for
@@ -727,7 +727,7 @@ export function FileViewer(p: FileViewerProps) {
       </div>
       <div className="relative min-h-0 flex-1">
         {p.media
-          ? <MediaView key={`${p.media.src}&v=${p.refresh}`} kind={p.media.kind} src={`${p.media.src}&v=${p.refresh}`} name={nameOf(p.path)} onOpenDefault={p.onOpenDefault} />
+          ? <MediaView key={refreshMediaUrl(p.media.src, p.refresh)} kind={p.media.kind} src={refreshMediaUrl(p.media.src, p.refresh)} name={nameOf(p.path)} onOpenDefault={p.onOpenDefault} />
           : current?.error !== undefined
           ? <Notice text={readError(current.error)} onOpenDefault={current.error === 'binary' || current.error === 'tooLarge' ? p.onOpenDefault : undefined} />
           : previewing ? (svg ? <SvgPreview text={current.text!} name={nameOf(p.path)} /> : <MarkdownPreview text={current.text!} onOpenLink={p.onOpenLink} />)

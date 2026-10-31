@@ -17,6 +17,10 @@ export function isShowImageTool(block: Pick<ToolCallBlock, 'verbKey'>): boolean 
   return block.verbKey === 'verb.showImage';
 }
 
+export function isShowVideoTool(block: Pick<ToolCallBlock, 'verbKey'>): boolean {
+  return block.verbKey === 'verb.showVideo';
+}
+
 // Acpira's `show_widget`: one HTML file the webview runs as an interactive widget (`chat/AgentWidget.tsx`)
 export function isShowWidgetTool(block: Pick<ToolCallBlock, 'verbKey'>): boolean {
   return block.verbKey === 'verb.showWidget';
@@ -24,7 +28,7 @@ export function isShowWidgetTool(block: Pick<ToolCallBlock, 'verbKey'>): boolean
 
 // Tool calls whose images are results for the reader, not process detail: generated and shown images, and widgets
 export function isImageResultBlock(block: AgentBlock): block is ToolCallBlock {
-  return block.type === 'tool_call' && (isImageGenTool(block) || isShowImageTool(block) || isShowWidgetTool(block));
+  return block.type === 'tool_call' && (isImageGenTool(block) || isShowImageTool(block) || isShowVideoTool(block) || isShowWidgetTool(block));
 }
 
 // A widget's HTML is stored as an image content of this type, which engines that predate widgets still read
@@ -36,7 +40,12 @@ const savedContents = (block: ToolCallBlock): ImageContent[] =>
 
 // The saved images of a tool call, in wire order; `contents` holds every item when there is more than one
 export function toolImages(block: ToolCallBlock): ImageRef[] {
-  return savedContents(block).filter(c => c.mimeType !== WIDGET_MIME);
+  return savedContents(block).filter(c => c.mimeType.startsWith('image/'));
+}
+
+// Videos use the existing image content shape to keep stored sessions readable by older engines.
+export function toolVideos(block: ToolCallBlock): ImageRef[] {
+  return savedContents(block).filter(c => c.mimeType.startsWith('video/'));
 }
 
 // The saved widget of a show_widget call (its HTML in the blob store)

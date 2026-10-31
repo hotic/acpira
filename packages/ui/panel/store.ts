@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { PANEL_SCOPES, type PanelScope } from '@acpira/shared/settings';
 import { pieceKey, pluginPieces } from '../pluginSlots';
 import { setWebviewState, webviewState } from '../vscodeApi';
+import type { MediaKind } from './files';
 
 // The desktop tool panel's state, one per window: whether it is open, how it scopes its tabs and views (per project, per
 // session, or shared across all projects), its width and the tree's, and what each Files tab shows. The files layout
@@ -31,7 +32,7 @@ export type PanelTab =
 
 // What a Files tab shows: a file (scrolled to `line`, with `selection` picked; `text` / `planId` for a plan outside the
 // project folder), the session's whole review, or nothing (the tree takes the tab)
-export type PanelView = { path: string; line?: number; selection?: LineRange; text?: string; planId?: string } | 'review';
+export type PanelView = { path: string; line?: number; selection?: LineRange; text?: string; planId?: string; media?: { kind: MediaKind; src: string } } | 'review';
 
 // The same file (or the review), wherever it is scrolled to
 export const sameView = (a: PanelView, b: PanelView) => (a === 'review' ? b === 'review' : b !== 'review' && a.path === b.path);
@@ -275,6 +276,7 @@ function tabEntry(view: Exclude<PanelView, 'review'>): Exclude<PanelView, 'revie
     path: view.path,
     ...(view.text !== undefined ? { text: view.text } : {}),
     ...(view.planId !== undefined ? { planId: view.planId } : {}),
+    ...(view.media ? { media: view.media } : {}),
   };
 }
 
@@ -291,7 +293,7 @@ function withOpened(s: PanelState, rootKey: string, view: PanelView | null | und
   const list = s.opened[r] ?? [];
   const entry = view === 'review' ? view : tabEntry(view);
   if (list.some(v => sameView(v, view))) {
-    return view !== 'review' && view.text !== undefined
+    return view !== 'review' && (view.text !== undefined || view.media)
       ? { ...s.opened, [r]: list.map(v => (sameView(v, view) ? entry : v)) }
       : s.opened;
   }
@@ -407,12 +409,12 @@ export const panel = {
     state = { ...s, ...(s.sessionId === fromId ? { sessionId: toId } : {}), slots, views, opened };
   },
   // A file of `root` (relative path), from a file link, an edit row or a terminal: on the Files tab shown, else the first
-  openFile(root: string, path: string, line?: number) {
+  openFile(root: string, path: string, line?: number, media?: Exclude<PanelView, 'review'>['media']) {
     const s = current();
     const tab = s.tabs.find(t => t.id === s.tab)?.kind === 'files' ? s.tab : FILES_TAB;
     const key = viewKey(tab, root);
     const r = scopedRoot(root);
-    const view: PanelView = { path, ...(line !== undefined ? { line } : {}) };
+    const view: PanelView = { path, ...(line !== undefined ? { line } : {}), ...(media ? { media } : {}) };
     update({ open: true, tab, ...withFiles(s, tab), ...(s.open ? {} : { treeOpen: false }), views: { ...s.views, [key]: view }, opened: withOpened(s, r, view) });
   },
   // A plan whose file is outside `root` (or only in memory): shown in the viewer with its markdown text
@@ -457,7 +459,8 @@ export const panel = {
     const s = current();
     const now = s.views[key];
     const next = now && sameView(now, view)
-      ? (now !== 'review' && view !== 'review' && view.text !== undefined ? { ...now, text: view.text, ...(view.planId !== undefined ? { planId: view.planId } : {}) } : now)
+      ? (now !== 'review' && view !== 'review' && (view.text !== undefined || view.media)
+        ? { ...now, ...(view.text !== undefined ? { text: view.text } : {}), ...(view.planId !== undefined ? { planId: view.planId } : {}), ...(view.media ? { media: view.media } : {}) } : now)
       : view;
     update({ tab, ...withFiles(s, tab), views: { ...s.views, [key]: next }, opened: withOpened(s, key, view) });
   },

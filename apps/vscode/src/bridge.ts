@@ -197,8 +197,8 @@ export function chatPageHtml(webview: vscode.Webview, extensionUri: vscode.Uri, 
     `font-src ${webview.cspSource}`,
     `script-src 'nonce-${nonce}' 'wasm-unsafe-eval'`,
     "worker-src blob:",
-    // The attention chime is a WAV synthesized in the page and played from a blob: URL (effects/chime.ts)
-    "media-src blob:",
+    // The chime uses blob:; inline recordings load only from the session's resource origin.
+    `media-src blob: ${webview.cspSource}`,
   ].join('; ');
   return `<!doctype html>
 <html lang="${lang}">

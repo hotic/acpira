@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
-use acpira_shared::host_tools::{SEARCH_SESSIONS as SEARCH_SESSIONS_TOOL, SHOW_WIDGET as WIDGET_TOOL, WORKSPACE_HOOKS as HOOKS_TOOL};
+use acpira_shared::host_tools::{SEARCH_SESSIONS as SEARCH_SESSIONS_TOOL, SHOW_VIDEO as VIDEO_TOOL, SHOW_WIDGET as WIDGET_TOOL, WORKSPACE_HOOKS as HOOKS_TOOL};
 
-use super::tools::{show_image_with, show_widget_with, tool_error, workspace_hooks_with};
+use super::tools::{show_image_with, show_video_with, show_widget_with, tool_error, workspace_hooks_with};
 
 /// The way back to the sidecar (`relay/hub.rs`), from the env the session put on this server's entry
 #[derive(Clone)]
@@ -174,17 +174,18 @@ impl Relay {
       });
     }
     let widget = params.get("name").and_then(Value::as_str) == Some(WIDGET_TOOL);
+    let video = params.get("name").and_then(Value::as_str) == Some(VIDEO_TOOL);
     let one = args.get("path").and_then(Value::as_str).into_iter();
-    let many = args.get("paths").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).filter(|_| !widget);
+    let many = args.get("paths").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).filter(|_| !widget && !video);
     let paths: Vec<String> = one.chain(many).map(str::trim).filter(|p| !p.is_empty()).map(str::to_owned).collect();
     if !paths.is_empty() {
-      let checked = self.answer(HubOp::HostFiles { paths, widget });
+      let checked = self.answer(HubOp::HostFiles { paths, widget, video });
       if checked.get("isError").and_then(Value::as_bool) == Some(true) {
         return checked;
       }
     }
     let fine = |_: &str| Ok(());
-    if widget { show_widget_with(args, &fine) } else { show_image_with(args, &fine) }
+    if widget { show_widget_with(args, &fine) } else if video { show_video_with(args, &fine) } else { show_image_with(args, &fine) }
   }
 
   /// `search_sessions` / `read_session`: the arguments go to the hub as they are, the sidecar reads and bounds the answer

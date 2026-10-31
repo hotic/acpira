@@ -11,6 +11,7 @@ func toolIcon(_ block: ToolCallBlock) -> LucideIcon {
   case "verb.todo": .listTodo
   case "verb.imagegen": .imagePlus
   case "verb.showImage": .image
+  case "verb.showVideo": .fileVideo
   case "verb.skill": .bookOpen
   default: kindIcon(block.kind)
   }
@@ -188,6 +189,7 @@ struct CommandOutcome: View {
   let status: ToolStatus
   var duration: String?
   var since: Double?
+  @Environment(\.quietEntrance) private var quiet
   @Environment(\.motionEnabled) private var motion
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.scrollGesture) private var gesture
@@ -244,7 +246,7 @@ struct CommandOutcome: View {
     if memo.live == nil { memo.live = !done; return }
     if done && memo.live == true {
       memo.live = false
-      if motion && !reduceMotion && !gesture.active { memo.ends += 1 }
+      if !quiet && motion && !reduceMotion && !gesture.active { memo.ends += 1 }
     }
   }
 }

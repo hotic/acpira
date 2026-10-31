@@ -227,7 +227,11 @@ struct ImageResults: View {
     let shown = block.verbKey == "verb.showImage"
     let images = toolImages(block)
     if !grouped || inFold {
-      if block.verbKey == "verb.showWidget" {
+      if block.verbKey == "verb.showVideo" {
+        ForEach(toolVideos(block), id: \.blob) { video in
+          AgentVideoView(video: video)
+        }
+      } else if block.verbKey == "verb.showWidget" {
         // Nothing while the call runs or when it failed: the row says so (AgentWidget.tsx ShownWidget)
         if let blob = toolWidget(block)?.blob, let session = media.session {
           let loader = media.loader

@@ -31,7 +31,7 @@ pub enum HubOp {
   ReadSession(SessionReadArgs),
   /// `show_image` / `show_widget` in a session whose folder is on an SSH host: the files are checked and read there,
   /// for the call's completion to show; answered `Done` / `Error` (what is wrong with them)
-  HostFiles { paths: Vec<String>, widget: bool },
+  HostFiles { paths: Vec<String>, widget: bool, #[serde(default)] video: bool },
   /// `workspace_hooks` in a session whose folder is on an SSH host: the project's hooks file there, checked there;
   /// answered `Done` (the check's text) / `Error`
   HostHooks { cwd: String },
@@ -214,4 +214,7 @@ pub struct HostFeatures {
   /// (`HubOp::RemoteTool`)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub remote_tools: Option<String>,
+  /// The engine's plugins folder, named in the server's instructions (a data home other than ~/.acpira moves it)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub plugins_root: Option<String>,
 }

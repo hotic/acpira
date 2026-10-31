@@ -127,7 +127,6 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case panelLeft
   case panelRight
   case panelTop
-  case panelsTopLeft
   case paperclip
   case pause
   case pencil
@@ -312,7 +311,6 @@ extension LucideIcon {
     case .panelLeft: [.rect(x: 3, y: 3, width: 18, height: 18, rx: 2), .path("M9 3v18")]
     case .panelRight: [.rect(x: 3, y: 3, width: 18, height: 18, rx: 2), .path("M15 3v18")]
     case .panelTop: [.rect(x: 3, y: 3, width: 18, height: 18, rx: 2), .path("M3 9h18")]
-    case .panelsTopLeft: [.rect(x: 3, y: 3, width: 18, height: 18, rx: 2), .path("M3 9h18"), .path("M9 21V9")]
     case .paperclip: [.path("m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551")]
     case .pause: [.rect(x: 14, y: 3, width: 5, height: 18, rx: 1), .rect(x: 5, y: 3, width: 5, height: 18, rx: 1)]
     case .pencil: [.path("M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"), .path("m15 5 4 4")]

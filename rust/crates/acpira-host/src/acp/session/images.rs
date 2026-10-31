@@ -45,6 +45,8 @@ pub(crate) fn file_image_saver(me: Weak<AcpSession>) -> FileImageSaver {
     // Images, and the HTML of a `show_widget` call (kept as a `text/html` image content, which older engines still read)
     let limit = if acpira_shared::attachments::image_mime_of(path).is_some() {
       crate::limits::MAX_OUT_IMAGE_BYTES
+    } else if crate::host_mcp::video_mime_of(path).is_some() {
+      crate::limits::MAX_OUT_VIDEO_BYTES
     } else if crate::host_mcp::widget_mime_of(path).is_some() {
       crate::limits::MAX_WIDGET_BYTES
     } else {

@@ -200,6 +200,11 @@ final class MediaLoader {
     }
   }
 
+  /// Video is fetched only after a tap and written to a view-owned temporary file, never decoded into the image cache.
+  func video(session: String, blob: String) async throws -> Data {
+    try await fetch(session, blob)
+  }
+
   /// A stored blob's text (a widget's page), read fresh each time: pages are small and not decoded images
   func text(session: String, blob: String) async throws -> String {
     String(decoding: try await fetch(session, blob), as: UTF8.self)
@@ -354,7 +359,13 @@ final class MediaLoader {
 /// more than one. A widget's HTML rides as an image of type text/html and is not one
 func toolImages(_ block: ToolCallBlock) -> [ImageRef] {
   (block.contents ?? block.content.map { [$0] } ?? []).compactMap {
-    if case .image(let ref) = $0, ref.blob != nil, !isWidget(ref) { ref } else { nil }
+    if case .image(let ref) = $0, ref.blob != nil, ref.mimeType.hasPrefix("image/") { ref } else { nil }
+  }
+}
+
+func toolVideos(_ block: ToolCallBlock) -> [ImageRef] {
+  (block.contents ?? block.content.map { [$0] } ?? []).compactMap {
+    if case .image(let ref) = $0, ref.blob != nil, ref.mimeType.hasPrefix("video/") { ref } else { nil }
   }
 }
 
@@ -371,5 +382,5 @@ func toolWidget(_ block: ToolCallBlock) -> ImageRef? {
 /// imageTools.ts isImageResultBlock: generated and shown images, and widgets, are results for the reader, not
 /// process detail
 func isImageResult(_ block: ToolCallBlock) -> Bool {
-  block.verbKey == "verb.imagegen" || block.verbKey == "verb.showImage" || block.verbKey == "verb.showWidget"
+  block.verbKey == "verb.imagegen" || block.verbKey == "verb.showImage" || block.verbKey == "verb.showVideo" || block.verbKey == "verb.showWidget"
 }

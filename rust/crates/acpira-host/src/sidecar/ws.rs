@@ -40,6 +40,8 @@ fn mime(ext: &str) -> &'static str {
     "jpg" | "jpeg" => "image/jpeg",
     "gif" => "image/gif",
     "webp" => "image/webp",
+    "mp4" => "video/mp4",
+    "webm" => "video/webm",
     "woff2" => "font/woff2",
     "woff" => "font/woff",
     "txt" => "text/plain; charset=utf-8",

@@ -184,7 +184,8 @@ impl RelayHub {
         let remote = session.as_ref().is_some_and(|s| s.remote_folder().is_some());
         // The project tools go to the session's own agent; a summoned child's CLI keeps its own
         let remote_tools = session.as_ref().filter(|_| caller.is_none()).and_then(|s| s.claude_stand()).map(|st| st.alias);
-        let features = HostFeatures { browser, summoned: caller.is_some(), remote, remote_tools };
+        let plugins_root = self.plugin_host().map(|p| p.store().root().display().to_string());
+        let features = HostFeatures { browser, summoned: caller.is_some(), remote, remote_tools, plugins_root };
         let _ = write.write_all(reply(HubReply::Features(features)).as_bytes()).await;
       }
       HubOp::HostHooks { cwd } => {
@@ -197,9 +198,9 @@ impl RelayHub {
         };
         let _ = write.write_all(reply(r).as_bytes()).await;
       }
-      HubOp::HostFiles { paths, widget } => {
+      HubOp::HostFiles { paths, widget, video } => {
         let r = match session.upgrade() {
-          Some(s) => match s.fetch_shown(&paths, widget).await {
+          Some(s) => match s.fetch_shown(&paths, widget, video).await {
             Ok(()) => HubReply::Done(String::new()),
             Err(e) => HubReply::Error(e),
           },

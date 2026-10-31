@@ -102,6 +102,24 @@ pub(super) fn attach_shown_images(b: &mut ToolCallBlock, ctx: Option<&ToolCtx>) 
   b.contents = if list.len() > 1 { Some(list) } else { None };
 }
 
+/// Keep videos in the existing image shape, like widgets, so older engines can still read the session record.
+pub(super) fn attach_shown_video(b: &mut ToolCallBlock, ctx: Option<&ToolCtx>) {
+  let is_video = |c: &ToolContent| matches!(c, ToolContent::Image(i) if i.mime_type.starts_with("video/"));
+  if b.status != ToolStatus::Completed || b.content.as_ref().is_some_and(is_video) || b.contents.as_ref().is_some_and(|l| l.iter().any(is_video)) {
+    return;
+  }
+  let Some(save) = ctx.and_then(|c| c.save_image_file.as_ref()) else { return };
+  let Some(video) = b.locations.iter().flatten().find_map(|l| {
+    let path = local_path_of(&l.path)?;
+    let mime = crate::host_mcp::video_mime_of(&path)?;
+    Some(ToolContent::Image(ImageRef { blob: Some(save(&path)?), mime_type: mime.to_owned(), uri: Some(l.path.clone()) }))
+  }) else { return };
+  let mut list = vec![video];
+  list.extend(b.contents.take().unwrap_or_else(|| b.content.iter().cloned().collect()));
+  b.content = list.first().cloned();
+  b.contents = if list.len() > 1 { Some(list) } else { None };
+}
+
 /// A finished show_widget call: its HTML file is read into the blob store as a `text/html` image content ahead of the
 /// receipt, which older engines still read (a new content type would make them refuse the whole record). The webview
 /// runs it in a sandboxed frame (`AgentWidget.tsx`). Read once, when the call completes: a later edit of the file is a
@@ -257,7 +275,7 @@ pub(super) fn tool_contents(items: &[Value], ctx: Option<&ToolCtx>) -> Vec<ToolC
         let new = str_of(item, "newText").unwrap_or("").to_owned();
         out.push(ToolContent::Diff {
           lines: diff_lines(&old, &new),
-          source: Some(DiffSource { path: str_of(item, "path").unwrap_or("").to_owned(), old_text: old, new_text: new, omitted: false }),
+          source: Some(DiffSource::whole(str_of(item, "path").unwrap_or("").to_owned(), old, new)),
         });
       }
       Some("content") => {
