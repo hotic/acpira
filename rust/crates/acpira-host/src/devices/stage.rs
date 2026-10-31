@@ -2,8 +2,9 @@
 //! the engine runs from, and a service pointing there would fail at the next login. The engine goes into
 //! `<version>-<digest>/`: the copy the gateway starts its engine from (an engine of its own, `shell: remote`, which reaches
 //! the windows' engines over the push bus) may be running a device's turn while a newer one is installed, so a copy is
-//! never overwritten. The gateway goes beside it, except on Windows: there it keeps one path, `gateway/`, because the
-//! firewall remembers a program by its path and would ask again after every upgrade.
+//! never overwritten. The gateway keeps one path, `gateway/`, on Windows and macOS, since both remember a program by its
+//! path: the Windows firewall would ask again after every upgrade, and macOS privacy grants to a bare executable (App
+//! Management for the agents it runs) would be lost. On Linux it goes beside the engine.
 
 use std::path::{Path, PathBuf};
 
@@ -15,8 +16,11 @@ pub fn bin_root(root: &Path) -> PathBuf {
   root.join("devices").join("bin")
 }
 
-/// Windows: the gateway's fixed directory under `bin_root`
+/// Windows and macOS: the gateway's fixed directory under `bin_root`
 const GATEWAY_DIR: &str = "gateway";
+
+/// Whether the gateway lives in `GATEWAY_DIR` rather than beside the engine copy
+const FIXED_GATEWAY: bool = cfg!(any(windows, target_os = "macos"));
 
 /// The version an installed copy was made from (`<version>-<digest>` of the directory the engine path names)
 pub fn installed_version(engine: &Path) -> Option<String> {
@@ -77,12 +81,12 @@ pub async fn plan(root: &Path, version: &str, engine: &Path, gateway: &Path) -> 
   })
   .await??;
   let dir = bin_root(root).join(format!("{version}-{digest}"));
-  let gateway_dir = if cfg!(windows) { bin_root(root).join(GATEWAY_DIR) } else { dir.clone() };
+  let gateway_dir = if FIXED_GATEWAY { bin_root(root).join(GATEWAY_DIR) } else { dir.clone() };
   Ok(Staged { engine: dir.join(file_name(engine)?), gateway: gateway_dir.join(file_name(gateway)?) })
 }
 
 /// Copy the binaries where `plan` says; a copy already there is kept. The gateway must not be running (Windows replaces
-/// its fixed copy, moving a copy still in use aside first)
+/// its fixed copy, moving a copy still in use aside first; macOS does the same, harmlessly)
 pub async fn stage(root: &Path, engine: &Path, gateway: &Path, to: &Staged) -> Result<()> {
   let dir = to.engine.parent().context("staged engine without a directory")?.to_owned();
   let same_dir = to.gateway.parent() == Some(dir.as_path());
@@ -212,7 +216,7 @@ mod tests {
     assert_ne!(first.engine, second.engine, "a newer engine never overwrites a copy that may be running");
     stage(root.path(), &engine, &gateway, &second).await.unwrap();
     assert_eq!(std::fs::read_to_string(&second.gateway).unwrap(), "gateway v2");
-    assert_eq!(first.gateway == second.gateway, cfg!(windows), "Windows keeps the gateway at one path");
+    assert_eq!(first.gateway == second.gateway, FIXED_GATEWAY, "Windows and macOS keep the gateway at one path");
 
     prune(root.path(), second.engine.parent()).await;
     assert!(!first.engine.exists());

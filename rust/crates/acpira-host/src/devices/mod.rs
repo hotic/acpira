@@ -1,5 +1,5 @@
 //! Remote access on the settings page: the engine's side of `acpira-gateway`, the process paired devices connect to
-//! (a binary of its own so the engine does not link the network stack; docs/dev/paired-remote.md). The engine turns it
+//! (a binary of its own so the engine does not link the network stack; docs/dev/host-architecture.md, Remote access gateway). The engine turns it
 //! on and off through a login service (service.rs: a LaunchAgent, a systemd user unit or a logon task), writes its
 //! `gateway.json`, and relays what its control channel reports to the pages that asked. Every engine sharing the data
 //! root sees the same gateway.
@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use acpira_shared::devices::{GatewayRequest, GatewayStatus, PushNote, RemoteAccessOp, RemoteAccessView};
 use acpira_shared::local_ipc;
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use serde_json::Value;
 
 use self::service::{Program, Service};
@@ -294,6 +294,8 @@ impl RemoteAccess {
   /// otherwise the running gateway stopped, the copies made, the service written and started, older copies removed
   async fn install(&self, exe: &Path, program: &Program) -> Result<()> {
     let lock = self.root.join("devices").join("install");
+    // The lock file lives in `devices/`, which a data root that never had remote access on does not have yet
+    tokio::fs::create_dir_all(self.root.join("devices")).await.context("creating the devices directory")?;
     let deadline = tokio::time::Instant::now() + START_WAIT + STOP_WAIT;
     loop {
       let r = crate::store::file_lock::with_file_lock(&lock, || self.install_locked(exe, program)).await;

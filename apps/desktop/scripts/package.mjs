@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { macSigningIdentity } from '../../../scripts/release/sign-mac.mjs';
 import { packPage } from './pack-page.mjs';
 
 // The macOS arm64 app and dmg through the Tauri CLI (tauri.conf.json): the page, the picker and the release engine must
@@ -16,8 +17,10 @@ import { packPage } from './pack-page.mjs';
 // The dmg's Finder layout (window size, icon places) is an AppleScript that opens a Finder window on the mounted image;
 // it runs only with --layout, so a packaging run in the background leaves the screen alone (Tauri skips it under CI).
 //
-// Signing: APPLE_SIGNING_IDENTITY names a Developer ID Application identity in the keychain; without it the app is signed
-// ad hoc (runs on this Mac only). Notarization and stapling follow when the Tauri CLI finds APPLE_API_KEY /
+// Signing: APPLE_SIGNING_IDENTITY names a Developer ID Application identity, else the keychain's first one is taken
+// (scripts/release/sign-mac.mjs): a local build signed by the release team keeps macOS privacy grants such as App
+// Management across installs, which an ad hoc signature loses on every build. Without any the app is signed ad hoc (runs
+// on this Mac only). Notarization and stapling follow when the Tauri CLI finds APPLE_API_KEY /
 // APPLE_API_ISSUER / APPLE_API_KEY_PATH or APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID in the environment
 const TAURI_CLI = '@tauri-apps/cli@2.12.4';
 const TRIPLE = 'aarch64-apple-darwin';
@@ -53,8 +56,8 @@ for (const [from, to] of [['acpira', 'acpira-engine'], ['acpira-gateway', 'acpir
 // The page as the app ships it, its assets/ zstd-compressed (scripts/pack-page.mjs)
 packPage(repo, join(shell, 'target', 'webview-packed'));
 
-const identity = process.env.APPLE_SIGNING_IDENTITY?.trim() || '-';
-if (identity === '-') console.log('no APPLE_SIGNING_IDENTITY: signing ad hoc, the app runs on this Mac only');
+const identity = macSigningIdentity() ?? '-';
+console.log(identity === '-' ? 'no Developer ID identity: signing ad hoc, the app runs on this Mac only' : `signing with ${identity}`);
 // --config is merged into tauri.conf.json as a JSON merge patch: null drops the plain page from the resources
 const resources = { '../../dist/webview/': null, 'target/webview-packed/': 'webview/' };
 const config = { bundle: { externalBin: ['binaries/acpira-engine', 'binaries/acpira-gateway'], resources, macOS: { signingIdentity: identity } } };

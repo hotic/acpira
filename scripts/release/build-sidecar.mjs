@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, mkdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { signMacSidecar } from './sign-mac.mjs';
 import { GATEWAY_EXE, SIDECAR_TARGETS, exeName, gatewayName, hostPlatform, targetFor } from './sidecar-targets.mjs';
 
 // Builds the release Rust sidecar into dist/sidecar/<platform>/ (with acpira-gateway beside it where the target ships one):
@@ -43,4 +44,7 @@ for (const platform of platforms) {
     if (!exe.endsWith('.exe')) chmodSync(join(out, exe), 0o755);
     console.log(`${platform}: ${(statSync(join(out, exe)).size / 1e6).toFixed(1)} MB → dist/sidecar/${platform}/${exe}`);
   }
+  // A Developer ID signature keeps macOS privacy grants across builds (sign-mac.mjs); off macOS the copy keeps the
+  // linker's ad hoc one until a Mac signs it
+  signMacSidecar(root, platform);
 }
