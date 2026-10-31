@@ -415,6 +415,7 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
       data-rewritten={rewrite === 'done' || undefined}
       data-drag={dragging || undefined}
       data-focused={beamActive || undefined}
+      data-land={p.main && !p.edit ? 'composer' : undefined}
       className={cn('composer-field flex flex-col', flush ? 'rounded-none' : 'rounded-lg')}
       onFocus={() => setFocused(true)}
       onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) setFocused(false); }}

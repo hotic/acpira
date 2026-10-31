@@ -44,6 +44,11 @@ const RESTART_FIRST: Duration = Duration::from_secs(1);
 const RESTART_MAX: Duration = Duration::from_secs(60);
 /// Stderr lines of one process kept in the engine log per minute
 const STDERR_LINES_PER_MIN: u32 = 60;
+/// The stderr lines a failed start's error carries (the first ones, which name the error, and the last ones), and how
+/// long it waits for a dying process to finish writing
+const STDERR_HEAD_LINES: usize = 8;
+const STDERR_TAIL_LINES: usize = 12;
+const STDERR_TAIL_WAIT: Duration = Duration::from_millis(500);
 
 /// The engine's side of a call a process makes beyond the store (`session/*`, `ui/*`, …): plugin id, method, params
 /// A page of this engine taking a message from a plugin's process
@@ -712,7 +717,7 @@ impl Runtimes {
     let stdin = child.stdin.take().ok_or("stdin is not piped")?;
     let stdout = child.stdout.take().ok_or("stdout is not piped")?;
     let stderr = child.stderr.take().ok_or("stderr is not piped")?;
-    self.pipe_stderr(&want.id, stderr);
+    let tail = self.pipe_stderr(&want.id, stderr);
     let inbound: Arc<dyn Inbound> = Arc::new(PluginInbound { id: want.id.clone(), kv: self.kv(&want.id), runtimes: Arc::downgrade(self), want: want.clone() });
     let log = self.log.clone();
     let id = want.id.clone();
@@ -743,18 +748,18 @@ impl Runtimes {
       Ok(Err(e)) => {
         conn.close();
         proc.stop().await;
-        return Err(format!("initialize failed: {}", e.message));
+        return Err(tail.explain(format!("initialize failed: {}", e.message)).await);
       }
       Err(_) => {
         conn.close();
         proc.stop().await;
-        return Err(format!("no answer to initialize within {} s", INIT_TIMEOUT.as_secs()));
+        return Err(tail.explain(format!("no answer to initialize within {} s", INIT_TIMEOUT.as_secs())).await);
       }
     };
     if answer.get("protocolVersion").and_then(Value::as_u64) != Some(PROTOCOL_VERSION) {
       conn.close();
       proc.stop().await;
-      return Err(format!("it speaks protocol {}, this Acpira speaks {PROTOCOL_VERSION}", answer.get("protocolVersion").map(Value::to_string).unwrap_or_else(|| "none".into())));
+      return Err(tail.explain(format!("it speaks protocol {}, this Acpira speaks {PROTOCOL_VERSION}", answer.get("protocolVersion").map(Value::to_string).unwrap_or_else(|| "none".into()))).await);
     }
     // The answer may narrow what it handles, never widen what the user confirmed
     let hooks = match answer.get("hooks").and_then(Value::as_array) {
@@ -858,13 +863,16 @@ impl Runtimes {
   }
 
   /// A process's stderr goes to the engine log, a bounded number of lines a minute
-  fn pipe_stderr(&self, id: &str, stderr: tokio::process::ChildStderr) {
+  fn pipe_stderr(&self, id: &str, stderr: tokio::process::ChildStderr) -> StderrTail {
     let log = self.log.clone();
     let id = id.to_owned();
+    let tail = StderrTail::default();
+    let keep = tail.clone();
     tokio::spawn(async move {
       let mut lines = BufReader::new(stderr).lines();
       let mut window = (Instant::now(), 0u32);
       while let Ok(Some(line)) = lines.next_line().await {
+        keep.push(&line);
         if window.0.elapsed() > Duration::from_secs(60) {
           window = (Instant::now(), 0);
         }
@@ -875,7 +883,54 @@ impl Runtimes {
           log(&format!("plugin {id}: more stderr this minute left out"));
         }
       }
+      keep.closed.notify_one();
     });
+    tail
+  }
+}
+
+/// What a process wrote to stderr, its first and last lines. A process that dies on start says why there ("the plugin
+/// failed to load: ReferenceError …", `build.rs`, then the stack), and the activation check returns its error to the
+/// model that wrote the plugin, which can fix only what it can read (docs/dev/plugins.md, Activation)
+#[derive(Clone, Default)]
+struct StderrTail {
+  lines: Arc<parking_lot::Mutex<StderrLines>>,
+  closed: Arc<tokio::sync::Notify>,
+}
+
+#[derive(Default)]
+struct StderrLines {
+  head: Vec<String>,
+  tail: std::collections::VecDeque<String>,
+  /// Lines between the two, left out
+  skipped: usize,
+}
+
+impl StderrTail {
+  fn push(&self, line: &str) {
+    let mut l = self.lines.lock();
+    let line: String = line.chars().take(500).collect();
+    if l.head.len() < STDERR_HEAD_LINES {
+      l.head.push(line);
+      return;
+    }
+    if l.tail.len() == STDERR_TAIL_LINES {
+      l.tail.pop_front();
+      l.skipped += 1;
+    }
+    l.tail.push_back(line);
+  }
+
+  /// `error`, followed by what the process wrote once it closed stderr (or the wait passed)
+  async fn explain(&self, error: String) -> String {
+    let _ = tokio::time::timeout(STDERR_TAIL_WAIT, self.closed.notified()).await;
+    let l = self.lines.lock();
+    if l.head.is_empty() {
+      return error;
+    }
+    let skipped = (l.skipped > 0).then(|| format!("… {} lines left out", l.skipped));
+    let text: Vec<&str> = l.head.iter().map(String::as_str).chain(skipped.as_deref()).chain(l.tail.iter().map(String::as_str)).collect();
+    format!("{error}; its stderr:\n{}", text.join("\n"))
   }
 }
 

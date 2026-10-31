@@ -1,4 +1,4 @@
-// A soft whoosh under a plugin's arrival: a piece flying in from its card (`piece`), a skin uncovered by its circle
+// A soft whoosh under a plugin's arrival: a piece or a card's mark flying in from its card (`piece`), a skin uncovered by its circle
 // (`skin`, longer and lower). Synthesized like the chime (effects/chime.ts, same <audio> route and its reasons): noise
 // through a band-pass whose centre glides upward, swelling then dying away, at about the chime's level. Only a click on
 // the card starts the motion it goes with, so autoplay rules let it through. Off with the attention chime (`notifySound`)

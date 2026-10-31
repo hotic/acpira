@@ -78,7 +78,7 @@ export const Header = memo(function Header({ title, sessions, categories, agent,
     ? <span key={key} data-column-act data-shown={!docked || undefined} inert={docked || undefined}><span>{node}</span></span>
     : !docked && node;
   const settingsButton = onOpenSettings && columnAct('settings', (
-    <IconButton onClick={() => onOpenSettings()} title={t('session.settings')} aria-label={t('session.settings')}>
+    <IconButton data-land="settings" onClick={() => onOpenSettings()} title={t('session.settings')} aria-label={t('session.settings')}>
       <Settings2 strokeWidth={1.5} />
     </IconButton>
   ), gearDocked);
@@ -170,9 +170,9 @@ export const Header = memo(function Header({ title, sessions, categories, agent,
         {/* Plugin status pieces (plugins/Pieces.tsx) lead the header's actions */}
         <SlotPieces slot="statusbar" className="mr-gap-half flex items-center gap-1" />
         {/* New sessions start after choosing an agent from the plus menu. */}
-        {onNewIn && columnAct('new', <IconButton title={t('session.new')} aria-label={t('session.new')} onClick={onNewIn}><Plus strokeWidth={1.5} /></IconButton>)}
+        {onNewIn && columnAct('new', <IconButton data-land="agents" title={t('session.new')} aria-label={t('session.new')} onClick={onNewIn}><Plus strokeWidth={1.5} /></IconButton>)}
         {!sessionNav && !onNewIn && <DropdownMenu.Root>
-          <DropdownMenu.Trigger render={<IconButton title={t('session.new')} aria-label={t('session.new')}><Plus strokeWidth={1.5} /></IconButton>} />
+          <DropdownMenu.Trigger render={<IconButton data-land="agents" title={t('session.new')} aria-label={t('session.new')}><Plus strokeWidth={1.5} /></IconButton>} />
           <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="end" width="md"><DropdownMenu.Popup>
             <div className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
               {launchable(agents).map(a => <DropdownMenu.Item key={a.id} disabled={a.available === false} title={a.available === false ? t('agent.notInstalled') : undefined} onClick={() => on.newSession(a.id)}>

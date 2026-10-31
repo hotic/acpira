@@ -11,7 +11,7 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
 use acpira_shared::plugins::PluginCardOp;
-use acpira_shared::transcript::{PluginCard, Turn};
+use acpira_shared::transcript::{AgentBlock, AgentTurn, PluginCard, Turn};
 
 use crate::acp::session::AcpSession;
 use crate::acp::session::gates::{PendingQuestion, QuestionReply, Target};
@@ -75,6 +75,8 @@ impl AcpSession {
         let _ = out.send(HubReply::Error("There is no turn of yours to show the card in.".into()));
         return;
       };
+      let mut card = card;
+      card.after = offering_call(turn);
       turn.plugin_cards.push(card);
       self.plugin_waits.lock().insert(card_id.clone(), PluginWait { tx: Some(tx), host: host.clone() });
       self.touch(&mut c);
@@ -152,7 +154,19 @@ impl AcpSession {
             let _ = tx.send(HubReply::Done(text));
           }
         }
-        Err(e) => self.notify(&tp("host.plugin.applyFailed", &[("name", &card.name), ("error", &format!("{e:#}"))])),
+        Err(e) => {
+          let error = format!("{e:#}");
+          self.notify(&tp("host.plugin.applyFailed", &[("name", &card.name), ("error", &error)]));
+          // The agent that offered it may still be waiting on its call: it hears why verbatim, so it can fix the plugin
+          // and offer it again instead of waiting out the call (a later apply's failure reaches it as a message, like
+          // a later success)
+          if let Some(tx) = self.plugin_waits.lock().get_mut(card_id).and_then(|w| w.tx.take()) {
+            let _ = tx.send(HubReply::Error(format!(
+              "The user applied the card, but {} was not enabled: {error}\nFix it and call plugin_activate again.",
+              card.plugin
+            )));
+          }
+        }
       },
       PluginCardOp::Undo => match host.undo_card(&card, provenance).await {
         Ok(()) => self.update_card(card_id, |c| c.undo = None),
@@ -209,5 +223,45 @@ impl AcpSession {
         None
       }
     }
+  }
+}
+
+/// The row of the call that is offering a card: the turn's newest `plugin_activate` call, else its newest call still
+/// running (the MCP request carries no tool call id, and the agent reports its call before making it). None: the card
+/// shows after the reply
+fn offering_call(turn: &AgentTurn) -> Option<String> {
+  let calls = || turn.blocks.iter().rev().filter_map(|b| match b {
+    AgentBlock::ToolCall(t) => Some(t),
+    _ => None,
+  });
+  let named = |s: &str| s.to_ascii_lowercase().replace([' ', '-'], "_").contains("plugin_activate");
+  calls()
+    .find(|t| named(&t.verb) || t.target.as_deref().is_some_and(named))
+    .or_else(|| calls().find(|t| t.status.is_open()))
+    .map(|t| t.id.clone())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use serde_json::json;
+
+  fn turn(blocks: Value) -> AgentTurn {
+    serde_json::from_value(json!({ "role": "agent", "blocks": blocks })).unwrap()
+  }
+  fn call(id: &str, verb: &str, status: &str) -> Value {
+    json!({ "type": "tool_call", "id": id, "kind": "other", "verb": verb, "status": status })
+  }
+
+  #[test]
+  fn a_card_follows_the_call_that_offered_it() {
+    // The activate call, even with a later call already running beside it
+    let t = turn(json!([call("a", "Read", "completed"), call("b", "plugin_activate", "in_progress"), call("c", "Run", "in_progress")]));
+    assert_eq!(offering_call(&t).as_deref(), Some("b"));
+    // A client that names the call otherwise: the newest call still running
+    let t = turn(json!([call("a", "Run", "in_progress"), call("b", "Read", "completed")]));
+    assert_eq!(offering_call(&t).as_deref(), Some("a"));
+    // No call at all: after the reply
+    assert_eq!(offering_call(&turn(json!([{ "type": "text", "markdown": "hi" }]))), None);
   }
 }

@@ -40,7 +40,7 @@ export function useFollowing(): boolean {
 // so a stream chunk arriving mid-toggle cannot re-arm content-growth pinning while the fold is still opening
 const FOLD_SETTLE_MS = 400;
 
-export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, content: RefObject<HTMLDivElement | null>, resetKey: unknown, changes: DependencyList): FollowState {
+export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, content: RefObject<HTMLDivElement | null>, resetKey: unknown, changes: DependencyList, prompt?: unknown): FollowState {
   const pinned = useRef(true);
   const untouched = useRef(true);
   const holding = useRef(-Infinity);
@@ -154,6 +154,23 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
     };
   // The refs are stable; `resetKey` names the transcript whose content element is mounted
   }, [resetKey]);
+  // A new prompt (sent here or from another window) brings the reader back to the tail, even after a scroll away or a
+  // click in the thread (a plugin card's Apply) released the follow; `prompt` is the last user turn, whose reference
+  // stays the same across stream chunks and history slices (shared/reuse.ts)
+  const lastPrompt = useRef(prompt);
+  useLayoutEffect(() => {
+    if (lastPrompt.current === prompt) return;
+    const had = lastPrompt.current !== undefined;
+    lastPrompt.current = prompt;
+    const el = scroller.current;
+    if (!had || !el || !scrollerUsable(el)) return;
+    pinned.current = true;
+    untouched.current = true;
+    holding.current = -Infinity;
+    holdingDown.current = false;
+    follow.set(true);
+    el.scrollTop = el.scrollHeight;
+  }, [prompt]);
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el || !scrollerUsable(el) || !pinned.current) return;

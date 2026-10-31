@@ -4,10 +4,11 @@
 //! not (`initialize` advertises `mcpCapabilities.http` only, so the engine never sends one).
 //!
 //! Every server starts connecting when the session opens; a turn waits for the ones still starting (each bounded by
-//! `START_TIMEOUT`) before it freezes its tool set, so the set is the same from the first request on and a slow
+//! `START_TIMEOUT`) before it sets its tool set, so the set is complete from the first request on and a slow
 //! `npx` server does not hold up `session/new`. A server's tools reach the model as `<server>_<tool>` (OpenCode's
 //! naming, which the engine already recognizes for `acpira_show_image` and `acpira_ask_agent`), behind the built-in
-//! tools, in the order the servers were given. A `tools/list_changed` notification makes the next turn list again
+//! tools, in the order the servers were given. A `tools/list_changed` notification makes the next turn list again, so
+//! a turn keeps its tool table and the prompt cache; only a plugin just applied relists mid-turn (`Hub::pending`)
 
 mod http;
 mod stdio;
@@ -418,7 +419,19 @@ impl Hub {
   pub async fn call(&self, server: &str, tool: &str, args: Value, progress: Option<Progress>) -> Result<Value, String> {
     let s = self.servers.iter().find(|s| s.key == server).ok_or_else(|| format!("the MCP server {server} is not configured in this session"))?;
     let live = s.started().ok_or_else(|| format!("the MCP server {server} is not running"))?;
-    live.transport.request("tools/call", json!({ "name": tool, "arguments": args }), progress, CALL_TIMEOUT).await
+    let result = live.transport.request("tools/call", json!({ "name": tool, "arguments": args }), progress, CALL_TIMEOUT).await;
+    // A plugin the user just applied may bring tools: the engine's server lists again before the turn's next request,
+    // so the model can call what it built in the same turn (the one change worth the prompt cache mid-turn)
+    if server == safe(crate::acp::ACPIRA_SERVER) && tool == "plugin_activate" && result.is_ok() {
+      s.relist.store(true, Ordering::Release);
+    }
+    result
+  }
+
+  /// Whether a server is to list again before the turn's next request: a plugin was applied (`call`). A plain
+  /// `list_changed` waits for the next turn
+  pub fn pending(&self) -> bool {
+    self.servers.iter().any(|s| s.relist.load(Ordering::Acquire))
   }
 
   /// End every server process (and HTTP session); idempotent

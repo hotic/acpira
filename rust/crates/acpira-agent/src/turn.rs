@@ -384,6 +384,13 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
     // What the user steered in since the last call goes in front of this one, behind the round's tool results. The
     // first call carries the prompt alone, as Codex samples a turn's own input first
     if step > 1 {
+      // A plugin applied since the last call: the model gets its tools now
+      if !s.raw && session.mcp.pending() {
+        offer = session.mcp.offer(&tools::names::ALL).await;
+        let mut fresh = setup(server, session, params, &offer.tools)?;
+        plugin_tools(server, session, &mut fresh).await;
+        s.retool(fresh);
+      }
       crate::steer::take(session, s.model.takes_images(), &s.skills);
       // The goal's budget ran out in this turn: the model is told to wrap up (`goal::account`)
       goal::take_note(session);
