@@ -208,12 +208,14 @@ fn sign_jwt(pem: &str, key_id: &str, team: &str, now_s: u64) -> Result<String> {
   Ok(format!("{signed}.{}", URL_SAFE_NO_PAD.encode(sig.as_ref())))
 }
 
-/// The notification: the session's title over what happened, the card's request or the reply below. A card is
-/// time-sensitive (an agent waits on it, so it may break through a Focus); the rest is ordinary
+/// The notification: the session's title over the card's request or the reply. No subtitle: the agent and its state
+/// ("Claude Code finished") only stand in as the body when there is nothing else to say. A card is time-sensitive
+/// (an agent waits on it, so it may break through a Focus); the rest is ordinary
 fn payload(note: &PushNote, computer: &str) -> Value {
-  let mut alert = json!({ "title": clip(&note.title, MAX_TITLE), "subtitle": clip(&note.subtitle, MAX_TITLE) });
-  if !note.body.trim().is_empty() {
-    alert["body"] = clip(note.body.trim(), MAX_BODY).into();
+  let mut alert = json!({ "title": clip(&note.title, MAX_TITLE) });
+  let body = if note.body.trim().is_empty() { note.subtitle.trim() } else { note.body.trim() };
+  if !body.is_empty() {
+    alert["body"] = clip(body, MAX_BODY).into();
   }
   let level = if note.kind == PushKind::Waiting { "time-sensitive" } else { "active" };
   json!({
@@ -292,9 +294,10 @@ mod tests {
     assert_eq!(p["aps"]["interruption-level"], "time-sensitive");
     assert_eq!(p["aps"]["alert"]["body"], "Run cargo test");
     assert_eq!(p["acpira"], json!({ "session": "s1", "computer": "gw", "kind": "waiting" }));
+    assert!(p["aps"]["alert"].get("subtitle").is_none());
     let p = payload(&note(PushKind::Done, "  "), "gw");
     assert_eq!(p["aps"]["interruption-level"], "active");
-    assert!(p["aps"]["alert"].get("body").is_none());
+    assert_eq!(p["aps"]["alert"]["body"], "Claude is waiting for you");
     let long = "x".repeat(5000);
     let p = payload(&note(PushKind::Done, &long), "gw");
     assert_eq!(p["aps"]["alert"]["body"].as_str().unwrap().chars().count(), MAX_BODY);
