@@ -3,6 +3,7 @@
 import type { MsgKey } from './i18n/keys';
 import type { SubagentSummary } from './subagents';
 import type { ModelShapes } from './modelShapes';
+import type { AccountAction } from './protocol';
 
 // Built-in devin / grok; custom ids can be added in acpira.agents
 export type AgentId = string;
@@ -29,6 +30,8 @@ export interface AgentInfo {
   searched?: string[];
   // How to get the CLI when none was found: the vendor's one-line install for this platform and its docs page
   install?: AgentInstall;
+  // The adapter version this release pins, when the installed adapter is older; the in-app install (installAgent) updates it
+  update?: string;
 }
 
 export interface AgentInstall {
@@ -144,7 +147,8 @@ export type SessionStatus = 'starting' | 'ready' | 'auth_required' | 'readonly' 
 export type ToolKind = 'read' | 'edit' | 'delete' | 'move' | 'search' | 'execute' | 'think' | 'fetch' | 'switch_mode' | 'other';
 export type ToolStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
 
-// An image the agent produced (tool result or message chunk). The pixels live in the session's blob directory
+// An image the agent produced (tool result or message chunk). Widgets (text/html) and videos (video/*) reuse this
+// stored shape for record compatibility; render by mimeType. The bytes live in the session's blob directory
 // under a content-hash name; `uri` keeps a path the agent saved itself (codex-acp writes generations to disk)
 export interface ImageRef {
   blob?: string;
@@ -399,7 +403,14 @@ export interface QuestionBlock {
   questions: Question[];
   outcome?: QuestionOutcome;
   answers?: QuestionAnswers;
+  // The agent takes images with the answers (the built-in agent, on a model that reads images)
+  images?: boolean;
+  // Images sent with the answers, by question id; the bytes are in the session's blob store
+  answerImages?: Record<string, ImageRef[]>;
 }
+
+// An image draft as a question card sends it with an answer
+export type ImageDraft = Extract<Draft, { kind: 'image' }>;
 
 // An image the agent streamed as a message chunk (image generation / view results); pixels are in the blob store, never base64 here
 export interface ImageBlock {
@@ -598,12 +609,17 @@ export interface PluginCard {
   slots?: string[];
   // The cron expressions of its schedules: it runs unattended, and may act on sessions while nobody watches
   schedules?: string[];
+  // What it contributes (tools, hooks, agent …): where the card's mark flies once applied (plugins/landings.ts)
+  adds?: string[];
   // The source folder, which the corner button reveals
   folder: string;
   at: number;
   // Set when it was applied from this card: the version enabled before (none: it was off) and the skin before
   // ('' for none; absent when the card is not a skin)
   undo?: { snapshot?: string; skin?: string };
+  // The tool call that offered it (the agent's plugin_activate): shown right after that row, not under everything the
+  // turn streams later. Absent on older records, or when the call is not in the turn: after the reply
+  after?: string;
 }
 
 export interface TurnRetry {
@@ -645,6 +661,8 @@ export interface SessionSummary {
   unread?: boolean;
   // Only beside `waiting`: only questions wait; a permission card waiting too wins, as it holds up a tool
   question?: boolean;
+  // Only beside `background`: when Claude's pending ScheduleWakeup resumes the session (ms since the epoch)
+  wakeAt?: number;
   // The model the session last ran: the wire id is its identity (the vendor is read from it), the name its label. Absent
   // while no model control is known and on index entries written before the field existed
   model?: { id: string; name: string };
@@ -754,8 +772,16 @@ export interface ForkOrigin {
   agent?: AgentId;
 }
 
+// Public account metadata from the SSH engine that owns a session; secrets never cross the peer wire.
+export interface RemoteAuth {
+  agent: AgentInfo;
+  accounts: AccountInfo[];
+  action?: AccountAction;
+}
+
 export interface SessionView {
   id: string;
+  remoteAuth?: RemoteAuth;
   external?: ExternalSessionInfo;
   agent: AgentId;
   // Bound account (only agents on the account layer have one); a session uses a single account from start to finish

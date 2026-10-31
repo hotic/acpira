@@ -133,6 +133,14 @@ struct MediaSourceTests {
     #expect(isImageResult(block))
   }
 
+  @Test func videoResultsNeverEnterTheImageDecoder() throws {
+    let json = #"{"id":"v","kind":"other","verb":"Video","verbKey":"verb.showVideo","status":"completed","contents":[{"type":"image","blob":"clip.mp4","mimeType":"video/mp4"}]}"#
+    let block = try JSONDecoder().decode(ToolCallBlock.self, from: Data(json.utf8))
+    #expect(toolImages(block).isEmpty)
+    #expect(toolVideos(block).map(\.blob) == ["clip.mp4"])
+    #expect(isImageResult(block))
+  }
+
   @Test func markdownImages() throws {
     let images = try JSONDecoder().decode([ImageRef].self, from: Data(#"""
     [{"uri":"docs/my%20arch.png","blob":"b1.png","mimeType":"image/png"},{"uri":"./gone.png","mimeType":"image/png"}]

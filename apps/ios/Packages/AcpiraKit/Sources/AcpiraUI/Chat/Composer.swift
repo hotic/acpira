@@ -181,7 +181,7 @@ struct Composer: View {
   }
 
   private var send: some View {
-    SendButton(running: session.running, filled: filled) {
+    SendButton(running: session.running, filled: filled, waiting: VideoJobs.shared.pending(staged)) {
       if session.running && !filled {
         onStop()
       } else {
@@ -610,15 +610,49 @@ struct AttachPickers: ViewModifier {
     Binding(get: { source == s && (s != .camera || Self.cameraAvailable) }, set: { if !$0, source == s { source = nil } })
   }
 
+  #if canImport(PhotosUI)
+  /// A Photos video: staged at once under its compressed copy's path, named after the original once it has loaded
+  private func stageVideo(_ item: PhotosPickerItem) {
+    let folder = AttachmentFile.folder.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let uri = folder.appendingPathComponent("video.mp4").absoluteString
+    staged.append(.file(uri: uri, name: "video.mp4"))
+    let staged = $staged, toast = actions.toast
+    VideoJobs.shared.start(uri: uri, load: {
+      guard let movie = try await item.loadTransferable(type: PickedMovie.self) else { throw VideoCompressor.Failure.unreadable }
+      let name = movie.url.deletingPathExtension().lastPathComponent + ".mp4"
+      await MainActor.run {
+        if let at = staged.wrappedValue.firstIndex(where: { if case .file(uri, _) = $0 { true } else { false } }) {
+          staged.wrappedValue[at] = .file(uri: uri, name: name)
+        }
+      }
+      return movie.url
+    }, budget: VideoCompressor.maxBytes, unstage: {
+      staged.wrappedValue.removeAll { if case .file(uri, _) = $0 { true } else { false } }
+    }, failed: { failure in
+      switch failure {
+      case .tooBig: toast(t("mobile.video.tooBig", ["mb": VideoCompressor.maxBytes >> 20]), .fileVideo)
+      case .unreadable: toast(t("mobile.video.failed"), .fileVideo)
+      }
+    })
+  }
+  #endif
+
   func body(content: Content) -> some View {
     content
       #if canImport(PhotosUI)
-      .photosPicker(isPresented: shown(.photos), selection: $picked, maxSelectionCount: 4, matching: .images)
+      // `.current` keeps the original encoding: a video is compressed here anyway (VideoCompressor), and asking for
+      // `.compatible` would have Photos transcode it once more first
+      .photosPicker(isPresented: shown(.photos), selection: $picked, maxSelectionCount: 4,
+                    matching: .any(of: [.images, .videos]), preferredItemEncoding: .current)
       .onChange(of: picked) { _, items in
         guard !items.isEmpty else { return }
         picked = []
+        // Videos take their pill at once and fill it as they compress; photos arrive as they load
+        for item in items where item.supportedContentTypes.contains(where: { $0.conforms(to: .movie) }) {
+          stageVideo(item)
+        }
         Task {
-          for item in items {
+          for item in items where !item.supportedContentTypes.contains(where: { $0.conforms(to: .movie) }) {
             if let data = try? await item.loadTransferable(type: Data.self), let image = AttachmentImage.thumbnail(data) {
               staged.append(.image(blob: image, mimeType: "image/jpeg", name: nil))
             }
@@ -727,7 +761,13 @@ struct StagedAttachments: View {
                 }
             // A pill is lower than the badge, which covered the end of its name: its ✕ sits inside it, after the name
             case .file(let uri, let name):
-              AttachmentPill(name: name, icon: .fileText, onOpen: opener.open(uri: uri)) { items.remove(at: i) }
+              let video = Attachment.isVideo(name: name)
+              let progress = VideoJobs.shared.progress[uri]
+              AttachmentPill(name: name, icon: video ? .fileVideo : .fileText, progress: progress,
+                             onOpen: progress == nil ? opener.open(uri: uri) : nil) {
+                VideoJobs.shared.cancel(uri)
+                items.remove(at: i)
+              }
             case .text(_, let name, _):
               AttachmentPill(name: name, icon: .fileText) { items.remove(at: i) }
             // Only a sent prompt taken in for editing brings a selection back
@@ -878,10 +918,12 @@ struct SendButton: View {
   @Environment(\.syncing) private var syncing
   var running: Bool
   var filled: Bool
+  /// A staged video is still compressing: the draft can't go yet, and the button doesn't stop the turn meanwhile
+  var waiting = false
   var action: () -> Void
 
   var body: some View {
-    let on = (running && !syncing) || filled
+    let on = !waiting && ((running && !syncing) || filled)
     let side = Metrics.barCtl - Metrics.s1 * 2
     Button(action: action) {
       Group {

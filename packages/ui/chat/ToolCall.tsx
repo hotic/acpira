@@ -4,7 +4,7 @@ import type { AsyncTaskInfo, AsyncTaskState, ImageRef, ToolCallBlock } from '@ac
 import type { MsgKey } from '@acpira/shared/i18n';
 import { imageMimeOf } from '@acpira/shared/attachments';
 import { toolTodoEntries } from '@acpira/shared/todoTools';
-import { isImageGenTool, isShowImageTool, isShowWidgetTool, toolImages, toolTexts } from '@acpira/shared/imageTools';
+import { isImageGenTool, isShowImageTool, isShowVideoTool, isShowWidgetTool, toolImages, toolTexts } from '@acpira/shared/imageTools';
 import { useAppearance } from '../appearance';
 import { Disclosure } from '../ui/Disclosure';
 import { EntranceOnce, Row, RowLabel, RowTarget } from '../ui/Row';
@@ -19,6 +19,7 @@ import { AgentImage } from './AgentImage';
 import { FileMenu } from './ImageMenu';
 import { GeneratedImages, ImageInFoldContext } from './GeneratedImage';
 import { ShownWidget } from './AgentWidget';
+import { ShownVideos } from './AgentVideo';
 import { TerminalOutput, ToolOutput } from './Terminal';
 import { isSkillTool, isWorkflowRun, toolTarget, toolVerb } from './folding';
 import { AsyncTaskStopContext, OpenToolFileContext, SessionTitleContext, SkillDescriptionContext, ToolFileActionsContext, WorkflowProgressContext } from './fileLinks';
@@ -117,12 +118,13 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
   // An edit names where it landed, first to last changed line, the way a read names its range
   const span = block.kind === 'edit' ? editSpan([block]) : undefined;
   const editFile = block.kind === 'edit' ? editReference([block]) : undefined;
-  const target = isSessionTool(block) ? <SessionToolTarget block={block} /> : isSkillTool(block) ? <SkillTarget block={block} /> : <RowTarget mono={block.targetMono}>{toolTarget(block)}</RowTarget>;
+  const targetName = toolTarget(block);
+  const target = isSessionTool(block) ? <SessionToolTarget block={block} /> : isSkillTool(block) ? <SkillTarget block={block} /> : <RowTarget mono={block.targetMono}>{targetName}</RowTarget>;
   const label = <>
     <RowLabel shimmer={running}>{toolVerb(block)}</RowLabel>
     {command
       ? <RowTarget mono>{command}</RowTarget>
-      : block.target && !(block.kind === 'read' && files.length) && (editFile
+      : targetName && !(block.kind === 'read' && files.length) && (editFile
         ? <FileRef hit={editFile.path} line={editFile.line} aside={span}>{target}</FileRef>
         : span ? <span className="flex min-w-0 items-baseline gap-1">{target}<Aside>{span}</Aside></span> : target)}
   </>;
@@ -144,6 +146,10 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
   if (isShowImageTool(block)) {
     const row = <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
     return <div className="flex flex-col gap-gap">{row}{(!grouped || imageInFold) && <GeneratedImages block={block} />}</div>;
+  }
+  if (isShowVideoTool(block) && block.status !== 'failed') {
+    const row = <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
+    return <div className="flex flex-col gap-gap">{row}{(!grouped || imageInFold) && <ShownVideos block={block} />}</div>;
   }
   // A shown widget (Acpira's show_widget) sits like a shown image: under its row in an open process fold, outside it
   // once the fold closes; the receipt text is for the model only

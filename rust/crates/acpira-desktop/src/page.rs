@@ -354,7 +354,14 @@ pub fn route(path: &str, query: Option<&str>, webview: &Path, blobs: Option<&Pat
     }
     plain
   } else if let (Some(rest), Some(root)) = (path.strip_prefix("/blobs/"), blobs) {
-    crate::confine::confine(root, rest)
+    let file = crate::confine::confine(root, rest).filter(|f| f.is_file());
+    // WKWebView needs byte ranges for the MP4 index, including recordings saved as session blobs.
+    if let Some(file) = file.as_ref()
+      && mime(file).starts_with("video/")
+    {
+      return Route::Media { file: file.clone(), mime: mime(file) };
+    }
+    file
   } else {
     None
   };
@@ -507,6 +514,9 @@ mod tests {
     assert_eq!(route("/webview/assets", None, &web, None), Route::NotFound);
     assert_eq!(route("/blobs/b.png", None, &web, None), Route::NotFound);
     assert!(matches!(route("/blobs/b.png", None, &web, Some(&blobs)), Route::File(_)));
+    std::fs::write(blobs.join("clip.mp4"), "").unwrap();
+    assert!(matches!(route("/blobs/clip.mp4", None, &web, Some(&blobs)), Route::Media { mime: "video/mp4", .. }));
+    assert_eq!(route("/blobs/../clip.mp4", None, &web, Some(&blobs)), Route::NotFound);
     assert_eq!(route("/other", None, &web, Some(&blobs)), Route::NotFound);
     // A packed bundle file answers under its own name, with its own type; a plain file of that name wins
     std::fs::write(web.join("assets/c-AbCd1234.js.zst"), zstd::encode_all(&b"export {}"[..], 3).unwrap()).unwrap();

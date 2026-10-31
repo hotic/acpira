@@ -21,6 +21,9 @@ const show: ToolCallBlock = { type: 'tool_call', id: 'show', kind: 'other', verb
 const generation: ToolCallBlock = { ...show, id: 'generation', verb: 'Generate image', verbKey: 'verb.imagegen',
   content: { type: 'image', blob: 'generated.png', mimeType: 'image/png' } };
 
+const video: ToolCallBlock = { ...show, id: 'video', verb: 'Show video', verbKey: 'verb.showVideo',
+  content: { type: 'image', blob: 'recording.mp4', mimeType: 'video/mp4', uri: '/tmp/recording.mp4' } };
+
 function render(blocks: AgentTurn['blocks'], running = true, fold: 'codex' | 'cursor' = 'codex', memoryKey?: string) {
   return renderToStaticMarkup(createElement(AppearanceContext.Provider, { value: { ...BASE_APPEARANCE, fold, motion: 'none' } },
     createElement(BlobUrlContext.Provider, { value: blob => `/test-images/${blob}` },
@@ -58,6 +61,17 @@ describe('image results in the shared process fold', () => {
     // Live panels keep their process DOM mounted; their image results must not duplicate the lifted copies.
     expect(markup).toContain('after-image-command');
     expect(markup.match(/<img /g)).toHaveLength(2);
+  });
+
+  it.each(['codex', 'cursor'] as const)('keeps a single paused video visible with %s folding', fold => {
+    const markup = render([video, { ...after, status: 'completed' }], false, fold);
+    expect(markup.match(/<video /g)).toHaveLength(1);
+    expect(markup).toContain('controls=""');
+    expect(markup).toContain('preload="metadata"');
+    expect(markup).not.toContain('autoPlay');
+    expect(markup).not.toContain('<img ');
+    // No video source before IntersectionObserver admits the card to the viewport.
+    expect(markup).not.toContain('src="/test-images/recording.mp4"');
   });
 
   it('retains chronological images in cursor mode', () => {

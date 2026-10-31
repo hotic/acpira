@@ -3,8 +3,27 @@ import { dedupeRecentPages } from '../panel/browserTabs';
 import { FILES_TAB, anyModule, panel, panelState } from '../panel/store';
 import { projectPath } from '../panel/ToolPanel';
 import { setPluginSlots } from '../pluginSlots';
+import { refreshMediaUrl } from '../panel/files';
 
 describe('dedupeRecentPages', () => {
+  it('refreshes media without making the cache token part of a blob file name', () => {
+    const blob = new URL(refreshMediaUrl('acpira-app://localhost/blobs/s/clip.mp4', 2));
+    expect(blob.pathname).toBe('/blobs/s/clip.mp4');
+    expect(blob.searchParams.get('v')).toBe('2');
+    const local = new URL(refreshMediaUrl('acpira-app://localhost/file?path=%2Ftmp%2Fclip.mp4', 2));
+    expect(local.searchParams.get('path')).toBe('/tmp/clip.mp4');
+    expect(local.searchParams.get('v')).toBe('2');
+  });
+  it('keeps a staged media source when its file tab is opened in an SSH project', () => {
+    const root = 'ssh://host/work';
+    const path = '/remote/data/sessions/s-media/c429caa26e072b19.mp4';
+    const media = { kind: 'video' as const, src: 'acpira-app://localhost/blobs/s-media/c429caa26e072b19.mp4' };
+    panel.setContext('s-media', root);
+    panel.openFile(root, path);
+    panel.openFile(root, path, undefined, media);
+    expect(Object.values(panelState().views)).toContainEqual({ path, media });
+    expect(Object.values(panelState().opened).flat()).toContainEqual({ path, media });
+  });
   it('collapses repeated titles on the same loopback port, prefers running URLs, and caps at 5', () => {
     const pages = [
       { url: 'http://localhost:5199/lab/tour.preview.html?s=1', title: '设置里的界面导览入口' },

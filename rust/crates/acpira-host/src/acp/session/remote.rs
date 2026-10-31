@@ -234,19 +234,19 @@ impl AcpSession {
 
   /// `show_image` / `show_widget` on the session's host: each file checked there as `host_mcp` checks a local one, and
   /// read into `shown` for the call's completion to show. Err: what is wrong, for the model
-  pub(crate) async fn fetch_shown(&self, paths: &[String], widget: bool) -> Result<(), String> {
+  pub(crate) async fn fetch_shown(&self, paths: &[String], widget: bool, video: bool) -> Result<(), String> {
     use acpira_shared::attachments::image_mime_of;
     let f = self.remote_folder().ok_or("this session's folder is not on an SSH host")?;
     let connections = self.deps.remote.clone().ok_or("this engine has no SSH connections")?;
     let client = connections.ensure(&f.alias, CONNECT_WAIT).await.map_err(|e| format!("{} cannot be reached: {e:#}", f.alias))?;
-    let limit = if widget { crate::limits::MAX_WIDGET_BYTES } else { crate::limits::MAX_OUT_IMAGE_BYTES };
+    let limit = if widget { crate::limits::MAX_WIDGET_BYTES } else if video { crate::limits::MAX_OUT_VIDEO_BYTES } else { crate::limits::MAX_OUT_IMAGE_BYTES };
     let mut problems = vec![];
     for path in paths {
-      let kind_ok = if widget { crate::host_mcp::widget_mime_of(path).is_some() } else { image_mime_of(path).is_some() };
+      let kind_ok = if widget { crate::host_mcp::widget_mime_of(path).is_some() } else if video { crate::host_mcp::video_mime_of(path).is_some() } else { image_mime_of(path).is_some() };
       let problem = if !path.starts_with('/') {
         Some(format!("{path}: not an absolute path"))
       } else if !kind_ok {
-        Some(format!("{path}: {}", if widget { "not an .html file" } else { "not a PNG, JPEG, GIF or WebP file" }))
+        Some(format!("{path}: {}", if widget { "not an .html file" } else if video { "not an MP4 or WebM file" } else { "not a PNG, JPEG, GIF or WebP file" }))
       } else {
         match client.call("stat", json!({ "path": path })).await {
           Err(e) => Some(format!("{path}: {e}")),

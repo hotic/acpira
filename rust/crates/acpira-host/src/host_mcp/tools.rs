@@ -8,10 +8,10 @@ use serde_json::{Map, Value, json};
 use acpira_shared::attachments::image_mime_of;
 use acpira_shared::host_tools::{
   ASK_AGENT as ASK_TOOL, ASK_CALLER as CALLER_TOOL, OPEN_BROWSER as BROWSER_TOOL, PLUGIN_ACTIVATE, PLUGIN_GUIDE, READ_SESSION as READ_SESSION_TOOL,
-  SEARCH_SESSIONS as SEARCH_SESSIONS_TOOL, SHOW_IMAGE as TOOL_NAME, SHOW_WIDGET as WIDGET_TOOL, WORKSPACE_HOOKS as HOOKS_TOOL,
+  SEARCH_SESSIONS as SEARCH_SESSIONS_TOOL, SHOW_IMAGE as TOOL_NAME, SHOW_VIDEO as VIDEO_TOOL, SHOW_WIDGET as WIDGET_TOOL, WORKSPACE_HOOKS as HOOKS_TOOL,
 };
 
-use crate::limits::{MAX_OUT_IMAGE_BYTES, MAX_WIDGET_BYTES};
+use crate::limits::{MAX_OUT_IMAGE_BYTES, MAX_OUT_VIDEO_BYTES, MAX_WIDGET_BYTES};
 
 const SEARCH_SESSIONS_DESCRIPTION: &str = "Find earlier Acpira sessions, the user's conversations with any agent (Claude, \
 Codex, Kimi, Devin, the built-in agent …), by words in their title or conversation; without a query, list the most recent ones. \
@@ -232,6 +232,23 @@ pub(super) fn tool_def() -> Value {
   })
 }
 
+pub(super) fn video_tool_def() -> Value {
+  json!({
+    "name": VIDEO_TOOL,
+    "title": "Show video",
+    "description": "Display a local MP4 or WebM recording inline in the conversation. Pass its absolute path (under 64 MiB); prefer H.264 MP4 for compatibility. The player starts paused, with playback, seeking and fullscreen controls. It pauses when out of view. The video is saved with the session and shown to the user only, not returned to you. Use this instead of converting recordings to GIF; do not also embed or link the same video.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Absolute path of the MP4 or WebM file." },
+        "caption": { "type": "string", "description": "Optional short caption naming what the recording shows." },
+      },
+      "required": ["path"],
+    },
+    "annotations": { "readOnlyHint": true, "openWorldHint": false },
+  })
+}
+
 pub(super) fn widget_tool_def() -> Value {
   json!({
     "name": WIDGET_TOOL,
@@ -368,6 +385,44 @@ pub(super) fn show_image_with(args: &Map<String, Value>, check: &dyn Fn(&str) ->
     "content": [{ "type": "text", "text": format!("Shown to the user: {}. It is displayed in the conversation; no need to link or describe it again.", names.join(", ")) }],
     "isError": false,
   })
+}
+
+/// Video MIME is deliberately limited to containers the webview can play without a bundled decoder.
+pub fn video_mime_of(path: &str) -> Option<&'static str> {
+  match Path::new(path).extension()?.to_str()?.to_ascii_lowercase().as_str() {
+    "mp4" => Some("video/mp4"),
+    "webm" => Some("video/webm"),
+    _ => None,
+  }
+}
+
+pub(super) fn call_show_video(args: &Map<String, Value>) -> Value {
+  show_video_with(args, &|path| {
+    if !Path::new(path).is_absolute() {
+      return Err(format!("{path}: not an absolute path"));
+    }
+    if video_mime_of(path).is_none() {
+      return Err(format!("{path}: not an MP4 or WebM file"));
+    }
+    let meta = std::fs::metadata(path).map_err(|e| format!("{path}: {e}"))?;
+    if !meta.is_file() {
+      return Err(format!("{path}: not a file"));
+    }
+    if meta.len() > MAX_OUT_VIDEO_BYTES {
+      return Err(format!("{path}: larger than 64 MiB"));
+    }
+    Ok(())
+  })
+}
+
+pub(super) fn show_video_with(args: &Map<String, Value>, check: &dyn Fn(&str) -> Result<(), String>) -> Value {
+  let Some(path) = args.get("path").and_then(Value::as_str).map(str::trim).filter(|p| !p.is_empty()) else {
+    return tool_error("Pass `path` with the absolute path of an MP4 or WebM file.".into());
+  };
+  if let Err(e) = check(path) {
+    return tool_error(e);
+  }
+  json!({ "content": [{ "type": "text", "text": "Shown to the user as a paused video player in the conversation; no need to link or display it again." }], "isError": false })
 }
 
 fn check_image(path: &str) -> Result<(), String> {

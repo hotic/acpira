@@ -126,10 +126,13 @@ struct TurnAttachments: View {
 struct AttachmentPill: View {
   let name: String
   let icon: LucideIcon
+  /// A staged video still compressing (0...1): the pill fills from its leading edge, keeping its size
+  var progress: Double? = nil
   /// What a tap on the glyph and name opens (FileOpener), if the file can be shown here
   var onOpen: (() -> Void)? = nil
   /// A staged pill's ✕, after the name
   var onRemove: (() -> Void)? = nil
+  @Environment(\.motionEnabled) private var motion
   var body: some View {
     HStack(spacing: Metrics.s1) {
       let label = HStack(spacing: Metrics.s1) {
@@ -160,7 +163,17 @@ struct AttachmentPill: View {
     .foregroundStyle(Palette.fg2)
     .padding(.horizontal, Metrics.s2)
     .frame(height: WebMetrics.ctlSm)
-    .background(RoundedRectangle(cornerRadius: Metrics.rSm).fill(Palette.chip))
+    .background {
+      ZStack(alignment: .leading) {
+        Palette.chip
+        if let progress {
+          GeometryReader { box in Palette.active.frame(width: box.size.width * progress) }
+            .animation(motion ? .linear(duration: Motion.durOpen) : nil, value: progress)
+        }
+      }
+      .clipShape(RoundedRectangle(cornerRadius: Metrics.rSm))
+    }
+    .accessibilityValue(progress.map { Text(web: t("mobile.video.compressing", ["percent": Int($0 * 100)])) } ?? Text(verbatim: ""))
   }
 }
 
@@ -467,7 +480,8 @@ struct TurnStats: View {
       }
       .padding(.horizontal, Metrics.s2)
       .frame(minHeight: WebMetrics.ctl)
-      if !content.tiles.isEmpty { tiles(content.tiles) }
+      // Inset like the web's mx-1.5, so the tile sheet sits inside the token lines instead of running edge to edge
+      if !content.tiles.isEmpty { tiles(content.tiles).padding(.horizontal, Metrics.s1_5) }
       if !content.tokens.isEmpty || content.context != nil {
         VStack(alignment: .leading, spacing: 0) {
           ForEach(content.tokens, id: \.label) { stat($0.label, Text(web: $0.value), chip: $0.chip) }
