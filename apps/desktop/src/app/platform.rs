@@ -72,7 +72,8 @@ impl Platform for App {
   }
 
   fn attention(&self, session_id: &str) {
-    self.attention.lock().insert(session_id.to_owned());
+    let here = self.shown_here(session_id);
+    *self.attention.lock().entry(session_id.to_owned()).or_default() |= here;
     self.update_attention();
     if self.background {
       return;

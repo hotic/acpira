@@ -20,9 +20,31 @@ impl App {
   /// Only reading the corresponding session clears its icon mark; activating another window leaves the others alone.
   pub fn acknowledge_attention(&self, w: &crate::chat_window::ChatWindow) {
     let Some(id) = w.session_id() else { return };
-    if w.watching(&id) && self.attention.lock().remove(&id) {
+    if !w.watching(&id) {
+      // On screen but not looked at: the engine counts it seen from now on, so the list can no longer clear it
+      if let Some(here) = self.attention.lock().get_mut(&id) {
+        *here = true;
+      }
+      return;
+    }
+    if self.attention.lock().remove(&id).is_some() {
       self.update_attention();
     }
+  }
+
+  /// Longer than the engine's settle delay before it announces a finished turn
+  const LEFT_RECENTLY: std::time::Duration = std::time::Duration::from_secs(10);
+
+  pub(crate) fn left_session(&self, id: String) {
+    let mut left = self.left.lock();
+    left.retain(|_, at| at.elapsed() < Self::LEFT_RECENTLY);
+    left.insert(id, std::time::Instant::now());
+  }
+
+  /// Whether a window of this app shows the session now or did a moment ago, i.e. was an engine viewer at its last edge
+  pub(crate) fn shown_here(&self, id: &str) -> bool {
+    self.windows().iter().any(|w| w.session_id().as_deref() == Some(id))
+      || self.left.lock().get(id).is_some_and(|at| at.elapsed() < Self::LEFT_RECENTLY)
   }
 
   pub(crate) fn update_attention(&self) {

@@ -4,6 +4,7 @@
 use std::path::PathBuf;
 
 use acpira_shared::sidecar::{BrowserOpened, PlanTarget, PlatformRequest, ToastOpen};
+use acpira_shared::transcript::SummaryState;
 use serde_json::{Map, Value};
 
 use crate::editors::{Editor, FileTarget};
@@ -102,6 +103,13 @@ pub fn handle_request(r: PlatformRequest, p: &dyn Platform) -> Result<Value, Str
     }
     other => Err(format!("{} is not supported by the desktop app", other.method())),
   }
+}
+
+/// Whether a session the icon badge counts still wants the user, by its list entry. The engine marks a reply unread only
+/// when nobody anywhere looked, while the badge counts any session this app's focused window was not showing, so the
+/// list is the only place a read in VS Code, on the phone or in a peer engine shows up; without it those stay counted
+pub fn still_wants_user(state: Option<SummaryState>, unread: bool) -> bool {
+  unread || matches!(state, Some(SummaryState::Waiting | SummaryState::Unread | SummaryState::Error))
 }
 
 /// A file link or a plan: in the editor the settings name, at the line, else (or when that editor is not installed) with
