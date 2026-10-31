@@ -8,13 +8,13 @@ import { cn } from '../ui/cn';
 import { dateFormat, getLocale, t } from '../i18n';
 import { vscodeApi } from '../vscodeApi';
 import { usePluginPieces } from '../pluginSlots';
-import { SkinThumb } from '../plugins/PluginCard';
+import { DefaultLookThumb, SkinThumb } from '../plugins/PluginCard';
 import { SandboxFrame } from '../plugins/SandboxFrame';
 import { backdropsShown, expectReveal, useSkin } from '../plugins/skin';
 import { DangerAction, DialogBody, Note, SettingsDialog } from './controls';
 
-// Settings → Plugins, the user's plugins (docs/dev/plugins.md): the skin picker heading the page, and a tile per plugin in
-// the layer it belongs to, beside the built-in modules. Read from the plugins view (plugins/skin.ts), so the page, every
+// Settings → Plugins, the user's plugins (docs/dev/plugins.md): the skin picker heading the Appearance filter, and a tile
+// per plugin. Read from the plugins view (plugins/skin.ts), so the page, every
 // window and the in-chat cards agree; every action goes to the engine and comes back as a new view
 
 const act = (action: PluginAction) => vscodeApi().postMessage({ type: 'pluginAction', action });
@@ -57,9 +57,9 @@ export function SkinPicker({ view, filter }: { view: PluginsView; filter?: (p: P
     pick(tile, ids[next]!);
   };
   return (
-    <div ref={group} role="radiogroup" aria-label={t('settings.plugins.appearance')} onKeyDown={onKey} className="grid grid-cols-3 gap-gap @max-[600px]/settings-shell:grid-cols-2">
+    <div ref={group} role="radiogroup" aria-label={t('settings.plugins.skins')} onKeyDown={onKey} className="grid grid-cols-3 gap-gap @max-[600px]/settings-shell:grid-cols-2">
       <SkinTile name={t('settings.plugins.noSkin')} sub={t('settings.plugins.noSkinDesc')} on={!chosen} onPick={el => pick(el, '')}>
-        <div className="absolute inset-0 bg-bg-0" />
+        <DefaultLookThumb />
       </SkinTile>
       {skins.map(p => (
         <SkinTile key={p.id} name={p.name} sub={p.description} on={chosen === p.id} onPick={el => pick(el, p.id)}>

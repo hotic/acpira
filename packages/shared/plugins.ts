@@ -6,6 +6,20 @@ export const PLUGIN_LAYERS: readonly PluginLayer[] = ['agents', 'tools', 'interf
 
 export type PluginContribution = 'tools' | 'mcp' | 'hooks' | 'theme' | 'style' | 'prompts' | 'agent' | 'runtime' | 'skills' | 'commands' | 'providers' | 'ui' | 'schedules';
 
+// The plugins page's filters, read off what a plugin contributes (never its manifest `layer`): a plugin carries every
+// kind it touches. The resident `runtime` and the pieces that ride with others (skills, prompts, commands) open none;
+// a skill on its own belongs to the Shared page
+export type PluginKind = 'look' | 'ui' | 'models' | 'tools' | 'automation';
+export const PLUGIN_KINDS: readonly { kind: PluginKind; of: readonly PluginContribution[] }[] = [
+  { kind: 'look', of: ['theme', 'style'] },
+  { kind: 'ui', of: ['ui'] },
+  { kind: 'models', of: ['agent', 'providers'] },
+  { kind: 'tools', of: ['tools', 'mcp'] },
+  { kind: 'automation', of: ['hooks', 'schedules'] },
+];
+export const pluginKinds = (contributes: readonly PluginContribution[]): PluginKind[] =>
+  PLUGIN_KINDS.filter(k => k.of.some(c => contributes.includes(c))).map(k => k.kind);
+
 // Who made a change: user (a page), session (a card in a session, with its agent and model) or cli
 export interface PluginProvenance {
   by: 'user' | 'session' | 'cli' | (string & {});

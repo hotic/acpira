@@ -1,23 +1,28 @@
-import { type CSSProperties, type ReactNode } from 'react';
-import { ArrowLeft, Blocks, HardDrive, Info, Layers, Network, Palette, SlidersHorizontal, Workflow } from 'lucide-react';
+import { useState, type CSSProperties, type ReactNode, type Ref } from 'react';
+import { ArrowLeft, Blocks, BrainCircuit, HardDrive, Info, Layers, Network, Palette, SlidersHorizontal, Workflow } from 'lucide-react';
 import type { AgentInfo } from '@acpira/shared/transcript';
 import { cn } from '../ui/cn';
+import { UpdateDot } from '../ui/UpdateDot';
 import { TitleSpace } from '../chat/DesktopFrame';
+import { NavEmpty, NavSearch } from '../chat/NavRows';
+import { shortcutLabel } from '../desktop';
+import { scrollToAnchor, searchHits, type SearchEntry } from './search';
 import { t } from '../i18n';
 
-// Orchestration carries the persona or group opened from its lists, and an agent's page is the Plugins page with that
+// Orchestration carries the persona or group opened from its lists, and an agent's page is the Models page with that
 // agent's dialog open (ChatGPT's the Connections page with its dialog), so an opened dialog is a step of its own in the
-// back / forward trail and the chat can open the settings straight at one
-export type SettingsPage = { kind: 'general' } | { kind: 'appearance' } | { kind: 'plugins' } | { kind: 'shared' } | { kind: 'connections' }
+// back / forward trail and the chat can open the settings straight at one. Plugins carries its open filter, so the
+// rail's search can land on one
+export type SettingsPage = { kind: 'general' } | { kind: 'appearance' } | { kind: 'models' } | { kind: 'plugins'; tab?: string } | { kind: 'shared' } | { kind: 'connections' }
   | { kind: 'subagents'; persona?: string; group?: string } | { kind: 'storage' } | { kind: 'about' }
   | { kind: 'agent'; id: AgentInfo['id'] } | { kind: 'chatgpt' };
 
 // Two pages are the same place (a click on the page already shown adds nothing to the trail)
 export const samePage = (a: SettingsPage, b: SettingsPage) => JSON.stringify(a) === JSON.stringify(b);
 
-type RailId = 'general' | 'appearance' | 'plugins' | 'subagents' | 'shared' | 'connections' | 'storage' | 'about';
-// The rail entry a page lights: an agent's dialog sits on the Plugins page, ChatGPT's on Connections
-export const railOf = (p: SettingsPage): RailId => (p.kind === 'agent' ? 'plugins' : p.kind === 'chatgpt' ? 'connections' : p.kind);
+type RailId = 'general' | 'appearance' | 'models' | 'plugins' | 'subagents' | 'shared' | 'connections' | 'storage' | 'about';
+// The rail entry a page lights: an agent's dialog sits on the Models page, ChatGPT's on Connections
+export const railOf = (p: SettingsPage): RailId => (p.kind === 'agent' ? 'models' : p.kind === 'chatgpt' ? 'connections' : p.kind);
 
 export interface PageRailProps {
   page: SettingsPage;
@@ -31,6 +36,12 @@ export interface PageRailProps {
   opening?: boolean;
   // The Connections entry shows: SSH hosts are offered (the engine answered for them, remote/api.ts) or ChatGPT is set up
   connections?: boolean;
+  // What the rail's search finds (settings/search.tsx); without it the rail has no search
+  index?: SearchEntry[];
+  // The search field, for ⌘K
+  searchRef?: Ref<HTMLInputElement>;
+  // Entries with something new to install: Models (an agent update), About (an Acpira update)
+  marks?: Partial<Record<RailId, boolean>>;
 }
 
 // Full-width navigation on wide surfaces collapses to an icon rail in narrow webviews (the shell is the container).
@@ -48,9 +59,12 @@ function RailIcon({ children, desktop }: { children: ReactNode; desktop?: boolea
   return <span className={desktop ? deskLead : 'flex size-icon-ctl shrink-0 items-center justify-center [&_svg]:size-icon-ctl [&_svg]:stroke-[1.75]'}>{children}</span>;
 }
 
-// The fixed pages only: the agents moved to the Plugins page as tiles (their order and switches with them)
-export function PageRail({ page, onPage, onBack, desktop, width, opening, connections }: PageRailProps) {
+// The fixed pages, or while the search holds words, what it finds: a hit that is not a page names its page as a second
+// line (two entries may share a name, Appearance the page and Appearance the plugins filter), its mark on the title's line
+export function PageRail({ page, onPage, onBack, desktop, width, opening, connections, index, searchRef, marks }: PageRailProps) {
   const cur = railOf(page);
+  const [query, setQuery] = useState('');
+  const hits = index && query.trim() ? searchHits(index, query) : undefined;
   const item = (id: RailId, name: string, icon: ReactNode) => (
     <button
       key={id}
@@ -63,6 +77,8 @@ export function PageRail({ page, onPage, onBack, desktop, width, opening, connec
     >
       <RailIcon desktop={desktop}>{icon}</RailIcon>
       <span className="min-w-0 truncate @max-[600px]/settings-shell:hidden">{name}</span>
+      {/* Held in from the row's end, clear of the selected fill's edge */}
+      {marks?.[id] && <UpdateDot className="mr-gap-half ml-auto @max-[600px]/settings-shell:hidden" />}
     </button>
   );
   const back = (
@@ -87,13 +103,34 @@ export function PageRail({ page, onPage, onBack, desktop, width, opening, connec
           <RailIcon desktop><ArrowLeft /></RailIcon>
           <span className="min-w-0 truncate @max-[600px]/settings-shell:hidden">{t('settings.back')}</span>
         </button>}
-        {item('general', t('settings.nav.general'), <SlidersHorizontal />)}
-        {item('appearance', t('settings.nav.appearance'), <Palette />)}
-        {item('plugins', t('settings.nav.plugins'), <Blocks />)}
-        {item('subagents', t('settings.nav.subagents'), <Workflow />)}
-        {item('shared', t('settings.nav.shared'), <Layers />)}
-        {connections && item('connections', t('settings.nav.connections'), <Network />)}
-        {item('storage', t('settings.nav.storage'), <HardDrive />)}
+        {/* The chat column's search row; folded to icons the rail has no room for it */}
+        {index && (
+          <div className="mb-gap-half flex shrink-0 flex-col @max-[600px]/settings-shell:hidden" onKeyDown={e => { if (e.key === 'Escape' && query) { e.stopPropagation(); setQuery(''); } }}>
+            <NavSearch value={query} onChange={setQuery} quiet={desktop} hint={desktop && shortcutLabel('K')} inputRef={searchRef}
+              placeholder={desktop ? t('common.search') : t('settings.search')} label={t('settings.search')} />
+          </div>
+        )}
+        {hits ? (
+          hits.length ? hits.map((h, i) => (
+            <button key={i} type="button" onClick={e => { onPage(h.page); if (h.anchor) scrollToAnchor(e.currentTarget, h.anchor); }}
+              className={cn(desktop ? deskItem : navItem, 'h-auto items-start py-1', tone(false), 'hover:bg-hover focus-visible:bg-hover')}>
+              <span className="flex h-lh shrink-0 items-center"><RailIcon desktop={desktop}>{h.icon}</RailIcon></span>
+              <span className="flex min-w-0 flex-col gap-y-(--stack-gap) text-left">
+                <span className="truncate text-fg-1">{h.label}</span>
+                {h.where && <span className="truncate text-3 text-fg-3">{h.where}</span>}
+              </span>
+            </button>
+          )) : <NavEmpty>{t('settings.search.none')}</NavEmpty>
+        ) : <>
+          {item('general', t('settings.nav.general'), <SlidersHorizontal />)}
+          {item('appearance', t('settings.nav.appearance'), <Palette />)}
+          {item('models', t('settings.nav.models'), <BrainCircuit />)}
+          {item('subagents', t('settings.nav.subagents'), <Workflow />)}
+          {item('plugins', t('settings.nav.plugins'), <Blocks />)}
+          {item('shared', t('settings.nav.shared'), <Layers />)}
+          {connections && item('connections', t('settings.nav.connections'), <Network />)}
+          {item('storage', t('settings.nav.storage'), <HardDrive />)}
+        </>}
       </nav>
       {/* Desktop: About (the version and its updates) at the rail's foot, where apps keep it, by the page sheet's bottom edge like
           the chat column's gear (chat/DesktopFrame.tsx AppMenu, --foot-bottom), so the two foot glyphs share a line; the IDE shells'

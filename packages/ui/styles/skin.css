@@ -34,6 +34,20 @@
   --option-hover-bg: var(--hover); --option-hover-fg: var(--fg-1);
   --option-selected-bg: var(--active); --option-selected-fg: var(--fg-1);
 }
+/* The skin picker's "no skin" picture (PluginCard DefaultLookThumb): tokens.css's own palette for the current scheme,
+   set on the picture itself so neither the skin in effect nor the host's colours repaint it */
+.skin-default-thumb {
+  --thumb-around: #121212;
+  --bg-0: #181818; --bg-1: #1f1f1f;
+  --line: rgba(255, 255, 255, 0.07); --line-strong: #3c3c3c;
+  --fg-3: #767676; --btn-1-bg: rgba(255, 255, 255, 0.95);
+}
+[data-theme="light"] .skin-default-thumb {
+  --thumb-around: #e9e9e9;
+  --bg-0: #f3f3f3; --bg-1: #ffffff;
+  --line: rgba(0, 0, 0, 0.07); --line-strong: #cecece;
+  --fg-3: #767676; --btn-1-bg: #151515;
+}
 @layer components {
   .acp-shell.acp-shell[data-backdrop] { isolation: isolate; background: transparent; --glass-sheet: 70%; --glass-column: 46%; }
   .acp-shell.acp-shell[data-backdrop][data-glass="calm"] { --glass-sheet: 84%; --glass-column: 62%; }

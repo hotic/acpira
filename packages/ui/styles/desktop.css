@@ -232,7 +232,8 @@
   /* Folded, it gives the stack's gap back too */
   [data-start-top][data-closed] { grid-template-rows: 0fr; opacity: 0; translate: 0 6px; margin-bottom: calc(-1 * var(--dock-gap)); }
   [data-start-top] > div { min-height: 0; overflow: hidden; }
-  [data-start-top] [data-picker] { margin: 0 var(--start-x) var(--gap); }
+  /* DockStack owns the gap below the picker, just as below the notice. */
+  [data-start-top] [data-picker] { margin-inline: var(--start-x); }
   /* A page-drawn caption: the raised card (the chat's sheet, the files layout's stage) begins under the title bar, its header line on
      the canvas above it, so the caption in the corner never cuts into the card. The card is drawn by ::before; the element
      stays unclipped, as the card's rim is a shadow outside it. What paints to the stage's edges (a file, a terminal) is
