@@ -45,6 +45,9 @@ public struct LaunchOptions: Sendable {
   /// `-subagent ID|tree`: that child's inspector, or the session's subagent graph, pushed over the launch chat (with
   /// `-start`, once the engine has opened the new chat)
   public var subagent: String?
+  /// `-orientation portrait|landscape|landscapeLeft|landscapeRight`: debug builds turn the window on launch
+  /// (`OrientationProbe`), since the simulator takes no scripted rotation
+  public var orientation: String?
 
   public static func current(_ arguments: [String] = ProcessInfo.processInfo.arguments) -> LaunchOptions {
     func value(_ flag: String) -> String? {
@@ -57,7 +60,7 @@ public struct LaunchOptions: Sendable {
                          popup: value("-popup"), replay: arguments.contains("-replay"), open: value("-open"),
                          prompt: value("-prompt"), draft: value("-draft"), engine: value("-engine"),
                          session: value("-session"), start: value("-start"), terminal: value("-terminal"),
-                         type: value("-type"), subagent: value("-subagent"))
+                         type: value("-type"), subagent: value("-subagent"), orientation: value("-orientation"))
   }
 }
 
@@ -230,6 +233,7 @@ public struct RootView: View {
     }
     .task {
       #if DEBUG && canImport(UIKit)
+      if let orientation = options.orientation { OrientationProbe.turn(orientation) }
       if let popup = options.popup, popup.hasPrefix("menu:") { await MenuProbe.open(popup) }
       #endif
       if let folder = options.terminal {

@@ -10,7 +10,7 @@ set -euo pipefail
 ios="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ios/scripts/simulator.sh"
 out="${1:-/tmp/acpira-ios.png}"
-sim="${2:-$sim_default}"
+sim="$(sim_resolve "${2:-$sim_default}")"
 shift $(( $# > 2 ? 2 : $# ))
 bundle="cc.hotic.acpira"
 derived="$ios/build/DerivedData"
@@ -31,7 +31,10 @@ xcrun simctl install "$sim" "$derived/Build/Products/Debug-iphonesimulator/Acpir
 xcrun simctl terminate "$sim" "$bundle" 2>/dev/null || true
 xcrun simctl launch "$sim" "$bundle" "$@" >/dev/null
 
-# Give the first frame time to settle before capturing
-sleep 3
-xcrun simctl io "$sim" screenshot "$out" >/dev/null
+# Give the first frame time to settle before capturing; a window turned by `-orientation` draws its first frames
+# upright and only then rotates
+settle=3
+case " $* " in *" -orientation "*) settle=6 ;; esac
+sleep "$settle"
+xcrun simctl io "$sim" screenshot $(sim_display "$sim") "$out" >/dev/null
 echo "$out"

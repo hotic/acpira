@@ -432,3 +432,27 @@ enum MenuProbe {
   }
 }
 #endif
+
+#if DEBUG && canImport(UIKit)
+/// `-orientation portrait|landscape|landscapeLeft|landscapeRight`: turns the window on launch, since `simctl` cannot
+/// rotate a device (wide-layout screenshots). Debug builds only; the device itself stays upright, so a full-screen
+/// cover that hands orientation back to the system may snap the window upright again
+@MainActor
+enum OrientationProbe {
+  static func turn(_ spec: String) {
+    let mask: UIInterfaceOrientationMask? = switch spec {
+    case "portrait": .portrait
+    case "landscape": .landscape
+    case "landscapeLeft": .landscapeLeft
+    case "landscapeRight": .landscapeRight
+    default: nil
+    }
+    guard let mask else { return }
+    for case let scene as UIWindowScene in UIApplication.shared.connectedScenes {
+      scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { error in
+        print("OrientationProbe: \(error.localizedDescription)")
+      }
+    }
+  }
+}
+#endif

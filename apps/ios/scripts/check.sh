@@ -10,7 +10,7 @@ set -euo pipefail
 
 ios="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ios/scripts/simulator.sh"
-sim="${1:-$sim_default}"
+sim="$(sim_resolve "${1:-$sim_default}")"
 destination="platform=iOS Simulator,name=$sim"
 
 # xcode-select may still point at the Command Line Tools, which ship no iOS SDK
