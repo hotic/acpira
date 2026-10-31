@@ -14,6 +14,7 @@ struct QuestionCard: View {
   @State private var page = 0
   @FocusState private var otherFocused: Bool
   @Environment(\.snapshot) private var snapshot
+  @Environment(\.room) private var room
   private static let keys = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ").map(String.init)
 
   var body: some View {
@@ -50,7 +51,7 @@ struct QuestionCard: View {
         }
         .scrollBounceBehavior(.basedOnSize)
         // --question-body-max: min(--row × 8, 35dvh)
-        .frame(maxHeight: Metrics.row * 8)
+        .frame(maxHeight: room.height(Metrics.row * 8))
         .fixedSize(horizontal: false, vertical: true)
 
         HStack(spacing: Metrics.gap) {

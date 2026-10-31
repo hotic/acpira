@@ -37,6 +37,7 @@ struct Composer: View {
   @Environment(\.snapshot) private var snapshot
   /// The face alone, for the list hand-over's stand-in, which draws its own glass under it (BarHandoff.swift)
   @Environment(\.composerBare) private var bare
+  @Environment(\.room) private var room
   @Environment(\.motionEnabled) private var motion
   /// The liquid chip that is open (attach, model), if any, the bean whose panel is out (1…, 0 for none), the list the
   /// sidekick's panel opened in place of its rows, and the picker `+` opened
@@ -100,7 +101,9 @@ struct Composer: View {
         VStack(alignment: .leading, spacing: 0) {
           // The card's cap in whole lines of the field's own line box. lineLimit's cap counts the font's natural line
           // height (about 20.6 pt at this size), not the exact one the field draws, so the last line ran cut under it
-          FieldHeight(cap: rest ? TypeScale.field.lineHeight : CGFloat(Self.maxLines) * TypeScale.field.lineHeight) {
+          // Fewer lines where the keyboard leaves little room (landscape), so the card stays under the top bar
+          FieldHeight(cap: rest ? TypeScale.field.lineHeight
+                        : CGFloat(room.lines(Self.maxLines, lineHeight: TypeScale.field.lineHeight)) * TypeScale.field.lineHeight) {
             TextField(text: fieldText, selection: $selection, axis: .vertical) {
               // At rest the hint is drawn over the field instead (below)
               hintText(rest ? "" : hint)

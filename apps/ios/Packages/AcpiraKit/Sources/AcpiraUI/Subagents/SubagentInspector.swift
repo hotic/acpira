@@ -43,6 +43,7 @@ struct SubagentInspector: View {
           QuestionCard(block: question) { model.answer(session, question: question.id, answers: $0, skipped: $1) }
             .id(question.id)
             .padding(.horizontal, Metrics.pad)
+            .readableWidth()
             .padding(.bottom, Metrics.s2)
         }
       }
@@ -137,6 +138,8 @@ private struct InspectorThread: View {
           .padding(.bottom, WebMetrics.msgGap)
         }
       }
+      // The result lines up with the transcript in a wide window
+      .readableWidth()
     }
     .scrollIndicators(.hidden)
     .scrollPosition($position)

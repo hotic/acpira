@@ -333,6 +333,13 @@ public enum Metrics {
   public static let planEntryPadY: CGFloat = 2
   /// max-h-plan: the docked list scrolls past seven dense rows
   public static var planMax: CGFloat { 7 * rowDense }
+  /// A docked card's share of the window's height (--question-body-max's 35dvh): what keeps a question or the plan
+  /// list off the top bar in a short window (landscape, iPhone Duo folded on its side)
+  public static let dockShare: CGFloat = 0.35
+  /// The composer's share of the height the keyboard leaves: its card grows to `maxLines` only where that fits
+  public static let composerShare: CGFloat = 0.45
+  /// The reading column's widest (--content-w): the transcript and the dock stay this wide, centred, in a wide window
+  public static let contentW: CGFloat = 720
   /// A popover's width (--pop-w-lg)
   public static let popLg: CGFloat = 300
   /// The widest card a compact-adapted popover shows unclipped on a 402 pt screen (the stats card's three tiles)
