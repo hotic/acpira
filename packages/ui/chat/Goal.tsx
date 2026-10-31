@@ -48,7 +48,9 @@ const EVENT_STATUS: Record<GoalEvent, GoalStatus> = {
 function GoalGlyph({ status, quiet, live }: { status: GoalStatus; quiet?: boolean; live?: boolean }) {
   if (status === 'complete') return <CircleCheck className="size-icon text-ok" strokeWidth={1.5} />;
   if (status === 'blocked' || status === 'limited') return <TriangleAlert className="size-icon text-warn" strokeWidth={1.5} />;
-  return <GoalIcon className={cn('size-icon', status === 'active' && !quiet && 'text-accent', live && 'goal-live')} strokeWidth={1.5} />;
+  // The goal mark draws lighter than its neighbours (Brain, the Orb), so it scales up a tenth; the stroke is divided by
+  // the same factor to keep the line weight of every other row icon
+  return <GoalIcon className={cn('size-icon scale-110', status === 'active' && !quiet && 'text-accent', live && 'goal-live')} strokeWidth={1.5 / 1.1} />;
 }
 
 // One short fact for the head: elapsed time (Codex) or stop-hook rounds (Claude); the spend goes to the hover title
