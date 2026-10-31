@@ -1,9 +1,10 @@
 //! Permission and question cards of a session. A request lands a card in the owning transcript (root or a child's), the answer travels back through
 //! a oneshot; the agent withdrawing its request (the connection's cancel signal) closes the card
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use tokio::sync::oneshot;
 
 use acpira_shared::transcript::*;
@@ -32,7 +33,8 @@ pub(crate) struct PendingPermission {
 }
 
 pub(crate) enum QuestionReply {
-  Form { schema: Value },
+  /// `images`: the request takes images with the answers (`_meta["acpira/answerImages"]`, the built-in agent's)
+  Form { schema: Value, images: bool },
   Grok,
   /// A `session/request_permission` asked as a question (`Vendor::question_permission`): the answer is the picked option
   Permission,
@@ -171,6 +173,7 @@ impl AcpSession {
     let session_id = req.get("sessionId").and_then(Value::as_str).map(str::to_owned);
     let tool_call = req.get("toolCall").cloned().unwrap_or(Value::Null);
     let tool_call_id = tool_call.get("toolCallId").and_then(Value::as_str).unwrap_or("").to_owned();
+    let auto_rechecked = req.pointer("/_meta/acpira~1autoApprove").and_then(Value::as_bool) == Some(true);
     // A summoned child's request is read in its own CLI's dialect
     let vendor = session_id.as_deref().and_then(|sid| self.relay_vendor(sid)).unwrap_or(self.vendor);
     if vendor.question_permission(&tool_call) {
@@ -237,7 +240,7 @@ impl AcpSession {
     let insist = if judged {
       let auto = {
         let c = self.core.lock();
-        c.perms.auto_approve || in_full_access(&c.state.controls)
+        c.perms.auto_approve || in_full_access(&c.state.controls) || auto_rechecked
       };
       match self.plugin_permission(&req, row, auto).await {
         PermVerdict::Deny(plugin, reason) => {
@@ -269,7 +272,7 @@ impl AcpSession {
       }
     }
     // Read outside the session lock: the setting lives with the shell
-    let plan_auto_on = self.deps.plan_auto_approve.as_ref().is_some_and(|f| f(&self.agent));
+    let plan_auto_on = self.deps.policy.plan_auto_approve(&self.agent);
     let remote_edit = self.remote_edit(&tool_call_id);
     let rx = {
       let mut c = self.core.lock();
@@ -289,7 +292,9 @@ impl AcpSession {
       // full-access root still gets cards
       let root = !summoned;
       let synth = c.perms.auto_approve;
-      let full_access = root && !insist && (synth || in_full_access(&c.state.controls));
+      // The built-in agent rechecks waiting actions after a live mode/approval change. It has already applied its
+      // mode denies and configuration guard; the host's hooks above still get the final say.
+      let full_access = root && !insist && (synth || in_full_access(&c.state.controls) || auto_rechecked);
       // A summoned child in a bypass round: answered without a card, preferring the one-time allow so nothing lasting
       // lands in that CLI's own settings; a request with no plain allow still gets a card
       let bypass = matches!(&target, Target::Node(id) if c.tree.relay_bypass(id));
@@ -504,7 +509,7 @@ impl AcpSession {
         continue;
       }
       let p = c.questions.pending.remove(i);
-      settle_question(c, &p, QuestionOutcome::Cancelled, None);
+      settle_question(c, &p, QuestionOutcome::Cancelled, None, None);
       let reply = cancel_reply(&p);
       let _ = p.tx.send(reply);
     }
@@ -556,7 +561,8 @@ impl AcpSession {
         return json!({ "action": "decline" });
       }
       let spare = spare_message(&message, &questions);
-      let block_id = self.open_question(&mut c, &target, questions.clone(), tool_call_id, spare);
+      let images = req.pointer("/_meta/acpira~1answerImages") == Some(&Value::Bool(true));
+      let block_id = self.open_question_with(&mut c, &target, questions.clone(), tool_call_id, spare, images);
       Self::bump_target(&mut c, &target);
       let (tx, rx) = oneshot::channel();
       c.questions.pending.push(PendingQuestion {
@@ -564,7 +570,7 @@ impl AcpSession {
         block_id: block_id.clone(),
         questions,
         node_id: target.node_id(),
-        reply: QuestionReply::Form { schema },
+        reply: QuestionReply::Form { schema, images },
       });
       self.touch(&mut c);
       (rx, block_id)
@@ -673,7 +679,7 @@ impl AcpSession {
         let mut c = self.core.lock();
         if let Some(i) = c.questions.pending.iter().position(|p| p.block_id == block_id) {
           let p = c.questions.pending.remove(i);
-          settle_question(&mut c, &p, QuestionOutcome::Cancelled, None);
+          settle_question(&mut c, &p, QuestionOutcome::Cancelled, None, None);
           self.touch(&mut c);
         }
         fallback
@@ -688,6 +694,19 @@ impl AcpSession {
     questions: Vec<Question>,
     tool_call_id: Option<String>,
     message: Option<String>,
+  ) -> String {
+    self.open_question_with(c, target, questions, tool_call_id, message, false)
+  }
+
+  /// `images`: the card offers to attach images to the answers
+  fn open_question_with(
+    &self,
+    c: &mut Core,
+    target: &Target,
+    questions: Vec<Question>,
+    tool_call_id: Option<String>,
+    message: Option<String>,
+    images: bool,
   ) -> String {
     c.questions.seq += 1;
     let id = format!("q-{}", c.questions.seq);
@@ -709,6 +728,8 @@ impl AcpSession {
       questions,
       outcome: None,
       answers: None,
+      images: images.then_some(true),
+      answer_images: None,
     };
     if let Some(state) = Self::target_state(c, target)
       && let Some(Turn::Agent(last)) = state.turns.last_mut()
@@ -724,6 +745,11 @@ impl AcpSession {
 
   /// The card was closed: only answered questions travel; skip tells the agent to go on with what it has
   pub fn answer_questions(&self, block_id: &str, answers: &QuestionAnswers, skip: bool) {
+    self.answer_questions_with(block_id, answers, None, skip);
+  }
+
+  /// `answer_questions` with image drafts by question id, taken only by a form that asked for them
+  pub fn answer_questions_with(&self, block_id: &str, answers: &QuestionAnswers, images: Option<&BTreeMap<String, Vec<Draft>>>, skip: bool) {
     let mut c = self.core.lock();
     let Some(i) = c.questions.pending.iter().position(|p| p.block_id == block_id) else { return };
     let p = c.questions.pending.remove(i);
@@ -732,19 +758,45 @@ impl AcpSession {
       // Only an offered option can answer a permission request
       given.retain(|qid, a| p.questions.iter().any(|q| &q.id == qid && q.options.iter().any(|o| a.as_str() == Some(o.id.as_str()))));
     }
-    let empty = given.is_empty();
-    settle_question(&mut c, &p, if skip || empty { QuestionOutcome::Skipped } else { QuestionOutcome::Answered }, Some(&given));
+    let attached = match (&p.reply, images) {
+      (QuestionReply::Form { images: true, .. }, Some(images)) if !skip => self.answer_images(&p.questions, images),
+      _ => Vec::new(),
+    };
+    // An image alone answers its question
+    let empty = given.is_empty() && attached.is_empty();
+    let refs: BTreeMap<String, Vec<ImageRef>> = attached
+      .iter()
+      .filter_map(|(qid, list)| {
+        let refs: Vec<ImageRef> = list.iter().filter_map(|i| Some(ImageRef { blob: Some(i.blob.clone()?), mime_type: i.mime.clone(), uri: None })).collect();
+        (!refs.is_empty()).then(|| (qid.clone(), refs))
+      })
+      .collect();
+    settle_question(
+      &mut c,
+      &p,
+      if skip || empty { QuestionOutcome::Skipped } else { QuestionOutcome::Answered },
+      Some(&given),
+      (!refs.is_empty()).then_some(refs),
+    );
     let reply = match &p.reply {
       QuestionReply::Grok => grok_response(skip, &given),
       QuestionReply::Permission => match given.values().next().and_then(Value::as_str).filter(|_| !skip) {
         Some(id) => json!({ "outcome": { "outcome": "selected", "optionId": id } }),
         None => cancelled_permission(),
       },
-      QuestionReply::Form { schema } => {
+      QuestionReply::Form { schema, .. } => {
         if empty {
           json!({ "action": "decline" })
         } else {
-          json!({ "action": "accept", "content": form_content(schema, &p.questions, &given) })
+          let mut reply = json!({ "action": "accept", "content": form_content(schema, &p.questions, &given) });
+          if !attached.is_empty() {
+            let by_question: Map<String, Value> = attached
+              .iter()
+              .map(|(qid, list)| (qid.clone(), list.iter().map(|i| json!({ "mimeType": i.mime, "data": i.data })).collect()))
+              .collect();
+            reply["_meta"] = json!({ ANSWER_IMAGES: by_question });
+          }
+          reply
         }
       }
       QuestionReply::Caller => json!({ "skipped": skip || empty, "answers": given }),
@@ -770,14 +822,14 @@ impl AcpSession {
     let mut c = self.core.lock();
     let Some(i) = c.questions.pending.iter().position(|p| p.block_id == block_id) else { return };
     let p = c.questions.pending.remove(i);
-    settle_question(&mut c, &p, outcome, None);
+    settle_question(&mut c, &p, outcome, None, None);
     self.touch(&mut c);
   }
 
   pub(crate) fn cancel_all_questions(&self, c: &mut Core) {
     let pending = std::mem::take(&mut c.questions.pending);
     for p in pending {
-      settle_question(c, &p, QuestionOutcome::Cancelled, None);
+      settle_question(c, &p, QuestionOutcome::Cancelled, None, None);
       let reply = cancel_reply(&p);
       let _ = p.tx.send(reply);
     }
@@ -791,12 +843,52 @@ impl AcpSession {
         continue;
       }
       let p = c.questions.pending.remove(i);
-      settle_question(c, &p, QuestionOutcome::Cancelled, None);
+      settle_question(c, &p, QuestionOutcome::Cancelled, None, None);
       let reply = cancel_reply(&p);
       let _ = p.tx.send(reply);
     }
   }
 }
+
+/// The `elicitation/create` `_meta` key of a form that takes images with its answers, and of the answer that carries them
+const ANSWER_IMAGES: &str = "acpira/answerImages";
+
+/// An image sent with an answer: its base64 for the agent and the blob it was kept as for the card's record
+struct AnswerImage {
+  mime: String,
+  data: String,
+  blob: Option<String>,
+}
+
+impl AcpSession {
+  /// The image drafts that may travel with these questions' answers: known questions, image MIME types within the
+  /// attachment limit, at most `MAX_ANSWER_IMAGES` per question. Each is kept in the blob store for the record
+  fn answer_images(&self, questions: &[Question], images: &BTreeMap<String, Vec<Draft>>) -> Vec<(String, Vec<AnswerImage>)> {
+    use base64::Engine;
+    let save = crate::acp::session::images::image_saver(self.me.clone());
+    let mut out = vec![];
+    for q in questions {
+      let Some(drafts) = images.get(&q.id) else { continue };
+      let list: Vec<AnswerImage> = drafts
+        .iter()
+        .filter_map(|d| match d {
+          Draft::Image { mime_type, data, .. } if mime_type.starts_with("image/") => Some((mime_type, data)),
+          _ => None,
+        })
+        .filter(|(_, data)| base64::engine::general_purpose::STANDARD.decode(data.as_bytes()).is_ok_and(|b| b.len() <= acpira_shared::attachments::MAX_IMAGE_BYTES))
+        .take(MAX_ANSWER_IMAGES)
+        .map(|(mime, data)| AnswerImage { blob: save(data, mime), mime: mime.clone(), data: data.clone() })
+        .collect();
+      if !list.is_empty() {
+        out.push((q.id.clone(), list));
+      }
+    }
+    out
+  }
+}
+
+/// Images one answer may carry: a request holds every answer's pictures at once
+const MAX_ANSWER_IMAGES: usize = 4;
 
 fn cancel_reply(p: &PendingQuestion) -> Value {
   match p.reply {
@@ -808,7 +900,13 @@ fn cancel_reply(p: &PendingQuestion) -> Value {
 }
 
 /// A card's outcome recorded on its block, in the transcript of the node that owns it
-fn settle_question(c: &mut Core, p: &PendingQuestion, outcome: QuestionOutcome, answers: Option<&QuestionAnswers>) {
+fn settle_question(
+  c: &mut Core,
+  p: &PendingQuestion,
+  outcome: QuestionOutcome,
+  answers: Option<&QuestionAnswers>,
+  images: Option<BTreeMap<String, Vec<ImageRef>>>,
+) {
   let target = match &p.node_id {
     None => Target::Root,
     Some(id) => Target::Node(id.clone()),
@@ -826,6 +924,9 @@ fn settle_question(c: &mut Core, p: &PendingQuestion, outcome: QuestionOutcome, 
     q.outcome = Some(outcome);
     if let Some(a) = answers.filter(|a| !a.is_empty()) {
       q.answers = Some(a.clone());
+    }
+    if images.is_some() {
+      q.answer_images = images;
     }
     let activity = activity_of(&state.turns);
     if let Some(Turn::Agent(turn)) = state.turns.get_mut(ti) {
