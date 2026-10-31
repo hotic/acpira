@@ -140,6 +140,17 @@ fn levels_the_endpoint_lists_are_taken_as_reported() {
   // The endpoint wins over the catalogue's low / high / max
   let ds = listed(json!({ "id": "deepseek-v4-flash", "capabilities": { "reasoning": { "effort": ["high", "max"] } } }));
   assert_eq!(discover::complete(&ds, &catalog()).efforts, ["high", "max"]);
+  // New API gateways that list the generic 3-level default alongside `opus47Effort` expand to the full 5-level Claude scale
+  let opus = listed(json!({
+    "id": "claude-opus-5.5-fast", "name": "Claude Opus 5.5 Fast",
+    "capabilities": { "reasoning": { "effort": ["low", "medium", "high"], "supported": true } },
+    "settings": { "extendParams": ["disableContextCaching", "enableAdaptiveThinking", "opus47Effort"] }
+  }));
+  assert_eq!(opus.efforts, Some(discover::CLAUDE_EFFORTS.map(str::to_owned).to_vec()));
+  // A brand-new adaptive Claude model flagged as reasoning gets all 5 Claude effort levels
+  let chat = provider("openai-chat", "https://gw.example/v1", "custom");
+  let claude_next = listed(json!({ "id": "claude-opus-6", "settings": { "extendParams": ["enableAdaptiveThinking"] } }));
+  assert_eq!(discover::complete_for(&chat, &claude_next, &catalog()).efforts, discover::CLAUDE_EFFORTS);
   // An empty list is no list
   assert_eq!(listed(json!({ "id": "y", "supported_reasoning_levels": [] })).efforts, None);
 }

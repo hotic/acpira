@@ -70,25 +70,63 @@ enum ModelCatalog {
                   sidekick: [sk.family, sk.effort].filter { !$0.isEmpty }.joined(separator: " "))
   }
 
+  private static func parseEffortTokens(_ tokens: [String]) -> (rest: [String], effort: String) {
+    var w = tokens
+    var thinking = false, effort = ""
+    if w.last?.lowercased() == "thinking" { thinking = true; w.removeLast() }
+    let last = w.last?.lowercased() ?? ""
+    if last == "high", w.count >= 2, w[w.count - 2].lowercased() == "extra" {
+      effort = "XHigh"; w.removeLast(2)
+    } else if let level = levels[last] {
+      effort = level; w.removeLast()
+    } else if last == "no", thinking {
+      effort = "None"; thinking = false; w.removeLast()
+    }
+    if effort.isEmpty && thinking { effort = "Thinking" }
+    return (w, effort)
+  }
+
   /// `<family> [effort] [Thinking] [Fast] [1M]`
   static func parse(_ name: String) -> Parsed {
     if let fusion = parseFusion(name) { return fusion }
     var t = name.trimmingCharacters(in: .whitespaces).split(whereSeparator: \.isWhitespace).map(String.init)
-    var fast = false, long = false, thinking = false, effort = ""
+    var fast = false, long = false, effort = ""
     // Fast and 1M may both trail, in either order
-    while t.count > 1 {
-      let last = t[t.count - 1].lowercased()
-      if last == "fast" { fast = true; t.removeLast() } else if last == "1m" { long = true; t.removeLast() } else { break }
+    func stripTrailingFlags() {
+      while t.count > 1 {
+        let last = t[t.count - 1].lowercased()
+        if last == "fast" { fast = true; t.removeLast() } else if last == "1m" { long = true; t.removeLast() } else { break }
+      }
     }
-    if t.count > 1, t[t.count - 1].lowercased() == "thinking" { thinking = true; t.removeLast() }
-    let last = t.last?.lowercased() ?? ""
-    if t.count > 1, let level = levels[last] {
-      effort = level; t.removeLast()
-    } else if t.count > 1, last == "no", thinking {
-      effort = "None"; thinking = false; t.removeLast()
+    stripTrailingFlags()
+    if t.count > 1, t.last?.hasSuffix(")") == true {
+      var open: Int?
+      for i in stride(from: t.count - 1, through: 1, by: -1) {
+        if t[i].hasPrefix("(") { open = i; break }
+      }
+      if let idx = open {
+        var group = Array(t[idx...])
+        group[0].removeFirst()
+        group[group.count - 1].removeLast()
+        let inner = group.filter { !$0.isEmpty }
+        if !inner.isEmpty, inner.allSatisfy({ !$0.contains("(") && !$0.contains(")") }) {
+          let p = parseEffortTokens(inner)
+          if !p.effort.isEmpty && p.rest.isEmpty {
+            effort = p.effort
+            t.removeSubrange(idx...)
+            stripTrailingFlags()
+          }
+        }
+      }
     }
-    // "Claude Opus 4.6 Thinking" with no effort word: Thinking is the level
-    if effort.isEmpty && thinking { effort = "Thinking" }
+    if effort.isEmpty && t.count > 1 {
+      let p = parseEffortTokens(Array(t.dropFirst()))
+      if !p.effort.isEmpty {
+        effort = p.effort
+        t = [t[0]] + p.rest
+        stripTrailingFlags()
+      }
+    }
     return Parsed(family: t.joined(separator: " "), effort: effort, fast: fast, long: long)
   }
 

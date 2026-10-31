@@ -186,11 +186,14 @@ pub fn trim_models_dev(api: &Value, fetched_at: &str, etag: Option<String>) -> C
       let limit = |k: &str| m.get("limit").and_then(|l| l.get(k)).and_then(Value::as_f64).filter(|c| *c >= 1.0).map(|c| c as u64);
       let options: Vec<&Value> = m.get("reasoning_options").and_then(Value::as_array).map(|a| a.iter().collect()).unwrap_or_default();
       let of = |t: &'static str| options.iter().filter(move |o| o.get("type").and_then(Value::as_str) == Some(t));
-      let efforts = of("effort")
+      let mut efforts: Vec<String> = of("effort")
         .flat_map(|o| o.get("values").and_then(Value::as_array).into_iter().flatten())
         .filter_map(Value::as_str)
         .map(str::to_owned)
         .collect();
+      if efforts.is_empty() && *vendor == "anthropic" && of("budget_tokens").next().is_some() {
+        efforts = ["low", "medium", "high", "max"].into_iter().map(str::to_owned).collect();
+      }
       models.push(CatalogModel {
         provider: (*vendor).to_owned(),
         id: id.clone(),
@@ -231,6 +234,26 @@ impl Catalog {
     self.index.get(key).map(|&i| &self.file.models[i])
   }
 
+  fn get_flexible(&self, raw: &str) -> Option<&CatalogModel> {
+    let trimmed = raw.trim().strip_suffix("[1m]").unwrap_or(raw.trim());
+    let key = model_key(trimmed);
+    if let Some(m) = self.get(&key) {
+      return Some(m);
+    }
+    for suffix in ["-fast", "-1m", "-thinking"] {
+      if let Some(base) = key.strip_suffix(suffix)
+        && let Some(m) = self.get(base)
+      {
+        return Some(m);
+      }
+    }
+    let family = crate::models::parse_model_name(trimmed).family;
+    if !family.is_empty() && family != trimmed {
+      return self.get(&model_key(&family));
+    }
+    None
+  }
+
   /// The catalogue entry an option stands for: its id first, then its display name
   pub fn resolve(&self, option: &SessionOption) -> Option<&CatalogModel> {
     self.lookup(&option.id, Some(&option.name))
@@ -240,7 +263,7 @@ impl Catalog {
   /// `kimi-k3.1-pro` through the name it lists. The same order `resolve` uses, so discovery, the built-in agent and the
   /// narrowing agree on which entry a model is
   pub fn lookup(&self, id: &str, name: Option<&str>) -> Option<&CatalogModel> {
-    self.get(&model_key(id)).or_else(|| name.filter(|n| !n.trim().is_empty()).and_then(|n| self.get(&model_key(n))))
+    self.get_flexible(id).or_else(|| name.filter(|n| !n.trim().is_empty()).and_then(|n| self.get_flexible(n)))
   }
 
   /// The effort levels the catalogue lists for a model it knows as reasoning; None when it lists none
@@ -411,6 +434,8 @@ mod tests {
     let c = catalog();
     assert_eq!(c.resolve(&opt("asgard/kimi-k3", "asgard/Kimi K3")).map(|m| m.provider.as_str()), Some("moonshotai"));
     assert_eq!(c.resolve(&opt("opus", "claude-opus-5.5")).map(|m| m.id.as_str()), Some("claude-opus-5-5"));
+    assert_eq!(c.resolve(&opt("asgard/claude-opus-5.5-fast", "Claude Opus 5.5 Fast")).map(|m| m.id.as_str()), Some("claude-opus-5-5"));
+    assert_eq!(c.resolve(&opt("claude-opus-4-6[1m]", "Claude Opus 4.6 (Thinking)")).map(|m| m.id.as_str()), Some("claude-opus-4-6"));
     assert_eq!(c.resolve(&opt("asgard", "gemini-3.8-flash")).map(|m| m.provider.as_str()), Some("google"));
     assert!(c.resolve(&opt("asgard/deepseek-v4.1-flash", "asgard/DeepSeek V4.1 Flash")).is_none());
     assert!(c.resolve(&opt("default", "Default (recommended)")).is_none());
@@ -422,6 +447,12 @@ mod tests {
     assert_eq!(c.get("claude-opus-5-5").unwrap().levels().unwrap(), [Level::Low, Level::Medium, Level::High, Level::XHigh, Level::Max]);
     assert_eq!(c.get("kimi-k3").unwrap().levels().unwrap(), [Level::Off, Level::Low, Level::High, Level::Max]);
     assert_eq!(c.get("gpt-6-sol").unwrap().levels().unwrap()[0], Level::Off);
+    // Budget-only Anthropic models in models.dev (e.g. Claude 4.5 Sonnet / Haiku) get low / medium / high / max
+    let budget_api = json!({ "anthropic": { "models": {
+      "claude-sonnet-4-5": { "name": "Claude Sonnet 4.5", "reasoning": true, "reasoning_options": [{ "type": "budget_tokens", "min": 1024 }] }
+    } } });
+    let budget_cat = Catalog::new(trim_models_dev(&budget_api, "2026-10-10T00:00:00Z", None));
+    assert_eq!(budget_cat.efforts("claude-sonnet-4-5", None).unwrap(), ["low", "medium", "high", "max"]);
   }
 
   #[test]

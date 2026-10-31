@@ -183,10 +183,15 @@ pub fn parse_entry(e: &Value) -> Option<Listed> {
     None
   };
   // Besides OpenRouter's parameters and Ollama's capabilities, gateways flag a reasoning model with a boolean: `reasoning`
-  // (models.dev's name), `supportsReasoning` / `supportsThinking`, or `capabilities.supports_reasoning`
+  // (models.dev's name), `supportsReasoning` / `supportsThinking`, `capabilities.supports_reasoning`, or New API's
+  // `settings.extendParams`
+  let extend = strings(e.pointer("/settings/extendParams"));
   let flagged = ["/reasoning", "/supportsReasoning", "/supportsThinking", "/capabilities/supports_reasoning", "/capabilities/reasoning/supported"]
     .iter()
-    .any(|p| e.pointer(p) == Some(&Value::Bool(true)));
+    .any(|p| e.pointer(p) == Some(&Value::Bool(true)))
+    || extend
+      .iter()
+      .any(|p| matches!(p.as_str(), "enablereasoning" | "enableadaptivethinking" | "reasoningbudgettoken" | "opus47effort" | "thinkinglevel"));
   let efforts = listed_efforts(e);
   let reasoning = if flagged || efforts.is_some() || params.iter().any(|p| p == "reasoning" || p == "include_reasoning") || caps.iter().any(|c| c == "thinking") {
     Some(true)
@@ -209,19 +214,31 @@ pub fn parse_entry(e: &Value) -> Option<Listed> {
   Some(Listed { id, name, context, output, images, tools, reasoning, efforts, not_chat })
 }
 
-/// The effort levels a listing reports, where gateways put them: `capabilities.reasoning.effort` (a list of levels) or
-/// Codex's `supported_reasoning_levels` (`{ effort, description }` objects, or plain levels). None when neither lists one
+/// The effort levels a listing reports, where gateways put them: `capabilities.reasoning.effort` (a list of levels),
+/// Codex's `supported_reasoning_levels` (`{ effort, description }` objects, or plain levels), or New API's
+/// `settings.extendParams` (`opus47Effort` expands the 5-level Claude scale). None when none lists one
 fn listed_efforts(e: &Value) -> Option<Vec<String>> {
   let level = |v: &Value| v.as_str().or_else(|| v.get("effort").and_then(Value::as_str)).map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty());
-  ["/capabilities/reasoning/effort", "/supported_reasoning_levels"].iter().find_map(|p| {
-    let mut out: Vec<String> = vec![];
-    for l in e.pointer(p)?.as_array()?.iter().filter_map(level) {
-      if !out.contains(&l) {
-        out.push(l);
+  let mut out = ["/capabilities/reasoning/effort", "/supported_reasoning_levels"]
+    .iter()
+    .find_map(|p| {
+      let mut list: Vec<String> = vec![];
+      for l in e.pointer(p)?.as_array()?.iter().filter_map(level) {
+        if !list.contains(&l) {
+          list.push(l);
+        }
+      }
+      (!list.is_empty()).then_some(list)
+    })
+    .unwrap_or_default();
+  if strings(e.pointer("/settings/extendParams")).iter().any(|p| p == "opus47effort") {
+    for l in CLAUDE_EFFORTS {
+      if !out.iter().any(|x| x == l) {
+        out.push(l.to_owned());
       }
     }
-    (!out.is_empty()).then_some(out)
-  })
+  }
+  (!out.is_empty()).then_some(out)
 }
 
 /// The catalogue and default tiers over what the endpoint said
@@ -249,9 +266,17 @@ pub fn complete(listed: &Listed, catalog: &Catalog) -> ProviderModel {
   if images {
     m.input.push("image".into());
   }
-  // Effort levels the endpoint lists are taken as they are; else the catalogue's, as a guess
+  // Effort levels the endpoint lists are taken as they are (unless a gateway only filled the generic 3-level default on
+  // an Anthropic model whose catalogue entry lists more levels); else the catalogue's, as a guess
   if let Some(levels) = &listed.efforts {
-    m.efforts = levels.clone();
+    if levels.as_slice() == DEFAULT_EFFORTS
+      && let Some(c) = entry.filter(|c| c.provider == "anthropic" && c.reasoning && c.efforts.len() > levels.len())
+    {
+      m.efforts = c.efforts.clone();
+      estimated.push(EFFORTS_FIELD);
+    } else {
+      m.efforts = levels.clone();
+    }
   } else if let Some(c) = entry.filter(|c| c.reasoning && !c.efforts.is_empty()) {
     m.efforts = c.efforts.clone();
     estimated.push(EFFORTS_FIELD);
@@ -264,8 +289,9 @@ pub fn complete(listed: &Listed, catalog: &Catalog) -> ProviderModel {
 }
 
 /// The levels a reasoning model gets when the endpoint says it reasons but the catalogue has none for it (a model newer
-/// than the catalogue): the three every `reasoning.effort` / `reasoning_effort` takes
+/// than the catalogue): the three every `reasoning.effort` / `reasoning_effort` takes, or the five adaptive Claude takes
 pub const DEFAULT_EFFORTS: [&str; 3] = ["low", "medium", "high"];
+pub const CLAUDE_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 /// `complete`, then the default levels for a model the endpoint flags as reasoning and nothing gives levels for, where
 /// the family documents a level: always on Responses and Anthropic Messages, on Chat only for a family whose own
@@ -275,10 +301,15 @@ pub const DEFAULT_EFFORTS: [&str; 3] = ["low", "medium", "high"];
 pub fn complete_for(provider: &Provider, listed: &Listed, catalog: &Catalog) -> ProviderModel {
   let mut m = complete(listed, catalog);
   if listed.reasoning == Some(true) && m.efforts.is_empty() {
+    let family = super::family::resolve(provider, &m);
     let takes_level = matches!(provider.api_format(), Some(ApiFormat::OpenaiResponses | ApiFormat::Anthropic))
-      || matches!(super::family::resolve(provider, &m).thinking, ThinkingParam::ReasoningEffort | ThinkingParam::ThinkingType | ThinkingParam::OpenRouter);
+      || matches!(family.thinking, ThinkingParam::ReasoningEffort | ThinkingParam::ThinkingType | ThinkingParam::OpenRouter);
     if takes_level {
-      m.efforts = DEFAULT_EFFORTS.map(str::to_owned).to_vec();
+      m.efforts = if family.name == "claude" {
+        CLAUDE_EFFORTS.map(str::to_owned).to_vec()
+      } else {
+        DEFAULT_EFFORTS.map(str::to_owned).to_vec()
+      };
       m.estimated.push(EFFORTS_FIELD.into());
     }
   }

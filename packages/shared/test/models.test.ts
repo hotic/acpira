@@ -70,6 +70,42 @@ describe('model name parsing', () => {
     expect(parseModelName('Max')).toEqual({ family: 'Max', effort: '', fast: false, long: false });
   });
 
+  it('parenthesized effort suffixes: Antigravity and OpenCode names collapse into families while keeping non-effort tags', () => {
+    expect(parseModelName('Gemini 4 Argon (Medium)')).toEqual({ family: 'Gemini 4 Argon', effort: 'Medium', fast: false, long: false });
+    expect(parseModelName('Gemini 4 Argon (High)')).toEqual({ family: 'Gemini 4 Argon', effort: 'High', fast: false, long: false });
+    expect(parseModelName('Gemini 4 Argon (Low)')).toEqual({ family: 'Gemini 4 Argon', effort: 'Low', fast: false, long: false });
+    expect(parseModelName('Gemini 3.8 Flash (High)')).toEqual({ family: 'Gemini 3.8 Flash', effort: 'High', fast: false, long: false });
+    expect(parseModelName('Gemini 3.1 Pro (Low thinking)')).toEqual({ family: 'Gemini 3.1 Pro', effort: 'Low', fast: false, long: false });
+    expect(parseModelName('Claude Opus 4.6 (Thinking)')).toEqual({ family: 'Claude Opus 4.6', effort: 'Thinking', fast: false, long: false });
+    expect(parseModelName('[OAuth] GPT-5.1-Codex-Max (Extra High)')).toEqual({ family: '[OAuth] GPT-5.1-Codex-Max', effort: 'XHigh', fast: false, long: false });
+    // Non-effort parenthesized suffixes stay in the family name
+    expect(parseModelName('Claude Haiku 4.5 (latest)')).toEqual({ family: 'Claude Haiku 4.5 (latest)', effort: '', fast: false, long: false });
+    expect(parseModelName('Default (recommended)')).toEqual({ family: 'Default (recommended)', effort: '', fast: false, long: false });
+    expect(parseModelName('GPT-4o (2024-11-20)')).toEqual({ family: 'GPT-4o (2024-11-20)', effort: '', fast: false, long: false });
+
+    const agy = opts([
+      'Gemini 4 Argon (Medium)', 'Gemini 4 Argon (High)', 'Gemini 4 Argon (Low)',
+      'Gemini 3.8 Flash (High)', 'Gemini 3.8 Flash (Medium)', 'Gemini 3.8 Flash (Low)',
+      'Gemini 3.7 Flash (High)', 'Gemini 3.7 Flash (Medium)', 'Gemini 3.7 Flash (Low)',
+    ]);
+    const fams = groupModels(agy);
+    expect(fams.map(f => [f.name, f.efforts])).toEqual([
+      ['Gemini 4 Argon', ['Low', 'Medium', 'High']],
+      ['Gemini 3.8 Flash', ['Low', 'Medium', 'High']],
+      ['Gemini 3.7 Flash', ['Low', 'Medium', 'High']],
+    ]);
+    // Legacy variant-level hidden entries: a family with all variants hidden stays hidden, while a family with only one
+    // variant previously hidden (Gemini 3.8 Flash (Medium)) stays visible with all three effort segments offered
+    const legacyHidden = ['Gemini 3.7 Flash (High)', 'Gemini 3.7 Flash (Medium)', 'Gemini 3.7 Flash (Low)', 'Gemini 3.8 Flash (Medium)'];
+    expect(familyHidden(fams[1]!, legacyHidden)).toBe(false);
+    expect(familyHidden(fams[2]!, legacyHidden)).toBe(true);
+    expect(groupModels(visibleOptions(agy, legacyHidden)).map(f => [f.name, f.efforts])).toEqual([
+      ['Gemini 4 Argon', ['Low', 'Medium', 'High']],
+      ['Gemini 3.8 Flash', ['Low', 'Medium', 'High']],
+    ]);
+    expect(setFamilyVisible(agy, legacyHidden, 'Gemini 4 Argon', false)).toEqual(['Gemini 3.7 Flash', 'Gemini 4 Argon']);
+  });
+
   it('grouping: keep first-seen order, variants sorted by strength, efforts / hasFast / hasLong aggregated', () => {
     const fams = groupModels(opts(DEVIN));
     expect(fams.map(f => f.name)).toEqual([
