@@ -1,4 +1,4 @@
-//! `acpira-gateway`: the computer side of paired devices (docs/dev/paired-remote.md). A separate binary rather than an
+//! `acpira-gateway`: the computer side of paired devices (docs/dev/host-architecture.md, Remote access gateway). A separate binary rather than an
 //! `acpira` subcommand: iroh brings some 220 crates the engine never needs, and only the computers that turn remote
 //! access on run this. The Windows desktop exe runs it as its `gateway` role instead (apps/desktop/src/main.rs).
 
