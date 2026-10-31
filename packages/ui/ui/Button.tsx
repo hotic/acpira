@@ -29,9 +29,10 @@ const buttonVariants = cva('inline-flex h-ctl items-center gap-1.5 whitespace-no
     },
   }, defaultVariants: { variant: 'secondary' },
 });
-// Icon buttons hover to --active, like the session list's row actions; an open menu keeps the same pressed fill
+// Icon buttons hover to --active, like the session list's row actions; an open menu keeps the same pressed fill.
+// The default size clips that fill to its content box, inset by --icon-fill-inset, so the fill is smaller than the hit area
 const iconVariants = cva('inline-flex shrink-0 items-center justify-center rounded-md text-fg-2 transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1 data-[popup-open]:bg-active data-[popup-open]:text-fg-1', {
-  variants: { size: { sm: 'size-ctl-sm [&_svg]:size-icon', default: 'size-ctl [&_svg]:size-icon-ctl' } }, defaultVariants: { size: 'default' },
+  variants: { size: { sm: 'size-ctl-sm [&_svg]:size-icon', default: 'size-ctl bg-clip-content p-(--icon-fill-inset) [&_svg]:size-icon-ctl' } }, defaultVariants: { size: 'default' },
 });
 
 // All buttons share --ctl height, --r-md radius, and 12px horizontal padding

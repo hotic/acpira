@@ -1,4 +1,4 @@
-import { useCallback, type MouseEvent, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
+import { Fragment, useCallback, type MouseEvent, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { BorderBeam } from 'border-beam';
 import { Check, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import type { DetectedAgent } from '@acpira/shared/protocol';
@@ -128,7 +128,7 @@ const STEPS: Step[] = [
       return [gear, ...(button ? targets(button, 'span.truncate') : [])];
     },
     lead: 'up-right', pad: 12, title: () => t('welcome.settings.title'),
-    lines: menu => [t('welcome.settings.1', { plugins: t('settings.nav.plugins'), sources: t('settings.agentTab.sources'), add: t('settings.providers.add') }), ...(menu ? [t('welcome.settings.menu')] : []), t('welcome.settings.2')],
+    lines: menu => [t('welcome.settings.1', { models: t('settings.nav.models'), sources: t('settings.agentTab.sources'), add: t('settings.providers.add') }), ...(menu ? [t('welcome.settings.menu')] : []), t('welcome.settings.2')],
   },
 ];
 
@@ -215,8 +215,15 @@ function usePresence(open: boolean, ms: number, still: boolean) {
 }
 
 function Chars({ text, at = 0, step = 0.03 }: { text: string; at?: number; step?: number }) {
-  return <>{[...text].map((c, i) => <span key={i} className="wl-ch" style={{ animationDelay: `${at + i * step}s` }}>{c}</span>)}</>;
+  // Each character is its own inline block, so a line could break between any two ("agent" / "s"): a run of letters
+  // shares a nowrap span, while spaces and CJK characters, which may end a line, stay on their own
+  let n = 0;
+  const ch = (c: string) => { const i = n++; return <span key={i} className="wl-ch" style={{ animationDelay: `${at + i * step}s` }}>{c}</span>; };
+  return <>{(text.match(WRAP_UNITS) ?? []).map((unit, u) => unit.length > 1 && !/\s/.test(unit)
+    ? <span key={u} className="whitespace-nowrap">{[...unit].map(ch)}</span>
+    : <Fragment key={u}>{[...unit].map(ch)}</Fragment>)}</>;
 }
+const WRAP_UNITS = /\s+|[\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]|[^\s\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]+/g;
 
 export interface WelcomeProps {
   mode: WelcomeMode;

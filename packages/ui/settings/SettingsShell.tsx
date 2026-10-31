@@ -1,5 +1,5 @@
 import type { ChatGptIntegrationStatus } from '@acpira/shared/chatgptIntegration';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { AccountInfo, AgentId, AgentInfo, ConfigControl } from '@acpira/shared/transcript';
 import type { ModelShapes } from '@acpira/shared/modelShapes';
@@ -14,6 +14,7 @@ import { IconButton } from '../ui/Button';
 import { cn } from '../ui/cn';
 import { ShellLayerContext } from '../ui/Popover';
 import { useScrollReveal } from '../ui/useScrollReveal';
+import { agentUpdates, appUpdatePending } from '../ui/UpdateDot';
 import { LocaleContext, t } from '../i18n';
 import { COLUMN_HIDDEN_KEY, DesktopContext, desktopOS, macOS, pageCaption, postUpdate, useUpdateState } from '../desktop';
 import { AboutPage } from './AboutPage';
@@ -24,7 +25,8 @@ import { PageRail, samePage, type SettingsPage } from './Nav';
 import { General } from './General';
 import { AppearancePage } from './Appearance';
 import { AgentDialog } from './AgentPage';
-import { PluginsPage } from './PluginsPage';
+import { ModelsPage, PluginsPage } from './PluginsPage';
+import { searchIndex, type SearchPage } from './search';
 import { SharedPage, type SharedState } from './SharedPage';
 import { SubagentsPage } from './SubagentsPage';
 import { StoragePage, type StorageState } from './StoragePage';
@@ -136,8 +138,8 @@ export function SettingsShell(p: SettingsShellProps) {
   const agent = page.kind === 'agent' ? p.agents.find(a => a.id === page.id) : undefined;
   // Ids the rail does not show (a custom agent missing from agents.json for now) keep their saved order / off state
   const unlisted = (id: AgentId) => !p.agents.some(a => a.id === id);
-  // An agent's dialog sits on the Plugins page and ChatGPT's on Connections: the page behind keeps its title and action
-  const title = page.kind === 'agent' || page.kind === 'plugins' ? t('settings.nav.plugins') : page.kind === 'appearance' ? t('settings.appearance.title')
+  // An agent's dialog sits on the Models page and ChatGPT's on Connections: the page behind keeps its title and action
+  const title = page.kind === 'agent' || page.kind === 'models' ? t('settings.nav.models') : page.kind === 'plugins' ? t('settings.nav.plugins') : page.kind === 'appearance' ? t('settings.appearance.title')
     : page.kind === 'shared' ? t('settings.shared.title') : page.kind === 'subagents' ? t('settings.nav.subagents')
     : page.kind === 'storage' ? t('storage.title') : page.kind === 'connections' || page.kind === 'chatgpt' ? t('settings.nav.connections')
     : page.kind === 'about' ? t('settings.about.title') : t('settings.general.title');
@@ -167,16 +169,26 @@ export function SettingsShell(p: SettingsShellProps) {
   // Opened while the chat's column was folded: the rail opens from nothing at that place (desktop.css data-opening)
   const [opening] = useState(() => desktop && webviewState(COLUMN_HIDDEN_KEY) === true);
   const trail = usePageTrail(page, p.onPage, p.onBack);
-  // Desktop: ⌘[ / ⌘] (Ctrl elsewhere) step through the trail as the title row's buttons do; back past the first page is the chat
+  // The rail's search over the pages this shell shows (About lives in the desktop rail only)
+  const searchPages: SearchPage[] = ['general', 'appearance', 'models', 'subagents', 'plugins', 'shared',
+    ...(remote || chatgpt || access ? ['connections' as const] : []), 'storage', ...(desktop ? ['about' as const] : [])];
+  const index = useMemo(() => searchIndex(p.agents, searchPages, desktop), [p.agents, searchPages.join(), desktop, p.locale]);
+  const search = useRef<HTMLInputElement>(null);
+  // Desktop: ⌘[ / ⌘] (Ctrl elsewhere) step through the trail as the title row's buttons do; back past the first page is the chat.
+  // ⌘K focuses the rail's search
   const keys = useRef(trail);
   keys.current = trail;
   useEffect(() => {
     if (!desktop) return;
     const onKey = (e: KeyboardEvent) => {
-      if (!(macOS ? e.metaKey : e.ctrlKey) || e.altKey || e.shiftKey || e.isComposing || (e.key !== '[' && e.key !== ']')) return;
+      if (!(macOS ? e.metaKey : e.ctrlKey) || e.altKey || e.shiftKey || e.isComposing) return;
+      const key = e.key.toLowerCase();
+      if (key === '[') keys.current.back();
+      else if (key === ']') keys.current.forward?.();
+      // ⌘K: the rail's search, as in the chat's column
+      else if (key === 'k') search.current?.focus();
+      else return;
       e.preventDefault();
-      if (e.key === '[') keys.current.back();
-      else keys.current.forward?.();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -202,20 +214,20 @@ export function SettingsShell(p: SettingsShellProps) {
             data-column={desktop || undefined}
           >
             <div className="flex min-h-0 flex-1">
-              <PageRail page={p.page} onPage={trail.go} onBack={p.onBack} desktop={desktop} width={desktop ? railWidth : undefined} opening={opening} connections={remote || chatgpt || !!access} />
+              <PageRail page={p.page} onPage={trail.go} onBack={p.onBack} desktop={desktop} width={desktop ? railWidth : undefined} opening={opening} connections={remote || chatgpt || !!access} index={index} searchRef={search}
+                marks={{ models: agentUpdates(p.agents), about: appUpdatePending(update) }} />
               <div data-sheet={desktop || undefined} className="relative flex min-w-0 flex-1 flex-col">
-              <main key={page.kind === 'agent' ? 'plugins' : page.kind === 'chatgpt' ? 'connections' : page.kind} className="min-h-0 min-w-0 flex-1 overflow-y-auto scroll-stable">
+              <main key={page.kind === 'agent' ? 'models' : page.kind === 'chatgpt' ? 'connections' : page.kind} className="min-h-0 min-w-0 flex-1 overflow-y-auto scroll-stable">
                 <Page>
                   <PageHeader title={title} action={action} />
                   {page.kind === 'general' && <General settings={p.settings} agents={p.agents} on={p.on} onTour={desktop ? undefined : p.onTour} />}
                   {page.kind === 'appearance' && <AppearancePage settings={p.settings} appearance={p.appearance} on={p.on} />}
-                  {(page.kind === 'plugins' || page.kind === 'agent') && <PluginsPage agents={p.agents} inventories={p.inventories}
+                  {(page.kind === 'models' || page.kind === 'agent') && <ModelsPage agents={p.agents} inventories={p.inventories}
                     onReorder={ids => p.on.setSetting('agentOrder', [...ids, ...p.settings.agentOrder.filter(unlisted)])}
                     onDisabled={ids => p.on.setSetting('disabledAgents', [...ids, ...p.settings.disabledAgents.filter(unlisted)])}
                     onOpen={id => trail.go({ kind: 'agent', id })} onInventory={p.on.refreshInventory}
-                    panelFiles={p.settings.panelFiles !== false} onPanelFiles={on => p.on.setSetting('panelFiles', on)}
-                    panelTerminal={p.settings.panelTerminal !== false} onPanelTerminal={on => p.on.setSetting('panelTerminal', on)}
-                    panelBrowser={p.settings.panelBrowser !== false} onPanelBrowser={on => p.on.setSetting('panelBrowser', on)} />}
+                    installs={p.installs} onUpdate={p.on.installAgent} />}
+                  {page.kind === 'plugins' && <PluginsPage tab={page.tab} onTab={tab => trail.replace({ kind: 'plugins', tab })} />}
                   {page.kind === 'shared' && <SharedPage state={p.shared} agents={p.agents} on={p.on} />}
                   {page.kind === 'about' && <AboutPage state={update} on={{
                     check: download => postUpdate({ type: 'updateCheck', download }),
@@ -247,7 +259,7 @@ export function SettingsShell(p: SettingsShellProps) {
                         ? p.settings.disabledAgents.filter(id => id !== agent.id)
                         : [...new Set([...p.settings.disabledAgents, agent.id])])}
                       onShared={() => trail.go({ kind: 'shared' })}
-                      onClose={() => trail.replace({ kind: 'plugins' })}
+                      onClose={() => trail.replace({ kind: 'models' })}
                     />
                   )}
                 </Page>

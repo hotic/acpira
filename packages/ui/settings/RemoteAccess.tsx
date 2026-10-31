@@ -24,9 +24,10 @@ export function RemoteAccessSection({ view }: { view: RemoteAccessView }) {
   const awakeError = (view.keepAwake ?? true) ? gateway?.awakeError : undefined;
   const devices = deviceOrder(gateway?.devices ?? []);
   const running = !!gateway;
-  // The switch shows the pick at once; the pushed view confirms it
+  // The switch shows the pick at once; the pushed view confirms it. Once the op settles (not busy, its error in) the
+  // switch takes the engine's state, so an enable that failed does not leave it reading on
   const [on, setOn] = useState(view.enabled);
-  useEffect(() => setOn(view.enabled), [view.enabled]);
+  useEffect(() => { if (!view.busy) setOn(view.enabled); }, [view.enabled, view.busy, view.error]);
   const relay: RelayPick = gateway?.relays.mode ?? 'n0';
   const state = !view.enabled ? 'off' : view.busy ? 'busy' : running ? 'running' : 'stopped';
   const STATE = {
@@ -49,6 +50,11 @@ export function RemoteAccessSection({ view }: { view: RemoteAccessView }) {
             onChange={v => { setOn(v); remoteAccessOp({ op: v ? 'enable' : 'disable' }); }} />
         </Field>
         : <Note>{t(unavailableKey(view))}</Note>}
+      {view.enabled && <Field label={t('devices.keepAwake')}
+        // A hold the system refused: the switch is on, the computer may still sleep
+        desc={awakeError && <span className="flex items-center gap-1.5" title={awakeError}><Dot ok={false} warn />{t('devices.keepAwakeFailed')}</span>}>
+        <Switch checked={view.keepAwake ?? true} label={t('devices.keepAwake')} onChange={v => remoteAccessOp({ op: 'setKeepAwake', on: v })} />
+      </Field>}
       {view.enabled && <Field label={t('devices.relays')} desc={t('devices.relaysDesc')}>
         <Select<RelayPick> label={t('devices.relays')} value={relay}
           onChange={mode => { if (mode !== 'custom') remoteAccessOp({ op: 'setRelays', relays: { mode } }); }}
@@ -58,11 +64,6 @@ export function RemoteAccessSection({ view }: { view: RemoteAccessView }) {
             ...(relay === 'custom' ? [{ value: 'custom' as const, label: t('devices.relays.custom') }] : []),
             { value: 'off', label: t('devices.relays.off') },
           ]} />
-      </Field>}
-      {view.enabled && <Field label={t('devices.keepAwake')}
-        // A hold the system refused: the switch is on, the computer may still sleep
-        desc={awakeError && <span className="flex items-center gap-1.5" title={awakeError}><Dot ok={false} warn />{t('devices.keepAwakeFailed')}</span>}>
-        <Switch checked={view.keepAwake ?? true} label={t('devices.keepAwake')} onChange={v => remoteAccessOp({ op: 'setKeepAwake', on: v })} />
       </Field>}
     </Section>
     {view.enabled && <Section title={t('devices.title')} count={devices.length} desc={t('devices.listDesc')}

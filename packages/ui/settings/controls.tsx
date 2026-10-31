@@ -157,10 +157,11 @@ export function Section({ title, desc, count, status, action, cards, children }:
 // The head of a titled list: the title with its status and count, an optional second line, and the action at the right.
 // A Section card's head, and a group head inside a shared card. No icon: a head mark left the column under it empty
 // on every setting row (studied 2026-10-26)
-// `outside`: a page's group name above its card, no row height of its own, its action ending on the rows' text edge
+// `outside`: a page's group name above its card, no row height of its own; the name and the action's words sit the same
+// small step in from the card's two outer edges
 export function ListHead({ title, desc, count, status, action, outside }: Pick<SectionProps, 'title' | 'desc' | 'count' | 'status' | 'action'> & { outside?: boolean }) {
   return (
-    <div className={cn(outside ? 'flex flex-wrap items-end gap-gap pr-pad' : cn(settingRow, 'flex flex-wrap items-center gap-gap'))} data-detail={!!desc || undefined}>
+    <div className={cn(outside ? 'flex flex-wrap items-center gap-gap px-(--group-head-inset)' : cn(settingRow, 'flex flex-wrap items-center gap-gap'))} data-detail={!!desc || undefined}>
       <div className={cn(stack, 'flex-[1_1_var(--setting-header-copy)]')}>
         <h3 className="m-0 flex items-baseline gap-2 text-2 font-medium text-fg-1">
           <span className="min-w-0 [overflow-wrap:anywhere]">{title}</span>
@@ -196,8 +197,8 @@ export function SearchRow({ value, onChange, label, children }: { value: string;
   );
 }
 
-// A card head's one action: a quiet icon + word. Its own padding hangs past the cards' right edge, so its words end on
-// the rows' text edge
+// A card head's one action: a quiet icon + word. Its own padding hangs past the head's right edge, so its words end on
+// that edge
 export function SectionAction({ icon, onClick, children, title, disabled }: { icon?: ReactNode; onClick: () => void; children: ReactNode; title?: string; disabled?: boolean }) {
   return (
     <button type="button" onClick={onClick} title={title} disabled={disabled}

@@ -7,7 +7,7 @@ import type { SettingsHandlers } from './SettingsShell';
 
 // Motion (an accessibility preference) and auto-expand are the appearance axes surfaced as user settings, plain on / off
 // switches; the other axes stay LAB design decisions
-// Appearance: how the panels render — scheme, motion, diff markers, then the type sizes. Every edit previews in place, this shell included
+// Appearance: how the panels render (scheme, motion, diff markers), the tool panel's modules, then the type sizes. Every edit previews in place, this shell included
 export function AppearancePage({ settings, appearance, on }: { settings: SettingsView; appearance: Appearance; on: SettingsHandlers }) {
   const desktop = useDesktop();
   return (
@@ -20,11 +20,6 @@ export function AppearancePage({ settings, appearance, on }: { settings: Setting
             {settings.panelFiles !== false && (
               <Field label={t('settings.desktopLayout')} desc={t('settings.desktopLayout.desc')}>
                 <Select options={DESKTOP_LAYOUTS.map(v => ({ value: v, label: t(`settings.desktopLayout.${v}`) }))} value={settings.desktopLayout} onChange={v => on.setSetting('desktopLayout', v)} label={t('settings.desktopLayout')} />
-              </Field>
-            )}
-            {(settings.panelFiles !== false || settings.panelTerminal !== false || settings.panelBrowser !== false) && (
-              <Field label={t('settings.panelScope')} desc={t('settings.panelScope.desc')}>
-                <Select options={PANEL_SCOPES.map(v => ({ value: v, label: t(`settings.panelScope.${v}`) }))} value={settings.panelScope ?? 'project'} onChange={v => on.setSetting('panelScope', v)} label={t('settings.panelScope')} />
               </Field>
             )}
           </>
@@ -43,6 +38,24 @@ export function AppearancePage({ settings, appearance, on }: { settings: Setting
         <Field label={t('settings.diffMarkers')}>
           <Select options={DIFF_MARKERS.map(v => ({ value: v, label: t(`settings.diffMarkers.${v}` as const) }))} value={settings.diffMarkers} onChange={v => on.setSetting('diffMarkers', v)} label={t('settings.diffMarkers')} />
         </Field>
+      </Section>
+
+      {/* The tool panel's built-in modules, switched in place without a restart, and whether the panel follows the session */}
+      <Section title={t('settings.panels')}>
+        <Field label={t('settings.plugins.files')} desc={t('settings.plugins.filesDesc')}>
+          <Switch checked={settings.panelFiles !== false} onChange={v => on.setSetting('panelFiles', v)} label={t('settings.plugins.files')} />
+        </Field>
+        <Field label={t('settings.plugins.terminal')} desc={t('settings.plugins.terminalDesc')}>
+          <Switch checked={settings.panelTerminal !== false} onChange={v => on.setSetting('panelTerminal', v)} label={t('settings.plugins.terminal')} />
+        </Field>
+        <Field label={t('settings.plugins.browser')} desc={t('settings.plugins.browserDesc')}>
+          <Switch checked={settings.panelBrowser !== false} onChange={v => on.setSetting('panelBrowser', v)} label={t('settings.plugins.browser')} />
+        </Field>
+        {desktop && (settings.panelFiles !== false || settings.panelTerminal !== false || settings.panelBrowser !== false) && (
+          <Field label={t('settings.panelScope')} desc={t('settings.panelScope.desc')}>
+            <Select options={PANEL_SCOPES.map(v => ({ value: v, label: t(`settings.panelScope.${v}`) }))} value={settings.panelScope ?? 'project'} onChange={v => on.setSetting('panelScope', v)} label={t('settings.panelScope')} />
+          </Field>
+        )}
       </Section>
 
       <Section title={t('settings.text.title')}>

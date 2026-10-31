@@ -1,32 +1,36 @@
-import { Fragment, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
-import { BrainCircuit, FolderTree, Globe, Palette, PanelsTopLeft, Settings2, SquareTerminal, Workflow, Wrench } from 'lucide-react';
-import type { PluginInfo, PluginLayer } from '@acpira/shared/plugins';
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { Settings2 } from 'lucide-react';
+import { pluginKinds, PLUGIN_KINDS, type PluginInfo, type PluginKind } from '@acpira/shared/plugins';
 import type { AgentId, AgentInfo } from '@acpira/shared/transcript';
 import type { AgentInventory } from '@acpira/shared/inventory';
+import type { AgentInstallProgress } from '@acpira/shared/protocol';
 import { moveAgent } from '@acpira/shared/agentOrder';
 import { BUILTIN_AGENT_ID } from '@acpira/shared/providers';
 import { Card } from '../ui/Card';
 import { IconButton } from '../ui/Button';
 import { Switch } from '../ui/Switch';
+import { Shimmer } from '../ui/Shimmer';
+import { UpdateDot } from '../ui/UpdateDot';
 import { cn } from '../ui/cn';
 import { AgentMark } from '../chat/AgentMark';
 import { t } from '../i18n';
-import { Count, SearchBox } from './controls';
+import { ListHead, Note, SearchBox, Section, Tabs } from './controls';
 import { askPluginsView, usePluginsView } from '../plugins/skin';
 import { SkinPicker, UserPluginTile } from './UserPlugins';
+import { PLUGIN_KIND_LABEL } from './search';
 
-// Settings → Plugins: what Acpira is built from, one tile per module in layers. The skins head the page (one at a time,
-// settings/UserPlugins.tsx); then the agents: a tile per agent with its switch (an off agent leaves the new-session entry
-// points, acpira.disabledAgents) and its gear, which opens the agent's dialog; dragging a tile (or Alt+arrow on it)
-// reorders the agents everywhere they are listed (acpira.agentOrder). The user's plugins join the layer they declare,
-// after the built-in modules. Laid out in lab/settings-all.preview.tsx
+// Settings → Models: a tile per agent (the built-in one and any a plugin adds among them) with its switch (an off agent
+// leaves the new-session entry points, acpira.disabledAgents) and its gear, which opens the agent's dialog with its
+// models; dragging a tile (or Alt+arrow on it) reorders the agents everywhere they are listed (acpira.agentOrder).
+// Settings → Plugins: every plugin the user has in one list, filtered by what it adds (shared/plugins.ts PLUGIN_KINDS);
+// the skin in effect is picked at the head of the Appearance filter. Drafted in lab/plugin-home.preview.tsx
 
 // The vendors of the agents Acpira knows by id; any other agent is described as an ACP agent
 const VENDOR: Partial<Record<AgentId, string>> = {
   claude: 'Anthropic', codex: 'OpenAI', grok: 'xAI', devin: 'Cognition', kimi: 'Moonshot AI', antigravity: 'Google', dsh: 'DeepSeek',
 };
 
-export interface PluginsPageProps {
+export interface ModelsPageProps {
   // The host's list as received (its identity changes only when the host pushes a new one)
   agents: AgentInfo[];
   inventories: Partial<Record<AgentId, AgentInventory>>;
@@ -38,21 +42,15 @@ export interface PluginsPageProps {
   onOpen: (id: AgentId) => void;
   // Ask for an agent's inventory (its version for the tile's foot); a file scan, no process is started
   onInventory: (id: AgentId) => void;
-  // Built-in interface modules in the tool panel (`acpira.panelFiles`, `acpira.panelTerminal`, `acpira.panelBrowser`)
-  panelFiles?: boolean;
-  onPanelFiles?: (on: boolean) => void;
-  panelTerminal?: boolean;
-  onPanelTerminal?: (on: boolean) => void;
-  panelBrowser?: boolean;
-  onPanelBrowser?: (on: boolean) => void;
+  // Each agent's latest in-app install: an update running on a tile shows there
+  installs?: AgentInstallProgress[];
+  // A tile's update action: the agent's install line, which pins the newer version (AgentInfo.update)
+  onUpdate: (id: AgentId) => void;
 }
 
-export function PluginsPage({ agents: all, inventories, onReorder, onDisabled, onOpen, onInventory, panelFiles, onPanelFiles, panelTerminal, onPanelTerminal, panelBrowser, onPanelBrowser }: PluginsPageProps) {
+export function ModelsPage({ agents: all, inventories, onReorder, onDisabled, onOpen, onInventory, installs, onUpdate }: ModelsPageProps) {
   const agents = all.filter(a => !a.external);
   const [query, setQuery] = useState('');
-  // The user's plugins come from the engine's plugins view, asked for once
-  useEffect(() => askPluginsView(), []);
-  const view = usePluginsView();
   // The versions on the tiles' feet: every agent not scanned yet, once per visit
   const asked = useRef(new Set<AgentId>());
   useEffect(() => {
@@ -60,81 +58,49 @@ export function PluginsPage({ agents: all, inventories, onReorder, onDisabled, o
   });
   const q = query.trim().toLowerCase();
   const match = (a: AgentInfo) => !q || a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q);
-  const matchedAgents = agents.filter(match);
-  const builtinUi: { id: string; icon: ReactNode; name: string; desc: string; on: boolean; onToggle: (on: boolean) => void }[] = [
-    ...(onPanelFiles ? [{ id: 'files', icon: <FolderTree className="size-lead" strokeWidth={1.5} />, name: t('settings.plugins.files'), desc: t('settings.plugins.filesDesc'), on: panelFiles !== false, onToggle: onPanelFiles }] : []),
-    ...(onPanelTerminal ? [{ id: 'terminal', icon: <SquareTerminal className="size-lead" strokeWidth={1.5} />, name: t('settings.plugins.terminal'), desc: t('settings.plugins.terminalDesc'), on: panelTerminal !== false, onToggle: onPanelTerminal }] : []),
-    ...(onPanelBrowser ? [{ id: 'browser', icon: <Globe className="size-lead" strokeWidth={1.5} />, name: t('settings.plugins.browser'), desc: t('settings.plugins.browserDesc'), on: panelBrowser !== false, onToggle: onPanelBrowser }] : []),
-  ].filter(m => !q || m.name.toLowerCase().includes(q) || m.desc.toLowerCase().includes(q) || m.id.includes(q));
-  const matchPlugin = (p: PluginInfo) => !q || p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q) || p.description.toLowerCase().includes(q);
-  const mine = (layer: PluginLayer) => (view?.plugins ?? []).filter(p => p.layer === layer && matchPlugin(p));
-  const skinCount = view ? view.plugins.filter(p => p.contributes.includes('theme') && p.loaded && matchPlugin(p)).length : 0;
-  const userTiles = (list: PluginInfo[]) => list.map(p => <UserPluginTile key={p.id} plugin={p} safeMode={!!view?.safeMode} />);
-  // Each layer shown, in page order, so only the ones after the first draw the rule above them
-  const layers: { key: string; node: (rule: boolean) => ReactNode }[] = [];
-  if (view && (skinCount > 0 || view.skin)) {
-    layers.push({ key: 'appearance', node: rule => (
-      <Layer rule={rule} icon={<Palette />} title={t('settings.plugins.appearance')} count={skinCount}>
-        <SkinPicker view={view} filter={matchPlugin} />
-      </Layer>
-    ) });
-  }
-  const agentPlugins = mine('agents');
-  if (!q || matchedAgents.length > 0 || agentPlugins.length > 0) {
-    layers.push({ key: 'agents', node: rule => (
-      <Layer rule={rule} icon={<BrainCircuit />} title={t('settings.plugins.agents')} count={matchedAgents.length + agentPlugins.length}>
-        <AgentTiles agents={all} inventories={inventories} filter={q ? match : undefined} onReorder={onReorder} onDisabled={onDisabled} onOpen={onOpen} />
-        {agentPlugins.length > 0 && <div className="grid grid-cols-2 gap-gap @max-[600px]/settings-shell:grid-cols-1">{userTiles(agentPlugins)}</div>}
-      </Layer>
-    ) });
-  }
-  const tools = mine('tools');
-  if (tools.length) {
-    layers.push({ key: 'tools', node: rule => (
-      <Layer rule={rule} icon={<Wrench />} title={t('settings.plugins.tools')} count={tools.length}>
-        <div className="grid grid-cols-2 gap-gap @max-[600px]/settings-shell:grid-cols-1">{userTiles(tools)}</div>
-      </Layer>
-    ) });
-  }
-  const ui = mine('interface');
-  if (builtinUi.length + ui.length > 0) {
-    layers.push({ key: 'interface', node: rule => (
-      <Layer rule={rule} icon={<PanelsTopLeft />} title={t('settings.plugins.interface')} count={builtinUi.length + ui.length}>
-        <div className="grid grid-cols-2 gap-gap @max-[600px]/settings-shell:grid-cols-1">
-          {builtinUi.map(m => <BuiltinTile key={m.id} {...m} />)}
-          {userTiles(ui)}
-        </div>
-      </Layer>
-    ) });
-  }
-  const automation = mine('automation');
-  if (automation.length) {
-    layers.push({ key: 'automation', node: rule => (
-      <Layer rule={rule} icon={<Workflow />} title={t('settings.plugins.automation')} count={automation.length}>
-        <div className="grid grid-cols-2 gap-gap @max-[600px]/settings-shell:grid-cols-1">{userTiles(automation)}</div>
-      </Layer>
-    ) });
-  }
   return <>
-    <SearchBox value={query} onChange={setQuery} label={t('settings.plugins.search')} />
-    {layers.map((l, i) => <Fragment key={l.key}>{l.node(i > 0)}</Fragment>)}
+    <SearchBox value={query} onChange={setQuery} label={t('settings.models.search')} />
+    <AgentTiles agents={all} inventories={inventories} filter={q ? match : undefined} onReorder={onReorder} onDisabled={onDisabled} onOpen={onOpen}
+      installs={installs} onUpdate={onUpdate} />
   </>;
 }
 
-// One layer: its head (icon, title, count on the title's baseline), then the tiles. Layers after the first are parted
-// from the one above by a rule fading out at both ends
-function Layer({ icon, title, count, rule, children }: { icon: ReactNode; title: string; count: number; rule?: boolean; children: ReactNode }) {
-  return (
-    <section className="flex flex-col gap-2">
-      {rule && <span aria-hidden className="h-px w-full bg-linear-to-r from-transparent via-line to-transparent" />}
-      <h2 className="m-0 flex min-h-ctl items-center gap-2 text-fg-2 [&>svg]:size-icon-ctl [&>svg]:stroke-[1.75]">
-        {icon}
-        {/* The count sits on the title's baseline: an icon inside the baseline box would pull it down to the icon's bottom */}
-        <span className="flex items-baseline gap-2 text-(length:--text-h) leading-(--text-h-lh) font-medium text-fg-1">{title}<Count n={count} /></span>
-      </h2>
-      {children}
-    </section>
-  );
+type Filter = 'all' | PluginKind;
+const themed = (p: PluginInfo) => p.contributes.includes('theme');
+
+// `tab`: the open filter, part of the page so the rail's search can land on one
+export function PluginsPage({ tab, onTab }: { tab?: string; onTab: (tab: Filter) => void }) {
+  const [query, setQuery] = useState('');
+  // The user's plugins come from the engine's plugins view, asked for once
+  useEffect(() => askPluginsView(), []);
+  const view = usePluginsView();
+  const q = query.trim().toLowerCase();
+  const matchPlugin = (p: PluginInfo) => !q || p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q) || p.description.toLowerCase().includes(q);
+  const all = (view?.plugins ?? []).filter(matchPlugin);
+  // A filter shows only while some plugin carries it
+  const tabs: { value: Filter; label: string; count: number }[] = [{ value: 'all', label: t('common.all'), count: all.length },
+    ...PLUGIN_KINDS.map(k => ({ value: k.kind, label: t(PLUGIN_KIND_LABEL[k.kind]), count: all.filter(p => pluginKinds(p.contributes).includes(k.kind)).length })).filter(k => k.count > 0)];
+  const current = tabs.find(x => x.value === tab)?.value ?? 'all';
+  const shown = current === 'all' ? all : all.filter(p => pluginKinds(p.contributes).includes(current));
+  // Under Appearance a skin shows once, as a choice in the picker; its tile (version, switch, folder) stays under All
+  const skins = view ? view.plugins.filter(p => themed(p) && p.loaded && matchPlugin(p)).length : 0;
+  const picking = current === 'look' && !!view && (skins > 0 || !!view.skin);
+  const tiles = picking ? shown.filter(p => !themed(p)) : shown;
+  return <>
+    <SearchBox value={query} onChange={setQuery} label={t('settings.plugins.search')} />
+    {tabs.length > 1 && <Tabs items={tabs} value={current} onChange={onTab} label={t('settings.plugins.kinds')} />}
+    {picking && view && <>
+      <ListHead title={t('settings.plugins.skins')} count={skins} outside />
+      <SkinPicker view={view} filter={matchPlugin} />
+      {tiles.length > 0 && <ListHead title={t('settings.plugins.styles')} count={tiles.length} outside />}
+    </>}
+    {view && !picking && tiles.length === 0 && <Section><Note>{t(q ? 'settings.plugins.noMatch' : 'settings.plugins.none')}</Note></Section>}
+    {tiles.length > 0 && (
+      <div className="grid grid-cols-2 gap-gap @max-[600px]/settings-shell:grid-cols-1">
+        {tiles.map(p => <UserPluginTile key={p.id} plugin={p} safeMode={!!view?.safeMode} />)}
+      </div>
+    )}
+  </>;
 }
 
 // Past this many pixels a press on a tile becomes a drag; below it the press stays a click
@@ -143,9 +109,11 @@ const DRAG_SLOP = 4;
 // The agent tiles: drag a tile (or Alt+← / Alt+→ on its gear) to reorder, the switch turns the agent on or off. Both
 // write through the host and come back as a rearranged list; until then the tiles show the local result so nothing
 // snaps back. The last agent on cannot be turned off
-function AgentTiles({ agents: all, inventories, filter, onReorder, onDisabled, onOpen }: {
+function AgentTiles({ agents: all, inventories, filter, onReorder, onDisabled, onOpen, installs, onUpdate }: {
   agents: AgentInfo[];
   inventories: Partial<Record<AgentId, AgentInventory>>;
+  installs?: AgentInstallProgress[];
+  onUpdate: (id: AgentId) => void;
   // A search narrows the tiles; reordering waits until it is cleared
   filter?: (a: AgentInfo) => boolean;
   onReorder: (ids: AgentId[]) => void;
@@ -233,6 +201,7 @@ function AgentTiles({ agents: all, inventories, filter, onReorder, onDisabled, o
             className={cn('min-w-0 touch-none', drag?.id === a.id && 'relative z-10 cursor-grabbing')}
           >
             <AgentTile agent={a} on={on} last={last} dragging={drag?.id === a.id} inventory={inventories[a.id]}
+              updating={installs?.some(i => i.agent === a.id && i.status === 'running')} onUpdate={() => onUpdate(a.id)}
               onToggle={v => toggle(a.id, v)} onOpen={() => onOpen(a.id)} onKeyDown={e => onKeyDown(e, a.id)} />
           </div>
         );
@@ -243,8 +212,10 @@ function AgentTiles({ agents: all, inventories, filter, onReorder, onDisabled, o
 
 // One agent: its mark in a square, name and what it is, the switch; the foot names where the module comes from, the
 // gear and the version (or that it is not installed). A click anywhere on the tile but its switch opens the dialog too
-function AgentTile({ agent: a, on, last, dragging, inventory, onToggle, onOpen, onKeyDown }: {
+function AgentTile({ agent: a, on, last, dragging, inventory, updating, onUpdate, onToggle, onOpen, onKeyDown }: {
   agent: AgentInfo;
+  updating?: boolean;
+  onUpdate: () => void;
   on: boolean;
   last: boolean;
   dragging: boolean;
@@ -281,7 +252,18 @@ function AgentTile({ agent: a, on, last, dragging, inventory, onToggle, onOpen, 
           {a.id === BUILTIN_AGENT_ID && <span className="shrink-0">{t('settings.plugins.bundled')}</span>}
           {version && <span className="truncate font-mono tabular-nums">{version}</span>}
         </span>
-        <span data-no-drag className="-mr-ctl-sm-bleed flex shrink-0">
+        <span data-no-drag className="-mr-ctl-sm-bleed flex shrink-0 items-center">
+          {/* A newer pinned adapter: the update action beside the gear, its dot breathing like an unread session; while the
+              install runs the same slot says so */}
+          {updating
+            ? <Shimmer className="px-2 text-3 text-fg-2">{t('settings.plugins.updating')}</Shimmer>
+            : a.update && (
+              <button type="button" onClick={onUpdate}
+                className="flex h-ctl-sm items-center gap-2 rounded-md px-2 text-3 text-fg-1 transition-colors hover:bg-hover focus-visible:bg-hover">
+                <UpdateDot />
+                <UpdateLabel version={a.update} />
+              </button>
+            )}
           <IconButton size="sm" title={settings} aria-label={settings} aria-haspopup="dialog" aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
             onClick={onOpen} onKeyDown={onKeyDown} className="text-fg-2">
             <Settings2 strokeWidth={1.75} />
@@ -292,38 +274,8 @@ function AgentTile({ agent: a, on, last, dragging, inventory, onToggle, onOpen, 
   );
 }
 
-// One built-in interface module tile: same silhouette as an agent tile, switched in place without a restart
-function BuiltinTile({ id, icon, name, desc, on, onToggle }: {
-  id: string;
-  icon: ReactNode;
-  name: string;
-  desc: string;
-  on: boolean;
-  onToggle: (on: boolean) => void;
-}) {
-  return (
-    <Card onClick={e => { if (!(e.target as Element).closest('[data-no-drag]')) onToggle(!on); }}
-      data-plugin-tile={id}
-      className="flex h-full cursor-pointer flex-col shadow-none transition-[background-color,box-shadow] hover:bg-hover">
-      <div className="flex items-center gap-gap p-pad">
-        <span className={cn('flex size-(--tile-mark) shrink-0 items-center justify-center rounded-lg bg-active text-fg-1', !on && 'text-fg-3')}>
-          {icon}
-        </span>
-        <span className="flex min-w-0 flex-1 flex-col gap-y-(--stack-gap)">
-          <span className={cn('truncate text-2 font-medium', on ? 'text-fg-1' : 'text-fg-2')}>{name}</span>
-          <span className="truncate text-3 text-fg-3">{desc}</span>
-        </span>
-        <span data-no-drag className="flex shrink-0 items-center">
-          <Switch checked={on} onCheckedChange={onToggle}
-            aria-label={t('settings.agent.enabled', { agent: name })}
-            title={t('settings.agent.enabled', { agent: name })} />
-        </span>
-      </div>
-      <div className="mt-auto flex h-(--tile-foot) items-center justify-between gap-gap border-t border-line px-pad">
-        <span className="flex min-w-0 items-baseline gap-2 text-3 text-fg-3">
-          <span className="shrink-0">{t('settings.plugins.bundled')}</span>
-        </span>
-      </div>
-    </Card>
-  );
+// "Update to 0.87.0" with the version in the foot's monospace figures, wherever the language puts it
+function UpdateLabel({ version }: { version: string }) {
+  const [before, after = ''] = t('settings.plugins.update', { version: '\u0000' }).split('\u0000');
+  return <span>{before}<span className="font-mono tabular-nums">{version}</span>{after}</span>;
 }
