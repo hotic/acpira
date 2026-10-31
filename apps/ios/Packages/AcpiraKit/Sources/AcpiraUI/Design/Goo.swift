@@ -1074,22 +1074,42 @@ struct ChipMark: View {
   /// The sidekick's colour while it works a round: a dot in it breathes on the mark's foot, as the desktop chip lights
   /// its sidekick half (the bar has no sidekick half at rest); nil while it does not
   var sidekick: Color?
+  @Environment(\.motionEnabled) private var motion
 
   var body: some View {
-    Group {
-      if let cur {
-        VendorMark(brand: cur.brand, name: cur.name, size: Metrics.barIcon)
-      } else {
-        Icon(.slidersHorizontal, size: Metrics.barIcon, strokeWidth: 1.75)
+    ZStack {
+      Group {
+        if let cur {
+          VendorMark(brand: cur.brand, name: cur.name, size: Metrics.barIcon)
+        } else {
+          Icon(.slidersHorizontal, size: Metrics.barIcon, strokeWidth: 1.75)
+        }
       }
+      // Another model (a pick, or another agent on the new session page) crossfades its mark in place
+      .id(cur?.key)
+      .transition(.scale(scale: Metrics.gooSeed).combined(with: .opacity))
     }
     .overlay(alignment: .topTrailing) {
-      if fast { FastGlyph(on: true, size: Metrics.chevron).offset(x: Metrics.s1, y: -Metrics.s1) }
+      if fast {
+        FastGlyph(on: true, size: Metrics.chevron).offset(x: Metrics.s1, y: -Metrics.s1)
+          .transition(.scale(scale: Metrics.gooSeed).combined(with: .opacity))
+      }
+    }
+    // Its own curve: the new session page swaps agents inside the ring's no-animation transaction, and a pushed
+    // answer comes with none, so the mark would otherwise blink from one model to the next
+    .transaction(value: MarkKey(model: cur?.key, fast: fast)) {
+      $0.disablesAnimations = false
+      $0.animation = motion ? Motion.quick : nil
     }
     .overlay(alignment: .bottomTrailing) {
       if let sidekick { SidekickPulse(tint: sidekick).offset(x: Metrics.s1, y: Metrics.s1).transition(.scale.combined(with: .opacity)) }
     }
     .animation(Motion.quick, value: sidekick != nil)
+  }
+
+  private struct MarkKey: Equatable {
+    var model: String?
+    var fast: Bool
   }
 }
 

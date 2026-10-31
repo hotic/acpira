@@ -516,6 +516,20 @@ private let fusionOptions: [SessionOption] = [
     #expect(pacer.visible == "rewritten")
   }
 
+  @Test func skippedTextShowsAtOnceAndResumesPacing() {
+    var pacer = StreamPacer(streaming: true)
+    pacer.receive("already on screen", streaming: true, now: 0, skip: true)
+    #expect(pacer.visible == "already on screen")
+    #expect(!pacer.pending)
+    #expect(pacer.reveals.isEmpty)
+    // Subsequent streamed chunks pace out from the skipped prefix
+    pacer.receive("already on screen, and now streaming live", streaming: true, now: 1)
+    #expect(pacer.visible == "already on screen")
+    #expect(pacer.pending)
+    pacer.tick(now: 1.032, dt: 0.032)
+    #expect(pacer.count > "already on screen".count)
+  }
+
   @Test func fadeFollowsRevealSteps() {
     let fade = StreamFade(count: 10, reveals: [StreamReveal(time: 1, from: 4, to: 10)])
     // The last glyph (character 10) is new; character 4 came before the step
@@ -544,6 +558,30 @@ private let fusionOptions: [SessionOption] = [
     claim.settle()
     #expect(!claim.enter(id: "b", scope: scope))
     #expect(!EntranceClaim().enter(id: "c", scope: EntranceScope(live: false, scope: scope.scope)))
+    // A quiet pass records the identity without playing the entrance
+    #expect(!EntranceClaim().enter(id: "d", scope: scope, quiet: true))
+    #expect(!EntranceClaim().enter(id: "d", scope: scope, quiet: false))
+  }
+
+  @Test func openingLiveSessionSeedsExistingEntrances() throws {
+    var session = try #require(Fixtures.session("streaming"))
+    session.id = "seed-\(UUID())"
+    let gate = QuietGate()
+    // Opening a live session is quiet and seeds every existing row identity into EntranceLedger
+    #expect(gate.isQuiet(session: session, catchingUp: false, liveStream: false))
+    let turnIndex = try #require(session.turns.lastIndex { if case .agent = $0 { true } else { false } })
+    let scope = EntranceScope(live: true, scope: "\(session.id):\(turnIndex)")
+    #expect(!EntranceClaim().enter(id: "fold-head", scope: scope))
+    #expect(!EntranceClaim().enter(id: "t2-read-1:tool", scope: scope))
+    #expect(!EntranceClaim().enter(id: itemEntrance("t2-read-1"), scope: scope))
+    #expect(!EntranceClaim().enter(id: itemEntrance("t2-read-2"), scope: scope))
+    #expect(!EntranceClaim().enter(id: "thought:1791536900000.0", scope: scope))
+    // A new tool arriving on a live stream step after opening still plays its entrance
+    guard case .agent(var turn) = session.turns[turnIndex] else { Issue.record("missing agent turn"); return }
+    turn.blocks.append(.toolCall(ToolCallBlock(id: "t2-new", kind: .execute, verb: "Run", target: "pnpm test", status: .in_progress)))
+    session.turns[turnIndex] = .agent(turn)
+    #expect(!gate.isQuiet(session: session, catchingUp: false, liveStream: true))
+    #expect(EntranceClaim().enter(id: "t2-new:tool", scope: scope))
   }
 }
 

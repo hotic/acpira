@@ -53,15 +53,18 @@ struct StreamPacer: Equatable {
   var pending: Bool { count < target.count }
   var visible: String { String(target[0..<min(count, target.count)]) }
 
-  /// A new value of the streamed text. Text that does not extend the previous value (an edit, a replay) shows at once
-  mutating func receive(_ text: String, streaming: Bool, now: Double) {
+  /// A new value of the streamed text. Text that does not extend the previous value (an edit, a replay) or that was
+  /// already there before the reader looked (`skip`: a session opened mid-turn or the catch-up after returning to it)
+  /// shows at once and measures the rate from scratch on the next chunk
+  mutating func receive(_ text: String, streaming: Bool, now: Double, skip: Bool = false) {
     let next = Array(text)
     let appended = next.starts(with: target)
     let added = next.count - target.count
     target = next
     self.streaming = streaming
-    guard appended else {
+    guard appended, !skip else {
       count = next.count; pos = Double(count); speed = 0; reveals = []
+      if skip { at = 0 }
       return
     }
     guard added > 0 else { return }

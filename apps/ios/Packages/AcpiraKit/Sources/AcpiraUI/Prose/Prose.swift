@@ -77,6 +77,9 @@ public struct StreamProse: View {
   /// The local images the engine read with the text, for its Markdown images
   var images: [ImageRef]?
   @Environment(\.motionEnabled) private var motion
+  @Environment(\.quietEntrance) private var quiet
+  @Environment(\.rowEnter) private var rowEnter
+  @Environment(\.scrollGesture) private var gesture
   @State private var pacer: StreamPacer?
   @State private var parse = StreamParse()
 
@@ -95,12 +98,14 @@ public struct StreamProse: View {
   public var body: some View {
     Group {
       if let pacer, motion {
-        // The pacing ticks come from the task below; the tail paragraph runs its own frames while glyphs fade
-        let text = pacer.visible
+        // The pacing ticks come from the task below; the tail paragraph runs its own frames while glyphs fade. A block
+        // mounted quietly or after its entrance settled shows its existing text on the first frame, before `onAppear`
+        let resume = pacer.target.isEmpty && (quiet || !rowEnter || gesture.active)
+        let text = resume ? markdown : pacer.visible
         // The turn heading already indicates waiting before the first visible words
         if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
           Prose(blocks: parse(text), tone: tone)
-            .environment(\.streamFade, StreamFade(count: pacer.count, reveals: pacer.reveals))
+            .environment(\.streamFade, resume ? nil : StreamFade(count: pacer.count, reveals: pacer.reveals))
         } else {
           // An empty Group is no view at all and would never start the task below; this holds it for the first tick
           Color.clear.frame(height: 0)
@@ -111,16 +116,17 @@ public struct StreamProse: View {
         Prose(markdown: markdown, tone: tone)
       }
     }
-    .onAppear { receive() }
-    .onChange(of: markdown) { receive() }
-    .onChange(of: streaming) { receive() }
+    .onAppear { receive(initial: true) }
+    .onChange(of: markdown) { receive(initial: false) }
+    .onChange(of: streaming) { receive(initial: false) }
     .task(id: pacer != nil && motion) { await pace() }
     .environment(\.markdownImages, images)
   }
 
-  private func receive() {
+  private func receive(initial: Bool) {
     guard var next = pacer else { return }
-    next.receive(markdown, streaming: streaming, now: Date.timeIntervalSinceReferenceDate)
+    let skip = quiet || (initial && (!rowEnter || gesture.active))
+    next.receive(markdown, streaming: streaming, now: Date.timeIntervalSinceReferenceDate, skip: skip)
     pacer = next
   }
 

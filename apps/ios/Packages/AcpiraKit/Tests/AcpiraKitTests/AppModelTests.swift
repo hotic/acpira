@@ -21,6 +21,15 @@ import Testing
     #expect(settings.path.isEmpty && settings.settingsOpen)
   }
 
+  /// A bare launch (from the home screen) is no demo, so a paired build starts empty rather than in a fixture's chat
+  @Test func bareLaunchShowsNoFixtures() {
+    #expect(!LaunchOptions.current(["Acpira"]).demo)
+    #expect(LaunchOptions.current(["Acpira", "-fixture", "running"]).demo)
+    #expect(LaunchOptions.current(["Acpira", "-screen", "list"]).demo)
+    let blank = AppModel(blank: LaunchOptions.current(["Acpira"]))
+    #expect(blank.path.isEmpty && blank.summaries.isEmpty && blank.views.isEmpty && blank.agents.isEmpty)
+  }
+
   @Test func aPromptStartsAStreamingTurn() {
     let m = model()
     let id = m.fixtureId("showcase")
@@ -92,6 +101,19 @@ import Testing
     #expect(!m.listedProjects.contains(last))
     m.toast?.action?.run()
     #expect(m.listedProjects.contains(last))
+  }
+
+  @Test func hostFoldersListOnlyOnceAdded() {
+    let m = model("list")
+    let folder = "ssh://gen1/home/u/scratch"
+    var s = m.summaries[0]
+    s.id = "host-session"
+    s.cwd = folder
+    m.summaries.append(s)
+    // A host's list brings every folder it ran a session in; the project list keeps only the ones added
+    #expect(!m.listedProjects.contains(folder))
+    m.projectOrder.append(folder)
+    #expect(m.listedProjects.contains(folder))
   }
 
   @Test func theSearchFindsConversationsAndMarksTheTerms() {

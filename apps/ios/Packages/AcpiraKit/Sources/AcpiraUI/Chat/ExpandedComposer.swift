@@ -49,7 +49,7 @@ struct ExpandedComposer: View {
       .safeAreaInset(edge: .bottom, spacing: 0) {
         HStack(spacing: 0) {
           Spacer(minLength: 0)
-          SendButton(running: false, filled: filled, action: onSend)
+          SendButton(running: false, filled: filled, waiting: VideoJobs.shared.pending(staged), action: onSend)
         }
         .padding(.horizontal, Metrics.pad)
         .padding(.vertical, Metrics.s2)

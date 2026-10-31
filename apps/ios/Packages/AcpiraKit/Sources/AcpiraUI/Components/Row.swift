@@ -1,4 +1,5 @@
 import AcpiraDesign
+import AcpiraModels
 import SwiftUI
 
 // ui/Row.tsx: the one shared row every thought / plan / tool / status / session item grows on. Lead slot (20) with a
@@ -22,6 +23,9 @@ extension EnvironmentValues {
   @Entry var rowEnterDelay: Double = 0
   /// EntranceScopeContext: whether the turn is live, and its name
   @Entry var entranceScope = EntranceScope(live: false, scope: "")
+  /// QuietEntranceContext: true while a pass restores history or applies the catch-up push after returning to a
+  /// session, so rows and streamed text already there appear in place
+  @Entry var quietEntrance: Bool = false
   /// Whether the reader is moving the thread (`Thread`); outside a scrolling thread it never is
   @Entry var scrollGesture = ScrollGesture()
 }
@@ -56,6 +60,52 @@ enum EntranceLedger {
     entered.insert(key)
     return fresh
   }
+
+  /// Marks every entrance identity already present in `session` as entered, so lazy rows mounted later by scrolling
+  /// or by opening a fold never play an entrance for content that was already there when the session opened or
+  /// caught up
+  static func seed(_ session: SessionView) {
+    let nodes = nodesByTurn(session.subagents ?? [])
+    for (index, turn) in session.turns.enumerated() {
+      guard case .agent(let agent) = turn else { continue }
+      seed(turn: agent, scope: "\(session.id):\(index)", subagents: nodes[index] ?? [])
+    }
+  }
+
+  static func seed(turn: AgentTurn, scope: String, subagents: [SubagentSummary]) {
+    _ = claim("\(scope)\u{0}fold-head")
+    let absorbed = absorbedNotices(turn)
+    let shown = displayTurn(turn, absorbed: absorbed)
+    let placed = delegatedIds(shown.blocks, subagents)
+    for section in splitPlanSections(shown.blocks, placed: placed) {
+      let split = splitCodexBlocks(section.blocks.map(observedBlock))
+      for item in groupProcess(split.process) {
+        _ = claim("\(scope)\u{0}\(itemEntrance(item.id))")
+      }
+    }
+    for block in turn.blocks {
+      switch block {
+      case .thought(let th):
+        _ = claim("\(scope)\u{0}thought:\(th.startedAt.map { "\($0)" } ?? "")")
+      case .toolCall(let call):
+        _ = claim("\(scope)\u{0}\(itemEntrance(call.id))")
+        _ = claim("\(scope)\u{0}\(call.id):tool")
+        if !toolFiles(call).isEmpty { _ = claim("\(scope)\u{0}\(call.id):files") }
+      default:
+        break
+      }
+    }
+    for node in subagents {
+      _ = claim("\(scope)\u{0}subagent:\(node.id)")
+      let sidekickKey = "\(scope)\u{0}sidekick:\(node.id)"
+      _ = claim(sidekickKey)
+    }
+  }
+
+  /// Drops recorded entrances under `prefix` (`-replay` and `sidekick.demo` replay a turn from its start)
+  static func clear(prefix: String) {
+    entered = entered.filter { !$0.hasPrefix(prefix) }
+  }
 }
 
 /// One claim per mounted EntranceOnce. A class so that resolving it while the body is evaluated (where the
@@ -64,8 +114,8 @@ final class EntranceClaim {
   private var fresh: Bool?
   private var settled = false
 
-  func enter(id: String, scope: EntranceScope) -> Bool {
-    if fresh == nil { fresh = EntranceLedger.claim("\(scope.scope)\u{0}\(id)") && scope.live }
+  func enter(id: String, scope: EntranceScope, quiet: Bool = false) -> Bool {
+    if fresh == nil { fresh = EntranceLedger.claim("\(scope.scope)\u{0}\(id)") && scope.live && !quiet }
     return fresh == true && !settled
   }
 
@@ -79,6 +129,7 @@ struct EntranceOnce<Content: View>: View {
   let id: String
   let content: Content
   @Environment(\.entranceScope) private var scope
+  @Environment(\.quietEntrance) private var quiet
   @State private var claim = EntranceClaim()
 
   init(id: String, @ViewBuilder content: () -> Content) {
@@ -88,7 +139,7 @@ struct EntranceOnce<Content: View>: View {
 
   var body: some View {
     content
-      .environment(\.rowEnter, claim.enter(id: id, scope: scope))
+      .environment(\.rowEnter, claim.enter(id: id, scope: scope, quiet: quiet))
       // Rows read the flag once, at their own mount: the ones mounted with this pass keep their entrance
       .task { claim.settle() }
   }
@@ -96,10 +147,11 @@ struct EntranceOnce<Content: View>: View {
 
 /// One slot of `process-row-enter`: opacity 0 → 1 over --row-enter-duration, ease-out, after `delay`. The decision
 /// is taken at mount, so a row that mounted still never fades later and a fading one finishes its fade. A row mounted
-/// by the reader's scroll stays still (`ScrollGesture`)
+/// by the reader's scroll or during a quiet restore stays still (`ScrollGesture`, `quietEntrance`)
 struct RowEnterFade: ViewModifier {
   var delay: Double
   @Environment(\.rowEnter) private var enter
+  @Environment(\.quietEntrance) private var quiet
   @Environment(\.motionEnabled) private var motion
   @Environment(\.scrollGesture) private var gesture
   @State private var shown: Bool?
@@ -117,7 +169,7 @@ struct RowEnterFade: ViewModifier {
       }
   }
 
-  private var plays: Bool { enter && motion && !gesture.active }
+  private var plays: Bool { enter && !quiet && motion && !gesture.active }
 }
 
 extension View {

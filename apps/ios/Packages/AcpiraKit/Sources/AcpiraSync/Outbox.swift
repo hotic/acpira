@@ -10,7 +10,7 @@ extension WebviewMsg {
   /// The id the engine dedupes this action by; nil for actions that carry none
   public var clientId: String? {
     switch self {
-    case .send(_, _, _, _, let id), .stop(_, let id), .permission(_, _, _, let id), .answer(_, _, _, _, let id),
+    case .send(_, _, _, _, let id), .stop(_, let id), .permission(_, _, _, let id), .answer(_, _, _, _, _, let id),
          .steerQueued(_, _, let id):
       id
     default:
@@ -25,7 +25,7 @@ extension WebviewMsg {
     case let .send(session, text, attachments, steer, nil): .send(sessionId: session, text: text, attachments: attachments, steer: steer, clientId: id)
     case let .stop(session, nil): .stop(sessionId: session, clientId: id)
     case let .permission(session, block, option, nil): .permission(sessionId: session, blockId: block, optionId: option, clientId: id)
-    case let .answer(session, block, answers, skip, nil): .answer(sessionId: session, blockId: block, answers: answers, skip: skip, clientId: id)
+    case let .answer(session, block, answers, images, skip, nil): .answer(sessionId: session, blockId: block, answers: answers, images: images, skip: skip, clientId: id)
     case let .steerQueued(session, item, nil): .steerQueued(sessionId: session, id: item, clientId: id)
     default: self
     }
@@ -45,7 +45,7 @@ extension WebviewMsg {
   public var sessionTarget: String? {
     switch self {
     case .send(let id, _, _, _, _), .stop(let id, _), .setMode(let id, _), .setConfig(let id, _, _): id
-    case .permission(let id, _, _, _), .answer(let id, _, _, _, _), .steerQueued(let id, _, _), .sendQueued(let id, _): id
+    case .permission(let id, _, _, _), .answer(let id, _, _, _, _, _), .steerQueued(let id, _, _), .sendQueued(let id, _): id
     default: nil
     }
   }

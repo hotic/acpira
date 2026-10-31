@@ -53,16 +53,13 @@ struct SettingsScreen: View {
 
   var body: some View {
     Form {
-      // Everything about how the app looks and reads in one group: theme, motion, language
+      // Everything about how the app looks and reads in one group: the two menus side by side, then the motion switch
       Section(t("settings.appearance.title")) {
         Picker(t("settings.theme"), selection: $theme) {
           Text(web: t("mobile.theme.system")).tag("system")
           Text(web: t("settings.theme.light")).tag("light")
           Text(web: t("settings.theme.dark")).tag("dark")
         }
-        // The app tints controls with the body ink; a switch keeps the system's own green (not the app's muted
-        // --ok) so "on" reads as on, as in every system app
-        Toggle(t("settings.motion"), isOn: $motion).tint(.green)
         // The same system menu as the theme, so every choice in the group opens the same way; a pick switches the
         // table first, so the rebuilt screens read the new language
         Picker(t("settings.language"), selection: Binding(get: { locale }, set: { id in
@@ -73,6 +70,9 @@ struct SettingsScreen: View {
             Text(verbatim: languageName(id)).tag(id)
           }
         }
+        // The app tints controls with the body ink; a switch keeps the system's own green (not the app's muted
+        // --ok) so "on" reads as on, as in every system app
+        Toggle(t("settings.motion"), isOn: $motion).tint(.green)
       }
       // The engine's own settings, shared with the computer
       EngineSettingsSections()
@@ -108,7 +108,6 @@ struct SettingsScreen: View {
     .pairSettingsHooks(pairing)
     .navigationDestination(for: SettingsRoute.self) { route in
       switch route {
-      case .agents: AgentsSettingsPage()
       case .agent(let id): AgentSettingsPage(id: id)
       case .models(let id): ModelsSettingsPage(id: id)
       }

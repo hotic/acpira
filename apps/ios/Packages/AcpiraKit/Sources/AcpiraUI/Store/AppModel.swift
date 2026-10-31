@@ -63,6 +63,11 @@ final class AppModel {
   var settings: SettingsView?
   /// Each agent's config controls as the engine last reported them (`controls`): the settings' model lists
   var agentControls: [AgentId: [ConfigControl]] = [:]
+  /// Each agent's remembered per-model parameters, from the same answer (modelShapes.ts): a model picked on the new
+  /// session page brings its own effort and Fast from here, as only a live session's set_config_option would
+  var agentShapes: [AgentId: ModelShapes] = [:]
+  /// Agents whose empty `controls` answer was followed by a fresh probe on this wire, so it is asked once
+  var probedControls: Set<AgentId> = []
   var summaries: [SessionSummary]
   /// List feedback stays until the list itself acknowledges it, even after a queued copy settles `outgoing`.
   var pendingSummaries: [String: PendingSummary] = [:]
@@ -80,6 +85,9 @@ final class AppModel {
   /// The desktop app's sections ("Work", "Personal"), each holding whole projects in its own order; the by-project
   /// view lists them as the desktop does. Made and filled on the desktop only
   var sections: [SessionSection] = []
+  /// Where chats' folders live on the computer (InitState.chats): a session whose folder sits directly inside is a chat,
+  /// in no project. Nil in the demo and from an engine older than chats
+  var chatRoot: String?
   /// The SSH hosts set up on the computer (HostMsg `connections`): each host folder's state and run mode. Empty until
   /// the engine answers, and for a gateway that keeps the list from devices; a host folder then shows its alias only
   var connections: [ConnectionView] = []
@@ -101,6 +109,8 @@ final class AppModel {
   /// The session the engine's view was last told this screen shows (`open`); nil once it was told the screen left it
   /// (AppModel+Engine.swift `syncWatching`)
   @ObservationIgnored var watching: String?
+  /// Sessions whose latest view update came from a live stream step rather than an initial load or catch-up push
+  @ObservationIgnored var liveSessions: Set<String> = []
   /// The app is in the background: the engine's view counts no session as watched until it comes back
   @ObservationIgnored var away = false
   /// This model's wire ended; the screens keep what it showed until the next wire's model takes them over
@@ -123,7 +133,7 @@ final class AppModel {
   @ObservationIgnored var computer: String?
   /// The engine's terminals the phone opened, one per project (Terminal/TerminalSession.swift)
   @ObservationIgnored let terminals = TerminalHub()
-  @ObservationIgnored private var runs: [String: Task<Void, Never>] = [:]
+  @ObservationIgnored var runs: [String: Task<Void, Never>] = [:]
   @ObservationIgnored private let launched = Date()
   @ObservationIgnored private var serial = 0
   /// Reads waiting for the engine's answer, by the seq it echoes (AppModel+Files.swift)
@@ -160,6 +170,16 @@ final class AppModel {
     connect()
   }
 
+  /// Nothing to show: a paired build before any computer's wire, so no fixture stands in for the user's sessions. The
+  /// connect page covers the list until a wire brings its own model (RootView.followPairing)
+  init(blank _: LaunchOptions) {
+    link = nil
+    agents = []
+    accounts = []
+    summaries = []
+    views = [:]
+  }
+
   private init(demo options: LaunchOptions) {
     link = nil
     let fixtures = Fixtures.sessionNames.compactMap { name in Fixtures.session(name).map { (name: name, view: $0) } }
@@ -185,6 +205,8 @@ final class AppModel {
     if let at = self.summaries.firstIndex(where: { $0.title == "上下文压缩" }) { self.summaries[at].state = .background }
     // The engine's defaults, so the settings that live on the computer can be tried in the demo
     settings = .defaults
+    // The fixtures' computer keeps chats where a project shell's engine does, so the demo can start them too
+    chatRoot = "/Users/dev/.acpira/chats"
     // The latest project starts open, so the by-project view shows open and closed groups
     openProjects = Set(summaries.first.map { [$0.cwd] } ?? [])
     let fixture = fixtureId(options.fixture)
@@ -226,8 +248,21 @@ final class AppModel {
   var projects: [String] {
     var seen = Set(removedProjects)
     let used = summaries.sorted { $0.updatedAt > $1.updatedAt }.map(\.cwd)
-    return (addedProjects + used + projectOrder).filter { !$0.isEmpty && seen.insert($0).inserted }
+    return (addedProjects + used + projectOrder).filter { !$0.isEmpty && !isChat($0) && seen.insert($0).inserted }
   }
+
+  /// A chat's folder: directly inside `chatRoot`, in either separator (sessionTree.ts isChatFolder)
+  func isChat(_ cwd: String) -> Bool {
+    guard let root = chatRoot, !root.isEmpty, let cut = cwd.lastIndex(where: { $0 == "/" || $0 == "\\" }) else { return false }
+    return cut > cwd.startIndex && cwd.index(after: cut) < cwd.endIndex && cwd[..<cut] == root
+  }
+
+  /// A new session in `cwd` starts as a chat: no folder picked, or one picked from a chat (Shell.tsx `newIn`: from a
+  /// chat, "new" is another chat). Only where the engine says where chats live
+  func startsChat(_ cwd: String) -> Bool { chatRoot != nil && (cwd.isEmpty || isChat(cwd)) }
+
+  /// Where a session sits, as a row's second line says it: its project's name, or "Chats"
+  func placeName(_ cwd: String) -> String { isChat(cwd) ? t("session.group.chats") : projectName(cwd) }
 
   /// The SSH host a folder lives on, nil for a local folder; `view` is nil until the engine has said how that host is
   func host(of cwd: String) -> (folder: RemoteFolder, view: ConnectionView?)? {
@@ -238,25 +273,18 @@ final class AppModel {
   /// The built-in agent (BUILTIN_AGENT_ID)
   static let builtinAgent: AgentId = "acpira"
 
-  /// The agents that work in a folder on an SSH host under local run (remote.ts LOCAL_RUN_AGENTS), the fallback first
-  static let localRunAgents: [AgentId] = [builtinAgent, "claude"]
-
-  /// The agent a new session in `cwd` starts with (Shell.tsx agentIn): under local run only the built-in agent and
-  /// Claude Code work in a folder on an SSH host (the engine refuses others with host.remoteBuiltinOnly), so it keeps one
-  /// of them and otherwise takes the first installed; a host the phone has not heard of yet counts as local run, the default
-  func startAgent(_ agent: AgentId, in cwd: String) -> AgentId {
-    guard let host = host(of: cwd), host.view?.mode != .remote,
-          let ready = Self.localRunAgents.first(where: { id in agents.contains { $0.id == id && $0.available != false } })
-    else { return agent }
-    return Self.localRunAgents.contains(agent) ? agent : ready
-  }
 
   /// The by-project view's projects (sessionTree.ts buildSessionTree): the user's order first, then every other folder a
-  /// session ran in, the latest first. Folders taken off the list stay off; their sessions still show in a search
+  /// session ran in, the latest first. Folders taken off the list stay off, and so does a host folder nobody added (a
+  /// host's list brings every folder it ever ran a session in; sessionTree.ts offList); their sessions still show in a
+  /// search
   var listedProjects: [String] {
+    let registered = projectOrder + addedProjects
     var seen = Set(removedProjects)
     let used = summaries.sorted { $0.updatedAt > $1.updatedAt }.map(\.cwd)
-    return (projectOrder + addedProjects + used).filter { !$0.isEmpty && seen.insert($0).inserted }
+      .filter { !$0.hasPrefix(RemoteFolder.scheme) || registered.contains($0) }
+    // Chats gather in their own group, never as projects
+    return (registered + used).filter { !$0.isEmpty && !isChat($0) && seen.insert($0).inserted }
   }
 
   /// The project leads the by-project view: registered if it was not, then moved before the first one (the desktop
@@ -329,6 +357,8 @@ final class AppModel {
   func search(_ query: String) {
     let terms = searchTerms(query)
     guard !terms.isEmpty else {
+      searchSeq += 1
+      searchQuery = ""
       hits = nil
       return
     }
@@ -363,6 +393,12 @@ final class AppModel {
     return latest.flatMap { views[$0.id]?.controls } ?? fallback ?? SessionControls()
   }
 
+  /// The per-model parameters a model pick on the new session page reshapes with: the engine's answer, else those a
+  /// kept view of the agent carries
+  func shapes(for agent: AgentId) -> ModelShapes? {
+    agentShapes[agent] ?? views.values.first { $0.agent == agent && $0.modelShapes != nil }?.modelShapes
+  }
+
   /// Starts a session with its first prompt and returns its id; nil with an engine, which pushes the session it made
   /// and the chat then takes the new-session screen's place
   @discardableResult
@@ -374,12 +410,15 @@ final class AppModel {
     serial += 1
     let id = "local-\(serial)"
     let stamp = now.iso
+    // The demo's stand-in for the engine's new chat folder: its day and a random tail (projects.rs new_chat_folder)
+    let chat = startsChat(cwd)
+    let cwd = chat ? "\(chatRoot ?? "")/\(stamp.prefix(10))-\(UUID().uuidString.prefix(6).lowercased())" : cwd
     let account = accounts.first { $0.agent == agent }?.id
     let view = SessionView(id: id, agent: agent, title: title(from: text), cwd: cwd, accountId: account,
                            controls: controls, createdAt: stamp, updatedAt: stamp)
     views[id] = view
     summaries.insert(SessionSummary(id: id, title: view.title, agent: agent, cwd: cwd, updatedAt: stamp, accountId: account), at: 0)
-    addProject(cwd)
+    if !chat { addProject(cwd) }
     startTurn(id, text: text, attachments: attachments)
     return id
   }
@@ -458,6 +497,7 @@ final class AppModel {
   /// `-replay`: the session's last agent turn streams again (the demo only: an engine's views are its own)
   func replay(_ id: String) {
     guard link == nil, let view = views[id] else { return }
+    EntranceLedger.clear(prefix: "\(id):")
     // The replayed turn's clock starts with the stream, a second from now
     let steps = Replay.steps(view, startedAt: now.addingTimeInterval(1).timeIntervalSince1970 * 1000)
     if let first = steps.first { apply(first, to: id) }
@@ -467,6 +507,7 @@ final class AppModel {
   /// A stream step carries the transcript; the queue and controls stay as the reader left them
   private func apply(_ step: SessionView, to id: String) {
     guard var view = views[id] else { return }
+    liveSessions.insert(id)
     view.turns = step.turns
     view.running = step.running
     views[id] = view
