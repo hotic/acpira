@@ -1073,11 +1073,13 @@ const NAV_LEAD = '-mr-gap-half flex size-lead shrink-0 items-center justify-cent
 const SECTION_ACT = 'inline-flex size-ctl-sm items-center justify-center rounded-md text-fg-3 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1 data-[popup-open]:bg-hover data-[popup-open]:text-fg-1';
 // The filter row's view button, an IconButton's box (ui/Button)
 const ROW_ACT = 'inline-flex size-ctl shrink-0 items-center justify-center rounded-md text-fg-2 transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1 data-[popup-open]:bg-active data-[popup-open]:text-fg-1';
-// A header's hover actions: they cross-fade in over its resting count / state, in the same cell, and take clicks only then
-const REVEAL = 'pointer-events-none opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-data-[menu-open]:pointer-events-auto group-data-[menu-open]:opacity-100';
+// A header's hover actions: they cross-fade in over its resting count / state, in the same cell, and take clicks only then.
+// Keyboard focus (focus-visible) reveals them too, not focus-within: a click focuses the row, which kept them showing after
+// the pointer left until a click elsewhere
+const REVEAL = 'pointer-events-none opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-visible:pointer-events-auto group-focus-visible:opacity-100 group-has-[:focus-visible]:pointer-events-auto group-has-[:focus-visible]:opacity-100 group-data-[menu-open]:pointer-events-auto group-data-[menu-open]:opacity-100';
 // The concealed tail also stops taking the pointer: at opacity 0 it paints (and hit-tests) above the fully opaque actions,
 // so once their fade ended the pointer fell through to it, the button lost its hover fill and a click selected the row
-const CONCEAL = 'transition-opacity duration-150 group-hover:pointer-events-none group-hover:opacity-0 group-focus-within:pointer-events-none group-focus-within:opacity-0 group-data-[menu-open]:pointer-events-none group-data-[menu-open]:opacity-0';
+const CONCEAL = 'transition-opacity duration-150 group-hover:pointer-events-none group-hover:opacity-0 group-focus-visible:pointer-events-none group-focus-visible:opacity-0 group-has-[:focus-visible]:pointer-events-none group-has-[:focus-visible]:opacity-0 group-data-[menu-open]:pointer-events-none group-data-[menu-open]:opacity-0';
 // The resting tail and the hover actions stacked in one grid cell, so the title's room never changes under the pointer
 const STACK = "grid [grid-template-areas:'x'] *:[grid-area:x]";
 
@@ -1100,12 +1102,12 @@ function SectionLabel({ children, actions, open, quiet, keep, rename, onToggle }
       {rename ?? <button type="button" aria-expanded={open} onClick={onToggle}
         className="inline-flex min-w-0 select-none items-center gap-1 rounded-sm px-[calc((var(--spacing-lead)-var(--spacing-icon))/2)] transition-colors hover:text-fg-1 focus-visible:text-fg-1">
         <span className="min-w-0 truncate">{children}</span>
-        <ChevronRight strokeWidth={1.5} className={cn('size-3 shrink-0 opacity-0 transition-[rotate,opacity] duration-(--dur-open) group-hover:opacity-100 group-focus-within:opacity-100',
+        <ChevronRight strokeWidth={1.5} className={cn('size-3 shrink-0 opacity-0 transition-[rotate,opacity] duration-(--dur-open) group-hover:opacity-100 group-has-[:focus-visible]:opacity-100',
           open && 'rotate-90')} />
       </button>}
       {actions && !rename && (
         <span className={cn('-mr-1 ml-auto flex shrink-0 items-center gap-0.5',
-          quiet && !keep && 'opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 has-[[data-popup-open]]:opacity-100')}>
+          quiet && !keep && 'opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-has-[:focus-visible]:opacity-100 has-[[data-popup-open]]:opacity-100')}>
           {actions}
         </span>
       )}
