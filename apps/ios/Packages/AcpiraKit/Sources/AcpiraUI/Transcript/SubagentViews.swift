@@ -220,6 +220,32 @@ struct SubagentElapsed: View {
 
 // MARK: - Marks
 
+/// HistoryMessage.tsx SubagentsReported: each summoned agent's return in the relay handback's shape, at the head of the
+/// reply it woke. The message itself is for the agent; a wake with only the sidekick shows nothing
+struct SubagentReturns: View {
+  let reports: [SubagentReport]
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Metrics.processRowGap) {
+      ForEach(Array(reports.enumerated()), id: \.offset) { _, r in
+        Row {
+          VendorMark(brand: r.agent, name: r.name, size: WebMetrics.icon).foregroundStyle(Palette.fg1)
+        } content: {
+          HStack(alignment: .firstTextBaseline, spacing: Metrics.s2) {
+            Text(web: r.name).foregroundStyle(Palette.fg1).lineLimit(1).fixedSize().cssBaseline()
+            Text(web: t(r.asks ? "chat.subagentAsks" : "sidekick.handback")).foregroundStyle(Palette.fg2).lineLimit(1).fixedSize().cssBaseline()
+            if let line = r.line { Text(web: line).foregroundStyle(Palette.fg3).lineLimit(1).truncationMode(.tail).cssBaseline() }
+          }
+        }
+        .accessibilityElement(children: .combine)
+      }
+    }
+    .environment(\.rowHeight, WebMetrics.processRow)
+    .environment(\.rowDenseHeight, WebMetrics.processRow)
+    .padding(.horizontal, Metrics.pad)
+  }
+}
+
 /// The lead slot: the state mark at --subagent-mark, and a summoned child's CLI mark on its corner over a page tile
 struct SubagentLead: View {
   let node: SubagentSummary

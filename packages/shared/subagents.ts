@@ -107,6 +107,8 @@ export interface SubagentPersona {
 export const PERSONA_MAX = 32;
 // The id the built-in agent's sidekick goes by (mirror of SIDEKICK_ID): no persona or group of the roster takes it
 export const SIDEKICK_ID = 'sidekick';
+// The name its rounds report under (relay/calls.rs sidekick persona), as the wake message's `## Sidekick (acpira)` heading
+export const SIDEKICK_NAME = 'Sidekick';
 const NAME_MAX = 48;
 const TEXT_MAX = 2000;
 

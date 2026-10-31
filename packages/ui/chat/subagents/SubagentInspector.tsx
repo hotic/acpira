@@ -96,11 +96,25 @@ function SessionTab({ node, transcript, onPermission, question, onAnswer, wide, 
   const body = useRef<HTMLDivElement>(null);
   // Stick to the bottom while the child streams, exactly like the main thread; scrolling up releases the follow
   const follow = useBottomFollow(scroll, body, undefined, [transcript?.turns, transcript?.running]);
+  // Edge fades (pane-fade): the top while rows sit scrolled under the header, the bottom while the reader left the tail.
+  // The bottom keys off the follow state like the main thread's, so streamed chunks never flash it
+  useEffect(() => {
+    const el = scroll.current;
+    if (!el) return;
+    const sync = () => {
+      el.toggleAttribute('data-more-above', el.scrollTop > 1);
+      el.toggleAttribute('data-more-below', !follow.value);
+    };
+    sync();
+    el.addEventListener('scroll', sync, { passive: true });
+    const unsubscribe = follow.subscribe(sync);
+    return () => { el.removeEventListener('scroll', sync); unsubscribe(); };
+  }, [follow]);
   const lastAgent = transcript ? transcript.turns.reduce((at, turn, i) => (turn.role === 'agent' ? i : at), -1) : -1;
   return (
     <>
       {/* The main thread's column: share its dock margins and scrollbar gutter, with turns carrying their own --pad */}
-      <div ref={scroll} className="scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-dock pr-dock-gutter">
+      <div ref={scroll} className="pane-fade scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-dock pr-dock-gutter">
         <div ref={body} className={cn('mx-auto flex min-w-0 flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-chat-column')}>
           {node.task !== undefined && <TaskCard task={node.task} />}
           {receiptOnly(node) ? (

@@ -41,8 +41,6 @@ private final class RelayMemo {
   /// Decided once, at mount: whether it plays the handoff
   var mounted = false
   var handoff = false
-  /// A round seen running keeps the whole window for good, so its end never shrinks the block
-  var reserve = false
   /// Steps already there at mount stay still
   var seen: Set<String> = []
   var kept: [ToolCallBlock] = []
@@ -76,16 +74,6 @@ private final class RelayMemo {
   }
 }
 
-/// Rounds seen running, so their window keeps every slot across a remount (a lazy stack scrolling the turn back in)
-private enum RelayLedger {
-  static var reserved = Set<String>()
-
-  static func reserve(_ key: String) {
-    if reserved.count >= EntranceLedger.cap { reserved.removeAll() }
-    reserved.insert(key)
-  }
-}
-
 /// One slot of the window: a step, or the handback once the round ended
 private enum RelayItem: Identifiable {
   case step(ToolCallBlock)
@@ -103,6 +91,7 @@ struct SidekickRelay: View {
   @Environment(\.sidekickModels) private var models
   @Environment(\.inspectSubagent) private var inspect
   @Environment(\.entranceScope) private var scope
+  @Environment(\.quietEntrance) private var quiet
   @Environment(\.motionEnabled) private var motion
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.scrollGesture) private var gesture
@@ -115,7 +104,9 @@ struct SidekickRelay: View {
     let live = settle(running: running)
     let kept = memo.keep(node.steps)
     let items: [RelayItem] = kept.map { .step($0) } + (running ? [] : [.back])
-    let slots = memo.reserve ? RelayMemo.window : max(1, min(RelayMemo.window, items.count))
+    // A running round holds the whole window, so its steps never push what sits below (the lead working in parallel, or
+    // its words already written); the slots it left unused close with the handback, so a short round leaves no gap
+    let slots = running ? RelayMemo.window : max(1, min(RelayMemo.window, items.count))
     let _ = memo.track(items.map(\.id), slots: slots, live: live)
     let mark = SidekickGlyph(brand: brand, name: model)
 
@@ -136,14 +127,12 @@ struct SidekickRelay: View {
   /// Whether motion may play is read at each event, so a round mounted mid-fling still slides in its later steps and a
   /// motion setting changed mid-round holds from the next event on
   private func settle(running: Bool) -> Bool {
-    let live = scope.live && motion && !reduceMotion && !gesture.active
+    let live = scope.live && !quiet && motion && !reduceMotion && !gesture.active
     if !memo.mounted {
       memo.mounted = true
       let key = "\(scope.scope)\u{0}sidekick:\(node.id)"
       // Claimed by the first mount whatever it shows, so a round first met in history never hands off later
       memo.handoff = EntranceLedger.claim(key) && running && live
-      if running { RelayLedger.reserve(key) }
-      memo.reserve = RelayLedger.reserved.contains(key)
       memo.seen = Set((node.steps ?? []).map(\.id))
     }
     if memo.wasRunning == true && !running && live { memo.handback = true }
@@ -179,6 +168,8 @@ struct SidekickRelay: View {
       }
     }
     .frame(maxWidth: .infinity, minHeight: height, maxHeight: height, alignment: more ? .bottom : .top)
+    // The slots a short round left unused close on the handback's sweep (subagents.css `--sidekick-collapse`)
+    .animation(memo.handback ? .timingCurve(Motion.sidekickSweep, duration: Motion.sidekickCollapse) : nil, value: slots)
     // The pressed fill reaches past the text column, so the clip does too
     .padding(.horizontal, Metrics.hit)
     .clipped()

@@ -561,6 +561,8 @@ public enum Motion {
   public static let sidekickTrail: Double = 0.3, sidekickTrailDelay: Double = 0.52
   public static let sidekickStep: Double = 0.42
   public static let sidekickSlide: Double = 0.44
+  /// The relay window closing the slots a short round left unused, with the handback
+  public static let sidekickCollapse: Double = 0.64
   public static let sidekickPop: Double = 0.56
   public static let sidekickBackText: Double = 0.64
   public static let sidekickBackTrail: Double = 0.36, sidekickBackTrailDelay: Double = 0.28

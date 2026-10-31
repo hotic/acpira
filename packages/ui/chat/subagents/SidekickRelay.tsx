@@ -35,10 +35,9 @@ function useStill(): () => boolean {
   return () => quiet.current || pageHidden();
 }
 
-// Rounds whose handoff already played, and rounds seen running (their window keeps every slot). Both outlive a remount,
-// which a long thread's tail window or a group changing shape causes mid-round
+// Rounds whose handoff already played: outlives a remount, which a long thread's tail window or a group changing shape
+// causes mid-round
 const handedOff = new Set<string>();
-const reserved = new Set<string>();
 const LEDGER_CAP = 4000;
 function remember(set: Set<string>, key: string) {
   if (set.size >= LEDGER_CAP) set.clear();
@@ -83,15 +82,12 @@ export function SidekickRelay({ node, onInspect }: { node: SubagentSummary; onIn
     wasRunning.current = running;
   }, [running]);
 
-  // A round seen running keeps the whole window for good, so its end never shrinks the block under the reader; a settled
-  // one sizes to what it has. The handback is the list's last item
-  const [reserve] = useState(() => {
-    if (running) remember(reserved, key);
-    return reserved.has(key);
-  });
+  // A running round holds the whole window, so its steps never push what sits below: the lead keeps working there in
+  // parallel, or its words are already written. The handback is the list's last item, and the slots the round left
+  // unused close with it (subagents.css), so a short round leaves no empty block behind
   const kept = useKept(node.steps);
   const items: (ToolCallBlock | undefined)[] = running ? kept : [...kept, undefined];
-  const slots = reserve ? WINDOW : Math.max(1, Math.min(WINDOW, items.length));
+  const slots = running ? WINDOW : Math.max(1, Math.min(WINDOW, items.length));
   // Steps already there when the block mounted stay still; later ones slide in from the gutter
   const [seen] = useState(() => new Set(kept.map(s => s.id)));
   const list = useSlide(items.map(s => s?.id ?? '\u0001back').join('\u0000'), slots, still);

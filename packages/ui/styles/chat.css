@@ -90,6 +90,22 @@
   }
 }
 
+/* The subagent inspector's transcript: no sticky prompt covers its top, so rows scrolling under the header fade out there
+   too. data-more-above follows the scroll position, data-more-below the follow state (as the thread's, so a streamed chunk
+   never flashes it); the scrollbar gutter stays whole like thread-fade's */
+@utility pane-fade {
+  --fade-top: 0px;
+  --fade-bottom: 0px;
+  &[data-more-above] { --fade-top: var(--scroll-fade-size); }
+  &[data-more-below] { --fade-bottom: var(--scroll-fade-size); }
+  &[data-more-above], &[data-more-below] {
+    mask-image: linear-gradient(to bottom, transparent, #000 var(--fade-top), #000 calc(100% - var(--fade-bottom)), transparent), linear-gradient(#000, #000);
+    mask-size: 100% 100%, var(--scrollbar) 100%;
+    mask-position: 0 0, 100% 0;
+    mask-repeat: no-repeat;
+  }
+}
+
 /* The desktop's session column, and the files layout's explorer tree, run to the window's foot: the list fades out over the last two gaps, and over as much at
    its top while rows scroll under the action rows above it (useScrollFade's data-more-above), the scrollbar gutter kept
    whole like thread-fade's */

@@ -154,6 +154,7 @@
     --sidekick-expo: cubic-bezier(0.16, 1, 0.3, 1);
     --sidekick-sweep: cubic-bezier(0.3, 0.6, 0.3, 1);
     --sidekick-slide: 440ms;
+    --sidekick-collapse: 640ms;
     display: flex;
     flex-direction: column;
     gap: var(--process-row-gap);
@@ -188,11 +189,13 @@
   .sidekick-back .sidekick-sheen::before { background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--fg-1) 9%, transparent) 45%, transparent); }
 
   /* The window: a fixed number of row slots. Once it overflows the rows sit on its bottom edge and the top one fades
-     out under a mask; a new row's push is played back as a slide (useSlide) */
+     out under a mask; a new row's push is played back as a slide (useSlide). The slots a round left unused close on the
+     handback's sweep curve */
   .sidekick-window {
     display: flex;
     flex-direction: column;
     height: calc(var(--sidekick-slots) * var(--process-row) + (var(--sidekick-slots) - 1) * var(--process-row-gap));
+    transition: height var(--sidekick-collapse) var(--sidekick-sweep);
     overflow: hidden;
     margin-inline: calc(-1 * var(--spacing-hit));
     padding-inline: var(--spacing-hit);
