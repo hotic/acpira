@@ -1,0 +1,220 @@
+{
+  "$schema": "https://opencode.ai/theme.json",
+  "defs": {
+    "stone0": "#1f1d1b",
+    "stone1": "#2a2725",
+    "stone2": "#36322f",
+    "stone3": "#4a4541",
+    "stone4": "#6e6760",
+    "stone5": "#a39a91",
+    "stone6": "#d6cfc7",
+    "stone7": "#f2eee9",
+    "clay": "#c08a5b",
+    "sage": "#8fa37e",
+    "rust": "#c0645a",
+    "ochre": "#c9a35a",
+    "mist": "#8a9aa3"
+  },
+  "theme": {
+    "primary": {
+      "dark": "clay",
+      "light": "clay"
+    },
+    "secondary": {
+      "dark": "mist",
+      "light": "mist"
+    },
+    "accent": {
+      "dark": "ochre",
+      "light": "clay"
+    },
+    "error": {
+      "dark": "rust",
+      "light": "rust"
+    },
+    "warning": {
+      "dark": "ochre",
+      "light": "ochre"
+    },
+    "success": {
+      "dark": "sage",
+      "light": "sage"
+    },
+    "info": {
+      "dark": "mist",
+      "light": "mist"
+    },
+    "text": {
+      "dark": "stone6",
+      "light": "stone1"
+    },
+    "textMuted": {
+      "dark": "stone5",
+      "light": "stone4"
+    },
+    "background": {
+      "dark": "stone0",
+      "light": "stone7"
+    },
+    "backgroundPanel": {
+      "dark": "stone1",
+      "light": "stone6"
+    },
+    "backgroundElement": {
+      "dark": "stone2",
+      "light": "stone6"
+    },
+    "border": {
+      "dark": "stone3",
+      "light": "stone5"
+    },
+    "borderActive": {
+      "dark": "stone4",
+      "light": "stone4"
+    },
+    "borderSubtle": {
+      "dark": "stone2",
+      "light": "stone6"
+    },
+    "diffAdded": {
+      "dark": "sage",
+      "light": "sage"
+    },
+    "diffRemoved": {
+      "dark": "rust",
+      "light": "rust"
+    },
+    "diffContext": {
+      "dark": "stone5",
+      "light": "stone4"
+    },
+    "diffHunkHeader": {
+      "dark": "stone4",
+      "light": "stone4"
+    },
+    "diffHighlightAdded": {
+      "dark": "sage",
+      "light": "sage"
+    },
+    "diffHighlightRemoved": {
+      "dark": "rust",
+      "light": "rust"
+    },
+    "diffAddedBg": {
+      "dark": "#26291f",
+      "light": "#e6eadc"
+    },
+    "diffRemovedBg": {
+      "dark": "#2e211f",
+      "light": "#f0dfdb"
+    },
+    "diffContextBg": {
+      "dark": "stone1",
+      "light": "stone6"
+    },
+    "diffLineNumber": {
+      "dark": "stone3",
+      "light": "stone5"
+    },
+    "diffAddedLineNumberBg": {
+      "dark": "#26291f",
+      "light": "#e6eadc"
+    },
+    "diffRemovedLineNumberBg": {
+      "dark": "#2e211f",
+      "light": "#f0dfdb"
+    },
+    "markdownText": {
+      "dark": "stone6",
+      "light": "stone1"
+    },
+    "markdownHeading": {
+      "dark": "clay",
+      "light": "clay"
+    },
+    "markdownLink": {
+      "dark": "mist",
+      "light": "mist"
+    },
+    "markdownLinkText": {
+      "dark": "ochre",
+      "light": "clay"
+    },
+    "markdownCode": {
+      "dark": "sage",
+      "light": "sage"
+    },
+    "markdownBlockQuote": {
+      "dark": "stone5",
+      "light": "stone4"
+    },
+    "markdownEmph": {
+      "dark": "ochre",
+      "light": "ochre"
+    },
+    "markdownStrong": {
+      "dark": "stone7",
+      "light": "stone0"
+    },
+    "markdownHorizontalRule": {
+      "dark": "stone3",
+      "light": "stone5"
+    },
+    "markdownListItem": {
+      "dark": "clay",
+      "light": "clay"
+    },
+    "markdownListEnumeration": {
+      "dark": "mist",
+      "light": "mist"
+    },
+    "markdownImage": {
+      "dark": "mist",
+      "light": "mist"
+    },
+    "markdownImageText": {
+      "dark": "ochre",
+      "light": "clay"
+    },
+    "markdownCodeBlock": {
+      "dark": "stone6",
+      "light": "stone1"
+    },
+    "syntaxComment": {
+      "dark": "stone4",
+      "light": "stone5"
+    },
+    "syntaxKeyword": {
+      "dark": "clay",
+      "light": "clay"
+    },
+    "syntaxFunction": {
+      "dark": "ochre",
+      "light": "clay"
+    },
+    "syntaxVariable": {
+      "dark": "stone6",
+      "light": "stone1"
+    },
+    "syntaxString": {
+      "dark": "sage",
+      "light": "sage"
+    },
+    "syntaxNumber": {
+      "dark": "ochre",
+      "light": "ochre"
+    },
+    "syntaxType": {
+      "dark": "mist",
+      "light": "mist"
+    },
+    "syntaxOperator": {
+      "dark": "stone5",
+      "light": "stone4"
+    },
+    "syntaxPunctuation": {
+      "dark": "stone5",
+      "light": "stone4"
+    }
+  }
+}
