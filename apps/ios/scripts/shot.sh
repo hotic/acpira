@@ -29,12 +29,14 @@ fi
 xcrun simctl bootstatus "$sim" -b >/dev/null
 xcrun simctl install "$sim" "$derived/Build/Products/Debug-iphonesimulator/Acpira.app"
 xcrun simctl terminate "$sim" "$bundle" 2>/dev/null || true
+# A relaunch can come back in the orientation the last run turned the window to: an upright run asks for it too
+case " $* " in *" -orientation "*) ;; *) set -- "$@" -orientation portrait ;; esac
 xcrun simctl launch "$sim" "$bundle" "$@" >/dev/null
 
 # Give the first frame time to settle before capturing; a window turned by `-orientation` draws its first frames
 # upright and only then rotates
-settle=3
-case " $* " in *" -orientation "*) settle=6 ;; esac
+settle=4
+case " $* " in *" -orientation landscape"*) settle=6 ;; esac
 sleep "$settle"
 xcrun simctl io "$sim" screenshot $(sim_display "$sim") "$out" >/dev/null
 echo "$out"

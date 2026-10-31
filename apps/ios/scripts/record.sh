@@ -32,6 +32,8 @@ xcrun simctl terminate "$sim" "$bundle" 2>/dev/null || true
 xcrun simctl io "$sim" recordVideo $(sim_display "$sim") --codec h264 --force "$out" >/dev/null 2>&1 &
 recorder=$!
 sleep 1.5
+# A relaunch can come back in the orientation the last run turned the window to: an upright run asks for it too
+case " $* " in *" -orientation "*) ;; *) set -- "$@" -orientation portrait ;; esac
 xcrun simctl launch "$sim" "$bundle" "$@" >/dev/null
 sleep "$seconds"
 kill -INT "$recorder"
