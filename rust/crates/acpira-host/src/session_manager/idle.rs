@@ -23,7 +23,7 @@ pub(super) async fn idle_loop(weak: Weak<SessionManager>) {
 
 impl SessionManager {
   /// End the agent processes of sessions nobody looks at: a live session no viewer shows, with nothing in flight
-  /// (`AcpSession::releasable`), goes once it has been like that for `after`; beyond the `keep` most recently seen ones,
+  /// (`AcpSession::can_let_go`), goes once it has been like that for `after`; beyond the `keep` most recently seen ones,
   /// once it has been like that for IDLE_KEEP_MIN (or `after`, when shorter). Its record is written, its lease released
   /// and the list entry stays; opening it again resumes the native session like after a window reload and replays its
   /// controls (`load_session`). Returns the ids released
@@ -36,7 +36,8 @@ impl SessionManager {
     let quiet: Vec<(Arc<AcpSession>, bool)> = live
       .into_iter()
       .map(|s| {
-        let quiet = !shown.contains(&s.id) && !yielding.contains(&s.id) && s.releasable();
+        // Other engines' pages count too: idle release must not move their agent onto a possibly locked SSH login.
+        let quiet = !shown.contains(&s.id) && !self.bus.watching(&s.id) && !yielding.contains(&s.id) && s.can_let_go();
         (s, quiet)
       })
       .collect();
@@ -80,7 +81,8 @@ impl SessionManager {
       self.log(&format!("session {}: idle release skipped, save failed: {e}", s.id));
       return false;
     }
-    if !s.releasable() {
+    // A pushed viewer keeps its authenticated owner, unless a follower explicitly asked for the idle handover.
+    if !s.can_let_go() || (self.bus.watching(&s.id) && !self.leases.handover_requested(&s.id)) {
       return false;
     }
     let (closed_tx, closed_rx) = tokio::sync::watch::channel(false);

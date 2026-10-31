@@ -27,7 +27,7 @@ pub const DEFAULT_DESKTOP_LAYOUT: &str = "chat";
 pub const PANEL_SCOPES: [&str; 3] = ["project", "session", "global"];
 pub const DEFAULT_PANEL_SCOPE: &str = "project";
 
-pub const SETTING_KEYS: [&str; 29] = [
+pub const SETTING_KEYS: [&str; 30] = [
   "language",
   "defaultAgent",
   "agentOrder",
@@ -48,6 +48,7 @@ pub const SETTING_KEYS: [&str; 29] = [
   "notifySound",
   "notifySystem",
   "planAutoApprove",
+  "sshLocalAgents",
   "subagents",
   "agentCpuCap",
   "proxy",
@@ -91,6 +92,10 @@ pub struct SettingsView {
   /// Agents whose plan mode answers tool permission requests itself (plan approvals still ask)
   #[serde(default)]
   pub plan_auto_approve: Vec<AgentId>,
+  /// Agents that run on this machine in a folder on an SSH host, only their tools on the host (`remote::SSH_LOCAL_AGENTS`);
+  /// the rest run in the host's own engine. The built-in agent by default
+  #[serde(default = "default_ssh_local_agents")]
+  pub ssh_local_agents: Vec<AgentId>,
   /// Cross-harness subagents (`~/.acpira/subagents.json`, not a host setting: every window and IDE shares the file)
   #[serde(default)]
   pub subagents: Vec<crate::subagents::SubagentPersona>,
@@ -119,6 +124,18 @@ pub struct SettingsView {
   pub panel_terminal: bool,
   #[serde(default = "default_panel_files")]
   pub panel_browser: bool,
+}
+
+fn default_ssh_local_agents() -> Vec<AgentId> {
+  vec![crate::remote::SSH_LOCAL_AGENTS[0].to_owned()]
+}
+
+/// The `sshLocalAgents` setting: the agents of `remote::SSH_LOCAL_AGENTS` it names, the built-in agent when it is unset
+pub fn ssh_local_agents(value: &Value) -> Vec<AgentId> {
+  if !value.is_array() {
+    return default_ssh_local_agents();
+  }
+  id_list(value).into_iter().filter(|a| crate::remote::SSH_LOCAL_AGENTS.contains(&a.as_str())).collect()
 }
 
 fn default_agent_cpu_cap() -> i64 {
@@ -259,6 +276,7 @@ pub fn sanitize_setting(key: &str, value: &Value) -> Value {
     "desktopLayout" => Value::from(one_of(value, &DESKTOP_LAYOUTS, DEFAULT_DESKTOP_LAYOUT)),
     "panelScope" => Value::from(one_of(value, &PANEL_SCOPES, DEFAULT_PANEL_SCOPE)),
     "agentOrder" | "disabledAgents" | "planAutoApprove" => Value::from(id_list(value)),
+    "sshLocalAgents" => Value::from(ssh_local_agents(value)),
     "subagents" => serde_json::to_value(crate::subagents::sanitize_personas(value)).unwrap_or(Value::Array(vec![])),
     _ => Value::Null,
   }

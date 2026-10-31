@@ -187,7 +187,24 @@ pub enum InitialView {
     most_recent: bool,
   },
   /// A view that never opens or starts a session by itself (a peer's list view, `session_manager/hosts.rs`)
-  Empty { empty: bool },
+  Empty {
+    empty: bool,
+  },
+  /// A peer's local-only list subscription; opening a session does not widen its list.
+  Scoped {
+    #[serde(rename = "sessionList")]
+    session_list: SessionListScope,
+    #[serde(default)]
+    session: Option<String>,
+  },
+}
+
+/// Selectors are a union. Absent folders selects all local folders; an empty array selects none.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SessionListScope {
+  pub folders: Option<Vec<String>>,
+  #[serde(default)]
+  pub ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -235,6 +252,11 @@ pub enum ShellMsg {
   },
   DetachView {
     view_id: String,
+  },
+  /// Update only this view's local-only session list, without detaching its pending actions.
+  SetSessionList {
+    view_id: String,
+    scope: SessionListScope,
   },
   WebviewMessage {
     view_id: String,

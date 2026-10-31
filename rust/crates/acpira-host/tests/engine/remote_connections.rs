@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use acpira_host::remote::connections::{Connections, ConnectionsOpts};
-use acpira_shared::remote::{ConnectFailure, ConnectStep, ConnectionOp, ConnectionState, ConnectionView, RunMode};
+use acpira_shared::remote::{ConnectFailure, ConnectStep, ConnectionOp, ConnectionState, ConnectionView};
 
 const VERSION: &str = "9.9.9-test";
 const ALIAS: &str = "gen1";
@@ -159,7 +159,7 @@ async fn gone(pid: i32) -> bool {
 }
 
 async fn add(c: &Connections) {
-  c.op(ConnectionOp::Add { alias: ALIAS.into(), mode: RunMode::Local }).await.unwrap();
+  c.op(ConnectionOp::Add { alias: ALIAS.into() }).await.unwrap();
 }
 
 #[tokio::test]
@@ -215,7 +215,7 @@ async fn a_new_build_goes_beside_the_old_one() {
   connected(&c).await;
   c.op(ConnectionOp::Disconnect { alias: ALIAS.into() }).await.unwrap();
   lab.set_binary("two");
-  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: false, fetch_build: false }).await.unwrap();
+  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: false }).await.unwrap();
   connected(&c).await;
   assert_eq!(lab.calls().iter().filter(|k| *k == "upload").count(), 2);
   assert_eq!(lab.builds().len(), 2, "an older engine elsewhere keeps its build");
@@ -249,7 +249,7 @@ async fn an_installed_copy_that_does_not_start_is_uploaded_again() {
   c.op(ConnectionOp::Disconnect { alias: ALIAS.into() }).await.unwrap();
   let installed = lab.host_home().join(".acpira/remote/bin").join(&lab.builds()[0]).join("acpira");
   write_exec(&installed, "#!/bin/sh\necho broken >&2\nexit 1\n");
-  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: false, fetch_build: false }).await.unwrap();
+  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: false }).await.unwrap();
   connected(&c).await;
   assert_eq!(lab.calls()[3..], ["probe", "start", "probe", "upload", "start"]);
 }
@@ -272,7 +272,7 @@ async fn another_machine_behind_the_alias_is_refused_until_confirmed() {
   connected(&c).await;
   c.op(ConnectionOp::Disconnect { alias: ALIAS.into() }).await.unwrap();
   lab.set_machine("machine-b");
-  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: false, fetch_build: false }).await.unwrap();
+  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: false }).await.unwrap();
   let v = until(&c, "the machine check", |v| v.state == ConnectionState::Error).await;
   assert_eq!(v.error.as_ref().map(|e| e.kind), Some(ConnectFailure::MachineChanged));
   // Final: no retry behind the user's back
@@ -281,7 +281,7 @@ async fn another_machine_behind_the_alias_is_refused_until_confirmed() {
   assert_eq!(lab.calls().len(), calls);
   assert!(c.client(ALIAS).is_none());
 
-  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: true, fetch_build: false }).await.unwrap();
+  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: true }).await.unwrap();
   connected(&c).await;
   let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(lab.path().join("engine/connections.json")).unwrap()).unwrap();
   assert_eq!(saved["hosts"][0]["machineId"], "machine-b");
@@ -331,7 +331,7 @@ async fn background_work_never_undoes_a_disconnect_or_retries_what_the_user_must
   c.ensure(ALIAS, Duration::from_secs(30)).await.expect("connected again");
 
   std::fs::write(lab.path().join("fail"), "Host key verification failed.\n").unwrap();
-  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: false, fetch_build: false }).await.unwrap();
+  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: false }).await.unwrap();
   until(&c, "the host key error", |v| v.state == ConnectionState::Error).await;
   let calls = lab.calls().len();
   assert!(c.follow(ALIAS, Duration::from_millis(300)).await.is_err());
@@ -445,7 +445,7 @@ fn serve(files: Vec<(String, Vec<u8>)>) -> (String, Arc<std::sync::Mutex<Vec<Str
 }
 
 #[tokio::test]
-async fn a_missing_platform_build_is_fetched_from_the_release_when_asked() {
+async fn a_missing_platform_build_is_fetched_from_the_release_on_connect() {
   use sha2::{Digest, Sha256};
   let lab = Lab::new();
   let platform = acpira_host::remote::deploy::local_platform();
@@ -459,24 +459,17 @@ async fn a_missing_platform_build_is_fetched_from_the_release_when_asked() {
   let c = lab.engine_with("engine", None, base.clone());
   add(&c).await;
 
-  // No build here: the driver stops on `unsupported` at the probe and downloads nothing on its own
-  let v = until(&c, "the unsupported error", |v| v.state == ConnectionState::Error).await;
-  let e = v.error.unwrap();
-  assert_eq!((e.kind, e.step), (ConnectFailure::Unsupported, ConnectStep::Probe));
-  assert!(asked.lock().unwrap().is_empty());
-
-  // Asked to: fetch, check, unpack, then the usual upload and start
-  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: false, fetch_build: true }).await.unwrap();
+  // No build here: connecting fetches, checks and unpacks it, then the usual upload and start
   connected(&c).await;
   assert_eq!(*asked.lock().unwrap(), [format!("/v{VERSION}/SHA256SUMS"), format!("/v{VERSION}/{name}")]);
   let fetched = lab.path().join("engine/run/remote/builds").join(VERSION).join(&platform).join("acpira");
   use std::os::unix::fs::PermissionsExt;
   assert_eq!(std::fs::metadata(&fetched).unwrap().permissions().mode() & 0o777, 0o755);
-  assert_eq!(lab.calls(), ["probe", "probe", "upload", "start"]);
+  assert_eq!(lab.calls(), ["probe", "upload", "start"]);
 
-  // The fetched build is found from now on without asking again
+  // The fetched build is found from now on without downloading again
   c.op(ConnectionOp::Disconnect { alias: ALIAS.into() }).await.unwrap();
-  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: false, fetch_build: false }).await.unwrap();
+  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: false }).await.unwrap();
   connected(&c).await;
   assert_eq!(asked.lock().unwrap().len(), 2);
   c.dispose();
@@ -486,8 +479,6 @@ async fn a_missing_platform_build_is_fetched_from_the_release_when_asked() {
   let lab = Lab::new();
   let c = lab.engine_with("engine", None, base);
   add(&c).await;
-  until(&c, "the unsupported error", |v| v.state == ConnectionState::Error).await;
-  c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: false, fetch_build: true }).await.unwrap();
   let v = until(&c, "the fetch error", |v| v.error.as_ref().is_some_and(|e| e.step == ConnectStep::Fetch)).await;
   let e = v.error.unwrap();
   assert_eq!(e.kind, ConnectFailure::Unsupported);

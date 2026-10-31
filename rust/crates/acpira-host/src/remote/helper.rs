@@ -502,6 +502,12 @@ async fn dispatch(op: &str, a: Value, id: u64, out: &Out, stdin: Option<mpsc::Un
     }
     // This host's session store, for the engines that keep one history per host (`host_store.rs`)
     "storeStat" | "storePut" | "storeBlob" | "storeRemove" => super::host_store::serve(op, &a, stdin).await,
+    // One blob of a host session, for an engine showing that session (`session_manager/hosts.rs`)
+    "storeBlobGet" => {
+      let bytes = super::host_store::read_blob(&a).await?;
+      out.chunks(id, "data", &bytes).await;
+      Ok(json!({ "size": bytes.len() }))
+    }
     other => Err(WireError::new("unknownOp", format!("unknown operation \"{other}\""))),
   }
 }

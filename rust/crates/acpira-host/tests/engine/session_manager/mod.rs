@@ -48,6 +48,9 @@ pub struct Opts {
   pub hidden: HiddenMap,
   pub local_accounts: Option<Arc<LocalAccounts>>,
   pub accounts: Option<Arc<acpira_host::accounts::account_manager::AccountManager>>,
+  /// Agents that run here in a folder on an SSH host (`sshLocalAgents`); both that can by default, as the tests of their
+  /// tools on a host expect
+  pub ssh_local_agents: Arc<Mutex<Vec<String>>>,
   /// SSH hosts for `ssh://` folders (`remote_connections::Lab`)
   pub remote: Option<Arc<acpira_host::remote::connections::Connections>>,
   /// The plugins' resident processes the manager's sessions report to
@@ -71,6 +74,7 @@ impl Opts {
       hidden: HiddenMap::default(),
       local_accounts: None,
       accounts: None,
+      ssh_local_agents: Arc::new(Mutex::new(vec!["acpira".into(), "claude".into()])),
       remote: None,
       plugin_runtime: None,
     }
@@ -139,6 +143,10 @@ impl Mgr {
         local_accounts: opts.local_accounts.clone(),
         compaction: Arc::new(|| CompactionPolicy { at_tokens: 300_000.0, auto: false }),
         plan_auto_approve: Arc::new(Vec::new),
+        ssh_local_agents: {
+          let l = opts.ssh_local_agents.clone();
+          Arc::new(move || l.lock().unwrap().clone())
+        },
         hidden: Arc::new(move || hidden.clone()),
         scope: Arc::new(move || scope.lock().unwrap().clone()),
         shared_mcp: None,
@@ -251,16 +259,13 @@ async fn foreign_native_session(fake: &FakeAgent, native: &Path, store: &Arc<Tra
     blobs: store.clone(),
     notify: None,
     accounts: None,
-    compaction: None,
-    plan_auto_approve: None,
+    policy: std::sync::Arc::new(acpira_host::acp::session::InertPolicy),
     pool: None,
-    model_shapes: None,
     shared_mcp: None,
     plugin_hooks: None,
     plugin_prompts: None,
     plugin_runtime: None,
     host_mcp: None,
-    claim: None,
     remote: None,
   };
   let s = AcpSession::fresh("fake", cwd, deps, None);

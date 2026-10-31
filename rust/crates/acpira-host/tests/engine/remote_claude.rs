@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use acpira_host::acp::session::AcpSession;
 use acpira_host::relay::hub::RelayHub;
 use acpira_host::relay::roster::Roster;
-use acpira_shared::remote::{ConnectionOp, RunMode};
+use acpira_shared::remote::ConnectionOp;
 
 use crate::acp_session::{agent_blocks, find_block, spawn_prompt, view};
 use crate::remote_connections::Lab;
@@ -47,7 +47,7 @@ impl Remote {
     std::fs::create_dir_all(real.join("work")).unwrap();
     lab.map_root(VIRT, &real);
     let connections = lab.engine("engine");
-    connections.op(ConnectionOp::Add { alias: "gen1".into(), mode: RunMode::Local }).await.unwrap();
+    connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
     connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
     h.deps.remote = Some(connections.clone());
     let roster = Arc::new(Roster::new(h.dir.path()));

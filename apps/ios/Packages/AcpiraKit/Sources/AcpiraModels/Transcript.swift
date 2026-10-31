@@ -142,6 +142,7 @@ public struct AgentInfo: Codable, Hashable, Sendable, Identifiable {
   public var missing: [String]?
   public var searched: [String]?
   public var install: AgentInstall?
+  public var update: String?
   public init(id: AgentId, name: String) { self.id = id; self.name = name }
 }
 
@@ -489,6 +490,10 @@ public struct QuestionBlock: Codable, Hashable, Sendable {
   public var questions: [Question]
   public var outcome: QuestionOutcome?
   public var answers: [String: QuestionAnswer]?
+  /// The agent takes images with the answers (the built-in agent); the phone card does not offer them yet
+  public var images: Bool?
+  /// Images sent with the answers, by question id
+  public var answerImages: [String: [ImageRef]]?
 }
 
 public struct ImageBlock: Codable, Hashable, Sendable {
@@ -834,6 +839,7 @@ public struct SessionSummary: Codable, Hashable, Sendable, Identifiable {
   public var state: SessionState?
   /// Only beside `.background`: a turn ended there that nobody has looked at yet
   public var unread: Bool?
+  public var wakeAt: Double?
   /// Absent while no model control is known and on older index entries
   public var model: Model?
 }
@@ -1049,8 +1055,16 @@ public struct SubagentTranscript: Codable, Hashable, Sendable {
   }
 }
 
+/// Account metadata from the SSH engine owning this session; credentials never cross the peer wire.
+public struct RemoteAuth: Codable, Hashable, Sendable {
+  public var agent: AgentInfo
+  public var accounts: [AccountInfo]
+  public var action: AccountAction?
+}
+
 public struct SessionView: Codable, Hashable, Sendable, Identifiable {
   public var id: String
+  public var remoteAuth: RemoteAuth?
   public var external: ExternalSessionInfo?
   public var agent: AgentId
   public var accountId: String?
@@ -1086,6 +1100,7 @@ public struct SessionView: Codable, Hashable, Sendable, Identifiable {
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
     id = try c.decode(String.self, forKey: .id)
+    remoteAuth = try c.decodeIfPresent(RemoteAuth.self, forKey: .remoteAuth)
     external = try c.decodeIfPresent(ExternalSessionInfo.self, forKey: .external)
     agent = try c.decode(String.self, forKey: .agent)
     accountId = try c.decodeIfPresent(String.self, forKey: .accountId)

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { ArrowUpRight, Laptop, Link2, Plus, Server, Unplug, X } from 'lucide-react';
+import { ArrowUpRight, Link2, Plus, Server, Unplug, X } from 'lucide-react';
 import type { MsgKey } from '@acpira/shared/i18n';
 import type { ChatGptIntegrationStatus } from '@acpira/shared/chatgptIntegration';
-import { isAlias, parseRemoteFolder, type ConnectionState, type ConnectionView, type RunMode, type SshHost } from '@acpira/shared/remote';
+import { isAlias, parseRemoteFolder, type ConnectionState, type ConnectionView, type SshHost } from '@acpira/shared/remote';
 import { cn } from '../ui/cn';
 import { Button, IconButton } from '../ui/Button';
 import { Command } from '../ui/Command';
@@ -11,26 +11,22 @@ import { t } from '../i18n';
 import { AgentMark } from '../chat/AgentMark';
 import { CONNECTION_STATE_NAME as STATE_NAME, connectionOp, listSshHosts, remoteProjectOp, useConnections, type SshHostList } from '../remote/api';
 import { RemoteFolderDialog } from '../remote/RemoteFolderDialog';
-import { ConnectStatus, hasConnectStatus, reconnect } from '../remote/ConnectStatus';
+import { ConnectStatus, failureReason, hasConnectStatus, reconnect } from '../remote/ConnectStatus';
 import { Collapsible } from '../ui/Collapsible';
 import { usePresence } from '../ui/usePresence';
 import {
-  blockItem, blockList, DangerAction, DialogBody, Dot, FactRow, Field, FooterNote, Group, ItemRow, Note, PickContent, Section, SectionAction,
-  SectionDescription, Segmented, SettingsDialog, Status, shortPath, useSettingRow,
+  blockItem, blockList, DangerAction, DialogBody, Dot, FactRow, FooterNote, Group, ItemRow, Note, PickContent, Section, SectionAction,
+  SectionDescription, SettingsDialog, Status, shortPath, useSettingRow,
 } from './controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 
 // Settings → Connections: the SSH hosts remote folders live on (docs/dev/remote.md), and the external session sources
-// (ChatGPT). A list of hosts, each opening a dialog (connection progress, run mode, its projects, removal); adding is
+// (ChatGPT). A list of hosts, each opening a dialog (connection progress, its projects, removal); adding is
 // one step in a dialog listing ~/.ssh/config. Both dialogs are wide and about as tall, so a pick in the add dialog
 // turns it into the host's nearly in place. On the host's page every block that comes and goes folds in or out and the
 // dialog keeps its top edge, so the page grows and shrinks smoothly downward. Every edit goes to the engine, which
 // pushes the whole list back (remote/api.ts)
 
-const MODES: RunMode[] = ['local', 'remote'];
-const MODE_NAME: Record<RunMode, MsgKey> = { local: 'connections.mode.local', remote: 'connections.mode.remote' };
-// One sentence per mode: where the sign-ins live and which agents work
-const MODE_EFFECT: Record<RunMode, MsgKey> = { local: 'connections.mode.localEffect', remote: 'connections.mode.remoteEffect' };
 const STATES: ConnectionState[] = ['off', 'connecting', 'connected', 'error'];
 
 // A host just added shows its dialog at once, as connecting, until the pushed list brings it; one the list never
@@ -48,22 +44,22 @@ export interface ChatGptEntry {
 export function ConnectionsPage({ env, projects, on, remote = true, chatgpt }: { env: SettingsEnv; projects?: string[]; on: SettingsHandlers; remote?: boolean; chatgpt?: ChatGptEntry }) {
   const list = useConnections() ?? [];
   const [open, setOpen] = useState<string>();
-  const [added, setAdded] = useState<{ alias: string; mode: RunMode }>();
+  const [added, setAdded] = useState<string>();
   const [picking, setPicking] = useState(false);
   const listed = list.find(c => c.alias === open);
-  const known = added && list.some(c => c.alias === added.alias);
+  const known = added && list.some(c => c.alias === added);
   useEffect(() => {
     if (!added || known) { if (added) setAdded(undefined); return; }
     const timer = setTimeout(() => setAdded(undefined), ADD_WAIT_MS);
     return () => clearTimeout(timer);
   }, [added, known]);
-  const current = listed ?? (added && added.alias === open ? { alias: added.alias, mode: added.mode, state: 'connecting' as const, step: 'ssh' as const, projects: [] } : undefined);
+  const current = listed ?? (added && added === open ? { alias: added, state: 'connecting' as const, step: 'ssh' as const, projects: [] } : undefined);
   // A host removed (here or in another window) closes its dialog
   useEffect(() => { if (open && !current) setOpen(undefined); }, [open, current]);
-  const add = (alias: string, mode: RunMode) => {
-    connectionOp({ op: 'add', alias, mode });
+  const add = (alias: string) => {
+    connectionOp({ op: 'add', alias });
     setPicking(false);
-    setAdded({ alias, mode });
+    setAdded(alias);
     setOpen(alias);
   };
   return <>
@@ -72,7 +68,7 @@ export function ConnectionsPage({ env, projects, on, remote = true, chatgpt }: {
       {list.length === 0 && <Note>{t('connections.empty')}</Note>}
       {list.map(c => (
         <ItemRow key={c.alias} lead={<Server />} onEdit={() => setOpen(c.alias)} editLabel={c.alias}
-          title={<span title={c.alias}>{c.alias}</span>} desc={t(MODE_NAME[c.mode])}
+          title={<span title={c.alias}>{c.alias}</span>} desc={<HostLine view={c} />}
           trailing={<StateLine state={c.state} />} />
       ))}
     </Section>}
@@ -81,7 +77,7 @@ export function ConnectionsPage({ env, projects, on, remote = true, chatgpt }: {
         trailing={<ChatGptState status={chatgpt.status} />} />
     </Section>}
     {picking && <AddHostDialog taken={list.map(c => c.alias)} onAdd={add} onClose={() => setPicking(false)} />}
-    {current && <HostDialog view={current} env={env} projects={projects} on={on} fresh={added?.alias === open} onClose={() => setOpen(undefined)} />}
+    {current && <HostDialog view={current} env={env} projects={projects} on={on} fresh={added === open} onClose={() => setOpen(undefined)} />}
     {chatgpt?.open && <ChatGptDialog status={chatgpt.status} on={on} onClose={chatgpt.onClose} />}
   </>;
 }
@@ -109,27 +105,20 @@ export function StateDot({ state }: { state: ConnectionState }) {
   return <Dot ok={state === 'connected'} warn={state === 'error'} label={t(STATE_NAME[state])} />;
 }
 
-// The run mode as a segmented strip, each segment with its glyph: the whole line in the add dialog, a right-column
-// control (`compact`, words only) on the host's dialog. The compact strip is at least the control column wide and grows
-// with longer words (zh-CN, de) instead of pushing its segments out of the card; the Field wraps it under the label
-// when the row cannot hold both
-function ModeSegments({ value, onChange, compact }: { value: RunMode; onChange: (m: RunMode) => void; compact?: boolean }) {
-  return <Segmented<RunMode> label={t('connections.mode.label')} value={value} onChange={onChange} className={compact ? 'min-w-(--ctl-w)' : 'w-full'}
-    items={MODES.map(m => ({ value: m, label: <>{!compact && (m === 'local' ? <Laptop strokeWidth={1.75} /> : <Server strokeWidth={1.75} />)}{t(MODE_NAME[m])}</> }))} />;
-}
-
-// The mode's consequence, both sentences reserved so a switch never moves what follows
-function ModeEffect({ mode, className }: { mode: RunMode; className?: string }) {
-  return <StableText className={className} current={mode} items={MODES.map(m => ({ key: m, text: t(MODE_EFFECT[m]) }))} />;
+// A host row's second line: why it failed, so the list says more than "failed" without opening the host (the host's page
+// has the way out); its address otherwise
+function HostLine({ view }: { view: ConnectionView }) {
+  const reason = view.state === 'error' && view.error ? failureReason(view.error) : undefined;
+  const text = reason ?? view.address;
+  return text ? <span title={view.state === 'error' ? view.error?.message : text}>{text}</span> : null;
 }
 
 // What the add list holds: a host of ~/.ssh/config, or the alias / user@host:port typed into the search
 type HostPick = SshHost & { typed?: boolean };
 
-// Add host: the mode on top, then the ~/.ssh/config hosts in one Command list (the add-model dialog's shape). A click adds
-// the host and opens its dialog, where the connection shows, so a host key to confirm in a terminal is never hidden
-function AddHostDialog({ taken, onAdd, onClose }: { taken: string[]; onAdd: (alias: string, mode: RunMode) => void; onClose: () => void }) {
-  const [mode, setMode] = useState<RunMode>('local');
+// Add host: the ~/.ssh/config hosts in one Command list (the add-model dialog's shape). A click adds the host and opens
+// its dialog, where the connection shows, so a host key to confirm in a terminal is never hidden
+function AddHostDialog({ taken, onAdd, onClose }: { taken: string[]; onAdd: (alias: string) => void; onClose: () => void }) {
   const [query, setQuery] = useState('');
   const [listing, setListing] = useState<SshHostList>();
   useEffect(() => {
@@ -149,8 +138,6 @@ function AddHostDialog({ taken, onAdd, onClose }: { taken: string[]; onAdd: (ali
         <Button onClick={onClose}>{t('settings.shared.cancel')}</Button>
       </>}>
       <DialogBody className="overflow-hidden">
-        <ModeSegments value={mode} onChange={setMode} />
-        <ModeEffect mode={mode} className="-mt-1 px-1 text-3 text-fg-3" />
         <Command.Root items={items} value={null} inputValue={query} onInputValueChange={setQuery}
           itemToStringValue={(h: HostPick | null) => h?.alias ?? ''} itemToStringLabel={(h: HostPick | null) => (h ? [h.alias, h.address].filter(Boolean).join(' ') : '')}>
           <Command.Input box placeholder={t('connections.addSearch')} />
@@ -163,7 +150,7 @@ function AddHostDialog({ taken, onAdd, onClose }: { taken: string[]; onAdd: (ali
               {(h: HostPick) => {
                 const done = taken.includes(h.alias);
                 return <Command.Item key={h.typed ? `typed:${h.alias}` : h.alias} value={h} disabled={done} title={done ? t('connections.added') : undefined}
-                  className={blockItem} onClick={() => { if (!done) onAdd(h.alias, mode); }}>
+                  className={blockItem} onClick={() => { if (!done) onAdd(h.alias); }}>
                   <PickContent lead={h.typed ? <Plus /> : <Server />} checked={done}
                     title={h.typed ? t('connections.addTyped', { alias: h.alias }) : h.alias} desc={h.typed ? undefined : h.address} />
                 </Command.Item>;
@@ -177,13 +164,9 @@ function AddHostDialog({ taken, onAdd, onClose }: { taken: string[]; onAdd: (ali
 }
 
 // One host in a dialog: the connection (its state, round trip and remote version, the one action that moves it on,
-// the attempt's steps while it runs or why it failed), where agents run, the host's projects (browsable only while
-// connected); the footer removes the host. `fresh`: it just replaced the add dialog in the same box, so its body fades in
+// the attempt's steps while it runs or why it failed), the host's projects (browsable only while connected); the footer removes the host. `fresh`: it just replaced the add dialog in the same box, so its body fades in
 function HostDialog({ view, env, projects, on, fresh, onClose }: { view: ConnectionView; env: SettingsEnv; projects?: string[]; on: SettingsHandlers; fresh?: boolean; onClose: () => void }) {
   const { alias, state } = view;
-  // The pick shows at once; the pushed list confirms it
-  const [mode, setMode] = useState(view.mode);
-  useEffect(() => setMode(view.mode), [view.mode]);
   const [picking, setPicking] = useState(false);
   // Held from the first render: `fresh` clears as soon as the pushed list brings the host, which would cut the fade short
   const [enter] = useState(fresh);
@@ -208,15 +191,12 @@ function HostDialog({ view, env, projects, on, fresh, onClose }: { view: Connect
         {/* The head's second line is always there (a blank one without facts), so facts arriving never move the card */}
         <Section title={<span className="flex items-center gap-2"><StateDot state={state} /><StableText current={state} items={STATES.map(s => ({ key: s, text: t(STATE_NAME[s]) }))} /></span>} desc={facts || '\u00a0'}
           action={<SectionAction icon={action === 'connect' ? <Link2 /> : action === 'disconnect' ? <Unplug /> : <X />}
-            onClick={action === 'connect' ? () => reconnect({ ...view, mode }) : () => connectionOp({ op: 'disconnect', alias })}>{t(ACTION[action])}</SectionAction>}>
+            onClick={action === 'connect' ? () => reconnect(view) : () => connectionOp({ op: 'disconnect', alias })}>{t(ACTION[action])}</SectionAction>}>
           {/* Folds open as an attempt starts and away once it is over; at rest it shows the steps settled (all done after
               a success), which is what folds away */}
           <Collapsible.Section open={hasConnectStatus(view)}>
             <StatusRow view={view} onOpenConfig={() => on.openPath(`${env.home}/.ssh/config`)} />
           </Collapsible.Section>
-          <Field label={t('connections.mode.label')} desc={<ModeEffect mode={mode} />}>
-            <ModeSegments compact value={mode} onChange={m => { setMode(m); connectionOp({ op: 'setMode', alias, mode: m }); }} />
-          </Field>
         </Section>
         <Section title={t('connections.projects')} count={folders.length} desc={t('connections.projectsDesc')}
           action={<SectionAction icon={<Plus />} disabled={!live} title={live ? undefined : t('connections.connectFirst')} onClick={() => setPicking(true)}>{t('connections.addFolder')}</SectionAction>}>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionCategory, SessionSummary } from '@acpira/shared/transcript';
-import { buildSessionTree, categoryOf, draggable, dropAction, isChatFolder } from '../chat/sessionTree';
+import { buildSessionTree, categoryOf, draggable, dropAction, isChatFolder, projectSessions } from '../chat/sessionTree';
 
 const WS = '/work/acpira';
 const OTHER = '/work/bot';
@@ -83,9 +83,10 @@ describe('session tree', () => {
     const input = { ...base, categories: [], workspace: undefined, shown, grouped: true, registered: [WS], removed: ['/work/gone'] };
     const tree = buildSessionTree(input);
     expect(tree.projects.map(p => p.cwd)).toEqual([WS]);
-    // A pinned session stays pinned
-    expect(tree.pinned.map(x => x.id)).toEqual(['b']);
-    expect(buildSessionTree({ ...input, filtering: true }).projects.map(p => p.cwd)).toEqual([WS, '/work/gone']);
+    expect(tree.pinned).toEqual([]);
+    const found = buildSessionTree({ ...input, filtering: true });
+    expect(found.projects.map(p => p.cwd)).toEqual([WS, '/work/gone']);
+    expect(found.pinned.map(x => x.id)).toEqual(['b']);
   });
 
   it('a project shell groups only the host folders it added; the rest of a host list shows in a search', () => {
@@ -100,6 +101,33 @@ describe('session tree', () => {
     expect(buildSessionTree({ ...input, filtering: true, expand: false }).projects.map(p => p.cwd)).toEqual([added, '/work/local']);
     // An IDE list registers nothing and keeps every folder
     expect(buildSessionTree({ ...input, registered: undefined }).projects.map(p => p.cwd)).toEqual(['/work/local', other, added]);
+  });
+
+  it.each([false, true])('pins obey the project list with pinInProject=%s', pinInProject => {
+    const added = 'ssh://gen1/home/u/app';
+    const other = 'ssh://gen1/home/u/scratch';
+    const removed = 'ssh://gen1/home/u/removed';
+    const shown = [s('added', { cwd: added, pinned: true }), s('other', { cwd: other, pinned: true }), s('removed', { cwd: removed, pinned: true }), s('local', { pinned: true })];
+    const input = { ...base, categories: [], shown, grouped: true, registered: [WS, added], removed: [removed], pinInProject };
+    const pins = (tree: ReturnType<typeof buildSessionTree>) => [...tree.pinned, ...tree.projects.flatMap(p => p.pinned)].map(x => x.id).sort();
+    expect(pins(buildSessionTree(input))).toEqual(['added', 'local']);
+    expect(pins(buildSessionTree({ ...input, filtering: true, expand: false }))).toEqual(['added', 'local']);
+    expect(pins(buildSessionTree({ ...input, filtering: true, expand: true }))).toEqual(['added', 'local', 'other', 'removed']);
+    expect(pins(buildSessionTree({ ...input, registered: [...input.registered, other] }))).toEqual(['added', 'local', 'other']);
+    // An IDE has no project registry; its cross-project pins stay visible.
+    expect(pins(buildSessionTree({ ...input, registered: undefined, removed: undefined }))).toEqual(['added', 'local', 'other', 'removed']);
+  });
+
+  it('filters project sessions before any layout, keeping ordinary and pinned rows under the same rules', () => {
+    const remote = 'ssh://gen1/home/u/other';
+    const gone = '/work/gone';
+    const shown = [s('local'), s('remote', { cwd: remote }), s('pin', { cwd: remote, pinned: true }), s('gone', { cwd: gone }), s('gone-pin', { cwd: gone, pinned: true })];
+    const input = { registered: [WS], removed: [gone], filtering: false };
+    const ids = (options: Parameters<typeof projectSessions>[1]) => projectSessions(shown, options).map(s => s.id);
+    expect(ids(input)).toEqual(['local']);
+    expect(ids({ ...input, filtering: true, expand: false })).toEqual(['local', 'gone', 'gone-pin']);
+    expect(ids({ ...input, filtering: true, expand: true })).toEqual(shown.map(s => s.id));
+    expect(ids({ ...input, registered: [] })).toEqual(['local']);
   });
 
   it('filtering hides empty categories and empty projects and opens everything else', () => {

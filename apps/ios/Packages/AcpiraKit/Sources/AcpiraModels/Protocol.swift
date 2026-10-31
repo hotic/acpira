@@ -175,6 +175,7 @@ public struct AccountAction: Codable, Hashable, Sendable {
 public struct SessionHit: Codable, Hashable, Sendable, Identifiable {
   public var id: String
   public var snippet: String
+  public var summary: SessionSummary?
 }
 
 /// How an account comes in (AddAccountVia): import the CLI's own login, log in a new one in a terminal on the engine's
@@ -550,7 +551,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   case stop(sessionId: String?, clientId: String? = nil)
   case permission(sessionId: String, blockId: String, optionId: String, clientId: String? = nil)
   /// The question card closed: `answers` holds the answered questions only; skip tells the agent to go on without them
-  case answer(sessionId: String, blockId: String, answers: QuestionAnswers, skip: Bool? = nil, clientId: String? = nil)
+  case answer(sessionId: String, blockId: String, answers: QuestionAnswers, images: [String: [Draft]]? = nil, skip: Bool? = nil, clientId: String? = nil)
   /// Build a reviewed plan: optionId picks the card's option, model the model it is built with
   case buildPlan(sessionId: String, planId: String, optionId: String? = nil, model: ModelPick? = nil)
   case setMode(sessionId: String?, id: String)
@@ -580,7 +581,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   /// Rebind the session to this account (also the agent's default account from then on)
   case selectAccount(sessionId: String?, id: String)
   /// An account list came into view: refresh that agent's quotas
-  case refreshQuota(agent: AgentId)
+  case refreshQuota(agent: AgentId, sessionId: String? = nil)
   case compact(sessionId: String?)
   case retry(sessionId: String?)
   /// SessionView.canTakeOver: end the agent another engine left holding the session, or ask the engine that has this
@@ -600,11 +601,11 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   /// "Copy as Markdown": the export's Markdown as text, answered with `sessionMarkdown` echoing seq. `format` asks for
   /// another export's content instead; an older engine ignores it and answers Markdown
   case sessionMarkdown(id: String, seq: Int, format: ExportFormat? = nil)
-  case addAccount(agent: AgentId, via: AddAccountVia)
-  case removeAccount(id: String)
+  case addAccount(agent: AgentId, via: AddAccountVia, sessionId: String? = nil)
+  case removeAccount(id: String, sessionId: String? = nil)
   /// AgentInfo.credentialsLocked: unlock the credential store in a terminal, then reconnect the agent's sessions stuck
   /// on sign-in
-  case unlockCredentials(agent: AgentId)
+  case unlockCredentials(agent: AgentId, sessionId: String? = nil)
   /// Sign in with one of SessionView.authMethods
   case login(sessionId: String?, methodId: String? = nil)
   /// Drop the agent process and resume the same native session (prompts keep failing on the live connection)
@@ -740,7 +741,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   }
 
   private enum Keys: String, CodingKey {
-    case type, patches, sessionId, text, attachments, steer, blockId, optionId, answers, skip, planId, model, id, configId
+    case type, patches, sessionId, text, attachments, steer, blockId, optionId, answers, images, skip, planId, model, id, configId
     case value, agent, category, cwd, chat, title, pinned, archived, unread, query, seq, turnIndex, retainedAttachments, clientId
     case file, via, methodId, requestId, edit, subagentId, taskId, action, objective, key, fresh, dir, path, base
     case toolCallId, nth, cols, rows, data, binary, chars, format
@@ -762,6 +763,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
       self = .permission(sessionId: try str(.sessionId), blockId: try str(.blockId), optionId: try str(.optionId), clientId: try opt(.clientId))
     case "answer":
       self = .answer(sessionId: try str(.sessionId), blockId: try str(.blockId), answers: try c.decode(QuestionAnswers.self, forKey: .answers),
+                     images: try c.decodeIfPresent([String: [Draft]].self, forKey: .images),
                      skip: try c.decodeIfPresent(Bool.self, forKey: .skip), clientId: try opt(.clientId))
     case "buildPlan":
       self = .buildPlan(sessionId: try str(.sessionId), planId: try str(.planId), optionId: try opt(.optionId),
@@ -783,7 +785,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case "forkSession":
       self = .forkSession(sessionId: try str(.sessionId), turnIndex: try c.decode(Int.self, forKey: .turnIndex), agent: try opt(.agent))
     case "selectAccount": self = .selectAccount(sessionId: try opt(.sessionId), id: try str(.id))
-    case "refreshQuota": self = .refreshQuota(agent: try str(.agent))
+    case "refreshQuota": self = .refreshQuota(agent: try str(.agent), sessionId: try opt(.sessionId))
     case "compact": self = .compact(sessionId: try opt(.sessionId))
     case "retry": self = .retry(sessionId: try opt(.sessionId))
     case "takeOverSession": self = .takeOverSession(sessionId: try opt(.sessionId))
@@ -798,9 +800,9 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case "moveSession": self = .moveSession(id: try str(.id), cwd: try opt(.cwd), category: try opt(.category))
     case "sessionMarkdown":
       self = .sessionMarkdown(id: try str(.id), seq: try int(.seq), format: try c.decodeIfPresent(ExportFormat.self, forKey: .format))
-    case "addAccount": self = .addAccount(agent: try str(.agent), via: try c.decode(AddAccountVia.self, forKey: .via))
-    case "removeAccount": self = .removeAccount(id: try str(.id))
-    case "unlockCredentials": self = .unlockCredentials(agent: try str(.agent))
+    case "addAccount": self = .addAccount(agent: try str(.agent), via: try c.decode(AddAccountVia.self, forKey: .via), sessionId: try opt(.sessionId))
+    case "removeAccount": self = .removeAccount(id: try str(.id), sessionId: try opt(.sessionId))
+    case "unlockCredentials": self = .unlockCredentials(agent: try str(.agent), sessionId: try opt(.sessionId))
     case "login": self = .login(sessionId: try opt(.sessionId), methodId: try opt(.methodId))
     case "reconnect": self = .reconnect(sessionId: try opt(.sessionId))
     case "retryTurn": self = .retryTurn(sessionId: try opt(.sessionId))
@@ -861,10 +863,11 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
       try c.encode(blockId, forKey: .blockId)
       try c.encode(optionId, forKey: .optionId)
       try c.encodeIfPresent(clientId, forKey: .clientId)
-    case let .answer(sessionId, blockId, answers, skip, clientId):
+    case let .answer(sessionId, blockId, answers, images, skip, clientId):
       try c.encode(sessionId, forKey: .sessionId)
       try c.encode(blockId, forKey: .blockId)
       try c.encode(answers, forKey: .answers)
+      try c.encodeIfPresent(images, forKey: .images)
       try c.encodeIfPresent(skip, forKey: .skip)
       try c.encodeIfPresent(clientId, forKey: .clientId)
     case let .buildPlan(sessionId, planId, optionId, model):
@@ -908,8 +911,9 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
       try c.encode(sessionId, forKey: .sessionId)
       try c.encode(turnIndex, forKey: .turnIndex)
       try c.encodeIfPresent(agent, forKey: .agent)
-    case .refreshQuota(let agent):
+    case let .refreshQuota(agent, sessionId), let .unlockCredentials(agent, sessionId):
       try c.encode(agent, forKey: .agent)
+      try c.encodeIfPresent(sessionId, forKey: .sessionId)
     case let .dequeue(sessionId, id), let .sendQueued(sessionId, id):
       try c.encode(sessionId, forKey: .sessionId)
       try c.encode(id, forKey: .id)
@@ -934,13 +938,15 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
       try c.encode(id, forKey: .id)
       try c.encode(seq, forKey: .seq)
       try c.encodeIfPresent(format, forKey: .format)
-    case let .addAccount(agent, via):
+    case let .addAccount(agent, via, sessionId):
       try c.encode(agent, forKey: .agent)
       try c.encode(via, forKey: .via)
-    case .removeAccount(let id), .terminalClose(let id), .terminalKill(let id):
+      try c.encodeIfPresent(sessionId, forKey: .sessionId)
+    case let .removeAccount(id, sessionId):
       try c.encode(id, forKey: .id)
-    case .unlockCredentials(let agent):
-      try c.encode(agent, forKey: .agent)
+      try c.encodeIfPresent(sessionId, forKey: .sessionId)
+    case .terminalClose(let id), .terminalKill(let id):
+      try c.encode(id, forKey: .id)
     case let .login(sessionId, methodId):
       try c.encodeIfPresent(sessionId, forKey: .sessionId)
       try c.encodeIfPresent(methodId, forKey: .methodId)

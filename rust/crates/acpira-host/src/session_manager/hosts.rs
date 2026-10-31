@@ -1,10 +1,11 @@
 //! Host sessions on this engine's side (docs/dev/remote.md): every SSH host that is not turned off has its engine reached
-//! as a peer (`remote::peer`), whatever its run mode, since a host folder has one history, the host's own. One empty view
-//! there brings its session list, which joins the local list with each folder as its `ssh://` form; a host session shown
+//! as a peer (`remote::peer`), whichever agents run where, since a host folder has one history, the host's own. One scoped view
+//! there brings the registered projects' list, which joins the local list with each folder as its `ssh://` form; a host session shown
 //! here gets a view of its own there, whose pushes are rebuilt into this engine's views (its own revs, so pages take
 //! patches as for any session). Page actions on a host session go to that view, list actions on one to the list view. The
-//! run mode decides only where a new session starts: on the host under remote run, here under local run. The last list a
-//! host sent stays (also on disk) while it is away
+//! agent decides only where a new session starts: here for those the `sshLocalAgents` setting names (their tools run on
+//! the host, `acp/session/remote.rs`), on the host for every other. The last list a host sent stays (also on disk) while
+//! it is away
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -17,9 +18,10 @@ use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use acpira_shared::protocol::{HostMsg, RawJson, WebviewMsg};
-use acpira_shared::remote::{ConnectionView, RunMode, format_remote_folder, parse_remote_folder};
+use acpira_shared::protocol::{HostMsg, RawJson, SessionHit, WebviewMsg};
+use acpira_shared::remote::{ConnectionView, format_remote_folder, parse_remote_folder};
 use acpira_shared::session_patch::{LastTurnParts, ViewParts};
+use acpira_shared::sidecar::SessionListScope;
 use acpira_shared::transcript::SessionSummary;
 
 use super::{SessionManager, Viewer, is_forwarded, remote_view, session_id_of};
@@ -33,8 +35,14 @@ const RETRY_MAX: Duration = Duration::from_secs(30);
 const LIST_VIEW: &str = "list";
 /// How long a new session in a host folder waits for the host's engine to be reached
 const NEW_WAIT: Duration = Duration::from_secs(60);
-/// What this engine serves for the host's engine (the requests its views cause come back here)
+/// What this engine serves for the host's engine (the requests its views cause come back here).
+/// A local terminal cannot run host logins, and a fresh SSH login cannot unlock the engine's macOS keychain session.
 const PEER_CAPS: &[&str] = &["toast"];
+/// How long a host session's view is held back for the blobs it shows to come over from the host; then it goes out
+/// with whatever arrived
+const BLOB_WAIT: Duration = Duration::from_secs(20);
+/// A bounded on-demand metadata query; disconnected hosts never block a history search.
+const QUERY_WAIT: Duration = Duration::from_secs(15);
 
 #[derive(Default)]
 pub(super) struct Hosts {
@@ -44,14 +52,15 @@ pub(super) struct Hosts {
 
 struct HostRun {
   alias: String,
-  /// The host's run mode now: under remote run new sessions in its folders start there
-  mode: parking_lot::Mutex<RunMode>,
   /// Envelopes to the host's engine while it is connected
   out: parking_lot::Mutex<Option<mpsc::UnboundedSender<Value>>>,
   /// Whether it is connected now
   up: tokio::sync::watch::Sender<bool>,
   /// The host's list as this engine shows it (folders as `ssh://` forms, no categories of the host's)
   items: parking_lot::Mutex<Vec<SessionSummary>>,
+  folders: parking_lot::Mutex<Option<Vec<String>>>,
+  /// One-shot search / id lookups. Their results never join the persistent project list.
+  requests: parking_lot::Mutex<HashMap<String, tokio::sync::oneshot::Sender<Value>>>,
   /// Host sessions shown here, each through a view of its own on the host, by session id
   shown: parking_lot::Mutex<HashMap<String, Shown>>,
   /// Views that asked the host for a new session, by view id: the viewer to put on it once it shows
@@ -64,6 +73,10 @@ struct HostRun {
   pid: parking_lot::Mutex<Option<u32>>,
   seq: AtomicU64,
   task: parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>,
+  /// Blobs being fetched from the host into this machine's store, as `<session>/<name>`
+  blobs: parking_lot::Mutex<std::collections::HashSet<String>>,
+  /// Public account metadata for this host only; never merged into this machine's account list.
+  auth: parking_lot::Mutex<Value>,
 }
 
 /// One host session's view here
@@ -75,9 +88,76 @@ struct Shown {
   host_rev: Option<i64>,
   parts: Option<ViewParts>,
   msg: Option<HostMsg>,
+  /// Blob fetches this session's view waits for: while any runs, its views are kept here instead of sent, so a page
+  /// never loads an image before its file is on this machine
+  fetching: usize,
+}
+
+/// Cancellation drops pending replies and closes temporary lookup views as well as timeouts do.
+struct HostRequest<'a> {
+  run: &'a HostRun,
+  key: String,
+}
+
+impl Drop for HostRequest<'_> {
+  fn drop(&mut self) {
+    self.run.requests.lock().remove(&self.key);
+    if self.key.starts_with("lookup-") {
+      self.run.send(json!({ "type": "detachView", "viewId": self.key }));
+    }
+  }
 }
 
 impl HostRun {
+  async fn request(&self, key: String, send: impl FnOnce()) -> Option<Value> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    self.requests.lock().insert(key.clone(), tx);
+    let _pending = HostRequest { run: self, key };
+    send();
+    tokio::time::timeout(QUERY_WAIT, rx).await.ok().and_then(Result::ok)
+  }
+
+  async fn lookup(&self, id: &str) -> bool {
+    let mut up = self.up.subscribe();
+    if tokio::time::timeout(NEW_WAIT, up.wait_for(|u| *u)).await.is_err() {
+      return false;
+    }
+    let view_id = format!("lookup-{}", self.next_view_id());
+    let reply = self
+      .request(view_id.clone(), || {
+        self.open_view(
+          &view_id,
+          json!({
+            "sessionList": { "folders": [], "ids": [id] }
+          }),
+        )
+      })
+      .await;
+    reply.and_then(|v| v.pointer("/state/sessions").and_then(Value::as_array).map(|s| s.iter().any(|s| s["id"] == id))).unwrap_or(false)
+  }
+
+  async fn search(&self, query: &str) -> Vec<SessionHit> {
+    if !*self.up.borrow() {
+      return vec![];
+    }
+    let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
+    let reply = self
+      .request(format!("search-{seq}"), || {
+        self.send_to_view(LIST_VIEW, json!({ "type": "searchSessions", "query": query, "seq": seq }));
+      })
+      .await;
+    let mut hits: Vec<SessionHit> =
+      reply.and_then(|v| v.get("hits").and_then(|h| serde_json::from_value(h.clone()).ok())).unwrap_or_default();
+    hits.retain(|h| h.summary.as_ref().is_some_and(|s| !acpira_shared::remote::is_remote_folder(&s.cwd)));
+    for hit in &mut hits {
+      if let Some(s) = &mut hit.summary {
+        s.cwd = local_folder(&self.alias, &s.cwd);
+        s.category = None;
+      }
+    }
+    hits
+  }
+
   fn send(&self, v: Value) -> bool {
     self.out.lock().as_ref().is_some_and(|tx| tx.send(v).is_ok())
   }
@@ -124,6 +204,10 @@ fn list_target(m: &WebviewMsg) -> Option<String> {
 /// A host folder as this engine names it; the path as it is when it is not absolute
 fn local_folder(alias: &str, path: &str) -> String {
   format_remote_folder(alias, path).unwrap_or_else(|| path.to_owned())
+}
+
+fn host_folder_selected(alias: &str, cwd: &str, folders: Option<&[String]>) -> bool {
+  parse_remote_folder(cwd).is_some_and(|f| f.alias == alias && folders.is_none_or(|paths| paths.contains(&f.path)))
 }
 
 /// A whole view as parts: its head without turns, every turn, and the live agent turn split into its head and blocks
@@ -209,13 +293,48 @@ impl SessionManager {
     }
   }
 
+  fn host_folders(&self, alias: &str) -> Option<Vec<String>> {
+    if !(self.deps.projects)() {
+      return None;
+    }
+    Some(
+      self
+        .categories()
+        .projects
+        .iter()
+        .flatten()
+        .filter_map(|cwd| parse_remote_folder(cwd))
+        .filter(|f| f.alias == alias)
+        .map(|f| f.path)
+        .collect(),
+    )
+  }
+
+  /// Narrow both memory and the offline cache before changing the subscription, including while disconnected.
+  pub(super) fn sync_host_scopes(&self) {
+    let runs: Vec<_> = self.hosts.runs.lock().values().cloned().collect();
+    for run in runs {
+      let mut scope = run.folders.lock();
+      let folders = self.host_folders(&run.alias);
+      if *scope == folders {
+        continue;
+      }
+      *scope = folders;
+      let mut items = run.items.lock();
+      items.retain(|s| host_folder_selected(&run.alias, &s.cwd, scope.as_deref()));
+      self.save_host_list(&run.alias, &items);
+      run.send(json!({ "type": "setSessionList", "viewId": LIST_VIEW, "scope": { "folders": *scope } }));
+    }
+    self.emit_sessions();
+  }
+
   fn sync_hosts(self: &Arc<Self>, views: &[ConnectionView]) {
-    let wanted: Vec<(&str, RunMode)> = views.iter().filter(|v| !v.disabled).map(|v| (v.alias.as_str(), v.mode)).collect();
+    let wanted: Vec<&str> = views.iter().filter(|v| !v.disabled).map(|v| v.alias.as_str()).collect();
     let mut changed = false;
     {
       let mut runs = self.hosts.runs.lock();
       runs.retain(|alias, run| {
-        let keep = wanted.iter().any(|(a, _)| a == alias);
+        let keep = wanted.contains(&alias.as_str());
         if !keep {
           if let Some(t) = run.task.lock().take() {
             t.abort();
@@ -224,17 +343,19 @@ impl SessionManager {
         }
         keep
       });
-      for (alias, mode) in wanted {
-        if let Some(run) = runs.get(alias) {
-          *run.mode.lock() = mode;
+      for alias in wanted {
+        if runs.contains_key(alias) {
           continue;
         }
+        let folders = self.host_folders(alias);
+        let items = self.cached_host_list(alias, folders.as_deref());
         let run = Arc::new(HostRun {
           alias: alias.to_owned(),
-          mode: parking_lot::Mutex::new(mode),
           out: Default::default(),
           up: tokio::sync::watch::Sender::new(false),
-          items: parking_lot::Mutex::new(self.cached_host_list(alias)),
+          items: parking_lot::Mutex::new(items),
+          folders: parking_lot::Mutex::new(folders),
+          requests: Default::default(),
           shown: Default::default(),
           asked: Default::default(),
           deletions: Default::default(),
@@ -242,6 +363,8 @@ impl SessionManager {
           pid: Default::default(),
           seq: Default::default(),
           task: Default::default(),
+          blobs: Default::default(),
+          auth: parking_lot::Mutex::new(json!({ "agents": [], "accounts": [], "actions": [] })),
         });
         *run.task.lock() = Some(tokio::spawn(drive(Arc::downgrade(self), run.clone())));
         runs.insert(alias.to_owned(), run);
@@ -281,15 +404,65 @@ impl SessionManager {
 
   /// The host whose session this is. A session this machine has itself (live, stored, or run by another engine here) is
   /// never a host's: the host's list also holds the copies of this machine's sessions in its folders (`remote::host_store`)
+  fn locally_owned(&self, id: &str) -> bool {
+    let st = self.state.lock();
+    st.live.contains_key(id)
+      || st.index.iter().any(|s| s.id == id)
+      || st.elsewhere.values().flatten().any(|s| s.id == id)
+      || st.trash.contains_key(id)
+  }
+
   fn host_of(&self, id: &str) -> Option<Arc<HostRun>> {
-    let mine = {
-      let st = self.state.lock();
-      st.live.contains_key(id) || st.index.iter().any(|s| s.id == id) || st.elsewhere.values().flatten().any(|s| s.id == id)
-    };
-    if mine {
+    if self.locally_owned(id) {
       return None;
     }
     self.hosts.runs.lock().values().find(|r| r.owns(id)).cloned()
+  }
+
+  /// Search only on demand; the owning host supplies summaries outside the project subscription.
+  pub(super) async fn search_hosts(&self, query: &str) -> Vec<SessionHit> {
+    let runs: Vec<_> = self.hosts.runs.lock().values().cloned().collect();
+    let mut tasks = tokio::task::JoinSet::new();
+    for run in runs {
+      let query = query.to_owned();
+      tasks.spawn(async move { run.search(&query).await });
+    }
+    let mut hits = vec![];
+    while let Some(Ok(found)) = tasks.join_next().await {
+      hits.extend(found.into_iter().filter(|h| !self.locally_owned(&h.id)));
+    }
+    hits
+  }
+
+  async fn find_host(&self, id: &str) -> Option<Arc<HostRun>> {
+    if !crate::store::transcript_store::is_session_id(id) || self.locally_owned(id) {
+      return None;
+    }
+    let run = match self.host_of(id) {
+      Some(run) => run,
+      None => {
+        let runs: Vec<_> = self.hosts.runs.lock().values().cloned().collect();
+        let mut tasks = tokio::task::JoinSet::new();
+        for run in runs {
+          let id = id.to_owned();
+          tasks.spawn(async move { run.lookup(&id).await.then_some(run) });
+        }
+        let mut found = None;
+        while let Some(reply) = tasks.join_next().await {
+          if let Ok(Some(run)) = reply {
+            found = Some(run);
+            break;
+          }
+        }
+        let run = found?;
+        // A local record may have arrived while the host was queried.
+        if self.locally_owned(id) {
+          return None;
+        }
+        run
+      }
+    };
+    Some(run)
   }
 
   /// Whether a session is a host's own (not this machine's, though the host may hold a copy of it)
@@ -318,7 +491,17 @@ impl SessionManager {
   /// A shown host session's current push
   pub(super) fn host_msg(&self, id: &str) -> Option<HostMsg> {
     let run = self.host_of(id)?;
-    run.shown.lock().get(id).and_then(|s| s.msg.clone())
+    // Not while it is held for its blobs: a page that loads it now would show broken images (`fetch_host_blobs`)
+    run.shown.lock().get(id).filter(|s| s.fetching == 0).and_then(|s| s.msg.clone())
+  }
+
+  pub(super) fn host_cwd(&self, id: &str) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct Head { cwd: String }
+    let run = self.host_of(id)?;
+    let shown = run.shown.lock();
+    let head = &shown.get(id)?.parts.as_ref()?.0.head;
+    serde_json::from_str::<Head>(head.get()).ok().map(|h| h.cwd)
   }
 
   /// A page's action that belongs to a host session (or starts one in a host folder): sent there. None for the rest
@@ -327,28 +510,46 @@ impl SessionManager {
     if self.hosts.runs.lock().is_empty() {
       return None;
     }
-    // Under local run a new session in a host folder starts here (`acp/session/remote.rs`)
+    // A new session in a host folder starts on the host, unless its agent is one the user runs here
+    // (`sshLocalAgents`, `acp/session/remote.rs`)
     let asked_on = match m {
-      W::NewSession { cwd: Some(cwd), .. } => parse_remote_folder(cwd).and_then(|f| {
-        let run = self.hosts.runs.lock().get(&f.alias).cloned().filter(|r| *r.mode.lock() == RunMode::Remote);
+      W::NewSession { cwd: Some(cwd), agent, .. } => parse_remote_folder(cwd).and_then(|f| {
+        let agent = agent.clone().unwrap_or_else(|| self.default_agent());
+        if (self.deps.ssh_local_agents)().contains(&agent) {
+          return None;
+        }
+        let run = self.hosts.runs.lock().get(&f.alias).cloned();
         run.map(|r| (f, r))
       }),
       _ => None,
     };
     if let (W::NewSession { agent, .. }, Some((f, run))) = (m, asked_on) {
+      self.register_project(&local_folder(&f.alias, &f.path)).await;
       // A host still being reached (the first connection deploys the helper) is waited for
       let mut up = run.up.subscribe();
       let _ = tokio::time::timeout(NEW_WAIT, up.wait_for(|u| *u)).await;
+      // Keep the host's current viewer so its normal empty-session replacement runs. A shared view stays on the old
+      // session for the other pages; this page then needs a separate view on the host.
+      let current = v.active_id().filter(|id| self.viewers_on(id, Some(v)).is_empty());
+      let reuse = current.and_then(|id| run.shown.lock().get(&id).map(|s| s.view_id.clone()));
+      if let Some(view_id) = reuse {
+        let sent = run.send_to_view(&view_id, json!({ "type": "newSession", "agent": agent, "cwd": f.path }));
+        return Some(if sent { Ok(()) } else { Err(anyhow!(crate::i18n::tp("host.remoteUnreachable", &[("host", &f.alias)]))) });
+      }
       let view_id = run.next_view_id();
       run.asked.lock().insert(view_id.clone(), Arc::downgrade(v));
-      run.open_view(&view_id, json!({ "empty": true }));
+      run.open_view(&view_id, json!({ "sessionList": { "folders": [] } }));
       // The host's categories are its own: a new session there starts unfiled
       let sent = run.send_to_view(&view_id, json!({ "type": "newSession", "agent": agent, "cwd": f.path }));
       return Some(if sent { Ok(()) } else { Err(anyhow!(crate::i18n::tp("host.remoteUnreachable", &[("host", &f.alias)]))) });
     }
     let explicit = session_id_of(m).or_else(|| list_target(m));
     let target = explicit.clone().or_else(|| v.active_id().filter(|_| is_forwarded(m)))?;
-    let run = self.host_of(&target)?;
+    let run = match self.host_of(&target) {
+      Some(run) => run,
+      None if list_target(m).is_some() && !v.has_list_scope() => self.find_host(&target).await?,
+      None => return None,
+    };
     let msg = serde_json::to_value(m).ok()?;
     let delete_request = match m {
       W::DeleteSession { request_id, .. } => request_id.as_ref(),
@@ -374,8 +575,14 @@ impl SessionManager {
   }
 
   /// A viewer lands on a session: a host's own is shown through the host's engine. False when it is not a host's
-  pub(super) fn open_on_host(self: &Arc<Self>, v: &Arc<Viewer>, id: &str) -> bool {
-    let Some(run) = self.host_of(id) else { return false };
+  pub(super) async fn open_on_host(self: &Arc<Self>, v: &Arc<Viewer>, id: &str) -> bool {
+    if self.locally_owned(id) || v.has_list_scope() {
+      return false;
+    }
+    let Some(run) = self.find_host(id).await else { return false };
+    if v.active_id().as_deref() != Some(id) {
+      return true;
+    }
     self.set_active(v, Some(id.to_owned()));
     self.show_host_session(&run, id, v);
     self.emit_sessions();
@@ -387,12 +594,23 @@ impl SessionManager {
     let current = {
       let mut shown = run.shown.lock();
       match shown.get(id) {
-        Some(s) => s.msg.clone(),
+        // A view held for its blobs goes out once they are here (`fetch_host_blobs`)
+        Some(s) => s.msg.clone().filter(|_| s.fetching == 0),
         None => {
           let view_id = run.next_view_id();
-          shown.insert(id.to_owned(), Shown { view_id: view_id.clone(), epoch: crate::acp::session::next_view_epoch(), host_rev: None, parts: None, msg: None });
+          shown.insert(
+            id.to_owned(),
+            Shown {
+              view_id: view_id.clone(),
+              epoch: crate::acp::session::next_view_epoch(),
+              host_rev: None,
+              parts: None,
+              msg: None,
+              fetching: 0,
+            },
+          );
           drop(shown);
-          run.open_view(&view_id, json!(id));
+          run.open_view(&view_id, json!({ "sessionList": { "folders": [] }, "session": id }));
           None
         }
       }
@@ -425,8 +643,15 @@ impl SessionManager {
     self.deps.lease_root.join("run").join("remote").join(format!("{alias}.sessions.json"))
   }
 
-  fn cached_host_list(&self, alias: &str) -> Vec<SessionSummary> {
-    std::fs::read_to_string(self.cache_file(alias)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+  fn cached_host_list(&self, alias: &str, folders: Option<&[String]>) -> Vec<SessionSummary> {
+    let mut items: Vec<SessionSummary> =
+      std::fs::read_to_string(self.cache_file(alias)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    let before = items.len();
+    items.retain(|s| host_folder_selected(alias, &s.cwd, folders));
+    if before != items.len() {
+      self.save_host_list(alias, &items);
+    }
+    items
   }
 
   fn save_host_list(&self, alias: &str, items: &[SessionSummary]) {
@@ -446,6 +671,18 @@ impl SessionManager {
       Some("hostMessage") => {
         let view_id = env.get("viewId").and_then(Value::as_str).unwrap_or("").to_owned();
         let msg = env.get("message").cloned().unwrap_or(Value::Null);
+        let key = match msg.get("type").and_then(Value::as_str) {
+          Some("init") if view_id.starts_with("lookup-") => Some(view_id.clone()),
+          Some("sessionHits") => msg.get("seq").and_then(Value::as_u64).map(|seq| format!("search-{seq}")),
+          _ => None,
+        };
+        if let Some(key) = key {
+          if let Some(tx) = run.requests.lock().remove(&key) {
+            let _ = tx.send(msg);
+          }
+          return;
+        }
+        self.on_host_auth(run, &msg);
         if msg.get("type").and_then(Value::as_str) == Some("deleteSessionResult") {
           let Some(request_id) = msg.get("requestId").and_then(Value::as_str) else { return };
           let Some(undo) = msg.get("undo").and_then(Value::as_bool) else { return };
@@ -467,7 +704,7 @@ impl SessionManager {
       }
       Some("platformRequest") => {
         let request = env.get("request").cloned().unwrap_or(Value::Null);
-        if request.get("method").and_then(Value::as_str) == Some("toast") {
+        if let Some("toast") = request.get("method").and_then(Value::as_str) {
           let text = request.get("text").and_then(Value::as_str).unwrap_or("");
           let level = request.get("level").and_then(Value::as_str).unwrap_or("info");
           (self.deps.toast)(level, &format!("{}: {text}", run.alias));
@@ -480,6 +717,53 @@ impl SessionManager {
     }
   }
 
+  /// Account pushes belong to the host, not the local settings. Reissue each shown view's head when they change so
+  /// login progress and keychain locks update even while the transcript stands still.
+  fn on_host_auth(self: &Arc<Self>, run: &Arc<HostRun>, msg: &Value) {
+    let changed = {
+      let mut auth = run.auth.lock();
+      let before = auth.clone();
+      match msg.get("type").and_then(Value::as_str) {
+        Some("init") => {
+          if let Some(state) = msg.get("state") {
+            for (key, source) in [("agents", "agents"), ("accounts", "accounts"), ("actions", "accountActions")] {
+              if let Some(v) = state.get(source) {
+                auth[key] = v.clone();
+              }
+            }
+          }
+        }
+        Some("agents") => auth["agents"] = msg.get("agents").cloned().unwrap_or_else(|| json!([])),
+        Some("accounts") => auth["accounts"] = msg.get("accounts").cloned().unwrap_or_else(|| json!([])),
+        Some("accountActions") => auth["actions"] = msg.get("actions").cloned().unwrap_or_else(|| json!([])),
+        _ => return,
+      }
+      *auth != before
+    };
+    if !changed {
+      return;
+    }
+    let messages: Vec<(String, HostMsg)> = {
+      let mut shown = run.shown.lock();
+      shown.iter_mut().filter_map(|(id, s)| {
+        let prev = s.parts.as_ref()?;
+        let mut head: Value = serde_json::from_str(prev.0.head.get()).ok()?;
+        head["remoteAuth"] = remote_auth(&run.auth.lock(), head.get("agent")?.as_str()?);
+        let head = serde_json::value::to_raw_value(&head).ok()?;
+        let last = prev.0.last.as_ref().map(|l| LastTurnParts { head: l.head.clone(), blocks: l.blocks.clone() });
+        let (parts, msg) = remote_view(id, &head, self.next_mirror_rev(), s.epoch, prev.0.turns.clone(), last)?;
+        s.parts = Some(parts);
+        s.msg = Some(msg.clone());
+        (s.fetching == 0).then(|| (id.clone(), msg))
+      }).collect()
+    };
+    for (id, msg) in messages {
+      for v in self.viewers_on(&id, None) {
+        v.emit(msg.clone());
+      }
+    }
+  }
+
   fn on_host_list(self: &Arc<Self>, run: &Arc<HostRun>, msg: &Value) {
     let list = match msg.get("type").and_then(Value::as_str) {
       Some("init") => msg.pointer("/state/sessions"),
@@ -488,6 +772,7 @@ impl SessionManager {
     };
     let Some(list) = list.and_then(|l| serde_json::from_value::<Vec<SessionSummary>>(l.clone()).ok()) else { return };
     // Sessions the host's engine lists from hosts of its own are theirs, not this host's
+    let scope = run.folders.lock();
     let items: Vec<SessionSummary> = list
       .into_iter()
       .filter(|s| !acpira_shared::remote::is_remote_folder(&s.cwd))
@@ -496,6 +781,7 @@ impl SessionManager {
         s.category = None;
         s
       })
+      .filter(|s| host_folder_selected(&run.alias, &s.cwd, scope.as_deref()))
       .collect();
     if *run.items.lock() == items {
       return;
@@ -503,6 +789,7 @@ impl SessionManager {
     run.deleted.lock().retain(|id, until| *until > tokio::time::Instant::now() && !items.iter().any(|s| &s.id == id));
     self.save_host_list(&run.alias, &items);
     *run.items.lock() = items;
+    drop(scope);
     self.emit_sessions();
   }
 
@@ -521,6 +808,73 @@ impl SessionManager {
     }
   }
 
+  /// Bring the blobs a host session's view shows into this machine's store, where every page loads them from (the
+  /// webview's blob URLs, a paired phone's blob requests). True while the session's view is held for a fetch, its own
+  /// or one already running; the latest view goes out once the last one ends
+  fn fetch_host_blobs(self: &Arc<Self>, run: &Arc<HostRun>, id: &str, refs: Vec<String>) -> bool {
+    let store = self.deps.store.clone();
+    let missing: Vec<String> = {
+      let mut flying = run.blobs.lock();
+      let mut names = vec![];
+      for name in refs {
+        let key = format!("{id}/{name}");
+        if names.contains(&name) || flying.contains(&key) || store.blob_path(id, &name).is_none_or(|p| p.exists()) {
+          continue;
+        }
+        flying.insert(key);
+        names.push(name);
+      }
+      names
+    };
+    let held = {
+      let mut shown = run.shown.lock();
+      let Some(s) = shown.get_mut(id) else { return false };
+      if !missing.is_empty() {
+        s.fetching += 1;
+      }
+      s.fetching > 0
+    };
+    if missing.is_empty() {
+      return held;
+    }
+    let client = self.deps.remote.as_ref().and_then(|c| c.client(&run.alias));
+    let (weak, run, id) = (Arc::downgrade(self), run.clone(), id.to_owned());
+    tokio::spawn(async move {
+      if let Some(client) = client {
+        let fetch = async {
+          for name in &missing {
+            if let Err(e) = fetch_host_blob(&client, &store, &id, name).await
+              && let Some(m) = weak.upgrade()
+            {
+              m.log(&format!("remote run: {id}/{name} from {}: {e:#}", run.alias));
+            }
+          }
+        };
+        if tokio::time::timeout(BLOB_WAIT, fetch).await.is_err()
+          && let Some(m) = weak.upgrade()
+        {
+          m.log(&format!("remote run: {id}'s blobs from {} took over {}s, showing it without them", run.alias, BLOB_WAIT.as_secs()));
+        }
+      }
+      run.blobs.lock().retain(|k| !missing.iter().any(|n| *k == format!("{id}/{n}")));
+      let latest = {
+        let mut shown = run.shown.lock();
+        let Some(s) = shown.get_mut(&id) else { return };
+        s.fetching = s.fetching.saturating_sub(1);
+        if s.fetching > 0 {
+          return;
+        }
+        s.msg.clone()
+      };
+      if let (Some(msg), Some(m)) = (latest, weak.upgrade()) {
+        for v in m.viewers_on(&id, None) {
+          v.emit(msg.clone());
+        }
+      }
+    });
+    true
+  }
+
   fn on_host_view(self: &Arc<Self>, run: &Arc<HostRun>, view_id: &str, msg: &Value) {
     if msg.get("type").and_then(Value::as_str) == Some("subagent") {
       self.on_host_subagent(run, view_id, msg);
@@ -532,16 +886,58 @@ impl SessionManager {
       Some("sessionPatch") => (None, msg.get("patch")),
       _ => return,
     };
+    // A reused host viewer has moved to its new session. Move the local pages with it and retire the old patch base.
+    if let Some(id) = whole.and_then(|w| w.get("id")).and_then(Value::as_str) {
+      let previous = {
+        let mut shown = run.shown.lock();
+        let previous = shown.iter().find(|(old, s)| old.as_str() != id && s.view_id == view_id).map(|(old, _)| old.clone());
+        if let Some(old) = &previous {
+          shown.remove(old);
+          shown.insert(
+            id.to_owned(),
+            Shown {
+              view_id: view_id.to_owned(),
+              epoch: crate::acp::session::next_view_epoch(),
+              host_rev: None,
+              parts: None,
+              msg: None,
+              fetching: 0,
+            },
+          );
+        }
+        previous
+      };
+      if let Some(old) = previous {
+        for v in self.viewers_on(&old, None) {
+          self.set_active(&v, Some(id.to_owned()));
+        }
+      }
+    }
     // A view that asked for a new session: the first one it shows is that session, and its viewer goes there
     if let Some(id) = whole.and_then(|w| w.get("id")).and_then(Value::as_str)
       && let Some(viewer) = run.asked.lock().remove(view_id)
     {
-      run.shown.lock().insert(id.to_owned(), Shown { view_id: view_id.to_owned(), epoch: crate::acp::session::next_view_epoch(), host_rev: None, parts: None, msg: None });
+      run.shown.lock().insert(
+        id.to_owned(),
+        Shown {
+          view_id: view_id.to_owned(),
+          epoch: crate::acp::session::next_view_epoch(),
+          host_rev: None,
+          parts: None,
+          msg: None,
+          fetching: 0,
+        },
+      );
       if let Some(v) = viewer.upgrade() {
         self.set_active(&v, Some(id.to_owned()));
       }
     }
     let Some(id) = run.shown.lock().iter().find(|(_, s)| s.view_id == view_id).map(|(id, _)| id.clone()) else { return };
+    // The blobs this step shows (a whole view's, or a patch's changed tail): they live in the host's store
+    let mut refs = vec![];
+    if let Some(step) = whole.or(patch) {
+      blob_refs(step, &id, &mut refs);
+    }
     let built = {
       let mut shown = run.shown.lock();
       let Some(s) = shown.get_mut(&id) else { return };
@@ -563,6 +959,9 @@ impl SessionManager {
           if let Some(cwd) = head.get("cwd").and_then(Value::as_str) {
             head["cwd"] = json!(local_folder(&run.alias, cwd));
           }
+          if let Some(agent) = head.get("agent").and_then(Value::as_str) {
+            head["remoteAuth"] = remote_auth(&run.auth.lock(), agent);
+          }
           let rev = self.next_mirror_rev();
           let head = serde_json::value::to_raw_value(&head).ok();
           head.and_then(|h| remote_view(&id, &h, rev, s.epoch, turns, last)).map(|(parts, msg)| {
@@ -575,6 +974,9 @@ impl SessionManager {
     };
     match built {
       Some(msg) => {
+        if self.fetch_host_blobs(run, &id, refs) {
+          return;
+        }
         for v in self.viewers_on(&id, None) {
           v.emit(msg.clone());
         }
@@ -586,6 +988,66 @@ impl SessionManager {
       }
     }
   }
+}
+
+/// Select public metadata for the session's agent. No local account may appear in a host session's menu.
+fn remote_auth(auth: &Value, agent: &str) -> Value {
+  let info = auth.get("agents").and_then(Value::as_array).and_then(|a| a.iter().find(|a| a.get("id").and_then(Value::as_str) == Some(agent)))
+    .cloned().unwrap_or_else(|| json!({ "id": agent, "name": agent }));
+  let accounts: Vec<Value> = auth.get("accounts").and_then(Value::as_array).into_iter().flatten()
+    .filter(|a| a.get("agent").and_then(Value::as_str) == Some(agent)).cloned().collect();
+  let action = auth.get("actions").and_then(Value::as_array).into_iter().flatten()
+    .find(|a| a.get("agent").and_then(Value::as_str) == Some(agent));
+  let mut out = json!({ "agent": info, "accounts": accounts });
+  if let Some(action) = action {
+    out["action"] = action.clone();
+  }
+  out
+}
+
+/// Every `blob` a view (or a patch of one) names, whichever block holds it: images, attachments, embedded files
+fn blob_refs(v: &Value, session_id: &str, out: &mut Vec<String>) {
+  match v {
+    Value::Object(m) => {
+      // Staged file attachments keep a file URI instead of a `blob` field. Only a file in this session's blob folder
+      // is copied; workspace file links stay on the host.
+      if m.get("kind").and_then(Value::as_str) == Some("file")
+        && let Some(uri) = m.get("uri").and_then(Value::as_str)
+        && let Some(path) = crate::platform::file_url::file_url_to_path(uri).map(std::path::PathBuf::from)
+        && let Some(parent) = path.parent()
+        && parent.file_name().is_some_and(|n| n == session_id)
+        && parent.parent().and_then(|p| p.file_name()).is_some_and(|n| n == "sessions")
+        && let Some(name) = path.file_name().and_then(|n| n.to_str())
+      {
+        out.push(name.to_owned());
+      }
+      for (k, x) in m {
+        match (k.as_str(), x) {
+          ("blob", Value::String(name)) => out.push(name.clone()),
+          _ => blob_refs(x, session_id, out),
+        }
+      }
+    }
+    Value::Array(a) => a.iter().for_each(|x| blob_refs(x, session_id, out)),
+    _ => {}
+  }
+}
+
+/// One blob of a host session from the host's store into this machine's. Blobs are named by their content, so bytes that
+/// do not match the name are refused
+async fn fetch_host_blob(
+  client: &crate::remote::client::RemoteClient,
+  store: &crate::store::transcript_store::TranscriptStore,
+  id: &str,
+  name: &str,
+) -> Result<()> {
+  let reply = client.call("storeBlobGet", json!({ "id": id, "name": name })).await.map_err(|e| anyhow!("{e}"))?;
+  let ext = name.rsplit_once('.').map(|(_, e)| format!(".{e}")).unwrap_or_default();
+  if crate::store::transcript_store::blob_name(&ext, &reply.data) != name {
+    return Err(anyhow!("the host's bytes do not match the name"));
+  }
+  store.save_blob(id, &ext, &reply.data).await?;
+  Ok(())
 }
 
 /// One host's connection, for as long as the host stays in remote run: reach its engine, open the list view and the
@@ -612,7 +1074,11 @@ async fn drive(weak: Weak<SessionManager>, run: Arc<HostRun>) {
         *run.pid.lock() = link.hello_ok.pointer("/sidecar/pid").and_then(Value::as_u64).map(|p| p as u32);
         let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
         *run.out.lock() = Some(tx);
-        run.open_view(LIST_VIEW, json!({ "empty": true }));
+        {
+          // Serialize attach with project changes: an update must never overtake the view's creation.
+          let folders = run.folders.lock();
+          run.open_view(LIST_VIEW, json!({ "sessionList": SessionListScope { folders: folders.clone(), ids: vec![] } }));
+        }
         run.up.send_replace(true);
         // Back after a drop: the sessions shown here get their views again, whole first
         let reopen: Vec<(String, String)> = {
@@ -621,7 +1087,7 @@ async fn drive(weak: Weak<SessionManager>, run: Arc<HostRun>) {
           shown.iter().map(|(id, s)| (id.clone(), s.view_id.clone())).collect()
         };
         for (id, view_id) in reopen {
-          run.open_view(&view_id, json!(id));
+          run.open_view(&view_id, json!({ "sessionList": { "folders": [] }, "session": id }));
         }
         loop {
           tokio::select! {
@@ -640,6 +1106,7 @@ async fn drive(weak: Weak<SessionManager>, run: Arc<HostRun>) {
         }
         run.up.send_replace(false);
         *run.out.lock() = None;
+        run.requests.lock().clear();
         *run.pid.lock() = None;
         if let Some(m) = weak.upgrade() {
           m.log(&format!("remote run: lost {}'s engine", run.alias));
@@ -679,7 +1146,17 @@ mod tests {
     let mut last = turns.pop();
     let before: Vec<&Turn> = turns.iter().collect();
     let (encoded, last) = encode_turns(&before, last.as_mut());
-    (ViewPartsData { id: "s".into(), epoch: 7, rev, head: raw(&json!({ "id": "s", "rev": rev, "cwd": "/w", "turns": [] })), turns: encoded, last }, whole)
+    (
+      ViewPartsData {
+        id: "s".into(),
+        epoch: 7,
+        rev,
+        head: raw(&json!({ "id": "s", "rev": rev, "cwd": "/w", "turns": [] })),
+        turns: encoded,
+        last,
+      },
+      whole,
+    )
   }
 
   fn turns_of(t: &[Box<RawValue>]) -> Vec<Value> {
@@ -689,7 +1166,14 @@ mod tests {
   /// What this engine holds after taking a whole view
   fn held(whole: &Value) -> ViewParts {
     let (head, turns, last) = split_view(whole).unwrap();
-    ViewParts(Arc::new(ViewPartsData { id: "s".into(), epoch: 1, rev: 1, head: serde_json::value::to_raw_value(&head).unwrap(), turns, last }))
+    ViewParts(Arc::new(ViewPartsData {
+      id: "s".into(),
+      epoch: 1,
+      rev: 1,
+      head: serde_json::value::to_raw_value(&head).unwrap(),
+      turns,
+      last,
+    }))
   }
 
   #[test]

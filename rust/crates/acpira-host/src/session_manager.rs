@@ -21,6 +21,7 @@ mod projects;
 mod records;
 pub mod storage;
 mod unread;
+pub mod upkeep;
 mod viewers;
 
 use std::collections::{HashMap, HashSet};
@@ -217,6 +218,8 @@ pub struct ManagerDeps {
   pub compaction: Arc<dyn Fn() -> CompactionPolicy + Send + Sync>,
   /// Agents whose plan mode answers tool permission requests itself (`acpira.planAutoApprove`)
   pub plan_auto_approve: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
+  /// Agents that run here in a folder on an SSH host, the rest starting in the host's engine (`acpira.sshLocalAgents`)
+  pub ssh_local_agents: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
   pub hidden: Arc<dyn Fn() -> HiddenMap + Send + Sync>,
   pub scope: Arc<dyn Fn() -> String + Send + Sync>,
   /// Shared MCP servers handed to every session (`shared_config::mcp_provider`); None in tests that do not need them
@@ -242,6 +245,8 @@ pub struct ManagerDeps {
 #[derive(Default)]
 struct ViewerState {
   active_id: Option<String>,
+  session_list: Option<acpira_shared::sidecar::SessionListScope>,
+  last_sessions: Option<Vec<SessionSummary>>,
   /// Opened with `InitialView::Empty`: shows nothing until a session is selected on it
   empty: bool,
   observing: Option<(String, String)>,
@@ -273,6 +278,20 @@ impl Viewer {
   }
 
   fn emit(&self, m: HostMsg) {
+    let m = match m {
+      HostMsg::Sessions { sessions } => {
+        let sessions = self.listed_sessions(sessions);
+        let mut st = self.state.lock();
+        if st.session_list.is_some() {
+          if st.last_sessions.as_ref() == Some(&sessions) {
+            return;
+          }
+          st.last_sessions = Some(sessions.clone());
+        }
+        HostMsg::Sessions { sessions }
+      }
+      m => m,
+    };
     let sink = self.sink.lock().clone();
     if let Some(s) = sink {
       s(m);
@@ -378,7 +397,8 @@ pub struct SessionManager {
   // Unread marks waiting to reach the shared store, written one batch at a time (`persist_unread`)
   unread_ops: parking_lot::Mutex<UnreadQueue>,
   // What other parts of the engine re-read on another engine's `touch` (`plugins` → the plugin host)
-  touch_hooks: parking_lot::Mutex<Vec<(&'static str, Arc<dyn Fn() + Send + Sync>)>>,
+  /// (what another engine touched, the hook it runs)
+  touch_hooks: parking_lot::Mutex<Vec<(&'static str, crate::util::Hook)>>,
   me: Weak<SessionManager>,
 }
 
@@ -564,6 +584,8 @@ impl SessionManager {
     tokio::spawn(async move { flush_loop(weak).await });
     let weak = mgr.me.clone();
     tokio::spawn(async move { idle_loop(weak).await });
+    let weak = mgr.me.clone();
+    tokio::spawn(async move { upkeep::upkeep_loop(weak).await });
     mgr
   }
 
@@ -715,6 +737,10 @@ fn session_id_of(m: &WebviewMsg) -> Option<String> {
     | W::SetMode { session_id, .. }
     | W::SetConfig { session_id, .. }
     | W::SelectAccount { session_id, .. }
+    | W::AddAccount { session_id, .. }
+    | W::RemoveAccount { session_id, .. }
+    | W::UnlockCredentials { session_id, .. }
+    | W::RefreshQuota { session_id, .. }
     | W::Compact { session_id }
     | W::Login { session_id, .. }
     | W::Retry { session_id }

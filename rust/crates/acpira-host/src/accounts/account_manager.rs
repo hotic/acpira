@@ -65,6 +65,9 @@ pub type RunInTerminal = Arc<dyn Fn(String, String, Vec<String>, Option<std::col
 pub type Toast = Arc<dyn Fn(&str, &str) + Send + Sync>;
 /// agent → the strategy of its automatic account switch (acpira.accountSwitch)
 pub type SwitchPolicy = Arc<dyn Fn(&str) -> SwitchStrategy + Send + Sync>;
+/// Hears the account list after every change (`subscribe`)
+pub type AccountsListener = Arc<dyn Fn(Vec<AccountInfo>) + Send + Sync>;
+
 
 pub struct AccountManager {
   store: Arc<AccountStore>,
@@ -72,7 +75,7 @@ pub struct AccountManager {
   log: LogFn,
   run_in_terminal: RunInTerminal,
   toast: Toast,
-  listeners: parking_lot::Mutex<Vec<(u64, Arc<dyn Fn(Vec<AccountInfo>) + Send + Sync>)>>,
+  listeners: parking_lot::Mutex<Vec<(u64, AccountsListener)>>,
   quotas: parking_lot::Mutex<HashMap<String, AccountQuota>>,
   /// Accounts whose last quota read failed; cleared by the next successful read
   quota_failures: parking_lot::Mutex<HashMap<String, QuotaFailure>>,
@@ -365,7 +368,7 @@ impl AccountManager {
     }
   }
 
-  pub fn subscribe(&self, f: Arc<dyn Fn(Vec<AccountInfo>) + Send + Sync>) -> u64 {
+  pub fn subscribe(&self, f: AccountsListener) -> u64 {
     let id = self.seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     self.listeners.lock().push((id, f));
     id

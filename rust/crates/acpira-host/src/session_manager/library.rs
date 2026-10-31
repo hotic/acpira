@@ -89,7 +89,9 @@ impl SessionLibrary for SessionManager {
       let meta = DigestMeta { agent_name: &agent_name, live: self.live(&id).is_some_and(|s| s.is_running()), fork_agent: fork_agent.as_deref() };
       Ok(match (args.from, args.to) {
         (None, None) => session_digest::outline(&record, &meta),
-        (from, to) => session_digest::range(&record, &meta, from.unwrap_or(1), to, args.offset.unwrap_or(0), args.detail.as_deref() == Some("full")),
+        (from, to) => {
+          session_digest::range(&record, &meta, from.unwrap_or(1), to, args.offset.unwrap_or(0), args.detail.as_deref() == Some("full"))
+        }
       })
     })
   }
@@ -136,6 +138,40 @@ impl SessionManager {
   /// so a reply still streaming is found a moment later; ChatGPT mirrors have no record here and match by title only
   pub async fn search_sessions(&self, query: &str) -> Vec<SessionHit> {
     self.search.search(self.deps.store.dir().to_path_buf(), query).await
+  }
+
+  /// Peer searches stop at this machine. Their bounded results carry the summaries a narrowed list does not have.
+  pub async fn search_sessions_for(&self, viewer: &Viewer, query: &str) -> Vec<SessionHit> {
+    use crate::store::session_search::{HITS_MAX, fold, terms_of};
+    let terms = terms_of(query);
+    if terms.is_empty() {
+      return vec![];
+    }
+    let hits = self.search_sessions(query).await;
+    if viewer.has_list_scope() {
+      let mut snippets: HashMap<_, _> = hits.into_iter().map(|h| (h.id, h.snippet)).collect();
+      let agents = self.agents();
+      return self
+        .sessions()
+        .into_iter()
+        .filter(|s| !acpira_shared::remote::is_remote_folder(&s.cwd))
+        .filter_map(|s| {
+          let name = agents.iter().find(|a| a.id == s.agent).map_or(s.agent.as_str(), |a| a.name.as_str());
+          let title = fold(&format!("{}\n{name}", s.title));
+          let snippet = snippets.remove(&s.id);
+          (snippet.is_some() || terms.iter().all(|t| title.contains(t))).then(|| SessionHit {
+            id: s.id.clone(),
+            snippet: snippet.unwrap_or_default(),
+            summary: Some(s),
+          })
+        })
+        .take(HITS_MAX)
+        .collect();
+    }
+    let mut hits = hits;
+    let mut known: HashSet<String> = hits.iter().map(|h| h.id.clone()).collect();
+    hits.extend(self.search_hosts(query).await.into_iter().filter(|h| known.insert(h.id.clone())));
+    hits
   }
 
   /// `cwd`: the folder to list for (`folder_for`); nothing to list without one

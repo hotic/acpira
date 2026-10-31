@@ -1,6 +1,7 @@
 import type { AgentId } from './transcript';
 import { sanitizePersonas, type SubagentGroup, type SubagentPersona } from './subagents';
 import { isLanguage, type Language, type Locale } from './i18n';
+import { SSH_LOCAL_AGENTS } from './remote';
 
 // Hidden option families (acpira.hiddenOptions): agent → configOption id → source-qualified family keys (legacy family names remain readable; see models.ts) kept out of the composer menus.
 // Long lists (Devin's 210 models) are trimmed to what is actually used via this; the option currently selected is never hidden
@@ -108,6 +109,9 @@ export interface SettingsView {
   notifySystem: boolean;
   // Agents whose Plan mode approves tool requests without a card (plan approvals and adapter safety asks still ask)
   planAutoApprove: AgentId[];
+  // Agents that run on this machine in a folder on an SSH host, only their tools on the host (SSH_LOCAL_AGENTS); the rest
+  // run in the host's own engine. The built-in agent by default
+  sshLocalAgents: AgentId[];
   // Cross-harness subagents: kept in ~/.acpira/subagents.json (shared by every window and IDE), not a host setting
   subagents: SubagentPersona[];
   // Groups of those personas, summoned together (the same file's `groups`)
@@ -129,8 +133,8 @@ export interface SettingsView {
 }
 
 // Keys the webview may write back; the host maps them onto acpira.<key> at user scope
-export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing' | 'shareEditorSelection' | 'steerQueued' | 'notifySound' | 'notifySystem' | 'planAutoApprove' | 'subagents' | 'agentCpuCap' | 'proxy' | 'openFilesWith' | 'desktopLayout' | 'panelScope' | 'panelFiles' | 'panelTerminal' | 'panelBrowser';
-export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing', 'shareEditorSelection', 'steerQueued', 'notifySound', 'notifySystem', 'planAutoApprove', 'subagents', 'agentCpuCap', 'proxy', 'openFilesWith', 'desktopLayout', 'panelScope', 'panelFiles', 'panelTerminal', 'panelBrowser'];
+export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing' | 'shareEditorSelection' | 'steerQueued' | 'notifySound' | 'notifySystem' | 'planAutoApprove' | 'sshLocalAgents' | 'subagents' | 'agentCpuCap' | 'proxy' | 'openFilesWith' | 'desktopLayout' | 'panelScope' | 'panelFiles' | 'panelTerminal' | 'panelBrowser';
+export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing', 'shareEditorSelection', 'steerQueued', 'notifySound', 'notifySystem', 'planAutoApprove', 'sshLocalAgents', 'subagents', 'agentCpuCap', 'proxy', 'openFilesWith', 'desktopLayout', 'panelScope', 'panelFiles', 'panelTerminal', 'panelBrowser'];
 
 // The settings each shell keeps in its own store, since they follow the window's shape: the session list's side and scope
 // (the desktop app always lists every project on the left) and sharing the editor selection (IDE shells only). Every
@@ -147,7 +151,7 @@ export function isSharedSetting(key: string): boolean {
 export const MIN_COMPACT_AT_TOKENS = 10_000;
 
 // Agents whose settings page offers the Plan mode auto-approval switch: Claude Code 2.1.284 asks for every tool call in
-// Plan mode under the SDK (docs/dev/agent-quirks.md)
+// Plan mode under the SDK (docs/dev/agent-quirks-claude.md)
 export const PLAN_AUTO_APPROVE_AGENTS: readonly AgentId[] = ['claude'];
 
 export const DEFAULT_SETTINGS: SettingsView = {
@@ -173,6 +177,7 @@ export const DEFAULT_SETTINGS: SettingsView = {
   notifySound: true,
   notifySystem: false,
   planAutoApprove: [],
+  sshLocalAgents: [SSH_LOCAL_AGENTS[0]!],
   subagents: [],
   subagentGroups: [],
   agentCpuCap: AGENT_CPU_CAP.default,
@@ -235,6 +240,8 @@ export function sanitizeSetting<K extends SettingKey>(key: K, value: unknown): S
     case 'disabledAgents':
     case 'planAutoApprove':
       return idList(value) as SettingsView[K];
+    case 'sshLocalAgents':
+      return (Array.isArray(value) ? idList(value).filter(a => SSH_LOCAL_AGENTS.includes(a)) : fallback) as SettingsView[K];
     case 'subagents':
       return sanitizePersonas(value) as SettingsView[K];
     case 'proxy': {

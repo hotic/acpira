@@ -50,11 +50,6 @@ export function useFolderHost(folder: string | undefined): { alias: string; view
   return remote ? { alias: remote.alias, view } : undefined;
 }
 
-/** Outside React (a callback): the host's run mode as last pushed */
-export function connectionOf(alias: string): ConnectionView | undefined {
-  return connections?.find(c => c.alias === alias);
-}
-
 /** Every op answers with a pushed list; a failure also shows the engine's toast */
 export function connectionOp(op: ConnectionOp) {
   post({ type: 'connectionOp', op });

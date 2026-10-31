@@ -113,17 +113,15 @@ describe('session patches over the sidecar', () => {
     const s = new Shell(home, cwd);
     shells.push(s);
     await s.hello();
-    s.send({ type: 'attachView', viewId: 'P', host: 'sidebar' });
-    s.view('P', { type: 'ready', patches: true });
-    const init = await s.hostMsg('P', 'init');
-    const id = init.state.active!.id;
     // The page as App.tsx keeps it
-    let held: SessionView | undefined = init.state.active;
+    let held: SessionView | undefined;
     let resyncs = 0;
     const sizes: { type: string; bytes: number }[] = [];
+    // Init and its first patch can arrive in one stdout chunk; listen before ready so neither is missed.
     s.onMessage(m => {
       if (m.type !== 'hostMessage' || m.viewId !== 'P') return;
       const msg: HostMsg = m.message;
+      if (msg.type === 'init') held = msg.state.active;
       if (msg.type === 'session') { held = applySession(held, msg.session); sizes.push({ type: 'session', bytes: JSON.stringify(msg).length }); }
       if (msg.type === 'sessionPatch') {
         sizes.push({ type: 'sessionPatch', bytes: JSON.stringify(msg).length });
@@ -132,6 +130,10 @@ describe('session patches over the sidecar', () => {
         else { resyncs++; s.view('P', { type: 'resync' }); }
       }
     });
+    s.send({ type: 'attachView', viewId: 'P', host: 'sidebar' });
+    s.view('P', { type: 'ready', patches: true });
+    const init = await s.hostMsg('P', 'init');
+    const id = init.state.active!.id;
     const idleAt = (turns: number) => () => !!held && held.id === id && !held.running && held.turns.length === turns;
     const until = async (ok: () => boolean) => { for (let i = 0; i < 300 && !ok(); i++) await new Promise(r => setTimeout(r, 50)); expect(ok()).toBe(true); };
 

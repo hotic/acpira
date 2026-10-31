@@ -1,7 +1,7 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type RefObject } from 'react';
 import { flushSync } from 'react-dom';
 import { Check, CircleAlert, Network, Paperclip, Settings2, X } from 'lucide-react';
-import type { ExternalSessionInfo, AccountInfo, AgentId, AgentInfo, ForkOrigin, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, GoalAction, NativeSessionInfo, PermissionBlock, PlanDocumentBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionGoal, SessionStatus, SessionSummary, SlashCommand, Turn, Usage, UserTurn } from '@acpira/shared/transcript';
+import type { ExternalSessionInfo, AccountInfo, AgentId, AgentInfo, ForkOrigin, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, GoalAction, ImageDraft, NativeSessionInfo, PermissionBlock, PlanDocumentBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionGoal, SessionStatus, SessionSummary, SlashCommand, Turn, Usage, UserTurn } from '@acpira/shared/transcript';
 import type { SubagentSummary } from '@acpira/shared/subagents';
 import type { ModelShapes } from '@acpira/shared/modelShapes';
 import type { HiddenMap, SessionScope } from '@acpira/shared/settings';
@@ -12,6 +12,7 @@ import { t, useLocale } from '../i18n';
 import { ShellLayerContext } from '../ui/Popover';
 import { useShellLayer } from '../ui/Overlay';
 import { cn } from '../ui/cn';
+import { agentUpdates } from '../ui/UpdateDot';
 import { DockStack } from '../ui/DockStack';
 import { Chip, IconButton } from '../ui/Button';
 import { useScrollReveal } from '../ui/useScrollReveal';
@@ -24,7 +25,7 @@ import { Header } from './Header';
 import { SessionList, projectName } from './SessionList';
 import { isChatFolder, type MoveTarget } from './sessionTree';
 import { AgentMessage } from './Turns';
-import { HistoryComposerContext, HistoryContext, HistoryMessage } from './HistoryMessage';
+import { HistoryComposerContext, HistoryContext, HistoryMessage, shownReports } from './HistoryMessage';
 import { QuoteToolbar } from './QuoteToolbar';
 import { Composer, type ComposerProps } from './Composer';
 import type { MentionPersona } from './Mention';
@@ -48,10 +49,10 @@ import { heldPrompt } from './heldPrompt';
 import { promptHistory } from './promptHistory';
 import { compactingNow } from './usageBreakdown';
 import { BUILTIN_AGENT_ID } from '@acpira/shared/providers';
-import { imageMimeOf } from '@acpira/shared/attachments';
+import { imageMimeOf, stagedFileBlob } from '@acpira/shared/attachments';
+import { mediaKind } from '../panel/files';
 import { launchable } from '@acpira/shared/agentOrder';
-import { LOCAL_RUN_AGENTS, parseRemoteFolder } from '@acpira/shared/remote';
-import { connectionOf, useFolderHost } from '../remote/api';
+import { parseRemoteFolder, SSH_LOCAL_AGENTS } from '@acpira/shared/remote';
 import { RemoteFolderDialog } from '../remote/RemoteFolderDialog';
 import { COLUMN_HIDDEN_KEY, DesktopContext, desktopOS, macOS, pageCaption, useShellCommands, useShellToasts } from '../desktop';
 import { droppedPathResolver, hostDragPaths, setWebviewState, webviewState } from '../vscodeApi';
@@ -94,8 +95,8 @@ export interface ShellHandlers {
   diffSource?: (sessionId: string, toolCallId: string, nth: number, subagentId?: string) => Promise<FullDiffSource | undefined>;
   stop: () => void;
   permission: (sessionId: string, blockId: string, optionId: string) => void;
-  // The question card was closed: answers keyed by question id, or skip
-  answer?: (sessionId: string, blockId: string, answers: QuestionAnswers, skip?: boolean) => void;
+  // The question card was closed: answers keyed by question id, or skip; `images` by question id for a card that takes them
+  answer?: (sessionId: string, blockId: string, answers: QuestionAnswers, skip?: boolean, images?: Record<string, ImageDraft[]>) => void;
   buildPlan?: (sessionId: string, planId: string, model?: { configId: string; value: string }, optionId?: string) => void;
   openPlan?: (sessionId: string, planId: string) => void;
   openFile?: (sessionId: string, path: string, line?: number, reveal?: boolean) => void;
@@ -134,6 +135,8 @@ export interface ShellHandlers {
   refreshQuota?: (agent: AgentInfo['id']) => void;
   // AgentInfo.credentialsLocked: unlock the credential store in a host terminal
   unlockCredentials?: (agent: AgentInfo['id']) => void;
+  // Run the agent on this machine in folders on SSH hosts from now on (`sshLocalAgents`) and start a session here in `cwd`
+  runHere?: (agent: AgentInfo['id'], cwd: string) => void;
   compact: () => void;
   login: (methodId?: string) => void;
   retry: () => void;
@@ -218,6 +221,8 @@ export interface ShellProps {
   shareEditorSelection?: boolean;
   // Settings `steerQueued` on an agent that can steer: a queued row's send button steers it into the running turn
   steerQueued?: boolean;
+  // Settings `sshLocalAgents`: the agents that run on this machine in a folder on an SSH host
+  sshLocalAgents?: string[];
   // Settings → Subagents, the enabled ones: offered in the composer's @ list and summon menu
   personas?: MentionPersona[];
   sessions: SessionSummary[];
@@ -598,18 +603,10 @@ export function Shell(p: ShellProps) {
   // The start page shows while the session on screen has not said a word
   const startPage = desktop && !p.noProject && !p.external && !!p.activeSessionId && !p.turns.length && !p.queued?.length;
   const currentAgent = launchable(p.agents).some(x => x.id === p.agent.id && x.available !== false) ? p.agent.id : undefined;
-  // Under local run only the built-in agent and Claude Code work in a folder on an SSH host (LOCAL_RUN_AGENTS; the engine
-  // refuses others with host.remoteBuiltinOnly), so a session started there keeps one of them and otherwise takes the
-  // first that is installed; under remote run the host's own engine runs them all, and a host the list does not know yet
-  // counts as local run, the default
-  const localReady = LOCAL_RUN_AGENTS.find(id => p.agents.some(a => a.id === id && a.available !== false));
-  const agentIn = useCallback((cwd: string | undefined, agent: AgentId | undefined) => {
-    const remote = cwd ? parseRemoteFolder(cwd) : undefined;
-    if (!remote || connectionOf(remote.alias)?.mode === 'remote' || !localReady) return agent;
-    return agent && LOCAL_RUN_AGENTS.includes(agent) ? agent : localReady;
-  }, [localReady]);
-  const startHost = useFolderHost(startPage ? p.cwd : undefined);
-  const startOnly = startHost && startHost.view?.mode !== 'remote' && localReady ? [...LOCAL_RUN_AGENTS] : undefined;
+  // A session in a folder on an SSH host, of an agent that runs in the host's engine but could run here (the host lacks
+  // its CLI or its login, or cannot reach the vendor): its notice offers to run it on this machine instead
+  const runHere = on.runHere && p.cwd && parseRemoteFolder(p.cwd) && SSH_LOCAL_AGENTS.includes(p.agent.id) && !p.sshLocalAgents?.includes(p.agent.id)
+    ? () => on.runHere!(p.agent.id, p.cwd!) : undefined;
   const [fresh, setFresh] = useState<string>();
   useEffect(() => {
     if (!fresh) return;
@@ -621,10 +618,10 @@ export function Shell(p: ShellProps) {
   const openProject = useCallback((cwd: string) => {
     on.categoryOp?.({ op: 'addProject', cwd });
     unfold(cwd);
-    on.newSession(agentIn(cwd, currentAgent), undefined, cwd);
+    on.newSession(currentAgent, undefined, cwd);
     setFresh(cwd);
     closeDrawer();
-  }, [on.categoryOp, on.newSession, unfold, currentAgent, agentIn, closeDrawer]);
+  }, [on.categoryOp, on.newSession, unfold, currentAgent, closeDrawer]);
   const addProject = useCallback(() => { void on.pickFolder?.().then(dir => { if (dir) openProject(dir); }); }, [on.pickFolder, openProject]);
   // The column's "remote folder" entries: a folder on that host through the remote folder picker, or a new host on the
   // settings page
@@ -655,8 +652,8 @@ export function Shell(p: ShellProps) {
     // Already on that project's start page: the composer takes the focus instead
     if (startPage && dir === p.cwd) { root.current?.querySelector<HTMLTextAreaElement>('[data-start-dock] textarea')?.focus(); return; }
     unfold(dir);
-    on.newSession(agentIn(dir, currentAgent), undefined, dir);
-  }, [p.cwd, p.chats, chatHere, newChat, closeDrawer, addProject, startPage, unfold, on.newSession, currentAgent, agentIn]);
+    on.newSession(currentAgent, undefined, dir);
+  }, [p.cwd, p.chats, chatHere, newChat, closeDrawer, addProject, startPage, unfold, on.newSession, currentAgent]);
   const newHere = useCallback(() => newIn(), [newIn]);
   // The start page starts its empty session over with another agent or in another project (the engine drops the empty one
   // it leaves); what was typed there moves to the new one before its composer mounts
@@ -764,9 +761,11 @@ export function Shell(p: ShellProps) {
   // settings sit at its foot, and the chat header drops its own plus and settings while the column is docked. The files
   // layout docks it at the right edge with the same rows and keeps the gear at the bottom-left, under the explorer
   const nav = position === 'left';
+  // A boolean, so a pushed agent list that changes nothing here keeps the cached gear
+  const agentUpdate = agentUpdates(p.agents);
   const gear = useMemo(() => (desktop && p.onOpenSettings
-    ? <AppMenu onOpenSettings={p.onOpenSettings} onOpenExternal={on.openExternal} quick={p.quickSettings} />
-    : undefined), [desktop, p.onOpenSettings, on.openExternal, p.quickSettings]);
+    ? <AppMenu onOpenSettings={p.onOpenSettings} onOpenExternal={on.openExternal} quick={p.quickSettings} agentUpdate={agentUpdate} />
+    : undefined), [desktop, p.onOpenSettings, on.openExternal, p.quickSettings, agentUpdate]);
   const openSession = useCallback((id: string) => { on.selectSession(id); closeDrawer(); }, [on.selectSession, closeDrawer]);
   const sessionsPanel = (
     <SessionList
@@ -899,8 +898,9 @@ export function Shell(p: ShellProps) {
     return (path: string, blob?: string, mimeType?: string) => {
       const name = path.split(/[\\/]/).pop() || t('common.image');
       const mime = mimeType ?? imageMimeOf(path);
-      if (blob) {
-        setFilePreview({ src: blobUrl(blob), name, mimeType: mime, path });
+      const staged = blob ?? stagedFileBlob(path, sid);
+      if (staged) {
+        setFilePreview({ src: blobUrl(staged), name, mimeType: mime, path });
         return;
       }
       if (!on.imageBlob) {
@@ -922,6 +922,12 @@ export function Shell(p: ShellProps) {
         return;
       }
       const resolved = resolveSessionPath(path, undefined, p.home);
+      const staged = stagedFileBlob(resolved, sid);
+      const kind = staged && mediaKind(staged);
+      if (filePanelRoot && staged && kind && blobUrl) {
+        panel.openFile(filePanelRoot, resolved, line, { kind, src: blobUrl(staged) });
+        return;
+      }
       const rel = filePanelRoot ? projectPath(filePanelRoot, resolved) : undefined;
       if (filePanelRoot && rel !== undefined) {
         if (/\.plan\.md$/i.test(rel)) preferMarkdownPreview();
@@ -937,7 +943,7 @@ export function Shell(p: ShellProps) {
       }
       on.openFile?.(sid, path, line);
     };
-  }, [p.activeSessionId, on.openFile, filePanelRoot, previewImage, p.home]);
+  }, [p.activeSessionId, on.openFile, filePanelRoot, previewImage, p.home, blobUrl]);
   const activeCwdRef = useRef<string | undefined>(undefined);
   activeCwdRef.current = p.sessions.find(s => s.id === p.activeSessionId)?.cwd || p.cwd;
   const homeRef = useRef(p.home);
@@ -1111,7 +1117,7 @@ export function Shell(p: ShellProps) {
             <Header
               title={desktop && p.noProject ? '' : p.title}
               // Desktop start page: the project after the title is a dropdown that starts the empty session over there
-              projectPick={start.shown && p.cwd ? <ProjectPick cwd={p.cwd} projects={startProjects} home={p.home} onPick={cwd => startOver(agentIn(cwd, p.agent.id) ?? p.agent.id, cwd)} onOpenOther={on.pickFolder ? addProject : undefined}
+              projectPick={start.shown && p.cwd ? <ProjectPick cwd={p.cwd} projects={startProjects} home={p.home} onPick={cwd => startOver(p.agent.id, cwd)} onOpenOther={on.pickFolder ? addProject : undefined}
                 chat={chatHere} chats={p.chats} onChat={p.chats && !chatHere ? startChat : undefined} /> : undefined}
               placeName={chatHere ? t('session.group.chats') : undefined}
               sessions={p.sessions}
@@ -1189,7 +1195,9 @@ export function Shell(p: ShellProps) {
                 </div>
                 {/* Every surface under the thread (question, alert, notice, queue, composer) shares the DockStack rhythm; none carries its own outer margin */}
                 <DockStack className={cn(wide && a.composer === 'island' && 'mx-auto w-full max-w-[calc(var(--content-w)+2*var(--page))]')} data-start-dock={desktop || undefined}>
-                  {question && on.answer && p.activeSessionId && <Questions key={question.id} block={question} subtitle={questionSubtitle} onAnswer={(blockId, answers, skip) => on.answer!(p.activeSessionId!, blockId, answers, skip)} />}
+                  {/* Pick who answers before handling that agent's notice. Keep it mounted across empty-session switches. */}
+                  {start.mounted && <StartPicker open={start.shown} agents={p.agents} current={p.agent.id} onPick={agent => startOver(agent)} />}
+                  {question && on.answer && p.activeSessionId && <Questions key={question.id} block={question} subtitle={questionSubtitle} onAnswer={(blockId, answers, skip, images) => on.answer!(p.activeSessionId!, blockId, answers, skip, images)} />}
                   {alertTurn && (
                     <Alert
                       turn={alertTurn}
@@ -1208,6 +1216,7 @@ export function Shell(p: ShellProps) {
                     onSelectAccount={on.selectAccount} onAddAccount={via => on.addAccount(p.agent.id, via)}
                     onUnlock={on.unlockCredentials && (() => on.unlockCredentials?.(p.agent.id))}
                     onTakeOver={p.canTakeOver ? on.takeOver : undefined}
+                    onRunHere={runHere}
                   />}
                   {held.queued?.length && p.activeSessionId
                     ? <Queue key={`queue:${p.activeSessionId}`} items={held.queued} composer={composerProps} blobUrl={blobUrl}
@@ -1218,9 +1227,6 @@ export function Shell(p: ShellProps) {
                           edit: (id, text, kept, drafts) => on.editQueued!(p.activeSessionId!, id, text, kept, drafts),
                         } : undefined} />
                     : null}
-                  {/* Desktop start page: who answers, right above the composer; it stays mounted while the empty session is
-                      started over with another agent, so the segments slide instead of the page replaying its entrance */}
-                  {start.mounted && <StartPicker open={start.shown} agents={p.agents} current={p.agent.id} only={startOnly} onPick={agent => startOver(agent)} />}
                   {/* Sibling keys include the component role; duplicate session-only keys leave stale queue rows after reconciliation. */}
                   {/* The sidekick is the lead's own second hand: the model chip lights its half while it works, and only
                       summoned helpers count towards the graph's entry */}
@@ -1248,7 +1254,7 @@ export function Shell(p: ShellProps) {
                   onCancel={inspectNode.controls.cancel && on.cancelSubagent ? () => on.cancelSubagent!(p.activeSessionId!, inspectNode.id) : undefined}
                   onPermission={(blockId, optionId) => on.permission(p.activeSessionId!, blockId, optionId)}
                   question={inspectNode.question}
-                  onAnswer={on.answer ? (blockId, answers, skip) => on.answer!(p.activeSessionId!, blockId, answers, skip) : undefined}
+                  onAnswer={on.answer ? (blockId, answers, skip, images) => on.answer!(p.activeSessionId!, blockId, answers, skip, images) : undefined}
                   wide={wide}
                   blobUrl={blobUrl}
                   diffSource={fetchSubagentDiffSource}
@@ -1431,7 +1437,11 @@ const Thread = memo(function Thread({ session, turns, running, wide, replayKey, 
   const ref = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const bodyRef = useMergedRefs(contentRef, body);
-  const follow = useBottomFollow(ref, body, replayKey, [turns, running]);
+  const lastPrompt = useMemo(() => {
+    for (let i = turns.length - 1; i >= 0; i--) if (turns[i]!.role === 'user') return turns[i];
+    return undefined;
+  }, [turns]);
+  const follow = useBottomFollow(ref, body, replayKey, [turns, running], lastPrompt);
   // Fade the lower edge while the reader is scrolled away from the bottom (thread-fade): text leaving the view above a
   // borderless dock row (the connecting notice) dissolves instead of being cut off flat. Driven by the follow state rather
   // than useScrollFade, whose content observer would flash the fade for a frame on every streamed chunk before the re-pin
@@ -1543,9 +1553,11 @@ const Thread = memo(function Thread({ session, turns, running, wide, replayKey, 
 });
 
 // A hidden turn that carries the turn before it on (after an account switch, Retry after a failure with output, the
-// workspace gate sending its findings back, or an active goal's next turn)
+// workspace gate sending its findings back, an active goal's next turn, or the sidekick's reply alone coming back: its
+// relay's handback row already shows the return)
 function isContinue(turn: UserTurn): boolean {
-  return turn.auto === true && (turn.autoReason === 'accountSwitch' || turn.autoReason === 'retry' || turn.autoReason === 'gate' || (turn.autoReason === 'goal' && turn.goalContinue === true));
+  return turn.auto === true && (turn.autoReason === 'accountSwitch' || turn.autoReason === 'retry' || turn.autoReason === 'gate' || (turn.autoReason === 'goal' && turn.goalContinue === true)
+    || (turn.autoReason === 'subagents' && shownReports(turn.text).length === 0));
 }
 
 // Outlasts the list page's 320 ms opening (desktop.css): a transition is cut short once its property leaves `transition`

@@ -431,6 +431,11 @@ impl Wire {
           runtime.detach_view(&core);
         }
       }
+      ShellMsg::SetSessionList { view_id, scope } => {
+        if let Some(core) = self.views.get(&view_id) {
+          runtime.manager.set_session_list(&core.viewer, scope);
+        }
+      }
       ShellMsg::WebviewMessage { view_id, message } => match self.views.get(&view_id) {
         Some(core) if self.peer => {
           // A peer's view: the platform requests its handling makes go back to that peer
@@ -604,6 +609,7 @@ fn shell_kind(m: &ShellMsg) -> &'static str {
     ShellMsg::Hello(_) => "hello",
     ShellMsg::AttachView { .. } => "attachView",
     ShellMsg::DetachView { .. } => "detachView",
+    ShellMsg::SetSessionList { .. } => "setSessionList",
     ShellMsg::WebviewMessage { .. } => "webviewMessage",
     ShellMsg::PlatformResponse { .. } => "platformResponse",
     ShellMsg::PlatformEvent { .. } => "platformEvent",

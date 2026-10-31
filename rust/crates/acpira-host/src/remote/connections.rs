@@ -1,9 +1,9 @@
 //! The SSH hosts this machine works on and their helper channels. `connections.json` under ACPIRA_HOME keeps each host's
-//! alias, default run mode, the disabled flag and the machine id seen on the first connection; it is shared by every
+//! alias, the disabled flag and the machine id seen on the first connection; it is shared by every
 //! engine on the machine, so edits go through the file lock and re-read the file first.
 //!
 //! A host connects on demand (an op from the page, or `ensure` from a session). One driver task per host runs the
-//! attempt (resolve, probe, upload when needed, start the helper), then watches the channel and reconnects with a
+//! attempt (resolve, probe, download and upload when needed, start the helper), then watches the channel and reconnects with a
 //! backoff when it drops. Failures only the user can settle (a host key, a locked key, a refusal, another machine behind
 //! the alias, an unsupported platform, no ssh) stop the driver; the rest retry. Every change is pushed to the pages
 
@@ -13,7 +13,7 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use acpira_shared::remote::{
-  ConnectFailure, ConnectStep, ConnectionError, ConnectionOp, ConnectionState, ConnectionView, RemoteDirEntry, RunMode, SshHost, is_alias,
+  ConnectFailure, ConnectStep, ConnectionError, ConnectionOp, ConnectionState, ConnectionView, RemoteDirEntry, SshHost, is_alias,
   normalize_remote_path, parse_remote_folder,
 };
 use anyhow::{Result, anyhow, bail};
@@ -67,8 +67,7 @@ impl Default for ConnectionsOpts {
 #[serde(rename_all = "camelCase")]
 struct Saved {
   alias: String,
-  #[serde(default)]
-  mode: RunMode,
+  // A `mode` left by engines that had a per-host run mode is ignored: the agent decides now (`sshLocalAgents`)
   #[serde(default, skip_serializing_if = "std::ops::Not::not")]
   disabled: bool,
   /// What the first connection found behind the alias (`/etc/machine-id`, the Mac's hardware UUID)
@@ -197,7 +196,6 @@ impl Connections {
       .iter()
       .map(|e| ConnectionView {
         alias: e.saved.alias.clone(),
-        mode: e.saved.mode,
         disabled: e.saved.disabled,
         state: e.live.state,
         step: e.live.step,
@@ -262,7 +260,7 @@ impl Connections {
         // A failure that stopped the driver: only this caller's own fresh attempt may answer it
         (ConnectionState::Error, false) | (ConnectionState::Off, _) if !started => {
           started = true;
-          self.connect(alias, false, false);
+          self.connect(alias, false);
         }
         (ConnectionState::Error, false) => {
           let e = error.map(|e| e.message).unwrap_or_default();
@@ -318,30 +316,23 @@ impl Connections {
 
   pub async fn op(&self, op: ConnectionOp) -> Result<()> {
     match op {
-      ConnectionOp::Add { alias, mode } => {
+      ConnectionOp::Add { alias } => {
         if !is_alias(&alias) {
           bail!("\"{alias}\" is not a host name ssh takes");
         }
         let a = alias.clone();
         self
           .edit(move |hosts| match hosts.iter_mut().find(|h| h.alias == a) {
-            Some(h) => {
-              h.mode = mode;
-              h.disabled = false;
-            }
-            None => hosts.push(Saved { alias: a, mode, disabled: false, machine_id: None }),
+            Some(h) => h.disabled = false,
+            None => hosts.push(Saved { alias: a, disabled: false, machine_id: None }),
           })
           .await?;
-        self.connect(&alias, false, false);
+        self.connect(&alias, false);
       }
       ConnectionOp::Remove { alias } => {
         self.stop(&alias, None);
         let a = alias.clone();
         self.edit(move |hosts| hosts.retain(|h| h.alias != a)).await?;
-      }
-      ConnectionOp::SetMode { alias, mode } => {
-        let a = alias.clone();
-        self.edit(move |hosts| hosts.iter_mut().filter(|h| h.alias == a).for_each(|h| h.mode = mode)).await?;
       }
       ConnectionOp::SetDisabled { alias, disabled } => {
         if disabled {
@@ -350,12 +341,12 @@ impl Connections {
         let a = alias.clone();
         self.edit(move |hosts| hosts.iter_mut().filter(|h| h.alias == a).for_each(|h| h.disabled = disabled)).await?;
       }
-      ConnectionOp::Connect { alias, accept_new_machine, fetch_build } => {
+      ConnectionOp::Connect { alias, accept_new_machine } => {
         let disabled = self.hosts.lock().iter().find(|e| e.saved.alias == alias).map(|e| e.saved.disabled);
         match disabled {
           None => bail!("{alias} is not among the connections"),
           Some(true) => bail!("the connection to {alias} is turned off"),
-          Some(false) => self.connect(&alias, accept_new_machine, fetch_build),
+          Some(false) => self.connect(&alias, accept_new_machine),
         }
       }
       ConnectionOp::Disconnect { alias } => {
@@ -383,9 +374,8 @@ impl Connections {
     }
   }
 
-  /// Start a fresh driver for the host, replacing any running one. `fetch_build`: the user asked for the host's
-  /// platform build to be downloaded when this machine has none
-  fn connect(&self, alias: &str, accept_new_machine: bool, fetch_build: bool) {
+  /// Start a fresh driver for the host, replacing any running one
+  fn connect(&self, alias: &str, accept_new_machine: bool) {
     let Some(me) = self.me.upgrade() else { return };
     let mut hosts = self.hosts.lock();
     let Some(e) = hosts.iter_mut().find(|e| e.saved.alias == alias) else { return };
@@ -397,7 +387,7 @@ impl Connections {
     e.live.detail = None;
     e.live.error = None;
     let alias = alias.to_owned();
-    e.live.driver = Some(tokio::spawn(async move { me.drive(alias, generation, accept_new_machine, fetch_build).await }).abort_handle());
+    e.live.driver = Some(tokio::spawn(async move { me.drive(alias, generation, accept_new_machine).await }).abort_handle());
   }
 
   /// Stop the host's driver and channel; `error` leaves it in the error state instead of off
@@ -421,11 +411,11 @@ impl Connections {
     true
   }
 
-  async fn drive(self: Arc<Self>, alias: String, generation: u64, mut accept_new_machine: bool, fetch_build: bool) {
+  async fn drive(self: Arc<Self>, alias: String, generation: u64, mut accept_new_machine: bool) {
     let mut delay = self.opts.retry_base;
     let mut force_upload = false;
     loop {
-      match self.attempt(&alias, generation, accept_new_machine, force_upload, fetch_build).await {
+      match self.attempt(&alias, generation, accept_new_machine, force_upload).await {
         Ok(client) => {
           accept_new_machine = false;
           force_upload = false;
@@ -502,7 +492,7 @@ impl Connections {
     }
   }
 
-  async fn attempt(&self, alias: &str, generation: u64, accept_new_machine: bool, force_upload: bool, fetch_build: bool) -> Result<RemoteClient, Failure> {
+  async fn attempt(&self, alias: &str, generation: u64, accept_new_machine: bool, force_upload: bool) -> Result<RemoteClient, Failure> {
     use ConnectFailure as K;
     use ConnectStep as S;
     let stale = || Failure::new(K::Other, S::Ssh, "superseded");
@@ -567,8 +557,9 @@ impl Connections {
 
     let binary = match (self.opts.binary)(&probe.platform).or_else(|| super::fetch::installed(&self.builds, &version, &probe.platform)) {
       Some(b) => b,
-      None if fetch_build => self.fetch_build(alias, generation, &version, &probe.platform).await?,
-      None => return Err(Failure::new(K::Unsupported, S::Probe, format!("no Acpira build for {} on this machine", probe.platform))),
+      // Nothing here for the host's platform: the release build of this version, checked against its SHA256SUMS, as an
+      // app update would be. Users rarely read a "download" step as part of connecting, so it is one
+      None => self.fetch_build(alias, generation, &version, &probe.platform).await?,
     };
     let artifact =
       deploy::prepare(&probe.platform, &binary, &self.cache).await.map_err(|e| Failure::new(K::Unsupported, S::Probe, format!("{e:#}")))?;
@@ -622,7 +613,7 @@ impl Connections {
   }
 
   /// Download the release build for `platform` (step `fetch`, its megabytes as the detail). Any failure is final and
-  /// keeps the `unsupported` kind, so the page offers the download again with the reason beside it
+  /// keeps the `unsupported` kind, so the page offers a retry with the reason beside it
   async fn fetch_build(&self, alias: &str, generation: u64, version: &str, platform: &str) -> Result<PathBuf, Failure> {
     use ConnectFailure as K;
     use ConnectStep as S;

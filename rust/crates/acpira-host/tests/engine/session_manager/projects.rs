@@ -162,8 +162,10 @@ async fn a_folder_on_an_ssh_host_is_a_project_in_one_spelling() {
   std::fs::create_dir_all(real.join("work")).unwrap();
   lab.map_root("/acpira-virtual-host", &real);
   let connections = lab.engine("engine");
-  connections.op(acpira_shared::remote::ConnectionOp::Add { alias: "gen1".into(), mode: acpira_shared::remote::RunMode::Local }).await.unwrap();
+  connections.op(acpira_shared::remote::ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
   let mut opts = Opts::fake(&fake).cwd(&home).projects();
+  // The fake agent runs here like the built-in agent would (`sshLocalAgents`), so the folder checks are this engine's
+  opts.ssh_local_agents.lock().unwrap().push("fake".into());
   opts.remote = Some(connections.clone());
   let m = Mgr::new(&dir.path().join("sessions"), opts);
   m.init().await;
@@ -179,10 +181,10 @@ async fn a_folder_on_an_ssh_host_is_a_project_in_one_spelling() {
   assert!(m.toasts().iter().any(|t| t.contains("nope")), "{:?}", m.toasts());
   assert_eq!(m.active_id(), None);
 
-  // There: the session takes the canonical folder, and an agent whose tools stay here refuses to start in it
+  // There: the session takes the canonical folder, and an agent that cannot run its tools on a host refuses to start here
   m.handle(json!({ "type": "newSession", "cwd": "ssh://gen1/acpira-virtual-host/work/" })).await;
   assert_eq!(cwd_of(&m), json!(canonical));
-  until(|| m.active().is_some_and(|v| v["error"].as_str().is_some_and(|e| e.contains("local run"))), 5000).await;
+  until(|| m.active().is_some_and(|v| v["error"].as_str().is_some_and(|e| e.contains("not added"))), 5000).await;
   connections.dispose();
 }
 

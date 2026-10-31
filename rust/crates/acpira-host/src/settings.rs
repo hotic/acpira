@@ -22,12 +22,12 @@ use acpira_shared::shared_config::{SharedAction, SharedView};
 
 pub struct SettingsDeps {
   pub agent_config_path: std::path::PathBuf,
-  pub read: Arc<dyn Fn(&str) -> Option<Value> + Send + Sync>,
+  pub read: crate::util::Lookup<Value>,
   pub write: Arc<dyn Fn(String, Value) -> BoxFuture<Result<()>> + Send + Sync>,
   pub host_language: Arc<dyn Fn() -> String + Send + Sync>,
   pub registry: Arc<dyn Fn() -> Arc<AgentRegistry> + Send + Sync>,
-  pub runtime_info: Arc<dyn Fn(&str) -> Option<AgentRuntimeInfo> + Send + Sync>,
-  pub health: Arc<dyn Fn(&str) -> Option<AgentHealth> + Send + Sync>,
+  pub runtime_info: crate::util::Lookup<AgentRuntimeInfo>,
+  pub health: crate::util::Lookup<AgentHealth>,
   pub home: Arc<dyn Fn() -> String + Send + Sync>,
   pub shared: Arc<SharedConfig>,
   /// The persona file behind the `subagents` key (`relay/roster.rs`)
@@ -82,6 +82,7 @@ impl SettingsCenter {
       notify_sound: self.read("notifySound").as_bool().unwrap_or(true),
       notify_system: self.read("notifySystem").as_bool().unwrap_or(false),
       plan_auto_approve: list("planAutoApprove"),
+      ssh_local_agents: list("sshLocalAgents"),
       subagents: self.deps.roster.list(),
       subagent_groups: self.deps.roster.groups(),
       agent_cpu_cap: self.read("agentCpuCap").as_i64().unwrap_or(acpira_shared::settings::AGENT_CPU_CAP.2),
