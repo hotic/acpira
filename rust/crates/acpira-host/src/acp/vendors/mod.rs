@@ -9,6 +9,7 @@ pub mod claude_remote;
 pub mod claude_retry;
 pub mod claude_thinking;
 pub mod claude_ultracode;
+pub mod claude_wakeup;
 pub mod claude_workflow;
 pub mod claude_workflow_log;
 pub mod claude_window;

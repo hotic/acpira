@@ -9,11 +9,12 @@ use acpira_shared::transcript::*;
 
 use crate::acp::session::failure::failure_of;
 use crate::acp::session::{AcpSession, Core};
-use crate::acp::transcript::normalize::{activity_of, apply_async_task, apply_goal, apply_update};
+use crate::acp::transcript::normalize::{WAKEUP_VERBS, activity_of, apply_async_task, apply_goal, apply_update, find_tool};
 use crate::acp::transcript::plans::{capture_plan, plan_documents};
 use crate::acp::transcript::subagent_tree::{Route, RouteCtx};
 use crate::acp::transport::wire::{ExtensionUpdate, extension_of};
-use crate::acp::vendors::{claude_autonomous, claude_window, goal, steering};
+use crate::acp::vendors::{claude_autonomous, claude_wakeup, claude_window, goal, steering};
+use crate::util::now_ms;
 
 const RUNNING_KINDS: [&str; 6] =
   ["user_message_chunk", "agent_message_chunk", "agent_thought_chunk", "tool_call", "tool_call_update", "plan"];
@@ -270,6 +271,10 @@ impl AcpSession {
       {
         c.state.controls.mode_id = Some("default".into());
       }
+      // Claude's ScheduleWakeup: its row's packets set or cancel the session's pending wakeup
+      if self.vendor.autonomous_cycles() && !c.replaying && is_wakeup_row(&c.state.turns, tool_call_id) && c.wake.observe(&u, now_ms()) {
+        self.watch_wake(&c);
+      }
     }
     if c.phase.running {
       let activity = activity_of(&c.state.turns);
@@ -285,6 +290,22 @@ impl AcpSession {
     if reevaluate {
       self.after_prompt(false, TurnStop::EndTurn);
     }
+  }
+
+  /// The list reads the pending wakeup at every push, but past its grace nothing else would push: a wakeup that never
+  /// fired (the CLI dropped it) leaves the background state here
+  fn watch_wake(self: &Arc<Self>, c: &Core) {
+    let Some(at) = c.wake.at else { return };
+    let me = self.clone();
+    tokio::spawn(async move {
+      let wait = (at + claude_wakeup::GRACE_MS - now_ms()).max(0);
+      tokio::time::sleep(std::time::Duration::from_millis(wait as u64)).await;
+      let mut c = me.core.lock();
+      if c.wake.at == Some(at) {
+        c.wake.at = None;
+        me.touch(&mut c);
+      }
+    });
   }
 
   /// An AIR async task lands on the transcript of the session whose stream carried it
@@ -343,4 +364,11 @@ pub(crate) fn current_turn_index(c: &Core) -> usize {
     Some(Turn::Agent(_)) => c.state.turns.len() - 1,
     _ => c.state.turns.len(),
   }
+}
+
+/// The row of a Claude `ScheduleWakeup` call, as `merge_tool` named it
+fn is_wakeup_row(turns: &[Turn], id: &str) -> bool {
+  find_tool(turns, id).is_some_and(|(ti, bi)| {
+    matches!(turns[ti].as_agent().and_then(|a| a.blocks.get(bi)), Some(AgentBlock::ToolCall(tc)) if tc.verb_key.as_deref().is_some_and(|k| WAKEUP_VERBS.contains(&k)))
+  })
 }

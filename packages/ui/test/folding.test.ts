@@ -10,6 +10,14 @@ const run: ToolCallBlock = { type: 'tool_call', id: 'run', kind: 'execute', verb
 afterEach(() => setLocale('en'));
 
 describe('Codex process folding', () => {
+  it('names edited files from their diffs in older transcripts with a generic or missing target', () => {
+    const edit: ToolCallBlock = { type: 'tool_call', id: 'edit', kind: 'edit', verb: 'Edit', target: 's', status: 'completed',
+      content: { type: 'diff', lines: [], source: { path: '/repo/docs/TASKS.md', omitted: true } } };
+    expect(toolTarget(edit)).toBe('TASKS.md');
+    expect(toolTarget({ ...edit, target: undefined })).toBe('TASKS.md');
+    expect(toolTarget({ ...edit, contents: [edit.content!, { type: 'diff', lines: [], source: { path: 'C:\\repo\\open.rs', omitted: true } }] })).toBe('TASKS.md, open.rs');
+    expect(toolTarget({ ...edit, content: undefined })).toBe('s');
+  });
   it('localizes known plan-mode targets in both tool rows and activity without translating commands or paths', () => {
     const plan: ToolCallBlock = { type: 'tool_call', id: 'plan', kind: 'switch_mode', verb: 'Switch mode', target: 'Approve Plan', status: 'pending' };
     setLocale('zh-CN');

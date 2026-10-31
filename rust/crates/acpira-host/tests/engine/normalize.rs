@@ -29,6 +29,22 @@ fn block(s: &NormalizeState, turn: usize, i: usize) -> Value {
 
 const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
+#[test]
+fn generic_patch_titles_take_the_actual_file_names_from_diffs() {
+  let mut s = state();
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "patch", "kind": "edit", "title": "Edit files", "status": "pending" }));
+  assert_ne!(block(&s, 0, 0)["target"], "s");
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "patch", "status": "completed", "locations": [], "content": [
+    { "type": "diff", "path": "/repo/docs/TASKS.md", "oldText": "old", "newText": "new" },
+    { "type": "diff", "path": "/repo/src/open.rs", "oldText": "before", "newText": "after" }
+  ] }));
+  expect_match(block(&s, 0, 0), json!({ "target": "TASKS.md, open.rs" }));
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "patch", "status": "completed" }));
+  assert_eq!(block(&s, 0, 0)["target"], "TASKS.md, open.rs");
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "read-file", "kind": "read", "title": "Read file.ts" }));
+  assert_eq!(block(&s, 0, 1)["target"], "file.ts");
+}
+
 fn saver(f: impl Fn(&str, &str) -> Option<String> + Send + Sync + 'static) -> Option<ImageSaver> {
   Some(Arc::new(f))
 }
@@ -1174,6 +1190,29 @@ fn the_host_show_image_tool_becomes_an_image_row_for_claude_and_codex_wire_shape
 }
 
 #[test]
+fn show_video_survives_adapter_shapes_and_titleless_completion_without_becoming_an_image() {
+  for (title, nested) in [("mcp__acpira__show_video", false), ("mcp.acpira.show_video", true), ("acpira_show_video", false), ("show_video", false)] {
+    let mut s = state();
+    s.ctx.save_image_file = Some(Arc::new(|_: &str| Some("saved.mp4".into())));
+    let args = json!({ "path": "/tmp/recording.mp4", "caption": "Panel interaction" });
+    let raw = if nested { json!({ "server": "acpira", "tool": "show_video", "arguments": args }) } else { args };
+    apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "v", "title": title, "kind": "execute", "status": "pending", "rawInput": raw }));
+    expect_match(block(&s, 0, 0), json!({ "verbKey": "verb.showVideo", "kind": "other", "target": "Panel interaction" }));
+    expect_absent(block(&s, 0, 0), "content");
+    apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "v", "status": "completed", "kind": "execute", "locations": [],
+      "content": [{ "type": "content", "content": { "type": "text", "text": "Shown." } }] }));
+    expect_match(block(&s, 0, 0), json!({ "kind": "other", "contents": [
+      { "type": "image", "blob": "saved.mp4", "mimeType": "video/mp4", "uri": "/tmp/recording.mp4" }, { "type": "text", "text": "Shown." },
+    ] }));
+    // Unknown verbs are plain strings and the content shape remains readable by older engines.
+    let row: acpira_shared::transcript::ToolCallBlock = serde_json::from_value(block(&s, 0, 0).clone()).unwrap();
+    assert_eq!(row.verb_key.as_deref(), Some("verb.showVideo"));
+    apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "failed", "title": title, "status": "failed", "rawInput": { "path": "/tmp/no.mp4" } }));
+    expect_absent(block(&s, 0, 1), "content");
+  }
+}
+
+#[test]
 fn the_host_show_widget_tool_reads_its_html_into_the_row_in_every_adapter_naming() {
   let mut s = state();
   s.ctx.save_image_file = Some(Arc::new(|p: &str| Some(format!("b-{}", p.rsplit('/').next().unwrap()))));
@@ -1313,4 +1352,24 @@ fn a_reused_tool_call_id_opens_a_new_row_instead_of_rewriting_an_earlier_turn() 
   let rows = s.turns[2].as_agent().unwrap().blocks.iter().filter(|b| matches!(b, AgentBlock::ToolCall(tc) if tc.id == "call-1")).count();
   assert_eq!(rows, 1);
   expect_match(block(&s, 2, 0), json!({ "type": "tool_call", "id": "call-1", "status": "failed" }));
+}
+
+#[test]
+fn a_scheduled_wakeup_names_the_time_the_session_resumes() {
+  let mut s = state();
+  // claude-agent-acp 0.84.0: the generic row under the tool's name; the result's instructions are for the model
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "w1", "title": "ScheduleWakeup", "kind": "other", "status": "pending",
+    "rawInput": { "delaySeconds": 1800, "prompt": "go on", "reason": "waiting on agents" }, "_meta": { "claudeCode": { "toolName": "ScheduleWakeup" } } }));
+  expect_match(block(&s, 0, 0), json!({ "verbKey": "verb.wakeup", "kind": "other" }));
+  expect_absent(block(&s, 0, 0), "target");
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "w1", "status": "completed",
+    "content": [{ "type": "content", "content": { "type": "text", "text": "Next wakeup scheduled for 02:22:00 (in 1860s). If you owe the user a status update…" } }] }));
+  expect_match(block(&s, 0, 0), json!({ "verbKey": "verb.wakeup", "target": "02:22", "targetMono": false, "status": "completed" }));
+  expect_absent(block(&s, 0, 0), "content");
+  // `stop: true` ends the wakeups and names no time
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "w2", "title": "ScheduleWakeup", "kind": "other", "status": "completed",
+    "rawInput": { "stop": true }, "_meta": { "claudeCode": { "toolName": "ScheduleWakeup" } },
+    "content": [{ "type": "content", "content": { "type": "text", "text": "Loop stopped" } }] }));
+  expect_match(block(&s, 0, 1), json!({ "verbKey": "verb.wakeupStop" }));
+  expect_absent(block(&s, 0, 1), "target");
 }

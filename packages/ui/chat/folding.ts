@@ -3,6 +3,7 @@ import type { AgentBlock, AgentTurn, CompactionBlock, GoalBlock, NoticeBlock, Te
 import type { MsgKey } from '@acpira/shared/i18n';
 import { getLocale, t } from '../i18n';
 import { planApprovalTitle } from './permissionOptions';
+import { visibleToolContents } from './toolDetails';
 
 // Thinking and to-do bookkeeping between closing paragraphs do not end the reply; in a foldable turn they join
 // the process fold instead, so a summary followed by one more thought and a short coda stays visible as a whole.
@@ -99,6 +100,11 @@ export function isWorkflowRun(block: ToolCallBlock): boolean {
 
 // Only mode-switch headings are adapter UI; commands and file targets stay verbatim.
 export function toolTarget(block: ToolCallBlock): string | undefined {
+  // Older transcripts may retain the adapter's generic patch title (or its stripped "s").
+  if (block.kind === 'edit') {
+    const paths = [...new Set(visibleToolContents(block).flatMap(c => c.type === 'diff' && c.source?.path ? [c.source.path] : []))];
+    if (paths.length) return paths.map(path => path.split(/[\\/]/).pop()).join(', ');
+  }
   if (isWorkflowRun(block)) return block.asyncTask!.name ?? block.target;
   // A session tool's session shows as its title on the row (ToolCall SessionToolTarget); this is the rest: a read's turns, a search's query
   if (isSessionTool(block)) {

@@ -133,7 +133,7 @@
          "id": "edit",
          "kind": "edit",
          "verb": "Edit",
-         "target": "Edit",
+         "target": "values.ts",
          "targetMono": false,
          "status": "pending",
          "diffStat": {
@@ -248,7 +248,7 @@
          "id": "edit",
          "kind": "edit",
          "verb": "Edit",
-         "target": "Edit",
+         "target": "values.ts",
          "targetMono": false,
          "status": "pending",
          "diffStat": {
@@ -388,7 +388,7 @@
          "id": "edit",
          "kind": "edit",
          "verb": "Edit",
-         "target": "Edit",
+         "target": "values.ts",
          "targetMono": false,
          "status": "pending",
          "diffStat": {
@@ -506,7 +506,7 @@
          "id": "edit",
          "kind": "edit",
          "verb": "Edit",
-         "target": "Edit",
+         "target": "values.ts",
          "targetMono": false,
          "status": "pending",
          "diffStat": {
@@ -621,7 +621,7 @@
          "id": "edit",
          "kind": "edit",
          "verb": "Edit",
-         "target": "Edit",
+         "target": "values.ts",
          "targetMono": false,
          "status": "pending",
          "diffStat": {

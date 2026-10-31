@@ -140,6 +140,8 @@ impl AcpSession {
 
   pub(crate) fn disconnect_tasks(&self, c: &mut Core) {
     disconnect_async_tasks(&mut c.state);
+    // A scheduled wakeup is a timer inside the process
+    c.wake.clear();
     for (_, st) in c.tree.states_mut() {
       disconnect_async_tasks(st);
     }
@@ -617,6 +619,28 @@ impl AcpSession {
       && c.relays.rounds.is_empty()
       && !c.tree.any_running()
       && !has_live_async_task(&c.state)
+      // Releasing would kill the process and the wakeup with it
+      && c.wake.pending(crate::util::now_ms()).is_none()
+  }
+
+  /// Stopped on sign-in with nothing waiting on it: the process never resumed the native session, so ending it loses
+  /// nothing, and the next open signs in afresh, possibly in an engine that can read the login (an SSH login's locked
+  /// keychain cannot). Lets such a session go idle and be handed over instead of pinning its lease forever
+  pub fn stalled_on_sign_in(&self) -> bool {
+    let c = self.core.lock();
+    c.status == SessionStatus::AuthRequired
+      && !Self::busy(&c)
+      && c.pending_prompt.is_none()
+      && c.queue.entries.is_empty()
+      && c.perms.pending.is_empty()
+      && c.questions.pending.is_empty()
+      && c.relays.rounds.is_empty()
+      && !c.tree.any_running()
+  }
+
+  /// Its agent process can go now: idle and restorable, or stopped on sign-in with nothing to lose
+  pub fn can_let_go(&self) -> bool {
+    self.releasable() || self.stalled_on_sign_in()
   }
 
   /// Re-authenticate a replacement process, then resume / load the same native session
