@@ -46,7 +46,7 @@ impl SharedConfig {
     self.data_root.join("backups").join("shared").join(stamp)
   }
 
-  pub async fn view(&self, places: Places, agents: Vec<String>, caps: Arc<dyn Fn(&str) -> Option<McpCaps> + Send + Sync>) -> SharedView {
+  pub async fn view(&self, places: Places, agents: Vec<String>, caps: crate::util::Lookup<McpCaps>) -> SharedView {
     if let Err(e) = self.maintain(&places, &agents).await {
       (self.log)(&format!("shared config: keeping links failed: {e:#}"));
     }
@@ -876,7 +876,7 @@ mod tests {
     (t, places, cfg, agents)
   }
 
-  fn caps() -> Arc<dyn Fn(&str) -> Option<McpCaps> + Send + Sync> {
+  fn caps() -> crate::util::Lookup<McpCaps> {
     Arc::new(|_| None)
   }
 

@@ -48,6 +48,8 @@ impl ClientHandlers for IdleHandlers {
   }
 }
 
+/// The processes a dispose found, for a hard kill once waiting runs out
+pub type DisposedProcs = Arc<parking_lot::Mutex<Vec<Arc<AgentProcess>>>>;
 pub type SpawnEnv = Arc<dyn Fn(String, String) -> BoxFuture<Option<acpira_shared::transcript::StrMap>> + Send + Sync>;
 
 enum Slot {
@@ -216,7 +218,7 @@ impl AgentPool {
 
   /// Every pooled process, ended before the host exits: SIGTERM now, and the returned future resolves once they are gone (a warming
   /// one is killed as soon as its spawn settles). The list holds each process as soon as it exists, for a hard kill if waiting runs out
-  pub fn dispose(&self) -> (Arc<parking_lot::Mutex<Vec<Arc<AgentProcess>>>>, BoxFuture<()>) {
+  pub fn dispose(&self) -> (DisposedProcs, BoxFuture<()>) {
     let seen = Arc::new(parking_lot::Mutex::new(Vec::new()));
     let mut exits = tokio::task::JoinSet::new();
     for slot in self.remove(None) {

@@ -1,7 +1,7 @@
 //! A live session's changes: its list entry, record, pushes, health and quota, the attention edges a user away
 //! from it hears about, the deps a session is built with, and prompts a plugin sends elsewhere
 
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use anyhow::{Result, anyhow};
 
@@ -10,7 +10,8 @@ use acpira_shared::transcript::*;
 
 use super::{ATTENTION_SETTLE, Attention, AttentionKind, SessionManager};
 use crate::accounts::account_manager::AccountHooks;
-use crate::acp::session::{AcpSession, SessionAccountHooks, SessionDeps};
+use crate::acp::session::{AcpSession, CompactionPolicy, SessionAccountHooks, SessionDeps, SessionPolicy};
+use acpira_shared::model_shapes::ModelShapes;
 use crate::store::record::RecordSource;
 use crate::store::transcript_store::sort_index;
 
@@ -145,11 +146,8 @@ impl SessionManager {
 
   pub(super) fn session_deps(&self) -> SessionDeps {
     let me = self.me.clone();
-    let shapes_me = self.me.clone();
-    let claim_me = self.me.clone();
     let toast = self.deps.toast.clone();
-    let compaction = self.deps.compaction.clone();
-    let plan_auto = self.deps.plan_auto_approve.clone();
+    let policy = ManagerPolicy { me: self.me.clone(), compaction: self.deps.compaction.clone(), plan_auto_approve: self.deps.plan_auto_approve.clone() };
     SessionDeps {
       registry: self.registry(),
       log: self.deps.log.clone(),
@@ -161,18 +159,13 @@ impl SessionManager {
       blobs: self.deps.store.clone(),
       notify: Some(Arc::new(move |text: &str| toast("info", text))),
       accounts: self.deps.accounts.clone().map(|a| Arc::new(AccountHooks(a)) as Arc<dyn SessionAccountHooks>),
-      compaction: Some(Arc::new(move || compaction())),
-      plan_auto_approve: Some(Arc::new(move |agent: &str| plan_auto().iter().any(|a| a == agent))),
+      policy: Arc::new(policy),
       pool: Some(self.pool.clone()),
       host_mcp: self.deps.host_mcp.clone(),
-      model_shapes: Some(Arc::new(move |agent: &str| {
-        shapes_me.upgrade().and_then(|m| m.state.lock().prefs.model_shapes.as_ref().and_then(|s| s.get(agent).cloned()))
-      })),
       shared_mcp: self.deps.shared_mcp.clone(),
       plugin_hooks: self.deps.plugin_hooks.clone(),
       plugin_prompts: self.deps.plugin_prompts.clone(),
       plugin_runtime: self.deps.plugin_runtime.clone(),
-      claim: Some(Arc::new(move |id: &str| claim_me.upgrade().map_or(Ok(0), |m| m.claim_turn(id)))),
       remote: self.deps.remote.clone(),
     }
   }
@@ -197,5 +190,31 @@ impl SessionManager {
     s.mark_redirected();
     tokio::spawn(async move { s.prompt(r.text, r.drafts, false, None, None).await });
     Ok(id)
+  }
+}
+
+/// A live session's policy: the settings' compaction and plan auto-approval, the shapes learned for its model, and the
+/// manager's cross-engine leases. A manager already gone hands out pin 0
+struct ManagerPolicy {
+  me: Weak<SessionManager>,
+  compaction: Arc<dyn Fn() -> CompactionPolicy + Send + Sync>,
+  plan_auto_approve: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
+}
+
+impl SessionPolicy for ManagerPolicy {
+  fn compaction(&self) -> Option<CompactionPolicy> {
+    Some((self.compaction)())
+  }
+
+  fn plan_auto_approve(&self, agent: &str) -> bool {
+    (self.plan_auto_approve)().iter().any(|a| a == agent)
+  }
+
+  fn model_shapes(&self, agent: &str) -> Option<ModelShapes> {
+    self.me.upgrade().and_then(|m| m.state.lock().prefs.model_shapes.as_ref().and_then(|s| s.get(agent).cloned()))
+  }
+
+  fn claim(&self, session: &str) -> Option<Result<u64, String>> {
+    Some(self.me.upgrade().map_or(Ok(0), |m| m.claim_turn(session)))
   }
 }

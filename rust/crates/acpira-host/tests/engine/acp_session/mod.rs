@@ -12,7 +12,7 @@ use acpira_shared::attachments::MAX_IMAGE_BYTES;
 use acpira_shared::transcript::{Draft, GoalAction, Turn};
 
 use crate::fake_or_skip;
-use crate::support::{Disposing, FakeAgent, Harness, expect_absent, expect_eq, expect_match, turns_in, until, v};
+use crate::support::{Disposing, FakeAgent, Harness, TestPolicy, expect_absent, expect_eq, expect_match, turns_in, until, v};
 
 mod prompts;
 mod plans;

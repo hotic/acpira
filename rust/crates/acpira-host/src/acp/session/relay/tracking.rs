@@ -59,7 +59,7 @@ impl AcpSession {
   pub(crate) fn relay_vendor(&self, session_id: &str) -> Option<crate::acp::vendors::Vendor> {
     let thread = session_id.strip_prefix("relay:")?;
     let c = self.core.lock();
-    c.tree.relay_latest(thread).map(|(_, h, ..)| crate::acp::vendors::Vendor::of(&h.agent))
+    c.tree.relay_latest(thread).map(|r| crate::acp::vendors::Vendor::of(&r.harness.agent))
   }
 
   /// Summoned rounds still running: the session has work in the background even while its own turn is over
@@ -152,7 +152,7 @@ impl AcpSession {
       return;
     }
     if prompt.is_empty() {
-      let name = thread.as_deref().and_then(|th| c.tree.relay_latest(th)).and_then(|(_, _, name, ..)| name);
+      let name = thread.as_deref().and_then(|th| c.tree.relay_latest(th)).and_then(|r| r.persona);
       if let Some(block) = crate::acp::transcript::normalize::find_tool_mut(&mut c.state.turns, &tool_call_id) {
         block.verb_key = Some("verb.awaitSubagent".into());
         block.verb = t("verb.awaitSubagent");

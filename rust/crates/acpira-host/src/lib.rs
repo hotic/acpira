@@ -1,6 +1,4 @@
-//! The Acpira host runtime. Each module mirrors the apps/vscode/src file of the same name
-
-#![allow(clippy::type_complexity, reason = "dependency seams are closures (`Arc<dyn Fn(..) -> BoxFuture<..>>`) like the TS deps objects they mirror")]
+//! The Acpira host runtime: the engine behind every shell, composed by `runtime::HostRuntime::create`
 
 pub mod accounts;
 pub mod acp;

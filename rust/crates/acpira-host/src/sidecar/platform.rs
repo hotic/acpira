@@ -27,6 +27,8 @@ pub type Affects = Arc<dyn Fn(Option<&str>) -> bool + Send + Sync>;
 pub type Send_ = Arc<dyn Fn(SidecarMsg) + Send + Sync>;
 /// Sends to the shell currently serving IDE actions; the wire it went out on, None when no shell is connected
 pub type Route = Arc<dyn Fn(SidecarMsg) -> Option<u64> + Send + Sync>;
+/// Hears which settings a change affects (`on_settings_changed`)
+pub type SettingsListener = Arc<dyn Fn(Affects) + Send + Sync>;
 
 tokio::task_local! {
   /// The peer wire whose view message is being handled (`server.rs`): the platform requests made meanwhile go back to
@@ -65,7 +67,7 @@ pub struct SidecarPlatform {
   window_seen: std::sync::atomic::AtomicBool,
   env: parking_lot::RwLock<ShellEnv>,
   pending: parking_lot::Mutex<HashMap<String, Pending>>,
-  settings_listeners: parking_lot::Mutex<Vec<Arc<dyn Fn(Affects) + Send + Sync>>>,
+  settings_listeners: parking_lot::Mutex<Vec<SettingsListener>>,
   focus_listeners: parking_lot::Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
   files: NodeFiles,
   seq: std::sync::atomic::AtomicU64,
@@ -264,7 +266,7 @@ impl SidecarPlatform {
     Ok(())
   }
 
-  pub fn on_settings_changed(&self, f: Arc<dyn Fn(Affects) + Send + Sync>) {
+  pub fn on_settings_changed(&self, f: SettingsListener) {
     self.settings_listeners.lock().push(f);
   }
 

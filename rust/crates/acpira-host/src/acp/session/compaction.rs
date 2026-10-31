@@ -149,7 +149,7 @@ impl AcpSession {
   }
 
   pub(crate) fn should_auto_compact(&self, c: &Core) -> bool {
-    let Some(policy) = self.deps.compaction.as_ref().map(|f| f()) else { return false };
+    let Some(policy) = self.deps.policy.compaction() else { return false };
     let used = c.state.usage.map(|u| u.used.0).unwrap_or(0.0);
     if !policy.auto || used == 0.0 || !Self::can_compact_of(c) || c.status != SessionStatus::Ready || used < policy.at_tokens {
       return false;

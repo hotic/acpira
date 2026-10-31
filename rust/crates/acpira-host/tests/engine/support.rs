@@ -101,7 +101,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use acpira_host::acp::agents::registry::AgentRegistry;
-use acpira_host::acp::session::{AcpSession, CompactionPolicy, SessionDeps};
+use acpira_host::acp::session::{AcpSession, CompactionPolicy, SessionDeps, SessionPolicy};
 use acpira_host::store::transcript_store::TranscriptStore;
 
 /// test/fake-agent.ts, bundled into one ES module that node runs directly (a SIGKILL reaches the agent itself)
@@ -212,6 +212,31 @@ pub struct Harness {
   listeners: Arc<Mutex<Vec<tokio::sync::mpsc::UnboundedSender<()>>>>,
 }
 
+/// A session policy a test sets piece by piece; what it leaves out answers like `InertPolicy`
+#[derive(Default)]
+pub struct TestPolicy {
+  pub compaction: Option<CompactionFn>,
+  pub plan_auto_approve: bool,
+  pub claim: Option<ClaimFn>,
+}
+
+pub type CompactionFn = Arc<dyn Fn() -> CompactionPolicy + Send + Sync>;
+pub type ClaimFn = Arc<dyn Fn(&str) -> Result<u64, String> + Send + Sync>;
+
+impl SessionPolicy for TestPolicy {
+  fn compaction(&self) -> Option<CompactionPolicy> {
+    self.compaction.as_ref().map(|f| f())
+  }
+
+  fn plan_auto_approve(&self, _agent: &str) -> bool {
+    self.plan_auto_approve
+  }
+
+  fn claim(&self, session: &str) -> Option<Result<u64, String>> {
+    self.claim.as_ref().map(|f| f(session))
+  }
+}
+
 impl Harness {
   pub fn new(fake: &FakeAgent, extra: Value) -> Harness {
     Harness::with_compaction(fake, extra, None)
@@ -247,16 +272,13 @@ impl Harness {
       blobs: TranscriptStore::new(dir.path().join("sessions"), log, None),
       notify: None,
       accounts: None,
-      compaction,
-      plan_auto_approve: None,
+      policy: Arc::new(TestPolicy { compaction, ..TestPolicy::default() }),
       pool: None,
-      model_shapes: None,
       shared_mcp: None,
       plugin_hooks: None,
       plugin_prompts: None,
       plugin_runtime: None,
       host_mcp: None,
-      claim: None,
       remote: None,
     };
     Harness { deps, logs, changes, dir, agent: id.to_owned(), listeners }

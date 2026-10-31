@@ -7,7 +7,7 @@ use acpira_host::acp::session::usage::grok_context_usage;
 
 use crate::acp_session::{agent_blocks, prompt, spawn_prompt, turn_count, view};
 use crate::fake_or_skip;
-use crate::support::{Disposing, Harness, expect_eq, until, v};
+use crate::support::{Disposing, Harness, TestPolicy, expect_eq, until, v};
 
 fn text(t: &str) -> Value {
   json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": t } })
@@ -136,7 +136,10 @@ fn unknown_mismatched_or_invalid_usage_is_rejected() {
 
 fn grok(fake: &crate::support::FakeAgent, style: &str, auto: bool) -> Harness {
   let mut h = Harness::for_agent(fake, "grok", json!({ "env": { "FAKE_GROK_USAGE": style } }));
-  h.deps.compaction = Some(std::sync::Arc::new(move || acpira_host::acp::session::CompactionPolicy { at_tokens: 300_000.0, auto }));
+  h.deps.policy = std::sync::Arc::new(TestPolicy {
+    compaction: Some(std::sync::Arc::new(move || acpira_host::acp::session::CompactionPolicy { at_tokens: 300_000.0, auto })),
+    ..TestPolicy::default()
+  });
   h
 }
 

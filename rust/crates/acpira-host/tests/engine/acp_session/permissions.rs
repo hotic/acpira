@@ -182,7 +182,7 @@ async fn an_antigravity_question_still_asks_under_synthesized_yolo() {
 async fn plan_auto_approve_answers_tool_requests_in_plan_mode_only() {
   let fake = fake_or_skip!();
   let mut h = Harness::new(&fake, json!({}));
-  h.deps.plan_auto_approve = Some(std::sync::Arc::new(|_: &str| true));
+  h.deps.policy = std::sync::Arc::new(TestPolicy { plan_auto_approve: true, ..TestPolicy::default() });
   let s = started(&h, "/tmp").await;
   // Outside plan mode the card still opens
   let p = spawn_prompt(&s, "use tool");
@@ -203,7 +203,7 @@ async fn plan_auto_approve_answers_tool_requests_in_plan_mode_only() {
 async fn plan_auto_approve_leaves_plan_approval_and_safety_asks_to_a_person() {
   let fake = fake_or_skip!();
   let mut h = Harness::new(&fake, json!({}));
-  h.deps.plan_auto_approve = Some(std::sync::Arc::new(|_: &str| true));
+  h.deps.policy = std::sync::Arc::new(TestPolicy { plan_auto_approve: true, ..TestPolicy::default() });
   let s = started(&h, "/tmp").await;
   s.set_mode("plan".into()).await.unwrap();
   let p = spawn_prompt(&s, "perm-meta");

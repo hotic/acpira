@@ -166,7 +166,7 @@ impl AcpSession {
   pub(crate) async fn wait_for_late_usage(self: &Arc<Self>, revision: u64) -> bool {
     let rx = {
       let mut c = self.core.lock();
-      let auto = self.deps.compaction.as_ref().is_some_and(|f| f().auto);
+      let auto = self.deps.policy.compaction().is_some_and(|p| p.auto);
       if !self.vendor.late_usage() || !auto || c.usage.revision != revision {
         return false;
       }

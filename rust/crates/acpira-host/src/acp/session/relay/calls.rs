@@ -26,7 +26,7 @@ use super::{
 use crate::acp::session::controls::picked_controls;
 use crate::acp::session::updates::current_turn_index;
 use crate::acp::session::{AcpSession, Core};
-use crate::acp::transcript::subagent_tree::{RelayOpen, RouteCtx};
+use crate::acp::transcript::subagent_tree::{RelayOpen, RelayRound, RouteCtx};
 use crate::handoff;
 use crate::relay::roster::Roster;
 use crate::relay::wire::{AskArgs, AskCallerArgs, HubReply};
@@ -234,8 +234,8 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
     let opened = {
       let mut c = self.core.lock();
       match c.tree.relay_latest(&thread) {
-        Some((node, .., SubagentState::Running)) if Self::relay_question(&c, &node).is_none() => Ok(self.open_caller_question(&mut c, &node, vec![question])),
-        Some((.., SubagentState::Running)) => Err("You already have a question waiting for an answer; wait for it before asking another."),
+        Some(RelayRound { node, state: SubagentState::Running, .. }) if Self::relay_question(&c, &node).is_none() => Ok(self.open_caller_question(&mut c, &node, vec![question])),
+        Some(RelayRound { state: SubagentState::Running, .. }) => Err("You already have a question waiting for an answer; wait for it before asking another."),
         _ => Err("Your round is over, so there is no caller waiting to answer."),
       }
     };
@@ -297,7 +297,7 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
     }
     // Waiting on a thread or reading its last round goes by the node alone: a persona edited or removed since then
     // does not take a finished answer away
-    if let Some((node, h, name, _, state)) = &latest {
+    if let Some(RelayRound { node, harness: h, persona: name, state, .. }) = &latest {
       let th = thread.clone().unwrap_or_default();
       let shown = node_persona(h, name.as_deref());
       if *state == SubagentState::Running {
@@ -331,7 +331,7 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
     }
     // A new round: the thread's persona as it is set now, else the named one
     let persona = match &latest {
-      Some((_, h, name, _, _)) => thread_persona(roster, self.sidekick_persona(), h, name.as_deref())?,
+      Some(RelayRound { harness: h, persona: name, .. }) => thread_persona(roster, self.sidekick_persona(), h, name.as_deref())?,
       None if args.agent.trim().is_empty() => return Err(anyhow!("Name the agent to summon (`agent`), or a `thread` to continue.")),
       None => self.find_persona(roster, caller.as_deref(), &args.agent).ok_or_else(|| {
         let sidekick = caller.is_none().then(|| self.sidekick_persona()).flatten();
@@ -354,8 +354,8 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
       shared: via.as_ref().and_then(|v| v.pack.clone()),
     });
     let title = args.title.as_deref().map(str::trim).filter(|x| !x.is_empty()).map(|x| clip(x, TITLE_MAX)).unwrap_or_else(|| clip(&prompt, TITLE_MAX));
-    let round = latest.as_ref().map(|(_, h, ..)| h.round + 1).unwrap_or(1);
-    let peer = latest.as_ref().and_then(|(_, _, _, p, _)| p.clone());
+    let round = latest.as_ref().map(|r| r.harness.round + 1).unwrap_or(1);
+    let peer = latest.as_ref().and_then(|r| r.native.clone());
     let (tx, rx) = watch::channel::<RoundEnd>(None);
     // Everything that decides whether the round may start, and the round's registration, happen under one lock: two
     // calls on one thread cannot both start a round, and a waiter always finds the round it was told about
@@ -364,9 +364,9 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
       if c.relays.closed {
         return Err(anyhow!("This Acpira session is closing."));
       }
-      if let (Some(th), Some((was, ..))) = (&thread, &latest) {
+      if let (Some(th), Some(RelayRound { node: was, .. })) = (&thread, &latest) {
         let now = c.tree.relay_latest(th);
-        if !now.as_ref().is_some_and(|(id, .., state)| id == was && *state != SubagentState::Running) {
+        if !now.as_ref().is_some_and(|r| r.node == *was && r.state != SubagentState::Running) {
           return Err(busy(&persona, th));
         }
       }
@@ -376,7 +376,7 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
           "{running} summoned agents are already running in this session (at most {MAX_RUNNING}). Wait for one first: call ask_agent with its thread and an empty prompt."
         ));
       }
-      let parent = caller.as_deref().and_then(|th| c.tree.relay_latest(th)).map(|(id, ..)| id);
+      let parent = caller.as_deref().and_then(|th| c.tree.relay_latest(th)).map(|r| r.node);
       let turn_index = current_turn_index(&c);
       let harness = SubagentHarness {
         agent: persona.agent.clone(),
@@ -392,7 +392,7 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
       let node = c.tree.relay_open(RelayOpen { parent, turn_index, harness, role: persona.name.clone(), title, task: prompt.clone(), model });
       let thread = c.tree.relay_thread_of(&node).unwrap_or_else(|| node.clone());
       // A root row announced before the round existed takes the node now
-      let opened = c.tree.relay_latest(&thread).map(|(_, h, ..)| h);
+      let opened = c.tree.relay_latest(&thread).map(|r| r.harness);
       let pending = opened.and_then(|h| {
         c.relays.calls.iter().position(|p| p.turn_index == turn_index && norm(&p.prompt) == norm(&prompt) && call_fits(&p.agent, p.thread.as_deref(), &h, Some(&persona.name)))
       });
@@ -485,7 +485,7 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
           // The caller is owed the reply anyway, unless its entry was settled meanwhile
           let still_owed = {
             let c = self.core.lock();
-            c.tree.relay_latest(thread).is_some_and(|(id, ..)| c.relays.ledger.iter().any(|o| o.node == id && o.state == Owed::Running))
+            c.tree.relay_latest(thread).is_some_and(|r| c.relays.ledger.iter().any(|o| o.node == r.node && o.state == Owed::Running))
           };
           let next = if still_owed {
             "Acpira sends you its reply in a message when it is done: carry on with other work or end your turn, and do not poll."
@@ -502,7 +502,7 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
   /// The question the thread's running round waits on, as a call answers it (marked told)
   fn relay_asking(&self, thread: &str, persona: &SubagentPersona) -> Option<String> {
     let mut c = self.core.lock();
-    let (node, ..) = c.tree.relay_latest(thread)?;
+    let RelayRound { node, .. } = c.tree.relay_latest(thread)?;
     let (block, questions) = Self::relay_question(&c, &node)?;
     c.relays.told.insert(block);
     Some(question_text(&questions, thread, persona))
@@ -512,7 +512,7 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
   fn relay_read(&self, thread: &str, persona: &SubagentPersona) -> HubReply {
     let mut c = self.core.lock();
     let end = match c.tree.relay_latest(thread) {
-      Some((id, ..)) => {
+      Some(RelayRound { node: id, .. }) => {
         c.relays.read(&id);
         round_result(&c, &id)
       }
@@ -523,6 +523,6 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
 
   fn relay_activity(&self, thread: &str) -> Option<String> {
     let c = self.core.lock();
-    c.tree.relay_latest(thread).and_then(|(id, ..)| c.tree.activity(&id))
+    c.tree.relay_latest(thread).and_then(|r| c.tree.activity(&r.node))
   }
 }

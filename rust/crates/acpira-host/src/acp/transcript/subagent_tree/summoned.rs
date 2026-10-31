@@ -5,7 +5,7 @@ use acpira_shared::subagents::{SIDEKICK_ID, SubagentHarness, SubagentPeer, Subag
 use acpira_shared::num::Num;
 use acpira_shared::transcript::{AgentBlock, AgentTurn, ContextUse, ToolCallBlock, Turn, TurnStop, TurnUsage};
 
-use super::{Node, RelayOpen, RouteCtx, SubagentTree};
+use super::{Node, RelayOpen, RelayRound, RouteCtx, SubagentTree};
 use crate::acp::session::prompt::merge_usage;
 use crate::acp::transcript::normalize::end_turn;
 use crate::i18n::t;
@@ -149,12 +149,12 @@ impl SubagentTree {
     true
   }
 
-  /// The latest round of a thread: (node id, harness, persona name, native session id, state)
-  pub fn relay_latest(&self, thread: &str) -> Option<(String, SubagentHarness, Option<String>, Option<String>, SubagentState)> {
+  /// The latest round of a thread
+  pub fn relay_latest(&self, thread: &str) -> Option<RelayRound> {
     let n = self.nodes.iter().rev().find(|n| n.harness.as_ref().is_some_and(|h| h.thread == thread || n.id == thread))?;
-    let h = n.harness.clone()?;
-    let native = h.session_id.clone();
-    Some((n.id.clone(), h, n.role.clone(), native, n.status))
+    let harness = n.harness.clone()?;
+    let native = harness.session_id.clone();
+    Some(RelayRound { node: n.id.clone(), harness, persona: n.role.clone(), native, state: n.status })
   }
 
   /// A summoned node's harness and persona name

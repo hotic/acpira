@@ -477,10 +477,13 @@ async fn the_turn_keeps_its_lease_while_the_gate_decides() {
   let mut h = Harness::new(&fake, json!({}));
   let claims = Arc::new(AtomicUsize::new(0));
   let n = claims.clone();
-  h.deps.claim = Some(Arc::new(move |_| {
-    n.fetch_add(1, Ordering::SeqCst);
-    Ok(7)
-  }));
+  h.deps.policy = Arc::new(TestPolicy {
+    claim: Some(Arc::new(move |_| {
+      n.fetch_add(1, Ordering::SeqCst);
+      Ok(7)
+    })),
+    ..TestPolicy::default()
+  });
   let s = started(&h, &p.cwd()).await;
   prompt(&s, "hello").await;
   // The turn has ended and the gate runs its script: the lease is not given back yet
@@ -501,7 +504,10 @@ async fn a_gate_follow_up_that_cannot_take_the_lease_lets_the_queue_go() {
   let mut h = Harness::new(&fake, json!({}));
   let claims = Arc::new(AtomicUsize::new(0));
   let n = claims.clone();
-  h.deps.claim = Some(Arc::new(move |_| if n.fetch_add(1, Ordering::SeqCst) == 0 { Ok(7) } else { Err("held elsewhere".into()) }));
+  h.deps.policy = Arc::new(TestPolicy {
+    claim: Some(Arc::new(move |_| if n.fetch_add(1, Ordering::SeqCst) == 0 { Ok(7) } else { Err("held elsewhere".into()) })),
+    ..TestPolicy::default()
+  });
   let s = started(&h, &p.cwd()).await;
   prompt(&s, "hello").await;
   // The session closes its lease meanwhile: the follow-up has to claim again, and is refused
