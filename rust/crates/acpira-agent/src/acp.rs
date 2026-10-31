@@ -56,7 +56,7 @@ pub struct SessionState {
   pub landed: Vec<(String, String)>,
   /// The running turn's cancel signal
   pub turn: Option<Cancel>,
-  /// How much runs without a card (the `approval` select), read at the start of each turn
+  /// How much runs without a card (the `approval` select), read before each tool runs
   pub approval: Approval,
   /// Rules the user added from permission cards ("always allow"), for this session only
   pub allowed: Vec<Rule>,
@@ -112,6 +112,8 @@ pub struct Session {
   pub remote: Option<Arc<crate::remote::Remote>>,
   /// The plugins' prompt and skill folders as the engine sent them when the session opened (`LAYERS_META`, `SKILLS_META`)
   pub layers: Layers,
+  /// Wakes open permission requests when the mode or approval level changes
+  pub permissions_changed: tokio::sync::Notify,
 }
 
 /// The plugins' folders a session reads besides the user's and the project's
@@ -420,7 +422,7 @@ impl Server {
       "text": state.prompt.text, "sampling": state.prompt.sampling, "thinking": state.prompt.thinking }));
     let mcp = crate::mcp::Hub::start(params.get("mcpServers").unwrap_or(&Value::Null), &self.process_dir(std::path::Path::new(cwd), remote.is_some()));
     let session =
-      Session { id: id.clone(), cwd: PathBuf::from(cwd), state: parking_lot::Mutex::new(state), store, tool_seq: AtomicU64::new(0), jobs: Default::default(), mcp, remote, layers };
+      Session { id: id.clone(), cwd: PathBuf::from(cwd), state: parking_lot::Mutex::new(state), store, tool_seq: AtomicU64::new(0), jobs: Default::default(), mcp, remote, layers, permissions_changed: Default::default() };
     // The starting controls too: a reopen must not take a default that changed in the meantime
     session.save_state(&session.state.lock());
     let (remote, layers) = (session.remote.clone(), session.layers.clone());
@@ -545,7 +547,7 @@ impl Server {
       .max()
       .unwrap_or(0);
     let mcp = crate::mcp::Hub::start(mcp_servers, &self.process_dir(&cwd, remote.is_some()));
-    Session { id: id.to_owned(), cwd, state: parking_lot::Mutex::new(st), store, tool_seq: AtomicU64::new(seq), jobs: Default::default(), mcp, remote, layers: Layers::default() }
+    Session { id: id.to_owned(), cwd, state: parking_lot::Mutex::new(st), store, tool_seq: AtomicU64::new(seq), jobs: Default::default(), mcp, remote, layers: Layers::default(), permissions_changed: Default::default() }
   }
 
   /// `session/list`: this data root's sessions with at least one message, newest first, filtered by `cwd` when given
@@ -590,6 +592,7 @@ impl Server {
     }
     st.mode = mode.to_owned();
     session.save_state(&st);
+    session.permissions_changed.notify_waiters();
     Ok(json!({}))
   }
 
@@ -626,6 +629,7 @@ impl Server {
       }
       APPROVAL => {
         st.approval = Approval::parse(value).ok_or_else(|| RpcError::new(-32602, format!("Unknown approval level: {value}")))?;
+        session.permissions_changed.notify_waiters();
       }
       FAST => {
         if !st.model.as_deref().and_then(|p| config.find(p)).is_some_and(|(p, m)| crate::llm::fast::offered(p, m)) {

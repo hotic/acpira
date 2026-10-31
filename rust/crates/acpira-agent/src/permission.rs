@@ -54,7 +54,7 @@ pub fn engine_rules(decision: Decision) -> impl Iterator<Item = Rule> {
 }
 
 /// The approval level: how much runs without a card. The session's `approval` select (ids as in `APPROVAL_LEVELS`),
-/// read at the start of each turn; a new session starts on `ProvidersFile::approval`
+/// read before each tool runs; a new session starts on `ProvidersFile::approval`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Approval {
   /// Edits and commands ask
