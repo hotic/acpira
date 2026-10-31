@@ -14,7 +14,7 @@ use std::time::Duration;
 use acpira_host::remote::host_store::HostMirror;
 use acpira_host::store::record::SessionRecord;
 use acpira_host::store::transcript_store::TranscriptStore;
-use acpira_shared::remote::{ConnectionOp, RunMode};
+use acpira_shared::remote::ConnectionOp;
 use serde_json::{Value, json};
 
 use crate::remote_connections::Lab;
@@ -50,7 +50,7 @@ async fn until(what: &str, mut pred: impl FnMut() -> bool) {
 async fn records_in_a_host_folder_have_their_copy_in_the_hosts_store() {
   let lab = Lab::new();
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into(), mode: RunMode::Local }).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
   // `add` connects at once: stop it, so the first record is written while the host is away
   connections.op(ConnectionOp::Disconnect { alias: "gen1".into() }).await.unwrap();
   let local = lab.path().join("engine").join("sessions");
@@ -67,7 +67,7 @@ async fn records_in_a_host_folder_have_their_copy_in_the_hosts_store() {
   let g = gone.clone();
   mirror.set_gone_hook(Arc::new(move |alias: &str, id: Option<&str>| g.lock().unwrap().push((alias.to_owned(), id.map(str::to_owned)))));
   mirror.start();
-  connections.op(ConnectionOp::Connect { alias: "gen1".into(), accept_new_machine: false, fetch_build: false }).await.unwrap();
+  connections.op(ConnectionOp::Connect { alias: "gen1".into(), accept_new_machine: false }).await.unwrap();
 
   let early = host_sessions(&lab).join("s-early.json");
   until("the early record's copy", || early.exists()).await;
@@ -117,7 +117,7 @@ async fn records_in_a_host_folder_have_their_copy_in_the_hosts_store() {
   mirror.stop();
   let mirror = HostMirror::with_batch(connections.clone(), store.clone(), &lab.path().join("engine"), Arc::new(|_: &str| {}), Duration::from_millis(50));
   mirror.start();
-  connections.op(ConnectionOp::Connect { alias: "gen1".into(), accept_new_machine: false, fetch_build: false }).await.unwrap();
+  connections.op(ConnectionOp::Connect { alias: "gen1".into(), accept_new_machine: false }).await.unwrap();
   until("the away copy removed", || !away.exists()).await;
   until("the deletion unfiled", || !filed("s-away")).await;
 

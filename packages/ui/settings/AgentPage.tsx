@@ -5,6 +5,7 @@ import type { AgentInstallProgress } from '@acpira/shared/protocol';
 import type { AgentHealthStage, AgentInventory, InventoryFile, InventoryMcp, InventoryScope, InventorySkill } from '@acpira/shared/inventory';
 import type { MsgKey } from '@acpira/shared/i18n';
 import { PLAN_AUTO_APPROVE_AGENTS, type SettingsView } from '@acpira/shared/settings';
+import { SSH_LOCAL_AGENTS } from '@acpira/shared/remote';
 import { familyLabel, isReasoningControl, SIDEKICK_CATEGORY, SIDEKICK_EFFORT_CATEGORY } from '@acpira/shared/composerControls';
 import { familyHidden, groupModels, setFamilyVisible, variantLabel, type ModelFamily } from '@acpira/shared/models';
 import { filterModels, MODEL_PREVIEW_LIMIT, prioritizeModels, setModelsVisible } from '@acpira/shared/modelCatalog';
@@ -18,6 +19,7 @@ import { Collapsible } from '../ui/Collapsible';
 import { useScrollFade } from '../ui/useScrollFade';
 import { t } from '../i18n';
 import { AgentMark } from '../chat/AgentMark';
+import { remoteOffered } from '../remote/api';
 import { ModelMark } from '../chat/ModelMark';
 import {
   DialogBody, Dot, FactRow, Field, Group, ItemRow, Meta, Note, PathText, SearchRow, Section, SectionAction, Select, SettingsDialog,
@@ -149,6 +151,7 @@ export function AgentSettings({ agent, accounts, install, inventory, controls, p
       <AgentFacts agent={agent} inventory={inventory} env={env} />
       {agent.install && agent.available !== false && <InstallSection agent={agent} install={install} env={env} on={on} />}
       {PLAN_AUTO_APPROVE_AGENTS.includes(agent.id) && <PermissionsSection agent={agent} settings={settings} on={on} />}
+      <SshHostSection agent={agent} settings={settings} on={on} />
       <ConfigSection agent={agent} files={inventory?.config} env={env} on={on} />
     </>;
     case 'models': return <ModelsSection agent={agent} controls={modelControlsOf(controls)} settings={settings} on={on} />;
@@ -157,7 +160,10 @@ export function AgentSettings({ agent, accounts, install, inventory, controls, p
     case 'skills': return <SkillsTab {...sources} />;
     case 'mcp': return <McpTab {...sources} />;
     case 'sources': return <ProvidersSection state={providers} on={on} />;
-    case 'behavior': return <BehaviorTab state={providers} on={on} />;
+    case 'behavior': return <>
+      <BehaviorTab state={providers} on={on} />
+      <SshHostSection agent={agent} settings={settings} on={on} />
+    </>;
   }
 }
 
@@ -369,6 +375,24 @@ function PermissionsSection({ agent, settings, on }: { agent: AgentInfo; setting
     <Section title={t('settings.agent.permissions')} desc={t('settings.agent.permissions.desc')}>
       <Field label={t('settings.planAutoApprove')} desc={t('settings.planAutoApprove.desc', { agent: agent.name })}>
         <Switch checked={enabled} onChange={toggle} label={t('settings.planAutoApprove')} />
+      </Field>
+    </Section>
+  );
+}
+
+// Where the agent runs in a folder on an SSH host (`sshLocalAgents`), for the agents that can run on this machine there:
+// off, the host's own engine runs it like every other agent. Only where SSH hosts are offered (the desktop app)
+const SSH_LOCAL_DESC: Record<string, MsgKey> = { acpira: 'settings.agent.sshLocal.descBuiltin', claude: 'settings.agent.sshLocal.descClaude' };
+function SshHostSection({ agent, settings, on }: { agent: AgentInfo; settings: SettingsView; on: SettingsHandlers }) {
+  if (!SSH_LOCAL_AGENTS.includes(agent.id) || !remoteOffered()) return null;
+  const enabled = settings.sshLocalAgents.includes(agent.id);
+  const toggle = (v: boolean) => on.setSetting('sshLocalAgents', v
+    ? [...settings.sshLocalAgents, agent.id]
+    : settings.sshLocalAgents.filter(id => id !== agent.id));
+  return (
+    <Section title={t('settings.agent.sshHosts')} desc={t('settings.agent.sshHosts.desc')}>
+      <Field label={t('settings.agent.sshLocal')} desc={t(SSH_LOCAL_DESC[agent.id]!)}>
+        <Switch checked={enabled} onChange={toggle} label={t('settings.agent.sshLocal')} />
       </Field>
     </Section>
   );

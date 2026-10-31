@@ -391,6 +391,9 @@ impl SessionManager {
   /// The working directory of a session a viewer shows: live, a mirror of another engine's session, a ChatGPT mirror,
   /// else whatever the index recorded (a session not opened here yet)
   pub fn session_cwd(&self, id: &str) -> Option<String> {
+    if let Some(cwd) = self.host_cwd(id) {
+      return Some(cwd);
+    }
     {
       let st = self.state.lock();
       if let Some(s) = st.live.get(id).or_else(|| st.mirrors.get(id)) {
@@ -400,8 +403,8 @@ impl SessionManager {
     if let Some(v) = self.deps.chatgpt.as_ref().and_then(|c| c.view(id)) {
       return Some(v.cwd);
     }
-    let st = self.state.lock();
-    st.index.iter().find(|s| s.id == id).map(|s| s.cwd.clone()).filter(|c| !c.is_empty())
+    let indexed = self.state.lock().index.iter().find(|s| s.id == id).map(|s| s.cwd.clone()).filter(|c| !c.is_empty());
+    indexed.or_else(|| self.sessions().into_iter().find(|s| s.id == id).map(|s| s.cwd).filter(|c| !c.is_empty()))
   }
 
   pub fn blob_path(&self, session_id: &str, name: &str) -> Option<std::path::PathBuf> {

@@ -8,10 +8,24 @@ use std::time::Duration;
 use anyhow::{Result, anyhow};
 
 use super::{FIRST_PUSH_GRACE, MIRROR_POLL, PUSH_QUANTUM, RECORD_HOLD_WAIT, SessionManager, TAKEOVER_POLL, TAKEOVER_WAIT, YIELD_SETTLE};
-use crate::acp::session::{AcpSession, SessionDeps};
+use crate::acp::session::{AcpSession, SessionDeps, SessionPolicy};
 use crate::i18n::{t, tp};
 use crate::store::record::{RecordSource, SessionRecord};
 use crate::store::session_lease::{Claim, SessionLeases};
+
+/// A mirror's policy: no compaction or plan auto-approval, and it never runs a turn; the live policy's model shapes
+/// still show
+struct MirrorPolicy(Arc<dyn SessionPolicy>);
+
+impl SessionPolicy for MirrorPolicy {
+  fn model_shapes(&self, agent: &str) -> Option<acpira_shared::model_shapes::ModelShapes> {
+    self.0.model_shapes(agent)
+  }
+
+  fn claim(&self, _session: &str) -> Option<Result<u64, String>> {
+    Some(Err(t("host.sessionBusyElsewhere")))
+  }
+}
 
 /// One claim on a session's lease (`store::session_lease`), released when it drops
 pub(super) struct LeaseHold<'a> {
@@ -185,7 +199,7 @@ impl SessionManager {
   /// A session another engine wants can go without asking anyone: live and idle here, and no window of this engine shows
   /// it (the usual case is a window reloaded onto a new engine after an upgrade, leaving this one with no window at all)
   fn handover_ready(&self, id: &str) -> bool {
-    self.live(id).is_some_and(|s| s.releasable()) && self.viewers_on(id, None).is_empty()
+    self.live(id).is_some_and(|s| s.can_let_go()) && self.viewers_on(id, None).is_empty()
   }
 
   /// Hand an idle, unseen session to the engine that wants it: the agent process closes like an idle release, and the
@@ -227,6 +241,16 @@ impl SessionManager {
 
   /// Take over a session another engine has open: ask it to let go, wait for the lease, then open the session here
   pub(super) async fn take_over_elsewhere(self: &Arc<Self>, id: &str) -> Result<()> {
+    // Refuse before asking the healthy owner to stop: SSH may see the same accounts but a locked keychain.
+    if let Some(s) = self.mirror_of(id)
+      && let Some(accounts) = &self.deps.accounts
+    {
+      accounts.check_locks(Some(&s.agent)).await;
+      if accounts.credentials_locked(&s.agent) {
+        let name = self.registry().try_get(&s.agent).map(|a| a.name.clone()).unwrap_or_else(|| s.agent.clone());
+        return Err(anyhow!(tp("notice.locked.title", &[("agent", &name)])));
+      }
+    }
     let hold = self.take_lease_elsewhere(id).await?;
     self.log(&format!("session {id}: taken over from another engine"));
     self.state.lock().mirrors.remove(id);
@@ -255,17 +279,15 @@ impl SessionManager {
 
   /// Inert deps for a mirror: it never saves (the record belongs to the engine holding the lease), warms or switches
   fn mirror_deps(&self) -> SessionDeps {
+    let live = self.session_deps();
     SessionDeps {
       on_change: Arc::new(|_: &str, _: bool| {}),
       notify: None,
       accounts: None,
-      compaction: None,
-      plan_auto_approve: None,
+      policy: Arc::new(MirrorPolicy(live.policy.clone())),
       pool: None,
-      // A mirror never runs a turn
-      claim: Some(Arc::new(|_: &str| Err(t("host.sessionBusyElsewhere")))),
       remote: None,
-      ..self.session_deps()
+      ..live
     }
   }
 
@@ -297,6 +319,7 @@ impl SessionManager {
     }
     let me = self.me.clone();
     let id = id.to_owned();
+    let mut note = note;
     tokio::spawn(async move {
       if await_push {
         let until = tokio::time::Instant::now() + FIRST_PUSH_GRACE;
@@ -345,6 +368,22 @@ impl SessionManager {
         // Free and nobody else is about to take it (a takeover in flight frees it for the requester, not for this copy).
         // Another machine's copy is never free here
         if !m.state.lock().copies.contains(&id) && !m.leases.held_elsewhere(&id) && !m.leases.takeover_requested(&id) {
+          // An engine that cannot read the login (an SSH login's locked keychain) would only stop it on sign-in and then
+          // hold its lease: stay read-only, saying why, until the store unlocks (`check_locks` ran when this copy started)
+          if let Some(agent) = m.mirror_of(&id).map(|s| s.agent.clone())
+            && m.deps.accounts.as_ref().is_some_and(|a| a.credentials_locked(&agent))
+          {
+            let name = m.registry().try_get(&agent).map(|a| a.name.clone()).unwrap_or(agent);
+            let locked = tp("notice.locked.title", &[("agent", &name)]);
+            if note != locked {
+              note = locked;
+              // The owner's last pushed view would otherwise stay on screen, still ready. Subscribed on, so an engine
+              // that takes the session later is shown live again
+              m.state.lock().remote.remove(&id);
+              m.renote_mirror(&id, &note, elsewhere, epoch);
+            }
+            continue;
+          }
           {
             let mut st = m.state.lock();
             if st.loading.contains_key(&id) {
@@ -395,8 +434,26 @@ impl SessionManager {
     });
   }
 
+  /// Swap a mirror for a copy of itself carrying another note, and show it
+  fn renote_mirror(&self, id: &str, note: &str, elsewhere: bool, epoch: u64) {
+    let Some(old) = self.mirror_of(id) else { return };
+    let copy = AcpSession::mirror(old.to_record(), self.mirror_deps(), note.to_owned(), self.next_mirror_rev(), elsewhere, epoch);
+    if let Some(slot) = self.state.lock().mirrors.get_mut(id) {
+      *slot = copy.clone();
+    } else {
+      return;
+    }
+    self.emit_session(&copy);
+  }
+
   /// Keep this engine's handover request for a mirrored session fresh
   fn want_handover(&self, id: &str) {
+    // Viewing must not move a working session onto an SSH login that cannot read its credentials. Keep subscribing
+    // and forwarding actions to its owner; unlock / refresh can make a later poll eligible for handover again.
+    if self.mirror_of(id).is_some_and(|s| self.deps.accounts.as_ref().is_some_and(|a| a.credentials_locked(&s.agent))) {
+      self.leases.clear_handover(id);
+      return;
+    }
     if let Err(e) = self.leases.request_handover(id) {
       self.log(&format!("session {id}: handover request failed: {e}"));
     }

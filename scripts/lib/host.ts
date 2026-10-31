@@ -48,12 +48,13 @@ export class Host {
 
   static async start(o: HostOpts): Promise<Host> {
     const host = new Host(o.home ?? mkdtempSync(join(tmpdir(), 'acpira-probe-home-')), o.cwd, o.env);
+    // A sidecar that never answers is ended here: the caller has no handle on it to end it
     const ok = await host.shell.hello({
       client: { name: 'acpira-probe', version: '0', capabilities: ['toast', 'searchFiles', 'writeSetting', 'revealInOS', 'openResolvedFile', 'openPlanDocument'] },
       env: { hostLanguage: 'en', cwd: o.cwd },
       settings: { defaultAgent: o.defaultAgent, ...(o.agents ? { agents: o.agents } : {}), ...o.settings },
-    });
-    if (ok.type !== 'helloOk') throw new Error(`sidecar refused the handshake: ${ok.reason}`);
+    }).catch(async (e: unknown) => { await host.shell.kill(); throw e; });
+    if (ok.type !== 'helloOk') { await host.shell.kill(); throw new Error(`sidecar refused the handshake: ${ok.reason}`); }
     host.sessionsDir = ok.sessionsDir;
     return host;
   }

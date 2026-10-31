@@ -45,9 +45,9 @@ describe.skipIf(process.platform === 'win32')('sidecar SSH connections', () => {
     s.view('V', { type: 'sshHosts' });
     expect((await s.hostMsg('V', 'sshHosts')).hosts).toEqual([{ alias: 'gen1', address: 'hotic@10.0.0.9:2222' }]);
 
-    s.view('V', { type: 'connectionOp', op: { op: 'add', alias: 'gen1', mode: 'local' } });
+    s.view('V', { type: 'connectionOp', op: { op: 'add', alias: 'gen1' } });
     const up = await s.hostMsg('V', 'connections', m => m.connections[0]?.state === 'connected', 30_000);
-    expect(up.connections[0]).toMatchObject({ alias: 'gen1', mode: 'local', address: 'hotic@10.0.0.9:2222', projects: [] });
+    expect(up.connections[0]).toMatchObject({ alias: 'gen1', address: 'hotic@10.0.0.9:2222', projects: [] });
     expect(up.connections[0]?.remoteVersion).toMatch(/^\d+\.\d+\.\d+/);
     // The steps went by on the way
     const steps = new Set(s.hostMsgs('V').flatMap(m => (m.type === 'connections' ? m.connections.map(c => c.step) : [])));
@@ -61,8 +61,6 @@ describe.skipIf(process.platform === 'win32')('sidecar SSH connections', () => {
     s.view('V', { type: 'remoteDir', alias: 'gen1', path: '/no/such/folder', seq: 8 });
     expect((await s.hostMsg('V', 'remoteDir', m => m.seq === 8)).error).toBeTruthy();
 
-    s.view('V', { type: 'connectionOp', op: { op: 'setMode', alias: 'gen1', mode: 'remote' } });
-    await s.hostMsg('V', 'connections', m => m.connections[0]?.mode === 'remote');
     s.view('V', { type: 'connectionOp', op: { op: 'disconnect', alias: 'gen1' } });
     await s.hostMsg('V', 'connections', m => m.connections[0]?.state === 'off');
     s.view('V', { type: 'connectionOp', op: { op: 'remove', alias: 'gen1' } });

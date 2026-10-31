@@ -4,10 +4,11 @@
 
 export const REMOTE_SCHEME = 'ssh://';
 
-/** The agents that work in a folder on an SSH host under local run, the engine refusing the rest (host.remoteBuiltinOnly):
- * the built-in agent, whose tools run on the host, and Claude Code, whose own file and shell tools are swapped for
- * Acpira's there (rust vendors/claude_remote.rs). The built-in agent first: it is the fallback. AppModel.swift mirrors it */
-export const LOCAL_RUN_AGENTS: readonly string[] = ['acpira', 'claude'];
+/** The agents that can run on this machine in a folder on an SSH host, only their tools running there: the built-in
+ * agent, and Claude Code with its own file and shell tools swapped for Acpira's (rust vendors/claude_remote.rs). Which of
+ * them do is the `sshLocalAgents` setting; every other agent, and these when off, runs in the host's own engine. Mirrors
+ * acpira_shared::remote::SSH_LOCAL_AGENTS */
+export const SSH_LOCAL_AGENTS: readonly string[] = ['acpira', 'claude'];
 
 export interface RemoteFolder { alias: string; path: string }
 
@@ -55,11 +56,9 @@ export function formatRemoteFolder(alias: string, path: string): string | undefi
   return p === undefined ? undefined : `${REMOTE_SCHEME}${alias}${p}`;
 }
 
-/** How a host's sessions run by default: `local` keeps the agent loop and logins here and runs only the tools on the host; `remote` drives the host's own engine */
-export type RunMode = 'local' | 'remote';
 export type ConnectionState = 'off' | 'connecting' | 'connected' | 'error';
 /** The step a connection attempt is on: ssh itself, probing the host, downloading the host's platform build from the
- *  release (only when asked, `connect` with `fetchBuild`), uploading the helper, starting it */
+ *  release (when this machine has none), uploading the helper, starting it */
 export type ConnectStep = 'ssh' | 'probe' | 'fetch' | 'upload' | 'start';
 export type ConnectFailure = 'hostKey' | 'keyLocked' | 'denied' | 'network' | 'machineChanged' | 'unsupported' | 'noSsh' | 'other';
 
@@ -68,7 +67,6 @@ export interface ConnectionError { kind: ConnectFailure; step: ConnectStep; mess
 /** One host as the pages see it (HostMsg `connections`) */
 export interface ConnectionView {
   alias: string;
-  mode: RunMode;
   disabled?: boolean;
   state: ConnectionState;
   /** While connecting: the step, and the newest line of what it does */
@@ -91,14 +89,12 @@ export interface RemoteDirEntry { name: string; dir: boolean; git?: boolean }
 
 /** What the settings page asks of a host (WebviewMsg `connectionOp`); every op answers with a `connections` push */
 export type ConnectionOp =
-  | { op: 'add'; alias: string; mode: RunMode }
+  | { op: 'add'; alias: string }
   // Forget the host here; nothing on the host is touched
   | { op: 'remove'; alias: string }
-  | { op: 'setMode'; alias: string; mode: RunMode }
   | { op: 'setDisabled'; alias: string; disabled: boolean }
-  // acceptNewMachine: the alias now leads to another machine and the user confirmed it is the right one; fetchBuild:
-  // download the host's platform build from Acpira's release when this machine has none (after an `unsupported` failure)
-  | { op: 'connect'; alias: string; acceptNewMachine?: boolean; fetchBuild?: boolean }
+  // acceptNewMachine: the alias now leads to another machine and the user confirmed it is the right one
+  | { op: 'connect'; alias: string; acceptNewMachine?: boolean }
   | { op: 'disconnect'; alias: string }
   // `ssh <alias>` in a terminal on this machine, to confirm a host key or unlock a key
   | { op: 'openTerminal'; alias: string };

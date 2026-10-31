@@ -70,15 +70,10 @@ pub fn format_remote_folder(alias: &str, path: &str) -> Option<String> {
   Some(format!("{REMOTE_SCHEME}{alias}{}", normalize_remote_path(path)?))
 }
 
-/// How a host's sessions run by default: `local` keeps the agent loop and the logins here and runs only the tools on the
-/// host (through `acpira remote`); `remote` drives the host's own engine
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub enum RunMode {
-  #[default]
-  Local,
-  Remote,
-}
+/// The agents that can run on this machine in a folder on an SSH host, its tools running there (`acpira remote`): the
+/// built-in agent, and Claude Code with its own file and shell tools swapped for Acpira's. Which of them do so is the
+/// `sshLocalAgents` setting; every other agent, and these two when off, runs in the host's own engine
+pub const SSH_LOCAL_AGENTS: [&str; 2] = ["acpira", "claude"];
 
 /// A connection's state as the settings page and the column show it
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -99,7 +94,7 @@ pub enum ConnectStep {
   Ssh,
   /// Platform, installed helper version, machine id
   Probe,
-  /// Downloading the helper build for the host's platform from the release (asked for after an `unsupported` failure)
+  /// Downloading the helper build for the host's platform from the release, when this machine has none
   Fetch,
   /// Uploading the helper binary
   Upload,
@@ -141,7 +136,6 @@ pub struct ConnectionError {
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionView {
   pub alias: String,
-  pub mode: RunMode,
   #[serde(default, skip_serializing_if = "std::ops::Not::not")]
   pub disabled: bool,
   pub state: ConnectionState,
@@ -194,19 +188,15 @@ pub struct RemoteDirEntry {
 #[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum ConnectionOp {
   /// Remember the host and connect to it
-  Add { alias: String, mode: RunMode },
+  Add { alias: String },
   /// Forget the host here; nothing on the host is touched
   Remove { alias: String },
-  SetMode { alias: String, mode: RunMode },
   SetDisabled { alias: String, disabled: bool },
-  /// `accept_new_machine`: the alias now leads to another machine and the user confirmed it is the right one;
-  /// `fetch_build`: download the host's platform build from the release when this machine has none
+  /// `accept_new_machine`: the alias now leads to another machine and the user confirmed it is the right one
   Connect {
     alias: String,
     #[serde(default)]
     accept_new_machine: bool,
-    #[serde(default)]
-    fetch_build: bool,
   },
   Disconnect { alias: String },
   /// `ssh <alias>` in a terminal on this machine, to confirm a host key or unlock a key

@@ -30,7 +30,12 @@ impl SessionManager {
     let cwds: Vec<String> = list
       .into_iter()
       .map(|s| s.cwd)
-      .filter(|c| !c.is_empty() && std::path::Path::new(c) != home && !self.is_chat(c) && (acpira_shared::remote::is_remote_folder(c) || std::path::Path::new(c).is_dir()))
+      .filter(|c| {
+        !c.is_empty()
+          && std::path::Path::new(c) != home
+          && !self.is_chat(c)
+          && (acpira_shared::remote::is_remote_folder(c) || std::path::Path::new(c).is_dir())
+      })
       .collect();
     if cwds.is_empty() {
       return;
@@ -199,6 +204,7 @@ impl SessionManager {
       st.categories = list.clone();
     }
     self.emit(HostMsg::Categories { categories: list });
+    self.sync_host_scopes();
   }
 
   pub fn categories(&self) -> SessionCategories {

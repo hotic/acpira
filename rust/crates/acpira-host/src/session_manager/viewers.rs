@@ -18,6 +18,27 @@ use crate::acp::session::errors::error_text;
 use crate::i18n::t;
 use crate::store::transcript_store::sort_index;
 
+impl Viewer {
+  /// Peer views never relay sessions imported from another SSH host.
+  pub fn listed_sessions(&self, mut sessions: Vec<SessionSummary>) -> Vec<SessionSummary> {
+    if let Some(scope) = &self.state.lock().session_list {
+      sessions.retain(|s| {
+        !acpira_shared::remote::is_remote_folder(&s.cwd)
+          && (scope.ids.contains(&s.id)
+            || scope
+              .folders
+              .as_ref()
+              .is_none_or(|folders| acpira_shared::remote::normalize_remote_path(&s.cwd).is_some_and(|cwd| folders.contains(&cwd))))
+      });
+    }
+    sessions
+  }
+
+  pub fn has_list_scope(&self) -> bool {
+    self.state.lock().session_list.is_some()
+  }
+}
+
 /// Dirty sessions become pushes: the first change goes out at once, later ones within a quantum coalesce
 pub(super) async fn flush_loop(weak: Weak<SessionManager>) {
   loop {
@@ -46,7 +67,14 @@ impl SessionManager {
       let st = self.state.lock();
       // Run by another engine: its entry as that engine announced it (one owner per session, so ids never collide)
       let elsewhere: HashMap<String, SessionSummary> = st.elsewhere.values().flatten().map(|s| (s.id.clone(), s.clone())).collect();
-      (st.index.clone(), st.live.clone(), st.unread.clone(), elsewhere, st.deleting.clone(), st.trash.keys().cloned().collect::<HashSet<_>>())
+      (
+        st.index.clone(),
+        st.live.clone(),
+        st.unread.clone(),
+        elsewhere,
+        st.deleting.clone(),
+        st.trash.keys().cloned().collect::<HashSet<_>>(),
+      )
     };
     let mark = |mut s: SessionSummary, live_state: Option<SummaryState>| {
       let seen = !unread.contains(&s.id);
@@ -56,6 +84,9 @@ impl SessionManager {
       if s.state != Some(SummaryState::Waiting) {
         s.question = None;
       }
+      if s.state != Some(SummaryState::Background) {
+        s.wake_at = None;
+      }
       s
     };
     let mut merged: Vec<SessionSummary> = index
@@ -64,7 +95,7 @@ impl SessionManager {
         (Some(l), _) => {
           let (state, question) = l.list_marks();
           // The index entry is written with the record; the live session knows a turn's end first
-          let s = SessionSummary { question: question.then_some(true), completed_at: l.completed_at(), ..s };
+          let s = SessionSummary { question: question.then_some(true), wake_at: l.wake_at(), completed_at: l.completed_at(), ..s };
           mark(s, state)
         }
         (None, Some(e)) => mark(e.clone(), e.state),
@@ -149,9 +180,14 @@ impl SessionManager {
   /// Attach a viewer: `initial` is the session it opens on, or the newest listed one
   pub fn attach(&self, initial: Option<acpira_shared::sidecar::InitialView>) -> Arc<Viewer> {
     use acpira_shared::sidecar::InitialView;
-    let empty = matches!(initial, Some(InitialView::Empty { empty: true }));
+    let empty = matches!(initial, Some(InitialView::Empty { empty: true } | InitialView::Scoped { .. }));
+    let session_list = match &initial {
+      Some(InitialView::Scoped { session_list, .. }) => Some(session_list.clone()),
+      _ => None,
+    };
     let id = match initial {
       Some(InitialView::Id(id)) => Some(id),
+      Some(InitialView::Scoped { session, .. }) => session,
       Some(InitialView::MostRecent { most_recent: true }) => self.most_recent(),
       _ => None,
     };
@@ -161,7 +197,7 @@ impl SessionManager {
     let mut st = self.state.lock();
     let v = Arc::new(Viewer {
       id: self.viewer_seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-      state: parking_lot::Mutex::new(ViewerState { active_id: id, empty, ..Default::default() }),
+      state: parking_lot::Mutex::new(ViewerState { active_id: id, session_list, empty, ..Default::default() }),
       sink: Default::default(),
     });
     st.viewers.push(v.clone());
@@ -341,11 +377,23 @@ impl SessionManager {
     self.emit(HostMsg::Sessions { sessions });
   }
 
-  /// The current list for one page, taken under the same lock as `emit_sessions`: whatever `send` queues lands after any
+  /// The current list for one page, taken under the same lock as `emit_sessions`: whatever it queues lands after any
   /// list already emitted and before any later one, so the page cannot end on an older list that the next emit skips
-  pub fn sessions_in_order(&self, send: impl FnOnce(Vec<SessionSummary>)) {
+  pub fn sessions_in_order(&self, viewer: &Viewer) {
     let _order = self.last_sessions.lock();
-    send(self.sessions());
+    // Init can overwrite an earlier push; its corrective list must bypass the scoped deduplication once.
+    viewer.state.lock().last_sessions = None;
+    viewer.emit(HostMsg::Sessions { sessions: self.sessions() });
+  }
+
+  pub fn set_session_list(&self, v: &Viewer, scope: acpira_shared::sidecar::SessionListScope) {
+    let _order = self.last_sessions.lock();
+    {
+      let mut st = v.state.lock();
+      st.session_list = Some(scope);
+      st.last_sessions = None;
+    }
+    v.emit(HostMsg::Sessions { sessions: self.sessions() });
   }
 
   /// Landing on a session also reads it; callers push the session list afterwards

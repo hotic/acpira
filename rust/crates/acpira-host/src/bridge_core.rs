@@ -17,11 +17,11 @@ use acpira_shared::sidecar::{InitialView, PlanTarget, ToastOpen};
 use crate::acp::transcript::normalize::file_url_to_path;
 use crate::i18n::{t, tp};
 use crate::project_files;
+use crate::remote::connections::Connections;
 use crate::session_manager::{SessionManager, Viewer};
 use crate::settings::SettingsCenter;
 use crate::sidecar::platform::SidecarPlatform;
 use crate::store::data_dir::{home_dir, normalize};
-use crate::remote::connections::Connections;
 use crate::terminal::TerminalHub;
 
 /// Manager events within this window collapse to one post per message type
@@ -269,7 +269,7 @@ impl BridgeCore {
           account_actions: Some(manager.account_actions()),
           agent_installs: Some(manager.agent_installs()),
           hidden: manager.hidden(),
-          sessions: manager.sessions(),
+          sessions: self.viewer.listed_sessions(manager.sessions()),
           categories: manager.categories(),
           active,
           settings: self.settings.view(),
@@ -290,7 +290,7 @@ impl BridgeCore {
         drop(sent);
         // A batched list may reach the page around init and lose to init's copy, and the manager does not repeat an
         // unchanged list: the batch gets the current one, ordered against every other list push
-        manager.sessions_in_order(|sessions| self.queue(HostMsg::Sessions { sessions }));
+        manager.sessions_in_order(&self.viewer);
         // A reloaded page lost its theme layer: it goes again after every init (a task of its own: `sent`'s guard above
         // keeps this future from crossing an await)
         *self.theme.lock() = None;
@@ -429,12 +429,12 @@ impl BridgeCore {
       }
       W::SearchSessions { query, seq } => {
         // Always answer, like searchFiles: the history list holds a promise per seq
-        let hits = manager.search_sessions(&query).await;
+        let hits = manager.search_sessions_for(&self.viewer, &query).await;
         self.post_now(HostMsg::SessionHits { seq, hits });
       }
       // Always answered, so the page's copy never waits on a request nobody will reply to
       W::DiffSource { session_id, tool_call_id, nth, subagent_id, seq } => {
-        let source = manager.diff_source(&session_id, &tool_call_id, nth, subagent_id.as_deref());
+        let source = manager.diff_source(&session_id, &tool_call_id, nth, subagent_id.as_deref()).await;
         self.post_now(HostMsg::DiffSource { seq, source });
       }
       // Stage an image file into the session's blob store on demand when a file reference is clicked for preview
@@ -505,10 +505,13 @@ impl BridgeCore {
           _ => path,
         };
         // The session's base is looked up now, while its view is at hand
-        let session_base = root.as_ref().and_then(|r| {
-          let abs = crate::workspace::folder_path(r).join(&path);
-          manager.edit_bases(&session_id).into_iter().find(|(p, _)| Path::new(p) == abs).and_then(|(_, b)| b)
-        });
+        let session_base = match root.as_ref() {
+          Some(r) => {
+            let abs = crate::workspace::folder_path(r).join(&path);
+            manager.edit_bases(&session_id).await.into_iter().find(|(p, _)| Path::new(p) == abs).and_then(|(_, b)| b)
+          }
+          None => None,
+        };
         tokio::spawn(async move {
           let ws = match core.workspace(root).await {
             Ok(ws) => ws,
@@ -620,7 +623,7 @@ impl BridgeCore {
         });
       }
       W::SessionChanges { session_id, seq } => {
-        let (core, root, bases) = (self.clone(), manager.session_cwd(&session_id), manager.edit_bases(&session_id));
+        let (core, root, bases) = (self.clone(), manager.session_cwd(&session_id), manager.edit_bases(&session_id).await);
         tokio::spawn(async move {
           let files = match core.workspace(root).await {
             Ok(ws) => ws.session_changes(bases).await,
@@ -711,14 +714,16 @@ impl BridgeCore {
         let view = self.manager.storage_view(&detail).await;
         self.post_now(HostMsg::Storage { view, outcome: None, error: None });
       }
-      W::StorageAction { action: acpira_shared::storage::StorageAction::Reveal { path }, .. } => match self.manager.storage_reveal(path).await {
-        Ok(p) => {
-          if let Err(e) = platform.reveal_in_os(&p.to_string_lossy()).await {
-            platform.log(&format!("storage: revealing {} failed: {e}", p.display()));
+      W::StorageAction { action: acpira_shared::storage::StorageAction::Reveal { path }, .. } => {
+        match self.manager.storage_reveal(path).await {
+          Ok(p) => {
+            if let Err(e) = platform.reveal_in_os(&p.to_string_lossy()).await {
+              platform.log(&format!("storage: revealing {} failed: {e}", p.display()));
+            }
           }
+          Err(e) => platform.log(&format!("storage: reveal refused: {e:#}")),
         }
-        Err(e) => platform.log(&format!("storage: reveal refused: {e:#}")),
-      },
+      }
       W::StorageAction { action, detail } => {
         let reply = self.manager.storage_action(action, &detail).await;
         self.post_now(HostMsg::Storage { view: reply.view, outcome: reply.outcome, error: reply.error });

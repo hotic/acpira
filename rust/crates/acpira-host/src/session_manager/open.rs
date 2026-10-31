@@ -240,11 +240,11 @@ impl SessionManager {
         return;
       }
       // A host's own session (`hosts.rs`): its view comes from the host's engine, a page's pick or a restored one alike
-      if me.open_on_host(&v, &id) {
-        return;
-      }
       let previous = v.active_id();
       me.set_active(&v, Some(id.clone()));
+      if me.open_on_host(&v, &id).await {
+        return;
+      }
       let _op = me.session_op(&id).await;
       // A delete may have rehomed this viewer while this pick waited. Never reopen its trashed record afterwards.
       if v.active_id().as_deref() != Some(id.as_str()) {
@@ -322,6 +322,12 @@ impl SessionManager {
     }
     // Another engine is mid-turn on this session (or holds it while draining): starting an agent here would race it
     if let Some((note, elsewhere)) = refused {
+      // Startup's account scan is asynchronous. Learn this login's lock state before a mirror can request handover.
+      if elsewhere
+        && let Some(accounts) = &self.deps.accounts
+      {
+        accounts.check_locks(Some(&record.agent)).await;
+      }
       self.start_mirror(id, record, note, elsewhere);
       return;
     }

@@ -46,13 +46,6 @@ public struct RemoteFolder: Hashable, Sendable {
   }
 }
 
-/// How a host's sessions run: `local` keeps the agent loop here and runs only the tools on the host (the built-in agent
-/// alone works there), `remote` drives the host's own engine
-public enum RunMode: String, TolerantEnum, CaseIterable {
-  case local, remote, unknown
-  public static var unknownCase: Self { .unknown }
-}
-
 public enum ConnectionState: String, TolerantEnum, CaseIterable {
   case off, connecting, connected, error, unknown
   public static var unknownCase: Self { .unknown }
@@ -61,7 +54,6 @@ public enum ConnectionState: String, TolerantEnum, CaseIterable {
 /// One SSH host as the pages see it (HostMsg `connections`), the part the list and the new session read
 public struct ConnectionView: Codable, Hashable, Sendable {
   public var alias: String
-  public var mode: RunMode
   public var disabled: Bool?
   public var state: ConnectionState
   public var error: Failure?
@@ -71,7 +63,7 @@ public struct ConnectionView: Codable, Hashable, Sendable {
     public var message: String
   }
 
-  public init(alias: String, mode: RunMode, disabled: Bool? = nil, state: ConnectionState, error: Failure? = nil) {
-    self.alias = alias; self.mode = mode; self.disabled = disabled; self.state = state; self.error = error
+  public init(alias: String, disabled: Bool? = nil, state: ConnectionState, error: Failure? = nil) {
+    self.alias = alias; self.disabled = disabled; self.state = state; self.error = error
   }
 }

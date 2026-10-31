@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState, type ReactNode } from 'react';
-import { ChevronDown, CirclePause, Download, Eye, KeyRound, LockKeyhole, RotateCw, SquareTerminal, TriangleAlert, UserRound } from 'lucide-react';
+import { ChevronDown, CirclePause, Download, Eye, KeyRound, Laptop, LockKeyhole, RotateCw, SquareTerminal, TriangleAlert, UserRound } from 'lucide-react';
 import type { AccountInfo, AgentInfo, AuthMethodInfo, SessionStatus } from '@acpira/shared/transcript';
 import type { AccountAction, AddAccountVia } from '@acpira/shared/protocol';
 import { Card } from '../ui/Card';
@@ -30,6 +30,9 @@ export interface NoticeProps {
   // SessionView.canTakeOver: an error from a session lock held by another Acpira instance's agent (taking over ends it), or a
   // read-only copy of a session another Acpira engine has open (taking over asks that engine to hand it over)
   onTakeOver?: () => void;
+  // A session on an SSH host's engine whose agent could run on this machine instead (Claude Code): offered beside a
+  // failure or a sign-in, since the host may lack the CLI, its login or a route to the vendor
+  onRunHere?: () => void;
 }
 
 // How long a session may be starting before the connecting row shows
@@ -91,7 +94,7 @@ export function ConnectingNotice({ status, agent }: { status: SessionStatus; age
 // Once an import found no local login, signing in in the terminal becomes the primary and import stays greyed out in the menu.
 // A locked credential store (the macOS keychain in an SSH session) keeps the saved logins unreadable, so importing or signing in again
 // would only duplicate them: unlocking is the one action then
-export function Notice({ status, error, agent, authMethods, accounts, accountId, accountAction, onLogin, onRetry, onNewSession, onSelectAccount, onAddAccount, onUnlock, onTakeOver }: NoticeProps) {
+export function Notice({ status, error, agent, authMethods, accounts, accountId, accountAction, onLogin, onRetry, onNewSession, onSelectAccount, onAddAccount, onUnlock, onTakeOver, onRunHere }: NoticeProps) {
   if (status === 'ready' || status === 'starting') return null;
   const withAccounts = !!agent.accounts;
   const locked = status === 'auth_required' && withAccounts && !!agent.credentialsLocked;
@@ -113,6 +116,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
 
   const retry: Way = { key: 'retry', label: t('common.retry'), run: onRetry };
   const continueNew: Way = { key: 'new', label: t('notice.continueNew'), run: () => onNewSession() };
+  const runHere: Way[] = onRunHere ? [{ key: 'here', label: t('notice.runHere', { agent: agent.name }), icon: rowIcon(Laptop), run: onRunHere }] : [];
   let primary: Way | undefined;
   // Groups of the other ways, a rule between non-empty groups in the menu
   let groups: Way[][] = [];
@@ -131,12 +135,13 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
       (accounts ?? []).filter(a => a.id !== accountId).map(a => ({ key: `account:${a.id}`, label: a.label, icon: rowIcon(UserRound), hint: a.detail, title: a.detail, run: () => onSelectAccount(a.id) })),
       [noLocal ? importWay : terminalWay],
       (authMethods ?? []).map(m => ({ key: `method:${m.id}`, label: methodName(m), icon: rowIcon(KeyRound), hint: t('notice.onceTag'), title: m.description ?? methodName(m), run: () => onLogin(m.id) })),
+      runHere,
     ];
     showRetry = true;
   } else if (status === 'auth_required') {
     const methods = (authMethods ?? []).map(m => ({ key: `method:${m.id}`, label: methodName(m), icon: rowIcon(KeyRound), title: m.description, run: () => onLogin(m.id) }));
     primary = methods[0] ?? { key: 'login', label: t('notice.goLogin'), run: () => onLogin() };
-    groups = [methods.slice(1)];
+    groups = [methods.slice(1), runHere];
     showRetry = true;
   } else if (status === 'readonly' || status === 'closed') {
     primary = takeOver ? { key: 'takeOver', label: t('notice.takeOver'), run: takeOver } : continueNew;
@@ -146,6 +151,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
     showRetry = true;
   } else {
     primary = retry;
+    groups = [runHere];
   }
   const others = groups.filter(g => g.length > 0);
   const otherCount = others.reduce((n, g) => n + g.length, 0);
@@ -170,6 +176,8 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
   const detail = error && (status === 'auth_required' || (status === 'error' && takeOver)) ? error : undefined;
   const Glyph = body.icon;
   // The text line starts at the title's column, under the glyph's lead slot
+  // Bound individual methods as well as the group: adapter labels can be arbitrarily long.
+  const methodButton = `${DOCK_BUTTON} h-auto min-h-ctl-sm min-w-0 max-w-full whitespace-normal py-gap-half [overflow-wrap:anywhere]`;
   const text = 'm-0 basis-full pl-indent text-3 text-fg-2 [overflow-wrap:anywhere]';
   return (
     <div className="px-dock">
@@ -181,13 +189,13 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
         </span>
         {/* "Copy details" leads the actions: before the buttons on the title row, at the start of the actions row (from the
             title's column) once they wrap */}
-        <div className="flex min-w-0 items-center justify-end gap-gap @max-notice:order-1 @max-notice:basis-full @max-notice:pl-indent">
+        <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-gap @max-notice:order-1 @max-notice:basis-full @max-notice:pl-indent">
           {detail && <span className="mr-auto flex min-w-0"><CopyDetail text={detail} label="" /></span>}
-          <fieldset disabled={busy} aria-busy={busy} className="m-0 flex min-w-0 items-center gap-gap border-0 p-0 disabled:opacity-60">
+          <fieldset disabled={busy} aria-busy={busy} className="m-0 flex min-w-0 max-w-full flex-wrap items-center justify-end gap-gap border-0 p-0 disabled:opacity-60">
             {otherCount === 1
-              ? others[0]!.map(w => <Button key={w.key} className={DOCK_BUTTON} title={w.title} disabled={w.disabled} onClick={w.run}>{w.label}</Button>)
+              ? others[0]!.map(w => <Button key={w.key} className={methodButton} title={w.title} disabled={w.disabled} onClick={w.run}>{w.label}</Button>)
               : otherCount > 1 && <OtherWays groups={others} />}
-            {primary && <Button variant="primary" className={DOCK_BUTTON} title={primary.title} onClick={primary.run}>{primary.label}</Button>}
+            {primary && <Button variant="primary" className={methodButton} title={primary.title} onClick={primary.run}>{primary.label}</Button>}
           </fieldset>
         </div>
         {showRetry && <IconButton size="sm" aria-label={retry.label} title={retry.label} onClick={onRetry} className="-mr-ctl-sm-bleed"><RotateCw strokeWidth={1.5} /></IconButton>}

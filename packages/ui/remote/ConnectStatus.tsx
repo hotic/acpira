@@ -1,7 +1,7 @@
 import { useRef, type ReactNode } from 'react';
-import { Check, Download, LoaderCircle, SquareTerminal } from 'lucide-react';
+import { Check, LoaderCircle, SquareTerminal } from 'lucide-react';
 import type { MsgKey } from '@acpira/shared/i18n';
-import type { ConnectFailure, ConnectionView, ConnectStep } from '@acpira/shared/remote';
+import type { ConnectFailure, ConnectionError, ConnectionView, ConnectStep } from '@acpira/shared/remote';
 import { cn } from '../ui/cn';
 import { Button } from '../ui/Button';
 import { Collapsible } from '../ui/Collapsible';
@@ -28,13 +28,25 @@ const FIX: Partial<Record<ConnectFailure, MsgKey>> = {
   hostKey: 'connections.fix.hostKey', keyLocked: 'connections.fix.keyLocked', denied: 'connections.fix.denied', network: 'connections.fix.network',
   machineChanged: 'connections.fix.machineChanged', unsupported: 'connections.fix.unsupported', noSsh: 'connections.fix.noSsh',
 };
+// A failure in a few words, for a host's row in the list; `other` has only the engine's own message
+const REASON: Partial<Record<ConnectFailure, MsgKey>> = {
+  hostKey: 'connections.reason.hostKey', keyLocked: 'connections.reason.keyLocked', denied: 'connections.reason.denied', network: 'connections.reason.network',
+  machineChanged: 'connections.failed.machine', unsupported: 'connections.failed.fetch', noSsh: 'connections.reason.noSsh',
+};
+
+/** Why a connection failed, in a few words */
+export function failureReason(error: ConnectionError): string {
+  const key = REASON[error.kind];
+  return key ? t(key) : error.message;
+}
+
 // The steps shown in order; the download takes the upload's place while it runs (it comes right before it)
 const SLOTS: ConnectStep[] = ['ssh', 'probe', 'upload', 'start'];
 const SLOT_OF: Record<ConnectStep, number> = { ssh: 0, probe: 1, fetch: 2, upload: 2, start: 3 };
 
 /** Connect again: a switched-off host comes back on through add, which also connects */
-export function reconnect(view: ConnectionView, extra?: { acceptNewMachine?: boolean; fetchBuild?: boolean }) {
-  connectionOp(view.disabled ? { op: 'add', alias: view.alias, mode: view.mode } : { op: 'connect', alias: view.alias, ...extra });
+export function reconnect(view: ConnectionView, extra?: { acceptNewMachine?: boolean }) {
+  connectionOp(view.disabled ? { op: 'add', alias: view.alias } : { op: 'connect', alias: view.alias, ...extra });
 }
 
 /**
@@ -102,8 +114,9 @@ function Failure({ view, retry, onOpenConfig }: { view: ConnectionView; retry?: 
     : error.kind === 'machineChanged'
       ? <><Button onClick={() => connectionOp({ op: 'disconnect', alias })}>{t('connections.cancel')}</Button>
         <Button variant="primary" onClick={() => reconnect(view, { acceptNewMachine: true })}>{t('connections.acceptMachine')}</Button></>
+      // A download that failed is tried again on the next connect
       : error.kind === 'unsupported'
-        ? <Button variant="primary" onClick={() => reconnect(view, { fetchBuild: true })}><Download className="size-icon" strokeWidth={1.5} />{t('connections.fetchBuild')}</Button>
+        ? <Button variant="primary" onClick={() => reconnect(view)}>{t('common.retry')}</Button>
         : error.kind === 'denied' && onOpenConfig
           ? <>{again}<Button onClick={onOpenConfig}>{t('connections.editConfigShort')}</Button></>
           : again;

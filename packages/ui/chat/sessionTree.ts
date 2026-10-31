@@ -67,10 +67,17 @@ export function isChatFolder(root: string | undefined, cwd: string | undefined):
   return cut > 0 && cut < cwd.length - 1 && cwd.slice(0, cut) === root;
 }
 
-// Whether a project shell keeps a folder off its list: one it took off, or a host folder it never added (a host's list
-// brings every folder that host ever ran a session in). Their sessions show only in a search
+// Whether a project shell keeps a folder off its list: one it took off, or a host folder it never added.
+// Search can return summaries outside the host's ordinary project subscription.
 export function offList(cwd: string, registered?: string[], removed?: string[]): boolean {
   return !!removed?.includes(cwd) || (!!registered && isRemoteFolder(cwd) && !registered.includes(cwd));
+}
+
+// Apply project visibility before pinning or grouping. A view filter may reveal removed folders, but only a search
+// reveals host folders that were never added.
+export function projectSessions(shown: SessionSummary[], { registered, removed, filtering, expand = filtering }: Pick<TreeInput, 'registered' | 'removed' | 'filtering' | 'expand'>): SessionSummary[] {
+  if (filtering && expand) return shown;
+  return shown.filter(s => !offList(s.cwd, registered, filtering ? undefined : removed));
 }
 
 // The category a session is filed under, if that category still exists and belongs to the session's project
@@ -80,10 +87,11 @@ export function categoryOf(s: SessionSummary, categories: SessionCategory[]): Se
 }
 
 export function buildSessionTree({ shown, categories, collapsedProjects, workspace, grouped, filtering, registered, removed, pinInProject, isChat, expand = filtering }: TreeInput): SessionTree {
+  const listed = grouped ? projectSessions(shown, { registered, removed, filtering, expand }) : shown;
   // Pinning into projects only means something when there are project groups to pin into
   const inProject = grouped && !!pinInProject;
-  const pinned = inProject ? [] : shown.filter(s => s.pinned);
-  const rest = inProject ? shown : shown.filter(s => !s.pinned);
+  const pinned = inProject ? [] : listed.filter(s => s.pinned);
+  const rest = inProject ? listed : listed.filter(s => !s.pinned);
   const node = (cwd: string, sessions: SessionSummary[]): ProjectNode => {
     const own = categories.filter(c => c.cwd === cwd);
     const filed = new Map(own.map(c => [c.id, [] as SessionSummary[]]));
@@ -118,9 +126,7 @@ export function buildSessionTree({ shown, categories, collapsedProjects, workspa
   const chat = (s: SessionSummary) => !!isChat?.(s.cwd);
   const chats = [...rest.filter(s => s.pinned && chat(s)), ...rest.filter(s => !s.pinned && chat(s))];
   const byProject = new Map<string, SessionSummary[]>();
-  // Host folders nobody added come back for a search only, not for a view filter (`expand` is on exactly while
-  // searching); folders taken off the list come back for either
-  for (const s of rest) if (!chat(s) && (filtering ? expand || !offList(s.cwd, registered) : !offList(s.cwd, registered, removed))) byProject.set(s.cwd, [...byProject.get(s.cwd) ?? [], s]);
+  for (const s of rest) if (!chat(s)) byProject.set(s.cwd, [...byProject.get(s.cwd) ?? [], s]);
   // A project with categories but no session in view still shows (so its categories can be reached), unless filtering
   if (!filtering) for (const c of categories) if (!byProject.has(c.cwd) && !offList(c.cwd, registered)) byProject.set(c.cwd, []);
   if (!filtering) for (const cwd of registered ?? []) if (!byProject.has(cwd)) byProject.set(cwd, []);

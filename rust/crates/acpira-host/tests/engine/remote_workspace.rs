@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use acpira_host::project_files::ProjectError;
 use acpira_host::workspace::Workspace;
-use acpira_shared::remote::{ConnectionOp, RunMode};
+use acpira_shared::remote::ConnectionOp;
 
 use crate::remote_connections::Lab;
 
@@ -30,7 +30,7 @@ async fn the_tool_panel_reads_a_folder_on_the_host() {
   std::fs::write(work.join("notes.txt"), "x\n").unwrap();
   lab.map_root(VIRT, &real);
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into(), mode: RunMode::Local }).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
   connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
 
   let ws = Workspace::open(&format!("ssh://gen1{VIRT}/work"), Some(&connections)).await.expect("connected");
@@ -69,7 +69,7 @@ async fn a_terminal_in_a_folder_on_the_host_runs_there() {
   std::fs::create_dir_all(real.join("work")).unwrap();
   lab.map_root(VIRT, &real);
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into(), mode: RunMode::Local }).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
   let client = connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
   let missing =
     client.call("pty", serde_json::json!({ "cwd": format!("{VIRT}/missing") })).await.expect_err("no fallback to the host's home");
@@ -116,7 +116,7 @@ async fn a_preview_of_a_dev_server_on_the_host_goes_through_it() {
   use tokio::io::{AsyncReadExt, AsyncWriteExt};
   let lab = Lab::new();
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into(), mode: RunMode::Local }).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
   connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
   // The fake host is this machine, so its loopback is this one's
   let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();

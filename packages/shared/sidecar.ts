@@ -67,8 +67,9 @@ export type ShellMsg =
   }
   // blobBase: this view's own blob base (VS Code maps the sessions directory per webview); env.blobBase when absent
   // initial { empty: true }: the view never opens or starts a session by itself (a peer engine's list view)
-  | { type: 'attachView'; viewId: string; host: WebviewHost; initial?: string | { mostRecent: true } | { empty: true }; blobBase?: string }
+  | { type: 'attachView'; viewId: string; host: WebviewHost; initial?: string | { mostRecent: true } | { empty: true } | { sessionList: SessionListScope; session?: string }; blobBase?: string }
   | { type: 'detachView'; viewId: string }
+  | { type: 'setSessionList'; viewId: string; scope: SessionListScope }
   | { type: 'webviewMessage'; viewId: string; message: WebviewMsg }
   | { type: 'platformResponse'; requestId: string; result?: unknown; error?: string }
   | { type: 'platformEvent'; event: PlatformEvent }
@@ -96,6 +97,12 @@ export type SidecarMsg =
   // The proxied address of a previewed page and the token its picker stamps messages with, or why not
   | { type: 'previewOpened'; requestId: string; url?: string; token?: string; error?: string }
   | { type: 'shutdownOk' };
+
+// Local folders only. Selectors are a union; null folders selects all, [] selects none.
+export interface SessionListScope {
+  folders: string[] | null;
+  ids?: string[];
+}
 
 export function isShellMsg(v: unknown): v is ShellMsg {
   return !!v && typeof v === 'object' && typeof (v as { type?: unknown }).type === 'string';

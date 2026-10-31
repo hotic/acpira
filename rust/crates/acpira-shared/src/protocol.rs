@@ -2,18 +2,19 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 use crate::appearance::Appearance;
 use crate::chatgpt_integration::ChatGptIntegrationStatus;
 use crate::i18n::Locale;
 use crate::inventory::AgentInventory;
 use crate::model_shapes::ModelShapes;
+use crate::plugins::{PluginAction, PluginCardOp, PluginSkin, PluginSlot, PluginsView};
 use crate::providers::{ProbeOutcome, ProviderAction, ProviderProbe, ProvidersView};
 use crate::remote::{ConnectionOp, ConnectionView, RemoteDirEntry, SshHost};
-use crate::shared_config::{SharedAction, SharedView};
-use crate::plugins::{PluginAction, PluginCardOp, PluginSkin, PluginSlot, PluginsView};
-use crate::storage::{StorageAction, StorageDetail, StorageOutcome, StorageView};
 use crate::settings::{HiddenMap, SettingsView};
+use crate::shared_config::{SharedAction, SharedView};
+use crate::storage::{StorageAction, StorageDetail, StorageOutcome, StorageView};
 use crate::transcript::{
   AccountInfo, AgentId, AgentInfo, CategoryOp, ConfigControl, DiffSource, Draft, NativeSessionInfo, QuestionAnswers,
   SessionCategories, SessionSummary, Turn, TurnSettings,
@@ -128,10 +129,13 @@ pub enum ProjectBase {
 }
 
 /// A session whose conversation contains every term of a history search, with the text around the first match
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionHit {
   pub id: String,
   pub snippet: String,
+  /// A remote hit need not be in the page's project subscription. Kept only for this search.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub summary: Option<SessionSummary>,
 }
 
 /// Links in agent output open on the host side; only these schemes are ever handed to openExternal
@@ -347,9 +351,14 @@ pub enum HostMsg {
   },
   /// The plugins' interface pieces (docs/dev/plugins.md, Interface): after every init and whenever they change; empty
   /// takes them away
-  PluginUi { slots: Vec<PluginSlot> },
+  PluginUi {
+    slots: Vec<PluginSlot>,
+  },
   /// A message a plugin's process sends its frames (`ui/post`), for the page to hand to that plugin's frames only
-  PluginPost { plugin: String, message: Value },
+  PluginPost {
+    plugin: String,
+    message: Value,
+  },
   /// Text a plugin's process puts into the composer of the session on screen (`ui/composer`): at the cursor, or in
   /// place of the draft. With `session` only a page showing that session takes it; without, only the focused page
   PluginComposer {
@@ -665,7 +674,7 @@ pub enum WebviewMsg {
     op: ConnectionOp,
   },
   SshHosts,
-  /// Remote access (paired devices, docs/dev/paired-remote.md): the gateway's state, pushed on every change after
+  /// Remote access (paired devices, docs/dev/host-architecture.md, Remote access gateway): the gateway's state, pushed on every change after
   RemoteAccess,
   RemoteAccessOp {
     op: crate::devices::RemoteAccessOp,
@@ -764,6 +773,9 @@ pub enum WebviewMsg {
     block_id: String,
     #[serde(default)]
     answers: QuestionAnswers,
+    /// Image drafts sent with the answers, by question id, for a card that takes them (`QuestionBlock::images`)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    images: Option<BTreeMap<String, Vec<Draft>>>,
     #[serde(default)]
     skip: Option<bool>,
     /// Set by a paired device: a resend after a lost link carries the same id, and the session runs it once
@@ -889,16 +901,24 @@ pub enum WebviewMsg {
     id: String,
   },
   AddAccount {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
     agent: AgentId,
     via: AddAccountVia,
   },
   RemoveAccount {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
     id: String,
   },
   UnlockCredentials {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
     agent: AgentId,
   },
   RefreshQuota {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
     agent: AgentId,
   },
   Compact {

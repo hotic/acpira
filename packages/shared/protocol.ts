@@ -1,7 +1,7 @@
 import type { ChatGptIntegrationStatus } from './chatgptIntegration';
 import type { RemoteAccessOp, RemoteAccessView } from './devices';
 import type { ConnectionOp, ConnectionView, RemoteDirEntry, SshHost } from './remote';
-import type { AccountInfo, AgentId, AgentInfo, CategoryOp, ConfigControl, Draft, FullDiffSource, GoalAction, NativeSessionInfo, QuestionAnswers, SessionCategories, SessionSummary, SessionView, Turn, TurnSettings } from './transcript';
+import type { AccountInfo, AgentId, AgentInfo, CategoryOp, ConfigControl, Draft, FullDiffSource, GoalAction, ImageDraft, NativeSessionInfo, QuestionAnswers, SessionCategories, SessionSummary, SessionView, Turn, TurnSettings } from './transcript';
 import type { Appearance, AxisKey } from './appearance';
 import type { HiddenMap, SettingKey, SettingsView } from './settings';
 import type { Locale } from './i18n';
@@ -138,6 +138,8 @@ export type ProjectError = 'noProject' | 'outside' | 'missing' | 'binary' | 'too
 export interface SessionHit {
   id: string;
   snippet: string;
+  // Remote results outside the project's subscription live only for this search.
+  summary?: SessionSummary;
 }
 
 // A line range of an editor document as the IDE shell reports it: 1-based inclusive lines, the selected text verbatim
@@ -468,7 +470,8 @@ export type WebviewMsg =
   | { type: 'imageBlob'; sessionId: string; path: string; seq: number }
   | { type: 'permission'; sessionId: string; blockId: string; optionId: string; clientId?: string }
   // The question card was closed: `answers` holds the answered questions only (option ids / free text); skip tells the agent to go on with what it has
-  | { type: 'answer'; sessionId: string; blockId: string; answers: QuestionAnswers; skip?: boolean; clientId?: string }
+  // `images`: image drafts by question id, for a card that takes them (QuestionBlock.images)
+  | { type: 'answer'; sessionId: string; blockId: string; answers: QuestionAnswers; images?: Record<string, ImageDraft[]>; skip?: boolean; clientId?: string }
   | { type: 'buildPlan'; sessionId: string; planId: string; optionId?: string; model?: { configId: string; value: string } }
   | { type: 'openPlan'; sessionId: string; planId: string }
   | { type: 'setMode'; sessionId?: string; id: string }
@@ -509,12 +512,13 @@ export type WebviewMsg =
   | { type: 'sessionMarkdown'; id: string; seq: number; format?: ExportFormat }
   // Rebind the session to this account (also becomes the agent's default account)
   | { type: 'selectAccount'; sessionId?: string; id: string }
-  | { type: 'addAccount'; agent: AgentId; via: AddAccountVia }
-  | { type: 'removeAccount'; id: string }
+  // A session id routes chat account actions to its owning SSH engine; settings omit it and stay local.
+  | { type: 'addAccount'; sessionId?: string; agent: AgentId; via: AddAccountVia }
+  | { type: 'removeAccount'; sessionId?: string; id: string }
   // AgentInfo.credentialsLocked: unlock the credential store in a terminal, then reconnect the agent's sessions stuck on sign-in
-  | { type: 'unlockCredentials'; agent: AgentId }
+  | { type: 'unlockCredentials'; sessionId?: string; agent: AgentId }
   // An account list came into view: refresh the quotas of that agent's accounts (recent ones are served from memory)
-  | { type: 'refreshQuota'; agent: AgentId }
+  | { type: 'refreshQuota'; sessionId?: string; agent: AgentId }
   | { type: 'compact'; sessionId?: string }
   | { type: 'login'; sessionId?: string; methodId?: string }
   // Settings page: run the agent's install line (AgentInfo.install) in the background on the engine's machine
