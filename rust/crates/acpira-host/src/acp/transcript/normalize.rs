@@ -39,7 +39,7 @@ pub use self::tasks::{
 use self::tasks::{link_async_task, settled_before, time_tool_at, tool_at};
 pub use self::tool_call::{empty_tool, permission_tool_update};
 use self::tool_call::{merge_tool, time_tool, tool_block};
-pub use self::tool_kind::{READ_SESSION_VERB, SEARCH_SESSIONS_VERB, SHOW_IMAGE_VERB};
+pub use self::tool_kind::{READ_SESSION_VERB, SEARCH_SESSIONS_VERB, SHOW_IMAGE_VERB, WAKEUP_VERBS};
 pub use self::tool_target::command_from_raw;
 
 pub type ImageSaver = Arc<dyn Fn(&str, &str) -> Option<String> + Send + Sync>;

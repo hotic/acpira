@@ -568,7 +568,12 @@ const app = acp.agent({ name: 'fake-agent' })
   .onRequest(acp.methods.agent.session.prompt, async ({ params, client }) => {
     const sid = params.sessionId;
     prompted.add(sid);
-    const text = params.prompt.map(p => (p.type === 'text' ? p.text : '')).join('');
+    const full = params.prompt.map(p => (p.type === 'text' ? p.text : '')).join('');
+    // The commands below match the user's words only: a beforePrompt hook's context rides behind them as blocks of its
+    // own, and its wording must not turn into a command ("…/notes.txt<workspace-hook-context …" as a path, "big" in a rule)
+    const text = params.prompt.map(p => (p.type === 'text' && !p.text.startsWith('<workspace-hook-context') ? p.text : '')).join('');
+    // One JSON line per prompt as it reached the agent (after the host's expansion of slash commands and hooks)
+    if (process.env.FAKE_PROMPT_LOG) appendFileSync(process.env.FAKE_PROMPT_LOG, `${JSON.stringify({ sessionId: sid, text: full })}\n`);
     const send = (update: acp.SessionUpdate) => client.notify(acp.methods.client.session.update, { sessionId: sid, update });
     cancelled.delete(sid);
     // The goal extension: `/goal …` changes the snapshot, "goal-done" meets it
@@ -796,7 +801,7 @@ const app = acp.agent({ name: 'fake-agent' })
     }
     // echo-text → reply with the prompt's text blocks joined, so tests can see text the host added to the prompt
     if (text.startsWith('echo-text')) {
-      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: full } });
       return { stopReason: 'end_turn' };
     }
     // "mcp-call:<tool> <json arguments>" → start the session's `acpira` MCP server the way a CLI does, list its tools, call one,
@@ -1095,7 +1100,8 @@ const app = acp.agent({ name: 'fake-agent' })
       // model with no prompt on the wire, and the followup streams as plain updates until its result's usage_update, stamped
       // `_claude/origin`. =autonomous-hang never sends that result (the cycle only ends by a stop). FAKE_AUTONOMOUS_WRITE=<path>:
       // the cycle writes "bad\n" there through an edit row; FAKE_AUTONOMOUS_TWICE: a second background task's cycle follows
-      // the first one's result; FAKE_AUTONOMOUS_DELAY: ms between the turn's end and the cycle (default 80)
+      // the first one's result; FAKE_AUTONOMOUS_DELAY: ms between the turn's end and the cycle (default 80);
+      // FAKE_AUTONOMOUS_NO_ORIGIN: the result carries only its cost, as a scheduled wakeup's cycle's did
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'waiting in background' } });
       setTimeout(() => {
         void (async () => {
@@ -1116,6 +1122,10 @@ const app = acp.agent({ name: 'fake-agent' })
             await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ' queued tail after cancel' } });
           }
           if (text === 'autonomous-hang') return;
+          if (process.env.FAKE_AUTONOMOUS_NO_ORIGIN) {
+            await send({ sessionUpdate: 'usage_update', used: 20, size: 1000, cost: { amount: 0.01, currency: 'USD' } } as never);
+            return;
+          }
           await send({ sessionUpdate: 'usage_update', used: 20, size: 1000, _meta: { '_claude/origin': { kind: 'task-notification' } } } as never);
           if (process.env.FAKE_AUTONOMOUS_TWICE) {
             await new Promise(r => setTimeout(r, 200));

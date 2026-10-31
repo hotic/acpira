@@ -28,6 +28,18 @@ async fn a_claude_followup_after_end_turn_runs_the_last_turn_until_its_result() 
   until(|| view(&s)["turns"][3]["stop"] == "end_turn", 5000).await;
 }
 
+// A cycle a scheduled wakeup started: its result names no origin, only its cost. It spun until a stop
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cycle_whose_result_names_no_origin_still_settles() {
+  let fake = fake_or_skip!();
+  let h = Harness::for_agent(&fake, "claude", json!({ "env": { "FAKE_AUTONOMOUS_NO_ORIGIN": "1" } }));
+  let s = started(&h, "/tmp").await;
+  prompt(&s, "autonomous").await;
+  until(|| agent_text(&view(&s)["turns"][1]).contains("followup"), 5000).await;
+  until(|| !s.is_running(), 5000).await;
+  expect_match(&view(&s)["turns"][1], json!({ "stop": "end_turn", "usage": { "context": { "used": 20 } } }));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn stopping_an_autonomous_cycle_settles_it_without_a_prompt_response() {
   let fake = fake_or_skip!();

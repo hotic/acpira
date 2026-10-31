@@ -216,6 +216,7 @@ impl SessionManager {
         let (state, question) = s.list_marks();
         sum.state = state;
         sum.question = question.then_some(true);
+        sum.wake_at = (state == Some(SummaryState::Background)).then(|| s.wake_at()).flatten();
         serde_json::to_value(&sum).ok().map(|v| (s.id.clone(), v))
       })
       .collect();

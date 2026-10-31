@@ -14,12 +14,13 @@ use crate::util::{js_num, now_ms};
 
 use super::ToolCtx;
 use super::content::{
-  append_exit_code, attach_saved_images, attach_shown_images, attach_shown_widget, formatted_output, show_image_paths, tool_contents,
+  append_exit_code, attach_saved_images, attach_shown_images, attach_shown_video, attach_shown_widget, formatted_output, show_image_paths, tool_contents,
 };
 use super::tool_kind::{
-  ASK_TITLE, IMAGE_GEN, IMAGE_GEN_TITLE, IMAGE_GEN_VERB, READ_SESSION_VERB, SEARCH_SESSIONS_VERB, SHOW_IMAGE_VERB, SHOW_WIDGET_VERB,
-  JOB_INPUT, SKILL_VERB, TODO_TITLE, WEB_SEARCH_VERB, WebTool, infer_kind, is_show_image_call, is_show_widget_call, mcp_identity, mcp_label, session_tool_target,
-  session_tool_verb, shell_verb, show_image_args, skill_load, verb_of, web_search_query, web_tool,
+  ASK_TITLE, IMAGE_GEN, IMAGE_GEN_TITLE, IMAGE_GEN_VERB, READ_SESSION_VERB, SEARCH_SESSIONS_VERB, SHOW_IMAGE_VERB, SHOW_VIDEO_VERB, SHOW_WIDGET_VERB,
+  JOB_INPUT, SKILL_VERB, TODO_TITLE, WEB_SEARCH_VERB, WebTool, infer_kind, is_show_image_call, is_show_video_call, is_show_widget_call, mcp_identity, mcp_label, session_tool_target,
+  session_tool_verb, shell_verb, show_image_args, skill_load, verb_of, wakeup_time, wakeup_verb, web_search_query, web_tool, WAKEUP_STOP_VERB,
+  WAKEUP_VERBS,
 };
 use super::tool_target::{
   Target, path_from_raw, pick_target, prompt_target, read_range_from_raw, shell_target, show_image_target, show_widget_target,
@@ -85,6 +86,7 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
   let title = str_of(u, "title");
   // A skill row keeps the name it got from an earlier packet; this one may carry only a status or the command again
   let skill_before = (b.verb_key.as_deref() == Some(SKILL_VERB)).then(|| b.target.clone()).flatten();
+  let wake_before = b.verb_key.as_deref().is_some_and(|k| WAKEUP_VERBS.contains(&k)).then(|| b.target.clone()).flatten();
   // An MCP row stays `other`: codex-acp files every MCP call as `execute`
   if let Some(k) = kind_field(u).filter(|_| b.mcp_server.is_none()) {
     b.kind = k;
@@ -146,6 +148,13 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
       b.locations = Some(paths.into_iter().map(|path| Location { path, line: None }).collect());
     }
   }
+  if b.verb_key.as_deref() == Some(SHOW_VIDEO_VERB) || is_show_video_call(u, title, raw) {
+    set_verb(b, SHOW_VIDEO_VERB);
+    b.kind = ToolKind::Other;
+    if let Some(path) = show_image_args(raw).and_then(|a| a.get("path")).and_then(Value::as_str).map(str::trim).filter(|p| !p.is_empty()) {
+      b.locations = Some(vec![Location { path: path.to_owned(), line: None }]);
+    }
+  }
   // Acpira's show_widget: one HTML file, kept as the row's location until the call completes and the file is read
   if b.verb_key.as_deref() == Some(SHOW_WIDGET_VERB) || is_show_widget_call(u, title, raw) {
     set_verb(b, SHOW_WIDGET_VERB);
@@ -198,7 +207,7 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
   {
     b.background = Some(true);
   }
-  if let Some(locs) = u.get("locations").and_then(Value::as_array).filter(|_| !matches!(b.verb_key.as_deref(), Some(SHOW_IMAGE_VERB | SHOW_WIDGET_VERB))) {
+  if let Some(locs) = u.get("locations").and_then(Value::as_array).filter(|_| !matches!(b.verb_key.as_deref(), Some(SHOW_IMAGE_VERB | SHOW_VIDEO_VERB | SHOW_WIDGET_VERB))) {
     b.locations = Some(
       locs
         .iter()
@@ -239,6 +248,7 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
         | "verb.kill"
         | IMAGE_GEN_VERB
         | SHOW_IMAGE_VERB
+        | SHOW_VIDEO_VERB
         | SHOW_WIDGET_VERB
         | SEARCH_SESSIONS_VERB
         | READ_SESSION_VERB
@@ -252,8 +262,13 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
     web_search_query(title, raw).map(|text| Target { text, mono: false, from_title: false })
   } else if b.verb_key.as_deref() == Some(IMAGE_GEN_VERB) {
     prompt_target(raw)
-  } else if b.verb_key.as_deref() == Some(SHOW_IMAGE_VERB) {
-    show_image_target(show_image_args(raw), b.locations.as_deref())
+  } else if matches!(b.verb_key.as_deref(), Some(SHOW_IMAGE_VERB | SHOW_VIDEO_VERB)) {
+    // A title-less completion must not replace the recording's caption with its file name.
+    if b.verb_key.as_deref() == Some(SHOW_VIDEO_VERB) && raw.is_none() && b.target.is_some() {
+      None
+    } else {
+      show_image_target(show_image_args(raw), b.locations.as_deref())
+    }
   } else if b.verb_key.as_deref() == Some(SHOW_WIDGET_VERB) {
     show_widget_target(show_image_args(raw), b.locations.as_deref())
   } else if let Some(key @ (SEARCH_SESSIONS_VERB | READ_SESSION_VERB)) = b.verb_key.as_deref() {
@@ -290,7 +305,7 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
   {
     let lines = diff_lines("", &content);
     let add = lines.iter().filter(|l| l.kind == DiffKind::Add).count() as u64;
-    let diff = ToolContent::Diff { lines, source: Some(DiffSource { path, old_text: String::new(), new_text: content, omitted: false }) };
+    let diff = ToolContent::Diff { lines, source: Some(DiffSource::whole(path, String::new(), content)) };
     let items =
       u.get("content").and_then(Value::as_array).filter(|a| !a.is_empty()).map(|a| tool_contents(a, ctx.as_deref())).unwrap_or_default();
     let receipts: Vec<ToolContent> = items.into_iter().filter(|x| matches!(x, ToolContent::Text { text } if !text.is_empty())).collect();
@@ -335,11 +350,30 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
       b.contents = if list.len() > 1 { Some(list) } else { None };
     }
   }
+  // Codex can title a patch only "Edit files" and omit locations. The diff is authoritative about which files changed.
+  if b.kind == ToolKind::Edit {
+    let mut paths = Vec::new();
+    for item in b.contents.as_deref().unwrap_or(b.content.as_slice()) {
+      if let ToolContent::Diff { source: Some(source), .. } = item
+        && !source.path.is_empty()
+        && !paths.contains(&source.path)
+      {
+        paths.push(source.path.clone());
+      }
+    }
+    if !paths.is_empty() {
+      b.target = Some(paths.iter().map(|p| crate::json::basename(p)).collect::<Vec<_>>().join(", "));
+      b.target_mono = Some(false);
+    }
+  }
   if b.verb_key.as_deref() == Some(IMAGE_GEN_VERB) && !b.status.is_open() {
     attach_saved_images(b, u, ctx.as_deref());
   }
   if b.verb_key.as_deref() == Some(SHOW_IMAGE_VERB) {
     attach_shown_images(b, ctx.as_deref());
+  }
+  if b.verb_key.as_deref() == Some(SHOW_VIDEO_VERB) {
+    attach_shown_video(b, ctx.as_deref());
   }
   if b.verb_key.as_deref() == Some(SHOW_WIDGET_VERB) {
     attach_shown_widget(b, ctx.as_deref());
@@ -415,6 +449,22 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
       b.locations = Some(vec![Location { path, line: None }]);
     }
     b.read_range = None;
+    if b.status != ToolStatus::Failed {
+      b.content = None;
+      b.contents = None;
+    }
+  }
+  // A ScheduleWakeup row names the time the session resumes; the result's instructions are for the model. A failure keeps
+  // its message
+  if let Some(key) = wakeup_verb(b, meta, raw) {
+    set_verb(b, key);
+    b.kind = ToolKind::Other;
+    let time = match &b.content {
+      Some(ToolContent::Text { text }) => wakeup_time(text),
+      _ => None,
+    };
+    b.target = if key == WAKEUP_STOP_VERB { None } else { time.or(wake_before) };
+    b.target_mono = Some(false);
     if b.status != ToolStatus::Failed {
       b.content = None;
       b.contents = None;

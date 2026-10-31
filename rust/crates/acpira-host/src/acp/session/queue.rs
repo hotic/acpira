@@ -359,6 +359,10 @@ impl AcpSession {
     }
     c.peer.detached = true;
     c.peer.autonomous = true;
+    // At or past a pending wakeup's time, this cycle is the wakeup firing
+    if c.wake.fired(crate::util::now_ms()) {
+      self.log("scheduled wakeup fired");
+    }
     self.reopen_for_detached(c);
     self.log(&format!("autonomous cycle started ({kind})"));
   }

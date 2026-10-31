@@ -16,7 +16,7 @@ import { useScrollFade } from '../ui/useScrollFade';
 import { Popover } from '../ui/Popover';
 import { Row } from '../ui/Row';
 import { imeKey } from '../ui/ime';
-import { dateFormat, t, useLocale } from '../i18n';
+import { dateFormat, getLocale, t, useLocale } from '../i18n';
 import { macOS, shortcutLabel, useDesktop, windowsOS } from '../desktop';
 import { AgentMark } from './AgentMark';
 import { CategoryAddIcon } from './CategoryIcon';
@@ -24,7 +24,8 @@ import { ModelMark } from './ModelMark';
 import { RowContextMenu, SessionContextMenu, Submenu, type MoveProject, type SessionCopyKind, type SessionMenuItemsProps } from './SessionMenu';
 import { setWebviewState, webviewState } from '../vscodeApi';
 import { markParts, matchesTitle, searchTerms } from './sessionSearch';
-import { buildSessionTree, categoryOf, draggable, dropAction, isChatFolder, offList, type CategoryNode, type MoveTarget, type ProjectNode, type SessionTree } from './sessionTree';
+import { NAV_LEAD, NAV_ROW, NavEmpty, NavHint, NavSearch } from './NavRows';
+import { buildSessionTree, categoryOf, draggable, dropAction, isChatFolder, offList, projectSessions, type CategoryNode, type MoveTarget, type ProjectNode, type SessionTree } from './sessionTree';
 import { clearFilters, filterCount, groupSessions, passes, readView, sortSessions, VIEW_KEY, type FlatGroup, type ListView, type TimeBucket } from './sessionView';
 import { ViewMenu } from './ViewMenu';
 import { clockRoot, rowDone, rowState } from './styleClock';
@@ -48,19 +49,23 @@ const LATEST = 5;
 const MORE_MARKS = 3;
 // Each click on the "more" row shows this many more, as Codex does; once all are out it reads "show less"
 const MORE_PAGE = 10;
-// Running sessions (a turn on, waiting on the user, or background work) older than the latest few stay out of the "more"
-// fold, up to this many; past that the list would stop being a short one and they fold like the rest
+// Pure running / background work stays outside "more" up to this many; sessions needing attention have no cap.
 const LIVE_KEEP = 5;
-const isLive = (s: SessionSummary) => s.state === 'working' || s.state === 'waiting' || s.state === 'background';
+const isLive = (s: SessionSummary) => s.state === 'working' || s.state === 'background';
+const needsAttention = (s: SessionSummary) => !!s.unread || s.state === 'unread' || s.state === 'waiting' || s.state === 'error';
 
 // Ring and dots share one fixed slot so every mark sits on the same centre line, and each names its meaning on hover.
 // The ring is drawn smaller than the slot: at full size its arc outweighed even an 8 px dot
 // Background (the turn ended, a task it started still runs) is the working ring at rest: a closed circle in the faint
 // foreground with a small dot orbiting it slowly, so it reads as "alive, not done, nothing to do". A reply that came in
 // meanwhile lights it in the strongest foreground with a dot inside, never the unread dot itself, which means finished
-interface Mark { state: NonNullable<SessionSummary['state']>; unread?: boolean }
-function StateMark({ state, unread }: Mark) {
-  const label = t(state === 'background' && unread ? 'session.state.backgroundUnread' : `session.state.${state}`);
+// A background ring waiting on Claude's scheduled wakeup names the time it resumes; the mark itself stays the same, since
+// either way the session is alive and asks nothing of the user
+interface Mark { state: NonNullable<SessionSummary['state']>; unread?: boolean; wakeAt?: number }
+function StateMark({ state, unread, wakeAt }: Mark) {
+  const label = state === 'background' && wakeAt
+    ? t(unread ? 'session.state.wakeupUnread' : 'session.state.wakeup', { time: dateFormat(getLocale(), { hour: 'numeric', minute: '2-digit' }).format(wakeAt) })
+    : t(state === 'background' && unread ? 'session.state.backgroundUnread' : `session.state.${state}`);
   return <span className="flex size-3 shrink-0 items-center justify-center" title={label} aria-label={label} role="img">
     {state === 'working'
       ? <LoaderCircle className="size-2.5 animate-spin live-spin text-fg-2" strokeWidth={2.5} />
@@ -118,7 +123,9 @@ function Fold({ open, children }: { open: boolean; children: ReactNode }) {
 // froze the column for most of a second on every new or deleted session (lab/session-list-perf). Only rows on screen
 // before or after the commit animate; the others land where they belong out of sight
 type FlipFirst = { tops: Map<string, number>; open: Set<Element> };
-const flipKey = (el: HTMLElement) => el.dataset.session ?? (el.hasAttribute('data-project-row') ? `p:${el.title}` : `m:${el.closest('[role="group"]')?.getAttribute('aria-label')}`);
+// Each row carries its own unique key: a project's full path, never its display name, which a local folder and one on an
+// SSH host (or two local folders) can share; with a shared key one row slid from the other's place
+const flipKey = (el: HTMLElement) => el.dataset.session ?? (el.dataset.projectRow !== undefined ? `p:${el.dataset.projectRow}` : `m:${el.dataset.more}`);
 class FlipRows extends Component<{ on: boolean; layout: string; children: ReactNode }> {
   box = createRef<HTMLDivElement>();
   getSnapshotBeforeUpdate(prev: Readonly<{ on: boolean; layout: string }>): FlipFirst | null {
@@ -160,8 +167,8 @@ class FlipRows extends Component<{ on: boolean; layout: string; children: ReactN
 // What decides where every row sits; FlipRows measures only when it changed
 function layoutOf(tree: SessionTree, folded: string[], more: Map<string, number>, active?: string): string {
   const ids = (list: SessionSummary[]) => list.map(s => s.id).join();
-  // A session that starts or stops running leaves or rejoins the "more" fold (cutRows)
-  const live = (list: SessionSummary[]) => list.filter(isLive).map(s => s.id).join();
+  // Attention and pure live work have different caps; changing either can move rows across "more" (cutRows).
+  const live = (list: SessionSummary[]) => list.filter(s => isLive(s) || needsAttention(s)).map(s => `${s.id}:${needsAttention(s) ? 'attention' : 'live'}`).join();
   return [folded.join(), live(tree.chats), ...tree.projects.map(p => live(p.loose)), active, ids(tree.pinned), `chats>${more.get(CHATS) ?? 0}>${ids(tree.chats)}`, ...tree.projects.map(p =>
     `${p.cwd}>${p.open}${more.get(p.cwd) ?? 0}>${ids(p.pinned)}>${ids(p.loose)}>${p.categories.map(n => `${n.category.id}${n.open}:${ids(n.sessions)}`).join(';')}`)].join('|');
 }
@@ -372,24 +379,37 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   // list renders, where asking after that render put the two one after the other
   const asked = useMemo(() => searchTerms(query).join(' '), [query]);
   // Content hits belong to the query they answered; a reply for an older query is ignored rather than mixed in
-  const [hits, setHits] = useState<{ q: string; snippets: Map<string, string> }>();
+  const [hits, setHits] = useState<{ q: string; snippets: Map<string, string>; summaries: SessionSummary[] }>();
   useEffect(() => {
-    if (!onSearch || !asked) return;
+    if (!onSearch || !asked) { setHits(undefined); return; }
     let live = true;
     const timer = setTimeout(() => {
-      void onSearch(asked).then(list => { if (live) setHits({ q: asked, snippets: new Map(list.map(h => [h.id, h.snippet])) }); });
+      void onSearch(asked).then(list => {
+        if (live) setHits({ q: asked, snippets: new Map(list.map(h => [h.id, h.snippet])), summaries: list.flatMap(h => h.summary ? [h.summary] : []) });
+      });
     }, SEARCH_DEBOUNCE);
     return () => { live = false; clearTimeout(timer); };
   }, [asked, onSearch]);
   const snippets = hits?.q === q ? hits.snippets : undefined;
   const searching = !!onSearch && !!q && !snippets;
-  // The active session always stays listed (its row is the highlight), even when it belongs to another project
+  // Search-only remote summaries never enter the persistent list and are released when the query clears.
+  const searched = useMemo(() => {
+    if (!q || hits?.q !== q || !hits.summaries.length) return sessions;
+    const known = new Set(sessions.map(s => s.id));
+    return [...sessions, ...hits.summaries.filter(s => !known.has(s.id))];
+  }, [sessions, hits, q]);
+  // Scope keeps the active session even in another project; project visibility and view filters still apply.
   const inScope = (s: SessionSummary) => scope === 'all' || here(s) || s.id === activeId;
+  // Before the list arrives the desktop app registers nothing yet, rather than every folder (`offList`)
+  const registered = desktop ? categoryState?.projects ?? [] : undefined;
+  const removed = desktop ? categoryState?.removedProjects : undefined;
+  const filtering = !!q || filters > 0;
+  // Pins and flat views follow the same project visibility as the project tree.
+  const listed = desktop ? projectSessions(searched, { registered, removed, filtering, expand: !!q }) : searched;
   const at = new Date();
-  const shown = sortSessions(sessions.filter(s => inScope(s) && passes(s, view, at)
+  const shown = sortSessions(listed.filter(s => inScope(s) && passes(s, view, at)
     && (!q || matchesTitle(s.title, nameOf(s.agent), terms) || !!snippets?.has(s.id))), view.order, locale);
 
-  const filtering = !!q || filters > 0;
   // Grouped by date, channel or not at all, the rows leave the project tree for one flat list under group labels
   const flat = view.group !== 'project';
   const flatGroups: FlatGroup[] = view.group === 'project' ? [] : view.group === 'none'
@@ -402,9 +422,6 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   }, [sessions, agents]);
   // The desktop app always groups by project, its registered folders leading in their own order
   const grouped = desktop || (scope === 'all' && !!workspace);
-  // Before the list arrives the desktop app registers nothing yet, rather than every folder (`offList`)
-  const registered = desktop ? categoryState?.projects ?? [] : undefined;
-  const removed = desktop ? categoryState?.removedProjects : undefined;
   // View menu → Show → Pinned: grouped by project, pinned rows lead their own project instead of one section on top
   const pinInProject = grouped && !flat && view.pinned === 'project';
   // Desktop: a chat's folder is no project, so it never heads a group or becomes a destination
@@ -583,14 +600,17 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   // What a row's controls do, read through the ref when they are used: rows hold the same object on every render, so a
   // row whose own props a push left alone skips its render (Item is memoized), where every listed row used to re-render
   const rowActions = useRef<RowActions>(null!);
+  const patchSearch = (id: string, patch?: Partial<SessionSummary>) => setHits(prev => prev && ({
+    ...prev, summaries: patch ? prev.summaries.map(s => s.id === id ? { ...s, ...patch } : s) : prev.summaries.filter(s => s.id !== id),
+  }));
   rowActions.current = {
     select: s => onSelect(s.id),
     edit: s => setEditing(s.id),
-    rename: (s, title) => { setEditing(undefined); if (title.trim() && title.trim() !== s.title) onRename(s.id, title); },
-    delete: s => { setEditing(undefined); onDelete(s.id); },
-    pin: s => onPin(s.id, !s.pinned),
-    archive: (s, archived) => onArchive?.(s.id, archived),
-    unread: (s, unread) => onUnread?.(s.id, unread),
+    rename: (s, title) => { setEditing(undefined); if (title.trim() && title.trim() !== s.title) { onRename(s.id, title); patchSearch(s.id, { title }); } },
+    delete: s => { setEditing(undefined); onDelete(s.id); patchSearch(s.id); },
+    pin: s => { onPin(s.id, !s.pinned); patchSearch(s.id, { pinned: !s.pinned }); },
+    archive: (s, archived) => { onArchive?.(s.id, archived); patchSearch(s.id, { archived }); },
+    unread: (s, unread) => { onUnread?.(s.id, unread); patchSearch(s.id, { state: unread ? 'unread' : undefined, unread }); },
     move: (s, to) => onMove?.(s.id, to),
     export: (s, format) => onExport?.(s.id, format),
     copy: (s, what) => onCopy?.(s.id, what),
@@ -682,11 +702,12 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   const cutRows = (key: string, list: SessionSummary[], flush?: boolean) => {
     const cut = desktop && !q && view.per ? view.per : list.length;
     const extra = more.get(key) ?? 0;
-    // The active session and running ones still folded behind "more" sit above it on their own, in list order, instead
-    // of stretching the list down to them; a crowd of running ones folds like the rest (LIVE_KEEP)
+    // Keep attention and the active session outside "more", in list order, without opening all rows before them.
+    // Only pure running / background work is capped; unread replies still surface while background work continues.
     const beyond = list.slice(cut + extra);
-    const live = beyond.filter(isLive);
-    const kept = live.length <= LIVE_KEEP ? new Set(live) : new Set<SessionSummary>();
+    const live = beyond.filter(s => isLive(s) && !needsAttention(s));
+    const kept = new Set(beyond.filter(needsAttention));
+    if (live.length <= LIVE_KEEP) for (const s of live) kept.add(s);
     const active = beyond.find(s => s.id === activeId);
     if (active) kept.add(active);
     const late = beyond.filter(s => kept.has(s));
@@ -699,7 +720,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
       // One fold per page, so each click opens only the page it adds (a closed fold releases its rows)
       ...(rest.length > 0 ? pages(rest).map((page, i) => <Fold key={`fold:${i}`} open={shown > i * MORE_PAGE}>{page.map(renderItem)}</Fold>) : []),
       ...late.map(renderItem),
-      rest.length > 0 && <MoreRow key="more" flush={flush} open={shown >= rest.length} rest={rest.slice(shown)} nameOf={nameOf} onToggle={() => stepMore(key, rest.length)} />,
+      rest.length > 0 && <MoreRow key="more" group={key} flush={flush} open={shown >= rest.length} rest={rest.slice(shown)} nameOf={nameOf} onToggle={() => stepMore(key, rest.length)} />,
     ];
   };
   const renderBody = (p: ProjectNode) => {
@@ -801,15 +822,15 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   const rest = flat ? flatGroups.length > 0 : unsectioned.some(p => p.pinned.length || p.loose.length || p.categories.length) || (desktop && unsectioned.length > 0);
   const empty = searching ? t('session.searching') : q ? t('session.noMatch') : filters ? t('session.view.noMatch') : scope === 'workspace' && workspace ? t('session.noneWorkspace') : t('session.none');
 
+  // The panel layout's search field (the nav layout's is a NavSearch row)
   const searchInput = (
     <input
       autoFocus={autoFocus}
       value={query}
       onChange={e => setQuery(e.target.value)}
-      // Desktop: the row reads like the one above it until focused, its shortcut at the end
-      placeholder={desktop ? t('session.searchShort') : onSearch ? t('session.searchContent') : t('session.search')}
+      placeholder={onSearch ? t('session.searchContent') : t('session.search')}
       aria-label={onSearch ? t('session.searchContent') : t('session.search')}
-      className={cn('min-w-0 flex-1 bg-transparent text-2 text-fg-1 outline-none', desktop ? 'placeholder:text-fg-1 focus:placeholder:text-fg-3' : 'placeholder:text-fg-3')}
+      className="min-w-0 flex-1 bg-transparent text-2 text-fg-1 outline-none placeholder:text-fg-3"
     />
   );
   const importer = onListNative && onImportNative && (
@@ -824,7 +845,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   );
   // Desktop: in the rows' geometry (an empty lead slot, then the text where titles start), not centred in the column
   const emptyRow = !shown.length && !visibleCategories && !(desktop && (rest || sectionNodes.length > 0)) && (desktop
-    ? <div className="flex min-h-row items-center gap-gap px-2 text-3 text-fg-3"><span className="w-lead shrink-0" />{empty}</div>
+    ? <NavEmpty>{empty}</NavEmpty>
     : <div className="mt-1 flex min-h-row items-center justify-center px-2 text-2 text-fg-3">{empty}</div>);
   // Grouped by date or channel: one quiet label per group (none when not grouped at all), its rows at the label's inset
   const flatLabel = (g: FlatGroup) => view.group === 'time' ? t(`session.when.${g.key as TimeBucket}`) : view.group === 'agent' ? nameOf(g.key) : '';
@@ -889,14 +910,14 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
         <div className="flex shrink-0 flex-col">
           {desktop
             ? onNewIn && (
-              <button type="button" className={NAV_ROW} onClick={() => onNewIn()}>
+              <button type="button" data-land="agents" className={NAV_ROW} onClick={() => onNewIn()}>
                 <span className={NAV_LEAD}><SquarePen className="size-icon" strokeWidth={1.5} /></span>
-                <span className="min-w-0 flex-1 truncate">{t('session.new')}</span><Hint>{shortcutLabel('N')}</Hint>
+                <span className="min-w-0 flex-1 truncate">{t('session.new')}</span><NavHint>{shortcutLabel('N')}</NavHint>
               </button>
             )
             : onNew && fresh.length > 0 && (
               <DropdownMenu.Root>
-                <DropdownMenu.Trigger render={<button type="button" className={NAV_ROW}><span className={NAV_LEAD}><SquarePen className="size-icon" strokeWidth={1.5} /></span><span className="min-w-0 truncate">{t('session.new')}</span></button>} />
+                <DropdownMenu.Trigger render={<button type="button" data-land="agents" className={NAV_ROW}><span className={NAV_LEAD}><SquarePen className="size-icon" strokeWidth={1.5} /></span><span className="min-w-0 truncate">{t('session.new')}</span></button>} />
                 <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="start" width="md"><DropdownMenu.Popup>
                   <div className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
                     {fresh.map(a => <DropdownMenu.Item key={a.id} disabled={a.available === false} title={a.available === false ? t('agent.notInstalled') : undefined} onClick={() => onNew(a.id)}>
@@ -906,11 +927,10 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
                 </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
               </DropdownMenu.Root>
             )}
-          <label className={cn(NAV_ROW, 'cursor-text text-fg-3 focus-within:bg-hover')}>
-            <span className={NAV_LEAD}><Search className="size-icon" strokeWidth={1.5} /></span>
-            {searchInput}
-            {desktop && <Hint>{shortcutLabel('K')}</Hint>}
-          </label>
+          {/* Desktop: the row reads like the one above it until focused, its shortcut at the end */}
+          <NavSearch value={query} onChange={setQuery} autoFocus={autoFocus} quiet={desktop} hint={desktop && shortcutLabel('K')}
+            placeholder={desktop ? t('session.searchShort') : onSearch ? t('session.searchContent') : t('session.search')}
+            label={onSearch ? t('session.searchContent') : t('session.search')} />
           {!desktop && importer}
         </div>
         {/* The scroller bleeds through the panel's padding like the other layout's, so the thumb rides the panel edge. Its gutter
@@ -1065,21 +1085,17 @@ function PinDivider({ on }: { on: boolean }) {
   );
 }
 
-// The nav layout's action rows share the session rows' box (height, inset, radius, lead slot), so the column reads as one list.
-// The lead takes the session rows' half-gap pull too: without it "New session" and "Search" started their text 6 px right of
-// the pinned and project rows below them
-const NAV_ROW = 'flex min-h-row w-full items-center gap-gap rounded-md px-2 text-left text-2 text-fg-1 transition-colors hover:bg-hover focus-visible:bg-hover data-[popup-open]:bg-hover';
-const NAV_LEAD = '-mr-gap-half flex size-lead shrink-0 items-center justify-center text-fg-2';
 const SECTION_ACT = 'inline-flex size-ctl-sm items-center justify-center rounded-md text-fg-3 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1 data-[popup-open]:bg-hover data-[popup-open]:text-fg-1';
 // The filter row's view button, an IconButton's box (ui/Button)
 const ROW_ACT = 'inline-flex size-ctl shrink-0 items-center justify-center rounded-md text-fg-2 transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1 data-[popup-open]:bg-active data-[popup-open]:text-fg-1';
 // A header's hover actions: they cross-fade in over its resting count / state, in the same cell, and take clicks only then.
 // Keyboard focus (focus-visible) reveals them too, not focus-within: a click focuses the row, which kept them showing after
-// the pointer left until a click elsewhere
-const REVEAL = 'pointer-events-none opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-visible:pointer-events-auto group-focus-visible:opacity-100 group-has-[:focus-visible]:pointer-events-auto group-has-[:focus-visible]:opacity-100 group-data-[menu-open]:pointer-events-auto group-data-[menu-open]:opacity-100';
+// the pointer left until a click elsewhere. A focused action is seen through the span's own `:has(>…)` (CONCEAL: its next
+// sibling's), never a group-level `:has()`, which restyled the whole shell on every keystroke (docs/dev/webview.md)
+const REVEAL = 'pointer-events-none opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-visible:pointer-events-auto group-focus-visible:opacity-100 has-[>:focus-visible]:pointer-events-auto has-[>:focus-visible]:opacity-100 group-data-[menu-open]:pointer-events-auto group-data-[menu-open]:opacity-100';
 // The concealed tail also stops taking the pointer: at opacity 0 it paints (and hit-tests) above the fully opaque actions,
 // so once their fade ended the pointer fell through to it, the button lost its hover fill and a click selected the row
-const CONCEAL = 'transition-opacity duration-150 group-hover:pointer-events-none group-hover:opacity-0 group-focus-visible:pointer-events-none group-focus-visible:opacity-0 group-has-[:focus-visible]:pointer-events-none group-has-[:focus-visible]:opacity-0 group-data-[menu-open]:pointer-events-none group-data-[menu-open]:opacity-0';
+const CONCEAL = 'transition-opacity duration-150 group-hover:pointer-events-none group-hover:opacity-0 group-focus-visible:pointer-events-none group-focus-visible:opacity-0 has-[+*>:focus-visible]:pointer-events-none has-[+*>:focus-visible]:opacity-0 group-data-[menu-open]:pointer-events-none group-data-[menu-open]:opacity-0';
 // The resting tail and the hover actions stacked in one grid cell, so the title's room never changes under the pointer
 const STACK = "grid [grid-template-areas:'x'] *:[grid-area:x]";
 
@@ -1102,12 +1118,12 @@ function SectionLabel({ children, actions, open, quiet, keep, rename, onToggle }
       {rename ?? <button type="button" aria-expanded={open} onClick={onToggle}
         className="inline-flex min-w-0 select-none items-center gap-1 rounded-sm px-[calc((var(--spacing-lead)-var(--spacing-icon))/2)] transition-colors hover:text-fg-1 focus-visible:text-fg-1">
         <span className="min-w-0 truncate">{children}</span>
-        <ChevronRight strokeWidth={1.5} className={cn('size-3 shrink-0 opacity-0 transition-[rotate,opacity] duration-(--dur-open) group-hover:opacity-100 group-has-[:focus-visible]:opacity-100',
+        <ChevronRight strokeWidth={1.5} className={cn('size-3 shrink-0 opacity-0 transition-[rotate,opacity] duration-(--dur-open) group-hover:opacity-100 [:focus-visible>&]:opacity-100',
           open && 'rotate-90')} />
       </button>}
       {actions && !rename && (
         <span className={cn('-mr-1 ml-auto flex shrink-0 items-center gap-0.5',
-          quiet && !keep && 'opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-has-[:focus-visible]:opacity-100 has-[[data-popup-open]]:opacity-100')}>
+          quiet && !keep && 'opacity-0 transition-opacity duration-150 group-hover:opacity-100 has-[:focus-visible]:opacity-100 [:focus-visible~&]:opacity-100 has-[[data-popup-open]]:opacity-100')}>
           {actions}
         </span>
       )}
@@ -1134,11 +1150,6 @@ function SectionActions({ onRename, onUp, onDown, onDelete }: { onRename: () => 
   );
 }
 
-// A keyboard shortcut at the end of a nav row
-function Hint({ children }: { children: ReactNode }) {
-  return <span className="shrink-0 text-3 text-fg-3 tabular-nums">{children}</span>;
-}
-
 // Desktop: an empty project's only row. With a way to start a session it is that action, a muted plus and "new session in
 // this project" that brighten under the pointer; without one it only says the project has none
 // `flush`: at a section label's inset (the empty chats section), `label` its action's words
@@ -1163,11 +1174,12 @@ const pages = <T,>(list: T[]) => Array.from({ length: Math.ceil(list.length / MO
 // page at a time coming out above it. With all of them out (`open`), it reads "show less" at the
 // list's end: the chevron turns over, the labels cross-fade and the preview fades away, so the row changes in place
 // `flush`: at a section label's inset (the chats), not a project's
-function MoreRow({ open, rest, nameOf, onToggle, flush }: { open: boolean; rest: SessionSummary[]; nameOf: (id: string) => string; onToggle: () => void; flush?: boolean }) {
+// `group`: the project's full path (or the chats' key), the row's identity for FlipRows
+function MoreRow({ group, open, rest, nameOf, onToggle, flush }: { group: string; open: boolean; rest: SessionSummary[]; nameOf: (id: string) => string; onToggle: () => void; flush?: boolean }) {
   const marks = [...new Set(rest.map(s => s.agent))].slice(0, MORE_MARKS);
   const state = aggregate(rest);
   return (
-    <button type="button" data-more aria-expanded={open} onClick={onToggle}
+    <button type="button" data-more={group} aria-expanded={open} onClick={onToggle}
       className={cn('group flex min-h-row w-full shrink-0 items-center gap-gap rounded-md pr-2 text-left text-3 text-fg-3 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1', flush ? 'pl-2' : 'pl-6')}>
       <span className="-mr-gap-half flex size-lead shrink-0 items-center justify-center">
         <ChevronDown strokeWidth={1.5} className={cn('size-icon transition-transform duration-(--dur-open) ease-out', open && 'rotate-180')} />
@@ -1249,7 +1261,7 @@ function GroupHeader({ project, sub, name, title, folder, badge, count, open, st
       tabIndex={0}
       title={title}
       data-menu-open={menuOpen || contextOpen || undefined}
-      data-project-row={project || undefined}
+      data-project-row={project ? folder ?? '' : undefined}
       draggable={!!onDragStart}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
@@ -1525,9 +1537,14 @@ interface RowActions {
 // (`mark-flip`, motion.css), so a pointer sweeping down the list flips nothing.
 // Memoized: a push re-renders only the rows whose summary (kept by reference while unchanged, App's reuseById) or
 // place-dependent props changed
-const Item = memo(function Item({ session: s, agentName, terms, snippet, active, time, project, model, nudge, editing, actions, moveHere, moveTo, projects, exportable, copyable, archivable, markable, drag, dragging, fileable, categories }: ItemProps) {
+const Item = memo(function Item({ session, agentName, terms, snippet, active, time, project, model, nudge, editing, actions, moveHere, moveTo, projects, exportable, copyable, archivable, markable, drag, dragging, fileable, categories }: ItemProps) {
   // Memo / a cached parent can skip this on a language switch: subscribe so the strings follow the new locale
   useLocale();
+  // Unrelated pushes and replies to earlier renames must not replace the latest submitted title.
+  const [renamed, setRenamed] = useState<{ title: string; waiting: string[] }>();
+  const pending = renamed?.waiting.includes(session.title) ? renamed : undefined;
+  if (renamed && !pending) setRenamed(undefined);
+  const s = pending ? { ...session, title: pending.title } : session;
   const [menuOpen, setMenuOpen] = useState(false);
   const select = () => actions.current.select(s);
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -1592,7 +1609,15 @@ const Item = memo(function Item({ session: s, agentName, terms, snippet, active,
           : <AgentMark id={s.agent} name={agentName} />}
       </span>
       {editing
-        ? <RenameInput initial={s.title} onDone={title => actions.current.rename(s, title)} />
+        ? <RenameInput initial={s.title} onDone={value => {
+          const title = value.trim();
+          if (title && title !== s.title) {
+            const waiting = new Set([session.title, ...(pending?.waiting ?? []), s.title]);
+            waiting.delete(title);
+            setRenamed({ title, waiting: [...waiting] });
+          }
+          actions.current.rename(s, title);
+        }} />
         : (
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="truncate"><Marked text={s.title} terms={terms} /></span>
@@ -1604,7 +1629,7 @@ const Item = memo(function Item({ session: s, agentName, terms, snippet, active,
           <span className={cn('flex items-center justify-end gap-2', CONCEAL)}>
             {project && <span className="max-w-project truncate text-fg-3/70" title={s.cwd}>{project}</span>}
             {model && <span className="max-w-project truncate text-fg-3/70">{model}</span>}
-            {s.state && <StateMark state={s.state} unread={s.unread} />}
+            {s.state && <StateMark state={s.state} unread={s.unread} wakeAt={s.wakeAt} />}
             <span className="min-w-session-time text-right">{time}</span>
           </span>
           <span className={cn('flex items-center justify-end gap-0.5', REVEAL)}>

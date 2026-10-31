@@ -132,7 +132,7 @@ static KIND_BY_TITLE: LazyLock<Vec<(Regex, ToolKind)>> = LazyLock::new(|| {
   .collect()
 });
 static STRIP_VERB: LazyLock<Regex> = LazyLock::new(|| {
-  acpira_shared::re::compile(r"(?i)^(read(ing)?|edit(ing)?|write|writing|search(ing)?|run(ning)?|execute|executing|fetch(ing)?|delete|deleting|move|moving|list(ing)?)\s+(file|files|directory|command)?\s*")
+  acpira_shared::re::compile(r"(?i)^(read(ing)?|edit(ing)?|write|writing|search(ing)?|run(ning)?|execute|executing|fetch(ing)?|delete|deleting|move|moving|list(ing)?)\s+(?:(?:files?|directory|command)(?:\s+|$))?")
 });
 pub(super) static DATA_URL: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?s)^data:([\w.+-]+/[\w.+-]+)?;base64,(.+)$"));
 
@@ -165,6 +165,15 @@ pub const SHOW_IMAGE_VERB: &str = "verb.showImage";
 
 pub(super) fn is_show_image_call(u: &Value, title: Option<&str>, raw: Option<&Map<String, Value>>) -> bool {
   let named = |x: Option<&str>| x.map(str::trim).is_some_and(|x| SHOW_IMAGE.is_match(x));
+  named(title) || named(str_of(u, "name")) || named(raw.and_then(|r| r.get("tool")).and_then(Value::as_str))
+}
+
+/// Acpira's `show_video`, in the same adapter namings as show_image.
+static SHOW_VIDEO: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)(?:^|acpira[_.:/-]{1,2})show_video$"));
+pub const SHOW_VIDEO_VERB: &str = "verb.showVideo";
+
+pub(super) fn is_show_video_call(u: &Value, title: Option<&str>, raw: Option<&Map<String, Value>>) -> bool {
+  let named = |x: Option<&str>| x.map(str::trim).is_some_and(|x| SHOW_VIDEO.is_match(x));
   named(title) || named(str_of(u, "name")) || named(raw.and_then(|r| r.get("tool")).and_then(Value::as_str))
 }
 
@@ -271,6 +280,36 @@ pub(super) fn strip_verb(title: &str) -> String {
 
 /// A skill load reads "Load skill <name>" whichever way the agent ran it
 pub const SKILL_VERB: &str = "verb.skill";
+/// Claude's `ScheduleWakeup` (`vendors::claude_wakeup`): setting a wakeup, or `stop: true` ending them. The keys also mark
+/// the row for the session's pending-wakeup tracking
+pub const WAKEUP_VERB: &str = "verb.wakeup";
+pub const WAKEUP_STOP_VERB: &str = "verb.wakeupStop";
+pub const WAKEUP_VERBS: [&str; 2] = [WAKEUP_VERB, WAKEUP_STOP_VERB];
+
+/// A `ScheduleWakeup` row's verb key, by the tool name claude-agent-acp puts in `_meta.claudeCode.toolName`; a row
+/// already named one keeps it, since later packets may carry only a status
+pub(super) fn wakeup_verb(b: &ToolCallBlock, meta: Option<&Map<String, Value>>, raw: Option<&Map<String, Value>>) -> Option<&'static str> {
+  let named = meta.and_then(|m| m.get("claudeCode")).and_then(|c| c.get("toolName")).and_then(Value::as_str)
+    == Some(crate::acp::vendors::claude_wakeup::TOOL);
+  let before = b.verb_key.as_deref().and_then(|k| WAKEUP_VERBS.iter().copied().find(|v| *v == k));
+  if !named && before.is_none() {
+    return None;
+  }
+  match raw.and_then(|r| r.get("stop")).and_then(Value::as_bool) {
+    Some(true) => Some(WAKEUP_STOP_VERB),
+    Some(false) => Some(WAKEUP_VERB),
+    None => before.or(Some(WAKEUP_VERB)),
+  }
+}
+
+/// "Next wakeup scheduled for 02:22:00 (in 1860s)": the clock time, to the minute, as the CLI printed it
+pub(super) fn wakeup_time(text: &str) -> Option<String> {
+  let (_, rest) = text.split_once("scheduled for ")?;
+  let time: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == ':').collect();
+  let mut parts = time.split(':');
+  let (h, m) = (parts.next()?, parts.next()?);
+  (!h.is_empty() && m.len() == 2).then(|| format!("{h}:{m}"))
+}
 /// claude-agent-acp's `Skill` ("Load skill" until the input is known, then "Load skill: <name>"), the built-in agent's
 /// `skill` ("Skill <name>") and OpenCode's bare `skill`; group 1 or 2 is the name when the title carries it
 static SKILL_TITLE: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)^(?:load\s+skill(?::\s*(\S.*))?|skill(?:\s+(\S+))?)$"));

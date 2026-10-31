@@ -13,6 +13,7 @@ use serde_json::value::RawValue;
 
 use crate::acp::session::controls::picked_controls;
 use crate::acp::session::queue::queue_snapshot;
+use crate::util::now_ms;
 use crate::acp::transcript::normalize::has_live_async_task;
 use crate::acp::session::{AcpSession, Core};
 use crate::store::record::{ForkedFrom, ImportedFrom, RecordSource, SessionRecord};
@@ -37,6 +38,7 @@ impl AcpSession {
       state: None,
       unread: None,
       question: None,
+      wake_at: None,
       completed_at: completed_at(visible_turns(&c)),
       model: session_model(&c.state.controls),
     }
@@ -69,7 +71,7 @@ impl AcpSession {
     }
     let state = match visible_turns(&c).last() {
       Some(Turn::Agent(a)) if a.stop == Some(TurnStop::Error) => Some(SummaryState::Error),
-      _ if has_live_async_task(&c.state) || Self::relay_background(&c) => Some(SummaryState::Background),
+      _ if has_live_async_task(&c.state) || Self::relay_background(&c) || c.wake.pending(now_ms()).is_some() => Some(SummaryState::Background),
       _ => None,
     };
     (state, false)
@@ -108,7 +110,12 @@ impl AcpSession {
   /// disconnect, so this cannot outlive the agent
   pub fn background_running(&self) -> bool {
     let c = self.core.lock();
-    has_live_async_task(&c.state) || Self::relay_background(&c)
+    has_live_async_task(&c.state) || Self::relay_background(&c) || c.wake.pending(now_ms()).is_some()
+  }
+
+  /// When Claude's pending `ScheduleWakeup` resumes the session (`SessionSummary::wake_at`)
+  pub fn wake_at(&self) -> Option<i64> {
+    self.core.lock().wake.pending(now_ms())
   }
 
   /// Still inside a turn: running, a prompt waiting on its pre-send compaction, or the workspace gate deciding about a follow-up
@@ -140,7 +147,7 @@ impl AcpSession {
   }
 
   fn view_encoded(&self) -> (RawJson, bool, ViewParts) {
-    let shapes = self.deps.model_shapes.as_ref().and_then(|f| f(&self.agent));
+    let shapes = self.deps.policy.model_shapes(&self.agent);
     let mut c = self.core.lock();
     if let Some((rev, status, running, ref cached_shapes, ref full, ref parts)) = c.cached_view
       && rev == c.rev
@@ -251,12 +258,12 @@ impl AcpSession {
     }
   }
 
-  /// Every file the session's own edits touched, in the order it first edited them, with the text it held before that
-  /// first edit (None when the record no longer keeps it). Subagents' edits are not counted: they live in their own
-  /// transcripts
-  pub fn edit_bases(&self) -> Vec<(String, Option<String>)> {
+  /// Every file the session's own edits touched, in the order it first edited them, with the diff source of that first
+  /// edit: its old text is what the file held before (inline, or in a blob the caller reads back; None when the record
+  /// no longer keeps it). Subagents' edits are not counted: they live in their own transcripts
+  pub fn edit_bases(&self) -> Vec<(String, Option<DiffSource>)> {
     let c = self.core.lock();
-    let mut out: Vec<(String, Option<String>)> = vec![];
+    let mut out: Vec<(String, Option<DiffSource>)> = vec![];
     for tool in visible_turns(&c).filter_map(Turn::as_agent).flat_map(|t| t.blocks.iter()).filter_map(|b| match b {
       AgentBlock::ToolCall(tool) => Some(tool),
       _ => None,
@@ -271,7 +278,8 @@ impl AcpSession {
         if source.path.is_empty() || out.iter().any(|(p, _)| *p == source.path) {
           continue;
         }
-        out.push((source.path.clone(), (!source.omitted).then(|| source.old_text.clone())));
+        let kept = !source.omitted || source.in_blobs();
+        out.push((source.path.clone(), kept.then(|| source.clone())));
       }
     }
     out
