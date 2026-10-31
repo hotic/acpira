@@ -332,6 +332,7 @@ struct PlanDot: View {
 /// rest beat, then clamps the arrows shut once and lands the new label bright before it eases to the action ink
 struct CompactionRow: View {
   let block: CompactionBlock
+  @Environment(\.quietEntrance) private var quiet
   @Environment(\.motionEnabled) private var motion
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var phase = CompactionPhase.idle
@@ -373,7 +374,7 @@ struct CompactionRow: View {
   private func follow(_ status: CompactionStatus, loop: Date?) {
     beat?.cancel()
     if status == .in_progress { CompactionMotion.seen.insert(block.id); loopStart = .now; phase = .idle; return }
-    guard CompactionMotion.seen.remove(block.id) != nil, status == .completed, motion && !reduceMotion else { return }
+    guard CompactionMotion.seen.remove(block.id) != nil, status == .completed, !quiet, motion && !reduceMotion else { return }
     let at = loop.map { Date().timeIntervalSince($0).truncatingRemainder(dividingBy: CompactionMotion.cycle) }
     let wait = at.map { $0 >= CompactionMotion.rest ? 0 : CompactionMotion.rest - $0 } ?? 0
     phase = wait > 0 ? .finishing : .settling

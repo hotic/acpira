@@ -9,7 +9,6 @@ import SwiftUI
 
 /// The pages the settings push
 enum SettingsRoute: Hashable {
-  case agents
   case agent(AgentId)
   case models(AgentId)
 
@@ -18,9 +17,8 @@ enum SettingsRoute: Hashable {
     guard let arg else { return NavigationPath() }
     let parts = arg.split(separator: ":", maxSplits: 1).map(String.init)
     let routes: [SettingsRoute] = switch (parts.first, parts.count > 1 ? parts[1] : nil) {
-    case ("agents", _): [.agents]
-    case ("agent", let id?): [.agents, .agent(id)]
-    case ("models", let id?): [.agents, .agent(id), .models(id)]
+    case ("agent", let id?): [.agent(id)]
+    case ("models", let id?): [.agent(id), .models(id)]
     default: []
     }
     return NavigationPath(routes)
@@ -34,12 +32,9 @@ struct EngineSettingsSections: View {
   var body: some View {
     if let settings = model.settings {
       let agents = model.settingsAgents
+      // Under the agents' header, its own card above the list: a row without a mark among the marked ones would break
+      // their column
       Section {
-        NavigationLink(value: SettingsRoute.agents) {
-          LabeledContent(t("mobile.settings.agents")) {
-            Text(verbatim: t("settings.models.enabled", ["count": agents.filter { $0.disabled != true }.count, "total": agents.count]))
-          }
-        }
         // Switched-off agents are not offered; a default that was switched off reads as the agent new sessions fall
         // back to (pickDefaultAgent)
         Picker(t("settings.defaultAgent"), selection: Binding(
@@ -47,8 +42,28 @@ struct EngineSettingsSections: View {
           set: { model.setSetting(\.defaultAgent, "defaultAgent", $0) })) {
           ForEach(launchable(agents)) { a in Text(verbatim: a.name).tag(a.id) }
         }
+      } header: {
+        Text(web: t("mobile.settings.agents"))
+      }
+      // Every agent laid out, as the system's Settings lists its apps: a row opens that agent's page (its on / off
+      // switch included) in one tap, and touch and hold drags it into the order every list follows
+      Section {
+        ForEach(agents) { a in
+          NavigationLink(value: SettingsRoute.agent(a.id)) { AgentRow(agent: a) }
+        }
+        .onMove { model.moveAgents(from: $0, to: $1) }
+      } footer: {
+        Text(web: t("mobile.settings.agents.desc"))
       }
       Section {
+        // The menu first, the switches under it; the threshold stays under the switch it depends on
+        Picker(t("settings.accountSwitch"), selection: Binding(
+          get: { settings.accountSwitch },
+          set: { model.setSetting(\.accountSwitch, "accountSwitch", $0) })) {
+          ForEach(["off", "earliestReset", "mostRemaining", "listOrder"], id: \.self) { s in
+            Text(web: t("settings.accountSwitch.\(s)")).tag(s)
+          }
+        }
         // Titles alone: the desktop's hints run to three lines at the phone's width
         Toggle(isOn: Binding(get: { settings.steerQueued }, set: { model.setSetting(\.steerQueued, "steerQueued", $0) })) {
           Text(web: t("settings.steerQueued"), paragraph: false)
@@ -68,13 +83,6 @@ struct EngineSettingsSections: View {
             }
           }
         }
-        Picker(t("settings.accountSwitch"), selection: Binding(
-          get: { settings.accountSwitch },
-          set: { model.setSetting(\.accountSwitch, "accountSwitch", $0) })) {
-          ForEach(["off", "earliestReset", "mostRemaining", "listOrder"], id: \.self) { s in
-            Text(web: t("settings.accountSwitch.\(s)")).tag(s)
-          }
-        }
       } header: {
         Text(web: t("mobile.settings.sessions"))
       } footer: {
@@ -83,9 +91,10 @@ struct EngineSettingsSections: View {
     }
   }
 
-  /// settings.ts MIN_COMPACT_AT_TOKENS and up, the current value kept in its place
+  /// settings.ts MIN_COMPACT_AT_TOKENS and up, the current value kept in its place; the top preset matches the 1M
+  /// windows (the built-in agent caps it at the model's window less its output room)
   private func compactPresets(_ current: Int) -> [Int] {
-    Array(Set([100_000, 200_000, 300_000, 400_000, 600_000, 800_000, current])).sorted()
+    Array(Set([100_000, 200_000, 300_000, 400_000, 600_000, 800_000, 1_000_000, current])).sorted()
   }
 }
 
@@ -111,83 +120,20 @@ func pickDefaultAgent(_ agents: [AgentInfo], _ preferred: AgentId) -> AgentId {
   return (open.first { $0.available != false } ?? (own.disabled == true ? open.first : nil))?.id ?? preferred
 }
 
-/// Every agent with its state, each row opening the agent's page. Edit works as Mail's mailbox list: a check circle
-/// before each agent turns it on or off and a handle after it reorders (the order every list follows); the rows stop
-/// opening their pages meanwhile, so a row never offers a handle and a chevron at once
-struct AgentsSettingsPage: View {
-  @Environment(AppModel.self) private var model
-  @Environment(\.initialPopup) private var initialPopup
-  #if os(iOS)
-  @State private var editMode = EditMode.inactive
-  private var editing: Bool { editMode.isEditing }
-  #else
-  private let editing = false
-  #endif
+/// The agent's mark and name, and "Off" while it is switched off
+struct AgentRow: View {
+  let agent: AgentInfo
 
   var body: some View {
-    let agents = model.settingsAgents
-    // The last agent on stays on: a new session needs one
-    let lastOn = agents.filter { $0.disabled != true }.map(\.id)
-    List {
-      Section {
-        ForEach(agents) { a in
-          if editing {
-            HStack(spacing: Metrics.s3) {
-              check(a, locked: lastOn == [a.id])
-              row(a, showOff: false)
-            }
-          } else {
-            NavigationLink(value: SettingsRoute.agent(a.id)) { row(a, showOff: true) }
-          }
-        }
-        .onMove { model.moveAgents(from: $0, to: $1) }
-      } footer: {
-        Text(web: t("mobile.settings.agents.desc"))
-      }
-    }
-    .formPage()
-    .navigationTitle(t("mobile.settings.agents"))
-    .navigationBarTitleDisplayModeInline()
-    #if os(iOS)
-    .toolbar { EditButton() }
-    // Outside the toolbar too, so EditButton flips the same mode the rows read
-    .environment(\.editMode, $editMode)
-    // `-popup agents.edit`: the page in Edit on launch (screenshots)
-    .onAppear { if initialPopup == "agents.edit" { editMode = .active } }
-    #endif
-  }
-
-  /// The agent's mark and name, and "Off" while it is switched off (the check says so in Edit)
-  private func row(_ a: AgentInfo, showOff: Bool) -> some View {
     LabeledContent {
-      if showOff && a.disabled == true { Text(web: t("mobile.settings.agentOff"), paragraph: false) }
+      if agent.disabled == true { Text(web: t("mobile.settings.agentOff"), paragraph: false) }
     } label: {
       Label {
-        Text(verbatim: a.name).lineLimit(1)
+        Text(verbatim: agent.name).lineLimit(1)
       } icon: {
-        VendorMark(brand: a.id, name: a.name, size: Metrics.rowMark, fit: true).foregroundStyle(Palette.fg2)
+        VendorMark(brand: agent.id, name: agent.name, size: Metrics.rowMark, fit: true).foregroundStyle(Palette.fg2)
       }
     }
-  }
-
-  /// Edit's check circle: filled in the switches' green while the agent is offered for new sessions, grey on the last
-  /// agent on, which cannot be turned off
-  private func check(_ a: AgentInfo, locked: Bool) -> some View {
-    let on = a.disabled != true
-    return Button { model.setAgentEnabled(a.id, !on) } label: {
-      // The bar glyph's size, inside the row's own height: Edit must not make the rows taller
-      Image(systemName: on ? "checkmark.circle.fill" : "circle")
-        .resizable()
-        .scaledToFit()
-        .symbolRenderingMode(on ? .palette : .monochrome)
-        .foregroundStyle(on ? Color.white : Palette.fg3, locked ? Palette.fg3 : Color.green)
-        .frame(width: Metrics.barIcon, height: Metrics.barIcon)
-        .contentShape(Circle())
-    }
-    .buttonStyle(.plain)
-    .disabled(locked)
-    .accessibilityLabel(Text(web: t("settings.agent.enabled", ["agent": a.name])))
-    .accessibilityAddTraits(on ? .isSelected : [])
   }
 }
 
@@ -223,7 +169,7 @@ struct AgentSettingsPage: View {
         NavigationLink(value: SettingsRoute.models(id)) {
           LabeledContent(t("settings.models.selection")) {
             if let count = ModelSettings.count(model.agentControls[id], hidden: settings.hiddenOptions[id] ?? [:]) {
-              Text(verbatim: t("settings.models.enabled", ["count": count.shown, "total": count.total]))
+              Text(verbatim: "\(count.shown)")
             }
           }
         }

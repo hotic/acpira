@@ -109,6 +109,24 @@ struct EngineModelTests {
     #expect(try String(contentsOf: text.url, encoding: .utf8) == "Plain")
   }
 
+  @Test func remoteSearchSummariesLiveOnlyForTheCurrentQuery() async throws {
+    let (model, wire) = try await connected()
+    model.search("needle")
+    let seq = model.searchSeq
+    let remote = #"{"id":"s-remote","title":"Remote","agent":"fake","cwd":"ssh://host/hidden","updatedAt":"2026-10-28T00:00:00.000Z"}"#
+    push(wire, #"{"type":"sessionHits","seq":\#(seq),"hits":[{"id":"s-remote","snippet":"needle","summary":\#(remote)}]}"#)
+    try await until { model.hits?.summaries.first?.id == "s-remote" }
+    #expect(model.hits?.summaries.first?.cwd == "ssh://host/hidden")
+    #expect(!model.summaries.contains { $0.id == "s-remote" })
+    model.search("")
+    #expect(model.hits == nil)
+    push(wire, #"{"type":"sessionHits","seq":\#(seq),"hits":[{"id":"s-remote","snippet":"needle","summary":\#(remote)}]}"#)
+    // A following event is a barrier for the stale reply on the same wire.
+    push(wire, #"{"type":"sessions","sessions":[]}"#)
+    try await until { model.summaries.isEmpty }
+    #expect(model.hits == nil)
+  }
+
   @Test func attachmentsGoAsDrafts() throws {
     // A file picked on the phone travels as its bytes; a path on the computer stays a link
     let folder = AttachmentFile.folder.appendingPathComponent("test-\(UUID().uuidString)", isDirectory: true)
@@ -517,5 +535,40 @@ struct EngineModelTests {
     push(wire, #"{"type":"sessionPatch","patch":{"id":"s1","base":4,"view":{"id":"s1","agent":"fake","rev":5,"running":true,"canSteer":true},"keep":1,"turns":[{"role":"agent","blocks":[{"type":"text","markdown":"working"},{"type":"steer","id":"e1","text":"first"},{"type":"steer","id":"e2","text":"second"}]}]}}"#)
     try await until { model.views["s1"]?.rev == 5 }
     #expect(model.outgoing["s1"] == nil)
+  }
+
+  /// Opening an unseen live session or catching up after returning to a kept one seeds its existing rows as quiet;
+  /// only patches that arrive afterwards while watching count as live stream updates
+  @Test func openingAndCatchingUpStayQuietUntilNextLivePatch() async throws {
+    let (model, wire) = try await connected()
+    let sid = "s-quiet-\(UUID())"
+    model.open(sid)
+    push(wire, #"{"type":"session","session":{"id":"\#(sid)","agent":"fake","title":"Live","cwd":"/w","rev":1,"running":true,"turns":[{"role":"user","text":"go"},{"role":"agent","blocks":[{"type":"tool_call","id":"c1","kind":"read","verb":"Read","target":"a.swift","status":"completed"}]}]}}"#)
+    try await until { model.views[sid]?.rev == 1 }
+    #expect(!model.liveSessions.contains(sid))
+    let scope = EntranceScope(live: true, scope: "\(sid):1")
+    #expect(!EntranceClaim().enter(id: "c1:tool", scope: scope))
+
+    // A live patch while watching marks the session as streaming and lets the new tool enter
+    push(wire, #"{"type":"sessionPatch","patch":{"id":"\#(sid)","base":1,"view":{"id":"\#(sid)","agent":"fake","rev":2,"running":true},"keep":1,"turns":[{"role":"agent","blocks":[{"type":"tool_call","id":"c1","kind":"read","verb":"Read","target":"a.swift","status":"completed"},{"type":"tool_call","id":"c2","kind":"execute","verb":"Run","target":"swift test","status":"in_progress"}]}]}}"#)
+    try await until { model.views[sid]?.rev == 2 }
+    #expect(model.liveSessions.contains(sid))
+    #expect(EntranceClaim().enter(id: "c2:tool", scope: scope))
+
+    // Switching away to s1 and back to sid puts sid in catchingUp; the catch-up patch seeds c3 quietly
+    model.open("s1")
+    push(wire, #"{"type":"sessionPatch","patch":{"id":"s1","base":1,"view":{"id":"s1","agent":"fake","rev":1},"keep":1,"turns":[]}}"#)
+    model.open(sid)
+    #expect(!model.liveSessions.contains(sid))
+    push(wire, #"{"type":"sessionPatch","patch":{"id":"\#(sid)","base":2,"view":{"id":"\#(sid)","agent":"fake","rev":3,"running":true},"keep":1,"turns":[{"role":"agent","blocks":[{"type":"tool_call","id":"c1","kind":"read","verb":"Read","target":"a.swift","status":"completed"},{"type":"tool_call","id":"c2","kind":"execute","verb":"Run","target":"swift test","status":"completed"},{"type":"tool_call","id":"c3","kind":"read","verb":"Read","target":"b.swift","status":"completed"}]}]}}"#)
+    try await until { model.views[sid]?.rev == 3 }
+    #expect(!model.liveSessions.contains(sid))
+    #expect(!EntranceClaim().enter(id: "c3:tool", scope: scope))
+
+    // The next patch after catch-up is live again
+    push(wire, #"{"type":"sessionPatch","patch":{"id":"\#(sid)","base":3,"view":{"id":"\#(sid)","agent":"fake","rev":4,"running":true},"keep":1,"turns":[{"role":"agent","blocks":[{"type":"tool_call","id":"c1","kind":"read","verb":"Read","target":"a.swift","status":"completed"},{"type":"tool_call","id":"c2","kind":"execute","verb":"Run","target":"swift test","status":"completed"},{"type":"tool_call","id":"c3","kind":"read","verb":"Read","target":"b.swift","status":"completed"},{"type":"tool_call","id":"c4","kind":"edit","verb":"Edit","target":"b.swift","status":"in_progress"}]}]}}"#)
+    try await until { model.views[sid]?.rev == 4 }
+    #expect(model.liveSessions.contains(sid))
+    #expect(EntranceClaim().enter(id: "c4:tool", scope: scope))
   }
 }

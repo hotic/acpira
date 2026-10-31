@@ -67,7 +67,9 @@ struct SessionListScreen: View {
     let searching = !terms.isEmpty
     // Content hits count for the query they answered only
     let snippets = model.hits?.query == terms.joined(separator: " ") ? model.hits?.snippets : nil
-    let pool = listed
+    let known = Set(model.summaries.map(\.id))
+    let extra = snippets == nil ? [] : model.hits?.summaries.filter { !known.contains($0.id) && ($0.archived == true) == archivedOnly } ?? []
+    let pool = listed + extra
     let shown = searching ? filtered(pool, terms: terms, snippets: snippets) : pool
     // Pinned first, then the latest
     let ordered = shown.sorted { ($0.pinned == true ? 1 : 0, $0.updatedAt) > ($1.pinned == true ? 1 : 0, $1.updatedAt) }
@@ -80,7 +82,8 @@ struct SessionListScreen: View {
     let onNew = { model.path.append(.new(agent: nil, cwd: projects.first ?? "")) }
     ScrollView(.vertical) {
       LazyVStack(alignment: .leading, spacing: 0) {
-        if ordered.isEmpty && !(byProject && !model.listedProjects.isEmpty) {
+        // By project, the chats' group still stands (its "new chat" row) when nothing else does
+        if ordered.isEmpty && !(byProject && (!model.listedProjects.isEmpty || model.chatRoot != nil)) {
           // Waiting on the conversation search, the empty list says so rather than "no match"
           // The whole list is empty, not one project's ("session.noneWorkspace" is the IDE's workspace-scoped list)
           Text(web: searching ? t(snippets == nil ? "session.searching" : "session.noMatch") : t("session.none"))
@@ -88,7 +91,10 @@ struct SessionListScreen: View {
             .frame(maxWidth: .infinity, minHeight: Metrics.sheetRow)
         }
         ForEach(groups) { group($0, terms: terms, snippets: snippets, projects: projects) }
-        if byProject { projectGroups(pinsInProject: pinsInProject, projects: projects) }
+        if byProject {
+          projectGroups(pinsInProject: pinsInProject, projects: projects)
+          chatGroup(pinsInProject: pinsInProject, projects: projects)
+        }
       }
       .padding(.bottom, Metrics.msgGap)
       .animation(Motion.ease, value: ordered.map(\.id))
@@ -130,7 +136,7 @@ struct SessionListScreen: View {
     ForEach(Array(group.sessions.enumerated()), id: \.element.id) { i, s in
       // A caption already says "pinned"; one run without captions (a search) ends its leading pins at the pin rule
       let pinEnd = group.caption == nil && s.pinned == true && group.sessions[safe: i + 1].map { $0.pinned != true } == true
-      row(s, place: projectName(s.cwd),
+      row(s, place: model.placeName(s.cwd),
           // A day caption already says when; pinned rows and search hits have none, so they keep the time
           time: group.dated ? nil : sessionTime(s.updatedAt, now: now),
           // Captions part the runs and rows sit on space alone; one run without captions parts by hairlines
@@ -209,6 +215,45 @@ struct SessionListScreen: View {
     }
   }
 
+  /// The chats (sessions in no project, AppModel.isChat) under the projects, as the desktop list puts them: a caption,
+  /// then the rows at the top level's inset (one line, the caption already says where), the latest few until "N more";
+  /// with none yet, a row starting one. Shown where the engine keeps chats
+  @ViewBuilder
+  private func chatGroup(pinsInProject: Bool, projects: [String]) -> some View {
+    if model.chatRoot != nil {
+      let all = listed.filter { model.isChat($0.cwd) }
+      let pins = pinsInProject ? all.filter { $0.pinned == true }.sorted { $0.updatedAt > $1.updatedAt } : []
+      // Pinned to the top, a chat already sits in the pinned run
+      let sessions = all.filter { $0.pinned != true }.sorted { $0.updatedAt > $1.updatedAt }
+      let cut = sessions.count <= Self.perProject + 1 ? sessions.count : Self.perProject
+      let extra = moreShown[Self.chatsKey] ?? 0
+      let rows = Array(sessions.prefix(cut + extra))
+      let rest = Array(sessions.dropFirst(rows.count))
+      Group {
+        Caption(text: t("session.group.chats"))
+        ForEach(pins, id: \.id) { s in
+          row(s, place: nil, time: sessionTime(s.updatedAt, now: now), divider: false, projects: projects)
+        }
+        if !pins.isEmpty && !rows.isEmpty { PinRule() }
+        ForEach(rows, id: \.id) { s in
+          row(s, place: nil, time: sessionTime(s.updatedAt, now: now), divider: false, projects: projects)
+        }
+        if sessions.count > cut {
+          MoreRow(rest: rest, nameOf: { model.agent($0).name }, nested: false) {
+            if closeSwipe() { return }
+            withAnimation(Motion.ease) { moreShown[Self.chatsKey] = rest.isEmpty ? nil : extra + Self.morePage }
+          }
+        }
+        if all.isEmpty {
+          NewChatRow { if !closeSwipe() { model.path.append(.new(agent: nil, cwd: "")) } }
+        }
+      }
+    }
+  }
+
+  /// The chats' key among the projects' `moreShown` (a project's is its folder, never blank-led)
+  private static let chatsKey = " chats"
+
   /// One session with its menu: the chat's "…" menu without the chat's own pages, as the desktop's row menu is its
   /// header's (pin, rename, copy, move, export). Delete is the row's swipe, as in the system's lists
   private func row(_ s: SessionSummary, place: String?, time: String?, divider: Bool, nested: Bool = false,
@@ -225,7 +270,7 @@ struct SessionListScreen: View {
         export: { model.export(s.id, format: $0) },
         exportJSON: model.holdsView(s.id),
         copy: { kind in Task { await model.copy(s.id, kind) } },
-        cwd: s.cwd, projects: projects,
+        cwd: s.cwd, projects: projects, chat: model.isChat(s.cwd),
         move: { model.move(s.id, to: $0) },
         addFolder: { movingTo = s }))
     }
@@ -285,7 +330,7 @@ struct SessionListScreen: View {
   /// A search's rows: every term in the title, the agent or the project, or a content hit for the query
   private func filtered(_ sessions: [SessionSummary], terms: [String], snippets: [String: String]?) -> [SessionSummary] {
     sessions.filter {
-      snippets?[$0.id] != nil || SessionSearch.matches([$0.title, model.agent($0.agent).name, projectName($0.cwd)], terms: terms)
+      snippets?[$0.id] != nil || SessionSearch.matches([$0.title, model.agent($0.agent).name, model.placeName($0.cwd)], terms: terms)
     }
   }
 }
@@ -727,6 +772,8 @@ struct MoreRow: View {
   /// The sessions still hidden, in list order
   let rest: [SessionSummary]
   var nameOf: (AgentId) -> String
+  /// Under a project's rows, a step in; under the chats, at the top level's inset
+  var nested = true
   var action: () -> Void
 
   /// SessionList.tsx MORE_MARKS
@@ -763,14 +810,38 @@ struct MoreRow: View {
           if let mark = ProjectHeader.pressing(rest) { StateMark(state: mark.state, unread: mark.unread) }
         }
       }
-      // Only ever inside a project's group: its chevron on its sessions' marks
-      .padding(.leading, Metrics.nest)
+      // Its chevron on its sessions' marks
+      .padding(.leading, nested ? Metrics.nest : 0)
       .padding(.horizontal, Metrics.pad)
       .frame(minHeight: Metrics.sheetRow)
       .contentShape(Rectangle())
     }
     .buttonStyle(ListRowStyle(active: false))
     .accessibilityLabel(Text(web: all ? t("session.showLess") : t("session.showMore", ["n": String(rest.count)])))
+  }
+}
+
+/// The empty chats group's only row (SessionList.tsx EmptyProjectRow, flush): a faint plus in the marks' column and
+/// "New chat"
+struct NewChatRow: View {
+  var action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      HStack(spacing: Metrics.gap) {
+        Icon(.plus)
+          .frame(width: Metrics.rowMark)
+          .frame(width: Metrics.lead, alignment: .leading)
+        Text(web: t("session.chat.new"), paragraph: false).lineLimit(1)
+          .textStyle(TypeScale.text2)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
+      .foregroundStyle(Palette.fg3)
+      .padding(.horizontal, Metrics.pad)
+      .frame(minHeight: Metrics.sheetRow)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(ListRowStyle(active: false))
   }
 }
 

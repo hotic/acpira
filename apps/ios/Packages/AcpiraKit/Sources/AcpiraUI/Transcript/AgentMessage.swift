@@ -25,6 +25,7 @@ struct AgentMessage: View {
   var subagents: [SubagentSummary] = []
   @Environment(\.sessionActions) private var sessionActions
   @Environment(\.subagentTranscript) private var readOnly
+  @Environment(\.quietEntrance) private var quiet
 
   var body: some View {
     let absorbed = absorbedNotices(turn)
@@ -63,7 +64,7 @@ struct AgentMessage: View {
     .padding(.horizontal, Metrics.pad)
     .environment(\.rowHeight, WebMetrics.chatRow)
     // Entrance effects belong to the live turn only; restored history stays still
-    .environment(\.rowEnter, running)
+    .environment(\.rowEnter, running && !quiet)
     .environment(\.entranceScope, EntranceScope(live: running, scope: scope))
     .environment(\.noticeScope, NoticeScope(showActions: last && !running && !readOnly, suppressId: turn.error?.failureId,
                                              absorbed: absorbed))

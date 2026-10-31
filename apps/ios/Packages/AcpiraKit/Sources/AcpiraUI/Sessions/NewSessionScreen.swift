@@ -1,6 +1,9 @@
 import AcpiraDesign
 import AcpiraModels
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 // A new session before its first prompt: the agent's mark and the project in the middle of an empty thread, and the
 // composer. The two choices a session is born with (which agent CLI runs it and which folder it works in) are made in
@@ -42,6 +45,12 @@ struct NewSessionScreen: View {
       // composer growing (the attach tray, a long prompt) never moves the hero
       GeometryReader { page in
         ZStack {
+          // Nothing here scrolls, so the thread's scroll dismissal has no counterpart: a tap or a downward drag on
+          // the empty page ends typing instead, under the hero so its mark and capsule keep their own taps
+          Color.clear
+            .contentShape(Rectangle())
+            .onTapGesture { Self.endEditing() }
+            .gesture(DragGesture(minimumDistance: Metrics.s3).onChanged { if $0.translation.height > abs($0.translation.width) { Self.endEditing() } })
           if ring {
             Palette.gooDim
               .ignoresSafeArea()
@@ -50,8 +59,10 @@ struct NewSessionScreen: View {
               .transition(.opacity)
           }
           NewSessionHero(agent: agent, cwd: draft.cwd, agents: model.agents,
-                         recent: model.projects, onAgent: pickAgent, onProject: { draft.cwd = $0 },
-                         onAdd: { model.addProject($0); draft.cwd = $0 }, ring: $ring)
+                         recent: model.projects, chat: model.startsChat(draft.cwd), onAgent: pickAgent,
+                         onProject: { draft.cwd = $0 }, onAdd: { model.addProject($0); draft.cwd = $0 },
+                         // An empty folder is a chat (AppModel.startsChat); offered where the engine keeps chats
+                         onChat: model.chatRoot == nil ? nil : { draft.cwd = "" }, ring: $ring)
             .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(Self.page)).maxY } action: { heroBottom = $0 }
             .opacity(covered || picking ? 0 : 1)
             .allowsHitTesting(!covered)
@@ -88,7 +99,12 @@ struct NewSessionScreen: View {
     // before the first prompt; they fill the draft once they arrive unless something was picked meanwhile. Asked
     // again on every new wire: an answer the lost one never brought left the page without a model chip for good
     .task(id: ControlsAsk(agent: draft.agent, wire: ObjectIdentifier(model))) { model.loadControls(draft.agent) }
+    // The ring's other agents too, so a switch finds their models in hand rather than dropping the chip meanwhile
+    .task(id: RingAsk(agents: launchable(model.agents).map(\.id), wire: ObjectIdentifier(model))) {
+      model.prefetchControls(launchable(model.agents).map(\.id))
+    }
     .onChange(of: model.agentControls[draft.agent]) { _, _ in
+      model.probeUnknownControls(draft.agent)
       guard !picked else { return }
       let known = model.controls(for: draft.agent)
       if known != draft.controls { draft.controls = known }
@@ -104,12 +120,25 @@ struct NewSessionScreen: View {
     .modifier(MediaLayer(session: draft, loader: model.media))
   }
 
+  /// Ends typing in the composer, whichever field holds the keyboard
+  private static func endEditing() {
+    #if canImport(UIKit)
+    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    #endif
+  }
+
   /// The page's coordinate space, for the hero and the composer to meet in
   nonisolated private static let page = "new.page"
 
   /// What the controls are asked for: the agent, on this wire's app model (every wire brings a new one)
   private struct ControlsAsk: Equatable {
     var agent: AgentId
+    var wire: ObjectIdentifier
+  }
+
+  /// The agents the ring offers, on this wire's app model
+  private struct RingAsk: Equatable {
+    var agents: [AgentId]
     var wire: ObjectIdentifier
   }
 
@@ -121,9 +150,12 @@ struct NewSessionScreen: View {
   }
 
   private func setConfig(_ control: String, _ value: String) {
-    guard let at = draft.controls.options.firstIndex(where: { $0.id == control }) else { return }
+    guard draft.controls.options.contains(where: { $0.id == control }) else { return }
     picked = true
-    draft.controls.options[at].value = value
+    // No session answers set_config_option here, so a model pick brings that model's own parameters from the
+    // remembered shapes (TurnEdit.swift): a model without Fast loses the previous model's Fast, as on the desktop
+    draft.controls = editTurnConfig(draft.controls, live: draft.controls, id: control, value: value,
+                                    shapes: model.shapes(for: draft.agent))
   }
 
   /// The first prompt creates the session; its chat takes this screen's place in the stack
@@ -142,9 +174,13 @@ struct NewSessionHero: View {
   let cwd: String
   var agents: [AgentInfo] = []
   var recent: [String] = []
+  /// The session starts as a chat, in no project: the capsule says so instead of a folder
+  var chat = false
   var onAgent: (AgentId) -> Void = { _ in }
   var onProject: (String) -> Void = { _ in }
   var onAdd: (String) -> Void = { _ in }
+  /// Turns the draft into a chat; nil where the engine keeps no chats
+  var onChat: (() -> Void)?
   @Binding var ring: Bool
   /// The name and the folder are hidden while the ring is out and until AgentRing lets them back
   @State private var veil = false
@@ -163,11 +199,12 @@ struct NewSessionHero: View {
           .id(agent.id)
           .transition(.identity)
         Menu {
-          NativeProjectMenu(cwd: cwd, recent: recent, onSelect: onProject, onAdd: { adding = true })
+          NativeProjectMenu(cwd: cwd, recent: recent, chat: chat, onSelect: onProject, onAdd: { adding = true },
+                            onChat: onChat)
         } label: {
           HStack(spacing: Metrics.s1_5) {
-            Icon(.folder, size: Metrics.icon)
-            Text(web: folderName(cwd), paragraph: false).textStyle(TypeScale.text2)
+            Icon(chat ? .messagesSquare : .folder, size: Metrics.icon)
+            Text(web: chat ? t("session.group.chats") : folderName(cwd), paragraph: false).textStyle(TypeScale.text2)
           }
           .foregroundStyle(Palette.fg2)
           .padding(.horizontal, Metrics.s3)

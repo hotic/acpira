@@ -124,7 +124,7 @@ struct ContractTests {
     try checkStruct(state, try need(TS.interface(proto, "InitState")), leftOut: ["agentInstalls"])
     try checkStruct(state.settings, try need(TS.interface(Self.source("settings.ts"), "SettingsView")), leftOut: [
       "sessionScope", "sessionListPosition", "uiFontSize", "codeFontSize", "diffMarkers", "fontSmoothing", "shareEditorSelection",
-      "agentCpuCap", "proxy", "openFilesWith", "desktopLayout", "panelScope", "panelFiles", "panelTerminal", "panelBrowser",
+      "agentCpuCap", "proxy", "openFilesWith", "desktopLayout", "panelScope", "panelFiles", "panelTerminal", "panelBrowser", "sshLocalAgents",
     ])
     let subagents = try Self.source("subagents.ts")
     try checkStruct(try need(state.settings.subagents.first), try need(TS.interface(subagents, "SubagentPersona")))
@@ -251,7 +251,6 @@ struct ContractTests {
     try check(SubagentSummary.StateSource.self, field(subagents, "SubagentSummary", "stateSource"), "SubagentSummary.stateSource")
     try check(RelayMode.self, TS.alias(subagents, "RelayMode"), "RelayMode")
     let remote = try Self.source("remote.ts")
-    try check(RunMode.self, TS.alias(remote, "RunMode"), "RunMode")
     try check(ConnectionState.self, TS.alias(remote, "ConnectionState"), "ConnectionState")
     let reasons = TS.literals(try need(TS.alias(proto, "ProjectError"), "ProjectError"))
     #expect(Set(ProjectError.reasons.map(\.rawValue)) == reasons, "ProjectError is \(reasons.sorted())")
@@ -555,7 +554,7 @@ enum ContractSamples {
     .send(sessionId: "s1", text: "hi", attachments: [drafts[0]], steer: true, clientId: "c1"),
     .stop(sessionId: "s1", clientId: "c2"),
     .permission(sessionId: "s1", blockId: "b1", optionId: "allow", clientId: "c3"),
-    .answer(sessionId: "s1", blockId: "q1", answers: ["a": .one("notes"), "b": .many(["docs"])], skip: false, clientId: "c4"),
+    .answer(sessionId: "s1", blockId: "q1", answers: ["a": .one("notes"), "b": .many(["docs"])], images: ["a": [drafts[0]]], skip: false, clientId: "c4"),
     .buildPlan(sessionId: "s1", planId: "p1", optionId: "build", model: ModelPick(configId: "model", value: "opus")),
     .setMode(sessionId: "s1", id: "plan"),
     .setConfig(sessionId: "s1", configId: "effort", value: "high"),
@@ -572,7 +571,7 @@ enum ContractSamples {
     .searchSessions(query: "zebracorn", seq: 3),
     .forkSession(sessionId: "s1", turnIndex: 1, agent: "codex"),
     .selectAccount(sessionId: "s1", id: "acc-1"),
-    .refreshQuota(agent: "claude"),
+    .refreshQuota(agent: "claude", sessionId: "s1"),
     .compact(sessionId: "s1"),
     .retry(sessionId: "s1"),
     .takeOverSession(sessionId: "s1"),
@@ -583,9 +582,9 @@ enum ContractSamples {
     .categoryOp(op: .reorderProject(cwd: "/w/a", before: "/w/b"), file: "s1"),
     .moveSession(id: "s1", cwd: "/w2", category: "c1"),
     .sessionMarkdown(id: "s1", seq: 4, format: .text),
-    .addAccount(agent: "codex", via: .login),
-    .removeAccount(id: "acc-1"),
-    .unlockCredentials(agent: "claude"),
+    .addAccount(agent: "codex", via: .login, sessionId: "s1"),
+    .removeAccount(id: "acc-1", sessionId: "s1"),
+    .unlockCredentials(agent: "claude", sessionId: "s1"),
     .login(sessionId: "s1", methodId: "chatgpt"),
     .reconnect(sessionId: "s1"),
     .retryTurn(sessionId: "s1"),
@@ -635,7 +634,7 @@ enum ContractSamples {
     #"{"type":"permission","id":"perm-1","title":"Run ls","command":"ls","description":"list","planId":"p1","defaultToNo":true,"options":[{"id":"allow","label":"Allow","kind":"allow_once","detail":"once"}]}"#,
     #"{"type":"compaction","id":"c1","status":"failed","error":"too long"}"#,
     ##"{"type":"plan_document","id":"p1","title":"Plan","markdown":"# Plan","path":"/w/plan.md","toolCallId":"call-2","approvalToolCallId":"call-3","status":"ready"}"##,
-    #"{"type":"question","id":"q1","toolCallId":"call-4","message":"Pick","questions":[{"id":"a","title":"Kind","text":"Which?","kind":"single","options":[{"id":"x","label":"X","description":"the x"}],"other":true,"numeric":false,"required":true}],"outcome":"answered","answers":{"a":"x"}}"#,
+    #"{"type":"question","id":"q1","toolCallId":"call-4","message":"Pick","questions":[{"id":"a","title":"Kind","text":"Which?","kind":"single","options":[{"id":"x","label":"X","description":"the x"}],"other":true,"numeric":false,"required":true}],"outcome":"answered","answers":{"a":"x"},"images":true,"answerImages":{"a":[{"blob":"3f2a.png","mimeType":"image/png"}]}}"#,
     #"{"type":"image","id":"img-1","blob":"3f2a.png","mimeType":"image/png","uri":"/w/shot.png"}"#,
     #"{"type":"notice","id":"n-1","revision":2,"category":"limit","severity":"warning","info":true,"title":"Slow down","details":"429","actions":["retry"],"retry":{"status":"in_progress","max":10,"nextAt":1,"reconnect":true,"attempts":[{"at":1,"attempt":1,"text":"529"}]}}"#,
     #"{"type":"steer","id":"st-1","text":"also this","attachments":[{"kind":"quote","text":"x","comment":"y"}]}"#,
@@ -676,6 +675,6 @@ enum ContractSamples {
     #"{"type":"editTurnResult","requestId":"e1","error":"stale"}"#,
     #"{"type":"deleteSessionResult","requestId":"d1","undo":false,"error":"busy"}"#,
     #"{"type":"appearance","appearance":{"density":"airy","motion":"none"}}"#,
-    #"{"type":"connections","connections":[{"alias":"gen1","mode":"local","disabled":false,"state":"error","error":{"message":"denied"}}]}"#,
+    #"{"type":"connections","connections":[{"alias":"gen1","disabled":false,"state":"error","error":{"message":"denied"}}]}"#,
   ]
 }

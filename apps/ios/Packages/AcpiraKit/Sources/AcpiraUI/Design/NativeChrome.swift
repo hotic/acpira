@@ -53,7 +53,7 @@ struct NativeSessionMenu: View {
         Menu {
           // The new session's folder menu: this computer's folders, each SSH host's, then a folder typed in. The
           // session's own folder is the ticked one, so picking it moves nothing
-          NativeProjectMenu(cwd: actions.cwd, recent: actions.projects,
+          NativeProjectMenu(cwd: actions.cwd, recent: actions.projects, chat: actions.chat,
                             onSelect: { if $0 != actions.cwd { move($0) } }, onAdd: actions.addFolder)
         } label: {
           // SF Symbols has no folder.badge.arrow.forward: an unknown name draws no icon at all
@@ -118,16 +118,28 @@ struct NativeSessionMenu: View {
 struct NativeProjectMenu: View {
   let cwd: String
   let recent: [String]
+  /// `cwd` is a chat's (or the draft is one): no folder is ticked, and the chat option is where offered
+  var chat = false
   var onSelect: (String) -> Void
   var onAdd: (() -> Void)?
+  /// The new session's chat: a session in no project, ahead of the folders; nil where a session moves
+  var onChat: (() -> Void)?
 
   var body: some View {
     var seen = Set<String>()
-    let folders = ([cwd] + recent).filter { !$0.isEmpty && seen.insert($0).inserted }
+    let folders = ((chat ? [] : [cwd]) + recent).filter { !$0.isEmpty && seen.insert($0).inserted }
     let local = folders.filter { RemoteFolder.parse($0) == nil }
     let remote = folders.filter { RemoteFolder.parse($0) != nil }
     var seenHosts = Set<String>()
     let hosts = remote.compactMap { RemoteFolder.parse($0)?.alias }.filter { seenHosts.insert($0).inserted }
+    if let onChat {
+      Section {
+        // Checked while the draft is a chat; picking it again keeps it
+        Toggle(isOn: Binding(get: { chat }, set: { if $0 { onChat() } })) {
+          Label(t("session.group.chats"), systemImage: "bubble.left.and.bubble.right")
+        }
+      }
+    }
     Section {
       Menu {
         projects(local)

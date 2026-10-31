@@ -67,6 +67,20 @@ extension AppModel {
       agentControls[agent] = views.values.first { $0.agent == agent && !$0.controls.options.isEmpty }?.controls.options ?? []
     }
   }
+
+  /// Asks for every agent not answered yet, so a switch on the new session page finds the agent's models at once
+  /// instead of dropping the model chip for the round trip (hundreds of milliseconds over a paired link)
+  func prefetchControls(_ agents: [AgentId]) {
+    for agent in agents where agentControls[agent] == nil { loadControls(agent) }
+  }
+
+  /// An agent the engine knows no models for yet (never run on that computer, no probe) gets one fresh probe on this
+  /// wire: the desktop starts the CLI with the page and shows its models, the phone only starts it with the first prompt
+  func probeUnknownControls(_ agent: AgentId) {
+    guard link != nil, agentControls[agent]?.isEmpty == true, !probedControls.contains(agent) else { return }
+    probedControls.insert(agent)
+    loadControls(agent, fresh: true)
+  }
 }
 
 /// agentOrder.ts arrangeAgents: the saved order first, the rest in registry order after them, external entries last;

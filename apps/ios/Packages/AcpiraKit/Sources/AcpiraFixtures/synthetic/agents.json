@@ -1,5 +1,20 @@
 [
  {
+  "id": "acpira",
+  "name": "Acpira",
+  "available": true
+ },
+ {
+  "id": "codex",
+  "name": "Codex",
+  "available": true
+ },
+ {
+  "id": "claude",
+  "name": "Claude Code",
+  "available": true
+ },
+ {
   "id": "grok",
   "name": "Grok Build",
   "available": true,
@@ -53,20 +68,5 @@
     "fetchedAt": "2026-10-09T09:05:18.000Z"
    }
   }
- },
- {
-  "id": "claude",
-  "name": "Claude Code",
-  "available": true
- },
- {
-  "id": "codex",
-  "name": "Codex",
-  "available": true
- },
- {
-  "id": "acpira",
-  "name": "Acpira",
-  "available": true
  }
 ]

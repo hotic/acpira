@@ -79,12 +79,13 @@ extension AppModel {
     switch message {
     case .initState(let state):
       if let base = state.blobBase { link.blobBase = base }
+      chatRoot = state.chats
       agents = state.agents
       accounts = state.accounts
       settings = state.settings
       summaries = state.sessions.map { pendingSummary($0, fresh: resumed) }
       if let categories = state.categories { follow(categories) }
-      present(link.feed.receive(message))
+      present(message)
       synced = true
       // The hosts' state for the host folders; the engine pushes it again on every change
       post(.connections)
@@ -104,18 +105,19 @@ extension AppModel {
       accounts = list
     case .settings(let next, _):
       settings = next
-    case let .controls(agent, controls, _):
+    case let .controls(agent, controls, shapes):
       agentControls[agent] = controls
+      if let shapes { agentShapes[agent] = shapes }
     case .accountActions(let actions):
       report(actions)
     case let .sessionHits(seq, list):
       // A reply to an older query is dropped rather than mixed in
       guard seq == searchSeq else { break }
-      hits = SessionHits(query: searchQuery, snippets: Dictionary(list.map { ($0.id, $0.snippet) }, uniquingKeysWith: { a, _ in a }))
+      hits = SessionHits(query: searchQuery, snippets: Dictionary(list.map { ($0.id, $0.snippet) }, uniquingKeysWith: { a, _ in a }), summaries: list.compactMap(\.summary))
     case let .projectFile(seq, _, _, _), let .sessionChanges(seq, _), let .diffSource(seq, _), let .sessionMarkdown(seq, _, _):
       answer(seq, message)
     case .session, .sessionPatch, .noSession:
-      present(link.feed.receive(message))
+      present(message)
     case .terminalOutput, .terminalState:
       terminals.receive(message)
     case .imageBlob(let seq, let blob):
@@ -138,10 +140,23 @@ extension AppModel {
     sections = categories.sections ?? []
   }
 
-  private func present(_ outcome: SessionFeed.Outcome) {
+  private func present(_ message: HostMsg) {
     guard let link else { return }
+    let catchingUp = link.feed.views.catchingUp
+    let known = Set(link.feed.views.kept)
+    let outcome = link.feed.receive(message)
     switch outcome {
     case .show(let view?):
+      let isQuiet: Bool = switch message {
+      case .initState: true
+      default: !known.contains(view.id) || catchingUp == view.id
+      }
+      if isQuiet {
+        liveSessions.remove(view.id)
+        EntranceLedger.seed(view)
+      } else {
+        liveSessions.insert(view.id)
+      }
       // Only the views the feed keeps stay, so a long transcript is not held past its cache bound
       let kept = Set(link.feed.views.kept)
       views = views.filter { kept.contains($0.key) }
@@ -173,6 +188,7 @@ extension AppModel {
     accounts = previous.accounts
     settings = previous.settings
     agentControls = previous.agentControls
+    agentShapes = previous.agentShapes
     summaries = previous.summaries
     views = previous.views
     // The replay below sends them again, so they keep reading as sent, and this wire's loader keeps their photos too
@@ -184,6 +200,7 @@ extension AppModel {
     projectOrder = previous.projectOrder
     removedProjects = previous.removedProjects
     sections = previous.sections
+    chatRoot = previous.chatRoot
     hits = previous.hits
     openProjects = previous.openProjects
     settingsOpen = previous.settingsOpen
@@ -260,8 +277,16 @@ extension AppModel {
 
   /// A chat came on screen: its kept view at once, and the engine switches the view to it
   func open(_ id: String) {
+    if runs[id] == nil, let current = views[id] {
+      liveSessions.remove(id)
+      EntranceLedger.seed(current)
+    }
     guard let link else { return }
-    if let kept = link.feed.select(id) { views[id] = kept }
+    if let kept = link.feed.select(id) {
+      liveSessions.remove(id)
+      EntranceLedger.seed(kept)
+      views[id] = kept
+    }
     watching = id
     link.client.post(.selectSession(id: id))
   }
@@ -279,10 +304,14 @@ extension AppModel {
       if case .new? = self.path.last { self.path[self.path.count - 1] = .chat(id) } else { self.path.append(.chat(id)) }
       opened?()
     })
-    // A host folder under local run takes the built-in agent, whatever the page picked (also a folder picked after the
-    // page opened) or the engine would default to
-    let start = startAgent(agent ?? "", in: cwd)
-    post(.newSession(agent: start.isEmpty ? nil : start, cwd: cwd.isEmpty ? nil : cwd))
+    let start = agent ?? ""
+    // A chat gets a fresh folder of its own from the engine; an engine that is no project shell ignores the flag and
+    // starts it in its default folder
+    if startsChat(cwd) {
+      post(.newSession(agent: start.isEmpty ? nil : start, chat: true))
+    } else {
+      post(.newSession(agent: start.isEmpty ? nil : start, cwd: cwd.isEmpty ? nil : cwd))
+    }
   }
 
   /// The picks a new session's screen made where they differ from what the engine started it with

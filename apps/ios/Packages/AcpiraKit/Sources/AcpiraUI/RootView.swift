@@ -48,6 +48,12 @@ public struct LaunchOptions: Sendable {
   /// `-orientation portrait|landscape|landscapeLeft|landscapeRight`: debug builds turn the window on launch
   /// (`OrientationProbe`), since the simulator takes no scripted rotation
   public var orientation: String?
+  /// The launch asked for the demo's fixtures (`-fixture`, `-screen` or another screenshot flag). A build with a pairing
+  /// service launched bare, as from the home screen, starts empty instead: its lists come from a paired computer
+  public var demo = true
+
+  /// Flags that pick something from the fixtures, so a launch with any of them shows the demo
+  static let demoFlags = ["-fixture", "-screen", "-popup", "-prompt", "-draft", "-replay", "-open", "-subagent", "-render"]
 
   public static func current(_ arguments: [String] = ProcessInfo.processInfo.arguments) -> LaunchOptions {
     func value(_ flag: String) -> String? {
@@ -60,7 +66,8 @@ public struct LaunchOptions: Sendable {
                          popup: value("-popup"), replay: arguments.contains("-replay"), open: value("-open"),
                          prompt: value("-prompt"), draft: value("-draft"), engine: value("-engine"),
                          session: value("-session"), start: value("-start"), terminal: value("-terminal"),
-                         type: value("-type"), subagent: value("-subagent"), orientation: value("-orientation"))
+                         type: value("-type"), subagent: value("-subagent"), orientation: value("-orientation"),
+                         demo: demoFlags.contains(where: arguments.contains))
   }
 }
 
@@ -103,8 +110,12 @@ public struct RootView: View {
     // `-locale` pins a screenshot's language; otherwise the stored choice, then the device's
     L10n.setLocale(options.locale ?? Prefs.resolve(UserDefaults.standard.string(forKey: Prefs.locale) ?? "auto"))
     InterFont.register()
-    _model = State(initialValue: AppModel(options: options))
-    _pairing = State(initialValue: PairingModel.launch() ?? (options.engine == nil ? pairingService.map { PairingModel(service: $0) } : nil))
+    let pairing = PairingModel.launch() ?? (options.engine == nil ? pairingService.map { PairingModel(service: $0) } : nil)
+    // A paired build launched bare shows no fixtures: the list stands empty under the connect page until a computer's
+    // wire brings its own model
+    let blank = pairingService != nil && pairing != nil && !options.demo
+    _model = State(initialValue: blank ? AppModel(blank: options) : AppModel(options: options))
+    _pairing = State(initialValue: pairing)
   }
 
   public var body: some View {
@@ -266,9 +277,8 @@ public struct RootView: View {
       ChatScreen(id: id)
     case .new(let agent, let cwd):
       let folder = cwd ?? model.projects.first ?? ""
-      // A folder on an SSH host under local run opens on the built-in agent (Shell.tsx agentIn)
-      let start = model.startAgent(agent ?? model.summaries.max { $0.updatedAt < $1.updatedAt }?.agent
-        ?? launchable(model.agents).first { $0.available != false }?.id ?? "", in: folder)
+      let start = agent ?? model.summaries.max { $0.updatedAt < $1.updatedAt }?.agent
+        ?? launchable(model.agents).first { $0.available != false }?.id ?? ""
       NewSessionScreen(agent: start, cwd: folder, controls: model.controls(for: start))
     case .changes(let id):
       ChangesScreen(sessionId: id)

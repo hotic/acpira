@@ -132,14 +132,19 @@ struct PairHeroPlacement<Content: View>: View {
   @ViewBuilder var content: () -> Content
 
   var body: some View {
+    // Centred on the whole screen, not the safe area: on iPhone Duo the system's side bar takes one edge, and a hero
+    // centred beside it leaned away from the screen's middle. Both sides keep clear by the wider inset
     GeometryReader { page in
+      let side = max(page.safeAreaInsets.leading, page.safeAreaInsets.trailing)
       VStack(spacing: 0) {
         Color.clear.frame(height: max(0, page.size.height * Metrics.heroRise - box / 2))
         content()
         Spacer(minLength: 0)
       }
+      .frame(width: max(0, page.size.width - side * 2))
       .frame(width: page.size.width)
     }
+    .ignoresSafeArea(.container, edges: .horizontal)
   }
 }
 

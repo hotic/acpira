@@ -168,6 +168,7 @@ struct ChatScreen: View {
       copy: { kind in Task { await model.copy(id, kind) } },
       cwd: session.cwd,
       projects: model.projects,
+      chat: model.isChat(session.cwd),
       move: { model.move(id, to: $0) },
       addFolder: { addingFolder = true })
   }
@@ -246,6 +247,8 @@ struct HeaderActions {
   /// The session's folder and the others it can move to
   var cwd = ""
   var projects: [String] = []
+  /// The session is a chat: its own folder is no project to tick in the move menu
+  var chat = false
   var move: ((String) -> Void)?
   /// "Add folder" in the move menu: the screen raises its path alert, then moves the session there
   var addFolder: (() -> Void)?
@@ -298,6 +301,8 @@ struct Thread: View {
   @State private var offset = ScrollOffset()
   /// The turn just ended under a following thread: growth still follows until the reader drags or a fold moves
   @State private var settling = false
+  /// Opened and not yet scrolled or folded: the thread stays on its end while the lazy rows settle their heights
+  @State private var opening = true
 
   var body: some View {
     ScrollView(.vertical) {
@@ -311,6 +316,10 @@ struct Thread: View {
     .scrollPosition($position)
     .defaultScrollAnchor(.bottom, for: .initialOffset)
     .defaultScrollAnchor(.top, for: .alignment)
+    // Lazy rows above a just-opened thread trade estimates for real heights as they lay out; without a bottom anchor
+    // a long running turn left the thread at its top instead of its end. Once the reader scrolls or folds, size
+    // changes keep the default anchor, so reading history stays put
+    .defaultScrollAnchor(opening ? .bottom : nil, for: .sizeChanges)
     // Interactive dismissal waits for the finger to reach the keyboard; even a short drag should end typing.
     .scrollDismissesKeyboard(.immediately)
     .contentShape(Rectangle())
@@ -324,6 +333,8 @@ struct Thread: View {
       let wasDragging = dragging
       dragging = phase == .interacting || phase == .tracking || phase == .decelerating
       gesture.active = dragging
+      // Any scroll, the reader's or the system's (a tap on the status bar), ends the opening anchor
+      if phase != .idle { opening = false }
       if dragging {
         // Release on touch, not on a geometry Boolean changing: a stream may already have made atBottom false
         // before the drag, in which case that callback never fires and the next chunk pulls the reader back.
@@ -357,10 +368,11 @@ struct Thread: View {
   /// by the fold's height (iOS 27 simulator, 2026-10-27)
   private var hold: HoldScroll {
     let pinned = session.running && follow
-    let position = $position, offset = offset, settled = $settling
+    let position = $position, offset = offset, settled = $settling, opening = $opening
     return HoldScroll {
-      // A fold the reader moved ends the settling follow: the row under the finger stays put from now on
+      // A fold the reader moved ends the settling follow and the opening anchor: the row under the finger stays put
       settled.wrappedValue = false
+      opening.wrappedValue = false
       guard !pinned else { return }
       position.wrappedValue.scrollTo(y: offset.y)
     }
@@ -372,30 +384,84 @@ final class ScrollOffset: @unchecked Sendable {
   var y: CGFloat = 0
 }
 
+/// Snapshot of the parts of a session that change as a turn streams, used by `QuietGate` and `AppModel.quietSessions`
+/// to tell an initial or caught-up view apart from a live stream update
+struct QuietSignature: Equatable {
+  var rev: Int?
+  var turnCount: Int
+  var lastAgent: AgentTurn?
+  var subagents: [SubagentSummary]?
+
+  init(_ session: SessionView) {
+    rev = session.rev
+    turnCount = session.turns.count
+    lastAgent = session.turns.reversed().lazy.compactMap { if case .agent(let t) = $0 { t } else { nil } }.first
+    subagents = session.subagents
+  }
+}
+
+/// Tracks whether the current pass restores history or applies the catch-up push after returning to a session
+/// (`Shell.tsx` `opening` / `QuietEntranceContext`). Seeded into `EntranceLedger` so lazy rows and closed folds
+/// mounted on later frames stay still too
+final class QuietGate {
+  private var sessionId: String?
+  private var settled: QuietSignature?
+  private var wasCatchingUp = false
+
+  func isQuiet(session: SessionView, catchingUp: Bool, liveStream: Bool) -> Bool {
+    let current = QuietSignature(session)
+    if sessionId != session.id || catchingUp || wasCatchingUp || !liveStream {
+      sessionId = session.id
+      settled = current
+      wasCatchingUp = catchingUp
+      EntranceLedger.seed(session)
+      return true
+    }
+    return current == settled
+  }
+}
+
 /// The exchanges themselves; `lazy: false` lays every exchange out at once (a full-length render)
 struct ThreadContent: View {
   let session: SessionView
   var lazy = true
+  /// True while the caller is still waiting for the first transcript push (e.g. a subagent inspector before its first
+  /// `subagent` message lands)
+  var catchingUp = false
+  /// True when the caller drives `session` from its own stream outside `AppModel.liveSessions` (e.g. the subagent
+  /// inspector once its initial transcript has loaded)
+  var liveStream: Bool?
   /// Folds opened in the last exchange before any tap (renders and previews)
   var preOpen: Set<PreOpen> = []
+  @Environment(AppModel.self) private var model: AppModel?
   @Environment(\.sessionActions) private var actions
+  @State private var gate = QuietGate()
 
   var body: some View {
+    let stream = liveStream ?? (model?.liveSessions.contains(session.id) == true)
+    let quiet = gate.isQuiet(session: session, catchingUp: catchingUp, liveStream: stream)
     let groups = exchanges(session.turns)
     let activeAgent = session.turns.lastIndex { if case .agent = $0 { true } else { false } }
     // Each child reaches only the turn that announced it
     let nodes = nodesByTurn(session.subagents ?? [])
     Group {
       if lazy {
-        // A prompt bubble does not stick (it would sit under the floating glass with the thread showing beside it)
-        LazyVStack(alignment: .leading, spacing: 0) {
-          sections(groups, activeAgent, nodes)
+        // A prompt bubble does not stick (it would sit under the floating glass with the thread showing beside it).
+        // The last exchange stays out of the lazy stack: the stack sizes the exchanges it has not laid out from the
+        // ones it has, and a thread opened at the bottom lays out the last one first. A running turn's open process
+        // is many screens tall, so every earlier exchange was taken for that tall, the bottom the thread opened at
+        // lay far past the real content, and no row was there to draw: a blank chat until a drag
+        VStack(alignment: .leading, spacing: 0) {
+          LazyVStack(alignment: .leading, spacing: 0) {
+            sections(groups, 0..<max(groups.count - 1, 0), activeAgent, nodes)
+          }
+          sections(groups, max(groups.count - 1, 0)..<groups.count, activeAgent, nodes)
           StartingReply(session: session)
           queue
         }
       } else {
         VStack(alignment: .leading, spacing: 0) {
-          sections(groups, activeAgent, nodes)
+          sections(groups, groups.indices, activeAgent, nodes)
           StartingReply(session: session)
           queue
         }
@@ -407,23 +473,30 @@ struct ThreadContent: View {
     .readableWidth()
     .padding(.top, Metrics.padY)
     .padding(.bottom, WebMetrics.msgGap)
+    .environment(\.quietEntrance, quiet)
     .environment(\.planContext, PlanContext(controls: session.controls, running: session.running, ready: session.status == .ready))
     .environment(\.allSubagents, session.subagents ?? [])
     .environment(\.sidekickModels, SidekickModels(session.controls))
   }
 
-  @ViewBuilder private func sections(_ groups: [Exchange], _ activeAgent: Int?, _ nodes: [Int: [SubagentSummary]]) -> some View {
+  /// The exchanges in `range` of `groups`; the gaps and pre-opened folds still count from the whole thread
+  @ViewBuilder private func sections(_ groups: [Exchange], _ range: Range<Int>, _ activeAgent: Int?,
+                                     _ nodes: [Int: [SubagentSummary]]) -> some View {
     // What the prompts' long-press menus offer, and the failed reply that offers Retry
     let editable = canEditPrompts(session)
     let goalPrompt = canSetGoal(session) ? lastTypedPrompt(session.turns) : nil
     let retry = retryableTurn(session)
-    ForEach(Array(groups.enumerated()), id: \.element.id) { n, exchange in
+    ForEach(Array(groups.enumerated())[range], id: \.element.id) { n, exchange in
       // The gap to the next exchange closes this one, so a pinned card keeps no transparent band above it; an
       // exchange ending in a reply's action row only needs a row gap, the row's own height separates them
       let next = n + 1 < groups.count
         ? (endsWithActions(exchange, running: session.running, active: activeAgent) ? Metrics.gap : WebMetrics.msgGap) : 0
       Section {
         VStack(alignment: .leading, spacing: WebMetrics.msgGap) {
+          if let user = exchange.user, user.auto == true, user.autoReason == "subagents" {
+            let reports = shownReports(user.text)
+            if !reports.isEmpty { SubagentReturns(reports: reports) }
+          }
           ForEach(exchange.agents, id: \.index) { item in
             AgentMessage(turn: item.turn, running: session.running && item.index == activeAgent && item.turn.stop == nil,
                          scope: "\(session.id):\(item.index)", index: item.index, last: item.index == session.turns.count - 1,

@@ -9,6 +9,7 @@ import Foundation
 struct SessionHits: Equatable {
   var query: String
   var snippets: [String: String]
+  var summaries: [SessionSummary] = []
 }
 
 /// The distinct lower-cased terms of a query
