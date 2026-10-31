@@ -7,7 +7,7 @@ A chat shell for VS Code / Cursor, IntelliJ and a desktop app that drives offici
 - Done means: `pnpm typecheck` and `pnpm test` pass, plus `pnpm build` when a bundle entry or the webview changed and `cargo test --workspace` + `cargo clippy --workspace --all-targets --all-features -- -D warnings` (in `rust/`) when the engine changed, and no orphaned `fake-agent` process remains. Kotlin changes also pass `cd apps/intellij && ./gradlew test`; Swift changes under `apps/ios/` pass `apps/ios/scripts/check.sh`; `apps/desktop/` changes its clippy and `scripts/smoke.mjs`. Visual changes are checked in `pnpm harness` or the LAB when a browser is available; otherwise the summary says they were not.
 - Keep going while the next step needs no decision. Stop and ask only when blocked on a decision, or before: deleting files this task did not create, force-pushing or rewriting history, deleting or rewriting data outside the repository (`~/.acpira`, the CLIs' own stores), or sending real prompts to a CLI (probe scripts, evals), since those spend model calls.
 - Read the area's doc from the table below before changing it; the recorded wire behaviour outranks the ACP spec and memory of it.
-- `docs/dev/` holds only what the code does not say quickly: invariants and cross-file contracts, the non-obvious why, external CLI wire behaviour with the version observed on, traps, open questions, and where an area lives. It never restates code (constants, timings, step-by-step logic, field lists, test lists, UI descriptions). Edit entries in place, terse bullets: no dates, change history, investigation stories, measurements, commit hashes, machine names or personal paths; git keeps the history. `docs/dev/` is published, so anything private or scratch goes in an untracked file under `docs/` (everything there outside the `.gitignore` whitelist stays local).
+- `docs/dev/` keeps knowledge the source cannot give back: external CLI wire behaviour with the version observed on, invariants and cross-file contracts, the non-obvious why, traps, open questions, where an area lives. A typical change adds nothing there; an entry earns its place only when the next change would go astray without it, and anything a look at the code settles stays out. Never restate code (constants, timings, control flow, field / flag lists, test lists) or describe how the UI looks; point at the source instead. One current entry per topic: when behaviour changes, edit or remove it in place. Terse bullets, no dates, change history, investigation stories, measurements, commit hashes, machine names or personal paths; git keeps the history. A file stays under 16 KB: one over it is pruned before anything is added. `docs/dev/` is published, so anything private or scratch goes in an untracked file under `docs/` (everything there outside the `.gitignore` whitelist stays local).
 - This file stays an index under 12 KB (some hosts truncate at 16 KB); details belong in `docs/dev/`.
 - Long multi-part work keeps its checklist in `docs/TASKS.md` (ignored by git) and ticks items as they finish.
 - A run that changed files closes with a short summary: any decision still needed first, then what changed, the commands actually run, and what was left unverified (and why). Anything not confirmed against code, tests or a real CLI is called out as unverified, with where it was looked for.
@@ -53,7 +53,8 @@ One pnpm workspace: each package declares its own dependencies (versions in the 
 
 | Area | Doc |
 |---|---|
-| Engine composition, sidecar protocol and shells, persistent engine and push bus, agent registry / launching / installs, browser panel, session links, cross-harness subagents, terminals, shared config, stores, accounts, remote access gateway, probes | `docs/dev/host-architecture.md` |
+| Engine composition, sidecar protocol and shells, persistent engine and push bus, browser panel, session links, terminals, stores, accounts, remote access gateway, probes | `docs/dev/host-architecture.md` |
+| Agent registry / launching / installs, cross-harness subagents, handoff pack, shared config | `docs/dev/host-agents.md` |
 | Transcript normalization: prompts and attachments, tool content, terminal / image output, session import, subagents, usage, forking, export | `docs/dev/transcript-pipeline.md` |
 | `packages/ui` structure, stylesheets, markdown links, slash commands, render budget | `docs/dev/webview.md` |
 | UI primitives, tokens, rows, menus, overlays, composer, model panels | `docs/dev/ui-conventions.md` |
@@ -63,10 +64,10 @@ One pnpm workspace: each package declares its own dependencies (versions in the 
 | Plugins: manifest, runtime, hooks, activation, safe mode | `docs/dev/plugins.md` |
 | SSH remote workspaces: helper, deploy, connections, remote run | `docs/dev/remote.md` |
 | Eval benches | `docs/dev/evals.md` |
-| Anything specific to one agent CLI | `docs/dev/agent-quirks.md`, then `docs/acp-agents-compat.md` (the compatibility matrix) |
+| Anything specific to one agent CLI | `docs/dev/agent-quirks.md` (Claude: `agent-quirks-claude.md`, Codex: `agent-quirks-codex.md`), then `docs/acp-agents-compat.md` (the compatibility matrix) |
 | `apps/intellij/` | `docs/dev/intellij.md` |
 | `apps/desktop/` | `docs/dev/desktop.md` |
-| `apps/ios/` | `docs/dev/ios.md` |
+| `apps/ios/` | `docs/dev/ios.md`; SwiftUI traps and webview parity: `docs/dev/ios-ui.md` |
 | Windows compatibility boundaries and regression checks | `docs/dev/windows-compatibility.md` |
 
 Public docs: `docs/context-api.md` (the `acpira.context` contract other extensions call), `docs/chatgpt-bridge.md`, `docs/releasing.md`, `docs/roadmap.md`, `docs/harness-evaluations.md`. The rest of `docs/` is local only and may be absent (`HANDOFF.md`, `TASKS.md`, plans and scratch notes).

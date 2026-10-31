@@ -35,7 +35,7 @@ flate2 = "1.1"
 # pixels, `image` composites the frames, scales them and writes the PNG
 gif = "0.14"
 image = { version = "0.25", default-features = false, features = ["gif", "png"] }
-# Paired devices (acpira-net, docs/dev/paired-remote.md): QUIC with hole punching and relays. Only acpira-net and the
+# Paired devices (acpira-net, docs/dev/host-architecture.md, Remote access gateway): QUIC with hole punching and relays. Only acpira-net and the
 # gateway / mobile builds link it; the engine binary stays without it. Minor versions move together with n0's public relays
 iroh = { version = "1.4", default-features = false, features = ["tls-ring", "portmapper"] }
 n0-future = "0.3"
