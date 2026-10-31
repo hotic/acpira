@@ -177,6 +177,8 @@ public struct RootView: View {
     .overlay { BarHandoffLayer() }
     // A language switch redraws every screen with the new table (the settings switch the table first)
     .id(locale)
+    // The window's room, outside the `.id` so a language switch keeps it (LayoutRoom)
+    .measuresRoom()
     .toastLayer(model)
     .sheet(item: Bindable(model).shared) { file in
       ShareSheet(url: file.url).presentationDetents([.medium, .large])

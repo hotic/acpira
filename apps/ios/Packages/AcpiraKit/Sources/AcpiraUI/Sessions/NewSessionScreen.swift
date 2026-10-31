@@ -74,6 +74,7 @@ struct NewSessionScreen: View {
             .background { BarHandoffProbe(session: draft, placeholder: t("mobile.new.placeholder")) }
             #endif
             .padding(.horizontal, Metrics.pad)
+            .readableWidth()
             .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(Self.page)).minY } action: { composerTop = $0 }
         }
       }

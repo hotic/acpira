@@ -68,6 +68,7 @@ struct ChatScreen: View {
       .safeAreaInset(edge: .bottom, spacing: 0) {
         DockSeat(homeInset: homeInset) {
           Dock(session: session, draft: Bindable(draft).text, staged: Bindable(draft).staged, edit: Bindable(draft).edit)
+            .readableWidth()
         }
         // The inset takes the dock's ideal height, including long drafts and attachments above the keyboard.
         .fixedSize(horizontal: false, vertical: true)
@@ -305,7 +306,7 @@ struct Thread: View {
         .environment(\.scrollGesture, gesture)
     }
     // The docked plan floats over the thread's bottom; the inset is also the transcript's scroll clearance
-    .safeAreaInset(edge: .bottom, spacing: 0) { ThreadDock(session: session) }
+    .safeAreaInset(edge: .bottom, spacing: 0) { ThreadDock(session: session).readableWidth() }
     .scrollIndicators(.hidden)
     .scrollPosition($position)
     .defaultScrollAnchor(.bottom, for: .initialOffset)
@@ -403,6 +404,7 @@ struct ThreadContent: View {
     // The messages' `Metrics.pad` puts prose, row icons and cards on the edge the dock, the composer and the bar's back
     // button share; the thread's own inset moves them a little inside it
     .padding(.horizontal, Metrics.threadInset)
+    .readableWidth()
     .padding(.top, Metrics.padY)
     .padding(.bottom, WebMetrics.msgGap)
     .environment(\.planContext, PlanContext(controls: session.controls, running: session.running, ready: session.status == .ready))

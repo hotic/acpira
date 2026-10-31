@@ -244,9 +244,20 @@ final class BarHandoffController: UIViewController {
     return view.convert(view.bounds, to: nil)
   }
 
+  /// Whether the list's search field and new session sit on a bottom bar, the only layout the hand-over draws: a
+  /// regular width moves the search field to the top bar, and iPhone Duo puts every bar on the side in every pose
+  /// (`verticalBarEdge`, iOS 27.1; read by selector so SDKs before 27.1 still build). Elsewhere the pages just slide
+  static func barsAtBottom(_ traits: UITraitCollection) -> Bool {
+    guard traits.horizontalSizeClass == .compact else { return false }
+    let edge = NSSelectorFromString("verticalBarEdge")
+    guard traits.responds(to: edge) else { return true }
+    // UIVerticalBarEdgeUnspecified: no vertical bar here
+    return (traits.value(forKey: "verticalBarEdge") as? Int ?? 0) == 0
+  }
+
   private func begin(toList: Bool) {
     guard let handoff, let session, let coordinator = transitionCoordinator, coordinator.isAnimated,
-          let nav = navigationController, let root = nav.viewControllers.first,
+          let nav = navigationController, Self.barsAtBottom(nav.traitCollection), let root = nav.viewControllers.first,
           coordinator.viewController(forKey: toList ? .to : .from) === root,
           // A search under way: the list's bar is then the search field's own, over the keyboard
           root.navigationItem.searchController?.isActive != true,

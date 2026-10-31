@@ -122,6 +122,7 @@ struct PlanCard: View {
   @State private var open = false
   @Environment(\.motionEnabled) private var motion
   @Environment(\.initialPopup) private var initialPopup
+  @Environment(\.room) private var room
 
   var body: some View {
     let done = entries?.filter { $0.status == .completed }.count ?? 0
@@ -197,7 +198,7 @@ struct PlanCard: View {
     }
     .scrollDisabled(!open)
     .scrollIndicators(.hidden)
-    .frame(maxHeight: Metrics.planMax)
+    .frame(maxHeight: room.height(Metrics.planMax))
     .fixedSize(horizontal: false, vertical: true)
   }
 
