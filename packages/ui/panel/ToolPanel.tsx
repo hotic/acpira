@@ -21,6 +21,8 @@ import { PluginFrame } from './PluginFrame';
 import { pieceKey, pluginPiece, usePluginPieces } from '../pluginSlots';
 import { takeArrival } from '../plugins/arrivals';
 import { flyStandIn } from '../plugins/Pieces';
+import { motionOff } from '../effects/magic';
+import { playWhoosh } from '../effects/whoosh';
 import { FILES_TAB, allLiveTabs, anyModule, panel, panelState, usePanel, viewKey, type LineRange, type PanelTab, type PanelView } from './store';
 import { TerminalFrame } from './TerminalFrame';
 
@@ -114,6 +116,8 @@ export const ToolPanelDock = memo(function ToolPanelDock(p: ToolPanelDockProps) 
       flights.current.get(key)?.abort();
       const flight = new AbortController();
       flights.current.set(key, flight);
+      // The same whoosh as a piece landing in its slot (Pieces.tsx useArrival)
+      if (!motionOff()) playWhoosh('piece');
       flyStandIn(from, at, () => at.getBoundingClientRect(), () => {
         flights.current.delete(key);
         if (pluginPiece(piece.plugin, piece.id)?.html === piece.html) panel.openPlugin(piece.plugin, piece.id, piece.title || piece.plugin);
@@ -550,7 +554,7 @@ export function ViewPane({ f, openEditor, openPlan, treeOpen, onToggleTree, onCl
     return <ReviewView sessionId={f.sessionId} changes={f.changes} refresh={f.refresh} onOpen={path => f.open(projectPath(root, path) ?? path)} treeOpen={treeOpen} onToggleTree={onToggleTree} onClose={onClose} />;
   }
   if (!file) return null;
-  const inProject = file.text === undefined && projectPath(root, file.path) !== undefined;
+  const inProject = !file.media && file.text === undefined && projectPath(root, file.path) !== undefined;
   const openInEditor = file.planId && (openPlan || openEditor)
     ? (line?: number) => {
         if (line !== undefined && openEditor && /^([a-z]:)?[\\/]/i.test(file.path)) openEditor(file.path, line);
@@ -560,17 +564,17 @@ export function ViewPane({ f, openEditor, openPlan, treeOpen, onToggleTree, onCl
     : openEditor && ((line?: number) => openEditor(absPath(parseRemoteFolder(root)?.path ?? root, file.path), line));
   // A file on this machine: media loads from the shell by its path, and anything the viewer cannot show opens in the
   // system's own app. A file on an SSH host has neither
-  const local = file.text === undefined && !parseRemoteFolder(root) ? absPath(root, file.path) : undefined;
+  const local = !file.media && file.text === undefined && !parseRemoteFolder(root) ? absPath(root, file.path) : undefined;
   const kind = local !== undefined ? mediaKind(file.path) : undefined;
   const src = kind && mediaUrl(local!);
   return (
     <FileViewer key={file.path} sessionId={f.sessionId} path={file.path} text={file.text} base={f.base}
-      media={kind && src ? { kind, src } : undefined}
+      media={file.media ?? (kind && src ? { kind, src } : undefined)}
       onOpenDefault={local !== undefined ? () => vscodeApi().postMessage({ type: 'openPath', path: local }) : undefined}
       refresh={f.refresh} line={file.line} selection={file.selection}
       onSelect={f.select} onSelectionText={f.liveSelection} onAdd={f.addRange}
       onReveal={inProject ? () => { panel.toggleTree(true); f.reveal(file.path); } : undefined}
-      onOpenEditor={openInEditor}
+      onOpenEditor={file.media ? undefined : openInEditor}
       onOpenLink={(target, line) => void openMarkdownLink(f, inProject ? file.path : '', target, line, openEditor)}
       treeOpen={treeOpen} onToggleTree={onToggleTree} onClose={onClose} />
   );

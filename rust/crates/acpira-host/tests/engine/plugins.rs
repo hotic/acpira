@@ -125,6 +125,27 @@ async fn a_session_lists_and_calls_plugin_tools_and_its_agent_asks_to_enable_one
   let err = done(&op(&addr, &token, HubOp::PluginActivate { id: "demo".into(), wait_secs: Some(30) }).await).unwrap_err();
   assert!(err.contains("contributes nothing") && cards(&m.view_of(&id).unwrap()).len() == 1, "{err}");
 
+  // A runtime that dies on start: applying its card fails the dynamic check, and the call still waiting hears why,
+  // with what the process wrote, instead of waiting out its time
+  let crash = plugins_root.join("crash");
+  std::fs::create_dir_all(&crash).unwrap();
+  let m_crash = json!({ "schema": 1, "id": "crash", "version": "0.1.0", "description": "Dies on start",
+    "contributes": { "runtime": { "command": ["sh", "die.sh"], "hooks": ["prompt"] } } });
+  std::fs::write(crash.join("plugin.json"), m_crash.to_string()).unwrap();
+  std::fs::write(crash.join("die.sh"), "echo 'the plugin failed to load: ReferenceError: definePlugin is not defined' >&2; exit 1\n").unwrap();
+  let waiting = {
+    let (addr, token) = (addr.clone(), token.clone());
+    tokio::spawn(async move { op(&addr, &token, HubOp::PluginActivate { id: "crash".into(), wait_secs: Some(60) }).await })
+  };
+  until(|| m.view_of(&id).is_some_and(|v| cards(&v).iter().any(|c| c["plugin"] == "crash")), 5000).await;
+  let shown = card(&m.view_of(&id).unwrap()).unwrap();
+  let t0 = std::time::Instant::now();
+  m.handle(json!({ "type": "pluginCard", "sessionId": id, "card": shown["id"], "op": "apply" })).await;
+  let err = done(&waiting.await.unwrap()).unwrap_err();
+  assert!(err.contains("crash was not enabled") && err.contains("definePlugin is not defined"), "{err}");
+  assert!(t0.elapsed() < std::time::Duration::from_secs(20), "answered only after {:?}", t0.elapsed());
+  assert!(plugins.store().load().unwrap().plugins.get("crash").is_none_or(|e| !e.enabled));
+
   // Answered after the call gave up: still enabled, and the agent is told in a message of its own
   write_plugin(&plugins_root, "late", "echo late");
   let gave_up = done(&op(&addr, &token, HubOp::PluginActivate { id: "late".into(), wait_secs: Some(1) }).await).unwrap();

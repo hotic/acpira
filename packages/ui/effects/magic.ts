@@ -23,6 +23,13 @@ export const revealKeepsOld = vtAllowed;
 export const REVEAL_MS = 1300;
 const UNDO_MS = 1000;
 const FLY_MS = 1100;
+// A lifting stand-in rises this far (px) and grows by this much before it flies
+const LIFT_RISE = 8;
+const LIFT_GROW = 1.15;
+// How much a merging mark shrinks as it dissolves into its slot
+const MERGE_SHRINK = 0.2;
+// The slot's answer to a merging mark: one soft swell of light, no edge, no burst
+const BLOOM_MS = 900;
 const REVEAL_EASE = 'cubic-bezier(.45,.05,.25,1)';
 const UNDO_EASE = 'cubic-bezier(.45,0,.55,1)';
 
@@ -171,17 +178,26 @@ export interface FlyOptions {
   flyer: HTMLElement;
   glow: string;
   duration?: number;
-  // Both land exactly on the target's box. mark: scales evenly (a mark onto a mark) and the slot answers with a round
-  // glow; piece: fits the box an interface piece has reserved, its glow following that box
+  // Both land exactly on the target's box. mark: a square from a square, laid out at its starting size and scaled
+  // evenly down (so its outline and corners stay crisp at the start, where it is looked at), and the slot answers with
+  // a round glow; piece: fits the box an interface piece has reserved, its glow following that box
   fit?: 'mark' | 'piece';
   // Where the stand-in and the glow live: inside the shell they read its theme and skin tokens (default: body)
   host?: HTMLElement;
   // A layer inside the stand-in that thins out as it grows (a piece's fill), so it arrives as a frame, not a slab
   fade?: HTMLElement;
+  // A beat before the flight (ms): the stand-in rises off its source and grows a little, so the eye finds it before it
+  // leaves. Off by default: a piece already reads as its lit block leaving the map
+  lift?: number;
+  // Lands by merging (a mark): it eases into the slot, shrinking a little as it dissolves, and the slot answers with a
+  // soft swell of light (bloomAt) instead of the ring. A burst of rings and streaks read as cartoonish
+  merge?: boolean;
   // Called when the flyer lands: swap the slot's content here
   land?: () => void;
   // The slot went away mid-flight: the stand-in goes, nothing lands, no glow
   signal?: AbortSignal;
+  // The box that answers the landing, when it is not the target: a mark landing inside the composer lights its edge
+  glowBox?: () => DOMRect | undefined;
 }
 
 // Flies `opts.flyer` from `from` into `to` along an arc that bows upward, shrinking to the slot's size, then glows the slot
@@ -197,7 +213,7 @@ export async function flyInto(from: DOMRect, to: () => DOMRect | undefined, opts
   // landing underneath. A piece is laid out at the size it lands at and scaled up to it, so its 1 px outline is 1 px
   // where it matters; width / height or border-radius keyframes put the whole flight on the main thread, where the
   // landing's commit made it stutter
-  const box = target;
+  const box = piece ? target : from;
   f.style.width = `${box.width}px`; f.style.height = `${box.height}px`;
   (opts.host ?? document.body).append(f);
   // Centre to centre, the control point a quarter of the distance off the path's middle, on the side that leans up: a
@@ -211,7 +227,23 @@ export async function flyInto(from: DOMRect, to: () => DOMRect | undefined, opts
   const ctl = { x: (a.x + b.x) / 2 + n.x * dist * 0.25, y: (a.y + b.y) / 2 + n.y * dist * 0.25 };
   const even = target.width / from.width;
   const end = piece ? { x: target.width / from.width, y: target.height / from.height } : { x: even, y: even };
+  const lift = opts.lift ?? 0;
+  const total = lift + duration;
   const frames: Keyframe[] = [];
+  const at = (x: number, y: number, sx: number, sy: number) => {
+    const w = from.width * sx, h = from.height * sy;
+    return `translate(${x - w / 2}px, ${y - h / 2}px) scale(${w / box.width}, ${h / box.height})`;
+  };
+  // The lift: up a few pixels and a little larger, easing out, then a short hold; the arc leaves from there
+  const rise = lift ? LIFT_RISE : 0, grow = lift ? LIFT_GROW : 1;
+  if (lift) {
+    const share = lift / total;
+    for (let i = 0; i <= 8; i++) {
+      const p = i / 8, e = 1 - (1 - p) ** 3;
+      frames.push({ offset: share * 0.7 * p, transform: at(a.x, a.y - rise * e, 1 + (grow - 1) * e, 1 + (grow - 1) * e), opacity: '1' });
+    }
+    a.y -= rise;
+  }
   const N = 36;
   for (let i = 0; i <= N; i++) {
     const t = i / N;
@@ -219,16 +251,25 @@ export async function flyInto(from: DOMRect, to: () => DOMRect | undefined, opts
     const x = (1 - uc) * (1 - uc) * a.x + 2 * (1 - uc) * uc * ctl.x + uc * uc * b.x;
     const y = (1 - uc) * (1 - uc) * a.y + 2 * (1 - uc) * uc * ctl.y + uc * uc * b.y;
     const k = 1 - Math.pow(1 - Math.min(1, t / 0.7), 2);
-    const sx = 1 + (end.x - 1) * k, sy = 1 + (end.y - 1) * k;
-    const w = from.width * sx, h = from.height * sy;
-    const opacity = t > 0.86 ? String(1 - (t - 0.86) / 0.14) : '1';
-    frames.push({ offset: t, transform: `translate(${x - w / 2}px, ${y - h / 2}px) scale(${w / box.width}, ${h / box.height})`, opacity });
+    const sx = grow + (end.x - grow) * k, sy = grow + (end.y - grow) * k;
+    // A merging mark, in place from 80 %, dissolves over the rest on an ease, shrinking as it goes
+    const q = opts.merge ? smooth(Math.min(1, Math.max(0, (t - 0.78) / 0.22))) : 0;
+    const press = 1 - MERGE_SHRINK * q;
+    const opacity = opts.merge ? String(1 - q) : t > 0.86 ? String(1 - (t - 0.86) / 0.14) : '1';
+    frames.push({ offset: (lift + t * duration) / total, transform: at(x, y, sx * press, sy * press), opacity });
   }
-  const anim = f.animate(frames, { duration, easing: 'linear', fill: 'forwards' });
+  const anim = f.animate(frames, { duration: total, easing: 'linear', fill: 'forwards' });
   // A piece's fill thins out in an effect of its own, so a main-thread hitch only delays that
   opts.fade?.animate([{ opacity: 1 }, { opacity: 0.2 }], { duration: duration * 0.8, easing: 'ease-in', fill: 'forwards' });
   // Land a little before the stand-in has faded, so the real mark is already there as it dissolves
-  const landing = setTimeout(() => { opts.land?.(); glowAt(to() ?? target, opts.glow, piece, opts.host); }, duration * 0.82);
+  const landing = setTimeout(() => {
+    opts.land?.();
+    const box = opts.glowBox?.();
+    // The light swells where the mark is dissolving; a wide box around it (the composer) brightens along its edge
+    if (opts.merge) bloomAt(box ?? to() ?? target, opts.glow, !!box, opts.host);
+    else if (box) glowAt(box, opts.glow, true, opts.host);
+    else glowAt(to() ?? target, opts.glow, piece, opts.host);
+  }, lift + duration * (opts.merge ? 0.78 : 0.82));
   opts.signal?.addEventListener('abort', () => { clearTimeout(landing); anim.cancel(); }, { once: true });
   await anim.finished.catch(() => {});
   f.remove();
@@ -250,4 +291,46 @@ function glowAt(r: DOMRect, colour: string, box = false, host: HTMLElement = doc
   Object.assign(g.style, { left: `${r.left + r.width / 2 - size / 2}px`, top: `${r.top + r.height / 2 - size / 2}px`, width: `${size}px`, height: `${size}px`, boxShadow: `0 0 0 2px ${colour}, 0 0 18px 4px ${colour}` });
   host.append(g);
   g.animate([{ transform: 'scale(.9)', opacity: 1 }, { transform: 'scale(2.6)', opacity: 0 }], { duration: 760, easing: 'cubic-bezier(.2,.7,.2,1)' }).finished.then(() => g.remove(), () => g.remove());
+}
+
+const smooth = (u: number) => u * u * (3 - 2 * u);
+
+// The slot's answer to a merging mark: a soft light swells in behind it and fades, slower out than in. A small control
+// gets a round bloom a few times its size; a wide box (the composer) brightens its edge in place, without growing.
+// Opacity and transform only, on the compositor
+export function bloomAt(r: DOMRect, colour: string, box: boolean, host: HTMLElement = document.body): void {
+  const el = document.createElement('div');
+  el.className = 'slot-glow';
+  const swell = [{ opacity: 0 }, { opacity: 1, offset: 0.3 }, { opacity: 0 }];
+  if (box) {
+    Object.assign(el.style, {
+      left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px`, borderRadius: '12px',
+      boxShadow: `0 0 0 1px color-mix(in srgb, ${colour} 35%, transparent), 0 0 32px -8px color-mix(in srgb, ${colour} 28%, transparent)`,
+    });
+    host.append(el);
+    el.animate(swell, { duration: BLOOM_MS, easing: 'cubic-bezier(.4,0,.2,1)' }).finished.then(() => el.remove(), () => el.remove());
+    return;
+  }
+  const d = Math.max(r.width, r.height) * 3;
+  Object.assign(el.style, {
+    left: `${r.left + r.width / 2 - d / 2}px`, top: `${r.top + r.height / 2 - d / 2}px`, width: `${d}px`, height: `${d}px`,
+    background: `radial-gradient(circle, color-mix(in srgb, ${colour} 22%, transparent), transparent 62%)`,
+  });
+  host.append(el);
+  el.animate([
+    { opacity: 0, transform: 'scale(.6)' },
+    { opacity: 1, transform: 'scale(.95)', offset: 0.3 },
+    { opacity: 0, transform: 'scale(1.1)' },
+  ], { duration: BLOOM_MS, easing: 'cubic-bezier(.4,0,.2,1)' }).finished.then(() => el.remove(), () => el.remove());
+}
+
+// The slot gives under the mark: a slight dip and an eased return, no rebound. Added on top of whatever transform the
+// element already has
+export function pressIn(el: Element, amount: number): void {
+  if (motionOff()) return;
+  el.animate([
+    { transform: 'scale(1)' },
+    { transform: `scale(${1 - amount})`, offset: 0.35 },
+    { transform: 'scale(1)' },
+  ], { duration: 520, easing: 'cubic-bezier(.4,0,.2,1)', composite: 'add' });
 }

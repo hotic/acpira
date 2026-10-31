@@ -24,7 +24,7 @@ use serde_json::{Map, Value, json};
 // The names live in acpira-shared, where the built-in agent's permission rules list them one by one
 pub use acpira_shared::host_tools::{
   ASK_AGENT as ASK_TOOL, ASK_CALLER as CALLER_TOOL, OPEN_BROWSER as BROWSER_TOOL, READ_SESSION as READ_SESSION_TOOL, SEARCH_SESSIONS as SEARCH_SESSIONS_TOOL,
-  SERVER as SERVER_NAME, SHOW_IMAGE as TOOL_NAME, SHOW_WIDGET as WIDGET_TOOL, WORKSPACE_HOOKS as HOOKS_TOOL,
+  SERVER as SERVER_NAME, SHOW_IMAGE as TOOL_NAME, SHOW_VIDEO as VIDEO_TOOL, SHOW_WIDGET as WIDGET_TOOL, WORKSPACE_HOOKS as HOOKS_TOOL,
 };
 
 mod relay_client;
@@ -32,17 +32,17 @@ mod tools;
 
 use self::relay_client::{Relay, listing_print};
 use self::tools::{
-  ask_tool_def, browser_tool_def, call_show_image, call_show_widget, call_workspace_hooks, caller_tool_def, hooks_tool_def, plugin_activate_def,
-  plugin_guide_def, session_tool_defs, tool_def, tool_error, widget_tool_def,
+  ask_tool_def, browser_tool_def, call_show_image, call_show_video, call_show_widget, call_workspace_hooks, caller_tool_def, hooks_tool_def, plugin_activate_def,
+  plugin_guide_def, session_tool_defs, tool_def, tool_error, video_tool_def, widget_tool_def,
 };
-pub use self::tools::widget_mime_of;
+pub use self::tools::{video_mime_of, widget_mime_of};
 
 /// Answered when the client does not name a protocol version
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
 const INSTRUCTIONS: &str = "The user reads this conversation in Acpira, which can display images and interactive HTML widgets inline. \
 When the user should see an image (a screenshot you took, a chart or diagram you rendered, a generated or downloaded picture), \
-call show_image with its absolute path instead of only printing the path. When a small interactive view would serve them better \
+call show_image with its absolute path instead of only printing the path. For an MP4 or WebM recording, call show_video; it appears as a paused player, not an autoplaying GIF. When a small interactive view would serve them better \
 than more text (tuning parameters with sliders, comparing options in tabs, exploring numbers), write it as one HTML file and \
 call show_widget. Project gates and reviews live in `.agents/hooks.json`, which Acpira runs for every agent: before writing or changing that file (or a hook script it names), call workspace_hooks for the format, and again afterwards to check it.";
 
@@ -60,12 +60,18 @@ instead of opening files under ~/.acpira; search_sessions finds earlier sessions
 When a long session would flood your context, ask_agent (if offered) can hand the reading to a read-only agent that answers \
 with the conclusion only. When you mention a session, write the Markdown link the tools gave for it.";
 
-/// Appended with the relay env: the model learns that it may extend Acpira itself (`docs/dev/plugins.md`)
+/// Appended with the relay env: the model learns that it may extend Acpira itself (`docs/dev/plugins.md`). `{root}` is the
+/// engine's plugins folder, which a data home other than ~/.acpira moves
 const PLUGINS_INSTRUCTIONS: &str = "You can extend Acpira for every agent without a build or a restart: a plugin is a folder \
-under ~/.acpira/plugins/<id>/ with a plugin.json, written in TypeScript with React for its interface (Acpira compiles it), \
+under {root}/<id>/ with a plugin.json, written in TypeScript with React for its interface (Acpira compiles it), \
 or as plain scripts. It can add tools, hooks into every prompt and permission, slash commands and composer buttons, \
 interface pieces, schedules, skills, model sources, a theme or style, MCP servers or a specialised agent. Call plugin_guide \
 for the format and examples, write the folder, then call plugin_activate: the user confirms on a card.";
+
+/// The plugins paragraph for the engine's folder; an engine too old to report it keeps the default home's
+fn plugins_instructions(root: Option<&str>) -> String {
+  PLUGINS_INSTRUCTIONS.replace("{root}", root.unwrap_or("~/.acpira/plugins"))
+}
 
 pub use acpira_shared::host_tools::{PLUGIN_ACTIVATE, PLUGIN_GUIDE};
 
@@ -340,7 +346,7 @@ pub fn run(version: &str) -> i32 {
       if method == "tools/list"
         && let Some(id) = msg.get("id").cloned()
       {
-        let mut tools = vec![tool_def(), widget_tool_def(), hooks_tool_def()];
+        let mut tools = vec![tool_def(), video_tool_def(), widget_tool_def(), hooks_tool_def()];
         let roster = relay.roster();
         let plugins = relay.plugins();
         relay.served(listing_print(roster.as_ref(), plugins.as_ref()));
@@ -455,7 +461,7 @@ pub fn run(version: &str) -> i32 {
       }
       // A session folder on an SSH host: the files are checked and read there, through the hub
       if method == "tools/call"
-        && matches!(name, Some(TOOL_NAME | WIDGET_TOOL | HOOKS_TOOL))
+        && matches!(name, Some(TOOL_NAME | VIDEO_TOOL | WIDGET_TOOL | HOOKS_TOOL))
         && let Some(id) = msg.get("id").cloned()
         && relay.features().remote
       {
@@ -487,7 +493,8 @@ pub fn run(version: &str) -> i32 {
       if features.browser {
         extra.push_str(&format!("\n\n{BROWSER_INSTRUCTIONS}"));
       }
-      result["instructions"] = json!(format!("{INSTRUCTIONS}\n\n{RELAY_INSTRUCTIONS}{extra}\n\n{SESSIONS_INSTRUCTIONS}\n\n{PLUGINS_INSTRUCTIONS}"));
+      let plugins = plugins_instructions(features.plugins_root.as_deref());
+      result["instructions"] = json!(format!("{INSTRUCTIONS}\n\n{RELAY_INSTRUCTIONS}{extra}\n\n{SESSIONS_INSTRUCTIONS}\n\n{plugins}"));
       // ask_agent's agents follow the roster while the session runs (see `Relay::watch`)
       result["capabilities"]["tools"]["listChanged"] = json!(true);
     }
@@ -519,13 +526,14 @@ pub fn handle_line(line: &str, version: &str) -> Option<Value> {
       "instructions": INSTRUCTIONS,
     }),
     "ping" => json!({}),
-    "tools/list" => json!({ "tools": [tool_def(), widget_tool_def(), hooks_tool_def()] }),
+    "tools/list" => json!({ "tools": [tool_def(), video_tool_def(), widget_tool_def(), hooks_tool_def()] }),
     "tools/call" => {
       let name = params.get("name").and_then(Value::as_str).unwrap_or("");
       let empty = Map::new();
       let args = params.get("arguments").and_then(Value::as_object).unwrap_or(&empty);
       match name {
         TOOL_NAME => call_show_image(args),
+        VIDEO_TOOL => call_show_video(args),
         WIDGET_TOOL => call_show_widget(args),
         HOOKS_TOOL => call_workspace_hooks(args),
         _ => return Some(json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32602, "message": format!("unknown tool: {name}") } })),
@@ -566,7 +574,7 @@ mod tests {
     // would leave a name a plugin could not take
     let persona: acpira_shared::subagents::SubagentPersona =
       serde_json::from_value(json!({ "id": "son-1", "name": "Son", "agent": "codex", "mode": "work" })).unwrap();
-    let mut tools = vec![tool_def(), widget_tool_def(), hooks_tool_def(), ask_tool_def(std::slice::from_ref(&persona), &[]), caller_tool_def(), browser_tool_def(), plugin_guide_def(), plugin_activate_def()];
+    let mut tools = vec![tool_def(), video_tool_def(), widget_tool_def(), hooks_tool_def(), ask_tool_def(std::slice::from_ref(&persona), &[]), caller_tool_def(), browser_tool_def(), plugin_guide_def(), plugin_activate_def()];
     tools.extend(session_tool_defs());
     let mut names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     names.sort_unstable();
@@ -593,9 +601,33 @@ mod tests {
   }
 
   #[test]
+  fn show_video_checks_paths_types_and_size_without_returning_the_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mp4 = dir.path().join("clip.MP4");
+    std::fs::write(&mp4, b"\0\0\0\x18ftypmp42").unwrap();
+    let ask = |args: Value| call(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": VIDEO_TOOL, "arguments": args } }))["result"].clone();
+    let ok = ask(json!({ "path": mp4 }));
+    assert_eq!(ok["isError"], false);
+    assert_eq!(ok["content"][0]["type"], "text");
+    let big = dir.path().join("big.mp4");
+    std::fs::File::create(&big).unwrap().set_len(crate::limits::MAX_OUT_VIDEO_BYTES + 1).unwrap();
+    for (args, problem) in [
+      (json!({}), "Pass `path`"),
+      (json!({ "path": "clip.mp4" }), "not an absolute path"),
+      (json!({ "path": dir.path().join("clip.gif") }), "not an MP4 or WebM"),
+      (json!({ "path": dir.path().join("gone.mp4") }), "gone.mp4"),
+      (json!({ "path": big }), "larger than 64 MiB"),
+    ] {
+      let bad = ask(args);
+      assert_eq!(bad["isError"], true, "{bad}");
+      assert!(bad["content"][0]["text"].as_str().unwrap().contains(problem), "{bad}");
+    }
+  }
+
+  #[test]
   fn show_widget_takes_one_existing_html_file_and_teaches_the_sandbox() {
     let list = call(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }));
-    let def = &list["result"]["tools"][1];
+    let def = list["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == WIDGET_TOOL).unwrap();
     assert_eq!(def["name"], WIDGET_TOOL);
     assert_eq!(def["annotations"]["readOnlyHint"], true);
     // What the model must know lives in the description, which every CLI hands it: no network, Tailwind, the theme colours
@@ -631,7 +663,7 @@ mod tests {
   #[test]
   fn workspace_hooks_explains_the_format_and_checks_the_project_file() {
     let list = call(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }));
-    assert_eq!(list["result"]["tools"][2]["name"], HOOKS_TOOL);
+    assert!(list["result"]["tools"].as_array().unwrap().iter().any(|tool| tool["name"] == HOOKS_TOOL));
     let init = call(json!({ "jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {} }));
     assert!(init["result"]["instructions"].as_str().unwrap().contains("workspace_hooks"));
 
@@ -701,6 +733,9 @@ mod tests {
     }
     assert_eq!(defs[1]["inputSchema"]["required"], json!(["session"]));
     assert!(SESSIONS_INSTRUCTIONS.contains("acpira://session/<id>") && SESSIONS_INSTRUCTIONS.contains("read_session"));
+    // The plugins folder follows the engine's data home
+    assert!(plugins_instructions(Some("/tmp/home/plugins")).contains("under /tmp/home/plugins/<id>/"));
+    assert!(plugins_instructions(None).contains("under ~/.acpira/plugins/<id>/"));
   }
 
   #[test]

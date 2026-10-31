@@ -1,4 +1,4 @@
-import { memo, useContext, useEffect, useRef, type CSSProperties, type MouseEvent } from 'react';
+import { memo, useContext, useEffect, useRef, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
 import { Bot, Blocks, Clock, ExternalLink, LayoutPanelLeft, Palette, SquareTerminal, type LucideIcon } from 'lucide-react';
 import type { PluginsView } from '@acpira/shared/plugins';
 import type { PluginCard as Card_ } from '@acpira/shared/transcript';
@@ -12,6 +12,7 @@ import { AgentMark } from '../chat/AgentMark';
 import { TurnActionsContext } from '../chat/TurnActions';
 import { SandboxFrame } from './SandboxFrame';
 import { expectArrival } from './arrivals';
+import { flyHome } from './landings';
 import { useInView, useReducedMotion, useWindowFocused } from './motion';
 import { useAppearance } from '../appearance';
 import { askPluginsView, backdropsShown, expectReveal, usePluginBackdrop, usePluginsView } from './skin';
@@ -30,13 +31,17 @@ export function cardState(card: Card_, view: PluginsView | undefined): { state: 
   const enabledHere = !!info?.enabled && info.snapshot === card.snapshot;
   const skin = card.kind === 'skin';
   if (enabledHere && (!skin || view?.skin === card.plugin)) return { state: 'applied' };
-  if (info?.enabled && info.snapshot !== card.snapshot) return { state: 'newer' };
+  // Another version in effect is newer only when it was committed after this card was offered; a card offered later
+  // is an update to the version in effect and is still to be applied
+  if (info?.enabled && info.snapshot !== card.snapshot && !(info.committedAt !== undefined && card.at > info.committedAt)) return { state: 'newer' };
   if (card.undo && skin && view?.skin && view.skin !== card.plugin) {
     return { state: 'replaced', replacedBy: view.plugins.find(p => p.id === view.skin)?.name ?? view.skin };
   }
   return { state: 'pending' };
 }
 
+// How long after the click an apply still flies: the dynamic check of a program may take a while
+const LAUNCH_MS = 30_000;
 const KIND: Record<string, LucideIcon> = { skin: Palette, agent: Bot, ui: LayoutPanelLeft, exec: SquareTerminal };
 const kindLabel = (kind: string) => t(kind === 'skin' || kind === 'ui' || kind === 'agent' || kind === 'exec' ? `plugin.card.kind.${kind}` : 'plugin.card.kind.other');
 
@@ -49,7 +54,17 @@ export const PluginCard = memo(function PluginCard({ card }: { card: Card_ }) {
   const view = usePluginsView();
   const { state, replacedBy } = cardState(card, view);
   const thumb = useRef<HTMLDivElement>(null);
+  const kindIcon = useRef<SVGSVGElement>(null);
   const Kind = KIND[card.kind] ?? Blocks;
+  // An apply clicked here: once the card reads applied (the check passed), its mark flies to where the plugin now
+  // lives (landings.ts). Another window, or an apply that failed, flies nothing
+  const launched = useRef<number>(undefined);
+  useEffect(() => {
+    if (state !== 'applied' || launched.current === undefined) return;
+    const fresh = performance.now() - launched.current < LAUNCH_MS;
+    launched.current = undefined;
+    if (fresh && thumb.current) flyHome(card, thumb.current, kindIcon.current);
+  }, [state, card]);
   // One button for the card's whole life: Apply becomes Undo in place (Switch back / Use this version once superseded),
   // its box reserving the longest of those words, so the click lands where it is undone. No status beside it: the
   // change itself says it is applied
@@ -64,9 +79,13 @@ export const PluginCard = memo(function PluginCard({ card }: { card: Card_ }) {
     const undo = state === 'applied';
     const r = e.currentTarget.getBoundingClientRect();
     if (card.kind === 'skin') expectReveal({ x: r.left + r.width / 2, y: r.top + r.height / 2 }, undo, card.plugin);
-    // Any card with pieces, one that also runs a program (exec) included
+    if (!undo) launched.current = performance.now();
+    // Any card with pieces, one that also runs a program (exec) included. A reply action is a native button, which
+    // the mark flies to instead (landings.ts)
     if (!undo && card.slots?.length) {
-      for (const el of thumb.current?.querySelectorAll<HTMLElement>('[data-piece]') ?? []) expectArrival(card.plugin, el.dataset.piece!, el.getBoundingClientRect(), sessionId);
+      for (const el of thumb.current?.querySelectorAll<HTMLElement>('[data-piece]') ?? []) {
+        if (el.dataset.piece !== 'message.actions') expectArrival(card.plugin, el.dataset.piece!, el.getBoundingClientRect(), sessionId);
+      }
     }
     if (!sessionId) return;
     vscodeApi().postMessage({ type: 'pluginCard', sessionId, card: card.id, op: undo ? 'undo' : 'apply' });
@@ -93,7 +112,7 @@ export const PluginCard = memo(function PluginCard({ card }: { card: Card_ }) {
       {/* The bar: the kind (and for a program, what it runs) at the start, the button at the end */}
       <div className="flex min-w-0 items-center gap-gap border-t border-line py-gap-half pr-gap-half pl-pad">
         <span className="flex min-w-0 flex-1 items-center gap-1.5 text-3 text-fg-3">
-          <Kind className="size-icon shrink-0" strokeWidth={1.5} />
+          <Kind ref={kindIcon} className="size-icon shrink-0" strokeWidth={1.5} />
           <span className="shrink-0">{kindLabel(card.kind)}</span>
           {card.runs && <span className="ml-1.5 min-w-0 truncate">{t('plugin.card.runs')} <code className="rounded-xs bg-active px-1 font-mono text-mono text-fg-2">{card.runs}</code></span>}
           {/* A plugin with schedules acts while nobody watches: said on the card it is enabled from */}
@@ -114,15 +133,20 @@ export const PluginCard = memo(function PluginCard({ card }: { card: Card_ }) {
 
 // A skin's thumbnail is its backdrop, live: drawn at twice the box and scaled down, so the whole composition shows and
 // its glyphs become texture; 2D, since a page holds few WebGL contexts and a transcript can hold many cards. An agent's
-// is its mark on the brand tint, an interface plugin's a map of where its pieces go, anything else its kind
+// is its mark on a neutral fill, an interface plugin's a map of where its pieces go, anything else its kind
 function Thumb({ card }: { card: Card_ }) {
   if (card.kind === 'skin') return <SkinThumb plugin={card.plugin} snapshot={card.snapshot} name={card.name} />;
   // Interface pieces (a command's button among them) show where they go; a program's foot still names what it runs
   if (card.kind === 'ui' || card.slots?.length) return <UiThumb slots={card.slots ?? []} />;
   const Kind = KIND[card.kind] ?? Blocks;
+  // A small dashboard card: the mark in a tile at the top left (the tile that lifts off and flies once applied,
+  // landings.ts), the kind's glyph drawn large and faint, bleeding off the bottom right corner
   return (
-    <div className="absolute inset-0 flex items-center justify-center bg-[color-mix(in_srgb,var(--brand)_14%,var(--bg-1))] text-brand">
-      {card.kind === 'agent' ? <AgentMark id={card.plugin} name={card.name} className="size-ctl" /> : <Kind className="size-lead" strokeWidth={1.5} />}
+    <div className="absolute inset-0 overflow-hidden bg-linear-to-b from-bg-1 to-bg-0">
+      <Kind aria-hidden className="pointer-events-none absolute text-fg-1 opacity-[.08]" strokeWidth={0.75} style={{ height: '260%', width: 'auto', right: '-118%', bottom: '-128%' }} />
+      <div data-thumb-mark className="absolute top-gap left-gap flex size-ctl items-center justify-center rounded-md bg-active text-fg-2 shadow-[inset_0_0_0_1px_var(--line)]">
+        {card.kind === 'agent' ? <AgentMark id={card.plugin} name={card.name} className="size-icon" /> : <Kind className="size-icon" strokeWidth={1.5} />}
+      </div>
     </div>
   );
 }
@@ -140,7 +164,7 @@ export function SkinThumb({ plugin, snapshot, name }: { plugin: string; snapshot
   const reduced = useReducedMotion();
   const still = motion === 'none' || reduced;
   if (!backdropsShown || !html || safe) {
-    return <div className="absolute inset-0 flex items-center justify-center bg-[color-mix(in_srgb,var(--brand)_14%,var(--bg-1))] text-brand"><Palette className="size-lead" strokeWidth={1.5} /></div>;
+    return <div className="absolute inset-0 flex items-center justify-center bg-active text-fg-2"><Palette className="size-lead" strokeWidth={1.5} /></div>;
   }
   return (
     <div ref={box} className="absolute inset-0">
@@ -166,21 +190,44 @@ const BLOCKS: Record<string, { in: 'column' | 'sheet' | 'composer'; style: CSSPr
 const lit: CSSProperties = { position: 'absolute', borderRadius: 'var(--r-xs, 2px)', background: 'color-mix(in srgb, var(--brand) 30%, transparent)', boxShadow: '0 0 0 1px var(--brand), 0 0 8px -1px var(--brand)' };
 const line = (left: string, top: string, width: string): CSSProperties => ({ position: 'absolute', left, top, width, height: '3%', borderRadius: 1, background: 'color-mix(in srgb, var(--fg-3) 45%, transparent)' });
 
+type Where = 'column' | 'sheet' | 'composer';
+
+// The window in miniature, inside the box its caller frames: column, header and text lines, the composer; `at` puts
+// pieces in each part, `send` draws the composer's send button
+function WindowSketch({ at, send }: { at?: (where: Where) => ReactNode; send?: boolean }) {
+  return (
+    <>
+      <div className="absolute inset-y-0 left-0 w-[27%] border-r border-line bg-bg-0">
+        {[16, 26, 36, 46].map(top => <div key={top} style={line('14%', `${top}%`, top === 16 ? '60%' : '72%')} />)}
+        {at?.('column')}
+      </div>
+      <div style={line('34%', '10%', '30%')} />
+      {at?.('sheet')}
+      {[28, 36, 44].map((top, i) => <div key={top} style={line('34%', `${top}%`, i === 2 ? '34%' : '56%')} />)}
+      <div className="absolute rounded-xs border border-line-strong" style={{ left: '33%', right: '9%', bottom: '7%', height: '22%' }}>
+        {at?.('composer')}
+        {send && <div className="absolute rounded-xs bg-btn-1" style={{ right: '4%', bottom: '16%', width: '9%', aspectRatio: '1' }} />}
+      </div>
+    </>
+  );
+}
+
 function UiThumb({ slots }: { slots: string[] }) {
   const blocks = [...new Set(slots)].flatMap(s => (BLOCKS[s] ? [{ slot: s, ...BLOCKS[s] }] : []));
-  const at = (where: 'column' | 'sheet' | 'composer') => blocks.filter(b => b.in === where).map(b => <div key={b.slot} data-piece={b.slot} style={{ ...lit, ...b.style }} />);
+  const at = (where: Where) => blocks.filter(b => b.in === where).map(b => <div key={b.slot} data-piece={b.slot} style={{ ...lit, ...b.style }} />);
   return (
     <div className="absolute inset-0 bg-[color-mix(in_srgb,var(--brand)_6%,var(--bg-0))]">
-      <div className="absolute inset-2 overflow-hidden rounded-sm border border-line-strong bg-bg-1">
-        <div className="absolute inset-y-0 left-0 w-[27%] border-r border-line bg-bg-0">
-          {[16, 26, 36, 46].map(top => <div key={top} style={line('14%', `${top}%`, top === 16 ? '60%' : '72%')} />)}
-          {at('column')}
-        </div>
-        <div style={line('34%', '10%', '30%')} />
-        {at('sheet')}
-        {[28, 36, 44].map((top, i) => <div key={top} style={line('34%', `${top}%`, i === 2 ? '34%' : '56%')} />)}
-        <div className="absolute rounded-xs border border-line-strong" style={{ left: '33%', right: '9%', bottom: '7%', height: '22%' }}>{at('composer')}</div>
-      </div>
+      <div className="absolute inset-2 overflow-hidden rounded-sm border border-line-strong bg-bg-1"><WindowSketch at={at} /></div>
+    </div>
+  );
+}
+
+// The skin picker's "no skin" picture: the window in the default palette of the current scheme. skin.css pins those
+// colours on `.skin-default-thumb`, so the skin in effect cannot repaint the picture of going without one
+export function DefaultLookThumb() {
+  return (
+    <div className="skin-default-thumb absolute inset-0 bg-(--thumb-around)">
+      <div className="absolute overflow-hidden rounded-sm border border-line-strong bg-bg-1" style={{ inset: '13% 11%' }}><WindowSketch send /></div>
     </div>
   );
 }

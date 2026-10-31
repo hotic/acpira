@@ -1,8 +1,8 @@
 import { Fragment, createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Bot, Check, ChevronRight, Compass, FileText, Hand, Info, ListTodo, MessageCircleQuestion, ShieldAlert, ShieldX, Shrink, TriangleAlert, X } from 'lucide-react';
-import type { AgentBlock, AgentTurn, CompactionBlock, FailureAction, NoticeBlock, PermissionBlock, SlashCommand, SteerBlock, ToolCallBlock, ToolKind, TurnSettings, UserTurn } from '@acpira/shared/transcript';
+import type { AgentBlock, AgentTurn, CompactionBlock, FailureAction, NoticeBlock, PermissionBlock, PluginCard as PluginCardModel, SlashCommand, SteerBlock, ToolCallBlock, ToolKind, TurnSettings, UserTurn } from '@acpira/shared/transcript';
 import type { SubagentSummary } from '@acpira/shared/subagents';
-import { isImageResultBlock, isShowWidgetTool } from '@acpira/shared/imageTools';
+import { isImageResultBlock, isShowVideoTool, isShowWidgetTool } from '@acpira/shared/imageTools';
 import { isSessionTool } from '@acpira/shared/sessionLinks';
 import { useAppearance, type Appearance } from '../appearance';
 import { getLocale, t, useLocale } from '../i18n';
@@ -32,6 +32,7 @@ import { AgentImage } from './AgentImage';
 import { FileMenu } from './ImageMenu';
 import { GeneratedImages, ImageInFoldContext } from './GeneratedImage';
 import { ShownWidget } from './AgentWidget';
+import { ShownVideos } from './AgentVideo';
 import { Permission } from './Permission';
 import { QuestionRecord } from './Questions';
 import { BlobUrlContext, OpenToolFileContext, WorkflowProgressContext, parseFileLink } from './fileLinks';
@@ -233,6 +234,14 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   const placed = useMemo(() => subagents?.length && onInspect ? delegatedIds(raw.blocks, subagents) : undefined, [raw.blocks, subagents, onInspect]);
   const { byId: placedNodes, rest: restNodes } = useMemo(() => placed?.size ? placeNodes(subagents!, placed) : { byId: undefined, rest: subagents }, [placed, subagents]);
   const sections = useMemo(() => splitPlanSections(raw.blocks, placed), [raw.blocks, placed]);
+  // Plugin cards sit in the process where the agent offered them, in the place of that call's row, like the subagent rows
+  // at a delegation: never a boundary that would close the work before them into a Done fold. A card whose call is not
+  // in the turn (older records) trails the reply
+  const cards = turn.pluginCards;
+  // Keyed by which offering calls are present, not by the blocks: the context stays the same object while the turn
+  // streams, so the memoized process fold is not drawn again for every chunk
+  const present = cards?.length ? cards.map(c => c.after && raw.blocks.some(b => b.type === 'tool_call' && b.id === c.after) ? c.after : '').join('\n') : '';
+  const placedCards = useMemo(() => placeCards(cards, present), [cards, present]);
   const delegations = useMemo<Delegations | undefined>(() => placedNodes && onInspect
     ? { byId: placedNodes, all: allSubagents ?? subagents!, onInspect, onPermission } : undefined,
   [placedNodes, allSubagents, subagents, onInspect, onPermission]);
@@ -249,7 +258,7 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   }), [onFailureAction, last, running, turn.error?.failureId, absorbed]);
   // A settled turn mounts fold bodies on first open; a live one keeps them mounted (its finished items narrow this again,
   // `ProcessBlocks`) so streamed content stays in step while closed
-  return <LazyPanelContext.Provider value={!running}><EntranceScopeContext.Provider value={entrance}><RowEntranceContext.Provider value={running}><NoticeActionContext.Provider value={noticeActions}><WorkflowProgressContext.Provider value={workflows}><DelegationContext.Provider value={delegations}><div data-part="agent-message" className={cn('group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]', joined && '-mt-msg-join')}>
+  return <LazyPanelContext.Provider value={!running}><EntranceScopeContext.Provider value={entrance}><RowEntranceContext.Provider value={running}><NoticeActionContext.Provider value={noticeActions}><WorkflowProgressContext.Provider value={workflows}><DelegationContext.Provider value={delegations}><CardsContext.Provider value={placedCards}><div data-part="agent-message" className={cn('group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]', joined && '-mt-msg-join')}>
     {sections.map((section, i) => {
       const lastSection = i === sections.length - 1;
       // Only the continuation owns live activity and the turn outcome. Earlier
@@ -271,12 +280,12 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
           permission={shown.blocks.find((b): b is PermissionBlock => b.type === 'permission' && b.planId === section.plan!.id)} onChoose={onPermission} />}
       </Fragment>;
     })}
-    {/* Plugins an agent offered in this turn (plugin_activate): after the reply, clickable for good */}
-    {turn.pluginCards?.map(card => <PluginCard key={card.id} card={card} />)}
+    {/* Plugins an agent offered in this turn (plugin_activate) whose call is not in it: after the reply, clickable for good */}
+    {placedCards.rest.map(card => <PluginCard key={card.id} card={card} />)}
     {/* A reply that failed before producing anything still offers the fork: another agent can take the message over.
         One stopped before anything streamed keeps its stats (`hasTurnStats`) */}
     {actions && !running && !compacting && (hasTurnStats(turn) || turn.stop === 'error') && <TurnActions turn={turn} turnIndex={turnIndex} settings={settings} />}
-  </div></DelegationContext.Provider></WorkflowProgressContext.Provider></NoticeActionContext.Provider></RowEntranceContext.Provider></EntranceScopeContext.Provider></LazyPanelContext.Provider>;
+  </div></CardsContext.Provider></DelegationContext.Provider></WorkflowProgressContext.Provider></NoticeActionContext.Provider></RowEntranceContext.Provider></EntranceScopeContext.Provider></LazyPanelContext.Provider>;
 });
 
 interface SubagentSlots {
@@ -296,7 +305,8 @@ function AgentContent({ turn, index, running, compactionOnly, onPermission, memo
 // Every fold mode but codex: lines and standalone blocks in transcript order
 function FlatMessage({ turn, running, working, fold, onPermission, subagents, allSubagents, onInspect, lead }: { turn: AgentTurn; running: boolean; working: boolean; fold: Appearance['fold']; onPermission: OnPermission } & SubagentSlots) {
   // Plan approvals live on the plan card and the open question card above the composer; neither takes a slot in the message
-  const groups = groupBlocks(turn.blocks.filter(b => (b.type !== 'permission' || !b.planId) && (b.type !== 'question' || !!b.outcome)));
+  const cardCalls = useContext(CardsContext);
+  const groups = groupBlocks(turn.blocks.filter(b => (b.type !== 'permission' || !b.planId) && (b.type !== 'question' || !!b.outcome)), cardCalls.calls);
   const box = useRef<HTMLDivElement>(null);
   // The window counts blocks: a lines group of many blocks is trimmed inside, keeping its items' keys
   const tail = useTailWindow(groups.reduce((n, g) => n + groupSize(g), 0), running, box);
@@ -311,10 +321,11 @@ function FlatMessage({ turn, running, working, fold, onPermission, subagents, al
           at += size;
           if (skip >= size) return null;
           return (
-            <div key={g.kind === 'subagents' ? g.id : g.kind === 'block' && 'id' in g.block && g.block.id ? g.block.id : `g${gi}`}>
+            <div key={g.kind === 'subagents' || g.kind === 'cards' ? g.id : g.kind === 'block' && 'id' in g.block && g.block.id ? g.block.id : `g${gi}`}>
               {g.kind === 'lines'
                 ? <Lines blocks={g.blocks} fold={fold} running={running} skip={skip} />
                 : g.kind === 'subagents' ? <DelegatedSubagents ids={g.ids} />
+                : g.kind === 'cards' ? <PlacedCards call={g.id} />
                 : <Block block={g.block} onPermission={onPermission} />}
             </div>
           );
@@ -333,6 +344,31 @@ function FlatMessage({ turn, running, working, fold, onPermission, subagents, al
       )}
     </div>
   );
+}
+
+// The plugin cards of this turn by the call that offered them (`PluginCard.after`), for the process to draw in place of
+// that call's row; `rest` are the cards with no such call in the turn
+interface PlacedCardsMap { calls: ReadonlySet<string>; byCall: ReadonlyMap<string, PluginCardModel[]> }
+const NO_CARDS: PlacedCardsMap & { rest: PluginCardModel[] } = { calls: new Set(), byCall: new Map(), rest: [] };
+const CardsContext = createContext<PlacedCardsMap>(NO_CARDS);
+
+// `present`: per card, its offering call when that call is in the turn, else empty (newline separated)
+function placeCards(cards: PluginCardModel[] | undefined, present: string): PlacedCardsMap & { rest: PluginCardModel[] } {
+  if (!cards?.length) return NO_CARDS;
+  const at = present.split('\n');
+  const byCall = new Map<string, PluginCardModel[]>();
+  const rest: PluginCardModel[] = [];
+  cards.forEach((card, i) => {
+    const call = at[i];
+    if (call) byCall.set(call, [...(byCall.get(call) ?? []), card]);
+    else rest.push(card);
+  });
+  return { calls: new Set(byCall.keys()), byCall, rest };
+}
+
+function PlacedCards({ call }: { call: string }) {
+  const { byCall } = useContext(CardsContext);
+  return <div className="flex min-w-0 flex-col gap-gap">{byCall.get(call)?.map(card => <PluginCard key={card.id} card={card} />)}</div>;
 }
 
 // The nodes placed at this turn's delegation rows, so the process can draw them where each delegation sits
@@ -485,18 +521,19 @@ function Activity({ turn, running: working, leadKind = 'orb' }: { turn: AgentTur
 }
 
 const LINE_TYPES = new Set(['thought', 'plan', 'tool_call', 'compaction', 'notice', 'goal']);
-type Group = { kind: 'lines'; blocks: AgentBlock[] } | { kind: 'block'; block: AgentBlock } | { kind: 'subagents'; id: string; ids: string[] };
+type Group = { kind: 'lines'; blocks: AgentBlock[] } | { kind: 'block'; block: AgentBlock } | { kind: 'subagents'; id: string; ids: string[] } | { kind: 'cards'; id: string };
 
 // Blocks a group stands for, which is what the tail window counts
 const groupSize = (g: Group) => g.kind === 'lines' ? g.blocks.length : g.kind === 'subagents' ? g.ids.length : 1;
 
-// Runs of line blocks share a group, other blocks stand alone, and back-to-back delegations (a parallel launch) are one
-// group that draws their subagent rows
-function groupBlocks(blocks: AgentBlock[]): Group[] {
+// Runs of line blocks share a group, other blocks stand alone, back-to-back delegations (a parallel launch) are one
+// group that draws their subagent rows, and a call that offered plugin cards draws them in its place
+function groupBlocks(blocks: AgentBlock[], cardCalls?: ReadonlySet<string>): Group[] {
   const out: Group[] = [];
   for (const b of blocks) {
     const last = out[out.length - 1];
-    if (isDelegation(b)) {
+    if (b.type === 'tool_call' && cardCalls?.has(b.id)) out.push({ kind: 'cards', id: b.id });
+    else if (isDelegation(b)) {
       if (last?.kind === 'subagents') last.ids.push(b.subagentId);
       else out.push({ kind: 'subagents', id: b.id, ids: [b.subagentId] });
     } else if (LINE_TYPES.has(b.type)) {
@@ -652,7 +689,8 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
   const open = retired || (manual ?? auto);
   // A settled fold that has never been opened and has no steered prompt or delegation row to keep visible outside
   // the fold skips grouping its process blocks and computing per-item fold states until the reader opens it.
-  const hasExposed = useMemo(() => blocks.some(b => b.type === 'steer' || isDelegation(b)), [blocks]);
+  const cardCalls = useContext(CardsContext).calls;
+  const hasExposed = useMemo(() => blocks.some(b => b.type === 'steer' || isDelegation(b) || (b.type === 'tool_call' && cardCalls.has(b.id))), [blocks, cardCalls]);
   const everOpen = useRef(open);
   if (open) everOpen.current = true;
   const activeProcess = running || everOpen.current || hasExposed;
@@ -669,7 +707,7 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
     ? elapsedDuration(turn)
     : undefined;
   // Steered prompts and the subagent rows at a delegation stay visible between the folding parts of the process
-  const parts = useMemo(() => activeProcess ? processParts(items) : EMPTY_PARTS, [activeProcess, items]);
+  const parts = useMemo(() => activeProcess ? processParts(items, cardCalls) : EMPTY_PARTS, [activeProcess, items, cardCalls]);
   // Only items fold; a process of nothing but delegations has no chevron
   const foldable = activeProcess ? parts.some(part => part.type === 'items') : blocks.length > 0;
   const root = useRef<HTMLDivElement>(null);
@@ -716,6 +754,10 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
               if (part.type === 'subagents') return skips[i] ? null : (
                 <div key={part.id} className="flex min-w-0 flex-col pt-(--process-prose-gap)"><DelegatedSubagents ids={part.ids} /></div>
               );
+              // Plugin cards the same: where the agent offered them, outside the folding parts around them
+              if (part.type === 'cards') return skips[i] ? null : (
+                <div key={part.id} className="flex min-w-0 flex-col pt-(--process-prose-gap)"><PlacedCards call={part.id} /></div>
+              );
               // The padding folds with its part: the head's offset on the first, the prose gap after a card, the tail on the last
               const body = (
                 <div className={cn(!retired && (i === 0 ? 'pt-1' : 'pt-(--process-prose-gap)'), !retired && i === parts.length - 1 && 'pb-1.5')}>
@@ -733,7 +775,7 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
       )}
       {!open && imageResults.length > 0 && (
         <div className="flex min-w-0 flex-col gap-gap pt-gap">
-          {imageResults.map(block => isShowWidgetTool(block) ? <ShownWidget key={block.id} block={block} /> : <GeneratedImages key={block.id} block={block} />)}
+          {imageResults.map(block => isShowWidgetTool(block) ? <ShownWidget key={block.id} block={block} /> : isShowVideoTool(block) ? <ShownVideos key={block.id} block={block} /> : <GeneratedImages key={block.id} block={block} />)}
         </div>
       )}
     </Collapsible.Root>
@@ -758,7 +800,7 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
 function partSkips(parts: FoldPart[], start: number): number[] {
   let at = 0;
   return parts.map(part => {
-    const size = part.type === 'steer' ? 1 : part.type === 'subagents' ? part.ids.length : part.items.length;
+    const size = part.type === 'steer' || part.type === 'cards' ? 1 : part.type === 'subagents' ? part.ids.length : part.items.length;
     const skip = Math.min(size, Math.max(0, start - at));
     at += size;
     return skip;

@@ -369,9 +369,11 @@ impl PluginHost {
       // A command's button is a piece of the composer's toolbar, so it flies in like one
       slots: c.ui.iter().map(|u| u.slot.clone()).chain(c.commands.iter().any(|x| x.button.is_some()).then(|| "composer.toolbar".to_owned())).collect(),
       schedules: c.schedules.iter().map(|j| j.cron.clone()).collect(),
+      adds: c.kinds().into_iter().map(str::to_owned).collect(),
       folder: wire_path(&self.store.source(&frozen.id)),
       at: crate::util::now_ms(),
       undo: None,
+      after: None,
     }
   }
 

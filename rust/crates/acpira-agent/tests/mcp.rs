@@ -15,7 +15,8 @@ use serde_json::{Value, json};
 use acpira_agent::mock::{self, MockModel};
 use support::{Answer, Harness};
 
-/// A streamable HTTP MCP server with two tools: `shot` (read-only, returns text and an image) and `remove`
+/// A streamable HTTP MCP server with two tools: `shot` (read-only, returns text and an image) and `remove`; as the
+/// engine's own (`plugins`), `plugin_activate` alone, and `fx_convert` once it was called
 struct FakeMcp {
   url: String,
   /// Every JSON-RPC message received
@@ -24,6 +25,11 @@ struct FakeMcp {
 
 impl FakeMcp {
   fn start() -> FakeMcp {
+    FakeMcp::serve(false)
+  }
+
+  fn serve(plugins: bool) -> FakeMcp {
+    let activated = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/mcp", listener.local_addr().unwrap());
     let seen: Arc<parking_lot::Mutex<Vec<Value>>> = Default::default();
@@ -52,6 +58,18 @@ impl FakeMcp {
         let result = match msg["method"].as_str().unwrap_or("") {
           "initialize" => json!({ "protocolVersion": "2025-06-18", "capabilities": { "tools": {} }, "serverInfo": { "name": "bench", "version": "1" },
             "instructions": "Take a shot after every change." }),
+          "tools/list" if plugins => {
+            let mut tools = vec![json!({ "name": "plugin_activate", "description": "Enable a plugin", "inputSchema": { "type": "object", "properties": {} }, "annotations": { "readOnlyHint": true } })];
+            if activated.load(std::sync::atomic::Ordering::Acquire) {
+              tools.push(json!({ "name": "fx_convert", "description": "Convert", "inputSchema": { "type": "object", "properties": {} }, "annotations": { "readOnlyHint": true } }));
+            }
+            json!({ "tools": tools })
+          }
+          "tools/call" if msg["params"]["name"] == "plugin_activate" => {
+            activated.store(true, std::sync::atomic::Ordering::Release);
+            json!({ "content": [{ "type": "text", "text": "The user applied fx." }] })
+          }
+          "tools/call" if msg["params"]["name"] == "fx_convert" => json!({ "content": [{ "type": "text", "text": "300" }] }),
           "tools/list" => json!({ "tools": [
             { "name": "shot", "title": "Take Screenshot", "description": "Take a screenshot of the model", "inputSchema": { "type": "object", "properties": {} }, "annotations": { "readOnlyHint": true } },
             { "name": "remove", "description": "Remove a cube", "inputSchema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] } },
@@ -139,6 +157,25 @@ async fn a_read_only_tool_runs_without_a_card_and_its_image_reaches_the_model() 
   assert_eq!(tool_names(third), names);
   let last = third["messages"].as_array().unwrap().last().unwrap()["content"].as_str().unwrap().to_owned();
   assert_eq!(last, "thanks");
+}
+
+#[tokio::test]
+async fn a_plugin_applied_mid_turn_brings_its_tools_to_the_next_request() {
+  let h = Harness::start().await;
+  let model = MockModel::start();
+  h.providers(&model.base_url(), json!([{ "id": "m1" }]));
+  let mcp = FakeMcp::serve(true);
+  let sid = session(&h, json!([{ "type": "http", "name": "acpira", "url": mcp.url, "headers": [] }])).await;
+  model.push(mock::tools(&[("c1", "acpira_plugin_activate", json!({}))]));
+  model.push(mock::tools(&[("c2", "acpira_fx_convert", json!({}))]));
+  model.push(mock::text("300"));
+  assert_eq!(prompt(&h, &sid, "add a converter").await["stopReason"], "end_turn");
+
+  let requests = model.requests();
+  assert!(!tool_names(&requests[0].body).contains(&"acpira_fx_convert".to_owned()));
+  // Listed again before the next request of the same turn, so the model calls what it just built
+  assert!(tool_names(&requests[1].body).contains(&"acpira_fx_convert".to_owned()));
+  assert_eq!(mcp.calls().iter().map(|c| c["name"].as_str().unwrap().to_owned()).collect::<Vec<_>>(), ["plugin_activate", "fx_convert"]);
 }
 
 #[tokio::test]

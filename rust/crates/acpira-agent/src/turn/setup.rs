@@ -66,6 +66,16 @@ pub(super) async fn plugin_tools(server: &Arc<Server>, session: &Arc<Session>, s
 }
 
 impl Setup {
+  /// Take the tools of a fresh setup, made after an MCP server's list changed mid-turn; model, prompt and limits stay
+  /// the turn's
+  pub(super) fn retool(&mut self, fresh: Setup) {
+    self.tools = fresh.tools;
+    self.specs = fresh.specs;
+    self.skills = fresh.skills;
+    self.mcp = fresh.mcp;
+    self.withheld = fresh.withheld;
+  }
+
   /// Every tool name of the turn, built-in first
   pub(super) fn names(&self) -> Vec<&str> {
     self.tools.iter().copied().chain(self.mcp.iter().map(|t| t.name.as_str())).filter(|n| !self.withheld.iter().any(|w| w == n)).collect()
@@ -105,8 +115,6 @@ pub(super) fn setup(server: &Server, session: &Session, params: &Value, mcp: &[c
     }
     st.prompt.clone()
   };
-  // The session's level as the turn starts; a pick made during the turn applies from the next one
-  let approval = session.state.lock().approval;
   let defaults = &composed.sampling;
   let sampling = Sampling {
     temperature: model.sampling.temperature.or(defaults.temperature),
@@ -114,12 +122,10 @@ pub(super) fn setup(server: &Server, session: &Session, params: &Value, mcp: &[c
     top_k: model.sampling.top_k.or(defaults.top_k),
   };
   let thinking = if model.thinking == Thinking::Auto { composed.thinking.unwrap_or(Thinking::Auto) } else { model.thinking };
-  // Frozen for the turn like the rest; what the user allows on a card applies at once (`SessionState::allowed`)
+  // Paths and defaults stay fixed; approval and mode rules come from live session state
   let rules = Rules {
     defaults: permission::defaults(&server.session_dir(&session.id).join("outputs")),
-    approval: approval.rules(),
-    // Full access widens the mode's ask rules (Plan mode's commands then run); what the mode denies does not move
-    mode: mode.rules(&server.plan_file(&session.id), &session.cwd, approval),
+    plan: server.plan_file(&session.id),
     guard: Guard::new(server.config.home(), &session.cwd, user_home().as_deref()),
   };
   // Limits the configuration leaves open come from the catalogue, marked estimated (never sent as max_tokens)
@@ -128,7 +134,7 @@ pub(super) fn setup(server: &Server, session: &Session, params: &Value, mcp: &[c
   // Raw mode offers nothing: no tools, skills or MCP servers (so no `/skill` expansion either)
   let skills = if raw { vec![] } else { skills::scan(&places) };
   let mcp = if raw { &[] } else { mcp };
-  // Chunk compaction brings its history tools; the set is fixed for the turn like the rest
+  // Chunk compaction brings its history tools; the set is fixed for the turn, MCP tools aside (`Setup::retool`)
   let tools: &'static [&'static str] = match (raw, config.chunked(), skills.is_empty()) {
     (true, _, _) => &[],
     (false, false, true) => modes::TOOLS,

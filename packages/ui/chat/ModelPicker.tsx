@@ -95,7 +95,7 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
   const at = (stage: number, ref?: typeof fit.item) => {
     const on = CHIP_STAGES[stage]!;
     const skOn = CHIP_STAGES[skPicked ? stage : lastStage]!;
-    return <Chip ref={ref} narrow="text" title={chip.title} caret={on.caret} data-compact={on.compact ? '' : undefined} icon={<ModelMark family={chip.family} brand={chip.brand} />}
+    return <Chip ref={ref} data-land="models" narrow="text" title={chip.title} caret={on.caret} data-compact={on.compact ? '' : undefined} icon={<ModelMark family={chip.family} brand={chip.brand} />}
       trail={sidekick && <SidekickTail open={!!skPicked} live={!!skPicked && !!sidekickLive} name={shownSk?.name} brand={shownSk && optionBrand(shownSk)} named={skOn.names} level={skOn.levels ? shownSkLevel : undefined} animate={!!ref} />}
       tags={on.levels && chip.tags.length ? chip.tags.map(tag => <ChipTag key={tag.label} tone={tag.ultra ? 'ultra' : undefined} icon={tag.fast ? <FastIcon /> : undefined} short={tag.short}>{tag.label}</ChipTag>) : undefined}
       tagsKey={ref ? (on.levels ? chip.tags.map(tag => tag.label).join(' ') : '') : undefined}>
