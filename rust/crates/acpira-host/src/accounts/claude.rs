@@ -211,20 +211,13 @@ impl AccountProvider for ClaudeAccountProvider {
   }
 }
 
-/// "max" / "claude_max" (the credentials' subscriptionType, the profile's organization_type) → "Claude Max", with the
-/// usage multiplier of a rate-limit tier like `default_claude_max_20x` → "Claude Max 20x"
+/// Credentials' subscriptionType / profile's organization_type → the current public plan name.
+/// The service still calls Ultra `claude_max` with tier `default_claude_max_20x`; Max no longer has a multiplier suffix.
 pub fn claude_plan(kind: &str, tier: Option<&str>) -> Option<String> {
   let kind = kind.trim();
   let kind = kind.strip_prefix("claude_").unwrap_or(kind);
-  let label = plan_label("Claude", kind)?;
-  let multiplier = tier
-    .and_then(|t| t.rsplit_once('_'))
-    .map(|(_, last)| last)
-    .filter(|m| m.strip_suffix('x').is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())));
-  Some(match multiplier {
-    Some(m) => format!("{label} {m}"),
-    None => label,
-  })
+  let kind = if kind == "max" && tier == Some("default_claude_max_20x") { "ultra" } else { kind };
+  plan_label("Claude", kind)
 }
 
 /// api/oauth/profile → the plan label; None when the organization has no type (the detail stays)
@@ -299,14 +292,21 @@ mod tests {
 
   #[test]
   fn plan_labels() {
+    assert_eq!(claude_plan("free", None).as_deref(), Some("Claude Free"));
+    assert_eq!(claude_plan("claude_free", None).as_deref(), Some("Claude Free"));
     assert_eq!(claude_plan("pro", Some("default_claude_ai")).as_deref(), Some("Claude Pro"));
-    assert_eq!(claude_plan("max", Some("default_claude_max_5x")).as_deref(), Some("Claude Max 5x"));
+    assert_eq!(claude_plan("claude_pro", None).as_deref(), Some("Claude Pro"));
+    assert_eq!(claude_plan("max", Some("default_claude_max_5x")).as_deref(), Some("Claude Max"));
+    assert_eq!(claude_plan("max", Some("default_claude_max_20x")).as_deref(), Some("Claude Ultra"));
     assert_eq!(claude_plan("max", None).as_deref(), Some("Claude Max"));
+    assert_eq!(claude_plan("ultra", None).as_deref(), Some("Claude Ultra"));
+    assert_eq!(claude_plan("claude_ultra", Some("default_claude_max_20x")).as_deref(), Some("Claude Ultra"));
+    assert_eq!(claude_plan("team", None).as_deref(), Some("Claude Team"));
     assert_eq!(claude_plan("", None), None);
     // A live profile (2026-10-07) of a token issued on Pro, read after the upgrade to Max
     let live = json!({ "account": { "has_claude_max": true, "has_claude_pro": false },
       "organization": { "organization_type": "claude_max", "rate_limit_tier": "default_claude_max_20x", "billing_type": "apple_subscription" } });
-    assert_eq!(parse_claude_profile(&live).as_deref(), Some("Claude Max 20x"));
+    assert_eq!(parse_claude_profile(&live).as_deref(), Some("Claude Ultra"));
     assert_eq!(parse_claude_profile(&json!({ "organization": { "organization_type": null } })), None);
     assert_eq!(parse_claude_profile(&json!({ "error": { "type": "rate_limit_error" } })), None);
   }
