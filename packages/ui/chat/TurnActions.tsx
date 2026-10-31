@@ -41,7 +41,7 @@ export function TurnActions({ turn, turnIndex, settings }: { turn: AgentTurn; tu
     <div
       data-open={statsOpen || forkOpen || undefined}
       data-turn-actions
-      className="-mt-gap flex h-ctl-sm items-center justify-end gap-0.5 opacity-0 transition-opacity duration-(--code-copy-duration) ease-out group-hover/turn:opacity-100 group-focus-within/turn:opacity-100 [@media(hover:none)]:opacity-100 motion-reduce:transition-none data-[open]:opacity-100"
+      className="-mt-gap flex h-ctl-sm items-center justify-end gap-0.5 opacity-0 transition-opacity duration-(--code-copy-duration) ease-out group-hover/turn:opacity-100 group-focus-within/turn:opacity-100 [@media(hover:none)]:opacity-100 motion-reduce:transition-none data-[open]:opacity-100 data-[landing]:opacity-100"
     >
       {ctx && reply && <PluginActions session={ctx.sessionId} turn={turnIndex} text={reply} />}
       {reply && (

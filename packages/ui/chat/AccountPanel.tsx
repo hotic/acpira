@@ -69,10 +69,11 @@ export function AccountPanel(p: AccountPanelProps) {
             a stock person glyph said nothing and drew a second left edge the quota bars did not share */}
         <RadioGroup.Item value={a.id} onClick={() => { p.onSelectAccount(a.id); p.close(); }} className="min-h-0 flex-col items-stretch gap-0 py-1.5">
           {/* Only the email truncates. The trailing slot stands on the right text edge, where the quota bars end and the header's
-              "+" stands: the check, or the remove button over it on hover */}
+              "+" stands: the check, or the remove button over it on hover. The radio's own `:has(+ …)` sees the remove button's
+              keyboard focus; a group-level `:has()` restyled the whole shell on every keystroke */}
           <span className="flex min-w-0 items-center gap-2">
             <AccountLabel label={a.label} detail={a.detail} className="flex-1 text-fg-1" detailClassName="text-fg-3" />
-            <span className="flex size-icon shrink-0 items-center justify-center transition-opacity group-hover/item:opacity-0 group-has-[[data-remove]:focus-visible]/item:opacity-0" aria-hidden>
+            <span className="flex size-icon shrink-0 items-center justify-center transition-opacity group-hover/item:opacity-0 [button:has(+[data-remove-slot]_[data-remove]:focus-visible)_&]:opacity-0" aria-hidden>
               {a.id === p.accountId && <Check className="size-icon text-fg-1" strokeWidth={2} />}
             </span>
           </span>
@@ -81,7 +82,7 @@ export function AccountPanel(p: AccountPanelProps) {
         {/* A button cannot sit inside the radio's, so the remove button lies over the row in a copy of the identity line's box:
             the same padding and an invisible strut one text line tall, so it centres on that line at every density, not on a
             row the quota bars make tall */}
-        <span className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-end px-2 py-1.5 text-2">
+        <span data-remove-slot className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-end px-2 py-1.5 text-2">
           <span className="invisible w-0" aria-hidden>{'\u00a0'}</span>
           <span className="flex size-icon shrink-0 items-center justify-center">
             <button type="button" data-remove aria-label={t('common.removeNamed', { name: a.label })} title={t('common.remove')}

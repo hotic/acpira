@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { ChevronDown } from 'lucide-react';
 import type { ToolCallBlock } from '@acpira/shared/transcript';
 import { useScrollFade } from '../ui/useScrollFade';
+import { scrollbarRoom } from '../ui/scrollbarRoom';
 import { cn } from '../ui/cn';
 import { OutputCopy } from './OutputCopy';
 import { Prose } from './Prose';
@@ -87,7 +88,9 @@ export function OutputPane({ text, follow, label, copyLabel, className, prose = 
   const fade = useScrollFade<HTMLElement>();
   const setRef = useCallback((element: HTMLElement | null) => {
     ref.current = element;
-    return fade(element);
+    const unfade = fade(element);
+    const unroom = scrollbarRoom(element);
+    return () => { unfade?.(); unroom?.(); };
   }, [fade]);
   const pinned = useRef(true);
   useEffect(() => {
