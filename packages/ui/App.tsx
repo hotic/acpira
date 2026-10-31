@@ -19,6 +19,7 @@ import { deliverToBrowserTab, installBrowserTabs, setRecentPages } from './panel
 import { panel, panelState } from './panel/store';
 import { deliverTerminal, startTerminals, terminalsConnected } from './panel/terminals';
 import { vscodeApi } from './vscodeApi';
+import { requestTable } from './requestTable';
 import { desktopShell, pushShellToast, runShellCommand, setDesktopMenu, setUpdateState, setWindowMaximized } from './desktop';
 import { deliverRemote, watchConnections } from './remote/api';
 import { deliverRemoteAccess, watchRemoteAccess } from './remote/access';
@@ -98,72 +99,31 @@ const deleteSession = (id: string) => new Promise<boolean>(resolve => {
   post({ type: 'deleteSession', id, requestId });
 });
 
-// Request/response pairs over postMessage: file search for @ mentions and the history list's conversation search. Each
-// request gets a seq; the matching `files` / `sessionHits` reply resolves it.
-// A reply that never comes (host gone) resolves empty after a while so nothing waits forever
-const FILES_TIMEOUT = 5000;
-let fileSeq = 0;
-const fileWaits = new Map<number, (files: FileHit[]) => void>();
-const settleFiles = (seq: number, files: FileHit[]) => { fileWaits.get(seq)?.(files); fileWaits.delete(seq); };
-const searchFiles = (query: string) => new Promise<FileHit[]>(resolve => {
-  const seq = ++fileSeq;
-  fileWaits.set(seq, resolve);
-  setTimeout(() => settleFiles(seq, []), FILES_TIMEOUT);
-  post({ type: 'searchFiles', query, seq });
-});
+// Request/response pairs over postMessage (requestTable.ts): file search for @ mentions and the history list's
+// conversation search, a diff's whole files, an image staged as a blob, a session's Markdown export
+const fileRequests = requestTable<FileHit[]>(5000, []);
+const searchFiles = (query: string) => fileRequests.ask(seq => post({ type: 'searchFiles', query, seq }));
 // The first conversation search reads every saved record, so it gets more time than a file lookup
-const SESSION_SEARCH_TIMEOUT = 15000;
-let sessionSeq = 0;
-const sessionWaits = new Map<number, (hits: SessionHit[]) => void>();
-const settleSessions = (seq: number, hits: SessionHit[]) => { sessionWaits.get(seq)?.(hits); sessionWaits.delete(seq); };
-const searchSessions = (query: string) => new Promise<SessionHit[]>(resolve => {
-  const seq = ++sessionSeq;
-  sessionWaits.set(seq, resolve);
-  setTimeout(() => settleSessions(seq, []), SESSION_SEARCH_TIMEOUT);
-  post({ type: 'searchSessions', query, seq });
-});
+const sessionRequests = requestTable<SessionHit[]>(15000, []);
+const searchSessions = (query: string) => sessionRequests.ask(seq => post({ type: 'searchSessions', query, seq }));
 
 // The whole files behind a diff, which page views leave out: asked for when a diff's source is copied
-const DIFF_SOURCE_TIMEOUT = 10000;
-let diffSeq = 0;
-const diffWaits = new Map<number, (source: FullDiffSource | undefined) => void>();
-const settleDiff = (seq: number, source: FullDiffSource | undefined) => { diffWaits.get(seq)?.(source); diffWaits.delete(seq); };
-const diffSource = (sessionId: string, toolCallId: string, nth: number, subagentId?: string) => new Promise<FullDiffSource | undefined>(resolve => {
-  const seq = ++diffSeq;
-  diffWaits.set(seq, resolve);
-  setTimeout(() => settleDiff(seq, undefined), DIFF_SOURCE_TIMEOUT);
-  post({ type: 'diffSource', sessionId, toolCallId, nth, ...(subagentId !== undefined ? { subagentId } : {}), seq });
-});
+const diffRequests = requestTable<FullDiffSource | undefined>(10000, undefined);
+const diffSource = (sessionId: string, toolCallId: string, nth: number, subagentId?: string) =>
+  diffRequests.ask(seq => post({ type: 'diffSource', sessionId, toolCallId, nth, ...(subagentId !== undefined ? { subagentId } : {}), seq }));
 
 // Stage an image file path into the session's blob store when a file reference is clicked for preview
-const IMAGE_BLOB_TIMEOUT = 10000;
-let imageBlobSeq = 0;
-const imageBlobWaits = new Map<number, (blob: string | undefined) => void>();
-const settleImageBlob = (seq: number, blob: string | undefined) => { imageBlobWaits.get(seq)?.(blob); imageBlobWaits.delete(seq); };
-const imageBlob = (sessionId: string, path: string) => new Promise<string | undefined>(resolve => {
-  const seq = ++imageBlobSeq;
-  imageBlobWaits.set(seq, resolve);
-  setTimeout(() => settleImageBlob(seq, undefined), IMAGE_BLOB_TIMEOUT);
-  post({ type: 'imageBlob', sessionId, path, seq });
-});
+const imageBlobRequests = requestTable<string | undefined>(10000, undefined);
+const imageBlob = (sessionId: string, path: string) => imageBlobRequests.ask(seq => post({ type: 'imageBlob', sessionId, path, seq }));
 
 // "Copy as Markdown": the engine renders the export's Markdown and always answers; an error or no answer rejects, so the copy
 // toast says it failed instead of leaving the clipboard's pending write hanging
-const SESSION_MARKDOWN_TIMEOUT = 15000;
-let markdownSeq = 0;
-const markdownWaits = new Map<number, { resolve: (text: string) => void; reject: (error: Error) => void }>();
-const settleMarkdown = (seq: number, markdown: string | undefined, error: string | undefined) => {
-  const wait = markdownWaits.get(seq);
-  markdownWaits.delete(seq);
-  if (markdown !== undefined) wait?.resolve(markdown);
-  else wait?.reject(new Error(error ?? 'no reply'));
+const markdownRequests = requestTable<{ markdown?: string; error?: string }>(15000, { error: 'timed out' });
+const sessionMarkdown = async (id: string) => {
+  const r = await markdownRequests.ask(seq => post({ type: 'sessionMarkdown', id, seq }));
+  if (r.markdown === undefined) throw new Error(r.error ?? 'no reply');
+  return r.markdown;
 };
-const sessionMarkdown = (id: string) => new Promise<string>((resolve, reject) => {
-  const seq = ++markdownSeq;
-  markdownWaits.set(seq, { resolve, reject });
-  setTimeout(() => settleMarkdown(seq, undefined, 'timed out'), SESSION_MARKDOWN_TIMEOUT);
-  post({ type: 'sessionMarkdown', id, seq });
-});
 
 type InitEnv = Pick<InitState, 'host' | 'home' | 'cwd' | 'blobBase' | 'chats'>;
 
@@ -320,9 +280,13 @@ export function App() {
         // A sidecar that came back answers nothing it was asked before: pending controls requests go out again
         case 'init': controlsAsked.current.clear(); setInit({ host: m.state.host, home: m.state.home, cwd: m.state.cwd, blobBase: m.state.blobBase, chats: m.state.chats }); setAppearance(m.state.appearance); lastAgents.current = m.state.agents; setAgents(m.state.agents); setSessions(m.state.sessions); setCategories(m.state.categories); setAccounts(m.state.accounts); setAccountActions(m.state.accountActions ?? []); setAgentInstalls(m.state.agentInstalls ?? []); setHidden(m.state.hidden); setSession(views.init(m.state.active)); setNoProject(!m.state.active); setSettings(syncPanelScope(m.state.settings)); setLocale(m.state.locale); setLoc(m.state.locale); terminalsConnected(m.state.home); watchConnections(); watchRemoteAccess(); break;
         case 'appearance': setAppearance(m.appearance); break;
-        // An agent whose executable appeared or vanished has a stale inventory (binary path, version); drop it so the page rescans
+        // An agent whose executable appeared or vanished, or whose adapter was just updated, has a stale inventory (binary path,
+        // version); drop it so the page rescans
         case 'agents': {
-          const flipped = m.agents.filter(a => lastAgents.current.find(p => p.id === a.id)?.available !== a.available).map(a => a.id);
+          const flipped = m.agents.filter(a => {
+            const was = lastAgents.current.find(p => p.id === a.id);
+            return was?.available !== a.available || was?.update !== a.update;
+          }).map(a => a.id);
           lastAgents.current = m.agents;
           setAgents(m.agents);
           if (flipped.length) setInventories(inv => { const next = { ...inv }; for (const id of flipped) delete next[id]; return next; });
@@ -407,10 +371,10 @@ export function App() {
         // A reply for an agent the popover has since moved away from is dropped; the effect re-requested the new one already
         case 'nativeSessions': setNativeSessions(cur => cur?.agent === m.agent ? { agent: m.agent, sessions: m.sessions, error: m.error, loading: false } : cur); break;
         case 'chatgptStatus': setChatgptStatus(m.status); break;
-        case 'files': settleFiles(m.seq, m.files); break;
-        case 'sessionHits': settleSessions(m.seq, m.hits); break;
-        case 'diffSource': settleDiff(m.seq, m.source); break;
-        case 'imageBlob': settleImageBlob(m.seq, m.blob); break;
+        case 'files': fileRequests.settle(m.seq, m.files); break;
+        case 'sessionHits': sessionRequests.settle(m.seq, m.hits); break;
+        case 'diffSource': diffRequests.settle(m.seq, m.source); break;
+        case 'imageBlob': imageBlobRequests.settle(m.seq, m.blob); break;
         case 'projectDir': case 'projectStatus': case 'projectFile': case 'sessionChanges': settleProject(m); break;
         case 'terminalOutput': case 'terminalState': deliverTerminal(m); break;
         // SSH hosts: the pushed list, the ~/.ssh/config hosts and the remote folder picker's listings (remote/api.ts)
@@ -425,7 +389,7 @@ export function App() {
           if (!panelState().browser) { if (m.url) post({ type: 'openExternal', url: m.url }); break; }
           if (!(m.tab && panel.showBrowser(m.tab, m.url))) panel.openBrowser(m.url);
           break;
-        case 'sessionMarkdown': settleMarkdown(m.seq, m.markdown, m.error); break;
+        case 'sessionMarkdown': markdownRequests.settle(m.seq, { markdown: m.markdown, error: m.error }); break;
         case 'editorSelection': setEditorSelection(m.selection); break;
         case 'editorCopy': setEditorCopy(m.selection); break;
         case 'contextSelection': setContextSelection(m.source, m.items); break;
@@ -495,6 +459,18 @@ export function App() {
     return () => { clearInterval(timer); document.removeEventListener('visibilitychange', refresh); };
   }, [view, page.kind]);
 
+  // "Run it on this computer" from a session in a folder on an SSH host: the agent joins `sshLocalAgents`, then a new
+  // session starts in the same folder once the engine's settings say so, since it routes new sessions by that setting
+  const sshLocal = useRef<string[]>(undefined);
+  sshLocal.current = settings?.sshLocalAgents;
+  const runHerePending = useRef<{ agent: string; cwd: string }>(undefined);
+  useEffect(() => {
+    const want = runHerePending.current;
+    if (!want || !settings?.sshLocalAgents.includes(want.agent)) return;
+    runHerePending.current = undefined;
+    post({ type: 'newSession', agent: want.agent, cwd: want.cwd });
+  }, [settings]);
+
   const on = useMemo<ShellHandlers>(() => ({
     editTurn,
     send: (text, attachments, steer) => post({ type: 'send', sessionId: activeId.current, text, ...(attachments.length ? { attachments } : {}), ...(steer ? { steer } : {}) }),
@@ -503,7 +479,7 @@ export function App() {
     diffSource,
     stop: () => post({ type: 'stop', sessionId: activeId.current }),
     permission: (sessionId, blockId, optionId) => post({ type: 'permission', sessionId, blockId, optionId }),
-    answer: (sessionId, blockId, answers, skip) => post({ type: 'answer', sessionId, blockId, answers, ...(skip ? { skip } : {}) }),
+    answer: (sessionId, blockId, answers, skip, images) => post({ type: 'answer', sessionId, blockId, answers, ...(skip ? { skip } : {}), ...(images ? { images } : {}) }),
     buildPlan: (sessionId, planId, model, optionId) => post({ type: 'buildPlan', sessionId, planId, model, optionId }),
     openPlan: (sessionId, planId) => post({ type: 'openPlan', sessionId, planId }),
     openFile: (sessionId, path, line, reveal) => post({ type: 'openFile', sessionId, path, ...(line !== undefined ? { line } : {}), ...(reveal ? { reveal } : {}) }),
@@ -528,10 +504,14 @@ export function App() {
     categoryOp: (op, file) => post({ type: 'categoryOp', ...op, ...(file ? { file } : {}) }),
     markAllRead: () => post({ type: 'markAllRead' }),
     selectAccount: id => post({ type: 'selectAccount', sessionId: activeId.current, id }),
-    addAccount: (agent, via) => post({ type: 'addAccount', agent, via }),
-    removeAccount: id => post({ type: 'removeAccount', id }),
-    refreshQuota: agent => post({ type: 'refreshQuota', agent }),
-    unlockCredentials: agent => post({ type: 'unlockCredentials', agent }),
+    addAccount: (agent, via) => post({ type: 'addAccount', sessionId: activeId.current, agent, via }),
+    removeAccount: id => post({ type: 'removeAccount', sessionId: activeId.current, id }),
+    refreshQuota: agent => post({ type: 'refreshQuota', sessionId: activeId.current, agent }),
+    unlockCredentials: agent => post({ type: 'unlockCredentials', sessionId: activeId.current, agent }),
+    runHere: (agent, cwd) => {
+      runHerePending.current = { agent, cwd };
+      post({ type: 'setSetting', key: 'sshLocalAgents', value: [...(sshLocal.current ?? []).filter(a => a !== agent), agent] });
+    },
     compact: () => post({ type: 'compact', sessionId: activeId.current }),
     login: methodId => post({ type: 'login', sessionId: activeId.current, methodId }),
     retry: () => post({ type: 'retry', sessionId: activeId.current }),
@@ -663,7 +643,7 @@ export function App() {
     </>;
   }
   if (!init || !settings) return <>{null}{layer}</>;
-  const agent = agents.find(a => a.id === session?.agent) ?? agents[0];
+  const agent = session?.remoteAuth?.agent ?? agents.find(a => a.id === session?.agent) ?? agents[0];
   if (!agent) return <>{null}{layer}</>;
   // A locale change re-renders in place: t() reads module state, and what memo or a cache would keep (rows, joined
   // names) reads the locale from LocaleContext. Remounting on key={locale} replayed every mount animation, closed open
@@ -717,9 +697,9 @@ export function App() {
       host={init.host}
       agent={agent}
       agents={agents}
-      accounts={accounts}
+      accounts={session?.remoteAuth?.accounts ?? accounts}
       accountId={session?.accountId}
-      accountAction={accountActions.find(action => action.agent === agent.id)}
+      accountAction={session?.remoteAuth ? session.remoteAuth.action : accountActions.find(action => action.agent === agent.id)}
       hidden={hidden}
       title={session?.title ?? t('session.untitled')}
       status={session?.status ?? 'starting'}
@@ -740,6 +720,7 @@ export function App() {
       compactAt={settings.autoCompact ? settings.compactAtTokens : undefined}
       shareEditorSelection={settings.shareEditorSelection}
       steerQueued={settings.steerQueued && !!session?.canSteer}
+      sshLocalAgents={settings.sshLocalAgents}
       personas={personas}
       sessions={sessions}
       categories={categories}

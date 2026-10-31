@@ -7,8 +7,9 @@ import { Button, IconButton } from '../ui/Button';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
 import { Toast } from '../ui/Toast';
+import { appUpdatePending, UpdateDot } from '../ui/UpdateDot';
 import type { DesktopMenuEntry, WindowControl } from '@acpira/shared/protocol';
-import { dropShellToast, pageCaption, postMenuCommand, postUpdate, postWindowControl, shortcutLabel, useDesktopMenu, useShellToasts, useWindowMaximized, windowsOS } from '../desktop';
+import { dropShellToast, pageCaption, postMenuCommand, postUpdate, postWindowControl, shortcutLabel, useDesktopMenu, useShellToasts, useUpdateState, useWindowMaximized, windowsOS } from '../desktop';
 import { vscodeApi } from '../vscodeApi';
 import type { SettingsPage } from '../settings/Nav';
 import { DevicesButton, devicesShown } from '../remote/DevicesCard';
@@ -257,7 +258,7 @@ function QuickChoice<V extends string>({ icon, label, value, options, labelOf, o
   );
 }
 
-export function AppMenu({ onOpenSettings, onOpenExternal, quick }: { onOpenSettings: (page?: SettingsPage) => void; onOpenExternal?: (url: string) => void; quick?: QuickSettings }) {
+export function AppMenu({ onOpenSettings, onOpenExternal, quick, agentUpdate }: { onOpenSettings: (page?: SettingsPage) => void; onOpenExternal?: (url: string) => void; quick?: QuickSettings; agentUpdate?: boolean }) {
   // Shell caches this element (useMemo) and a language pick changes no prop once the optimistic setting is in, so the
   // labels would stay in the previous language: subscribe to the locale
   useLocale();
@@ -266,11 +267,19 @@ export function AppMenu({ onOpenSettings, onOpenExternal, quick }: { onOpenSetti
   // left, its glyph a size up (--foot-icon) so it does not read as a stray mark. The foot sits by the chat sheet's bottom
   // edge (--foot-bottom), its icons as far off the window's bottom as the traffic lights off its top
   const row = devicesShown(useRemoteAccess());
+  // Something new to install, an agent's adapter or Acpira itself: a breathing dot in the gear's top right corner, which the
+  // round glyph leaves empty
+  const mark = (agentUpdate || appUpdatePending(useUpdateState())) && (
+    // Placed by a wrapper: the dot's halo (motion.css .unread-halo) makes the dot itself position: relative
+    <span className="absolute -top-1 -right-1 flex"><UpdateDot /></span>
+  );
   return (
     <div className="flex shrink-0 items-center px-gap-half pt-gap-half pb-(--foot-bottom)">
       <DropdownMenu.Root>
-        <DropdownMenu.Trigger render={<button type="button" title={t('desktop.appMenu')} aria-label={t('desktop.appMenu')} className={row ? GEAR_START : GEAR}>
-          {row ? <Settings strokeWidth={1.5} /> : <span className="flex size-lead items-center justify-center"><Settings className="size-(--foot-icon)" strokeWidth={1.5} /></span>}
+        <DropdownMenu.Trigger render={<button type="button" data-land="settings" title={t('desktop.appMenu')} aria-label={t('desktop.appMenu')} className={row ? GEAR_START : GEAR}>
+          {row
+            ? <span className="relative flex"><Settings strokeWidth={1.5} />{mark}</span>
+            : <span className="flex size-lead items-center justify-center"><span className="relative flex"><Settings className="size-(--foot-icon)" strokeWidth={1.5} />{mark}</span></span>}
         </button>} />
         {/* No collision padding: the gear sits closer to the window's edge than the shell's pad, which shifted the menu off it */}
         <DropdownMenu.Portal><DropdownMenu.Positioner side="top" align="start" width="md" collisionPadding={0}><DropdownMenu.Popup>

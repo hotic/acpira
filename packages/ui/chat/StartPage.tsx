@@ -39,9 +39,8 @@ export function usePresence(open: boolean): { mounted: boolean; shown: boolean }
 // The fold above the composer: a segmented picker of the agents, in the app's shape language (a rounded-lg frame,
 // rounded-md segments). The picked segment's name opens on its own grid track while the last one's closes, both on one
 // curve, and the fill cross-fades with them, so the segments slide aside instead of jumping. A pick shows at once; the
-// session it starts follows. `only`: the agents that can work in this project (a folder on an SSH host under local run
-// takes the built-in agent and Claude Code alone); the rest stay in place, greyed out, saying why
-export function StartPicker({ open, agents, current, only, onPick }: { open: boolean; agents: AgentInfo[]; current: AgentId; only?: AgentId[]; onPick: (agent: AgentId) => void }) {
+// session it starts follows. An agent that is not installed stays in place, greyed out, saying why
+export function StartPicker({ open, agents, current, onPick }: { open: boolean; agents: AgentInfo[]; current: AgentId; onPick: (agent: AgentId) => void }) {
   const [want, setWant] = useState<AgentId>();
   // A pick slides the segments under a still pointer: whichever lands beneath it stays unlit until the pointer moves
   const [settling, setSettling] = useState(false);
@@ -56,9 +55,8 @@ export function StartPicker({ open, agents, current, only, onPick }: { open: boo
             onPointerMove={() => { if (settling) setSettling(false); }}>
             {offered.map(a => {
               const sel = a.id === pick;
-              const outside = !!only && !only.includes(a.id);
-              const off = a.available === false || outside;
-              const why = outside ? t('start.localRunOnly') : t('agent.notInstalled');
+              const off = a.available === false;
+              const why = t('agent.notInstalled');
               return (
                 <button key={a.id} type="button" role="radio" aria-checked={sel} disabled={off} title={off ? `${a.name}${t('common.metaSep')}${why}` : a.name}
                   onClick={() => { if (!sel) { setSettling(true); setWant(a.id); onPick(a.id); } }}
