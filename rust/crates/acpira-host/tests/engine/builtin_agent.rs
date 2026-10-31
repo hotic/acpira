@@ -50,16 +50,13 @@ impl Env {
       blobs: TranscriptStore::new(root.path().join("sessions"), log, None),
       notify: None,
       accounts: None,
-      compaction: None,
-      plan_auto_approve: None,
+      policy: std::sync::Arc::new(acpira_host::acp::session::InertPolicy),
       pool: None,
-      model_shapes: None,
       shared_mcp: None,
       plugin_hooks: None,
       plugin_prompts: None,
       plugin_runtime: None,
       host_mcp: None,
-      claim: None,
       remote: None,
     };
     Env { root, cwd, server, deps }
@@ -215,6 +212,119 @@ async fn an_edit_waits_for_its_card_then_lands_with_a_diff() {
   env.golden(&s, "builtin-edit", &vw["turns"]);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn approval_changes_release_waiting_tools_and_apply_to_the_rest_of_the_turn() {
+  let env = Env::new();
+  let s = env.session().await;
+  env.server.push(mock::tools(&[
+    ("c1", "write", json!({ "path": "a.txt", "content": "a" })),
+    ("c2", "write", json!({ "path": "b.txt", "content": "b" })),
+    ("c3", "bash", json!({ "command": "echo hot-permissions" })),
+  ]));
+  env.server.push(mock::text("Done."));
+  let task = spawn_prompt(&s, "go");
+  wait_block(&s, "permission").await;
+  s.set_config("approval".into(), "auto-edit".into()).await.unwrap();
+  until(|| env.cwd().join("b.txt").is_file(), 5000).await;
+  let card = wait_block(&s, "permission").await;
+  assert!(card["command"].as_str().is_some_and(|c| c.contains("hot-permissions")), "{card}");
+  s.set_config("approval".into(), "full".into()).await.unwrap();
+  until(|| task.is_finished(), 5000).await;
+  task.await.unwrap();
+  assert_eq!(std::fs::read_to_string(env.cwd().join("a.txt")).unwrap(), "a");
+  assert!(!agent_blocks(&view(&s)).iter().any(|b| b["type"] == "permission"));
+  env.assert_prefix_stable(&env.log_of(&s));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn switching_to_plan_denies_a_waiting_edit_even_after_full_access_is_selected() {
+  let env = Env::new();
+  let s = env.session().await;
+  env.server.push(mock::tools(&[("c1", "write", json!({ "path": "blocked.txt", "content": "x" }))]));
+  env.server.push(mock::text("Not changed."));
+  let task = spawn_prompt(&s, "go");
+  wait_block(&s, "permission").await;
+  s.set_mode("plan".into()).await.unwrap();
+  s.set_config("approval".into(), "full".into()).await.unwrap();
+  until(|| task.is_finished(), 5000).await;
+  task.await.unwrap();
+  assert!(!env.cwd().join("blocked.txt").exists());
+  assert!(!agent_blocks(&view(&s)).iter().any(|b| b["type"] == "permission"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn full_access_keeps_a_waiting_protected_config_edit_behind_its_card() {
+  let env = Env::new();
+  let s = env.session().await;
+  let path = env.root.path().join("providers.json");
+  let before = std::fs::read_to_string(&path).unwrap();
+  env.server.push(mock::tools(&[("c1", "write", json!({ "path": path, "content": "{}" }))]));
+  env.server.push(mock::text("Not changed."));
+  let task = spawn_prompt(&s, "go");
+  let card = wait_block(&s, "permission").await;
+  s.set_config("approval".into(), "full".into()).await.unwrap();
+  // Wait for a later wire operation too: the approval change has been processed, not merely painted optimistically.
+  s.set_mode("agent".into()).await.unwrap();
+  assert!(!task.is_finished());
+  assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+  assert_eq!(find_block(&view(&s), "permission").unwrap()["id"], card["id"]);
+  s.resolve_permission(card["id"].as_str().unwrap(), "reject");
+  task.await.unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugin_can_still_insist_on_a_card_after_a_live_approval_change() {
+  if !acpira_host::plugins::host::on_path("node") {
+    return;
+  }
+  let mut env = Env::new();
+  let plugins = tempfile::tempdir().unwrap();
+  let script = r#"
+import { createInterface } from 'node:readline';
+const send = m => process.stdout.write(JSON.stringify(m) + '\n');
+createInterface({ input: process.stdin }).on('line', line => {
+  const m = JSON.parse(line);
+  if (m.method === 'initialize') return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: 1 } });
+  if (m.id !== undefined) send({ jsonrpc: '2.0', id: m.id, result: m.method === 'hook/permission' ? { decision: 'ask' } : null });
+}).on('close', () => process.exit(0));
+"#;
+  let rt = crate::acp_session::plugin_runtime::plugin(plugins.path(), "guard", script, &[], &["permission"]).await;
+  env.deps.plugin_runtime = Some(rt.clone());
+  let s = env.session().await;
+  env.server.push(mock::tools(&[("c1", "write", json!({ "path": "gated.txt", "content": "x" }))]));
+  env.server.push(mock::text("Done."));
+  let task = spawn_prompt(&s, "go");
+  let card = wait_block(&s, "permission").await;
+  s.set_config("approval".into(), "full".into()).await.unwrap();
+  until(|| find_block(&view(&s), "permission").is_some_and(|c| c["id"] != card["id"]), 5000).await;
+  assert!(!env.cwd().join("gated.txt").exists());
+  let card = wait_block(&s, "permission").await;
+  s.resolve_permission(card["id"].as_str().unwrap(), "allow");
+  task.await.unwrap();
+  assert!(env.cwd().join("gated.txt").exists());
+  rt.stop_all().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn lowering_approval_during_a_model_call_gates_the_next_tool_in_the_same_turn() {
+  let env = Env::new();
+  let s = env.session().await;
+  s.set_config("approval".into(), "full".into()).await.unwrap();
+  let gate = mock::Gate::default();
+  env.server.push(Reply::Held(gate.clone(), Box::new(mock::tools(&[("c1", "write", json!({ "path": "held.txt", "content": "x" }))]))));
+  env.server.push(mock::text("Done."));
+  let task = spawn_prompt(&s, "go");
+  until(|| !env.server.requests().is_empty(), 5000).await;
+  s.set_config("approval".into(), "ask".into()).await.unwrap();
+  gate.open();
+  let card = wait_block(&s, "permission").await;
+  assert!(!env.cwd().join("held.txt").exists());
+  s.resolve_permission(card["id"].as_str().unwrap(), "allow");
+  task.await.unwrap();
+  assert!(env.cwd().join("held.txt").exists());
+}
+
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_plan_card_approves_and_the_same_turn_builds_it() {
@@ -272,6 +382,39 @@ async fn the_question_tool_opens_the_question_card_and_the_answers_reach_the_mod
   expect_match(last_turn(&vw), json!({ "stop": "end_turn" }));
   env.assert_prefix_stable(&env.log_of(&s));
   env.golden(&s, "builtin-question", &vw["turns"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn images_sent_with_an_answer_reach_the_model_and_stay_on_the_card() {
+  let env = Env::new();
+  // A model that reads images
+  let path = env.root.path().join("providers.json");
+  let mut providers: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+  providers["providers"][0]["models"][0]["input"] = json!(["text", "image"]);
+  std::fs::write(&path, providers.to_string()).unwrap();
+  let s = env.session().await;
+  env.server.push(mock::tools(&[("c1", "question", json!({ "questions": [{ "question": "Which screen?", "options": ["list", "chat"] }] }))]));
+  env.server.push(mock::text("I see it."));
+  let task = spawn_prompt(&s, "fix the layout");
+  let open = || agent_blocks(&view(&s)).into_iter().find(|b| b["type"] == "question" && b["outcome"].is_null());
+  until(|| open().is_some(), 10_000).await;
+  let card = open().unwrap();
+  // The model takes images, so the card offers to take some
+  assert_eq!(card["images"], true, "{card}");
+  // 1x1 PNG
+  let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+  let images: std::collections::BTreeMap<String, Vec<acpira_shared::transcript::Draft>> =
+    serde_json::from_value(json!({ "q0": [{ "kind": "image", "mimeType": "image/png", "data": png }] })).unwrap();
+  // An image alone answers the question
+  s.answer_questions_with(card["id"].as_str().unwrap(), &serde_json::Map::new(), Some(&images), false);
+  task.await.unwrap();
+  let body = env.server.requests()[1].body.to_string();
+  assert!(body.contains("A: [image 1 attached]"), "{body}");
+  assert!(body.contains(png), "the picture went to the model: {body}");
+  let vw = view(&s);
+  let q = agent_blocks(&vw).into_iter().find(|b| b["type"] == "question").unwrap();
+  expect_match(&q, json!({ "outcome": "answered", "answerImages": { "q0": [{ "mimeType": "image/png" }] } }));
+  assert!(q["answerImages"]["q0"][0]["blob"].as_str().is_some_and(|b| b.ends_with(".png")), "{q}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -386,6 +529,27 @@ async fn the_engines_own_mcp_server_reaches_the_model_and_show_image_shows_the_p
   expect_match(&row, json!({ "verbKey": "verb.showImage", "status": "completed" }));
   assert!(row.to_string().contains("image/png"), "the picture is attached: {row}");
   env.assert_prefix_stable(&env.log_of(&s));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn show_video_saves_the_recording_without_sending_it_back_to_the_model() {
+  let mut env = Env::new();
+  env.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")));
+  let clip = env.cwd().join("clip.mp4");
+  let bytes = b"\0\0\0\x18ftypmp42 recording";
+  std::fs::write(&clip, bytes).unwrap();
+  let s = env.session().await;
+  env.server.push(mock::tools(&[("v", "acpira_show_video", json!({ "path": clip, "caption": "Recording" }))]));
+  env.server.push(mock::text("Shown."));
+  assert!(run(&s, "show the recording").await.is_empty());
+  let vw = view(&s);
+  let row = agent_blocks(&vw).into_iter().find(|b| b["verbKey"] == "verb.showVideo").unwrap();
+  expect_match(&row, json!({ "status": "completed", "target": "Recording", "content": { "type": "image", "mimeType": "video/mp4" } }));
+  let path = env.root.path().join("sessions").join(&s.id).join(row["content"]["blob"].as_str().unwrap());
+  until(|| path.exists(), 5000).await;
+  assert_eq!(std::fs::read(path).unwrap(), bytes);
+  let sent = env.server.requests().last().unwrap().body["messages"].to_string();
+  assert!(sent.contains("paused video player") && !sent.contains("ftypmp42"), "{sent}");
 }
 
 /// Stands in for the session manager behind the hub: what reaches it, and a fixed answer
@@ -539,7 +703,7 @@ async fn an_edited_first_message_carries_the_workspace_context_again_after_the_r
 mod remote {
   use super::*;
   use crate::remote_connections::Lab;
-  use acpira_shared::remote::{ConnectionOp, RunMode};
+  use acpira_shared::remote::ConnectionOp;
 
   const VIRT: &str = "/acpira-virtual-host";
 
@@ -558,7 +722,7 @@ mod remote {
       std::fs::create_dir_all(real.join("work")).unwrap();
       lab.map_root(VIRT, &real);
       let connections = lab.engine("engine");
-      connections.op(ConnectionOp::Add { alias: "gen1".into(), mode: RunMode::Local }).await.unwrap();
+      connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
       connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
       env.deps.remote = Some(connections.clone());
       Remote { env, lab, real, connections }
@@ -674,9 +838,11 @@ mod remote {
     std::fs::write(work.join(".agents/hooks.json"), r#"{ "afterTurn": "true" }"#).unwrap();
     let png = b"\x89PNG\r\n\x1a\nhost pixels";
     std::fs::write(work.join("shot.png"), png).unwrap();
+    let video = b"\0\0\0\x18ftypmp42 host recording";
+    std::fs::write(work.join("clip.mp4"), video).unwrap();
     let s = r.session().await;
     let shot = format!("{VIRT}/work/shot.png");
-    r.env.server.push(mock::tools(&[("c1", "acpira_show_image", json!({ "path": shot })), ("c2", "acpira_workspace_hooks", json!({ "cwd": format!("{VIRT}/work") }))]));
+    r.env.server.push(mock::tools(&[("c1", "acpira_show_image", json!({ "path": shot })), ("c2", "acpira_workspace_hooks", json!({ "cwd": format!("{VIRT}/work") })), ("v", "acpira_show_video", json!({ "path": format!("{VIRT}/work/clip.mp4") }))]));
     r.env.server.push(mock::text("Shown."));
     run(&s, "show it").await;
     let sent = r.env.server.requests().last().unwrap().body["messages"].to_string();
@@ -687,6 +853,8 @@ mod remote {
     let blobs = r.env.root.path().join("sessions");
     let found = walkdir(&blobs).into_iter().any(|p| std::fs::read(&p).is_ok_and(|b| b == png));
     assert!(found, "the host's bytes are in the blob store");
+    assert!(vw.contains("video/mp4"), "{vw}");
+    until(|| walkdir(&blobs).into_iter().any(|p| std::fs::read(&p).is_ok_and(|b| b == video)), 5000).await;
 
   }
 

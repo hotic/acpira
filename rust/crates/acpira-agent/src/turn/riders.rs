@@ -127,6 +127,11 @@ pub(super) async fn ride_command(server: &Arc<Server>, session: &Arc<Session>, r
       match ask(server, session, rules, &p, action).await {
         Answer::Once => {}
         Answer::Always(pattern) => session.state.lock().allowed.push(Rule::new(permission::BASH, &pattern, Decision::Allow)),
+        Answer::Denied => {
+          let (key, target) = rules.denied(session, action);
+          report(server, session, &acp, Output::error(format!("Not allowed: the permission rules deny {key} on {target}.")));
+          return (format!("{header}\nNot run: the permission rules deny {key} on {target}. Do not retry it."), false);
+        }
         Answer::Reject => {
           report(server, session, &acp, Output::error("The user rejected this action."));
           return (format!("{header}\nNot run: the user rejected it. Do not retry it; wait for the user's direction."), true);
