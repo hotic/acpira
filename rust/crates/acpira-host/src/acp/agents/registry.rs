@@ -115,9 +115,54 @@ fn mode(id: &str, name: &str, description: &str) -> SessionOption {
   SessionOption { id: s(id), name: s(name), description: Some(s(description)), ..Default::default() }
 }
 
-/// The built-in agents, verified on real machines (per-version notes in docs/dev/agent-quirks.md)
+/// The built-in agents, verified on real machines (per-version notes in docs/dev/agent-quirks.md). Listed in the order
+/// every agent list shows before the user saves one (arrange_agents), after the built-in Acpira agent
 pub fn builtin_agents() -> Vec<AgentDef> {
   vec![
+    AgentDef {
+      requires: list(&["node"]),
+      install: install(
+        "npm install -g --include=optional @agentclientprotocol/codex-acp@2.1.1",
+        "npm install -g --include=optional @agentclientprotocol/codex-acp@2.1.1",
+        "https://github.com/agentclientprotocol/codex-acp",
+      ),
+      login: login("codex-acp", &["cli", "login"]),
+      adapter: Some(AdapterDef {
+        package: s("@agentclientprotocol/codex-acp"),
+        engine: Some(AdapterEngine {
+          package: s("@openai/codex"),
+          name: s("Codex"),
+          override_env: s("CODEX_PATH"),
+          native: Some(NativeLayout::CodexVendor),
+        }),
+      }),
+      ..base("codex", "Codex", "codex-acp", &[], &["~/.local/bin/codex-acp", "/opt/homebrew/bin/codex-acp", "/usr/local/bin/codex-acp"])
+    },
+    AgentDef {
+      requires: list(&["node"]),
+      login: login("claude-agent-acp", &["--cli", "auth", "login"]),
+      install: install(
+        "npm install -g --include=optional @agentclientprotocol/claude-agent-acp@0.87.0",
+        "npm install -g --include=optional @agentclientprotocol/claude-agent-acp@0.87.0",
+        "https://github.com/agentclientprotocol/claude-agent-acp",
+      ),
+      adapter: Some(AdapterDef {
+        package: s("@agentclientprotocol/claude-agent-acp"),
+        engine: Some(AdapterEngine {
+          package: s("@anthropic-ai/claude-agent-sdk"),
+          name: s("Claude Agent SDK"),
+          override_env: s("CLAUDE_CODE_EXECUTABLE"),
+          native: Some(NativeLayout::ClaudeSdk),
+        }),
+      }),
+      ..base(
+        "claude",
+        "Claude Code",
+        "claude-agent-acp",
+        &[],
+        &["~/.local/bin/claude-agent-acp", "/opt/homebrew/bin/claude-agent-acp", "/usr/local/bin/claude-agent-acp"],
+      )
+    },
     AgentDef {
       login: login("grok", &["login"]),
       install: install(
@@ -185,50 +230,6 @@ pub fn builtin_agents() -> Vec<AgentDef> {
         "kimi",
         &["acp"],
         &["~/.local/bin/kimi", "~/.kimi-code/bin/kimi", "/opt/homebrew/bin/kimi", "/usr/local/bin/kimi"],
-      )
-    },
-    AgentDef {
-      requires: list(&["node"]),
-      install: install(
-        "npm install -g --include=optional @agentclientprotocol/codex-acp@2.1.1",
-        "npm install -g --include=optional @agentclientprotocol/codex-acp@2.1.1",
-        "https://github.com/agentclientprotocol/codex-acp",
-      ),
-      login: login("codex-acp", &["cli", "login"]),
-      adapter: Some(AdapterDef {
-        package: s("@agentclientprotocol/codex-acp"),
-        engine: Some(AdapterEngine {
-          package: s("@openai/codex"),
-          name: s("Codex"),
-          override_env: s("CODEX_PATH"),
-          native: Some(NativeLayout::CodexVendor),
-        }),
-      }),
-      ..base("codex", "Codex", "codex-acp", &[], &["~/.local/bin/codex-acp", "/opt/homebrew/bin/codex-acp", "/usr/local/bin/codex-acp"])
-    },
-    AgentDef {
-      requires: list(&["node"]),
-      login: login("claude-agent-acp", &["--cli", "auth", "login"]),
-      install: install(
-        "npm install -g --include=optional @agentclientprotocol/claude-agent-acp@0.87.0",
-        "npm install -g --include=optional @agentclientprotocol/claude-agent-acp@0.87.0",
-        "https://github.com/agentclientprotocol/claude-agent-acp",
-      ),
-      adapter: Some(AdapterDef {
-        package: s("@agentclientprotocol/claude-agent-acp"),
-        engine: Some(AdapterEngine {
-          package: s("@anthropic-ai/claude-agent-sdk"),
-          name: s("Claude Agent SDK"),
-          override_env: s("CLAUDE_CODE_EXECUTABLE"),
-          native: Some(NativeLayout::ClaudeSdk),
-        }),
-      }),
-      ..base(
-        "claude",
-        "Claude Code",
-        "claude-agent-acp",
-        &[],
-        &["~/.local/bin/claude-agent-acp", "/opt/homebrew/bin/claude-agent-acp", "/usr/local/bin/claude-agent-acp"],
       )
     },
     AgentDef {
@@ -333,6 +334,8 @@ pub struct AgentRegistry {
   resolved: parking_lot::Mutex<HashMap<AgentId, String>>,
   missing_cmds: parking_lot::Mutex<HashMap<AgentId, Vec<String>>>,
   searched: parking_lot::Mutex<HashMap<AgentId, Vec<String>>>,
+  /// Agents whose installed adapter is older than the version their install line pins: that version
+  updates: parking_lot::Mutex<HashMap<AgentId, String>>,
   probed: AtomicBool,
   listeners: parking_lot::Mutex<Vec<(u64, Listener)>>,
   next_listener: std::sync::atomic::AtomicU64,
@@ -389,6 +392,7 @@ impl AgentRegistry {
       resolved: Default::default(),
       missing_cmds: Default::default(),
       searched: Default::default(),
+      updates: Default::default(),
       probed: AtomicBool::new(false),
       listeners: Default::default(),
       next_listener: Default::default(),
@@ -418,6 +422,7 @@ impl AgentRegistry {
     let resolved = self.resolved.lock();
     let missing = self.missing_cmds.lock();
     let searched = self.searched.lock();
+    let updates = self.updates.lock();
     self
       .order
       .iter()
@@ -431,6 +436,7 @@ impl AgentRegistry {
           missing: if probed && !found { missing.get(id).filter(|m| !m.is_empty()).cloned() } else { None },
           searched: if probed && !found { searched.get(id).filter(|m| !m.is_empty()).cloned() } else { None },
           install: self.install(id),
+          update: if found { updates.get(id).cloned() } else { None },
           ..Default::default()
         }
       })
@@ -537,6 +543,11 @@ impl AgentRegistry {
     }
     match found {
       Some(f) if missing.is_empty() => {
+        let update = update_for(def, &f).await;
+        match update {
+          Some(v) => self.updates.lock().insert(id.to_owned(), v),
+          None => self.updates.lock().remove(id),
+        };
         self.resolved.lock().insert(id.to_owned(), f.clone());
         self.missing_cmds.lock().remove(id);
         Some(f)
@@ -549,9 +560,17 @@ impl AgentRegistry {
     }
   }
 
+  /// The available set plus pending updates: either changing notifies subscribers
   fn snapshot(&self) -> String {
     let r = self.resolved.lock();
-    self.order.iter().filter(|id| r.contains_key(*id)).cloned().collect::<Vec<_>>().join("\0")
+    let u = self.updates.lock();
+    let mut out = self.order.iter().filter(|id| r.contains_key(*id)).cloned().collect::<Vec<_>>().join("\0");
+    for id in &self.order {
+      if let Some(v) = u.get(id) {
+        out.push_str(&format!("\n{id}@{v}"));
+      }
+    }
+    out
   }
 
   fn settle(&self, before: &str) -> bool {
@@ -564,6 +583,20 @@ impl AgentRegistry {
     }
     changed
   }
+}
+
+/// The adapter version an install line pins (`<package>@<version>` among its words); None when it installs the latest
+fn pinned_version(line: &str, package: &str) -> Option<semver::Version> {
+  let prefix = format!("{package}@");
+  line.split_whitespace().find_map(|w| w.strip_prefix(&prefix)).and_then(|v| semver::Version::parse(v).ok())
+}
+
+/// The pinned version when the adapter found next to `binary` is older; a version that cannot be read offers nothing
+async fn update_for(def: &AgentDef, binary: &str) -> Option<String> {
+  let package = &def.adapter.as_ref()?.package;
+  let pinned = pinned_version(def.install.as_ref()?.posix.as_deref()?, package)?;
+  let installed = semver::Version::parse(&super::adapter_info::installed_version(binary, package).await?).ok()?;
+  (installed < pinned).then(|| pinned.to_string())
 }
 
 /// Global bin directories package managers use outside the usual PATH entries, tried last: an npm prefix set up to avoid
@@ -650,6 +683,26 @@ mod tests {
     assert_eq!(r.install("mine"), Some(AgentInstall { command: None, docs: Some("https://x".into()) }));
     assert_eq!(r.install("grok").unwrap().command.unwrap(), "curl -fsSL https://x.ai/cli/install.sh | bash");
     assert!(r.list()[0].available.is_none(), "not probed yet");
+  }
+
+  #[tokio::test]
+  async fn an_adapter_older_than_the_pinned_install_offers_that_version() {
+    let defs = builtin_agents();
+    let claude = defs.iter().find(|d| d.id == "claude").unwrap();
+    let package = &claude.adapter.as_ref().unwrap().package;
+    let pinned = pinned_version(claude.install.as_ref().unwrap().posix.as_deref().unwrap(), package).expect("claude pins its adapter");
+    assert!(pinned_version("npm install -g @deepseek-ai/dsh", "@deepseek-ai/dsh").is_none(), "an unpinned line offers nothing");
+    // A global npm layout read through a .cmd shim (the lookup branches on the extension, not the platform)
+    let t = tempfile::tempdir().unwrap();
+    let dir = t.path().join("node_modules").join(package);
+    std::fs::create_dir_all(&dir).unwrap();
+    let shim = t.path().join("claude-agent-acp.cmd");
+    std::fs::write(&shim, "").unwrap();
+    let bin = shim.to_str().unwrap();
+    for (installed, offered) in [("0.1.0", Some(pinned.to_string())), (pinned.to_string().as_str(), None), ("99.0.0", None)] {
+      std::fs::write(dir.join("package.json"), format!(r#"{{"name":"{package}","version":"{installed}"}}"#)).unwrap();
+      assert_eq!(update_for(claude, bin).await, offered, "installed {installed}");
+    }
   }
 
   #[test]

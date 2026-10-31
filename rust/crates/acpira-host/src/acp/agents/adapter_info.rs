@@ -156,6 +156,12 @@ pub async fn missing_native(engine_dir: &Path, layout: NativeLayout, platform: &
   Some(c.package)
 }
 
+/// The installed adapter package's version, found from the resolved executable as `read_adapter_info` does
+pub async fn installed_version(binary: &str, package: &str) -> Option<String> {
+  let root = adapter_root(binary, package).await?;
+  read_package(&root, package).await.flatten()
+}
+
 pub async fn read_adapter_info(binary: &str, def: &AgentDef) -> Option<AdapterInfo> {
   let spec = def.adapter.as_ref()?;
   let mut out = AdapterInfo::default();
