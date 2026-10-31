@@ -15,6 +15,7 @@ use serde_json::Value;
 use acpira_shared::storage::{StorageEntry, StorageResidue, StorageResidueKind, StorageSegment, StorageSegmentKind, StorageView};
 use acpira_shared::transcript::SessionSummary;
 
+use super::blob_pool;
 use super::record::SessionRecord;
 use super::transcript_store::is_session_id;
 use crate::acp::agents::registry::SELF_AGENT_ID;
@@ -181,6 +182,7 @@ pub fn scan(input: &ScanInput) -> Scan {
   let sessions_dir = &input.sessions_dir;
   let mut has_record: HashSet<String> = HashSet::new();
   let mut unreadable: HashSet<String> = HashSet::new();
+  let mut seen: HashSet<(u64, u64)> = HashSet::new();
   let entries = names(sessions_dir);
   for (name, path) in &entries {
     let Some(id) = name.strip_suffix(".json").filter(|id| is_session_id(id)) else { continue };
@@ -215,6 +217,10 @@ pub fn scan(input: &ScanInput) -> Scan {
       // Part of that record's leftover already
       continue;
     }
+    if name == blob_pool::POOL_DIR {
+      // Links to the sessions' own blobs, counted with them; what only the index holds is counted below
+      continue;
+    }
     if !is_dir(path) || !is_session_id(name) {
       // index.json, prefs.json, categories.json, trash/, temp and lock files
       t.other("sessions", sessions_dir, du(path).bytes);
@@ -226,7 +232,13 @@ pub fn scan(input: &ScanInput) -> Scan {
       let mut kept = 0;
       let (mut orphan, mut targets) = (Du::default(), vec![]);
       for (blob, file) in names(path) {
-        let d = du(&file);
+        let mut d = du(&file);
+        // A blob shared with other sessions (`blob_pool`) takes its bytes once
+        if let Some(key) = std::fs::symlink_metadata(&file).ok().as_ref().and_then(blob_pool::file_key)
+          && !seen.insert(key)
+        {
+          d.bytes = 0;
+        }
         // Any mention keeps it: a blob is named by its content hash, so its name in the record is the reference
         if is_dir(&file) || !older(&d, now, FRESH) || text.contains(blob.as_str()) {
           kept += d.bytes;
@@ -240,6 +252,9 @@ pub fn scan(input: &ScanInput) -> Scan {
       if !targets.is_empty() {
         residue.push(leftover(StorageResidueKind::Blob, path, orphan, targets, None));
       }
+    } else if listed.contains(name.as_str()) {
+      // A listed session with no record here: a host's, whose blobs were fetched to show it (`session_manager/hosts.rs`)
+      t.seg(StorageSegmentKind::Attachments, du(path).bytes, 0);
     } else {
       let d = du(path);
       if older(&d, now, FRESH) {

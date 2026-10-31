@@ -86,7 +86,12 @@ impl SessionManager {
     let input = ScanInput {
       root: self.data_root(),
       sessions_dir: self.deps.store.dir().to_path_buf(),
-      sessions: self.state.lock().index.clone(),
+      // Host sessions too: their blobs fetched to show them are not leftovers
+      sessions: {
+        let mut all = self.state.lock().index.clone();
+        all.extend(self.host_summaries(&all));
+        all
+      },
       now: SystemTime::now(),
     };
     let fallback = (input.root.clone(), input.sessions_dir.clone());
@@ -96,7 +101,7 @@ impl SessionManager {
   }
 
   /// Why this session cannot be picked right now
-  fn storage_block(&self, id: &str, pinned: bool) -> Option<StorageBlock> {
+  pub(super) fn storage_block(&self, id: &str, pinned: bool) -> Option<StorageBlock> {
     if self.live(id).is_some_and(|s| s.is_running()) {
       Some(StorageBlock::Running)
     } else if self.mirror_of(id).is_some() || self.leases.held_elsewhere(id) {

@@ -185,7 +185,7 @@ fn numbered_hit(id: &str, e: &Entry, terms: &[String]) -> Option<(u32, SessionHi
   for ((message, folded), turn) in e.messages.iter().zip(&e.folded).zip(&e.turns) {
     let first = terms.iter().filter_map(|t| folded.find(t.as_str()).map(|pos| (pos, t))).min_by_key(|(pos, _)| *pos);
     if let Some((pos, term)) = first {
-      return Some((*turn, SessionHit { id: id.to_owned(), snippet: snippet(message, folded, pos, term) }));
+      return Some((*turn, SessionHit { id: id.to_owned(), snippet: snippet(message, folded, pos, term), summary: None }));
     }
   }
   None
@@ -270,6 +270,8 @@ fn refresh(cache: &mut HashMap<String, Entry>, dir: &Path) {
       continue;
     }
     let Ok(raw) = std::fs::read(e.path()) else { continue };
+    // A packed record is searched whole (`pack`)
+    let raw = super::pack::expand_raw(dir, raw);
     cache.insert(id.to_owned(), entry_of(stamp, &raw));
   }
   cache.retain(|id, _| present.contains(id));

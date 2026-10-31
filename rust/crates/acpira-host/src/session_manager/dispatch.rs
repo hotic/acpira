@@ -76,14 +76,25 @@ impl SessionManager {
   /// holds them. A ChatGPT mirror's view carries its sources whole and never asks
   /// A source the Storage tab slimmed away (`omitted` in the record) has no texts left: none is sent, so the page copies
   /// what it shows
-  pub fn diff_source(&self, session_id: &str, tool_call_id: &str, nth: usize, subagent: Option<&str>) -> Option<DiffSource> {
-    self.live(session_id).or_else(|| self.mirror_of(session_id))?.diff_source(tool_call_id, nth, subagent).filter(|s| !s.omitted)
+  /// A source whose texts the record keeps as blobs (`store::diff_texts`) is read back from them
+  pub async fn diff_source(&self, session_id: &str, tool_call_id: &str, nth: usize, subagent: Option<&str>) -> Option<DiffSource> {
+    let src = self.live(session_id).or_else(|| self.mirror_of(session_id))?.diff_source(tool_call_id, nth, subagent)?;
+    self.deps.store.resolve_diff(session_id, src).await.filter(|s| !s.omitted)
   }
 
   /// The files the session's own edits touched with their text before its first edit of each (`AcpSession::edit_bases`);
   /// empty for a session that is neither open here nor shown as another engine's copy
-  pub fn edit_bases(&self, session_id: &str) -> Vec<(String, Option<String>)> {
-    self.live(session_id).or_else(|| self.mirror_of(session_id)).map(|s| s.edit_bases()).unwrap_or_default()
+  pub async fn edit_bases(&self, session_id: &str) -> Vec<(String, Option<String>)> {
+    let Some(s) = self.live(session_id).or_else(|| self.mirror_of(session_id)) else { return vec![] };
+    let mut out = vec![];
+    for (path, src) in s.edit_bases() {
+      let base = match src {
+        Some(src) => self.deps.store.resolve_diff(session_id, src).await.filter(|s| !s.omitted).map(|s| s.old_text),
+        None => None,
+      };
+      out.push((path, base));
+    }
+    out
   }
 
   pub fn plan_document(&self, session_id: &str, plan_id: &str) -> Option<PlanDocumentBlock> {
@@ -184,12 +195,12 @@ impl SessionManager {
           s.resolve_permission(&block_id, &option_id);
         }
       }
-      W::Answer { session_id, block_id, answers, skip, client_id } => {
+      W::Answer { session_id, block_id, answers, images, skip, client_id } => {
         if valid(&session_id)
           && let Some(s) = self.live(&session_id)
           && s.claim_client_id(client_id.as_deref())
         {
-          s.answer_questions(&block_id, &answers, skip == Some(true));
+          s.answer_questions_with(&block_id, &answers, images.as_ref(), skip == Some(true));
         }
       }
       W::PluginCard { session_id, card, op } => {
@@ -342,15 +353,15 @@ impl SessionManager {
         self.import_native_session(v, &agent, &session_id, &cwd, title.as_deref(), updated_at.as_deref()).await
       }
       W::SelectAccount { session_id, id } => self.select_account(v, &id, session_id.as_deref()).await?,
-      W::AddAccount { agent, via } => self.add_account(v, &agent, via).await?,
-      W::RemoveAccount { id } => {
+      W::AddAccount { agent, via, .. } => self.add_account(v, &agent, via).await?,
+      W::RemoveAccount { id, .. } => {
         if let Some(a) = &self.deps.accounts {
           a.remove(&id).await?;
         }
         self.pool.invalidate(None);
       }
-      W::UnlockCredentials { agent } => self.unlock_credentials(&agent).await?,
-      W::RefreshQuota { agent } => {
+      W::UnlockCredentials { agent, .. } => self.unlock_credentials(&agent).await?,
+      W::RefreshQuota { agent, .. } => {
         let a = self.deps.accounts.clone();
         let l = self.deps.local_accounts.clone();
         let (ag1, ag2) = (agent.clone(), agent);

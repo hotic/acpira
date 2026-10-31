@@ -24,6 +24,7 @@ use acpira_shared::remote::{ConnectionState, ConnectionView, parse_remote_folder
 use super::client::RemoteClient;
 use super::connections::Connections;
 use super::wire::{self, WireError};
+use crate::store::diff_texts;
 use crate::store::file_lock::{with_file_lock, write_atomic};
 use crate::store::record::SessionRecord;
 use crate::store::transcript_store::{ChangeHook, CopyStamp, LogFn, RecordChange, TranscriptStore, blob_name, is_session_id};
@@ -91,16 +92,19 @@ pub(crate) async fn serve(op: &str, a: &Value, stdin: Option<mpsc::UnboundedRece
       let written = store.put_copy(&record).await.map_err(failed)?;
       Ok(json!({ "written": written, "blobs": store.blob_names(&record.id).await }))
     }
-    // One blob of a session, named by its content as every blob is: a name that does not match the bytes is refused
+    // One blob of a session, named by its content as every blob is: a name that does not match the bytes is refused. A
+    // diff text blob is named by the text it holds compressed (`store::diff_texts`)
     "storeBlob" => {
       let id = id_arg()?;
       let name = a.get("name").and_then(Value::as_str).unwrap_or("");
       let bytes = body(stdin).await?;
       let ext = name.rsplit_once('.').map(|(_, e)| format!(".{e}")).unwrap_or_default();
-      if blob_name(&ext, &bytes) != name {
+      let fits = blob_name(&ext, &bytes) == name
+        || (diff_texts::is_text_blob(name) && diff_texts::decode(&bytes).is_ok_and(|t| diff_texts::name_of(&t) == name));
+      if !fits {
         return Err(WireError::new("invalid", format!("{name} does not match its bytes")));
       }
-      store.save_blob(&id, &ext, &bytes).await.map_err(failed)?;
+      store.put_blob(&id, name, bytes).await.map_err(failed)?;
       Ok(json!({}))
     }
     // A session deleted where it ran: its copy and blobs go, from the trash too
@@ -110,6 +114,21 @@ pub(crate) async fn serve(op: &str, a: &Value, stdin: Option<mpsc::UnboundedRece
     }
     other => Err(WireError::new("unknownOp", format!("unknown operation \"{other}\""))),
   }
+}
+
+/// One blob of a session in this host's store (`storeBlobGet`): the store confines both names to its sessions directory
+pub(crate) async fn read_blob(a: &Value) -> Result<Vec<u8>, WireError> {
+  let root = a.get("home").and_then(Value::as_str).map(PathBuf::from).unwrap_or_else(crate::store::data_dir::acpira_home);
+  let store = TranscriptStore::new(root.join("sessions"), Arc::new(|_: &str| {}), None);
+  let id = a.get("id").and_then(Value::as_str).unwrap_or("");
+  let name = a.get("name").and_then(Value::as_str).unwrap_or("");
+  let Some(path) = store.blob_path(id, name) else { return Err(WireError::new("invalid", format!("\"{id}/{name}\" is not a blob"))) };
+  match tokio::fs::metadata(&path).await {
+    Ok(m) if m.len() as usize > MAX_BODY => return Err(WireError::new("invalid", format!("{name} is too large"))),
+    Ok(_) => {}
+    Err(e) => return Err(WireError::io(&e, name)),
+  }
+  store.read_blob(id, name).await.map_err(|e| WireError::new("io", format!("{e:#}")))
 }
 
 /// Told about deletions on a host (`alias`): a session id as it is deleted here, so the host's list drops it at once;

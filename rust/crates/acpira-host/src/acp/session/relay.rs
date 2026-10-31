@@ -654,7 +654,7 @@ mod tests {
     let mut lines: Vec<DiffLine> = (0..add).map(|_| line(DiffKind::Add)).collect();
     lines.extend((0..del).map(|_| line(DiffKind::Del)));
     lines.push(line(DiffKind::Ctx));
-    ToolContent::Diff { lines, source: Some(DiffSource { path: path.into(), old_text: String::new(), new_text: String::new(), omitted: false }) }
+    ToolContent::Diff { lines, source: Some(DiffSource::whole(path.into(), String::new(), String::new())) }
   }
 
   #[test]

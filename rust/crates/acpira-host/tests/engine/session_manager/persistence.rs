@@ -234,3 +234,65 @@ async fn a_copy_another_machine_left_here_is_read_only() {
   until(|| m.active().is_some_and(|a| a["id"] == "s-own" && a["status"] != "readonly"), 5000).await;
   m.dispose().await;
 }
+
+// The storage upkeep on a month-old record: its blob is shared with another session's copy, the record packs into a
+// stub, and opening it gives back every turn and the whole diff texts; the first write after that keeps the big texts
+// as blobs (one per distinct text), which a fresh engine reads back on demand
+#[tokio::test(flavor = "multi_thread")]
+async fn upkeep_packs_a_cold_record_and_diff_texts_come_back_from_blobs() {
+  use std::time::{Duration, SystemTime};
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let (a, b, c) = ("a\n".repeat(20_000), "b\n".repeat(20_000), "c\n".repeat(20_000));
+  let edit = |id: &str, old: &str, new: &str| {
+    json!({ "type": "tool_call", "id": id, "kind": "edit", "verb": "Edit", "status": "completed",
+      "content": { "type": "diff", "lines": [{ "kind": "add", "text": "x" }], "source": { "path": "/w/a.ts", "oldText": old, "newText": new } } })
+  };
+  let record = json!({ "id": "cold", "agent": "fake", "cwd": "/w", "title": "cold", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z",
+    "turns": [
+      { "role": "user", "text": "edit it", "attachments": [{ "kind": "image", "blob": "abcdabcdabcdabcd.png", "mimeType": "image/png" }] },
+      { "role": "agent", "blocks": [edit("t1", &a, &b), edit("t2", &b, &c)] },
+    ],
+    "controls": { "modes": [], "options": [] }, "commands": [] });
+  let path = dir.path().join("cold.json");
+  std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+  for s in ["cold", "other"] {
+    std::fs::create_dir_all(dir.path().join(s)).unwrap();
+    std::fs::write(dir.path().join(s).join("abcdabcdabcdabcd.png"), b"the same image").unwrap();
+  }
+  let month_ago = SystemTime::now() - Duration::from_secs(40 * 24 * 3600);
+  std::fs::File::options().write(true).open(&path).unwrap().set_modified(month_ago).unwrap();
+
+  let m = Mgr::new(dir.path(), Opts::fake(&fake));
+  m.init().await;
+  let report = m.m.run_upkeep(SystemTime::now()).await;
+  assert_eq!((report.packed_sessions, report.shared), (1, 14), "{report:?}");
+  assert!(std::fs::metadata(&path).unwrap().len() < 2_000, "a stub is left");
+  assert!(same_file::is_same_file(dir.path().join("cold/abcdabcdabcdabcd.png"), dir.path().join("other/abcdabcdabcdabcd.png")).unwrap());
+
+  m.handle(json!({ "type": "selectSession", "id": "cold" })).await;
+  until(|| m.active().is_some_and(|v| v["id"] == "cold" && turns_in(&v) == 2), 5000).await;
+  let src = m.m.diff_source("cold", "t2", 0, None).await.unwrap();
+  assert_eq!((src.old_text.len(), src.new_text == c), (b.len(), true));
+  // A write of the reopened session: the whole record again, its diff texts as three blobs (b is shared by both edits)
+  m.handle(json!({ "type": "renameSession", "id": "cold", "title": "renamed" })).await;
+  until(|| std::fs::read_to_string(&path).is_ok_and(|t| t.contains("renamed") && t.contains("oldBlob")), 5000).await;
+  let raw = std::fs::read_to_string(&path).unwrap();
+  assert!(raw.len() < 10_000 && !raw.contains("acpira-packed:"), "{} bytes", raw.len());
+  let texts = std::fs::read_dir(dir.path().join("cold")).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().ends_with(".zst")).count();
+  // Plus the archive, kept (stale and unused) until the session is packed again
+  assert_eq!(texts, 4);
+  assert!(dir.path().join("cold/record.json.zst").exists());
+  m.dispose().await;
+
+  // A fresh engine reads the texts back from the blobs
+  let m = Mgr::new(dir.path(), Opts::fake(&fake));
+  m.init().await;
+  m.handle(json!({ "type": "selectSession", "id": "cold" })).await;
+  until(|| m.active().is_some_and(|v| v["id"] == "cold" && turns_in(&v) == 2), 5000).await;
+  let src = m.m.diff_source("cold", "t1", 0, None).await.unwrap();
+  assert!(src.old_text == a && src.new_text == b && !src.omitted);
+  let bases = m.m.edit_bases("cold").await;
+  assert_eq!(bases, vec![("/w/a.ts".to_owned(), Some(a.clone()))]);
+  m.dispose().await;
+}

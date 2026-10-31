@@ -16,8 +16,11 @@ use sha2::{Digest, Sha256};
 use tokio::fs;
 
 use acpira_shared::model_shapes::{ModelShapes, session_model};
-use acpira_shared::transcript::{AgentId, CategoryOp, SessionCategories, SessionControls, SessionModel, SessionSummary, TurnSettings};
+use acpira_shared::transcript::{AgentId, CategoryOp, DiffSource, collect_text_blobs, SessionCategories, SessionControls, SessionModel, SessionSummary, TurnSettings};
 
+use super::blob_pool;
+use super::diff_texts;
+use super::pack;
 use super::file_lock::{with_file_lock, write_atomic};
 use super::record::{RecordSource, SessionRecord};
 use crate::acp::agents::registry::SELF_AGENT_ID;
@@ -35,7 +38,7 @@ const SAVE_MAX_WAIT: Duration = Duration::from_millis(2000);
 /// Session ids name files and directories under the store root: plain tokens only (the rule session links parse by)
 pub use acpira_shared::session_links::is_session_id;
 
-fn is_blob_name(name: &str) -> bool {
+pub(crate) fn is_blob_name(name: &str) -> bool {
   let Some((stem, ext)) = name.rsplit_once('.') else { return false };
   !stem.is_empty()
     && !ext.is_empty()
@@ -155,6 +158,8 @@ pub struct TranscriptStore {
   agent_home: parking_lot::RwLock<Option<PathBuf>>,
   /// Told of every record written, trashed, restored or removed (`remote::host_store` copies host folders' records)
   on_change: parking_lot::RwLock<Option<ChangeHook>>,
+  /// Per session, the diff text blobs (`diff_texts`) its folder is known to hold, so a record write hands back only new ones
+  texts: parking_lot::Mutex<HashMap<String, Arc<parking_lot::Mutex<HashSet<String>>>>>,
   me: Weak<TranscriptStore>,
 }
 
@@ -231,6 +236,7 @@ impl TranscriptStore {
       write_guard: Default::default(),
       agent_home: Default::default(),
       on_change: Default::default(),
+      texts: Default::default(),
       me: me.clone(),
     })
   }
@@ -538,7 +544,14 @@ impl TranscriptStore {
       Err(e) => return Err(RecordLoadError::Unreadable { reason: e.to_string() }),
     };
     match serde_json::from_slice::<SessionRecord>(&raw) {
-      Ok(mut r) if r.id == id && is_session_id(&r.id) => {
+      Ok(r) if r.id == id && is_session_id(&r.id) => {
+        // A packed record's stub (`pack`): its turns come back from the archive beside it
+        let mut r = if r.turns.iter().any(pack::is_placeholder) {
+          let archive = fs::read(self.dir.join(id).join(pack::PACKED_FILE)).await.ok();
+          pack::splice(r, archive.as_deref()).map_err(|reason| RecordLoadError::Corrupt { reason })?
+        } else {
+          r
+        };
         self.state.lock().known.insert(id.to_owned());
         r.fold_turn_usage();
         Ok(r)
@@ -686,7 +699,16 @@ impl TranscriptStore {
       (self.log)(&format!("session {id}: deleted by another window, not written back"));
       return Ok(());
     }
-    let bytes = source.record_json();
+    // Big diff texts go to the session's blob folder first, so the record never names a blob that is not there
+    let known = self.texts.lock().entry(id.clone()).or_default().clone();
+    let (bytes, texts) = collect_text_blobs(diff_texts::sink(known.clone()), || source.record_json());
+    if !texts.is_empty() {
+      fs::create_dir_all(self.dir.join(&id)).await?;
+      let dir = confined(&self.dir, &id).await.ok_or_else(|| anyhow!("session {id}: blob folder outside the store"))?;
+      let pool = self.dir.join(blob_pool::POOL_DIR);
+      let texts = tokio::task::spawn_blocking(move || diff_texts::store(&pool, &dir, &texts).map(|_| texts)).await??;
+      known.lock().extend(texts.into_iter().map(|(name, _)| name));
+    }
     write_atomic(&path, &bytes, None).await?;
     self.state.lock().known.insert(id.clone());
     if self.on_change.read().is_some() {
@@ -703,6 +725,7 @@ impl TranscriptStore {
     self.state.lock().pending.remove(id);
     self.settle_inflight(id).await;
     self.state.lock().known.remove(id);
+    self.texts.lock().remove(id);
     let mut log = None;
     let mut cwd = String::new();
     let hooked = self.on_change.read().is_some();
@@ -866,9 +889,35 @@ impl TranscriptStore {
     let name = blob_name(ext, bytes);
     fs::create_dir_all(self.dir.join(session_id)).await?;
     let dir = confined(&self.dir, session_id).await.ok_or_else(illegal)?;
-    let path = dir.join(&name);
-    fs::write(&path, bytes).await?;
+    // Shared with every session holding the same content (`blob_pool`); a file already there is never rewritten
+    let (pool, owned, file) = (self.dir.join(blob_pool::POOL_DIR), bytes.to_vec(), name.clone());
+    let path = tokio::task::spawn_blocking(move || blob_pool::place(&pool, &dir, &file, &owned)).await??;
     Ok((name, path))
+  }
+
+  /// Copy blob `name` of session `from` into session `to` under the same name (one file on disk, `blob_pool`)
+  pub async fn copy_blob(&self, from: &str, to: &str, name: &str) -> Result<()> {
+    let bytes = self.read_blob(from, name).await?;
+    self.put_blob(to, name, bytes).await
+  }
+
+  /// Store `bytes` as blob `name` of session `id`; the caller vouches that the name fits the content (`save_blob` names
+  /// by the bytes, a diff text blob by its text, `diff_texts::name_of`)
+  pub async fn put_blob(&self, id: &str, name: &str, bytes: Vec<u8>) -> Result<()> {
+    let illegal = || anyhow!(tp("host.blobIllegal", &[("path", &format!("{id}/{name}"))]));
+    if !is_session_id(id) || !is_blob_name(name) {
+      return Err(illegal());
+    }
+    fs::create_dir_all(self.dir.join(id)).await?;
+    let dir = confined(&self.dir, id).await.ok_or_else(illegal)?;
+    let (pool, file) = (self.dir.join(blob_pool::POOL_DIR), name.to_owned());
+    tokio::task::spawn_blocking(move || blob_pool::place(&pool, &dir, &file, &bytes)).await??;
+    Ok(())
+  }
+
+  /// `src` with its texts read back from the session's blobs when the record keeps them there (`diff_texts`)
+  pub async fn resolve_diff(&self, session_id: &str, src: DiffSource) -> Option<DiffSource> {
+    diff_texts::resolve(src, |name| async move { self.read_blob(session_id, &name).await }).await
   }
 
   pub fn blob_path(&self, session_id: &str, name: &str) -> Option<PathBuf> {
