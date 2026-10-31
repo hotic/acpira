@@ -52,6 +52,48 @@ fn level(word: &str) -> Option<&'static str> {
 
 const EFFORT_ORDER: [&str; 9] = ["", "Thinking", "None", "Minimal", "Low", "Medium", "High", "XHigh", "Max"];
 
+fn parse_effort_tokens<'a>(tokens: &[&'a str]) -> (Vec<&'a str>, String) {
+  let mut w = tokens.to_vec();
+  let mut thinking = false;
+  let mut effort = String::new();
+  if w.last().is_some_and(|s| s.eq_ignore_ascii_case("thinking")) {
+    thinking = true;
+    w.pop();
+  }
+  let last = w.last().map(|s| s.to_lowercase()).unwrap_or_default();
+  if last == "high" && w.len() >= 2 && w[w.len() - 2].eq_ignore_ascii_case("extra") {
+    effort = "XHigh".into();
+    w.pop();
+    w.pop();
+  } else if let Some(l) = level(&last) {
+    effort = l.into();
+    w.pop();
+  } else if last == "no" && thinking {
+    effort = "None".into();
+    thinking = false;
+    w.pop();
+  }
+  if effort.is_empty() && thinking {
+    effort = "Thinking".into();
+  }
+  (w, effort)
+}
+
+fn strip_trailing_flags(t: &mut Vec<&str>, fast: &mut bool, long: &mut bool) {
+  loop {
+    let last = t.last().map(|s| s.to_lowercase()).unwrap_or_default();
+    if t.len() > 1 && last == "fast" {
+      *fast = true;
+      t.pop();
+    } else if t.len() > 1 && last == "1m" {
+      *long = true;
+      t.pop();
+    } else {
+      break;
+    }
+  }
+}
+
 pub fn parse_model_name(name: &str) -> ParsedModel {
   if let Some(f) = parse_fusion_name(name) {
     return f;
@@ -60,34 +102,43 @@ pub fn parse_model_name(name: &str) -> ParsedModel {
   if t.is_empty() {
     t.push("");
   }
-  let (mut fast, mut long, mut thinking, mut effort) = (false, false, false, String::new());
-  loop {
-    let last = t.last().map(|s| s.to_lowercase()).unwrap_or_default();
-    if t.len() > 1 && last == "fast" {
-      fast = true;
-      t.pop();
-    } else if t.len() > 1 && last == "1m" {
-      long = true;
-      t.pop();
-    } else {
-      break;
+  let (mut fast, mut long, mut effort) = (false, false, String::new());
+  strip_trailing_flags(&mut t, &mut fast, &mut long);
+  if t.len() > 1 && t.last().is_some_and(|s| s.ends_with(')')) {
+    let mut open = None;
+    for i in (1..t.len()).rev() {
+      if t[i].starts_with('(') {
+        open = Some(i);
+        break;
+      }
+    }
+    if let Some(idx) = open {
+      let mut group: Vec<&str> = t[idx..].to_vec();
+      if let Some(first) = group.first_mut() {
+        *first = first.strip_prefix('(').unwrap_or(first);
+      }
+      if let Some(last) = group.last_mut() {
+        *last = last.strip_suffix(')').unwrap_or(last);
+      }
+      let inner: Vec<&str> = group.into_iter().filter(|s| !s.is_empty()).collect();
+      if !inner.is_empty() && inner.iter().all(|w| !w.contains('(') && !w.contains(')')) {
+        let (rest, parsed_effort) = parse_effort_tokens(&inner);
+        if !parsed_effort.is_empty() && rest.is_empty() {
+          effort = parsed_effort;
+          t.truncate(idx);
+          strip_trailing_flags(&mut t, &mut fast, &mut long);
+        }
+      }
     }
   }
-  if t.len() > 1 && t.last().is_some_and(|s| s.eq_ignore_ascii_case("thinking")) {
-    thinking = true;
-    t.pop();
-  }
-  let last = t.last().map(|s| s.to_lowercase()).unwrap_or_default();
-  if let (true, Some(l)) = (t.len() > 1, level(&last)) {
-    effort = l.into();
-    t.pop();
-  } else if t.len() > 1 && last == "no" && thinking {
-    effort = "None".into();
-    thinking = false;
-    t.pop();
-  }
-  if effort.is_empty() && thinking {
-    effort = "Thinking".into();
+  if effort.is_empty() && t.len() > 1 {
+    let (rest, parsed_effort) = parse_effort_tokens(&t[1..]);
+    if !parsed_effort.is_empty() {
+      effort = parsed_effort;
+      t.truncate(1);
+      t.extend(rest);
+      strip_trailing_flags(&mut t, &mut fast, &mut long);
+    }
   }
   ParsedModel { family: t.join(" "), effort, fast, long, lead: None, sidekick: None }
 }
@@ -195,11 +246,16 @@ mod tests {
   use super::*;
 
   #[test]
-  fn parses_devin_names() {
+  fn parses_devin_and_parenthesized_names() {
     let p = parse_model_name("Claude Opus 4.6 High Thinking Fast 1M");
     assert_eq!((p.family.as_str(), p.effort.as_str(), p.fast, p.long), ("Claude Opus 4.6", "High", true, true));
     assert_eq!(parse_model_name("Claude Opus 4.6 Thinking").effort, "Thinking");
     assert_eq!(parse_model_name("GPT No Thinking").effort, "None");
+    assert_eq!(parse_model_name("Gemini 4 Argon (Medium)"), ParsedModel { family: "Gemini 4 Argon".into(), effort: "Medium".into(), ..Default::default() });
+    assert_eq!(parse_model_name("Gemini 3.8 Flash (High)"), ParsedModel { family: "Gemini 3.8 Flash".into(), effort: "High".into(), ..Default::default() });
+    assert_eq!(parse_model_name("Gemini 3.1 Pro (Low thinking)"), ParsedModel { family: "Gemini 3.1 Pro".into(), effort: "Low".into(), ..Default::default() });
+    assert_eq!(parse_model_name("[OAuth] GPT-5.1-Codex-Max (Extra High)"), ParsedModel { family: "[OAuth] GPT-5.1-Codex-Max".into(), effort: "XHigh".into(), ..Default::default() });
+    assert_eq!(parse_model_name("Claude Haiku 4.5 (latest)"), ParsedModel { family: "Claude Haiku 4.5 (latest)".into(), ..Default::default() });
     let f = parse_fusion_name("Fusion (GPT-6 Astra High Thinking Fast + GPT-5.6 Luna High Thinking Fast)").unwrap();
     assert_eq!(f.lead.as_deref(), Some("GPT-6 Astra"));
     assert_eq!(f.sidekick.as_deref(), Some("GPT-5.6 Luna High"));

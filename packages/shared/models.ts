@@ -60,24 +60,67 @@ const LEVEL: Record<string, string> = {
 };
 const EFFORT_ORDER = ['', 'Thinking', 'None', 'Minimal', 'Low', 'Medium', 'High', 'XHigh', 'Max'];
 
+// Extract trailing `[<effort> | Extra High | No] [Thinking]` from a token slice; returns the remaining tokens and the
+// resolved effort label ('' when nothing matched)
+function parseEffortTokens(tokens: string[]): { rest: string[]; effort: string } {
+  const w = [...tokens];
+  let thinking = false, effort = '';
+  if (w.length > 0 && w[w.length - 1]!.toLowerCase() === 'thinking') { thinking = true; w.pop(); }
+  const last = w[w.length - 1]?.toLowerCase();
+  if (last === 'high' && w.length >= 2 && w[w.length - 2]!.toLowerCase() === 'extra') { effort = 'XHigh'; w.pop(); w.pop(); }
+  else if (last && last in LEVEL) { effort = LEVEL[last]!; w.pop(); }
+  else if (last === 'no' && thinking) { effort = 'None'; thinking = false; w.pop(); }
+  // For names like "Claude Opus 4.6 Thinking" with no effort word, just a toggle, Thinking itself counts as a level
+  if (!effort && thinking) effort = 'Thinking';
+  return { rest: w, effort };
+}
+
 export function parseModelName(name: string): Omit<ModelVariant, 'id' | 'name'> & { family: string } {
   const fusion = parseFusionName(name);
   if (fusion) return fusion;
   const t = name.trim().split(/\s+/);
-  let fast = false, long = false, thinking = false, effort = '';
+  let fast = false, long = false, effort = '';
   // Strip suffixes first: Fast / 1M may both be present, in either order
-  for (;;) {
-    const last = t[t.length - 1]?.toLowerCase();
-    if (t.length > 1 && last === 'fast') { fast = true; t.pop(); }
-    else if (t.length > 1 && last === '1m') { long = true; t.pop(); }
-    else break;
+  const stripTrailingFlags = () => {
+    for (;;) {
+      const last = t[t.length - 1]?.toLowerCase();
+      if (t.length > 1 && last === 'fast') { fast = true; t.pop(); }
+      else if (t.length > 1 && last === '1m') { long = true; t.pop(); }
+      else break;
+    }
+  };
+  stripTrailingFlags();
+  // Parenthesized effort suffixes ("Gemini 4 Argon (Medium)", "[OAuth] GPT-5.1-Codex-Max (Extra High)",
+  // "Claude Opus 4.6 (Thinking)", "Gemini 3.1 Pro (Low thinking)"): only strip when the entire `(...)` group is a
+  // valid effort/thinking suffix, so non-effort tags like "(latest)" or "(recommended)" stay in the family name
+  if (t.length > 1 && t[t.length - 1]!.endsWith(')')) {
+    let open = -1;
+    for (let i = t.length - 1; i >= 1; i--) {
+      if (t[i]!.startsWith('(')) { open = i; break; }
+    }
+    if (open >= 1) {
+      const group = t.slice(open);
+      group[0] = group[0]!.slice(1);
+      group[group.length - 1] = group[group.length - 1]!.slice(0, -1);
+      const inner = group.filter(Boolean);
+      if (inner.length > 0 && inner.every(w => !w.includes('(') && !w.includes(')'))) {
+        const p = parseEffortTokens(inner);
+        if (p.effort && p.rest.length === 0) {
+          effort = p.effort;
+          t.splice(open);
+          stripTrailingFlags();
+        }
+      }
+    }
   }
-  if (t.length > 1 && t[t.length - 1]!.toLowerCase() === 'thinking') { thinking = true; t.pop(); }
-  const last = t[t.length - 1]!.toLowerCase();
-  if (t.length > 1 && last in LEVEL) { effort = LEVEL[last]!; t.pop(); }
-  else if (t.length > 1 && last === 'no' && thinking) { effort = 'None'; thinking = false; t.pop(); }
-  // For names like "Claude Opus 4.6 Thinking" with no effort word, just a toggle, Thinking itself counts as a level
-  if (!effort && thinking) effort = 'Thinking';
+  if (!effort && t.length > 1) {
+    const p = parseEffortTokens(t.slice(1));
+    if (p.effort) {
+      effort = p.effort;
+      t.splice(1, t.length - 1, ...p.rest);
+      stripTrailingFlags();
+    }
+  }
   return { family: t.join(' '), effort, fast, long };
 }
 
@@ -145,16 +188,38 @@ export function fusionLabel(v: ModelVariant): string {
 }
 
 // Preferences stored before the family had a source: its bare name, or the `Provider/Name` Pi and OpenCode used to show
-const legacyKeys = (f: ModelFamily): string[] => (f.source ? [f.name, `${f.source}/${f.name}`] : [f.name]);
+const nameLegacyKeys = (f: ModelFamily, name: string): string[] => {
+  const keys = f.source ? [name, `${f.source}/${name}`] : [name];
+  if (f.key.startsWith('[')) {
+    try {
+      const parsed: unknown = JSON.parse(f.key);
+      if (Array.isArray(parsed) && parsed.length === 2 && typeof parsed[0] === 'string') {
+        keys.push(JSON.stringify([parsed[0], name]));
+      }
+    } catch { /* ignore */ }
+  }
+  return keys;
+};
 
-export const familyHidden = (f: ModelFamily, hidden: string[]): boolean => hidden.includes(f.key) || legacyKeys(f).some(k => hidden.includes(k));
+const legacyKeys = (f: ModelFamily): string[] => nameLegacyKeys(f, f.name);
+
+const allVariantsHidden = (f: ModelFamily, hidden: string[]): boolean =>
+  f.variants.length > 1 && f.variants.every(v => nameLegacyKeys(f, v.name).some(k => hidden.includes(k)));
+
+export const familyHidden = (f: ModelFamily, hidden: string[]): boolean =>
+  hidden.includes(f.key) || legacyKeys(f).some(k => hidden.includes(k)) || allVariantsHidden(f, hidden);
 
 // Expand legacy name-only preferences before toggling one source, preserving its siblings.
 export function setFamilyVisible(options: SessionOption[], hidden: string[], key: string, show: boolean): string[] {
   const families = groupModels(options);
   const next = new Set(hidden);
   for (const f of families) {
-    for (const k of legacyKeys(f)) if (hidden.includes(k)) { next.delete(k); next.add(f.key); }
+    const wasHidden = familyHidden(f, hidden);
+    for (const k of legacyKeys(f)) if (hidden.includes(k)) next.delete(k);
+    if (f.variants.length > 1) {
+      for (const v of f.variants) for (const k of nameLegacyKeys(f, v.name)) next.delete(k);
+    }
+    if (wasHidden) next.add(f.key);
   }
   if (show) next.delete(key); else next.add(key);
   return [...next];

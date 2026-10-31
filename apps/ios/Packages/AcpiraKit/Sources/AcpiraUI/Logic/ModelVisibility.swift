@@ -7,20 +7,43 @@ import Foundation
 
 extension ModelCatalog {
   /// Preferences stored before the family had a source: its bare name, or the `Provider/Name` Pi and OpenCode used to show
-  static func legacyKeys(_ f: ModelFamily) -> [String] { f.source.map { [f.name, "\($0)/\(f.name)"] } ?? [f.name] }
+  static func nameLegacyKeys(_ f: ModelFamily, _ name: String) -> [String] {
+    var keys = f.source.map { [name, "\($0)/\(name)"] } ?? [name]
+    if f.key.hasPrefix("["),
+       let data = f.key.data(using: .utf8),
+       let parsed = (try? JSONSerialization.jsonObject(with: data)) as? [String],
+       parsed.count == 2 {
+      keys.append(jsonKey([parsed[0], name]))
+    }
+    return keys
+  }
+
+  static func legacyKeys(_ f: ModelFamily) -> [String] { nameLegacyKeys(f, f.name) }
+
+  private static func allVariantsHidden(_ f: ModelFamily, in hidden: [String]) -> Bool {
+    f.variants.count > 1 && f.variants.allSatisfy { v in nameLegacyKeys(f, v.name).contains(where: hidden.contains) }
+  }
 
   static func hidden(_ f: ModelFamily, in hidden: [String]) -> Bool {
-    hidden.contains(f.key) || legacyKeys(f).contains(where: hidden.contains)
+    hidden.contains(f.key) || legacyKeys(f).contains(where: hidden.contains) || allVariantsHidden(f, in: hidden)
   }
 
   /// One family switched; legacy name-only entries become the family's key first, so its siblings keep their state
   static func setVisible(_ options: [SessionOption], hidden: [String], key: String, show: Bool) -> [String] {
     var next = hidden
     for f in group(options) {
+      let wasHidden = Self.hidden(f, in: hidden)
       for k in legacyKeys(f) where hidden.contains(k) {
         next.removeAll { $0 == k }
-        if !next.contains(f.key) { next.append(f.key) }
       }
+      if f.variants.count > 1 {
+        for v in f.variants {
+          for k in nameLegacyKeys(f, v.name) {
+            next.removeAll { $0 == k }
+          }
+        }
+      }
+      if wasHidden && !next.contains(f.key) { next.append(f.key) }
     }
     next.removeAll { $0 == key }
     if !show { next.append(key) }
