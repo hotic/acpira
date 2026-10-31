@@ -121,6 +121,7 @@ impl SessionRecord {
       state: None,
       unread: None,
       question: None,
+      wake_at: None,
       completed_at: completed_at(self.turns.iter()),
       model: session_model(&self.controls),
     }

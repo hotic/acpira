@@ -295,7 +295,7 @@ pub fn apply_chatgpt_event(record: &ChatGptRecord, value: &Value, now: i64) -> R
             let (path, old, new) = (text(d, "path")?.to_owned(), text(d, "oldText")?.to_owned(), text(d, "newText")?.to_owned());
             b.content = Some(ToolContent::Diff {
               lines: diff_lines(&old, &new),
-              source: Some(DiffSource { path: path.clone(), old_text: old, new_text: new, omitted: false }),
+              source: Some(DiffSource::whole(path.clone(), old, new)),
             });
             b.locations = Some(vec![Location { path, line: None }]);
           }
@@ -374,6 +374,7 @@ pub fn chatgpt_view(r: &ChatGptRecord, now: i64) -> SessionView {
   };
   SessionView {
     id: r.id.clone(),
+    remote_auth: None,
     external: Some(ExternalSessionInfo {
       source: "chatgpt".into(),
       source_key: r.source_key.clone(),
@@ -433,6 +434,7 @@ pub fn chatgpt_summary(r: &ChatGptRecord, now: i64) -> SessionSummary {
     },
     unread: None,
     question: None,
+    wake_at: None,
     completed_at: completed_at(v.turns.iter()),
     model: None,
   }

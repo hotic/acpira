@@ -1,6 +1,9 @@
 pub mod agent_config;
+pub mod blob_pool;
 pub mod data_dir;
+pub mod diff_texts;
 pub mod file_lock;
+pub mod pack;
 pub mod record;
 pub mod session_digest;
 pub mod session_lease;

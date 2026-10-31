@@ -78,6 +78,23 @@ fn blob_slots<'a>(turns: &'a mut [Turn], out: &mut Vec<&'a mut Option<String>>) 
   }
 }
 
+/// Every diff source in `turns` whose texts the record keeps as blobs (`store::diff_texts`)
+fn diff_slots<'a>(turns: &'a mut [Turn], out: &mut Vec<&'a mut DiffSource>) {
+  for turn in turns {
+    let Turn::Agent(a) = turn else { continue };
+    for b in &mut a.blocks {
+      let AgentBlock::ToolCall(c) = b else { continue };
+      for item in c.content.iter_mut().chain(c.contents.iter_mut().flatten()) {
+        if let ToolContent::Diff { source: Some(src), .. } = item
+          && src.in_blobs()
+        {
+          out.push(src);
+        }
+      }
+    }
+  }
+}
+
 impl SessionManager {
   /// Fork from an agent turn: a fresh session whose transcript is the source's turns up to that reply. `agent` moves the
   /// fork onto another agent, which starts the way a new session of it does (default account, remembered settings)
@@ -175,6 +192,27 @@ impl SessionManager {
     // Every blob the copied turns point at (prompt / steer attachments and the images the agent produced, subagent
     // transcripts included) is re-saved under the fork's own blob dir; content-hash names keep the same file name
     let fork_id = record.id.clone();
+    // Diff texts keep their names (a hash of the text, not of the stored bytes); a source missing one loses both and
+    // reads as one without texts, never as an empty file
+    let mut diffs = Vec::new();
+    diff_slots(&mut record.turns, &mut diffs);
+    for node in record.subagents.iter_mut().flatten() {
+      diff_slots(&mut node.turns, &mut diffs);
+    }
+    let mut copied_texts: HashMap<String, bool> = HashMap::new();
+    for src in diffs {
+      let mut whole = true;
+      for name in [src.old_blob.clone(), src.new_blob.clone()].into_iter().flatten() {
+        if !copied_texts.contains_key(&name) {
+          let ok = self.deps.store.copy_blob(&source.id, &fork_id, &name).await;
+          copied_texts.insert(name.clone(), ok.map_err(|e| self.log(&format!("fork: diff text {name} not copied ({e})"))).is_ok());
+        }
+        whole &= copied_texts[&name];
+      }
+      if !whole {
+        (src.old_blob, src.new_blob) = (None, None);
+      }
+    }
     let mut slots = Vec::new();
     blob_slots(&mut record.turns, &mut slots);
     for node in record.subagents.iter_mut().flatten() {

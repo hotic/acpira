@@ -43,6 +43,8 @@ tokio.workspace = true
 toml.workspace = true
 ureq.workspace = true
 uuid.workspace = true
+# Diff texts kept out of records and cold records packed (store/diff_texts.rs, store/pack.rs)
+zstd.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 junction.workspace = true

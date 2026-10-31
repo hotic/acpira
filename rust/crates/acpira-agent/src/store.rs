@@ -151,7 +151,7 @@ impl Store {
       Some(prev) => merge(prev, update),
       None => false,
     };
-    if !merged && let Some(prev) = inner.pending.replace(update.clone()) {
+    if !merged && let Some(prev) = inner.pending.replace(clip_output(update.clone())) {
       Self::write(&mut inner, &self.path, &self.header, update_event(prev));
     }
   }
@@ -226,6 +226,45 @@ fn update_event(update: Value) -> Value {
   json!({ "type": "update", "update": update })
 }
 
+/// The most of a command's output the replay keeps, in bytes. Clients show only the start of it (the engine keeps the
+/// first 20 000 UTF-16 units of a row's output), and a runaway command once wrote 186 MB into one log line
+pub const REPLAY_OUTPUT_MAX: usize = 64 * 1024;
+
+/// Cut `s` to at most `max` bytes on a char boundary
+pub fn truncate_at_char(s: &mut String, max: usize) {
+  if s.len() > max {
+    let mut at = max;
+    while !s.is_char_boundary(at) {
+      at -= 1;
+    }
+    s.truncate(at);
+  }
+}
+
+/// An update's terminal output cut to `REPLAY_OUTPUT_MAX`
+fn clip_output(mut update: Value) -> Value {
+  if let Some(Value::String(data)) = update.pointer_mut("/_meta/terminal_output_delta/data") {
+    truncate_at_char(data, REPLAY_OUTPUT_MAX);
+  }
+  update
+}
+
+/// A log line written before the replay cap whose terminal output runs past it, cut down to the cap; None when the line
+/// needs no change (or is no update). Used by the engine's storage upkeep on logs nobody is writing to
+pub fn clip_logged_output(line: &str) -> Option<String> {
+  if line.len() <= REPLAY_OUTPUT_MAX || !line.starts_with(r#"{"type":"update""#) {
+    return None;
+  }
+  let mut ev: Value = serde_json::from_str(line).ok()?;
+  let data = ev.pointer_mut("/update/_meta/terminal_output_delta/data")?;
+  let Value::String(s) = data else { return None };
+  if s.len() <= REPLAY_OUTPUT_MAX {
+    return None;
+  }
+  truncate_at_char(s, REPLAY_OUTPUT_MAX);
+  Some(ev.to_string())
+}
+
 /// Fold `next` into `prev` when it only continues it: more text of the same chunk kind, or more of the same tool call.
 /// Tool call updates replace fields, except terminal output, which accumulates
 fn merge(prev: &mut Value, next: &Value) -> bool {
@@ -250,8 +289,12 @@ fn merge(prev: &mut Value, next: &Value) -> bool {
         prev[k] = v.clone();
       }
       if let Some(d) = delta {
-        let before = prev.pointer("/_meta/terminal_output_delta/data").and_then(Value::as_str).unwrap_or("").to_owned();
-        prev["_meta"]["terminal_output_delta"] = json!({ "data": before + d });
+        let mut data = prev.pointer("/_meta/terminal_output_delta/data").and_then(Value::as_str).unwrap_or("").to_owned();
+        if data.len() < REPLAY_OUTPUT_MAX {
+          data.push_str(d);
+          truncate_at_char(&mut data, REPLAY_OUTPUT_MAX);
+        }
+        prev["_meta"]["terminal_output_delta"] = json!({ "data": data });
       }
       for (k, v) in next.get("_meta").and_then(Value::as_object).into_iter().flatten() {
         if k != "terminal_output_delta" {
@@ -546,6 +589,30 @@ mod tests {
     assert_eq!(back.updates[1]["_meta"], json!({ "terminal_output_delta": { "data": "ab" }, "terminal_exit": { "exit_code": 1 } }));
     let summary = load(&path, true).unwrap();
     assert!(summary.items.is_empty() && summary.title.is_some());
+  }
+
+  #[test]
+  fn a_runaway_commands_output_is_capped_in_the_replay() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("s.jsonl");
+    let store = Store::new(path.clone(), "s", Path::new("/w"));
+    // Multi-byte text, so the cut has to find a char boundary
+    let chunk = "日志".repeat(10_000);
+    store.record_update(&json!({ "sessionUpdate": "tool_call", "toolCallId": "c", "title": "bash", "_meta": { "terminal_output_delta": { "data": chunk } } }));
+    for _ in 0..20 {
+      store.record_update(&json!({ "sessionUpdate": "tool_call_update", "toolCallId": "c", "_meta": { "terminal_output_delta": { "data": chunk } } }));
+    }
+    store.flush();
+    let back = load(&path, false).unwrap();
+    let data = back.updates[0]["_meta"]["terminal_output_delta"]["data"].as_str().unwrap();
+    assert!(data.len() <= REPLAY_OUTPUT_MAX && data.len() > REPLAY_OUTPUT_MAX - 4 && data.starts_with("日志"));
+    // A line an older build wrote is cut the same way; anything else is left alone
+    let old = json!({ "type": "update", "update": { "sessionUpdate": "tool_call_update", "_meta": { "terminal_output_delta": { "data": "x".repeat(REPLAY_OUTPUT_MAX * 2) } } }, "t": 1 }).to_string();
+    let cut: Value = serde_json::from_str(&clip_logged_output(&old).unwrap()).unwrap();
+    assert_eq!(cut["update"]["_meta"]["terminal_output_delta"]["data"].as_str().unwrap().len(), REPLAY_OUTPUT_MAX);
+    assert_eq!(cut["t"], 1);
+    assert!(clip_logged_output(&json!({ "type": "item", "item": { "content": "x".repeat(REPLAY_OUTPUT_MAX * 2) } }).to_string()).is_none());
+    assert!(clip_logged_output(r#"{"type":"update","update":{}}"#).is_none());
   }
 
   #[test]
