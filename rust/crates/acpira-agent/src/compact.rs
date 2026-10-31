@@ -5,7 +5,7 @@
 //! nine-section prompt (an `<analysis>` pass, then the `<summary>`), by the fast model when one is set (the session's
 //! model when it is not, or when the fast one fails), each thinking at its own level; a later compaction folds the
 //! previous summary into the new one. Behind the summary the user's own messages, the last to-do list and the files
-//! touched last (re-read from disk) are carried verbatim, so none of them depends on the writer. It runs on `/compact`, inside a
+//! worked on most (re-read from disk) are carried verbatim, so none of them depends on the writer. It runs on `/compact`, inside a
 //! turn when a call's usage reaches the threshold (the host's `compactAtTokens`, sent as `_meta` on every prompt, capped
 //! at the model's window less room for its output), and when the provider refuses a request as too long. The session
 //! log keeps every item: a `compaction` event records the summary and how many items the tail kept, a `prune` event
@@ -54,13 +54,15 @@ const TOOL_TEXT_BUDGET: usize = 200_000;
 /// of a message's start and end a carried copy keeps
 const CARRIED_TOKENS: u64 = 20_000;
 const CARRIED_EDGE_CHARS: usize = 4_000;
-/// Files restored behind a summary: the ones touched last, re-read from disk (Claude Code restores five, at most 5k
+/// Files restored behind a summary: the ones worked on most, re-read from disk (Claude Code restores five, at most 5k
 /// tokens each), within a total that also shrinks with the compaction threshold
 const RESTORE_FILES: usize = 5;
 const RESTORE_FILE_TOKENS: u64 = 5_000;
 const RESTORE_TOTAL_TOKENS: u64 = 25_000;
 /// A restored file gets at least this many tokens, or none is restored
 const RESTORE_MIN_TOKENS: u64 = 500;
+/// How many reads an edit or write of a file counts as when ranking the files to restore (`restore_paths`)
+const EDIT_WEIGHT: u32 = 3;
 
 /// About four bytes a token: OpenCode's estimate, used for the tail budget and the prune
 pub fn estimate(text: &str) -> u64 {
@@ -256,7 +258,7 @@ pub fn summary_item(summary: &str, carry: &Carry) -> Item {
   }
   if !carry.files.is_empty() {
     let files: Vec<String> = carry.files.iter().map(|f| format!("<file path=\"{}\">\n{}\n</file>", f.path, f.text.trim_end())).collect();
-    text.push_str(&format!("\n\nThe files touched last before this point, re-read from disk at the compaction (a long one is cut):\n{}", files.join("\n")));
+    text.push_str(&format!("\n\nThe files worked on most before this point, re-read from disk at the compaction (a long one is cut):\n{}", files.join("\n")));
   }
   if let Some(r) = &carry.request {
     text.push_str(&format!("\n\nThe request being worked on, in the user's own words:\n<request>\n{}\n</request>", r.trim()));
@@ -277,7 +279,7 @@ pub struct Carry {
   pub omitted: usize,
   /// The last to-do list the summarized part wrote, when the tail does not write a later one
   pub todo: Option<String>,
-  /// The files touched last in the summarized part, as they were on disk at the compaction
+  /// The files the summarized part worked on most (`restore_paths`), as they were on disk at the compaction
   pub files: Vec<RestoredFile>,
   /// The running turn's prompt, when the summary took it in (`request_text`)
   pub request: Option<String>,
@@ -378,20 +380,25 @@ fn last_todo(head: &[Item], tail: &[Item], before: Option<&str>) -> Option<Strin
   last(head).or_else(|| before.map(str::to_owned))
 }
 
-/// Files the tool calls of an item read, wrote or edited, absolute; only the calls `counts` lets through (by call id)
-fn touched_paths(item: &Item, cwd: &Path, counts: &dyn Fn(&str) -> bool) -> Vec<PathBuf> {
+/// Files the tool calls of an item read, wrote or edited, absolute
+fn touched_paths(item: &Item, cwd: &Path) -> Vec<PathBuf> {
   let Item::Assistant { tool_calls, .. } = item else { return vec![] };
-  let mut out = vec![];
-  for c in tool_calls.iter().filter(|c| [tools::READ, tools::WRITE, tools::EDIT].contains(&c.name.as_str()) && counts(&c.id)) {
-    let Ok(args) = serde_json::from_str::<Value>(&c.arguments) else { continue };
-    out.extend(tools::files_of(&c.name, &args, cwd));
-  }
-  out
+  tool_calls.iter().flat_map(|c| call_paths(c, cwd)).collect()
 }
 
-/// The files `head` touched last, newest first, then the ones restored before (`earlier`, as shown), leaving out the
-/// ones `tail` touches (the model still sees those). Only a call that succeeded counts: a read the user refused on its
-/// permission card (an error result) must not bring the file in now
+/// The files one call read, wrote or edited, absolute; none for another tool
+fn call_paths(c: &llm::ToolCall, cwd: &Path) -> Vec<PathBuf> {
+  if ![tools::READ, tools::WRITE, tools::EDIT].contains(&c.name.as_str()) {
+    return vec![];
+  }
+  serde_json::from_str::<Value>(&c.arguments).map(|args| tools::files_of(&c.name, &args, cwd)).unwrap_or_default()
+}
+
+/// The files `head` worked on most, then the ones restored before (`earlier`, as shown), leaving out the ones `tail`
+/// touches (the model still sees those). A file ranks by how often it was read, an edit or write counting as
+/// `EDIT_WEIGHT` reads, newest first among equals: the last five touched were a log and fixtures while the files read
+/// in every stretch of a long turn were left out and read again after each compaction. Only a call that succeeded
+/// counts: a read the user refused on its permission card (an error result) must not bring the file in now
 fn restore_paths(head: &[Item], tail: &[Item], earlier: &[String], cwd: &Path) -> Vec<PathBuf> {
   let succeeded: Vec<&str> = head
     .iter()
@@ -400,10 +407,25 @@ fn restore_paths(head: &[Item], tail: &[Item], earlier: &[String], cwd: &Path) -
       _ => None,
     })
     .collect();
-  let in_tail: Vec<PathBuf> = tail.iter().flat_map(|i| touched_paths(i, cwd, &|_| true)).collect();
+  let in_tail: Vec<PathBuf> = tail.iter().flat_map(|i| touched_paths(i, cwd)).collect();
+  // (path, score) in the order first met going back from the newest
+  let mut ranked: Vec<(PathBuf, u32)> = vec![];
+  for item in head.iter().rev() {
+    let Item::Assistant { tool_calls, .. } = item else { continue };
+    for c in tool_calls.iter().rev().filter(|c| succeeded.contains(&c.id.as_str())) {
+      let weight = if c.name == tools::READ { 1 } else { EDIT_WEIGHT };
+      for p in call_paths(c, cwd).into_iter().rev() {
+        match ranked.iter_mut().find(|(q, _)| *q == p) {
+          Some((_, score)) => *score += weight,
+          None => ranked.push((p, weight)),
+        }
+      }
+    }
+  }
+  // A stable sort keeps the newest first among equal scores
+  ranked.sort_by_key(|r| std::cmp::Reverse(r.1));
   let mut seen: Vec<PathBuf> = vec![];
-  let touched = head.iter().rev().flat_map(|i| touched_paths(i, cwd, &|id| succeeded.contains(&id)).into_iter().rev());
-  for p in touched.chain(earlier.iter().map(|e| tools::resolve(e, cwd))) {
+  for p in ranked.into_iter().map(|(p, _)| p).chain(earlier.iter().map(|e| tools::resolve(e, cwd))) {
     if !seen.contains(&p) && !in_tail.contains(&p) {
       seen.push(p);
     }
@@ -560,7 +582,9 @@ fn tool_text(item: &Item) -> usize {
 const INSTRUCTIONS: &str = "Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and the assistant's previous actions.
 This summary should be thorough in capturing technical details, code patterns, and architectural decisions that would be essential for continuing development work without losing context. It replaces the conversation: the work continues from it, by the same assistant, without the transcript above.
 
-Next to the summary, the continuing session will have: the system prompt and project instructions, unchanged; the user's messages, verbatim (the oldest may be left out); the last to-do list; up to five of the files touched last, re-read from disk (long ones cut); and the most recent turns as they were, which follow where the transcript above ends. Nothing else survives. What the summary leaves out cannot be looked for later, so it has to carry the understanding: what the user is trying to get done and why, what has been decided, learned, tried and ruled out, where the work stands, and what comes next.
+Next to the summary, the continuing session will have: the system prompt and project instructions, unchanged; the user's messages, verbatim (the oldest may be left out); the last to-do list; up to five of the files worked on most, re-read from disk (long ones cut); and the most recent turns as they were, which follow where the transcript above ends. Nothing else survives. What the summary leaves out cannot be looked for later, so it has to carry the understanding: what the user is trying to get done and why, what has been decided, learned, tried and ruled out, where the work stands, and what comes next.
+
+Write what was learned as conclusions the continuing session can act on without reading again: for each place a pending step will change, give path:line and the change. Do not send it back to re-read or re-confirm what the summary states; name something to read only when the next step needs content the summary cannot hold.
 
 Before providing your final summary, wrap your analysis in <analysis> tags to organize your thoughts and ensure you've covered all necessary points. In your analysis process:
 
@@ -589,6 +613,7 @@ Your summary should include the following sections:
 7. Pending Tasks: Outline any pending tasks that the assistant has explicitly been asked to work on.
 8. Current Work: Describe in detail precisely what was being worked on immediately before this summary request, paying special attention to the most recent messages from both user and assistant. Include file names and code snippets where applicable.
 9. Optional Next Step: List the next step related to the most recent work. IMPORTANT: ensure that this step is DIRECTLY in line with the user's most recent explicit requests, and the task being worked on immediately before this summary request. If the last task was concluded, then only list next steps if they are explicitly in line with the user's request. Do not start on tangential requests or really old requests that were already completed without confirming with the user first.
+   When the cause behind a pending task is established, the next step is to make that change and check it, not to read further.
    If there is a next step, include direct quotes from the most recent conversation showing exactly what task was being worked on and where it left off. This should be verbatim to ensure there's no drift in task interpretation.
 
 Here's an example of how your output should be structured:
@@ -645,8 +670,10 @@ Here's an example of how your output should be structured:
 Please provide your summary based on the conversation so far, following this structure and ensuring precision and thoroughness in your response. Respond with text only: an <analysis> block followed by a <summary> block.";
 
 /// In front of the instructions when the conversation continues from an earlier summary: one summary covers both, the
-/// user's side copied over and the work's account rewritten (Claude Code's `short_v2` arm says the same)
-const PREVIOUS_INTRO: &str = "The transcript continues from an earlier summary, given in <previous-summary> before it. Write one summary that covers both: copy the earlier summary's record of what the user asked for, decided, allowed and ruled out unchanged and add anything new; keep every detail of it that still matters (files, code, errors, decisions) rather than shortening it; rewrite only the account of the work where the transcript moved it on.";
+/// user's side copied over and the work's account merged. Merged, not appended: told to keep every earlier detail, a
+/// long read-only turn's summaries grew from 20k to 75k characters over eight compactions, mostly code excerpts the
+/// model then read again anyway
+const PREVIOUS_INTRO: &str = "The transcript continues from an earlier summary, given in <previous-summary> before it. Write one summary that covers both. Copy the earlier summary's record of what the user asked for, decided, allowed and ruled out unchanged, and add anything new. Merge the account of the work instead of appending to it: state each finding once, as its conclusion with path:line, and drop code excerpts and file walkthroughs whose conclusion is already stated or that the work has moved past. The merged summary keeps the same length limit as a first one.";
 const SYSTEM: &str = "You write the handoff summary of a coding session: the session's context is about to be replaced by your summary, and the work continues from it alone. You have no tools; respond with text only.";
 const OMITTED: &str = "[The earliest part of the conversation was left out of this excerpt; the previous summary covers it.]\n";
 
@@ -1189,6 +1216,17 @@ mod tests {
     assert!(files[1].text.len() <= 20_000 + 100 && files[1].text.ends_with("[6000 more lines not shown; read the file from line 4001 for the rest]"), "{}", &files[1].text[19_900..]);
     // Too small a budget restores nothing
     assert!(restore_files(&head, &[], &[], cwd, 400, &|p| std::fs::read(p).ok()).is_empty());
+    // A file read again and again ranks above one read once since
+    let ranked = vec![
+      touch("8", "read", json!({ "path": "a.rs" })),
+      done("8", false),
+      touch("9", "read", json!({ "path": "a.rs", "paths": ["a.rs:1-1"] })),
+      done("9", false),
+      touch("10", "read", json!({ "path": "c.rs" })),
+      done("10", false),
+    ];
+    let files = restore_files(&ranked, &[], &[], cwd, 25_000, &|p| std::fs::read(p).ok());
+    assert_eq!(files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["a.rs", "c.rs"]);
   }
 
   #[test]
