@@ -50,20 +50,18 @@ export function Permission({ block, onChoose, compact }: { block: PermissionBloc
       </div>
     );
   }
+  // Bleed the frame into the message inset so its icon stays on the tool rows' keyline.
   return (
-    <div className="flex min-w-0 flex-col gap-gap rounded-lg border border-conversation-line bg-bg-1 p-pad">
-      <Row dense lead={block.command ? <Terminal className="size-icon" strokeWidth={1.5} /> : undefined}>
-        <span className="font-medium">{title}</span>
-      </Row>
-      {details}
-      <div className="flex flex-wrap items-center justify-between gap-gap">
-        {menu}
-        {flat ? (
-          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-gap">{choices}</div>
-        ) : (
-          <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-gap">{choices}</div>
-        )}
+    <div className="-mx-pad flex min-w-0 flex-col gap-gap rounded-md bg-bg-1 px-pad py-gap shadow-[inset_0_0_0_1px_var(--conversation-line)]">
+      <div className="flex min-w-0 flex-wrap items-center gap-gap">
+        <Row dense className="min-w-0 flex-auto gap-gap-half" lead={block.command ? <Terminal className="size-icon" strokeWidth={1.5} /> : undefined}>
+          <span className="min-w-0 font-medium [overflow-wrap:anywhere]">{title}</span>
+        </Row>
+        {/* Long labels wrap; equal-choice requests keep their options below the details. */}
+        {!flat && <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-gap">{choices}{menu}</div>}
       </div>
+      {details}
+      {flat && <div className="flex min-w-0 max-w-full flex-wrap items-center gap-gap">{choices}</div>}
     </div>
   );
 }
