@@ -11,7 +11,7 @@ export interface AgentQuota { plan?: string; windows: QuotaWindow[]; error?: str
 export type QuotaSnap = { at: string; agents: Record<string, AgentQuota> };
 
 // `acpira quota --json` for the named agents (all three when none are named), without the logins' labels (an email
-// address for some). Claude's usage endpoint rate-limits hard (docs/dev/agent-quirks.md, Claude accounts), so callers
+// address for some). Claude's usage endpoint rate-limits hard (docs/dev/agent-quirks-claude.md, Claude accounts), so callers
 // read it per batch, not per call
 export function readQuota(agents: string[] = []): QuotaSnap {
   const at = new Date().toISOString();

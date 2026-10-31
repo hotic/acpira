@@ -50,6 +50,9 @@ export const MODELS: Record<string, ModelSpec> = {
   // Devin's SWE model; not in the catalogue, so priced as Kimi K3, a rough figure: on 2026-10-21 the gateway reported
   // cache reads on most of its calls (55% of the input) but under 1k input tokens on a fifth of them
   'swe-2': { id: 'swe-2', api: 'responses', catalog: 'kimi-k3', context: 262_144, output: 32_000 },
+  // Kimi K3.1 Pro on the gateway (listed by /v1/models on 2026-11-01); not in the catalogue yet, so priced as Kimi K3,
+  // and its cache numbers are unchecked
+  'kimi-k3.1-pro': { id: 'kimi-k3.1-pro', api: 'chat', catalog: 'kimi-k3', context: 262_144, output: 32_000 },
   // V4.1 Flash on the gateway (2026-10-18), for when there is no DeepSeek key; its cache numbers are unchecked
   'deepseek-v4.1-flash': { id: 'deepseek-v4.1-flash', api: 'chat', catalog: 'deepseek-flash', context: 1_000_000, output: 32_000 },
   // DeepSeek's own API (deepseek-flash is V4.1 Flash), whose usage reports real cache hits
@@ -66,7 +69,7 @@ export interface HarnessCtx {
   home: string;
   // The sidecar's data root (where the built-in agent reads providers.json)
   acpiraHome: string;
-  // A reasoning effort other than the harness's default, where its config sets one (Codex)
+  // A reasoning effort other than the harness's default, where its config sets one (Codex, the built-in agent)
   effort?: string;
 }
 
@@ -124,7 +127,7 @@ function acpira({ model, base, acpiraHome }: HarnessCtx, efforts?: string[], api
 }
 
 export const HARNESSES: Record<string, (c: HarnessCtx) => HarnessSetup> = {
-  acpira: c => acpira(c),
+  acpira: c => acpira(c, c.effort ? [c.effort] : undefined),
   // The built-in agent at a fixed effort: a model whose only level is this one starts there (the default is high)
   'acpira-high': c => acpira(c, ['high']),
   'acpira-medium': c => acpira(c, ['medium']),
