@@ -98,6 +98,33 @@ pub struct CompactionPolicy {
 
 pub type OnChange = Arc<dyn Fn(&str, bool) + Send + Sync>;
 
+/// What a session asks its manager while it runs. Each default is the inert answer: no automatic compaction, no plan
+/// auto-approval, no saved model shapes, no leases (tests)
+pub trait SessionPolicy: Send + Sync {
+  /// The automatic-compaction setting; None: no policy, nothing compacts on its own
+  fn compaction(&self) -> Option<CompactionPolicy> {
+    None
+  }
+  /// Whether `agent`'s plan mode answers tool permission requests itself (`acpira.planAutoApprove`)
+  fn plan_auto_approve(&self, _agent: &str) -> bool {
+    false
+  }
+  /// The model shapes saved for `agent`
+  fn model_shapes(&self, _agent: &str) -> Option<ModelShapes> {
+    None
+  }
+  /// Takes the session's cross-engine lease for a turn about to start (`store::session_lease`) and returns its pin; Err:
+  /// the notice to show, another engine is running one or the lease could not be taken, and this turn must not start.
+  /// None: no leases
+  fn claim(&self, _session: &str) -> Option<Result<u64, String>> {
+    None
+  }
+}
+
+/// Every answer the inert default
+pub struct InertPolicy;
+impl SessionPolicy for InertPolicy {}
+
 #[derive(Clone)]
 pub struct SessionDeps {
   pub registry: Arc<AgentRegistry>,
@@ -107,11 +134,9 @@ pub struct SessionDeps {
   pub blobs: Arc<TranscriptStore>,
   pub notify: Option<LogFn>,
   pub accounts: Option<Arc<dyn SessionAccountHooks>>,
-  pub compaction: Option<Arc<dyn Fn() -> CompactionPolicy + Send + Sync>>,
-  /// Whether an agent's plan mode answers tool permission requests itself (`acpira.planAutoApprove`); None: never
-  pub plan_auto_approve: Option<Arc<dyn Fn(&str) -> bool + Send + Sync>>,
+  /// Compaction, plan auto-approval, model shapes and leases, asked of the manager (`InertPolicy` in tests)
+  pub policy: Arc<dyn SessionPolicy>,
   pub pool: Option<Arc<AgentPool>>,
-  pub model_shapes: Option<Arc<dyn Fn(&str) -> Option<ModelShapes> + Send + Sync>>,
   /// Shared MCP servers for session/new, load and resume; None sends none
   pub shared_mcp: Option<crate::shared_config::McpProvider>,
   /// The plugins' hooks, chained after the project's for a session on this machine; None: no plugins (tests)
@@ -122,10 +147,6 @@ pub struct SessionDeps {
   pub plugin_runtime: Option<std::sync::Arc<crate::plugins::runtime::Runtimes>>,
   /// The `mcpServers` entry of Acpira's own MCP server (`host_mcp.rs`), sent with session/new, load and resume
   pub host_mcp: Option<crate::host_mcp::HostMcp>,
-  /// Takes the session's cross-engine lease for a turn about to start (`store::session_lease`) and returns its pin; Err:
-  /// the notice to show, another engine is running one or the lease could not be taken, and this turn must not start.
-  /// None: no leases (tests)
-  pub claim: Option<Arc<dyn Fn(&str) -> Result<u64, String> + Send + Sync>>,
   /// SSH hosts: a session whose folder is on one runs the built-in agent's project tools there (`remote.rs`). None:
   /// no remote folders (tests, shells without the feature)
   pub remote: Option<Arc<crate::remote::connections::Connections>>,
@@ -192,6 +213,8 @@ pub(crate) struct Core {
   /// Bumped with every process replacement: callbacks and answers of an older generation are ignored
   pub proc_gen: u64,
   pub task_peer: HashMap<String, String>,
+  /// Claude's pending `ScheduleWakeup` (`vendors::claude_wakeup`): the session reads as background work until it fires
+  pub wake: crate::acp::vendors::claude_wakeup::Wake,
   pub state: NormalizeState,
   pub tree: SubagentTree,
   pub status: SessionStatus,
@@ -371,6 +394,7 @@ impl AcpSession {
           lease_pin: None,
           elsewhere: false,
           task_peer: HashMap::new(),
+          wake: Default::default(),
           state,
           tree,
           status: SessionStatus::Starting,
@@ -533,9 +557,10 @@ impl AcpSession {
   /// The lease check before a turn starts, called with the core locked (the hook never locks the session back) so the
   /// pin and `running` change together. A pin a finished turn still holds (its final save is not through yet) carries over
   pub(crate) fn lease_turn(&self, c: &mut Core) -> Result<(), String> {
-    let Some(claim) = self.deps.claim.as_ref() else { return Ok(()) };
-    if c.lease_pin.is_none() {
-      c.lease_pin = Some(claim(&self.id)?);
+    if c.lease_pin.is_none()
+      && let Some(pin) = self.deps.policy.claim(&self.id)
+    {
+      c.lease_pin = Some(pin?);
     }
     Ok(())
   }

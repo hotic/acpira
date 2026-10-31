@@ -257,7 +257,7 @@ impl AcpSession {
   /// the built-in agent reads to compact inside the turn at that threshold (every other agent ignores it)
   fn prompt_params(&self, acp_id: Option<&str>, blocks: Vec<Value>) -> Value {
     let mut params = json!({ "sessionId": acp_id, "prompt": blocks });
-    if let Some(policy) = self.deps.compaction.as_ref().map(|f| f()) {
+    if let Some(policy) = self.deps.policy.compaction() {
       params["_meta"] = json!({ "acpira/compaction": { "auto": policy.auto, "atTokens": policy.at_tokens } });
     }
     params

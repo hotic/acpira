@@ -19,7 +19,14 @@ const ROOTS: usize = 4;
 #[derive(Default)]
 pub struct NodeFiles {
   // Most recently used last
-  cache: tokio::sync::Mutex<Vec<(String, Instant, Arc<Vec<FileHit>>)>>,
+  cache: tokio::sync::Mutex<Vec<Listing>>,
+}
+
+/// One folder's file list and when it was read
+struct Listing {
+  root: String,
+  at: Instant,
+  files: Arc<Vec<FileHit>>,
 }
 
 impl NodeFiles {
@@ -35,17 +42,17 @@ impl NodeFiles {
   async fn list(&self, root: &str) -> Arc<Vec<FileHit>> {
     // Concurrent searches while a listing is in flight share it (they queue on the mutex, then hit the cache)
     let mut cache = self.cache.lock().await;
-    let hit = cache.iter().position(|(r, _, _)| r == root);
+    let hit = cache.iter().position(|l| l.root == root);
     if let Some(i) = hit {
       let entry = cache.remove(i);
-      if entry.1.elapsed() < TTL {
-        let files = entry.2.clone();
+      if entry.at.elapsed() < TTL {
+        let files = entry.files.clone();
         cache.push(entry);
         return files;
       }
     }
     let files = Arc::new(walk(root).await);
-    cache.push((root.to_owned(), Instant::now(), files.clone()));
+    cache.push(Listing { root: root.to_owned(), at: Instant::now(), files: files.clone() });
     if cache.len() > ROOTS {
       cache.remove(0);
     }
@@ -111,7 +118,7 @@ mod tests {
     for r in &roots[2..] {
       files.search(r, "only").await;
     }
-    let cached: Vec<String> = files.cache.lock().await.iter().map(|(r, _, _)| r.clone()).collect();
+    let cached: Vec<String> = files.cache.lock().await.iter().map(|l| l.root.clone()).collect();
     assert_eq!(cached.len(), ROOTS);
     assert!(!cached.contains(&roots[0]), "the least recently used folder went first");
   }

@@ -224,6 +224,18 @@ pub struct RecordRef<'a> {
   pub rev: i64,
 }
 
+/// One round of a summoned thread, the latest one (`relay_latest`)
+#[derive(Debug, Clone)]
+pub struct RelayRound {
+  pub node: String,
+  pub harness: SubagentHarness,
+  /// The persona's name
+  pub persona: Option<String>,
+  /// The summoned agent's own session id
+  pub native: Option<String>,
+  pub state: SubagentState,
+}
+
 /// A summoned round's node (`relay_open`)
 pub struct RelayOpen {
   pub parent: Option<String>,

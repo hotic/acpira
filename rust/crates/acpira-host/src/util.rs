@@ -1,6 +1,12 @@
 //! Small process-wide helpers: clocks in the JS formats the stores and the webview expect, ids, error text
 
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// A lookup by key (an agent id, a setting key) handed in as a dependency
+pub type Lookup<T> = Arc<dyn Fn(&str) -> Option<T> + Send + Sync>;
+/// A hook run on an event, with nothing to hear
+pub type Hook = Arc<dyn Fn() + Send + Sync>;
 
 thread_local! {
   static MOCK_NOW: std::cell::Cell<Option<i64>> = const { std::cell::Cell::new(None) };

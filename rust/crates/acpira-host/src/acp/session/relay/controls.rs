@@ -178,7 +178,7 @@ pub(super) fn round_mode(persona: RelayMode, asked: Option<&str>, caller: impl F
 /// read-only one, a full-access one by id or `_meta.kind`, yolo included) — anything else, or no mode at all, is work
 pub(super) fn caller_access(c: &Core, caller: Option<&str>) -> RelayMode {
   if let Some(th) = caller {
-    return c.tree.relay_latest(th).map(|(_, h, ..)| h.mode).filter(|m| *m != RelayMode::Inherit).unwrap_or(RelayMode::Consult);
+    return c.tree.relay_latest(th).map(|r| r.harness.mode).filter(|m| *m != RelayMode::Inherit).unwrap_or(RelayMode::Consult);
   }
   let controls = &c.state.controls;
   if c.perms.auto_approve || crate::acp::session::controls::in_full_access(controls) {

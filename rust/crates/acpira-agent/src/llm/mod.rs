@@ -79,7 +79,7 @@ impl Item {
 }
 
 /// A base64 image a tool returned
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Image {
   pub mime: String,
   pub data: String,

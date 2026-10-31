@@ -55,7 +55,7 @@ pub(super) fn idle_thread(c: &Core, persona: &SubagentPersona, caller: Option<&s
     .filter(|o| o.owner.as_deref() == caller)
     .filter_map(|o| c.tree.relay_harness(&o.node).map(|(h, _)| h))
     .find(|h| h.persona.as_deref() == Some(persona.id.as_str()))?;
-  let idle = c.tree.relay_latest(&latest.thread).is_some_and(|(.., state)| state != SubagentState::Running);
+  let idle = c.tree.relay_latest(&latest.thread).is_some_and(|r| r.state != SubagentState::Running);
   let alive = c.relays.procs.get(&latest.thread).is_some_and(|rp| rp.proc.alive() && !rp.peer.is_empty());
   (latest.agent == persona.agent && idle && alive).then_some(latest.thread)
 }

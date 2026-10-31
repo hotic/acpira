@@ -16,7 +16,7 @@ use acpira_shared::transcript::StrMap;
 use crate::acp_session::{claimed, last_turn, prompt, turn_at, turn_count, view};
 use crate::fake_or_skip;
 use crate::subagents::Recorder;
-use crate::support::{Disposing, FakeAgent, Harness, expect_eq, expect_match, until};
+use crate::support::{Disposing, FakeAgent, Harness, TestPolicy, expect_eq, expect_match, until};
 
 fn fake_def(fake: &FakeAgent) -> (AgentDef, String) {
   let registry = AgentRegistry::new(&fake.setting(json!({})));
@@ -262,7 +262,10 @@ fn compaction_fixture(fake: &FakeAgent, agent: &str, auto: bool, extra_env: Valu
     e.extend(x);
   }
   let mut h = Harness::for_agent(fake, agent, json!({ "env": env }));
-  h.deps.compaction = Some(Arc::new(move || acpira_host::acp::session::CompactionPolicy { at_tokens: 300_000.0, auto: f.load(std::sync::atomic::Ordering::SeqCst) }));
+  h.deps.policy = Arc::new(TestPolicy {
+    compaction: Some(Arc::new(move || acpira_host::acp::session::CompactionPolicy { at_tokens: 300_000.0, auto: f.load(std::sync::atomic::Ordering::SeqCst) })),
+    ..TestPolicy::default()
+  });
   (h, flag)
 }
 
