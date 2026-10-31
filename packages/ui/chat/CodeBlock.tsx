@@ -6,6 +6,7 @@ import { diffCopyText, plainDiffRows, type CodeDiffRow } from './codeDiff';
 import { promoteHighlight, requestCodeHighlight, requestDiffHighlight } from './diffHighlight';
 import { codeLanguage, fenceLanguage, type CodeToken, type Language } from './codeLanguage';
 import { OutputCopy } from './OutputCopy';
+import { scrollbarRoom } from '../ui/scrollbarRoom';
 import { DiffSourceContext } from './fileLinks';
 import { t, useLocale } from '../i18n';
 
@@ -17,7 +18,7 @@ export const CODE_INSET = 'px-pad py-[calc(var(--pad)-2px)]';
 // outlined with the conversation ring so it reads as a card next to the composer and bubbles
 export function CodeSurface({ children, className, padded = true }: { children: ReactNode; className?: string; padded?: boolean }) {
   return (
-    <pre className={cn('m-0 overflow-auto bg-code font-mono text-mono text-fg-1', CODE_CARD, padded && CODE_INSET, className)}>
+    <pre ref={scrollbarRoom} className={cn('m-0 overflow-auto bg-code font-mono text-mono text-fg-1', CODE_CARD, padded && CODE_INSET, className)}>
       {children}
     </pre>
   );
@@ -307,7 +308,7 @@ export const DiffBlock = memo(function DiffBlock({ lines, source, path = '', loc
   return <div ref={root} className="group/code-output code-output diff-surface" data-language={language ?? 'plain'}>
     <OutputCopy text={copyText} label={source !== undefined && (!source.omitted || fetchable) ? t('code.copySource') : t('code.copyVisible')}
       read={fetchable ? readSource : undefined} />
-    <div data-whole={whole || undefined} className={cn('diff-scroll scroll-thin py-gap-half', whole ? 'overflow-clip hover:overflow-x-auto focus-within:overflow-x-auto data-scrolled-x:overflow-x-auto' : 'max-h-code-output overflow-auto')} tabIndex={0} role="region" aria-label={t('code.diff')}
+    <div ref={whole ? undefined : scrollbarRoom} data-whole={whole || undefined} className={cn('diff-scroll scroll-thin py-gap-half', whole ? 'overflow-clip hover:overflow-x-auto focus-within:overflow-x-auto data-scrolled-x:overflow-x-auto' : 'max-h-code-output overflow-auto')} tabIndex={0} role="region" aria-label={t('code.diff')}
       onWheel={e => { if (e.deltaX > 0) e.currentTarget.setAttribute('data-scrolled-x', ''); }}
       onScroll={e => e.currentTarget.toggleAttribute('data-scrolled-x', e.currentTarget.scrollLeft > 0)}>
       <div className="diff-table min-w-full w-max font-mono text-mono leading-code-output">

@@ -6,6 +6,7 @@ import type { ImageRef, TextBlock } from '@acpira/shared/transcript';
 import { STREAM_DURATION_MS, STREAM_MOTION, useSmoothText, useStreamMotion, type StreamMotion } from './streamMotion';
 import { applyGlyphRuns, createGlyphRuns, seedGlyphRuns, type GlyphRunState } from './glyphRuns';
 import { CodeBlock } from './CodeBlock';
+import { scrollbarRoom } from '../ui/scrollbarRoom';
 import { InlineFileCode, Link } from './Link';
 import { decodeLocalImageSrc, rewriteFileHrefs, sameImageSource } from './fileLinks';
 import { AgentImage } from './AgentImage';
@@ -186,7 +187,7 @@ const COMPONENTS: Components = {
   a: Link,
   img: MarkdownImage,
   table: ({ children }) => (
-    <div className="acp-table scroll-thin overflow-x-auto rounded-lg border border-conversation-line">
+    <div ref={scrollbarRoom} className="acp-table scroll-thin overflow-x-auto rounded-lg border border-conversation-line">
       <table>{children}</table>
     </div>
   ),

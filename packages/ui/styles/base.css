@@ -115,6 +115,8 @@
    so it drops the vertical bar and keeps only the wheel; a horizontal bar (terminal long lines) keeps its height.
    Must follow .scroll-thin (same specificity) and must not use scrollbar-width, which would disable the ::-webkit-scrollbar rules. */
 .acp-shell .scroll-fade::-webkit-scrollbar { width: 0; }
+/* A WebKit box that overflows sideways (ui/scrollbarRoom.ts): a bar there from the start counts in its parent's first layout */
+.acp-shell [data-hbar] { overflow-x: scroll; }
 
 /* The host injects unlayered code rules; this reset matches the selected LAB. */
 .acp-shell .diff-source { padding: 0 var(--pad) 0 0; border: 0; border-radius: 0; background: transparent; font: inherit; color: var(--fg-1); }
