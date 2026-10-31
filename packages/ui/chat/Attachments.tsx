@@ -148,11 +148,13 @@ function split<T extends Attachment | Draft>(items: T[], indices?: number[]) {
 // Composer images use individual thumbnails; other attachments keep compact file labels.
 // An inline editor's retained attachments (`before`) share this one wrapping row, so a newly pasted image lands beside them instead of on a second row.
 // Quotes from the transcript lead the row as one annotations chip; its corner button drops them all, the card edits or removes one
-export function DraftChips({ drafts, before, onRemove, onUpdate }: {
+export function DraftChips({ drafts, before, onRemove, onUpdate, className }: {
   drafts: Draft[];
   before?: ReactNode;
   onRemove?: (indices: number[]) => void;
   onUpdate?: (index: number, draft: Draft) => void;
+  // Replaces the composer's padding (a question card lines the row up with its own text column)
+  className?: string;
 }) {
   const [preview, setPreview] = useState<Preview | null>(null);
   const peek = useTextPeek();
@@ -160,7 +162,7 @@ export function DraftChips({ drafts, before, onRemove, onUpdate }: {
   if (!drafts.length && !before) return null;
   const { quotes, named } = split(drafts);
   return (
-    <div className="flex flex-wrap items-start gap-chip-gap px-pad pt-gap">
+    <div className={cn('flex flex-wrap items-start gap-chip-gap px-pad pt-gap', className)}>
       {before}
       {quotes.length > 0 && (
         <Removable label={t('quote.removeAll')} onRemove={onRemove ? () => onRemove(quotes.map(q => q.index)) : undefined}>

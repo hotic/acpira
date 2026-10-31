@@ -14,6 +14,9 @@ pub const MAX_OPTIONS: usize = 8;
 
 /// The `_meta` key that lets the user type an answer of their own beside the choices
 pub const ALLOW_OTHER: &str = "acpira/allowOther";
+/// The request's `_meta` key offering to take images with the answers, and the answer's `_meta` key carrying them by
+/// form property (`[{ mimeType, data }]`); the host's gate reads and writes both (`acp/session/gates.rs`)
+pub const ANSWER_IMAGES: &str = "acpira/answerImages";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Choice {
@@ -76,7 +79,8 @@ fn text(v: Option<&Value>) -> Option<String> {
   v.and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned)
 }
 
-pub fn prepare(args: &Value) -> Result<Action, String> {
+/// `images`: the turn's model takes images, so the card may offer to attach some to the answers
+pub fn prepare(args: &Value, images: bool) -> Result<Action, String> {
   let list = args.get("questions").and_then(Value::as_array).ok_or("Missing required array argument \"questions\"")?;
   if list.is_empty() || list.len() > MAX_QUESTIONS {
     return Err(format!("Ask between 1 and {MAX_QUESTIONS} questions at a time, not {}", list.len()));
@@ -103,7 +107,7 @@ pub fn prepare(args: &Value) -> Result<Action, String> {
     let multiple = matches!(item.get("multiple").or_else(|| item.get("multiSelect")), Some(Value::Bool(true))) && !options.is_empty();
     questions.push(Question { question, header: text(item.get("header")), options, multiple });
   }
-  Ok(Action::Question { questions })
+  Ok(Action::Question { questions, images })
 }
 
 /// The tool card's title, which the host reads as an ask row (`normalize/tool_kind.rs` `ASK_TITLE`)
@@ -116,8 +120,8 @@ fn key(i: usize) -> String {
   format!("q{i}")
 }
 
-/// The `elicitation/create` params for these questions, tied to the tool call
-pub fn form(session_id: &str, tool_call_id: &str, questions: &[Question]) -> Value {
+/// The `elicitation/create` params for these questions, tied to the tool call; `images` offers to take images with the answers
+pub fn form(session_id: &str, tool_call_id: &str, questions: &[Question], images: bool) -> Value {
   let mut props = Map::new();
   for (i, q) in questions.iter().enumerate() {
     let choices: Vec<Value> = q
@@ -145,20 +149,24 @@ pub fn form(session_id: &str, tool_call_id: &str, questions: &[Question]) -> Val
     props.insert(key(i), prop);
   }
   let message = questions.iter().map(|q| q.question.as_str()).collect::<Vec<_>>().join("\n");
-  json!({
+  let mut request = json!({
     "sessionId": session_id,
     "toolCallId": tool_call_id,
     "mode": "form",
     "message": message,
     "requestedSchema": { "type": "object", "properties": props },
-  })
+  });
+  if images {
+    request["_meta"] = json!({ ANSWER_IMAGES: true });
+  }
+  request
 }
 
 /// How the user left the card
 #[derive(Debug, PartialEq, Eq)]
 pub enum Reply {
-  /// The model's copy of the answers (some may be missing)
-  Answered(String),
+  /// The model's copy of the answers (some may be missing) and the images sent with them, in question order
+  Answered(String, Vec<crate::llm::Image>),
   /// Skipped without a single answer
   Skipped,
   /// Closed or stopped: the turn ends
@@ -173,8 +181,11 @@ pub fn reply(questions: &[Question], response: &Value) -> Reply {
     _ => return Reply::Dismissed,
   }
   let content = response.get("content");
+  let attached = response.pointer("/_meta").and_then(|m| m.get(ANSWER_IMAGES));
   let mut lines = vec![];
   let mut answered = 0;
+  let mut images: Vec<crate::llm::Image> = vec![];
+  let mut left_out = 0;
   for (i, q) in questions.iter().enumerate() {
     let answer = match content.and_then(|c| c.get(key(i))) {
       Some(Value::String(s)) => Some(s.trim().to_owned()),
@@ -184,13 +195,42 @@ pub fn reply(questions: &[Question], response: &Value) -> Reply {
       _ => None,
     }
     .filter(|a| !a.is_empty());
-    answered += usize::from(answer.is_some());
-    lines.push(format!("Q: {}\nA: {}", q.question, answer.as_deref().unwrap_or("(no answer)")));
+    // The pictures sent with this answer: numbered across the reply, in the order they are attached to the result
+    let first = images.len() + 1;
+    for img in attached.and_then(|a| a.get(key(i))).and_then(Value::as_array).into_iter().flatten() {
+      let (Some(mime), Some(data)) = (img.get("mimeType").and_then(Value::as_str), img.get("data").and_then(Value::as_str)) else { continue };
+      // A provider refuses an oversized picture, and a refused one stays in the history failing every later request
+      if !mime.starts_with("image/") || data.is_empty() || data.len() > super::mcp::MAX_IMAGE_BYTES || images.len() >= super::mcp::MAX_IMAGES {
+        left_out += 1;
+        continue;
+      }
+      images.push(crate::llm::Image { mime: mime.to_owned(), data: data.to_owned() });
+    }
+    let pictures = match images.len() + 1 - first {
+      0 => None,
+      1 => Some(format!("[image {first} attached]")),
+      n => Some(format!("[images {first}-{} attached]", first + n - 1)),
+    };
+    answered += usize::from(answer.is_some() || pictures.is_some());
+    let a = match (answer, pictures) {
+      (Some(a), Some(p)) => format!("{a} {p}"),
+      (Some(a), None) => a,
+      (None, Some(p)) => p,
+      (None, None) => "(no answer)".to_owned(),
+    };
+    lines.push(format!("Q: {}\nA: {a}", q.question));
   }
   if answered == 0 {
     return Reply::Skipped;
   }
-  Reply::Answered(format!("The user answered:\n\n{}", lines.join("\n\n")))
+  let mut text = format!("The user answered:\n\n{}", lines.join("\n\n"));
+  if !images.is_empty() {
+    text.push_str("\n\nThe images the user sent with the answers are attached to this result, numbered as above.");
+  }
+  if left_out > 0 {
+    text.push_str(&format!("\n\n{left_out} more image(s) the user sent could not be passed on (too large or too many); ask for a smaller copy if it matters."));
+  }
+  Reply::Answered(text, images)
 }
 
 #[cfg(test)]
@@ -198,8 +238,8 @@ mod tests {
   use super::*;
 
   fn qs(args: Value) -> Vec<Question> {
-    match prepare(&json!({ "questions": args })).unwrap() {
-      Action::Question { questions } => questions,
+    match prepare(&json!({ "questions": args }), false).unwrap() {
+      Action::Question { questions, .. } => questions,
       other => panic!("{other:?}"),
     }
   }
@@ -215,14 +255,15 @@ mod tests {
     });
     assert!(q[1].options.is_empty() && !q[1].multiple);
     for bad in [json!([]), json!([{ "question": "" }]), json!([{ "question": "x", "options": ["a", "a"] }]), json!(vec![json!({ "question": "x" }); 5])] {
-      assert!(prepare(&json!({ "questions": bad })).is_err(), "{bad}");
+      assert!(prepare(&json!({ "questions": bad }), false).is_err(), "{bad}");
     }
   }
 
   #[test]
   fn the_form_has_one_property_per_question_and_answers_come_back_as_lines() {
     let q = qs(json!([{ "question": "Which?", "header": "Pick", "options": [{ "label": "a", "description": "first" }] }, { "question": "Where?", "options": ["x", "y"], "multiple": true }, { "question": "Name?" }]));
-    let f = form("s", "call_1", &q);
+    let f = form("s", "call_1", &q, false);
+    assert!(f.get("_meta").is_none(), "no image offer unless the model takes images");
     assert_eq!(f["toolCallId"], "call_1");
     assert_eq!(f["message"], "Which?\nWhere?\nName?");
     let p = &f["requestedSchema"]["properties"];
@@ -230,9 +271,27 @@ mod tests {
     assert_eq!(p["q1"]["items"]["anyOf"][1], json!({ "const": "y", "title": "y" }));
     assert_eq!(p["q2"], json!({ "type": "string", "description": "Name?" }));
     let answered = reply(&q, &json!({ "action": "accept", "content": { "q0": "my own", "q1": ["x", "y"] } }));
-    assert_eq!(answered, Reply::Answered("The user answered:\n\nQ: Which?\nA: my own\n\nQ: Where?\nA: x, y\n\nQ: Name?\nA: (no answer)".into()));
+    assert_eq!(answered, Reply::Answered("The user answered:\n\nQ: Which?\nA: my own\n\nQ: Where?\nA: x, y\n\nQ: Name?\nA: (no answer)".into(), vec![]));
     assert_eq!(reply(&q, &json!({ "action": "accept", "content": {} })), Reply::Skipped);
     assert_eq!(reply(&q, &json!({ "action": "decline" })), Reply::Skipped);
     assert_eq!(reply(&q, &json!({ "action": "cancel" })), Reply::Dismissed);
+  }
+
+  #[test]
+  fn images_sent_with_answers_go_to_the_model_numbered_by_question() {
+    let q = qs(json!([{ "question": "Which?", "options": ["a"] }, { "question": "Show me" }]));
+    assert_eq!(form("s", "c", &q, true)["_meta"], json!({ ANSWER_IMAGES: true }));
+    let png = |d: &str| json!({ "mimeType": "image/png", "data": d });
+    let r = reply(&q, &json!({
+      "action": "accept",
+      "content": { "q0": "a" },
+      "_meta": { ANSWER_IMAGES: { "q0": [png("AAA")], "q1": [png("BBB"), png("CCC"), { "mimeType": "text/html", "data": "x" }] } },
+    }));
+    let Reply::Answered(text, images) = r else { panic!("{r:?}") };
+    assert!(text.contains("Q: Which?\nA: a [image 1 attached]"), "{text}");
+    // An image alone answers its question
+    assert!(text.contains("Q: Show me\nA: [images 2-3 attached]"), "{text}");
+    assert!(text.contains("1 more image(s)"), "{text}");
+    assert_eq!(images.iter().map(|i| i.data.as_str()).collect::<Vec<_>>(), ["AAA", "BBB", "CCC"]);
   }
 }

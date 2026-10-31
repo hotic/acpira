@@ -102,7 +102,8 @@ struct QuestionCard: View {
         .buttonStyle(OptionButtonStyle(selected: selected))
       }
       if q.kind != .text && q.other == true {
-        OptionRow(key: Self.keys[safe: q.options.count] ?? "", selected: pick.other) {
+        // A one-line field centres in the row; top alignment left the row's spare height all below it
+        OptionRow(key: Self.keys[safe: q.options.count] ?? "", selected: pick.other, leadTop: false) {
           Group {
             if snapshot {
               // A snapshot draws the placeholder where the field would be (ImageRenderer cannot draw a TextField)
@@ -185,10 +186,12 @@ struct QuestionCard: View {
 struct OptionRow<Content: View>: View {
   let key: String
   let selected: Bool
+  /// Pin the key to the first text line (labels that may wrap); false centres it with a one-line field
+  var leadTop = true
   @ViewBuilder let content: () -> Content
 
   var body: some View {
-    Row(leadTop: true) {
+    Row(leadTop: leadTop) {
       Group {
         if selected { Icon(.check, size: Metrics.icon, strokeWidth: 1.75) } else { Text(web: key).textStyle(TypeScale.text3) }
       }

@@ -1,4 +1,4 @@
-import type { Draft } from '@acpira/shared/transcript';
+import type { Draft, ImageDraft } from '@acpira/shared/transcript';
 import { MAX_FILE_BYTES, MAX_IMAGE_BYTES, MAX_TEXT_BYTES, imageMimeOf } from '@acpira/shared/attachments';
 import { t } from '../i18n';
 
@@ -73,7 +73,7 @@ export async function collectDrafts(
       else out.refused.push(t('attach.loadFailed', { name: f.name }));
       continue;
     }
-    const mimeType = imageMimeOf(f.name) ?? (f.type.startsWith('image/') && imageMimeOf(`.${f.type.slice(6)}`));
+    const mimeType = imageMimeOfFile(f);
     if (mimeType) {
       if (f.size > MAX_IMAGE_BYTES) { out.refused.push(t('attach.tooBigImage', { name: f.name, mb: MAX_IMAGE_BYTES >> 20 })); continue; }
       out.drafts.push({ kind: 'image', mimeType, data: await base64Of(f), name: f.name === 'image.png' ? undefined : f.name });
@@ -92,6 +92,23 @@ export async function collectDrafts(
   }
   // A workbench drag that named only remote / virtual resources (or nothing readable) would otherwise drop without a trace
   if (!dt.files.length && [...dt.types].some(type => type.toLowerCase() !== 'files' && PAYLOAD_TYPES.has(type.toLowerCase()))) out.refused.push(t('attach.noLocalFiles'));
+  return out;
+}
+
+// The image MIME type of an OS file, by name and then by the type the browser gives it
+function imageMimeOfFile(f: File): string | undefined {
+  return imageMimeOf(f.name) ?? (f.type.startsWith('image/') ? imageMimeOf(`.${f.type.slice(6)}`) : undefined);
+}
+
+// The images among pasted or dropped files, for a field that takes nothing else (a question card's answer). Other files
+// and images over MAX_IMAGE_BYTES are left out
+export async function collectImages(files: Iterable<File>): Promise<ImageDraft[]> {
+  const out: ImageDraft[] = [];
+  for (const f of files) {
+    const mimeType = imageMimeOfFile(f);
+    if (!mimeType || f.size > MAX_IMAGE_BYTES) continue;
+    try { out.push({ kind: 'image', mimeType, data: await base64Of(f), name: f.name === 'image.png' ? undefined : f.name }); } catch { /* unreadable: left out */ }
+  }
   return out;
 }
 

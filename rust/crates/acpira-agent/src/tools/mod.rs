@@ -70,9 +70,10 @@ pub enum Action {
   /// Plan mode's approval request; the turn runs it itself
   #[serde(skip)]
   ExitPlan { plan: Option<String> },
-  /// Questions on the host's question card; the turn runs it itself
+  /// Questions on the host's question card; the turn runs it itself. `images`: the turn's model takes images, so the
+  /// card may take some with the answers
   #[serde(skip)]
-  Question { questions: Vec<question::Question> },
+  Question { questions: Vec<question::Question>, images: bool },
   /// `private`: the URL names this machine or a private network, so the call asks (`web.rs`)
   #[serde(skip)]
   Fetch { url: String, format: web::Format, timeout_s: u64, private: bool },
@@ -222,7 +223,7 @@ pub fn prepare(name: &str, args: &Value, cwd: &Path, images: bool) -> Result<Act
     EXIT_PLAN => plan::prepare(args),
     WEBFETCH => web::prepare_fetch(args),
     WEBSEARCH => web::prepare_search(args),
-    QUESTION => question::prepare(args),
+    QUESTION => question::prepare(args, images),
     HISTORY_GREP => history::prepare_grep(args),
     HISTORY_LIST => history::prepare_list(args),
     crate::goal::GET | crate::goal::CREATE | crate::goal::UPDATE => crate::goal::prepare(name, args),
@@ -348,7 +349,7 @@ impl Action {
       Action::Skill { name, path, .. } => Presentation { title: format!("Skill {name}"), kind: "read", locations: vec![path.into()], content: vec![] },
       // The webview localizes this exact heading
       Action::ExitPlan { .. } => Presentation { title: "Exit plan mode".to_owned(), kind: "switch_mode", locations: vec![], content: vec![] },
-      Action::Question { questions } => Presentation { title: question::title(questions.len()), kind: "other", locations: vec![], content: vec![] },
+      Action::Question { questions, .. } => Presentation { title: question::title(questions.len()), kind: "other", locations: vec![], content: vec![] },
       // `fetch` for both, as claude-agent-acp sends WebFetch and WebSearch: the webview renders their markdown
       Action::Fetch { url, .. } => Presentation { title: format!("Fetch {url}"), kind: "fetch", locations: vec![], content: vec![] },
       Action::Search { query, .. } => Presentation { title: format!("Search \"{query}\""), kind: "fetch", locations: vec![], content: vec![] },

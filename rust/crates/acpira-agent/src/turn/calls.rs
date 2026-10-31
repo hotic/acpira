@@ -268,10 +268,10 @@ pub(super) async fn run_tools(
       continue;
     }
     // The question card needs no permission; closing it ends the turn
-    if let Action::Question { questions } = &action {
+    if let Action::Question { questions, images } = &action {
       server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": p.acp, "status": "in_progress" }));
-      let (out, dismissed) = question(server, session, p, questions).await;
-      finish(server, session, p, out, todo, p.riders.refused()).await;
+      let (out, pictures, dismissed) = question(server, session, p, questions, *images).await;
+      finish_with(server, session, p, out, todo, p.riders.refused(), pictures).await;
       rejected |= dismissed;
       continue;
     }
@@ -287,6 +287,11 @@ pub(super) async fn run_tools(
         Answer::Always(pattern) => {
           let (key, _) = action.permission(&cwd);
           session.state.lock().allowed.push(Rule::new(key, &pattern, Decision::Allow));
+        }
+        Answer::Denied => {
+          let (key, target) = rules.denied(session, &action);
+          finish(server, session, p, Output::error(format!("Not allowed: the permission rules deny {key} on {target}. Do not retry it.")), todo, p.riders.skipped("the change was not allowed")).await;
+          continue;
         }
         Answer::Reject => {
           rejected = true;
@@ -389,22 +394,30 @@ completed once it is checked. If the plan turns out wrong, correct the plan file
   (Output { model, is_error: false, content: vec![], raw_output: None }, Some(true))
 }
 
-/// The `question` tool: an `elicitation/create` form on the host's question card. The bool is true when the user
-/// closed the card (or the client refused the form), which ends the turn like a rejected action
-async fn question(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, questions: &[tools::question::Question]) -> (Output, bool) {
+/// The `question` tool: an `elicitation/create` form on the host's question card. Also returns the images the user
+/// sent with the answers (offered only when the model takes images). The bool is true when the user closed the card
+/// (or the client refused the form), which ends the turn like a rejected action
+async fn question(
+  server: &Arc<Server>,
+  session: &Arc<Session>,
+  p: &Prepared,
+  questions: &[tools::question::Question],
+  images: bool,
+) -> (Output, Vec<crate::llm::Image>, bool) {
   if !server.forms() {
-    return (Output::error("This client cannot show questions. Ask in plain text instead and end your turn."), false);
+    return (Output::error("This client cannot show questions. Ask in plain text instead and end your turn."), vec![], false);
   }
-  let request = tools::question::form(&session.id, &p.acp, questions);
+  let request = tools::question::form(&session.id, &p.acp, questions, images);
   let out = match server.conn().request("elicitation/create", request).await {
     Ok(r) => tools::question::reply(questions, &r),
-    Err(e) => return (Output::error(format!("The questions could not be shown ({}). Ask in plain text instead and end your turn.", e.message)), false),
+    Err(e) => return (Output::error(format!("The questions could not be shown ({}). Ask in plain text instead and end your turn.", e.message)), vec![], false),
   };
   match out {
+    // The card keeps the pictures in its record; only a model that takes images gets them
+    tools::question::Reply::Answered(text, pictures) => (answered(text), if images { pictures } else { vec![] }, false),
     // A skip is an answer too, so the row does not read as failed
-    tools::question::Reply::Answered(text) => (answered(text), false),
-    tools::question::Reply::Skipped => (answered("The user skipped the questions without answering. Go on with your own judgement and say what you assumed.".into()), false),
-    tools::question::Reply::Dismissed => (Output::error("The user closed the questions. Stop here and wait for their direction."), true),
+    tools::question::Reply::Skipped => (answered("The user skipped the questions without answering. Go on with your own judgement and say what you assumed.".into()), vec![], false),
+    tools::question::Reply::Dismissed => (Output::error("The user closed the questions. Stop here and wait for their direction."), vec![], true),
   }
 }
 
@@ -485,14 +498,27 @@ fn images_of(p: &Prepared, out: &Output) -> Vec<crate::llm::Image> {
 }
 
 /// Report a finished call on its row and add its result, with the riders' notes, to the history
-async fn finish(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, mut out: Output, front: Option<String>, back: Option<String>) {
+async fn finish(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, out: Output, front: Option<String>, back: Option<String>) {
+  let images = images_of(p, &out);
+  finish_with(server, session, p, out, front, back, images).await;
+}
+
+/// `finish` with the images that go to the model given, for a call whose pictures are not in its card content
+async fn finish_with(
+  server: &Arc<Server>,
+  session: &Arc<Session>,
+  p: &Prepared,
+  mut out: Output,
+  front: Option<String>,
+  back: Option<String>,
+  images: Vec<crate::llm::Image>,
+) {
   // The plugins' `tool.after` may change what the model reads (the card keeps what the tool returned)
   let arguments = p.ran_with.clone().unwrap_or_else(|| serde_json::from_str(&p.call.arguments).unwrap_or_else(|_| Value::String(p.call.arguments.clone())));
   if let Some((model, is_error)) = crate::plugin_hooks::after_call(server, session, &p.call.name, &arguments, &out.model, out.is_error).await {
     out.model = model;
     out.is_error = is_error;
   }
-  let images = images_of(p, &out);
   // A call without a row (a goal tool's) only goes into the history
   let (model, is_error) = if p.acp.is_empty() { (out.model, out.is_error) } else { report(server, session, &p.acp, out) };
   record(session, p, joined(front.as_deref(), &model, back.as_deref()), is_error, images);
