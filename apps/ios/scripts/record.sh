@@ -11,7 +11,7 @@ ios="$(cd "$(dirname "$0")/.." && pwd)"
 out="${1:-/tmp/acpira-ios.mp4}"
 seconds="${2:-12}"
 shift $(( $# > 2 ? 2 : $# ))
-sim="${SIM:-$sim_default}"
+sim="$(sim_resolve "${SIM:-$sim_default}")"
 bundle="cc.hotic.acpira"
 derived="$ios/build/DerivedData"
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
@@ -29,7 +29,7 @@ xcrun simctl install "$sim" "$derived/Build/Products/Debug-iphonesimulator/Acpir
 xcrun simctl terminate "$sim" "$bundle" 2>/dev/null || true
 
 # The recorder finalises the file on SIGINT
-xcrun simctl io "$sim" recordVideo --codec h264 --force "$out" >/dev/null 2>&1 &
+xcrun simctl io "$sim" recordVideo $(sim_display "$sim") --codec h264 --force "$out" >/dev/null 2>&1 &
 recorder=$!
 sleep 1.5
 xcrun simctl launch "$sim" "$bundle" "$@" >/dev/null

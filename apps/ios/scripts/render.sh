@@ -7,7 +7,7 @@ set -euo pipefail
 
 ios="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ios/scripts/simulator.sh"
-out="$1"; fixture="$2"; mode="${3:-closed}"; theme="${4:-dark}"; sim="${5:-$sim_default}"
+out="$1"; fixture="$2"; mode="${3:-closed}"; theme="${4:-dark}"; sim="$(sim_resolve "${5:-$sim_default}")"
 bundle="cc.hotic.acpira"
 
 # Held across the shot and the read of its output, which the next run would overwrite

@@ -9,6 +9,9 @@
 # first use), never the plain "iPhone 18 Pro" a person keeps open to try the app: a shot reinstalls the app and
 # relaunches it with its own arguments (`-motion none` turns every animation off), and the reaper above shuts down a
 # device the scripts booted. A simulator named on the command line is still used as given.
+#
+# Wide layouts run on the runtime's own devices, never created ones: `ipad` and `duo` name them wherever a script takes
+# a simulator. Nobody keeps those open by hand, so the same relaunch and reaper rules apply.
 
 sim_state="/tmp/acpira-ios-sim-$(id -u)"
 sim_lock="$sim_state/lock"
@@ -31,6 +34,24 @@ sim_is_booted() {
 sim_ensure() {
   [ "$1" = "$sim_default" ] || return 0
   sim_exists "$1" || xcrun simctl create "$1" "$sim_default_type" >/dev/null
+}
+
+# `ipad` / `duo`: the runtime's own iPad and iPhone Duo; any other name as given
+sim_resolve() {
+  case "$1" in
+    ipad) echo "iPad Pro 13-inch (M5)" ;;
+    duo) echo "iPhone Duo" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+# `--display` for simctl io: ACPIRA_SIM_DISPLAY, else the Duo's outer screen ("primary"), since simctl cannot unfold
+# the device and its default capture is the dark inner screen; unfolded by hand, ACPIRA_SIM_DISPLAY=primary-1
+sim_display() {
+  local display="${ACPIRA_SIM_DISPLAY:-}"
+  [ -z "$display" ] && [ "$1" = "iPhone Duo" ] && display=primary
+  [ -n "$display" ] && echo "--display=$display"
+  return 0
 }
 
 sim_key() { printf '%s' "$1" | tr -c 'A-Za-z0-9' '_'; }
