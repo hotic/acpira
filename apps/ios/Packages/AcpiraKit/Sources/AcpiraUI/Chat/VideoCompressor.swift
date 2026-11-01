@@ -18,6 +18,8 @@ nonisolated enum VideoCompressor {
   private static let floorBitrate: Double = 300_000
   private static let audioBitrate: Double = 96_000
   private static let maxFrameRate: Float = 30
+  /// How long the copy loop waits with neither input taking data before it gives up
+  private static let stallLimit: Duration = .seconds(20)
 
   /// Writes `source` compressed to `out` (its folder is made), reporting 0...1 as it goes
   @concurrent static func compress(_ source: URL, to out: URL, budget: Int,
@@ -107,6 +109,7 @@ nonisolated enum VideoCompressor {
     var videoDone = false, audioDone = audioIn == nil
     var lastKept = -Double.infinity
     let minGap = 1 / Double(maxFrameRate) - 0.002
+    var lastMoved = ContinuousClock.now
     do {
       while !videoDone || !audioDone {
         try Task.checkCancellation()
@@ -134,7 +137,15 @@ nonisolated enum VideoCompressor {
             audioDone = true
           }
         }
-        if !moved { try await Task.sleep(for: .milliseconds(2)) }
+        if moved {
+          lastMoved = .now
+        } else {
+          // A failed writer never reports ready again, and an encoder can stall without failing (seen on a CI VM
+          // without a hardware encoder): either would spin here for good
+          if writer.status == .failed || reader.status == .failed { throw Failure.unreadable }
+          if lastMoved.duration(to: .now) > stallLimit { throw Failure.unreadable }
+          try await Task.sleep(for: .milliseconds(2))
+        }
       }
     } catch {
       reader.cancelReading()

@@ -33,6 +33,10 @@ scheme=AcpiraKit
 # the app's `canImport(AcpiraRemote)` true while its FFI module is gone
 dd=""
 [ "$ACPIRA_NET_STAMP" = none ] && dd="-nonet"
+# ACPIRA_RESULTS=<dir> keeps each simulator run's result bundle there: -quiet prints only failing test names, the bundle
+# holds the failed expectations (CI uploads it)
+results() { [ -n "${ACPIRA_RESULTS:-}" ] && rm -rf "$ACPIRA_RESULTS/$1.xcresult" && echo -resultBundlePath "$ACPIRA_RESULTS/$1.xcresult" || true; }
+[ -z "${ACPIRA_RESULTS:-}" ] || mkdir -p "$ACPIRA_RESULTS"
 
 echo "== AcpiraKit on macOS"
 (cd "$ios/Packages/AcpiraKit" && swift test)
@@ -43,10 +47,10 @@ echo "== AcpiraKit on $sim"
 # SwiftTerm's build-tool plugin (its version stamp) is never trusted in Xcode on a fresh checkout or machine, and
 # xcodebuild refuses an untrusted plugin; every iOS script passes this flag
 (cd "$ios/Packages/AcpiraKit" && xcodebuild -scheme "$scheme" -destination "$destination" \
-  -derivedDataPath "$ios/build/PackageDerivedData$dd" -skipPackagePluginValidation -quiet test)
+  -derivedDataPath "$ios/build/PackageDerivedData$dd" -skipPackagePluginValidation $(results package) -quiet test)
 
 echo "== Acpira app on $sim"
 xcodebuild -project "$ios/Acpira.xcodeproj" -scheme Acpira -destination "$destination" \
-  -derivedDataPath "$ios/build/DerivedData$dd" -skipPackagePluginValidation -quiet test
+  -derivedDataPath "$ios/build/DerivedData$dd" -skipPackagePluginValidation $(results app) -quiet test
 
 echo "== all green"

@@ -22,7 +22,8 @@ jobs:
   check:
     # GitHub's Xcode 27 runner image (macos-26 stops at Xcode 26.6)
     runs-on: xcode-27
-    timeout-minutes: 60
+    # A clean run takes about ten minutes; a hung test should not hold the runner for an hour
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -38,4 +39,14 @@ jobs:
           ACPIRA_NET: '0'
           # No idle reaper left behind: the runner goes away with its device
           ACPIRA_SIM_IDLE: '0'
+          ACPIRA_RESULTS: ${{ runner.temp }}/ios-results
         run: apps/ios/scripts/check.sh
+      # The failed expectations behind -quiet's bare test names
+      - name: Upload result bundles
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-results
+          path: ${{ runner.temp }}/ios-results
+          if-no-files-found: ignore
+          retention-days: 7
