@@ -884,6 +884,7 @@ export const ko = {
   'tool.sessionTurnsFrom': '턴 {n}부터',
   'verb.delegate': '위임',
   'verb.awaitSubagent': '서브에이전트 대기',
+  'verb.stopSubagent': '서브에이전트 중지',
   'verb.workflow': '워크플로 실행',
 
   'asyncTask.running': '백그라운드 작업 실행 중',

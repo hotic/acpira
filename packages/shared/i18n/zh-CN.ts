@@ -911,6 +911,7 @@ export const zhCN = {
   // Delegation calls: the tool that spawns a subagent (Devin run_subagent, Claude/Kimi Agent) and the one that blocks on it
   'verb.delegate': '委派',
   'verb.awaitSubagent': '等待子代理',
+  'verb.stopSubagent': '停止子代理',
   'verb.workflow': '运行工作流',
 
   'asyncTask.running': '后台任务运行中',

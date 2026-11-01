@@ -885,6 +885,7 @@ export const de = {
   'tool.sessionTurnsFrom': 'ab Runde {n}',
   'verb.delegate': 'Delegieren',
   'verb.awaitSubagent': 'Auf Subagent warten',
+  'verb.stopSubagent': 'Subagent stoppen',
   'verb.workflow': 'Workflow ausführen',
 
   'asyncTask.running': 'Hintergrundaufgabe läuft',

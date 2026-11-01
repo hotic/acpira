@@ -497,6 +497,28 @@ async fn cancelling_a_summoned_node_reaches_its_process_and_closing_the_session_
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn ask_agent_stop_cancels_the_running_round_and_leaves_the_thread_open() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let roster = roster(h.dir.path()).await;
+  let s = Disposing(h.session("/tmp"));
+  s.start().await;
+  let (_, text) = last_text(&run(&s, &roster, 0, AskArgs { wait_secs: Some(0), ..ask("fake-worker", "relay: slow stop me") }).await);
+  let thread = thread_of(&text);
+  until(|| nodes(&s).first().is_some_and(|n| n["peer"]["sessionId"].is_string()), 8000).await;
+  let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), stop: Some(true), ..ask("", "") }).await);
+  assert!(ok && text.contains("was cancelled") && text.contains("stays open"), "{text}");
+  expect_match(&nodes(&s)[0], json!({ "state": "cancelled" }));
+  // Nothing left to stop, and the thread takes a new prompt
+  let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), stop: Some(true), ..ask("", "") }).await);
+  assert!(ok && text.contains("nothing to stop"), "{text}");
+  let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread), ..ask("", "relay: and now?") }).await);
+  assert!(ok, "{text}");
+  let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { stop: Some(true), ..ask("", "") }).await);
+  assert!(!ok && text.contains("needs the `thread`"), "{text}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_root_ask_agent_row_is_tied_to_its_node_and_hides_behind_it() {
   let fake = fake_or_skip!();
   let h = Harness::new(&fake, json!({}));

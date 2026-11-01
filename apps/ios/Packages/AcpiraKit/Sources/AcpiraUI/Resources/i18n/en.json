@@ -877,6 +877,7 @@
   "tool.sessionTurnsFrom": "from turn {n}",
   "verb.delegate": "Delegate",
   "verb.awaitSubagent": "Wait for subagent",
+  "verb.stopSubagent": "Stop subagent",
   "verb.workflow": "Run workflow",
   "asyncTask.running": "Background task running",
   "asyncTask.paused": "Background task paused",

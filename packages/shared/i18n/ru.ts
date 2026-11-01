@@ -900,6 +900,7 @@ export const ru = {
   'tool.sessionTurnsFrom': 'с хода {n}',
   'verb.delegate': 'Делегирование',
   'verb.awaitSubagent': 'Ожидание субагента',
+  'verb.stopSubagent': 'Остановка субагента',
   'verb.workflow': 'Запуск рабочего процесса',
 
   'asyncTask.running': 'Фоновая задача выполняется',

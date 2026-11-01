@@ -886,6 +886,7 @@ export const es = {
   'tool.sessionTurnsFrom': 'desde el turno {n}',
   'verb.delegate': 'Delegación',
   'verb.awaitSubagent': 'Espera del subagente',
+  'verb.stopSubagent': 'Detención del subagente',
   'verb.workflow': 'Ejecución del flujo de trabajo',
 
   'asyncTask.running': 'Tarea en segundo plano en curso',

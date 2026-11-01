@@ -899,6 +899,7 @@ export const en = {
   // Delegation calls: the tool that spawns a subagent (Devin run_subagent, Claude/Kimi Agent) and the one that blocks on it
   'verb.delegate': 'Delegate',
   'verb.awaitSubagent': 'Wait for subagent',
+  'verb.stopSubagent': 'Stop subagent',
   // Claude's Workflow tool, recognized by its async task (taskType `workflow`); the run's name follows as the target
   'verb.workflow': 'Run workflow',
 

@@ -326,6 +326,7 @@ impl Relay {
       wait: args.get("wait").and_then(Value::as_bool),
       answers: args.get("answers").and_then(Value::as_array).map(|l| l.iter().filter_map(|a| a.as_str().map(str::to_owned)).collect()),
       changes: args.get("changes").and_then(Value::as_bool),
+      stop: args.get("stop").and_then(Value::as_bool),
     };
     self.streamed(HubOp::Ask(ask), params, progress)
   }
