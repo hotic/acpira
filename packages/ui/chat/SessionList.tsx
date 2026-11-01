@@ -604,7 +604,8 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
     ...prev, summaries: patch ? prev.summaries.map(s => s.id === id ? { ...s, ...patch } : s) : prev.summaries.filter(s => s.id !== id),
   }));
   rowActions.current = {
-    select: s => onSelect(s.id),
+    // A search-only row (a host session outside the list) gets no push: opening it reads it here too
+    select: s => { onSelect(s.id); if (s.state === 'unread' || s.unread) patchSearch(s.id, { state: s.state === 'unread' ? undefined : s.state, unread: false }); },
     edit: s => setEditing(s.id),
     rename: (s, title) => { setEditing(undefined); if (title.trim() && title.trim() !== s.title) { onRename(s.id, title); patchSearch(s.id, { title }); } },
     delete: s => { setEditing(undefined); onDelete(s.id); patchSearch(s.id); },
