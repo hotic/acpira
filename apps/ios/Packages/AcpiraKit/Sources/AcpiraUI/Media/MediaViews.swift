@@ -80,6 +80,11 @@ struct MediaImage<Content: View, Placeholder: View, Failure: View>: View {
       let done = loaded?.source == source ? loaded : nil
       if let image = done?.image ?? media.loader.peek(source) {
         content(image).transition(.opacity)
+          .task(id: source) {
+            // A file shown from the copy an earlier view loaded: checked again, swapped only when it changed
+            guard case .file = source, done == nil, let fresh = try? await media.loader.image(source), fresh != image else { return }
+            loaded = (source, fresh)
+          }
       } else if done != nil {
         failure()
       } else {
@@ -228,14 +233,18 @@ struct ImageResults: View {
     let images = toolImages(block)
     if !grouped || inFold {
       if block.verbKey == "verb.showVideo" {
-        ForEach(toolVideos(block), id: \.blob) { video in
+        ForEach(toolVideos(block), id: \.uriOrBlob) { video in
           AgentVideoView(video: video)
         }
       } else if block.verbKey == "verb.showWidget" {
         // Nothing while the call runs or when it failed: the row says so (AgentWidget.tsx ShownWidget)
-        if let blob = toolWidget(block)?.blob, let session = media.session {
+        // One kept as a path (a session on an SSH host) is staged by the engine first
+        if let widget = toolWidget(block), let session = media.session {
           let loader = media.loader
-          WidgetBlock { try await loader.text(session: session, blob: blob) }.id(blob)
+          WidgetBlock {
+            guard let blob = await loader.blobName(session: session, blob: widget.blob, uri: widget.uri) else { throw MediaLoader.Failure.notStaged }
+            return try await loader.text(session: session, blob: blob)
+          }.id(widget.uriOrBlob)
         }
       } else if images.isEmpty, !shown, block.status == .pending || block.status == .in_progress {
         ImagePlaceholder()

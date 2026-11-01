@@ -32,10 +32,22 @@ extension MediaSource {
     return session.map { .blob(session: $0, name: blob) }
   }
 
-  /// An agent image: its stored pixels, else a `data:` URI it carries (nil when it has neither: a refused payload or a
-  /// URI-only reference, which the card names instead)
+  /// An agent image: its stored pixels, else a `data:` URI it carries, else the file its `uri` names, staged on demand
+  /// (a row of a session on an SSH host keeps the host path alone). nil: nothing loadable, which the card names instead
   static func agentImage(blob: String?, uri: String?, session: String?) -> MediaSource? {
-    stored(blob, session: session) ?? uri.flatMap(dataURI)
+    stored(blob, session: session) ?? uri.flatMap(dataURI) ?? uri.flatMap { hostFile($0, session: session) }
+  }
+
+  /// A file the engine can read for the page: a file: URL or an absolute path (stagedBlob.ts isFileSource)
+  static func isFilePath(_ uri: String) -> Bool {
+    let lower = uri.lowercased()
+    // `//host/…` is a protocol-relative web URL, not a path
+    return lower.hasPrefix("file:") || (uri.hasPrefix("/") && !uri.hasPrefix("//")) || uri.hasPrefix("\\\\")
+      || (uri.count > 2 && uri.dropFirst().first == ":" && (uri.dropFirst(2).first == "/" || uri.dropFirst(2).first == "\\"))
+  }
+
+  static func hostFile(_ uri: String, session: String?) -> MediaSource? {
+    isFilePath(uri) ? session.map { .file(session: $0, path: uri) } : nil
   }
 
   /// The base64 of a `data:…;base64,` URI
@@ -47,8 +59,8 @@ extension MediaSource {
 
   /// A Markdown image's source (Prose.tsx MarkdownImage): web URLs load directly and `data:` URIs decode in place;
   /// anything else is a file on the engine's machine. The engine reads those with the text (`TextBlock.images`, matched
-  /// on the source as written, both sides percent-decoded); one it could not read (no blob) stays a named card, and one
-  /// it never saw (no entry) is staged on demand. nil: nothing loadable
+  /// on the source as written, both sides percent-decoded); one it did not read then (no blob: a session on an SSH host,
+  /// or a file missing at the time) or never saw (no entry) is staged on demand. nil: nothing loadable
   static func markdown(_ src: String, images: [ImageRef]?, session: String?) -> MediaSource? {
     let lower = src.lowercased()
     if lower.hasPrefix("https:") || lower.hasPrefix("http:") { return URL(string: src).map { .web($0) } }
@@ -56,7 +68,7 @@ extension MediaSource {
     if lower.hasPrefix("blob:") { return nil }
     let written = src.removingPercentEncoding ?? src
     if let read = images?.first(where: { $0.uri.map { ($0.removingPercentEncoding ?? $0) == written } ?? false }) {
-      return stored(read.blob, session: session)
+      return stored(read.blob, session: session) ?? session.map { .file(session: $0, path: written) }
     }
     return session.map { .file(session: $0, path: written) }
   }
@@ -126,6 +138,8 @@ final class MediaLoader {
   private let stage: Stage?
   private let web: WebFetch
   private let cache: MediaCache<MediaSource, DecodedImage>
+  /// The blob each file source was last staged as: its image shows at once while the engine checks the file again
+  private var stagedAs: [MediaSource: MediaSource] = [:]
 
   /// Whether files on the engine's machine can be staged at all; nil `stage` fails them at once
   var canStage: Bool { stage != nil }
@@ -151,6 +165,7 @@ final class MediaLoader {
   /// The image already at hand: a kept one, or inline pixels decoded in place, so a view draws at its final size on its
   /// first pass (and `ImageRenderer`, which runs no tasks, draws it at all)
   func peek(_ source: MediaSource) -> DecodedImage? {
+    if case .file = source { return stagedAs[source].flatMap { cache.cached($0) } }
     if let kept = cache.cached(source) { return kept }
     guard case .inline(let base64) = source, let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters),
           let image = Self.decodeNow(data) else { return nil }
@@ -181,6 +196,14 @@ final class MediaLoader {
 
   /// Loads and keeps the image; joins a load already under way for the same source
   func image(_ source: MediaSource) async throws -> DecodedImage {
+    // A file is staged every time: the engine answers the blob it already read while the file is unchanged (a stat,
+    // no transfer), and a new one once it changed, so a rewritten file shown again is not the old picture
+    if case .file(let session, let path) = source {
+      guard let stage, let name = await stage(session, path) else { throw Failure.notStaged }
+      let blob = MediaSource.blob(session: session, name: name)
+      stagedAs[source] = blob
+      return try await image(blob)
+    }
     if let image = peek(source) { return image }
     let (fetch, stage, web) = (fetch, stage, web)
     return try await cache.load(source) {
@@ -188,9 +211,8 @@ final class MediaLoader {
       switch source {
       case .blob(let session, let name):
         data = try await fetch(session, name)
-      case .file(let session, let path):
-        guard let stage, let name = await stage(session, path) else { throw Failure.notStaged }
-        data = try await fetch(session, name)
+      case .file:
+        throw Failure.notStaged
       case .web(let url):
         data = try await web(url)
       case .inline(let base64):
@@ -198,6 +220,14 @@ final class MediaLoader {
       }
       return try await Self.decode(data)
     }
+  }
+
+  /// The blob a video or widget plays from: its saved copy, else its file on the engine's side (the host's for a session
+  /// on an SSH host) staged now. nil: nothing to play
+  func blobName(session: String, blob: String?, uri: String?) async -> String? {
+    if let blob { return blob }
+    guard let uri, MediaSource.isFilePath(uri), let stage else { return nil }
+    return await stage(session, uri)
   }
 
   /// Video is fetched only after a tap and written to a view-owned temporary file, never decoded into the image cache.
@@ -357,15 +387,26 @@ final class MediaLoader {
 
 /// The saved images of a tool call in wire order (imageTools.ts toolImages): `contents` holds every item when there is
 /// more than one. A widget's HTML rides as an image of type text/html and is not one
+extension ImageRef {
+  /// A row item's identity: its blob, or the path it is kept as
+  var uriOrBlob: String { blob ?? uri ?? "" }
+}
+
+/// imageTools.ts savedContents: a saved item, or a show tool's file kept as its path (a session on an SSH host), which
+/// the engine stages on demand; anywhere else an unsaved item is a lost one
+private func kept(_ ref: ImageRef, in block: ToolCallBlock) -> Bool {
+  ref.blob != nil || (["verb.showImage", "verb.showVideo", "verb.showWidget"].contains(block.verbKey ?? "") && ref.uri.map(MediaSource.isFilePath) == true)
+}
+
 func toolImages(_ block: ToolCallBlock) -> [ImageRef] {
   (block.contents ?? block.content.map { [$0] } ?? []).compactMap {
-    if case .image(let ref) = $0, ref.blob != nil, ref.mimeType.hasPrefix("image/") { ref } else { nil }
+    if case .image(let ref) = $0, kept(ref, in: block), ref.mimeType.hasPrefix("image/") { ref } else { nil }
   }
 }
 
 func toolVideos(_ block: ToolCallBlock) -> [ImageRef] {
   (block.contents ?? block.content.map { [$0] } ?? []).compactMap {
-    if case .image(let ref) = $0, ref.blob != nil, ref.mimeType.hasPrefix("video/") { ref } else { nil }
+    if case .image(let ref) = $0, kept(ref, in: block), ref.mimeType.hasPrefix("video/") { ref } else { nil }
   }
 }
 
@@ -375,7 +416,7 @@ func isWidget(_ ref: ImageRef) -> Bool { ref.mimeType == "text/html" }
 /// imageTools.ts toolWidget: the saved page of a show_widget call
 func toolWidget(_ block: ToolCallBlock) -> ImageRef? {
   (block.contents ?? block.content.map { [$0] } ?? []).lazy.compactMap {
-    if case .image(let ref) = $0, ref.blob != nil, isWidget(ref) { ref } else { nil }
+    if case .image(let ref) = $0, kept(ref, in: block), isWidget(ref) { ref } else { nil }
   }.first
 }
 
