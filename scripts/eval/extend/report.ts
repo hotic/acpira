@@ -111,7 +111,8 @@ if (real.length) {
     const passOf = (rs: Result[]) => `${rs.filter(r => r.pass).length}/${rs.length}`;
     const useOf = (rs: Result[]) => median(rs.filter(r => r.pass).map(r => r.firstUseMs!));
     const callsOf = (rs: Result[]) => median(rs.filter(r => r.pass && r.usage).map(r => r.usage!.requests));
-    for (const m of models) {
+    // Only the models both sides ran
+    for (const m of models.filter(m => real.some(r => modelOf(r) === m && wayOf(r) === a) && real.some(r => modelOf(r) === m && wayOf(r) === o))) {
       out.push(`### 对照：${m}`, '');
       out.push('| 任务 | 跑通 Acpira / OpenCode | 首次可用 Acpira | 首次可用 OpenCode | OpenCode 用时倍数 | 模型调用 Acpira / OpenCode | 生效 Acpira / OpenCode |', '|---|---|---|---|---|---|---|');
       // The total adds up the tasks both sides passed
