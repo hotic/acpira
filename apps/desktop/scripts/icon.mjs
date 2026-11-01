@@ -17,7 +17,7 @@ const svg = join(icons, 'icon.svg');
 const set = join(mkdtempSync(join(tmpdir(), 'acpira-icon-')), 'icon.iconset');
 execFileSync('mkdir', ['-p', set]);
 const renderer = fileURLToPath(new URL('./icon-render.py', import.meta.url));
-const render = (px, file) => execFileSync('python3', [renderer, svg, String(px), file]);
+const render = (px, file, variant) => execFileSync('python3', [renderer, svg, String(px), file, ...(variant ? [variant] : [])]);
 for (const pt of [16, 32, 128, 256, 512]) {
   render(pt, join(set, `icon_${pt}x${pt}.png`));
   render(pt * 2, join(set, `icon_${pt}x${pt}@2x.png`));
@@ -27,11 +27,12 @@ render(32, join(icons, 'icon.png'));
 for (const px of [128, 256, 512]) render(px, join(icons, `${px}x${px}.png`));
 
 // An .ico of PNG frames (Windows Vista and later read PNG entries): the sizes the shell and the taskbar pick from at
-// 100-200% scaling; a 256 px frame is stored with width / height 0, as the format says
+// 100-200% scaling; a 256 px frame is stored with width / height 0, as the format says. Rendered as icon-render.py's
+// `windows` variant: full-bleed tile, no shadow, small frames hinted to the pixel grid
 const sizes = [16, 20, 24, 32, 40, 48, 64, 256];
 const frames = sizes.map(px => {
   const file = join(set, `ico_${px}.png`);
-  render(px, file);
+  render(px, file, 'windows');
   return readFileSync(file);
 });
 const header = Buffer.alloc(6 + 16 * frames.length);
