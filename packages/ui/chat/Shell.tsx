@@ -61,7 +61,7 @@ import { ProjectPick, StartPicker, usePresence } from './StartPage';
 import { AppMenu, NoProject, ShellToastItems, ShellToasts, TitleRow, TitleSpace, useSessionHistory, type QuickSettings } from './DesktopFrame';
 import type { SettingsPage } from '../settings/Nav';
 import { Lightbox } from './Lightbox';
-import { OpenToolFileContext, AsyncTaskStopContext, BlobUrlContext, DiffSourceContext, OpenBlobContext, OpenSessionContext, SessionTitleContext, SkillDescriptionContext, ToolFileActionsContext, resolveSessionPath, type ToolFileActions } from './fileLinks';
+import { OpenToolFileContext, AsyncTaskStopContext, BlobUrlContext, DiffSourceContext, FileStagerContext, OpenBlobContext, OpenSessionContext, SessionTitleContext, SkillDescriptionContext, ToolFileActionsContext, resolveSessionPath, type FileStager, type ToolFileActions } from './fileLinks';
 import { skillDescriptions } from './slashCommands';
 import { TurnActionsContext } from './TurnActions';
 import { ForkBoundary } from './ForkBoundary';
@@ -80,6 +80,13 @@ import { ComposerAbove } from '../plugins/ComposerAbove';
 import { backdropsShown, useSkin } from '../plugins/skin';
 import { useSessionOutline } from '../plugins/outline';
 import { SessionRail, SlotPieces } from '../plugins/Pieces';
+
+// What `fileStager` last read, by session and path (null: unreadable), kept for the page's life: a session switched
+// back to, or a fold opened again, shows it at once while the host checks the file again. Reads under way are shared
+const stagedFiles = new Map<string, string | null>();
+const stagingFiles = new Map<string, Promise<string | undefined>>();
+// Resolves once the image is decoded (or failed to), so the reserved frame gives way to pixels, not to an empty box
+const decodeImage = (src: string) => { const img = new Image(); img.src = src; return img.decode().catch(() => {}); };
 
 // Every action the webview sends to the host; in the LAB a fake host implements these, the real build swaps in postMessage
 export interface ShellHandlers {
@@ -101,7 +108,8 @@ export interface ShellHandlers {
   openPlan?: (sessionId: string, planId: string) => void;
   openFile?: (sessionId: string, path: string, line?: number, reveal?: boolean) => void;
   // Stage a local/remote image file into the session's blob store for the Lightbox
-  imageBlob?: (sessionId: string, path: string) => Promise<string | undefined>;
+  // shown: a file the session's transcript names (a row's image, video or widget), staged only when it does
+  imageBlob?: (sessionId: string, path: string, shown?: boolean) => Promise<string | undefined>;
   // An agent-emitted image's blob file opens in the editor by its store name (the host resolves the absolute path)
   openBlob?: (sessionId: string, name: string) => void;
   setMode: (id: string) => void;
@@ -582,6 +590,34 @@ export function Shell(p: ShellProps) {
   const blobUrl = useMemo(() => (p.blobBase && p.activeSessionId ? (blob: string) => `${p.blobBase}/${p.activeSessionId}/${blob}` : undefined), [p.blobBase, p.activeSessionId]);
   // Child transcripts share the root session's blob store, so both contexts live above Thread and the inspector
   const openBlob = useMemo(() => p.activeSessionId && on.openBlob ? (name: string) => on.openBlob!(p.activeSessionId!, name) : undefined, [p.activeSessionId, on.openBlob]);
+  // Files rows show from their paths. Each mount asks the host again (a stat while the file is unchanged), so a file
+  // rewritten and shown again is never the old one; an image is decoded before it replaces its placeholder
+  const fileStager = useMemo<FileStager | undefined>(() => {
+    const sid = p.activeSessionId;
+    const imageBlob = on.imageBlob;
+    if (!sid || !imageBlob) return undefined;
+    return {
+      known: path => stagedFiles.get(`${sid}\0${path}`),
+      load: path => {
+        const key = `${sid}\0${path}`;
+        let pending = stagingFiles.get(key);
+        if (!pending) {
+          pending = imageBlob(sid, path, true)
+            .then(async blob => {
+              if (blob && blobUrl && imageMimeOf(path)) await decodeImage(blobUrl(blob));
+              return blob;
+            })
+            .then(blob => {
+              stagingFiles.delete(key);
+              stagedFiles.set(key, blob ?? null);
+              return blob;
+            });
+          stagingFiles.set(key, pending);
+        }
+        return pending;
+      },
+    };
+  }, [p.activeSessionId, on.imageBlob, blobUrl]);
   // The card for a turn that stopped short stands until dismissed or until the transcript moves on; the key ties the dismissal to that one turn.
   // While the session isn't ready the Notice has the floor (a login problem after a failed prompt is its business)
   const lastTurn = p.turns[p.turns.length - 1];
@@ -1011,6 +1047,7 @@ export function Shell(p: ShellProps) {
       <ShellLayerContext.Provider value={root}>
       <BlobUrlContext.Provider value={blobUrl}>
       <OpenBlobContext.Provider value={openBlob}>
+      <FileStagerContext.Provider value={fileStager}>
       <ToolFileActionsContext.Provider value={toolFileActions}>
       <AsyncTaskStopContext.Provider value={stopAsyncTask}>
       <DiffSourceContext.Provider value={fetchDiffSource}>
@@ -1315,6 +1352,7 @@ export function Shell(p: ShellProps) {
       </DiffSourceContext.Provider>
       </AsyncTaskStopContext.Provider>
       </ToolFileActionsContext.Provider>
+      </FileStagerContext.Provider>
       </OpenBlobContext.Provider>
       </BlobUrlContext.Provider>
       </ShellLayerContext.Provider>

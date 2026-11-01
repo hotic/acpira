@@ -50,6 +50,12 @@ export const SessionTitleContext = createContext<((ref: string) => string | unde
 export const BlobUrlContext = createContext<((blob: string) => string) | undefined>(undefined);
 export const OpenBlobContext = createContext<((blob: string) => void) | undefined>(undefined);
 
+// A row's image, video or widget kept as a path (every one of a session on an SSH host), or a Markdown image the host
+// could not read when it streamed: the host reads the file into the session's blob store when the page shows it.
+// `known` answers synchronously what this page last staged (null: unreadable), shown while `load` checks again
+export type FileStager = { known: (path: string) => string | null | undefined; load: (path: string) => Promise<string | undefined> };
+export const FileStagerContext = createContext<FileStager | undefined>(undefined);
+
 // Hash form survives rehype-sanitize / rehype-harden: file: is a hard block and becomes ` [blocked]`.
 export const FILE_HREF_PREFIX = '#acpira-file:';
 // Session links take the same route: an acpira:// or vscode:// href would come out of harden as ` [blocked]`

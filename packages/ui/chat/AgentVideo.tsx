@@ -4,13 +4,14 @@ import { toolVideos } from '@acpira/shared/imageTools';
 import { t, useLocale } from '../i18n';
 import { Button } from '../ui/Button';
 import { BlobUrlContext, OpenBlobContext } from './fileLinks';
+import { useShownBlob } from './stagedBlob';
 
 // Media bytes never enter React state. Only a visible recording gets a source; the browser owns decoding and seeking.
 export const ShownVideos = memo(function ShownVideos({ block }: { block: ToolCallBlock }) {
   useLocale();
   const videos = toolVideos(block);
   if (!videos.length) return null;
-  return <div className="flex min-w-0 flex-col gap-gap">{videos.map(video => <AgentVideo key={video.blob} video={video} />)}</div>;
+  return <div className="flex min-w-0 flex-col gap-gap">{videos.map(video => <AgentVideo key={video.blob ?? video.uri} video={video} />)}</div>;
 });
 
 function AgentVideo({ video }: { video: ImageRef }) {
@@ -20,7 +21,10 @@ function AgentVideo({ video }: { video: ImageRef }) {
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
   const name = video.uri?.split(/[\\/]/).pop() ?? video.blob ?? '';
-  const src = video.blob && blobUrl ? blobUrl(video.blob) : undefined;
+  // A recording kept as a path (a session on an SSH host) is read by the host only once the player comes into view
+  const blob = useShownBlob(video.blob, ready ? video.uri : undefined);
+  const src = blob && blobUrl ? blobUrl(blob) : undefined;
+  const missing = !blobUrl || ((!!video.blob || ready) && blob === null);
 
   useEffect(() => {
     const el = player.current;
@@ -36,12 +40,16 @@ function AgentVideo({ video }: { video: ImageRef }) {
       observer.disconnect();
       document.removeEventListener('visibilitychange', hidden);
       el.pause();
-      el.removeAttribute('src');
-      el.load();
+      // Only a player that left the page lets go of its media: on a new `src` (a host recording read after mount) React
+      // has already set it, and dropping it here left the player without a source
+      if (!el.isConnected) {
+        el.removeAttribute('src');
+        el.load();
+      }
     };
   }, [src, failed]);
 
-  if (!src || failed) return <div role="status" className="flex flex-col items-start gap-gap text-3 text-fg-3">
+  if (missing || failed) return <div role="status" className="flex flex-col items-start gap-gap text-3 text-fg-3">
     <span>{t('panel.error.media')}</span>
     {video.blob && openBlob && <Button onClick={() => openBlob(video.blob!)}>{name}</Button>}
   </div>;

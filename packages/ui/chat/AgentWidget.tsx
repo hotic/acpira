@@ -7,6 +7,7 @@ import { useTheme } from '../look';
 import { t, useLocale } from '../i18n';
 import { cn } from '../ui/cn';
 import { BlobUrlContext, OpenToolFileContext, parseFileLink } from './fileLinks';
+import { useShownBlob } from './stagedBlob';
 import { WIDGET_MESSAGE, buildWidgetDoc, pageNonce, readWidgetTheme, type WidgetPageMsg } from './widgetDoc';
 
 // An HTML widget an agent showed with Acpira's `show_widget`: its page runs in a sandboxed srcdoc frame (see
@@ -35,13 +36,18 @@ async function fetchText(url: string): Promise<string> {
   }
 }
 
-// The widget of a completed show_widget row; nothing while it runs or when it failed (the row says so)
+// The widget of a completed show_widget row; nothing while it runs or when it failed (the row says so). One kept as a
+// path (a session on an SSH host) is read by the host first, its placeholder holding the place meanwhile
 export const ShownWidget = memo(function ShownWidget({ block }: { block: ToolCallBlock }) {
   // memo keeps a row from rendering again; the locale context still reaches it after a language change
   useLocale();
   const widget = toolWidget(block);
-  if (!widget?.blob) return null;
-  return <AgentWidget blob={widget.blob} uri={widget.uri} title={block.target} />;
+  const blob = useShownBlob(widget?.blob, widget?.uri);
+  if (!widget) return null;
+  if (blob === undefined) return <div aria-busy className="h-widget-placeholder w-full animate-pulse rounded-md bg-chip" />;
+  // The host could not read the file (gone, or the host is unreachable): said in place of the frame
+  if (blob === null) return <div role="status" className="text-3 text-fg-3">{t('panel.error.media')}</div>;
+  return <AgentWidget blob={blob} uri={widget.uri} title={block.target} />;
 });
 
 function AgentWidget({ blob, uri, title }: { blob: string; uri?: string; title?: string }) {

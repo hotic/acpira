@@ -6,25 +6,33 @@ import { AnimatedImage } from './AnimatedImage';
 import { FileMenu, ImageMenu } from './ImageMenu';
 import { Lightbox } from './Lightbox';
 import { BlobUrlContext, OpenBlobContext, OpenToolFileContext, parseFileLink } from './fileLinks';
+import { imageMimeOf } from '@acpira/shared/attachments';
+import { useShownBlob } from './stagedBlob';
 
 // An agent-emitted image (message chunk or tool content): pixels live in the session's blob store, base64 never
 // enters the transcript. A click previews it in the shell's Lightbox, like a dropped attachment; opening the file in an
 // editor tab is a right-click action next to Copy image, in the transcript and in the Lightbox alike. The agent's `uri`
 // (where it saved its copy, e.g. codex-acp) rides along as a small openable caption unless the surrounding row already
-// names the file (`caption={false}`).
+// names the file (`caption={false}`). An image kept as a path alone (a session on an SSH host) is read by the host the
+// first time the page shows it, in a reserved frame so the turn does not jump when it lands.
 export function AgentImage({ image, caption = true }: { image: ImageRef; caption?: boolean }) {
   const blobUrl = useContext(BlobUrlContext);
   const openBlob = useContext(OpenBlobContext);
   const openFile = useContext(OpenToolFileContext);
   const [preview, setPreview] = useState(false);
-  const src = image.blob && blobUrl ? blobUrl(image.blob) : undefined;
   const file = image.uri ? parseFileLink(image.uri) : undefined;
+  // Only an image file is read for this card: a Markdown source naming anything else stays its named card
+  const blob = useShownBlob(image.blob, image.uri && imageMimeOf(file?.path ?? image.uri) ? image.uri : undefined);
+  const src = blob && blobUrl ? blobUrl(blob) : undefined;
   const name = file?.path.split(/[\\/]/).pop() ?? t('common.image');
   // Editor-tab opener for the context menu: the blob itself when the host can open it, else the agent's own file
-  const openInEditor = image.blob && openBlob ? () => openBlob(image.blob!) : file && openFile ? () => openFile(file.path, file.line) : undefined;
+  const openInEditor = blob && openBlob ? () => openBlob(blob) : file && openFile ? () => openFile(file.path, file.line) : undefined;
   return (
     <div className="flex min-w-0 flex-col items-start gap-1">
-      {src ? (
+      {blob === undefined ? (
+        // The host is reading the file: an image-sized frame holds the place, the caption below already in its spot
+        <div role="status" aria-label={t('common.previewImage', { name })} title={image.uri} className="h-agent-image w-agent-image max-w-full animate-pulse rounded-md border border-line bg-chip" />
+      ) : src ? (
         <ImageMenu src={src} mimeType={image.mimeType} path={file?.path} line={file?.line} openInEditor={openInEditor}>
           <button
             type="button"
