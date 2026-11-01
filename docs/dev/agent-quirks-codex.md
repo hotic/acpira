@@ -21,4 +21,3 @@ How codex-acp and the bundled codex behave on the ACP wire, with the version obs
 - Goal behaviour (1.13.0 and 2.2.2, live): an unmet goal continues after the turn with no `session/prompt`, bracketed by `threadStatus` active … idle; the host runs it as a detached turn. After two continuations without progress Codex sets `blocked` itself.
 - Pause / clear never interrupt a running turn, only further continuations (a paused goal can still reach `complete`). `/goal resume` on a `complete` goal reactivates it. `usageLimited` / `budgetLimited` map to `limited`.
 - Open: codex-acp 2.x's "AIR tool call contract, exact diff patches" not run at turn level.
-

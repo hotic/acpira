@@ -11,6 +11,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [2.0.5] - 2026-11-01
+
+### Added
+
+- **Agents can show videos.** The new `show_video` tool plays a recording inline once it scrolls into view, in every shell. Pasted media loads from the session's own files, also in the file viewer.
+- **Stop a summoned agent.** `ask_agent` can stop a summoned thread's running round the way the stop button does, then answers with its last words. The thread stays open for another prompt.
+- **Summoned agents' returns lead the reply they woke**, and a short sidekick round no longer leaves empty slots behind.
+- **Claude Code's ScheduleWakeup keeps the session alive.** A session with a pending wakeup is not released while idle, and its row and the session list name when it resumes.
+- **Settings search.** The settings rail searches pages, groups and fields. Models get their own page, and plugins become one list filtered by what they add.
+- **Adapter updates.** An agent whose ACP adapter is older than the pinned version is offered an update, marked on its tile, the settings rail and the desktop gear. An updated adapter starts fresh instead of reusing a warm or cached old process.
+- **Effort levels from more gateways.** Levels are read from capability lists, Codex's supported reasoning levels and New API listings, and parenthesized effort suffixes fold into one model family. The built-in model catalogue is refreshed.
+- **The built-in agent** takes images with question answers, rechecks waiting cards when the mode or approval level changes, and restores the files it worked on most behind a compaction summary.
+- **Plugins land where they live.** After an apply the engine relists its MCP tools mid-turn, so the model can call what it just built. A failed runtime start returns its stderr to the agent, plugin cards sit at the call that offered them, and a newer card offers an update. Applying charges the card and flies lit frames in the skin's colour.
+- **Choose which agents run locally in SSH folders.** Settings pick the agents that run on this machine in a host folder; every other agent runs in the host's own engine. Session search reaches host sessions, and connecting downloads the helper build for the host's platform and names failures in the host list.
+- Project rows of SSH folders name the host instead of the parent folder when two folders share a name.
+
+### Changed
+
+- **The per-host SSH run mode is replaced by the per-agent setting.** By default only the built-in agent runs locally in an SSH folder. Claude Code and the other agents run in the host's own engine unless they are picked in Settings.
+- **Storage stays smaller.** Identical attachments are shared across sessions, large diff texts move out of session records into compressed files read on demand, and records untouched for a month are packed into an archive that older engines still open through a stub.
+- GIFs and their thumbnails play as video encoded in the page, which costs WebKit a fraction of the CPU. Any failure keeps the GIF, and GIF decoding is bounded by frame size.
+- Only the active language's dictionary loads, instead of all nine.
+- The thinking orb, composer beam, send button ring and image mosaic are drawn in-house. The send ring uses canvas 2D, so a lost WebGL context can no longer hide send or stop.
+- MCP tool rows name the server as configured, as Claude Code and Codex print it, and titles drop a repeated server prefix.
+- The permission card lines up with the tool rows and puts its choices beside the title. Crowded tool panel tabs shrink to their icon instead of scrolling.
+- Claude plans are named Max and Ultra, as the service sells them.
+- Codex patches are titled from their diffs when the adapter only says "Edit files".
+
+### Fixed
+
+- On macOS the engine and gateway are signed with the Developer ID and the gateway stays at one fixed path, so privacy grants such as App Management survive upgrades.
+- New sessions opened in an SSH folder from its category or the current session run on the host, and an offline host no longer stalls opening an unknown session.
+- Images, videos and widgets an SSH session shows keep the host path and are fetched when a page shows them, instead of a copy a repeated completion could drop.
+- Question answer images survive forks, submit waits while pasted images are still being read, and pictures the agent could not pass on are reported instead of reading the answer as skipped.
+- An automatic allow answered after the built-in agent's approval level went back to asking now asks a person.
+- Sessions stay off an engine whose login keychain is locked.
+- The desktop Dock badge clears for sessions read or answered elsewhere, including waiting cards answered on another device.
+- A search-only session row's unread mark clears when it is opened, and session list hover actions hide once the pointer leaves a clicked row.
+- In WebKit a wide code card no longer grows by its scrollbar after a session switch, and typing no longer restyles the whole shell.
+- Push notifications no longer repeat a subtitle.
+- The Windows desktop icon renders full-bleed without a shadow and stays sharp at small sizes.
+
 ## [2.0.1] - 2026-10-31
 
 ### Added
