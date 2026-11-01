@@ -24,7 +24,10 @@
   /* The new-tab page's column, its file list (fixed, so results arriving never move it); a tab's widest title */
   --new-tab-w: 480px;
   --new-tab-list: calc(var(--row) * 10);
-  --panel-tab-min: 96px;
+  /* A crowded tab shrinks down to its icon (TAB's px-2 on both sides) before the list scrolls: a scrolled list cut a
+     tab in half at its edge. The selected tab keeps room for a few letters of its title */
+  --panel-tab-min: calc(var(--icon) + 1rem);
+  --panel-tab-on-min: 96px;
   --panel-tab-max: 224px;
   /* The files layout (FilesLayout.tsx): the explorer's default, narrowest and widest width, the chat's beside the stage,
      what the stage keeps, and the narrowest window that takes the layout: its four columns at their narrowest. A narrower
