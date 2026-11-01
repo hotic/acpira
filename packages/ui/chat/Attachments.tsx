@@ -4,6 +4,7 @@ import type { Attachment, Draft } from '@acpira/shared/transcript';
 import { attachmentLabel, imageMimeOf } from '@acpira/shared/attachments';
 import { t } from '../i18n';
 import { cn } from '../ui/cn';
+import { AnimatedImage } from './AnimatedImage';
 import { Lightbox } from './Lightbox';
 import { TextPeek } from './TextPeek';
 import { isFolderUri } from './drafts';
@@ -210,6 +211,7 @@ export function TurnAttachments({ attachments, blobUrl }: { attachments: Attachm
           image={isImage(a)}
           icon={chipIcon(a)}
           src={a.kind === 'image' && blobUrl && a.blob ? blobUrl(a.blob) : undefined}
+          mimeType={a.kind === 'image' ? a.mimeType : undefined}
           title={chipTitle(a)}
           onPreview={src => setPreview(previewOf(a, src, openBlob))}
           onOpen={openFor(a, { blobUrl, openFile, peek })}
@@ -234,8 +236,8 @@ export function AttachmentTiles({ attachments, blobUrl }: { attachments: Attachm
         const src = a.kind === 'image' && blobUrl && a.blob ? blobUrl(a.blob) : undefined;
         return src
           ? <button key={key} type="button" title={a.name} aria-label={t('common.previewImage', { name: a.name ?? t('common.image') })} onClick={() => setPreview(previewOf(a, src, openBlob))}
-              className="flex size-lead shrink-0 cursor-zoom-in overflow-hidden rounded-xs outline-none hover:ring-1 hover:ring-fg-3 focus-visible:ring-1 focus-visible:ring-focus">
-              <img src={src} alt="" className="size-full object-cover" />
+              className="relative flex size-lead shrink-0 cursor-zoom-in overflow-hidden rounded-xs outline-none hover:ring-1 hover:ring-fg-3 focus-visible:ring-1 focus-visible:ring-focus">
+              <AnimatedImage src={src} mimeType={a.kind === 'image' ? a.mimeType : undefined} alt="" fit="cover" className="size-full object-cover" />
             </button>
           : <AttachmentTag key={key} name={attachmentLabel(a)} image={isImage(a)} icon={chipIcon(a)} title={chipTitle(a)}
               onOpen={openFor(a, { blobUrl, peek })} />;
@@ -267,7 +269,7 @@ export function EditAttachments({ attachments, retained, blobUrl, disabled, onRe
       {named.map(({ item: attachment, index: i }) => {
         const src = attachment.kind === 'image' && blobUrl && attachment.blob ? blobUrl(attachment.blob) : undefined;
         return <Removable key={i} disabled={disabled} label={t('common.removeNamed', { name: attachmentLabel(attachment) ?? t('common.image') })} onRemove={() => onRemove(i)}>
-          <AttachmentTag thumbnail name={attachmentLabel(attachment)} src={src}
+          <AttachmentTag thumbnail name={attachmentLabel(attachment)} src={src} mimeType={attachment.kind === 'image' ? attachment.mimeType : undefined}
             image={isImage(attachment)} icon={chipIcon(attachment)}
             title={chipTitle(attachment)}
             onPreview={src => setPreview(previewOf(attachment, src, openBlob))}
@@ -280,9 +282,10 @@ export function EditAttachments({ attachments, retained, blobUrl, disabled, onRe
   );
 }
 
-function AttachmentTag({ name = 'image.png', src, image, icon, title, thumbnail, onPreview, onOpen }: {
+function AttachmentTag({ name = 'image.png', src, mimeType, image, icon, title, thumbnail, onPreview, onOpen }: {
   name?: string;
   src?: string;
+  mimeType?: string;
   image: boolean;
   // Replaces the file glyph (an editor selection)
   icon?: ReactNode;
@@ -301,13 +304,16 @@ function AttachmentTag({ name = 'image.png', src, image, icon, title, thumbnail,
       onClick={click}
       className={cn(
         'inline-flex max-w-full min-w-0 shrink-0 items-center rounded-sm bg-chip text-fg-2 [&_svg]:size-icon [&_svg]:shrink-0 [&_svg]:text-fg-3',
-        thumbnail && image ? 'size-thumb justify-center overflow-hidden' : 'h-ctl-sm gap-1 px-2 text-3 font-medium',
+        // `relative`: a GIF thumbnail's video covers the image (AnimatedImage)
+        thumbnail && image ? 'relative size-thumb justify-center overflow-hidden' : 'h-ctl-sm gap-1 px-2 text-3 font-medium',
         click && 'outline-none hover:bg-chip-hover focus-visible:ring-1 focus-visible:ring-focus active:bg-active',
         src ? 'cursor-zoom-in' : click && 'cursor-pointer',
       )}
     >
       {src
-        ? <img src={src} alt="" className={thumbnail && image ? 'size-full object-cover' : 'size-icon-ctl shrink-0 rounded-xs object-cover'} />
+        ? thumbnail && image
+          ? <AnimatedImage src={src} mimeType={mimeType} alt="" fit="cover" className="size-full object-cover" />
+          : <img src={src} alt="" className="size-icon-ctl shrink-0 rounded-xs object-cover" />
         : image ? <ImageIcon strokeWidth={1.5} /> : icon ?? <FileText strokeWidth={1.5} />}
       {!(thumbnail && image) && <span className="truncate">{name}</span>}
     </Tag>
