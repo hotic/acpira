@@ -8,11 +8,12 @@ import { StableText } from '../ui/StableText';
 import { cn } from '../ui/cn';
 import { t, useLocale } from '../i18n';
 import { vscodeApi } from '../vscodeApi';
-import { AgentMark } from '../chat/AgentMark';
 import { TurnActionsContext } from '../chat/TurnActions';
 import { SandboxFrame } from './SandboxFrame';
 import { expectArrival } from './arrivals';
-import { flyHome } from './landings';
+import { captureReturns, flyBack, flyHome, type Return } from './landings';
+import { chargeCard } from './charge';
+import { pressIn } from '../effects/magic';
 import { useInView, useReducedMotion, useWindowFocused } from './motion';
 import { useAppearance } from '../appearance';
 import { askPluginsView, backdropsShown, expectReveal, usePluginBackdrop, usePluginsView } from './skin';
@@ -54,17 +55,32 @@ export const PluginCard = memo(function PluginCard({ card }: { card: Card_ }) {
   const view = usePluginsView();
   const { state, replacedBy } = cardState(card, view);
   const thumb = useRef<HTMLDivElement>(null);
-  const kindIcon = useRef<SVGSVGElement>(null);
   const Kind = KIND[card.kind] ?? Blocks;
-  // An apply clicked here: once the card reads applied (the check passed), its mark flies to where the plugin now
-  // lives (landings.ts). Another window, or an apply that failed, flies nothing
+  // Nothing to picture (no skin backdrop, no map of interface pieces): the thumbnail is the kind's glyph drawn large
+  // along its right side, cut by its edge, fading out to the left (skin.css); the mark lifts off from it (landings.ts)
+  const glyph = card.kind !== 'skin' && card.kind !== 'ui' && !card.slots?.length;
+  const box = useRef<HTMLDivElement>(null);
+  // An apply clicked here charges the card (charge.ts) and, once the card reads applied (the check passed), sends lit
+  // frames from the thumbnail to where the plugin now lives (landings.ts). An undo clicked here sends them back once
+  // the card reads undone, from where they were at the click. Another window, or an apply that failed, flies nothing
   const launched = useRef<number>(undefined);
+  const charged = useRef<() => void>(undefined);
+  const returning = useRef<{ at: number; returns: Return[] }>(undefined);
   useEffect(() => {
-    if (state !== 'applied' || launched.current === undefined) return;
-    const fresh = performance.now() - launched.current < LAUNCH_MS;
-    launched.current = undefined;
-    if (fresh && thumb.current) flyHome(card, thumb.current, kindIcon.current);
+    if (state === 'applied' && launched.current !== undefined) {
+      const fresh = performance.now() - launched.current < LAUNCH_MS;
+      launched.current = undefined;
+      if (fresh && thumb.current) flyHome(card, thumb.current);
+      charged.current?.();
+      charged.current = undefined;
+    }
+    if (state !== 'applied' && returning.current) {
+      const { at, returns } = returning.current;
+      returning.current = undefined;
+      if (performance.now() - at < LAUNCH_MS && thumb.current) flyBack(thumb.current, returns);
+    }
   }, [state, card]);
+  useEffect(() => () => charged.current?.(), []);
   // One button for the card's whole life: Apply becomes Undo in place (Switch back / Use this version once superseded),
   // its box reserving the longest of those words, so the click lands where it is undone. No status beside it: the
   // change itself says it is applied
@@ -77,9 +93,18 @@ export const PluginCard = memo(function PluginCard({ card }: { card: Card_ }) {
   const note = view?.safeMode ? t('plugin.card.safeMode') : state === 'replaced' ? t('plugin.card.replaced', { name: replacedBy ?? '' }) : state === 'newer' ? t('plugin.card.newer') : undefined;
   const act = (e: MouseEvent<HTMLButtonElement>) => {
     const undo = state === 'applied';
-    const r = e.currentTarget.getBoundingClientRect();
+    const button = e.currentTarget;
+    // A skin is uncovered from its thumbnail, the live picture of it, and covered back up into it
+    const r = (thumb.current ?? button).getBoundingClientRect();
     if (card.kind === 'skin') expectReveal({ x: r.left + r.width / 2, y: r.top + r.height / 2 }, undo, card.plugin);
-    if (!undo) launched.current = performance.now();
+    if (!undo) {
+      launched.current = performance.now();
+      charged.current?.();
+      charged.current = box.current && thumb.current ? chargeCard(box.current, button, thumb.current, { x: e.clientX, y: e.clientY }) : undefined;
+    } else {
+      pressIn(button, 0.06);
+      if (thumb.current && card.kind !== 'skin') returning.current = { at: performance.now(), returns: captureReturns(card, thumb.current) };
+    }
     // Any card with pieces, one that also runs a program (exec) included. A reply action is a native button, which
     // the mark flies to instead (landings.ts)
     if (!undo && card.slots?.length) {
@@ -91,7 +116,7 @@ export const PluginCard = memo(function PluginCard({ card }: { card: Card_ }) {
     vscodeApi().postMessage({ type: 'pluginCard', sessionId, card: card.id, op: undo ? 'undo' : 'apply' });
   };
   return (
-    <Card data-plugin-card={card.kind} data-state={state} className="group/plugin relative my-gap flex min-w-0 flex-col overflow-hidden">
+    <Card ref={box} data-plugin-card={card.kind} data-state={state} className="group/plugin relative my-gap flex min-w-0 flex-col overflow-hidden">
       {/* The plugin's folder: the plan card's corner glyph, placed and revealed the same way */}
       <div className="absolute top-gap-half right-gap-half z-3 opacity-0 transition-opacity duration-(--code-copy-duration) ease-out group-hover/plugin:opacity-100 group-focus-within/plugin:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100">
         <IconButton size="sm" className="bg-bg-2 ring ring-conversation-line" title={`${t('plugin.card.files')} ${card.folder}`} aria-label={t('plugin.card.files')}
@@ -102,7 +127,7 @@ export const PluginCard = memo(function PluginCard({ card }: { card: Card_ }) {
       {/* Body: the thumbnail, the name and one line beside it, clear of the corner */}
       <div className="flex min-w-0 items-center gap-pad p-pad pr-ctl">
         <div ref={thumb} data-plugin-thumb aria-hidden="true" className={cn('relative shrink-0 overflow-hidden rounded-md bg-bg-0 shadow-[inset_0_0_0_1px_var(--line)] transition-opacity duration-300', state === 'replaced' && 'opacity-50')}>
-          <Thumb card={card} />
+          {glyph ? <div data-plugin-glyph><Kind strokeWidth={1.75} /></div> : <Thumb card={card} />}
         </div>
         <div className="flex min-w-0 flex-col gap-0.5">
           <span className="truncate text-2 font-medium text-fg-strong">{card.name}</span>
@@ -110,9 +135,9 @@ export const PluginCard = memo(function PluginCard({ card }: { card: Card_ }) {
         </div>
       </div>
       {/* The bar: the kind (and for a program, what it runs) at the start, the button at the end */}
-      <div className="flex min-w-0 items-center gap-gap border-t border-line py-gap-half pr-gap-half pl-pad">
+      <div data-plugin-bar className="flex min-w-0 items-center gap-gap border-t border-line py-gap-half pr-gap-half pl-pad">
         <span className="flex min-w-0 flex-1 items-center gap-1.5 text-3 text-fg-3">
-          <Kind ref={kindIcon} className="size-icon shrink-0" strokeWidth={1.5} />
+          <Kind className="size-icon shrink-0" strokeWidth={1.5} />
           <span className="shrink-0">{kindLabel(card.kind)}</span>
           {card.runs && <span className="ml-1.5 min-w-0 truncate">{t('plugin.card.runs')} <code className="rounded-xs bg-active px-1 font-mono text-mono text-fg-2">{card.runs}</code></span>}
           {/* A plugin with schedules acts while nobody watches: said on the card it is enabled from */}
@@ -132,23 +157,12 @@ export const PluginCard = memo(function PluginCard({ card }: { card: Card_ }) {
 });
 
 // A skin's thumbnail is its backdrop, live: drawn at twice the box and scaled down, so the whole composition shows and
-// its glyphs become texture; 2D, since a page holds few WebGL contexts and a transcript can hold many cards. An agent's
-// is its mark on a neutral fill, an interface plugin's a map of where its pieces go, anything else its kind
+// its glyphs become texture; 2D, since a page holds few WebGL contexts and a transcript can hold many cards. An interface
+// plugin's is a map of where its pieces go; other cards draw their kind's glyph instead (PluginCard)
 function Thumb({ card }: { card: Card_ }) {
   if (card.kind === 'skin') return <SkinThumb plugin={card.plugin} snapshot={card.snapshot} name={card.name} />;
-  // Interface pieces (a command's button among them) show where they go; a program's foot still names what it runs
-  if (card.kind === 'ui' || card.slots?.length) return <UiThumb slots={card.slots ?? []} />;
-  const Kind = KIND[card.kind] ?? Blocks;
-  // A small dashboard card: the mark in a tile at the top left (the tile that lifts off and flies once applied,
-  // landings.ts), the kind's glyph drawn large and faint, bleeding off the bottom right corner
-  return (
-    <div className="absolute inset-0 overflow-hidden bg-linear-to-b from-bg-1 to-bg-0">
-      <Kind aria-hidden className="pointer-events-none absolute text-fg-1 opacity-[.08]" strokeWidth={0.75} style={{ height: '260%', width: 'auto', right: '-118%', bottom: '-128%' }} />
-      <div data-thumb-mark className="absolute top-gap left-gap flex size-ctl items-center justify-center rounded-md bg-active text-fg-2 shadow-[inset_0_0_0_1px_var(--line)]">
-        {card.kind === 'agent' ? <AgentMark id={card.plugin} name={card.name} className="size-icon" /> : <Kind className="size-icon" strokeWidth={1.5} />}
-      </div>
-    </div>
-  );
+  // Otherwise interface pieces (a command's button among them) show where they go
+  return <UiThumb slots={card.slots ?? []} />;
 }
 
 // Also the settings page's skin picker
@@ -164,7 +178,8 @@ export function SkinThumb({ plugin, snapshot, name }: { plugin: string; snapshot
   const reduced = useReducedMotion();
   const still = motion === 'none' || reduced;
   if (!backdropsShown || !html || safe) {
-    return <div className="absolute inset-0 flex items-center justify-center bg-active text-fg-2"><Palette className="size-lead" strokeWidth={1.5} /></div>;
+    // No live picture (another host, a skin of colours only, safe mode): drawn like a program's card, its glyph large
+    return <div data-plugin-glyph><Palette strokeWidth={1.75} /></div>;
   }
   return (
     <div ref={box} className="absolute inset-0">
@@ -187,7 +202,7 @@ const BLOCKS: Record<string, { in: 'column' | 'sheet' | 'composer'; style: CSSPr
   'message.actions': { in: 'sheet', style: { left: '34%', top: '50%', width: '14%', height: '6%' } },
   page: { in: 'sheet', style: { left: '30%', right: '6%', top: '20%', bottom: '34%' } },
 };
-const lit: CSSProperties = { position: 'absolute', borderRadius: 'var(--r-xs, 2px)', background: 'color-mix(in srgb, var(--brand) 30%, transparent)', boxShadow: '0 0 0 1px var(--brand), 0 0 8px -1px var(--brand)' };
+const lit: CSSProperties = { position: 'absolute', borderRadius: 'var(--r-xs, 2px)', background: 'color-mix(in srgb, var(--land-ink) 30%, transparent)', boxShadow: '0 0 0 1px var(--land-ink), 0 0 8px -1px var(--land-ink)' };
 const line = (left: string, top: string, width: string): CSSProperties => ({ position: 'absolute', left, top, width, height: '3%', borderRadius: 1, background: 'color-mix(in srgb, var(--fg-3) 45%, transparent)' });
 
 type Where = 'column' | 'sheet' | 'composer';

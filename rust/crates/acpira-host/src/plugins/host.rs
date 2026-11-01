@@ -815,6 +815,11 @@ fn theme_css_of(loaded: &Loaded) -> String {
     if !tokens.is_empty() {
       out.push_str(&format!(":root, .acp-shell, [data-theme], .acp-shell.acp-shell[data-skin] {{\n{}\n}}\n", tokens.join("\n")));
     }
+    // A skin that names its own colour lends it to the page's landing marks (--land-ink, skin.css); without, they stay
+    // the foreground's, since the default --brand is Acpira's own, not the skin's
+    if theme.tokens.get("--brand").and_then(Value::as_str).is_some_and(manifest::safe_css_value) {
+      out.push_str(":root, .acp-shell, [data-theme], .acp-shell.acp-shell[data-skin] { --skin-ink: var(--brand); }\n");
+    }
     if let Some(css) = theme.css.as_deref() {
       push_css(&mut out, &a.dir, css);
     }
@@ -1046,6 +1051,7 @@ mod tests {
     h.action(PluginAction::Enable { id: "warm".into() }).await.unwrap();
     let css = h.theme_css();
     assert!(css.contains(":root, .acp-shell, [data-theme], .acp-shell.acp-shell[data-skin] {\n  --bg-0: #1b1a18;\n  --brand: oklch(70% 0.1 60);\n}"), "{css}");
+    assert!(css.contains("--skin-ink: var(--brand);"), "{css}");
     assert!(css.trim_end().ends_with(".acp-shell { letter-spacing: 0.01em; }\n/* */"), "{css}");
     h.action(PluginAction::SafeMode { on: true }).await.unwrap();
     assert_eq!(h.theme_css(), "");

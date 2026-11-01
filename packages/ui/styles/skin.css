@@ -4,6 +4,10 @@
    layout): the shell's own fill goes and its surfaces let the fixed layer under the page through.
    Glass tiers: how much of each surface is the skin's --bg-0. `veil` and `calm` have no backdrop-filter (no blur pass
    per frame, and blur turns small glyphs into bokeh); `frost` blurs. */
+/* The colour of everything a plugin card sends flying and of the light where it lands (plugins/landings.ts, Pieces.tsx,
+   the card's map): the skin's own colour when it names one (the engine's theme layer sets --skin-ink), else the
+   foreground, white on dark and ink on light */
+.acp-shell { --land-ink: var(--skin-ink, var(--fg-strong)); }
 /* Custom properties only, so unlayered: desktop.css sets --canvas outside any layer */
 .acp-shell.acp-shell.acp-shell[data-backdrop][data-desktop] { --canvas: transparent; }
 /* The palette a skin's seeds derive, in every theme setting: palette.css derives only in automatic mode and there
@@ -79,4 +83,12 @@
 
   /* A plugin card's thumbnail (plugins/PluginCard.tsx): a small landscape window, the size the LAB settled on */
   [data-plugin-thumb] { width: 112px; height: 70px; }
+  /* A thumbnail with nothing to picture: the kind's glyph, far larger than the box, standing along its right side, cut by
+     the edges, its left part fading into the surface; a light from the top right gives the box some depth */
+  [data-plugin-glyph] {
+    position: absolute; inset: 0; color: var(--fg-1);
+    background: radial-gradient(120% 140% at 100% 0%, color-mix(in srgb, var(--fg-1) 7%, transparent), transparent 60%);
+    -webkit-mask-image: linear-gradient(to right, transparent 25%, #000 85%); mask-image: linear-gradient(to right, transparent 25%, #000 85%);
+  }
+  [data-plugin-glyph] svg { position: absolute; top: 50%; right: 0; height: 175%; width: auto; aspect-ratio: 1; opacity: .2; transform: translate(24%, -50%); }
 }

@@ -26,10 +26,7 @@ const FLY_MS = 1100;
 // A lifting stand-in rises this far (px) and grows by this much before it flies
 const LIFT_RISE = 8;
 const LIFT_GROW = 1.15;
-// How much a merging mark shrinks as it dissolves into its slot
-const MERGE_SHRINK = 0.2;
-// The slot's answer to a merging mark: one soft swell of light, no edge, no burst
-const BLOOM_MS = 900;
+
 const REVEAL_EASE = 'cubic-bezier(.45,.05,.25,1)';
 const UNDO_EASE = 'cubic-bezier(.45,0,.55,1)';
 
@@ -189,15 +186,13 @@ export interface FlyOptions {
   // A beat before the flight (ms): the stand-in rises off its source and grows a little, so the eye finds it before it
   // leaves. Off by default: a piece already reads as its lit block leaving the map
   lift?: number;
-  // Lands by merging (a mark): it eases into the slot, shrinking a little as it dissolves, and the slot answers with a
-  // soft swell of light (bloomAt) instead of the ring. A burst of rings and streaks read as cartoonish
-  merge?: boolean;
   // Called when the flyer lands: swap the slot's content here
   land?: () => void;
   // The slot went away mid-flight: the stand-in goes, nothing lands, no glow
   signal?: AbortSignal;
-  // The box that answers the landing, when it is not the target: a mark landing inside the composer lights its edge
-  glowBox?: () => DOMRect | undefined;
+  // The control a stand-in lands on, when it is not a reserved piece box: the answering ring takes that control's
+  // corner radius (a pill chip, the composer's rounded field)
+  outline?: () => Element | undefined;
 }
 
 // Flies `opts.flyer` from `from` into `to` along an arc that bows upward, shrinking to the slot's size, then glows the slot
@@ -252,11 +247,8 @@ export async function flyInto(from: DOMRect, to: () => DOMRect | undefined, opts
     const y = (1 - uc) * (1 - uc) * a.y + 2 * (1 - uc) * uc * ctl.y + uc * uc * b.y;
     const k = 1 - Math.pow(1 - Math.min(1, t / 0.7), 2);
     const sx = grow + (end.x - grow) * k, sy = grow + (end.y - grow) * k;
-    // A merging mark, in place from 80 %, dissolves over the rest on an ease, shrinking as it goes
-    const q = opts.merge ? smooth(Math.min(1, Math.max(0, (t - 0.78) / 0.22))) : 0;
-    const press = 1 - MERGE_SHRINK * q;
-    const opacity = opts.merge ? String(1 - q) : t > 0.86 ? String(1 - (t - 0.86) / 0.14) : '1';
-    frames.push({ offset: (lift + t * duration) / total, transform: at(x, y, sx * press, sy * press), opacity });
+    const opacity = t > 0.86 ? String(1 - (t - 0.86) / 0.14) : '1';
+    frames.push({ offset: (lift + t * duration) / total, transform: at(x, y, sx, sy), opacity });
   }
   const anim = f.animate(frames, { duration: total, easing: 'linear', fill: 'forwards' });
   // A piece's fill thins out in an effect of its own, so a main-thread hitch only delays that
@@ -264,12 +256,10 @@ export async function flyInto(from: DOMRect, to: () => DOMRect | undefined, opts
   // Land a little before the stand-in has faded, so the real mark is already there as it dissolves
   const landing = setTimeout(() => {
     opts.land?.();
-    const box = opts.glowBox?.();
-    // The light swells where the mark is dissolving; a wide box around it (the composer) brightens along its edge
-    if (opts.merge) bloomAt(box ?? to() ?? target, opts.glow, !!box, opts.host);
-    else if (box) glowAt(box, opts.glow, true, opts.host);
+    const around = opts.outline?.();
+    if (around) glowAt(around.getBoundingClientRect(), opts.glow, true, opts.host, getComputedStyle(around).borderRadius);
     else glowAt(to() ?? target, opts.glow, piece, opts.host);
-  }, lift + duration * (opts.merge ? 0.78 : 0.82));
+  }, lift + duration * 0.82);
   opts.signal?.addEventListener('abort', () => { clearTimeout(landing); anim.cancel(); }, { once: true });
   await anim.finished.catch(() => {});
   f.remove();
@@ -277,11 +267,11 @@ export async function flyInto(from: DOMRect, to: () => DOMRect | undefined, opts
 
 // The slot answers the landing: a ring pulses out from it and fades. Around a piece the ring follows its box and grows a
 // few pixels out, where a circle as wide as a sidebar module would sweep half the window
-function glowAt(r: DOMRect, colour: string, box = false, host: HTMLElement = document.body) {
+function glowAt(r: DOMRect, colour: string, box = false, host: HTMLElement = document.body, radius = '8px') {
   const g = document.createElement('div');
   g.className = 'slot-glow';
   if (box) {
-    Object.assign(g.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px`, borderRadius: '8px', boxShadow: `0 0 0 1.5px ${colour}, 0 0 16px 1px ${colour}` });
+    Object.assign(g.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px`, borderRadius: radius, boxShadow: `0 0 0 1.5px ${colour}, 0 0 16px 1px ${colour}` });
     host.append(g);
     const grow = (px: number) => `scale(${1 + (2 * px) / r.width}, ${1 + (2 * px) / r.height})`;
     g.animate([{ transform: grow(0), opacity: 1 }, { transform: grow(9), opacity: 0 }], { duration: 900, easing: 'cubic-bezier(.2,.7,.2,1)' }).finished.then(() => g.remove(), () => g.remove());
@@ -293,38 +283,7 @@ function glowAt(r: DOMRect, colour: string, box = false, host: HTMLElement = doc
   g.animate([{ transform: 'scale(.9)', opacity: 1 }, { transform: 'scale(2.6)', opacity: 0 }], { duration: 760, easing: 'cubic-bezier(.2,.7,.2,1)' }).finished.then(() => g.remove(), () => g.remove());
 }
 
-const smooth = (u: number) => u * u * (3 - 2 * u);
-
-// The slot's answer to a merging mark: a soft light swells in behind it and fades, slower out than in. A small control
-// gets a round bloom a few times its size; a wide box (the composer) brightens its edge in place, without growing.
-// Opacity and transform only, on the compositor
-export function bloomAt(r: DOMRect, colour: string, box: boolean, host: HTMLElement = document.body): void {
-  const el = document.createElement('div');
-  el.className = 'slot-glow';
-  const swell = [{ opacity: 0 }, { opacity: 1, offset: 0.3 }, { opacity: 0 }];
-  if (box) {
-    Object.assign(el.style, {
-      left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px`, borderRadius: '12px',
-      boxShadow: `0 0 0 1px color-mix(in srgb, ${colour} 35%, transparent), 0 0 32px -8px color-mix(in srgb, ${colour} 28%, transparent)`,
-    });
-    host.append(el);
-    el.animate(swell, { duration: BLOOM_MS, easing: 'cubic-bezier(.4,0,.2,1)' }).finished.then(() => el.remove(), () => el.remove());
-    return;
-  }
-  const d = Math.max(r.width, r.height) * 3;
-  Object.assign(el.style, {
-    left: `${r.left + r.width / 2 - d / 2}px`, top: `${r.top + r.height / 2 - d / 2}px`, width: `${d}px`, height: `${d}px`,
-    background: `radial-gradient(circle, color-mix(in srgb, ${colour} 22%, transparent), transparent 62%)`,
-  });
-  host.append(el);
-  el.animate([
-    { opacity: 0, transform: 'scale(.6)' },
-    { opacity: 1, transform: 'scale(.95)', offset: 0.3 },
-    { opacity: 0, transform: 'scale(1.1)' },
-  ], { duration: BLOOM_MS, easing: 'cubic-bezier(.4,0,.2,1)' }).finished.then(() => el.remove(), () => el.remove());
-}
-
-// The slot gives under the mark: a slight dip and an eased return, no rebound. Added on top of whatever transform the
+// The slot gives under a landing: a slight dip and an eased return, no rebound. Added on top of whatever transform the
 // element already has
 export function pressIn(el: Element, amount: number): void {
   if (motionOff()) return;

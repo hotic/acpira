@@ -80,7 +80,7 @@ function PluginButtons({ plugin, sessionId, children }: { plugin: string; sessio
   const box = useRef<HTMLSpanElement>(null);
   const landed = useArrival(plugin, 'composer.toolbar', box, sessionId);
   return (
-    <span ref={box} className="inline-flex shrink-0 items-center gap-1 rounded-sm transition-opacity duration-200" style={{ opacity: landed ? 1 : 0 }}>
+    <span ref={box} data-plugin-buttons={plugin} className="inline-flex shrink-0 items-center gap-1 rounded-sm transition-opacity duration-200" style={{ opacity: landed ? 1 : 0 }}>
       {children}
     </span>
   );
