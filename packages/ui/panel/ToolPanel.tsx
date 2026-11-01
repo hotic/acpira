@@ -213,7 +213,7 @@ export function tabLabel(tab: PanelTab): string {
 // A tab's tooltip: a terminal's folder, a plugin piece's plugin, else its label
 export const tabTitle = (tab: PanelTab) => (tab.kind === 'terminal' ? `${tabLabel(tab)} — ${tab.cwd}` : tab.kind === 'plugin' ? `${tabLabel(tab)} — ${tab.plugin}` : undefined);
 
-const TAB = 'group/tab inline-flex h-ctl min-w-[min(var(--panel-tab-min),100%)] max-w-[min(var(--panel-tab-max),100%)] shrink items-center gap-1.5 rounded-md px-2 text-2 transition-colors';
+const TAB = 'group/tab inline-flex h-ctl max-w-[min(var(--panel-tab-max),100%)] shrink items-center gap-1.5 rounded-md px-2 text-2 transition-colors';
 
 // Both desktop layouts shrink tab titles before scrolling. Keep the selected tab whole when
 // its container resizes, without scrollIntoView moving any of the shell's ancestor scrollports.
@@ -221,8 +221,14 @@ export function PanelTabList({ children }: { children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   const reveal = useCallback(() => {
     const list = ref.current;
-    const active = list?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
-    if (!list || !active) return;
+    if (!list) return;
+    // A title squeezed narrower than two letters shows a sliver of a glyph, too narrow for its ellipsis: hide it and leave
+    // the icon. Hidden by opacity, so the measure stays the same
+    for (const label of list.querySelectorAll<HTMLElement>('[data-tab-label]')) {
+      label.style.opacity = label.clientWidth < 2 * parseFloat(getComputedStyle(label).fontSize) ? '0' : '';
+    }
+    const active = list.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+    if (!active) return;
     const box = list.getBoundingClientRect();
     const tab = active.getBoundingClientRect();
     if (tab.left < box.left) list.scrollLeft -= box.left - tab.left;
@@ -271,7 +277,7 @@ export function TabButton({ label, title, icon, on, closable, guard, onSelect, o
     <button type="button" role="tab" title={title ?? label} aria-selected={on} onClick={onSelect}
       onAuxClick={e => { if (closable && e.button === 1) onClose(); }}
       onPointerLeave={guard?.leave} onPointerMove={guard?.move}
-      className={cn(TAB, on ? 'bg-active text-fg-1' : 'text-fg-2 hover:bg-hover hover:text-fg-1')}>
+      className={cn(TAB, on ? 'min-w-[min(var(--panel-tab-on-min),100%)] bg-active text-fg-1' : 'min-w-[min(var(--panel-tab-min),100%)] text-fg-2 hover:bg-hover hover:text-fg-1')}>
       <span className="relative flex size-icon shrink-0 items-center justify-center">
         {icon(cn('size-icon transition-opacity', closable && !guard && 'group-hover/tab:opacity-0'))}
         {closable && (
@@ -281,7 +287,7 @@ export function TabButton({ label, title, icon, on, closable, guard, onSelect, o
           </span>
         )}
       </span>
-      <span className="min-w-0 truncate">{label}</span>
+      <span data-tab-label className="min-w-0 truncate">{label}</span>
     </button>
   );
 }
