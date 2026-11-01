@@ -250,7 +250,6 @@ export const en = {
   'session.section.moveUp': 'Move up',
   'session.section.moveDown': 'Move down',
   'session.section.delete': 'Delete section',
-  'session.section.deleteHint': 'Its projects go back to Projects',
   'session.section.empty': 'Drag a project here or move it from its menu',
   'session.section.moveTo': 'Move to section',
   'session.section.remove': 'Remove from section',

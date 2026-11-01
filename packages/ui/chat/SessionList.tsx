@@ -1144,7 +1144,7 @@ function SectionActions({ onRename, onUp, onDown, onDelete }: { onRename: () => 
         {onDown && <DropdownMenu.Item onClick={onDown}><OptionContent icon={<ArrowDown strokeWidth={1.5} />}>{t('session.section.moveDown')}</OptionContent></DropdownMenu.Item>}
         {separator}
         <DropdownMenu.Item className="text-danger" onClick={onDelete}>
-          <OptionContent icon={<Trash2 strokeWidth={1.5} />} description={t('session.section.deleteHint')}>{t('session.section.delete')}</OptionContent>
+          <OptionContent icon={<Trash2 strokeWidth={1.5} />}>{t('session.section.delete')}</OptionContent>
         </DropdownMenu.Item>
       </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
     </DropdownMenu.Root>

@@ -245,7 +245,6 @@
   "session.section.moveUp": "Вверх",
   "session.section.moveDown": "Вниз",
   "session.section.delete": "Удалить раздел",
-  "session.section.deleteHint": "Его проекты вернутся в «Проекты»",
   "session.section.empty": "Перетащите сюда проект или переместите его через меню",
   "session.section.moveTo": "Переместить в раздел",
   "session.section.remove": "Убрать из раздела",

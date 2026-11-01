@@ -248,7 +248,6 @@ export const es = {
   'session.section.moveUp': 'Subir',
   'session.section.moveDown': 'Bajar',
   'session.section.delete': 'Eliminar sección',
-  'session.section.deleteHint': 'Sus proyectos vuelven a Proyectos',
   'session.section.empty': 'Arrastra un proyecto aquí o muévelo desde su menú',
   'session.section.moveTo': 'Mover a sección',
   'session.section.remove': 'Quitar de la sección',

@@ -242,7 +242,6 @@
   "session.section.moveUp": "Monter",
   "session.section.moveDown": "Descendre",
   "session.section.delete": "Supprimer la section",
-  "session.section.deleteHint": "Ses projets reviennent dans Projets",
   "session.section.empty": "Glissez un projet ici ou déplacez-le depuis son menu",
   "session.section.moveTo": "Déplacer vers une section",
   "session.section.remove": "Retirer de la section",

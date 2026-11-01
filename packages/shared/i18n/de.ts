@@ -249,7 +249,6 @@ export const de = {
   'session.section.moveUp': 'Nach oben',
   'session.section.moveDown': 'Nach unten',
   'session.section.delete': 'Bereich löschen',
-  'session.section.deleteHint': 'Seine Projekte kehren zu Projekte zurück',
   'session.section.empty': 'Ziehe ein Projekt hierher oder verschiebe es über sein Menü',
   'session.section.moveTo': 'In Bereich verschieben',
   'session.section.remove': 'Aus Bereich entfernen',
