@@ -640,8 +640,9 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   /// The whole files behind the `nth` diff of a tool call (counted in `contents`, or `content` alone), answered with
   /// `diffSource` echoing seq; subagentId: the subagent transcript the diff was shown in
   case diffSource(sessionId: String, toolCallId: String, nth: Int, subagentId: String? = nil, seq: Int)
-  /// Stage an image file path into the session's blob store, answered with `imageBlob` echoing seq
-  case imageBlob(sessionId: String, path: String, seq: Int)
+  /// Stage a file path into the session's blob store, answered with `imageBlob` echoing seq. `shown`: a file the
+  /// session's transcript names, the only form a paired device may send (the engine checks it)
+  case imageBlob(sessionId: String, path: String, seq: Int, shown: Bool = false)
   /// Open a plan document; the engine passes it on as the openPlanDocument platform request
   case openPlan(sessionId: String, planId: String)
   /// The engine's terminals (terminal.rs): open terminal `id` (a login shell in `cwd`) or view it again; keys and
@@ -744,7 +745,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case type, patches, sessionId, text, attachments, steer, blockId, optionId, answers, images, skip, planId, model, id, configId
     case value, agent, category, cwd, chat, title, pinned, archived, unread, query, seq, turnIndex, retainedAttachments, clientId
     case file, via, methodId, requestId, edit, subagentId, taskId, action, objective, key, fresh, dir, path, base
-    case toolCallId, nth, cols, rows, data, binary, chars, format
+    case toolCallId, nth, cols, rows, data, binary, chars, format, shown
   }
 
   public init(from decoder: Decoder) throws {
@@ -825,7 +826,9 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case "diffSource":
       self = .diffSource(sessionId: try str(.sessionId), toolCallId: try str(.toolCallId), nth: try int(.nth),
                          subagentId: try opt(.subagentId), seq: try int(.seq))
-    case "imageBlob": self = .imageBlob(sessionId: try str(.sessionId), path: try str(.path), seq: try int(.seq))
+    case "imageBlob":
+      self = .imageBlob(sessionId: try str(.sessionId), path: try str(.path), seq: try int(.seq),
+                        shown: try c.decodeIfPresent(Bool.self, forKey: .shown) ?? false)
     case "openPlan": self = .openPlan(sessionId: try str(.sessionId), planId: try str(.planId))
     case "terminalOpen":
       self = .terminalOpen(id: try str(.id), cwd: try opt(.cwd), cols: try c.decodeIfPresent(Int.self, forKey: .cols),
@@ -991,10 +994,11 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
       try c.encode(nth, forKey: .nth)
       try c.encodeIfPresent(subagentId, forKey: .subagentId)
       try c.encode(seq, forKey: .seq)
-    case let .imageBlob(sessionId, path, seq):
+    case let .imageBlob(sessionId, path, seq, shown):
       try c.encode(sessionId, forKey: .sessionId)
       try c.encode(path, forKey: .path)
       try c.encode(seq, forKey: .seq)
+      if shown { try c.encode(true, forKey: .shown) }
     case let .openPlan(sessionId, planId):
       try c.encode(sessionId, forKey: .sessionId)
       try c.encode(planId, forKey: .planId)

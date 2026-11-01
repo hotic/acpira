@@ -29,10 +29,10 @@ final class EngineLink {
   /// The paired wire's own blob streams; nil on the development engine's WebSocket
   private let pairedBlobs: (any PairedBlobs)?
   /// The chat's images: blobs over the paired link (the computer's HTTP route is loopback only, out of the phone's
-  /// reach) or the development engine's HTTP route, files on the Mac staged with imageBlob first. The gateway refuses
-  /// imageBlob from devices (it reads any local path), so a paired wire stages nothing: a Markdown image the engine did
-  /// not read shows as its named chip at once, and a file row without a saved copy stays plain
-  lazy var media = MediaLoader(fetch: blobFetch, stage: pairedBlobs == nil ? stager : nil)
+  /// reach) or the development engine's HTTP route, files on the computer staged with imageBlob first. A paired wire
+  /// stages only files the session shows (`shown`; the gateway refuses any other path, the engine checks the transcript
+  /// names it), so a file row the session does not show stays plain there
+  lazy var media = MediaLoader(fetch: blobFetch, stage: stager)
 
   private var stager: MediaLoader.Stage {
     { [weak self] session, path in await self?.stage(session, path) }
@@ -73,7 +73,7 @@ final class EngineLink {
     let seq = stagingSeq
     return await withCheckedContinuation { continuation in
       staging[seq] = continuation
-      client.post(.imageBlob(sessionId: session, path: path, seq: seq))
+      client.post(.imageBlob(sessionId: session, path: path, seq: seq, shown: pairedBlobs != nil))
       Task { [weak self] in
         try? await Task.sleep(for: Self.stageTimeout)
         self?.staged(seq, blob: nil)

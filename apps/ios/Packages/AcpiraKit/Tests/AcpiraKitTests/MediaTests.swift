@@ -98,7 +98,10 @@ struct MediaSourceTests {
 
   @Test func agentImages() {
     #expect(MediaSource.agentImage(blob: nil, uri: "data:image/png;base64,\(dotPNG)", session: "s") == .inline(dotPNG))
-    #expect(MediaSource.agentImage(blob: nil, uri: "/repo/red.png", session: "s") == nil)
+    // A path alone (a session on an SSH host keeps the host's): the engine stages it on demand
+    #expect(MediaSource.agentImage(blob: nil, uri: "/repo/red.png", session: "s") == .file(session: "s", path: "/repo/red.png"))
+    #expect(MediaSource.agentImage(blob: nil, uri: "https://example.com/a.png", session: "s") == nil)
+    #expect(MediaSource.agentImage(blob: nil, uri: "//example.com/a.png", session: "s") == nil)
     #expect(MediaSource.agentImage(blob: "a.png", uri: "/repo/red.png", session: "s") == .blob(session: "s", name: "a.png"))
     #expect(fileOfURI("/repo/red.png") == "/repo/red.png")
     #expect(fileOfURI("file:///repo/my%20shot.png") == "/repo/my shot.png")
@@ -133,6 +136,15 @@ struct MediaSourceTests {
     #expect(isImageResult(block))
   }
 
+  @Test func aShownFileKeptAsItsPathIsStillTheRowsResult() throws {
+    let json = #"{"id":"i","kind":"other","verb":"Show image","verbKey":"verb.showImage","status":"completed","contents":["#
+      + #"{"type":"image","uri":"/srv/app/shot.png","mimeType":"image/png"},{"type":"image","uri":"/srv/app/page.html","mimeType":"text/html"},"#
+      + #"{"type":"image","uri":"https://example.com/x.png","mimeType":"image/png"},{"type":"text","text":"Shown to the user"}]}"#
+    let block = try JSONDecoder().decode(ToolCallBlock.self, from: Data(json.utf8))
+    #expect(toolImages(block).map(\.uri) == ["/srv/app/shot.png"])
+    #expect(toolWidget(block)?.uri == "/srv/app/page.html")
+  }
+
   @Test func videoResultsNeverEnterTheImageDecoder() throws {
     let json = #"{"id":"v","kind":"other","verb":"Video","verbKey":"verb.showVideo","status":"completed","contents":[{"type":"image","blob":"clip.mp4","mimeType":"video/mp4"}]}"#
     let block = try JSONDecoder().decode(ToolCallBlock.self, from: Data(json.utf8))
@@ -149,8 +161,8 @@ struct MediaSourceTests {
     #expect(MediaSource.markdown("data:image/png;base64,\(dotPNG)", images: nil, session: "s") == .inline(dotPNG))
     // Read by the engine with the text: matched on the source as written, percent-decoded on both sides
     #expect(MediaSource.markdown("docs/my arch.png", images: images, session: "s") == .blob(session: "s", name: "b1.png"))
-    // The engine could not read it: nothing to stage again
-    #expect(MediaSource.markdown("./gone.png", images: images, session: "s") == nil)
+    // Not read with the text (a session on an SSH host, or missing then): staged on demand
+    #expect(MediaSource.markdown("./gone.png", images: images, session: "s") == .file(session: "s", path: "./gone.png"))
     // Never seen: staged on demand, the path decoded
     #expect(MediaSource.markdown("/tmp/new%20one.png", images: images, session: "s") == .file(session: "s", path: "/tmp/new one.png"))
     #expect(MediaSource.markdown("blob:abc", images: nil, session: "s") == nil)
@@ -268,7 +280,11 @@ struct MediaLoaderTests {
   @Test func theDemoReadsFixtureBlobs() async throws {
     let view = try #require(Fixtures.session("media"))
     await MediaLoader.demo.preload(view)
-    for source in MediaLoader.sources(in: view) { #expect(MediaLoader.demo.peek(source) != nil, "\(source)") }
+    // A file is staged by an engine, which the demo has not: its card names it (the fixture's missing ./old-shot.png)
+    for source in MediaLoader.sources(in: view) {
+      if case .file = source { continue }
+      #expect(MediaLoader.demo.peek(source) != nil, "\(source)")
+    }
   }
 }
 
@@ -374,8 +390,8 @@ struct EngineMediaTests {
     let image = try await link.media.image(.blob(session: "s1", name: "dot.png"))
     #expect(image.width == 1)
     #expect(wire.asked.withLock { $0 } == ["s1/dot.png"])
-    // The gateway refuses imageBlob from devices: files on the computer are never staged over this link
-    #expect(!link.media.canStage)
+    // Files the session shows are staged over it too (imageBlob with `shown`, which the gateway lets through)
+    #expect(link.media.canStage)
   }
 
   @Test func initNamesTheBlobBase() async throws {

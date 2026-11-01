@@ -602,7 +602,7 @@ enum ContractSamples {
     .projectFile(sessionId: "s1", path: "src/a.ts", base: .head, seq: 8),
     .sessionChanges(sessionId: "s1", seq: 9),
     .diffSource(sessionId: "s1", toolCallId: "call-1", nth: 0, subagentId: "n1", seq: 10),
-    .imageBlob(sessionId: "s1", path: "/w/shot.png", seq: 11),
+    .imageBlob(sessionId: "s1", path: "/w/shot.png", seq: 11, shown: true),
     .openPlan(sessionId: "s1", planId: "p1"),
     .terminalOpen(id: "T", cwd: "/w", cols: 100, rows: 30),
     .terminalInput(id: "T", data: "ls\r", binary: false),

@@ -47,7 +47,8 @@ struct AgentVideoView: View {
     .onChange(of: phase) { _, next in if next != .active { player?.pause() } }
     .task(id: requested) {
       guard requested, player == nil else { return }
-      guard let session = media.session, let blob = video.blob else { failed = true; return }
+      guard let session = media.session,
+            let blob = await media.loader.blobName(session: session, blob: video.blob, uri: video.uri) else { failed = true; return }
       do {
         let bytes = try await media.loader.video(session: session, blob: blob)
         try Task.checkCancellation()
