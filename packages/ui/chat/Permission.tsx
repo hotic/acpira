@@ -39,7 +39,7 @@ export function Permission({ block, onChoose, compact }: { block: PermissionBloc
   </>;
   if (compact) {
     return (
-      <div className="flex min-w-0 flex-col gap-gap-half rounded-md border border-line py-gap-half pr-gap-half pl-pad">
+      <div data-permission-card className="flex min-w-0 flex-col gap-gap-half rounded-md border border-line py-gap-half pr-gap-half pl-pad">
         <div className="flex min-w-0 flex-wrap items-center gap-gap">
           <Row dense className="min-w-0 flex-1 text-fg-1" lead={block.command ? <Terminal className="size-icon" strokeWidth={1.5} /> : undefined}>
             <span className="min-w-0 truncate" title={title}>{title}</span>
@@ -51,8 +51,9 @@ export function Permission({ block, onChoose, compact }: { block: PermissionBloc
     );
   }
   // Bleed the frame into the message inset so its icon stays on the tool rows' keyline.
+  // data-permission-card: the welcome tour's approvals step finds the card by it, whatever frames it.
   return (
-    <div className="-mx-pad flex min-w-0 flex-col gap-gap rounded-md bg-bg-1 px-pad py-gap shadow-[inset_0_0_0_1px_var(--conversation-line)]">
+    <div data-permission-card className="-mx-pad flex min-w-0 flex-col gap-gap rounded-md bg-bg-1 px-pad py-gap shadow-[inset_0_0_0_1px_var(--conversation-line)]">
       <div className="flex min-w-0 flex-wrap items-center gap-gap">
         <Row dense className="min-w-0 flex-auto gap-gap-half" lead={block.command ? <Terminal className="size-icon" strokeWidth={1.5} /> : undefined}>
           <span className="min-w-0 font-medium [overflow-wrap:anywhere]">{title}</span>

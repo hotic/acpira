@@ -99,12 +99,8 @@ const STEPS: Step[] = [
     lines: () => [t('welcome.sessions.1'), t('welcome.sessions.2')],
   },
   {
-    // The permission card: up from its title (the agent's own English words) to the first box with a border
-    find: r => {
-      const title = targets(r, 'div, span').find(e => e.childElementCount === 0 && /^(Edit|Run|Write) /.test(e.textContent ?? ''));
-      const card = upTo(title, el => el.classList.contains('border') || getComputedStyle(el).borderTopWidth !== '0px');
-      return card ? [card] : [];
-    },
+    // The permission card, by its marker rather than its frame: the card's border is a box shadow, not a border
+    find: r => targets(r, '[data-permission-card]').slice(0, 1),
     lead: 'below', pad: 6, title: () => t('welcome.approvals.title'),
     lines: () => [t('welcome.approvals.1'), t('welcome.approvals.2', { more: t('permission.more') })],
   },
