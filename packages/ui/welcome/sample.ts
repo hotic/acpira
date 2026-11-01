@@ -43,7 +43,7 @@ export function sampleSession(now = Date.now()): SampleSession {
         { type: 'tool_call', id: 'sample-read', kind: 'read', verb: t('verb.read'), target: 'src/SessionList.tsx', targetMono: true, status: 'completed' },
         { type: 'tool_call', id: 'sample-run', kind: 'execute', verb: t('verb.execute'), target: 'pnpm test sidebar', status: 'completed' },
         { type: 'text', markdown: t('welcome.sample.reply') },
-        // The title is the agent's own words, which arrive in English; the approvals step finds the card by it
+        // The title is the agent's own words, which arrive in English
         { type: 'permission', id: 'sample-permission', title: 'Edit src/SessionList.tsx', options: [
           { id: 'once', label: t('permission.once'), kind: 'allow_once' },
           { id: 'session', label: t('permission.session'), kind: 'allow_always' },
