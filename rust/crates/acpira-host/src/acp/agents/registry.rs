@@ -503,6 +503,12 @@ impl AgentRegistry {
   }
 
   /// Find the executable; a lookup that flips availability notifies subscribers like a full probe would
+  /// Drop the path `id` was last found at, so the next lookup searches anew: an install may have put a newer copy
+  /// earlier in the search order while the old one stays where it was
+  pub fn forget_resolved(&self, id: &str) {
+    self.resolved.lock().remove(id);
+  }
+
   pub async fn resolve_binary(&self, id: &str) -> Option<String> {
     let before = self.snapshot();
     let found = self.locate(id).await;
