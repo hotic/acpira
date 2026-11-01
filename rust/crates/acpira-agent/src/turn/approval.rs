@@ -109,40 +109,48 @@ pub(super) async fn ask(server: &Arc<Server>, session: &Arc<Session>, rules: &Ru
   tokio::pin!(changed);
   changed.as_mut().enable();
   let mut decision = rules.decide(session, action);
-  let r = 'request: loop {
-    if decision == Decision::Deny {
-      return Answer::Denied;
-    }
-    request["_meta"] = json!({ "acpira/autoApprove": decision == Decision::Allow });
-    let pending = server.conn().request_cancellable("session/request_permission", request.clone());
-    tokio::pin!(pending);
-    loop {
-      tokio::select! {
-        r = &mut pending => break 'request r,
-        _ = &mut changed => {
-          changed.set(session.permissions_changed.notified());
-          changed.as_mut().enable();
-          let next = rules.decide(session, action);
-          if next != decision {
-            decision = next;
-            break;
+  'ask: loop {
+    let r = 'request: loop {
+      if decision == Decision::Deny {
+        return Answer::Denied;
+      }
+      request["_meta"] = json!({ "acpira/autoApprove": decision == Decision::Allow });
+      let pending = server.conn().request_cancellable("session/request_permission", request.clone());
+      tokio::pin!(pending);
+      loop {
+        tokio::select! {
+          r = &mut pending => break 'request r,
+          _ = &mut changed => {
+            changed.set(session.permissions_changed.notified());
+            changed.as_mut().enable();
+            let next = rules.decide(session, action);
+            if next != decision {
+              decision = next;
+              break;
+            }
           }
         }
       }
+      // Dropping the old request withdraws its card before the replacement request is sent.
+    };
+    let Ok(r) = r else { return Answer::Reject };
+    if r.pointer("/outcome/outcome").and_then(Value::as_str) != Some("selected") {
+      return Answer::Reject;
     }
-    // Dropping the old request withdraws its card before the replacement request is sent.
-  };
-  let Ok(r) = r else { return Answer::Reject };
-  if r.pointer("/outcome/outcome").and_then(Value::as_str) != Some("selected") {
-    return Answer::Reject;
-  }
-  // A reply racing a restrictive mode change must not authorize an action that mode now denies.
-  if rules.decide(session, action) == Decision::Deny {
-    return Answer::Denied;
-  }
-  match (r.pointer("/outcome/optionId").and_then(Value::as_str), always) {
-    (Some("allow"), _) => Answer::Once,
-    (Some("always"), Some((pattern, _))) => Answer::Always(pattern),
-    _ => Answer::Reject,
+    // A reply racing a restrictive mode change must not authorize an action that mode now denies.
+    let now = rules.decide(session, action);
+    if now == Decision::Deny {
+      return Answer::Denied;
+    }
+    // An automatic allow answered after the level went back to asking: a person decides after all
+    if decision == Decision::Allow && now != Decision::Allow {
+      decision = now;
+      continue 'ask;
+    }
+    return match (r.pointer("/outcome/optionId").and_then(Value::as_str), always) {
+      (Some("allow"), _) => Answer::Once,
+      (Some("always"), Some((pattern, _))) => Answer::Always(pattern),
+      _ => Answer::Reject,
+    };
   }
 }

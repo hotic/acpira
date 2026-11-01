@@ -387,9 +387,15 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       // A plugin applied since the last call: the model gets its tools now
       if !s.raw && session.mcp.pending() {
         offer = session.mcp.offer(&tools::names::ALL).await;
-        let mut fresh = setup(server, session, params, &offer.tools)?;
-        plugin_tools(server, session, &mut fresh).await;
-        s.retool(fresh);
+        // Only the tools are taken over: setup reads the live model and mode, which a pick made meanwhile may have
+        // changed (raw mode would empty the table under a history of tool calls, a removed model would fail the
+        // turn). Those keep the table this turn started with
+        if let Ok(mut fresh) = setup(server, session, params, &offer.tools)
+          && !fresh.raw
+        {
+          plugin_tools(server, session, &mut fresh).await;
+          s.retool(fresh);
+        }
       }
       crate::steer::take(session, s.model.takes_images(), &s.skills);
       // The goal's budget ran out in this turn: the model is told to wrap up (`goal::account`)
