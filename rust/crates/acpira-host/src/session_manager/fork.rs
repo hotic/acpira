@@ -66,6 +66,7 @@ fn blob_slots<'a>(turns: &'a mut [Turn], out: &mut Vec<&'a mut Option<String>>) 
             AgentBlock::Steer(s) => attachments(&mut s.attachments, out),
             AgentBlock::Image(i) => out.push(&mut i.blob),
             AgentBlock::Text(t) => out.extend(t.images.iter_mut().flatten().map(|r| &mut r.blob)),
+            AgentBlock::Question(q) => out.extend(q.answer_images.iter_mut().flat_map(|m| m.values_mut()).flatten().map(|r| &mut r.blob)),
             AgentBlock::ToolCall(c) => {
               out.extend(c.content.as_mut().and_then(image));
               out.extend(c.contents.iter_mut().flatten().filter_map(image));

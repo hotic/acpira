@@ -50,6 +50,8 @@ export function Questions({ block, onAnswer, subtitle }: { block: QuestionBlock;
   const [picks, setPicks] = useState<Record<string, Pick>>({});
   const [active, setActive] = useState(0);
   const [focusField, setFocusField] = useState(false);
+  // Image reads still running: an answer sent now would leave them out
+  const [reading, setReading] = useState(0);
   const fade = useScrollFade<HTMLDivElement>();
   const qs = block.questions;
   const total = qs.length;
@@ -67,7 +69,7 @@ export function Questions({ block, onAnswer, subtitle }: { block: QuestionBlock;
     return out;
   }, [qs, picks, block]);
   const answered = (q: Question) => answers[q.id] !== undefined || !!images[q.id];
-  const canSubmit = qs.some(answered) && qs.every(q => !q.required || answered(q));
+  const canSubmit = !reading && qs.some(answered) && qs.every(q => !q.required || answered(q));
   const canAdvance = last ? canSubmit : !!current && (!current.required || answered(current));
   const skip = useCallback(() => onAnswer(block.id, answers, true), [onAnswer, block.id, answers]);
   const submit = () => onAnswer(block.id, answers, false, Object.keys(images).length ? images : undefined);
@@ -77,13 +79,14 @@ export function Questions({ block, onAnswer, subtitle }: { block: QuestionBlock;
   const attach = (files: Iterable<File>) => {
     if (!current || !accepts) return;
     const id = current.id;
+    setReading(n => n + 1);
     void collectImages(files).then(list => {
       // Images live in the "other" field, so attaching picks it like typing does
       if (list.length) update(id, p => ({
         ...p, images: [...p.images, ...list].slice(0, MAX_ANSWER_IMAGES),
         ...(current.kind !== 'text' ? { other: true } : {}), ...(current.kind === 'single' ? { options: [] } : {}),
       }));
-    });
+    }).finally(() => setReading(n => n - 1));
   };
   const hasFiles = (dt: DataTransfer | null) => !!dt && [...dt.types].includes('Files');
   const onPaste = (e: ClipboardEvent<HTMLDivElement>) => {
