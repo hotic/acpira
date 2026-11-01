@@ -6,7 +6,8 @@ import Testing
 // The picked-video compressor against a clip made on the spot: a portrait 1080p 60 fps recording with sound comes out
 // as a 720p, 30 fps MP4 with its rotation and audio kept, and a budget nothing could fit is refused.
 
-@Suite struct VideoCompressorTests {
+// A time limit, so a stalled writer fails this suite by name instead of hanging the whole test run
+@Suite(.timeLimit(.minutes(1))) struct VideoCompressorTests {
   @Test func shrinksAndKeepsRotationAndSound() async throws {
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent("video-test-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: folder) }
@@ -65,19 +66,7 @@ private enum Clip {
     #expect(writer.startWriting())
     writer.startSession(atSourceTime: .zero)
 
-    for frame in 0..<(fps * seconds) {
-      while !video.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(1)) }
-      var buffer: CVPixelBuffer?
-      CVPixelBufferPoolCreatePixelBuffer(nil, try #require(pixels.pixelBufferPool), &buffer)
-      let pixel = try #require(buffer)
-      CVPixelBufferLockBaseAddress(pixel, [])
-      memset(CVPixelBufferGetBaseAddress(pixel), Int32(frame * 4 % 256), CVPixelBufferGetDataSize(pixel))
-      CVPixelBufferUnlockBaseAddress(pixel, [])
-      pixels.append(pixel, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: CMTimeScale(fps)))
-    }
-    video.markAsFinished()
-
-    // One second of 16-bit mono PCM per buffer
+    // One second of 16-bit mono PCM per buffer, made up front
     let rate = 44_100
     var asbd = AudioStreamBasicDescription(
       mSampleRate: Double(rate), mFormatID: kAudioFormatLinearPCM,
@@ -86,8 +75,8 @@ private enum Clip {
     var format: CMAudioFormatDescription?
     CMAudioFormatDescriptionCreate(allocator: nil, asbd: &asbd, layoutSize: 0, layout: nil, magicCookieSize: 0,
                                    magicCookie: nil, extensions: nil, formatDescriptionOut: &format)
+    var sounds: [CMSampleBuffer] = []
     for second in 0..<seconds {
-      while !audio.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(1)) }
       var samples = (0..<rate).map { Int16(sin(Double($0) * 2 * .pi * 440 / Double(rate)) * 8000) }
       var block: CMBlockBuffer?
       CMBlockBufferCreateWithMemoryBlock(allocator: nil, memoryBlock: nil, blockLength: rate * 2, blockAllocator: nil,
@@ -99,9 +88,35 @@ private enum Clip {
         allocator: nil, dataBuffer: try #require(block), formatDescription: try #require(format), sampleCount: rate,
         presentationTimeStamp: CMTime(value: CMTimeValue(second), timescale: 1), packetDescriptions: nil,
         sampleBufferOut: &sample)
-      audio.append(try #require(sample))
+      sounds.append(try #require(sample))
     }
-    audio.markAsFinished()
+
+    // Both inputs fed in turn: the writer interleaves them and holds back one that runs ahead, so writing all frames
+    // before any sound can wait for good (it did on a CI VM)
+    var frame = 0, second = 0
+    while frame < fps * seconds || second < seconds {
+      try #require(writer.status != .failed, "\(String(describing: writer.error))")
+      var moved = false
+      if frame < fps * seconds, video.isReadyForMoreMediaData {
+        var buffer: CVPixelBuffer?
+        CVPixelBufferPoolCreatePixelBuffer(nil, try #require(pixels.pixelBufferPool), &buffer)
+        let pixel = try #require(buffer)
+        CVPixelBufferLockBaseAddress(pixel, [])
+        memset(CVPixelBufferGetBaseAddress(pixel), Int32(frame * 4 % 256), CVPixelBufferGetDataSize(pixel))
+        CVPixelBufferUnlockBaseAddress(pixel, [])
+        pixels.append(pixel, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: CMTimeScale(fps)))
+        frame += 1
+        if frame == fps * seconds { video.markAsFinished() }
+        moved = true
+      }
+      if second < seconds, audio.isReadyForMoreMediaData {
+        audio.append(sounds[second])
+        second += 1
+        if second == seconds { audio.markAsFinished() }
+        moved = true
+      }
+      if !moved { try await Task.sleep(for: .milliseconds(1)) }
+    }
     await writer.finishWriting()
     #expect(writer.status == .completed)
   }
