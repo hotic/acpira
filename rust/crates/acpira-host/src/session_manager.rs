@@ -362,6 +362,11 @@ struct State {
   closing: HashMap<String, tokio::sync::watch::Receiver<bool>>,
 }
 
+/// A file a page shows, by (session, path)
+type StagedKey = (String, std::path::PathBuf);
+/// A file `stage_file` read: the (size, mtime ms) it had, and its blob
+type StagedFile = ((u64, u64), String);
+
 pub struct SessionManager {
   deps: ManagerDeps,
   state: parking_lot::Mutex<State>,
@@ -379,6 +384,11 @@ pub struct SessionManager {
   // The last export per (session, format): an unchanged transcript hands back the same file instead of writing another one.
   // Held across the write, so rapid repeated clicks run one after another and the later ones hit the cache
   exports: tokio::sync::Mutex<HashMap<(String, ExportFormat), (u64, std::path::PathBuf)>>,
+  // Files a page asked to see (`stage_file`), by (session, path): the size and mtime they had and the blob they were
+  // read into, so an unchanged file is not read again from its (possibly remote) workspace
+  staged: parking_lot::Mutex<HashMap<StagedKey, StagedFile>>,
+  // One read at a time per (session, path): pages asking at once wait for the first and take its blob
+  staging: parking_lot::Mutex<HashMap<StagedKey, Arc<tokio::sync::Mutex<()>>>>,
   // Which sessions this engine has open, visible to every other engine on the machine (`store::session_lease`)
   leases: SessionLeases,
   // Sessions being handed over to another engine right now (a takeover request is being honoured)
@@ -493,6 +503,8 @@ impl SessionManager {
         last_sessions: Default::default(),
         search: SessionSearch::default(),
         exports: Default::default(),
+        staged: Default::default(),
+        staging: Default::default(),
         leases,
         yielding: Default::default(),
         bus,

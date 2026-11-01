@@ -1194,6 +1194,24 @@ fn the_host_show_image_tool_becomes_an_image_row_for_claude_and_codex_wire_shape
 }
 
 #[test]
+fn a_shown_file_with_no_saved_copy_keeps_its_path_through_a_repeated_completion() {
+  // A session on an SSH host saves nothing at show time: the row names the host file and the page reads it from there
+  let mut s = state();
+  s.ctx.save_image_file = Some(Arc::new(|_: &str| None));
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "c1", "title": "mcp__acpira__show_image", "kind": "other", "status": "pending",
+    "rawInput": { "path": "/srv/app/shot.png" } }));
+  let done = json!({ "sessionUpdate": "tool_call_update", "toolCallId": "c1", "status": "completed",
+    "content": [{ "type": "content", "content": { "type": "text", "text": "Shown to the user: shot.png." } }] });
+  let shown = json!({ "contents": [{ "type": "image", "mimeType": "image/png", "uri": "/srv/app/shot.png" }, { "type": "text" }] });
+  apply(&mut s, done.clone());
+  expect_match(block(&s, 0, 0), shown.clone());
+  // The adapter repeats the result: the receipt replaces the contents, and the path comes back ahead of it
+  apply(&mut s, done);
+  expect_match(block(&s, 0, 0), shown);
+  expect_absent(&block(&s, 0, 0)["contents"][0], "blob");
+}
+
+#[test]
 fn show_video_survives_adapter_shapes_and_titleless_completion_without_becoming_an_image() {
   for (title, nested) in [("mcp__acpira__show_video", false), ("mcp.acpira.show_video", true), ("acpira_show_video", false), ("show_video", false)] {
     let mut s = state();

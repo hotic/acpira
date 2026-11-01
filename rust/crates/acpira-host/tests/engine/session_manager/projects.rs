@@ -226,3 +226,42 @@ async fn a_chat_runs_in_a_folder_of_its_own_that_is_no_project_and_an_unprompted
   assert!(Path::new(&second).is_dir());
   assert_eq!(projects_of(&m), json!([p1]));
 }
+
+/// A file the page shows from its path in a folder on an SSH host: read there once into the blob store, the copy reused
+/// while the file is unchanged, read again once it changed
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_host_file_the_page_shows_is_read_once_until_it_changes() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let lab = crate::remote_connections::Lab::new();
+  let real = lab.path().join("hostfs");
+  std::fs::create_dir_all(real.join("work")).unwrap();
+  lab.map_root("/acpira-virtual-host", &real);
+  let connections = lab.engine("engine");
+  connections.op(acpira_shared::remote::ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  let mut opts = Opts::fake(&fake).cwd(&folder(dir.path(), "home"));
+  opts.remote = Some(connections.clone());
+  let m = Mgr::new(&dir.path().join("sessions"), opts);
+  let ws = acpira_host::workspace::Workspace::open("ssh://gen1/acpira-virtual-host/work", Some(&connections)).await.unwrap();
+  let shot = Path::new("/acpira-virtual-host/work/shot.png");
+  std::fs::write(real.join("work/shot.png"), b"\x89PNG first").unwrap();
+
+  let first = m.m.stage_file("s1", &ws, shot).await.expect("read from the host");
+  assert_eq!(std::fs::read(m.m.blob_path("s1", &first).unwrap()).unwrap(), b"\x89PNG first");
+  // Unchanged on the host: the same blob, without another read (the file is unreadable now; its stat still answers)
+  use std::os::unix::fs::PermissionsExt;
+  std::fs::set_permissions(real.join("work/shot.png"), std::fs::Permissions::from_mode(0o000)).unwrap();
+  assert_eq!(m.m.stage_file("s1", &ws, shot).await.as_deref(), Some(first.as_str()));
+  std::fs::set_permissions(real.join("work/shot.png"), std::fs::Permissions::from_mode(0o644)).unwrap();
+  // Rewritten: read again (the size differs, so a coarse mtime cannot hide it)
+  std::fs::write(real.join("work/shot.png"), b"\x89PNG second, longer").unwrap();
+  let second = m.m.stage_file("s1", &ws, shot).await.expect("read again");
+  assert_ne!(first, second);
+  assert_eq!(std::fs::read(m.m.blob_path("s1", &second).unwrap()).unwrap(), b"\x89PNG second, longer");
+  // Not a file the page shows, or gone: nothing
+  std::fs::write(real.join("work/notes.txt"), b"text").unwrap();
+  assert_eq!(m.m.stage_file("s1", &ws, Path::new("/acpira-virtual-host/work/notes.txt")).await, None);
+  assert_eq!(m.m.stage_file("s1", &ws, Path::new("/acpira-virtual-host/work/gone.png")).await, None);
+  connections.dispose();
+}

@@ -35,11 +35,10 @@ pub(crate) fn image_saver(me: Weak<AcpSession>) -> ImageSaver {
 pub(crate) fn file_image_saver(me: Weak<AcpSession>) -> FileImageSaver {
   Arc::new(move |path: &str| {
     let s = me.upgrade()?;
-    // A session folder on an SSH host: only what `fetch_shown` read there, never a file of the same name here
+    // A session folder on an SSH host: never a file of the same name here. The row keeps the host path and the page
+    // reads it from the host when it shows it (`imageBlob`)
     if s.remote_folder().is_some() {
-      let bytes = s.shown.lock().remove(path)?;
-      let ext = std::path::Path::new(path).extension().map(|e| format!(".{}", e.to_string_lossy().to_lowercase())).unwrap_or_default();
-      return Some(save_bytes(&s, &ext, bytes));
+      return None;
     }
     let meta = std::fs::metadata(path).ok()?;
     // Images, and the HTML of a `show_widget` call (kept as a `text/html` image content, which older engines still read)

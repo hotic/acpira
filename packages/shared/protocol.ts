@@ -466,8 +466,10 @@ export type WebviewMsg =
   // diff sources without their texts. Answered with a `diffSource` message echoing seq. subagentId names the subagent
   // transcript the diff was shown in (the inspector); absent, the session's own turns
   | { type: 'diffSource'; sessionId: string; toolCallId: string; nth: number; subagentId?: string; seq: number }
-  // Stage a local/remote image file path into the session's blob store for the Lightbox; answered with `imageBlob` echoing seq
-  | { type: 'imageBlob'; sessionId: string; path: string; seq: number }
+  // Stage a local/remote file path into the session's blob store for the page to show; answered with `imageBlob` echoing seq.
+  // shown: a file the session's transcript names (a row's image, video or widget, a Markdown image), staged only when it
+  // does; the only form a paired device may send. Without it any path, the computer's own pages only
+  | { type: 'imageBlob'; sessionId: string; path: string; seq: number; shown?: boolean }
   | { type: 'permission'; sessionId: string; blockId: string; optionId: string; clientId?: string }
   // The question card was closed: `answers` holds the answered questions only (option ids / free text); skip tells the agent to go on with what it has
   // `images`: image drafts by question id, for a card that takes them (QuestionBlock.images)

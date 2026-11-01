@@ -130,6 +130,25 @@ impl Workspace {
     }
   }
 
+  /// A regular file's size and modification time in ms, to tell whether a copy read earlier is still current; None when
+  /// it is missing or no file
+  pub async fn file_stamp(&self, path: &Path) -> Option<(u64, u64)> {
+    match self {
+      Workspace::Local(_) => {
+        let meta = tokio::fs::metadata(path).await.ok().filter(|m| m.is_file())?;
+        let mtime = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis() as u64;
+        Some((meta.len(), mtime))
+      }
+      Workspace::Remote { client, .. } => {
+        let st = client.call("stat", json!({ "path": path })).await.ok()?;
+        if st.value.get("kind").and_then(Value::as_str) != Some("file") {
+          return None;
+        }
+        Some((st.value.get("size").and_then(Value::as_u64)?, st.value.get("mtimeMs").and_then(Value::as_u64).unwrap_or(0)))
+      }
+    }
+  }
+
   /// An image file the user attached by its path, at most `max` bytes; None when it is missing, larger or unreadable
   pub async fn read_file(&self, path: &Path, max: u64) -> Option<Vec<u8>> {
     match self {

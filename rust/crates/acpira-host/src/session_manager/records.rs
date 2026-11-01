@@ -18,6 +18,9 @@ use crate::store::record::{RecordSource, SessionRecord};
 use crate::store::transcript_store::{is_session_id, sort_index};
 use crate::util::clip;
 
+/// Entries `stage_file` keeps before it starts over
+const STAGED_MAX: usize = 4096;
+
 impl SessionManager {
   /// Rename / pin: a live session mutates itself; one not loaded is patched on disk
   /// An event for the plugins' processes that no live session carries (the session may not be open here)
@@ -413,6 +416,53 @@ impl SessionManager {
 
   pub async fn save_blob(&self, session_id: &str, ext: &str, bytes: &[u8]) -> Option<String> {
     self.deps.store.save_blob(session_id, ext, bytes).await.ok().map(|(name, _)| name)
+  }
+
+  /// A file the page shows from its path (an image, video or widget a row names, a clicked image reference): read from
+  /// the session's workspace, the SSH host's for a remote folder, into the session's blob store. An unchanged file
+  /// (same size and mtime) whose blob is still there answers that blob without another read
+  pub async fn stage_file(&self, session_id: &str, ws: &crate::workspace::Workspace, path: &std::path::Path) -> Option<String> {
+    use acpira_shared::attachments::{ext_of_mime, ext_of_name, image_mime_of};
+    let text = path.to_string_lossy();
+    let (ext, max) = if let Some(mime) = image_mime_of(&text) {
+      (ext_of_mime(mime).to_owned(), crate::limits::MAX_OUT_IMAGE_BYTES)
+    } else if crate::host_mcp::video_mime_of(&text).is_some() {
+      (ext_of_name(&text), crate::limits::MAX_OUT_VIDEO_BYTES)
+    } else if crate::host_mcp::widget_mime_of(&text).is_some() {
+      (ext_of_name(&text), crate::limits::MAX_WIDGET_BYTES)
+    } else {
+      return None;
+    };
+    let key = (session_id.to_owned(), path.to_path_buf());
+    let turn = self.staging.lock().entry(key.clone()).or_default().clone();
+    let blob = {
+      let _one = turn.lock().await;
+      self.stage_file_now(&key, ws, &ext, max).await
+    };
+    // The last one out drops the lock (the map's and this one are all that hold it then)
+    let mut staging = self.staging.lock();
+    if staging.get(&key).is_some_and(|t| Arc::strong_count(t) <= 2) {
+      staging.remove(&key);
+    }
+    blob
+  }
+
+  async fn stage_file_now(&self, key: &(String, std::path::PathBuf), ws: &crate::workspace::Workspace, ext: &str, max: u64) -> Option<String> {
+    let (session_id, path) = (key.0.as_str(), key.1.as_path());
+    let stamp = ws.file_stamp(path).await?;
+    let kept = self.staged.lock().get(key).filter(|(at, _)| *at == stamp).map(|(_, blob)| blob.clone());
+    if let Some(blob) = kept.filter(|b| self.blob_path(session_id, b).is_some_and(|p| p.is_file())) {
+      return Some(blob);
+    }
+    let bytes = ws.read_file(path, max).await?;
+    let blob = self.save_blob(session_id, ext, &bytes).await?;
+    let mut staged = self.staged.lock();
+    // A page can name any number of files over a long run; the index only spares reads, so it starts over when full
+    if staged.len() >= STAGED_MAX {
+      staged.clear();
+    }
+    staged.insert(key.clone(), (stamp, blob.clone()));
+    Some(blob)
   }
 
   /// A record changed on disk without a live session: this host's copy wins for it

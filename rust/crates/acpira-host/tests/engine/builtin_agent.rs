@@ -848,14 +848,18 @@ mod remote {
     let sent = r.env.server.requests().last().unwrap().body["messages"].to_string();
     assert!(sent.contains("Shown to the user: shot.png"), "{sent}");
     assert!(sent.contains("is valid") && sent.contains("afterTurn: `true`"), "the hooks check ran on the host: {sent}");
-    let vw = view(&s).to_string();
-    assert!(vw.contains("image/png") && vw.contains("\"blob\""), "the image is shown: {vw}");
+    // The rows keep the host paths alone: the page reads the files from the host when it shows them (`stage_file`),
+    // so a later packet of the call can never leave a row without its image
+    let vw = view(&s);
+    let rows = vw.to_string();
+    assert!(rows.contains(&format!(r#""mimeType":"image/png","uri":"{shot}""#)), "the image row names the host file: {rows}");
+    assert!(rows.contains("video/mp4"), "{rows}");
+    assert!(!rows.contains("\"blob\""), "nothing was copied at show time: {rows}");
     let blobs = r.env.root.path().join("sessions");
-    let found = walkdir(&blobs).into_iter().any(|p| std::fs::read(&p).is_ok_and(|b| b == png));
-    assert!(found, "the host's bytes are in the blob store");
-    assert!(vw.contains("video/mp4"), "{vw}");
-    until(|| walkdir(&blobs).into_iter().any(|p| std::fs::read(&p).is_ok_and(|b| b == video)), 5000).await;
-
+    assert!(!walkdir(&blobs).into_iter().any(|p| std::fs::read(&p).is_ok_and(|b| b == png || b == video)));
+    // What a paired device may stage: only the files the session shows
+    assert!(s.shows_file(&shot) && s.shows_file(&format!("{VIRT}/work/clip.mp4")));
+    assert!(!s.shows_file(&format!("{VIRT}/work/.agents/hooks.json")) && !s.shows_file("/etc/passwd"));
   }
 
   /// open_browser: the listen check runs on the host, and the shell is told the page is that folder's
