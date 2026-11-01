@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { cn } from '../ui/cn';
-import { gifClip, type GifClip } from './gifVideo';
+import { gifClip, holdClip, releaseClip, type GifClip } from './gifVideo';
 
 // An <img> that plays an animated GIF as a muted looping <video> once it comes into view: WebKit decodes every GIF
 // frame on the CPU at full size (a quarter of a core for one 1280 px GIF), the video goes through the hardware
@@ -38,6 +38,13 @@ export function AnimatedImage({ src, mimeType, alt, className, fit = 'contain' }
       observer.disconnect();
     };
   }, [gif, src]);
+
+  // The clip stays converted while this image shows it
+  useEffect(() => {
+    if (!clip) return;
+    holdClip(src);
+    return () => releaseClip(src);
+  }, [clip, src]);
 
   // Play while on screen, pause off view or in a hidden page; a refused play() (autoplay policy) keeps the GIF
   useEffect(() => {
