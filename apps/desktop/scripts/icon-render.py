@@ -1,9 +1,14 @@
-"""Renders icons/icon.svg at one size without gradient banding: python3 icon-render.py <svg> <px> <out.png>
+"""Renders icons/icon.svg at one size without gradient banding: python3 icon-render.py <svg> <px> <out.png> [windows]
 
 The tile's gradient spans ~14 levels per channel, so librsvg's 8-bit render steps every ~25 px. The svg is split into
 three layers rendered by rsvg-convert: the drop shadow (#drop), the tile's coverage (#backdrop painted white) and
 everything above the tile. The gradient is computed in floating point across #backdrop's box, the layers are composited
-in floating point, and the colour is dithered by one level before it is quantized. Needs numpy and Pillow."""
+in floating point, and the colour is dithered by one level before it is quantized. Needs numpy and Pillow.
+
+`windows` renders the .ico frames. The svg is drawn on the macOS grid (an inset tile plus a shadow, which the Dock lays
+out for), but Windows shows an icon's canvas as is, next to icons that fill theirs (VS Code, Chrome), so this variant
+crops the canvas to the tile, drops the shadow and tightens the corners. Frames up to 64 px also nudge the glyph by
+sub-pixel offsets and a few percent of scale to land its edges on the pixel grid, which a plain downscale smears."""
 
 import io
 import subprocess
@@ -29,6 +34,55 @@ def layer(root, keep, white_backdrop=False):
   return ET.tostring(out)
 
 
+# The tile's corner radius on Windows, as a share of its side (the macOS grid uses ~22.5%)
+WINDOWS_CORNER = 0.18
+# Glyph hinting search for small Windows frames: offsets in pixels and scales around the tile centre
+HINT_MAX_PX = 64
+HINT_OFFSETS = np.linspace(-0.5, 0.5, 9)
+HINT_SCALES = (0.96, 0.98, 1.0, 1.02, 1.04)
+
+
+def windows_variant(root):
+  """Crops the viewBox to #backdrop, removes #drop and scales the tile's corners down"""
+  backdrop = next(el for el in root if el.get('id') == 'backdrop')
+  x, y, side = (float(backdrop.get(k)) for k in ('x', 'y', 'width'))
+  root.set('viewBox', f'{x:g} {y:g} {side:g} {side:g}')
+  for el in list(root):
+    if el.get('id') == 'drop':
+      root.remove(el)
+    elif el.tag == f'{{{SVG_NS}}}rect' and el.get('rx'):
+      # The backdrop and its hairline stroke share the corner; the stroke sits half a unit inside
+      inset = float(el.get('x')) - x
+      el.set('rx', f'{side * WINDOWS_CORNER - inset:g}')
+
+
+def glyph(root):
+  """The top-level element drawn over the tile that carries the mark (the one <g>)"""
+  return next(el for el in root if el.tag == f'{{{SVG_NS}}}g')
+
+
+def hint(root, px):
+  """Picks the glyph offset and scale whose edges fall closest to whole pixels at px, and applies it"""
+  g = glyph(root)
+  base = g.get('transform', '')
+  vx, vy, vw, _ = (float(v) for v in root.get('viewBox').split())
+  cx, cy, unit = vx + vw / 2, vy + vw / 2, vw / px
+  # An svg of the glyph alone; ElementTree keeps no parent links, so g stays in root as well
+  alone = ET.Element(root.tag, root.attrib)
+  alone.append(g)
+  best = None
+  for s in HINT_SCALES:
+    for dy in HINT_OFFSETS:
+      for dx in HINT_OFFSETS:
+        g.set('transform', f'translate({cx + dx * unit:g} {cy + dy * unit:g}) scale({s:g}) translate({-cx:g} {-cy:g}) {base}')
+        a = render(ET.tostring(alone), px)[..., 3]
+        # Partial coverage is what reads as blur; prefer the untouched glyph on ties
+        score = (np.minimum(a, 1.0 - a).sum(), abs(s - 1.0), abs(dx) + abs(dy))
+        if best is None or score < best[0]:
+          best = (score, g.get('transform'))
+  g.set('transform', best[1])
+
+
 def render(svg, px):
   """Premultiplied float RGBA in 0..1"""
   png = subprocess.run(['rsvg-convert', '-w', str(px), '-h', str(px)], input=svg, capture_output=True, check=True).stdout
@@ -37,9 +91,13 @@ def render(svg, px):
   return a
 
 
-def main(svg_path, px, out_path):
+def main(svg_path, px, out_path, variant=None):
   px = int(px)
   root = ET.parse(svg_path).getroot()
+  if variant == 'windows':
+    windows_variant(root)
+    if px <= HINT_MAX_PX:
+      hint(root, px)
   backdrop = next(el for el in root if el.get('id') == 'backdrop')
   grad_id = backdrop.get('fill')[len('url(#'):-1]
   grad = next(el for el in root.iter(f'{{{SVG_NS}}}linearGradient') if el.get('id') == grad_id)
@@ -51,8 +109,8 @@ def main(svg_path, px, out_path):
   above = render(layer(root, lambda i: i not in ('drop', 'backdrop')), px)
 
   # A vertical objectBoundingBox gradient (x1=x2, y1=0, y2=1) across the backdrop's box, sampled at pixel centres
-  view = float(root.get('viewBox').split()[3])
-  y0, h = float(backdrop.get('y')) / view, float(backdrop.get('height')) / view
+  _, vy, _, view = (float(v) for v in root.get('viewBox').split())
+  y0, h = (float(backdrop.get('y')) - vy) / view, float(backdrop.get('height')) / view
   t = np.clip(((np.arange(px) + 0.5) / px - y0) / h, 0.0, 1.0)[:, None, None]
   tile = np.concatenate([np.broadcast_to(top + (bottom - top) * t, (px, px, 3)) * cover, cover], axis=2)
 
