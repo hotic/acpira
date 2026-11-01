@@ -174,6 +174,11 @@ impl SessionManager {
         if ok && login_path::refresh(LOGIN_PATH_REFRESH).await {
           m.log_login_path();
         }
+        // An update: warm processes run the old adapter, and the cached path may still point at it
+        if ok {
+          m.pool.invalidate(Some(&id));
+          m.registry().forget_resolved(&id);
+        }
         let found = m.registry().resolve_binary(&id).await.is_some();
         m.emit_agents();
         let key = match (ok, found) {
