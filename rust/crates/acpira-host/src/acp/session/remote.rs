@@ -232,8 +232,8 @@ impl AcpSession {
     Ok(r.value.get("text").and_then(Value::as_str).unwrap_or("").to_owned())
   }
 
-  /// `show_image` / `show_widget` on the session's host: each file checked there as `host_mcp` checks a local one, and
-  /// read into `shown` for the call's completion to show. Err: what is wrong, for the model
+  /// `show_image` / `show_widget` on the session's host: each file checked there as `host_mcp` checks a local one. The
+  /// row keeps the host path, and the page reads the file from the host when it shows it. Err: what is wrong, for the model
   pub(crate) async fn fetch_shown(&self, paths: &[String], widget: bool, video: bool) -> Result<(), String> {
     use acpira_shared::attachments::image_mime_of;
     let f = self.remote_folder().ok_or("this session's folder is not on an SSH host")?;
@@ -252,13 +252,7 @@ impl AcpSession {
           Err(e) => Some(format!("{path}: {e}")),
           Ok(st) if st.value.get("kind").and_then(Value::as_str) != Some("file") => Some(format!("{path}: not a file")),
           Ok(st) if st.value.get("size").and_then(Value::as_u64).unwrap_or(0) > limit => Some(format!("{path}: larger than {} KB", limit / 1024)),
-          Ok(_) => match client.call("read", json!({ "path": path })).await {
-            Ok(r) => {
-              self.shown.lock().insert(path.clone(), r.data);
-              None
-            }
-            Err(e) => Some(format!("{path}: {e}")),
-          },
+          Ok(_) => None,
         }
       };
       problems.extend(problem);

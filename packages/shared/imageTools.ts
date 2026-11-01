@@ -35,10 +35,14 @@ export function isImageResultBlock(block: AgentBlock): block is ToolCallBlock {
 export const WIDGET_MIME = 'text/html';
 
 type ImageContent = Extract<NonNullable<ToolCallBlock['content']>, { type: 'image' }>;
-const savedContents = (block: ToolCallBlock): ImageContent[] =>
-  (block.contents ?? (block.content ? [block.content] : [])).filter((c): c is ImageContent => c.type === 'image' && !!c.blob);
+// Saved items. A show tool's file may be kept as its path alone (every one of a session on an SSH host), which the page
+// reads through the host (`ui/chat/stagedBlob.ts`); anywhere else an unsaved item is a lost one
+const savedContents = (block: ToolCallBlock): ImageContent[] => {
+  const byPath = isShowImageTool(block) || isShowVideoTool(block) || isShowWidgetTool(block);
+  return (block.contents ?? (block.content ? [block.content] : [])).filter((c): c is ImageContent => c.type === 'image' && !!(c.blob || (byPath && c.uri)));
+};
 
-// The saved images of a tool call, in wire order; `contents` holds every item when there is more than one
+// The images of a tool call, in wire order; `contents` holds every item when there is more than one
 export function toolImages(block: ToolCallBlock): ImageRef[] {
   return savedContents(block).filter(c => c.mimeType.startsWith('image/'));
 }
@@ -48,7 +52,7 @@ export function toolVideos(block: ToolCallBlock): ImageRef[] {
   return savedContents(block).filter(c => c.mimeType.startsWith('video/'));
 }
 
-// The saved widget of a show_widget call (its HTML in the blob store)
+// The widget of a show_widget call (its HTML in the blob store, or its file on the session's host)
 export function toolWidget(block: ToolCallBlock): ImageRef | undefined {
   return savedContents(block).find(c => c.mimeType === WIDGET_MIME);
 }

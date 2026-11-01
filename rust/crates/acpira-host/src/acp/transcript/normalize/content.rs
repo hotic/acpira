@@ -75,7 +75,8 @@ pub(super) fn show_image_paths(args: &Map<String, Value>) -> Vec<String> {
   one.chain(many).map(str::trim).filter(|p| !p.is_empty()).map(str::to_owned).collect()
 }
 
-/// A finished show_image call: the files it named (kept as locations while it ran) become its images
+/// A finished show_image call: the files it named (kept as locations while it ran) become its images. A file with no saved
+/// copy (every one of a session on an SSH host) keeps its path alone, and the page reads it when it shows it
 pub(super) fn attach_shown_images(b: &mut ToolCallBlock, ctx: Option<&ToolCtx>) {
   let is_image = |c: &ToolContent| matches!(c, ToolContent::Image(_));
   if b.status != ToolStatus::Completed || b.content.as_ref().is_some_and(is_image) || b.contents.as_ref().is_some_and(|l| l.iter().any(is_image)) {
@@ -87,9 +88,9 @@ pub(super) fn attach_shown_images(b: &mut ToolCallBlock, ctx: Option<&ToolCtx>) 
     .iter()
     .flatten()
     .filter_map(|l| {
-      let path = local_path_of(&l.path)?;
+      let path = shown_path_of(&l.path)?;
       let mime = image_mime_of(&path)?;
-      Some(ToolContent::Image(ImageRef { blob: Some(save(&path)?), mime_type: mime.to_owned(), uri: Some(l.path.clone()) }))
+      Some(ToolContent::Image(ImageRef { blob: save(&path), mime_type: mime.to_owned(), uri: Some(l.path.clone()) }))
     })
     .collect();
   if images.is_empty() {
@@ -110,9 +111,9 @@ pub(super) fn attach_shown_video(b: &mut ToolCallBlock, ctx: Option<&ToolCtx>) {
   }
   let Some(save) = ctx.and_then(|c| c.save_image_file.as_ref()) else { return };
   let Some(video) = b.locations.iter().flatten().find_map(|l| {
-    let path = local_path_of(&l.path)?;
+    let path = shown_path_of(&l.path)?;
     let mime = crate::host_mcp::video_mime_of(&path)?;
-    Some(ToolContent::Image(ImageRef { blob: Some(save(&path)?), mime_type: mime.to_owned(), uri: Some(l.path.clone()) }))
+    Some(ToolContent::Image(ImageRef { blob: save(&path), mime_type: mime.to_owned(), uri: Some(l.path.clone()) }))
   }) else { return };
   let mut list = vec![video];
   list.extend(b.contents.take().unwrap_or_else(|| b.content.iter().cloned().collect()));
@@ -131,9 +132,9 @@ pub(super) fn attach_shown_widget(b: &mut ToolCallBlock, ctx: Option<&ToolCtx>) 
   }
   let Some(save) = ctx.and_then(|c| c.save_image_file.as_ref()) else { return };
   let Some(widget) = b.locations.iter().flatten().find_map(|l| {
-    let path = local_path_of(&l.path)?;
+    let path = shown_path_of(&l.path)?;
     crate::host_mcp::widget_mime_of(&path)?;
-    Some(ToolContent::Image(ImageRef { blob: Some(save(&path)?), mime_type: WIDGET_MIME.to_owned(), uri: Some(l.path.clone()) }))
+    Some(ToolContent::Image(ImageRef { blob: save(&path), mime_type: WIDGET_MIME.to_owned(), uri: Some(l.path.clone()) }))
   }) else {
     return;
   };
@@ -233,6 +234,12 @@ pub(super) fn image_content(c: &Value, ctx: Option<&ToolCtx>) -> Option<ToolCont
 }
 
 /// A local path behind a resource_link's uri
+/// A file show_image / show_video / show_widget named. A host path (`/…`) of a session on an SSH host is kept even where
+/// it is no absolute path here (a Windows engine)
+fn shown_path_of(uri: &str) -> Option<String> {
+  local_path_of(uri).or_else(|| uri.starts_with('/').then(|| uri.to_owned()))
+}
+
 fn local_path_of(uri: &str) -> Option<String> {
   if crate::platform::file_url::is_file_url(uri) {
     return file_url_to_path(uri);

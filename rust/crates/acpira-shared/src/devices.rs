@@ -99,8 +99,8 @@ pub fn device_allowed(m: &WebviewMsg) -> bool {
     | W::OpenBlob { .. }
     | W::ExportSession { .. }
     | W::InstallInTerminal { .. } => false,
-    // Stages any local path into the blob store; a device fetches blobs over its link instead
-    W::ImageBlob { .. } => false,
+    // Stages a path into the blob store: only one the session shows (the engine checks), never any path of the computer
+    W::ImageBlob { shown, .. } => *shown,
     // A shell viewed on the device; the gateway namespaces its id, never trusting a client-supplied prefix
     W::TerminalOpen { .. }
     | W::TerminalInput { .. }
@@ -368,6 +368,8 @@ mod tests {
     assert!(allowed(json!({ "type": "setSetting", "key": "agentOrder", "value": ["claude", "codex"] })));
     assert!(!allowed(json!({ "type": "openFile", "sessionId": "s", "path": "a" })));
     assert!(!allowed(json!({ "type": "imageBlob", "sessionId": "s", "path": "/etc/passwd", "seq": 1 })));
+    // A file the session shows: let through, the engine checks the transcript names it
+    assert!(allowed(json!({ "type": "imageBlob", "sessionId": "s", "path": "/srv/app/shot.png", "seq": 1, "shown": true })));
     assert!(!allowed(json!({ "type": "removeAccount", "id": "a" })));
     assert!(allowed(json!({ "type": "connections" })));
     assert!(!allowed(json!({ "type": "connectionOp", "op": { "op": "remove", "alias": "h" } })));

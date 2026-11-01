@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ToolCallBlock } from '@acpira/shared/transcript';
-import { isImageGenBlock, isImageGenTool, isImageResultBlock, isShowImageTool, isShowVideoTool, toolImages, toolVideos, toolTexts } from '@acpira/shared/imageTools';
+import { isImageGenBlock, isImageGenTool, isImageResultBlock, isShowImageTool, isShowVideoTool, toolImages, toolVideos, toolTexts, toolWidget } from '@acpira/shared/imageTools';
 import { setLocale } from '../packages/ui/i18n';
 import { foldActivity, toolVerb } from '../packages/ui/chat/folding';
 import { agentTurn } from './fixtures/engine';
@@ -36,6 +36,15 @@ describe('image generation tools', () => {
     expect(isImageGenBlock({ type: 'text', markdown: 'x' })).toBe(false);
     expect(isImageGenBlock({ ...base, verbKey: 'verb.todo' })).toBe(false);
     expect(isImageGenBlock(base)).toBe(true);
+  });
+
+  it('keeps a shown file that is only a path: the page reads it through the host', () => {
+    const shown: ToolCallBlock = { type: 'tool_call', id: 's', kind: 'other', verb: 'Show image', verbKey: 'verb.showImage', status: 'completed' };
+    const host = { type: 'image' as const, mimeType: 'image/png', uri: '/srv/app/shot.png' };
+    const receipt = { type: 'text' as const, text: 'Shown to the user: shot.png.' };
+    expect(toolImages({ ...shown, content: host, contents: [host, receipt] })).toEqual([host]);
+    const page = { type: 'image' as const, mimeType: 'text/html', uri: '/srv/app/page.html' };
+    expect(toolWidget({ ...shown, verbKey: 'verb.showWidget', content: page })).toEqual(page);
   });
 });
 

@@ -660,12 +660,16 @@ pub enum WebviewMsg {
     #[serde(deserialize_with = "crate::num::lenient_i64")]
     seq: i64,
   },
-  /// Stage an image file path into the session's blob store for the Lightbox, answered with `imageBlob` echoing `seq`
+  /// Stage a file path into the session's blob store for the page to show, answered with `imageBlob` echoing `seq`
   ImageBlob {
     session_id: String,
     path: String,
     #[serde(deserialize_with = "crate::num::lenient_i64")]
     seq: i64,
+    /// A file the session's transcript shows (a row's image, video or widget, a Markdown image): staged only when the
+    /// session names that path, so a paired device may ask for it (`devices.rs`); without it any path, computer only
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    shown: bool,
   },
   /// SSH hosts: the current list (pushed on every change after), an edit of one host, the ~/.ssh/config hosts, a
   /// folder of a host (`path` absent: its home)

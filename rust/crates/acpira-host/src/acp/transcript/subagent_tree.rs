@@ -603,6 +603,11 @@ impl SubagentTree {
     self.nodes.iter().filter_map(|n| n.cached.as_ref().map(|c| c.1.clone())).collect()
   }
 
+  /// Every subagent's turns, one transcript after another
+  pub fn all_turns(&self) -> impl Iterator<Item = &Turn> {
+    self.nodes.iter().flat_map(|n| n.state.turns.iter())
+  }
+
   pub fn transcript(&self, id: &str) -> Option<(&[Turn], i64, bool)> {
     let n = self.nodes.iter().find(|n| n.id == id)?;
     Some((&n.state.turns, n.rev, n.status == SubagentState::Running))

@@ -82,6 +82,11 @@ impl SessionManager {
     self.deps.store.resolve_diff(session_id, src).await.filter(|s| !s.omitted)
   }
 
+  /// Whether a session open here (or shown as another engine's copy) shows the file at `path` (`AcpSession::shows_file`)
+  pub fn shows_file(&self, session_id: &str, path: &str) -> bool {
+    self.live(session_id).or_else(|| self.mirror_of(session_id)).is_some_and(|s| s.shows_file(path))
+  }
+
   /// The files the session's own edits touched with their text before its first edit of each (`AcpSession::edit_bases`);
   /// empty for a session that is neither open here nor shown as another engine's copy
   pub async fn edit_bases(&self, session_id: &str) -> Vec<(String, Option<String>)> {

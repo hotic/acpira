@@ -258,6 +258,27 @@ impl AcpSession {
     }
   }
 
+  /// Whether the session (or one of its subagents) shows the file at `path`: a show tool's image, video or widget, an
+  /// agent image, or a Markdown image, by the `uri` the row keeps (compared percent-decoded). Only such a file may be
+  /// staged for a paired device (`imageBlob` with `shown`), which may not read arbitrary paths of this machine
+  pub fn shows_file(&self, path: &str) -> bool {
+    let decoded = |s: &str| crate::platform::file_url::percent_decode(s, false).unwrap_or_else(|| s.to_owned());
+    let want = decoded(path);
+    let hit = |uri: &Option<String>| uri.as_deref().is_some_and(|u| u == path || decoded(u) == want);
+    let shows = |t: &Turn| {
+      t.as_agent().is_some_and(|a| {
+        a.blocks.iter().any(|b| match b {
+          AgentBlock::Text(t) => t.images.iter().flatten().any(|i| hit(&i.uri)),
+          AgentBlock::Image(i) => hit(&i.uri),
+          AgentBlock::ToolCall(tool) => tool.contents.iter().flatten().chain(tool.content.iter()).any(|c| matches!(c, ToolContent::Image(i) if hit(&i.uri))),
+          _ => false,
+        })
+      })
+    };
+    let c = self.core.lock();
+    visible_turns(&c).any(shows) || c.tree.all_turns().any(shows)
+  }
+
   /// Every file the session's own edits touched, in the order it first edited them, with the diff source of that first
   /// edit: its old text is what the file held before (inline, or in a blob the caller reads back; None when the record
   /// no longer keeps it). Subagents' edits are not counted: they live in their own transcripts

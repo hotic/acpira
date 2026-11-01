@@ -437,22 +437,32 @@ impl BridgeCore {
         let source = manager.diff_source(&session_id, &tool_call_id, nth, subagent_id.as_deref()).await;
         self.post_now(HostMsg::DiffSource { seq, source });
       }
-      // Stage an image file into the session's blob store on demand when a file reference is clicked for preview
-      W::ImageBlob { session_id, path, seq } => {
-        let (core, root) = (self.clone(), manager.session_cwd(&session_id));
+      // Stage a file a page shows from its path into the session's blob store: a row's image, video or widget kept as a
+      // path (every one of a session on an SSH host), or a file reference clicked for preview
+      W::ImageBlob { session_id, path, seq, shown } => {
+        let (core, cwd) = (self.clone(), manager.session_cwd(&session_id));
         tokio::spawn(async move {
           let blob = async {
-            let ws = core.workspace(root).await.ok()?;
-            let raw = if crate::platform::file_url::is_file_url(&path) {
-              std::path::PathBuf::from(file_url_to_path(&path)?)
-            } else {
-              resolve_open_path(&ws.path().to_string_lossy(), &path)
+            // A paired device may stage only what the session shows, never any path of this machine
+            if shown && !core.manager.shows_file(&session_id, &path) {
+              return None;
+            }
+            let cwd = cwd?;
+            let named = if crate::platform::file_url::is_file_url(&path) { file_url_to_path(&path)? } else { path.clone() };
+            // On an SSH host: the host's own path (the Claude stand-in moved back, a relative one read against the host
+            // folder, `/` joins even on a Windows engine); `~` would name this machine's home, so it is refused
+            let resolved = match acpira_shared::remote::parse_remote_folder(&cwd) {
+              Some(f) => {
+                if named == "~" || named.starts_with("~/") {
+                  return None;
+                }
+                let stand = crate::acp::vendors::claude_remote::Stand::new(&f.alias, &f.path, &core.manager.data_root());
+                std::path::PathBuf::from(normalize_remote_path(&stand.host_path(&named))?)
+              }
+              None => normalize(&resolve_open_path(&cwd, &named)),
             };
-            let resolved = if matches!(ws, crate::workspace::Workspace::Local(_)) { normalize(&raw) } else { raw };
-            let mime = acpira_shared::attachments::image_mime_of(&resolved.to_string_lossy())?;
-            let bytes = ws.read_file(&resolved, crate::limits::MAX_OUT_IMAGE_BYTES).await?;
-            let ext = acpira_shared::attachments::ext_of_mime(mime);
-            core.manager.save_blob(&session_id, ext, &bytes).await
+            let ws = core.workspace(Some(cwd)).await.ok()?;
+            core.manager.stage_file(&session_id, &ws, &resolved).await
           }
           .await;
           core.post_now(HostMsg::ImageBlob { seq, blob });
