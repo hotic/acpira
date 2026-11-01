@@ -673,6 +673,9 @@ document.addEventListener('securitypolicyviolation', () => { seen.blocked = true
     await page.press('the pinned placement submenu', viewItem('PinnedAt the top'));
     await page.press('pins inside their project', viewItem('In their project'));
     await page.press('close the pinned placement menu', viewButton);
+    // The closing popup keeps its items through its exit: reopened before they go, the next press can land on the old
+    // "Show" item and open nothing
+    await page.waitFor('the list view menu closed', `!document.querySelector('[role="menuitem"]')`);
     await page.press('reopen the list view menu', viewButton);
     await page.press('the show submenu', viewItem('ShowLatest 5'));
     if (await page.eval(`document.body.innerText.includes('Per project')`)) fail('the show submenu still has the redundant per-project label');
