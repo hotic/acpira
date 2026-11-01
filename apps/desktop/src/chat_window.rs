@@ -36,6 +36,8 @@ pub struct ChatWindow {
   shown: Mutex<Option<String>>,
   /// Last unscoped list: only an id disappearing from a known list proves it was removed.
   listed: Mutex<HashSet<String>>,
+  /// The listed sessions that waited on the user at the last list push
+  waiting: Mutex<HashSet<String>>,
   watch: Mutex<Option<Watch>>,
   /// The tool panel's browser tabs by tab id; their pages are frames of this window's page, so a reload ends them all
   tabs: Mutex<HashMap<String, Arc<BrowserRelay>>>,
@@ -62,6 +64,7 @@ impl ChatWindow {
       shell_queue: Mutex::new(vec![]),
       shown: Mutex::new(None),
       listed: Mutex::new(HashSet::new()),
+      waiting: Mutex::new(HashSet::new()),
       watch: Mutex::new(watch),
       tabs: Mutex::new(HashMap::new()),
     }
@@ -330,6 +333,15 @@ impl ShellView for ChatWindow {
         // Listed with nothing left for the user: read or answered somewhere else since it was counted
         let settled: HashSet<String> =
           list.sessions.iter().filter(|s| !acpira_desktop::platform::still_wants_user(s.state, s.unread == Some(true))).map(|s| s.id.clone()).collect();
+        // A wait that ended: its card was answered somewhere (another device), which no showing here stands in for
+        let now_waiting: HashSet<String> =
+          list.sessions.iter().filter(|s| s.state == Some(acpira_shared::transcript::SummaryState::Waiting)).map(|s| s.id.clone()).collect();
+        let answered: HashSet<String> = {
+          let mut waiting = self.waiting.lock();
+          let answered = waiting.iter().filter(|id| settled.contains(*id)).cloned().collect();
+          *waiting = now_waiting;
+          answered
+        };
         let ids: HashSet<_> = list.sessions.into_iter().map(|s| s.id).collect();
         let removed: HashSet<_> = {
           let mut listed = self.listed.lock();
@@ -347,7 +359,7 @@ impl ShellView for ChatWindow {
             let before = pending.len();
             pending.retain(|id, here| {
               *here |= shown.contains(id);
-              !removed.contains(id) && (*here || !settled.contains(id))
+              !removed.contains(id) && !answered.contains(id) && (*here || !settled.contains(id))
             });
             before != pending.len()
           };
