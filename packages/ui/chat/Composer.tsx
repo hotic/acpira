@@ -98,9 +98,9 @@ export interface ComposerProps {
 // Composer has three layers: attachment chips (when any), the input area, and a toolbar row below.
 // One layout for all ACP agents: mode on the left; context, model with reasoning, and send on the right.
 // Attachments come from pasting / dropping (images, OS files, Explorer items) or from an @ mention that searches the workspace
-// The frame and its beam stay mounted when the shown session changes; only the field remounts (`resetKey`). border-beam
-// writes a <style> with per-instance @property rules, and removing a <style> makes WebKit rebuild every element's style:
-// remounting the beam with the field cost each switch a full-document restyle (~30 ms with a long session list)
+// The frame and its beam stay mounted when the shown session changes; only the field remounts (`resetKey`). Remounting
+// the frame restyled the whole document in WebKit with the beam library that came before effects/Beam (per-instance
+// <style> and @property rules); keeping it mounted stays the cheaper path
 export const Composer = memo(function Composer(p: ComposerProps) {
   const { composer } = useAppearance();
   const flush = !p.edit && composer === 'flush';

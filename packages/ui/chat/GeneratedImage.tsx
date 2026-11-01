@@ -4,7 +4,8 @@ import { isShowImageTool, toolImages } from '@acpira/shared/imageTools';
 import { useAppearance } from '../appearance';
 import { useTheme } from '../look';
 import { t, useLocale } from '../i18n';
-import { IMAGE_GEN } from '../effects/presets';
+import { PixelMosaic } from '../effects/PixelMosaic';
+import { warmPixelMosaic } from '../effects/mosaicGL';
 import { dissolveIn, readImageGenColors } from '../effects/imageGen';
 import { hasWebGL2 } from '../effects/webgl';
 import { cn } from '../ui/cn';
@@ -100,42 +101,19 @@ function GenerationCard({ image }: { image?: ImageRef }) {
   );
 }
 
-// img-fx (with three.js) is fetched by the first card, not with the page; later cards find it loaded
-type Renderer = typeof import('../effects/imageGenRenderer');
-let renderer: Promise<Renderer> | undefined;
-const loadRenderer = () => renderer ??= import('../effects/imageGenRenderer');
-
-// img-fx's mosaic on the card's own colours. It mounts on the next idle slot rather than with the row: the first card
-// in a webview builds the shared WebGL renderer and links its shader synchronously, which should not land in the same
-// frame as the transcript update; the keeper then holds the renderer for every later card. The module loads while the
-// slot is awaited, so the mosaic still fades in at the idle slot (or as soon as the module is there, if that is later)
+// The mosaic on the card's own colours (effects/PixelMosaic). It mounts on the next idle slot rather than with the row:
+// the first card in a webview builds the shared WebGL context and links its shader synchronously, which should not land
+// in the same frame as the transcript update; the context then stays for every later card
 function MosaicLoader() {
   const host = useRef<HTMLDivElement>(null);
   const theme = useTheme();
-  const [fx, setFx] = useState<Renderer>();
+  const [ready, setReady] = useState(false);
   const [colors, setColors] = useState<ReturnType<typeof readImageGenColors>>();
-  useEffect(() => {
-    let alive = true;
-    const loaded = loadRenderer();
-    const cancel = idle(() => {
-      void loaded.then(m => {
-        if (!alive) return;
-        m.keepImageGenRenderer();
-        setFx(m);
-      }, () => {});
-    });
-    return () => { alive = false; cancel(); };
-  }, []);
-  useLayoutEffect(() => { if (fx && host.current) setColors(readImageGenColors(host.current)); }, [fx, theme]);
+  useEffect(() => idle(() => { warmPixelMosaic(); setReady(true); }), []);
+  useLayoutEffect(() => { if (ready && host.current) setColors(readImageGenColors(host.current)); }, [ready, theme]);
   return (
     <div ref={host} className="size-full">
-      {fx && colors && (
-        // img-fx's own stylesheet is unlayered, so its inline-block root only yields to an important utility
-        <fx.ImageGeneration preset={IMAGE_GEN.preset} pixelScale={IMAGE_GEN.pixelScale} theme={theme} cardBg={colors.cardBg} colors={colors.colors}
-          className="block! size-full fade-in">
-          <div className="size-full" />
-        </fx.ImageGeneration>
-      )}
+      {ready && colors && <PixelMosaic theme={theme} cardBg={colors.cardBg} colors={colors.colors} className="size-full fade-in" />}
     </div>
   );
 }

@@ -24,20 +24,15 @@
     "@xterm/addon-web-links": "catalog:",
     "@xterm/addon-webgl": "catalog:",
     "@xterm/xterm": "catalog:",
-    "border-beam": "catalog:",
     "class-variance-authority": "catalog:",
     "clsx": "catalog:",
-    "img-fx": "catalog:",
     "katex": "catalog:",
     "lucide-react": "catalog:",
-    "metal-fx": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "shiki": "catalog:",
     "streamdown": "catalog:",
-    "tailwind-merge": "catalog:",
-    "thinking-orbs": "catalog:",
-    "three": "catalog:"
+    "tailwind-merge": "catalog:"
   },
   "devDependencies": {
     "@tailwindcss/vite": "catalog:",

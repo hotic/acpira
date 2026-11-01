@@ -72,9 +72,6 @@ catalogs:
     '@xterm/xterm':
       specifier: 6.0.0
       version: 6.0.0
-    border-beam:
-      specifier: 1.3.0
-      version: 1.3.0
     class-variance-authority:
       specifier: ^0.7.1
       version: 0.7.1
@@ -84,18 +81,12 @@ catalogs:
     esbuild:
       specifier: ^0.28.2
       version: 0.28.2
-    img-fx:
-      specifier: 0.5.1
-      version: 0.5.1
     katex:
       specifier: 0.16.47
       version: 0.16.47
     lucide-react:
       specifier: 1.35.0
       version: 1.35.0
-    metal-fx:
-      specifier: 1.0.4
-      version: 1.0.4
     react:
       specifier: 19.2.8
       version: 19.2.8
@@ -114,12 +105,6 @@ catalogs:
     tailwindcss:
       specifier: 4.3.3
       version: 4.3.3
-    thinking-orbs:
-      specifier: 0.3.1
-      version: 0.3.1
-    three:
-      specifier: 0.186.0
-      version: 0.186.0
     tsx:
       specifier: ^4.23.13
       version: 4.23.13
@@ -173,9 +158,6 @@ importers:
       esbuild:
         specifier: 'catalog:'
         version: 0.28.2
-      img-fx:
-        specifier: 'catalog:'
-        version: 0.5.1(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(three@0.186.0)
       katex:
         specifier: 'catalog:'
         version: 0.16.47
@@ -194,9 +176,6 @@ importers:
       streamdown:
         specifier: 'catalog:'
         version: 2.6.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-      three:
-        specifier: 'catalog:'
-        version: 0.186.0
       tsx:
         specifier: 'catalog:'
         version: 4.23.13
@@ -347,27 +326,18 @@ importers:
       '@xterm/xterm':
         specifier: 'catalog:'
         version: 6.0.0
-      border-beam:
-        specifier: 'catalog:'
-        version: 1.3.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       class-variance-authority:
         specifier: 'catalog:'
         version: 0.7.1
       clsx:
         specifier: 'catalog:'
         version: 2.1.1
-      img-fx:
-        specifier: 'catalog:'
-        version: 0.5.1(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(three@0.186.0)
       katex:
         specifier: 'catalog:'
         version: 0.16.47
       lucide-react:
         specifier: 'catalog:'
         version: 1.35.0(react@19.2.8)
-      metal-fx:
-        specifier: 'catalog:'
-        version: 1.0.4(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       react:
         specifier: 'catalog:'
         version: 19.2.8
@@ -383,12 +353,6 @@ importers:
       tailwind-merge:
         specifier: 'catalog:'
         version: 3.6.0
-      thinking-orbs:
-        specifier: 'catalog:'
-        version: 0.3.1(react@19.2.8)
-      three:
-        specifier: 'catalog:'
-        version: 0.186.0
     devDependencies:
       '@tailwindcss/vite':
         specifier: 'catalog:'
@@ -1516,12 +1480,6 @@ packages:
   boolbase@1.0.0:
     resolution: {integrity: sha512-JZOSA7Mo9sNGB8+UjSgzdLtokWAky1zbztM3WRLCbZ70/3cTANmQmOdR7y2g+J0e2WXywy1yS468tY+IruqEww==}
 
-  border-beam@1.3.0:
-    resolution: {integrity: sha512-oZSISp3aQau4ASTmzm5pzxeBinO6Fh2HW0gyEixJgtpUZvRiU0vNpP+IwGRrNpIyqPjA7Rf5EBnVqDSJ49cm5w==}
-    peerDependencies:
-      react: '>=18.0.0'
-      react-dom: '>=18.0.0'
-
   boundary@2.0.0:
     resolution: {integrity: sha512-rJKn5ooC9u8q13IMCrW0RSp31pxBCHE3y9V/tp3TdWSLf8Em3p6Di4NBpfzbJge9YjjFEsD0RtFEjtvHL5VyEA==}
 
@@ -2139,13 +2097,6 @@ packages:
     resolution: {integrity: sha512-YYNsSlXBjMk92SKnkwvB5LOVSa6OznlFUGcsvrFgNJbJCd0M1XKeFVRc8ZByeCqz32FivYNHJVooLmdqrmvp/Q==}
     engines: {node: '>= 4'}
 
-  img-fx@0.5.1:
-    resolution: {integrity: sha512-CXIFGoGgK5F80d8I+VXZ96dmfkWqb4EGpecAIVXVXhuUVqCe1571Xhf5oGZ4qmTce0UoTfNMKLQDOgSAbIbH0w==}
-    peerDependencies:
-      react: '>=18.0.0'
-      react-dom: '>=18.0.0'
-      three: '>=0.149.0'
-
   import-meta-resolve@4.2.0:
     resolution: {integrity: sha512-Iqv2fzaTQN28s/FwZAoFq0ZSs/7hMAHJVX+w8PZl3cY19Pxk6jFFalxQoIfW2826i/fDLXv8IiEZRIT0lDuWcg==}
 
@@ -2576,12 +2527,6 @@ packages:
 
   mermaid@11.17.2:
     resolution: {integrity: sha512-V6K3C8EBdEsPFZXSKMJe6ppQOENxuHARr9GvHX4hh47lAbhMRD9qf4oEK7LoaRQxULMa80/qt5gHO73aCleBBg==}
-
-  metal-fx@1.0.4:
-    resolution: {integrity: sha512-Zqxp3df47n2yhp7SPMZtPdKQ7Avag8ITxXX1NtbA0bWdU2GJN8MJPNJ2SKtQ2CfXpAWXtCc0CbM64UtiTor3pw==}
-    peerDependencies:
-      react: '>=18.0.0'
-      react-dom: '>=18.0.0'
 
   micromark-core-commonmark@2.0.3:
     resolution: {integrity: sha512-RDBrHEMSxVFLg6xvnXmb1Ayr2WzLAWjeSATAoxwKYJV94TeNavgoIdA0a9ytzDSVzBy2YKFK+emCPOEibLeCrg==}
@@ -3171,14 +3116,6 @@ packages:
   textextensions@6.11.0:
     resolution: {integrity: sha512-tXJwSr9355kFJI3lbCkPpUH5cP8/M0GGy2xLO34aZCjMXBaK3SoPnZwr/oWmo1FdCnELcs4npdCIOFtq9W3ruQ==}
     engines: {node: '>=4'}
-
-  thinking-orbs@0.3.1:
-    resolution: {integrity: sha512-3BG1aeB1RUTxItCml/BBuIz5JRM4kZqGuyx+vouv0fXTtcR9ZNoKjWGneHPx94y74GxgArwJZ1qbJR5dt54kSw==}
-    peerDependencies:
-      react: '>=18.0.0'
-
-  three@0.186.0:
-    resolution: {integrity: sha512-cr/fIM2ddMSVbYVgkfD4jLJv7Fh/8ZTjvo+7gQeSVGUZHxpx9FDwoL5iC7hUz/LiRA8wMbqfnb90xKfm1/HHkQ==}
 
   tinybench@2.9.0:
     resolution: {integrity: sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==}
@@ -4467,11 +4404,6 @@ snapshots:
 
   boolbase@1.0.0: {}
 
-  border-beam@1.3.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
-    dependencies:
-      react: 19.2.8
-      react-dom: 19.2.8(react@19.2.8)
-
   boundary@2.0.0: {}
 
   brace-expansion@5.0.9:
@@ -5226,12 +5158,6 @@ snapshots:
 
   ignore@7.0.8: {}
 
-  img-fx@0.5.1(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(three@0.186.0):
-    dependencies:
-      react: 19.2.8
-      react-dom: 19.2.8(react@19.2.8)
-      three: 0.186.0
-
   import-meta-resolve@4.2.0: {}
 
   index-to-position@1.2.0: {}
@@ -5723,11 +5649,6 @@ snapshots:
       stylis: 4.4.0
       ts-dedent: 2.3.0
       uuid: 14.0.2
-
-  metal-fx@1.0.4(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
-    dependencies:
-      react: 19.2.8
-      react-dom: 19.2.8(react@19.2.8)
 
   micromark-core-commonmark@2.0.3:
     dependencies:
@@ -6562,12 +6483,6 @@ snapshots:
   textextensions@6.11.0:
     dependencies:
       editions: 6.22.0
-
-  thinking-orbs@0.3.1(react@19.2.8):
-    dependencies:
-      react: 19.2.8
-
-  three@0.186.0: {}
 
   tinybench@2.9.0: {}
 

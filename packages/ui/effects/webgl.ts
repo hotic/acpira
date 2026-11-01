@@ -1,7 +1,5 @@
-// The WebGL effects (metal-fx, img-fx) throw inside an effect when they get no context, tearing down the whole React tree;
-// probe once, the way each library asks for its context, and let callers fall back to their static look. The two ask
-// differently, and a webview can answer one and not the other: WebKitGTK (the Linux desktop app) without a GPU gives a
-// page canvas WebGL but an OffscreenCanvas none (2.50.4, 2026-10-26)
+// Probe a WebGL context once so callers fall back to their static look without one. Ask the way the effect does: a
+// webview can answer one way and not another (WebKitGTK without a GPU gives a page canvas WebGL but an OffscreenCanvas none)
 const probes = new Map<string, boolean>();
 function probe(key: string, context: () => unknown): boolean {
   let ok = probes.get(key);
@@ -12,17 +10,7 @@ function probe(key: string, context: () => unknown): boolean {
   return ok;
 }
 
-// metal-fx (the send button's ring): WebGL 1 on an OffscreenCanvas wherever the browser has OffscreenCanvas, else on a
-// page canvas (metal-fx 1.0.4)
-export function hasMetalWebGL(): boolean {
-  return probe('metal', () => {
-    if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(1, 1).getContext('webgl');
-    const c = document.createElement('canvas');
-    return c.getContext('webgl') ?? c.getContext('experimental-webgl');
-  });
-}
-
-// img-fx (the image generation card): three.js on a page canvas, which needs WebGL 2 (three r163 and later)
+// The image generation mosaic (effects/mosaicGL): WebGL 2 on a page canvas
 export function hasWebGL2(): boolean {
   return probe('webgl2', () => document.createElement('canvas').getContext('webgl2'));
 }

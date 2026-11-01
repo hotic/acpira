@@ -1,0 +1,197 @@
+/* Credit: ported from border-beam 1.3.0 by Jakub Antalik (https://beam.jakubantalik.com), MIT License, Copyright (c) 2026
+   Jakub Antalik. Full notice in THIRD_PARTY_NOTICES.md.
+   effects/Beam.tsx: the composer focus beam. Every animated custom property is
+   registered here once: WebKit restyles every element whenever the @property registry changes, so nothing may
+   register one per instance. Per-instance values come inline: --bb-r, --bb-strength, --bb-bri, --bb-sat, --bb-shadow
+   on the root, the gradients and --bb-k (layer opacity) on each layer. Base values are the final state, so the motion
+   kill switch leaves a still beam rather than none. */
+
+@property --bb-fade { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --bb-angle { syntax: "<angle>"; inherits: true; initial-value: 0deg; }
+/* line: travel position / width, breathing height, spikes, edge fade */
+@property --bb-x { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --bb-w { syntax: "<number>"; inherits: true; initial-value: 1; }
+@property --bb-h { syntax: "<number>"; inherits: true; initial-value: 1; }
+@property --bb-spike { syntax: "<number>"; inherits: true; initial-value: 1; }
+@property --bb-spike2 { syntax: "<number>"; inherits: true; initial-value: 1; }
+@property --bb-edge { syntax: "<number>"; inherits: true; initial-value: 1; }
+/* md / line hue swing, animated on each layer itself */
+@property --bb-swing { syntax: "<number>"; inherits: false; initial-value: 0; }
+/* pulse-inner: hue turn and the 17 oscillator phases (0-1, mapped to values in Beam.tsx) */
+@property --bb-hue { syntax: "<angle>"; inherits: true; initial-value: 0deg; }
+@property --bb-o0 { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --bb-o1 { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --bb-o2 { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --bb-o3 { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --bb-o4 { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --bb-o5 { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --bb-o6 { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --bb-o7 { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --bb-o8 { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --bb-o9 { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --bb-o10 { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --bb-o11 { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --bb-o12 { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --bb-o13 { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --bb-o14 { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --bb-o15 { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --bb-o16 { syntax: "<number>"; inherits: true; initial-value: 0; }
+
+@layer components {
+  .bb { position: relative; overflow: hidden; border-radius: var(--bb-r); --bb-r-in: max(0px, calc(var(--bb-r) - 1px)); }
+  .bb[data-bb="pulse-inner"] { isolation: isolate; }
+  /* Fade and motion live on .bb-fx, so the wrapped children never restyle with them */
+  .bb-fx, .bb-osc { position: absolute; inset: 0; pointer-events: none; }
+  .bb-fx[data-state="on"] { --bb-fade: 1; animation: bb-in 0.6s ease; }
+  .bb-fx[data-state="off"] { --bb-fade: 0; animation: bb-out 0.5s ease; }
+  .bb[data-bb="md"] .bb-fx[data-state="on"] { animation: bb-spin 1.96s linear infinite, bb-in 0.6s ease; }
+  .bb[data-bb="md"] .bb-fx[data-state="off"] { animation: bb-spin 1.96s linear infinite, bb-out 0.5s ease; }
+  .bb[data-bb="line"] .bb-fx[data-state="on"] {
+    animation: bb-travel 3.1s linear infinite, bb-edge 3.1s linear infinite, bb-breathe 4s ease-in-out infinite,
+      bb-spike 4.1s ease-in-out infinite, bb-spike2 5.3s ease-in-out infinite, bb-in 0.6s ease;
+  }
+  .bb[data-bb="line"] .bb-fx[data-state="off"] {
+    animation: bb-travel 3.1s linear infinite, bb-edge 3.1s linear infinite, bb-breathe 4s ease-in-out infinite,
+      bb-spike 4.1s ease-in-out infinite, bb-spike2 5.3s ease-in-out infinite, bb-out 0.5s ease;
+  }
+
+  .bb-glow, .bb-stroke, .bb-bloom {
+    position: absolute; inset: 0; pointer-events: none; clip-path: inset(0 round var(--bb-r));
+    opacity: calc(var(--bb-fade) * var(--bb-edge) * var(--bb-k) * var(--bb-strength, 1));
+  }
+  .bb-glow { z-index: 1; border-radius: var(--bb-r); }
+  .bb-stroke { z-index: 2; border-radius: var(--bb-r-in); padding: 1px; }
+  .bb-bloom { z-index: 3; border-radius: var(--bb-r-in); padding: 1px; }
+  /* The stroke and bloom rings: content-box punched out of the padding (1px) */
+  :is(.bb[data-bb="pulse-inner"] .bb-stroke, .bb[data-bb="md"] .bb-bloom, .bb[data-bb="pulse-inner"] .bb-bloom) {
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+  }
+
+  /* md: a conic window turning around the ring, over the stroke and the inner glow (28px from each edge) */
+  .bb[data-bb="md"] .bb-stroke {
+    -webkit-mask:
+      conic-gradient(from var(--bb-angle), transparent 0%, transparent 30%, rgba(255, 255, 255, 0.1) 36%, rgba(255, 255, 255, 0.35) 44%, white 52%, white 80%, rgba(255, 255, 255, 0.35) 86%, rgba(255, 255, 255, 0.1) 92%, transparent 95%, transparent 100%),
+      linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: source-in, xor;
+    mask:
+      conic-gradient(from var(--bb-angle), transparent 0%, transparent 30%, rgba(255, 255, 255, 0.1) 36%, rgba(255, 255, 255, 0.35) 44%, white 52%, white 80%, rgba(255, 255, 255, 0.35) 86%, rgba(255, 255, 255, 0.1) 92%, transparent 95%, transparent 100%),
+      linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask-composite: intersect, exclude;
+  }
+  .bb[data-bb="md"] .bb-glow {
+    box-shadow: inset 0 0 9px 1px var(--bb-shadow);
+    -webkit-mask-image:
+      conic-gradient(from var(--bb-angle), transparent 0%, transparent 30%, rgba(255, 255, 255, 0.1) 36%, rgba(255, 255, 255, 0.35) 44%, white 52%, white 80%, rgba(255, 255, 255, 0.35) 86%, rgba(255, 255, 255, 0.1) 92%, transparent 95%, transparent 100%),
+      linear-gradient(white, transparent 28px, transparent calc(100% - 28px), white),
+      linear-gradient(to right, white, transparent 28px, transparent calc(100% - 28px), white);
+    -webkit-mask-composite: source-in, source-over;
+    mask-image:
+      conic-gradient(from var(--bb-angle), transparent 0%, transparent 30%, rgba(255, 255, 255, 0.1) 36%, rgba(255, 255, 255, 0.35) 44%, white 52%, white 80%, rgba(255, 255, 255, 0.35) 86%, rgba(255, 255, 255, 0.1) 92%, transparent 95%, transparent 100%),
+      linear-gradient(white, transparent 28px, transparent calc(100% - 28px), white),
+      linear-gradient(to right, white, transparent 28px, transparent calc(100% - 28px), white);
+    mask-composite: intersect, add;
+  }
+  .bb[data-bb="md"] .bb-bloom { filter: blur(8px) brightness(var(--bb-bri)) saturate(var(--bb-sat)); }
+  .bb[data-bb="md"]:not([data-bb-still]) :is(.bb-stroke, .bb-glow) {
+    animation: bb-swing 12s ease-in-out infinite;
+    filter: hue-rotate(calc(var(--bb-swing) * 30deg)) brightness(var(--bb-bri)) saturate(var(--bb-sat));
+  }
+
+  /* line: a glow travelling along the bottom edge */
+  .bb[data-bb="line"] .bb-stroke {
+    -webkit-mask:
+      radial-gradient(ellipse calc(78px * var(--bb-w)) calc(60px * var(--bb-h)) at calc(var(--bb-x) * 100%) 100%, white 0%, rgba(255, 255, 255, 0.5) 45%, transparent 100%),
+      linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: source-in, xor;
+    mask:
+      radial-gradient(ellipse calc(78px * var(--bb-w)) calc(60px * var(--bb-h)) at calc(var(--bb-x) * 100%) 100%, white 0%, rgba(255, 255, 255, 0.5) 45%, transparent 100%),
+      linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask-composite: intersect, exclude;
+  }
+  .bb[data-bb="line"] .bb-glow {
+    box-shadow: inset 0 0 9px 1px var(--bb-shadow);
+    -webkit-mask-image:
+      radial-gradient(ellipse calc(78px * var(--bb-w)) calc(60px * var(--bb-h)) at calc(var(--bb-x) * 100%) 100%, white 0%, rgba(255, 255, 255, 0.5) 45%, transparent 100%),
+      linear-gradient(white, transparent 28px, transparent calc(100% - 28px), white),
+      linear-gradient(to right, white, transparent 28px, transparent calc(100% - 28px), white);
+    -webkit-mask-composite: source-in, source-over;
+    mask-image:
+      radial-gradient(ellipse calc(78px * var(--bb-w)) calc(60px * var(--bb-h)) at calc(var(--bb-x) * 100%) 100%, white 0%, rgba(255, 255, 255, 0.5) 45%, transparent 100%),
+      linear-gradient(white, transparent 28px, transparent calc(100% - 28px), white),
+      linear-gradient(to right, white, transparent 28px, transparent calc(100% - 28px), white);
+    mask-composite: intersect, add;
+  }
+  .bb[data-bb="line"] .bb-bloom {
+    padding: 0;
+    -webkit-mask: radial-gradient(ellipse calc(84px * var(--bb-w)) calc(110px * var(--bb-h)) at calc(var(--bb-x) * 100%) 100%, white 0%, rgba(255, 255, 255, 0.5) 35%, transparent 100%);
+    mask: radial-gradient(ellipse calc(84px * var(--bb-w)) calc(110px * var(--bb-h)) at calc(var(--bb-x) * 100%) 100%, white 0%, rgba(255, 255, 255, 0.5) 35%, transparent 100%);
+  }
+  .bb[data-bb="line"][data-bb-mono] .bb-bloom { filter: blur(6px); }
+  .bb[data-bb="line"]:not([data-bb-still]) :is(.bb-stroke, .bb-glow) {
+    animation: bb-swing 12s ease-in-out infinite;
+    filter: hue-rotate(calc(var(--bb-swing) * 13deg)) brightness(var(--bb-bri)) saturate(var(--bb-sat));
+  }
+  .bb[data-bb="line"]:not([data-bb-still]) .bb-bloom {
+    animation: bb-swing 8s ease-in-out infinite;
+    filter: blur(8px) hue-rotate(calc(var(--bb-swing) * 23deg)) brightness(var(--bb-bri)) saturate(var(--bb-sat));
+  }
+
+  /* pulse-inner: border blobs breathing in place, hue turning unless still (--bb-hue then stays 0) */
+  .bb[data-bb="pulse-inner"] :is(.bb-stroke, .bb-bloom) { border-radius: var(--bb-r); }
+  .bb[data-bb="pulse-inner"] .bb-glow {
+    -webkit-mask-image:
+      linear-gradient(white, transparent 28px, transparent calc(100% - 28px), white),
+      linear-gradient(to right, white, transparent 28px, transparent calc(100% - 28px), white);
+    -webkit-mask-composite: source-over;
+    mask-image:
+      linear-gradient(white, transparent 28px, transparent calc(100% - 28px), white),
+      linear-gradient(to right, white, transparent 28px, transparent calc(100% - 28px), white);
+    mask-composite: add;
+  }
+  .bb[data-bb="pulse-inner"] :is(.bb-stroke, .bb-glow) { filter: hue-rotate(var(--bb-hue)) brightness(var(--bb-bri)) saturate(var(--bb-sat)); }
+  .bb[data-bb="pulse-inner"] .bb-bloom { filter: blur(8px) hue-rotate(var(--bb-hue)) brightness(var(--bb-bri)) saturate(var(--bb-sat)); }
+}
+
+@keyframes bb-in { from { --bb-fade: 0; } }
+@keyframes bb-out { from { --bb-fade: 1; } }
+@keyframes bb-spin { to { --bb-angle: 360deg; } }
+@keyframes bb-swing { 0%, 100% { --bb-swing: -1; } 50% { --bb-swing: 1; } }
+@keyframes bb-travel {
+  0% { --bb-x: 0.06; --bb-w: 0.5; }
+  10% { --bb-x: 0.15; --bb-w: 0.8; }
+  20% { --bb-x: 0.25; --bb-w: 1.1; }
+  30% { --bb-x: 0.35; --bb-w: 1.3; }
+  40% { --bb-x: 0.44; --bb-w: 1.45; }
+  50% { --bb-x: 0.5; --bb-w: 1.5; }
+  60% { --bb-x: 0.56; --bb-w: 1.45; }
+  70% { --bb-x: 0.65; --bb-w: 1.3; }
+  80% { --bb-x: 0.75; --bb-w: 1.1; }
+  90% { --bb-x: 0.85; --bb-w: 0.8; }
+  100% { --bb-x: 0.94; --bb-w: 0.5; }
+}
+@keyframes bb-edge { 0%, 12.5% { --bb-edge: 0; } 32.5%, 67.5% { --bb-edge: 1; } 87.5%, 100% { --bb-edge: 0; } }
+@keyframes bb-breathe { 0%, 100% { --bb-h: 0.8; } 25% { --bb-h: 1.25; } 55% { --bb-h: 0.85; } 80% { --bb-h: 1.3; } }
+@keyframes bb-spike { 0%, 100% { --bb-spike: 0.8; } 25% { --bb-spike: 1.3; } 50% { --bb-spike: 0.9; } 75% { --bb-spike: 1.4; } }
+@keyframes bb-spike2 { 0%, 100% { --bb-spike2: 1.2; } 25% { --bb-spike2: 0.7; } 50% { --bb-spike2: 1.4; } 75% { --bb-spike2: 0.8; } }
+@keyframes bb-hue { to { --bb-hue: 360deg; } }
+/* Oscillator phases: 0 -> 1 -> 0, each half eased like half a cosine (timing set inline) */
+@keyframes bb-o0 { 50% { --bb-o0: 1; } }
+@keyframes bb-o1 { 50% { --bb-o1: 1; } }
+@keyframes bb-o2 { 50% { --bb-o2: 1; } }
+@keyframes bb-o3 { 50% { --bb-o3: 1; } }
+@keyframes bb-o4 { 50% { --bb-o4: 1; } }
+@keyframes bb-o5 { 50% { --bb-o5: 1; } }
+@keyframes bb-o6 { 50% { --bb-o6: 1; } }
+@keyframes bb-o7 { 50% { --bb-o7: 1; } }
+@keyframes bb-o8 { 50% { --bb-o8: 1; } }
+@keyframes bb-o9 { 50% { --bb-o9: 1; } }
+@keyframes bb-o10 { 50% { --bb-o10: 1; } }
+@keyframes bb-o11 { 50% { --bb-o11: 1; } }
+@keyframes bb-o12 { 50% { --bb-o12: 1; } }
+@keyframes bb-o13 { 50% { --bb-o13: 1; } }
+@keyframes bb-o14 { 50% { --bb-o14: 1; } }
+@keyframes bb-o15 { 50% { --bb-o15: 1; } }
+@keyframes bb-o16 { 50% { --bb-o16: 1; } }
