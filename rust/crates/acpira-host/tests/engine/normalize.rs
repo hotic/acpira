@@ -1139,19 +1139,19 @@ fn mcp_calls_name_their_server_and_take_the_tools_title_whatever_the_adapter_nam
   let meta = json!({ "acpira/mcp": { "server": "blockbench", "tool": "screenshot", "title": "Take Screenshot" } });
   apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "a1", "title": "blockbench_screenshot", "kind": "other", "status": "pending", "_meta": meta }));
   apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "a1", "title": "blockbench_screenshot", "rawInput": { "path": "/tmp/x" }, "_meta": meta }));
-  expect_match(block(&s, 0, 0), json!({ "mcpServer": "Blockbench", "kind": "other", "target": "Take Screenshot", "targetMono": false }));
+  expect_match(block(&s, 0, 0), json!({ "mcpServer": "blockbench", "kind": "other", "target": "Take Screenshot", "targetMono": false }));
   // A later update without the note keeps the row as it is
   apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "a1", "status": "completed", "rawInput": { "command": "ls" } }));
-  expect_match(block(&s, 0, 0), json!({ "mcpServer": "Blockbench", "target": "Take Screenshot", "status": "completed" }));
+  expect_match(block(&s, 0, 0), json!({ "mcpServer": "blockbench", "target": "Take Screenshot", "status": "completed" }));
   // claude-agent-acp: `mcp__<server>__<tool>`; without a title the tool's name stands in, its separators as spaces
   apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "c1", "name": "mcp__chrome-devtools__take_screenshot", "title": "mcp__chrome-devtools__take_screenshot",
     "kind": "other", "status": "pending", "rawInput": { "format": "png" } }));
-  expect_match(block(&s, 0, 1), json!({ "mcpServer": "Chrome Devtools", "kind": "other", "target": "take screenshot" }));
+  expect_match(block(&s, 0, 1), json!({ "mcpServer": "chrome-devtools", "kind": "other", "target": "take screenshot" }));
   // codex-acp: `mcp.<server>.<tool>`, filed as `execute`, in every update
   apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "x1", "title": "mcp.hilfa.query_npc_lore", "kind": "execute", "status": "in_progress",
     "rawInput": { "server": "hilfa", "tool": "query_npc_lore", "arguments": {} } }));
   apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "x1", "kind": "execute", "status": "completed" }));
-  expect_match(block(&s, 0, 2), json!({ "mcpServer": "Hilfa", "kind": "other", "target": "query npc lore", "status": "completed" }));
+  expect_match(block(&s, 0, 2), json!({ "mcpServer": "hilfa", "kind": "other", "target": "query npc lore", "status": "completed" }));
   // The engine's own tools keep their rows: show_image is an image row, ask_agent stands behind its agent's node
   apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "s1", "title": "mcp__acpira__show_image", "status": "pending", "rawInput": { "path": "/tmp/a.png" } }));
   expect_match(block(&s, 0, 3), json!({ "verbKey": "verb.showImage" }));
@@ -1161,6 +1161,10 @@ fn mcp_calls_name_their_server_and_take_the_tools_title_whatever_the_adapter_nam
   // An ordinary tool that merely mentions mcp is no MCP call
   apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "o1", "title": "Read mcp.json", "kind": "read", "status": "pending" }));
   expect_absent(block(&s, 0, 5), "mcpServer");
+  // A title opening with its server's name drops it: the verb already reads "Call acpira"
+  let meta = json!({ "acpira/mcp": { "server": "acpira", "tool": "plugin_guide", "title": "Acpira plugin guide" } });
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "g1", "title": "acpira_plugin_guide", "kind": "other", "status": "pending", "_meta": meta }));
+  expect_match(block(&s, 0, 6), json!({ "mcpServer": "acpira", "target": "plugin guide" }));
 }
 
 #[test]

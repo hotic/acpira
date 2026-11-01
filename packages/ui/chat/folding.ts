@@ -81,7 +81,7 @@ const FOLD_KEY: Record<ToolCallBlock['status'], MsgKey> = {
 export function toolVerb(block: ToolCallBlock): string {
   if (block.observation === 'unknown') return t('chatgpt.unknownTool');
   // Stored verbs use the host locale at creation time; render from semantic kind, or from verbKey when the verb came from the tool's identity
-  // An MCP call names its server ("Call Blockbench"), its target is the tool's title
+  // An MCP call names its server ("Call blockbench"), its target is the tool's title
   const verb = block.mcpServer && !block.verbKey ? t('verb.mcp', { server: block.mcpServer })
     : t(block.verbKey ?? (isWorkflowRun(block) ? 'verb.workflow' : `verb.${block.kind}`));
   return t(FOLD_KEY[block.status], { verb });
