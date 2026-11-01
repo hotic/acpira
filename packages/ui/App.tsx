@@ -117,7 +117,8 @@ const diffSource = (sessionId: string, toolCallId: string, nth: number, subagent
 
 // Stage an image file path into the session's blob store when a file reference is clicked for preview
 const imageBlobRequests = requestTable<string | undefined>(10000, undefined);
-const imageBlob = (sessionId: string, path: string) => imageBlobRequests.ask(seq => post({ type: 'imageBlob', sessionId, path, seq }));
+const imageBlob = (sessionId: string, path: string, shown?: boolean) =>
+  imageBlobRequests.ask(seq => post({ type: 'imageBlob', sessionId, path, seq, ...(shown ? { shown } : {}) }));
 
 // "Copy as Markdown": the engine renders the export's Markdown and always answers; an error or no answer rejects, so the copy
 // toast says it failed instead of leaving the clipboard's pending write hanging
