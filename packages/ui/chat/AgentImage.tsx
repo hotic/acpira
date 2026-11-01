@@ -2,6 +2,7 @@ import { useContext, useState } from 'react';
 import { Image as ImageIcon } from 'lucide-react';
 import type { ImageRef } from '@acpira/shared/transcript';
 import { t } from '../i18n';
+import { AnimatedImage } from './AnimatedImage';
 import { FileMenu, ImageMenu } from './ImageMenu';
 import { Lightbox } from './Lightbox';
 import { BlobUrlContext, OpenBlobContext, OpenToolFileContext, parseFileLink } from './fileLinks';
@@ -30,9 +31,9 @@ export function AgentImage({ image, caption = true }: { image: ImageRef; caption
             title={name}
             aria-label={t('common.previewImage', { name })}
             onClick={() => setPreview(true)}
-            className="block max-w-full cursor-pointer overflow-hidden rounded-md border border-line outline-none focus-visible:ring-1 focus-visible:ring-focus"
+            className="relative block max-w-full cursor-pointer overflow-hidden rounded-md border border-line outline-none focus-visible:ring-1 focus-visible:ring-focus"
           >
-            <img src={src} alt={name} className="max-h-agent-image w-auto max-w-full object-contain" />
+            <AnimatedImage src={src} mimeType={image.mimeType} alt={name} className="block max-h-agent-image w-auto max-w-full object-contain" />
           </button>
         </ImageMenu>
       ) : (
