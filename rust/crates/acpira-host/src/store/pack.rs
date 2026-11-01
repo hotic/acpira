@@ -93,7 +93,12 @@ pub fn expand_raw(dir: &Path, raw: Vec<u8>) -> Vec<u8> {
     return raw;
   }
   let Ok(stub) = serde_json::from_slice::<SessionRecord>(&raw) else { return raw };
-  let archive = fs::read(dir.join(&stub.id).join(PACKED_FILE)).ok();
+  // An archive that cannot be read now leaves the stub as it is rather than dropping its history
+  let archive = match fs::read(dir.join(&stub.id).join(PACKED_FILE)) {
+    Ok(bytes) => Some(bytes),
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+    Err(_) => return raw,
+  };
   match splice(stub, archive.as_deref()) {
     Ok(r) => serde_json::to_vec(&r).unwrap_or(raw),
     Err(_) => raw,
@@ -158,7 +163,8 @@ pub fn pack(dir: &Path, id: &str, now: SystemTime) -> std::io::Result<Result<u64
   if (now_meta.len(), now_meta.modified().ok()) != stamp {
     return Ok(Err(Kept::Changed));
   }
-  let tmp = dir.join(format!("{id}.json.{}.tmp", std::process::id()));
+  // Not `write_atomic`'s temp name: a writer that bypassed the store's chain must still not share one file with it
+  let tmp = dir.join(format!("{id}.json.pack.{}.tmp", std::process::id()));
   fs::write(&tmp, &bytes).and_then(|_| fs::rename(&tmp, &path)).inspect_err(|_| {
     let _ = fs::remove_file(&tmp);
   })?;

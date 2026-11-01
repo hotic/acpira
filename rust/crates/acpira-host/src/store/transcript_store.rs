@@ -547,7 +547,13 @@ impl TranscriptStore {
       Ok(r) if r.id == id && is_session_id(&r.id) => {
         // A packed record's stub (`pack`): its turns come back from the archive beside it
         let mut r = if r.turns.iter().any(pack::is_placeholder) {
-          let archive = fs::read(self.dir.join(id).join(pack::PACKED_FILE)).await.ok();
+          // Only a missing archive means there is none; one that cannot be read now must not load as a record without
+          // its history, or the next write would make that loss permanent
+          let archive = match fs::read(self.dir.join(id).join(pack::PACKED_FILE)).await {
+            Ok(bytes) => Some(bytes),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(RecordLoadError::Unreadable { reason: format!("{}: {e}", pack::PACKED_FILE) }),
+          };
           pack::splice(r, archive.as_deref()).map_err(|reason| RecordLoadError::Corrupt { reason })?
         } else {
           r
@@ -663,6 +669,18 @@ impl TranscriptStore {
     self.state.lock().known.contains(id)
   }
 
+  /// `pack::pack` inside the record's write chain: a write of the same record waits for it, and it for the write, so
+  /// the stub never lands on top of a record written meanwhile. A record with a write still pending is not cold
+  pub async fn pack(&self, id: &str, now: SystemTime) -> Result<Result<u64, pack::Kept>> {
+    if !is_session_id(id) || self.state.lock().pending.contains_key(id) {
+      return Ok(Err(pack::Kept::NotCold));
+    }
+    let chain = self.chain(id);
+    let _g = chain.lock().await;
+    let (dir, id) = (self.dir.clone(), id.to_owned());
+    Ok(tokio::task::spawn_blocking(move || pack::pack(&dir, &id, now)).await??)
+  }
+
   fn chain(&self, id: &str) -> Arc<tokio::sync::Mutex<()>> {
     self.inflight.lock().entry(id.to_owned()).or_default().clone()
   }
@@ -701,7 +719,7 @@ impl TranscriptStore {
     }
     // Big diff texts go to the session's blob folder first, so the record never names a blob that is not there
     let known = self.texts.lock().entry(id.clone()).or_default().clone();
-    let (bytes, texts) = collect_text_blobs(diff_texts::sink(known.clone()), || source.record_json());
+    let (bytes, texts) = collect_text_blobs(diff_texts::sink(known.clone(), self.dir.join(&id)), || source.record_json());
     if !texts.is_empty() {
       fs::create_dir_all(self.dir.join(&id)).await?;
       let dir = confined(&self.dir, &id).await.ok_or_else(|| anyhow!("session {id}: blob folder outside the store"))?;

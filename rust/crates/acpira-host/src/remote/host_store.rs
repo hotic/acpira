@@ -427,6 +427,10 @@ impl HostMirror {
       Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
       Err(e) => return Err(e.into()),
     };
+    // A packed record's stub sends its archived turns along: the archive is no blob and stays here, so a bare stub
+    // would land on the host with its history gone
+    let dir = self.store.dir().to_path_buf();
+    let raw = tokio::task::spawn_blocking(move || crate::store::pack::expand_raw(&dir, raw)).await?;
     let mut record: Value = serde_json::from_slice(&raw)?;
     let Some(folder) = record.get("cwd").and_then(Value::as_str).and_then(parse_remote_folder) else { return Ok(()) };
     if folder.alias != alias {

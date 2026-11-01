@@ -54,13 +54,19 @@ fn facts(path: &Path, slim: bool) -> Facts {
     return f;
   }
   let Ok(raw) = std::fs::read(path) else { return Facts::default() };
+  // A packed record's stub counts what its archive holds; slimming passes it over (`slim_record`)
+  let packed = crate::store::pack::maybe_stub(&raw);
+  let raw = match path.parent() {
+    Some(dir) if packed => crate::store::pack::expand_raw(dir, raw),
+    _ => raw,
+  };
   #[derive(Deserialize)]
   struct Subagents {
     #[serde(default)]
     subagents: Option<Vec<IgnoredAny>>,
   }
   let subagents = serde_json::from_slice::<Subagents>(&raw).ok().and_then(|s| s.subagents).map_or(0, |s| s.len() as u32);
-  let slim = slim.then(|| slim_gain(&raw)).flatten();
+  let slim = slim.then(|| if packed { Some(0) } else { slim_gain(&raw) }).flatten();
   let f = Facts { subagents, slim };
   FACTS.lock().insert(path.to_path_buf(), (stamp, f));
   f
@@ -287,6 +293,10 @@ impl SessionManager {
     }
     let _hold = self.hold_record(id).await?;
     let path = self.deps.store.dir().join(format!("{id}.json"));
+    // A packed record is compressed already: slimming would write it back whole and free nothing
+    if std::fs::read(&path).is_ok_and(|raw| crate::store::pack::maybe_stub(&raw)) {
+      return Ok(0);
+    }
     let before = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
     let record = self.deps.store.load_detailed(id).await.map_err(|e| anyhow::anyhow!(e.detail()))?;
     let slim = acpira_shared::transcript::encode_for_view(|| serde_json::to_vec(&record))?;
