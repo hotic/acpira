@@ -1,6 +1,6 @@
 // Pure subagent-view helpers: grouping, trees and labels for the group row and the inspector.
 // No DOM — unit-tested in packages/ui/test/subagentState.test.ts; `t` arrives as a parameter so fixtures decide the locale.
-import type { MsgKey, Params } from '@acpira/shared/i18n';
+import type { MsgKey, Params } from '@acpira/shared/i18n/core';
 import type { SubagentSummary } from '@acpira/shared/subagents';
 import type { AgentBlock } from '@acpira/shared/transcript';
 

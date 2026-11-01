@@ -3,7 +3,7 @@ import { Ban, Check, ChevronDown, ChevronUp, CircleAlert, Copy, Download, Eye, E
 import type { AccountInfo, AgentInfo, ConfigControl } from '@acpira/shared/transcript';
 import type { AgentInstallProgress } from '@acpira/shared/protocol';
 import type { AgentHealthStage, AgentInventory, InventoryFile, InventoryMcp, InventoryScope, InventorySkill } from '@acpira/shared/inventory';
-import type { MsgKey } from '@acpira/shared/i18n';
+import type { MsgKey } from '@acpira/shared/i18n/core';
 import { PLAN_AUTO_APPROVE_AGENTS, type SettingsView } from '@acpira/shared/settings';
 import { SSH_LOCAL_AGENTS } from '@acpira/shared/remote';
 import { familyLabel, isReasoningControl, SIDEKICK_CATEGORY, SIDEKICK_EFFORT_CATEGORY } from '@acpira/shared/composerControls';

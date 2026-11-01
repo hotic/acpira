@@ -5,7 +5,7 @@ import type { BrowserHostMsg, BrowserLook, BrowserMsg, BrowserPage } from '@acpi
 import { optionClass } from '../ui/DropdownMenu';
 import { popupClass } from '../ui/Overlay';
 import { AppearanceContext, appearanceDataAttrs, BASE_APPEARANCE } from '../appearance';
-import { LocaleContext, setLocale, t } from '../i18n';
+import { LocaleContext, setLocale, t, whenLocale } from '../i18n';
 import { lookAttrs, resolveTheme, ThemeContext } from '../look';
 import { useVsCodeTheme } from '../useVsCodeTheme';
 import { vscodeApi } from '../vscodeApi';
@@ -172,7 +172,7 @@ export function BrowserPanel() {
       if (clear) { post(clear); return; }
       const m = hostMsgOf(e);
       switch (m?.type) {
-        case 'browserLook': setLook(m.look); setLocale(m.look.locale); break;
+        case 'browserLook': { const look = m.look; whenLocale(look.locale, () => { setLook(look); setLocale(look.locale); }); break; }
         case 'browserFrame': setFrame(m); setError(undefined); setShown(m.target); setPickable(undefined); setPicked([]); setRects([]); break;
         case 'browserError': setError(m); setShown(m.target); break;
         case 'browserHistory': setHistory(m.pages); break;

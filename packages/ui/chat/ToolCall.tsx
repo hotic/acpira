@@ -1,7 +1,7 @@
 import { FileText, Globe, Square } from 'lucide-react';
 import { memo, useContext, type ReactNode } from 'react';
 import type { AsyncTaskInfo, AsyncTaskState, ImageRef, ToolCallBlock } from '@acpira/shared/transcript';
-import type { MsgKey } from '@acpira/shared/i18n';
+import type { MsgKey } from '@acpira/shared/i18n/core';
 import { imageMimeOf } from '@acpira/shared/attachments';
 import { toolTodoEntries } from '@acpira/shared/todoTools';
 import { isImageGenTool, isShowImageTool, isShowVideoTool, isShowWidgetTool, toolImages, toolTexts } from '@acpira/shared/imageTools';

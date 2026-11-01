@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ArrowUpRight, Link2, Plus, Server, Unplug, X } from 'lucide-react';
-import type { MsgKey } from '@acpira/shared/i18n';
+import type { MsgKey } from '@acpira/shared/i18n/core';
 import type { ChatGptIntegrationStatus } from '@acpira/shared/chatgptIntegration';
 import { isAlias, parseRemoteFolder, type ConnectionState, type ConnectionView, type SshHost } from '@acpira/shared/remote';
 import { cn } from '../ui/cn';

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Blocks, BrainCircuit, HardDrive, Info, Layers, Network, Palette, SlidersHorizontal, Workflow } from 'lucide-react';
-import type { MsgKey } from '@acpira/shared/i18n';
+import type { MsgKey } from '@acpira/shared/i18n/core';
 import type { PluginKind } from '@acpira/shared/plugins';
 import type { AgentInfo } from '@acpira/shared/transcript';
 import { t } from '../i18n';

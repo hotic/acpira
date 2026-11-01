@@ -1,7 +1,7 @@
 import { Check, RotateCw, Unplug, X } from 'lucide-react';
 import { memo, useEffect, useState } from 'react';
 import type { RetryLog } from '@acpira/shared/transcript';
-import type { Locale } from '@acpira/shared/i18n';
+import type { Locale } from '@acpira/shared/i18n/core';
 import { Disclosure } from '../ui/Disclosure';
 import { RowLabel } from '../ui/Row';
 import { dateFormat, t, useLocale } from '../i18n';

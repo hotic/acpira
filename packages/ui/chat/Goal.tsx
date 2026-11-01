@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { CircleCheck, Goal as GoalIcon, Pause, Play, Trash2, TriangleAlert } from 'lucide-react';
 import type { GoalAction, GoalBlock, GoalEvent, GoalStatus, SessionGoal } from '@acpira/shared/transcript';
-import type { MsgKey } from '@acpira/shared/i18n';
+import type { MsgKey } from '@acpira/shared/i18n/core';
 import { t, useLocale } from '../i18n';
 import { IconButton } from '../ui/Button';
 import { Row, RowLabel, RowTarget } from '../ui/Row';

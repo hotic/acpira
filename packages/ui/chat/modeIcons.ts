@@ -1,5 +1,5 @@
 import { Bug, CircleDashed, Code, Eye, FolderPen, Infinity as InfinityIcon, ListTodo, MessageCircleQuestionMark, ShieldOff, Sparkles, Unplug, Users, type LucideIcon } from 'lucide-react';
-import type { MsgKey } from '@acpira/shared/i18n';
+import type { MsgKey } from '@acpira/shared/i18n/core';
 import type { SessionOption } from '@acpira/shared/transcript';
 import { t } from '../i18n';
 

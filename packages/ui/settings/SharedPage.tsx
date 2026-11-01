@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { FileText, Layers, Link2, Plus, Trash2, X } from 'lucide-react';
 import type { AgentId, AgentInfo } from '@acpira/shared/transcript';
 import type { Choice, PlanItem, PrivateSkill, Reach, ReachState, SharedAction, SharedMcp, SharedPrompt, SharedScope, SharedSkill, SharedView } from '@acpira/shared/sharedConfig';
-import type { MsgKey } from '@acpira/shared/i18n';
+import type { MsgKey } from '@acpira/shared/i18n/core';
 import { Button, IconButton } from '../ui/Button';
 import { cn } from '../ui/cn';
 import { t, useLocale } from '../i18n';

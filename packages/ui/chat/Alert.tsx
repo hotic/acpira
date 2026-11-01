@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { TriangleAlert, X } from 'lucide-react';
 import type { AgentTurn, TurnStop } from '@acpira/shared/transcript';
-import type { MsgKey } from '@acpira/shared/i18n';
+import type { MsgKey } from '@acpira/shared/i18n/core';
 import { isContextLengthError } from '@acpira/shared/turnErrors';
 import { Card } from '../ui/Card';
 import { Button, IconButton } from '../ui/Button';

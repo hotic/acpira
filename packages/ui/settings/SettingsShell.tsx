@@ -7,7 +7,7 @@ import type { AgentInventory } from '@acpira/shared/inventory';
 import type { AgentInstallProgress } from '@acpira/shared/protocol';
 import type { SettingKey, SettingsView } from '@acpira/shared/settings';
 import type { SubagentGroup, SubagentPersona } from '@acpira/shared/subagents';
-import type { Locale } from '@acpira/shared/i18n';
+import type { Locale } from '@acpira/shared/i18n/core';
 import { AppearanceContext, appearanceDataAttrs, type Appearance, type AxisKey } from '../appearance';
 import { lookAttrs, ThemeContext, type ShellLook, type Theme } from '../look';
 import { IconButton } from '../ui/Button';

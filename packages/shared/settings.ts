@@ -1,6 +1,6 @@
 import type { AgentId } from './transcript';
 import { sanitizePersonas, type SubagentGroup, type SubagentPersona } from './subagents';
-import { isLanguage, type Language, type Locale } from './i18n';
+import { isLanguage, type Language, type Locale } from './i18n/core';
 import { SSH_LOCAL_AGENTS } from './remote';
 
 // Hidden option families (acpira.hiddenOptions): agent → configOption id → source-qualified family keys (legacy family names remain readable; see models.ts) kept out of the composer menus.
