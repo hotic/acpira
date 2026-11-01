@@ -483,8 +483,15 @@ async function main() {
       return true;
     })()`);
     const marker = join(alpha, 'terminal.txt');
-    await waitUntil('the typed line to run in the project folder', () => existsSync(marker) && /^\d+$/.test(readFileSync(marker, 'utf8')), 15_000);
-    const shellPid = Number(readFileSync(marker, 'utf8'));
+    // Windows refuses the read (EBUSY) while the shell still holds the file open
+    let shellPid = 0;
+    await waitUntil('the typed line to run in the project folder', () => {
+      try {
+        const text = existsSync(marker) ? readFileSync(marker, 'utf8') : '';
+        if (/^\d+$/.test(text)) shellPid = Number(text);
+      } catch {}
+      return shellPid > 0;
+    }, 15_000);
     const terminalTab = `[...document.querySelectorAll('[data-panel-tabs] [role="tab"]')].find(t => /^(zsh|bash|sh|fish|powershell|pwsh|cmd)$/i.test(t.textContent.trim()))`;
     await page.waitFor('the terminal tab named after its shell', `!!(${terminalTab})`);
     if (shotDir) { await sleep(300); await page.shot(join(shotDir, 'panel-terminal.png')); }
@@ -1074,11 +1081,23 @@ class Hook {
   }
 
   // A press at the element's centre as pointer and mouse events (Base UI opens menus on pointer events, which
-  // element.click() does not send); the point has to land on the element itself
-  async press(what, element, button = 0) {
-    const at = await this.waitFor(what, `(() => { const e = ${element}; if (!e) return; const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
-    const hit = await this.eval(`(() => { const e = ${element}; const h = document.elementFromPoint(${at.x}, ${at.y}); return h && e.contains(h) ? '' : h ? 'covered by ' + h.outerHTML.slice(0, 160) : 'off the page'; })()`);
-    if (hit) fail(`${what} at ${Math.round(at.x)},${Math.round(at.y)} is ${hit}`);
+  // element.click() does not send); the point has to land on the element itself. Box and hit test are taken together and
+  // retried until they agree: a popup still being placed reports a box it is about to leave
+  async press(what, element, button = 0, timeout = 20_000) {
+    const end = Date.now() + timeout;
+    let at;
+    for (;;) {
+      at = await this.eval(`(() => {
+        const e = ${element};
+        if (!e) return { miss: '' };
+        const r = e.getBoundingClientRect(), x = r.x + r.width / 2, y = r.y + r.height / 2;
+        const h = document.elementFromPoint(x, y);
+        return h && e.contains(h) ? { x, y } : { x, y, miss: h ? 'covered by ' + h.outerHTML.slice(0, 160) : 'off the page' };
+      })()`).catch(() => ({ miss: '' }));
+      if (at.miss === undefined) break;
+      if (Date.now() > end) fail(at.miss ? `${what} at ${Math.round(at.x)},${Math.round(at.y)} is ${at.miss}` : `timed out waiting for ${what}`);
+      await sleep(100);
+    }
     await this.eval(`(() => {
       const t = document.elementFromPoint(${at.x}, ${at.y});
       const o = { bubbles: true, cancelable: true, composed: true, clientX: ${at.x}, clientY: ${at.y}, button: ${button}, buttons: ${button === 2 ? 2 : 1}, pointerId: 1, pointerType: 'mouse', isPrimary: true, view: window };
