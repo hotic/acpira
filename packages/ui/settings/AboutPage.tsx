@@ -96,4 +96,3 @@ function statusLine(s: UpdateState): string {
     default: return t('settings.update.idle');
   }
 }
-
