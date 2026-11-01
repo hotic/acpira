@@ -6,9 +6,9 @@
 [![JetBrains Plugin](https://img.shields.io/jetbrains/plugin/v/34192?label=JetBrains&color=FE315D)](https://plugins.jetbrains.com/plugin/34192-acpira)
 [![License](https://img.shields.io/github/license/hotic/acpira)](LICENSE)
 
-**A lightweight GUI workbench for coding agents.**
+**A native workbench for coding agents.**
 
-Acpira runs its own coding agent on any model API, or drives an agent CLI such as Claude Code or Codex on its native harness. It is a native desktop app of about 16 MB, and the same engine also runs inside VS Code, Cursor, and IntelliJ IDEA. An iPhone app is in testing.
+Acpira is built on [ACP](https://agentclientprotocol.com) with a Rust core. It runs Claude Code and Codex on your own login and their own harness, or its built-in agent on any model API. The same engine powers a native desktop app, extensions for VS Code, Cursor, and IntelliJ IDEA, and a paired iPhone app.
 
 **English** ｜ [简体中文](README.zh.md)
 
@@ -18,12 +18,12 @@ Acpira runs its own coding agent on any model API, or drives an agent CLI such a
   <img src="media/readme/hero-light.png" alt="Acpira showing a coding conversation, an expanded execution history, an inline code diff, and model controls." width="960">
 </picture>
 
-- **Small and native.** The engine is written in Rust, and the desktop app draws with the system WebView. There is no Electron and no Node.js runtime.
 - **An agent of its own.** The built-in agent reads, edits, runs commands, searches the web, and plans with any OpenAI- or Anthropic-compatible endpoint. Vendor CLIs keep their own harness and run beside it.
-- **Hot-plug plugins.** A plugin is a folder that adds tools, hooks, MCP servers, panels, themes, or a whole agent. It goes live without a build or a restart, and every version waits for your confirmation and can be rolled back.
-- **Remote built in.** Open folders on SSH hosts from the desktop app. Pair an iPhone with your Mac by scanning a code, with no account to sign up for.
-- **One setup for every agent.** Skills, MCP servers, instructions, and workspace hooks are shared by every agent. Summon an agent from another with `@name` and it reports back to the conversation.
+- **Cross-agent delegation.** Summon any agent from another with `@name`. It works inside the running turn and reports back, and in Team mode the built-in agent calls on others by itself. Skills, MCP servers, instructions, and workspace hooks are shared across all of them.
+- **Hot-pluggable, self-extending plugins.** A plugin is a folder that adds tools, hooks, MCP servers, panels, themes, or a whole agent. Agents can write their own, each one goes live on the spot, and every version waits for your confirmation and can be rolled back.
+- **Remote built in.** Open folders on SSH hosts from the desktop app. Pair an iPhone with your computer by scanning a code, with no account needed.
 - **A clear record of the work.** File reads, diffs, and command output appear in the conversation. Queue or steer follow-ups while the agent works, and approve plans and actions in place.
+- **Small and native.** The engine is written in Rust, and the desktop app renders with the system WebView.
 
 <table width="100%">
   <tr>
@@ -72,14 +72,14 @@ Acpira runs its own coding agent on any model API, or drives an agent CLI such a
 
 ## Where it runs
 
-The desktop app and the IDE plugins run the same engine and share sessions, accounts, and settings in `~/.acpira`. The iPhone app drives the engine on your Mac.
+The desktop app and the IDE plugins run the same engine and share sessions, accounts, and settings in `~/.acpira`. The iPhone app drives the engine on your computer.
 
 | | Platforms | Get it |
 | --- | --- | --- |
 | **Desktop app** | macOS on Apple silicon, Windows x64 | [GitHub Releases](https://github.com/hotic/acpira/releases/latest) |
 | **VS Code and Cursor** | macOS, Linux, Alpine, and Windows on x64 and arm64 | [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=hotic.acpira), [Open VSX](https://open-vsx.org/extension/hotic/acpira) |
 | **IntelliJ IDEA** 2026.1 and later | macOS, Linux, and Windows, including remote development | [JetBrains Marketplace](https://plugins.jetbrains.com/plugin/34192-acpira) |
-| **iPhone** | iOS, paired with the Mac app | In testing, not yet on the App Store |
+| **iPhone** | iOS, paired with a computer running Acpira | In testing, not yet on the App Store |
 
 The desktop app adds a tool panel beside the conversation with files, terminals, and a browser, plus SSH remote folders and device pairing. A Linux build of the desktop app works but is not released yet.
 
@@ -112,9 +112,9 @@ See [evaluation notes](docs/harness-evaluations.md) for sources, metrics, and ad
 
 A plugin is a folder under `~/.acpira/plugins/<id>/` with one `plugin.json`. It can add script tools, MCP servers, hooks on prompts, edits, and the built-in agent's loop, slash commands, skills, model sources, a theme, a tab in the desktop tool panel, or a specialised agent built on the built-in loop.
 
-- **Live without a restart.** Once confirmed, a plugin applies to every open window at once. Nothing builds and nothing reloads.
+- **Hot-pluggable.** Once confirmed, a plugin applies to every open window at once. Nothing builds and nothing reloads.
 - **You confirm every version.** A plugin runs only after you confirm it, and the confirmed version is frozen. Later edits wait for a new confirmation, and earlier versions stay available to roll back to.
-- **Agents can write them.** An agent can draft a plugin for itself and propose it. You confirm it on a card in the conversation.
+- **Self-extending.** An agent can draft a plugin for itself and propose it. You confirm it on a card in the conversation.
 - **Safe mode.** One switch unloads every user plugin at once, even when a broken plugin covers the interface.
 
 `acpira plugin new` scaffolds a plugin in TypeScript or Python. The Plugins settings page lists, confirms, rolls back, and removes them. The format is described in [the plugin notes](docs/dev/plugins.md).
@@ -122,13 +122,13 @@ A plugin is a folder under `~/.acpira/plugins/<id>/` with one `plugin.json`. It 
 ## Remote access
 
 - **SSH hosts.** Add hosts from `~/.ssh/config` on the Connections settings page of the desktop app, then open folders on them like local ones. Local run keeps sign-ins and the built-in agent on your computer and runs only tools on the host. Remote run uses the host's own sign-ins and every agent installed there. Each host folder keeps one session history. VS Code and IntelliJ IDEA keep using their own remote development.
-- **Paired devices.** The Devices card shows a pairing code. Scan it with the iPhone app and the phone can drive the sessions on your Mac: chat, approvals, plans, terminals, and reviews. Pairing needs no account. The connection goes over your LAN at home, over Tailscale or a direct link when one is reachable, and through a relay otherwise, end-to-end encrypted on every path. Remote access runs on macOS for now.
+- **Paired devices.** The Devices card shows a pairing code. Scan it with the iPhone app and the phone can drive the sessions on your computer: chat, approvals, plans, terminals, and reviews. Pairing needs no account. The connection goes over your LAN at home, over Tailscale or a direct link when one is reachable, and through a relay otherwise, end-to-end encrypted on every path. Remote access runs on macOS, Linux, and Windows.
 
 ## Agents
 
 The **Acpira** agent is built in and needs only a model endpoint and its key; see [Built-in agent](#built-in-agent). Other agents are official CLIs driven over ACP. Install the CLI and keep it on `PATH`:
 
-- [Claude](https://code.claude.com): `claude-agent-acp` (`npm install -g @agentclientprotocol/claude-agent-acp`)
+- [Claude Code](https://code.claude.com): `claude-agent-acp` (`npm install -g @agentclientprotocol/claude-agent-acp`)
 - [Codex](https://developers.openai.com/codex): `codex-acp` (`npm install -g @agentclientprotocol/codex-acp`)
 - [Grok](https://x.ai): `grok` (`grok agent stdio`)
 - [Devin](https://devin.ai): `devin` (`devin acp`)
@@ -225,7 +225,7 @@ General settings also hold notifications, the network proxy, and a CPU cap. Noti
 - One place to configure models and sync settings to different agents. The built-in agent's model sources are the first step.
 - Installing skills from Git repositories and URLs into the shared set.
 - Per-agent instructions on top of the shared prompt.
-- The iPhone app on the App Store, and remote access beyond macOS.
+- The iPhone app on the App Store.
 
 See the [roadmap](docs/roadmap.md) for the planned directions.
 

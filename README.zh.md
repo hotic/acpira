@@ -6,9 +6,9 @@
 [![JetBrains Plugin](https://img.shields.io/jetbrains/plugin/v/34192?label=JetBrains&color=FE315D)](https://plugins.jetbrains.com/plugin/34192-acpira)
 [![License](https://img.shields.io/github/license/hotic/acpira)](LICENSE)
 
-**轻量的编程 Agent 图形工作台。**
+**原生的编程 Agent 工作台。**
 
-Acpira 可以用自带的 Agent 对接任意模型 API，也可以驱动 Claude Code、Codex 等 Agent CLI，让它们跑在各自的原生 Harness 上。它是一个约 16 MB 的原生桌面应用，同一套引擎也运行在 VS Code、Cursor 和 IntelliJ IDEA 里。iPhone 版正在测试中。
+Acpira 用 Rust 写成，通过 [ACP](https://agentclientprotocol.com) 让 Claude Code、Codex 用你自己的登录跑在各自的原生 Harness 上，也可以用自带的 Agent 对接任意模型 API。同一套引擎驱动原生桌面应用、VS Code、Cursor 和 IntelliJ IDEA 的扩展，以及配对使用的 iPhone 应用。
 
 [English](README.md) ｜ **简体中文**
 
@@ -18,12 +18,12 @@ Acpira 可以用自带的 Agent 对接任意模型 API，也可以驱动 Claude 
   <img src="media/readme/hero-light.png" alt="Acpira 编程对话：展开的执行过程、文件修改对比和模型控制。" width="960">
 </picture>
 
-- **小巧，原生。** 引擎用 Rust 编写，桌面端用系统自带的 WebView 绘制界面，不带 Electron，也不需要 Node.js 运行时。
 - **自带 Agent。** 内置 Agent 接上任何 OpenAI 或 Anthropic 兼容的端点，就能读文件、改代码、跑命令、联网搜索和制定计划。厂商的 CLI 保留自己的 Harness，与它并列可选。
-- **热插拔插件。** 一个插件就是一个文件夹，可以加工具、Hooks、MCP 服务、面板、主题，甚至一整个 Agent。无需构建、无需重启即可生效；每个版本都要你确认，也都能回滚。
-- **内置远程。** 桌面端可以直接打开 SSH 主机上的文件夹。iPhone 扫码即可与 Mac 配对，不用注册任何账号。
-- **一套配置，所有 Agent 通用。** Skills、MCP 服务、指令和工作区 Hooks 对每个 Agent 生效。在一个 Agent 里用 `@名称` 召唤另一个，完成后结果交回对话。
+- **跨 Agent 委派。** 在一个 Agent 里用 `@名称` 召唤另一个，它在当前回合里工作，完成后结果交回对话；Team 模式下内置 Agent 会自己调度其他 Agent。Skills、MCP 服务、指令和工作区 Hooks 对所有 Agent 共享。
+- **可热插拔、可自迭代的插件。** 一个插件就是一个文件夹，可以加工具、Hooks、MCP 服务、面板、主题，甚至一整个 Agent。Agent 可以自己编写插件，写完即刻生效；每个版本都要你确认，也都能回滚。
+- **内置远程。** 桌面端可以直接打开 SSH 主机上的文件夹。iPhone 扫码即可与电脑配对，不用注册任何账号。
 - **执行过程一目了然。** 文件读取、代码差异和命令输出都显示在对话中。Agent 工作时可以排队或插入后续消息，计划和操作在原地审批。
+- **小巧，原生。** 引擎用 Rust 编写，桌面端用系统自带的 WebView 绘制界面。
 
 <table width="100%">
   <tr>
@@ -72,14 +72,14 @@ Acpira 可以用自带的 Agent 对接任意模型 API，也可以驱动 Claude 
 
 ## 在哪里用
 
-桌面端和各 IDE 插件运行同一套引擎，共用 `~/.acpira` 里的会话、账号与设置。iPhone 版驱动的是你 Mac 上的引擎。
+桌面端和各 IDE 插件运行同一套引擎，共用 `~/.acpira` 里的会话、账号与设置。iPhone 版驱动的是你电脑上的引擎。
 
 | | 平台 | 获取 |
 | --- | --- | --- |
 | **桌面端** | Apple 芯片的 macOS、Windows x64 | [GitHub Releases](https://github.com/hotic/acpira/releases/latest) |
 | **VS Code 与 Cursor** | macOS、Linux、Alpine、Windows，x64 与 arm64 | [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=hotic.acpira)、[Open VSX](https://open-vsx.org/extension/hotic/acpira) |
 | **IntelliJ IDEA** 2026.1 及以上 | macOS、Linux、Windows，支持远程开发 | [JetBrains Marketplace](https://plugins.jetbrains.com/plugin/34192-acpira) |
-| **iPhone** | iOS，与 Mac 端配对使用 | 测试中，尚未上架 App Store |
+| **iPhone** | iOS，与运行 Acpira 的电脑配对使用 | 测试中，尚未上架 App Store |
 
 桌面端在对话旁边多了一个工具面板，内含文件、终端和浏览器，另外还支持 SSH 远程文件夹和设备配对。Linux 版桌面端已经能用，但还没有正式发布。
 
@@ -112,9 +112,9 @@ Acpira 通过 [ACP](https://agentclientprotocol.com) 连接 Agent CLI，把模�
 
 插件是 `~/.acpira/plugins/<id>/` 下的一个文件夹，里面有一个 `plugin.json`。它可以添加脚本工具、MCP 服务、作用于提示词、代码修改和内置 Agent 循环的 Hooks、斜杠命令、Skills、模型来源、主题、桌面端工具面板里的标签页，或者基于内置循环的专用 Agent。
 
-- **不用重启就生效。** 插件确认后立即作用于所有打开的窗口，不需要构建，也不需要重新加载。
+- **可热插拔。** 插件确认后立即作用于所有打开的窗口，不需要构建，也不需要重新加载。
 - **每个版本都由你确认。** 插件确认后才会运行，确认的版本会被冻结。之后的修改要重新确认，旧版本保留，随时可以回滚。
-- **Agent 也能写插件。** Agent 可以为自己起草插件并提交，你在对话里的卡片上确认。
+- **可自迭代。** Agent 可以为自己起草插件并提交，你在对话里的卡片上确认。
 - **安全模式。** 一个开关就能卸下所有用户插件，即使某个插件把界面挡住了也能操作。
 
 `acpira plugin new` 可以生成 TypeScript 或 Python 插件骨架。设置中的「插件」页负责列出、确认、回滚和移除插件。格式说明见[插件文档](docs/dev/plugins.md)。
@@ -122,13 +122,13 @@ Acpira 通过 [ACP](https://agentclientprotocol.com) 连接 Agent CLI，把模�
 ## 远程访问
 
 - **SSH 主机。** 在桌面端设置的「连接」页从 `~/.ssh/config` 添加主机，然后像本地一样打开主机上的文件夹。「本机运行」把登录和内置 Agent 留在你的电脑上，只在主机上执行工具；「远端运行」使用主机自己的登录和主机上装好的所有 Agent。每个主机文件夹只保留一份会话历史。VS Code 和 IntelliJ IDEA 继续使用它们自己的远程开发功能。
-- **配对设备。** 「设备」卡片会显示配对码，用 iPhone 版扫码后，手机就能操作 Mac 上的会话：对话、审批、计划、终端和审阅。配对不需要账号。在家走局域网，能直连时走 Tailscale 或直连，否则走中继，每条路径都端到端加密。远程访问目前仅支持 macOS。
+- **配对设备。** 「设备」卡片会显示配对码，用 iPhone 版扫码后，手机就能操作电脑上的会话：对话、审批、计划、终端和审阅。配对不需要账号。在家走局域网，能直连时走 Tailscale 或直连，否则走中继，每条路径都端到端加密。远程访问支持 macOS、Linux 和 Windows。
 
 ## Agent
 
 **Acpira** Agent 是内置的，只需要一个模型端点和它的密钥，详见 [内置 Agent](#内置-agent)。其他 Agent 是通过 ACP 驱动的官方 CLI，安装对应 CLI 并保证它在 `PATH` 上即可：
 
-- [Claude](https://code.claude.com)：`claude-agent-acp`（`npm install -g @agentclientprotocol/claude-agent-acp`）
+- [Claude Code](https://code.claude.com)：`claude-agent-acp`（`npm install -g @agentclientprotocol/claude-agent-acp`）
 - [Codex](https://developers.openai.com/codex)：`codex-acp`（`npm install -g @agentclientprotocol/codex-acp`）
 - [Grok](https://x.ai)：`grok`（`grok agent stdio`）
 - [Devin](https://devin.ai)：`devin`（`devin acp`）
@@ -225,7 +225,7 @@ Acpira 可为 Devin、Codex、Claude 保存多份登录，并在创建会话时�
 - 统一模型配置入口，自动同步到不同 Agent；内置 Agent 的模型来源是第一步。
 - 从 Git 仓库、URL 安装 Skills 到共享集合。
 - 在共享提示词之上为单个 Agent 追加专属指令。
-- iPhone 版上架 App Store，远程访问支持 macOS 以外的系统。
+- iPhone 版上架 App Store。
 
 具体方向见[路线图](docs/roadmap.md#简体中文)。
 
