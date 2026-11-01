@@ -250,7 +250,6 @@ export const ko = {
   'session.section.moveUp': '위로 이동',
   'session.section.moveDown': '아래로 이동',
   'session.section.delete': '섹션 삭제',
-  'session.section.deleteHint': '포함된 프로젝트는 프로젝트로 돌아갑니다',
   'session.section.empty': '프로젝트를 여기로 끌어 오거나 메뉴에서 옮길 수 있습니다',
   'session.section.moveTo': '섹션으로 이동',
   'session.section.remove': '섹션에서 제거',

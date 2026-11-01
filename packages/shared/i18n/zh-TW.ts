@@ -253,7 +253,6 @@ export const zhTW = {
   'session.section.moveUp': '上移',
   'session.section.moveDown': '下移',
   'session.section.delete': '刪除分區',
-  'session.section.deleteHint': '其中的專案回到「專案」',
   'session.section.empty': '把專案拖到這裡，或從專案選單移入',
   'session.section.moveTo': '移到分區',
   'session.section.remove': '移出分區',

@@ -255,7 +255,6 @@ export const zhCN = {
   'session.section.moveUp': '上移',
   'session.section.moveDown': '下移',
   'session.section.delete': '删除分区',
-  'session.section.deleteHint': '其中的项目回到「项目」',
   'session.section.empty': '把项目拖到这里，或从项目菜单移入',
   'session.section.moveTo': '移到分区',
   'session.section.remove': '移出分区',
