@@ -96,6 +96,8 @@ async function convert({ id, bytes, codecs }: GifVideoRequest): Promise<GifVideo
   const { width: W, height: H, frames } = gif;
   if (frames.length < 2) return { id, skipped: 'still' };
   if (!W || !H || W * H * frames.length > MAX_WORK) return { id, skipped: 'too large' };
+  // Each frame decodes into a buffer of its own declared size, which a crafted file can set far past the canvas
+  if (frames.some(f => f.width * f.height > W * H) || frames.reduce((n, f) => n + f.width * f.height, 0) > MAX_WORK) return { id, skipped: 'too large' };
   const scale = Math.min(1, MAX_SIDE / Math.max(W, H), Math.sqrt(MAX_AREA / (W * H)));
   const dw = even(W * scale);
   const dh = even(H * scale);

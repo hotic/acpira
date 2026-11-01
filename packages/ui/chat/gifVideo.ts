@@ -1,8 +1,9 @@
 import type { GifVideoCodec, GifVideoRequest, GifVideoResponse } from './gifVideo.worker';
 
-// Page side of the GIF-to-video worker. One conversion runs at a time, each GIF (by URL) converts once per page and
-// its MP4 stays as an object URL for the page's life: a clip is a fraction of its GIF's size, and an in-place
-// <video> may hold it at any moment, so nothing is revoked. Any failure resolves undefined and the GIF stays.
+// Page side of the GIF-to-video worker. One conversion runs at a time and each GIF (by URL) converts once while its
+// MP4 is kept as an object URL. A <video> showing a clip holds it (`holdClip` / `releaseClip`); clips nobody holds stay
+// for a later mount up to `IDLE_BYTES`, then the least recently released go and their URLs are revoked. Any failure
+// resolves undefined and the GIF stays.
 
 export interface GifClip {
   url: string;
@@ -14,6 +15,11 @@ export interface GifClip {
 }
 
 const clips = new Map<string, Promise<GifClip | undefined>>();
+// Each converted clip's MP4 size, the <video>s holding it, and the clips nobody holds, least recently released first
+const sizes = new Map<string, number>();
+const users = new Map<string, number>();
+const idle = new Set<string>();
+const IDLE_BYTES = 32 * 1024 * 1024;
 const pending = new Map<number, (response: GifVideoResponse) => void>();
 let queue: Promise<unknown> = Promise.resolve();
 let sequence = 0;
@@ -67,7 +73,42 @@ async function convert(src: string): Promise<GifClip | undefined> {
     return undefined;
   }
   const url = URL.createObjectURL(new Blob([response.mp4], { type: 'video/mp4' }));
+  sizes.set(src, response.mp4.byteLength);
+  // The image that asked may be gone already: then nobody holds the clip from the start
+  if (!users.has(src)) { idle.add(src); trim(); }
   return { url, width: response.width, height: response.height, plays: response.plays ?? 0 };
+}
+
+// Drop idle clips, oldest first, until the rest fit the budget
+function trim() {
+  let total = 0;
+  for (const src of idle) total += sizes.get(src) ?? 0;
+  for (const src of idle) {
+    if (total <= IDLE_BYTES) break;
+    total -= sizes.get(src) ?? 0;
+    idle.delete(src);
+    sizes.delete(src);
+    const clip = clips.get(src);
+    clips.delete(src);
+    void clip?.then(c => { if (c) URL.revokeObjectURL(c.url); });
+  }
+}
+
+// A <video> starts showing `src`'s clip
+export function holdClip(src: string) {
+  users.set(src, (users.get(src) ?? 0) + 1);
+  idle.delete(src);
+}
+
+// A <video> stopped showing it
+export function releaseClip(src: string) {
+  const left = (users.get(src) ?? 1) - 1;
+  if (left > 0) { users.set(src, left); return; }
+  users.delete(src);
+  if (!sizes.has(src)) return;
+  idle.delete(src);
+  idle.add(src);
+  trim();
 }
 
 export function gifClip(src: string): Promise<GifClip | undefined> {
