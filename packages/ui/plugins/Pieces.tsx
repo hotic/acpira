@@ -30,16 +30,21 @@ export function useArrival(plugin: string, slot: string, box: RefObject<HTMLElem
   return landed;
 }
 
-// The lit block of a card's thumbnail flying onto `to` (effects/magic.ts flyInto), in the brand colour where `near` sits
-export function flyStandIn(from: DOMRect, near: HTMLElement, to: () => DOMRect | undefined, land: () => void, signal?: AbortSignal) {
+// The lit block of a card's thumbnail flying onto `to` (effects/magic.ts flyInto), in the landing colour where `near`
+// sits (--land-ink, skin.css: the skin's colour, else the foreground)
+// `shape`: the control it lands on, when it is not a reserved piece box: the frame takes that control's corner radius
+// and its outline answers the landing (plugins/landings.ts); `lift` / `duration` as in flyInto
+export function flyStandIn(from: DOMRect, near: HTMLElement, to: () => DOMRect | undefined, land: () => void, signal?: AbortSignal,
+  more?: { shape?: Element; lift?: number; duration?: number }) {
   const shell = near.closest<HTMLElement>('.acp-shell') ?? undefined;
-  const brand = getComputedStyle(near).getPropertyValue('--brand').trim();
+  const brand = getComputedStyle(near).getPropertyValue('--land-ink').trim() || 'currentColor';
   const flyer = document.createElement('div');
   const fill = document.createElement('div');
-  Object.assign(flyer.style, { borderRadius: 'var(--r-md)', boxShadow: `0 0 0 1px ${brand}, 0 0 8px -1px ${brand}` });
+  const radius = more?.shape ? getComputedStyle(more.shape).borderRadius : 'var(--r-md)';
+  Object.assign(flyer.style, { borderRadius: radius, boxShadow: `0 0 0 1px ${brand}, 0 0 8px -1px ${brand}` });
   Object.assign(fill.style, { position: 'absolute', inset: '0', borderRadius: 'inherit', background: `color-mix(in srgb, ${brand} 30%, transparent)` });
   flyer.append(fill);
-  void flyInto(from, to, { flyer, fade: fill, glow: brand, fit: 'piece', host: shell, land, signal });
+  void flyInto(from, to, { flyer, fade: fill, glow: brand, fit: 'piece', host: shell, land, signal, outline: more?.shape && (() => more.shape), lift: more?.lift, duration: more?.duration });
 }
 
 // A new version of a piece is a new box, so one applied from a card flies in again (its frame is new anyway)
