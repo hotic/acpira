@@ -6,6 +6,7 @@ import { inWorkspace, type SessionScope } from '@acpira/shared/settings';
 import { launchable } from '@acpira/shared/agentOrder';
 import { foreignBrand } from '@acpira/shared/models';
 import { reuse } from '@acpira/shared/reuse';
+import { parseRemoteFolder } from '@acpira/shared/remote';
 import { cn } from '../ui/cn';
 import { Collapsible, LazyPanelContext } from '../ui/Collapsible';
 import { Command } from '../ui/Command';
@@ -440,11 +441,10 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
     for (const c of categoryState?.categories ?? []) if (c.cwd && !latest.has(c.cwd)) latest.set(c.cwd, '');
     for (const cwd of registered ?? []) if (!latest.has(cwd)) latest.set(cwd, '');
     const cwds = [...latest.keys()].filter(c => !offList(c, registered, removed) && !(desktop && isChatFolder(chats, c))).sort((a, b) => Number(b === workspace) - Number(a === workspace) || latest.get(b)!.localeCompare(latest.get(a)!));
-    const names = cwds.map(projectName);
-    return cwds.map((cwd, i) => {
-      const name = names[i]!;
-      const shared = names.indexOf(name) !== names.lastIndexOf(name);
-      return { cwd, name, current: cwd === workspace, ...(shared ? { hint: cwd.slice(0, cwd.lastIndexOf(name)).replace(/[\\/]+$/, '') || cwd } : {}) };
+    // A project on an SSH host carries the host's name; a local one carries nothing (its full path is the row's tooltip)
+    return cwds.map(cwd => {
+      const alias = parseRemoteFolder(cwd)?.alias;
+      return { cwd, name: projectName(cwd), current: cwd === workspace, ...(alias ? { hint: alias } : {}) };
     });
   }, [sessions, categoryState, registered, removed, workspace, desktop, chats]));
   // A row's slices of the menus' lists, one array per project, so a row gets the same one on every render

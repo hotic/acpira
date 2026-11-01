@@ -14,7 +14,7 @@ export interface MoveProject {
   cwd: string;
   name: string;
   current: boolean;
-  // The parent folder, set only when another listed project shares the name, so the two rows can be told apart
+  // The SSH host's name for a project on one; a local project has none
   hint?: string;
 }
 
@@ -108,18 +108,21 @@ function sessionMenuItems({ session, onOpenInEditor, onRename, onPin, onUnread, 
       ...filed ? [<DropdownMenu.Item key="remove" onClick={() => onFile(null)}><OptionContent icon={<Undo2 strokeWidth={1.5} />}>{t('session.category.remove')}</OptionContent></DropdownMenu.Item>] : [],
     ]}</Submenu>);
   }
-  // Each project is a one-line row like every other menu option: folder name, the "current" badge, and the parent folder only
-  // when two projects share a name; the full path is the tooltip
+  // Each project is a one-line row like every other menu option: folder name, and at the row's end the host's name for an
+  // SSH project and "current" as quiet text; the full path is the tooltip
   if (onMoveTo && projects.length) {
     top.push(<Submenu key="project" icon={<FolderInput strokeWidth={1.5} />} label={t('session.moveToProject')}>{projects.map(p => (
       <DropdownMenu.Item key={p.cwd} title={p.cwd} onClick={() => onMoveTo(p.cwd)}>
         <OptionContent icon={<Folder strokeWidth={1.5} />}>
           {p.name}
-          {/* As faint as the project tag on a list row */}
-          {p.hint && <span className="ml-gap text-fg-3/70">{p.hint}</span>}
         </OptionContent>
-        {/* The same "current" badge as the project group header */}
-        {p.current && <span className="shrink-0 rounded-sm bg-active px-1 text-3 text-fg-3">{t('session.project.current')}</span>}
+        {/* Right-aligned plain text, like the host on an SSH project's header in the list: the host, then "current" */}
+        {(p.hint || p.current) && (
+          <span className="flex min-w-0 max-w-1/2 shrink-0 items-center gap-gap text-3 text-fg-3/70">
+            {p.hint && <span className="truncate">{p.hint}</span>}
+            {p.current && <span className="shrink-0">{t('session.project.current')}</span>}
+          </span>
+        )}
       </DropdownMenu.Item>
     ))}</Submenu>);
   } else if (onMove) {
