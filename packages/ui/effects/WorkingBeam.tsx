@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { BorderBeam } from 'border-beam';
+import { Beam } from './Beam';
 import { useAppearance } from '../appearance';
 import { BEAM_SIZE, BEAM_STRENGTH } from './presets';
 
@@ -38,11 +38,11 @@ export function WorkingBeam({ active, theme, field, children }: WorkingBeamProps
   return (
     <div ref={hostRef} className="relative block w-full">
       {children}
-      {/* Every mode is border-beam drawn as an overlay sibling: the composer subtree never repaints with the beam's
-          animated masks. The full ring is the library's `md` (stroke, 9px inner glow and bloom); a hand-rolled 1px
-          rotating ring replaced it on 2026-10-25 and lost the glow, so it is not to be "optimised" back without them. */}
+      {/* Every mode is Beam (effects/Beam.tsx) drawn as an overlay sibling: the composer subtree never repaints with the
+          beam's animated masks. The full ring is `md` (stroke, 9px inner glow and bloom); a bare 1px rotating ring once
+          replaced it and lost the glow, so it is not to be "optimised" back without them. */}
       {enabled && (
-        <BorderBeam
+        <Beam
           key={beam}
           className="pointer-events-none absolute! inset-0 contain-strict transform-gpu backface-hidden"
           size={BEAM_SIZE[beam]}
@@ -54,7 +54,7 @@ export function WorkingBeam({ active, theme, field, children }: WorkingBeamProps
           strength={BEAM_STRENGTH[motion]}
         >
           <div className="size-full" />
-        </BorderBeam>
+        </Beam>
       )}
     </div>
   );

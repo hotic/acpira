@@ -18,7 +18,7 @@ Rules for primitives, tokens, menus, overlays, the composer, transcript rows and
 
 - Interactive primitives are `@base-ui/react` parts in `ui/`, composed directly; never reintroduce `Menu items=[]`, `children(api)` or `content(close)` wrappers.
 - `ui/Button` has two tiers, `primary` (one per card) and `secondary`; no ghost tier, and the inverted solid belongs to the send button alone. Destructive is `secondary tone="danger"`: a `text-danger` class loses to the secondary's `hover:text-fg-1`.
-- Trap: `MetalFx` hides its wrapper until the WebGL shader paints; `effects/SendButton`'s `visible! opacity-100!` keeps send / stop visible after a lost context in a long-lived webview. Keep it.
+- The send button's ring (`effects/MetalRing`) is a canvas 2D paint on mount, never WebGL: a WebGL ring that hid its wrapper until the shader painted once lost the send / stop button with the context in a long-lived webview.
 - Every overlay portal inherits `ShellLayerContext`. Overlays pick a width tier (`Positioner width`), not content width; lists cap at `--pop-rows`. Only the `@` mention list spans the composer field.
 - Menus are nonmodal; radio items close on selection except where the effect is judged in place (`closeOnClick={false}`). Narrow-column menus open `inline-end`, since they deformed otherwise.
 - `onOpenChange` is a Base UI request callback; anything that counts real opens uses `onOpenLifecycle`. Triggers recognise both `data-open` and `data-popup-open`.

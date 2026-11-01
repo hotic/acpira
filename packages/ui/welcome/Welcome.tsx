@@ -1,5 +1,5 @@
 import { Fragment, useCallback, type MouseEvent, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
-import { BorderBeam } from 'border-beam';
+import { Beam } from '../effects/Beam';
 import { Check, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import type { DetectedAgent } from '@acpira/shared/protocol';
 import { appearanceDataAttrs, type Appearance } from '../appearance';
@@ -744,9 +744,9 @@ function Consent({ open, home, theme, motion, error, busy, back, onCreate }: { o
           </div>
         </div>
         {motion !== 'none' && (
-          <BorderBeam className="pointer-events-none absolute! inset-0" size={BEAM_SIZE.full} colorVariant="mono" staticColors theme={theme} borderRadius={radius} active strength={BEAM_STRENGTH[motion]}>
+          <Beam className="pointer-events-none absolute! inset-0" size={BEAM_SIZE.full} colorVariant="mono" staticColors theme={theme} borderRadius={radius} active strength={BEAM_STRENGTH[motion]}>
             <div className="size-full" />
-          </BorderBeam>
+          </Beam>
         )}
       </div>
     </div>

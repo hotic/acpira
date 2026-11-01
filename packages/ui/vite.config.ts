@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 // Webview build: root is this directory (packages/ui), the output the repository's dist/webview, which every shell serves.
 // Only index.html is built: main.js and main.css under fixed names for the bridges, plus the chunks the page imports on
-// demand (mermaid, the highlighting worker, img-fx …) under assets/, which every host serves from the same directory.
+// demand (mermaid, the highlighting worker …) under assets/, which every host serves from the same directory.
 // A chunk loads through `import()` from main.js and inherits its CSP nonce. All CSS stays in main.css, and Vite's
 // modulepreload helper is off: its injected <link> tags would carry no nonce
 const root = dirname(fileURLToPath(import.meta.url));
