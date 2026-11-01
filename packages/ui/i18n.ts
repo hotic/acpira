@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
-import { translate, en, type Locale, type MsgKey, type Params } from '@acpira/shared/i18n';
+import { hasLocale, translate, en, type Locale, type MsgKey, type Params } from '@acpira/shared/i18n/core';
+import { loadLocale } from '@acpira/shared/i18n/load';
 
 // Webview strings. Components read `t` from module state (no prop threading through twenty components). A new locale
 // from the host re-renders the tree in place, without a remount: a component that memo keeps from rendering (the
@@ -8,6 +9,16 @@ import { translate, en, type Locale, type MsgKey, type Params } from '@acpira/sh
 let current: Locale = 'en';
 
 export function setLocale(locale: Locale) { current = locale; }
+
+// Runs `apply` (which sets the locale and whatever arrived with it) once `locale`'s dictionary is in: at once when it
+// already is, else after it is read from the package (load.ts). Only the latest call applies, so a quick second change
+// is not overtaken by the first one's read. A failed read applies anyway, on en
+let applying = 0;
+export function whenLocale(locale: Locale, apply: () => void) {
+  const seq = ++applying;
+  if (hasLocale(locale)) { apply(); return; }
+  void loadLocale(locale).then(() => { if (seq === applying) apply(); });
+}
 export function getLocale(): Locale { return current; }
 
 export function t(key: MsgKey, params?: Params): string {

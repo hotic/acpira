@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import type { HostMsg } from '@acpira/shared/protocol';
 import type { DeviceStatus, PathKind, RemoteAccessOp, RemoteAccessView } from '@acpira/shared/devices';
-import type { MsgKey } from '@acpira/shared/i18n';
+import type { MsgKey } from '@acpira/shared/i18n/core';
 import { vscodeApi } from '../vscodeApi';
 
 // Remote access (paired phones and computers, rust/crates/acpira-host/src/devices/) as the pages see it. App asks for the

@@ -5,12 +5,13 @@ import type { AccountInfo, AgentId, AgentInfo, ConfigControl, FullDiffSource, Se
 import type { ModelShapes } from '@acpira/shared/modelShapes';
 import type { HiddenMap, PanelScope, SettingKey, SettingsView } from '@acpira/shared/settings';
 import type { AgentInventory } from '@acpira/shared/inventory';
-import { isLocale, resolveLocale, type Locale } from '@acpira/shared/i18n';
+import { isLocale, resolveLocale, type Locale } from '@acpira/shared/i18n/core';
 import { reuse, reuseById } from '@acpira/shared/reuse';
 import { effortLabel } from '@acpira/shared/composerControls';
 import { SessionViews } from './sessionViews';
 import { BASE_APPEARANCE, type Appearance } from './appearance';
-import { LocaleContext, setLocale, t } from './i18n';
+import { LocaleContext, setLocale, t, whenLocale } from './i18n';
+import { loadLocale } from '@acpira/shared/i18n/load';
 import { Shell, type ShellHandlers } from './chat/Shell';
 import { lookFromSettings, resolveTheme } from './look';
 import { useVsCodeTheme } from './useVsCodeTheme';
@@ -68,6 +69,8 @@ const tourPage = window.__acpira?.tourPage;
 const bootTag = (firstRun ?? tourPage)?.locale;
 const bootLocale: Locale | undefined = bootTag === undefined ? undefined : isLocale(bootTag) ? bootTag : resolveLocale(undefined, bootTag);
 if (bootLocale) setLocale(bootLocale);
+// main.tsx renders once the boot language's dictionary is in, so a first-run page never shows en first
+export const bootReady: Promise<void> = bootLocale ? loadLocale(bootLocale) : Promise.resolve();
 
 // What the tour's steps light: the sample shell's root (welcome/SampleShell.tsx)
 const sampleScope = () => document.querySelector<HTMLElement>('[data-sample-shell] .acp-shell');
@@ -278,7 +281,7 @@ export function App() {
           break;
         }
         // A sidecar that came back answers nothing it was asked before: pending controls requests go out again
-        case 'init': controlsAsked.current.clear(); setInit({ host: m.state.host, home: m.state.home, cwd: m.state.cwd, blobBase: m.state.blobBase, chats: m.state.chats }); setAppearance(m.state.appearance); lastAgents.current = m.state.agents; setAgents(m.state.agents); setSessions(m.state.sessions); setCategories(m.state.categories); setAccounts(m.state.accounts); setAccountActions(m.state.accountActions ?? []); setAgentInstalls(m.state.agentInstalls ?? []); setHidden(m.state.hidden); setSession(views.init(m.state.active)); setNoProject(!m.state.active); setSettings(syncPanelScope(m.state.settings)); setLocale(m.state.locale); setLoc(m.state.locale); terminalsConnected(m.state.home); watchConnections(); watchRemoteAccess(); break;
+        case 'init': controlsAsked.current.clear(); setInit({ host: m.state.host, home: m.state.home, cwd: m.state.cwd, blobBase: m.state.blobBase, chats: m.state.chats }); setAppearance(m.state.appearance); lastAgents.current = m.state.agents; setAgents(m.state.agents); setSessions(m.state.sessions); setCategories(m.state.categories); setAccounts(m.state.accounts); setAccountActions(m.state.accountActions ?? []); setAgentInstalls(m.state.agentInstalls ?? []); setHidden(m.state.hidden); setSession(views.init(m.state.active)); setNoProject(!m.state.active); { const s = m.state; whenLocale(s.locale, () => { setSettings(syncPanelScope(s.settings)); setLocale(s.locale); setLoc(s.locale); }); } terminalsConnected(m.state.home); watchConnections(); watchRemoteAccess(); break;
         case 'appearance': setAppearance(m.appearance); break;
         // An agent whose executable appeared or vanished, or whose adapter was just updated, has a stale inventory (binary path,
         // version); drop it so the page rescans
@@ -355,7 +358,8 @@ export function App() {
           });
           break;
         }
-        case 'settings': setSettings(syncPanelScope(m.settings)); setLocale(m.locale); setLoc(m.locale); break;
+        // Nothing renders before settings, so holding them for the dictionary's read shows no en first
+        case 'settings': whenLocale(m.locale, () => { setSettings(syncPanelScope(m.settings)); setLocale(m.locale); setLoc(m.locale); }); break;
         case 'inventory': setInventories(inv => ({ ...inv, [m.agent]: m.inventory })); break;
         case 'shared': setShared({ view: m.view, error: m.error }); break;
         // A reply without the review lists (a plain refresh) keeps the ones already shown: a review always re-asks on open

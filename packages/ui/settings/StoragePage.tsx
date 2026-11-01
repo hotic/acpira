@@ -5,7 +5,7 @@ import {
   STORAGE_RESIDUE_KINDS, STORAGE_SEGMENTS, formatBytes,
   type StorageAction, type StorageBlock, type StorageDetail, type StorageOutcome, type StorageResidue, type StorageResidueKind, type StorageSegmentKind, type StorageSession, type StorageView,
 } from '@acpira/shared/storage';
-import type { MsgKey } from '@acpira/shared/i18n';
+import type { MsgKey } from '@acpira/shared/i18n/core';
 import type { AgentInfo } from '@acpira/shared/transcript';
 import { Button, IconButton } from '../ui/Button';
 import { ShellLayerContext } from '../ui/Overlay';

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DICTS, en, LANGUAGES, LOCALES, pluralCategory, resolveLocale, translate, zhCN } from '../i18n';
+import { APPROVAL_WRAPPERS } from '../i18n/approvalWrappers';
 
 const holes = (s: string) => [...new Set([...s.matchAll(/\{(\w+)\}/g)].map(m => m[1]))].sort();
 const PLURAL_SUFFIX = /#(one|few|many)$/;
@@ -93,5 +94,13 @@ describe('i18n dictionaries', () => {
   });
   it('every language has a picker label', () => {
     for (const l of LANGUAGES) expect(`settings.language.${l}` in en, l).toBe(true);
+  });
+  it('the approval heading copy matches every dictionary', () => {
+    for (const l of LOCALES) {
+      expect(APPROVAL_WRAPPERS[l], l).toEqual({
+        needApprovalFor: DICTS[l]['host.needApprovalFor'] ?? en['host.needApprovalFor'],
+        switchMode: DICTS[l]['verb.switch_mode'] ?? en['verb.switch_mode'],
+      });
+    }
   });
 });

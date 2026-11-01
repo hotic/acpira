@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import type { HostMsg, WebviewMsg } from '@acpira/shared/protocol';
-import type { MsgKey } from '@acpira/shared/i18n';
+import type { MsgKey } from '@acpira/shared/i18n/core';
 import { parseRemoteFolder, type ConnectionOp, type ConnectionState, type ConnectionView, type RemoteDirEntry, type SshHost } from '@acpira/shared/remote';
 import { vscodeApi } from '../vscodeApi';
 

@@ -1,5 +1,6 @@
 import type { PermissionBlock, PermissionKind } from '@acpira/shared/transcript';
-import { DICTS, en, LOCALES, translate, type Locale, type MsgKey } from '@acpira/shared/i18n';
+import { LOCALES, translate, type Locale, type MsgKey } from '@acpira/shared/i18n/core';
+import { APPROVAL_WRAPPERS } from '@acpira/shared/i18n/approvalWrappers';
 
 type Option = PermissionBlock['options'][number];
 
@@ -26,8 +27,8 @@ const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // since a persisted card keeps the wording of the locale it was recorded under
 const WRAPPED_TITLE = (() => {
   const prefixes = new Set(LOCALES.map(l => {
-    const wrapper = (DICTS[l]['host.needApprovalFor'] ?? en['host.needApprovalFor']).split('{what}')[0]!;
-    return `${escape(wrapper)}(?:${escape(DICTS[l]['verb.switch_mode'] ?? en['verb.switch_mode'])} )?`;
+    const wrapper = APPROVAL_WRAPPERS[l].needApprovalFor.split('{what}')[0]!;
+    return `${escape(wrapper)}(?:${escape(APPROVAL_WRAPPERS[l].switchMode)} )?`;
   }));
   return new RegExp(`^(?:${[...prefixes].join('|')})(.+)$`);
 })();

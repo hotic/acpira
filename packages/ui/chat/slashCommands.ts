@@ -1,5 +1,5 @@
 import { presentCommand } from '@acpira/shared/commandPresentation';
-import type { Locale } from '@acpira/shared/i18n';
+import type { Locale } from '@acpira/shared/i18n/core';
 import type { SlashCommand } from '@acpira/shared/transcript';
 
 // Pure helpers behind the / command completion (Slash.tsx renders them; a lowercase `slash.ts` would clash with it on a case-insensitive disk); kept DOM-free so the host tsconfig can type-check their tests
