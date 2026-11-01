@@ -92,7 +92,7 @@ export function StateCell({ ok, warn, word }: { ok: boolean; warn?: boolean; wor
   return <StableText className="shrink-0 text-2 text-fg-2" itemClassName="flex items-center justify-self-end gap-1.5" current={word}
     items={STATE_WORDS.map(k => ({ key: k, text: <>
       <Dot ok={ok} warn={warn} label={k === word ? t(word) : undefined} />
-      <span className="@max-[600px]/settings-shell:hidden">{t(k)}</span>
+      <span className="settings-narrow:hidden">{t(k)}</span>
     </> }))} />;
 }
 

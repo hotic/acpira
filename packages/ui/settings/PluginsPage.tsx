@@ -96,7 +96,7 @@ export function PluginsPage({ tab, onTab }: { tab?: string; onTab: (tab: Filter)
     </>}
     {view && !picking && tiles.length === 0 && <Section><Note>{t(q ? 'settings.plugins.noMatch' : 'settings.plugins.none')}</Note></Section>}
     {tiles.length > 0 && (
-      <div className="grid grid-cols-2 gap-gap @max-[600px]/settings-shell:grid-cols-1">
+      <div className="grid grid-cols-2 gap-gap settings-narrow:grid-cols-1">
         {tiles.map(p => <UserPluginTile key={p.id} plugin={p} safeMode={!!view?.safeMode} />)}
       </div>
     )}
@@ -185,7 +185,7 @@ function AgentTiles({ agents: all, inventories, filter, onReorder, onDisabled, o
   };
 
   return (
-    <div ref={grid} className="grid grid-cols-2 gap-gap @max-[600px]/settings-shell:grid-cols-1">
+    <div ref={grid} className="grid grid-cols-2 gap-gap settings-narrow:grid-cols-1">
       {visible.map(a => {
         const on = enabled(a);
         const last = on && enabledCount === 1;

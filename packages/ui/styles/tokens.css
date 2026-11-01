@@ -439,6 +439,9 @@
   --text-page-lh: calc(var(--ui-font-size) + 10px);
 }
 
+/* Settings narrow layout: the rail collapses to icons and grids drop a column */
+@custom-variant settings-narrow (@container settings-shell (width < 600px));
+
 /* Tailwind theme mapping: class names → the tokens above */
 @theme inline {
   --container-quota: 30rem;
