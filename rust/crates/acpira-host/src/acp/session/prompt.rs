@@ -410,7 +410,11 @@ impl AcpSession {
           blocks.append(&mut prepared.blocks);
           prepared.blocks = blocks;
           edited = true;
-          if h.omitted > 0 {
+          // An agent that can read_session fetches the left-out turns on demand behind their outline: nothing for
+          // the user to act on, so only the log records it
+          if h.omitted > 0 && h.recoverable {
+            self.log(&format!("fork context trimmed: {} earlier turns behind an outline", h.omitted));
+          } else if h.omitted > 0 {
             self.notify(&tp("host.forkContextTrimmed", &[("count", &h.omitted.to_string())]));
           }
         }

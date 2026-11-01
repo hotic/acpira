@@ -202,6 +202,8 @@ pub struct HistoryContext {
   pub blocks: Vec<Value>,
   /// Turns left out, numbered as `read_session` counts them (the kept history starts at turn `omitted + 1`)
   pub omitted: u32,
+  /// The history points the agent at read_session, so the turns left out stay within its reach
+  pub recoverable: bool,
 }
 
 /// How a history goes out: the lead it opens with, the fork it may have come from (another agent's turns get their
@@ -272,7 +274,7 @@ pub async fn history_context(
   let (source, rounds): (Vec<&Turn>, Vec<u32>) =
     all.iter().zip(numbers.iter().copied()).filter(|(t, _)| !matches!(t, Turn::User(u) if u.auto == Some(true) && !is_delivery(u))).unzip();
   if source.is_empty() {
-    return Ok(Some(HistoryContext { blocks: vec![], omitted: 0 }));
+    return Ok(Some(HistoryContext { blocks: vec![], omitted: 0, recoverable: spec.readable }));
   }
   let lead = handoff_lead(spec.lead, spec.fork, all, &numbers);
   let items: Vec<String> = source.iter().map(|t| compact_turn(t).to_string()).collect();
@@ -323,7 +325,7 @@ pub async fn history_context(
       }
     }
   }
-  Ok(Some(HistoryContext { blocks: context, omitted }))
+  Ok(Some(HistoryContext { blocks: context, omitted, recoverable: spec.readable }))
 }
 
 /// Acpira's own extension: the agent cuts its history back to just before a turn named in that turn's `session/prompt`
