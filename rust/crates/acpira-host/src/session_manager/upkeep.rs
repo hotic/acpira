@@ -22,7 +22,7 @@ use super::SessionManager;
 use crate::acp::agents::registry::SELF_AGENT_ID;
 use crate::store::blob_pool;
 use crate::store::file_lock::{temp_writer_pid, with_file_lock, write_atomic};
-use crate::store::pack::{self, PACK_AFTER};
+use crate::store::pack::PACK_AFTER;
 use crate::store::transcript_store::{is_blob_name, is_session_id};
 
 /// How long after the engine starts the first run waits, so a starting window never competes with it for the disk
@@ -206,8 +206,7 @@ impl SessionManager {
       return Ok(0);
     }
     let _hold = self.hold_record(id).await?;
-    let (dir, owned) = (self.deps.store.dir().to_path_buf(), id.to_owned());
-    match tokio::task::spawn_blocking(move || pack::pack(&dir, &owned, now)).await?? {
+    match self.deps.store.pack(id, now).await? {
       Ok(freed) => Ok(freed),
       Err(_) => Ok(0),
     }

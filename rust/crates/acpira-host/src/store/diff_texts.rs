@@ -35,9 +35,22 @@ pub fn is_text_blob(name: &str) -> bool {
   name.ends_with(EXT)
 }
 
-/// The sink a record write of a session collects texts with; `known` names the blobs its folder already holds
-pub fn sink(known: Arc<parking_lot::Mutex<HashSet<String>>>) -> TextBlobSink {
-  TextBlobSink { min_len: MIN_LEN, name: Box::new(name_of), known: Box::new(move |n: &str| known.lock().contains(n)), out: vec![] }
+/// The sink a record write of a session collects texts with; `known` names the blobs its folder `dir` already holds.
+/// A known name is checked against the folder too: the Storage tab may have cleaned a blob no record named any more,
+/// and the same text written again must not leave the record naming a missing blob
+pub fn sink(known: Arc<parking_lot::Mutex<HashSet<String>>>, dir: std::path::PathBuf) -> TextBlobSink {
+  let known = move |n: &str| {
+    let mut k = known.lock();
+    if !k.contains(n) {
+      return false;
+    }
+    if dir.join(n).is_file() {
+      return true;
+    }
+    k.remove(n);
+    false
+  };
+  TextBlobSink { min_len: MIN_LEN, name: Box::new(name_of), known: Box::new(known), out: vec![] }
 }
 
 /// Compress and store texts a record write collected, in the session's blob folder `dir`. Blocking
