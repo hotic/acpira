@@ -195,8 +195,8 @@
      width and clipped meanwhile, the sheet's edge following it */
   .acp-settings[data-desktop] [data-settings-rail][data-opening] { overflow: hidden; animation: acp-rail-open 320ms var(--start-ease) both; }
   .acp-settings[data-desktop] [data-settings-rail][data-opening] > nav { min-width: var(--rail-w, var(--pop-w-md)); }
-  @container settings-shell (max-width: 600px) {
-    .acp-settings[data-desktop] [data-settings-rail] { width: calc(var(--title-w) - var(--ctl)); }
+  .acp-settings[data-desktop] [data-settings-rail] {
+    @variant settings-narrow { width: calc(var(--title-w) - var(--ctl)); }
   }
   /* The header's new-session and settings buttons (Header columnAct): there while the column is folded, they open from
      nothing to their width and fade on the column's curve, and close the same way as it comes back */
