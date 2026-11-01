@@ -41,9 +41,9 @@ jobs:
           ACPIRA_SIM_IDLE: '0'
           ACPIRA_RESULTS: ${{ runner.temp }}/ios-results
         run: apps/ios/scripts/check.sh
-      # The failed expectations behind -quiet's bare test names
+      # The failed expectations behind -quiet's bare test names; a timeout counts as cancelled, not failed
       - name: Upload result bundles
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v7
         with:
           name: ios-results
