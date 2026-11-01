@@ -180,11 +180,32 @@ struct Composer: View {
     }
   }
 
+  /// Whether the draft goes as one message on the paired link: every attachment travels inside it as base64, and the
+  /// link refuses a frame over `MAX_FRAME` (acpira-net) without a word. Several videos within their own budget each can
+  /// still pass it together: then the draft stays and says so
+  private func fitsOneMessage() -> Bool {
+    var bytes = text.utf8.count
+    for a in staged {
+      switch a {
+      case let .image(blob?, _, _): bytes += blob.utf8.count
+      case let .file(uri, _):
+        if let url = URL(string: uri), AttachmentFile.isCopy(url),
+           let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int {
+          bytes += (size + 2) / 3 * 4
+        }
+      default: break
+      }
+    }
+    if bytes <= AttachmentFile.messageBytes { return true }
+    actions.toast(t("mobile.video.tooBig", ["mb": (AttachmentFile.messageBytes / 4 * 3) >> 20]), .fileVideo)
+    return false
+  }
+
   private var send: some View {
     SendButton(running: session.running, filled: filled, waiting: VideoJobs.shared.pending(staged)) {
       if session.running && !filled {
         onStop()
-      } else {
+      } else if fitsOneMessage() {
         onSend(text, staged)
         text = ""
         staged = []
@@ -313,6 +334,7 @@ struct Composer: View {
     // Collapsing gives the card its focus back; leaving for a file page does not, or the keyboard rose over that page
     .modifier(FullEditorCover(open: $fullEditor, onDismiss: { if leftEditor { leftEditor = false } else { focused = true } }) {
       ExpandedComposer(text: $text, staged: $staged, filled: filled, onSend: {
+        guard fitsOneMessage() else { return }
         onSend(text, staged)
         text = ""
         staged = []
@@ -686,6 +708,8 @@ enum AttachSource: Equatable { case photos, camera, files }
 /// A picked file is readable only while the picker's grant lasts, so it is copied into the app's temporary folder at
 /// once; the send reads the copy and hands its bytes to the engine (AppModel.drafts)
 enum AttachmentFile {
+  /// The base64 a message may carry: the paired link's frame limit (`MAX_FRAME`, 64 MiB) less room for the envelope
+  static let messageBytes = 60 << 20
   static var folder: URL { FileManager.default.temporaryDirectory.appendingPathComponent("attachments", isDirectory: true) }
 
   /// A picked file's copy, as opposed to a path on the computer
