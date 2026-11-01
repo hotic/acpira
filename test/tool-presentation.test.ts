@@ -88,12 +88,12 @@ describe('ACP tool presentation', () => {
   });
 
   it('names the server of an MCP call in the current UI language', () => {
-    const block: ToolCallBlock = { type: 'tool_call', id: 'm', kind: 'other', verb: '调用 Blockbench', mcpServer: 'Blockbench', target: 'Take Screenshot', status: 'completed' };
+    const block: ToolCallBlock = { type: 'tool_call', id: 'm', kind: 'other', verb: '调用 blockbench', mcpServer: 'blockbench', target: 'Take Screenshot', status: 'completed' };
     setLocale('zh-CN');
-    expect(toolVerb(block)).toBe('已调用 Blockbench');
-    expect(toolVerb({ ...block, status: 'in_progress' })).toBe('正在调用 Blockbench');
+    expect(toolVerb(block)).toBe('已调用 blockbench');
+    expect(toolVerb({ ...block, status: 'in_progress' })).toBe('正在调用 blockbench');
     setLocale('en');
-    expect(toolVerb(block)).toBe('Call Blockbench');
+    expect(toolVerb(block)).toBe('Call blockbench');
   });
 
   it('labels a todo-list tool by name whatever kind the agent filed it under', () => {

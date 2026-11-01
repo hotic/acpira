@@ -18,7 +18,7 @@ use super::content::{
 };
 use super::tool_kind::{
   ASK_TITLE, IMAGE_GEN, IMAGE_GEN_TITLE, IMAGE_GEN_VERB, READ_SESSION_VERB, SEARCH_SESSIONS_VERB, SHOW_IMAGE_VERB, SHOW_VIDEO_VERB, SHOW_WIDGET_VERB,
-  JOB_INPUT, SKILL_VERB, TODO_TITLE, WEB_SEARCH_VERB, WebTool, infer_kind, is_show_image_call, is_show_video_call, is_show_widget_call, mcp_identity, mcp_label, session_tool_target,
+  JOB_INPUT, SKILL_VERB, TODO_TITLE, WEB_SEARCH_VERB, WebTool, infer_kind, is_show_image_call, is_show_video_call, is_show_widget_call, mcp_identity, mcp_label, drop_server_prefix, session_tool_target,
   session_tool_verb, shell_verb, show_image_args, skill_load, verb_of, wakeup_time, wakeup_verb, web_search_query, web_tool, WAKEUP_STOP_VERB,
   WAKEUP_VERBS,
 };
@@ -163,21 +163,21 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
       b.locations = Some(vec![Location { path: path.to_owned(), line: None }]);
     }
   }
-  // Acpira's session tools read "Search sessions" / "Read session" with what they looked for, not "Call Acpira"
+  // Acpira's session tools read "Search sessions" / "Read session" with what they looked for, not "Call acpira"
   if let Some(key) = b.verb_key.as_deref().filter(|k| matches!(*k, SEARCH_SESSIONS_VERB | READ_SESSION_VERB)).map(str::to_owned).or_else(|| session_tool_verb(u, title, raw).map(str::to_owned)) {
     set_verb(b, &key);
     b.kind = ToolKind::Other;
   }
-  // Any other MCP call reads "Call <Server>" with the tool's title as its target, whichever naming it came in
+  // Any other MCP call reads "Call <server>" with the tool's title as its target, whichever naming it came in
   let mut mcp_target = None;
   if b.verb_key.is_none()
     && let Some(call) = mcp_identity(u, meta, title, raw)
   {
     let label = mcp_label(&call.server);
     b.verb = tp("verb.mcp", &[("server", &label)]);
+    mcp_target = Some(drop_server_prefix(call.title.unwrap_or_else(|| call.tool.replace(['_', '-'], " ")), &label));
     b.mcp_server = Some(label);
     b.kind = ToolKind::Other;
-    mcp_target = Some(call.title.unwrap_or_else(|| call.tool.replace(['_', '-'], " ")));
   }
   if b.verb_key.is_none()
     && b.mcp_server.is_none()

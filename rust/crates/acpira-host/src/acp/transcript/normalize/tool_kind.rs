@@ -255,18 +255,29 @@ pub(super) fn mcp_identity(u: &Value, meta: Option<&Map<String, Value>>, title: 
   (!(call.server == crate::host_mcp::SERVER_NAME && call.tool == crate::host_mcp::ASK_TOOL)).then_some(call)
 }
 
-/// A server name as the row shows it: words split at `-`, `_`, `.` and spaces, each capitalized (`chrome-devtools` →
-/// `Chrome Devtools`, `blockbench` → `Blockbench`)
+/// A server name as the row shows it: the configured name unchanged (`chrome-devtools`, `acpira`), as Claude Code and
+/// Codex print it, so it reads the same as skill names and the MCP settings list
 pub(super) fn mcp_label(server: &str) -> String {
-  server
-    .split(['-', '_', '.', ' '])
-    .filter(|w| !w.is_empty())
-    .map(|w| {
-      let mut c = w.chars();
-      c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
-    })
-    .collect::<Vec<_>>()
-    .join(" ")
+  server.trim().to_owned()
+}
+
+/// A tool title that opens with its server's name ("Acpira plugin guide" on server acpira) drops it, since the verb
+/// already names the server. Separators in the name match any separator or space (`chrome-devtools` ~ "Chrome DevTools")
+pub(super) fn drop_server_prefix(target: String, label: &str) -> String {
+  let sep = |c: char| matches!(c, ' ' | ':' | '-' | '_' | '.');
+  let mut rest = target.chars();
+  for want in label.chars() {
+    match rest.next() {
+      Some(got) if got.eq_ignore_ascii_case(&want) || (sep(got) && sep(want)) => {}
+      _ => return target,
+    }
+  }
+  let rest = rest.as_str();
+  if !rest.starts_with(sep) {
+    return target;
+  }
+  let rest = rest.trim_start_matches(sep);
+  if rest.is_empty() { target } else { rest.to_owned() }
 }
 
 /// An agent's title is often like "Read file foo.ts"; the verb is ours, so strip the English one
