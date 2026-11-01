@@ -220,7 +220,8 @@ pub fn reply(questions: &[Question], response: &Value) -> Reply {
     };
     lines.push(format!("Q: {}\nA: {a}", q.question));
   }
-  if answered == 0 {
+  // Pictures alone that could not be passed on are still an answer: the model hears why below, not a skip
+  if answered == 0 && left_out == 0 {
     return Reply::Skipped;
   }
   let mut text = format!("The user answered:\n\n{}", lines.join("\n\n"));
