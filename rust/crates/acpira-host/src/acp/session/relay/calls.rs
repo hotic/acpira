@@ -21,7 +21,7 @@ use super::texts::{
   answer_text, busy, caller_answers, clip, dispatched_text, final_reply, group_dispatched_text, norm, question_text, round_result,
 };
 use super::{
-  DEFAULT_WAIT, Handoff, MAX_WAIT, Owed, Owing, PROGRESS_EVERY, Round, RoundEnd, Start, Starting, TITLE_MAX, Via, Waiting, caller_scope,
+  DEFAULT_WAIT, Handoff, MAX_WAIT, Owed, Owing, PROGRESS_EVERY, Round, RoundEnd, STOP_WAIT, Start, Starting, TITLE_MAX, Via, Waiting, caller_scope,
 };
 use crate::acp::session::controls::picked_controls;
 use crate::acp::session::updates::current_turn_index;
@@ -72,6 +72,10 @@ impl AcpSession {
 
   /// One `ask_agent` call from an agent of this session (the root, or a summoned child when `caller` names its thread)
   pub async fn relay_ask(self: Arc<Self>, roster: Arc<Roster>, caller: Option<String>, depth: u32, args: AskArgs, out: mpsc::UnboundedSender<HubReply>) {
+    if args.stop == Some(true) {
+      let _ = out.send(self.relay_stop(args.thread.as_deref().unwrap_or("")).await);
+      return;
+    }
     // A new task naming a group (and no persona of that name) goes to each of its members
     let new_task = args.thread.as_deref().is_none_or(|t| t.trim().is_empty()) && !args.prompt.trim().is_empty();
     if new_task
@@ -439,6 +443,53 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
       me.relay_settled();
     });
     Ok(Start::Started { thread, persona })
+  }
+
+  /// `stop`: cancel the thread's running round the way the user's stop does, then wait briefly for it to end so the
+  /// call answers with its last words. A round that ends while this call waits counts as read, so no automatic message
+  /// repeats it; one that has not ended by then is still delivered when it does
+  async fn relay_stop(self: &Arc<Self>, thread: &str) -> HubReply {
+    let th = thread.trim();
+    if th.is_empty() {
+      return HubReply::Error("`stop` needs the `thread` to stop.".into());
+    }
+    let Some(RelayRound { node, harness: h, persona: name, state, .. }) = self.core.lock().tree.relay_latest(th) else {
+      return HubReply::Error(format!("Unknown thread {th}."));
+    };
+    let shown = who(&node_persona(&h, name.as_deref()));
+    if state != SubagentState::Running {
+      return HubReply::Done(format!("{shown} is not working on anything (thread: {th}); there is nothing to stop."));
+    }
+    let rx = {
+      let mut c = self.core.lock();
+      let rx = c.relays.rounds.get(th).cloned();
+      if rx.is_some() {
+        *c.relays.waiters.entry(th.to_owned()).or_default() += 1;
+      }
+      rx
+    };
+    self.cancel_subagent(&node).await;
+    if let Some(mut rx) = rx {
+      let _waiting = Waiting { session: self, thread: th };
+      let _ = tokio::time::timeout(STOP_WAIT, rx.wait_for(Option::is_some)).await;
+    }
+    let mut c = self.core.lock();
+    let end = match c.tree.relay_outcome(&node) {
+      Some((SubagentState::Running, ..)) => {
+        return HubReply::Done(format!(
+          "Asked {shown} to stop (thread: {th}); it has not confirmed yet. Acpira sends you how it ended in a message."
+        ));
+      }
+      Some(_) => {
+        c.relays.read(&node);
+        round_result(&c, &node)
+      }
+      None => Err("is gone.".into()),
+    };
+    HubReply::Done(match end {
+      Ok(reply) => format!("{shown} finished before the stop reached it (thread: {th}). Its reply:\n\n{}", reply.trim()),
+      Err(e) => format!("{shown} {e}\n\nThe thread ({th}) stays open: pass it with a new prompt to go on."),
+    })
   }
 
   /// Wait for the thread's running round up to the deadline, with progress lines meanwhile

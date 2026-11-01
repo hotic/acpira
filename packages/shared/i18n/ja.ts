@@ -890,6 +890,7 @@ export const ja = {
   'tool.sessionTurnsFrom': 'ターン {n} 以降',
   'verb.delegate': '委任',
   'verb.awaitSubagent': 'サブエージェントを待機',
+  'verb.stopSubagent': 'サブエージェントを停止',
   'verb.workflow': 'ワークフローを実行',
 
   'asyncTask.running': 'バックグラウンドタスク実行中',

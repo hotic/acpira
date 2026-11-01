@@ -155,6 +155,10 @@ pub struct AskArgs {
   /// moved since on a later one). Absent = the persona's own switch
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub changes: Option<bool>,
+  /// With a thread: stop its running round (the child's `session/cancel`, like the user's stop) instead of asking it
+  /// anything; answered once the round ends or a short wait passes
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub stop: Option<bool>,
 }
 
 /// `ask_caller`'s arguments

@@ -46,6 +46,8 @@ use self::tracking::is_ask_name;
 const DEFAULT_WAIT: Duration = Duration::from_secs(50);
 const MAX_WAIT: Duration = Duration::from_secs(30 * 60);
 const PROGRESS_EVERY: Duration = Duration::from_secs(5);
+/// How long a `stop` call waits for the cancelled round to end before it answers anyway
+const STOP_WAIT: Duration = Duration::from_secs(15);
 /// Automatic messages delivering finished rounds to the root, per prompt of the user's own
 const MAX_WAKES: u32 = 6;
 const TITLE_MAX: usize = 48;

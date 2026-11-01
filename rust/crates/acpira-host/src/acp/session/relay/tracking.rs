@@ -154,8 +154,10 @@ impl AcpSession {
     if prompt.is_empty() {
       let name = thread.as_deref().and_then(|th| c.tree.relay_latest(th)).and_then(|r| r.persona);
       if let Some(block) = crate::acp::transcript::normalize::find_tool_mut(&mut c.state.turns, &tool_call_id) {
-        block.verb_key = Some("verb.awaitSubagent".into());
-        block.verb = t("verb.awaitSubagent");
+        // A thread without a prompt waits on it, or with `stop` ends its round
+        let key = if args.get("stop").and_then(Value::as_bool) == Some(true) { "verb.stopSubagent" } else { "verb.awaitSubagent" };
+        block.verb_key = Some(key.into());
+        block.verb = t(key);
         if let Some(name) = name {
           block.target = Some(name);
           block.target_mono = None;

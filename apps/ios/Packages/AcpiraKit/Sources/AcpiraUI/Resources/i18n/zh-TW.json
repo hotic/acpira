@@ -873,6 +873,7 @@
   "tool.sessionTurnsFrom": "第 {n} 段對話起",
   "verb.delegate": "委派",
   "verb.awaitSubagent": "等待子代理",
+  "verb.stopSubagent": "停止子代理",
   "verb.workflow": "執行工作流程",
   "asyncTask.running": "背景任務執行中",
   "asyncTask.paused": "背景任務已暫停",
