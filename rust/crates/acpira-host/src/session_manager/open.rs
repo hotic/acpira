@@ -100,6 +100,20 @@ impl SessionManager {
     }
   }
 
+  /// The folder a new session asked with `cwd` / `category` names, if any: a project shell's "new in this category"
+  /// starts in the category's project
+  pub(super) fn category_folder(&self, cwd: Option<String>, category: Option<&String>) -> Option<String> {
+    cwd.or_else(|| {
+      let id = category.filter(|_| (self.deps.projects)())?;
+      self.state.lock().categories.categories.iter().find(|c| &c.id == id).map(|c| c.cwd.clone())
+    })
+  }
+
+  /// Where `new_session_for` would start a session asked with `cwd` / `category`, before checking the folder
+  pub(super) fn new_session_folder(&self, v: &Viewer, cwd: Option<String>, category: Option<&String>) -> Option<String> {
+    self.folder_for(Some(v), self.category_folder(cwd, category))
+  }
+
   pub fn new_session_for<'a>(
     self: &'a Arc<Self>,
     v: &'a Arc<Viewer>,
@@ -111,11 +125,7 @@ impl SessionManager {
     let me = self.clone();
     let v = v.clone();
     Box::pin(async move {
-      // A project shell's "new in this category" starts in the category's project
-      let explicit = cwd.or_else(|| {
-        let id = category.as_ref().filter(|_| (me.deps.projects)())?;
-        me.state.lock().categories.categories.iter().find(|c| &c.id == id).map(|c| c.cwd.clone())
-      });
+      let explicit = me.category_folder(cwd, category.as_ref());
       let explicit = match explicit {
         Some(dir) => Some(me.check_folder(&dir, "host.folderMissing").await?),
         None => None,

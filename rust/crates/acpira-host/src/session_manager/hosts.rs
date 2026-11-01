@@ -77,6 +77,10 @@ struct HostRun {
   blobs: parking_lot::Mutex<std::collections::HashSet<String>>,
   /// Public account metadata for this host only; never merged into this machine's account list.
   auth: parking_lot::Mutex<Value>,
+  /// Blob fetches each session's view waits for, by session id: while any runs, its views are kept here instead of
+  /// sent, so a page never loads an image before its file is on this machine. Kept apart from `Shown`, which a page
+  /// switching away and back drops and builds anew while the fetch still runs
+  fetching: parking_lot::Mutex<HashMap<String, usize>>,
 }
 
 /// One host session's view here
@@ -88,9 +92,6 @@ struct Shown {
   host_rev: Option<i64>,
   parts: Option<ViewParts>,
   msg: Option<HostMsg>,
-  /// Blob fetches this session's view waits for: while any runs, its views are kept here instead of sent, so a page
-  /// never loads an image before its file is on this machine
-  fetching: usize,
 }
 
 /// Cancellation drops pending replies and closes temporary lookup views as well as timeouts do.
@@ -117,9 +118,15 @@ impl HostRun {
     tokio::time::timeout(QUERY_WAIT, rx).await.ok().and_then(Result::ok)
   }
 
+  /// Whether a blob fetch session `id`'s view waits for still runs (`fetch_host_blobs`)
+  fn is_fetching(&self, id: &str) -> bool {
+    self.fetching.lock().get(id).is_some_and(|n| *n > 0)
+  }
+
   async fn lookup(&self, id: &str) -> bool {
-    let mut up = self.up.subscribe();
-    if tokio::time::timeout(NEW_WAIT, up.wait_for(|u| *u)).await.is_err() {
+    // Like `search`: a host that is not connected is not waited for, or every pick of a session this engine does not
+    // list would hang on an unreachable host. Sessions a host listed before (`owns`) never come here
+    if !*self.up.borrow() {
       return false;
     }
     let view_id = format!("lookup-{}", self.next_view_id());
@@ -365,6 +372,7 @@ impl SessionManager {
           task: Default::default(),
           blobs: Default::default(),
           auth: parking_lot::Mutex::new(json!({ "agents": [], "accounts": [], "actions": [] })),
+          fetching: Default::default(),
         });
         *run.task.lock() = Some(tokio::spawn(drive(Arc::downgrade(self), run.clone())));
         runs.insert(alias.to_owned(), run);
@@ -438,6 +446,10 @@ impl SessionManager {
     if !crate::store::transcript_store::is_session_id(id) || self.locally_owned(id) {
       return None;
     }
+    // A record here that the index has not caught up with yet (another window's) is this machine's too
+    if tokio::fs::try_exists(self.deps.store.dir().join(format!("{id}.json"))).await.unwrap_or(false) {
+      return None;
+    }
     let run = match self.host_of(id) {
       Some(run) => run,
       None => {
@@ -492,7 +504,7 @@ impl SessionManager {
   pub(super) fn host_msg(&self, id: &str) -> Option<HostMsg> {
     let run = self.host_of(id)?;
     // Not while it is held for its blobs: a page that loads it now would show broken images (`fetch_host_blobs`)
-    run.shown.lock().get(id).filter(|s| s.fetching == 0).and_then(|s| s.msg.clone())
+    run.shown.lock().get(id).filter(|_| !run.is_fetching(id)).and_then(|s| s.msg.clone())
   }
 
   pub(super) fn host_cwd(&self, id: &str) -> Option<String> {
@@ -513,7 +525,9 @@ impl SessionManager {
     // A new session in a host folder starts on the host, unless its agent is one the user runs here
     // (`sshLocalAgents`, `acp/session/remote.rs`)
     let asked_on = match m {
-      W::NewSession { cwd: Some(cwd), agent, .. } => parse_remote_folder(cwd).and_then(|f| {
+      // The folder resolves as `new_session_for` resolves it: a page may name only a category, or nothing (the
+      // current session's folder), and either may be a host's
+      W::NewSession { cwd, agent, category, chat } if *chat != Some(true) => self.new_session_folder(v, cwd.clone(), category.as_ref()).as_deref().and_then(parse_remote_folder).and_then(|f| {
         let agent = agent.clone().unwrap_or_else(|| self.default_agent());
         if (self.deps.ssh_local_agents)().contains(&agent) {
           return None;
@@ -533,6 +547,8 @@ impl SessionManager {
       let current = v.active_id().filter(|id| self.viewers_on(id, Some(v)).is_empty());
       let reuse = current.and_then(|id| run.shown.lock().get(&id).map(|s| s.view_id.clone()));
       if let Some(view_id) = reuse {
+        // Only this page follows the view to its new session; a page that opens the old one meanwhile stays there
+        run.asked.lock().insert(view_id.clone(), Arc::downgrade(v));
         let sent = run.send_to_view(&view_id, json!({ "type": "newSession", "agent": agent, "cwd": f.path }));
         return Some(if sent { Ok(()) } else { Err(anyhow!(crate::i18n::tp("host.remoteUnreachable", &[("host", &f.alias)]))) });
       }
@@ -541,6 +557,11 @@ impl SessionManager {
       run.open_view(&view_id, json!({ "sessionList": { "folders": [] } }));
       // The host's categories are its own: a new session there starts unfiled
       let sent = run.send_to_view(&view_id, json!({ "type": "newSession", "agent": agent, "cwd": f.path }));
+      // An empty session this page left here (an agent run here, then one run on the host) goes, as `new_session_for`
+      // drops it when the next one starts here
+      if sent {
+        self.drop_empty_current(v).await;
+      }
       return Some(if sent { Ok(()) } else { Err(anyhow!(crate::i18n::tp("host.remoteUnreachable", &[("host", &f.alias)]))) });
     }
     let explicit = session_id_of(m).or_else(|| list_target(m));
@@ -595,7 +616,7 @@ impl SessionManager {
       let mut shown = run.shown.lock();
       match shown.get(id) {
         // A view held for its blobs goes out once they are here (`fetch_host_blobs`)
-        Some(s) => s.msg.clone().filter(|_| s.fetching == 0),
+        Some(s) => s.msg.clone().filter(|_| !run.is_fetching(id)),
         None => {
           let view_id = run.next_view_id();
           shown.insert(
@@ -606,7 +627,6 @@ impl SessionManager {
               host_rev: None,
               parts: None,
               msg: None,
-              fetching: 0,
             },
           );
           drop(shown);
@@ -754,7 +774,7 @@ impl SessionManager {
         let (parts, msg) = remote_view(id, &head, self.next_mirror_rev(), s.epoch, prev.0.turns.clone(), last)?;
         s.parts = Some(parts);
         s.msg = Some(msg.clone());
-        (s.fetching == 0).then(|| (id.clone(), msg))
+        (!run.is_fetching(id)).then(|| (id.clone(), msg))
       }).collect()
     };
     for (id, msg) in messages {
@@ -826,13 +846,15 @@ impl SessionManager {
       }
       names
     };
+    if !run.shown.lock().contains_key(id) {
+      return false;
+    }
     let held = {
-      let mut shown = run.shown.lock();
-      let Some(s) = shown.get_mut(id) else { return false };
+      let mut fetching = run.fetching.lock();
       if !missing.is_empty() {
-        s.fetching += 1;
+        *fetching.entry(id.to_owned()).or_default() += 1;
       }
-      s.fetching > 0
+      fetching.get(id).is_some_and(|n| *n > 0)
     };
     if missing.is_empty() {
       return held;
@@ -857,15 +879,21 @@ impl SessionManager {
         }
       }
       run.blobs.lock().retain(|k| !missing.iter().any(|n| *k == format!("{id}/{n}")));
-      let latest = {
-        let mut shown = run.shown.lock();
-        let Some(s) = shown.get_mut(&id) else { return };
-        s.fetching = s.fetching.saturating_sub(1);
-        if s.fetching > 0 {
-          return;
+      {
+        let mut fetching = run.fetching.lock();
+        let left = fetching.get_mut(&id).map(|n| {
+          *n = n.saturating_sub(1);
+          *n
+        });
+        match left {
+          Some(0) => {
+            fetching.remove(&id);
+          }
+          Some(_) => return,
+          None => {}
         }
-        s.msg.clone()
-      };
+      }
+      let Some(latest) = run.shown.lock().get(&id).map(|s| s.msg.clone()) else { return };
       if let (Some(msg), Some(m)) = (latest, weak.upgrade()) {
         for v in m.viewers_on(&id, None) {
           v.emit(msg.clone());
@@ -886,6 +914,11 @@ impl SessionManager {
       Some("sessionPatch") => (None, msg.get("patch")),
       _ => return,
     };
+    // Whether this view showed this session already: a reused view's push of the session it is leaving is no answer
+    let again = whole
+      .and_then(|w| w.get("id"))
+      .and_then(Value::as_str)
+      .is_some_and(|id| run.shown.lock().get(id).is_some_and(|s| s.view_id == view_id));
     // A reused host viewer has moved to its new session. Move the local pages with it and retire the old patch base.
     if let Some(id) = whole.and_then(|w| w.get("id")).and_then(Value::as_str) {
       let previous = {
@@ -901,20 +934,25 @@ impl SessionManager {
               host_rev: None,
               parts: None,
               msg: None,
-              fetching: 0,
             },
           );
         }
         previous
       };
       if let Some(old) = previous {
+        let asker = run.asked.lock().get(view_id).and_then(Weak::upgrade);
         for v in self.viewers_on(&old, None) {
-          self.set_active(&v, Some(id.to_owned()));
+          match &asker {
+            // Another page on the old session keeps it, through a view of its own on the host
+            Some(a) if !Arc::ptr_eq(a, &v) => self.show_host_session(run, &old, &v),
+            _ => self.set_active(&v, Some(id.to_owned())),
+          }
         }
       }
     }
     // A view that asked for a new session: the first one it shows is that session, and its viewer goes there
     if let Some(id) = whole.and_then(|w| w.get("id")).and_then(Value::as_str)
+      && !again
       && let Some(viewer) = run.asked.lock().remove(view_id)
     {
       run.shown.lock().insert(
@@ -925,7 +963,6 @@ impl SessionManager {
           host_rev: None,
           parts: None,
           msg: None,
-          fetching: 0,
         },
       );
       if let Some(v) = viewer.upgrade() {
