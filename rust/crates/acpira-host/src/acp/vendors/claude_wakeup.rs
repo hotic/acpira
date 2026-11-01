@@ -12,6 +12,9 @@ use serde_json::Value;
 pub const TOOL: &str = "ScheduleWakeup";
 /// How long past its time a wakeup still counts as pending: the CLI fires it on its own clock
 pub const GRACE_MS: i64 = 120_000;
+/// How early a cycle may start and still be the wakeup: the timer runs on this machine's clock, so only rounding.
+/// A wider window would take another task's cycle shortly before the time for the wakeup and drop the keep-alive
+const EARLY_MS: i64 = 5_000;
 /// The CLI clamps the requested delay to this range (the tool's own schema)
 const DELAY_RANGE: (u64, u64) = (60, 3600);
 
@@ -65,7 +68,7 @@ impl Wake {
 
   /// A cycle started: at or past its time, it is the wakeup firing
   pub fn fired(&mut self, now: i64) -> bool {
-    let fired = self.at.is_some_and(|at| now + GRACE_MS >= at);
+    let fired = self.at.is_some_and(|at| now + EARLY_MS >= at);
     if fired {
       self.at = None;
     }
@@ -136,6 +139,7 @@ mod tests {
     assert_eq!(w.at, Some(NOW + 600_000));
     // A cycle long before the time is something else (a background task's notification); at the time it is the wakeup
     assert!(!w.fired(NOW));
+    assert!(!w.fired(NOW + 600_000 - 60_000));
     assert!(w.fired(NOW + 600_000));
     let w = Wake { at: Some(NOW), ..Wake::default() };
     assert_eq!(w.pending(NOW + GRACE_MS - 1), Some(NOW));
