@@ -56,8 +56,13 @@ Prefer this tool. To place an image at a specific point of a reply instead, embe
 
 const WIDGET_DESCRIPTION: &str = "Show an interactive HTML widget to the user, inline in the conversation: a small \
 self-contained view (sliders, toggles, tabs, a live calculator, a mini chart) that lets them explore numbers or options without \
-more back-and-forth. Write it to an .html file first (absolute path, under 512 KB), then call this tool; the widget is shown \
-to the user only, not returned to you. Call it again after editing the file to show the new version.\n\n\
+more back-and-forth. Write it to an .html file first (absolute path, under 512 KB), then call this tool. Call it again \
+after editing the file to show the new version.\n\n\
+What the user does in it stays there unless the widget sends it: `window.acpira.sendPrompt(text)` sends text as the \
+user's next message to you (queued while you are still working), so a choice, a vote, a form or picked settings come \
+back as data you can act on. Call it from a click or key handler (a button such as Submit); a call without one is \
+refused. Write the text so it reads on its own in the conversation, e.g. `Picked option B (dark, 14 px)`, with any \
+data you need appended, and guard it with `window.acpira?.sendPrompt`, since an older Acpira lacks it.\n\n\
 It runs in a sandboxed frame with no network: no CDN, fetch, external images or fonts, so put all CSS and JavaScript inline \
 (classic scripts; inline event handlers such as onclick work). Tailwind CSS v4 is built in: use utility classes directly, no \
 build step (`<style type=\"text/tailwindcss\">` works too). Follow the conversation's light or dark theme with these colours \
@@ -467,7 +472,7 @@ pub(super) fn show_widget_with(args: &Map<String, Value>, check: &dyn Fn(&str) -
   }
   let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
   json!({
-    "content": [{ "type": "text", "text": format!("Shown to the user: {name}, as an interactive widget in the conversation. It is not returned to you; no need to describe it again.") }],
+    "content": [{ "type": "text", "text": format!("Shown to the user: {name}, as an interactive widget in the conversation. You do not see it; what the user picks in it reaches you only through acpira.sendPrompt. No need to describe it again.") }],
     "isError": false,
   })
 }

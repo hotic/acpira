@@ -57,15 +57,27 @@ export interface WidgetTheme {
 // Messages between the frame and the page. The frame only accepts the page's (`event.source === parent`), the page only
 // the frame's own window
 export const WIDGET_MESSAGE = 'acpiraWidget';
-export type WidgetFrameMsg = { [WIDGET_MESSAGE]: 'height'; height: number };
+// The longest text `acpira.sendPrompt` takes from a widget; longer is refused in the frame and dropped by the page
+export const WIDGET_PROMPT_MAX = 20_000;
+// `prompt`: the widget's `acpira.sendPrompt(text)`, sent as the user's next message (AgentWidget.tsx checks it came from a click)
+export type WidgetFrameMsg = { [WIDGET_MESSAGE]: 'height'; height: number } | { [WIDGET_MESSAGE]: 'prompt'; text: string };
 export type WidgetPageMsg = { [WIDGET_MESSAGE]: 'theme' } & WidgetTheme;
 
 // Runs first in the frame. It reports the content height (the page sizes the frame to it), applies theme updates, and
 // turns inline event handlers into nonce'd scripts: `onclick="…"` attributes are blocked by the CSP, so each one is
 // removed before it can fire and rebound through addEventListener, also on elements added later (innerHTML).
-// Links are kept from navigating the frame.
+// Links are kept from navigating the frame. `window.acpira.sendPrompt(text)` is the widget's way back to the agent: it
+// only goes out while the frame holds a user activation (a click, a key), so a widget cannot talk on its own at load.
 const BOOTSTRAP = `(function () {
   var N = document.currentScript.nonce, KEY = ${JSON.stringify(WIDGET_MESSAGE)}, els = window.__acpiraOn = [];
+  window.acpira = Object.freeze({
+    sendPrompt: function (text) {
+      if (typeof text !== 'string' || !text.trim()) throw new TypeError('acpira.sendPrompt: text must be a non-empty string');
+      if (text.length > ${WIDGET_PROMPT_MAX}) throw new RangeError('acpira.sendPrompt: text is longer than ${WIDGET_PROMPT_MAX} characters');
+      if (navigator.userActivation && !navigator.userActivation.isActive) throw new Error('acpira.sendPrompt: call it from a click or key handler');
+      parent.postMessage({ [KEY]: 'prompt', text: text }, '*');
+    },
+  });
   var WIN = /^(load|resize|scroll|hashchange|popstate|message|pageshow|pagehide|beforeunload|unload)$/;
   function rebind(el) {
     if (!el.attributes) return;

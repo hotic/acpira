@@ -6,9 +6,9 @@ import { useAppearance } from '../appearance';
 import { useTheme } from '../look';
 import { t, useLocale } from '../i18n';
 import { cn } from '../ui/cn';
-import { BlobUrlContext, OpenToolFileContext, parseFileLink } from './fileLinks';
+import { BlobUrlContext, OpenToolFileContext, WidgetPromptContext, parseFileLink } from './fileLinks';
 import { useShownBlob } from './stagedBlob';
-import { WIDGET_MESSAGE, buildWidgetDoc, pageNonce, readWidgetTheme, type WidgetPageMsg } from './widgetDoc';
+import { WIDGET_MESSAGE, WIDGET_PROMPT_MAX, buildWidgetDoc, pageNonce, readWidgetTheme, type WidgetPageMsg } from './widgetDoc';
 
 // An HTML widget an agent showed with Acpira's `show_widget`: its page runs in a sandboxed srcdoc frame (see
 // `widgetDoc.ts` for the CSP and the head it gets), sized to the height the frame reports and following the editor theme
@@ -25,6 +25,9 @@ export const isWidgetFrame = (source: MessageEventSource | null): boolean => !!s
 
 // The last height each widget reported, by blob: a remount (the process fold closing, a session switch) takes its place at once
 const heights = new Map<string, number>();
+
+// The shortest gap between two prompts of one widget: a double click or a handler bound twice sends once
+const PROMPT_GAP_MS = 1000;
 
 // The blob is written while the row completes, so the first read can miss it
 async function fetchText(url: string): Promise<string> {
@@ -53,6 +56,7 @@ export const ShownWidget = memo(function ShownWidget({ block }: { block: ToolCal
 function AgentWidget({ blob, uri, title }: { blob: string; uri?: string; title?: string }) {
   const blobUrl = useContext(BlobUrlContext);
   const openFile = useContext(OpenToolFileContext);
+  const sendPrompt = useContext(WidgetPromptContext);
   const appearance = useAppearance();
   const dark = useTheme() === 'dark';
   const root = useRef<HTMLDivElement>(null);
@@ -97,9 +101,20 @@ function AgentWidget({ blob, uri, title }: { blob: string; uri?: string; title?:
   }, [dark, appearance, doc]);
 
   useEffect(() => {
+    let lastPrompt = 0;
     const onMessage = (e: MessageEvent) => {
       if (!frame.current || e.source !== frame.current.contentWindow) return;
-      const data = e.data as { [WIDGET_MESSAGE]?: string; height?: unknown } | null;
+      const data = e.data as { [WIDGET_MESSAGE]?: string; height?: unknown; text?: unknown } | null;
+      if (data?.[WIDGET_MESSAGE] === 'prompt') {
+        // The frame's own check (user activation) runs in the widget's code, which could post this itself: the page also
+        // wants the frame focused, which a click or key inside it does and a script alone cannot
+        const text = typeof data.text === 'string' ? data.text.trim() : '';
+        const now = Date.now();
+        if (!sendPrompt || !text || text.length > WIDGET_PROMPT_MAX || document.activeElement !== frame.current || now - lastPrompt < PROMPT_GAP_MS) return;
+        lastPrompt = now;
+        sendPrompt(text);
+        return;
+      }
       if (data?.[WIDGET_MESSAGE] !== 'height' || typeof data.height !== 'number' || !(data.height > 0)) return;
       heights.set(blob, data.height);
       setHeight(data.height);
@@ -107,7 +122,7 @@ function AgentWidget({ blob, uri, title }: { blob: string; uri?: string; title?:
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [blob]);
+  }, [blob, sendPrompt]);
 
   const attach = useCallback((el: HTMLIFrameElement | null) => {
     frame.current = el;

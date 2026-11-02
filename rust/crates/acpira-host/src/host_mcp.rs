@@ -44,7 +44,8 @@ const INSTRUCTIONS: &str = "The user reads this conversation in Acpira, which ca
 When the user should see an image (a screenshot you took, a chart or diagram you rendered, a generated or downloaded picture), \
 call show_image with its absolute path instead of only printing the path. For an MP4 or WebM recording, call show_video; it appears as a paused player, not an autoplaying GIF. When a small interactive view would serve them better \
 than more text (tuning parameters with sliders, comparing options in tabs, exploring numbers), write it as one HTML file and \
-call show_widget. Project gates and reviews live in `.agents/hooks.json`, which Acpira runs for every agent: before writing or changing that file (or a hook script it names), call workspace_hooks for the format, and again afterwards to check it.";
+call show_widget; when the user should pick or fill something in it for you, its buttons call window.acpira.sendPrompt(text), \
+which reaches you as their next message. Project gates and reviews live in `.agents/hooks.json`, which Acpira runs for every agent: before writing or changing that file (or a hook script it names), call workspace_hooks for the format, and again afterwards to check it.";
 
 /// Appended to the instructions when the relay env is on the entry. Server instructions reach the model even where
 /// the client defers tools behind a search, so `@name` is tied to `ask_agent` before the model goes looking for it
