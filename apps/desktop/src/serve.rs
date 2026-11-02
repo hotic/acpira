@@ -53,6 +53,23 @@ fn media(file: &Path, mime: &str, range: Option<&str>) -> Response<Vec<u8>> {
   read().unwrap_or_else(|_| respond(StatusCode::NOT_FOUND, "text/plain", b"not found".to_vec()))
 }
 
+/// Answers a request from a worker thread. WebKit stops a task (a session switch drops the old page's images and video)
+/// on the main thread, and answering a stopped task throws an NSException; wry checks the task first, but from another
+/// thread the check races the stop, and with `panic = "abort"` objc2's `catch` cannot stop the exception unwinding
+/// through Rust, so the app aborts. On the main thread the check and the answer cannot be split by a stop
+fn reply(main: &tauri::AppHandle, responder: tauri::UriSchemeResponder, response: Response<Vec<u8>>) {
+  #[cfg(target_os = "macos")]
+  {
+    // Fails only once the event loop has gone, when nothing is left to answer
+    let _ = main.run_on_main_thread(move || responder.respond(response));
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = main;
+    responder.respond(response);
+  }
+}
+
 pub fn handle(request: Request<Vec<u8>>, responder: tauri::UriSchemeResponder) {
   let uri = request.uri();
   if uri.host() != Some("localhost") {
@@ -72,6 +89,7 @@ pub fn handle(request: Request<Vec<u8>>, responder: tauri::UriSchemeResponder) {
     responder.respond(respond(StatusCode::SERVICE_UNAVAILABLE, "text/plain", Vec::new()));
     return;
   };
+  let main = app.handle.clone();
   // The Windows exe carries the bundle itself (build.rs)
   if let Some(rest) = path.strip_prefix("/webview/")
     && let Some((body, packed)) = crate::embedded::file(rest)
@@ -80,10 +98,10 @@ pub fn handle(request: Request<Vec<u8>>, responder: tauri::UriSchemeResponder) {
     if packed {
       let name = rest.to_owned();
       std::thread::spawn(move || match zstd::stream::decode_all(body) {
-        Ok(plain) => responder.respond(respond(StatusCode::OK, mime, plain)),
+        Ok(plain) => reply(&main, responder, respond(StatusCode::OK, mime, plain)),
         Err(e) => {
           crate::app::log(&format!("serve: unpacking {name}: {e}"));
-          responder.respond(respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", Vec::new()));
+          reply(&main, responder, respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", Vec::new()));
         }
       });
     } else {
@@ -112,19 +130,19 @@ pub fn handle(request: Request<Vec<u8>>, responder: tauri::UriSchemeResponder) {
     Route::File(file) => {
       // Off the main thread: the bundle is megabytes, a blob can be more
       std::thread::spawn(move || match std::fs::read(&file) {
-        Ok(body) => responder.respond(respond(StatusCode::OK, mime(&file), body)),
-        Err(_) => responder.respond(respond(StatusCode::NOT_FOUND, "text/plain", b"not found".to_vec())),
+        Ok(body) => reply(&main, responder, respond(StatusCode::OK, mime(&file), body)),
+        Err(_) => reply(&main, responder, respond(StatusCode::NOT_FOUND, "text/plain", b"not found".to_vec())),
       });
     }
     Route::Media { file, mime } => {
-      std::thread::spawn(move || responder.respond(media(&file, mime, range.as_deref())));
+      std::thread::spawn(move || reply(&main, responder, media(&file, mime, range.as_deref())));
     }
     Route::Packed { file, mime } => {
       std::thread::spawn(move || match unpack(&file) {
-        Ok(body) => responder.respond(respond(StatusCode::OK, mime, body)),
+        Ok(body) => reply(&main, responder, respond(StatusCode::OK, mime, body)),
         Err(e) => {
           crate::app::log(&format!("serve: unpacking {}: {e}", file.display()));
-          responder.respond(respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", Vec::new()));
+          reply(&main, responder, respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", Vec::new()));
         }
       });
     }
