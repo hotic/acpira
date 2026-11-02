@@ -81,9 +81,17 @@ struct SubagentInspector: View {
       .modifier(MediaLayer(session: root, loader: model.media))
   }
 
-  /// The child as a session the transcript views can draw: the task as its opening prompt, then its turns
+  /// The child as a session the transcript views can draw: the task as its opening prompt (unless the turns carry it), then its turns
   private func childView(_ root: SessionView, _ node: SubagentSummary, _ transcript: SubagentTranscript?) -> SessionView {
-    let task = node.task.map { [Turn.user(UserTurn(text: $0))] } ?? []
+    // A summoned round's transcript is its whole thread, each round led by its task: no second copy on top (and none
+    // above a later round's earlier rounds before the push lands)
+    let taskInTurns: Bool
+    if let h = node.harness {
+      if let first = transcript?.turns.first, case .user = first { taskInTurns = true } else { taskInTurns = transcript == nil && h.round > 1 }
+    } else {
+      taskInTurns = false
+    }
+    let task = taskInTurns ? [] : node.task.map { [Turn.user(UserTurn(text: $0))] } ?? []
     return SessionView(id: "subagent:\(node.id)", agent: node.harness?.agent ?? root.agent, title: subagentTitle(node),
                        cwd: root.cwd, turns: task + (receiptOnly(node) ? [] : transcript?.turns ?? []),
                        running: !receiptOnly(node) && transcript?.running == true)

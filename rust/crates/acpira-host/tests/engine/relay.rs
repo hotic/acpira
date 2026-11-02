@@ -1069,9 +1069,13 @@ async fn hub_session(fake: &crate::support::FakeAgent) -> (Harness, Disposing, A
   (h, s, roster)
 }
 
+/// A first round's own turns: its transcript opens with the task as a user turn, which this checks and drops
 fn node_turns(s: &Disposing, id: &str) -> Vec<Value> {
   let (turns, ..) = s.subagent_transcript(id).unwrap();
-  serde_json::from_str::<Value>(turns.get()).unwrap().as_array().cloned().unwrap_or_default()
+  let mut turns = serde_json::from_str::<Value>(turns.get()).unwrap().as_array().cloned().unwrap_or_default();
+  assert!(turns.first().is_some_and(|t| t["role"] == "user" && t["auto"].is_null()), "{turns:?}");
+  turns.remove(0);
+  turns
 }
 
 fn node_of(s: &Disposing, persona: &str) -> Value {

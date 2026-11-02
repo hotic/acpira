@@ -316,4 +316,44 @@ mod tests {
     assert_eq!(steps.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["b", "c", "d", "e"]);
     assert!(steps.iter().all(|s| s.content.is_none()));
   }
+
+  // A later round of a thread reads back the earlier rounds first, each led by its task; another thread stays out
+  #[test]
+  fn a_round_shows_its_thread_up_to_itself() {
+    use std::sync::Arc;
+
+    use acpira_shared::subagents::{RelayMode, SubagentHarness};
+
+    use crate::acp::transcript::normalize::ToolCtx;
+    use crate::acp::transcript::subagent_tree::RelayOpen;
+
+    let mut tree = SubagentTree::new(Arc::new(|_: &str| {}), ToolCtx::default(), None, None, false);
+    let open = |tree: &mut SubagentTree, thread: &str, round: u32, task: &str, reply: &str| {
+      let harness = SubagentHarness { agent: "claude".into(), persona: None, mode: RelayMode::Consult, thread: thread.into(), round, session_id: None, effort: None, group: None };
+      let id = tree.relay_open(RelayOpen { parent: None, turn_index: 0, harness, role: "Claude".into(), title: task.into(), task: task.into(), model: None });
+      let i = tree.idx(&id).unwrap();
+      let reply = AgentBlock::ToolCall(empty_tool(reply.into()));
+      // The node opens with an empty agent turn, which the reply fills
+      match tree.nodes[i].state.turns.last_mut() {
+        Some(Turn::Agent(turn)) => turn.blocks.push(reply),
+        _ => tree.nodes[i].state.turns.push(Turn::Agent(AgentTurn { blocks: vec![reply], ..Default::default() })),
+      }
+      id
+    };
+    let first = open(&mut tree, "", 1, "hello", "hi");
+    let thread = tree.nodes[tree.idx(&first).unwrap()].harness.as_ref().unwrap().thread.clone();
+    open(&mut tree, "other", 1, "elsewhere", "no");
+    let second = open(&mut tree, &thread, 2, "still there?", "yes");
+    let text = |t: &Turn| match t {
+      Turn::User(u) => u.text.clone(),
+      Turn::Agent(a) => match &a.blocks[0] {
+        AgentBlock::ToolCall(tc) => tc.id.clone(),
+        _ => String::new(),
+      },
+    };
+    let (turns, _, _) = tree.transcript(&second).unwrap();
+    assert_eq!(turns.iter().map(|t| text(t)).collect::<Vec<_>>(), ["hello", "hi", "still there?", "yes"]);
+    let (turns, _, _) = tree.transcript(&first).unwrap();
+    assert_eq!(turns.iter().map(|t| text(t)).collect::<Vec<_>>(), ["hello", "hi"]);
+  }
 }

@@ -111,12 +111,16 @@ function SessionTab({ node, transcript, onPermission, question, onAnswer, wide, 
     return () => { el.removeEventListener('scroll', sync); unsubscribe(); };
   }, [follow]);
   const lastAgent = transcript ? transcript.turns.reduce((at, turn, i) => (turn.role === 'agent' ? i : at), -1) : -1;
+  // A summoned round's transcript is its whole thread, each round led by its task: the card would repeat the last one
+  // (and, before the push lands, sit above earlier rounds of a later round)
+  const taskInTurns = node.harness !== undefined
+    && (transcript !== undefined ? transcript.turns[0]?.role === 'user' : node.harness.round > 1);
   return (
     <>
       {/* The main thread's column: share its dock margins and scrollbar gutter, with turns carrying their own --pad */}
       <div ref={scroll} className="pane-fade scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-dock pr-dock-gutter">
         <div ref={body} className={cn('mx-auto flex min-w-0 flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-chat-column')}>
-          {node.task !== undefined && <TaskCard task={node.task} />}
+          {node.task !== undefined && !taskInTurns && <TaskCard task={node.task} />}
           {receiptOnly(node) ? (
             <>
               <p className="m-0 px-pad text-2 text-fg-3">{t('subagents.receiptOnly')}</p>

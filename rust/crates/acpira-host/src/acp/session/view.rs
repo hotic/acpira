@@ -253,7 +253,7 @@ impl AcpSession {
       })
     };
     match subagent {
-      Some(id) => find(&mut c.tree.transcript(id)?.0.iter()),
+      Some(id) => find(&mut c.tree.transcript(id)?.0.iter().map(|t| t.as_ref())),
       None => find(&mut visible_turns(&c)),
     }
   }
