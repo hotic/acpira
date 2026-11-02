@@ -149,7 +149,7 @@ struct AgentSettingsPage: View {
     Form {
       Section {
         Toggle(isOn: Binding(get: { agent.disabled != true }, set: { model.setAgentEnabled(id, $0) })) {
-          Text(web: t("settings.agent.enabled", ["agent": agent.name]), paragraph: false)
+          Text(web: t("settings.agent.enable"), paragraph: false)
         }
         .tint(.green)
         // The last agent on stays on: a new session needs one
