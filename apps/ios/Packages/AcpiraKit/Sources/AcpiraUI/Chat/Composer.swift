@@ -67,6 +67,9 @@ struct Composer: View {
   @State private var leftEditor = false
   /// The card shows a plain plate for its glass: from the moment a picker opens over it until the last drop is home
   @State private var plate = false
+  /// The plate's fill, which outlives `plate`: glass coming back materialises over a few frames, so a plate cut the
+  /// moment the glass returned left the card empty in between and it flashed dark, then bright again
+  @State private var plateFill = false
   @Environment(FileSearch.self) private var files: FileSearch?
   @Environment(\.mentionPersonas) private var personas
   @Environment(\.compactAt) private var compactAt
@@ -76,9 +79,9 @@ struct Composer: View {
 
   private var hint: String { placeholder ?? (session.running ? t("composer.placeholder.queue") : t("composer.placeholder")) }
 
-  /// The bar's hint at rest: its first sentence, cut before the `@` tip, on one line. The tip shows once the bar has
-  /// grown into the card. A sentence too long for the bar ends in an ellipsis, where the wrapped hint stopped halfway
-  /// through a phrase
+  /// The hint as drawn, at rest and in the card alike: its first sentence, cut before the `@` tip. The tip popped in
+  /// halfway through the bar's growth into the card, so it is left out. On one line at rest, where a sentence too long
+  /// for the bar ends in an ellipsis instead of a wrap stopping halfway through a phrase
   private var restHint: String {
     hint.split(separator: "@", maxSplits: 1).first.map { $0.trimmingCharacters(in: .whitespaces) } ?? hint
   }
@@ -94,7 +97,7 @@ struct Composer: View {
     return Group {
       if snapshot {
         Group {
-          if text.isEmpty { hintText(rest ? restHint : hint) } else { Text(web: text).foregroundStyle(Palette.fgStrong) }
+          if text.isEmpty { hintText(restHint) } else { Text(web: text).foregroundStyle(Palette.fgStrong) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
       } else {
@@ -106,7 +109,7 @@ struct Composer: View {
                         : CGFloat(room.lines(Self.maxLines, lineHeight: TypeScale.field.lineHeight)) * TypeScale.field.lineHeight) {
             TextField(text: fieldText, selection: $selection, axis: .vertical) {
               // At rest the hint is drawn over the field instead (below)
-              hintText(rest ? "" : hint)
+              hintText(rest ? "" : restHint)
             }
             .focused($focused)
           }
@@ -270,8 +273,9 @@ struct Composer: View {
               // into on the way back
               shape.fill(Palette.cardBg)
                 .overlay(shape.strokeBorder(Palette.cardLine))
-                .opacity(plate ? 1 : 0)
-                .transaction { $0.animation = nil }
+                .opacity(plateFill ? 1 : 0)
+                // In at once with the picker, out over the glass as it materialises
+                .animation(plateFill || !motion ? nil : Motion.plateOut, value: plateFill)
               shape.fill(Palette.gooDim)
                 .animation(recedeCurve) { $0.opacity(receded ? 1 : 0) }
             }
@@ -358,10 +362,12 @@ struct Composer: View {
     // A photo preview ends typing; closing it must not request the keyboard again after the chat has reappeared.
     .onChange(of: media.lightbox?.item?.id) { _, item in if item != nil { focused = false } }
     // The plate stands in for the card's glass as a picker opens over it, until its last drop is home
-    .onChange(of: goo) { _, now in if now != nil, expanded { plate = true } }
+    .onChange(of: goo) { _, now in if now != nil, expanded { plate = true; plateFill = true } }
     .task(id: goo) {
       guard goo == nil, plate, (try? await Task.sleep(for: .seconds(motion ? Motion.gooHome : 0))) != nil else { return }
+      // The glass first, the plate's fill fading out over it after
       plate = false
+      plateFill = false
     }
     // The card follows focus that comes or goes some other way (the keyboard swiped away, a pick that sets `focused`)
     .onChange(of: focused) { _, now in

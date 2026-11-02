@@ -502,6 +502,9 @@ public enum Motion {
   public static let gooDimOut = Animation.easeIn(duration: 0.42)
   /// When a closing picker's last drop is home in its chip (`gooSwapBack` brings the chip's glyph back then)
   public static let gooHome: Double = 0.44
+  /// The composer's plate giving way to its returning glass: held through the first frames, while the glass is still
+  /// materialising, then gone
+  public static let plateOut = Animation.easeInOut(duration: 0.3).delay(0.14)
   /// The agent ring moves at the liquid pickers' pace: their spring, and each bubble's lag behind the one before
   /// (clockwise out, the last one first on the way home, at half the lag). A 0.46 s spring with a 0.03 s lag put the
   /// whole ring out in a quarter of a second and read as a pop with no transition, as the beans once did
