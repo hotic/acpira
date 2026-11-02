@@ -629,6 +629,8 @@ export interface PluginCard {
   schedules?: string[];
   // What it contributes (tools, hooks, agent …): where the card's mark flies once applied (plugins/landings.ts)
   adds?: string[];
+  // The style hooks (STYLE_HOOKS) its stylesheet names, first seen first: a style lands on those parts of the page
+  restyles?: string[];
   // The source folder, which the corner button reveals
   folder: string;
   at: number;

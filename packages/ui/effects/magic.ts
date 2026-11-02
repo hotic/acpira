@@ -150,7 +150,8 @@ async function fallbackReveal(at: Point, opts: RevealOptions, duration: number) 
   const local = box ? { x: at.x - box.left, y: at.y - box.top } : at;
   const max = farthest(at);
   const circle = (r: number) => `circle(${r}px at ${local.x}px ${local.y}px)`;
-  const anim = layer?.animate({ clipPath: opts.back ? [circle(max), circle(0)] : [circle(0), circle(max)] }, { duration, easing: opts.back ? UNDO_EASE : REVEAL_EASE });
+  // A leaving backdrop stays closed until it is unmounted, so its end never shows the whole old scene for a frame
+  const anim = layer?.animate({ clipPath: opts.back ? [circle(max), circle(0)] : [circle(0), circle(max)] }, { duration, easing: opts.back ? UNDO_EASE : REVEAL_EASE, fill: opts.back ? 'forwards' : 'none' });
   const start = performance.now();
   let frame = 0;
   await new Promise<void>(done => {

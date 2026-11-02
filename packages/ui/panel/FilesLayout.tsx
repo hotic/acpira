@@ -146,7 +146,7 @@ export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
             })}
           </PanelTabList>
           {(s.terminal || s.browser || pluginTabs.length > 0) && (
-            <IconButton title={t('panel.newTab')} aria-label={t('panel.newTab')} onClick={() => fresh.made(panel.newTab())}><Plus strokeWidth={1.5} /></IconButton>
+            <IconButton data-part="tab-new" title={t('panel.newTab')} aria-label={t('panel.newTab')} onClick={() => fresh.made(panel.newTab())}><Plus strokeWidth={1.5} /></IconButton>
           )}
         </div>
         <div data-stage-body className="relative min-h-0 flex-1 border-t border-[var(--stage-rule,var(--line))]">

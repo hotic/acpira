@@ -1386,6 +1386,9 @@ pub struct PluginCard {
   /// What it contributes (`Contributes::kinds`: `tools`, `hooks`, `agent` …): where the card's mark flies once applied
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub adds: Vec<String>,
+  /// The `STYLE_HOOKS` its stylesheet names, in the order they first appear: a style lands on those parts of the page
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub restyles: Vec<String>,
   /// The source folder, which the corner button reveals
   #[serde(default)]
   pub folder: String,

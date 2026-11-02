@@ -373,7 +373,7 @@ function ToolPanel(p: ToolPanelProps) {
             );
           })}
         </PanelTabList>
-        <IconButton title={t('panel.newTab')} aria-label={t('panel.newTab')} onClick={() => fresh.made(panel.newTab())}><Plus strokeWidth={1.5} /></IconButton>
+        <IconButton data-part="tab-new" title={t('panel.newTab')} aria-label={t('panel.newTab')} onClick={() => fresh.made(panel.newTab())}><Plus strokeWidth={1.5} /></IconButton>
       </div>
       <div className="relative min-h-0 flex-1">
         {s.tabs.map(tab => {

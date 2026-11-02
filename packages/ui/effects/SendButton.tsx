@@ -27,6 +27,7 @@ export function SendButton({ running, filled, theme = 'dark', onClick }: SendBut
       disabled={!on}
       data-on={on || undefined}
       data-metal={metal || undefined}
+      data-part={metal ? undefined : 'composer-send'}
       className={cn(
         'send-btn inline-flex size-ctl-sm shrink-0 items-center justify-center rounded-md [&_svg]:size-icon disabled:cursor-default',
         send === 'accent' && on && '[--send-bg-on:var(--accent)] [--send-ink-on:var(--accent-fg)]',
@@ -37,7 +38,7 @@ export function SendButton({ running, filled, theme = 'dark', onClick }: SendBut
   );
   if (!metal) return button;
   return (
-    <MetalRing theme={theme} paused={motion === 'none'} className="shrink-0 rounded-md bg-btn-1 text-btn-1-fg">
+    <MetalRing part="composer-send" theme={theme} paused={motion === 'none'} className="shrink-0 rounded-md bg-btn-1 text-btn-1-fg">
       {button}
     </MetalRing>
   );
