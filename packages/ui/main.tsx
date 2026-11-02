@@ -7,6 +7,9 @@ import 'katex/dist/katex.min.css';
 import './styles/index.css';
 import { App, bootReady } from './App';
 import { BrowserPanel } from './browser/BrowserPanel';
+import { fixSpacedPinyinCommits } from './ui/ime';
+
+fixSpacedPinyinCommits();
 
 // The browser panel runs the same bundle in its own webview (apps/vscode/src/bridge.ts BrowserPanel)
 // After the boot language's dictionary (App.tsx bootReady), read from the package in a few ms
