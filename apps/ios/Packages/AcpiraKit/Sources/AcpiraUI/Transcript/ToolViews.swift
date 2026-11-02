@@ -731,6 +731,7 @@ struct ToolOutput: View {
           .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { natural = $0 }
       }
       .scrollBounceBehavior(.basedOnSize)
+      .scrollDisabled(!inSheet)
       .codeCap(natural: natural, inSheet: inSheet)
       .modifier(CodeOutputFrame())
       .codeViewer(title: t("code.copyToolOutput"), copy: body, copyLabel: t("code.copyToolOutput")) { ToolOutput(text: text) }
@@ -738,7 +739,7 @@ struct ToolOutput: View {
   }
 }
 
-/// The scrolling output area: capped by --code-output-max, sideways scrolling for long lines
+/// The scrolling output area: capped by --code-output-max, sideways scrolling for long lines (in the transcript too)
 struct OutputPane<Content: View>: View {
   var top: CGFloat
   @ViewBuilder let content: () -> Content
@@ -746,7 +747,7 @@ struct OutputPane<Content: View>: View {
   @State private var natural: CGFloat = 0
 
   var body: some View {
-    Scroller([.vertical, .horizontal]) {
+    Scroller(inSheet ? [.vertical, .horizontal] : .horizontal) {
       content()
         .textStyle(WebType.mono)
         .foregroundStyle(Palette.fg2)
@@ -756,6 +757,7 @@ struct OutputPane<Content: View>: View {
         .padding(.bottom, Metrics.commandY)
         .frame(maxWidth: .infinity, alignment: .leading)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { natural = $0 }
+        .codeCut(inSheet: inSheet)
     }
     .scrollBounceBehavior(.basedOnSize, axes: [.vertical, .horizontal])
     .scrollIndicators(.hidden)
@@ -899,7 +901,7 @@ struct DiffBlockView: View {
   }
 
   private func scroller(_ display: [DiffLine], tokens: [[CodeToken]?]?, ch: CGFloat) -> some View {
-    Scroller([.vertical, .horizontal]) {
+    Scroller(inSheet ? [.vertical, .horizontal] : .horizontal) {
       Group {
         if inSheet && !snapshot {
           LazyVStack(alignment: .leading, spacing: 0) { rows(display, tokens: tokens, ch: ch) }
@@ -911,6 +913,7 @@ struct DiffBlockView: View {
       .frame(minWidth: max(viewport, rowWidth), alignment: .leading)
       .padding(.vertical, Metrics.gapHalf)
       .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { natural = $0 }
+      .codeCut(inSheet: inSheet)
     }
     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { viewport = $0 }
     .scrollBounceBehavior(.basedOnSize, axes: [.vertical, .horizontal])
@@ -992,14 +995,13 @@ extension EnvironmentValues {
 
 extension View {
   /// A code card's scrolling body: cut at --code-output-max in the transcript, whole in the code sheet. The cut does
-  /// not scroll, so no scroll view nests in the transcript's; a fade at the cut shows there is more, and a tap opens
-  /// the whole card. The cut is the webview's, so a card under it reads as
-  /// the desktop's (a shorter phone cap sliced a seven-line diff through its last line)
+  /// not scroll vertically, so no vertical scroller nests in the transcript's (long lines still scroll sideways,
+  /// see `codeCut`); a fade at the cut shows there is more, and a tap opens the whole card. The cut is the webview's,
+  /// so a card under it reads as the desktop's (a shorter phone cap sliced a seven-line diff through its last line)
   func codeCap(natural: CGFloat, inSheet: Bool) -> some View {
     let preview = !inSheet
     return frame(maxHeight: inSheet ? nil : WebMetrics.codeOutputMax)
       .fixedSize(horizontal: false, vertical: true)
-      .scrollDisabled(preview)
       .overlay(alignment: .bottom) {
         if preview && natural > WebMetrics.codeOutputMax {
           LinearGradient(colors: [Palette.bgCode.opacity(0), Palette.bgCode], startPoint: .top, endPoint: .bottom)
@@ -1007,6 +1009,16 @@ extension View {
             .allowsHitTesting(false)
         }
       }
+  }
+
+  /// The transcript's cut inside a sideways-only scroller: the content keeps its top --code-output-max, so the strip
+  /// is no taller than the card and a swipe across it scrolls long lines. Measure `natural` before this
+  @ViewBuilder func codeCut(inSheet: Bool) -> some View {
+    if inSheet {
+      self
+    } else {
+      frame(maxHeight: WebMetrics.codeOutputMax, alignment: .top).clipped()
+    }
   }
 
   /// A tap on a code card opens the whole card in the code sheet; inside the sheet the card stays as it is
