@@ -614,7 +614,10 @@ final class AppModel {
       case let .image(blob?, mime, name): return .image(mimeType: mime, data: blob, name: name)
       case let .file(uri, name):
         guard let url = URL(string: uri), AttachmentFile.isCopy(url) else { return .file(uri: uri, name: name) }
-        return (try? Data(contentsOf: url)).map { .file(uri: uri, name: name, data: $0.base64EncodedString()) }
+        guard let bytes = try? Data(contentsOf: url) else { return nil }
+        // The tile of the sent prompt finds the video under the engine's blob name without fetching it back
+        if Attachment.isVideo(name: name) { VideoCache.adopt(bytes, name: name) }
+        return .file(uri: uri, name: name, data: bytes.base64EncodedString())
       case let .quote(text, comment): return .quote(text: text, comment: comment)
       default: return nil
       }

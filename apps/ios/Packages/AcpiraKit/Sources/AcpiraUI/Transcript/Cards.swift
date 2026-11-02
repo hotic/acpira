@@ -27,8 +27,8 @@ struct UserMessageCard: View {
       let shape = RoundedRectangle(cornerRadius: Metrics.rBubble)
       let edit = editable ? index : nil
       VStack(alignment: .trailing, spacing: Metrics.s2) {
-        // At its own width, so the row sits on the bubble's right edge
-        if !attachments.isEmpty { TurnAttachments(attachments: attachments).fixedSize() }
+        // Packed to the bubble's right edge and never wider than the column: long names truncate, pills wrap
+        if !attachments.isEmpty { TurnAttachments(attachments: attachments) }
         if !shown.isEmpty {
           Text(web: shown)
             .textStyle(WebType.text1)
@@ -100,15 +100,21 @@ struct TurnAttachments: View {
 
   var body: some View {
     let opener = FileOpener(model: model, session: media.session) { preview = $0 }
-    FlowLayout(spacing: Metrics.gap) {
+    FlowLayout(spacing: Metrics.gap, alignment: .trailing) {
       ForEach(Array(attachments.enumerated()), id: \.offset) { _, item in
         switch item {
         case .image(let blob, _, let name):
           // Inline pixels when the app staged the photo itself, else the engine's blob
           AttachmentThumbnail(blob: blob, name: name)
-        // A file on the computer opens in the chat's file page, as a staged one does (FileOpener)
+        // A video shows its first frame and opens in Quick Look; another file on the computer opens in the chat's
+        // file page, as a staged one does (FileOpener)
         case .file(let uri, let name):
-          AttachmentPill(name: name, icon: .fileText, onOpen: opener.open(uri: uri))
+          if let video = VideoSource.of(uri: uri, name: name, session: media.session, loader: media.loader) {
+            VideoAttachmentTile(source: video, name: name) { preview = $0 }
+          } else {
+            AttachmentPill(name: name, icon: Attachment.isVideo(name: name) ? .fileVideo : .fileText,
+                           onOpen: opener.open(uri: uri))
+          }
         case .text(_, let name, _):
           AttachmentPill(name: name, icon: .fileText)
         case .selection(let uri, let name, let start, let end, _):
@@ -126,13 +132,10 @@ struct TurnAttachments: View {
 struct AttachmentPill: View {
   let name: String
   let icon: LucideIcon
-  /// A staged video still compressing (0...1): the pill fills from its leading edge, keeping its size
-  var progress: Double? = nil
   /// What a tap on the glyph and name opens (FileOpener), if the file can be shown here
   var onOpen: (() -> Void)? = nil
   /// A staged pill's ✕, after the name
   var onRemove: (() -> Void)? = nil
-  @Environment(\.motionEnabled) private var motion
   var body: some View {
     HStack(spacing: Metrics.s1) {
       let label = HStack(spacing: Metrics.s1) {
@@ -163,37 +166,29 @@ struct AttachmentPill: View {
     .foregroundStyle(Palette.fg2)
     .padding(.horizontal, Metrics.s2)
     .frame(height: WebMetrics.ctlSm)
-    .background {
-      ZStack(alignment: .leading) {
-        Palette.chip
-        if let progress {
-          GeometryReader { box in Palette.active.frame(width: box.size.width * progress) }
-            .animation(motion ? .linear(duration: Motion.durOpen) : nil, value: progress)
-        }
-      }
-      .clipShape(RoundedRectangle(cornerRadius: Metrics.rSm))
-    }
-    .accessibilityValue(progress.map { Text(web: t("mobile.video.compressing", ["percent": Int($0 * 100)])) } ?? Text(verbatim: ""))
+    .background(Palette.chip, in: RoundedRectangle(cornerRadius: Metrics.rSm))
   }
 }
 
-/// flex-wrap: items left to right, wrapping at the proposed width, rows aligned to their tops
+/// flex-wrap: items left to right, wrapping at the proposed width, rows aligned to their tops. An item wider than a row
+/// is offered the row's width (a pill truncates its name instead of running off the screen). `.trailing` packs rows
+/// against the right edge and takes only the widest row's width (justify-end), for the prompt's attachments
 struct FlowLayout: Layout {
   var spacing: CGFloat
+  var alignment: HorizontalAlignment = .leading
 
   func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
     let rows = arrange(width: proposal.width ?? .infinity, subviews: subviews)
     let width = rows.map { $0.width }.max() ?? 0
     let height = rows.map(\.height).reduce(0, +) + spacing * CGFloat(max(0, rows.count - 1))
-    return CGSize(width: proposal.width ?? width, height: height)
+    return CGSize(width: alignment == .trailing ? width : proposal.width ?? width, height: height)
   }
 
   func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
     var y = bounds.minY
     for row in arrange(width: bounds.width, subviews: subviews) {
-      var x = bounds.minX
-      for index in row.items {
-        let size = subviews[index].sizeThatFits(.unspecified)
+      var x = alignment == .trailing ? bounds.maxX - row.width : bounds.minX
+      for (index, size) in zip(row.items, row.sizes) {
         subviews[index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
         x += size.width + spacing
       }
@@ -201,13 +196,14 @@ struct FlowLayout: Layout {
     }
   }
 
-  private struct FlowRow { var items: [Int] = []; var width: CGFloat = 0; var height: CGFloat = 0 }
+  private struct FlowRow { var items: [Int] = []; var sizes: [CGSize] = []; var width: CGFloat = 0; var height: CGFloat = 0 }
 
   private func arrange(width: CGFloat, subviews: Subviews) -> [FlowRow] {
     var rows: [FlowRow] = []
     var row = FlowRow()
     for (i, view) in subviews.enumerated() {
-      let size = view.sizeThatFits(.unspecified)
+      var size = view.sizeThatFits(.unspecified)
+      if size.width > width { size = view.sizeThatFits(ProposedViewSize(width: width, height: nil)) }
       let next = row.items.isEmpty ? size.width : row.width + spacing + size.width
       if next > width && !row.items.isEmpty {
         rows.append(row); row = FlowRow()
@@ -215,6 +211,7 @@ struct FlowLayout: Layout {
       row.width = row.items.isEmpty ? size.width : row.width + spacing + size.width
       row.height = max(row.height, size.height)
       row.items.append(i)
+      row.sizes.append(size)
     }
     if !row.items.isEmpty { rows.append(row) }
     return rows

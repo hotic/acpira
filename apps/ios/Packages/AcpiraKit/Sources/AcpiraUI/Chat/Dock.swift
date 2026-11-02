@@ -302,7 +302,7 @@ struct QueueBubble: View {
     let attachments = item.attachments ?? []
     let shape = RoundedRectangle(cornerRadius: Metrics.rBubble)
     return VStack(alignment: .trailing, spacing: Metrics.s2) {
-      if !attachments.isEmpty { TurnAttachments(attachments: attachments).fixedSize() }
+      if !attachments.isEmpty { TurnAttachments(attachments: attachments) }
       if !shown.isEmpty {
         Text(web: shown)
           .textStyle(WebType.text1)

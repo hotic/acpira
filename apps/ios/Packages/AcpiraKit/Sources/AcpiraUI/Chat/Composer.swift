@@ -785,12 +785,27 @@ struct StagedAttachments: View {
                 }
             // A pill is lower than the badge, which covered the end of its name: its ✕ sits inside it, after the name
             case .file(let uri, let name):
-              let video = Attachment.isVideo(name: name)
               let progress = VideoJobs.shared.progress[uri]
-              AttachmentPill(name: name, icon: video ? .fileVideo : .fileText, progress: progress,
-                             onOpen: progress == nil ? opener.open(uri: uri) : nil) {
-                VideoJobs.shared.cancel(uri)
-                items.remove(at: i)
+              // A video is a tile like a photo's from the moment it is picked: while it compresses, its first frame
+              // (once Photos has handed it over) waits under a spinner. One view throughout, so the frame stays put
+              // when the copy is ready
+              let video = progress != nil ? URL(string: uri).map(VideoSource.local)
+                : VideoSource.of(uri: uri, name: name, session: media.session, loader: media.loader)
+              if let video {
+                VideoAttachmentTile(source: video, name: name, progress: progress, still: VideoJobs.shared.stills[uri]) {
+                  preview = $0
+                }
+                .overlay(alignment: .topTrailing) {
+                  RemoveBadge(label: t("common.remove")) {
+                    VideoJobs.shared.cancel(uri)
+                    items.remove(at: i)
+                  }
+                }
+              } else {
+                AttachmentPill(name: name, icon: Attachment.isVideo(name: name) ? .fileVideo : .fileText,
+                               onOpen: opener.open(uri: uri)) {
+                  items.remove(at: i)
+                }
               }
             case .text(_, let name, _):
               AttachmentPill(name: name, icon: .fileText) { items.remove(at: i) }
