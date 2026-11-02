@@ -1221,12 +1221,13 @@ export function Shell(p: ShellProps) {
                     data-plan-dock
                     className={cn('pointer-events-none absolute inset-x-0 bottom-0 z-10', wide && a.composer === 'island' && 'mx-auto w-full max-w-[calc(var(--content-w)+2*var(--page))]')}
                   >
-                    {/* Plugin pieces on the dock's top edge (plugins/ComposerAbove.tsx): over the plan card when there is
-                        one, else over the question, the queue or the composer, never on top of their controls */}
-                    {!p.external && <ComposerAbove running={p.running} waiting={waitingOnUser} />}
                     {/* A held prompt already owns a Working row; the floating startup row would duplicate and overlap it. */}
                     {!p.external && !held.running && <ConnectingNotice status={p.status} agent={p.agent} />}
                     <div ref={planDock}>
+                      {/* Plugin pieces on the dock's top edge (plugins/ComposerAbove.tsx): over the plan card when there
+                          is one, else over the question, the queue or the composer, never on top of their controls. Inside
+                          the measured dock, so the transcript's clearance keeps the last reply's actions clear of them */}
+                      {!p.external && <ComposerAbove running={p.running} waiting={waitingOnUser} />}
                       {/* The session goal heads the floating to-do card, so the dock keeps one silhouette */}
                       <PlanBar key={`plan:${p.activeSessionId}`} turns={p.turns} running={p.running}
                         goal={p.external ? undefined : p.goal} goalActions={p.goalActions} onGoalAction={goalAction} />
