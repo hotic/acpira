@@ -128,6 +128,20 @@ export interface SlashCommand {
   look?: 'brand' | 'solid' | 'outline' | 'icon';
   // The button runs with the draft as its arguments; otherwise it leaves the draft and its attachments alone
   takesDraft?: boolean;
+  // The button opens this menu instead of running the command, the session's picks checked
+  menu?: CommandMenuItem[];
+  // The first group's pick, a tag on the chip like the mode chip's access level
+  badge?: string;
+}
+
+// One row of a plugin command button's menu (plugins/manifest.rs MenuItemDef)
+export interface CommandMenuItem {
+  id: string;
+  kind: 'radio' | 'toggle' | 'action' | 'separator';
+  group?: string;
+  label: string;
+  description?: string;
+  checked?: boolean;
 }
 
 export interface AuthMethodInfo {

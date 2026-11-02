@@ -246,8 +246,17 @@ export function start(def = {}, options = {}) {
     p.hook('command', async (payload, extra) => {
       const fn = commands[payload?.name];
       if (typeof fn !== 'function') return null;
-      const out = await fn(payload.arguments ?? '', withCtx({ ...extra, draft: payload.draft === true, session: payload.session }));
+      const out = await fn(payload.arguments ?? '', withCtx({ ...extra, draft: payload.draft === true, session: payload.session, menus: payload.menus ?? {} }));
       return typeof out === 'string' ? { text: out } : out ?? null;
+    });
+  }
+  const menus = def.menus ?? {};
+  if (Object.keys(menus).length > 0) {
+    // A row of a command button's menu was picked: `picks` is the menu's state after it; an answer `{ picks }` changes it
+    p.hook('menu', async (payload, extra) => {
+      const fn = menus[payload?.name];
+      if (typeof fn !== 'function') return null;
+      return (await fn(payload.item, withCtx({ ...extra, session: payload.session, picks: payload.picks ?? {} }))) ?? null;
     });
   }
   p.onClose(async () => {

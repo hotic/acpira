@@ -1083,6 +1083,12 @@ pub enum WebviewMsg {
     #[serde(default)]
     arguments: String,
   },
+  /// A row of a plugin command button's menu was picked: the engine keeps the pick and tells the plugin
+  PluginMenu {
+    session_id: String,
+    name: String,
+    item: String,
+  },
   /// The built-in agent's model sources: read them, or apply an edit and get the view back
   Providers,
   ProviderAction {

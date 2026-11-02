@@ -3,18 +3,22 @@ import {
   Bot, Bug, Check, Eye, FileText, Flame, GitBranch, GitCommitHorizontal, GitPullRequest, Heart, Languages, ListChecks, LoaderCircle,
   MessageSquare, Package, Play, RefreshCw, Rocket, Search, Sparkles, SquareTerminal, Star, TestTube, WandSparkles, Zap, type LucideIcon,
 } from 'lucide-react';
-import type { SlashCommand } from '@acpira/shared/transcript';
-import { Chip } from '../ui/Button';
+import type { CommandMenuItem, SlashCommand } from '@acpira/shared/transcript';
+import { Chip, ChipTag } from '../ui/Button';
+import { DropdownMenu, optionClass } from '../ui/DropdownMenu';
+import { OptionContent } from '../ui/Panel';
 import { cn } from '../ui/cn';
 import { t } from '../i18n';
 import { callPluginCommand } from '../pluginSlots';
+import { vscodeApi } from '../vscodeApi';
 import { useArrival } from './Pieces';
 
 // Plugin commands with a `button` (docs/dev/plugins.md Commands), as native chips in the composer's toolbar, so they
 // work in every host. A click runs the command with the draft as its arguments: sent like `/name <draft>`, or with
 // `draft` its text replaces the draft, one edit the field's undo takes back. A command that takes no draft (`input:
 // "none"`) sends `/name` alone and leaves the draft be. One applied from a card flies in from it.
-// The plugin picks the glyph and the look; a press sends a ring of the brand colour out of the button (motion.css)
+// The plugin picks the glyph and the look; a press sends a ring of the brand colour out of the button (motion.css).
+// A command with a `menu` is a menu chip instead, drawn like the mode chip: the engine keeps the session's picks
 
 // The manifest's BUTTON_ICONS, one glyph each (test/pluginButtonIcons.test.ts keeps the two lists equal)
 export const BUTTON_ICONS: Record<string, LucideIcon> = {
@@ -31,7 +35,7 @@ const LOOK = {
   icon: 'bg-chip text-fg-1 hover:bg-chip-hover w-ctl-sm justify-center px-0',
 };
 
-export const CommandButtons = memo(function CommandButtons({ commands, sessionId, draft, disabled, onSend, onSendBare, onDraft, onRewriting, onNotice }: {
+export const CommandButtons = memo(function CommandButtons({ commands, sessionId, draft, disabled, onSend, onSendBare, onDraft, onRewriting, onNotice, onOpenChange }: {
   commands?: SlashCommand[];
   sessionId?: string;
   draft: string;
@@ -44,6 +48,8 @@ export const CommandButtons = memo(function CommandButtons({ commands, sessionId
   // A draft command is working on the draft: the field shows it (composer-field[data-rewriting])
   onRewriting: (busy: boolean) => void;
   onNotice: (text: string) => void;
+  // A menu chip's menu opened or closed, as the mode chip reports it
+  onOpenChange?: (open: boolean) => void;
 }) {
   const buttons = commands?.filter(c => c.plugin && c.button) ?? [];
   if (!buttons.length) return null;
@@ -68,7 +74,9 @@ export const CommandButtons = memo(function CommandButtons({ commands, sessionId
       {plugins.map(plugin => (
         // Keyed by its buttons too: a plugin applied again with changed buttons lands again
         <PluginButtons key={`${plugin}|${buttons.filter(c => c.plugin === plugin).map(c => c.name).join(',')}`} plugin={plugin} sessionId={sessionId}>
-          {buttons.filter(c => c.plugin === plugin).map(c => <CommandButton key={c.name} command={c} disabled={disabled} run={run(c)} />)}
+          {buttons.filter(c => c.plugin === plugin).map(c => c.menu?.length
+            ? <CommandMenu key={c.name} command={c} sessionId={sessionId} disabled={disabled} onOpenChange={onOpenChange} />
+            : <CommandButton key={c.name} command={c} disabled={disabled} run={run(c)} />)}
         </PluginButtons>
       ))}
     </div>
@@ -106,4 +114,67 @@ function CommandButton({ command: c, disabled, run }: { command: SlashCommand; d
       {presses > 0 && <span key={presses} aria-hidden="true" className="command-ring" />}
     </span>
   );
+}
+
+// A command button with a `menu`: the chip names the command and carries the first group's pick as a tag, and its menu
+// opens upwards like the mode chip's. A radio pick closes the menu as a mode pick does; a toggle keeps it open
+function CommandMenu({ command: c, sessionId, disabled, onOpenChange }: { command: SlashCommand; sessionId?: string; disabled?: boolean; onOpenChange?: (open: boolean) => void }) {
+  const look = c.look && c.look in LOOK ? c.look : 'brand';
+  const Icon = (c.icon && BUTTON_ICONS[c.icon]) || Zap;
+  const pick = (item: string) => { if (sessionId) vscodeApi().postMessage({ type: 'pluginMenu', sessionId, name: c.name, item }); };
+  const items = c.menu ?? [];
+  const wide = items.some(i => i.description);
+  return (
+    <DropdownMenu.Root onOpenLifecycle={onOpenChange}>
+      <DropdownMenu.Trigger disabled={disabled || !sessionId} render={<Chip className={cn('shrink-0', LOOK[look])} narrow={look === 'icon' ? undefined : 'icon'}
+        title={[c.description || c.button, c.badge].filter(Boolean).join('\n')} aria-label={c.button}
+        icon={<Icon strokeWidth={1.75} className={look === 'brand' ? 'text-(--brand)' : look === 'icon' ? 'text-fg-1' : undefined} />}
+        tags={c.badge ? [<ChipTag key="badge">{c.badge}</ChipTag>] : undefined} tagsKey={c.badge ?? ''}>
+        {look === 'icon' ? null : c.button}
+      </Chip>} />
+      <DropdownMenu.Portal><DropdownMenu.Positioner side="top" width={wide ? 'md' : 'sm'}><DropdownMenu.Popup>
+        <div className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
+          {menuRuns(items).map((run, i) => <MenuRun key={i} run={run} onPick={pick} />)}
+        </div>
+      </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
+}
+
+// Consecutive radio rows of one group form one radio group; every other row stands alone
+function menuRuns(items: CommandMenuItem[]): CommandMenuItem[][] {
+  const runs: CommandMenuItem[][] = [];
+  for (const item of items) {
+    const last = runs[runs.length - 1];
+    if (item.kind === 'radio' && last?.[0]?.kind === 'radio' && last[0].group === item.group) last.push(item);
+    else runs.push([item]);
+  }
+  return runs;
+}
+
+function MenuRun({ run, onPick }: { run: CommandMenuItem[]; onPick: (id: string) => void }) {
+  const first = run[0]!;
+  // A check slot on every row keeps labels aligned whether a row is checked or not
+  const content = (i: CommandMenuItem) => <OptionContent checked={!!i.checked} checkSlot description={i.description}>{i.label}</OptionContent>;
+  // A row with a description is two lines: a little air keeps neighbours apart
+  const roomy = (i: CommandMenuItem) => (i.description ? 'py-1' : undefined);
+  switch (first.kind) {
+    case 'separator':
+      return <DropdownMenu.Separator className="my-1 h-px shrink-0 bg-line" />;
+    case 'radio':
+      return (
+        <DropdownMenu.RadioGroup value={run.find(i => i.checked)?.id}>
+          {run.map(i => <DropdownMenu.RadioItem key={i.id} value={i.id} className={roomy(i)} onClick={() => onPick(i.id)}>{content(i)}</DropdownMenu.RadioItem>)}
+        </DropdownMenu.RadioGroup>
+      );
+    case 'toggle':
+      return (
+        <DropdownMenu.CheckboxItem checked={!!first.checked} closeOnClick={false} onCheckedChange={() => onPick(first.id)}
+          render={<button type="button" />} nativeButton className={cn(optionClass, roomy(first))}>
+          {content(first)}
+        </DropdownMenu.CheckboxItem>
+      );
+    default:
+      return <DropdownMenu.Item className={roomy(first)} onClick={() => onPick(first.id)}><OptionContent checkSlot description={first.description}>{first.label}</OptionContent></DropdownMenu.Item>;
+  }
 }

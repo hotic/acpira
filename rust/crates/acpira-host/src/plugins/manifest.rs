@@ -37,6 +37,7 @@ pub const RUNTIME_HOOKS: &[&str] = &[
   "tools",
   "websearch",
   "command",
+  "menu",
 ];
 /// The event families a resident process may subscribe to; `<family>.*` takes every event of one, `*` all of them
 /// except the streamed deltas, which are asked for by name (`text.delta`, `thought.delta`)
@@ -222,7 +223,37 @@ pub struct CommandDef {
   /// template has `$ARGUMENTS`, so a fixed prompt never sweeps up what the user is still writing
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub input: Option<String>,
+  /// The button opens a menu of these instead of running the command, like the mode chip: picks are kept per session
+  /// by the engine and handed to the plugin's hooks as `menus`; the chip shows the first group's pick
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub menu: Vec<MenuItemDef>,
 }
+
+/// One row of a command button's menu (`MENU_KINDS`): `radio` is one choice of its `group`, `toggle` a switch of its
+/// own, `action` calls the runtime's `menu` hook and keeps nothing, `separator` a rule
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MenuItemDef {
+  #[serde(default)]
+  pub id: String,
+  pub kind: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub group: Option<String>,
+  #[serde(default)]
+  pub label: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub description: Option<String>,
+  /// The group's choice, or a toggle that starts on, until the user picks otherwise
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub default: bool,
+}
+
+pub const MENU_KINDS: &[&str] = &["radio", "toggle", "action", "separator"];
+/// Most rows a menu may have, separators included
+pub const MENU_MAX_ITEMS: usize = 16;
+/// Longest row label and description, in characters
+pub const MENU_LABEL_MAX_CHARS: usize = 24;
+pub const MENU_DESCRIPTION_MAX_CHARS: usize = 48;
 
 impl CommandDef {
   /// `input` as it applies (see there)
@@ -231,6 +262,47 @@ impl CommandDef {
       Some(i) => i == "draft",
       None => self.draft || self.prompt.as_deref().is_some_and(|p| p.contains("$ARGUMENTS")),
     }
+  }
+
+  /// The menu's state in a session: each group's choice (by its name) and each toggle (by its id), from what the user
+  /// picked there where the manifest still has it, else the defaults. A group without a default starts at its first
+  pub fn menu_picks(&self, stored: Option<&Map<String, Value>>) -> Map<String, Value> {
+    let mut out = Map::new();
+    for item in &self.menu {
+      match (item.kind.as_str(), item.group.as_deref()) {
+        ("radio", Some(group)) => {
+          let kept = stored.and_then(|s| s.get(group)).and_then(Value::as_str).filter(|id| self.menu.iter().any(|i| i.kind == "radio" && i.group.as_deref() == Some(group) && i.id == *id));
+          match kept {
+            Some(id) => {
+              out.insert(group.to_owned(), Value::from(id));
+            }
+            None if item.default || !out.contains_key(group) => {
+              out.insert(group.to_owned(), Value::from(item.id.as_str()));
+            }
+            None => {}
+          }
+        }
+        ("toggle", _) => {
+          let on = stored.and_then(|s| s.get(&item.id)).and_then(Value::as_bool).unwrap_or(item.default);
+          out.insert(item.id.clone(), Value::from(on));
+        }
+        _ => {}
+      }
+    }
+    out
+  }
+
+  /// The picks after the user chose `id`: a radio becomes its group's choice, a toggle flips; None for an action or an
+  /// id the menu lacks
+  pub fn menu_pick(&self, current: &Map<String, Value>, id: &str) -> Option<Map<String, Value>> {
+    let item = self.menu.iter().find(|i| i.id == id && i.kind != "separator")?;
+    let mut next = current.clone();
+    match (item.kind.as_str(), item.group.as_deref()) {
+      ("radio", Some(group)) => next.insert(group.to_owned(), Value::from(id)),
+      ("toggle", _) => next.insert(id.to_owned(), Value::from(!current.get(id).and_then(Value::as_bool).unwrap_or(item.default))),
+      _ => return None,
+    };
+    Some(next)
   }
 }
 
@@ -548,6 +620,67 @@ pub fn parse(bytes: &[u8]) -> Result<(Manifest, Findings), String> {
   Ok((manifest, findings))
 }
 
+/// A command button's `menu`: picks are stored by group name and toggle id, so those share one namespace, and an
+/// action needs a runtime that answers the `menu` hook
+fn check_menu(m: &Manifest, c: &CommandDef, at: &str, findings: &mut Findings) {
+  let mut err = |s: String| findings.errors.push(s);
+  if c.button.is_none() || c.draft || c.input.is_some() {
+    err(format!("{at}: a `menu` needs a `button`, and takes neither `draft` nor `input`"));
+  }
+  if c.menu.len() > MENU_MAX_ITEMS {
+    err(format!("{at}: a menu has at most {MENU_MAX_ITEMS} rows"));
+  }
+  let menu_hooked = m.contributes.runtime.as_ref().is_some_and(|r| r.main.is_some() || r.hooks.iter().any(|h| h == "menu"));
+  let mut ids = std::collections::HashSet::new();
+  let mut keys = std::collections::HashMap::new();
+  let mut defaults = std::collections::HashSet::new();
+  for item in &c.menu {
+    let row = format!("{at}: menu row `{}`", item.id);
+    if !MENU_KINDS.contains(&item.kind.as_str()) {
+      err(format!("{row}: kind `{}` is not one of {}", item.kind, MENU_KINDS.join(", ")));
+      continue;
+    }
+    if item.kind == "separator" {
+      continue;
+    }
+    if !valid_command_name(&item.id) {
+      err(format!("{row}: the id must be lowercase letters, digits, `-` and `_`, starting with a letter, at most {NAME_MAX} characters"));
+    }
+    if !ids.insert(item.id.as_str()) {
+      err(format!("{row} is declared twice"));
+    }
+    let label = item.label.trim().chars().count();
+    if label == 0 || label > MENU_LABEL_MAX_CHARS {
+      err(format!("{row}: `label` is 1 to {MENU_LABEL_MAX_CHARS} characters"));
+    }
+    if item.description.as_deref().is_some_and(|d| d.chars().count() > MENU_DESCRIPTION_MAX_CHARS) {
+      err(format!("{row}: `description` is at most {MENU_DESCRIPTION_MAX_CHARS} characters"));
+    }
+    match item.kind.as_str() {
+      "radio" => match item.group.as_deref() {
+        Some(g) if valid_command_name(g) => {
+          if keys.insert(g, "radio").is_some_and(|k| k != "radio") {
+            err(format!("{row}: group `{g}` is also a toggle's id"));
+          }
+          if item.default && !defaults.insert(g) {
+            err(format!("{row}: group `{g}` has more than one `default`"));
+          }
+        }
+        _ => err(format!("{row}: a radio row names its `group` (lowercase letters, digits, `-` and `_`)")),
+      },
+      "toggle" if keys.insert(item.id.as_str(), "toggle").is_some() => err(format!("{row}: the id is also a group's name")),
+      "action" if !menu_hooked => err(format!("{row}: an action needs a runtime that answers the `menu` hook")),
+      _ => {}
+    }
+    if item.group.is_some() && item.kind != "radio" {
+      err(format!("{row}: only a radio row has a `group`"));
+    }
+    if item.default && item.kind == "action" {
+      err(format!("{row}: an action has no `default`"));
+    }
+  }
+}
+
 /// The static check of a manifest against the folder it sits in (the source folder or its frozen copy). `which`
 /// resolves a program on PATH
 pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> bool, findings: &mut Findings) {
@@ -664,8 +797,12 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
     if !names.insert(c.name.as_str()) {
       err(findings, format!("{at} is declared twice"));
     }
-    if c.prompt.as_deref().is_none_or(|p| p.trim().is_empty()) && !hooked {
+    // A menu button is the command's way in: typing `/name` then needs the prompt or hook too, the button does not
+    if c.menu.is_empty() && c.prompt.as_deref().is_none_or(|p| p.trim().is_empty()) && !hooked {
       err(findings, format!("{at}: needs a `prompt`, or a runtime that answers the `command` hook"));
+    }
+    if !c.menu.is_empty() {
+      check_menu(m, c, &at, findings);
     }
     match c.button.as_deref().map(str::trim) {
       Some(b) if b.is_empty() || b.chars().count() > BUTTON_MAX_CHARS => err(findings, format!("{at}: `button` is the label, 1 to {BUTTON_MAX_CHARS} characters")),
@@ -1206,6 +1343,49 @@ mod tests {
     check(&m, "cmds", dir.path(), &|p| p == "node", &mut f);
     let text = f.text();
     for needle in ["command `/Review`: the name", "needs a `prompt`", "`/x` is declared twice", "skills folder `nope`", "`/y`: `button` is the label", "`/z`: `draft`, `icon`, `look` and `input` need a `button`", "icon `unicorn`", "look `neon`"] {
+      assert!(text.contains(needle), "{needle} missing in\n{text}");
+    }
+  }
+
+  #[test]
+  fn a_command_menu_is_checked_and_resolves_picks_with_defaults() {
+    let dir = tempfile::tempdir().unwrap();
+    let menu = json!([
+      { "id": "on", "kind": "toggle", "label": "Dispatch", "default": true },
+      { "kind": "separator" },
+      { "id": "normal", "kind": "radio", "group": "level", "label": "Normal" },
+      { "id": "eager", "kind": "radio", "group": "level", "label": "Eager", "default": true },
+      { "id": "reset", "kind": "action", "label": "Reset" }
+    ]);
+    let base = |menu: Value, runtime: Value| {
+      json!({ "schema": 1, "id": "subs", "version": "0.1.0", "description": "x", "contributes": { "commands": [{ "name": "subagent", "button": "Sub", "menu": menu }], "runtime": runtime } })
+    };
+    // A menu command needs no prompt; an action needs the `menu` hook
+    let (m, mut f) = manifest(base(menu.clone(), json!({ "command": ["node", "run.mjs"], "hooks": ["menu"] })));
+    check(&m, "subs", dir.path(), &|p| p == "node", &mut f);
+    assert!(f.ok(), "{f:?}");
+    let def = &m.contributes.commands[0];
+    let picks = def.menu_picks(None);
+    assert_eq!(Value::Object(picks.clone()), json!({ "on": true, "level": "eager" }));
+    let stored = def.menu_pick(&picks, "normal").unwrap();
+    assert_eq!(Value::Object(def.menu_pick(&stored, "on").unwrap()), json!({ "on": false, "level": "normal" }));
+    assert!(def.menu_pick(&picks, "reset").is_none());
+    // A pick the manifest no longer has falls back to the default
+    let gone = json!({ "level": "max", "on": false });
+    assert_eq!(Value::Object(def.menu_picks(gone.as_object())), json!({ "on": false, "level": "eager" }));
+
+    let bad = json!([
+      { "id": "a", "kind": "radio", "label": "A" },
+      { "id": "b", "kind": "radio", "group": "g", "label": "B", "default": true },
+      { "id": "c", "kind": "radio", "group": "g", "label": "C", "default": true },
+      { "id": "g", "kind": "toggle", "label": "G" },
+      { "id": "x", "kind": "action", "label": "" },
+      { "id": "y", "kind": "slider", "label": "Y" }
+    ]);
+    let (m, mut f) = manifest(base(bad, json!({ "command": ["node", "run.mjs"], "hooks": ["command"] })));
+    check(&m, "subs", dir.path(), &|p| p == "node", &mut f);
+    let text = f.text();
+    for needle in ["row `a`: a radio row names its `group`", "more than one `default`", "row `g`: the id is also a group's name", "row `x`: `label` is 1 to", "an action needs a runtime that answers the `menu` hook", "kind `slider`"] {
       assert!(text.contains(needle), "{needle} missing in\n{text}");
     }
   }

@@ -437,7 +437,7 @@ impl AcpSession {
           workflow_logs: Default::default(),
           hooks: Default::default(),
           plugin_events: Default::default(),
-          plugin_state: Default::default(),
+          plugin_state: plugin_hooks::PluginState { menus: record.plugin_menus, ..Default::default() },
           cached_view: None,
         }),
         deps,
@@ -498,6 +498,7 @@ impl AcpSession {
         goal: None,
         copy_of: None,
         client_ids: Vec::new(),
+        plugin_menus: Default::default(),
       },
       deps,
     )
