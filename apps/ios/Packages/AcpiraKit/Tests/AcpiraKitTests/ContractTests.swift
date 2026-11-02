@@ -141,7 +141,7 @@ struct ContractTests {
     try checkStruct(patch, try need(TS.interface(Self.source("sessionPatch.ts"), "SessionPatch")))
   }
 
-  /// The transcript structs the messages carry: SessionView and AgentInfo whole, SessionSummary
+  /// The transcript structs the messages carry: SessionView whole, AgentInfo but its own-mark fields, SessionSummary
   /// but its style-hook fields, AccountInfo as a subset
   /// (it reads addedAt leniently)
   @Test(.enabled(if: readable))
@@ -152,7 +152,8 @@ struct ContractTests {
     // completedAt / question feed the page's plugin style hooks (data-done, data-state="question"); the phone has none
     try checkStruct(try need(state.sessions.first), try need(TS.interface(transcript, "SessionSummary")), leftOut: ["completedAt", "question"])
     try checkStruct(try need(state.accounts.first), try need(TS.interface(transcript, "AccountInfo")), subset: true)
-    try checkStruct(try need(state.agents.first), try need(TS.interface(transcript, "AgentInfo")))
+    // vendor / mark draw custom and plugin agents' own marks on the page; the phone draws built-in marks only
+    try checkStruct(try need(state.agents.first), try need(TS.interface(transcript, "AgentInfo")), leftOut: ["mark", "vendor"])
   }
 
   /// The payloads of the parity actions and pushes
@@ -659,7 +660,7 @@ enum ContractSamples {
     #"{"type":"accountActions","actions":[{"agent":"claude","via":"login","status":"pending"}]}"#,
     #"{"type":"hidden","hidden":{"claude":{"effort":["low"]}}}"#,
     #"{"type":"settings","settings":\#(settings),"locale":"zh-CN"}"#,
-    #"{"type":"controls","agent":"claude","controls":[{"id":"model","name":"Model","category":"model","options":[{"id":"opus","name":"Opus"}],"value":"opus"}],"shapes":{"opus":[{"id":"effort","name":"Effort","options":[{"id":"high","name":"High"}],"value":"high"}]}}"#,
+    #"{"type":"controls","agent":"claude","controls":[{"id":"model","name":"Model","category":"model","options":[{"id":"opus","name":"Opus"}],"value":"opus"}],"shapes":{"opus":[{"id":"effort","name":"Effort","options":[{"id":"high","name":"High"}],"value":"high"}]},"commands":[{"name":"review","description":"Review the diff","input":{"hint":"path"}}]}"#,
     #"{"type":"sessionHits","seq":3,"hits":[{"id":"s1","snippet":"… the zebracorn …"}]}"#,
     #"{"type":"subagent","sessionId":"s1","subagentId":"n1","rev":3,"running":true,"turns":[{"role":"user","text":"look"},{"role":"agent","blocks":[{"type":"text","markdown":"found it"}]}]}"#,
     #"{"type":"files","seq":5,"files":[{"uri":"file:///w/src/app.ts","path":"src/app.ts"}]}"#,
