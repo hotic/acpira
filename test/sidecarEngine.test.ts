@@ -178,6 +178,10 @@ describe('persistent engine', { timeout: 60_000 }, () => {
     // Engine A holds the lease and pushes the session over the engines' bus: B shows it live, with nothing to take over
     const pushed = await vb.session(s => s.id === id && s.running && s.status !== 'readonly' && textOf(s).includes(' 20 '));
     expect(pushed.canTakeOver).toBeFalsy();
+    // Nor read-only for a moment on the way: init used to carry the record copy, replaced by the push a few ms later
+    const readOnly = vb.messages.map(m => m.type === 'session' ? m.session : m.type === 'init' ? m.state.active : undefined)
+      .filter(s => s?.id === id && s.status === 'readonly');
+    expect(readOnly).toEqual([]);
 
     // B's stop runs in engine A: the turn ends there, and B shows it ended
     b.send('B', { type: 'stop', sessionId: id });
@@ -205,13 +209,13 @@ describe('persistent engine', { timeout: 60_000 }, () => {
     expect(pa.held!.rev).toBeGreaterThan(0);
     await expect.poll(() => existsSync(join(home, 'sessions', `${id}.json`)), { timeout: 5000 }).toBe(true);
 
-    // A shows the session, so B gets it read-only and takes it over
+    // A shows the session, so B follows A's pushed view and takes it over
     const b = client(engineEndpoint({ binary: SIDECAR, home, cwd: cwdB }), cwdB, home, [], agentEnv);
     const vb = new View('B', id);
     b.attach(vb);
     b.send('B', { type: 'ready' });
     b.start();
-    await vb.session(s => s.id === id && s.canTakeOver === true);
+    await vb.session(s => s.id === id && (s.rev ?? 0) < 0);
     b.send('B', { type: 'takeOverSession', sessionId: id });
     await vb.session(s => s.id === id && s.status === 'ready' && (s.rev ?? 0) >= 0);
 
