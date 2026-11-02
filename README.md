@@ -251,4 +251,4 @@ Stable GitHub Releases publish the platform VSIXes to Visual Studio Marketplace 
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) · Contact: s@asgard.sh / s@asgard.me
