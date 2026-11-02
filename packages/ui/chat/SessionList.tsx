@@ -911,14 +911,14 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
         <div className="flex shrink-0 flex-col">
           {desktop
             ? onNewIn && (
-              <button type="button" data-land="agents" className={NAV_ROW} onClick={() => onNewIn()}>
+              <button type="button" data-land="agents" data-part="session-new" className={NAV_ROW} onClick={() => onNewIn()}>
                 <span className={NAV_LEAD}><SquarePen className="size-icon" strokeWidth={1.5} /></span>
                 <span className="min-w-0 flex-1 truncate">{t('session.new')}</span><NavHint>{shortcutLabel('N')}</NavHint>
               </button>
             )
             : onNew && fresh.length > 0 && (
               <DropdownMenu.Root>
-                <DropdownMenu.Trigger render={<button type="button" data-land="agents" className={NAV_ROW}><span className={NAV_LEAD}><SquarePen className="size-icon" strokeWidth={1.5} /></span><span className="min-w-0 truncate">{t('session.new')}</span></button>} />
+                <DropdownMenu.Trigger render={<button type="button" data-land="agents" data-part="session-new" className={NAV_ROW}><span className={NAV_LEAD}><SquarePen className="size-icon" strokeWidth={1.5} /></span><span className="min-w-0 truncate">{t('session.new')}</span></button>} />
                 <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="start" width="md"><DropdownMenu.Popup>
                   <div className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
                     {fresh.map(a => <DropdownMenu.Item key={a.id} disabled={a.available === false} title={a.available === false ? t('agent.notInstalled') : undefined} onClick={() => onNew(a.id)}>
@@ -929,7 +929,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
               </DropdownMenu.Root>
             )}
           {/* Desktop: the row reads like the one above it until focused, its shortcut at the end */}
-          <NavSearch value={query} onChange={setQuery} autoFocus={autoFocus} quiet={desktop} hint={desktop && shortcutLabel('K')}
+          <NavSearch part="session-search" value={query} onChange={setQuery} autoFocus={autoFocus} quiet={desktop} hint={desktop && shortcutLabel('K')}
             placeholder={desktop ? t('session.searchShort') : onSearch ? t('session.searchContent') : t('session.search')}
             label={onSearch ? t('session.searchContent') : t('session.search')} />
           {!desktop && importer}
@@ -1033,7 +1033,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
       <div className="flex items-center gap-1 px-1 pt-1">
         {/* No focus fill: the panel autofocuses the field, so a fill would sit there permanently as an off-centre box.
             Like the inline rename input, the caret alone marks it */}
-        <label className="flex h-ctl min-w-0 flex-1 cursor-text items-center gap-2 px-2 text-fg-3">
+        <label data-part="session-search" className="flex h-ctl min-w-0 flex-1 cursor-text items-center gap-2 px-2 text-fg-3">
           <Search className="size-icon shrink-0" strokeWidth={1.5} />
           {searchInput}
         </label>

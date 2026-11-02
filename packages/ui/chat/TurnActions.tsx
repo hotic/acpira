@@ -46,7 +46,7 @@ export function TurnActions({ turn, turnIndex, settings }: { turn: AgentTurn; tu
       {ctx && reply && <PluginActions session={ctx.sessionId} turn={turnIndex} text={reply} />}
       {reply && (
         <>
-          <IconButton size="sm" title={copyLabel} aria-label={copyLabel} onClick={copyState.copy}>
+          <IconButton size="sm" data-part="turn-copy" title={copyLabel} aria-label={copyLabel} onClick={copyState.copy}>
             {copyState.state === 'copied' ? <Check strokeWidth={1.5} /> : <Copy strokeWidth={1.5} />}
           </IconButton>
           <span className="sr-only" role="status">{copyState.state === 'idle' ? '' : copyLabel}</span>
@@ -55,7 +55,7 @@ export function TurnActions({ turn, turnIndex, settings }: { turn: AgentTurn; tu
       {ctx?.fork && ctx.agentId && (
         <DropdownMenu.Root open={forkOpen} onOpenChange={setForkOpen}>
           <DropdownMenu.Trigger render={
-            <IconButton size="sm" data-open={forkOpen || undefined} title={t('turn.fork')} aria-label={t('turn.fork')} aria-expanded={forkOpen}>
+            <IconButton size="sm" data-part="turn-fork" data-open={forkOpen || undefined} title={t('turn.fork')} aria-label={t('turn.fork')} aria-expanded={forkOpen}>
               <GitBranch strokeWidth={1.5} />
             </IconButton>
           } />
@@ -75,7 +75,7 @@ export function TurnActions({ turn, turnIndex, settings }: { turn: AgentTurn; tu
       )}
       {stats && <Popover.Root open={statsOpen} onOpenChange={setStatsOpen}>
         <Popover.Trigger render={
-          <IconButton size="sm" data-open={statsOpen || undefined} title={t('turn.stats')} aria-label={t('turn.stats')} aria-expanded={statsOpen}>
+          <IconButton size="sm" data-part="turn-stats" data-open={statsOpen || undefined} title={t('turn.stats')} aria-label={t('turn.stats')} aria-expanded={statsOpen}>
             <ChartNoAxesColumn strokeWidth={1.5} />
           </IconButton>
         } />

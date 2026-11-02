@@ -369,6 +369,7 @@ impl PluginHost {
       slots: c.ui.iter().map(|u| u.slot.clone()).chain(c.commands.iter().any(|x| x.button.is_some()).then(|| "composer.toolbar".to_owned())).collect(),
       schedules: c.schedules.iter().map(|j| j.cron.clone()).collect(),
       adds: c.kinds().into_iter().map(str::to_owned).collect(),
+      restyles: c.style.as_deref().and_then(|rel| manifest::inside(&frozen.dir, rel)).and_then(|p| std::fs::read_to_string(p).ok()).map(|css| restyled_hooks(&css)).unwrap_or_default(),
       folder: wire_path(&self.store.source(&frozen.id)),
       at: crate::util::now_ms(),
       undo: None,
@@ -833,6 +834,24 @@ fn theme_css_of(loaded: &Loaded) -> String {
   out
 }
 
+/// The `STYLE_HOOKS` a stylesheet names, in the order they first appear, so the card's mark can land on the parts it
+/// restyles. Comments are skipped, and quotes and spaces inside a selector do not count (`[data-part=user-message]`
+/// names the same hook)
+fn restyled_hooks(css: &str) -> Vec<String> {
+  let mut text = String::with_capacity(css.len());
+  let mut rest = css;
+  while let Some((before, after)) = rest.split_once("/*") {
+    text.push_str(before);
+    rest = after.split_once("*/").map_or("", |(_, tail)| tail);
+  }
+  text.push_str(rest);
+  let bare = |s: &str| s.chars().filter(|c| !matches!(c, '"' | '\'' | ' ' | '\t' | '\n' | '\r')).collect::<String>();
+  let text = bare(&text);
+  let mut found: Vec<(usize, &str)> = acpira_shared::plugins::STYLE_HOOKS.iter().filter_map(|h| text.find(&bare(h)).map(|at| (at, *h))).collect();
+  found.sort();
+  found.into_iter().map(|(_, h)| h.to_owned()).collect()
+}
+
 /// A plugin's stylesheet, cut at `THEME_CSS_MAX_BYTES`
 fn push_css(out: &mut String, dir: &Path, rel: &str) {
   let Some(css) = manifest::inside(dir, rel).and_then(|p| std::fs::read_to_string(p).ok()) else { return };
@@ -967,6 +986,13 @@ fn executable(m: &std::fs::Metadata) -> bool {
 #[cfg(unix)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn a_style_names_the_hooks_it_restyles_in_order() {
+    let css = "/* [data-part=\"composer\"] in a comment */\n[data-part='user-message'] > div { color: red }\n[data-session][data-state] {}\n[data-part = \"user-message\"] {}";
+    assert_eq!(restyled_hooks(css), ["[data-part=\"user-message\"]", "[data-session]", "[data-session][data-state]"]);
+    assert!(restyled_hooks("body { color: red }").is_empty());
+  }
 
   fn host(root: &std::path::Path) -> Arc<PluginHost> {
     PluginHost::new(root.to_path_buf(), false, Arc::new(|_| {}))

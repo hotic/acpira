@@ -15,7 +15,7 @@ export function NavHint({ children }: { children: ReactNode }) {
 
 // The column's search: a row like the ones around it, not a boxed field. `quiet`: until focused its placeholder reads
 // like the row above (desktop), its shortcut at the end
-export function NavSearch({ value, onChange, placeholder, label, autoFocus, quiet, hint, inputRef, className }: {
+export function NavSearch({ value, onChange, placeholder, label, autoFocus, quiet, hint, inputRef, className, part }: {
   value: string;
   onChange: (v: string) => void;
   placeholder: string;
@@ -25,9 +25,11 @@ export function NavSearch({ value, onChange, placeholder, label, autoFocus, quie
   hint?: ReactNode;
   inputRef?: Ref<HTMLInputElement>;
   className?: string;
+  // A plugin style hook (`data-part`)
+  part?: string;
 }) {
   return (
-    <label className={cn(NAV_ROW, 'cursor-text text-fg-3 focus-within:bg-hover', className)}>
+    <label data-part={part} className={cn(NAV_ROW, 'cursor-text text-fg-3 focus-within:bg-hover', className)}>
       <span className={NAV_LEAD}><Search className="size-icon" strokeWidth={1.5} /></span>
       <input
         ref={inputRef}

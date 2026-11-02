@@ -106,7 +106,7 @@ export const Composer = memo(function Composer(p: ComposerProps) {
   const flush = !p.edit && composer === 'flush';
   const [beamActive, setBeamActive] = useState(false);
   return (
-    <div data-part={p.edit ? undefined : 'composer'} className={cn(p.edit ? 'min-w-0' : flush ? 'pt-0' : 'px-dock pb-dock')}>
+    <div className={cn(p.edit ? 'min-w-0' : flush ? 'pt-0' : 'px-dock pb-dock')}>
       <WorkingBeam active={beamActive} theme={p.theme} field={p.resetKey}>
         <ComposerField key={p.resetKey} {...p} onBeam={setBeamActive} />
       </WorkingBeam>
@@ -416,6 +416,8 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
       data-drag={dragging || undefined}
       data-focused={beamActive || undefined}
       data-land={p.main && !p.edit ? 'composer' : undefined}
+      // The skins' `composer` hook (STYLE_HOOKS) is the field a person sees, not the dock's padding around it
+      data-part={p.edit ? undefined : 'composer'}
       className={cn('composer-field flex flex-col', flush ? 'rounded-none' : 'rounded-lg')}
       onFocus={() => setFocused(true)}
       onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) setFocused(false); }}
@@ -552,7 +554,7 @@ function ModeMenu({ modes, value, title, onSelect, onOpenChange, labelOf = modeL
   const tagged = level && level.id !== access!.options[0]?.id ? level : undefined;
   return (
     <DropdownMenu.Root onOpenLifecycle={onOpenChange}>
-      <DropdownMenu.Trigger render={<Chip variant="solid" className="ml-0.5 shrink-0" narrow="icon"
+      <DropdownMenu.Trigger render={<Chip variant="solid" data-part="composer-mode" className="ml-0.5 shrink-0" narrow="icon"
         title={[mode ? [mode.name, mode.description].filter(Boolean).join(t('common.metaSep')) : title, level && accessLabel(level)].filter(Boolean).join('\n')}
         icon={ModeIcon && <ModeIcon strokeWidth={1.75} className={mode?.kind === 'full_access' ? 'text-warn' : undefined} />}
         tags={tagged && [<ChipTag key="access" icon={tagged.kind === 'full_access' ? <ShieldAlert className="size-2.5 shrink-0" strokeWidth={2.25} aria-hidden /> : undefined}>{accessLabel(tagged)}</ChipTag>]}

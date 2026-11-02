@@ -9,13 +9,15 @@ export interface MetalRingProps {
   // Multiplier for every pixel constant, for a magnified copy (the LAB); 1 in the app
   scale?: number;
   className?: string;
+  // A plugin style hook (`data-part`) for the box the ring wraps the child in
+  part?: string;
   children: ReactNode;
 }
 
 // A silver ring around a single child (the send / stop button), plus a soft halo and catch-light that drift along the
 // edge toward the ring's brightest spot. The child stays on screen at all times: the ring is painted synchronously on
 // mount and needs no WebGL. The wrapper takes the child's corner radius; give it the fill colour, the child keeps none.
-export function MetalRing({ theme = 'dark', paused = false, scale = 1, className, children }: MetalRingProps) {
+export function MetalRing({ theme = 'dark', paused = false, scale = 1, className, part, children }: MetalRingProps) {
   const root = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const ring = useRef<Ring | null>(null);
@@ -72,7 +74,7 @@ export function MetalRing({ theme = 'dark', paused = false, scale = 1, className
 
   // data-theme re-scopes the theme tokens under the ring, as metal-fx's wrapper did
   return (
-    <div ref={root} data-theme={theme} className={cn('relative isolate inline-flex', className)} style={geo ? { borderRadius: geo.r } : undefined}>
+    <div ref={root} data-theme={theme} data-part={part} className={cn('relative isolate inline-flex', className)} style={geo ? { borderRadius: geo.r } : undefined}>
       <canvas ref={canvas} aria-hidden="true" className="pointer-events-none absolute inset-0 block size-full" />
       {geo && <GlowSvg id={id} geo={geo} scale={scale} theme={theme} nodes={glow.current} />}
       <div className="relative inline-flex items-center justify-center">{children}</div>

@@ -74,17 +74,19 @@ export const Header = memo(function Header({ title, sessions, categories, agent,
   const accountTitle = account ? [agent.name, account.label, account.quota && quotaSummary(account.quota)].filter(Boolean).join(t('common.metaSep')) : agent.name;
   // Desktop: the column's own new-session and settings entries come to the header while the column is folded. Both stay
   // mounted there and ease in and out with the column (desktop.css data-column-act) instead of popping in and out
-  const columnAct = (key: string, node: ReactNode, docked = sessionNav) => desktop
-    ? <span key={key} data-column-act data-shown={!docked || undefined} inert={docked || undefined}><span>{node}</span></span>
-    : !docked && node;
-  const settingsButton = onOpenSettings && columnAct('settings', (
-    <IconButton data-land="settings" onClick={() => onOpenSettings()} title={t('session.settings')} aria-label={t('session.settings')}>
+  // `part` is the plugin style hook, on whichever box is the actions row's child: the wrapper on desktop, else the
+  // button (`own`). Call sites spell the hook out on the button too, where test/pluginStyleHooks.test.ts looks for it
+  const columnAct = (key: string, part: string, node: (own: boolean) => ReactNode, docked = sessionNav) => desktop
+    ? <span key={key} data-column-act data-part={part} data-shown={!docked || undefined} inert={docked || undefined}><span>{node(false)}</span></span>
+    : !docked && node(true);
+  const settingsButton = onOpenSettings && columnAct('settings', 'header-settings', own => (
+    <IconButton data-land="settings" data-part={own ? 'header-settings' : undefined} onClick={() => onOpenSettings()} title={t('session.settings')} aria-label={t('session.settings')}>
       <Settings2 strokeWidth={1.5} />
     </IconButton>
   ), gearDocked);
   const accountButton = (
     <Popover.Root open={accountOpen} onOpenChange={setAccountOpen}>
-      <Popover.Trigger render={<IconButton title={accountTitle} aria-label={t('common.account')}><UserRound strokeWidth={1.5} /></IconButton>} />
+      <Popover.Trigger render={<IconButton data-part="header-account" title={accountTitle} aria-label={t('common.account')}><UserRound strokeWidth={1.5} /></IconButton>} />
       <Popover.Portal><Popover.Positioner side="bottom" align="end" width="md"><Popover.Popup>
         <AccountPanel agent={agent} accounts={accounts?.filter(a => a.agent === agent.id) ?? []} accountId={accountId} close={() => setAccountOpen(false)}
           onSelectAccount={on.selectAccount} onAddAccount={on.addAccount} onRemoveAccount={on.removeAccount} onRefreshQuota={on.refreshQuota} onUnlockCredentials={on.unlockCredentials} />
@@ -170,9 +172,9 @@ export const Header = memo(function Header({ title, sessions, categories, agent,
         {/* Plugin status pieces (plugins/Pieces.tsx) lead the header's actions */}
         <SlotPieces slot="statusbar" className="mr-gap-half flex items-center gap-1" />
         {/* New sessions start after choosing an agent from the plus menu. */}
-        {onNewIn && columnAct('new', <IconButton data-land="agents" title={t('session.new')} aria-label={t('session.new')} onClick={onNewIn}><Plus strokeWidth={1.5} /></IconButton>)}
+        {onNewIn && columnAct('new', 'header-new', own => <IconButton data-land="agents" data-part={own ? 'header-new' : undefined} title={t('session.new')} aria-label={t('session.new')} onClick={onNewIn}><Plus strokeWidth={1.5} /></IconButton>)}
         {!sessionNav && !onNewIn && <DropdownMenu.Root>
-          <DropdownMenu.Trigger render={<IconButton data-land="agents" title={t('session.new')} aria-label={t('session.new')}><Plus strokeWidth={1.5} /></IconButton>} />
+          <DropdownMenu.Trigger render={<IconButton data-land="agents" data-part="header-new" title={t('session.new')} aria-label={t('session.new')}><Plus strokeWidth={1.5} /></IconButton>} />
           <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="end" width="md"><DropdownMenu.Popup>
             <div className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
               {launchable(agents).map(a => <DropdownMenu.Item key={a.id} disabled={a.available === false} title={a.available === false ? t('agent.notInstalled') : undefined} onClick={() => on.newSession(a.id)}>
@@ -182,7 +184,7 @@ export const Header = memo(function Header({ title, sessions, categories, agent,
           </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
         </DropdownMenu.Root>}
         {sessionPanel === 'hidden' && <Popover.Root open={historyOpen} onOpenChange={setHistoryOpen}>
-          <Popover.Trigger render={<IconButton title={t('session.history')} aria-label={t('session.history')}><History strokeWidth={1.5} /></IconButton>} />
+          <Popover.Trigger render={<IconButton data-part="header-history" title={t('session.history')} aria-label={t('session.history')}><History strokeWidth={1.5} /></IconButton>} />
           <Popover.Portal><Popover.Positioner side="bottom" align="end" width="xl"><Popover.Popup initialFocus={interaction => interaction === 'keyboard'}>
             <SessionList sessions={sessions} agents={agents} activeId={activeSessionId} workspace={workspace} scope={sessionScope}
               onSelect={id => { on.selectSession(id); setHistoryOpen(false); }}
@@ -200,7 +202,7 @@ export const Header = memo(function Header({ title, sessions, categories, agent,
             session={sessions.find(s => s.id === activeSessionId) ?? { id: activeSessionId, title, agent: agent.id, cwd: '', updatedAt: '' }}
             align="end"
             lead={narrowDesk ? menuLead() : undefined}
-            trigger={<IconButton title={t('session.more')} aria-label={t('session.more')}><Ellipsis strokeWidth={1.5} /></IconButton>}
+            trigger={<IconButton data-part="header-more" title={t('session.more')} aria-label={t('session.more')}><Ellipsis strokeWidth={1.5} /></IconButton>}
             onOpenInEditor={on.openInEditor ? () => on.openInEditor!(activeSessionId) : undefined}
             onPin={() => on.pinSession(activeSessionId, !(sessions.find(s => s.id === activeSessionId)?.pinned))}
             onUnread={on.setSessionUnread ? unread => on.setSessionUnread!(activeSessionId, unread) : undefined}

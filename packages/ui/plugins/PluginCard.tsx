@@ -11,7 +11,7 @@ import { vscodeApi } from '../vscodeApi';
 import { TurnActionsContext } from '../chat/TurnActions';
 import { SandboxFrame } from './SandboxFrame';
 import { expectArrival } from './arrivals';
-import { captureReturns, flyBack, flyHome, type Return } from './landings';
+import { captureReturns, flyBack, flyHome, restylePart, restylePiece, type Return } from './landings';
 import { chargeCard } from './charge';
 import { pressIn } from '../effects/magic';
 import { useInView, useReducedMotion, useWindowFocused } from './motion';
@@ -58,7 +58,7 @@ export const PluginCard = memo(function PluginCard({ card }: { card: Card_ }) {
   const Kind = KIND[card.kind] ?? Blocks;
   // Nothing to picture (no skin backdrop, no map of interface pieces): the thumbnail is the kind's glyph drawn large
   // along its right side, cut by its edge, fading out to the left (skin.css); the mark lifts off from it (landings.ts)
-  const glyph = card.kind !== 'skin' && card.kind !== 'ui' && !card.slots?.length;
+  const glyph = card.kind !== 'skin' && !card.slots?.length && !restyledBlocks(card.restyles).length;
   const box = useRef<HTMLDivElement>(null);
   // An apply clicked here charges the card (charge.ts) and, once the card reads applied (the check passed), sends lit
   // frames from the thumbnail to where the plugin now lives (landings.ts). An undo clicked here sends them back once
@@ -162,7 +162,7 @@ export const PluginCard = memo(function PluginCard({ card }: { card: Card_ }) {
 function Thumb({ card }: { card: Card_ }) {
   if (card.kind === 'skin') return <SkinThumb plugin={card.plugin} snapshot={card.snapshot} name={card.name} />;
   // Otherwise interface pieces (a command's button among them) show where they go
-  return <UiThumb slots={card.slots ?? []} />;
+  return <UiThumb slots={card.slots ?? []} restyles={card.restyles ?? []} />;
 }
 
 // Also the settings page's skin picker
@@ -227,11 +227,31 @@ function WindowSketch({ at, send }: { at?: (where: Where) => ReactNode; send?: b
   );
 }
 
-function UiThumb({ slots }: { slots: string[] }) {
-  const blocks = [...new Set(slots)].flatMap(s => (BLOCKS[s] ? [{ slot: s, ...BLOCKS[s] }] : []));
+// Where each style hook's part sits on the sketch: a style sheet lights the parts it restyles, and its frame lifts off
+// from there to the same part of the real window. The whole window, sheet or thread is no part to light: a sheet
+// naming only those draws its kind's glyph
+const PARTS: Record<string, { in: Where; style: CSSProperties }> = {
+  '[data-part="header"]': { in: 'sheet', style: { left: '30%', right: '4%', top: '4%', height: '12%' } },
+  '[data-part="user-message"]': { in: 'sheet', style: { left: '58%', right: '9%', top: '18%', height: '7%' } },
+  '[data-part="agent-message"]': { in: 'sheet', style: { left: '32%', right: '9%', top: '26%', height: '22%' } },
+  '[data-turn-actions]': { in: 'sheet', style: { left: '33%', top: '51%', width: '14%', height: '6%' } },
+  '[data-plan-dock]': { in: 'sheet', style: { left: '36%', right: '12%', bottom: '31%', height: '7%' } },
+  '[data-part="composer"]': { in: 'sheet', style: { left: '33%', right: '9%', bottom: '7%', height: '22%' } },
+  '[data-exchange]': { in: 'sheet', style: { left: '31%', right: '7%', top: '16%', bottom: '41%' } },
+  '[data-session-panel]': { in: 'sheet', style: { right: '2.5%', top: '18%', width: '3.5%', bottom: '32%' } },
+  '[data-tool-panel-wrap]': { in: 'sheet', style: { right: '1.5%', top: '4%', width: '5%', bottom: '4%' } },
+  '[data-part="tab"]': { in: 'sheet', style: { right: '1.5%', top: '4%', width: '5%', height: '6%' } },
+  '[data-session]': { in: 'column', style: { left: '8%', right: '8%', top: '21%', height: '10%' } },
+};
+function restyledBlocks(restyles: readonly string[] | undefined) {
+  return [...new Set((restyles ?? []).map(restylePart))].flatMap(h => (PARTS[h] ? [{ slot: restylePiece(h), ...PARTS[h] }] : []));
+}
+
+function UiThumb({ slots, restyles }: { slots: string[]; restyles: string[] }) {
+  const blocks = [...[...new Set(slots)].flatMap(s => (BLOCKS[s] ? [{ slot: s, ...BLOCKS[s] }] : [])), ...restyledBlocks(restyles)];
   const at = (where: Where) => blocks.filter(b => b.in === where).map(b => <div key={b.slot} data-piece={b.slot} style={{ ...lit, ...b.style }} />);
   return (
-    <div className="absolute inset-0 bg-[color-mix(in_srgb,var(--brand)_6%,var(--bg-0))]">
+    <div className="absolute inset-0 bg-bg-0">
       <div className="absolute inset-2 overflow-hidden rounded-sm border border-line-strong bg-bg-1"><WindowSketch at={at} /></div>
     </div>
   );

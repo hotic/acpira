@@ -189,7 +189,8 @@ pub enum PluginAction {
 pub const UI_SLOTS: &[&str] = &["composer.above", "composer.toolbar", "session.panel", "sidebar", "statusbar", "start", "message.actions", "panel.tab", "page"];
 
 /// The selectors a theme's `css` may style the page through, kept stable across releases (the guide lists them; a
-/// contract test in `test/` checks the page still carries each). Anything else in the page's markup may change
+/// contract test in `test/` checks the page still carries each). Anything else in the page's markup may change.
+/// Each control hook sits on the box that is its row's flex child, so a sheet can move it within that row with `order`
 pub const STYLE_HOOKS: &[&str] = &[
   ".acp-shell[data-skin]",
   "[data-sheet]",
@@ -203,6 +204,22 @@ pub const STYLE_HOOKS: &[&str] = &[
   "[data-plan-dock]",
   "[data-part=\"composer\"]",
   "[data-tool-panel-wrap]",
+  "[data-part=\"tab\"]",
+  "[data-part=\"tab-close\"]",
+  "[data-part=\"tab-new\"]",
+  "[data-part=\"composer-mode\"]",
+  "[data-part=\"composer-model\"]",
+  "[data-part=\"composer-send\"]",
+  "[data-part=\"header-new\"]",
+  "[data-part=\"header-history\"]",
+  "[data-part=\"header-account\"]",
+  "[data-part=\"header-more\"]",
+  "[data-part=\"header-settings\"]",
+  "[data-part=\"session-new\"]",
+  "[data-part=\"session-search\"]",
+  "[data-part=\"turn-copy\"]",
+  "[data-part=\"turn-fork\"]",
+  "[data-part=\"turn-stats\"]",
   "[data-plugin-slot]",
   "[data-session]",
   "[data-session][data-state]",

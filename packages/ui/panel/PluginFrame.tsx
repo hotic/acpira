@@ -49,6 +49,8 @@ export function PluginFrame({ plugin, piece, shown, className }: { plugin: strin
     const shell = el.closest('.acp-shell');
     if (shell) watch.observe(shell, { attributes: true });
     watch.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    // A skin's new version keeps the shell's attributes and only rewrites the plugins' theme layer
+    watch.observe(document.head, { childList: true, subtree: true, characterData: true });
     return () => { watch.disconnect(); off(); };
   }, [plugin, piece, version]);
   if (version === undefined) return null;

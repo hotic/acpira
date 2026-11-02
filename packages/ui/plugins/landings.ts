@@ -8,8 +8,9 @@ import { playWhoosh } from '../effects/whoosh';
 // the same lit frame from the card to the control it now stands behind, the frame growing into that control's outline,
 // so every kind of plugin lands somewhere visible.
 // - composer: tools, MCP servers, prompts, skills and commands are the agent's to use from the next message
-// - settings: hooks, a runtime and schedules work in the background, behind the gear; a style sheet alone goes there
-//   too, where the looks are chosen
+// - settings: hooks, a runtime and schedules work in the background, behind the gear; a style sheet whose parts are
+//   not on screen goes there too, where the looks are chosen
+// - restyled parts: a style sheet lands on the parts it names through the style hooks (`restyles`, found by the engine)
 // - agents: a new agent is picked from the new-session entry
 // - models: a model source shows in the model chip
 // - actions: a reply action is a native button, not a framed piece, so it lands here too
@@ -34,7 +35,8 @@ const ACTIONS_SHOWN_MS = 2400;
 // Targets that come with the plugins' push (a reply action) are looked for this long
 const FIND_MS = 1500;
 
-export function landingsFor(card: Pick<PluginCard, 'kind' | 'adds' | 'slots' | 'schedules'>): Landing[] {
+// `restyled`: the style sheet already lands on parts of the page it restyles
+export function landingsFor(card: Pick<PluginCard, 'kind' | 'adds' | 'slots' | 'schedules'>, restyled = false): Landing[] {
   // Records from before `adds` was sent: the card's kind is all there is
   const adds = card.adds ?? (card.kind === 'agent' ? ['agent'] : card.kind === 'exec' ? ['tools'] : []);
   const slots = card.slots ?? [];
@@ -46,9 +48,9 @@ export function landingsFor(card: Pick<PluginCard, 'kind' | 'adds' | 'slots' | '
   }
   if (card.schedules?.length) to.add('settings');
   if (slots.includes('message.actions')) to.add('actions');
-  // A style sheet alone goes behind the gear, where the looks are chosen; with anything else it rides along. Never a
-  // flash over the whole window: that read as the window being wiped
-  if (adds.includes('style') && !adds.includes('theme') && !to.size && !slots.length) to.add('settings');
+  // A style sheet whose parts are not on screen goes behind the gear, where the looks are chosen; with anything else it
+  // rides along. Never a flash over the whole window: that read as the window being wiped
+  if (adds.includes('style') && !adds.includes('theme') && !restyled && !to.size && !slots.length) to.add('settings');
   return [...to];
 }
 
@@ -64,10 +66,10 @@ const centre = (r: DOMRect) => ({ x: r.left + r.width / 2, y: r.top + r.height /
 const distance = (a: DOMRect, b: DOMRect) => { const p = centre(a), q = centre(b); return Math.hypot(p.x - q.x, p.y - q.y); };
 
 // The shown candidate nearest the card: with two sessions side by side, the one in the card's own column
-function nearest(selector: string, near: DOMRect): HTMLElement | undefined {
+function nearest(selector: string, near: DOMRect, ok: (el: HTMLElement) => boolean = () => true): HTMLElement | undefined {
   let best: HTMLElement | undefined, d = Infinity;
   for (const el of document.querySelectorAll<HTMLElement>(selector)) {
-    if (!shown(el)) continue;
+    if (!shown(el) || !ok(el)) continue;
     const dd = distance(el.getBoundingClientRect(), near);
     if (dd < d) { d = dd; best = el; }
   }
@@ -105,6 +107,77 @@ function actionsTarget(plugin: string): Target | undefined {
   return undefined;
 }
 
+// The part of the page a style hook names: the richer of two hooks on one part names it once ([data-session][data-state]
+// is a session row too), and a control names the area it sits in (a tab's buttons the tab, the send button the
+// composer). The thumbnail lights it as the block `restylePiece` (PluginCard), where its frame lifts off
+const CONTROL_AREA: [prefix: string, area: string][] = [
+  ['[data-part="tab-', '[data-part="tab"]'],
+  ['[data-part="composer-', '[data-part="composer"]'],
+  ['[data-part="header-', '[data-part="header"]'],
+  ['[data-part="turn-', '[data-turn-actions]'],
+  ['[data-part="session-', '[data-session]'],
+];
+export const restylePart = (hook: string) => (hook.startsWith('[data-session][')
+  ? '[data-session]'
+  : CONTROL_AREA.find(([prefix]) => hook.startsWith(prefix))?.[1] ?? hook);
+export const restylePiece = (part: string) => `style:${part}`;
+
+// A restyled part's flights: at most this many, one per part
+const RESTYLE_MAX = 3;
+// A part covering more than this share of the window is the page itself (the shell, the thread), not a place to land
+const RESTYLE_AREA = 0.5;
+// How deep a hook's single-child wrappers are followed to the box that is drawn
+const RESTYLE_DEPTH = 8;
+
+function painted(el: Element): boolean {
+  const s = getComputedStyle(el);
+  const fill = s.backgroundColor !== 'rgba(0, 0, 0, 0)' && s.backgroundColor !== 'transparent';
+  return fill || s.backgroundImage !== 'none' || s.boxShadow !== 'none' || parseFloat(s.borderTopWidth) > 0;
+}
+
+// A hook often marks a bare wrapper around what the eye sees (the user message's band around its bubble): follow the
+// only child down and take the deepest box that draws itself, else the hook's own element
+function drawnBox(el: HTMLElement): HTMLElement {
+  let box = el, at: Element = el;
+  for (let i = 0; i < RESTYLE_DEPTH && at.childElementCount === 1; i++) {
+    at = at.firstElementChild!;
+    if (!(at instanceof HTMLElement) || !shown(at)) break;
+    if (painted(at)) box = at;
+  }
+  return box;
+}
+
+const pressFor = (el: HTMLElement) => {
+  const r = el.getBoundingClientRect();
+  return r.width > innerWidth * 0.4 ? PRESS_WIDE : r.width > r.height * 1.4 ? PRESS_ROW : PRESS_ICON;
+};
+
+// The parts a style sheet restyles, each the shown one nearest the card (a user message: the one above it), in the
+// order the sheet names them; none when none of them is on screen, and the sheet goes behind the gear instead
+function restyleTargets(card: Pick<PluginCard, 'restyles'>, near: DOMRect): (Target & { piece: string })[] {
+  const out: (Target & { piece: string })[] = [];
+  const taken = new Set<HTMLElement>();
+  const small = (el: HTMLElement) => {
+    const r = el.getBoundingClientRect();
+    return r.width * r.height <= innerWidth * innerHeight * RESTYLE_AREA;
+  };
+  const parts = new Set<string>();
+  for (const hook of card.restyles ?? []) {
+    if (out.length >= RESTYLE_MAX) break;
+    const part = restylePart(hook);
+    if (parts.has(part)) continue;
+    let el: HTMLElement | undefined;
+    // A hook from a newer engine this page cannot parse is skipped, not thrown
+    try { el = nearest(hook, near, e => small(e) && !taken.has(e)); } catch { continue; }
+    if (!el) continue;
+    taken.add(el);
+    parts.add(part);
+    const box = drawnBox(el);
+    out.push({ piece: restylePiece(part), rect: () => box.getBoundingClientRect(), outline: () => box, land: () => pressIn(box, pressFor(box)) });
+  }
+  return out;
+}
+
 function target(at: Landing, plugin: string, near: DOMRect): Target | undefined {
   switch (at) {
     case 'composer': {
@@ -119,11 +192,12 @@ function target(at: Landing, plugin: string, near: DOMRect): Target | undefined 
       const el = nearest(`[data-land="${at}"]`, near);
       if (!el) return undefined;
       // The frame takes the control's shape; the control gives under it, a row or chip less than a lone icon, and the
-      // gear also turns a little as something settles in behind it
+      // gear also turns as something settles in behind it: a whole turn, so it comes to rest as the icon it was, with no
+      // jump back when the animation lets go
       const r = el.getBoundingClientRect();
       const land = () => {
         pressIn(el, r.width > r.height * 1.4 ? PRESS_ROW : PRESS_ICON);
-        if (at === 'settings') el.querySelector('svg')?.animate([{ transform: 'rotate(0)' }, { transform: 'rotate(90deg)' }], { duration: 900, easing: 'cubic-bezier(.4,0,.2,1)' });
+        if (at === 'settings') el.querySelector('svg')?.animate([{ transform: 'rotate(0)' }, { transform: 'rotate(360deg)' }], { duration: 1100, easing: 'cubic-bezier(.4,0,.2,1)' });
       };
       return { rect: () => el.getBoundingClientRect(), outline: () => el, land };
     }
@@ -136,15 +210,30 @@ function target(at: Landing, plugin: string, near: DOMRect): Target | undefined 
 // Sends a lit frame from the card's thumbnail to every place the plugin now lives. Called once the card reads applied,
 // so a failed check flies nothing
 export function flyHome(card: PluginCard, thumb: HTMLElement, onLeave?: () => void): void {
-  const to = landingsFor(card);
-  if (motionOff() || !to.length) return;
+  if (motionOff()) return;
   const from = thumb.getBoundingClientRect();
+  const restyled = restyleTargets(card, from);
+  const to = landingsFor(card, restyled.length > 0);
+  if (!to.length && !restyled.length) return;
   onLeave?.();
   // The whoosh goes with the first frame leaving, not the lift
   setTimeout(() => playWhoosh('piece'), LIFT_MS);
+  const fly = (t: Target, piece?: string) => {
+    // The lit frame leaves as the whole thumbnail (its glyph inside), or a restyled part's lit block on its map, and
+    // grows into the outline of the control it lands on, as an interface piece's does into its box
+    const block = piece ? thumb.querySelector<HTMLElement>(`[data-piece="${CSS.escape(piece)}"]`) : null;
+    const start = block ?? thumb;
+    const shape = t.outline?.();
+    flyStandIn(start.getBoundingClientRect(), shape ?? start, t.rect, () => t.land?.(), undefined, { shape, lift: LIFT_MS, duration: MARK_FLY_MS });
+  };
+  let delay = 0;
+  // Restyled parts first: they are what the user asked to change
+  for (const t of restyled) {
+    setTimeout(() => fly(t, t.piece), delay);
+    delay += STAGGER_MS;
+  }
   // One flight per control: two landings that fall back onto the same one fly once
   const flown = new Set<Landing>();
-  let delay = 0;
   for (const at of to) {
     const started = performance.now();
     const go = (wait: number) => setTimeout(() => {
@@ -155,10 +244,7 @@ export function flyHome(card: PluginCard, thumb: HTMLElement, onLeave?: () => vo
       if (!t && at === 'actions' && performance.now() - started < FIND_MS) { go(100); return; }
       if (!t || !land || flown.has(land)) return;
       flown.add(land);
-      // The lit frame leaves as the whole thumbnail (its glyph inside) and grows into the outline of the control it lands
-      // on, as an interface piece's does into its box
-      const shape = t.outline?.();
-      flyStandIn(thumb.getBoundingClientRect(), shape ?? thumb, t.rect, () => t.land?.(), undefined, { shape, lift: LIFT_MS, duration: MARK_FLY_MS });
+      fly(t);
     }, wait);
     go(delay);
     delay += STAGGER_MS;
@@ -180,8 +266,13 @@ const RETURN_FLY_MS = 1100;
 export function captureReturns(card: PluginCard, thumb: HTMLElement): Return[] {
   const near = thumb.getBoundingClientRect();
   const out: Return[] = [];
+  const restyled = restyleTargets(card, near);
+  for (const t of restyled) {
+    const r = t.rect();
+    if (r) out.push({ from: r, slot: t.piece });
+  }
   const seen = new Set<Landing>();
-  for (const at of landingsFor(card)) {
+  for (const at of landingsFor(card, restyled.length > 0)) {
     let land: Landing | undefined = at;
     let t: Target | undefined;
     while (land && !(t = target(land, card.plugin, near))) land = FALLBACK[land];
