@@ -248,7 +248,7 @@ export interface ShellProps {
   blobBase?: string;
   // Delegated children of this session; their transcripts arrive separately under `${sessionId}:${subagentId}`
   subagents?: SubagentSummary[];
-  subagentTranscripts?: Record<string, { rev: number; running: boolean; turns: Turn[] }>;
+  subagentTranscripts?: Record<string, { rev: number; running: boolean; turns: Turn[]; catchingUp?: boolean }>;
   on: ShellHandlers;
   // Opens the settings page (a local view swap, not a host action — hence not part of ShellHandlers), at `page` when given
   onOpenSettings?: (page?: SettingsPage) => void;
