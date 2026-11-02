@@ -103,7 +103,9 @@ struct ChatScreen: View {
     .gooLayer()
     .modifier(SystemChatBar(pinned: pinned, unread: summary.map(isUnread) ?? false, archived: summary?.archived == true,
                             actions: headerActions(session, agent)))
-    .background(Palette.bg0)
+    // Under the keyboard too: its rounded corners show the page's ground, not the hosting view's black (a colour's own
+    // background ignores the container's safe area only)
+    .background(Palette.bg0.ignoresSafeArea())
     .environment(\.agentAccent, Palette.accent(for: session.agent))
     .environment(\.chatAgent, agent)
     // A view carried over from the wire before stays syncing until this wire sends the session again

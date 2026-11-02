@@ -107,7 +107,8 @@ struct SessionListScreen: View {
     .onScrollPhaseChange { _, phase in
       if phase == .interacting && swiped != nil { swiped = nil }
     }
-    .background(Palette.bg0)
+    // Under the keyboard too, behind its rounded corners while searching (ChatScreen)
+    .background(Palette.bg0.ignoresSafeArea())
     .modifier(SystemListBar(query: $query, onNew: onNew))
     // Rows fade into the page as they scroll up under the bar's glass buttons
     .topFade()
