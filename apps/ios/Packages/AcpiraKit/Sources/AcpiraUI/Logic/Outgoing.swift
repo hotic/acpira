@@ -33,6 +33,8 @@ struct Outgoing: Equatable {
   var steers: Set<String>
   /// Copies of prompts sent before it that were dropped since: never this one's
   var taken: Set<String> = []
+  /// The send's clientId: once the engine shows a copy, the wire no longer counts it as maybe lost (`delivered`)
+  var clientId: String?
 
   /// Where the session stands with one prompt
   enum State: Equatable {
@@ -46,7 +48,8 @@ struct Outgoing: Equatable {
     var settled: Bool { if case .settled = self { true } else { false } }
   }
 
-  init(text: String, attachments: [Attachment], after session: SessionView, steer: Bool = false) {
+  init(text: String, attachments: [Attachment], after session: SessionView, steer: Bool = false, clientId: String? = nil) {
+    self.clientId = clientId
     self.text = text
     self.attachments = attachments
     self.steer = steer
@@ -95,6 +98,17 @@ extension [Outgoing] {
   /// The prompts the session does not show yet
   func pending(in session: SessionView) -> [Outgoing] {
     zip(self, states(in: session)).filter { !$1.settled }.map(\.0)
+  }
+
+  /// The clientIds of the prompts the session shows a copy of: the engine has them, so a new wire never sends them again.
+  /// One the session will not take (settled without a copy) proves nothing about delivery and stays as it was
+  func delivered(in session: SessionView) -> [String] {
+    zip(self, states(in: session)).compactMap { sent, state in
+      switch state {
+      case .pending, .settled(nil): nil
+      case .steering, .settled: sent.clientId
+      }
+    }
   }
 
   /// The prompts still on their way once the session is shown, each holding on to the copies of those that went

@@ -569,6 +569,41 @@ async fn a_resent_client_id_runs_once_here_and_over_the_bus() {
   b.dispose().await;
 }
 
+// The engine that ran an id may be gone when the resend comes: the gateway's engine quits when idle with no window, and
+// the device's return starts a new one. The ids are saved with the record, so the new engine still runs the resend once
+#[tokio::test(flavor = "multi_thread")]
+async fn a_resent_client_id_runs_once_after_the_engine_that_ran_it_exited() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  // The fake keeps its sessions on disk, so the second engine resumes the same one
+  let native = dir.path().join("native");
+  std::fs::create_dir(&native).unwrap();
+  let env = json!({ "env": { "FAKE_SESSION_DIR": native } });
+  let opts = || Opts::with_agents(fake.setting(env.clone()), "fake");
+  let sessions = dir.path().join("sessions");
+  let send = |id: &str, cid: &str| json!({ "type": "send", "sessionId": id, "text": "hi", "clientId": cid });
+  let a = Mgr::new(&sessions, opts());
+  a.init().await;
+  a.new_session(None).await;
+  a.handle(json!({ "type": "send", "text": "first" })).await;
+  let id = a.active_id().unwrap();
+  until(|| a.active().is_some_and(|s| turns_in(&s) == 2 && s["running"] == false), 5000).await;
+  a.handle(send(&id, "c1")).await;
+  until(|| a.active().is_some_and(|s| turns_in(&s) == 4 && s["running"] == false), 5000).await;
+  a.dispose().await;
+
+  let b = Mgr::new(&sessions, opts());
+  b.init().await;
+  b.m.select_session_for(&b.v, &id).await;
+  until(|| b.active().is_some_and(|s| s["id"] == id.as_str() && s["status"] == "ready"), 5000).await;
+  b.handle(send(&id, "c1")).await;
+  b.handle(send(&id, "c2")).await;
+  until(|| b.active().is_some_and(|s| turns_in(&s) == 6 && s["running"] == false), 5000).await;
+  tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+  assert_eq!(turns_in(&b.active().unwrap()), 6);
+  b.dispose().await;
+}
+
 // The sync model's session facts in the list: a session another engine runs shows there as its owner lists it (a new one
 // at once, a rename) without waiting for a refresh, and a rename or pin made in the other engine is written by the owner
 // instead of being refused as "busy elsewhere"

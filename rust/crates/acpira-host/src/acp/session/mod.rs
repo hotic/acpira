@@ -301,15 +301,15 @@ pub struct AcpSession {
   /// A Claude Code session's calls of the project tools on its SSH host, by the model's call id, until their rows
   /// complete (`remote_claude.rs`)
   pub(crate) remote_calls: parking_lot::Mutex<std::collections::HashMap<String, remote_claude::RemoteCall>>,
-  /// The `clientId`s of the actions this instance ran, newest last (`claim_client_id`)
+  /// The `clientId`s of the actions the session ran, newest last (`claim_client_id`); saved with the record
   client_ids: parking_lot::Mutex<std::collections::VecDeque<String>>,
   /// The plugin host each card offered by `plugin_activate` came through, by card id (`plugin_card.rs`)
   pub(crate) plugin_offers: parking_lot::Mutex<std::collections::HashMap<String, std::sync::Arc<crate::plugins::host::PluginHost>>>,
 }
 
-/// How many `clientId`s a session remembers: a device resends within seconds of losing its link, never hundreds of
-/// actions later
-const CLIENT_IDS: usize = 256;
+/// How many `clientId`s a session remembers: a device resends what it wrote in the last seconds before losing its link,
+/// never dozens of actions later. Every record carries them, so the bound stays small
+const CLIENT_IDS: usize = 32;
 
 /// A fresh view epoch: every opened session gets one, a chain of read-only copies shares one (their revs keep growing)
 pub fn next_view_epoch() -> u64 {
@@ -447,7 +447,7 @@ impl AcpSession {
         epoch,
         host_stdio: Default::default(),
         remote_calls: Default::default(),
-        client_ids: Default::default(),
+        client_ids: parking_lot::Mutex::new(record.client_ids.iter().cloned().collect()),
         plugin_offers: Default::default(),
       }
     })
@@ -455,7 +455,8 @@ impl AcpSession {
 
   /// Whether an action carrying `client_id` should run: a paired device that lost its link resends what it is unsure of
   /// with the same id, and each id runs once. Actions without one always run. Checked where the session is live, so an
-  /// action forwarded over the push bus is counted by the engine that runs it. The memory dies with the instance
+  /// action forwarded over the push bus is counted by the engine that runs it. The ids are saved with the record: an
+  /// engine that exited while the device was away (idle with no window) left them for the one the device wakes
   pub fn claim_client_id(&self, client_id: Option<&str>) -> bool {
     let Some(id) = client_id else { return true };
     let mut ids = self.client_ids.lock();
@@ -496,6 +497,7 @@ impl AcpSession {
         subagents: None,
         goal: None,
         copy_of: None,
+        client_ids: Vec::new(),
       },
       deps,
     )

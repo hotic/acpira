@@ -197,6 +197,7 @@ impl SessionSnapshot {
         subagents: None,
         goal: v.goal,
         copy_of: None,
+        client_ids: Vec::new(),
       },
     }
   }

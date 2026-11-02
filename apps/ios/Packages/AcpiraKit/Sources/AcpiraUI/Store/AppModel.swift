@@ -1,6 +1,7 @@
 import AcpiraDesign
 import AcpiraFixtures
 import AcpiraModels
+import AcpiraSync
 import Foundation
 import Observation
 import SwiftUI
@@ -444,11 +445,13 @@ final class AppModel {
       // The engine's copy names the stored blob: its thumbnail keeps the photo already on the phone
       media.adopt(attachments, session: id)
       let steer = steering(id)
-      post(.send(sessionId: id, text: trimmed, attachments: drafts.isEmpty ? nil : drafts, steer: steer ? true : nil))
+      // Stamped here, so the bubble knows the clientId it can confirm once the engine shows the prompt
+      let message = WebviewMsg.send(sessionId: id, text: trimmed, attachments: drafts.isEmpty ? nil : drafts, steer: steer ? true : nil).stamped()
+      post(message)
       // Reads as sent until the engine shows it, a steer as already in the running turn; queued behind a running turn
       // without steering, the engine's queue row already says where it is
       if let view = views[id], !view.running || steer {
-        outgoing[id, default: []].append(Outgoing(text: trimmed, attachments: attachments, after: view, steer: steer))
+        outgoing[id, default: []].append(Outgoing(text: trimmed, attachments: attachments, after: view, steer: steer, clientId: message.clientId))
         if !view.running { sendingSummary(view, text: trimmed) }
       }
       return
