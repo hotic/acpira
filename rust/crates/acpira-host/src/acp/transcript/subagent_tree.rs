@@ -3,6 +3,7 @@
 //! receipt), lifecycle, early-update buffering and record round trips. All mutations are synchronous. Nodes are found
 //! through peer-id → node-id maps; the root transcript is reached through `RouteCtx`
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use serde_json::{Map, Value};
@@ -13,7 +14,7 @@ use acpira_shared::subagents::{
   SubagentUsage, SubagentVisibility,
 };
 use acpira_shared::transcript::{
-  AgentBlock, AgentTurn, PermissionBlock, QuestionBlock, ToolCallBlock, ToolContent, ToolStatus, Turn, TurnStop,
+  AgentBlock, AgentTurn, PermissionBlock, QuestionBlock, ToolCallBlock, ToolContent, ToolStatus, Turn, TurnStop, UserTurn,
 };
 
 use crate::acp::session::restore_turns::restore_interrupted_turns;
@@ -608,9 +609,30 @@ impl SubagentTree {
     self.nodes.iter().flat_map(|n| n.state.turns.iter())
   }
 
-  pub fn transcript(&self, id: &str) -> Option<(&[Turn], i64, bool)> {
+  /// What a viewer of node `id` reads. A summoned round shows its whole thread up to itself: every earlier round of the
+  /// same native session, then this one, each led by its task as a user turn, so the reader sees what the child already
+  /// heard. The rev sums the shown rounds' revs, which only grows while they stream
+  pub fn transcript(&self, id: &str) -> Option<(Vec<Cow<'_, Turn>>, i64, bool)> {
     let n = self.nodes.iter().find(|n| n.id == id)?;
-    Some((&n.state.turns, n.rev, n.status == SubagentState::Running))
+    let running = n.status == SubagentState::Running;
+    let Some(h) = n.harness.as_ref() else {
+      return Some((n.state.turns.iter().map(Cow::Borrowed).collect(), n.rev, running));
+    };
+    let mut rounds: Vec<&Node> = self
+      .nodes
+      .iter()
+      .filter(|o| o.harness.as_ref().is_some_and(|oh| oh.thread == h.thread && oh.round < h.round))
+      .collect();
+    rounds.sort_by_key(|o| o.harness.as_ref().map(|oh| oh.round));
+    rounds.push(n);
+    let mut turns = vec![];
+    for r in &rounds {
+      if let Some(task) = &r.task {
+        turns.push(Cow::Owned(Turn::User(UserTurn { text: task.clone(), ..Default::default() })));
+      }
+      turns.extend(r.state.turns.iter().map(Cow::Borrowed));
+    }
+    Some((turns, rounds.iter().map(|r| r.rev).sum(), running))
   }
 
   pub fn cancel(&mut self, id: &str) -> Option<String> {

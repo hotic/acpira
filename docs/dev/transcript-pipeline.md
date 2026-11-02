@@ -63,6 +63,7 @@ How ACP updates become transcript blocks and how prompts go out. Normalization l
 - Effort is matched by value, name, then level (`parse_level`), never by substring: a stored `high` on a low / medium / xhigh scale ran at xhigh.
 - A summoned node's approvals follow its own round mode only; root yolo and plan auto-approval never answer it.
 - codex-acp's `read-only` mode still lets in-workspace writes through without a card (`acp-agents-compat.md`), so the brief's "do not modify any file" line is what holds a Codex consult.
+- A summoned node's transcript (`SubagentTree::transcript`) is its thread up to that round, each round led by its task as a user turn; the inspectors (webview and iOS) skip their own task card for such nodes. The node list stays one node per round.
 - Child traffic is keyed `relay:<thread>` (bound as the node's `peer.sessionId`) because two CLIs may mint the same session id.
 - `settle("prompt-returned")` leaves running summoned nodes alone (the call may return before the round). Stop cancels every running round; an edit dropping turns cancels theirs (`relay_truncate`).
 - Root rows: `relay_annotate` recognizes `ask_agent` by name before arguments, because claude-agent-acp 0.83.0 sends an AIR client's first `tool_call` with title only and the input in a title-less refinement.
