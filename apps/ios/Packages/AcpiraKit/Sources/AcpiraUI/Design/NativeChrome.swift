@@ -483,13 +483,64 @@ extension View {
   /// The back button as the bare chevron, without the previous screen's title
   func backWithoutTitle() -> some View {
     #if os(iOS)
-    toolbarRole(.editor)
+    toolbarRole(.editor).backWithoutMenu()
+    #else
+    self
+    #endif
+  }
+
+  /// The back button a page hands to the pages pushed over it, without the long-press history menu: every page here
+  /// leaves its back title empty, so the menu only ever held blank rows
+  func backWithoutMenu() -> some View {
+    #if os(iOS)
+    background { BackMenuOff() }
     #else
     self
     #endif
   }
 
 }
+
+#if os(iOS)
+/// A back item UIKit cannot hang the back-stack menu on: the menu it assigns on push is dropped
+private final class MenulessBackItem: UIBarButtonItem {
+  override var menu: UIMenu? {
+    get { nil }
+    set {}
+  }
+}
+
+/// Sets the hosting page's `backBarButtonItem` (the one the next page's back button is built from) to a menuless one
+private struct BackMenuOff: UIViewControllerRepresentable {
+  func makeUIViewController(context: Context) -> Probe { Probe() }
+  func updateUIViewController(_ controller: Probe, context: Context) {}
+
+  final class Probe: UIViewController {
+    override func loadView() {
+      view = UIView()
+      view.isUserInteractionEnabled = false
+    }
+
+    override func didMove(toParent parent: UIViewController?) {
+      super.didMove(toParent: parent)
+      apply()
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+      super.viewWillAppear(animated)
+      apply()
+    }
+
+    /// The page is the ancestor sitting directly in the navigation stack
+    private func apply() {
+      var page: UIViewController = self
+      while let up = page.parent, !(up is UINavigationController) { page = up }
+      guard page.parent is UINavigationController, !(page.navigationItem.backBarButtonItem is MenulessBackItem) else { return }
+      page.navigationItem.backBarButtonItem = MenulessBackItem(title: "", style: .plain, target: nil, action: nil)
+    }
+  }
+}
+#endif
 
 // MARK: - Screenshot probe
 

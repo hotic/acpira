@@ -521,6 +521,7 @@ struct ListTopBar: ViewModifier {
       // A pushed chat shows back without a word beside it
       .navigationTitle("")
       .navigationBarTitleDisplayModeInline()
+      .backWithoutMenu()
       .toolbar {
         #if os(iOS)
         if let filter { ToolbarItem(placement: .topBarLeading) { filter } }

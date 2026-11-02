@@ -37,6 +37,7 @@ struct SettingsSheet: View {
   var body: some View {
     NavigationStack(path: $path) {
       SettingsScreen()
+        .backWithoutMenu()
         .toolbar {
           ToolbarItem(placement: .primaryAction) { Button(role: .close) { dismiss() } }
         }
