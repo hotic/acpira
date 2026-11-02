@@ -77,8 +77,9 @@
 
   /* composer.above: pieces overhang the transcript's last lines from the dock's top edge (the plan card, a question or
      the composer, whichever is highest), at its end; they take no room and no clicks, so what is under them stays usable */
-  [data-plugin-above] { position: relative; height: 0; }
-  [data-plugin-above] > div { position: absolute; right: calc(var(--spacing-dock) + var(--pad)); bottom: -4px; display: flex; align-items: flex-end; gap: var(--gap); pointer-events: none; }
+  /* In flow, so the dock measures them; the 4px overlap seats them on the edge below */
+  [data-plugin-above] { display: flex; justify-content: flex-end; padding-right: calc(var(--spacing-dock) + var(--pad)); margin-bottom: -4px; }
+  [data-plugin-above] > div { display: flex; align-items: flex-end; gap: var(--gap); pointer-events: none; }
   [data-plugin-above] iframe { pointer-events: none; }
 
   /* A plugin card's thumbnail (plugins/PluginCard.tsx): a small landscape window, the size the LAB settled on */
