@@ -20,6 +20,8 @@ enum Prefs {
   static let listView = "acpira.listView"
   /// Where pinned sessions sit by project: `top` or `project` (PinPlace)
   static let pinPlace = "acpira.pinPlace"
+  /// The first-run flow is over, or was never due (a computer already paired when it would have shown)
+  static let welcomed = "acpira.welcomed"
 
   /// The table a stored language choice selects
   static func resolve(_ locale: String) -> String { locale == "auto" ? L10n.preferred() : locale }

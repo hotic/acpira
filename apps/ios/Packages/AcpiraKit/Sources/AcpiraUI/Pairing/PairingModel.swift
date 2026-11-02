@@ -36,6 +36,8 @@ final class PairingModel {
   private(set) var selectedId: String?
   /// The add-computer sheet over the list
   var addOpen = false
+  /// The first-run flow is on screen and pairs in place: the add-computer sheet stays down meanwhile
+  var onboarding = false
   /// An `acpira://pair/…` link waiting for confirmation in the sheet
   var pendingLink: String?
 

@@ -54,6 +54,7 @@
 - A presence probe never dials the followed computer while it is dialed or connected: the gateway keeps one connection per device, so a second one replaced the app's wire.
 - Blobs: a paired wire fetches over its own link (`PairedBlobs`), the computer's blob route is loopback only. The gateway refuses `imageBlob` from devices, so a paired loader stages nothing (`canStage`). A sent photo is aliased under the blob name the engine will store (`MediaLoader.adopt` mirrors `transcript_store.rs` `blob_name` / `ext_of_mime`), or the thumbnail falls back to its placeholder. A blob name always holds a dot, base64 never does.
 - Notifications (`Pairing/PushCenter.swift`; gateway side in host-architecture.md): every wire sends `registerPush`, nil while notifications are off, nothing while permission or token is still pending (a nil would stop them). The APNs environment comes from the embedded provisioning profile; TestFlight and App Store builds carry none and use production. The team reaches the app as `AcpiraTeamID` in the Info.plist.
+- First run (`Welcome/WelcomeFlow.swift`): only for a bare launch that finds no computer paired, once (`Prefs.welcomed`, also set when a computer is found); its pairing step is `PairSheet(inline:)`, so the add sheet stays down meanwhile (`PairingModel.onboarding`). Notification permission is asked in its own step, so a wire asks only on installs that never saw the flow. Until a computer's lists are in, a regular width shows the connect page full-window, not the split.
 - A scanned code is redrawn from Vision's descriptor: CoreImage's encoder picks another mask than the gateway's `qrcode`. The paired moment is the pair reply, not the wire; `PairingTokens.swift` mirrors `devices.css` / `DevicesCard.tsx` timings.
 - Two sheets cannot share a presenter: the add-computer sheet is raised by settings while settings are up, else by the root.
 - `PasteButton`'s label follows `CFBundleLocalizations` (`Acpira-Info.plist`), not the in-app language. Elsewhere the pasteboard is only asked `hasImages`: reading raises the paste prompt.
@@ -79,6 +80,7 @@
 - `simctl recordVideo` right after a boot can stall for seconds: record again before calling it a bug.
 - Frame timing: Instruments' hitch template refuses the simulator; Time Profiler and its potential-hangs table work. Debug builds take `-frameprobe` (`FrameProbe`), timed between two Darwin notifications. Time with Swift optimisation on: a plain Debug build runs several times slower.
 - The first accessibility client to attach after launch (an automation tool's first call) costs the app a 100+ ms frame once: warm it up before timing.
+- A build with the paired-remote module keeps the phone's list on the connect page until a computer is paired, demo launch or not; list scenarios need a build without it (`ACPIRA_NET=0`).
 
 ## Platform behaviour
 
