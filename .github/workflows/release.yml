@@ -196,6 +196,12 @@ jobs:
             vsix.sha256
           if-no-files-found: error
           retention-days: 30
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sums-vsix
+          path: vsix.sha256
+          if-no-files-found: error
+          retention-days: 30
 
   # The IntelliJ plugin: the same version (build.gradle.kts reads package.json), one zip per OS / CPU with its sidecar binary.
   build-idea:
@@ -343,24 +349,37 @@ jobs:
           prev=()
           for tag in $(gh release list --exclude-drafts --exclude-pre-releases --limit 10 --json tagName --jq '.[].tagName' | grep -vFx "v$version" | head -3); do
             from="${tag#v}"
-            if gh release download "$tag" --dir prev --pattern "Acpira-$from-darwin-aarch64.app.tar.zst" 2>/dev/null; then
+            # On the packages Release since 2.0.6, on the version's own Release before
+            if gh release download packages --dir prev --pattern "Acpira-$from-darwin-aarch64.app.tar.zst" 2>/dev/null \
+              || gh release download "$tag" --dir prev --pattern "Acpira-$from-darwin-aarch64.app.tar.zst" 2>/dev/null; then
               prev+=(--prev "$from=prev/Acpira-$from-darwin-aarch64.app.tar.zst")
             fi
           done
           gh release view "$RELEASE_TAG" --json body --jq .body > notes.md 2>/dev/null || : > notes.md
           rust/target/release/acpira-update-pack pack --app apps/desktop/target/aarch64-apple-darwin/release/bundle/macos/Acpira.app \
-            --version "$version" --base-url "https://github.com/$GH_REPO/releases/download/v$version" --out out \
+            --version "$version" --base-url "https://github.com/$GH_REPO/releases/download/packages" --out out \
             --notes-file notes.md "${prev[@]}" --unsigned
           # This platform's part of the manifest; desktop-update merges the parts and signs the result
           mv out/desktop-update.json part/
-          cp apps/desktop/target/aarch64-apple-darwin/release/bundle/dmg/Acpira_"$version"_aarch64.dmg out/
-          (cd out && shasum -a 256 Acpira* > desktop.sha256)
-          cat out/desktop.sha256 >> "$GITHUB_STEP_SUMMARY"
+          # out/ (update packages) goes to the packages Release, dl/ (the dmg) to the version's Release
+          mkdir -p dl sums
+          cp apps/desktop/target/aarch64-apple-darwin/release/bundle/dmg/Acpira_"$version"_aarch64.dmg dl/
+          (cd dl && shasum -a 256 *; cd ../out && shasum -a 256 *) > sums/desktop-mac.sha256
+          cat sums/desktop-mac.sha256 >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
         if: steps.creds.outputs.ready == 'true'
         with:
           name: desktop-app
-          path: out/
+          path: |
+            out/
+            dl/
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v7
+        if: steps.creds.outputs.ready == 'true'
+        with:
+          name: sums-desktop-mac
+          path: sums/
           if-no-files-found: error
           retention-days: 30
       - uses: actions/upload-artifact@v7
@@ -370,12 +389,13 @@ jobs:
           path: part/
           if-no-files-found: error
           retention-days: 30
-      # The packages only: the manifest goes up in desktop-update, after every platform's files are on the Release
-      - name: Attach the app to the GitHub Release
+      # The packages only: the manifest goes up in desktop-update, after every platform's files are on the Releases
+      - name: Attach the app to the GitHub Releases
         if: steps.creds.outputs.ready == 'true' && env.PUBLISH == 'true'
         run: |
+          node scripts/release/packages-release.mjs upload out/*
           gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' > assets.txt
-          for file in out/*; do
+          for file in dl/*; do
             grep -Fxq "$(basename "$file")" assets.txt || gh release upload "$RELEASE_TAG" "$file"
           done
 
@@ -432,22 +452,34 @@ jobs:
           prev=()
           for tag in $(gh release list --exclude-drafts --exclude-pre-releases --limit 10 --json tagName --jq '.[].tagName' | grep -vFx "v$version" | head -3); do
             from="${tag#v}"
-            if gh release download "$tag" --dir prev --pattern "Acpira-$from-windows-x86_64.exe.tar.zst" 2>/dev/null; then
+            # On the packages Release since 2.0.6, on the version's own Release before
+            if gh release download packages --dir prev --pattern "Acpira-$from-windows-x86_64.exe.tar.zst" 2>/dev/null \
+              || gh release download "$tag" --dir prev --pattern "Acpira-$from-windows-x86_64.exe.tar.zst" 2>/dev/null; then
               prev+=(--prev "$from=prev/Acpira-$from-windows-x86_64.exe.tar.zst")
             fi
           done
           gh release view "$RELEASE_TAG" --json body --jq .body > notes.md 2>/dev/null || : > notes.md
           rust/target/release/acpira-update-pack.exe pack --app apps/desktop/target/windows/Acpira.exe --platform windows-x86_64 \
-            --version "$version" --base-url "https://github.com/$GH_REPO/releases/download/v$version" --out out \
+            --version "$version" --base-url "https://github.com/$GH_REPO/releases/download/packages" --out out \
             --notes-file notes.md "${prev[@]}" --unsigned
           mv out/desktop-update.json part/
-          cp "apps/desktop/target/windows/Acpira-$version-windows-x86_64-portable.zip" out/
-          (cd out && sha256sum Acpira* > desktop-windows.sha256)
-          cat out/desktop-windows.sha256 >> "$GITHUB_STEP_SUMMARY"
+          # out/ (update packages) goes to the packages Release, dl/ (the zip) to the version's Release
+          mkdir -p dl sums
+          cp "apps/desktop/target/windows/Acpira-$version-windows-x86_64.zip" dl/
+          (cd dl && sha256sum *; cd ../out && sha256sum *) > sums/desktop-windows.sha256
+          cat sums/desktop-windows.sha256 >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
         with:
           name: desktop-windows
-          path: out/
+          path: |
+            out/
+            dl/
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sums-desktop-windows
+          path: sums/
           if-no-files-found: error
           retention-days: 30
       - uses: actions/upload-artifact@v7
@@ -456,11 +488,91 @@ jobs:
           path: part/
           if-no-files-found: error
           retention-days: 30
-      - name: Attach the app to the GitHub Release
+      - name: Attach the app to the GitHub Releases
+        if: env.PUBLISH == 'true'
+        run: |
+          node scripts/release/packages-release.mjs upload out/*
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' > assets.txt
+          for file in dl/*; do
+            grep -Fxq "$(basename "$file")" assets.txt || gh release upload "$RELEASE_TAG" "$file"
+          done
+
+  # The Linux desktop app (docs/dev/desktop.md "Linux"), a preview: deb, rpm and AppImage for x64 from
+  # apps/desktop/scripts/package-linux.mjs, built on Ubuntu 22.04 for a low glibc floor. No in-app updates yet, so it
+  # adds nothing to the manifest; it needs no secret and nothing waits on it but release-sums.
+  desktop-linux:
+    needs: [sidecar, build]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      version: ${{ needs.build.outputs.version }}
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.ref }}
+      PUBLISH: ${{ github.event_name == 'release' || inputs.publish }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.ref }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.99.1'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            rust
+            apps/desktop
+          key: desktop-linux
+      # GTK 3 / WebKitGTK 4.1 to link the shell; rpm, squashfs, patchelf and file for the rpm and the AppImage
+      - name: Install the build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev rpm zstd squashfs-tools desktop-file-utils patchelf \
+            fakeroot file
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v8
+        with:
+          name: sidecar-linux-x86_64
+          path: dist/sidecar
+      - name: Build the packages
+        run: |
+          chmod +x dist/sidecar/*/acpira dist/sidecar/*/acpira-gateway
+          pnpm build
+          node apps/desktop/scripts/package-linux.mjs
+          mkdir -p dl sums
+          bundle=apps/desktop/target/x86_64-unknown-linux-gnu/release/bundle
+          cp "$bundle"/deb/*.deb "$bundle"/rpm/*.rpm "$bundle"/appimage/*.AppImage dl/
+          # One of each, named for this version
+          set -- dl/*"$version"*
+          test $# = 3
+          (cd dl && sha256sum *) > sums/desktop-linux.sha256
+          cat sums/desktop-linux.sha256 >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desktop-linux
+          path: dl/
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sums-desktop-linux
+          path: sums/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Attach the packages to the GitHub Release
         if: env.PUBLISH == 'true'
         run: |
           gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' > assets.txt
-          for file in out/*; do
+          for file in dl/*; do
             grep -Fxq "$(basename "$file")" assets.txt || gh release upload "$RELEASE_TAG" "$file"
           done
 
@@ -531,39 +643,69 @@ jobs:
             grep -Fxq "$name" assets.txt || gh release upload "$RELEASE_TAG" "out/$name"
           done
 
+  # The VSIXes go to the packages Release, not the version's: they install from the marketplaces, and an engine connecting
+  # to an SSH host without its platform's build takes that platform's VSIX from there, checked against the version's
+  # SHA256SUMS (rust/crates/acpira-host/src/remote/fetch.rs). The IntelliJ zips stay off GitHub: the plugin installs from
+  # the JetBrains Marketplace
   release-asset:
-    needs: [build, build-idea]
+    needs: [build]
     if: github.event_name == 'release' || inputs.publish
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.ref }}
+          persist-credentials: false
+          sparse-checkout: scripts/release
       - uses: actions/download-artifact@v8
         with:
           name: extension-vsix
-      - uses: actions/download-artifact@v8
-        with:
-          name: intellij-plugin
-          path: idea
-      # The per-platform zips and SHA256SUMS must stay on the Release: an engine connecting to an SSH host without its
-      # platform's build downloads acpira-<version>-<platform>.zip from here and checks it against SHA256SUMS
-      # (rust/crates/acpira-host/src/remote/fetch.rs). The universal zip only goes to the JetBrains Marketplace
-      - name: Attach packages to GitHub Release
+          path: vsix
+      - name: Attach the VSIXes to the packages Release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.ref }}
         run: |
-          sha256sum --check vsix.sha256
-          (cd idea && sha256sum --check SHA256SUMS --ignore-missing)
-          # Keep original release assets on retries instead of replacing a published package.
-          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' > assets.txt
-          for file in *.vsix vsix.sha256 $(ls idea/*.zip | grep -v -- '-universal\.zip$') idea/SHA256SUMS; do
-            if ! grep -Fxq "$(basename "$file")" assets.txt; then
-              gh release upload "$RELEASE_TAG" "$file"
-            fi
-          done
+          (cd vsix && sha256sum --check vsix.sha256)
+          node scripts/release/packages-release.mjs upload vsix/*.vsix
+
+  # The version's one checksum file, listing its downloads and its files on the packages Release alike, from whatever
+  # built (the macOS app is missing without its secrets). Then files of versions outside the newest ten stable Releases
+  # leave the packages Release: deltas only reach back three, and an engine that old fetches no SSH helper anymore
+  release-sums:
+    needs: [build, release-asset, desktop, desktop-windows, desktop-linux]
+    if: always() && needs.build.result == 'success' && (github.event_name == 'release' || inputs.publish)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.ref }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.ref }}
+          persist-credentials: false
+          sparse-checkout: scripts/release
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: sums-*
+          merge-multiple: true
+          path: sums
+      - name: Attach SHA256SUMS
+        run: |
+          cat sums/*.sha256 | sort -k2 > SHA256SUMS
+          cat SHA256SUMS >> "$GITHUB_STEP_SUMMARY"
+          # Replaced on a rerun: a job that failed before may have added files since
+          gh release upload "$RELEASE_TAG" SHA256SUMS --clobber
+      - name: Prune the packages Release
+        if: needs.release-asset.result == 'success'
+        run: node scripts/release/packages-release.mjs prune 10
 
   jetbrains-marketplace:
     needs: [build, build-idea]
@@ -588,7 +730,7 @@ jobs:
           version: ${{ needs.build.outputs.version }}
         run: |
           sha256sum --check SHA256SUMS --ignore-missing
-          # One version works across different client/backend platforms. Per-platform archives stay on the GitHub Release.
+          # One version works across different client/backend platforms. The per-platform zips stay workflow artifacts.
           curl -fsS "https://plugins.jetbrains.com/plugins/list?pluginId=com.github.hotic.acpira" > published.xml
           if grep -Fq "<version>$version</version>" published.xml; then
             echo "$version is already on the Marketplace"

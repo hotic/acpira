@@ -104,4 +104,4 @@ WebKitGTK 4.1, deb / rpm / AppImage, no in-app updates; observed on WebKitGTK 2.
 - No GPU means no WebGL in `OffscreenCanvas` (`effects/webgl.ts` falls back).
 - Build on Ubuntu 22.04 for a low glibc floor. The engine sits in `libexec/acpira/` with `acpira-gateway` beside it: linuxdeploy patchelfs every ELF under `usr/bin` and `usr/lib`, treats static-pie as dynamic, and crashed the engine.
 - An AppImage relaunch mounts at a new path, so it starts a second engine.
-- Smoke-verified under Xvfb + openbox. Not yet: GNOME / Plasma Wayland, NVIDIA (blank window; `WEBKIT_DISABLE_DMABUF_RENDERER=1` usual remedy), IME, fractional scaling, a release job. AppImage needs libfuse2 and registers no `acpira://`. Flatpak / Snap would cut the engine off from CLIs on PATH.
+- Smoke-verified under Xvfb + openbox. Not yet: GNOME / Plasma Wayland, NVIDIA (blank window; `WEBKIT_DISABLE_DMABUF_RENDERER=1` usual remedy), IME, fractional scaling; the release ships the packages (`desktop-linux`) as a preview until those are checked. AppImage needs libfuse2 and registers no `acpira://`. Flatpak / Snap would cut the engine off from CLIs on PATH.

@@ -25,7 +25,7 @@ OpenSSH behaviour the code relies on (OpenSSH 10.3 client, Ubuntu and macOS serv
 - A dropped channel fails pending requests as `Disconnected`: the operation may or may not have happened, and nothing replays it. Every `exec` runs in its own process group, killed on cancel, timeout or helper exit.
 - The helper never hashes itself (slow on a debug build); the deployer passes `--digest`.
 - Each build gets its own `~/.acpira/remote/bin/<version>-<digest16>/` on the host; uploads are sha256-checked there, then `mv -f`. The host never downloads anything. No lock on purpose: concurrent engines rename identical verified bytes over each other.
-- Other platforms' helpers are not packaged, so connecting fetches a missing build as one of its steps (`remote/fetch.rs`, from the engine version's IntelliJ release archive, checked against `SHA256SUMS`); a separate download button went unnoticed. A fetch failure is final until a retry; a dev build with no release always fails.
+- Other platforms' helpers are not packaged, so connecting fetches a missing build as one of its steps (`remote/fetch.rs`, from the engine version's VSIX on the `packages` Release, checked against the version's `SHA256SUMS`); a separate download button went unnoticed. A fetch failure is final until a retry; a dev build with no release always fails.
 
 ## Connections
 
