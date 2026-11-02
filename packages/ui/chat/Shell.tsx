@@ -61,7 +61,7 @@ import { ProjectPick, StartPicker, usePresence } from './StartPage';
 import { AppMenu, NoProject, ShellToastItems, ShellToasts, TitleRow, TitleSpace, useSessionHistory, type QuickSettings } from './DesktopFrame';
 import type { SettingsPage } from '../settings/Nav';
 import { Lightbox } from './Lightbox';
-import { OpenToolFileContext, AsyncTaskStopContext, BlobUrlContext, DiffSourceContext, FileStagerContext, OpenBlobContext, OpenSessionContext, SessionTitleContext, SkillDescriptionContext, ToolFileActionsContext, resolveSessionPath, type FileStager, type ToolFileActions } from './fileLinks';
+import { OpenToolFileContext, AsyncTaskStopContext, BlobUrlContext, WidgetPromptContext, DiffSourceContext, FileStagerContext, OpenBlobContext, OpenSessionContext, SessionTitleContext, SkillDescriptionContext, ToolFileActionsContext, resolveSessionPath, type FileStager, type ToolFileActions } from './fileLinks';
 import { skillDescriptions } from './slashCommands';
 import { TurnActionsContext } from './TurnActions';
 import { ForkBoundary } from './ForkBoundary';
@@ -590,6 +590,10 @@ export function Shell(p: ShellProps) {
   const blobUrl = useMemo(() => (p.blobBase && p.activeSessionId ? (blob: string) => `${p.blobBase}/${p.activeSessionId}/${blob}` : undefined), [p.blobBase, p.activeSessionId]);
   // Child transcripts share the root session's blob store, so both contexts live above Thread and the inspector
   const openBlob = useMemo(() => p.activeSessionId && on.openBlob ? (name: string) => on.openBlob!(p.activeSessionId!, name) : undefined, [p.activeSessionId, on.openBlob]);
+  // A widget's acpira.sendPrompt in the main thread: a message like one typed in the composer, queued behind a running turn.
+  // Only where the composer could send it too (not an imported session, a sample or a session that is not up)
+  const canSend = !p.external && !p.sample && !!p.activeSessionId && (p.status === 'ready' || p.status === 'starting');
+  const widgetPrompt = useMemo(() => canSend ? (text: string) => on.send(text, []) : undefined, [canSend, on.send]);
   // Files rows show from their paths. Each mount asks the host again (a stat while the file is unchanged), so a file
   // rewritten and shown again is never the old one; an image is decoded before it replaces its placeholder
   const fileStager = useMemo<FileStager | undefined>(() => {
@@ -1193,6 +1197,7 @@ export function Shell(p: ShellProps) {
                     <HistoryContext.Provider value={history}>
                     <HistoryComposerContext.Provider value={history?.editing !== undefined ? composerProps : undefined}>
                       <OpenToolFileContext.Provider value={openToolFile}>
+                      <WidgetPromptContext.Provider value={widgetPrompt}>
                         <TurnActionsContext.Provider value={turnActions}>
                           <SidekickModelsContext.Provider value={sidekickModels}>
                           <Thread key={p.activeSessionId} session={p.activeSessionId} turns={held.turns} running={held.running} wide={wide} replayKey={p.replayKey} catchingUp={p.catchingUp} blobUrl={blobUrl} contentRef={contentRef} commands={p.commands} summons={summons}
@@ -1201,6 +1206,7 @@ export function Shell(p: ShellProps) {
                             onPermission={onPermission} />
                           </SidekickModelsContext.Provider>
                         </TurnActionsContext.Provider>
+                      </WidgetPromptContext.Provider>
                       </OpenToolFileContext.Provider>
                     </HistoryComposerContext.Provider>
                     </HistoryContext.Provider>

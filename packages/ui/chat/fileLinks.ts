@@ -48,6 +48,9 @@ export const SessionTitleContext = createContext<((ref: string) => string | unde
 
 // Agent-emitted images are blob-store files: the URL builds them for <img>, the opener hands the host the blob name
 export const BlobUrlContext = createContext<((blob: string) => string) | undefined>(undefined);
+// A show_widget widget's `acpira.sendPrompt`: the text goes out as the user's next message in the thread's session (queued
+// behind a running turn). Absent outside the main thread (a subagent's inspector, an imported session), where widgets stay one-way
+export const WidgetPromptContext = createContext<((text: string) => void) | undefined>(undefined);
 export const OpenBlobContext = createContext<((blob: string) => void) | undefined>(undefined);
 
 // A row's image, video or widget kept as a path (every one of a session on an SSH host), or a Markdown image the host
