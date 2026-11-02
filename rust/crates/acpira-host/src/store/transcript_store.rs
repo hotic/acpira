@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use tokio::fs;
 
 use acpira_shared::model_shapes::{ModelShapes, session_model};
-use acpira_shared::transcript::{AgentId, CategoryOp, DiffSource, collect_text_blobs, SessionCategories, SessionControls, SessionModel, SessionSummary, TurnSettings};
+use acpira_shared::transcript::{AgentId, CategoryOp, DiffSource, collect_text_blobs, SessionCategories, SessionControls, SessionModel, SessionSummary, SlashCommand, TurnSettings};
 
 use super::blob_pool;
 use super::diff_texts;
@@ -586,6 +586,26 @@ impl TranscriptStore {
     let path = confined(&self.dir, &format!("{id}.json")).await?;
     let raw = fs::read(&path).await.ok()?;
     serde_json::from_slice::<ControlsOnly>(&raw).ok().filter(|r| r.id == id).map(|r| r.controls)
+  }
+
+  /// Only a record's slash commands, read like `load_controls` without building the transcript
+  pub async fn load_commands(&self, id: &str) -> Option<Vec<SlashCommand>> {
+    #[derive(Deserialize)]
+    struct CommandsOnly {
+      id: String,
+      #[serde(default)]
+      commands: Vec<SlashCommand>,
+    }
+    if !is_session_id(id) {
+      return None;
+    }
+    let pending = self.state.lock().pending.get(id).map(|p| p.source.clone());
+    if let Some(src) = pending {
+      return Some(src.record().commands);
+    }
+    let path = confined(&self.dir, &format!("{id}.json")).await?;
+    let raw = fs::read(&path).await.ok()?;
+    serde_json::from_slice::<CommandsOnly>(&raw).ok().filter(|r| r.id == id).map(|r| r.commands)
   }
 
   /// Compatibility wrapper for callers that only need the record. Detailed callers should use `load_detailed`.

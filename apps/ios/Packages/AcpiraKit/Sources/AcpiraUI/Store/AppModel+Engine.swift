@@ -105,9 +105,10 @@ extension AppModel {
       accounts = list
     case .settings(let next, _):
       settings = next
-    case let .controls(agent, controls, shapes):
+    case let .controls(agent, controls, shapes, commands):
       agentControls[agent] = controls
       if let shapes { agentShapes[agent] = shapes }
+      agentCommands[agent] = commands
     case .accountActions(let actions):
       report(actions)
     case let .sessionHits(seq, list):

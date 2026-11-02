@@ -1045,8 +1045,9 @@ public enum HostMsg: Codable, Hashable, Sendable {
   case hidden(hidden: HiddenMap)
   /// The settings view and the resolved locale (a language change swaps both at once)
   case settings(settings: SettingsView, locale: String)
-  /// An agent's model controls, answering the settings page's `controls` request; shapes: its remembered per-model ones
-  case controls(agent: AgentId, controls: [ConfigControl], shapes: ModelShapes? = nil)
+  /// An agent's model controls, answering the settings page's `controls` request; shapes: its remembered per-model ones;
+  /// commands: the slash commands its newest session advertised, the new session page's `/` menu before a session runs
+  case controls(agent: AgentId, controls: [ConfigControl], shapes: ModelShapes? = nil, commands: [SlashCommand] = [])
   /// The answer to searchSessions with the same seq; a lower seq is stale
   case sessionHits(seq: Int, hits: [SessionHit])
   /// One observed subagent's transcript, pushed to the viewer that asked for it; rev grows with every change
@@ -1129,7 +1130,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
 
   private enum Keys: String, CodingKey {
     case type, state, agents, sessions, categories, session, patch, accounts, actions, hidden, settings, locale, agent
-    case controls, shapes, seq, hits
+    case controls, shapes, commands, seq, hits
     case sessionId, subagentId, rev, running, turns, files, source, blob, markdown, error, entries, root, marks, text
     case hunks, id, data, title, cols, rows, replay, exit, requestId, undo, appearance, connections
   }
@@ -1154,7 +1155,8 @@ public enum HostMsg: Codable, Hashable, Sendable {
       self = .settings(settings: try c.decode(SettingsView.self, forKey: .settings), locale: try c.decode(String.self, forKey: .locale))
     case "controls":
       self = .controls(agent: try c.decode(String.self, forKey: .agent), controls: try c.decode([ConfigControl].self, forKey: .controls),
-                       shapes: try c.decodeIfPresent(ModelShapes.self, forKey: .shapes))
+                       shapes: try c.decodeIfPresent(ModelShapes.self, forKey: .shapes),
+                       commands: try c.decodeIfPresent([SlashCommand].self, forKey: .commands) ?? [])
     case "sessionHits": self = .sessionHits(seq: try c.decode(Int.self, forKey: .seq), hits: try c.decode([SessionHit].self, forKey: .hits))
     case "subagent":
       self = .subagent(sessionId: try str(.sessionId), subagentId: try str(.subagentId), rev: try int(.rev),
@@ -1201,10 +1203,11 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case let .settings(settings, locale):
       try c.encode(settings, forKey: .settings)
       try c.encode(locale, forKey: .locale)
-    case let .controls(agent, controls, shapes):
+    case let .controls(agent, controls, shapes, commands):
       try c.encode(agent, forKey: .agent)
       try c.encode(controls, forKey: .controls)
       try c.encodeIfPresent(shapes, forKey: .shapes)
+      if !commands.isEmpty { try c.encode(commands, forKey: .commands) }
     case let .sessionHits(seq, hits):
       try c.encode(seq, forKey: .seq)
       try c.encode(hits, forKey: .hits)

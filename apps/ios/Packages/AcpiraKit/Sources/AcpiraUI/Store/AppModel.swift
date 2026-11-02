@@ -67,6 +67,9 @@ final class AppModel {
   /// Each agent's remembered per-model parameters, from the same answer (modelShapes.ts): a model picked on the new
   /// session page brings its own effort and Fast from here, as only a live session's set_config_option would
   var agentShapes: [AgentId: ModelShapes] = [:]
+  /// Each agent's slash commands from the same answer (its newest session's): the new session page has no session to
+  /// advertise them, the desktop starts the CLI with its page and the phone only with the first prompt
+  var agentCommands: [AgentId: [SlashCommand]] = [:]
   /// Agents whose empty `controls` answer was followed by a fresh probe on this wire, so it is asked once
   var probedControls: Set<AgentId> = []
   var summaries: [SessionSummary]
@@ -392,6 +395,15 @@ final class AppModel {
       .min { $0.id < $1.id }?.controls
     let fallback = link == nil ? own ?? Fixtures.session("showcase")?.controls : nil
     return latest.flatMap { views[$0.id]?.controls } ?? fallback ?? SessionControls()
+  }
+
+  /// The slash commands a new session of `agent` offers before it runs: the engine's answer, else a kept view's of the
+  /// agent (the demo's fixtures among them)
+  func commands(for agent: AgentId) -> [SlashCommand] {
+    if let known = agentCommands[agent], !known.isEmpty { return known }
+    let latest = summaries.filter { $0.agent == agent }.sorted { $0.updatedAt > $1.updatedAt }
+    return latest.lazy.compactMap { self.views[$0.id]?.commands }.first { !$0.isEmpty }
+      ?? views.values.filter { $0.agent == agent && !$0.commands.isEmpty }.min { $0.id < $1.id }?.commands ?? []
   }
 
   /// The per-model parameters a model pick on the new session page reshapes with: the engine's answer, else those a

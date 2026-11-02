@@ -297,6 +297,21 @@ impl SessionManager {
     vec![]
   }
 
+  /// The slash commands this agent's newest session advertised, for a page with no session of its own yet
+  pub async fn known_commands(&self, agent: &str) -> Vec<SlashCommand> {
+    let index = self.state.lock().index.clone();
+    for s in index.iter().filter(|s| s.agent == agent) {
+      let commands = match self.live(&s.id) {
+        Some(l) => l.agent_commands(),
+        None => self.deps.store.load_commands(&s.id).await.unwrap_or_default(),
+      };
+      if !commands.is_empty() {
+        return commands;
+      }
+    }
+    vec![]
+  }
+
   /// The parameters each of this agent's models came with, as remembered from its sessions (`model_shapes.rs`)
   pub fn model_shapes(&self, agent: &str) -> Option<ModelShapes> {
     self.state.lock().prefs.model_shapes.as_ref().and_then(|s| s.get(agent).cloned())
