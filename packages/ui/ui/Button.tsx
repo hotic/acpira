@@ -101,6 +101,7 @@ export interface ChipProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   trail?: ReactNode;
   // What survives below the sm container tier (the toolbar of a 380 sidebar has ~324px): 'icon' keeps just the icon, 'text' keeps just the label;
   // the caret goes first either way (as in Devin's own composer, which has none). The title keeps the full name. Needs an @container ancestor.
+  // 'icon' also folds at any width inside a `group/bar` carrying `data-squeezed` (the composer toolbar making room for the model chip).
   // 'icon-xl' keeps just the icon below the xl tier already: several live-context chips sharing the composer toolbar
   narrow?: 'icon' | 'icon-xl' | 'text';
   children: ReactNode;
@@ -203,13 +204,13 @@ export function Chip({ className, children, variant = 'quiet', caret = true, ico
     >
       {icon && <span className={cn('flex shrink-0 items-center [&_svg]:size-icon', variant === 'quiet' && 'text-fg-3')}>{icon}</span>}
       {/* A null label leaves just the icon (the model chip stepping down to its marks) */}
-      {children != null && <span className={cn('truncate text-left', tags ? 'shrink-0' : 'grow', narrow === 'icon' && '@max-sm:hidden', narrow === 'icon-xl' && '@max-xl:hidden')}>
+      {children != null && <span className={cn('truncate text-left', tags ? 'shrink-0' : 'grow', narrow === 'icon' && '@max-sm:hidden group-data-[squeezed]/bar:hidden', narrow === 'icon-xl' && '@max-xl:hidden')}>
         {children}
         {meta && <span className="text-fg-3"> {meta}</span>}
       </span>}
       {tagsKey !== undefined ? <TagTrail tagsKey={tagsKey}>{tags}</TagTrail> : tags && <span className={TAGS}>{tags}</span>}
       {trail}
-      {caret && <ChevronDown className={cn('size-3 shrink-0 text-fg-3', CARET_TURN, narrow && '@max-sm:hidden')} strokeWidth={1.75} />}
+      {caret && <ChevronDown className={cn('size-3 shrink-0 text-fg-3', CARET_TURN, narrow && '@max-sm:hidden', narrow === 'icon' && 'group-data-[squeezed]/bar:hidden')} strokeWidth={1.75} />}
     </button>
   );
 }
