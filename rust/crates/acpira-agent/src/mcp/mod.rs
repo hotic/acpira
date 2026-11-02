@@ -419,17 +419,11 @@ impl Hub {
   pub async fn call(&self, server: &str, tool: &str, args: Value, progress: Option<Progress>) -> Result<Value, String> {
     let s = self.servers.iter().find(|s| s.key == server).ok_or_else(|| format!("the MCP server {server} is not configured in this session"))?;
     let live = s.started().ok_or_else(|| format!("the MCP server {server} is not running"))?;
-    let result = live.transport.request("tools/call", json!({ "name": tool, "arguments": args }), progress, CALL_TIMEOUT).await;
-    // A plugin the user just applied may bring tools: the engine's server lists again before the turn's next request,
-    // so the model can call what it built in the same turn (the one change worth the prompt cache mid-turn)
-    if server == safe(crate::acp::ACPIRA_SERVER) && tool == "plugin_activate" && result.is_ok() {
-      s.relist.store(true, Ordering::Release);
-    }
-    result
+    live.transport.request("tools/call", json!({ "name": tool, "arguments": args }), progress, CALL_TIMEOUT).await
   }
 
-  /// Whether a server is to list again before the turn's next request: a plugin was applied (`call`). A plain
-  /// `list_changed` waits for the next turn
+  /// Whether a server is to list again before the turn's next request (`relist`). A plain `list_changed` waits for the
+  /// next turn
   pub fn pending(&self) -> bool {
     self.servers.iter().any(|s| s.relist.load(Ordering::Acquire))
   }

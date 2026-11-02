@@ -74,7 +74,7 @@ A step is seconds of model time against milliseconds of tool time, so tools do m
 ## MCP servers
 
 - Servers come only from `mcpServers` in the session request; `sse` is skipped. A turn waits for servers still starting, so the tool set is complete from the first request.
-- Tools are `<server>_<tool>` (the engine recognizes `acpira_show_image` and `acpira_ask_agent` by it). `tools/list_changed` relists at the next turn; only a successful `acpira_plugin_activate` relists before the next request, so a writer calls its new tools in the same turn. `toolsDigest` catches a rewritten definition under the same name.
+- Tools are `<server>_<tool>` (the engine recognizes `acpira_show_image` and `acpira_ask_agent` by it). `tools/list_changed` relists at the next turn. `toolsDigest` catches a rewritten definition under the same name.
 - Server instructions go in an `<mcp>` user-message block, never the system prompt.
 - The engine's tools are allowed by name (`host_tools.rs` `ALL`), not `acpira/*`, so a tool a plugin adds there asks.
 - Result images go inside `tool_result` on Anthropic, as a following user message on Chat / Responses (tool outputs take text only). Cancel does not notify the server.

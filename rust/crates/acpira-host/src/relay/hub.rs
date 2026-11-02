@@ -295,19 +295,12 @@ impl RelayHub {
         };
         let _ = write.write_all(reply(r).as_bytes()).await;
       }
-      HubOp::PluginActivate { id, wait_secs } => {
-        let (Some(p), Some(s)) = (self.plugin_host(), session.upgrade()) else {
-          let _ = write.write_all(reply(HubReply::Error("Plugins are not available in this host.".into())).as_bytes()).await;
-          return;
+      HubOp::PluginActivate { id } => {
+        let r = match (self.plugin_host(), session.upgrade()) {
+          (Some(p), Some(s)) => s.plugin_activate(p, id).await,
+          _ => HubReply::Error("Plugins are not available in this host.".into()),
         };
-        let (tx, mut rx) = mpsc::unbounded_channel::<HubReply>();
-        tokio::spawn(s.plugin_activate(p, id, wait_secs, tx));
-        while let Some(r) = rx.recv().await {
-          let last = !matches!(r, HubReply::Progress(_));
-          if write.write_all(reply(r).as_bytes()).await.is_err() || last {
-            break;
-          }
-        }
+        let _ = write.write_all(reply(r).as_bytes()).await;
       }
       HubOp::SearchSessions(_) | HubOp::ReadSession(_) => {
         let r = self.library_op(&session, caller.is_some(), req.op).await;

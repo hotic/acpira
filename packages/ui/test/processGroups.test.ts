@@ -130,14 +130,6 @@ describe('process parts', () => {
       : part.type === 'subagents' ? part.ids : part.id)).toEqual([['thought:5'], ['n1', 'n2'], ['r1'], 'st', ['r2']]);
   });
 
-  it('puts plugin cards in place of the call that offered them, the work around it folding on', () => {
-    const activate: ToolCallBlock = { type: 'tool_call', id: 'act', kind: 'other', verb: 'plugin_activate', status: 'in_progress' };
-    const items = groupProcess([read('r1', '/a.ts'), activate, read('r2', '/b.ts')]);
-    expect(processParts(items, new Set(['act'])).map(part => part.type === 'items' ? part.items.map(item => item.id) : `${part.type}:${part.id}`))
-      .toEqual([['r1'], 'cards:act', ['r2']]);
-    expect(processParts(items).map(part => part.type)).toEqual(['items']);
-  });
-
   it('never groups a delegation with the reads around it, whatever its kind', () => {
     expect(groupProcess([read('r1', '/a.ts'), delegate('d1', 'n1'), read('r2', '/b.ts')]).map(item => item.type)).toEqual(['block', 'block', 'block']);
   });
