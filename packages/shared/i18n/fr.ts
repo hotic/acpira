@@ -963,7 +963,6 @@ export const fr = {
   'settings.openFilesWith': 'Ouvrir les fichiers avec',
   'settings.openFilesWith.desc': 'Où s’ouvrent liens de fichiers et plans',
   'settings.openFilesWith.system': 'Application par défaut',
-  'settings.about.title': 'À propos d’Acpira',
   'settings.about.releaseNotes': 'Notes de version',
   'settings.about.source': 'Code source',
   'settings.update.version': 'Acpira {version}',

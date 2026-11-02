@@ -943,7 +943,6 @@
   "settings.openFilesWith": "Dateien öffnen mit",
   "settings.openFilesWith.desc": "Wo Dateilinks und Pläne geöffnet werden",
   "settings.openFilesWith.system": "Systemstandard",
-  "settings.about.title": "Über Acpira",
   "settings.about.releaseNotes": "Versionshinweise",
   "settings.about.source": "Quellcode",
   "settings.update.version": "Acpira {version}",

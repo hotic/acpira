@@ -983,7 +983,6 @@ export const ru = {
   'settings.openFilesWith': 'Открывать файлы в',
   'settings.openFilesWith.desc': 'Где открываются ссылки на файлы и планы',
   'settings.openFilesWith.system': 'Системное приложение',
-  'settings.about.title': 'Об Acpira',
   'settings.about.releaseNotes': 'Список изменений',
   'settings.about.source': 'Исходный код',
   'settings.update.version': 'Acpira {version}',

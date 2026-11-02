@@ -995,7 +995,6 @@ export const zhCN = {
   'settings.openFilesWith': '打开文件',
   'settings.openFilesWith.desc': '对话里的文件链接和计划用它打开',
   'settings.openFilesWith.system': '系统默认程序',
-  'settings.about.title': '关于 Acpira',
   'settings.about.releaseNotes': '更新日志',
   'settings.about.source': '源代码',
   'settings.update.version': 'Acpira {version}',

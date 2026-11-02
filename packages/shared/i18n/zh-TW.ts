@@ -984,7 +984,6 @@ export const zhTW = {
   'settings.openFilesWith': '開啟檔案方式',
   'settings.openFilesWith.desc': '檔案連結和計畫在哪開啟',
   'settings.openFilesWith.system': '系統預設程式',
-  'settings.about.title': '關於 Acpira',
   'settings.about.releaseNotes': '更新日誌',
   'settings.about.source': '原始碼',
   'settings.update.version': 'Acpira {version}',

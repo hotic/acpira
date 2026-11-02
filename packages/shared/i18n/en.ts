@@ -985,7 +985,6 @@ export const en = {
   'settings.openFilesWith': 'Open files with',
   'settings.openFilesWith.desc': 'Where file links and plans open',
   'settings.openFilesWith.system': 'System default',
-  'settings.about.title': 'About Acpira',
   'settings.about.releaseNotes': 'Release notes',
   'settings.about.source': 'Source code',
   'settings.update.version': 'Acpira {version}',
