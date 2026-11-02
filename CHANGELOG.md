@@ -7,17 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+### Planned
 
-- The GitHub Release lists only what people download: the desktop apps, the update manifest and one `SHA256SUMS`. VSIXes and desktop update packages move to a shared `packages` prerelease, the IntelliJ plugin's per-platform zips leave GitHub (the plugin installs from the JetBrains Marketplace), and the Windows desktop app is `Acpira-<version>-windows-x86_64.zip` again. SSH folders take a missing helper build from the platform's VSIX there.
+- An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
+
+## [2.0.6] - 2026-11-02
 
 ### Added
 
 - **Linux desktop app, preview.** Each release ships x64 deb, rpm and AppImage packages, built on Ubuntu 22.04. They have no in-app updates yet.
+- **Widgets can answer.** A `show_widget` widget's buttons can send a pick as the next message with `window.acpira.sendPrompt(text)`, queued behind a running turn. Only a live session's main thread takes it; inspectors and imported sessions stay one-way.
+- **Auto-compaction can follow the model's window.** The Model limit option compacts each session a little below the context size its agent reports. A custom count works as before.
+- **Plugin menus and hooks.** A command button can open a menu of radio, toggle and action rows, kept per session and shared with every hook. A transcript hook can split a settled thought or reply into thought and reply parts. Skins get style hooks on tabs, composer chips, header and session-list actions and turn actions, and a skin's card lands on the parts it restyles.
+- **Custom and plugin agents can carry a vendor and an SVG mark**, drawn wherever the agent shows. A plugin agent whose CLI is not installed yet passes the check, and its tile offers the install line.
+- **A summoned round's inspector shows the whole thread**, with every earlier round of the same session.
+- A new session's `/` menu offers the agent's known slash commands before its first turn.
+- The built-in agent ships a skill-creator skill in place of the plugin author skill. How to write a plugin reaches every agent through the MCP instructions.
 
-### Planned
+### Changed
 
-- An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
+- **SSH folders run every agent on the host by default.** No agent, the built-in one included, runs on this machine until it is picked in Settings. Folders with a saved pick keep it.
+- **A macOS host's engine starts in the user's GUI session**, where the login keychain is unlocked. A session running in a host's engine no longer offers a local keychain unlock and asks to unlock on that computer instead.
+- `plugin_activate` returns as soon as its card is shown, so a turn never waits on a click. A failed apply reaches the agent later as a queued message.
+- The GitHub Release lists only what people download: the desktop apps, the update manifest and one `SHA256SUMS`. VSIXes and desktop update packages move to a shared `packages` prerelease, the IntelliJ plugin's per-platform zips leave GitHub (the plugin installs from the JetBrains Marketplace), and the Windows desktop app is `Acpira-<version>-windows-x86_64.zip` again. SSH folders take a missing helper build from the platform's VSIX there.
+- A trailing read or edit phase stays in progress across the gaps between completed calls.
+- Tabs on Windows and Linux put their close button at the end.
+- An agent's switch in Settings reads Enabled / Enable {agent}.
+
+### Fixed
+
+- A steer during Claude Code's autonomous cycle goes out as a prompt that takes the session over, with claude-agent-acp 0.95.0 or newer. Older adapters keep it queued until the cycle ends.
+- A turn that runs again without a prompt, such as an autonomous cycle, a goal continuation or a steer, keeps its closing prose as the reply instead of folding it into the process.
+- A session another engine runs no longer flashes read-only when it opens.
+- A message resent from a paired device runs once, even after the engine restarted while the device was away.
+- A retry after signing in to another account runs with that account.
+- Controls brought by an earlier answer are restored again.
+- In a narrow composer the model chip steps down and the other chips fold to icons, so it no longer runs past the send button.
+- Spaced pinyin commits are fixed in every text field, not only the composer.
+- What a press landed on stays under the pointer while content above it grows.
+- `composer.above` plugin pieces no longer cover the last reply's actions.
+- Re-observing a subagent no longer replays its inspector's entrances.
+- The desktop app no longer aborts when WebKit stops a custom-scheme request.
 
 ## [2.0.5] - 2026-11-01
 
