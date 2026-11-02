@@ -64,8 +64,28 @@ func editTurnConfig(_ editor: SessionControls, live: SessionControls, id: String
     if c.id == id { c.value = value }
     return c
   }
-  guard let control = live.options.first(where: { $0.id == id }), isModelControl(control) else { return next }
+  guard let control = live.options.first(where: { $0.id == id }) else { return next }
+  if control.category == ComposerControls.sidekickCategory { return seatSidekickEffort(next, sidekick: value, shapes: shapes) }
+  guard isModelControl(control) else { return next }
   return reshape(next, captureTurnSettings(next), live: live, shapes: shapes)
+}
+
+/// The built-in agent offers the sidekick's level select only once a sidekick is set, so a pick nothing answers (a new
+/// session's draft, the editor) takes it from the picked model's learned shape: its levels, the level held while still
+/// offered, else the one the model last ran at. None, or a model never seen, drops it
+private func seatSidekickEffort(_ controls: SessionControls, sidekick: String, shapes: ModelShapes?) -> SessionControls {
+  var next = controls
+  let held = controls.options.first { $0.category == ComposerControls.sidekickEffortCategory }
+  next.options.removeAll { $0.category == ComposerControls.sidekickEffortCategory }
+  guard sidekick != ComposerControls.noSidekick, let model = controls.options.first(where: isModelControl),
+        let scale = shapeFor(shapes, model: model, value: sidekick)?.first(where: ComposerControls.isReasoning),
+        scale.options.count > 1 else { return next }
+  var effort = held ?? ConfigControl(id: "sidekick_effort", name: "Sidekick effort", category: ComposerControls.sidekickEffortCategory)
+  effort.options = scale.options
+  effort.value = held?.value.flatMap { v in scale.options.contains { $0.id == v } ? v : nil } ?? scale.value
+  let at = next.options.firstIndex { $0.category == ComposerControls.sidekickCategory }.map { $0 + 1 } ?? next.options.endIndex
+  next.options.insert(effort, at: at)
+  return next
 }
 
 /// A sent prompt being rewritten in the composer. `turnCount` is the transcript's length when the edit began, so the

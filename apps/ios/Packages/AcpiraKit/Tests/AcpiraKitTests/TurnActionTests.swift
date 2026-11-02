@@ -104,6 +104,25 @@ private func agentTurns(_ view: SessionView) -> [AgentTurn] {
     #expect(live.options.map(\.id) == ["model"])
   }
 
+  @Test func aSidekickPickedInADraftBringsItsModelsLevels() {
+    let controls = SessionControls(options: [
+      decode(#"{"id":"model","name":"Model","category":"model","value":"a/sol","options":[{"id":"a/sol","name":"Sol"},{"id":"a/terra","name":"Terra"}]}"#),
+      decode(#"{"id":"sidekick","name":"Sidekick","category":"_sidekick","value":"none","options":[{"id":"none","name":"None"},{"id":"a/sol","name":"Sol"},{"id":"a/terra","name":"Terra"}]}"#),
+      decode(#"{"id":"approval","name":"Approval","category":"_permission_mode","value":"ask","options":[{"id":"ask","name":"Ask"},{"id":"full","name":"Full"}]}"#),
+    ])
+    let effort: ConfigControl = decode(#"{"id":"effort","name":"Effort","category":"thought_level","options":[{"id":"low","name":"Low"},{"id":"xhigh","name":"XHigh"}],"value":"xhigh"}"#)
+    let shapes: ModelShapes = ["a/terra": [effort]]
+    // Nothing answers a draft's pick: the level select comes from the picked model's shape, next to the sidekick
+    let picked = editTurnConfig(controls, live: controls, id: "sidekick", value: "a/terra", shapes: shapes)
+    #expect(picked.options.map(\.id) == ["model", "sidekick", "sidekick_effort", "approval"])
+    #expect(picked.options[2].value == "xhigh" && picked.options[2].options.map(\.id) == ["low", "xhigh"])
+    // A level picked meanwhile holds while the next model offers it; none, or a model never seen, drops the select
+    let low = editTurnConfig(picked, live: picked, id: "sidekick_effort", value: "low", shapes: shapes)
+    #expect(editTurnConfig(low, live: low, id: "sidekick", value: "a/terra", shapes: shapes).options[2].value == "low")
+    #expect(editTurnConfig(low, live: low, id: "sidekick", value: "none", shapes: shapes).options.map(\.id) == ["model", "sidekick", "approval"])
+    #expect(editTurnConfig(low, live: low, id: "sidekick", value: "a/sol", shapes: shapes).options.map(\.id) == ["model", "sidekick", "approval"])
+  }
+
   @Test func anEditRequestCarriesTheTrimmedTextAndTheSnapshot() {
     let view = Fixtures.session("goal")!
     guard case .user(let prompt) = view.turns[2] else { Issue.record("no prompt"); return }
