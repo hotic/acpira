@@ -944,7 +944,7 @@ pub(crate) fn merge_usage(into: &mut TurnUsage, u: TurnUsage) {
   macro_rules! take {
     ($($f:ident),*) => { $( if u.$f.is_some() { into.$f = u.$f; } )* };
   }
-  take!(input, output, cached_read, cached_write, reasoning, total, model_calls, model, request_id, context);
+  take!(input, output, cached_read, cached_write, reasoning, total, model_calls, decode_ms, model, request_id, context);
 }
 
 /// First line of the text, or what was attached when there is no text

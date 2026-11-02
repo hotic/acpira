@@ -91,22 +91,30 @@ function tallyIsLastCall(u: TurnUsage): boolean {
   return Math.abs(total - u.context.used) <= u.context.used * SINGLE_CALL_TOLERANCE;
 }
 
-// Per-request decode throughput (`(tokens - 1) / decodeSeconds`, NVIDIA AIPerf's Output Token Throughput Per User),
-// measured from the first streamed block (`respondedAt`) to `endedAt` minus foreground tool execution. When the tally
-// covers only the last model call, the window shrinks to that call: from the last foreground tool's end to `endedAt`
-// (it then includes that call's prefill, so the figure reads slightly low). Omitted when fewer than 5 tokens were
-// generated or the active decode window is under 200 ms (single-chunk / buffered dumps).
+// Per-request decode throughput (`(tokens - 1) / decodeSeconds`, NVIDIA AIPerf's Output Token Throughput Per User).
+// An agent that times its own streaming (`usage.decodeMs`, the built-in agent) is taken at its word, one first token
+// per call left out. Otherwise the window runs from the first streamed block (`respondedAt`) to `endedAt` minus
+// foreground tool execution and the engine's background waits (`idleMs`), so per-call prefill still reads it low. When
+// the tally covers only the last model call, the window shrinks to that call: from the last foreground tool's end to
+// `endedAt`. Omitted when fewer than 5 tokens were generated or the decode window is under 200 ms (single-chunk /
+// buffered dumps).
 const MIN_TPS_TOKENS = 5;
 const MIN_DECODE_MS = 200;
 
 export function turnOutputTps(turn: AgentTurn): number | undefined {
-  if (turn.respondedAt === undefined || turn.endedAt === undefined) return undefined;
   const tokens = generatedTokens(turn.usage);
   if (tokens === undefined || tokens < MIN_TPS_TOKENS) return undefined;
-  const lastToolEnd = tallyIsLastCall(turn.usage!) ? lastForegroundToolEnd(turn, turn.respondedAt, turn.endedAt) : undefined;
+  const usage = turn.usage!;
+  if (usage.decodeMs !== undefined) {
+    if (usage.decodeMs < MIN_DECODE_MS) return undefined;
+    const tps = Math.round(((tokens - (usage.modelCalls ?? 1)) * 1000) / usage.decodeMs);
+    return tps > 0 ? tps : undefined;
+  }
+  if (turn.respondedAt === undefined || turn.endedAt === undefined) return undefined;
+  const lastToolEnd = tallyIsLastCall(usage) ? lastForegroundToolEnd(turn, turn.respondedAt, turn.endedAt) : undefined;
   const activeMs = lastToolEnd !== undefined
     ? turn.endedAt - lastToolEnd
-    : turn.endedAt - turn.respondedAt - foregroundToolMs(turn, turn.respondedAt, turn.endedAt);
+    : turn.endedAt - turn.respondedAt - foregroundToolMs(turn, turn.respondedAt, turn.endedAt) - (turn.idleMs ?? 0);
   if (activeMs < MIN_DECODE_MS) return undefined;
   const tps = Math.round(((tokens - 1) * 1000) / activeMs);
   return tps > 0 ? tps : undefined;

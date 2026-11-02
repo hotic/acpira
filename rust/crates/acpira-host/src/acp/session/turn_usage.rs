@@ -37,6 +37,7 @@ pub fn turn_usage_of(r: &Value) -> Option<TurnUsage> {
     if let Some(inner) = meta.get("usage").filter(|u| u.is_object()) {
       fill(&mut out.cached_write, inner.get("cacheCreationTokens"));
       fill(&mut out.model_calls, inner.get("modelCalls"));
+      fill(&mut out.decode_ms, inner.get("decodeMs"));
     }
     if out.model.is_none() {
       out.model = label(meta.get("modelId"));

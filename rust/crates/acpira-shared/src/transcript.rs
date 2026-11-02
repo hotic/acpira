@@ -1273,6 +1273,10 @@ pub struct TurnUsage {
   pub total: Option<Num>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub model_calls: Option<Num>,
+  /// Milliseconds the model calls spent streaming, first event to the end of each call, when the agent measures it
+  /// itself (the built-in agent's `_meta.usage.decodeMs`); the output speed then needs no estimate
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub decode_ms: Option<Num>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub model: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1343,6 +1347,10 @@ pub struct AgentTurn {
   pub responded_at: Option<i64>,
   #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient_opt_i64")]
   pub ended_at: Option<i64>,
+  /// Milliseconds the live turn sat with only background work open and the model silent past a grace period
+  /// (`normalize/idle.rs`): waiting on a background task, not generating. The output speed leaves it out
+  #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient_opt_i64")]
+  pub idle_ms: Option<i64>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub activity: Option<Activity>,
   #[serde(default, skip_serializing_if = "Option::is_none")]

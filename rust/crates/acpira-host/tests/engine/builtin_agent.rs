@@ -133,6 +133,9 @@ impl Env {
           m.remove("startedAt");
           m.remove("endedAt");
           m.remove("respondedAt");
+          // Wall-clock measurements, never the same twice
+          m.remove("decodeMs");
+          m.remove("idleMs");
           // A steer block carries its queue entry's random id; it is numbered with the user turns
           let user = m.get("role").and_then(Value::as_str) == Some("user") || m.get("type").and_then(Value::as_str) == Some("steer");
           if user && m.contains_key("id") {

@@ -62,14 +62,22 @@ private func tallyIsLastCall(_ u: TurnUsage) -> Bool {
   return abs(Double(total - context.used)) <= Double(context.used) * 0.02
 }
 
-/// turnOutputTps: decode throughput, `(tokens - 1) / seconds` from the first streamed block to the end, foreground tool
-/// time taken out; a tally of the last call alone is timed from the last foreground tool's end. Left out below 5
-/// tokens or a 200 ms window (a buffered dump)
+/// turnOutputTps: decode throughput, `(tokens - 1) / seconds`. An agent that timed its own streaming (`decodeMs`, the
+/// built-in agent) is taken at its word, one first token per call left out. Otherwise the window runs from the first
+/// streamed block to the end, foreground tool time and the engine's background waits (`idleMs`) taken out; a tally of
+/// the last call alone is timed from the last foreground tool's end. Left out below 5 tokens or a 200 ms window (a
+/// buffered dump)
 func turnOutputTps(_ turn: AgentTurn) -> Int? {
-  guard let responded = turn.respondedAt, let ended = turn.endedAt, let usage = turn.usage,
-        let tokens = generatedTokens(usage), tokens >= 5 else { return nil }
+  guard let usage = turn.usage, let tokens = generatedTokens(usage), tokens >= 5 else { return nil }
+  if let decode = usage.decodeMs {
+    guard decode >= 200 else { return nil }
+    let tps = Int((Double(tokens - (usage.modelCalls ?? 1)) * 1000 / Double(decode)).rounded())
+    return tps > 0 ? tps : nil
+  }
+  guard let responded = turn.respondedAt, let ended = turn.endedAt else { return nil }
   let lastToolEnd = tallyIsLastCall(usage) ? foregroundSpans(turn, from: responded, to: ended).map(\.1).max() : nil
-  let active = lastToolEnd.map { ended - $0 } ?? ended - responded - foregroundToolMs(turn, from: responded, to: ended)
+  let active = lastToolEnd.map { ended - $0 }
+    ?? ended - responded - foregroundToolMs(turn, from: responded, to: ended) - (turn.idleMs ?? 0)
   guard active >= 200 else { return nil }
   let tps = Int((Double(tokens - 1) * 1000 / active).rounded())
   return tps > 0 ? tps : nil

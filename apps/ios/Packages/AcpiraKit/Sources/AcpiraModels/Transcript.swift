@@ -750,6 +750,8 @@ public struct TurnUsage: Codable, Hashable, Sendable {
   public var reasoning: Int?
   public var total: Int?
   public var modelCalls: Int?
+  /// Milliseconds the model calls streamed, when the agent timed them itself (the built-in agent)
+  public var decodeMs: Int?
   public var model: String?
   /// The vendor's id for this request
   public var requestId: String?
@@ -788,6 +790,8 @@ public struct AgentTurn: Codable, Hashable, Sendable {
   /// First streamed output of the prompt; the turn's duration counts from here (absent on older transcripts)
   public var respondedAt: Double?
   public var endedAt: Double?
+  /// Milliseconds the live turn waited on background work with the model silent; the output speed leaves it out
+  public var idleMs: Double?
   public var activity: TurnActivity?
   public var stop: TurnStop?
   public var error: TurnError?

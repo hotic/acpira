@@ -81,6 +81,9 @@ struct Stats {
   prompt: Option<(String, String, String)>,
   /// Tool calls run, the goal's own left out (`goal::end_turn`)
   tools: u64,
+  /// Time the successful calls spent streaming, each from its first event to its end: the decode time the client's
+  /// output speed divides by (`_meta.usage.decodeMs`)
+  decode: std::time::Duration,
   /// The turn ended waiting for the user: an action rejected, the questions closed, the plan not approved
   held: bool,
 }
@@ -196,7 +199,7 @@ pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<V
       "inputTokens": u.input, "outputTokens": u.output, "totalTokens": u.input + u.output,
       "thoughtTokens": u.reasoning, "cachedReadTokens": u.cache_read, "cachedWriteTokens": u.cache_write,
     });
-    response["_meta"] = json!({ "modelId": s.pick, "usage": { "modelCalls": s.calls } });
+    response["_meta"] = json!({ "modelId": s.pick, "usage": { "modelCalls": s.calls, "decodeMs": u64::try_from(s.decode.as_millis()).unwrap_or(u64::MAX) } });
     if let Some((variant, version, digest)) = &s.prompt {
       response["_meta"]["acpira/prompt"] = json!({ "variant": variant, "version": version, "digest": digest });
     }
@@ -438,6 +441,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
     // retry still overflowed, which the summary then answers
     let mut overflows = 0u32;
     let mut summarized_overflow = false;
+    let mut decode = std::time::Duration::ZERO;
     let (reply, stop, usage, started) = loop {
       attempt += 1;
       let started = std::time::Instant::now();
@@ -445,6 +449,8 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       let mut rx = llm::stream(server.http.clone(), endpoint.clone(), request.clone());
       let mut outcome = Err(LlmError::Protocol("the stream ended without a result".into()));
       let idle = stream_idle();
+      // The call's first event: the prefill is over and output streams from here
+      let mut first: Option<std::time::Instant> = None;
       loop {
         let ev = match tokio::time::timeout(idle, rx.recv()).await {
           Ok(Some(ev)) => ev,
@@ -455,6 +461,9 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
             break;
           }
         };
+        if ev.is_ok() {
+          first.get_or_insert_with(std::time::Instant::now);
+        }
         match ev {
           Ok(Event::Text(t)) => {
             session.state.lock().partial_text.push_str(&t);
@@ -480,6 +489,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
           // Already counted: receiving it restarted the idle timeout
           Ok(Event::Alive) => {}
           Ok(Event::Done { reply, stop, usage }) => {
+            decode = first.map(|f| f.elapsed()).unwrap_or_default();
             outcome = Ok((reply, stop, usage));
             break;
           }
@@ -563,6 +573,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
     let mut over = false;
     // The provider's own count of this call, for chunk compaction to scale its estimates by (a stand-in is no count)
     let mut measured = None;
+    stats.lock().decode += decode;
     if let Some(u) = usage {
       let mut st = stats.lock();
       st.usage.input += u.input;
