@@ -112,23 +112,31 @@ pub fn backdrop_html(scene: &str) -> String {
 /// compiles, or a plain Node / Python process with the SDK file copied in
 pub const LANGS: &[&str] = &["ts", "node", "python"];
 
-/// The skill that teaches an agent to write a plugin, offered in every session like a plugin's skills
-pub const AUTHOR_SKILL: &str = include_str!("skill/SKILL.md");
-/// Under `<plugins>/.sdk/`: a skills folder (`<name>/SKILL.md`) holding `AUTHOR_SKILL`
+/// The skill that teaches Acpira's own agent to write a plain skill, as Codex and Claude Code ship their own. It reaches
+/// only that agent (`shipped_skills`), so no CLI sees a second `skill-creator`. How to write a plugin is not a skill:
+/// every agent, this one included, learns it from Acpira's MCP server instructions and `plugin_guide`
+pub const CREATOR_SKILL: &str = include_str!("skill-creator/SKILL.md");
+/// Under `<plugins>/.sdk/`: a skills folder (`<name>/SKILL.md`) holding `CREATOR_SKILL`
 pub const SKILLS_DIR: &str = "skills";
-const AUTHOR_SKILL_FILE: &str = "skills/acpira-plugin/SKILL.md";
+const CREATOR_SKILL_FILE: &str = "skills/skill-creator/SKILL.md";
+/// The plugin author skill earlier builds wrote, removed so the agent no longer lists it
+const OLD_AUTHOR_SKILL_DIR: &str = "skills/acpira-plugin";
 
-/// Keep `<plugins>/.sdk/` holding the SDKs and the author skill this build ships; each written only when it differs. The folder
+/// Keep `<plugins>/.sdk/` holding the SDKs and the skill this build ships; each written only when it differs. The folder
 pub fn install(root: &Path) -> Result<PathBuf> {
   let dir = root.join(SDK_DIR);
-  std::fs::create_dir_all(dir.join(AUTHOR_SKILL_FILE).parent().unwrap_or(&dir)).with_context(|| format!("create {}", dir.display()))?;
-  for (name, text) in [(SDK_FILE, SDK), (SDK_PY_FILE, SDK_PY), (AUTHOR_SKILL_FILE, AUTHOR_SKILL)] {
+  for (name, text) in [(SDK_FILE, SDK), (SDK_PY_FILE, SDK_PY), (CREATOR_SKILL_FILE, CREATOR_SKILL)] {
     let path = dir.join(name);
+    std::fs::create_dir_all(path.parent().unwrap_or(&dir)).with_context(|| format!("create {}", dir.display()))?;
     if std::fs::read_to_string(&path).is_ok_and(|t| t == text) {
       continue;
     }
     let tmp = path.with_file_name(format!(".{}.{}.tmp", path.file_name().unwrap_or_default().to_string_lossy(), std::process::id()));
     std::fs::write(&tmp, text).and_then(|()| std::fs::rename(&tmp, &path)).with_context(|| format!("write {}", path.display()))?;
+  }
+  let old = dir.join(OLD_AUTHOR_SKILL_DIR);
+  if old.is_dir() {
+    std::fs::remove_dir_all(&old).with_context(|| format!("remove {}", old.display()))?;
   }
   Ok(dir)
 }
@@ -581,9 +589,12 @@ mod tests {
     let tmp = tempfile::tempdir().unwrap();
     let dir = install(tmp.path()).unwrap();
     assert_eq!(std::fs::read_to_string(dir.join(SDK_PY_FILE)).unwrap(), SDK_PY);
-    // The author skill is a skills folder like a plugin's
+    // The shipped skill is a skills folder like a plugin's, and the old author skill goes
+    std::fs::create_dir_all(dir.join(OLD_AUTHOR_SKILL_DIR)).unwrap();
+    std::fs::write(dir.join(OLD_AUTHOR_SKILL_DIR).join("SKILL.md"), "---\nname: acpira-plugin\n---\n").unwrap();
+    install(tmp.path()).unwrap();
     let skills = acpira_agent::skills::scan_dirs(&[dir.join(SKILLS_DIR)]);
-    assert_eq!(skills.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["acpira-plugin"]);
+    assert_eq!(skills.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["skill-creator"]);
     std::fs::write(dir.join(SDK_FILE), "old").unwrap();
     install(tmp.path()).unwrap();
     assert_eq!(std::fs::read_to_string(dir.join(SDK_FILE)).unwrap(), SDK);

@@ -205,8 +205,7 @@ impl PluginHost {
     if let Err(e) = self.store.reconcile().await {
       (self.log)(&format!("plugins: {e:#}"));
     }
-    // The SDK copy plugins written by hand take theirs from, and the skill that teaches an agent to write the first
-    // plugin, so it is there before any plugin is (`sdk.rs`)
+    // The SDK copy plugins written by hand take theirs from, and the skill the built-in agent ships (`sdk.rs`)
     if let Err(e) = crate::plugins::sdk::install(self.store.root()) {
       (self.log)(&format!("plugins: {e:#}"));
     }
