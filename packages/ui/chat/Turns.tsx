@@ -23,7 +23,7 @@ import { Plan } from './Plan';
 import { ToolCall } from './ToolCall';
 import { RetryRow } from './RetryRow';
 import { ToolGroup } from './ToolGroup';
-import { blockItemId, blockSettled, foldStates, groupProcess, isDelegation, itemEntrance, itemSettled, processParts, type FoldPart, type ProcessItem } from './processGroups';
+import { blockItemId, blockSettled, continuingToolItem, foldStates, groupProcess, isDelegation, itemEntrance, itemSettled, processParts, type FoldPart, type ProcessItem } from './processGroups';
 import { useTailWindow } from './tailWindow';
 import { AutoFoldContext, AutoFoldItem, AutoFoldStore } from './autoFold';
 import { useFollowing } from './useBottomFollow';
@@ -661,6 +661,7 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
   if (open) everOpen.current = true;
   const activeProcess = running || everOpen.current || hasExposed;
   const items = useMemo(() => activeProcess ? groupProcess(blocks) : EMPTY_ITEMS, [activeProcess, blocks]);
+  const continuing = continuingToolItem(items, running && turn.blocks.at(-1) === blocks.at(-1));
   const store = useProcessFolds(items, manual === undefined, auto, following, memoryKey);
   const imageResults = useMemo(() => blocks.filter(isImageResultBlock), [blocks]);
   const activity = liveActivity(turn, lead);
@@ -723,7 +724,7 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
               // The padding folds with its part: the head's offset on the first, the prose gap after a card, the tail on the last
               const body = (
                 <div className={cn(!retired && (i === 0 ? 'pt-1' : 'pt-(--process-prose-gap)'), !retired && i === parts.length - 1 && 'pb-1.5')}>
-                  <ProcessHistory><ProcessBlocks blocks={blocks} items={skips[i] ? part.items.slice(skips[i]) : part.items} /></ProcessHistory>
+                  <ProcessHistory><ProcessBlocks blocks={blocks} items={skips[i] ? part.items.slice(skips[i]) : part.items} continuing={continuing} /></ProcessHistory>
                 </div>
               );
               // Nested rows extend their hit area beyond the text column; the clip reserves the turn padding (wider than
@@ -746,6 +747,8 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
   prev.blocks === next.blocks
   && prev.running === next.running
   && prev.replyBusy === next.replyBusy
+  // A trailing reply/approval seals the last tool phase without changing the process list itself.
+  && (prev.turn.blocks.at(-1) === prev.blocks.at(-1)) === (next.turn.blocks.at(-1) === next.blocks.at(-1))
   && prev.hasTools === next.hasTools
   && prev.memoryKey === next.memoryKey
   && prev.lead === next.lead
@@ -815,13 +818,13 @@ function useProcessFolds(items: ProcessItem[], settle: boolean, live: boolean, f
 // call's id, and a remounted transcript replays nothing. Unkeyed blocks take their transcript position
 // A finished item mounts its fold bodies only while open, in a live turn too: only what still streams keeps a closed
 // body mounted (a 700-block live turn held ~35k nodes, 9k with this)
-function ProcessBlocks({ blocks, items }: { blocks: AgentBlock[]; items?: ProcessItem[] }) {
+function ProcessBlocks({ blocks, items, continuing }: { blocks: AgentBlock[]; items?: ProcessItem[]; continuing?: string }) {
   const lazy = useContext(LazyPanelContext);
   return (items ?? groupProcess(blocks)).map(item => (
     <EntranceOnce key={item.id} id={itemEntrance(item.id)}>
       <LazyPanelContext.Provider value={lazy || itemSettled(item)}>
-        <AutoFoldItem id={item.id}>{item.type === 'group' ? <ToolGroup kind={item.kind} blocks={item.blocks} />
-          : item.block.type === 'tool_call' ? <ToolCall block={item.block} grouped />
+        <AutoFoldItem id={item.id}>{item.type === 'group' ? <ToolGroup kind={item.kind} blocks={item.blocks} continuing={item.id === continuing} />
+          : item.block.type === 'tool_call' ? <ToolCall block={item.block} grouped continuing={item.id === continuing} />
           : item.block.type === 'text' ? <Prose block={item.block} />
           : <LineBlock block={item.block} />}</AutoFoldItem>
       </LazyPanelContext.Provider>

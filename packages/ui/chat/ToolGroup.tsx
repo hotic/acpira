@@ -5,7 +5,7 @@ import { toolImages } from '@acpira/shared/imageTools';
 import type { ToolCallBlock } from '@acpira/shared/transcript';
 import { Collapsible } from '../ui/Collapsible';
 import { Disclosure, DisclosureRow } from '../ui/Disclosure';
-import { EntranceOnce, Row, RowLabel, RowTarget } from '../ui/Row';
+import { EntranceOnce, Row, RowTarget } from '../ui/Row';
 import { Shimmer } from '../ui/Shimmer';
 import { t, useLocale } from '../i18n';
 import { TOOL_ICON } from './icons';
@@ -13,6 +13,7 @@ import { DiffBlock } from './CodeBlock';
 import { ToolOutput } from './Terminal';
 import { Aside, DiffStat, FileRef, ResultList } from './ToolCall';
 import { sessionReadLabel, toolVerb } from './folding';
+import { ToolLabel } from './ToolLabel';
 import { SessionTitleContext } from './fileLinks';
 import { diffIndex, toolFiles, visibleToolContents } from './toolDetails';
 import { useAutoFold } from './autoFold';
@@ -32,7 +33,7 @@ function namesLabel(names: string[]): string {
 // read group counts its files with, one entry per turn.
 // Entries hang on the head's rail; each takes its first call's entrance identity, so the row that was a single call
 // before the group formed keeps still. The grouping array is rebuilt on every render, so compare its members
-export const ToolGroup = memo(function ToolGroup({ kind, blocks }: { kind: GroupKind; blocks: ToolCallBlock[] }) {
+export const ToolGroup = memo(function ToolGroup({ kind, blocks, continuing = false }: { kind: GroupKind; blocks: ToolCallBlock[]; continuing?: boolean }) {
   // memo keeps a row from rendering again; the locale context still reaches it after a language change
   useLocale();
   const fold = useAutoFold();
@@ -55,12 +56,12 @@ export const ToolGroup = memo(function ToolGroup({ kind, blocks }: { kind: Group
   return (
     <Disclosure className="action-details" bodyClassName="pt-0" tone="action" lead={lead} trailing={stat && <DiffStat {...stat} />}
       indent={kind === 'wait'} rail={kind === 'wait' ? 'body' : 'rows'} open={fold?.open} onToggle={fold?.onToggle} body={body}>
-      <RowLabel shimmer={live(current)}>{toolVerb(current)}</RowLabel>
+      <ToolLabel block={current} continuing={continuing} />
       {kind === 'wait' && current.target && <RowTarget mono>{current.target}</RowTarget>}
       {turns > 0 ? <TurnsTarget title={names[0]!} n={turns} /> : names.length > 0 && <RowTarget mono={kind !== 'session'}>{namesLabel(names)}</RowTarget>}
     </Disclosure>
   );
-}, (a, b) => a.kind === b.kind && a.blocks.length === b.blocks.length && a.blocks.every((block, i) => block === b.blocks[i]));
+}, (a, b) => a.kind === b.kind && a.continuing === b.continuing && a.blocks.length === b.blocks.length && a.blocks.every((block, i) => block === b.blocks[i]));
 
 // A session group's head text, "<title> 中的 3 段对话" in the read group's colour and wording: only the title truncates,
 // so a long title never hides the count

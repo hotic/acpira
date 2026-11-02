@@ -1,18 +1,24 @@
-import type { ReactNode } from 'react';
+import { useLayoutEffect, useRef, type ReactNode } from 'react';
 import { cn } from './cn';
 
-// Text shimmer for a running verb. The label is drawn twice: the muted copy stays put, a strong copy sits inside a
-// masked window that slides across it while the copy slides back by the same amount. Both moves are transforms, so
-// the sweep runs on the compositor and never repaints the transcript (animating background-position on a
-// background-clip: text gradient re-painted the whole document layer every frame, ~3 ms on a 60k-node session).
+// Text shimmer for a running verb: both copies stay put while a mask sweeps across the strong copy.
 // `active` false renders a plain span, so callers keep one element for both states (pass a real boolean: an explicit
 // `undefined` takes the default and shimmers).
-export function Shimmer({ active = true, className, children }: { active?: boolean; className?: string; children: ReactNode }) {
+export function Shimmer({ active = true, sync = false, className, children }: { active?: boolean; sync?: boolean; className?: string; children: ReactNode }) {
+  const clip = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    if (!active || !sync) return;
+    // Tool headings can remount when a call gains details or joins a group. Anchor their sweep to the document's
+    // timeline so the new shape continues the same phase instead of restarting from the left edge.
+    for (const animation of clip.current?.getAnimations() ?? []) {
+      if (animation instanceof CSSAnimation && animation.animationName === 'acp-shimmer-mask') animation.startTime = 0;
+    }
+  }, [active, sync]);
   if (!active) return <span className={className}>{children}</span>;
   return (
     <span className={cn('shimmer', className)}>
       {children}
-      <span className="shimmer-sweep" aria-hidden="true"><span>{children}</span></span>
+      <span ref={clip} className="shimmer-clip" aria-hidden="true"><span>{children}</span></span>
     </span>
   );
 }

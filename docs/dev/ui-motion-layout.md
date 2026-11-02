@@ -15,6 +15,8 @@ Rules for motion, status signals, rails, sticky prompts, bottom follow, scrollba
 ## Status and streaming
 
 - Only the turn's top-level activity owns the `Orb`; running tool rows shimmer their verb. Pass `shimmer` a real boolean: explicit `undefined` takes the active default.
+- A trailing read/edit/session phase keeps its heading in progress across completed-call gaps until a later block or the turn end seals it. The heading's text and shimmer share that phase status across gaps without changing stored tool outcomes. Tool labels keep their natural width; reserving every status variant creates an extra gap before the target once the phase ends. Tool shimmers use a shared document-timeline origin because a row gaining details or becoming a group remounts the heading; restarting the CSS sweep there breaks the phase's continuity. A trailing reply can seal the phase without changing the process list, so `CodexFold`'s memo comparison must include that boundary.
+- Shimmer's absolute highlight covers the host's padding box, not its content box: it must inherit the host's padding or padded labels draw two offset copies. Animation changes cannot correct that layout offset.
 - Session states rank waiting > working > error > unread (`AcpSession::list_state` checks open cards before `running`). The unread dot is foreground, not accent: amber reads as waiting.
 - `--session-time` is set on the list element and read directly; a `:root` token wrapping it resolves to `auto` first.
 - `useSmoothText` never cuts right after markdown punctuation: streamdown draws already-animated characters at 0 ms, so a transient `**` skipped the real text's entrance.

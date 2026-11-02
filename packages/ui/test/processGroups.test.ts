@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentBlock, DiffLine, ToolCallBlock } from '@acpira/shared/transcript';
-import { DWELL_MS, editEntries, editReference, editSpan, foldStates, groupNames, groupProcess, itemSettled, processParts, type FoldInput } from '../chat/processGroups';
+import { DWELL_MS, continuingToolItem, editEntries, editReference, editSpan, foldStates, groupNames, groupProcess, itemSettled, processParts, type FoldInput } from '../chat/processGroups';
 
 const read = (id: string, path: string, status: ToolCallBlock['status'] = 'completed'): ToolCallBlock => ({
   type: 'tool_call', id, kind: 'read', verb: 'Read', status, target: path.split('/').pop(), locations: [{ path }],
@@ -55,6 +55,29 @@ describe('process groups', () => {
     const items = groupProcess([read('r1', '/a.ts'), read('r2', '/b.ts', 'in_progress'), failed, read('r3', '/c.ts'), empty, read('r4', '/d.ts')]);
     expect(items.map(i => i.id)).toEqual(['r1', 'f', 'r3', 'empty', 'r4']);
     expect(items[0]).toMatchObject({ type: 'group', blocks: [{ id: 'r1' }, { id: 'r2' }] });
+  });
+
+  it('keeps the trailing read or edit phase across completed-call gaps, sealing it on the next phase or turn end', () => {
+    const first = read('r1', '/a.ts');
+    const second = read('r2', '/b.ts', 'in_progress');
+    expect(continuingToolItem(groupProcess([first]), true)).toBe('r1');
+    expect(continuingToolItem(groupProcess([first, second]), true)).toBe('r1');
+    expect(continuingToolItem(groupProcess([first, { ...second, status: 'completed' }]), true)).toBe('r1');
+    expect(continuingToolItem(groupProcess([first, second, thought]), true)).toBeUndefined();
+    expect(continuingToolItem(groupProcess([first, second]), false)).toBeUndefined();
+    expect(continuingToolItem(groupProcess([first, edit('e1', '/a.ts'), edit('e2', '/b.ts')]), true)).toBe('e1');
+    expect(continuingToolItem(groupProcess([first, { type: 'text', markdown: 'Done.' }]), true)).toBeUndefined();
+  });
+
+  it('never holds failures, queued background work, or observation loss as a continuing phase', () => {
+    for (const block of [{ ...read('r1', '/a.ts'), status: 'failed' as const },
+      { ...read('r1', '/a.ts'), status: 'cancelled' as const },
+      { ...read('r1', '/a.ts'), background: true },
+      { ...read('r1', '/a.ts'), observation: 'unknown' as const }, search]) {
+      expect(continuingToolItem(groupProcess([block]), true)).toBeUndefined();
+    }
+    const wait: ToolCallBlock = { type: 'tool_call', id: 'w', kind: 'execute', verb: 'Wait', verbKey: 'verb.wait', status: 'completed' };
+    expect(continuingToolItem(groupProcess([wait]), true)).toBeUndefined();
   });
 
   it('merges edits of one file into one entry and names each file once', () => {
