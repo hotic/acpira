@@ -48,6 +48,9 @@ public struct LaunchOptions: Sendable {
   /// `-orientation portrait|landscape|landscapeLeft|landscapeRight`: debug builds turn the window on launch
   /// (`OrientationProbe`), since the simulator takes no scripted rotation
   public var orientation: String?
+  /// `-welcome play|intro|pair|notify`: the first-run flow on launch whatever has been paired, from its start or on
+  /// that step (screenshots and recordings)
+  public var welcome: String?
   /// The launch asked for the demo's fixtures (`-fixture`, `-screen` or another screenshot flag). A build with a pairing
   /// service launched bare, as from the home screen, starts empty instead: its lists come from a paired computer
   public var demo = true
@@ -67,7 +70,7 @@ public struct LaunchOptions: Sendable {
                          prompt: value("-prompt"), draft: value("-draft"), engine: value("-engine"),
                          session: value("-session"), start: value("-start"), terminal: value("-terminal"),
                          type: value("-type"), subagent: value("-subagent"), orientation: value("-orientation"),
-                         demo: demoFlags.contains(where: arguments.contains))
+                         welcome: value("-welcome"), demo: demoFlags.contains(where: arguments.contains))
   }
 }
 
@@ -103,6 +106,10 @@ public struct RootView: View {
   @AppStorage(Prefs.theme) private var theme = "system"
   @AppStorage(Prefs.locale) private var locale = "auto"
   @AppStorage(Prefs.motion) private var motion = true
+  /// The first-run flow is over (or was never due): it does not come back, even with every computer removed
+  @AppStorage(Prefs.welcomed) private var welcomed = false
+  /// The first-run flow is on screen over the screens
+  @State private var welcoming = false
 
   @Environment(\.scenePhase) private var phase
 
@@ -127,8 +134,44 @@ public struct RootView: View {
         .preferredColorScheme(options.theme)
         .environment(\.motionEnabled, false)
     } else {
-      screens
+      ZStack {
+        screens
+        if welcoming {
+          WelcomeFlow(start: options.welcome, onDone: endWelcome)
+            .environment(model)
+            .environment(\.pairing, pairing)
+            .preferredColorScheme(scheme)
+            .environment(\.motionEnabled, options.motion && motion)
+            .tint(Palette.fg1)
+            .transition(.opacity)
+        }
+      }
+      .animation(options.motion && motion ? Motion.ease : nil, value: welcoming)
+      .onChange(of: pairing?.loaded, initial: true) { _, _ in startWelcome() }
     }
+  }
+
+  /// The first-run flow, once the paired computers are known: for a build that pairs, launched bare, with none paired
+  /// yet and the flow never finished. A launch that finds a computer already paired never shows it
+  private func startWelcome() {
+    guard let pairing, pairing.loaded, !welcoming else { return }
+    if options.welcome == nil {
+      guard !welcomed, !options.demo, options.engine == nil else { return }
+      guard pairing.computers.isEmpty else {
+        welcomed = true
+        return
+      }
+    }
+    pairing.onboarding = true
+    welcoming = true
+  }
+
+  private func endWelcome() {
+    welcomed = true
+    welcoming = false
+    pairing?.onboarding = false
+    // A pairing link the flow took leaves the add sheet asked for
+    pairing?.addOpen = false
   }
 
   /// A paired computer's wire becomes the app model the screens follow; its end goes back to the pairing model, whose
@@ -148,9 +191,10 @@ public struct RootView: View {
       }
       push.showing = { [weak next] computer, session in next?.computer == computer && next?.path.last == .chat(session) }
       model = next
-      // The first wire asks for permission; every wire tells its computer where notifications go
+      // The first wire asks for permission, unless the first-run flow asks (or asked) in its own step; every wire tells
+      // its computer where notifications go
       Task {
-        await push.activate()
+        if welcomed || welcoming { await push.refresh() } else { await push.activate() }
         if push.settled { await wire.registerPush(push.target) }
       }
     }

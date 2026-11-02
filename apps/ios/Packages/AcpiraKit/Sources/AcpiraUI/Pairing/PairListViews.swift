@@ -122,8 +122,9 @@ struct PairingLayer: ViewModifier {
   func body(content: Content) -> some View {
     if let pairing {
       content
-        // While the settings are up they raise the sheet themselves (PairSettingsHooks)
-        .sheet(isPresented: Binding(get: { pairing.addOpen && !model.settingsOpen }, set: { pairing.addOpen = $0 })) {
+        // While the settings are up they raise the sheet themselves (PairSettingsHooks); the first-run flow pairs in place
+        .sheet(isPresented: Binding(get: { pairing.addOpen && !model.settingsOpen && !pairing.onboarding },
+                                     set: { pairing.addOpen = $0 })) {
           PairSheet()
         }
         .onOpenURL { url in pairing.open(url) }

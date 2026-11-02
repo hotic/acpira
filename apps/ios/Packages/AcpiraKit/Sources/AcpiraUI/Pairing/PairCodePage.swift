@@ -11,6 +11,8 @@ struct PairCodePage: View {
   let computer: NearbyComputer
   /// Closes the whole sheet (this page's own dismiss would only pop it)
   var finish: () -> Void
+  /// A close button in the bar; in the first-run flow back is the way out
+  var closes = true
   @Environment(\.pairing) private var pairing
   @Environment(\.initialPopup) private var initialPopup
   @Environment(\.motionEnabled) private var motion
@@ -36,7 +38,9 @@ struct PairCodePage: View {
     .navigationSubtitle(joined == nil ? computer.name : "")
     .navigationBarTitleDisplayModeInline()
     .navigationBarBackButtonHidden(joined != nil)
-    .toolbar { ToolbarItem(placement: .primaryAction) { Button(role: .close, action: finish) } }
+    .toolbar {
+      if closes { ToolbarItem(placement: .primaryAction) { Button(role: .close, action: finish) } }
+    }
     .task { await start() }
   }
 

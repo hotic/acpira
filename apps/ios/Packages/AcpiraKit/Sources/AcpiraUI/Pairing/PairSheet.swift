@@ -29,7 +29,16 @@ enum PairRetry: Equatable {
   case link(String)
 }
 
+/// The sheet's content in place instead of in a sheet: the first-run flow's pairing step (WelcomeFlow)
+struct PairInline {
+  var onBack: () -> Void
+  /// Paired and the wire up (or failed right after pairing): the flow moves on
+  var onDone: () -> Void
+}
+
 struct PairSheet: View {
+  /// In place: a large title over the computer's hint, back to the flow instead of close
+  var inline: PairInline?
   @Environment(\.pairing) private var pairing
   @Environment(\.initialPopup) private var initialPopup
   @Environment(\.motionEnabled) private var motion
@@ -45,20 +54,32 @@ struct PairSheet: View {
     NavigationStack(path: $path) {
       ZStack {
         if phase == .choose {
-          PairAddForm(nearby: nearby, browsing: browsing, scanning: path.isEmpty, onLink: { pair($0, scanned: $1) })
+          PairAddForm(nearby: nearby, browsing: browsing, scanning: path.isEmpty,
+                      lead: inline == nil ? nil : t("mobile.pair.connectHint"), onLink: { pair($0, scanned: $1) })
             .transition(.opacity)
         } else {
-          PairStage(phase: phase, code: code?.rows, finish: { dismiss() }, onConnect: connectConfirmed, onRetry: retry)
+          PairStage(phase: phase, code: code?.rows, finish: finish, onConnect: connectConfirmed, onRetry: retry)
             .transition(.opacity)
         }
       }
       .animation(motion ? Motion.ease : nil, value: phase)
-      .navigationTitle(phase == .choose ? t("mobile.pair.add") : "")
-      .navigationBarTitleDisplayModeInline()
+      .navigationTitle(phase == .choose ? t(inline == nil ? "mobile.pair.add" : "mobile.pair.connectTitle") : "")
+      .modifier(PairTitleMode(large: inline != nil))
       .navigationDestination(for: NearbyComputer.self) { computer in
-        PairCodePage(computer: computer, finish: { dismiss() })
+        PairCodePage(computer: computer, finish: finish, closes: inline == nil)
       }
-      .toolbar { ToolbarItem(placement: .primaryAction) { Button(role: .close) { dismiss() } } }
+      .toolbar {
+        if let inline {
+          if phase == .choose {
+            ToolbarItem(placement: .navigation) {
+              Button(action: inline.onBack) { Image(systemName: "chevron.backward") }
+                .accessibilityLabel(Text(web: t("welcome.back")))
+            }
+          }
+        } else {
+          ToolbarItem(placement: .primaryAction) { Button(role: .close) { dismiss() } }
+        }
+      }
     }
     .presentationBackground(Palette.formPage)
     // Browsing runs for the sheet's whole life, so coming back from the code page keeps the rows where they were
@@ -80,6 +101,11 @@ struct PairSheet: View {
   }
 
   @State private var openedPopup = false
+
+  /// Paired and done: the sheet goes, or the flow it stands in moves on
+  private func finish() {
+    if let inline { inline.onDone() } else { dismiss() }
+  }
 
   /// A link opened from outside while the sheet is up, or the one that raised it
   private func takePending() {
@@ -165,6 +191,8 @@ struct PairAddForm: View {
   let browsing: Bool
   /// The form is on top: the camera runs only then
   let scanning: Bool
+  /// A line over the camera card: where the computer shows its code (the first-run flow)
+  var lead: String?
   /// A pairing link, with the code's rows when the camera read it
   var onLink: (String, [String]?) -> Void
   @State private var notice: String?
@@ -175,6 +203,14 @@ struct PairAddForm: View {
       Section {
         PairCameraCard(active: scanning, onLink: onLink)
           .listRowInsets(EdgeInsets())
+      } header: {
+        if let lead {
+          Text(web: lead, paragraph: false)
+            .textStyle(TypeScale.body)
+            .foregroundStyle(Palette.fg2)
+            .textCase(nil)
+            .padding(.bottom, Metrics.s2)
+        }
       }
       Section {
         if nearby.isEmpty {
@@ -357,5 +393,17 @@ struct PairStage: View {
     case .failed: onRetry()
     default: break
     }
+  }
+}
+
+/// The sheet's title inline in its bar; in place of the sheet, large over the page
+private struct PairTitleMode: ViewModifier {
+  var large: Bool
+  func body(content: Content) -> some View {
+    #if os(iOS)
+    content.navigationBarTitleDisplayMode(large ? .large : .inline)
+    #else
+    content
+    #endif
   }
 }
