@@ -591,8 +591,10 @@ struct GooBean {
   let title: String
   let glyph: AnyView
   let caption: AnyView
-  let rows: Int
-  let panel: AnyView
+  var rows = 0
+  var panel: AnyView? = nil
+  /// A bean that acts in place (Fast flips) instead of opening a panel
+  var tap: (() -> Void)? = nil
 }
 
 extension GooColumn {
@@ -605,9 +607,12 @@ extension GooColumn {
     let offsets = offsets(chip: chip, widths: beans.map { _ in chip.width })
     return zip(beans, offsets).enumerated().map { k, item in
       let (b, at) = item
+      if let tap = b.tap {
+        return GooPiece(id: "bean.\(b.key)", name: b.title, offset: at, glyph: b.glyph, caption: b.caption, action: tap)
+      }
       let h = panelHeight(rows: b.rows, room: room)
       return GooPiece(id: "bean.\(b.key)", name: b.title, offset: at, glyph: b.glyph, caption: b.caption,
-                      panel: GooPanel(size: CGSize(width: Metrics.gooPanelW, height: h), content: b.panel)) {
+                      panel: b.panel.map { GooPanel(size: CGSize(width: Metrics.gooPanelW, height: h), content: $0) }) {
         withAnimation(motion ? Motion.gooSpring : nil) {
           stage.wrappedValue = stage.wrappedValue == k + 1 ? 0 : k + 1
           deeper?.wrappedValue = nil
@@ -618,11 +623,12 @@ extension GooColumn {
 }
 
 /// The model button as one liquid chip (the model's mark, large, beside `+`). Opening it squeezes its beans out of
-/// it in a column: the model, the reasoning level and the special modes (the agent's modes, Fast), each with its
-/// value on its right, and the mark turns into × (the chip has become the beans, as `+` does). A tapped bean
-/// stretches into its panel of choices and swallows the others; a pick shrinks it back into the bean and leaves the
-/// beans out, so another setting can change next. Fast and Thinking flip in place. The built-in agent's sidekick is
-/// the last bean, and its panel holds its own model and level a level deeper (`SidekickPanel`)
+/// it in a column: the model, the reasoning level, Fast, the working mode (Codex's collaboration mode) and the agent's
+/// modes with the approval level under them, each with its value on its right, and the mark turns into × (the chip
+/// has become the beans, as `+` does). A tapped bean stretches into its panel of choices and swallows the others; a
+/// pick shrinks it back into the bean and leaves the beans out, so another setting can change next. Fast is one bean
+/// whatever the agent's wire shape and flips on a tap, no panel; Thinking flips in place. The built-in agent's
+/// sidekick is the last bean, and its panel holds its own model and level a level deeper (`SidekickPanel`)
 struct LiquidControls: View {
   let controls: SessionControls
   @Binding var open: String?
@@ -726,49 +732,80 @@ struct LiquidControls: View {
                         }
                       })))
     }
-    let modes = c.modes
-    let fast = c.fast
-    if c.hasModes {
-      out.append(GooBean(key: "mode", title: t("composer.mode"),
-                      glyph: AnyView(Group {
-                        if let mode, !modes.isEmpty {
-                          Icon(modeIcon(mode), size: Metrics.barIcon, strokeWidth: 1.75)
-                            .foregroundStyle(mode.kind == "full_access" ? Palette.warn : Palette.fg1)
-                        } else {
-                          FastGlyph(on: fast?.on == true, size: Metrics.barIcon)
-                        }
-                      }),
-                      caption: AnyView(HStack(spacing: Metrics.s1_5) {
-                        if fast?.on == true { FastGlyph(on: true, size: Metrics.icon) }
-                        if let mode, !modes.isEmpty { GooCaption(text: modeLabel(mode)) }
-                        if modes.isEmpty, fast?.on != true { GooCaption(text: "Fast") }
-                      }),
-                      rows: modes.count + (fast != nil ? 1 : 0),
-                      panel: AnyView(GooList(current: mode?.id) {
-                        if let fast {
-                          // Fast flips in place: the panel stays out
-                          GooRow(name: "Fast", checked: fast.on) { FastGlyph(on: fast.on, size: Metrics.icon) } trailing: {
-                            Toggle("", isOn: Binding(get: { fast.on }, set: { fast.set($0) }))
-                              .labelsHidden()
-                              // The system's green, as the settings switch
-                              .tint(.green)
-                              .disabled(fast.disabled)
-                          } action: { if !fast.disabled { fast.set(!fast.on) } }
-                        }
-                        ForEach(modes) { m in
-                          GooRow(name: modeLabel(m), checked: m.id == mode?.id) {
-                            Icon(modeIcon(m), size: Metrics.icon, strokeWidth: 1.75)
-                              .foregroundStyle(m.kind == "full_access" ? Palette.warn : Palette.fg1)
-                          } action: {
-                            onSetMode(m.id)
-                            fold()
-                          }
-                          .id(m.id)
-                        }
-                      })))
+    if let fast = c.fast {
+      // Every agent's Fast reads the same: the bolt and its name, lit on a tap, the panel never opens
+      out.append(GooBean(key: "fast", title: "Fast",
+                         glyph: AnyView(FastGlyph(on: fast.on, size: Metrics.barIcon)),
+                         caption: AnyView(GooCaption(text: "Fast")),
+                         tap: { if !fast.disabled { withAnimation(motion ? Motion.quick : nil) { fast.set(!fast.on) } } }))
     }
+    if let work = c.collaboration {
+      let current = work.options.first { $0.id == work.value } ?? work.options.first
+      out.append(GooBean(key: "work", title: work.name,
+                         glyph: AnyView(Icon(current.map(modeIcon) ?? .circleDashed, size: Metrics.barIcon, strokeWidth: 1.75)
+                           .foregroundStyle(Palette.fg1)),
+                         caption: AnyView(GooCaption(text: current.map(workLabel) ?? work.name)), rows: work.options.count,
+                         panel: AnyView(GooList(current: current?.id) {
+                           ForEach(work.options) { o in
+                             GooRow(name: workLabel(o), checked: o.id == current?.id) {
+                               Icon(modeIcon(o), size: Metrics.icon, strokeWidth: 1.75)
+                             } action: {
+                               onSetConfig(work.id, o.id)
+                               fold()
+                             }
+                             .id(o.id)
+                           }
+                         })))
+    }
+    if c.hasModes { out.append(modeBean(c)) }
     if let sk = c.sidekick { out.append(sidekickBean(sk, effort: c.sidekickEffort)) }
     return out
+  }
+
+  /// The agent's modes, and under them the approval level where the agent offers one as a config option (Composer.tsx
+  /// ModeMenu): a segmented scale whose pick keeps the panel out; a level past the first shows under the mode's name.
+  /// Without modes the levels are the panel's rows
+  private func modeBean(_ c: ModelChoices) -> GooBean {
+    let modes = c.modes
+    let mode = c.mode
+    let access = c.access
+    let level = access.flatMap { a in a.options.first { $0.id == a.value } }
+    // The first level is the default and shows no tag
+    let tagged = level.flatMap { $0.id == access?.options.first?.id ? nil : $0 }
+    if modes.isEmpty, let access {
+      return GooBean(key: "mode", title: access.name,
+                     glyph: AnyView(Icon(level.map(modeIcon) ?? .circleDashed, size: Metrics.barIcon, strokeWidth: 1.75).foregroundStyle(Palette.fg1)),
+                     caption: AnyView(GooCaption(text: level.map(accessLabel) ?? access.name)), rows: access.options.count,
+                     panel: AnyView(GooList(current: level?.id) {
+                       ForEach(access.options) { o in
+                         GooRow(name: accessLabel(o), checked: o.id == level?.id) {
+                           Icon(modeIcon(o), size: Metrics.icon, strokeWidth: 1.75)
+                         } action: {
+                           onSetConfig(access.id, o.id)
+                           fold()
+                         }
+                         .id(o.id)
+                       }
+                     }))
+    }
+    return GooBean(key: "mode", title: t("composer.mode"),
+                   glyph: AnyView(Icon(mode.map(modeIcon) ?? .circleDashed, size: Metrics.barIcon, strokeWidth: 1.75)
+                     .foregroundStyle(mode?.kind == "full_access" ? Palette.warn : Palette.fg1)),
+                   caption: AnyView(GooCaption(text: mode.map(modeLabel) ?? t("composer.mode"), note: tagged.map(accessLabel))),
+                   rows: modes.count + (access != nil ? 1 : 0),
+                   panel: AnyView(GooList(current: mode?.id) {
+                     ForEach(modes) { m in
+                       GooRow(name: modeLabel(m), checked: m.id == mode?.id) {
+                         Icon(modeIcon(m), size: Metrics.icon, strokeWidth: 1.75)
+                           .foregroundStyle(m.kind == "full_access" ? Palette.warn : Palette.fg1)
+                       } action: {
+                         onSetMode(m.id)
+                         fold()
+                       }
+                       .id(m.id)
+                     }
+                     if let access { AccessScale(control: access) { onSetConfig(access.id, $0) } }
+                   }))
   }
 
   /// The built-in agent's sidekick, last so the lead's settings stay together: its mark with the plus badge (a faint
@@ -939,6 +976,36 @@ struct SidekickMark: View {
   }
 }
 
+/// The approval level under the modes (Composer.tsx ModeMenu's SegmentScale): the system's segmented control, its
+/// thirds even, under a hairline. A pick keeps the panel out, as an effort pick does on the desktop
+private struct AccessScale: View {
+  let control: ConfigControl
+  var onSelect: (String) -> Void
+
+  var body: some View {
+    Picker("", selection: Binding(get: { control.value ?? control.options.first?.id ?? "" }, set: onSelect)) {
+      ForEach(control.options) { o in Text(web: accessLabel(o), paragraph: false).tag(o.id) }
+    }
+    .pickerStyle(.segmented)
+    .labelsHidden()
+    .padding(.horizontal, Metrics.gooPadX)
+    .frame(height: Metrics.gooRow)
+    .overlay(alignment: .top) { Rectangle().fill(Palette.line).frame(height: Metrics.hairline) }
+    .accessibilityLabel(Text(web: t("composer.access")))
+  }
+}
+
+/// modeIcons.ts `accessLabel`: the built-in agent's approval levels by id, any other level its short mode label
+func accessLabel(_ level: SessionOption) -> String {
+  let keys = ["ask": "composer.access.ask", "auto-edit": "composer.access.autoEdit", "full": "composer.access.full"]
+  return keys[level.id].map { t($0) } ?? modeLabel(level)
+}
+
+/// A collaboration mode's name: Codex's `default` is its Build mode, not the permission default beside it
+func workLabel(_ mode: SessionOption) -> String {
+  mode.id == "default" ? t("composer.modeShort.build") : modeLabel(mode)
+}
+
 /// One Fast toggle per panel, whatever its source: an embedded variant, a Fusion pair, or a native model_config control
 struct FastState {
   var on: Bool
@@ -971,6 +1038,10 @@ struct ModelChoices {
   let mode: SessionOption?
   /// The modes to choose between; none when the agent has only one
   let modes: [SessionOption]
+  /// Codex's collaboration mode (Build / Plan), a working mode beside the permission modes
+  let collaboration: ConfigControl?
+  /// The approval level offered as a config option (the built-in agent's), under the modes
+  let access: ConfigControl?
   /// The built-in agent's sidekick select and its level (the last bean, `SidekickPanel`)
   let sidekick: ConfigControl?
   let sidekickEffort: ConfigControl?
@@ -990,6 +1061,8 @@ struct ModelChoices {
     self.effort = Self.effort(split: split, cur: cur, curVar: curVar, modelId: model?.id, onSetConfig: onSetConfig)
     self.mode = controls.modes.first { $0.id == controls.modeId } ?? controls.modes.first
     self.modes = controls.modes.count > 1 ? controls.modes : []
+    self.collaboration = split.collaboration.first { $0.options.count > 1 }
+    self.access = split.permission.first { $0.options.count > 1 }
     let sidekick = Self.sidekick(split, hidden: hidden)
     self.sidekick = sidekick?.select
     self.sidekickEffort = sidekick?.effort
@@ -1008,12 +1081,15 @@ struct ModelChoices {
     split.sidekick.first.map { (visible($0, hidden: hidden), split.sidekickEffort.first) }
   }
 
-  /// Which of the chip's beans apply, in the column's order: the model, the reasoning level, the modes and Fast
+  /// Which of the chip's beans apply, in the column's order: the model, the reasoning level, Fast, the working mode,
+  /// the modes with the approval level
   var hasModel: Bool { cur != nil && modelId != nil }
   var hasEffort: Bool { effort.map { $0.levels.count > 1 || $0.thinking != nil } ?? false }
-  var hasModes: Bool { !modes.isEmpty || fast != nil }
+  var hasModes: Bool { !modes.isEmpty || access != nil }
   /// The sidekick's bean (1…), last in the column, when the agent offers one (`-popup` and the demo)
-  var sidekickStage: Int? { sidekick.map { _ in [hasModel, hasEffort, hasModes].filter { $0 }.count + 1 } }
+  var sidekickStage: Int? {
+    sidekick.map { _ in [hasModel, hasEffort, fast != nil, collaboration != nil, hasModes].filter { $0 }.count + 1 }
+  }
 
   /// Fast, when the model in use can switch it at the level in force, or while it is on (the bolt on the chip says
   /// so). A family with Fast at other levels only offers none here, rather than a switch that cannot move

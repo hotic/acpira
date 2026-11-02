@@ -362,9 +362,14 @@ enum ComposerControls {
   /// The sidekick's value for none
   static let noSidekick = "none"
 
-  /// The toolbar's split: model selectors, reasoning, model parameters, working modes, the sidekick, the rest
+  /// A permission level offered as a config option (the built-in agent's approval): it rides in the mode bean
+  static let permissionCategory = "_permission_mode"
+
+  /// The toolbar's split: model selectors, reasoning, model parameters, working modes, the permission level, the
+  /// sidekick, the rest
   struct Split {
     var models: [ConfigControl] = []; var reasoning: [ConfigControl] = []; var modelConfig: [ConfigControl] = []; var collaboration: [ConfigControl] = []
+    var permission: [ConfigControl] = []
     var sidekick: [ConfigControl] = []; var sidekickEffort: [ConfigControl] = []; var other: [ConfigControl] = []
   }
 
@@ -373,6 +378,7 @@ enum ComposerControls {
     for c in options {
       if isReasoning(c) { s.reasoning.append(c) }
       else if c.category == "collaboration_mode" && c.type != "boolean" { s.collaboration.append(c) }
+      else if c.category == permissionCategory && c.type != "boolean" { s.permission.append(c) }
       else if c.category == sidekickCategory && c.type != "boolean" { s.sidekick.append(c) }
       else if c.category == sidekickEffortCategory && c.type != "boolean" { s.sidekickEffort.append(c) }
       else if c.category == "model_config" { s.modelConfig.append(c) }
