@@ -164,6 +164,18 @@ async fn replaying_remembered_controls_does_not_reset_the_previous_effort_betwee
   assert_eq!(agent_value(&s, "effort").as_deref(), Some("high"));
 }
 
+// A draft picks a sidekick and its level before any session exists; the level select only arrives with the sidekick
+#[tokio::test(flavor = "multi_thread")]
+async fn replaying_remembered_controls_sets_a_control_an_earlier_answer_brought() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({ "env": { "FAKE_SIDEKICK": "1" } }));
+  let s = started(&h, "/tmp").await;
+  assert_eq!(agent_value(&s, "sidekick_effort"), None);
+  s.adopt_controls(serde_json::from_value(json!({ "config": { "sidekick": "m2", "sidekick_effort": "low" } })).unwrap()).await;
+  assert_eq!(agent_value(&s, "sidekick").as_deref(), Some("m2"));
+  assert_eq!(agent_value(&s, "sidekick_effort").as_deref(), Some("low"));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn ignore_modes_drops_protocol_modes_and_a_pushed_mode_update() {
   let fake = fake_or_skip!();
