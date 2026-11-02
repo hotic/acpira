@@ -938,7 +938,6 @@
   "settings.openFilesWith": "파일 열기 앱",
   "settings.openFilesWith.desc": "파일 링크와 계획을 여는 곳",
   "settings.openFilesWith.system": "시스템 기본 앱",
-  "settings.about.title": "Acpira 정보",
   "settings.about.releaseNotes": "릴리스 노트",
   "settings.about.source": "소스 코드",
   "settings.update.version": "Acpira {version}",

@@ -142,7 +142,7 @@ export function SettingsShell(p: SettingsShellProps) {
   const title = page.kind === 'agent' || page.kind === 'models' ? t('settings.nav.models') : page.kind === 'plugins' ? t('settings.nav.plugins') : page.kind === 'appearance' ? t('settings.appearance.title')
     : page.kind === 'shared' ? t('settings.shared.title') : page.kind === 'subagents' ? t('settings.nav.subagents')
     : page.kind === 'storage' ? t('storage.title') : page.kind === 'connections' || page.kind === 'chatgpt' ? t('settings.nav.connections')
-    : page.kind === 'about' ? t('settings.about.title') : t('settings.general.title');
+    : page.kind === 'about' ? t('settings.nav.about') : t('settings.general.title');
   const busy = !!agent && !!p.refreshing?.has(agent.id);
   // Header refresh clicks on the Storage tab: the only thing that replays its bar's fill
   const [storageRefresh, setStorageRefresh] = useState(0);

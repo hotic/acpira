@@ -21,7 +21,7 @@ const RELEASES_URL = `${REPO_URL}/releases`;
 // The phases with work under way: the status line shimmers and the check button waits
 const BUSY = new Set<UpdateState['phase']>(['checking', 'downloading', 'staging', 'applying']);
 
-// Desktop only: About Acpira, at the rail's foot. The first card is the app: its version as the head, where its updates
+// Desktop only: About, at the rail's foot. The first card is the app: its version as the head, where its updates
 // stand (HostMsg updateState, rust/crates/acpira-desktop/src/update/) as the second line with the one next step as the
 // head's action, then the automatic download switch. An install that cannot replace itself (a dmg, App Translocation,
 // a folder it cannot write, a development build) says why and links to the release page instead. Getting started replays

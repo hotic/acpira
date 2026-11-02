@@ -963,7 +963,6 @@ export const ja = {
   'settings.openFilesWith': 'ファイルを開くアプリ',
   'settings.openFilesWith.desc': 'ファイルリンクとプランを開く場所',
   'settings.openFilesWith.system': 'システムの既定',
-  'settings.about.title': 'Acpira について',
   'settings.about.releaseNotes': 'リリースノート',
   'settings.about.source': 'ソースコード',
   'settings.update.version': 'Acpira {version}',
