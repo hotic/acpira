@@ -1467,6 +1467,7 @@
   "mobile.engineNeeded": "엔진 연결이 필요합니다",
   "mobile.cancel": "취소",
   "mobile.save": "저장",
+  "mobile.scrollToLatest": "최신으로 이동",
   "mobile.add": "추가",
   "mobile.composer.expand": "입력창 펼치기",
   "mobile.composer.collapse": "입력창 접기",

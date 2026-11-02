@@ -1481,6 +1481,7 @@ export const de = {
   'mobile.engineNeeded': 'Braucht eine verbundene Engine',
   'mobile.cancel': 'Abbrechen',
   'mobile.save': 'Sichern',
+  'mobile.scrollToLatest': 'Zum Neuesten scrollen',
   'mobile.add': 'Hinzufügen',
   'mobile.composer.expand': 'Eingabefeld vergrößern',
   'mobile.composer.collapse': 'Eingabefeld verkleinern',

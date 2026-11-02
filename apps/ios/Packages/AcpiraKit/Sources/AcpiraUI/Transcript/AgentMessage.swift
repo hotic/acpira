@@ -119,13 +119,17 @@ struct CodexMessage: View {
   }
 }
 
-/// The process fold: open while the turn works, closed once it is done; a tap on the head always wins
+/// The process fold: open while the turn works, closed once it is done; a tap on the head always wins. A reader who let
+/// go of the thread's end holds the automatic close until they come back, as on the desktop (Turns.tsx CodexFold): the
+/// fold collapsing many screens above or under them moved what they were reading
 struct CodexFold: View {
   let turn: AgentTurn
   let blocks: [AgentBlock]
   var running: Bool
   var hasTools: Bool
   @State private var manual: Bool?
+  @State private var hold = FoldHold()
+  @Environment(\.threadFollowing) private var following
   @Environment(\.motionEnabled) private var motion
   @Environment(\.holdScroll) private var holdScroll
   @Environment(\.preOpen) private var preOpen
@@ -137,7 +141,8 @@ struct CodexFold: View {
   var body: some View {
     // A turn with no process worth a head (a plain reply, or only a compaction status) shows no head
     let retired = !running && !hasTools && !blocks.contains { if case .compaction = $0 { false } else { true } }
-    let open = retired || (manual ?? (running || preOpen.contains(.fold)))
+    let auto = hold.next(running: running, following: following?.value ?? true) || preOpen.contains(.fold)
+    let open = retired || (manual ?? auto)
     let items = groupProcess(blocks)
     let parts = processParts(items)
     // Only items fold; a process of nothing but delegations has no chevron
@@ -147,7 +152,7 @@ struct CodexFold: View {
         if !retired {
           EntranceOnce(id: "fold-head") { head(open: open, foldable: foldable) }
             // `-popup fold:N` reaches the process fold too, so a recording shows it open and close
-            .foldProbe { toggle(from: manual ?? (running || preOpen.contains(.fold))) }
+            .foldProbe { toggle(from: manual ?? auto) }
         }
         if !blocks.isEmpty {
           VStack(alignment: .leading, spacing: 0) {
@@ -243,6 +248,17 @@ struct CodexFold: View {
       }
     }
     .buttonStyle(RowButtonStyle())
+  }
+}
+
+/// The fold's automatic state across redraws (Turns.tsx `held`): open while the turn runs, and still open after it while
+/// the thread is not following. A class written from the body, so holding costs no redraw
+final class FoldHold {
+  private var open = false
+
+  func next(running: Bool, following: Bool) -> Bool {
+    open = running || (!following && open)
+    return open
   }
 }
 

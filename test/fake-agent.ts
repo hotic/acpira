@@ -1101,7 +1101,27 @@ const app = acp.agent({ name: 'fake-agent' })
       // `_claude/origin`. =autonomous-hang never sends that result (the cycle only ends by a stop). FAKE_AUTONOMOUS_WRITE=<path>:
       // the cycle writes "bad\n" there through an edit row; FAKE_AUTONOMOUS_TWICE: a second background task's cycle follows
       // the first one's result; FAKE_AUTONOMOUS_DELAY: ms between the turn's end and the cycle (default 80);
-      // FAKE_AUTONOMOUS_NO_ORIGIN: the result carries only its cost, as a scheduled wakeup's cycle's did
+      // FAKE_AUTONOMOUS_NO_ORIGIN: the result carries only its cost, as a scheduled wakeup's cycle's did.
+      // FAKE_AUTONOMOUS_TOOLS=<n> (the phone's scroll checks): the turn runs n tool rows first, then cycles of n / 2 rows
+      // and a screen of prose follow every FAKE_AUTONOMOUS_GAP ms (default 3000), FAKE_AUTONOMOUS_CYCLES times (default 20)
+      const tools = Number(process.env.FAKE_AUTONOMOUS_TOOLS ?? 0);
+      const row = async (id: string) => {
+        await send({ sessionUpdate: 'tool_call', toolCallId: id, title: `Read ${id}.ts`, kind: 'read', status: 'completed', locations: [{ path: `/tmp/${id}.ts` }] });
+        await new Promise(r => setTimeout(r, 60));
+      };
+      if (tools) {
+        for (let i = 0; i < tools; i++) await row(`t${i}`);
+        void (async () => {
+          for (let c = 0; c < Number(process.env.FAKE_AUTONOMOUS_CYCLES ?? 20); c++) {
+            await new Promise(r => setTimeout(r, Number(process.env.FAKE_AUTONOMOUS_GAP ?? 3000)));
+            for (let i = 0; i < tools / 2; i++) await row(`c${c}-${i}`);
+            await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `\n\nCycle ${c + 1} done: the take was recorded and the next line is queued for the driver.`.repeat(16) } });
+            await send({ sessionUpdate: 'usage_update', used: 20 + c, size: 1000, _meta: { '_claude/origin': { kind: 'task-notification' } } } as never);
+          }
+        })();
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Recording runs in the background. '.repeat(12) } });
+        return { stopReason: 'end_turn' };
+      }
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'waiting in background' } });
       setTimeout(() => {
         void (async () => {

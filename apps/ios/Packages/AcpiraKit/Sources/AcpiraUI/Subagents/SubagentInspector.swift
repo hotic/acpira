@@ -162,7 +162,7 @@ private struct InspectorThread: View {
         follow = false
       } else if wasDragging, phase == .idle {
         let g = context.geometry
-        follow = g.contentOffset.y + g.containerSize.height - g.contentInsets.bottom >= g.contentSize.height - Metrics.s2
+        follow = g.gapBelow <= Metrics.s2
       }
     }
     // Stick to the bottom while the child streams, as the main thread does; dragging away releases the follow
