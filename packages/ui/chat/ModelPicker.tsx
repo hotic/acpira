@@ -50,7 +50,7 @@ export function ModelOptions({ control, hidden, onSelect, close }: {
 
 // Every ACP uses the Devin-style model chip and panel. Native reasoning and model
 // parameters join the footer, while embedded variants retain their wire IDs.
-export function ModelControl({ control, hidden, reasoning = [], modelConfig = [], sidekick, sidekickEffort, sidekickLive, hiddenConfig, onSetConfig, onSelect, onOpenChange }: OptionMenuProps & {
+export function ModelControl({ control, hidden, reasoning = [], modelConfig = [], sidekick, sidekickEffort, sidekickLive, hiddenConfig, onSetConfig, onSqueeze, onSelect, onOpenChange }: OptionMenuProps & {
   hidden?: string[];
   reasoning?: ConfigControl[];
   modelConfig?: ConfigControl[];
@@ -61,6 +61,8 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
   sidekickLive?: boolean;
   hiddenConfig?: Record<string, string[]>;
   onSetConfig: (id: string, value: string) => void;
+  // Asks the toolbar to fold its other chips to their icons while the chip cannot keep its name (useFitStage squeeze)
+  onSqueeze?: (on: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const c = useMemo(() => ({ ...control, options: visibleOptions(control.options, hidden, control.value) }), [control, hidden]);
@@ -76,7 +78,9 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
   const skPicked = sidekick?.options.find(o => o.id === sidekick.value && o.id !== NO_SIDEKICK);
   const skLevel = skPicked && sidekickEffort ? reasoningChip(sidekickEffort) : undefined;
   const skLabel = skPicked && [skPicked.name, skLevel].filter(Boolean).join(' ');
-  const fit = useFitStage<HTMLButtonElement, HTMLSpanElement>(!!skPicked);
+  // A single model steps down too (its level to the short form first), not only a pair: it used to keep its full width and
+  // run past the send button in a narrow window. Below the compact form the toolbar folds its other chips first (onSqueeze)
+  const fit = useFitStage<HTMLButtonElement, HTMLSpanElement>(true, onSqueeze && { stage: 1, set: onSqueeze });
   // Keep the last picked sidekick, its level and its fit stage while the chip's trail folds back for None
   const [lastSk, setLastSk] = useState(skPicked);
   const [lastSkLevel, setLastSkLevel] = useState(skLevel);
@@ -104,20 +108,20 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
   };
   return (<>
     <Popover.Root open={open} onOpenChange={setOpen} onOpenLifecycle={onOpenChange}>
-      <Popover.Trigger render={at(skPicked ? fit.stage : 0, fit.item)} />
+      <Popover.Trigger render={at(fit.stage, fit.item)} />
       <Popover.Portal><Popover.Positioner side="top" align="end" width="lg"><Popover.Popup palette="menu">
         <ModelPanel families={families} cur={cur} curVar={curVar} onSelect={onSelect} close={() => setOpen(false)}
           reasoning={reasoning} modelConfig={modelConfig} sidekick={sk} sidekickEffort={sidekickEffort} hiddenConfig={hiddenConfig} onSetConfig={onSetConfig} />
       </Popover.Popup></Popover.Positioner></Popover.Portal>
     </Popover.Root>
     {/* Every stage laid out once, out of sight and out of the row's flow, for useFitStage to measure */}
-    {skPicked && <span inert aria-hidden className="pointer-events-none invisible absolute size-0 overflow-hidden">
+    <span inert aria-hidden className="pointer-events-none invisible absolute size-0 overflow-hidden">
       <span ref={fit.box} className="flex w-max flex-col items-start">{CHIP_STAGES.map((_, i) => <Fragment key={i}>{at(i)}</Fragment>)}</span>
-    </span>}
+    </span>
   </>);
 }
 
-// How the chip steps down with a sidekick, one step per stage while the toolbar is short of room. The two sides always step
+// How the chip steps down, one step per stage while the toolbar is short of room. With a sidekick the two sides always step
 // together (both names or neither, both levels in the same form): both levels to their short form, then the caret, then both
 // names (the marks stay), then both levels
 const CHIP_STAGES = [

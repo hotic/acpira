@@ -157,6 +157,8 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
   // The beam lights up while the composer is focused (focus-within semantics), not while it's working.
   // Overlays portal to the shell root, so opening a menu blurs the composer; "a menu is open" therefore also counts as focused
   const [focused, setFocused] = useState(false);
+  // The model chip cannot keep its name in the room left: the toolbar's icon chips drop their labels first (useFitStage squeeze)
+  const [squeezed, setSqueezed] = useState(false);
   const [openMenus, setOpenMenus] = useState(0);
   const onOpenChange = useCallback((open: boolean) => setOpenMenus(n => n + (open ? 1 : -1)), []);
   const beamActive = focused || openMenus > 0;
@@ -466,7 +468,7 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
           a fieldset lays children out in an anonymous inner box that ignores the fieldset's min-height, so items-center there
           only centered the chips within their own --ctl-sm height and they rode a few px above the row-centered send button.
           box-content keeps the floor off the padding: under the preflight's border-box, min-h-ctl minus pt-1 / pb-2 left less than a chip */}
-      <div className="@container box-content flex min-h-ctl min-w-0 items-center gap-1 px-2 pt-1 pb-2">
+      <div className="group/bar @container box-content flex min-h-ctl min-w-0 items-center gap-1 px-2 pt-1 pb-2" data-squeezed={squeezed || undefined}>
         <fieldset disabled={p.disabled || p.controlsLocked || sending} className="m-0 flex min-w-0 shrink-0 items-center gap-1 border-0 p-0">
           <div className="flex shrink-0 items-center gap-1">
             {/* Working mode first (Codex collaboration_mode: Build / Plan), then the permission modes; both are solid chips that never truncate */}
@@ -513,7 +515,7 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
             <ModelControl key={c.id} control={c} hidden={p.hidden?.[c.id]} reasoning={i === 0 ? reasoning : undefined}
               modelConfig={i === 0 ? modelConfig : undefined} sidekick={i === 0 ? sidekick[0] : undefined} sidekickEffort={i === 0 ? sidekickEffort[0] : undefined}
               sidekickLive={i === 0 && p.sidekickLive}
-              hiddenConfig={p.hidden}
+              hiddenConfig={p.hidden} onSqueeze={i === 0 ? setSqueezed : undefined}
               onSetConfig={p.onSetConfig} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />
           ))}
           {p.onAddModel && p.main && !p.edit && !p.controlsLocked && !models.length && (
