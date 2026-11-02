@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The GitHub Release lists only what people download: the desktop apps, the update manifest and one `SHA256SUMS`. VSIXes and desktop update packages move to a shared `packages` prerelease, the IntelliJ plugin's per-platform zips leave GitHub (the plugin installs from the JetBrains Marketplace), and the Windows desktop app is `Acpira-<version>-windows-x86_64.zip` again. SSH folders take a missing helper build from the platform's VSIX there.
+
+### Added
+
+- **Linux desktop app, preview.** Each release ships x64 deb, rpm and AppImage packages, built on Ubuntu 22.04. They have no in-app updates yet.
+
 ### Planned
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.

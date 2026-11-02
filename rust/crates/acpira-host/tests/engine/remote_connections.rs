@@ -450,18 +450,19 @@ async fn a_missing_platform_build_is_fetched_from_the_release_on_connect() {
   let lab = Lab::new();
   let platform = acpira_host::remote::deploy::local_platform();
   let wrapper = std::fs::read(lab.binary()).unwrap();
-  let inner = format!("acpira/sidecar/bin/{platform}/acpira");
-  let zip = stored_zip(&[("acpira/plugin.txt", b"other files of the archive", 0o100644), (&inner, &wrapper, 0o100755)]);
-  let name = format!("acpira-{VERSION}-{platform}.zip");
+  let inner = "extension/bin/acpira";
+  let zip = stored_zip(&[("extension/package.json", b"other files of the archive", 0o100644), (inner, &wrapper, 0o100755)]);
+  let name = acpira_host::remote::fetch::asset_name(VERSION, &platform);
   let digest: String = Sha256::digest(&zip).iter().map(|b| format!("{b:02x}")).collect();
-  let sums = format!("{}  acpira-{VERSION}-other.zip\n{digest}  {name}\n", "0".repeat(64));
-  let (base, asked) = serve(vec![(format!("/v{VERSION}/SHA256SUMS"), sums.into_bytes()), (format!("/v{VERSION}/{name}"), zip)]);
+  let sums = format!("{}  acpira-{VERSION}-other.vsix\n{digest}  {name}\n", "0".repeat(64));
+  // The version's Release lists the digest, the shared packages Release holds the VSIX
+  let (base, asked) = serve(vec![(format!("/v{VERSION}/SHA256SUMS"), sums.into_bytes()), (format!("/packages/{name}"), zip)]);
   let c = lab.engine_with("engine", None, base.clone());
   add(&c).await;
 
   // No build here: connecting fetches, checks and unpacks it, then the usual upload and start
   connected(&c).await;
-  assert_eq!(*asked.lock().unwrap(), [format!("/v{VERSION}/SHA256SUMS"), format!("/v{VERSION}/{name}")]);
+  assert_eq!(*asked.lock().unwrap(), [format!("/v{VERSION}/SHA256SUMS"), format!("/packages/{name}")]);
   let fetched = lab.path().join("engine/run/remote/builds").join(VERSION).join(&platform).join("acpira");
   use std::os::unix::fs::PermissionsExt;
   assert_eq!(std::fs::metadata(&fetched).unwrap().permissions().mode() & 0o777, 0o755);
@@ -475,7 +476,7 @@ async fn a_missing_platform_build_is_fetched_from_the_release_on_connect() {
   c.dispose();
 
   // A release without the build: a final `unsupported` at the fetch step, which names what is missing
-  let (base, _) = serve(vec![(format!("/v{VERSION}/SHA256SUMS"), format!("{}  acpira-{VERSION}-other.zip\n", "0".repeat(64)).into_bytes())]);
+  let (base, _) = serve(vec![(format!("/v{VERSION}/SHA256SUMS"), format!("{}  acpira-{VERSION}-other.vsix\n", "0".repeat(64)).into_bytes())]);
   let lab = Lab::new();
   let c = lab.engine_with("engine", None, base);
   add(&c).await;

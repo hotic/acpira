@@ -1,8 +1,9 @@
-//! A helper build for a host's platform that this machine does not carry, fetched from the GitHub Release of the
-//! engine's own version: the per-platform IntelliJ archive (`acpira-<version>-<platform>.zip`, which holds the bare
-//! binary at `acpira/sidecar/bin/<platform>/acpira`), checked against the Release's `SHA256SUMS`. Builds land in
-//! `<builds>/<version>/<platform>/acpira`; a fetch for one version removes the other versions' folders. The host
-//! itself still never downloads anything (docs/dev/remote.md)
+//! A helper build for a host's platform that this machine does not carry, taken from the platform's VSIX of the engine's
+//! own version (`acpira-<version>-<target>.vsix`, which holds the bare binary at `extension/bin/acpira`). Since 2.0.6 the
+//! VSIX sits on the shared `packages` Release and the version's Release lists its digest in `SHA256SUMS`; from 1.11.0 to
+//! 2.0.5 both the VSIX and `vsix.sha256` sat on the version's Release. Builds land in
+//! `<builds>/<version>/<platform>/acpira`; a fetch for one version removes the other versions' folders. The host itself
+//! still never downloads anything (docs/dev/remote.md)
 
 use std::path::{Path, PathBuf};
 
@@ -10,11 +11,17 @@ use anyhow::{Context, Result, anyhow, bail};
 
 use crate::acp::agents::native_release::{download_progress, extract_zip};
 
-/// Where releases are published; `<base>/v<version>/<asset>` is an asset's URL
+/// Where releases are published; `<base>/<tag>/<asset>` is an asset's URL
 pub const RELEASES: &str = "https://github.com/hotic/acpira/releases/download";
 
+/// The prerelease holding every version's files nobody downloads by hand (`scripts/release/packages-release.mjs`)
+pub const PACKAGES_TAG: &str = "packages";
+
+/// The VSIX that carries `platform`'s binary: `dist/sidecar` names (`mac-arm64`, `linux-x86_64`) map to VS Code targets
+/// (`darwin-arm64`, `linux-x64`) as in `scripts/release/sidecar-targets.mjs`
 pub fn asset_name(version: &str, platform: &str) -> String {
-  format!("acpira-{version}-{platform}.zip")
+  let target = platform.replacen("mac-", "darwin-", 1).replacen("windows-", "win32-", 1).replace("x86_64", "x64");
+  format!("acpira-{version}-{target}.vsix")
 }
 
 /// A fetched build of `version` for `platform`, when one is in place
@@ -23,7 +30,7 @@ pub fn installed(builds: &Path, version: &str, platform: &str) -> Option<PathBuf
   p.is_file().then_some(p)
 }
 
-/// The digest `SHA256SUMS` lists for `name` (`<hex>  <name>`, a `*` before binary-mode names)
+/// The digest a `sha256sum` listing gives `name` (`<hex>  <name>`, a `*` before binary-mode names)
 pub fn digest_in_sums(sums: &str, name: &str) -> Option<String> {
   sums.lines().find_map(|line| {
     let (hex, file) = line.trim().split_once(char::is_whitespace)?;
@@ -48,23 +55,40 @@ pub fn fetch(base: &str, builds: &Path, version: &str, platform: &str, progress:
 
 fn fetch_into(base: &str, builds: &Path, stage: &Path, version: &str, platform: &str, progress: &mut dyn FnMut(u64, Option<u64>)) -> Result<PathBuf> {
   let base = base.trim_end_matches('/');
-  let name = asset_name(version, platform);
   let release = format!("{base}/v{version}");
-  let sums_path = stage.join("SHA256SUMS");
-  download_progress(&format!("{release}/SHA256SUMS"), &sums_path, &mut |_, _| {})
-    .map_err(|e| anyhow!("no published Acpira {version} release to take a {platform} build from ({e:#})"))?;
-  let sums = std::fs::read_to_string(&sums_path)?;
-  let expected = digest_in_sums(&sums, &name).ok_or_else(|| anyhow!("the Acpira {version} release has no {platform} build ({name})"))?;
+  let name = asset_name(version, platform);
+  // The current layout first, then the 1.11.0 - 2.0.5 one (whose SHA256SUMS lists only the IntelliJ zips)
+  let layouts = [("SHA256SUMS", format!("{base}/{PACKAGES_TAG}")), ("vsix.sha256", release.clone())];
+  let (mut found, mut listed, mut miss) = (None, false, None);
+  for (sums_name, dir) in layouts {
+    let sums_path = stage.join(sums_name);
+    if let Err(e) = download_progress(&format!("{release}/{sums_name}"), &sums_path, &mut |_, _| {}) {
+      miss.get_or_insert(e);
+      continue;
+    }
+    // A listing came: the Release exists, so not finding the VSIX means it has no build for this platform
+    listed = true;
+    if let Some(digest) = digest_in_sums(&std::fs::read_to_string(&sums_path)?, &name) {
+      found = Some((sums_name, dir, digest));
+      break;
+    }
+  }
+  let Some((sums_name, dir, expected)) = found else {
+    return Err(match miss {
+      Some(e) if !listed => anyhow!("no published Acpira {version} release to take a {platform} build from ({e:#})"),
+      _ => anyhow!("the Acpira {version} release has no {platform} build ({name})"),
+    });
+  };
   let archive = stage.join(&name);
-  let got = download_progress(&format!("{release}/{name}"), &archive, progress)?;
+  let got = download_progress(&format!("{dir}/{name}"), &archive, progress)?;
   if !got.eq_ignore_ascii_case(&expected) {
-    bail!("SHA-256 mismatch for {name}: SHA256SUMS lists {expected}, the download is {got}");
+    bail!("SHA-256 mismatch for {name}: {sums_name} lists {expected}, the download is {got}");
   }
   let pkg = stage.join("pkg");
   extract_zip(&archive, &pkg)?;
-  let inner = pkg.join("acpira").join("sidecar").join("bin").join(platform).join("acpira");
+  let inner = pkg.join("extension").join("bin").join("acpira");
   if !inner.is_file() {
-    bail!("{name} holds no acpira/sidecar/bin/{platform}/acpira");
+    bail!("{name} holds no extension/bin/acpira");
   }
   #[cfg(unix)]
   {
@@ -114,7 +138,9 @@ mod tests {
 
   #[test]
   fn names_stay_one_path_segment() {
-    assert_eq!(asset_name("1.11.0", "linux-x86_64"), "acpira-1.11.0-linux-x86_64.zip");
+    assert_eq!(asset_name("1.11.0", "linux-x86_64"), "acpira-1.11.0-linux-x64.vsix");
+    assert_eq!(asset_name("1.11.0", "mac-arm64"), "acpira-1.11.0-darwin-arm64.vsix");
+    assert_eq!(asset_name("1.11.0", "linux-arm64"), "acpira-1.11.0-linux-arm64.vsix");
     for bad in ["", ".", "..", "../x", "a/b", ".stage-1"] {
       assert!(!valid_part(bad), "{bad}");
     }
@@ -135,7 +161,7 @@ mod tests {
     assert!(installed(dir.path(), "1.11.0", "linux-arm64").is_none());
   }
 
-  /// The real Release (network, about 20 MB): `cargo test -p acpira-host --lib remote::fetch -- --ignored`
+  /// The real Release (network, about 40 MB): `cargo test -p acpira-host --lib remote::fetch -- --ignored`
   #[test]
   #[ignore]
   fn fetches_a_published_release() {
