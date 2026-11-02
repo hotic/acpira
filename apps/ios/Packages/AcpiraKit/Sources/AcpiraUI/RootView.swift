@@ -84,6 +84,9 @@ extension EnvironmentValues {
   /// The screens show what an ended wire left (`AppModel.current` false): live marks stop moving and stop is off until
   /// the engine's own state is back, so a turn that ended meanwhile does not read as still running
   @Entry var syncing = false
+  /// The session list stands in a sidebar beside the chat (regular width): a pick replaces the chat beside it instead
+  /// of pushing over the list
+  @Entry var listInSidebar = false
 }
 
 /// The app's root: the session list, pushing a chat or the new-session screen, the settings over it as a sheet; the app
@@ -179,11 +182,59 @@ public struct RootView: View {
     return switch theme { case "light": .light; case "dark": .dark; default: nil }
   }
 
-  private var screens: some View {
-    NavigationStack(path: Bindable(model).path) {
-      SessionListScreen()
-        .navigationDestination(for: Route.self) { route in destination(route) }
+  @Environment(\.horizontalSizeClass) private var widthClass
+  /// The sidebar's visibility: open where the chat beside it keeps its reading width, folded (the chat leading, the
+  /// sidebar sliding over it) where it would not; the toggle works in between
+  @State private var columns: NavigationSplitViewVisibility = .automatic
+  @State private var roomy = true
+
+  private func setRoomy(_ now: Bool) {
+    roomy = now
+    columns = now ? .all : .automatic
+  }
+
+  /// Compact width: the phone's stack. Regular width (iPad, an unfolded iPhone Duo): the list in a sidebar and the
+  /// chat beside it, the route's first page at the detail column's root and the rest pushed over it, so one path serves
+  /// both shells and a resize across the line keeps the reader where they were. Until a paired computer's lists are in,
+  /// the connect page takes the whole window there too: a sidebar and a chat with nothing to show say nothing
+  @ViewBuilder private var shell: some View {
+    // A demo launch (screenshots) has the fixtures' lists to show
+    let covered = !options.demo && (pairing.map { PairHeroList.covers($0, model) } ?? false)
+    if widthClass == .regular && !covered {
+      NavigationSplitView(columnVisibility: $columns) {
+        NavigationStack { SessionListScreen() }
+          .environment(\.listInSidebar, true)
+          .navigationSplitViewColumnWidth(Metrics.sidebarW)
+      } detail: {
+        NavigationStack(path: Binding(get: { Array(model.path.dropFirst()) },
+                                      set: { model.path = Array(model.path.prefix(1)) + $0 })) {
+          // Nothing picked yet: a new session, as the desktop opens on its composer
+          destination(model.path.first ?? .new(agent: nil, cwd: nil))
+            .id(model.path.first)
+            .navigationDestination(for: Route.self) { route in destination(route) }
+        }
+      }
+      .modifier(SplitStyle(roomy: roomy))
+      // Read on the first layout too (onGeometryChange only reports changes)
+      .background {
+        GeometryReader { g in
+          let roomy = g.size.width - Metrics.sidebarW >= Metrics.contentW + Metrics.pad * 2
+          Color.clear
+            // A visibility set in the split view's first layout is dropped: it is set on the next turn
+            .onAppear { setRoomy(roomy) }
+            .onChange(of: roomy) { _, now in setRoomy(now) }
+        }
+      }
+    } else {
+      NavigationStack(path: Bindable(model).path) {
+        SessionListScreen()
+          .navigationDestination(for: Route.self) { route in destination(route) }
+      }
     }
+  }
+
+  private var screens: some View {
+    shell
     // Over the whole stack, so it stays put while the pages slide under it
     .overlay { BarHandoffLayer() }
     // A language switch redraws every screen with the new table (the settings switch the table first)
@@ -309,6 +360,16 @@ struct ShareSheet: View {
   var body: some View { Text(verbatim: url.path) }
 }
 #endif
+
+/// Balanced while the sidebar fits beside the chat's reading width; otherwise the chat leads and the sidebar slides
+/// over it (a visibility of `.detailOnly` under `.balanced` is overridden by the split view itself)
+private struct SplitStyle: ViewModifier {
+  var roomy: Bool
+
+  @ViewBuilder func body(content: Content) -> some View {
+    if roomy { content.navigationSplitViewStyle(.balanced) } else { content.navigationSplitViewStyle(.prominentDetail) }
+  }
+}
 
 /// Renders the poster once laid out and writes it where `ios/scripts/render.sh` picks it up
 struct RenderScreen: View {

@@ -4,7 +4,7 @@
 
 ## Layout
 
-- `Acpira.xcodeproj`: app target `Acpira` (iPhone only, iOS 26+, Swift 6, main-actor default isolation) and the hosted `AcpiraTests`. Synchronized groups: a new file joins its target without editing `project.pbxproj`. No signing team is set.
+- `Acpira.xcodeproj`: app target `Acpira` (iPhone and iPad, iOS 26+, Swift 6, main-actor default isolation; one window: the scene manifest comes from `Acpira-Info.plist` because every window's root view would claim the shared push and pairing state) and the hosted `AcpiraTests`. Synchronized groups: a new file joins its target without editing `project.pbxproj`. No signing team is set.
 - `Packages/AcpiraKit` holds nearly all code:
   - `AcpiraModels`: Codable mirrors of the wire. Decoding is tolerant (unknown kind → placeholder): the Mac's engine ships faster than the App Store.
   - `AcpiraSync`: transport, envelope client, session patches (`sessionPatch.ts` / `sessionViews.ts` are the reference; views are values, so `reuse.ts` has no counterpart); no SwiftUI or UIKit. `SyncTests` replays `test/fixtures/engine-patches.json`.
@@ -73,6 +73,7 @@
 
 - One simulator serves every session (`simulator.sh`): runs take turns under a lock; the scripts use their own device ("Acpira Scripts"), never one a person keeps open (a shot relaunches the app with its own arguments). Do not create more devices. A script-booted device shuts down after `ACPIRA_SIM_IDLE` seconds; a hand-booted one is left alone.
 - Wide layouts: scripts take `ipad` and `duo`. `simctl` can neither fold nor rotate: the Duo boots folded, so captures default to its outer screen (`ACPIRA_SIM_DISPLAY=primary-1` for the inner one, unfolded by hand); `-orientation` turns the window, and a relaunch can keep the last run's turn. `xcrun devicectl device orientation set -d NAME landscapeLeft` rotates a simulator itself.
+- Regular width (`RootView.shell`): `NavigationSplitView`, one `AppModel.path` for both shells, its first route the detail column's root and the rest pushed over it, so a resize across the line keeps the page. Sidebar picks replace the root (`listInSidebar`). The sidebar stands open only where the detail keeps `contentW`, else `.prominentDetail`: `.detailOnly` under `.balanced` is overridden by the split view itself, and a visibility set in its first layout is dropped.
 - iPadOS 27 opens the app as a 516 pt compact window whatever it asks; with SpringBoard's `SBMedusaMultitaskingEnabled` and `SBChamoisWindowingEnabled` false (`simctl spawn … defaults write com.apple.springboard`, then reboot) apps run full screen. SpringBoard keeps a window size until reboot.
 - With a hardware keyboard attached the software keyboard is minimised; `defaults write com.apple.keyboard.preferences AutomaticMinimizationEnabled -bool false` via `simctl spawn` brings it back.
 - `simctl recordVideo` right after a boot can stall for seconds: record again before calling it a bug.

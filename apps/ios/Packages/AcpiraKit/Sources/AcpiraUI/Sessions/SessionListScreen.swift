@@ -42,6 +42,8 @@ struct SessionListScreen: View {
   /// The view menu's "archived": the list shows the archived sessions, and only those
   @State private var archivedOnly = false
   @Environment(\.now) private var now
+  /// In a regular width's sidebar: a pick replaces the chat beside the list rather than pushing over it
+  @Environment(\.listInSidebar) private var inSidebar
 
   /// Sessions an open project shows before "N more" (the desktop view menu's default)
   private static let perProject = 5
@@ -62,6 +64,11 @@ struct SessionListScreen: View {
                            onSettings: { model.settingsOpen = true }))
   }
 
+  /// Opens a page from the list: pushed over it on the phone, beside it in place of the open one in the sidebar
+  private func show(_ route: Route) {
+    if inSidebar { model.path = [route] } else { model.path.append(route) }
+  }
+
   @ViewBuilder private var list: some View {
     let terms = searchTerms(query)
     let searching = !terms.isEmpty
@@ -79,7 +86,7 @@ struct SessionListScreen: View {
     let groups = groups(ordered, searching: searching, byProject: byProject, pinsInProject: pinsInProject)
     // The folders the rows' menus move a session to, sorted once per render rather than in every row
     let projects = model.projects
-    let onNew = { model.path.append(.new(agent: nil, cwd: projects.first ?? "")) }
+    let onNew = { show(.new(agent: nil, cwd: projects.first ?? "")) }
     ScrollView(.vertical) {
       LazyVStack(alignment: .leading, spacing: 0) {
         // By project, the chats' group still stands (its "new chat" row) when nothing else does
@@ -193,7 +200,7 @@ struct SessionListScreen: View {
                     onToggle: { if !closeSwipe() { withAnimation(Motion.ease) { model.toggleOpen(cwd) } } },
                     onMoveTop: { withAnimation(Motion.ease) { model.moveProjectToTop(cwd) } },
                     onRemove: { withAnimation(Motion.ease) { model.removeProject(cwd) } },
-                    onNew: { model.path.append(.new(agent: nil, cwd: cwd)) },
+                    onNew: { show(.new(agent: nil, cwd: cwd)) },
                     onSection: { section in withAnimation(Motion.ease) { model.setProjectSection(cwd, section) } },
                     onCopyPath: { model.copyPath(cwd) })
       if open {
@@ -246,7 +253,7 @@ struct SessionListScreen: View {
           }
         }
         if all.isEmpty {
-          NewChatRow { if !closeSwipe() { model.path.append(.new(agent: nil, cwd: "")) } }
+          NewChatRow { if !closeSwipe() { show(.new(agent: nil, cwd: "")) } }
         }
       }
     }
@@ -261,8 +268,10 @@ struct SessionListScreen: View {
                    snippet: String? = nil, terms: [String] = [], projects: [String]) -> some View {
     SessionRow(session: s, agentName: model.agent(s.agent).name, place: place, time: time, divider: divider,
                nested: nested, snippet: snippet, terms: terms,
+               // The sidebar marks the chat open beside it
+               active: inSidebar && model.path.first == .chat(s.id),
                // A tap while a row stands swiped open only puts it back
-               onSelect: { if !closeSwipe() { model.path.append(.chat(s.id)) } }) {
+               onSelect: { if !closeSwipe() { show(.chat(s.id)) } }) {
       NativeSessionMenu(pinned: s.pinned == true, unread: isUnread(s), archived: s.archived == true, actions: HeaderActions(
         pin: { model.togglePin(s.id) },
         unread: { model.setUnread(s.id, $0) },
@@ -442,12 +451,29 @@ func marked(_ text: String, terms: [String], size: CGFloat) -> AttributedString 
 
 // MARK: - Pieces
 
-/// The system search field and new session ride the bottom bar (iOS 26 Mail / Notes); the top bar is `ListTopBar`
+/// The system search field and new session ride the bottom bar (iOS 26 Mail / Notes); the top bar is `ListTopBar`.
+/// In the sidebar the search stands under the top bar, as the desktop's column has it, and the foot holds settings
+/// and the computer; new sessions come from the chat's own bar beside it
 struct SystemListBar: ViewModifier {
   @Binding var query: String
   var onNew: () -> Void
+  @Environment(\.listInSidebar) private var inSidebar
 
-  func body(content: Content) -> some View {
+  @ViewBuilder func body(content: Content) -> some View {
+    #if os(iOS)
+    if inSidebar {
+      content
+        .navigationBarTitleDisplayModeInline()
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: Text(web: t("session.searchContent")))
+    } else {
+      phone(content)
+    }
+    #else
+    phone(content)
+    #endif
+  }
+
+  private func phone(_ content: Content) -> some View {
     content
       .navigationBarTitleDisplayModeInline()
       .toolbar {
@@ -487,6 +513,8 @@ struct ListTopBar: ViewModifier {
   /// The grouping menu; none while the hero covers the list, during a search or with nothing to group
   var filter: ListViewMenu?
   var onSettings: () -> Void
+  /// In the sidebar the filter stays and the computer and settings move to the foot (SidebarFoot)
+  @Environment(\.listInSidebar) private var inSidebar
 
   func body(content: Content) -> some View {
     content
@@ -496,15 +524,18 @@ struct ListTopBar: ViewModifier {
       .toolbar {
         #if os(iOS)
         if let filter { ToolbarItem(placement: .topBarLeading) { filter } }
-        ToolbarItem(placement: .principal) { ListBarTitle() }
-          // The title is text, not a control: no glass capsule behind it
-          .sharedBackgroundVisibility(.hidden)
-        ToolbarItem(placement: .topBarTrailing) {
-          Button(action: onSettings) { Image(systemName: "gearshape") }
-            .accessibilityLabel(Text(web: t("session.settings")))
+        if !inSidebar {
+          ToolbarItem(placement: .principal) { ListBarTitle() }
+            // The title is text, not a control: no glass capsule behind it
+            .sharedBackgroundVisibility(.hidden)
+          ToolbarItem(placement: .topBarTrailing) {
+            Button(action: onSettings) { Image(systemName: "gearshape") }
+              .accessibilityLabel(Text(web: t("session.settings")))
+          }
         }
         #endif
       }
+      .safeAreaBar(edge: .bottom) { if inSidebar { SidebarFoot() } }
   }
 }
 
@@ -526,6 +557,8 @@ struct SessionRow<Items: View>: View {
   var snippet: String?
   /// A search's terms, marked in the title and the snippet
   var terms: [String] = []
+  /// The chat open beside the sidebar
+  var active = false
   var onSelect: () -> Void
   /// The long press's menu (the list hands it the session menu)
   @ViewBuilder var menu: () -> Items
@@ -587,7 +620,7 @@ struct SessionRow<Items: View>: View {
       }
       .contentShape(Rectangle())
     }
-    .buttonStyle(ListRowStyle(active: false))
+    .buttonStyle(ListRowStyle(active: active))
     .contextMenu { menu() }
   }
 }

@@ -340,6 +340,13 @@ public enum Metrics {
   public static let composerShare: CGFloat = 0.45
   /// The reading column's widest (--content-w): the transcript and the dock stay this wide, centred, in a wide window
   public static let contentW: CGFloat = 720
+  /// The session list's column in a regular-width window; the sidebar stands open only where the chat beside it keeps
+  /// `contentW`
+  public static let sidebarW: CGFloat = 320
+  /// An SF Symbol in a `glassCtl` circle, the size the system bar draws its own glyphs at
+  public static let glassGlyph: CGFloat = 19
+  /// How far the new-session pencil is lifted in its glass: its ink sits low in the symbol's box
+  public static let pencilLift: CGFloat = 1.5
   /// A popover's width (--pop-w-lg)
   public static let popLg: CGFloat = 300
   /// The widest card a compact-adapted popover shows unclipped on a 402 pt screen (the stats card's three tiles)
