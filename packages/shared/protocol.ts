@@ -1,7 +1,7 @@
 import type { ChatGptIntegrationStatus } from './chatgptIntegration';
 import type { RemoteAccessOp, RemoteAccessView } from './devices';
 import type { ConnectionOp, ConnectionView, RemoteDirEntry, SshHost } from './remote';
-import type { AccountInfo, AgentId, AgentInfo, CategoryOp, ConfigControl, Draft, FullDiffSource, GoalAction, ImageDraft, NativeSessionInfo, QuestionAnswers, SessionCategories, SessionSummary, SessionView, Turn, TurnSettings } from './transcript';
+import type { AccountInfo, AgentId, AgentInfo, CategoryOp, ConfigControl, Draft, FullDiffSource, GoalAction, ImageDraft, NativeSessionInfo, QuestionAnswers, SessionCategories, SessionSummary, SessionView, SlashCommand, Turn, TurnSettings } from './transcript';
 import type { Appearance, AxisKey } from './appearance';
 import type { HiddenMap, SettingKey, SettingsView } from './settings';
 import type { Locale } from './i18n';
@@ -312,7 +312,8 @@ export type HostMsg =
   // The answer to the pluginCall with the same id: the method's result, or why there is none
   | { type: 'pluginCalled'; id: string; result?: unknown; error?: string }
   // shapes: the agent's remembered per-model parameters (modelShapes.ts), so a model picked in settings shows its own efforts
-  | { type: 'controls'; agent: AgentId; controls: ConfigControl[]; shapes?: ModelShapes }
+  // `commands`: what the agent's newest session advertised, for a page with no session yet (the phone's new session page)
+  | { type: 'controls'; agent: AgentId; controls: ConfigControl[]; shapes?: ModelShapes; commands?: SlashCommand[] }
   // The built-in agent's model sources; error when the action that triggered this reply failed
   | { type: 'providers'; view: ProvidersView; error?: string }
   // The answer to the providerProbe with the same id

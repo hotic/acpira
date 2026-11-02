@@ -17,7 +17,7 @@ use crate::shared_config::{SharedAction, SharedView};
 use crate::storage::{StorageAction, StorageDetail, StorageOutcome, StorageView};
 use crate::transcript::{
   AccountInfo, AgentId, AgentInfo, CategoryOp, ConfigControl, DiffSource, Draft, NativeSessionInfo, QuestionAnswers,
-  SessionCategories, SessionSummary, Turn, TurnSettings,
+  SessionCategories, SessionSummary, SlashCommand, Turn, TurnSettings,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -393,6 +393,11 @@ pub enum HostMsg {
     /// The agent's remembered per-model parameters, so a model picked on the settings page shows its own effort levels
     #[serde(default, skip_serializing_if = "Option::is_none")]
     shapes: Option<ModelShapes>,
+    /// The slash commands the agent's newest session advertised, so a page that has no session yet (the phone's new
+    /// session page) can offer the `/` menu before the first prompt starts the CLI. Discovery only: the real list
+    /// replaces it once the session runs
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    commands: Vec<SlashCommand>,
   },
   Files {
     seq: i64,

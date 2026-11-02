@@ -103,6 +103,9 @@ struct NewSessionScreen: View {
     .task(id: RingAsk(agents: launchable(model.agents).map(\.id), wire: ObjectIdentifier(model))) {
       model.prefetchControls(launchable(model.agents).map(\.id))
     }
+    // The agent's slash commands as its newest session advertised them, so `/` opens the menu before the first prompt
+    // has started the CLI (the session's own list replaces them once it runs)
+    .onChange(of: model.commands(for: draft.agent), initial: true) { _, commands in draft.commands = commands }
     .onChange(of: model.agentControls[draft.agent]) { _, _ in
       model.probeUnknownControls(draft.agent)
       guard !picked else { return }

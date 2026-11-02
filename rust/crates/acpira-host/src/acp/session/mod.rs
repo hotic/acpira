@@ -628,6 +628,11 @@ impl AcpSession {
     self.core.lock().state.controls.clone()
   }
 
+  /// The slash commands the agent advertised (available_commands_update), without the plugins' own
+  pub fn agent_commands(&self) -> Vec<SlashCommand> {
+    self.core.lock().state.commands.clone()
+  }
+
   pub fn acp_session_id(&self) -> Option<String> {
     self.core.lock().acp_session_id.clone()
   }

@@ -814,12 +814,14 @@ impl BridgeCore {
         if fresh != Some(true) {
           let controls = manager.known_controls(&agent).await;
           let shapes = manager.model_shapes(&agent);
-          self.post_now(HostMsg::Controls { agent, controls, shapes });
+          let commands = manager.known_commands(&agent).await;
+          self.post_now(HostMsg::Controls { agent, controls, shapes, commands });
         } else {
           // The probe's initialize brings the version back too; a fresh inventory keeps the facts card in step
           let controls = manager.probe_controls(&agent).await;
           let shapes = manager.model_shapes(&agent);
-          self.post_now(HostMsg::Controls { agent: agent.clone(), controls, shapes });
+          let commands = manager.known_commands(&agent).await;
+          self.post_now(HostMsg::Controls { agent: agent.clone(), controls, shapes, commands });
           let inventory = self.settings.inventory(&agent, &self.folder()).await;
           self.post_now(HostMsg::Inventory { agent, inventory });
         }
