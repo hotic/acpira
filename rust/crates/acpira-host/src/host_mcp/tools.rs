@@ -46,7 +46,11 @@ Use it when the user asks to see a page or would clearly want to: a local dev se
 A URL on this machine's loopback (localhost, 127.0.0.1, 0.0.0.0) must be served here first; when the user's editor runs \
 on another machine (SSH, containers), Acpira forwards the port to it and checks from there that the page answers. \
 The result says whether the page opened and at which address. Loading a page can change the state of the app behind it \
-(one that hands its session to the open page, for example), so open it when it is wanted, not as a check.";
+(one that hands its session to the open page, for example), so open it when it is wanted, not as a check. \
+A loopback page opens in Acpira's browser panel, where it gets `window.acpira.context`: `add({ source: { id, name }, \
+items: [{ label, text }] })` from a click handler pins text to the user's next message to you, so a page you serve \
+can hand back what the user picked there. You cannot read the page or its console yourself; ask the user, or have \
+the page post what you need to its own server.";
 
 const DESCRIPTION: &str = "Display local image files (PNG, JPEG, GIF, WebP) to the user, inline in the conversation. \
 Use it whenever the user should look at an image you produced or found: a screenshot, a rendered UI, a chart, a generated picture. \
