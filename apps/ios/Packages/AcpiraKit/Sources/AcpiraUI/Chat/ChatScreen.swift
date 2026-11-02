@@ -61,7 +61,9 @@ struct ChatScreen: View {
     // A prompt the session itself holds back (starting, replaying remembered controls) shows as sent (HeldPrompt.swift)
     // and so does the phone's own prompt still on its way to the engine; its working row says which stage holds it
     let sent = model.outgoing[id] ?? []
-    return Thread(session: heldPrompt(session, outgoing: sent))
+    let held = heldPrompt(session, outgoing: sent)
+    return Thread(session: held)
+      .modifier(StartingTitle(session: held))
       .environment(\.liveStage, heldStage(session, outgoing: sent, agent: agent.name))
       // An inset reserves scroll clearance without clipping the transcript at the composer's rectangular top edge.
       // Messages pass behind the glass and remain visible beside its rounded corners, as under the navigation bar.
@@ -579,6 +581,7 @@ struct DockSeat<Content: View>: View {
   var homeInset: CGFloat
   let content: Content
   @State private var keyboard = false
+  @Environment(\.horizontalSizeClass) private var widthClass
 
   init(homeInset: CGFloat, @ViewBuilder content: () -> Content) {
     self.homeInset = homeInset

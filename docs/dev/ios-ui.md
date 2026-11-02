@@ -72,4 +72,5 @@ SwiftUI, Liquid Glass, WebKit and text-layout traps of `apps/ios/Packages/Acpira
 ## Deviations
 
 - Deliberate: no auto-focused search in menus (the keyboard covers them); a queued prompt is a faint bubble at the thread's end with a system menu, not the web's toolbar rows; Retry sits in the newest reply's row (Alert.tsx's rule).
+- Deliberate: a start with no prompt waiting shows in the navigation bar's title slot (`StartingTitle`), not as the web's row at the thread's end. That row pushed the bottom-anchored history up a line and dropped it back, and a pill above the composer covered the last reply's closing line.
 - Not ported: account choices on the session card, opening a plan file on the computer, a workflow task's agent count and links.
