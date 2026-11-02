@@ -260,9 +260,13 @@ export function useFreshTab() {
 
 interface TabGuard { leave: () => void; move: () => void }
 
-// One tab on the window's title line. A closable tab's icon turns into its close button on hover: no room is kept for one
-// beside the title, which spread the inactive tabs apart (the LAB, 2026-10-23)
-export function TabButton({ label, title, icon, on, closable, guard, onSelect, onClose }: {
+// One tab on the window's title line. Where its close button sits follows the platform's own tabs:
+// - macOS: the icon turns into the close button on hover, so no room is kept for one beside the title, which spread the
+//   inactive tabs apart (the LAB, 2026-10-23)
+// - Windows and Linux: at the tab's end, in room kept for it, shown on the selected tab and on hover (Edge, VS Code,
+//   Windows Terminal), with no setting to flip it
+// `data-part="tab"` / `"tab-close"` are plugin style hooks (STYLE_HOOKS), so a skin can restyle or move them
+export function TabButton({ label, title, icon, on, closable, guard, closeAt = macOS ? 'start' : 'end', onSelect, onClose }: {
   label: string;
   title?: string;
   // The icon drawn with the classes given (they fade it for the close button)
@@ -270,24 +274,30 @@ export function TabButton({ label, title, icon, on, closable, guard, onSelect, o
   on: boolean;
   closable: boolean;
   guard?: TabGuard;
+  // Overridden only by the LAB, to show the other platform's tab
+  closeAt?: 'start' | 'end';
   onSelect: () => void;
   onClose: () => void;
 }) {
+  const atStart = closable && closeAt === 'start';
+  const atEnd = closable && closeAt === 'end';
+  const close = (shown: string) => (
+    <span role="button" tabIndex={-1} data-part="tab-close" aria-label={t('panel.closeTab')} title={t('panel.closeTab')} onClick={e => { e.stopPropagation(); onClose(); }}
+      className={cn('absolute -inset-0.5 flex items-center justify-center rounded-sm text-fg-2 opacity-0 transition-opacity hover:bg-active hover:text-fg-1', guard ? 'pointer-events-none' : shown)}>
+      <X strokeWidth={1.5} className="size-3.5" />
+    </span>
+  );
   return (
-    <button type="button" role="tab" title={title ?? label} aria-selected={on} onClick={onSelect}
+    <button type="button" role="tab" data-part="tab" title={title ?? label} aria-selected={on} onClick={onSelect}
       onAuxClick={e => { if (closable && e.button === 1) onClose(); }}
       onPointerLeave={guard?.leave} onPointerMove={guard?.move}
       className={cn(TAB, on ? 'min-w-[min(var(--panel-tab-on-min),100%)] bg-active text-fg-1' : 'min-w-[min(var(--panel-tab-min),100%)] text-fg-2 hover:bg-hover hover:text-fg-1')}>
       <span className="relative flex size-icon shrink-0 items-center justify-center">
-        {icon(cn('size-icon transition-opacity', closable && !guard && 'group-hover/tab:opacity-0'))}
-        {closable && (
-          <span role="button" tabIndex={-1} aria-label={t('panel.closeTab')} title={t('panel.closeTab')} onClick={e => { e.stopPropagation(); onClose(); }}
-            className={cn('absolute -inset-0.5 flex items-center justify-center rounded-sm text-fg-2 opacity-0 transition-opacity hover:bg-active hover:text-fg-1', guard ? 'pointer-events-none' : 'group-hover/tab:opacity-100')}>
-            <X strokeWidth={1.5} className="size-3.5" />
-          </span>
-        )}
+        {icon(cn('size-icon transition-opacity', atStart && !guard && 'group-hover/tab:opacity-0'))}
+        {atStart && close('group-hover/tab:opacity-100')}
       </span>
       <span data-tab-label className="min-w-0 truncate">{label}</span>
+      {atEnd && <span className="relative -mr-1 flex size-icon shrink-0">{close(on ? 'opacity-100' : 'group-hover/tab:opacity-100')}</span>}
     </button>
   );
 }
