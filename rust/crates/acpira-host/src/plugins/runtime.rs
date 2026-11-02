@@ -326,9 +326,9 @@ impl Runtimes {
     self.enabled.store(true, Ordering::Relaxed);
   }
 
-  /// The author skill's folder (`sdk::AUTHOR_SKILL`), for the built-in agent in safe mode too: it is how a broken
-  /// plugin gets fixed. Other agents learn the same from Acpira's MCP server instructions, so they are not sent it
-  pub fn author_skills(&self) -> Option<PathBuf> {
+  /// The folder of the skills the engine ships (`sdk::CREATOR_SKILL`), for the built-in agent in safe mode too. Other
+  /// agents bring their own, so they are not sent it
+  pub fn shipped_skills(&self) -> Option<PathBuf> {
     let dir = self.data_root.parent()?.join(crate::plugins::sdk::SDK_DIR).join(crate::plugins::sdk::SKILLS_DIR);
     dir.is_dir().then_some(dir)
   }
