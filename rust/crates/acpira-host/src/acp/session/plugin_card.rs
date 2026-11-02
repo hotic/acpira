@@ -1,14 +1,14 @@
-//! `plugin_activate` (`docs/dev/plugins.md`, Activation): an agent of this session asks to enable a plugin it wrote.
-//! The plugin is frozen and checked statically first (nothing of it runs), then a plugin card joins the agent's turn
-//! (`AgentTurn::plugin_cards`). The card stays clickable after the turn: applying it is the user's confirmation, and
-//! undoing it puts back what it replaced. The call waits as long as its client allows; an apply after that still
-//! enables the plugin, and the agent is told in a queued message when the plugin gives it something to use
+//! `plugin_activate` (`docs/dev/plugins.md`, Activation): an agent of this session offers a plugin it wrote. The
+//! plugin is frozen and checked statically first (nothing of it runs), then a plugin card joins the agent's turn
+//! (`AgentTurn::plugin_cards`) and the call returns at once, like showing an image: the agent's turn never waits on the
+//! user. The card stays clickable after the turn; applying it is the user's confirmation and ends the exchange, and
+//! undoing it puts back what it replaced. Only a failed apply goes back to the agent, as a queued message
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::Value;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 
 use acpira_shared::plugins::PluginCardOp;
 use acpira_shared::transcript::{AgentBlock, AgentTurn, PluginCard, Turn};
@@ -20,116 +20,58 @@ use crate::plugins::host::PluginHost;
 use crate::plugins::store::Provenance;
 use crate::relay::wire::HubReply;
 
-/// How long the call waits when the client named no bound (the 50 s every client but Claude gets, `host_mcp.rs`)
-const DEFAULT_WAIT: Duration = Duration::from_secs(50);
-const MAX_WAIT: Duration = Duration::from_secs(25 * 60);
-const PROGRESS_EVERY: Duration = Duration::from_secs(5);
-
-/// A `plugin_activate` call waiting on its card: what the agent is told once the card is applied, and the plugin host
-/// the call came through (the one a click applies to when this session's own hub has none), kept after the answer
-pub(crate) struct PluginWait {
-  tx: Option<oneshot::Sender<HubReply>>,
-  host: Arc<PluginHost>,
-}
-
 impl AcpSession {
-  pub async fn plugin_activate(self: Arc<Self>, host: Arc<PluginHost>, id: String, wait_secs: Option<u64>, out: mpsc::UnboundedSender<HubReply>) {
+  pub async fn plugin_activate(self: &Arc<Self>, host: Arc<PluginHost>, id: String) -> HubReply {
     let prepared = {
       let (host, id) = (host.clone(), id.clone());
       tokio::task::spawn_blocking(move || host.prepare(&id)).await
     };
     let frozen = match prepared {
       Ok(Ok(f)) => f,
-      Ok(Err(e)) => {
-        let _ = out.send(HubReply::Error(format!("{e:#}")));
-        return;
-      }
-      Err(e) => {
-        let _ = out.send(HubReply::Error(format!("the check did not finish: {e}")));
-        return;
-      }
+      Ok(Err(e)) => return HubReply::Error(format!("{e:#}")),
+      Err(e) => return HubReply::Error(format!("the check did not finish: {e}")),
     };
     if !frozen.findings.ok() {
-      let _ = out.send(HubReply::Error(format!(
+      return HubReply::Error(format!(
         "The plugin was not offered to the user. Fix these in {} and call plugin_activate again:\n{}",
         host.store().source(&id).display(),
         frozen.findings.text()
-      )));
-      return;
+      ));
     }
     // In effect already: enabled at this version, and the skin when it is a theme
     let loaded = host.loaded();
     let enabled = loaded.state.plugins.get(&id).is_some_and(|e| e.enabled && e.snapshot == frozen.hash);
     let skinned = frozen.manifest.contributes.theme.is_none() || loaded.skin().is_some_and(|a| a.id == id);
     if enabled && skinned {
-      let _ = out.send(HubReply::Done(format!("This version of {id} is in effect already.")));
-      return;
+      return HubReply::Done(format!("This version of {id} is in effect already."));
     }
     let card = host.card(&frozen, format!("plugin-{}", crate::util::random_hex(6)));
     let card_id = card.id.clone();
-    let (tx, mut rx) = oneshot::channel();
     {
       let mut c = self.core.lock();
       let Some(turn) = c.state.turns.iter_mut().rev().find_map(Turn::as_agent_mut) else {
-        drop(c);
-        let _ = out.send(HubReply::Error("There is no turn of yours to show the card in.".into()));
-        return;
+        return HubReply::Error("There is no turn of yours to show the card in.".into());
       };
       let mut card = card;
       card.after = offering_call(turn);
       turn.plugin_cards.push(card);
-      self.plugin_waits.lock().insert(card_id.clone(), PluginWait { tx: Some(tx), host: host.clone() });
+      // The host the call came through, for a click in a session whose own hub has none
+      self.plugin_offers.lock().insert(card_id, host);
       self.touch(&mut c);
     }
-    let deadline = wait_secs.map(Duration::from_secs).unwrap_or(DEFAULT_WAIT).min(MAX_WAIT);
-    let until = tokio::time::Instant::now() + deadline;
-    let mut tick = tokio::time::interval(PROGRESS_EVERY);
-    tick.tick().await;
-    let answer = loop {
-      tokio::select! {
-        r = &mut rx => break r.ok(),
-        _ = tick.tick() => {
-          if out.send(HubReply::Progress("Waiting for the user to apply the plugin card".into())).is_err() {
-            break None;
-          }
-        }
-        _ = tokio::time::sleep_until(until) => break None,
-      }
-    };
-    if let Some(reply) = answer {
-      let _ = out.send(reply);
-      return;
-    }
-    let _ = out.send(HubReply::Done(format!(
-      "The card offering {id} is in the conversation; the user applies it when they like, also after this turn. If it \
-       gives you tools or skills you are told in a message then (tools appear in your list, in a new session for \
-       clients that do not list tools again). Go on with other work meanwhile; do not call plugin_activate again for \
-       the same version."
-    )));
-    // A later apply: the agent hears of it only when there is something for it to use. The wait holds the session
-    // weakly, so a card nobody clicks never keeps a closed session alive (its sender goes with the session)
-    let uses = !frozen.manifest.contributes.tools.is_empty() || frozen.manifest.contributes.skills.is_some() || !frozen.manifest.contributes.commands.is_empty();
-    if !uses {
-      return;
-    }
-    let me = Arc::downgrade(&self);
-    drop(self);
-    tokio::spawn(async move {
-      let Ok(reply) = rx.await else { return };
-      let Some(me) = me.upgrade() else { return };
-      let text = match reply {
-        HubReply::Done(t) | HubReply::Error(t) => t,
-        _ => return,
-      };
-      me.enqueue(format!("[Acpira] {text}"), vec![], None).await;
-    });
+    HubReply::Done(format!(
+      "A card offering {id} is in your reply. The user applies it with one click whenever they like, also after this \
+       turn; that click is the hand-off, so the plugin is delivered: do not wait for it and do not ask the user to \
+       click. If applying it fails, you are told in a message with the error. Call plugin_activate again only after \
+       changing the plugin."
+    ))
   }
 
   /// A card's button: apply the version it offers, or undo what applying it changed. A failure is a toast; the
   /// card's state follows the plugins' state either way
   pub async fn plugin_card(self: &Arc<Self>, card_id: &str, op: PluginCardOp) {
     let own = self.deps.host_mcp.as_ref().and_then(|m| m.hub.as_ref()).and_then(|h| h.plugin_host());
-    let Some(host) = own.or_else(|| self.plugin_waits.lock().get(card_id).map(|w| w.host.clone())) else {
+    let Some(host) = own.or_else(|| self.plugin_offers.lock().get(card_id).cloned()) else {
       self.notify("Plugins are not available in this host.");
       return;
     };
@@ -141,31 +83,20 @@ impl AcpSession {
           if let Some(undo) = undo {
             self.update_card(card_id, |c| c.undo = Some(undo));
           }
-          let tools: Vec<String> = host
-            .loaded()
-            .active
-            .iter()
-            .filter(|a| a.id == card.plugin)
-            .flat_map(|a| a.manifest.contributes.tools.iter().map(|t| crate::plugins::manifest::served_name(&card.plugin, &t.name)))
-            .collect();
-          let tools = if tools.is_empty() { String::new() } else { format!(" Its tools on Acpira's MCP server: {}.", tools.join(", ")) };
-          let text = format!("The user applied {}.{tools} Clients that list tools again see them now; others in a new session.", card.plugin);
-          if let Some(tx) = self.plugin_waits.lock().get_mut(card_id).and_then(|w| w.tx.take()) {
-            let _ = tx.send(HubReply::Done(text));
-          }
         }
         Err(e) => {
           let error = format!("{e:#}");
           self.notify(&tp("host.plugin.applyFailed", &[("name", &card.name), ("error", &error)]));
-          // The agent that offered it may still be waiting on its call: it hears why verbatim, so it can fix the plugin
-          // and offer it again instead of waiting out the call (a later apply's failure reaches it as a message, like
-          // a later success)
-          if let Some(tx) = self.plugin_waits.lock().get_mut(card_id).and_then(|w| w.tx.take()) {
-            let _ = tx.send(HubReply::Error(format!(
-              "The user applied the card, but {} was not enabled: {error}\nFix it and call plugin_activate again.",
-              card.plugin
-            )));
-          }
+          // The version the agent handed over does not work: it hears why verbatim (a module that throws on load says
+          // why only in the runtime's stderr), so it can fix the plugin and offer it again. A success needs no word:
+          // the click ends the exchange, and new tools reach the agent through `tools/list_changed`
+          self
+            .enqueue(
+              format!("[Acpira] The user applied the card, but {} was not enabled: {error}\nFix it and call plugin_activate again.", card.plugin),
+              vec![],
+              None,
+            )
+            .await;
         }
       },
       PluginCardOp::Undo => match host.undo_card(&card, provenance).await {

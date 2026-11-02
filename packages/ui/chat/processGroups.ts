@@ -34,22 +34,19 @@ export function isDelegation(block: AgentBlock): block is ToolCallBlock & { suba
 }
 
 // The turn's process cut where something has to stay in view while the parts around it fold: a steered prompt (what the
-// user said), the subagent rows at a delegation (the work the turn handed off) and the plugin cards at the call that
-// offered them (`cardCalls`, `PluginCard.after`: the card takes that row's place). Runs of items fold. A part is keyed
+// user said) and the subagent rows at a delegation (the work the turn handed off). Runs of items fold. A part is keyed
 // by its first item, so content arriving later leaves the earlier parts mounted; back-to-back delegations (a parallel
 // launch) share one part
 export type FoldPart =
   | { type: 'items'; id: string; items: ProcessItem[] }
   | { type: 'steer'; id: string; block: SteerBlock }
-  | { type: 'subagents'; id: string; ids: string[] }
-  | { type: 'cards'; id: string };
+  | { type: 'subagents'; id: string; ids: string[] };
 
-export function processParts(items: ProcessItem[], cardCalls?: ReadonlySet<string>): FoldPart[] {
+export function processParts(items: ProcessItem[]): FoldPart[] {
   const out: FoldPart[] = [];
   for (const item of items) {
     const last = out[out.length - 1];
     if (item.type === 'block' && item.block.type === 'steer') out.push({ type: 'steer', id: item.id, block: item.block });
-    else if (item.type === 'block' && item.block.type === 'tool_call' && cardCalls?.has(item.block.id)) out.push({ type: 'cards', id: item.id });
     else if (item.type === 'block' && isDelegation(item.block)) {
       if (last?.type === 'subagents') last.ids.push(item.block.subagentId);
       else out.push({ type: 'subagents', id: item.id, ids: [item.block.subagentId] });

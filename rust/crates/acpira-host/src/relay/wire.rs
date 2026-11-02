@@ -49,13 +49,9 @@ pub enum HubOp {
   },
   /// `plugin_guide`: the contract and the state of every plugin; answered `Done`
   PluginGuide,
-  /// `plugin_activate`: freeze and check the plugin, then ask the user on a card in the calling session; progress
-  /// lines while the card waits, then `Done` / `Error`
-  PluginActivate {
-    id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    wait_secs: Option<u64>,
-  },
+  /// `plugin_activate`: freeze and check the plugin, then offer it on a card in the calling session; answered `Done`
+  /// once the card is shown, `Error` when the check fails
+  PluginActivate { id: String },
   /// A call to one of this server's tools, before it runs (`phase: "before"`, answered `Done` with `{ arguments?,
   /// block?, after }`) or after (`"after"` with its `result`, answered `Done` with `{ result? }`): the plugins'
   /// `tool.before` / `tool.after` hooks (`AcpSession::plugin_tool`)

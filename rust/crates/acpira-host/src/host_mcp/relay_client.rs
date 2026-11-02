@@ -264,15 +264,14 @@ impl Relay {
     out
   }
 
-  /// `plugin_activate`: the hub freezes and checks the plugin, then waits for the user's card
+  /// `plugin_activate`: the hub freezes and checks the plugin, then shows its card and answers at once
   pub(super) fn plugin_activate(&self, params: &Value, progress: &mut dyn FnMut(Value)) -> Value {
     use crate::relay::wire::HubOp;
     let id = params.get("arguments").and_then(|a| a.get("id")).and_then(Value::as_str).map(str::trim).unwrap_or("");
     if id.is_empty() {
       return tool_error("Pass `id`: the plugin's folder name under ~/.acpira/plugins.".into());
     }
-    let wait_secs = Some(self.wait_secs.load(std::sync::atomic::Ordering::Relaxed));
-    self.streamed(HubOp::PluginActivate { id: id.to_owned(), wait_secs }, params, progress)
+    self.streamed(HubOp::PluginActivate { id: id.to_owned() }, params, progress)
   }
 
   /// Note what a `tools/list` answer offered (`listing_print`)

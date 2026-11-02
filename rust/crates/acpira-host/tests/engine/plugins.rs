@@ -100,19 +100,14 @@ async fn a_session_lists_and_calls_plugin_tools_and_its_agent_asks_to_enable_one
   assert!(out.contains(&format!("ws={}", project.path().display())), "{out}");
   assert!(out.contains(&format!("\"session\":\"{id}\"")) && out.contains("\"arguments\":{\"x\":1}"), "{out}");
 
-  // The agent asks to enable its new version: a card in its session, answered in time
+  // The agent offers its new version: a card in its session, and the call answers at once, before any click
   std::fs::write(plugins_root.join("demo/go.sh"), "echo v2").unwrap();
-  let waiting = {
-    let (addr, token) = (addr.clone(), token.clone());
-    tokio::spawn(async move { op(&addr, &token, HubOp::PluginActivate { id: "demo".into(), wait_secs: Some(30) }).await })
-  };
-  until(|| m.view_of(&id).and_then(|v| card(&v)).is_some(), 5000).await;
+  let offered = done(&op(&addr, &token, HubOp::PluginActivate { id: "demo".into() }).await).unwrap();
+  assert!(offered.contains("A card offering demo"), "{offered}");
   let shown = card(&m.view_of(&id).unwrap()).unwrap();
   assert_eq!((shown["kind"].as_str(), shown["plugin"].as_str()), (Some("exec"), Some("demo")), "{shown}");
   assert!(shown["runs"].as_str().is_some_and(|r| r.contains("go.sh")) && shown.get("undo").is_none(), "{shown}");
   m.handle(json!({ "type": "pluginCard", "sessionId": id, "card": shown["id"], "op": "apply" })).await;
-  let answer = done(&waiting.await.unwrap()).unwrap();
-  assert!(answer.contains("The user applied demo") && answer.contains("demo_where"), "{answer}");
   // The card keeps what it replaced: the version enabled before
   let applied = card(&m.view_of(&id).unwrap()).unwrap();
   assert!(applied["undo"]["snapshot"].is_string(), "{applied}");
@@ -122,38 +117,32 @@ async fn a_session_lists_and_calls_plugin_tools_and_its_agent_asks_to_enable_one
 
   // A broken plugin is never offered: the error comes back for the agent to fix
   std::fs::write(plugins_root.join("demo/plugin.json"), json!({ "schema": 1, "id": "demo", "contributes": {} }).to_string()).unwrap();
-  let err = done(&op(&addr, &token, HubOp::PluginActivate { id: "demo".into(), wait_secs: Some(30) }).await).unwrap_err();
+  let err = done(&op(&addr, &token, HubOp::PluginActivate { id: "demo".into() }).await).unwrap_err();
   assert!(err.contains("contributes nothing") && cards(&m.view_of(&id).unwrap()).len() == 1, "{err}");
 
-  // A runtime that dies on start: applying its card fails the dynamic check, and the call still waiting hears why,
-  // with what the process wrote, instead of waiting out its time
+  // A runtime that dies on start: applying its card fails the dynamic check, and the agent hears why in a message,
+  // with what the process wrote
   let crash = plugins_root.join("crash");
   std::fs::create_dir_all(&crash).unwrap();
   let m_crash = json!({ "schema": 1, "id": "crash", "version": "0.1.0", "description": "Dies on start",
     "contributes": { "runtime": { "command": ["sh", "die.sh"], "hooks": ["prompt"] } } });
   std::fs::write(crash.join("plugin.json"), m_crash.to_string()).unwrap();
   std::fs::write(crash.join("die.sh"), "echo 'the plugin failed to load: ReferenceError: definePlugin is not defined' >&2; exit 1\n").unwrap();
-  let waiting = {
-    let (addr, token) = (addr.clone(), token.clone());
-    tokio::spawn(async move { op(&addr, &token, HubOp::PluginActivate { id: "crash".into(), wait_secs: Some(60) }).await })
-  };
-  until(|| m.view_of(&id).is_some_and(|v| cards(&v).iter().any(|c| c["plugin"] == "crash")), 5000).await;
+  done(&op(&addr, &token, HubOp::PluginActivate { id: "crash".into() }).await).unwrap();
   let shown = card(&m.view_of(&id).unwrap()).unwrap();
-  let t0 = std::time::Instant::now();
+  assert_eq!(shown["plugin"], "crash", "{shown}");
   m.handle(json!({ "type": "pluginCard", "sessionId": id, "card": shown["id"], "op": "apply" })).await;
-  let err = done(&waiting.await.unwrap()).unwrap_err();
-  assert!(err.contains("crash was not enabled") && err.contains("definePlugin is not defined"), "{err}");
-  assert!(t0.elapsed() < std::time::Duration::from_secs(20), "answered only after {:?}", t0.elapsed());
+  until(|| m.view_of(&id).is_some_and(|v| v.to_string().contains("[Acpira] The user applied the card, but crash was not enabled")), 10_000).await;
+  assert!(m.view_of(&id).unwrap().to_string().contains("definePlugin is not defined"));
   assert!(plugins.store().load().unwrap().plugins.get("crash").is_none_or(|e| !e.enabled));
 
-  // Answered after the call gave up: still enabled, and the agent is told in a message of its own
+  // Applied later: enabled, and the agent is sent nothing; the click ends the exchange
   write_plugin(&plugins_root, "late", "echo late");
-  let gave_up = done(&op(&addr, &token, HubOp::PluginActivate { id: "late".into(), wait_secs: Some(1) }).await).unwrap();
-  assert!(gave_up.contains("is in the conversation"), "{gave_up}");
+  done(&op(&addr, &token, HubOp::PluginActivate { id: "late".into() }).await).unwrap();
   let shown = card(&m.view_of(&id).unwrap()).expect("the card stays");
   m.handle(json!({ "type": "pluginCard", "sessionId": id, "card": shown["id"], "op": "apply" })).await;
-  until(|| m.view_of(&id).is_some_and(|v| v.to_string().contains("[Acpira] The user applied late.")), 10_000).await;
-  assert!(plugins.loaded().tool("late_where").is_some());
+  until(|| plugins.loaded().tool("late_where").is_some(), 5000).await;
+  assert!(!m.view_of(&id).unwrap().to_string().contains("[Acpira] The user applied late"));
   // Undone from the card: a plugin that was off is off again
   m.handle(json!({ "type": "pluginCard", "sessionId": id, "card": shown["id"], "op": "undo" })).await;
   until(|| plugins.loaded().tool("late_where").is_none(), 5000).await;
