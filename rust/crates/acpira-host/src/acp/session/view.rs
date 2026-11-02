@@ -419,6 +419,8 @@ struct RecordRef<'a> {
   subagents: Option<Vec<crate::acp::transcript::subagent_tree::RecordRef<'a>>>,
   #[serde(skip_serializing_if = "Option::is_none")]
   goal: Option<&'a SessionGoal>,
+  #[serde(skip_serializing_if = "Vec::is_empty")]
+  client_ids: Vec<String>,
 }
 
 impl RecordSource for AcpSession {
@@ -455,6 +457,7 @@ impl RecordSource for AcpSession {
       imported_from: c.lineage.imported_from.as_ref(),
       subagents: (!c.tree.is_empty()).then(|| c.tree.record_refs()),
       goal: c.state.goal.as_ref(),
+      client_ids: self.client_ids.lock().iter().cloned().collect(),
     };
     serde_json::to_vec(&r).unwrap_or_default()
   }

@@ -87,6 +87,13 @@ public actor EngineClient {
     transport.close()
   }
 
+  /// Actions the engine showed it has (a prompt's copy in its session): never sent again
+  public nonisolated func delivered(_ ids: Set<String>) {
+    ledger.withLock { l in
+      l.written.removeAll { $0.message.clientId.map(ids.contains) == true }
+    }
+  }
+
   /// Once the wire ended, what it may not have delivered and is worth sending on the next one (`replayable`), oldest
   /// first: clientId actions written shortly before the end, actions still queued, actions posted after it
   public nonisolated func unsent() -> [WebviewMsg] {

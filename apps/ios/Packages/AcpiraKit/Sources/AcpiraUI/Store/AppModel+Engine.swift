@@ -164,6 +164,13 @@ extension AppModel {
       // A prompt still on its way gives up its place once the session shows the engine's copy; the ones sent after it
       // keep theirs until their own copies arrive
       if let sent = outgoing[view.id] {
+        // Shown by the engine: no wire sends it again. A resend the engine refuses as a duplicate would still switch its
+        // view to the session first (`flushReplay`), which reads as looking at it and clears its unread dot
+        let delivered = Set(sent.delivered(in: view))
+        if !delivered.isEmpty {
+          link.client.delivered(delivered)
+          replay.removeAll { $0.clientId.map(delivered.contains) == true }
+        }
         let left = sent.left(after: view)
         if left != sent { outgoing[view.id] = left.isEmpty ? nil : left }
       }

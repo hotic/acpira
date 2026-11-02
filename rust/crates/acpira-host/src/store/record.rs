@@ -89,6 +89,10 @@ pub struct SessionRecord {
   /// Set on a copy of a session another machine drives in a folder of this one: shown read-only here, never driven
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub copy_of: Option<CopyOf>,
+  /// The `clientId`s of the latest actions a paired device drove the session with (`AcpSession::claim_client_id`),
+  /// kept so an engine that opens the session after another one exited still runs a resent action once
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub client_ids: Vec<String>,
 }
 
 impl SessionRecord {

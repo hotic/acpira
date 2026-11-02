@@ -332,6 +332,22 @@ struct EngineModelTests {
     #expect(wire.sent.contains { $0.contains(#""type":"send""#) && $0.contains(String(id)) })
   }
 
+  /// A prompt the engine already showed is not sent again after the wire is lost: the engine that ran it may have quit
+  /// meanwhile and kept no claim of its clientId in memory, and the resend's switch to the session would clear its
+  /// unread dot
+  @Test func aPromptTheEngineShowedIsNotSentAgainOnTheNextWire() async throws {
+    let (before, lost) = try await connected()
+    before.path = [.chat("s1")]
+    before.open("s1")
+    before.send("s1", text: "hello", attachments: [])
+    try await until { lost.types.last == "webviewMessage:send" }
+    push(lost, #"{"type":"session","session":{"id":"s1","agent":"fake","title":"T","cwd":"/w","status":"ready","rev":2,"running":true,"turns":[{"role":"user","id":"u1","text":"hi"},{"role":"user","id":"u2","text":"hello"},{"role":"agent","blocks":[]}]}}"#)
+    try await until { before.outgoing["s1"] == nil }
+    lost.feed.finish(throwing: CancellationError())
+    try await until { before.ended }
+    #expect(before.link?.client.unsent().isEmpty == true)
+  }
+
   /// An action for a session off screen switches the view to it and back
   @Test func aReplayedActionForAnotherSessionSwitchesTheViewThere() async throws {
     let (before, _) = try await connected()

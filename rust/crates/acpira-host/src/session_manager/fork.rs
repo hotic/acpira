@@ -189,6 +189,7 @@ impl SessionManager {
       subagents: (!subagents.is_empty()).then_some(subagents),
       goal: None,
       copy_of: None,
+      client_ids: Vec::new(),
     };
     // Every blob the copied turns point at (prompt / steer attachments and the images the agent produced, subagent
     // transcripts included) is re-saved under the fork's own blob dir; content-hash names keep the same file name
