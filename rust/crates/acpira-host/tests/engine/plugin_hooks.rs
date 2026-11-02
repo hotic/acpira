@@ -1,6 +1,7 @@
 //! The hooks a plugin's resident process answers for every agent (`acp/session/plugin_hooks.rs`, docs/dev/plugins.md,
 //! Hooks): prompts rewritten, blocked and sent to another agent, permission requests denied or carded under yolo, a
-//! failed turn retried, the title, the MCP list and the agent's launch environment, all against the fake agent
+//! failed turn retried, the title, the MCP list, the agent's launch environment and settled thoughts split into reply
+//! text, all against the fake agent
 
 use std::path::Path;
 use std::sync::Arc;
@@ -44,6 +45,12 @@ const answer = (method, p) => {
       if (p.arguments.cwd === '/blocked') return { block: 'not this one' };
       return { arguments: { ...p.arguments, cwd: '/from-plugin' } };
     case 'hook/command': return p.name === 'ping' ? { text: 'echo-text pong ' + p.arguments } : {};
+    case 'hook/transcript': {
+      const b = p.blocks[0];
+      if (b.type === 'thought' && b.text === 'thinking hard') return { blocks: [{ type: 'thought', text: 'thinking' }, { type: 'text', text: 'hard' }] };
+      if (b.type === 'text') return { blocks: [{ type: 'text', text: b.text + ' CHANGED' }] };
+      return null;
+    }
     case 'hook/tool.after': return { result: { content: [{ type: 'text', text: 'AFTER:' + p.result.content[0].text }], isError: false } };
   }
   return null;
@@ -189,6 +196,35 @@ async fn a_plugin_changes_and_refuses_calls_to_acpiras_own_tools() {
   assert_eq!(reply["result"]["isError"], true, "{reply}");
   assert!(reply["result"]["content"][0]["text"].as_str().is_some_and(|t| t.contains("hooker: not this one")), "{reply}");
   assert_eq!(calls(plugins.path(), "hook/tool.after").len(), 1);
+  rt.stop_all().await;
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugin_splits_a_settled_thought_into_reply_text_but_never_changes_its_words() {
+  let fake = fake_or_skip!();
+  if !acpira_host::plugins::host::on_path("node") {
+    return;
+  }
+  let plugins = tempfile::tempdir().unwrap();
+  let rt = crate::acp_session::plugin_runtime::plugin(plugins.path(), "hooker", HOOKER, &[], &["transcript"]).await;
+  let mut h = Harness::new(&fake, json!({}));
+  h.deps.plugin_runtime = Some(rt.clone());
+  let s = Disposing(h.session("/tmp"));
+  s.start().await;
+  prompt(&s, "hello").await;
+  let kinds = |s: &Disposing| agent_blocks(&view(s)).iter().map(|b| (b["type"].as_str().unwrap_or("").to_owned(), b["text"].as_str().or(b["markdown"].as_str()).unwrap_or("").to_owned())).collect::<Vec<_>>();
+  until(|| kinds(&s).iter().any(|(t, x)| t == "text" && x == "hard"), 5000).await;
+  let blocks = kinds(&s);
+  let at = blocks.iter().position(|(t, x)| t == "thought" && x == "thinking").unwrap_or_else(|| panic!("{blocks:?}"));
+  assert_eq!(blocks[at + 1], ("text".to_owned(), "hard".to_owned()), "{blocks:?}");
+  // The reply text was offered once it settled at the turn's end; the answer changing its words was refused
+  until(|| calls(plugins.path(), "hook/transcript").len() >= 2, 5000).await;
+  let offered = calls(plugins.path(), "hook/transcript");
+  assert_eq!((offered[0]["blocks"][0]["type"].as_str(), offered[0]["next"]["type"].as_str(), offered[0]["ended"].as_bool()), (Some("thought"), Some("plan"), Some(false)), "{offered:?}");
+  let last = offered.last().unwrap();
+  assert_eq!((last["blocks"][0]["type"].as_str(), last["ended"].as_bool(), last["next"].is_null()), (Some("text"), Some(true), true), "{offered:?}");
+  assert!(!kinds(&s).iter().any(|(_, x)| x.contains("CHANGED")), "{:?}", kinds(&s));
   rt.stop_all().await;
 }
 

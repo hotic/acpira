@@ -815,6 +815,7 @@ impl AcpSession {
       Some(e) => fail_turn(&mut c.state, e),
       None => end_turn(&mut c.state, stop),
     }
+    self.plugin_settled(c, true);
     c.goal_steered = None;
     // Claude's goal holds the turn until it is met, so a turn that ended on its own met it (`goal::met_by_turn_end`)
     if ended

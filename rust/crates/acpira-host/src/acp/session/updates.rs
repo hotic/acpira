@@ -224,6 +224,8 @@ impl AcpSession {
     }
     if !c.replaying {
       self.emit_update(&mut c, &kind, &u);
+      // A thought or reply text this update closed: a plugin may split it into thought and reply parts
+      self.plugin_settled(&mut c, false);
       // The agent titled the session: a plugin may title it otherwise
       if let Some(before) = title_before
         && let Some(title) = c.state.title.clone().filter(|t| before.as_ref() != Some(t))

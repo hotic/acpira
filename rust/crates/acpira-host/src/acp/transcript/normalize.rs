@@ -24,6 +24,7 @@ use crate::util::now_ms;
 mod content;
 mod controls;
 mod notices;
+pub mod reclassify;
 mod tasks;
 mod tool_call;
 mod tool_kind;
