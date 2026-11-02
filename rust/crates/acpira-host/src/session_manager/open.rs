@@ -272,7 +272,10 @@ impl SessionManager {
       // Already mirrored for another viewer (or this one a moment ago): its poll keeps this one current too. The owner's
       // pushed view when there is one, as `emit_session` sends it
       if let Some(mirror) = me.mirror_of(&id) {
-        v.emit(me.remote_msg(&id).unwrap_or_else(|| mirror.view_msg()));
+        // Still waiting for the owner's first push: that push, or the grace's end, reaches this viewer too
+        if !me.awaiting_first_push(&id) {
+          v.emit(me.remote_msg(&id).unwrap_or_else(|| mirror.view_msg()));
+        }
         me.emit_sessions();
         return;
       }

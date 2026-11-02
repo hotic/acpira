@@ -311,6 +311,10 @@ impl SessionManager {
     if !fresh {
       return;
     }
+    // Settled below once the pushed view came or the grace ended (`first_view_settled`)
+    if await_push {
+      self.state.lock().first_push.insert(id.to_owned(), tokio::sync::watch::channel(false).0);
+    }
     // Held by another engine: ask it to hand the session over once nobody there needs it (refreshed on every poll below),
     // and to push the session's view meanwhile
     if elsewhere {
@@ -337,6 +341,12 @@ impl SessionManager {
         {
           m.emit_session(&copy);
         }
+      }
+      if await_push
+        && let Some(m) = me.upgrade()
+        && let Some(tx) = m.state.lock().first_push.remove(&id)
+      {
+        tx.send_replace(true);
       }
       let mut seen = None;
       loop {
@@ -432,6 +442,24 @@ impl SessionManager {
         }
       }
     });
+  }
+
+  /// Whether a fresh mirror still waits for its owner's first pushed view: nothing of it goes to a page meanwhile, since
+  /// the grace's end shows the record copy to every page on it anyway
+  pub(super) fn awaiting_first_push(&self, id: &str) -> bool {
+    self.state.lock().first_push.get(id).is_some_and(|tx| !*tx.borrow())
+  }
+
+  /// Until the session's mirror has its owner's first pushed view, or its grace ended: a page's first view (init) is then
+  /// the owner's live view instead of the read-only record copy it would replace a few milliseconds later. Returns at
+  /// once for anything else; a dropped sender (the engine closing) ends the wait too. The push settles it the moment it
+  /// lands (`bus_view`), the grace's end otherwise
+  pub async fn first_view_settled(&self, id: Option<&str>) {
+    let Some(id) = id else { return };
+    let rx = self.state.lock().first_push.get(id).map(|tx| tx.subscribe());
+    if let Some(mut rx) = rx {
+      let _ = rx.wait_for(|done| *done).await;
+    }
   }
 
   /// Swap a mirror for a copy of itself carrying another note, and show it

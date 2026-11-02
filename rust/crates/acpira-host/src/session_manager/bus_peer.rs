@@ -50,6 +50,12 @@ impl BusPeer for SessionManager {
         }
       }
     };
+    // The owner's first view: a page waiting for it (`first_view_settled`) goes on now
+    if built.is_some()
+      && let Some(tx) = self.state.lock().first_push.get(session)
+    {
+      tx.send_replace(true);
+    }
     match built {
       Some(msg) => {
         for v in self.viewers_on(session, None) {

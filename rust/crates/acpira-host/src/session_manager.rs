@@ -348,6 +348,9 @@ struct State {
   // Mirrored sessions whose owner pushes their view over the bus (`bus.rs`): shown instead of the record copy, and the
   // pages' actions on them go to the owner
   remote: HashMap<String, Remote>,
+  // Fresh mirrors still waiting for their owner's first pushed view (`start_mirror`): true once it came or the grace ended.
+  // A page's first view waits for it, or it is the read-only record copy the push replaces a moment later
+  first_push: HashMap<String, tokio::sync::watch::Sender<bool>>,
   // Mirrored sessions to re-read on the next poll whatever the record's stamp (their pushed view just ended)
   refresh: HashSet<String>,
   // The list entries of sessions other engines run, per engine (its connection on the bus router): this list shows them
@@ -487,6 +490,7 @@ impl SessionManager {
           mirrors: HashMap::new(),
           copies: HashSet::new(),
           remote: HashMap::new(),
+          first_push: HashMap::new(),
           refresh: HashSet::new(),
           elsewhere: HashMap::new(),
           node_watch: HashMap::new(),

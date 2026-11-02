@@ -250,6 +250,8 @@ impl BridgeCore {
           _ = ensure => {}
           _ = self.view_shown.notified() => {}
         }
+        // A session another engine runs: its live view, not the read-only record copy shown until the first push lands
+        manager.first_view_settled(self.viewer.active_id().as_deref()).await;
         // A page's first pushes start only now: init below carries everything they would have, and opening a long session
         // during the awaits above used to send its whole view once before init and once inside it.
         // The sent views stay locked from here until init is out: a session push racing init (the agent starting, a status
