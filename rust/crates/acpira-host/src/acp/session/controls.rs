@@ -453,26 +453,34 @@ impl AcpSession {
   }
 
   /// Set the given values again, one request per difference in control order (model before effort), then the mode;
-  /// values the agent no longer offers are skipped, a refused one is logged and the rest go on. Claude's Ultra goes out
-  /// as its wire target and is compared with the agent's own effort. `skip` leaves a key (a config id or `MODE_PICK`)
-  /// alone. The caller holds the pick lock
+  /// values the agent no longer offers are skipped, a refused one is logged and the rest go on. A control an earlier
+  /// answer brought (the built-in agent's sidekick level after its sidekick, a model's Fast after the model) gets its
+  /// turn in a later pass. Claude's Ultra goes out as its wire target and is compared with the agent's own effort.
+  /// `skip` leaves a key (a config id or `MODE_PICK`) alone. The caller holds the pick lock
   pub(crate) async fn replay_settings(self: &Arc<Self>, settings: &TurnSettings, skip: impl Fn(&str) -> bool) {
     let adopting = std::mem::replace(&mut self.core.lock().picks.adopting, true);
-    let ids: Vec<String> = self.core.lock().state.controls.options.iter().map(|o| o.id.clone()).collect();
-    for id in ids {
-      let Some(value) = settings.config.get(&id).filter(|v| !v.is_empty()).cloned() else { continue };
-      if skip(&id) {
-        continue;
+    let mut seen = std::collections::HashSet::new();
+    loop {
+      let ids: Vec<String> = self.core.lock().state.controls.options.iter().map(|o| o.id.clone()).filter(|id| !seen.contains(id)).collect();
+      if ids.is_empty() {
+        break;
       }
-      let differs = {
-        let mut c = self.core.lock();
-        self.wire_pick(&mut c, &id, &value).filter(|(wire, current)| {
-          current.as_ref() != Some(wire) && c.state.controls.options.iter().find(|o| o.id == id).is_some_and(|ctl| ctl.options.iter().any(|o| &o.id == wire))
-        })
-      };
-      let Some((value, _)) = differs else { continue };
-      if let Err(e) = self.set_config_wire(id.clone(), value.clone()).await {
-        self.log(&format!("adopt {id}={value} refused: {e}"));
+      seen.extend(ids.iter().cloned());
+      for id in ids {
+        let Some(value) = settings.config.get(&id).filter(|v| !v.is_empty()).cloned() else { continue };
+        if skip(&id) {
+          continue;
+        }
+        let differs = {
+          let mut c = self.core.lock();
+          self.wire_pick(&mut c, &id, &value).filter(|(wire, current)| {
+            current.as_ref() != Some(wire) && c.state.controls.options.iter().find(|o| o.id == id).is_some_and(|ctl| ctl.options.iter().any(|o| &o.id == wire))
+          })
+        };
+        let Some((value, _)) = differs else { continue };
+        if let Err(e) = self.set_config_wire(id.clone(), value.clone()).await {
+          self.log(&format!("adopt {id}={value} refused: {e}"));
+        }
       }
     }
     self.core.lock().picks.adopting = adopting;
