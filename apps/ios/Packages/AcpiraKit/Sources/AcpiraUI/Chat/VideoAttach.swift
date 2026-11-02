@@ -1,4 +1,5 @@
 import AVFoundation
+import AcpiraDesign
 import AcpiraModels
 import CoreTransferable
 import Foundation
@@ -8,9 +9,9 @@ import UniformTypeIdentifiers
 import UIKit
 #endif
 
-// Videos picked from Photos. The pill is staged at once under the path its compressed copy will have, and the copy is
-// made in the background (VideoCompressor); until it is on disk the pill shows its progress and send waits, since a
-// send reads the copy's bytes (AppModel.drafts).
+// Videos picked from Photos. The tile is staged at once under the path its compressed copy will have, and the copy is
+// made in the background (VideoCompressor); until it is on disk the tile spins and send waits, since a send reads the
+// copy's bytes (AppModel.drafts).
 
 /// The videos still being prepared, by the staged copy's file URL
 @MainActor @Observable
@@ -19,6 +20,8 @@ final class VideoJobs {
 
   /// 0...1 per video still being prepared
   private(set) var progress: [String: Double] = [:]
+  /// The original's first frame, for the tile to show while the copy is made
+  private(set) var stills: [String: CGImage] = [:]
   @ObservationIgnored private var tasks: [String: Task<Void, Never>] = [:]
 
   func pending(_ staged: [Attachment]) -> Bool {
@@ -40,9 +43,12 @@ final class VideoJobs {
       do {
         let source = try await load()
         defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+        if let still = await Self.firstFrame(source), self.progress[uri] != nil { self.stills[uri] = still }
         try await VideoCompressor.compress(source, to: out, budget: budget) { fraction in
           Task { @MainActor in if self.progress[uri] != nil { self.progress[uri] = fraction } }
         }
+        // The ready tile reads its poster from the cache: the same frame, without decoding the copy again
+        if let still = self.stills[uri] { VideoCache.shared.remember(still, for: .local(out)) }
       } catch {
         try? FileManager.default.removeItem(at: out.deletingLastPathComponent())
         // A removed pill cancels the task; Photos may report that as an error of its own, which is no failure
@@ -52,8 +58,17 @@ final class VideoJobs {
         }
       }
       self.progress[uri] = nil
+      self.stills[uri] = nil
       self.tasks[uri] = nil
     }
+  }
+
+  /// A video's first frame at the tile's size on a 3x screen, nil when it cannot be read
+  private static func firstFrame(_ url: URL) async -> CGImage? {
+    let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+    generator.appliesPreferredTrackTransform = true
+    generator.maximumSize = CGSize(width: Metrics.thumb * 3, height: Metrics.thumb * 3)
+    return try? await generator.image(at: .zero).image
   }
 
   /// The pill was removed: its preparation stops and its copy goes
@@ -80,6 +95,8 @@ struct PickedMovie: Transferable {
 extension Attachment {
   /// A staged or sent file that is a video, by its name
   static func isVideo(name: String) -> Bool {
-    UTType(filenameExtension: (name as NSString).pathExtension)?.conforms(to: .movie) == true
+    let ext = (name as NSString).pathExtension.lowercased()
+    // The system takes .ts for an MPEG transport stream; in a chat about code it is TypeScript
+    return ext != "ts" && UTType(filenameExtension: ext)?.conforms(to: .movie) == true
   }
 }

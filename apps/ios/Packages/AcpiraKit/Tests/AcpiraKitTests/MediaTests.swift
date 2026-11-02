@@ -415,3 +415,14 @@ final class BlobWire: EngineTransport, PairedBlobs {
     return Data(base64Encoded: dotPNG)!
   }
 }
+
+/// A sent video's tile finds the phone's copy under the name transcript_store.rs `blob_name` gives the engine's copy
+struct VideoCacheTests {
+  @Test func blobNameMatchesTheEngine() {
+    // sha256("abc") = ba7816bf8f01cfea…; ext_of_name lowercases, and a name without an extension parks as .bin
+    #expect(VideoCache.blobName(Data("abc".utf8), name: "Clip.MP4") == "ba7816bf8f01cfea.mp4")
+    #expect(VideoCache.blobName(Data("abc".utf8), name: "clip") == "ba7816bf8f01cfea.bin")
+    #expect(VideoCache.isBlobName("ba7816bf8f01cfea.mp4"))
+    #expect(!VideoCache.isBlobName("ScreenRecording_11-01-2026 12-02-08_1.mp4"))
+  }
+}
