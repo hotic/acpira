@@ -221,37 +221,53 @@ extension EnvironmentValues {
   @Entry var liveStage: String?
 }
 
-/// How long the start may last before its row shows
+/// How long the start may last before the pill shows
 private let startingDelay = Duration.milliseconds(400)
 
-/// ConnectingNotice at phone width: "Starting Codex" while a session starts with no reply to say it on, drawn as the
-/// working row a held prompt's reply shows (`heldStage`), at the thread's end where that reply would stand, so a start
-/// reads the same whether or not a prompt waits on it. It shows once the start has taken a moment, so a warm agent does
-/// not flash it. A floating pill said the same words in a second form
-struct StartingReply: View {
+/// ConnectingNotice at phone width: a glass pill in the navigation bar's empty middle while a session starts with no
+/// reply to say it on, once the start has taken a moment, so a warm agent does not flash it. Neither place on the
+/// thread held it: a row at the thread's end pushed the history up a line when it showed and dropped it back when the
+/// start ended, and a pill floating above the composer covered the last reply's closing line and its actions. The bar
+/// has room for "Starting…" alone; the composer's mark already names the agent. A held prompt makes the thread's view
+/// running, and that reply's working row speaks instead (`heldStage`), so the words never show in two places.
+/// iOS 26 lays the title slot out beside the back button, not centred
+struct StartingTitle: ViewModifier {
   let session: SessionView
   @Environment(\.chatAgent) private var agent
   @Environment(\.snapshot) private var snapshot
   @State private var late = false
 
-  var body: some View {
-    // `session` is the thread's view: a held prompt makes it running, and that reply's row speaks instead
+  func body(content: Content) -> some View {
     let active = session.status == .starting && !session.running && session.external == nil
-    // A stack, not a Group: a Group hands `.task` to its children, and with none shown the delay would never run
-    VStack(alignment: .leading, spacing: 0) {
-      if active && (late || snapshot) {
-        AgentMessage(turn: AgentTurn(), running: true, scope: "\(session.id):starting", index: session.turns.count, last: true)
-          .environment(\.liveStage, t("mobile.starting", ["agent": agent?.name ?? session.agent]))
-          .padding(.top, session.turns.isEmpty ? 0 : WebMetrics.msgGap)
-          .transition(.opacity)
-          .accessibilityAddTraits(.updatesFrequently)
+    content
+      .toolbar {
+        #if os(iOS)
+        if active && (late || snapshot) {
+          ToolbarItem(placement: .title) {
+            HStack(spacing: Metrics.s2) {
+              Orb()
+              Text(web: t("devices.starting"), paragraph: false).lineLimit(1)
+            }
+            .textStyle(TypeScale.text3, weight: .medium)
+            .foregroundStyle(Palette.fg2)
+            .padding(.horizontal, Metrics.pad)
+            .frame(height: Metrics.glassCtl)
+            .glassEffect(.regular, in: Capsule())
+            .fixedSize()
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text(web: t("notice.connecting", ["agent": agent?.name ?? session.agent])))
+            .accessibilityAddTraits(.updatesFrequently)
+          }
+          // Its own glass, the height of the bar's buttons; the shared one would draw a second capsule around it
+          .sharedBackgroundVisibility(.hidden)
+        }
+        #endif
       }
-    }
-    .task(id: active) {
-      late = false
-      guard active else { return }
-      try? await Task.sleep(for: startingDelay)
-      withAnimation(Motion.ease) { late = true }
-    }
+      .task(id: active) {
+        late = false
+        guard active else { return }
+        try? await Task.sleep(for: startingDelay)
+        withAnimation(Motion.ease) { late = true }
+      }
   }
 }
