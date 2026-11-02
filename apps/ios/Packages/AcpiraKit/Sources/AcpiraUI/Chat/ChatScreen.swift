@@ -273,7 +273,8 @@ struct SystemChatBar: ViewModifier {
       .backWithoutTitle()
       .toolbar {
         ToolbarItemGroup(placement: .primaryAction) {
-          Button(action: actions.new) { Image(systemName: "square.and.pencil") }
+          // The pencil's ink sits low in its box: lifted, it reads centred in the glass
+          Button(action: actions.new) { Image(systemName: "square.and.pencil").offset(y: -Metrics.pencilLift) }
             .accessibilityLabel(Text(web: t("session.new")))
           Menu { NativeSessionMenu(pinned: pinned, unread: unread, archived: archived, actions: actions) } label: { Image(systemName: "ellipsis") }
             .accessibilityLabel(Text(web: t("session.more")))
@@ -803,7 +804,8 @@ struct DockSeat<Content: View>: View {
 
   var body: some View {
     content
-      .padding(.bottom, keyboard ? Metrics.s2 : max(Metrics.s2, homeInset - Metrics.barSink))
+      // A regular width keeps the dock out of the home band, level with the sidebar's foot
+      .padding(.bottom, keyboard ? Metrics.s2 : max(Metrics.s2, homeInset - (widthClass == .regular ? 0 : Metrics.barSink)))
       .modifier(KeyboardWatch(up: $keyboard))
   }
 }

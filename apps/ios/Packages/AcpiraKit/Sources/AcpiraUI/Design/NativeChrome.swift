@@ -125,13 +125,19 @@ struct NativeProjectMenu: View {
   /// The new session's chat: a session in no project, ahead of the folders; nil where a session moves
   var onChat: (() -> Void)?
 
-  var body: some View {
+  /// The folders the menu offers: this computer's, and each SSH host's in the order they first turn up
+  static func places(cwd: String, recent: [String], chat: Bool) -> (local: [String], remote: [String], hosts: [String]) {
     var seen = Set<String>()
     let folders = ((chat ? [] : [cwd]) + recent).filter { !$0.isEmpty && seen.insert($0).inserted }
     let local = folders.filter { RemoteFolder.parse($0) == nil }
     let remote = folders.filter { RemoteFolder.parse($0) != nil }
     var seenHosts = Set<String>()
     let hosts = remote.compactMap { RemoteFolder.parse($0)?.alias }.filter { seenHosts.insert($0).inserted }
+    return (local, remote, hosts)
+  }
+
+  var body: some View {
+    let (local, remote, hosts) = Self.places(cwd: cwd, recent: recent, chat: chat)
     if let onChat {
       Section {
         // Checked while the draft is a chat; picking it again keeps it
@@ -170,7 +176,7 @@ struct NativeProjectMenu: View {
         Button {} label: {
           Text(verbatim: folderName(remote?.path ?? folder))
           // Menu labels become native actions; keep their subtitle short before UIKit lays it out.
-          Text(verbatim: subtitle(folder))
+          Text(verbatim: Self.subtitle(folder))
           Image(systemName: remote == nil ? "folder" : "globe")
         }
         .tag(folder)
@@ -182,7 +188,7 @@ struct NativeProjectMenu: View {
   }
 
   /// The title names the project and its menu names the machine, leaving the parent path as the only subtitle.
-  private func subtitle(_ folder: String) -> String {
+  static func subtitle(_ folder: String) -> String {
     let remote = RemoteFolder.parse(folder)
     let path = remote?.path ?? folder
     let parent = folderOf(path.hasSuffix("/") && path != "/" ? String(path.dropLast()) : path)
@@ -190,6 +196,81 @@ struct NativeProjectMenu: View {
     let tail = parts.suffix(2).joined(separator: "/")
     return tail.isEmpty ? (path.hasPrefix("/") ? "/" : ".")
       : parts.count > 2 ? "…/\(tail)" : parent
+  }
+}
+
+/// NativeProjectMenu as a popover, for regular width: it stands centred under its button, where a system menu opens
+/// from one of the button's edges and reads crooked under the new session's centred mark. The menu's per-machine
+/// submenus become sections
+struct ProjectPopover: View {
+  let cwd: String
+  let recent: [String]
+  var chat = false
+  var onSelect: (String) -> Void
+  var onAdd: (() -> Void)?
+  var onChat: (() -> Void)?
+  @State private var height = Metrics.popLg
+
+  var body: some View {
+    let (local, remote, hosts) = NativeProjectMenu.places(cwd: cwd, recent: recent, chat: chat)
+    let list = VStack(alignment: .leading, spacing: 0) {
+      if let onChat {
+        row(t("session.group.chats"), symbol: "bubble.left.and.bubble.right", on: chat, action: onChat)
+      }
+      if !local.isEmpty {
+        header(t("mobile.projects.local"))
+        ForEach(local, id: \.self) { folder($0) }
+      }
+      ForEach(hosts, id: \.self) { host in
+        header(host)
+        ForEach(remote.filter { RemoteFolder.parse($0)?.alias == host }, id: \.self) { folder($0) }
+      }
+      if let onAdd {
+        Divider().padding(.vertical, Metrics.s1)
+        row(t("mobile.projects.add"), symbol: "folder.badge.plus", action: onAdd)
+      }
+    }
+    .padding(.vertical, Metrics.s2)
+    // As tall as its rows, scrolling only past the cap
+    ScrollView { list.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 } }
+      .scrollBounceBehavior(.basedOnSize)
+      .frame(width: Metrics.popWide, height: min(height, Metrics.popLg * 1.5))
+  }
+
+  private func header(_ title: String) -> some View {
+    Text(verbatim: title)
+      .textStyle(TypeScale.text3, weight: .medium)
+      .foregroundStyle(Palette.popFg3)
+      .padding(.horizontal, Metrics.pad)
+      .padding(.top, Metrics.s3)
+      .padding(.bottom, Metrics.s1)
+  }
+
+  private func folder(_ folder: String) -> some View {
+    let remote = RemoteFolder.parse(folder)
+    return row(folderName(remote?.path ?? folder), detail: NativeProjectMenu.subtitle(folder),
+               symbol: remote == nil ? "folder" : "globe", on: !chat && folder == cwd) { onSelect(folder) }
+  }
+
+  private func row(_ title: String, detail: String? = nil, symbol: String, on: Bool = false,
+                   action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      HStack(spacing: Metrics.s3) {
+        Image(systemName: symbol).frame(width: Metrics.icon)
+        VStack(alignment: .leading, spacing: Metrics.s0_5) {
+          Text(verbatim: title).textStyle(TypeScale.text2).foregroundStyle(Palette.fg1)
+          if let detail { Text(verbatim: detail).textStyle(TypeScale.text3).foregroundStyle(Palette.popFg3) }
+        }
+        .lineLimit(1)
+        Spacer(minLength: 0)
+        if on { Image(systemName: "checkmark").fontWeight(.semibold) }
+      }
+      .foregroundStyle(Palette.fg1)
+      .padding(.horizontal, Metrics.pad)
+      .padding(.vertical, Metrics.s2)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
   }
 }
 

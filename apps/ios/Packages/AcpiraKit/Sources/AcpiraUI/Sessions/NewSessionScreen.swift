@@ -186,8 +186,11 @@ struct NewSessionHero: View {
   /// The name and the folder are hidden while the ring is out and until AgentRing lets them back
   @State private var veil = false
   @State private var adding = false
+  /// The folder popover is open (regular width)
+  @State private var folders = false
   @Environment(\.initialPopup) private var initialPopup
   @Environment(\.motionEnabled) private var motion
+  @Environment(\.horizontalSizeClass) private var widthClass
 
   var body: some View {
     VStack(spacing: Metrics.s2) {
@@ -199,24 +202,8 @@ struct NewSessionHero: View {
           // also stopped the group's offset from reaching it, so the name jumped up as the ring opened
           .id(agent.id)
           .transition(.identity)
-        Menu {
-          NativeProjectMenu(cwd: cwd, recent: recent, chat: chat, onSelect: onProject, onAdd: { adding = true },
-                            onChat: onChat)
-        } label: {
-          HStack(spacing: Metrics.s1_5) {
-            Icon(chat ? .messagesSquare : .folder, size: Metrics.icon)
-            Text(web: chat ? t("session.group.chats") : folderName(cwd), paragraph: false).textStyle(TypeScale.text2)
-          }
-          .foregroundStyle(Palette.fg2)
-          .padding(.horizontal, Metrics.s3)
-          .padding(.vertical, Metrics.s1_5)
-          .glassEffect(GlassStyle.control.interactive(), in: Capsule())
-        }
-        .menuStyle(.button)
-        // Keep local before remote and Add last, even when the system opens the menu upward.
-        .menuOrder(.fixed)
-        .buttonStyle(.plain)
-        .modifier(AddProjectAlert(isPresented: $adding, onAdd: onAdd))
+        folderButton
+          .modifier(AddProjectAlert(isPresented: $adding, onAdd: onAdd))
       }
       // The name and the folder step back while the ring is out and rise back from under the drop once the picked
       // mark has landed, or once the bubbles are home
@@ -232,6 +219,46 @@ struct NewSessionHero: View {
       try? await Task.sleep(for: .seconds(1.2))
       ring = true
     }
+  }
+
+  /// The folder capsule: the system menu on the phone, a popover centred under it in regular width
+  @ViewBuilder private var folderButton: some View {
+    if widthClass == .regular {
+      Button { folders = true } label: { capsule }
+        .buttonStyle(.plain)
+        .popover(isPresented: $folders) {
+          ProjectPopover(cwd: cwd, recent: recent, chat: chat,
+                         onSelect: { folders = false; onProject($0) },
+                         onAdd: { folders = false; adding = true },
+                         onChat: onChat.map { chosen in { folders = false; chosen() } })
+        }
+        .task {
+          // `-popup folder`: the popover open on launch (screenshots)
+          guard initialPopup == "folder" else { return }
+          try? await Task.sleep(for: .seconds(1))
+          folders = true
+        }
+    } else {
+      Menu {
+        NativeProjectMenu(cwd: cwd, recent: recent, chat: chat, onSelect: onProject, onAdd: { adding = true },
+                          onChat: onChat)
+      } label: { capsule }
+      .menuStyle(.button)
+      // Keep local before remote and Add last, even when the system opens the menu upward.
+      .menuOrder(.fixed)
+      .buttonStyle(.plain)
+    }
+  }
+
+  private var capsule: some View {
+    HStack(spacing: Metrics.s1_5) {
+      Icon(chat ? .messagesSquare : .folder, size: Metrics.icon)
+      Text(web: chat ? t("session.group.chats") : folderName(cwd), paragraph: false).textStyle(TypeScale.text2)
+    }
+    .foregroundStyle(Palette.fg2)
+    .padding(.horizontal, Metrics.s3)
+    .padding(.vertical, Metrics.s1_5)
+    .glassEffect(GlassStyle.control.interactive(), in: Capsule())
   }
 
   private var name: some View {

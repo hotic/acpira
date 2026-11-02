@@ -25,6 +25,13 @@
 	     (Pairing/PushCenter.swift) -->
 	<key>AcpiraTeamID</key>
 	<string>$(DEVELOPMENT_TEAM)</string>
+	<!-- One window (the generated manifest offers several): every window's root view would claim the shared push and
+	     pairing state (PushCenter's on-screen check, the paired wire), so a second iPad window is not offered -->
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+	</dict>
 	<!-- The app's own languages (packages/shared/i18n), so system controls such as PasteButton read in the same ones -->
 	<key>CFBundleLocalizations</key>
 	<array>
