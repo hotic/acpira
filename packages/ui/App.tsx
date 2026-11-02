@@ -171,7 +171,7 @@ export function App() {
   // The desktop shell's folder dialog under way, settled by pickedFolder (a newer request settles the older one empty)
   const folderPick = useRef<(path?: string) => void>(undefined);
   // Observed subagent transcripts keyed `${sessionId}:${subagentId}`; the inspector subscribes to one at a time
-  const [subagentTranscripts, setSubagentTranscripts] = useState<Record<string, { rev: number; running: boolean; turns: Turn[] }>>({});
+  const [subagentTranscripts, setSubagentTranscripts] = useState<Record<string, { rev: number; running: boolean; turns: Turn[]; catchingUp?: boolean }>>({});
   // The session the view is showing right now, readable inside the stable handler object: every session action
   // carries it so a click rendered for one conversation can never be applied to another after a fast switch
   const activeId = useRef<string | undefined>(undefined);
@@ -357,7 +357,9 @@ export function App() {
           const key = `${m.sessionId}:${m.subagentId}`;
           setSubagentTranscripts(current => {
             const prev = current[key];
-            if (prev !== undefined && m.rev <= prev.rev) return current;
+            if (prev !== undefined && m.rev < prev.rev) return current;
+            // observeSubagent always replies, even at the cached revision. That reply ends the quiet catch-up window.
+            if (prev !== undefined && m.rev === prev.rev && !prev.catchingUp) return current;
             return { ...current, [key]: { rev: m.rev, running: m.running, turns: prev !== undefined ? reuse(prev.turns, m.turns) : m.turns } };
           });
           break;
@@ -535,7 +537,11 @@ export function App() {
     openInEditor: sessionId => post({ type: 'openInEditor', sessionId }),
     listNativeSessions: agent => { setNativeSessions({ agent, loading: true, sessions: [] }); post({ type: 'listNativeSessions', agent }); },
     importNativeSession: (agent, s) => post({ type: 'importNativeSession', agent, sessionId: s.sessionId, cwd: s.cwd, title: s.title, updatedAt: s.updatedAt }),
-    observeSubagent: (sessionId, subagentId) => post({ type: 'observeSubagent', sessionId, subagentId }),
+    observeSubagent: (sessionId, subagentId) => {
+      const key = `${sessionId}:${subagentId}`;
+      setSubagentTranscripts(current => current[key] ? { ...current, [key]: { ...current[key], catchingUp: true } } : current);
+      post({ type: 'observeSubagent', sessionId, subagentId });
+    },
     unobserveSubagent: (sessionId, subagentId) => post({ type: 'unobserveSubagent', sessionId, subagentId }),
     cancelSubagent: (sessionId, subagentId) => post({ type: 'cancelSubagent', sessionId, subagentId }),
     stopAsyncTask: (sessionId, taskId) => post({ type: 'stopAsyncTask', sessionId, taskId }),

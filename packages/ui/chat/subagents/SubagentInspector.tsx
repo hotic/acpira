@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { ArrowLeft, Square, Unplug, X } from 'lucide-react';
 import type { SubagentSummary } from '@acpira/shared/subagents';
 import type { FullDiffSource, QuestionBlock, TextBlock, Turn, TurnSettings, UserTurn } from '@acpira/shared/transcript';
 import { t } from '../../i18n';
 import { cn } from '../../ui/cn';
 import { IconButton } from '../../ui/Button';
-import { Row } from '../../ui/Row';
+import { QuietEntranceContext, Row } from '../../ui/Row';
 import { Shimmer } from '../../ui/Shimmer';
 import { AgentMessage, UserMessage } from '../Turns';
 import { Questions, type OnAnswer } from '../Questions';
@@ -20,7 +20,7 @@ import { useDesktop } from '../../desktop';
 interface InspectorProps {
   node: SubagentSummary;
   // The observed child's transcript; absent until the host answers observeSubagent
-  transcript?: { turns: Turn[]; running: boolean; rev: number };
+  transcript?: { turns: Turn[]; running: boolean; rev: number; catchingUp?: boolean };
   onClose: () => void;
   onCancel?: () => void;
   onPermission: (blockId: string, optionId: string) => void;
@@ -85,7 +85,7 @@ export function SubagentInspector(p: InspectorProps) {
         )}
       </div>
       <DiffSourceContext.Provider value={p.diffSource}>
-        <SessionTab {...p} />
+        <SessionTab key={node.id} {...p} />
       </DiffSourceContext.Provider>
     </div>
   );
@@ -94,6 +94,10 @@ export function SubagentInspector(p: InspectorProps) {
 function SessionTab({ node, transcript, onPermission, question, onAnswer, wide, blobUrl }: InspectorProps) {
   const scroll = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
+  // Like Thread: the first transcript and the first reply after re-observing a cached child are restored history.
+  // Children read the flag before this layout effect clears it, so only later live updates play entrances/text pacing.
+  const opening = useRef(true);
+  useLayoutEffect(() => { opening.current = transcript === undefined || transcript.turns.length === 0 || !!transcript.catchingUp; });
   // Stick to the bottom while the child streams, exactly like the main thread; scrolling up releases the follow
   const follow = useBottomFollow(scroll, body, undefined, [transcript?.turns, transcript?.running]);
   // Edge fades (pane-fade): the top while rows sit scrolled under the header, the bottom while the reader left the tail.
@@ -116,7 +120,7 @@ function SessionTab({ node, transcript, onPermission, question, onAnswer, wide, 
   const taskInTurns = node.harness !== undefined
     && (transcript !== undefined ? transcript.turns[0]?.role === 'user' : node.harness.round > 1);
   return (
-    <>
+    <QuietEntranceContext.Provider value={opening}>
       {/* The main thread's column: share its dock margins and scrollbar gutter, with turns carrying their own --pad */}
       <div ref={scroll} className="pane-fade scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-dock pr-dock-gutter">
         <div ref={body} className={cn('mx-auto flex min-w-0 flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-chat-column')}>
@@ -175,7 +179,7 @@ function SessionTab({ node, transcript, onPermission, question, onAnswer, wide, 
         </div>
       </div>
       {question !== undefined && onAnswer !== undefined && <div className="pb-gap-half"><Questions block={question} onAnswer={onAnswer} /></div>}
-    </>
+    </QuietEntranceContext.Provider>
   );
 }
 
