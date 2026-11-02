@@ -1491,6 +1491,7 @@ export const ja = {
   'mobile.engineNeeded': 'エンジンへの接続が必要です',
   'mobile.cancel': 'キャンセル',
   'mobile.save': '保存',
+  'mobile.scrollToLatest': '最新へ移動',
   'mobile.add': '追加',
   'mobile.composer.expand': '入力欄を広げる',
   'mobile.composer.collapse': '入力欄を戻す',

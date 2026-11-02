@@ -1533,6 +1533,7 @@ export const en = {
   'mobile.engineNeeded': 'Needs a connected engine',
   'mobile.cancel': 'Cancel',
   'mobile.save': 'Save',
+  'mobile.scrollToLatest': 'Scroll to latest',
   'mobile.add': 'Add',
   'mobile.composer.expand': 'Expand the message box',
   'mobile.composer.collapse': 'Collapse the message box',

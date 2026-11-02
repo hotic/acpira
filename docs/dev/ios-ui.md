@@ -51,6 +51,12 @@ SwiftUI, Liquid Glass, WebKit and text-layout traps of `apps/ios/Packages/Acpira
 - Hit targets over the transcript cannot live in the composer: outside its frame they lose taps to the scroll view (the goo's `gooLayer()`, the `/` and `@` lists).
 - A fold calls `\.holdScroll` first, or the bottom-edge pin shoves the thread by the fold's height. `scrollTo(y:)` counts below the top inset, `contentOffset` from the frame's top.
 - Follow-bottom survives a turn's end (paced lines land after `running` is false); a drag releases it and it resumes when the gesture settles at the bottom. A geometry-only bottom flag can already be false from streamed growth and miss the release.
+- Once the reader has scrolled, `.defaultScrollAnchor(.bottom, for: .sizeChanges)` no longer moves the offset, so the end is kept by hand (`Thread.keepEnd`), with the distance pinned for the whole change: the lazy rows grow over many frames. Content changes keep it only for a following reader; for one who let go, a process fold's automatic close waits until they return (`CodexFold`, as Turns.tsx) and growth below never moves them.
+- A shrink under the reader clamps the offset toward the top (a running turn's rows re-estimating around a new card), and the thread stayed there once they grew back; `Thread.keepTop` returns to the old offset.
+- A `scrollTo` while the finger or its deceleration owns the offset is overridden on the next frame, and the two fight visibly. A finished turn an older engine reopens, whose fold opens above the reply, therefore lands only at rest (`Thread.parked`).
+- `ScrollGeometry.contentOffset` is UIKit's raw offset while `containerSize` already excludes both insets: distance to the end goes through `gapBelow`; offset + container − bottom inset counted the inset twice.
+- The thread dismisses the keyboard interactively, as ChatGPT does: it starts only once the finger reaches the keyboard, and no public API counts the dock above it as keyboard.
+- A glass drop inserted and removed inside a push never finished leaving (`ScrollToLatest` waits for `opening` to end).
 
 ## Liquid Glass
 

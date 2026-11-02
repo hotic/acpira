@@ -1521,6 +1521,7 @@ export const zhTW = {
   'mobile.engineNeeded': '需要先連線引擎',
   'mobile.cancel': '取消',
   'mobile.save': '儲存',
+  'mobile.scrollToLatest': '回到最新',
   'mobile.add': '新增',
   'mobile.composer.expand': '展開輸入框',
   'mobile.composer.collapse': '收起輸入框',

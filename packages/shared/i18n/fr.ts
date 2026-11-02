@@ -1484,6 +1484,7 @@ export const fr = {
   'mobile.engineNeeded': 'Nécessite un moteur connecté',
   'mobile.cancel': 'Annuler',
   'mobile.save': 'Enregistrer',
+  'mobile.scrollToLatest': 'Aller au plus récent',
   'mobile.add': 'Ajouter',
   'mobile.composer.expand': 'Agrandir la zone de saisie',
   'mobile.composer.collapse': 'Réduire la zone de saisie',

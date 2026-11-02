@@ -1487,6 +1487,7 @@ export const es = {
   'mobile.engineNeeded': 'Necesita un motor conectado',
   'mobile.cancel': 'Cancelar',
   'mobile.save': 'Guardar',
+  'mobile.scrollToLatest': 'Ir a lo más reciente',
   'mobile.add': 'Añadir',
   'mobile.composer.expand': 'Ampliar el cuadro de mensaje',
   'mobile.composer.collapse': 'Reducir el cuadro de mensaje',

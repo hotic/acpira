@@ -307,25 +307,43 @@ struct Thread: View {
   @State private var settling = false
   /// Opened and not yet scrolled or folded: the thread stays on its end while the lazy rows settle their heights
   @State private var opening = true
+  /// Far enough from the end to offer the jump back (`ScrollToLatest`); nearer than that, the end holds (`keepEnd`)
+  @State private var far = ObservedFlag()
+  /// `follow` for the process folds: a reader who let go of the end keeps a fold the turn opened open until they come
+  /// back (`CodexFold`). Observed by the folds alone, so a drag does not redraw the thread
+  @State private var following = ObservedFlag(true)
+  /// A fold the reader opened or closed by tap: size changes keep the offset, not the end, until the next touch or turn
+  @State private var held = false
+  /// An older engine reopened a finished turn near the end (`reopensAbove`): its fold's lazy rows keep settling for a few
+  /// frames, so the end holds until the reader next touches the thread, even while the turn streams
+  @State private var flipHold = false
+  /// The session as it was before an older engine reopened its turn under a moving thread (`reopensAbove`), shown until
+  /// the thread comes to rest. The whole process opened above the reply, which itself joined the process, and the offset
+  /// cannot be corrected while the finger or its deceleration owns it (a scroll set then was overridden on the next frame
+  /// and the thread flickered between the two). At rest the new state lands and `keepEnd` holds the end through it
+  @State private var parked: SessionView?
+  @State private var seen = SeenSession()
+  @Environment(\.motionEnabled) private var motion
 
   var body: some View {
-    ScrollView(.vertical) {
-      ThreadContent(session: session, preOpen: preOpen)
+    seen.note(session)
+    return ScrollView(.vertical) {
+      ThreadContent(session: parked ?? session, preOpen: preOpen)
         .environment(\.holdScroll, hold)
         .environment(\.scrollGesture, gesture)
+        .environment(\.threadFollowing, following)
     }
-    // The docked plan floats over the thread's bottom; the inset is also the transcript's scroll clearance
-    .safeAreaInset(edge: .bottom, spacing: 0) { ThreadDock(session: session).readableWidth() }
     .scrollIndicators(.hidden)
     .scrollPosition($position)
     .defaultScrollAnchor(.bottom, for: .initialOffset)
     .defaultScrollAnchor(.top, for: .alignment)
     // Lazy rows above a just-opened thread trade estimates for real heights as they lay out; without a bottom anchor
-    // a long running turn left the thread at its top instead of its end. Once the reader scrolls or folds, size
-    // changes keep the default anchor, so reading history stays put
+    // a long running turn left the thread at its top instead of its end. Later size changes go through `keepEnd`
     .defaultScrollAnchor(opening ? .bottom : nil, for: .sizeChanges)
-    // Interactive dismissal waits for the finger to reach the keyboard; even a short drag should end typing.
-    .scrollDismissesKeyboard(.immediately)
+    // As in ChatGPT and Messages: the thread scrolls freely above an open keyboard, and only a drag that carries on into
+    // the keyboard pulls it down with the finger. `.immediately` closed it on any scroll, so history could not be read
+    // while typing
+    .scrollDismissesKeyboard(.interactively)
     .contentShape(Rectangle())
     .simultaneousGesture(TapGesture().onEnded {
       // Keep transcript buttons and links working on the same tap that dismisses the composer keyboard.
@@ -333,10 +351,38 @@ struct Thread: View {
       UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
       #endif
     })
+    // Outside the tap above, so jumping to the end keeps the keyboard; inside the plan dock's inset, so it floats above
+    // the plan card and the composer
+    .overlay(alignment: .bottomTrailing) {
+      // Not while the thread opens: its lazy rows report the top for a frame or two before the bottom anchor lands, and a
+      // drop of glass inserted and removed inside the push never finished leaving (iOS 27 simulator)
+      ScrollToLatest(far: far, hidden: opening || session.running && follow, action: toLatest)
+        .padding(.trailing, Metrics.pad)
+        .padding(.bottom, Metrics.s2)
+        // On the composer's right edge, above the send button
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .readableWidth()
+    }
+    // The docked plan floats over the thread's bottom; the inset is also the transcript's scroll clearance. Outside the
+    // tap that ends typing, as the jump button is: the card's own taps keep the keyboard
+    .safeAreaInset(edge: .bottom, spacing: 0) { ThreadDock(session: session).readableWidth() }
     .onScrollPhaseChange { _, phase, context in
       let wasDragging = dragging
       dragging = phase == .interacting || phase == .tracking || phase == .decelerating
       gesture.active = dragging
+      // A new touch ends a tapped fold's hold and the end kept through a change; so does a scroll of the system's own
+      // (a tap on the status bar), which the kept end would fight
+      if dragging, !wasDragging {
+        held = false
+        flipHold = false
+        offset.pin = nil
+        offset.top = nil
+      } else if phase == .animating {
+        offset.pin = nil
+        offset.top = nil
+      }
+      // The thread at rest (or moved by the system) shows the session as it is
+      if !dragging { parked = nil }
       // Any scroll, the reader's or the system's (a tap on the status bar), ends the opening anchor
       if phase != .idle { opening = false }
       if dragging {
@@ -346,24 +392,103 @@ struct Thread: View {
         settling = false
       } else if wasDragging, phase == .idle {
         let g = context.geometry
-        follow = g.contentOffset.y + g.containerSize.height - g.contentInsets.bottom >= g.contentSize.height - Metrics.s2
+        follow = g.gapBelow <= Metrics.s2
         // The turn may have ended during the drag while its paced tail is still arriving.
         settling = follow
         if follow { position.scrollTo(edge: .bottom) }
       }
     }
-    .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { old, new in
-      guard session.running || settling, follow, !dragging, new > old else { return }
-      position.scrollTo(edge: .bottom)
+    .onScrollGeometryChange(for: EndGeometry.self) { EndGeometry($0) } action: { old, new in
+      offset.y = new.y
+      offset.gap = new.gap
+      if session.running || settling, follow, !dragging, new.size > old.size {
+        position.scrollTo(edge: .bottom)
+      } else {
+        keepEnd(old, new)
+        if offset.pin == nil { keepTop(old, new) }
+      }
     }
     // Only a following thread settles at the end; finishing (including in the background) never overrides a drag.
     .onChange(of: session.running) { was, now in
+      // A turn starting adds below what is there, and one ending under a reader who let go of the end keeps its fold
+      // open (`CodexFold`); a following reader is kept on the end by the follow and `keepEnd`. Only a finished turn an
+      // older engine reopens opens its process above the reply the reader is on (`reopensAbove`): Claude's autonomous
+      // cycles did it every few seconds, and with the offset kept from the top a drag near the end flung the thread into
+      // the middle of the process and back
+      held = false
+      let above = now && reopensAbove(session)
+      flipHold = above && !far.value
+      if dragging {
+        if above, parked == nil { parked = seen.before }
+      } else {
+        offset.pin = above && !far.value ? max(0, offset.gap) : nil
+      }
       guard was, !now, follow, !dragging else { return }
       settling = true
       position.scrollTo(edge: .bottom)
     }
-    // `scrollTo(y:)` takes the point under the content's top inset; `contentOffset` counts from the frame's top edge
-    .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { _, y in offset.y = y }
+    // More than half a screen above the end; written to an observed object the thread itself never reads, so crossing
+    // the line redraws the button alone
+    .onScrollGeometryChange(for: Bool.self) { $0.gapBelow > $0.containerSize.height / 2 } action: { _, now in far.value = now }
+    .onChange(of: follow) { _, now in following.value = now }
+  }
+
+  /// The content or the room for it changed size: within half a screen of the end (where the jump button is not
+  /// offered either) the distance to the end holds, so the keyboard and the composer's card rising lift the last lines
+  /// with them instead of covering them, and for a following reader a process fold closing above the reply leaves the
+  /// reply where it was. Further up, the offset from the top holds and reading history stays put. Content changing under
+  /// a reader who let go of the end (a reply still pacing out after its turn, a turn streaming) never pulls that reader
+  /// along, except through the frames an older engine's reopened turn settles in (`flipHold`); a fold the reader tapped
+  /// keeps its row under the finger (`held`).
+  /// Done by hand: once the reader has scrolled, a `.bottom` anchor for `.sizeChanges` left the offset where it was. The
+  /// distance is pinned when a change begins and holds until the next touch: a fold's lazy rows grow the content over many
+  /// frames, each reported before the previous scroll has landed. Never while the finger or its deceleration owns the
+  /// offset: a scroll set then was overridden on the next frame and the thread flickered between the two for a second
+  /// (iOS 27 simulator)
+  private func keepEnd(_ old: EndGeometry, _ new: EndGeometry) {
+    guard !dragging, old.size != new.size || old.room != new.room else { return }
+    if offset.pin == nil {
+      guard !opening, !held, old.gap <= old.room / 2, old.size == new.size || follow || flipHold else { return }
+      offset.pin = max(0, old.gap)
+    }
+    position.scrollTo(y: max(0, new.size - new.room - (offset.pin ?? 0)))
+  }
+
+  /// Content that shrank under the reader clamps the offset toward the top: a running turn's rows swapping in a card
+  /// (a steer, a question) re-estimate for a frame or two, and the thread was left at the top of the turn once they grew
+  /// back ("jumps to the top"). The offset from before the shrink is noted and returned to as the content regrows, until
+  /// the reader next touches the thread. Not for a fold the reader tapped, whose shrink is theirs (`held`)
+  private func keepTop(_ old: EndGeometry, _ new: EndGeometry) {
+    guard !dragging, !opening, !held else { return }
+    if new.size < old.size, new.y < old.y - 1 {
+      offset.top = offset.top ?? old.y
+    } else if let top = offset.top, new.size > old.size {
+      let y = min(top, max(0, new.size - new.room))
+      position.scrollTo(y: y)
+      if y >= top { offset.top = nil }
+    }
+  }
+
+  /// A finished turn running again with its process fold opening above the reply: an engine that marks the reply final
+  /// on a reopen (`mark_reply_final`) has the new work start a stretch under it instead (`splitPlanSections`)
+  private func reopensAbove(_ session: SessionView) -> Bool {
+    guard case .agent(let turn)? = session.turns.last else { return false }
+    return turn.blocks.contains { $0.toolCall != nil }
+      && !turn.blocks.contains { if case .text(let text) = $0 { text.phase == .final } else { false } }
+  }
+
+  /// The jump button: back to the end, and a running turn is followed again from there
+  private func toLatest() {
+    offset.pin = nil
+    offset.top = nil
+    follow = true
+    settling = false
+    opening = false
+    if motion {
+      withAnimation(.smooth) { position.scrollTo(edge: .bottom) }
+    } else {
+      position.scrollTo(edge: .bottom)
+    }
   }
 
   /// A fold about to open or close: unless the thread is following a running turn, the bottom pin (the launch's
@@ -372,20 +497,110 @@ struct Thread: View {
   /// by the fold's height (iOS 27 simulator, 2026-10-27)
   private var hold: HoldScroll {
     let pinned = session.running && follow
-    let position = $position, offset = offset, settled = $settling, opening = $opening
+    let position = $position, offset = offset, settled = $settling, opening = $opening, held = $held, flip = $flipHold
     return HoldScroll {
       // A fold the reader moved ends the settling follow and the opening anchor: the row under the finger stays put
       settled.wrappedValue = false
       opening.wrappedValue = false
+      flip.wrappedValue = false
+      offset.pin = nil
+      offset.top = nil
       guard !pinned else { return }
+      held.wrappedValue = true
       position.wrappedValue.scrollTo(y: offset.y)
     }
   }
 }
 
-/// The thread's last content offset (`Thread.hold`)
+/// The thread's last content offset (`Thread.hold`, `scrollTo(y:)`'s measure: under the content's top inset), its
+/// distance to the end, the distance `Thread.keepEnd` holds through a change and the offset `Thread.keepTop` goes back to. Outside SwiftUI's state, so scrolling
+/// does not redraw the thread
 final class ScrollOffset: @unchecked Sendable {
   var y: CGFloat = 0
+  var gap: CGFloat = 0
+  var pin: CGFloat?
+  /// The offset a shrink clamped the thread away from (`Thread.keepTop`)
+  var top: CGFloat?
+}
+
+/// The session the thread showed before its latest change of run state (`Thread.parked`). Noted from the body, outside
+/// SwiftUI's state, so it costs no redraw; `onChange` runs after the body has noted the new session
+final class SeenSession {
+  private(set) var before: SessionView?
+  private var current: SessionView?
+
+  func note(_ session: SessionView) {
+    if let current, current.running != session.running { before = current }
+    current = session
+  }
+}
+
+/// What `Thread.keepEnd` compares across a change: the offset under the top inset (`contentOffset` counts from the
+/// frame's top edge), the content's height, the room the insets leave for it, and the distance from the bottom of that
+/// room to the content's end
+struct EndGeometry: Equatable {
+  var y: CGFloat
+  var size: CGFloat
+  var room: CGFloat
+  var gap: CGFloat
+
+  init(_ g: ScrollGeometry) {
+    y = g.contentOffset.y + g.contentInsets.top
+    size = g.contentSize.height
+    room = g.containerSize.height
+    gap = g.gapBelow
+  }
+}
+
+extension ScrollGeometry {
+  /// How far the content runs on below the part of the frame the bottom insets leave clear (0 at the end).
+  /// `contentOffset` is UIKit's raw offset from the frame's top, while `containerSize` already excludes both insets:
+  /// adding the container to the offset and taking the bottom inset off counted that inset twice, so a thread resting
+  /// on its end read as a dock's height above it and never resumed following after a drag back down
+  var gapBelow: CGFloat { contentSize.height - (contentOffset.y + contentInsets.top + containerSize.height) }
+}
+
+/// A flag one view writes and another observes, so the writer never redraws when it flips
+@Observable final class ObservedFlag {
+  var value: Bool
+
+  init(_ value: Bool = false) { self.value = value }
+}
+
+extension EnvironmentValues {
+  /// Whether the thread follows its end (`Thread.following`); nil outside a thread, which counts as following
+  @Entry var threadFollowing: ObservedFlag?
+}
+
+/// Back to the latest message: a small glass drop on the composer's right edge, there while the thread is more than
+/// half a screen above its end. ChatGPT centres a similar arrow; on the right it sits under the thumb and clear of the
+/// prose. Hidden while the thread follows a running turn, where streamed growth briefly opens a gap the follow closes
+struct ScrollToLatest: View {
+  let far: ObservedFlag
+  var hidden: Bool
+  var action: () -> Void
+  @Environment(\.motionEnabled) private var motion
+
+  var body: some View {
+    let shown = far.value && !hidden
+    GlassEffectContainer {
+      if shown {
+        Button(action: action) {
+          Icon(.arrowDown, size: Metrics.icon)
+            .foregroundStyle(Palette.fg1)
+            .frame(width: Metrics.ctlSm, height: Metrics.ctlSm)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        // The composer's glass, frosted enough for prose passing behind
+        .glassEffect(GlassStyle.bar.interactive(), in: Circle())
+        // Glass cannot fade; the system's own materialise is how a drop of it comes and goes
+        .glassEffectTransition(.materialize)
+        .accessibilityLabel(Text(web: t("mobile.scrollToLatest")))
+      }
+    }
+    .animation(motion ? .smooth(duration: Motion.dur * 2) : nil, value: shown)
+  }
 }
 
 /// Snapshot of the parts of a session that change as a turn streams, used by `QuietGate` and `AppModel.quietSessions`
@@ -460,13 +675,11 @@ struct ThreadContent: View {
             sections(groups, 0..<max(groups.count - 1, 0), activeAgent, nodes)
           }
           sections(groups, max(groups.count - 1, 0)..<groups.count, activeAgent, nodes)
-          StartingReply(session: session)
           queue
         }
       } else {
         VStack(alignment: .leading, spacing: 0) {
           sections(groups, groups.indices, activeAgent, nodes)
-          StartingReply(session: session)
           queue
         }
       }

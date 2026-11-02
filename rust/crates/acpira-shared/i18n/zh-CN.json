@@ -1501,6 +1501,7 @@
   "mobile.engineNeeded": "需要先连接引擎",
   "mobile.cancel": "取消",
   "mobile.save": "保存",
+  "mobile.scrollToLatest": "回到最新",
   "mobile.add": "添加",
   "mobile.composer.expand": "展开输入框",
   "mobile.composer.collapse": "收起输入框",

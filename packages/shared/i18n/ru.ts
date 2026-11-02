@@ -1516,6 +1516,7 @@ export const ru = {
   'mobile.engineNeeded': 'Нужен подключённый движок',
   'mobile.cancel': 'Отмена',
   'mobile.save': 'Сохранить',
+  'mobile.scrollToLatest': 'К последним',
   'mobile.add': 'Добавить',
   'mobile.composer.expand': 'Развернуть поле ввода',
   'mobile.composer.collapse': 'Свернуть поле ввода',

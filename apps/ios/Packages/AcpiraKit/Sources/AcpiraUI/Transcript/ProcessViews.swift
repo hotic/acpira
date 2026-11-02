@@ -180,7 +180,7 @@ struct ThoughtView: View {
           follow = false
         } else if wasDragging, phase == .idle {
           let g = context.geometry
-          follow = g.contentOffset.y + g.containerSize.height - g.contentInsets.bottom >= g.contentSize.height - Metrics.s2
+          follow = g.gapBelow <= Metrics.s2
         }
       }
       .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { old, new in
@@ -190,7 +190,7 @@ struct ThoughtView: View {
       .onScrollGeometryChange(for: Edge.Set.self) { g in
         var edges: Edge.Set = []
         if g.contentOffset.y + g.contentInsets.top > Metrics.hairline { edges.insert(.top) }
-        if g.contentOffset.y + g.containerSize.height - g.contentInsets.bottom < g.contentSize.height - Metrics.hairline {
+        if g.gapBelow > Metrics.hairline {
           edges.insert(.bottom)
         }
         return edges
