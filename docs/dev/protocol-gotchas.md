@@ -86,6 +86,7 @@ Cross-agent ACP behaviour the host depends on, and the host invariants built aro
 ## Compaction and context usage
 
 - ACP has no compact request, so auto-compaction sends the advertised `/compact` at a turn boundary; it never resizes the window or interrupts a prompt. The settings also ride `_meta["acpira/compaction"]` on each `session/prompt` for the built-in agent, which compacts inside the turn.
+- `compactAtTokens` 0 means the model's own window (TS, Rust and Swift all treat it as the sentinel): the host compacts near the session's reported `size`, never while no size is known.
 - `usage_update` replaces the snapshot (Grok: polled `_x.ai/session/info`). Kimi 0.41.0 sends usage after acknowledging the prompt, so with auto-compaction on the turn is held briefly for it.
 - A missing usage report is never replaced by a transcript estimate (the history still holds what the CLI compacted). A completed `/compact` with no new snapshot and no `Tokens after` (Devin) marks usage stale (`compactedFrom`).
 - Background compaction: Devin 3000.6.14 and Kimi 0.41.0 acknowledge `/compact` before it finishes; the queue holds until completion (`acp/session/compaction.rs`). Releasing on the RPC response cancels Devin's compaction or loses Kimi's reply. Grok 1.0.18 waits inside the request.

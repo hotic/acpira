@@ -1128,6 +1128,8 @@
   "settings.autoCompact.desc": "超過門檻後，在下一則訊息前壓縮",
   "settings.compactAt": "壓縮閾值",
   "settings.compactAt.unit": "k",
+  "settings.compactAt.model": "模型上限",
+  "settings.compactAt.custom": "自訂",
   "settings.sessionListPosition": "工作階段列表",
   "settings.sessionListPosition.desc": "在聊天旁常駐顯示工作階段列表；面板較窄時改為抽屜",
   "settings.sessionListPosition.hidden": "收起",

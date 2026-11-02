@@ -1171,6 +1171,8 @@ export const ru = {
   'settings.autoCompact.desc': 'Сжимать перед следующим сообщением после порога',
   'settings.compactAt': 'Порог сжатия',
   'settings.compactAt.unit': 'тыс.',
+  'settings.compactAt.model': 'Лимит модели',
+  'settings.compactAt.custom': 'Своё значение',
   'settings.sessionListPosition': 'Список сессий',
   'settings.sessionListPosition.desc': 'Список сессий рядом с чатом. В узких панелях открывается выдвижной панелью.',
   'settings.sessionListPosition.hidden': 'Свёрнут',

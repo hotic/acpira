@@ -26,6 +26,15 @@ static KIMI_DONE: LazyLock<Regex> = LazyLock::new(|| {
   acpira_shared::re::compile(r"Compaction completed\.|Compaction cancelled\.|Compaction is blocked by the current turn;|/compact failed:")
 });
 
+/// Room kept below the window when the threshold follows the model (the built-in agent's RESERVED_OUTPUT cap)
+const MODEL_RESERVE: f64 = 32_000.0;
+
+/// The threshold for "the model's window": the reported context size less a tenth of it, at most `MODEL_RESERVE`;
+/// 0 (never) while no size is known. CLIs with their own auto-compaction usually fire first
+fn model_threshold(size: f64) -> f64 {
+  if size <= 0.0 { 0.0 } else { size - (size / 10.0).min(MODEL_RESERVE) }
+}
+
 /// The session's compaction bookkeeping
 #[derive(Default)]
 pub(crate) struct CompactionState {
@@ -151,10 +160,12 @@ impl AcpSession {
   pub(crate) fn should_auto_compact(&self, c: &Core) -> bool {
     let Some(policy) = self.deps.policy.compaction() else { return false };
     let used = c.state.usage.map(|u| u.used.0).unwrap_or(0.0);
-    if !policy.auto || used == 0.0 || !Self::can_compact_of(c) || c.status != SessionStatus::Ready || used < policy.at_tokens {
+    let size = c.state.usage.map(|u| u.size.0).unwrap_or(0.0);
+    let at = if policy.at_tokens > 0.0 { policy.at_tokens } else { model_threshold(size) };
+    if !policy.auto || used == 0.0 || at <= 0.0 || !Self::can_compact_of(c) || c.status != SessionStatus::Ready || used < at {
       return false;
     }
-    c.compaction.at.is_none_or(|at| used >= at + policy.at_tokens / 10.0)
+    c.compaction.at.is_none_or(|last| used >= last + at / 10.0)
   }
 
   /// Compact before flushing so a queued follow-up is not the request that runs over budget

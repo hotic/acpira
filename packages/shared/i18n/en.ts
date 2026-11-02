@@ -1175,6 +1175,8 @@ export const en = {
   'settings.autoCompact.desc': 'Compact before the next message once past the threshold',
   'settings.compactAt': 'Compaction threshold',
   'settings.compactAt.unit': 'k',
+  'settings.compactAt.model': 'Model limit',
+  'settings.compactAt.custom': 'Custom',
   // Appearance page
   'settings.sessionListPosition': 'Session list',
   'settings.sessionListPosition.desc': 'Keep the session list beside the chat. Narrow panels use a drawer.',

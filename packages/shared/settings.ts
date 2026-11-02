@@ -149,6 +149,8 @@ export function isSharedSetting(key: string): boolean {
 }
 
 export const MIN_COMPACT_AT_TOKENS = 10_000;
+// `compactAtTokens` value meaning "the model's own window": each session compacts near the context size its agent reports
+export const COMPACT_AT_MODEL = 0;
 
 // Agents whose settings page offers the Plan mode auto-approval switch: Claude Code 2.1.284 asks for every tool call in
 // Plan mode under the SDK (docs/dev/agent-quirks-claude.md)
@@ -210,7 +212,7 @@ export function sanitizeSetting<K extends SettingKey>(key: K, value: unknown): S
       return (typeof value === 'boolean' ? value : fallback) as SettingsView[K];
     case 'compactAtTokens': {
       const n = typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : fallback as number;
-      return Math.max(MIN_COMPACT_AT_TOKENS, n) as SettingsView[K];
+      return (n <= COMPACT_AT_MODEL ? COMPACT_AT_MODEL : Math.max(MIN_COMPACT_AT_TOKENS, n)) as SettingsView[K];
     }
     case 'uiFontSize':
       return clampSize(value, UI_FONT_SIZE) as SettingsView[K];
