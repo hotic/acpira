@@ -86,10 +86,23 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
       follow.set(pinned.current);
       if (was && pinned.current && !user && el.scrollHeight - el.scrollTop - el.clientHeight > 1) el.scrollTop = el.scrollHeight;
       lastTop = el.scrollTop;
+      if (anchor) anchor.at = offset(anchor.node);
     };
+    // What a press landed on and where it shows: content growing above it (a skin's borders, an image higher up) would
+    // move it from under the pointer, so the view moves with it, as Chrome's scroll anchoring does (WebKit has none).
+    // Growth below it (a fold it opened) moves nothing. Every scroll (a clamp, a pin) re-reads where it shows, so only
+    // a layout change counts. A wheel, touch or key drops it
+    let anchor: { node: Element; at: number } | undefined;
+    const offset = (node: Element) => node.getBoundingClientRect().top;
     const touched = () => { untouched.current = false; intentAt = holding.current = performance.now(); };
     follow.release = () => { touched(); pinned.current = false; follow.set(false); };
-    const pressed = () => { pointerDown = holdingDown.current = true; touched(); };
+    const pressed = (event: PointerEvent) => {
+      pointerDown = holdingDown.current = true;
+      touched();
+      const node = event.target instanceof Element && content.current?.contains(event.target) ? event.target : undefined;
+      anchor = node && { node, at: offset(node) };
+    };
+    const typed = () => { anchor = undefined; touched(); };
     const released = () => {
       if (pointerDown) {
         pointerDown = holdingDown.current = false;
@@ -109,6 +122,7 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
     // downward scroll. Release on upward wheel intent itself, but only when the thread takes the vertical gesture.
     const moved = (event: WheelEvent | TouchEvent) => {
       intentAt = performance.now();
+      anchor = undefined;
       if ('deltaY' in event && event.deltaY < 0 && !event.ctrlKey && Math.abs(event.deltaY) >= Math.abs(event.deltaX) && takesWheel(event)) {
         pinned.current = false;
         follow.set(false);
@@ -123,6 +137,11 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
         return;
       }
       if (!scrollerUsable(el)) return;
+      if (anchor?.node.isConnected) {
+        const shift = offset(anchor.node) - anchor.at;
+        if (Math.abs(shift) >= 1) el.scrollTop += shift;
+        anchor.at = offset(anchor.node);
+      }
       const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 1;
       if (pinned.current !== atBottom) {
         pinned.current = atBottom;
@@ -131,7 +150,7 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     el.addEventListener('pointerdown', pressed, { passive: true });
-    el.addEventListener('keydown', touched);
+    el.addEventListener('keydown', typed);
     el.addEventListener('wheel', moved, { passive: true });
     el.addEventListener('touchmove', moved, { passive: true });
     // The release can land outside the scroller (a scrollbar drag that left it)
@@ -146,7 +165,7 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
       body.disconnect();
       el.removeEventListener('scroll', onScroll);
       el.removeEventListener('pointerdown', pressed);
-      el.removeEventListener('keydown', touched);
+      el.removeEventListener('keydown', typed);
       el.removeEventListener('wheel', moved);
       el.removeEventListener('touchmove', moved);
       window.removeEventListener('pointerup', released);
