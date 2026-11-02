@@ -9,6 +9,8 @@
 
 use serde_json::Value;
 
+use crate::acp::vendors::steering::version_triple;
+
 /// Updates that mean the model is working: one arriving with nothing on the wire opens an autonomous cycle. A bare
 /// `tool_call_update` is left out, since a background task's own row can still settle after the turn
 pub const CYCLE_START_KINDS: [&str; 4] = ["agent_message_chunk", "agent_thought_chunk", "tool_call", "plan"];
@@ -18,6 +20,13 @@ pub const CYCLE_START_KINDS: [&str; 4] = ["agent_message_chunk", "agent_thought_
 pub fn cycle_ended(update: &Value) -> bool {
   update.get("sessionUpdate").and_then(Value::as_str) == Some("usage_update")
     && (update.get("cost").is_some_and(Value::is_object) || update.pointer("/_meta/_claude~1origin").is_some_and(Value::is_object))
+}
+
+/// A `session/prompt` sent during a cycle is answered by that cycle: from claude-agent-acp 0.95.0 a prompt the CLI folds
+/// into an autonomous turn owns it, and the cycle's result settles the prompt (source read in 0.95.0 and 0.99.1). Earlier
+/// adapters book that result as autonomous and absorb its idle, so the prompt never returns (seen on 0.84.0)
+pub fn prompt_joins_cycle(init: &Value) -> bool {
+  init.pointer("/agentInfo/version").and_then(Value::as_str).and_then(version_triple).is_some_and(|v| v >= (0, 95, 0))
 }
 
 #[cfg(test)]
@@ -36,5 +45,15 @@ mod tests {
     assert!(!cycle_ended(&json!({ "sessionUpdate": "usage_update", "used": 1, "size": 2 })));
     assert!(!cycle_ended(&json!({ "sessionUpdate": "usage_update", "used": 1, "size": 2, "_meta": { "_claude/rateLimit": {} } })));
     assert!(!cycle_ended(&json!({ "sessionUpdate": "agent_message_chunk", "_meta": { "_claude/origin": { "kind": "peer" } } })));
+  }
+
+  #[test]
+  fn only_adapters_from_0_95_let_a_prompt_join_a_cycle() {
+    let at = |v: &str| prompt_joins_cycle(&json!({ "agentInfo": { "version": v } }));
+    assert!(!at("0.84.0"));
+    assert!(!at("0.94.1-preview.13"));
+    assert!(at("0.95.0"));
+    assert!(at("0.99.1"));
+    assert!(!prompt_joins_cycle(&json!({})));
   }
 }

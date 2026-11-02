@@ -50,7 +50,7 @@ pub fn cancel_drops_unanswered(init: &Value) -> bool {
 }
 
 /// `major.minor.patch`, a pre-release or build suffix ignored
-fn version_triple(v: &str) -> Option<(u64, u64, u64)> {
+pub(crate) fn version_triple(v: &str) -> Option<(u64, u64, u64)> {
   let core = v.split(['-', '+']).next()?;
   let mut parts = core.split('.').map(str::parse::<u64>);
   Some((parts.next()?.ok()?, parts.next()?.ok()?, parts.next().unwrap_or(Ok(0)).ok()?))
