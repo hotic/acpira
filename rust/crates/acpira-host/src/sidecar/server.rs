@@ -311,18 +311,22 @@ impl Engine {
     }
   }
 
-  /// A window from another SSH login joins a persistent engine whose keychain is locked. Unlock state belongs to the
-  /// security session, and the window's terminal unlocks its own session, never this engine's: the engine could not read
-  /// the login however often the user typed the password. With no other window on it and no turn running it retires, so
-  /// the window's shell starts the next engine in the window's own session. Called under `init`, before the wire joins.
+  /// A window from another SSH login (or a peer on macOS when the user's `gui/<uid>` session can run the engine instead
+  /// of an SSH session) joins a persistent engine whose keychain is locked. Unlock state belongs to the security
+  /// session: with no other wire on it and no turn running it retires, so the next connection starts the engine in the
+  /// window's or `gui/<uid>`'s session. Called under `init`, before the wire joins.
   /// Observed 2026-10-10 on acpira 1.9.0 over Remote-SSH: an engine left by an earlier connection stayed locked while
   /// the window's terminal unlocked the keychain, and the unlock notice waited out its 5 minutes
   async fn retires_for(&self, hello: &Hello, rt: &HostRuntime) -> bool {
-    // A peer is no window: the keychain of its login is not the one a terminal would unlock
-    if !self.persistent || hello.client.is_peer() || !other_login(self.ssh_connection.as_deref(), hello.client.ssh_connection.as_deref()) {
+    if !self.persistent {
       return false;
     }
-    if !self.inner.lock().wires.is_empty() || self.busy() || !rt.credentials_locked().await {
+    let another_session = if hello.client.is_peer() {
+      self.ssh_connection.is_some() && crate::devices::launch_agent::can_use_gui(&self.opts.home).await
+    } else {
+      other_login(self.ssh_connection.as_deref(), hello.client.ssh_connection.as_deref())
+    };
+    if !another_session || !self.inner.lock().wires.is_empty() || self.busy() || !rt.credentials_locked().await {
       return false;
     }
     let mut inner = self.inner.lock();
@@ -332,7 +336,7 @@ impl Engine {
     }
     inner.sealed = true;
     drop(inner);
-    self.log("retiring: a window from another SSH login joined while the keychain is locked for this engine's session");
+    self.log("retiring: a window or peer joined while the keychain is locked for this engine's SSH login");
     self.changed.notify_waiters();
     true
   }

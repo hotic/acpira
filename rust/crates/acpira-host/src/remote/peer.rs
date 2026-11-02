@@ -34,8 +34,30 @@ pub struct PeerLink {
 }
 
 impl PeerLink {
-  /// Reach the host's engine and say hello. `home`: another data root on the host (tests); the host's own otherwise
+  /// Reach the host's engine and say hello. `home`: another data root on the host (tests); the host's own otherwise.
+  /// Retries when the host's engine is retiring (`retires_for`, e.g. an SSH engine handing over to `gui/<uid>`)
   pub async fn connect(client: &RemoteClient, home: Option<&str>, me: PeerHello<'_>) -> Result<PeerLink> {
+    let mut retiring = false;
+    for _ in 0..4 {
+      match Self::connect_once(client, home, &me).await {
+        Ok(link) => return Ok(link),
+        Err(e) => {
+          let msg = e.to_string();
+          let shutting_down = msg.contains("shutting down");
+          let closed_during_retire = retiring && msg.contains("closed the connection before it answered");
+          if shutting_down || closed_during_retire {
+            retiring = true;
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            continue;
+          }
+          return Err(e);
+        }
+      }
+    }
+    Self::connect_once(client, home, &me).await
+  }
+
+  async fn connect_once(client: &RemoteClient, home: Option<&str>, me: &PeerHello<'_>) -> Result<PeerLink> {
     let mut args = json!({});
     if let Some(h) = home {
       args["home"] = json!(h);
@@ -96,8 +118,14 @@ impl PeerLink {
       Err(anyhow!("the host's engine closed the connection before it answered"))
     })
     .await
-    .map_err(|_| anyhow!("the host's engine did not answer hello within {}s", HELLO_WAIT.as_secs()))??;
-    Ok(PeerLink { out, inbox, hello_ok: answer, task })
+    .map_err(|_| anyhow!("the host's engine did not answer hello within {}s", HELLO_WAIT.as_secs()));
+    match answer {
+      Ok(Ok(hello_ok)) => Ok(PeerLink { out, inbox, hello_ok, task }),
+      Ok(Err(e)) | Err(e) => {
+        task.abort();
+        Err(e)
+      }
+    }
   }
 
   /// One envelope to the host's engine (`ShellMsg`)

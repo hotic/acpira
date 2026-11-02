@@ -74,7 +74,7 @@ Its file and shell tools live in its own process, so under local run it runs her
 
 ## Remote run: the peer wire
 
-- The helper's `engine` op reaches (or starts under `setsid`) the host's `acpira serve` of its own version; it outlives the connection and ends by idle grace.
+- The helper's `engine` op reaches the host's `acpira serve` of its own version, starting it on macOS in `gui/<uid>` (`Aqua`, plist under `<home>/run/`, no `KeepAlive`) when the user is logged into the desktop so the login keychain is unlocked, or under `setsid` otherwise; it outlives the connection and ends by idle grace.
 - `PeerLink` hellos with `client.role: "peer"`; only the same version connects. A peer never rebinds the platform or becomes the active wire; its platform requests route back via `platform::ORIGIN`.
 - The last host list is cached at `<ACPIRA_HOME>/run/remote/<alias>.sessions.json` so an absent host still shows. Host views get this engine's revs; a misfit patch triggers `resync`. Unread marks live on the host.
 - Chat accounts belong to the engine running the agent, never the local settings store. Only public metadata crosses the peer wire; credentials stay on that host.
