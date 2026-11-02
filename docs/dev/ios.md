@@ -76,6 +76,8 @@
 - iPadOS 27 opens the app as a 516 pt compact window whatever it asks; with SpringBoard's `SBMedusaMultitaskingEnabled` and `SBChamoisWindowingEnabled` false (`simctl spawn … defaults write com.apple.springboard`, then reboot) apps run full screen. SpringBoard keeps a window size until reboot.
 - With a hardware keyboard attached the software keyboard is minimised; `defaults write com.apple.keyboard.preferences AutomaticMinimizationEnabled -bool false` via `simctl spawn` brings it back.
 - `simctl recordVideo` right after a boot can stall for seconds: record again before calling it a bug.
+- Frame timing: Instruments' hitch template refuses the simulator; Time Profiler and its potential-hangs table work. Debug builds take `-frameprobe` (`FrameProbe`), timed between two Darwin notifications. Time with Swift optimisation on: a plain Debug build runs several times slower.
+- The first accessibility client to attach after launch (an automation tool's first call) costs the app a 100+ ms frame once: warm it up before timing.
 
 ## Platform behaviour
 

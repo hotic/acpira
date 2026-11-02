@@ -70,8 +70,9 @@ public struct TextStyle: Hashable, Sendable {
   }
 
   public func font(_ weight: FontWeight = .regular, italic: Bool = false) -> Font {
-    mono ? Font(MonoFont.ctFont(size: size, weight: weight))
-      : InterFont.font(size: size, weight: weight, italic: italic)
+    mono ? FontCache.shared.font(FontCache.Key(size: size, weight: weight, italic: false, mono: true)) {
+      MonoFont.ctFont(size: size, weight: weight)
+    } : InterFont.font(size: size, weight: weight, italic: italic)
   }
 }
 
@@ -105,10 +106,50 @@ public enum TypeScale {
 /// and a bold face; WebKit takes bold from 600 up, and CJK falls back to PingFang SC at the same weight
 public enum MonoFont {
   public static func ctFont(size: CGFloat, weight: FontWeight) -> CTFont {
-    let name = weight.rawValue >= FontWeight.semibold.rawValue ? "Menlo-Bold" : "Menlo-Regular"
-    let cascade = CTFontDescriptorCreateWithNameAndSize(InterFont.pingFang(weight) as CFString, size)
-    let attributes: [CFString: Any] = [kCTFontNameAttribute: name, kCTFontCascadeListAttribute: [cascade]]
-    return CTFontCreateWithFontDescriptor(CTFontDescriptorCreateWithAttributes(attributes as CFDictionary), size, nil)
+    FontCache.shared.ctFont(FontCache.Key(size: size, weight: weight, italic: false, mono: true)) {
+      let name = weight.rawValue >= FontWeight.semibold.rawValue ? "Menlo-Bold" : "Menlo-Regular"
+      let cascade = CTFontDescriptorCreateWithNameAndSize(InterFont.pingFang(weight) as CFString, size)
+      let attributes: [CFString: Any] = [kCTFontNameAttribute: name, kCTFontCascadeListAttribute: [cascade]]
+      return CTFontCreateWithFontDescriptor(CTFontDescriptorCreateWithAttributes(attributes as CFDictionary), size, nil)
+    }
+  }
+}
+
+/// Fonts made once per face, weight and size. Making one costs a descriptor match, and pushing a chat made hundreds;
+/// and a fresh `CTFont` never compares equal to the last, so a rebuilt text read as set in a new font
+final class FontCache: @unchecked Sendable {
+  struct Key: Hashable {
+    var size: CGFloat
+    var weight: FontWeight
+    var italic: Bool
+    var mono: Bool
+  }
+
+  static let shared = FontCache()
+  private let lock = NSLock()
+  private var ctFonts: [Key: CTFont] = [:]
+  private var fonts: [Key: Font] = [:]
+
+  /// Made outside the lock: `make` may itself go through the cache
+  func ctFont(_ key: Key, make: () -> CTFont) -> CTFont {
+    if let font = lock.withLock({ ctFonts[key] }) { return font }
+    let font = make()
+    return lock.withLock {
+      if let made = ctFonts[key] { return made }
+      ctFonts[key] = font
+      return font
+    }
+  }
+
+  /// The SwiftUI font over the cached `CTFont`, itself kept so equal styles hand out an equal value
+  func font(_ key: Key, make: () -> CTFont) -> Font {
+    if let font = lock.withLock({ fonts[key] }) { return font }
+    let font = Font(make())
+    return lock.withLock {
+      if let made = fonts[key] { return made }
+      fonts[key] = font
+      return font
+    }
   }
 }
 
@@ -136,7 +177,9 @@ public enum InterFont {
 
   /// Inter at a size and a point on its weight axis
   public static func font(size: CGFloat, weight: FontWeight, italic: Bool = false) -> Font {
-    Font(ctFont(size: size, weight: weight, italic: italic))
+    FontCache.shared.font(FontCache.Key(size: size, weight: weight, italic: italic, mono: false)) {
+      ctFont(size: size, weight: weight, italic: italic)
+    }
   }
 
   /// The PingFang SC face Chrome picks for CJK at a CSS weight (zh-CN; 700 has no face of its own and takes Semibold).
@@ -150,15 +193,17 @@ public enum InterFont {
   }
 
   public static func ctFont(size: CGFloat, weight: FontWeight, italic: Bool = false) -> CTFont {
-    register()
-    let cascade = CTFontDescriptorCreateWithNameAndSize(pingFang(weight) as CFString, size)
-    let attributes: [CFString: Any] = [
-      kCTFontNameAttribute: italic ? italicPostScriptName : postScriptName,
-      kCTFontVariationAttribute: [weightAxis: weight.rawValue],
-      kCTFontCascadeListAttribute: [cascade],
-    ]
-    let descriptor = CTFontDescriptorCreateWithAttributes(attributes as CFDictionary)
-    return CTFontCreateWithFontDescriptor(descriptor, size, nil)
+    FontCache.shared.ctFont(FontCache.Key(size: size, weight: weight, italic: italic, mono: false)) {
+      register()
+      let cascade = CTFontDescriptorCreateWithNameAndSize(pingFang(weight) as CFString, size)
+      let attributes: [CFString: Any] = [
+        kCTFontNameAttribute: italic ? italicPostScriptName : postScriptName,
+        kCTFontVariationAttribute: [weightAxis: weight.rawValue],
+        kCTFontCascadeListAttribute: [cascade],
+      ]
+      let descriptor = CTFontDescriptorCreateWithAttributes(attributes as CFDictionary)
+      return CTFontCreateWithFontDescriptor(descriptor, size, nil)
+    }
   }
 }
 

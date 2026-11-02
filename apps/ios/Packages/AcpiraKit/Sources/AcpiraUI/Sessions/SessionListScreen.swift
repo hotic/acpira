@@ -307,9 +307,11 @@ struct SessionListScreen: View {
         SessionGroup(id: "agent.\(a)", caption: model.agent(a).name, sessions: rest.filter { $0.agent == a })
       }
     }
+    // Each session's bucket is worked out once, not once per bucket
+    var buckets: [String: [SessionSummary]] = [:]
+    for s in rest { buckets[recency(s.updatedAt), default: []].append(s) }
     for key in ["today", "yesterday", "week", "month", "older"] {
-      let members = rest.filter { recency($0.updatedAt) == key }
-      if !members.isEmpty {
+      if let members = buckets[key] {
         out.append(SessionGroup(id: key, caption: t("session.when.\(key)"), sessions: members, dated: true))
       }
     }
@@ -317,9 +319,7 @@ struct SessionListScreen: View {
   }
 
   private func recency(_ iso: String) -> String {
-    let parser = ISO8601DateFormatter()
-    parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    guard let date = parser.date(from: iso) ?? ISO8601DateFormatter().date(from: iso) else { return "older" }
+    guard let date = SessionDate.parse(iso) else { return "older" }
     let calendar = Calendar.current
     if calendar.isDate(date, inSameDayAs: now) { return "today" }
     if let y = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: y) { return "yesterday" }
@@ -401,11 +401,23 @@ func projectName(_ cwd: String) -> String {
   cwd.split(whereSeparator: { $0 == "/" || $0 == "\\" }).last.map(String.init) ?? cwd
 }
 
+/// The engine's ISO timestamps, with fractional seconds or without. A formatter is costly to make and parses safely
+/// from any thread, so one pair serves every row: a new pair per call, five calls per session per list render, showed
+/// up in the profile of pushing a chat
+enum SessionDate {
+  nonisolated(unsafe) private static let fractional: ISO8601DateFormatter = {
+    let parser = ISO8601DateFormatter()
+    parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return parser
+  }()
+  nonisolated(unsafe) private static let plain = ISO8601DateFormatter()
+
+  static func parse(_ iso: String) -> Date? { fractional.date(from: iso) ?? plain.date(from: iso) }
+}
+
 /// Today: the time of day; earlier: month/day — both in the UI locale
 func sessionTime(_ iso: String, now: Date = Date()) -> String {
-  let parser = ISO8601DateFormatter()
-  parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-  guard let date = parser.date(from: iso) ?? ISO8601DateFormatter().date(from: iso) else { return "" }
+  guard let date = SessionDate.parse(iso) else { return "" }
   let locale = Locale(identifier: L10n.locale)
   if Calendar.current.isDate(date, inSameDayAs: now) {
     return date.formatted(Date.FormatStyle(locale: locale).hour(.defaultDigits(amPM: .abbreviated)).minute(.twoDigits))
