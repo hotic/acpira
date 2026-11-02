@@ -111,7 +111,8 @@ struct NewSessionScreen: View {
     }
     // The composer's liquid pickers, drawn over the whole screen so every piece takes taps
     .gooLayer()
-    .background(Palette.bg0)
+    // Under the keyboard too, behind its rounded corners (ChatScreen)
+    .background(Palette.bg0.ignoresSafeArea())
     .modifier(SystemTitle(title: t("session.new")))
     .environment(\.agentAccent, Palette.accent(for: draft.agent))
     .environment(\.hiddenModels, model.settings?.hiddenOptions[draft.agent] ?? [:])

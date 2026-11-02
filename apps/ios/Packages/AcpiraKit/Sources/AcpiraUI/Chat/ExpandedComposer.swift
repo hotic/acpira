@@ -35,7 +35,8 @@ struct ExpandedComposer: View {
           .scrollContentBackground(.hidden)
           .padding(.horizontal, Metrics.pad)
       }
-      .background(Palette.bg0)
+      // Under the keyboard too, behind its rounded corners (ChatScreen)
+      .background(Palette.bg0.ignoresSafeArea())
       .modifier(LightboxHost(onOpen: { focused = false }))
       .toolbar {
         ToolbarItem(placement: .primaryAction) {

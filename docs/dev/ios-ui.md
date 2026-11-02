@@ -44,6 +44,7 @@ SwiftUI, Liquid Glass, WebKit and text-layout traps of `apps/ios/Packages/Acpira
 
 - The home inset is read from a layer that ignores the keyboard (`HomeInset`): with the keyboard counted, geometry reports its inset a frame before will-show and threw the dock up.
 - A pushed page's keyboard avoidance happens above the page: ignoring the keyboard safe area there does nothing.
+- The keyboard's rounded corners show what lies under it. A page's hosting view is full height with `systemBackground` (black in dark mode), and `.background(colour)` ignores only the container safe area: a page that raises the keyboard sets its ground with `.ignoresSafeArea()`.
 - `FocusState` turns true only once the text view is first responder (after the keyboard rose, in a transaction ignoring `.animation(value:)`), so the composer's card form is its own state, opened on tap.
 - The field's height comes from `FieldHeight`: a vertical `TextField` fills any finite height offered, and `lineLimit` counts the font's natural line height, not the drawn line box. The dock reserves its height as a bottom safe-area inset; a sibling in the thread's stack clipped messages across the screen.
 - At rest the hint is a plain `Text` and the field takes no touches (a drag scrolled the field's text view).
