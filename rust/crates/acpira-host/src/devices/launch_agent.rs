@@ -16,7 +16,131 @@ pub fn plist_path(label: &str, user_home: &Path) -> PathBuf {
 }
 
 fn xml(s: &str) -> String {
-  s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+  s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&apos;")
+}
+
+/// The LaunchAgent label of the peer engine for `version` (`remote/helper/streams.rs`)
+pub fn peer_label(version: &str) -> String {
+  let clean: String = version.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '-' }).collect();
+  format!("com.hotic.acpira.peer.{clean}")
+}
+
+/// The LaunchAgent plist for a peer engine on macOS: runs in the user's `Aqua` login session (`gui/<uid>`), where the
+/// login keychain is unlocked, without `KeepAlive` so the engine still exits on its idle grace (`cli.rs`)
+pub fn peer_plist(label: &str, exe: &Path, socket: &Path, home: &Path, log: &Path) -> String {
+  format!(
+    r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>{label}</string>
+  <key>LimitLoadToSessionType</key>
+  <string>Aqua</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{exe}</string>
+    <string>serve</string>
+    <string>--socket</string>
+    <string>{socket}</string>
+    <string>--home</string>
+    <string>{home}</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>{log}</string>
+  <key>StandardErrorPath</key>
+  <string>{log}</string>
+</dict>
+</plist>
+"#,
+    label = xml(label),
+    exe = xml(&exe.to_string_lossy()),
+    socket = xml(&socket.to_string_lossy()),
+    home = xml(&home.to_string_lossy()),
+    log = xml(&log.to_string_lossy()),
+  )
+}
+
+#[cfg(unix)]
+fn passwd_home() -> Option<PathBuf> {
+  // SAFETY: geteuid has no preconditions; getpwuid_r writes into caller-owned buffers and sets `result` on success
+  unsafe {
+    let uid = libc::geteuid();
+    let mut pwd: libc::passwd = std::mem::zeroed();
+    let mut buf = vec![0 as libc::c_char; 4096];
+    let mut result: *mut libc::passwd = std::ptr::null_mut();
+    if libc::getpwuid_r(uid, &mut pwd, buf.as_mut_ptr(), buf.len(), &mut result) != 0 || result.is_null() || pwd.pw_dir.is_null() {
+      return None;
+    }
+    let dir = std::ffi::CStr::from_ptr(pwd.pw_dir).to_str().ok()?.trim();
+    (!dir.is_empty()).then(|| PathBuf::from(dir))
+  }
+}
+
+/// Whether `home` is this OS user's real `~/.acpira` with no test or custom environment overrides: tests (`remote_peer`)
+/// and custom homes must stay in their own process tree and never load a job into the host's `gui/<uid>` launchd domain
+pub fn is_default_user_home(home: &Path) -> bool {
+  #[cfg(unix)]
+  {
+    if ["ACPIRA_HOME", "ACPIRA_REMOTE_ROOT_MAP", "ACPIRA_REMOTE_MACHINE_ID"].iter().any(|k| std::env::var_os(k).is_some()) {
+      return false;
+    }
+    passwd_home().is_some_and(|u| home == u.join(".acpira"))
+  }
+  #[cfg(not(unix))]
+  {
+    let _ = home;
+    false
+  }
+}
+
+/// Whether the user has an active macOS GUI (`Aqua`) login session (`gui/<uid>`)
+pub async fn gui_available() -> bool {
+  if !cfg!(target_os = "macos") {
+    return false;
+  }
+  launchctl(&["print", &domain()]).await.is_ok_and(|o| o.status.success())
+}
+
+/// Whether a peer engine for `home` can run in the user's macOS GUI (`gui/<uid>`) login session
+pub async fn can_use_gui(home: &Path) -> bool {
+  cfg!(target_os = "macos") && is_default_user_home(home) && gui_available().await
+}
+
+/// Start (or kickstart after an idle exit) the peer engine for `version` in `gui/<uid>`. The plist lives under
+/// `<home>/run/` rather than `~/Library/LaunchAgents/` so it neither triggers a Login Items notification nor starts
+/// every old version at login
+pub async fn start_peer(version: &str, exe: &Path, socket: &Path, home: &Path, log: &Path) -> Result<()> {
+  for p in [exe, socket, home, log] {
+    if p.to_string_lossy().bytes().any(|b| b < 0x20) {
+      bail!("path contains control characters: {}", p.display());
+    }
+  }
+  if !gui_available().await {
+    bail!("no GUI login session ({})", domain());
+  }
+  let label = peer_label(version);
+  let run = home.join("run");
+  let plist_path = run.join(format!("peer-{version}.plist"));
+  let lock_path = run.join(format!("peer-{version}.plist.lock"));
+  let text = peer_plist(&label, exe, socket, home, log);
+  crate::store::file_lock::with_file_lock(&lock_path, || async {
+    let same = tokio::fs::read_to_string(&plist_path).await.is_ok_and(|t| t == text);
+    if !same {
+      crate::store::file_lock::write_atomic(&plist_path, text.as_bytes(), Some(0o600)).await?;
+    }
+    if loaded(&label).await {
+      if !same {
+        unload(&label).await?;
+        return load(&label, &plist_path).await;
+      }
+      return kickstart(&label, false).await;
+    }
+    load(&label, &plist_path).await
+  })
+  .await
 }
 
 /// The LaunchAgent: started at login, restarted when it crashes or exits with an error (not after `acpira-gateway stop`)
@@ -127,7 +251,8 @@ pub async fn kickstart(label: &str, kill: bool) -> Result<()> {
   let target = format!("{}/{label}", domain());
   let args: &[&str] = if kill { &["kickstart", "-k", &target] } else { &["kickstart", &target] };
   let out = launchctl(args).await?;
-  if !out.status.success() {
+  // 37 (Operation already in progress): already running when `kill` is false
+  if !out.status.success() && (kill || out.status.code() != Some(37)) {
     bail!("launchctl kickstart: {}", String::from_utf8_lossy(&out.stderr).trim());
   }
   Ok(())
@@ -143,5 +268,9 @@ mod tests {
     assert_eq!(label(Path::new("/Users/u/.acpira"), home), "com.hotic.acpira.gateway");
     assert!(label(Path::new("/Users/u/.acpira/harness"), home).starts_with("com.hotic.acpira.gateway."));
     assert!(plist("l", Path::new("/a&b/acpira-gateway"), Path::new("/r")).contains("<string>/a&amp;b/acpira-gateway</string>"));
+    assert_eq!(peer_label("2.0.5"), "com.hotic.acpira.peer.2.0.5");
+    let peer = peer_plist("com.hotic.acpira.peer.2.0.5", Path::new("/a'b/acpira"), Path::new("/r/peer.sock"), Path::new("/r"), Path::new("/r/peer.log"));
+    assert!(peer.contains("<string>Aqua</string>") && peer.contains("/a&apos;b/acpira") && !peer.contains("KeepAlive"));
+    assert!(!is_default_user_home(Path::new("/tmp/not-real-user-home/.acpira")));
   }
 }

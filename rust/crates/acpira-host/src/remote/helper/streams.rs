@@ -88,7 +88,8 @@ fn peer_socket(home: &Path, version: &str) -> PathBuf {
 }
 
 /// The engine of this host for a peer (remote run, docs/dev/remote.md): the running `acpira serve` of this version, or
-/// one started here and left running past this helper (its own session, output to `peer-<version>.log`), then the call
+/// one started here and left running past this helper (on macOS in the user's `gui/<uid>` Aqua session when logged in so
+/// the login keychain is unlocked, otherwise in its own `setsid` session; output to `peer-<version>.log`), then the call
 /// carries the connection to its socket. `home`: another data root (tests)
 #[cfg(unix)]
 pub(super) async fn engine(a: &Value, id: u64, out: &Out, stdin_rx: Option<mpsc::UnboundedReceiver<Option<Vec<u8>>>>, version: &str) -> Result<Value, WireError> {
@@ -100,23 +101,40 @@ pub(super) async fn engine(a: &Value, id: u64, out: &Out, stdin_rx: Option<mpsc:
       let exe = std::env::current_exe().map_err(|e| WireError::io(&e, "this helper's binary"))?;
       let log_dir = home.join("run");
       std::fs::create_dir_all(&log_dir).map_err(|e| WireError::io(&e, &log_dir.to_string_lossy()))?;
-      let log = std::fs::OpenOptions::new().create(true).append(true).open(log_dir.join(format!("peer-{version}.log"))).map_err(|e| WireError::io(&e, "the engine log"))?;
-      let err = log.try_clone().map_err(|e| WireError::io(&e, "the engine log"))?;
-      let mut cmd = std::process::Command::new(exe);
-      cmd.arg("serve").arg("--socket").arg(&socket).arg("--home").arg(&home).stdin(Stdio::null()).stdout(log).stderr(err);
-      // SAFETY: setsid is async-signal-safe and touches no memory of this process
-      unsafe {
-        use std::os::unix::process::CommandExt;
-        cmd.pre_exec(|| {
-          libc::setsid();
-          Ok(())
+      let log_path = log_dir.join(format!("peer-{version}.log"));
+      let launched_in_gui = if cfg!(target_os = "macos") && a.get("home").is_none() && crate::devices::launch_agent::can_use_gui(&home).await {
+        match crate::devices::launch_agent::start_peer(version, &exe, &socket, &home, &log_path).await {
+          Ok(()) => true,
+          Err(e) => {
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+              let _ = writeln!(f, "peer launchd start fell back to setsid: {e:#}");
+            }
+            false
+          }
+        }
+      } else {
+        false
+      };
+      if !launched_in_gui {
+        let log = std::fs::OpenOptions::new().create(true).append(true).open(&log_path).map_err(|e| WireError::io(&e, "the engine log"))?;
+        let err = log.try_clone().map_err(|e| WireError::io(&e, "the engine log"))?;
+        let mut cmd = std::process::Command::new(exe);
+        cmd.arg("serve").arg("--socket").arg(&socket).arg("--home").arg(&home).stdin(Stdio::null()).stdout(log).stderr(err);
+        // SAFETY: setsid is async-signal-safe and touches no memory of this process
+        unsafe {
+          use std::os::unix::process::CommandExt;
+          cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+          });
+        }
+        let mut child = cmd.spawn().map_err(|e| WireError::io(&e, "acpira serve"))?;
+        // Reaped by a thread of its own: it outlives this helper, which only must not leave a zombie meanwhile
+        std::thread::spawn(move || {
+          let _ = child.wait();
         });
       }
-      let mut child = cmd.spawn().map_err(|e| WireError::io(&e, "acpira serve"))?;
-      // Reaped by a thread of its own: it outlives this helper, which only must not leave a zombie meanwhile
-      std::thread::spawn(move || {
-        let _ = child.wait();
-      });
       let deadline = tokio::time::Instant::now() + ENGINE_START;
       let mut wait = Duration::from_millis(5);
       loop {
