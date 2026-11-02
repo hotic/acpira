@@ -110,7 +110,7 @@ export interface SettingsView {
   // Agents whose Plan mode approves tool requests without a card (plan approvals and adapter safety asks still ask)
   planAutoApprove: AgentId[];
   // Agents that run on this machine in a folder on an SSH host, only their tools on the host (SSH_LOCAL_AGENTS); the rest
-  // run in the host's own engine. The built-in agent by default
+  // run in the host's own engine. None by default
   sshLocalAgents: AgentId[];
   // Cross-harness subagents: kept in ~/.acpira/subagents.json (shared by every window and IDE), not a host setting
   subagents: SubagentPersona[];
@@ -179,7 +179,8 @@ export const DEFAULT_SETTINGS: SettingsView = {
   notifySound: true,
   notifySystem: false,
   planAutoApprove: [],
-  sshLocalAgents: [SSH_LOCAL_AGENTS[0]!],
+  // Every agent runs in the host's own engine until opted in: a session run here is a read-only copy on the host
+  sshLocalAgents: [],
   subagents: [],
   subagentGroups: [],
   agentCpuCap: AGENT_CPU_CAP.default,

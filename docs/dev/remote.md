@@ -1,6 +1,6 @@
 # SSH remote workspaces
 
-Remote folders over the system `ssh`. Local run keeps login and agent loop here and runs only tools on the host through a helper (`acpira remote --stdio`); remote run drives the host's own `acpira serve` as a peer. The agent picks, not the host: a new session in a host folder runs here when `sshLocalAgents` names its agent, else on the host (`session_manager/hosts.rs` `host_action`). Either way a host folder has one session history, the host's own store. Code: `rust/crates/acpira-host/src/remote/`.
+Remote folders over the system `ssh`. Local run keeps login and agent loop here and runs only tools on the host through a helper (`acpira remote --stdio`); remote run drives the host's own `acpira serve` as a peer. The agent picks, not the host: a new session in a host folder runs here when `sshLocalAgents` names its agent, else on the host (`session_manager/hosts.rs` `host_action`). It names none by default: only a host-run session is the host's own, live on every engine there; one run here reaches the host as a read-only record copy. Either way a host folder has one session history, the host's own store. Code: `rust/crates/acpira-host/src/remote/`.
 
 ## Transport
 
