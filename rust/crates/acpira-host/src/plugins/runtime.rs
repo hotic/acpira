@@ -72,12 +72,15 @@ struct Want {
   optional: BTreeMap<String, String>,
   /// A `runtime.main` plugin whose commands have no prompt answers the `command` hook without listing it
   commands_hooked: bool,
+  menus_hooked: bool,
 }
 
 impl Want {
   fn of(id: &str, hash: &str, dir: &Path, m: &crate::plugins::manifest::Manifest) -> Option<Want> {
     let def = m.contributes.runtime.clone()?;
     let commands_hooked = def.main.is_some() && m.contributes.commands.iter().any(|c| c.prompt.as_deref().is_none_or(|p| p.trim().is_empty()));
+    // Likewise a command button's menu, answered by `menus` of the definition
+    let menus_hooked = def.main.is_some() && m.contributes.commands.iter().any(|c| !c.menu.is_empty());
     Some(Want {
       id: id.to_owned(),
       version: m.version.clone(),
@@ -89,6 +92,7 @@ impl Want {
       dependencies: m.dependencies.clone(),
       optional: m.optional_dependencies.clone(),
       commands_hooked,
+      menus_hooked,
     })
   }
 
@@ -97,6 +101,9 @@ impl Want {
     let mut hooks = self.def.hooks.clone();
     if self.commands_hooked && !hooks.iter().any(|h| h == "command") {
       hooks.push("command".into());
+    }
+    if self.menus_hooked && !hooks.iter().any(|h| h == "menu") {
+      hooks.push("menu".into());
     }
     hooks
   }

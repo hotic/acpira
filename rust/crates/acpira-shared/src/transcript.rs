@@ -215,6 +215,29 @@ pub struct SlashCommand {
   /// The button runs with the draft as its arguments (`CommandDef::takes_draft`); otherwise it leaves the draft alone
   #[serde(default, rename = "takesDraft", skip_serializing_if = "is_false")]
   pub takes_draft: bool,
+  /// The button opens this menu instead of running the command, with the session's picks checked
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub menu: Vec<CommandMenuItem>,
+  /// The label of the first group's pick, shown on the chip the way the mode chip shows its access level
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub badge: Option<String>,
+}
+
+/// One row of a plugin command button's menu (`plugins/manifest.rs` `MenuItemDef`)
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandMenuItem {
+  #[serde(default)]
+  pub id: String,
+  /// `radio`, `toggle`, `action` or `separator`
+  pub kind: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub group: Option<String>,
+  #[serde(default)]
+  pub label: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub description: Option<String>,
+  #[serde(default, skip_serializing_if = "is_false")]
+  pub checked: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

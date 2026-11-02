@@ -495,7 +495,7 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
         {!p.edit && p.toolbarStart}
         {!p.edit && p.main && (
           <CommandButtons commands={p.commands} sessionId={p.sessionId} draft={text} disabled={p.disabled || p.controlsLocked || sending}
-            onSend={as => { void send(as); }} onSendBare={command => { void sendBare(command); }} onDraft={onRewritten} onRewriting={busy => setRewrite(busy ? 'busy' : undefined)} onNotice={p.onNotice} />
+            onSend={as => { void send(as); }} onSendBare={command => { void sendBare(command); }} onDraft={onRewritten} onRewriting={busy => setRewrite(busy ? 'busy' : undefined)} onNotice={p.onNotice} onOpenChange={onOpenChange} />
         )}
         {/* Plugin chips (plugins/Pieces.tsx) after the built-in ones, on the main composer only */}
         {!p.edit && p.main && <SlotPieces slot="composer.toolbar" className="flex shrink-0 items-center gap-1" />}

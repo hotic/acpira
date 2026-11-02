@@ -198,6 +198,7 @@ impl SessionSnapshot {
         goal: v.goal,
         copy_of: None,
         client_ids: Vec::new(),
+        plugin_menus: Default::default(),
       },
     }
   }
@@ -764,6 +765,7 @@ fn session_id_of(m: &WebviewMsg) -> Option<String> {
     W::Permission { session_id, .. }
     | W::Answer { session_id, .. }
     | W::PluginCard { session_id, .. }
+    | W::PluginMenu { session_id, .. }
     | W::BuildPlan { session_id, .. }
     | W::OpenPlan { session_id, .. }
     | W::ForkSession { session_id, .. }

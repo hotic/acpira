@@ -24,6 +24,7 @@ pub(super) fn is_execution(m: &WebviewMsg) -> bool {
       | W::Permission { .. }
       | W::Answer { .. }
       | W::PluginCard { .. }
+      | W::PluginMenu { .. }
       | W::BuildPlan { .. }
       | W::SetMode { .. }
       | W::SetConfig { .. }
@@ -230,6 +231,13 @@ impl SessionManager {
           };
           v.emit(HostMsg::PluginCalled { id, result, error });
         });
+      }
+      W::PluginMenu { session_id, name, item } => {
+        if valid(&session_id)
+          && let Some(s) = self.live(&session_id)
+        {
+          s.plugin_menu_pick(&name, &item);
+        }
       }
       W::BuildPlan { session_id, plan_id, option_id, model } => {
         if valid(&session_id)

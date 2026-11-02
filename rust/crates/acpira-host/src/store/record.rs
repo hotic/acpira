@@ -93,7 +93,13 @@ pub struct SessionRecord {
   /// kept so an engine that opens the session after another one exited still runs a resent action once
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub client_ids: Vec<String>,
+  /// What the user picked in plugin command buttons' menus, by command name (`CommandDef::menu_picks`)
+  #[serde(default, skip_serializing_if = "PluginMenus::is_empty")]
+  pub plugin_menus: PluginMenus,
 }
+
+/// Menu picks by command name, each a map of group name or toggle id to the pick
+pub type PluginMenus = std::collections::BTreeMap<String, serde_json::Map<String, serde_json::Value>>;
 
 impl SessionRecord {
   /// Records written before `TurnUsage::fold_cache_into_input` carry the vendor's own `input` semantics; folding on

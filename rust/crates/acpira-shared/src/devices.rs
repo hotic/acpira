@@ -36,6 +36,7 @@ pub fn device_allowed(m: &WebviewMsg) -> bool {
     W::Send { .. }
     // A command button with `draft`: what sending `/name` runs, its text coming back instead of going out
     | W::PluginCommand { .. }
+    | W::PluginMenu { .. }
     | W::Stop { .. }
     | W::Permission { .. }
     | W::Answer { .. }

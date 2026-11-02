@@ -69,6 +69,8 @@ declare module '@acpira/plugin' {
     agent?: string;
     session?: string;
     cwd?: string;
+    // Every hook's payload carries it while a plugin command has a menu: the session's picks, by command
+    menus?: Record<string, MenuPicks>;
     [key: string]: unknown;
   }
 
@@ -85,6 +87,9 @@ declare module '@acpira/plugin' {
     data?: any;
     [key: string]: unknown;
   }
+
+  // A command menu's state: each radio group's pick (by group name) and each toggle (by its id)
+  export type MenuPicks = Record<string, string | boolean>;
 
   type Maybe<T> = T | null | undefined | void | Promise<T | null | undefined | void>;
   type Handler<P = any, R = unknown> = (payload: P, ctx: Context) => Maybe<R>;
@@ -105,7 +110,11 @@ declare module '@acpira/plugin' {
     // Schedules of plugin.json: `due` is the occurrence in milliseconds (a missed run catches up once)
     schedules?: Record<string, (ctx: Context & { due: number }) => unknown>;
     // Commands of plugin.json without a `prompt`: the prompt to send in their place, or nothing
-    commands?: Record<string, (args: string, ctx: Context & { draft: boolean; session?: string }) => Maybe<string | { text: string }>>;
+    // `menus`: every command button menu's picks in the session, by command; `picks` in an answer moves this command's
+    commands?: Record<string, (args: string, ctx: Context & { draft: boolean; session?: string; menus: Record<string, MenuPicks> }) => Maybe<string | { text?: string; picks?: MenuPicks }>>;
+    // Command buttons with a `menu`: a row was picked (`item`, its id), `picks` already holds the result; answer
+    // `{ picks }` to change them (an `action` row keeps nothing otherwise)
+    menus?: Record<string, (item: string, ctx: Context & { session: string; picks: MenuPicks }) => Maybe<{ picks?: MenuPicks }>>;
   }
 
   export function definePlugin<T extends PluginDefinition>(definition: T): T;

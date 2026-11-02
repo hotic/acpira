@@ -174,7 +174,7 @@ impl AcpSession {
     let picked = (!c.picks.values.is_empty()).then(|| picked_controls(&c));
     let queued = queue_snapshot(&c);
     // The plugins' slash commands join the agent's own in the menu
-    let merged = self.plugin_commands(&c.state.commands);
+    let merged = self.plugin_commands(&c.state.commands, &c.plugin_state.menus);
     let head = ViewRef {
       id: &self.id,
       agent: &self.agent,
@@ -421,6 +421,8 @@ struct RecordRef<'a> {
   goal: Option<&'a SessionGoal>,
   #[serde(skip_serializing_if = "Vec::is_empty")]
   client_ids: Vec<String>,
+  #[serde(skip_serializing_if = "crate::store::record::PluginMenus::is_empty")]
+  plugin_menus: &'a crate::store::record::PluginMenus,
 }
 
 impl RecordSource for AcpSession {
@@ -458,6 +460,7 @@ impl RecordSource for AcpSession {
       subagents: (!c.tree.is_empty()).then(|| c.tree.record_refs()),
       goal: c.state.goal.as_ref(),
       client_ids: self.client_ids.lock().iter().cloned().collect(),
+      plugin_menus: &c.plugin_state.menus,
     };
     serde_json::to_vec(&r).unwrap_or_default()
   }

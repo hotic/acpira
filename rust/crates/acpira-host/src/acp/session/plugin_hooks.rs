@@ -13,7 +13,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use acpira_shared::slash_commands::command_name;
-use acpira_shared::transcript::{Attachment, CommandInput, Draft, SlashCommand, StrMap, Turn, TurnStop};
+use acpira_shared::transcript::{Attachment, CommandInput, CommandMenuItem, Draft, SlashCommand, StrMap, Turn, TurnStop};
 
 use super::AcpSession;
 use super::attachments::encode_uri_component;
@@ -47,6 +47,7 @@ pub(crate) struct PluginState {
   pub redirected: bool,
   /// Plugin retries since the user's last prompt
   pub retries: u32,
+  pub menus: crate::store::record::PluginMenus,
 }
 
 /// What the `prompt` hooks made of a prompt
@@ -106,6 +107,34 @@ fn skills_block(dirs: &[std::path::PathBuf]) -> Option<Value> {
   Some(json!({ "type": "text", "text": text }))
 }
 
+/// A command button's menu as the page draws it, the session's picks checked, and the chip's badge: the label of the
+/// first group's pick
+fn command_menu(def: &crate::plugins::manifest::CommandDef, stored: Option<&serde_json::Map<String, Value>>) -> (Vec<CommandMenuItem>, Option<String>) {
+  if def.menu.is_empty() {
+    return (vec![], None);
+  }
+  let picks = def.menu_picks(stored);
+  let items: Vec<CommandMenuItem> = def
+    .menu
+    .iter()
+    .map(|i| CommandMenuItem {
+      id: i.id.clone(),
+      kind: i.kind.clone(),
+      group: i.group.clone(),
+      label: i.label.clone(),
+      description: i.description.clone(),
+      checked: match (i.kind.as_str(), i.group.as_deref()) {
+        ("radio", Some(g)) => picks.get(g).and_then(Value::as_str) == Some(i.id.as_str()),
+        ("toggle", _) => picks.get(&i.id).and_then(Value::as_bool) == Some(true),
+        _ => false,
+      },
+    })
+    .collect();
+  let first = def.menu.iter().find_map(|i| (i.kind == "radio").then_some(i.group.as_deref()).flatten());
+  let badge = first.and_then(|g| items.iter().find(|i| i.checked && i.group.as_deref() == Some(g))).map(|i| i.label.clone());
+  (items, badge)
+}
+
 fn text_of<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
   v.get(key).and_then(Value::as_str).filter(|s| !s.trim().is_empty())
 }
@@ -116,8 +145,73 @@ impl AcpSession {
       o.insert("session".into(), json!(self.id));
       o.insert("agent".into(), json!(self.agent));
       o.insert("cwd".into(), json!(self.cwd));
+      if let Some(menus) = self.plugin_menu_picks() {
+        o.insert("menus".into(), menus);
+      }
     }
     data
+  }
+
+  /// Every plugin command menu's picks in this session, defaults filled in, by command name; None when no plugin
+  /// command has a menu. Takes the core lock, so never called with it held
+  fn plugin_menu_picks(&self) -> Option<Value> {
+    let contributed = self.deps.plugin_runtime.as_ref()?.contributed();
+    let mut menus = contributed.commands.iter().filter(|c| !c.def.menu.is_empty()).peekable();
+    menus.peek()?;
+    let c = self.core.lock();
+    Some(Value::Object(menus.map(|cmd| (cmd.def.name.clone(), Value::Object(cmd.def.menu_picks(c.plugin_state.menus.get(&cmd.def.name))))).collect()))
+  }
+
+  /// The user picked row `item` of command `name`'s menu: a radio or toggle is stored (and the view pushed) at once, then
+  /// the plugin's `menu` hook hears `{ name, item, picks }`; an answer `{ picks }` replaces the stored ones (an action
+  /// keeps nothing otherwise). A failed hook shows as a notice
+  pub fn plugin_menu_pick(self: &Arc<Self>, name: &str, item: &str) {
+    let Some(rt) = self.deps.plugin_runtime.clone() else { return };
+    let contributed = rt.contributed();
+    let Some(cmd) = contributed.commands.iter().find(|c| c.def.name == name && c.def.menu.iter().any(|i| i.id == item && i.kind != "separator")) else { return };
+    let picks = {
+      let mut c = self.core.lock();
+      let current = cmd.def.menu_picks(c.plugin_state.menus.get(name));
+      match cmd.def.menu_pick(&current, item) {
+        Some(next) => {
+          c.plugin_state.menus.insert(name.to_owned(), next.clone());
+          self.touch(&mut c);
+          next
+        }
+        None => current,
+      }
+    };
+    let (plugin, def, me, item) = (cmd.plugin.clone(), cmd.def.clone(), self.clone(), item.to_owned());
+    tokio::spawn(async move {
+      let payload = me.plugin_payload(json!({ "name": def.name, "item": item, "picks": picks }));
+      match rt.hook_of(&plugin, "menu", payload).await {
+        None | Some(Ok(Value::Null)) => {}
+        Some(Ok(answer)) => me.apply_menu_answer(&def, &answer),
+        Some(Err(e)) => me.notify(&format!("{plugin}: {e}")),
+      }
+    });
+  }
+
+  /// An answer's `picks` (from the `menu` or `command` hook) for command `def`'s menu: what the menu has replaces the
+  /// stored picks, the rest is dropped
+  fn apply_menu_answer(&self, def: &crate::plugins::manifest::CommandDef, answer: &Value) {
+    let Some(picks) = answer.get("picks").and_then(Value::as_object) else { return };
+    if def.menu.is_empty() {
+      return;
+    }
+    let mut c = self.core.lock();
+    let mut next = def.menu_picks(c.plugin_state.menus.get(&def.name));
+    let valid = def.menu_picks(Some(picks));
+    for (k, v) in picks {
+      // Kept only where the menu has that group or toggle and the value survived validation
+      if valid.get(k) == Some(v) {
+        next.insert(k.clone(), v.clone());
+      }
+    }
+    if c.plugin_state.menus.get(&def.name) != Some(&next) {
+      c.plugin_state.menus.insert(def.name.clone(), next);
+      self.touch(&mut c);
+    }
   }
 
   /// `prompt`: asked about every prompt the user (or their goal) sends, after the workspace's `beforePrompt`. An answer
@@ -212,23 +306,28 @@ impl AcpSession {
   }
 
   /// The menu's commands with the plugins' after the agent's own (an agent's command of the same name wins); None when
-  /// no plugin adds one
-  pub(crate) fn plugin_commands(&self, own: &[SlashCommand]) -> Option<Vec<SlashCommand>> {
+  /// no plugin adds one. `menus`: the session's picks, checked in each button's menu
+  pub(crate) fn plugin_commands(&self, own: &[SlashCommand], menus: &crate::store::record::PluginMenus) -> Option<Vec<SlashCommand>> {
     let contributed = self.deps.plugin_runtime.as_ref()?.contributed();
     let extra: Vec<SlashCommand> = contributed
       .commands
       .iter()
       .filter(|c| !own.iter().any(|o| o.name == c.def.name))
-      .map(|c| SlashCommand {
-        name: c.def.name.clone(),
-        description: c.def.description.clone(),
-        input: c.def.hint.clone().map(|hint| CommandInput { hint }),
-        plugin: Some(c.plugin.clone()),
-        button: c.def.button.clone(),
-        draft: c.def.draft,
-        icon: c.def.icon.clone(),
-        look: c.def.look.clone(),
-        takes_draft: c.def.button.is_some() && c.def.takes_draft(),
+      .map(|c| {
+        let (menu, badge) = command_menu(&c.def, menus.get(&c.def.name));
+        SlashCommand {
+          name: c.def.name.clone(),
+          description: c.def.description.clone(),
+          input: c.def.hint.clone().map(|hint| CommandInput { hint }),
+          plugin: Some(c.plugin.clone()),
+          button: c.def.button.clone(),
+          draft: c.def.draft,
+          icon: c.def.icon.clone(),
+          look: c.def.look.clone(),
+          takes_draft: c.def.button.is_some() && c.def.menu.is_empty() && c.def.takes_draft(),
+          menu,
+          badge,
+        }
       })
       .collect();
     if extra.is_empty() {
@@ -273,7 +372,11 @@ impl AcpSession {
     Some(match rt.hook_of(&cmd.plugin, "command", payload).await {
       None => Err(format!("{}: /{name} needs its process, which is not running", cmd.plugin)),
       Some(Err(e)) => Err(format!("{}: {e}", cmd.plugin)),
-      Some(Ok(answer)) => Ok(answer.get("text").and_then(Value::as_str).filter(|t| !t.trim().is_empty()).map(clipped)),
+      Some(Ok(answer)) => {
+        // `/name off` typed by hand may move the button's menu too
+        self.apply_menu_answer(&cmd.def, &answer);
+        Ok(answer.get("text").and_then(Value::as_str).filter(|t| !t.trim().is_empty()).map(clipped))
+      }
     })
   }
 
