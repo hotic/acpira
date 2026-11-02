@@ -30,6 +30,7 @@ pub const RUNTIME_HOOKS: &[&str] = &[
   "title",
   "session.mcp",
   "agent.launch",
+  "transcript",
   "context",
   "model.request",
   "compaction",

@@ -1,7 +1,8 @@
 //! The hooks a session asks the plugins' resident processes about, whichever agent it drives (docs/dev/plugins.md,
 //! Hooks): `prompt` (rewrite, add context, block or send elsewhere), `permission` (deny or insist on a card), `retry`
 //! (try a failed turn again), `title`, `session.mcp` (the MCP servers a session gets) and `agent.launch` (the
-//! command line and environment an agent starts with). Each call site checks `Runtimes::has_hook` first, so a session
+//! command line and environment an agent starts with), `transcript` (split a settled thought or reply text into thought
+//! and reply parts). Each call site checks `Runtimes::has_hook` first, so a session
 //! no plugin hooks into pays one lock read
 //!
 //! No answer can loosen what the user decides: a permission hook may deny or ask for a card, never approve, and a launch
@@ -13,12 +14,13 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use acpira_shared::slash_commands::command_name;
-use acpira_shared::transcript::{Attachment, CommandInput, CommandMenuItem, Draft, SlashCommand, StrMap, Turn, TurnStop};
+use acpira_shared::transcript::{AgentBlock, Attachment, CommandInput, CommandMenuItem, Draft, SlashCommand, StrMap, Turn, TurnStop};
 
-use super::AcpSession;
+use super::{AcpSession, Core};
 use super::attachments::encode_uri_component;
 use super::prompt::Origin;
 use crate::acp::agents::registry::AgentDef;
+use crate::acp::transcript::normalize::reclassify::{Prose, parse_parts, parts_json, reclassify, same_words};
 use crate::acp::transport::rpc::BoxFuture;
 
 /// A prompt a plugin's `prompt` hook sent to another agent: the engine starts a session for it in the same folder
@@ -47,7 +49,39 @@ pub(crate) struct PluginState {
   pub redirected: bool,
   /// Plugin retries since the user's last prompt
   pub retries: u32,
+  /// The root transcript's thought or reply text now streaming, for the `transcript` hook once it settles
+  pub streaming: Option<Streaming>,
+  /// What the user picked in plugin command buttons' menus, saved with the record
   pub menus: crate::store::record::PluginMenus,
+}
+
+/// Where a streaming thought or reply text sits: the turn (and its start, in case the turns were rebuilt) and the block
+#[derive(Debug)]
+pub(crate) struct Streaming {
+  turn: usize,
+  started: Option<i64>,
+  index: usize,
+  thought: bool,
+}
+
+fn streams(b: &AgentBlock) -> bool {
+  match b {
+    AgentBlock::Thought(t) => t.streaming == Some(true),
+    AgentBlock::Text(t) => t.streaming == Some(true),
+    _ => false,
+  }
+}
+
+/// What followed a settled block, for the `transcript` hook: its type, and for a tool call its kind, target and whether
+/// it asks the user (a question tool such as Claude's AskUserQuestion)
+fn next_of(b: &AgentBlock) -> Value {
+  match b {
+    AgentBlock::ToolCall(tc) => {
+      json!({ "type": "tool_call", "kind": tc.kind, "target": tc.target, "asksUser": tc.verb_key.as_deref() == Some("verb.ask") })
+    }
+    AgentBlock::Question(_) => json!({ "type": "question", "asksUser": true }),
+    other => json!({ "type": serde_json::to_value(other).ok().and_then(|v| v.get("type").cloned()) }),
+  }
 }
 
 /// What the `prompt` hooks made of a prompt
@@ -516,6 +550,71 @@ impl AcpSession {
       me.log("plugins: session retitled");
       let next = next.to_owned();
       me.emit("session.renamed", || json!({ "title": next }));
+    });
+  }
+
+  /// `transcript`: a thought or reply text of the root transcript settled, because the next block began or the turn
+  /// ended. The payload `{ blocks: [{ type, text }], next, ended }` says what followed it (`next_of`, null at the turn's
+  /// end); an answer `{ blocks }` splits it into thought and reply parts holding the same words (`reclassify.rs`), and
+  /// anything else is ignored. Called after every streamed update and when the turn ends, never during a replay
+  pub(crate) fn plugin_settled(&self, c: &mut Core, ended: bool) {
+    if c.replaying {
+      return;
+    }
+    let Some(rt) = self.deps.plugin_runtime.clone().filter(|rt| rt.has_hook("transcript")) else {
+      c.plugin_state.streaming = None;
+      return;
+    };
+    if let Some(w) = c.plugin_state.streaming.take() {
+      let at = match c.state.turns.get(w.turn) {
+        Some(Turn::Agent(t)) if t.started_at == w.started => t.blocks.get(w.index).map(|b| (b, t.blocks.get(w.index + 1))),
+        _ => None,
+      };
+      match at {
+        Some((b, _)) if streams(b) => c.plugin_state.streaming = Some(w),
+        Some((b, next)) => {
+          if let Some(p) = Prose::of(b).filter(|p| p.thought == w.thought) {
+            let next = next.map(next_of).unwrap_or(Value::Null);
+            self.offer_settled(rt, w.turn, w.started, p, next, ended);
+          }
+        }
+        None => {}
+      }
+    }
+    if c.plugin_state.streaming.is_none()
+      && !ended
+      && let Some(Turn::Agent(t)) = c.state.turns.last()
+      && let Some(index) = t.blocks.iter().rposition(streams)
+    {
+      let thought = matches!(t.blocks[index], AgentBlock::Thought(_));
+      c.plugin_state.streaming = Some(Streaming { turn: c.state.turns.len() - 1, started: t.started_at, index, thought });
+    }
+  }
+
+  fn offer_settled(&self, rt: Arc<crate::plugins::runtime::Runtimes>, turn: usize, started: Option<i64>, original: Prose, next: Value, ended: bool) {
+    let me = self.arc();
+    tokio::spawn(async move {
+      let payload = me.plugin_payload(json!({ "blocks": [original.to_json()], "next": next, "ended": ended }));
+      let out = rt
+        .chain("transcript", payload, |plugin, answer, p| {
+          let Some(answer) = answer.get("blocks") else { return true };
+          let current = parse_parts(&p["blocks"]).unwrap_or_default();
+          match parse_parts(answer) {
+            Some(parts) if same_words(&current, &parts) => p["blocks"] = parts_json(&parts),
+            _ => me.log(&format!("plugin {plugin}: transcript answer ignored, it may only split and retype the same words")),
+          }
+          true
+        })
+        .await;
+      let Some(parts) = parse_parts(&out["blocks"]).filter(|parts| parts.as_slice() != std::slice::from_ref(&original)) else { return };
+      let mut c = me.core.lock();
+      // The turn may be gone (a fork, a reload) or the block changed meanwhile: then nothing is replaced
+      if !matches!(c.state.turns.get(turn), Some(Turn::Agent(t)) if t.started_at == started) || !reclassify(&mut c.state, turn, &original, &parts) {
+        return;
+      }
+      me.touch(&mut c);
+      drop(c);
+      me.log(&format!("plugins: a settled {} became {} parts", if original.thought { "thought" } else { "reply text" }, parts.len()));
     });
   }
 
