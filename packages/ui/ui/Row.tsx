@@ -158,8 +158,8 @@ export function Row({ lead, trailing, children, interactive, as = 'div', classNa
 }
 
 // Keep short labels intact; the adjacent target gives up space and truncates first. `shimmer` marks the running verb.
-export function RowLabel({ children, className, shimmer }: { children: ReactNode; className?: string; shimmer?: boolean }) {
-  return <Shimmer active={!!shimmer} className={cn('shrink-0 whitespace-nowrap', className)}>{children}</Shimmer>;
+export function RowLabel({ children, className, shimmer, syncShimmer }: { children: ReactNode; className?: string; shimmer?: boolean; syncShimmer?: boolean }) {
+  return <Shimmer active={!!shimmer} sync={syncShimmer} className={cn('shrink-0 whitespace-nowrap', className)}>{children}</Shimmer>;
 }
 
 // Target text within a row (file name / command), one step brighter than the verb

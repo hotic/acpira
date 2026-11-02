@@ -163,6 +163,14 @@ describe('Codex process folding', () => {
     expect(toolVerb({ ...run, status: 'cancelled' })).toBe('Run cancelled');
   });
 
+  it('can label a continuing phase without rewriting its completed call or hiding lost observation', () => {
+    setLocale('zh-CN');
+    expect(toolVerb(read, 'in_progress')).toBe('正在读取');
+    expect(toolVerb(read)).toBe('已读取');
+    expect(read.status).toBe('completed');
+    expect(toolVerb({ ...read, observation: 'unknown' }, 'in_progress')).toBe(toolVerb({ ...read, observation: 'unknown' }));
+  });
+
   it('distinguishes announced reads from execution and completion', () => {
     expect(toolVerb({ ...read, status: 'pending' })).toBe('Read queued');
     expect(toolVerb({ ...read, status: 'in_progress' })).toBe('Read…');

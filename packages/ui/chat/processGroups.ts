@@ -86,6 +86,17 @@ export function groupProcess(blocks: AgentBlock[]): ProcessItem[] {
   return out;
 }
 
+// The trailing read/edit/session run can still gain a same-kind call until a later block or the turn's end seals it.
+// This affects its heading only: its text and shimmer stay continuous, while completed calls keep their real results.
+export function continuingToolItem(items: ProcessItem[], live: boolean): string | undefined {
+  const tail = live ? items.at(-1) : undefined;
+  if (!tail) return;
+  const blocks = tail.type === 'group' ? tail.blocks : tail.block.type === 'tool_call' ? [tail.block] : [];
+  if (!blocks.length || blocks.some(block => block.observation === 'unknown' || block.background)) return;
+  const kind = groupKind(blocks.at(-1)!);
+  return kind && kind !== 'wait' ? tail.id : undefined;
+}
+
 // Whether an item has finished: none of its calls pending or running, its thought no longer streaming.
 // A command parked in the background runs on its own and does not hold its row open
 export function itemSettled(item: ProcessItem): boolean {

@@ -1,28 +1,32 @@
 /* Animation: shimmer / enter utilities, streamed graphemes, row entrance, the ConnectedRail growth, keyframes and the reduced-motion kill switch. */
-/* ui/Shimmer: muted label + a strong copy inside a masked window; the window and the copy translate in opposite directions,
-   so the highlight sweeps the text with compositor-only work (a background-position gradient repainted the document each frame). */
+/* ui/Shimmer: a stationary strong copy is revealed by an animated mask over the muted label. */
 @utility shimmer {
   position: relative;
   display: inline-block;
   color: var(--shimmer-base);
 }
-.shimmer-sweep {
+.shimmer-clip {
   position: absolute;
   inset: 0;
+  /* Absolute insets cover the host's padding box; keep both text copies on the same content edge. */
+  padding: inherit;
   overflow: hidden;
   pointer-events: none;
   color: var(--fg-strong);
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 50%, transparent);
-  mask-image: linear-gradient(90deg, transparent, #000 50%, transparent);
-  animation: acp-shimmer-window var(--shimmer-cycle) linear infinite;
+  /* The gradient spans twice the label, so its opaque half is one label wide: a band, not a wash */
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 35%, #000 65%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 35%, #000 65%, transparent);
+  -webkit-mask-size: 200% 100%;
+  mask-size: 200% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  animation: acp-shimmer-mask var(--shimmer-cycle) linear infinite;
 }
-.shimmer-sweep > span { display: inline-block; white-space: nowrap; animation: acp-shimmer-copy var(--shimmer-cycle) linear infinite; }
 /* The strong copy is one colour throughout, even over children that tint the muted text (the goal head's label + objective) */
-.shimmer-sweep > span * { color: inherit; }
+.shimmer-clip * { color: inherit; }
 /* A truncated shimmer clips its copy the same way, so the sweep never reveals text hidden behind the ellipsis */
-.shimmer.truncate > .shimmer-sweep > span { display: block; overflow: hidden; text-overflow: ellipsis; }
-@keyframes acp-shimmer-window { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
-@keyframes acp-shimmer-copy { from { transform: translateX(100%); } to { transform: translateX(-100%); } }
+.shimmer.truncate > .shimmer-clip > span { display: block; overflow: hidden; text-overflow: ellipsis; }
+@keyframes acp-shimmer-mask { from { -webkit-mask-position: 150% 0; mask-position: 150% 0; } to { -webkit-mask-position: -50% 0; mask-position: -50% 0; } }
 /* Content that replaces something in place (a prompt card ↔ its inline editor): a plain fade, the container animates its own height.
    Entrances fill backwards (their keyframes only set the start): a forwards fill keeps the finished animation in effect */
 @utility fade-in { animation: acp-fade-in var(--dur-open) ease backwards; }
@@ -206,11 +210,11 @@
 /* The working ring is the list's only "still running" signal (a list item has no verb to shimmer), so it keeps turning. */
 [data-motion="none"] .live-spin { animation: var(--animate-spin) !important; }
 [data-motion="none"] .shimmer { color: var(--fg-2); }
-[data-motion="none"] .shimmer-sweep { display: none; }
+[data-motion="none"] .shimmer-clip { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .acp-shell *, .acp-shell *::before, .acp-shell *::after { animation: none !important; transition: none !important; }
   .acp-shell .shimmer { color: var(--fg-2); }
-  .acp-shell .shimmer-sweep { display: none; }
+  .acp-shell .shimmer-clip { display: none; }
 }
 
 /* A plugin command button (plugins/CommandButtons.tsx): pressed in, then a ring of the brand colour out of it. The ring's

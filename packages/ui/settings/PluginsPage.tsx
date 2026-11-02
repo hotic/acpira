@@ -256,7 +256,7 @@ function AgentTile({ agent: a, on, last, dragging, inventory, updating, onUpdate
           {/* A newer pinned adapter: the update action beside the gear, its dot breathing like an unread session; while the
               install runs the same slot says so */}
           {updating
-            ? <Shimmer className="px-2 text-3 text-fg-2">{t('settings.plugins.updating')}</Shimmer>
+            ? <Shimmer className="max-w-full truncate px-2 text-3 whitespace-nowrap text-fg-2">{t('settings.plugins.updating')}</Shimmer>
             : a.update && (
               <button type="button" onClick={onUpdate}
                 className="flex h-ctl-sm items-center gap-2 rounded-md px-2 text-3 text-fg-1 transition-colors hover:bg-hover focus-visible:bg-hover">

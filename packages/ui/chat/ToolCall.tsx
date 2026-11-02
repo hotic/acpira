@@ -7,7 +7,7 @@ import { toolTodoEntries } from '@acpira/shared/todoTools';
 import { isImageGenTool, isShowImageTool, isShowVideoTool, isShowWidgetTool, toolImages, toolTexts } from '@acpira/shared/imageTools';
 import { useAppearance } from '../appearance';
 import { Disclosure } from '../ui/Disclosure';
-import { EntranceOnce, Row, RowLabel, RowTarget } from '../ui/Row';
+import { EntranceOnce, Row, RowTarget } from '../ui/Row';
 import { cn } from '../ui/cn';
 import { ConnectedRail } from '../ui/ConnectedRail';
 import { IconButton } from '../ui/Button';
@@ -21,7 +21,8 @@ import { GeneratedImages, ImageInFoldContext } from './GeneratedImage';
 import { ShownWidget } from './AgentWidget';
 import { ShownVideos } from './AgentVideo';
 import { TerminalOutput, ToolOutput } from './Terminal';
-import { isSkillTool, isWorkflowRun, toolTarget, toolVerb } from './folding';
+import { isSkillTool, isWorkflowRun, toolTarget } from './folding';
+import { ToolLabel } from './ToolLabel';
 import { AsyncTaskStopContext, OpenToolFileContext, SessionTitleContext, SkillDescriptionContext, ToolFileActionsContext, WorkflowProgressContext } from './fileLinks';
 import { isSessionTool, splitSessionTarget } from '@acpira/shared/sessionLinks';
 import { compactTokens } from './goalText';
@@ -40,16 +41,15 @@ export { OpenToolFileContext } from './fileLinks';
 // column and hangs from the row icon on a connected rail
 // Memoized on the block reference: a live turn re-renders on every chunk, and only the tool that changed should pay for it.
 // The rows enter once per tool id: the branch below changes shape as the call progresses, and a remount must not replay it
-export const ToolCall = memo(function ToolCall({ block, grouped = false }: { block: ToolCallBlock; grouped?: boolean }) {
+export const ToolCall = memo(function ToolCall({ block, grouped = false, continuing = false }: { block: ToolCallBlock; grouped?: boolean; continuing?: boolean }) {
   // memo keeps a row from rendering again; the locale context still reaches it after a language change
   useLocale();
-  return <EntranceOnce id={`${block.id}:tool`}><ToolCallRows block={block} grouped={grouped} /></EntranceOnce>;
+  return <EntranceOnce id={`${block.id}:tool`}><ToolCallRows block={block} grouped={grouped} continuing={continuing} /></EntranceOnce>;
 });
 
-function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boolean }) {
+function ToolCallRows({ block, grouped, continuing }: { block: ToolCallBlock; grouped: boolean; continuing: boolean }) {
   const { toolLine } = useAppearance();
   const imageInFold = useContext(ImageInFoldContext);
-  // Announced calls can wait behind another tool; only execution shimmers.
   const running = block.status === 'in_progress' && block.observation !== 'unknown';
   const execute = block.kind === 'execute';
   const seconds = useToolSeconds(block);
@@ -121,7 +121,7 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
   const targetName = toolTarget(block);
   const target = isSessionTool(block) ? <SessionToolTarget block={block} /> : isSkillTool(block) ? <SkillTarget block={block} /> : <RowTarget mono={block.targetMono}>{targetName}</RowTarget>;
   const label = <>
-    <RowLabel shimmer={running}>{toolVerb(block)}</RowLabel>
+    <ToolLabel block={block} continuing={continuing} />
     {command
       ? <RowTarget mono>{command}</RowTarget>
       : targetName && !(block.kind === 'read' && files.length) && (editFile
