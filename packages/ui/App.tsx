@@ -714,6 +714,7 @@ export function App() {
       accounts={session?.remoteAuth?.accounts ?? accounts}
       accountId={session?.accountId}
       accountAction={session?.remoteAuth ? session.remoteAuth.action : accountActions.find(action => action.agent === agent.id)}
+      remoteAuth={!!session?.remoteAuth}
       hidden={hidden}
       title={session?.title ?? t('session.untitled')}
       status={session?.status ?? 'starting'}

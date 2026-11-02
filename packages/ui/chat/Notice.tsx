@@ -123,6 +123,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
   let showRetry = false;
   if (locked) {
     if (onUnlock) primary = { key: 'unlock', label: t('notice.unlock'), run: onUnlock };
+    groups = [runHere];
     showRetry = true;
   } else if (status === 'auth_required' && withAccounts) {
     const noLocal = action?.via === 'import' && action.status === 'missing';
@@ -157,7 +158,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
   const otherCount = others.reduce((n, g) => n + g.length, 0);
 
   const body = locked
-    ? { icon: KeyRound, title: t('notice.locked.title', { agent: agent.name }), text: t('notice.locked.text') }
+    ? { icon: KeyRound, title: t('notice.locked.title', { agent: agent.name }), text: t(onUnlock ? 'notice.locked.text' : 'mobile.notice.unlockOnComputer') }
     : status === 'auth_required'
     ? {
         icon: LockKeyhole,
@@ -177,7 +178,9 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
   const Glyph = body.icon;
   // The text line starts at the title's column, under the glyph's lead slot
   // Bound individual methods as well as the group: adapter labels can be arbitrarily long.
-  const methodButton = `${DOCK_BUTTON} h-auto min-h-ctl-sm min-w-0 max-w-full whitespace-normal py-gap-half [overflow-wrap:anywhere]`;
+  // No vertical padding: a one-line label must stay exactly ctl-sm tall, level with the "other ways" trigger beside it;
+  // only a wrapped label grows the button.
+  const methodButton = `${DOCK_BUTTON} h-auto min-h-ctl-sm min-w-0 max-w-full whitespace-normal [overflow-wrap:anywhere]`;
   const text = 'm-0 basis-full pl-indent text-3 text-fg-2 [overflow-wrap:anywhere]';
   return (
     <div className="px-dock">

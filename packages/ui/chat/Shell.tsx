@@ -201,6 +201,8 @@ export interface ShellProps {
   accounts?: AccountInfo[];
   accountId?: string;
   accountAction?: AccountAction;
+  // The session runs in an SSH host's engine (SessionView.remoteAuth): no local terminal can unlock that host's keychain
+  remoteAuth?: boolean;
   // Option families hidden from the composer menus (acpira.hiddenOptions)
   hidden?: HiddenMap;
   title: string;
@@ -547,8 +549,12 @@ export function Shell(p: ShellProps) {
       (e: unknown) => show({ text: t('session.copyFailed', { detail: e instanceof Error ? e.message : String(e) }), icon: <CircleAlert className="size-icon shrink-0 text-danger" strokeWidth={1.5} /> }),
     );
   }, []);
+  // A peer session on an SSH host has no terminal on that host's security session (`remote.md`), so only a local session
+  // can run the keychain unlock command from here
+  const canUnlock = !p.remoteAuth;
   const handlers = useMemo<ShellHandlers>(() => ({
     ...on,
+    unlockCredentials: canUnlock ? on.unlockCredentials : undefined,
     deleteSession: async id => {
       if (deleting.current.has(id)) return false;
       const target = p.sessions.find(s => s.id === id);
@@ -586,7 +592,7 @@ export function Shell(p: ShellProps) {
       on.moveSession!(id, to);
       pushToast({ key: `m${id}`, text: to && to.cwd !== p.workspace ? t('session.movedTo', { title, project: projectName(to.cwd) }) : t('session.moved', { title }) });
     }),
-  }), [on, p.sessions, p.activeSessionId, p.cwd, pushToast, dropToast, copied]);
+  }), [on, canUnlock, p.sessions, p.activeSessionId, p.cwd, pushToast, dropToast, copied]);
   const blobUrl = useMemo(() => (p.blobBase && p.activeSessionId ? (blob: string) => `${p.blobBase}/${p.activeSessionId}/${blob}` : undefined), [p.blobBase, p.activeSessionId]);
   // Child transcripts share the root session's blob store, so both contexts live above Thread and the inspector
   const openBlob = useMemo(() => p.activeSessionId && on.openBlob ? (name: string) => on.openBlob!(p.activeSessionId!, name) : undefined, [p.activeSessionId, on.openBlob]);
@@ -1257,7 +1263,7 @@ export function Shell(p: ShellProps) {
                     accountAction={p.accountAction}
                     onLogin={on.login} onRetry={on.retry} onNewSession={() => on.newSession(p.agent.id)}
                     onSelectAccount={on.selectAccount} onAddAccount={via => on.addAccount(p.agent.id, via)}
-                    onUnlock={on.unlockCredentials && (() => on.unlockCredentials?.(p.agent.id))}
+                    onUnlock={canUnlock && on.unlockCredentials ? () => on.unlockCredentials?.(p.agent.id) : undefined}
                     onTakeOver={p.canTakeOver ? on.takeOver : undefined}
                     onRunHere={runHere}
                   />}
