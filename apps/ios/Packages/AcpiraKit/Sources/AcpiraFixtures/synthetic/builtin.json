@@ -30,6 +30,10 @@
         ]
       },
       {
+        "id": "fast", "name": "Fast", "category": "model_config", "type": "boolean", "value": "false",
+        "options": [{ "id": "false", "name": "Off" }, { "id": "true", "name": "On" }]
+      },
+      {
         "id": "sidekick", "name": "Sidekick", "category": "_sidekick", "value": "gateway/claude-opus-5-5",
         "options": [
           { "id": "none", "name": "None" },
@@ -47,6 +51,10 @@
           { "id": "high", "name": "High" },
           { "id": "xhigh", "name": "XHigh" }
         ]
+      },
+      {
+        "id": "approval", "name": "Approval", "category": "_permission_mode", "value": "full",
+        "options": [{ "id": "ask", "name": "Ask" }, { "id": "auto-edit", "name": "Auto-edit" }, { "id": "full", "name": "Full access", "kind": "full_access" }]
       }
     ]
   },

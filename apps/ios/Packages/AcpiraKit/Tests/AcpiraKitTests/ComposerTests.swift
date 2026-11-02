@@ -200,6 +200,21 @@ private let commands: [SlashCommand] = decode(#"""
     ModelChoices(controls: SessionControls(options: options.map { decode($0) }), onSetConfig: set)
   }
 
+  @Test func fastStandsApartFromTheModesAndTheApprovalLevelJoinsThem() {
+    let effort = #"{"id":"effort","name":"Effort","category":"thought_level","value":"high","options":[{"id":"low","name":"Low"},{"id":"high","name":"High"}]}"#
+    let fast = #"{"id":"fast","name":"Fast","category":"model_config","type":"boolean","value":"false","options":[{"id":"false","name":"Off"},{"id":"true","name":"On"}]}"#
+    let approval = #"{"id":"approval","name":"Approval","category":"_permission_mode","value":"ask","options":[{"id":"ask","name":"Ask"},{"id":"full","name":"Full access","kind":"full_access"}]}"#
+    let work = #"{"id":"collaboration_mode","name":"Mode","category":"collaboration_mode","value":"default","options":[{"id":"default","name":"Default"},{"id":"plan","name":"Plan"}]}"#
+    var sets: [String] = []
+    let c = choices([effort, fast, approval, work]) { sets.append("\($0)=\($1)") }
+    // No modes: the approval level alone still makes a mode bean; Fast is never one of its rows
+    #expect(c.hasModes && c.access?.id == "approval" && c.collaboration?.id == "collaboration_mode")
+    c.fast?.set(true)
+    #expect(sets == ["fast=true"])
+    // Fast alone makes no mode bean
+    #expect(!choices([effort, fast]).hasModes)
+  }
+
   @Test func thinkingSwitchWhereTheAgentCanTurnItOff() {
     var sets: [String] = []
     let deepseek = #"{"id":"thinking","name":"Thinking","category":"thought_level","value":"off","options":[{"id":"off","name":"off"},{"id":"low","name":"low"},{"id":"high","name":"high"}]}"#
