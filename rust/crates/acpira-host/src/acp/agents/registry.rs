@@ -80,6 +80,35 @@ pub struct AgentDef {
   /// first, spawned by its real path (the launcher finds its helpers next to it) in a process group of its own, so its
   /// helper processes end with it
   pub release: Option<&'static NativeRelease>,
+  /// Who makes the CLI and its mark (SVG path data, 24 x 24), for an agent the page knows neither of
+  pub vendor: Option<String>,
+  pub mark: Option<Vec<String>>,
+}
+
+/// Most paths and bytes per path a mark may carry
+pub const MARK_MAX_PATHS: usize = 16;
+pub const MARK_MAX_PATH_BYTES: usize = 8192;
+
+/// A mark's path data as the page will draw it, or why it cannot be: only SVG path commands and numbers, so nothing
+/// but a shape ever reaches the page
+pub fn mark_paths(raw: &serde_json::Value) -> std::result::Result<Vec<String>, String> {
+  let Some(items) = raw.as_array().filter(|a| !a.is_empty()) else { return Err("`mark` is a non-empty array of SVG path data".into()) };
+  if items.len() > MARK_MAX_PATHS {
+    return Err(format!("`mark` holds more than {MARK_MAX_PATHS} paths"));
+  }
+  items
+    .iter()
+    .map(|v| {
+      let d = v.as_str().map(str::trim).filter(|d| !d.is_empty()).ok_or("`mark` paths are non-empty strings")?;
+      if d.len() > MARK_MAX_PATH_BYTES {
+        return Err(format!("a `mark` path is over {MARK_MAX_PATH_BYTES} bytes"));
+      }
+      if !d.chars().all(|c| c.is_ascii_digit() || " ,.-+eE\n\t".contains(c) || "MmLlHhVvCcSsQqTtAaZz".contains(c)) {
+        return Err("a `mark` path holds characters other than SVG path commands and numbers".into());
+      }
+      Ok(d.to_owned())
+    })
+    .collect()
 }
 
 fn s(v: &str) -> String {
@@ -311,6 +340,9 @@ pub struct CustomAgentSetting {
   pub ignore_modes: Option<bool>,
   pub subagents: Option<bool>,
   pub terminal_auth: Option<bool>,
+  pub vendor: Option<String>,
+  /// Checked by `mark_paths`; an invalid mark is dropped, the agent kept
+  pub mark: Option<Value>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -379,6 +411,8 @@ impl AgentRegistry {
         login: login.split_first().map(|(cmd, rest)| LoginDef { command: cmd.clone(), args: rest.to_vec() }),
         install: (command.is_some() || docs.is_some()).then(|| InstallDef { posix: command.clone(), windows: command, docs }),
         adapter: None,
+        vendor: c.vendor.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty()),
+        mark: c.mark.as_ref().and_then(|m| mark_paths(m).ok()),
       };
       if !defs.contains_key(id) {
         order.push(id.clone());
@@ -437,6 +471,8 @@ impl AgentRegistry {
           searched: if probed && !found { searched.get(id).filter(|m| !m.is_empty()).cloned() } else { None },
           install: self.install(id),
           update: if found { updates.get(id).cloned() } else { None },
+          vendor: d.vendor.clone(),
+          mark: d.mark.clone(),
           ..Default::default()
         }
       })
@@ -689,6 +725,18 @@ mod tests {
     assert_eq!(r.install("mine"), Some(AgentInstall { command: None, docs: Some("https://x".into()) }));
     assert_eq!(r.install("grok").unwrap().command.unwrap(), "curl -fsSL https://x.ai/cli/install.sh | bash");
     assert!(r.list()[0].available.is_none(), "not probed yet");
+  }
+
+  #[test]
+  fn a_custom_agent_carries_its_vendor_and_a_valid_mark_only() {
+    let r = AgentRegistry::with_os(
+      &json!({ "a": { "command": "a", "vendor": " Alibaba ", "mark": ["M3 3h18v18H3z"] }, "b": { "command": "b", "mark": ["url(x)"] } }),
+      Os::Posix,
+    );
+    let list = r.list();
+    let (a, b) = (list.iter().find(|x| x.id == "a").unwrap(), list.iter().find(|x| x.id == "b").unwrap());
+    assert_eq!((a.vendor.as_deref(), a.mark.clone()), (Some("Alibaba"), Some(vec!["M3 3h18v18H3z".to_owned()])));
+    assert_eq!(b.mark, None, "an invalid mark is dropped, the agent kept");
   }
 
   #[tokio::test]

@@ -13,6 +13,7 @@ import { BASE_APPEARANCE, type Appearance } from './appearance';
 import { LocaleContext, setLocale, t, whenLocale } from './i18n';
 import { loadLocale } from '@acpira/shared/i18n/load';
 import { Shell, type ShellHandlers } from './chat/Shell';
+import { setAgentMarks } from './chat/AgentMark';
 import { lookFromSettings, resolveTheme } from './look';
 import { useVsCodeTheme } from './useVsCodeTheme';
 import { settleProject } from './panel/api';
@@ -161,6 +162,8 @@ export function App() {
   // In-app agent installs, host-owned: every panel shows the same run
   const [agentInstalls, setAgentInstalls] = useState<AgentInstallProgress[]>([]);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
+  // Marks agents bring themselves (a plugin's agent) reach every AgentMark from here
+  useEffect(() => setAgentMarks(agents), [agents]);
   const [hidden, setHidden] = useState<HiddenMap>({});
   const [session, setSession] = useState<SessionView>();
   // A project shell (the desktop app) with no project to show a session of: init came without one, or noSession

@@ -892,8 +892,25 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
     } else {
       match agent.get("command").and_then(Value::as_str).filter(|c| !c.trim().is_empty()) {
         None => err(findings, "agent: `command` (another ACP agent) or `builtin` (Acpira's loop with a profile) is needed".into()),
-        Some(command) => command_exists(&[crate::plugins::mcp::strip_dir(command).to_owned()], dir, which, "agent", findings),
+        // An agent CLI the user has not installed yet is no fault of the plugin: its tile offers the install line. A
+        // program meant to ship inside the plugin still has to be there
+        Some(command) => {
+          let program = crate::plugins::mcp::strip_dir(command);
+          if program != command || program.contains(['/', '\\']) || program_in(dir, program).is_some() || which(program) {
+            command_exists(&[program.to_owned()], dir, which, "agent", findings);
+          } else {
+            findings.notes.push(format!("agent: `{program}` is not on PATH yet; the agent shows as not installed until it is"));
+          }
+        }
       }
+    }
+    if let Some(mark) = agent.get("mark")
+      && let Err(e) = crate::acp::agents::registry::mark_paths(mark)
+    {
+      err(findings, format!("agent: {e}"));
+    }
+    if agent.get("vendor").is_some_and(|v| !v.is_string()) {
+      err(findings, "agent: `vendor` is a string".into());
     }
   }
   if let Some(hooks) = &m.contributes.hooks {
@@ -1233,6 +1250,27 @@ mod tests {
     assert_eq!(m.layer(), "tools");
     assert_eq!(served_name(&m.id, &m.contributes.tools[0].name), "currency_convert");
     assert_eq!(m.contributes.tools[0].timeout(), std::time::Duration::from_secs(45));
+  }
+
+  #[test]
+  fn an_agent_cli_not_installed_yet_passes_with_a_note_and_a_bad_mark_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = |mark: Value| {
+      json!({ "schema": 1, "id": "qoder", "version": "0.1.0", "description": "x",
+        "contributes": { "agent": { "name": "Qoder", "command": "qoder", "args": ["--acp"], "vendor": "Alibaba", "mark": mark } } })
+    };
+    let (m, mut f) = manifest(agent(json!(["M3 3h18v18H3z"])));
+    check(&m, "qoder", dir.path(), &|_| false, &mut f);
+    assert!(f.ok(), "{f:?}");
+    assert!(f.text().contains("not on PATH yet"), "{}", f.text());
+    let (m, mut f) = manifest(agent(json!(["<script>"])));
+    check(&m, "qoder", dir.path(), &|_| false, &mut f);
+    assert!(f.text().contains("agent: a `mark` path"), "{}", f.text());
+    // A program meant to ship inside the plugin still has to be there
+    let (m, mut f) = manifest(json!({ "schema": 1, "id": "own", "version": "0.1.0", "description": "x",
+      "contributes": { "agent": { "command": "${pluginDir}/bin/own" } } }));
+    check(&m, "own", dir.path(), &|_| false, &mut f);
+    assert!(!f.ok());
   }
 
   #[test]

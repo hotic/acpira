@@ -224,7 +224,7 @@ function AgentTile({ agent: a, on, last, dragging, inventory, updating, onUpdate
   onOpen: () => void;
   onKeyDown: (e: KeyboardEvent<HTMLElement>) => void;
 }) {
-  const vendor = VENDOR[a.id];
+  const vendor = VENDOR[a.id] ?? a.vendor;
   const desc = a.id === BUILTIN_AGENT_ID ? t('settings.plugins.builtinDesc') : vendor ? t('settings.plugins.officialCli', { vendor }) : t('settings.plugins.acpAgent');
   const version = a.available === false ? t('settings.plugins.notInstalled') : inventory?.runtime?.version ?? inventory?.adapter?.adapter?.version;
   const settings = t('settings.plugins.settings', { name: a.name });

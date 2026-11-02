@@ -44,6 +44,12 @@ pub struct AgentInfo {
   /// The adapter version this release's install line pins, when the installed adapter is older (the in-app install updates it)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub update: Option<String>,
+  /// Who makes the CLI, for an agent the page has no vendor of its own for (an `agents.json` entry or a plugin's)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub vendor: Option<String>,
+  /// The agent's mark as SVG path data on a 24 x 24 box, for an agent the page has no mark of its own for
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub mark: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

@@ -208,8 +208,9 @@ const MARK_ALIAS: Record<string, string> = {
 // Brand logo by key, or the name's initial in a rounded square when the key is unknown — every caller gets an icon,
 // so menu rows with and without a known brand stay left-aligned
 // `colored`: a colour logo's washes over the mark (brandLayers), as where the mark stands for its vendor in that colour
-export function MarkSvg({ id, name, className, colored }: { id: string | undefined; name?: string; className?: string; colored?: boolean }) {
-  const paths = id ? MARKS[MARK_ALIAS[id] ?? id] : undefined;
+// `own`: the agent's own path data (AgentInfo.mark, checked by the engine), drawn when no built-in mark has the key
+export function MarkSvg({ id, name, className, colored, own }: { id: string | undefined; name?: string; className?: string; colored?: boolean; own?: string[] }) {
+  const paths = (id ? MARKS[MARK_ALIAS[id] ?? id] : undefined) ?? own;
   const cls = cn('size-icon shrink-0', className);
   const uid = useId();
   if (paths) {
