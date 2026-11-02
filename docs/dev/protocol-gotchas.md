@@ -55,6 +55,7 @@ Cross-agent ACP behaviour the host depends on, and the host invariants built aro
 - Prompts sent during a turn queue host-side (in memory, send order). Send-now cancels and lets completion flush; never send a concurrent prompt from the cancel response.
 - **Steering** (`vendors/steering.rs`, peers advertising `_meta.steering.supported`): `_session/steering` with `idleBehavior: promptRequired`, answered via `request_ordered` so an `injected` block lands before later updates. A steer that cannot land stays queued and never cancels the turn.
 - No steer during a compaction (it aborted the agent's compaction); steers park until it ends.
+- A steer during a Claude autonomous cycle goes out as a plain `session/prompt` that takes the session over (no cancel): the adapter has no turn to steer into. Gated on `claude_autonomous::prompt_joins_cycle`; older adapters keep it queued, since their prompt never settles.
 - codex-acp answers an idle steer `startedNewTurn`, so the race is read off `_meta.codex.threadStatus`: after `idle` no steer goes out; a `startedNewTurn` that slips through marks the session `detached` until the next `idle`.
 - **Stop and steers**: claude-agent-acp ≥ 0.86.0 drops unanswered steers on cancel, so cancel requeues them first (gated on `Vendor::requeues_steers_on_cancel` and the agentInfo version). A handover cancel leaves them, since the queue does not travel.
 - UI siblings of a session use role-prefixed React keys (`plan:` / `queue:` / `composer:<sessionId>`, `chat/Shell.tsx`): a shared session-only key orphans and duplicates queue rows.

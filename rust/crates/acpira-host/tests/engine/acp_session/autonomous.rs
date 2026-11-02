@@ -116,3 +116,36 @@ async fn a_second_background_task_s_cycle_opens_after_the_first_one_s_result() {
   until(|| !s.is_running(), 5000).await;
   expect_match(&view(&s)["turns"][1], json!({ "stop": "end_turn", "usage": { "context": { "used": 30 } } }));
 }
+
+// A cycle is no turn of the adapter's to steer into: from claude-agent-acp 0.95.0 a steer goes out as an ordinary prompt at
+// once, and nothing is stopped
+#[tokio::test(flavor = "multi_thread")]
+async fn a_steer_during_an_autonomous_cycle_goes_out_as_a_prompt_without_a_stop() {
+  let fake = fake_or_skip!();
+  let h = Harness::for_agent(&fake, "claude", json!({ "env": { "FAKE_STEERING": "1", "FAKE_AGENT_VERSION": "0.95.0" } }));
+  let s = started(&h, "/tmp").await;
+  prompt(&s, "autonomous-hang").await;
+  until(|| s.is_running() && agent_text(&view(&s)["turns"][1]).contains("followup"), 5000).await;
+  s.steer_prompt("next".into(), vec![]).await.unwrap();
+  let vw = view(&s);
+  expect_absent(&vw, "queued");
+  expect_match(&vw["turns"][1], json!({ "stop": "end_turn" }));
+  expect_match(&vw["turns"][2], json!({ "role": "user", "text": "next" }));
+  // The prompt owns the session from here: its own response settles it
+  until(|| !s.is_running(), 5000).await;
+  expect_match(&view(&s)["turns"][3], json!({ "stop": "end_turn" }));
+}
+
+// An older adapter never settles a prompt sent mid-cycle: the steer waits in the queue for the cycle's end
+#[tokio::test(flavor = "multi_thread")]
+async fn a_steer_during_an_autonomous_cycle_stays_queued_on_an_older_adapter() {
+  let fake = fake_or_skip!();
+  let h = Harness::for_agent(&fake, "claude", json!({ "env": { "FAKE_STEERING": "1", "FAKE_AGENT_VERSION": "0.94.0" } }));
+  let s = started(&h, "/tmp").await;
+  prompt(&s, "autonomous").await;
+  until(|| s.is_running() && agent_text(&view(&s)["turns"][1]).contains("followup"), 5000).await;
+  s.steer_prompt("next".into(), vec![]).await.unwrap();
+  expect_match(&view(&s)["queued"], json!([{ "text": "next" }]));
+  until(|| !s.is_running() && view(&s)["queued"].is_null(), 5000).await;
+  expect_match(&view(&s)["turns"][1], json!({ "stop": "end_turn" }));
+}

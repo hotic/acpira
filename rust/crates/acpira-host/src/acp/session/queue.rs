@@ -231,6 +231,25 @@ impl AcpSession {
         }
         return Ok(());
       }
+      // A Claude autonomous cycle is no turn of the adapter's, so `_session/steering` would answer `promptRequired`; a
+      // `session/prompt` joins the CLI's input all the same, like a message typed into Claude Code mid-cycle, and an
+      // adapter that books it to the cycle (`claude_autonomous::prompt_joins_cycle`) settles it. The cycle hands the
+      // session over and the entry goes out first in line, without a cancel; an older adapter keeps it queued
+      let takes_prompt = self.vendor.autonomous_cycles()
+        && c.peer.autonomous
+        && c.proc.as_ref().is_some_and(|p| claude_autonomous::prompt_joins_cycle(&p.init))
+        && c.phase.running
+        && !c.phase.staging
+        && c.pending_prompt.is_none()
+        && !c.switching;
+      if takes_prompt && let Some(i) = c.queue.entries.iter().position(|q| q.id == id) {
+        let entry = c.queue.entries.remove(i);
+        c.queue.entries.insert(0, entry);
+        self.hand_over_autonomous(&mut c);
+        drop(c);
+        self.flush_queue();
+        return Ok(());
+      }
       // Staging, a pre-send compaction or an account switch own the wire: the steer would land in the wrong request
       // A peer that already reported its thread idle has finished the turn: the steer would start a turn of its own
       let steerable = c.phase.running
@@ -341,6 +360,19 @@ impl AcpSession {
     self.log(if autonomous { "autonomous cycle ended" } else { "detached turn ended (thread idle)" });
     let me = self.clone();
     tokio::spawn(async move { me.hooks_after_detached(stop) });
+  }
+
+  /// A user prompt takes the session from a running autonomous cycle (`steer_entry`): the cycle's turn ends here and what
+  /// the CLI still streams of it lands on the prompt's turn. It is not gated on its own: its snapshot stays open, so the
+  /// prompt's turn is gated over both
+  fn hand_over_autonomous(&self, c: &mut Core) {
+    c.peer.detached = false;
+    c.peer.autonomous = false;
+    if c.hooks.before.is_none() {
+      c.hooks.before = c.hooks.settled.take();
+    }
+    self.settle(c, TurnStop::EndTurn, None);
+    self.log("autonomous cycle handed over to a prompt");
   }
 
   /// Turn content with nothing on the wire from a peer that runs cycles of its own (Claude's task-notification
