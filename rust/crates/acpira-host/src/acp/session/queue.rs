@@ -343,6 +343,7 @@ impl AcpSession {
     if let Some(Turn::Agent(t)) = c.state.turns.last_mut() {
       t.stop = None;
       t.ended_at = None;
+      mark_reply_final(t);
     }
   }
 
@@ -518,4 +519,45 @@ pub(crate) fn queue_snapshot(c: &Core) -> Option<Vec<QueuedPrompt>> {
       })
       .collect(),
   )
+}
+
+/// A finished turn running again for work detached from any prompt (Claude's autonomous cycle, Codex's goal
+/// continuation, a steer's own peer turn): the prose it closed on is that stretch's reply. It is marked final, so the
+/// clients keep it in view as a reply and start a new stretch at what follows (`splitPlanSections`), instead of folding
+/// it into the process as text that more work came after. Prose that already carries a phase keeps it
+fn mark_reply_final(t: &mut AgentTurn) {
+  for block in t.blocks.iter_mut().rev() {
+    match block {
+      AgentBlock::Text(text) => {
+        if text.phase.is_none() {
+          text.phase = Some(TextPhase::Final);
+        }
+      }
+      // What the clients set aside from the process, and thinking or to-dos between closing paragraphs, which join the fold
+      AgentBlock::Permission(_) | AgentBlock::Notice(_) | AgentBlock::Goal(_) | AgentBlock::Thought(_) | AgentBlock::Plan(_) => {}
+      AgentBlock::Question(q) if q.outcome.is_none() => {}
+      _ => break,
+    }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn text(markdown: &str) -> AgentBlock {
+    AgentBlock::Text(TextBlock { id: None, phase: None, markdown: markdown.into(), streaming: None, images: None })
+  }
+
+  fn phases(t: &AgentTurn) -> Vec<Option<TextPhase>> {
+    t.blocks.iter().filter_map(|b| if let AgentBlock::Text(t) = b { Some(t.phase) } else { None }).collect()
+  }
+
+  #[test]
+  fn reopening_marks_only_the_closing_prose_final() {
+    let steer = AgentBlock::Steer(SteerBlock { id: "s1".into(), text: "and then".into(), attachments: None });
+    let mut t = AgentTurn { blocks: vec![text("looking"), steer, text("done"), text("more")], ..Default::default() };
+    mark_reply_final(&mut t);
+    assert_eq!(phases(&t), vec![None, Some(TextPhase::Final), Some(TextPhase::Final)]);
+  }
 }

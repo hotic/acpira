@@ -56,6 +56,20 @@ private let claudeOptions: [PermissionOption] = decode("""
     #expect(kept.count == records.blocks.count - 1)
   }
 
+  @Test func workAfterAFinalReplyStartsAStretch() {
+    let blocks: [AgentBlock] = decode(#"""
+      [{"type":"tool_call","id":"t1","kind":"read","verb":"Read","status":"completed"},
+       {"type":"text","markdown":"Recorded.","phase":"final"},
+       {"type":"tool_call","id":"t2","kind":"read","verb":"Read","status":"completed"},
+       {"type":"text","markdown":"Again."}]
+      """#)
+    let sections = splitPlanSections(blocks)
+    #expect(sections.map(\.key) == ["start", "resume:2"])
+    #expect(splitCodexBlocks(sections[0].blocks).reply.map(\.markdown) == ["Recorded."])
+    // Unmarked prose between tools stays one stretch
+    #expect(splitPlanSections([blocks[0], blocks[3], blocks[2]]).count == 1)
+  }
+
   @Test func headingNamesTheCardAndLeavesTheBody() {
     let doc: PlanDocumentBlock = decode(#"{"id":"d","title":"Ship it","markdown":"\n# Ship it\n\nStep one.","toolCallId":"t","status":"ready"}"#)
     #expect(planHeading(doc).title == "Ship it")

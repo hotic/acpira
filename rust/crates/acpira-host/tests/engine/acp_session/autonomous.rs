@@ -18,6 +18,9 @@ async fn a_claude_followup_after_end_turn_runs_the_last_turn_until_its_result() 
   let vw = view(&s);
   assert_eq!(vw["running"], true);
   expect_absent(&vw["turns"][1], "stop");
+  // The reply the turn ended on stays its reply; the cycle's prose starts a stretch of its own
+  expect_match(&vw["turns"][1]["blocks"], json!([{ "markdown": "waiting in background", "phase": "final" }, { "type": "text" }]));
+  expect_absent(&vw["turns"][1]["blocks"][1], "phase");
   prompt(&s, "next").await;
   expect_match(&view(&s)["queued"], json!([{ "text": "next" }]));
   // Its result settles the turn and releases the queue

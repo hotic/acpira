@@ -38,24 +38,45 @@ func splitPlanSections(_ blocks: [AgentBlock], placed: Set<String> = []) -> [Pla
   var sections = [PlanSection(key: "start", blocks: [])]
   var seen = Set<String>()
   let questionTools = Set(blocks.compactMap { block -> String? in if case .question(let q) = block { q.toolCallId } else { nil } })
-  for block in blocks {
+  // A reply marked final that more work follows ends a stretch (planSections.ts): the reply stays in view after its own
+  // closed fold and the new work opens a fold under it
+  var replied = false
+  for (i, block) in blocks.enumerated() {
     switch block {
     case .toolCall(let call) where call.status != .failed && questionTools.contains(call.id):
       continue
-    case .toolCall(let call) where call.subagentId != nil:
-      if let id = call.subagentId, placed.contains(id), seen.insert(id).inserted {
-        sections[sections.count - 1].blocks.append(block)
-      }
+    case .toolCall(let call) where call.subagentId.map { !placed.contains($0) || seen.contains($0) } ?? false:
+      continue
     case .thought(let thought) where thought.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
       continue
+    default: break
+    }
+    if case .text(let text) = block, text.phase == .final {
+      replied = true
+    } else if replied, startsStretch(block) {
+      replied = false
+      sections.append(PlanSection(key: "resume:\(i)", blocks: []))
+    }
+    switch block {
     case .planDocument(let plan):
+      replied = false
       sections[sections.count - 1].plan = plan
       sections.append(PlanSection(key: plan.id, blocks: []))
     default:
+      if case .toolCall(let call) = block, let id = call.subagentId { seen.insert(id) }
       sections[sections.count - 1].blocks.append(block)
     }
   }
   return sections
+}
+
+/// Work, not the status rows and cards that stand beside a reply
+private func startsStretch(_ block: AgentBlock) -> Bool {
+  switch block {
+  case .permission, .notice, .goal, .compaction, .planDocument: false
+  case .question(let q): q.outcome != nil
+  default: true
+  }
 }
 
 /// The plan card's name and body. The engine names a plan after its first `# heading` ("Plan" when it has none); that

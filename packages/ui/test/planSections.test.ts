@@ -95,4 +95,17 @@ describe('chronological plan sections', () => {
     expect(splitPlanSections([write, thought, steer, after])).toEqual([{ key: 'start', blocks: [write, thought, steer, after] }]);
     expect(splitPlanSections([write, steer])).toEqual([{ key: 'start', blocks: [write, steer] }]);
   });
+
+  it('starts a stretch at work after a final reply, keeping the reply out of the new fold', () => {
+    const final: AgentBlock = { type: 'text', markdown: 'Recorded.', phase: 'final' };
+    const permission: AgentBlock = { type: 'permission', id: 'p', title: 'Run', options: [] };
+    const sections = splitPlanSections([write, final, permission, thought, reply]);
+    expect(sections).toEqual([
+      { key: 'start', blocks: [write, final, permission] },
+      { key: 'resume:3', blocks: [thought, reply] },
+    ]);
+    expect(splitCodexBlocks(sections[0]!.blocks).reply).toEqual([final]);
+    // Unmarked prose after tools stays one stretch, as before
+    expect(splitPlanSections([write, reply, write]).map(s => s.key)).toEqual(['start']);
+  });
 });

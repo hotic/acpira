@@ -52,6 +52,7 @@ Rules for motion, status signals, rails, sticky prompts, bottom follow, scrollba
 - Rows read auto-fold state from `AutoFoldStore` per item; a context value would re-render every row per chunk.
 - Entrances belong to the list (`EntranceOnce` by item id), so a call becoming a group keeps still and a remount replays nothing.
 - `splitCodexBlocks`: thoughts, to-do updates and compactions after the last tool call do not turn the reply into process history.
+- A finished turn the engine reopens with no prompt (a Claude autonomous cycle, a goal continuation, a steer's own peer turn) has its closing prose marked `phase: final` (`mark_reply_final`), and work after a final reply starts a new stretch (`splitPlanSections`, both clients): the reply stays in view instead of sinking into a fold that reopens above it. Turns from older engines carry no mark and still fold it in.
 - Turn duration runs from `AgentTurn.respondedAt`, never the send.
 - A retired empty `CodexFold` cancels its sibling gap on `Collapsible.Root` (the flex item), not the inner head.
 - `FoldRows` wraps `Collapsible.Section`, not inside it: a closed body unmounts, so inner rows never replay their entrance.
