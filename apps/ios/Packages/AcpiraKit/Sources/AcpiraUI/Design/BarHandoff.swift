@@ -44,10 +44,12 @@ final class BarHandoff {
   @ObservationIgnored weak var barHost: AnyObject?
 
   /// The two glass pieces at a progress. The bar draws back from its trailing end ahead of the rest, so send parts from
-  /// it as a drop in the middle of the move rather than at its very end
+  /// it as a drop in the middle of the move rather than at its very end. The trailing end leaves the composer's end
+  /// flat (a smooth step, not an ease-out): with a steep start it lagged the circle over the push's eased last frames,
+  /// and the two pieces showed a waist on the right until the very end
   func pieces(_ p: CGFloat) -> (bar: CGRect, circle: CGRect) {
     let send = CGRect(x: composer.maxX - composer.height, y: composer.minY, width: composer.height, height: composer.height)
-    let trail = BarHandoff.ease(min(1, p / BarHandoff.trailLead))
+    let trail = BarHandoff.step(0, BarHandoff.trailLead, p)
     let minX = lerp(composer.minX, search.minX, p)
     let maxX = lerp(composer.maxX, search.maxX, trail)
     let minY = lerp(composer.minY, search.minY, p)
@@ -58,8 +60,6 @@ final class BarHandoff {
 
   /// The share of the move in which the bar's trailing end reaches the search field's
   static let trailLead: CGFloat = 0.75
-
-  static func ease(_ t: CGFloat) -> CGFloat { 1 - (1 - t) * (1 - t) }
 
   /// 0 below `from`, 1 above `to`, smooth between
   static func step(_ from: CGFloat, _ to: CGFloat, _ x: CGFloat) -> CGFloat {
@@ -97,9 +97,11 @@ struct BarHandoffLayer: View {
   var body: some View {
     if let p = handoff.progress, let session = handoff.face {
       let (bar, circle) = handoff.pieces(p)
-      // Both ends are the same glass (`GlassStyle.bar`), so only the shape and what lies on it change
-      let out = BarHandoff.step(0, 0.45, p)
-      let into = BarHandoff.step(0.4, 0.9, p)
+      // Both ends are the same glass (`GlassStyle.bar`), so only the shape and what lies on it change. One face fades
+      // as the other comes, over the same stretch: run one after the other, the glass stood empty for a few frames
+      // mid-move and read as a flicker
+      let out = BarHandoff.step(0.25, 0.75, p)
+      let into = out
       ZStack(alignment: .topLeading) {
         GlassEffectContainer(spacing: Metrics.gooMerge) {
           ZStack(alignment: .topLeading) {
