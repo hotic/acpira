@@ -400,6 +400,9 @@ impl SessionManager {
       }
       W::Retry { session_id } => {
         if let Some(s) = self.target(v, session_id.as_deref()) {
+          if let Some(a) = &self.deps.accounts {
+            a.sync_local(Some(&s.agent)).await;
+          }
           s.retry().await?;
         }
       }
