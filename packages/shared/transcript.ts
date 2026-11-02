@@ -32,6 +32,10 @@ export interface AgentInfo {
   install?: AgentInstall;
   // The adapter version this release pins, when the installed adapter is older; the in-app install (installAgent) updates it
   update?: string;
+  // Who makes the CLI, for an agent the page knows no vendor of (an agents.json entry or a plugin's)
+  vendor?: string;
+  // The agent's mark as SVG path data on a 24 x 24 box, for an agent the page has no mark of its own for
+  mark?: string[];
 }
 
 export interface AgentInstall {
