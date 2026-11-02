@@ -574,6 +574,9 @@ export interface TurnUsage {
   total?: number;
   // Model rounds the prompt took (Grok `_meta.usage.modelCalls`)
   modelCalls?: number;
+  // Milliseconds the model calls streamed, each from its first event to its end, when the agent times them itself
+  // (the built-in agent's `_meta.usage.decodeMs`); the output speed divides by it instead of estimating
+  decodeMs?: number;
   // The model the agent says answered (Grok `_meta.modelId`); the webview falls back to the user turn's settings otherwise
   model?: string;
   // The vendor's id for this request (Grok `_meta.requestId`, Devin `_meta['cognition.ai/userMessageId']`)
@@ -595,6 +598,9 @@ export interface AgentTurn {
   // agent's first output is not working time. Absent until then, and on older transcripts. `startedAt` stays the identity
   respondedAt?: number;
   endedAt?: number;
+  // Milliseconds the live turn spent with only background work open and the model silent past a grace period (the
+  // engine's `normalize/idle.rs`): waiting, neither tool time nor generation, so the output speed leaves it out
+  idleMs?: number;
   // What it's currently doing (inferred from usage and tool states); empty when the turn ends
   activity?: { kind: ToolKind; label: string };
   // How the turn ended; absent while it runs (and on turns persisted before this field existed)

@@ -1,6 +1,8 @@
 //! Tool rows from tool_call / tool_call_update: a new block, the merge of an update's optional fields into it, and
 //! the fields a permission request's copy of the call may improve
 
+use std::collections::HashMap;
+
 use serde_json::{Map, Value};
 
 use acpira_shared::todo_tools::{is_todo_tool, todo_entries};
@@ -26,13 +28,27 @@ use super::tool_target::{
   Target, path_from_raw, pick_target, prompt_target, read_range_from_raw, shell_target, show_image_target, show_widget_target,
 };
 
-/// Sparse updates retain the first observed start and the first terminal timestamp
-pub fn time_tool(b: &mut ToolCallBlock, live: bool) {
+/// Sparse updates retain the first observed start and the first terminal timestamp. An agent that never reports
+/// `in_progress` (claude-agent-acp streams the input while `pending`, then runs the call) gets as its start the last
+/// moment it sent the call's input while pending. That moment stays parked in `pending_input` until the row closes, so
+/// a row that does report `in_progress` keeps that as its start and a pending row shows no running clock
+pub fn time_tool(b: &mut ToolCallBlock, live: bool, input: bool, pending_input: &mut HashMap<String, i64>) {
+  if live && input && b.status == ToolStatus::Pending && b.started_at.is_none() && b.ended_at.is_none() {
+    pending_input.insert(b.id.clone(), now_ms());
+  }
   if live && b.status == ToolStatus::InProgress && b.ended_at.is_none() && b.started_at.is_none() {
     b.started_at = Some(now_ms());
   }
-  if b.started_at.is_some() && !b.status.is_open() && b.ended_at.is_none() {
-    b.ended_at = Some(now_ms());
+  if !b.status.is_open() && b.ended_at.is_none() {
+    if b.started_at.is_none() {
+      b.started_at = pending_input.get(&b.id).copied();
+    }
+    if b.started_at.is_some() {
+      b.ended_at = Some(now_ms());
+    }
+  }
+  if b.started_at.is_some() || !b.status.is_open() {
+    pending_input.remove(&b.id);
   }
 }
 

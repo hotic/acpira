@@ -23,6 +23,7 @@ use crate::util::now_ms;
 
 mod content;
 mod controls;
+mod idle;
 mod notices;
 pub mod reclassify;
 mod tasks;
@@ -84,6 +85,11 @@ pub struct NormalizeState {
   pub goal: Option<SessionGoal>,
   /// How good the text kept for each attempt of the open retry row is (`notices::report_retry`)
   pub retry_quality: Vec<(u32, RetryText)>,
+  /// Tool call id → when a pending call last got its input, the start of a call that never reports `in_progress`
+  /// (`tool_call::time_tool`)
+  pub pending_input: HashMap<String, i64>,
+  /// Since when the live turn has had only background work open with the model silent (`idle.rs`)
+  pub quiet_since: Option<i64>,
 }
 
 impl NormalizeState {
@@ -181,6 +187,7 @@ pub fn apply_update(s: &mut NormalizeState, u: &Value) -> bool {
   if changed {
     mark_responded(s);
   }
+  idle::tick(s, idle::model_activity(u));
   changed
 }
 
@@ -307,7 +314,7 @@ fn apply_update_kind(s: &mut NormalizeState, u: &Value) -> bool {
         }
       };
       link_async_task(s, loc);
-      time_tool_at(s, i, loc);
+      time_tool_at(s, i, loc, crate::json::truthy(u.get("rawInput")));
       true
     }
     "tool_call_update" => {
@@ -337,7 +344,7 @@ fn apply_update_kind(s: &mut NormalizeState, u: &Value) -> bool {
         }
       };
       link_async_task(s, loc);
-      time_tool_at(s, i, loc);
+      time_tool_at(s, i, loc, crate::json::truthy(u.get("rawInput")));
       true
     }
     "plan" => {
@@ -449,10 +456,11 @@ fn apply_update_kind(s: &mut NormalizeState, u: &Value) -> bool {
 
 /// Turn ended: seal streaming blocks, record how it ended; tools still running are marked per stop reason
 pub fn end_turn(s: &mut NormalizeState, stop: TurnStop) {
+  idle::close(s);
   // Content after a retry row closes it as recovered, so one still open when the turn ends never got through
   settle_retry(s, if stop == TurnStop::Cancelled { ToolStatus::Cancelled } else { ToolStatus::Failed });
   clear_retry(s);
-  let NormalizeState { turns, thought_started_at, .. } = s;
+  let NormalizeState { turns, thought_started_at, pending_input, .. } = s;
   let Some(Turn::Agent(t)) = turns.last_mut() else { return };
   seal_streaming(thought_started_at, t);
   // Replay-only turns have no live start time; never invent a duration for them
@@ -467,9 +475,10 @@ pub fn end_turn(s: &mut NormalizeState, stop: TurnStop) {
       && tc.status.is_open()
     {
       tc.status = if stop == TurnStop::Cancelled { ToolStatus::Cancelled } else { ToolStatus::Failed };
-      time_tool(tc, false);
+      time_tool(tc, false, false, pending_input);
     }
   }
+  pending_input.clear();
 }
 
 /// session/prompt itself failed: wrap up like a cancellation and keep the error on the turn

@@ -40,6 +40,15 @@ private func agentTurns(_ view: SessionView) -> [AgentTurn] {
     #expect(turnOutputTps(tiny) == nil)
   }
 
+  @Test func outputSpeedLeavesWaitsOutAndTakesAMeasuredDecode() {
+    // 60 s window less a 58 s wait on background work: 200 tokens over 2 s
+    let waited: AgentTurn = decode(#"{"startedAt":0,"respondedAt":1000,"endedAt":61000,"idleMs":58000,"usage":{"output":201},"blocks":[]}"#)
+    #expect(turnOutputTps(waited) == 100)
+    // The agent timed its own streaming: 3 calls, one first token each outside the 2 s
+    let measured: AgentTurn = decode(#"{"startedAt":0,"respondedAt":500,"endedAt":600000,"usage":{"output":203,"modelCalls":3,"decodeMs":2000},"blocks":[]}"#)
+    #expect(turnOutputTps(measured) == 100)
+  }
+
   @Test func statsListOnlyWhatThePeerReported() {
     let turns = agentTurns(Fixtures.session("goal")!)
     let full = turnStatsContent(turns[1])

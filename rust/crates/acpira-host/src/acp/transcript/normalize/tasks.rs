@@ -133,18 +133,26 @@ pub(super) fn link_async_task(s: &mut NormalizeState, loc: (usize, usize)) {
   tool_at(&mut s.turns, loc).status = task_status(state);
 }
 
-pub(super) fn time_tool_at(s: &mut NormalizeState, current: usize, loc: (usize, usize)) {
+/// `input`: the update carried the call's `rawInput`
+pub(super) fn time_tool_at(s: &mut NormalizeState, current: usize, loc: (usize, usize), input: bool) {
   let live = loc.0 == current && s.turns[current].as_agent().is_some_and(|t| t.started_at.is_some() && t.stop.is_none());
   // The block may have moved (a placeholder removal); find it again by position validity
   if let Some(Turn::Agent(t)) = s.turns.get_mut(loc.0)
     && let Some(AgentBlock::ToolCall(tc)) = t.blocks.get_mut(loc.1)
   {
-    time_tool(tc, live);
+    time_tool(tc, live, input, &mut s.pending_input);
   }
 }
 
 /// One asyncTasks event on the owning session's transcript; returns whether the transcript changed
 pub fn apply_async_task(s: &mut NormalizeState, e: &AsyncTaskEvent) -> bool {
+  let changed = apply_task_event(s, e);
+  // A task starting or ending opens or closes a background wait
+  super::idle::tick(s, false);
+  changed
+}
+
+fn apply_task_event(s: &mut NormalizeState, e: &AsyncTaskEvent) -> bool {
   let id = e.async_task_id.clone();
   {
     let info = s.tasks.tasks.entry(id.clone()).or_insert_with(|| AsyncTaskInfo {
@@ -228,7 +236,7 @@ pub fn apply_async_task(s: &mut NormalizeState, e: &AsyncTaskEvent) -> bool {
         b.ended_at = Some(now_ms());
       }
     } else {
-      time_tool(b, true);
+      time_tool(b, true, false, &mut s.pending_input);
     }
     return true;
   }

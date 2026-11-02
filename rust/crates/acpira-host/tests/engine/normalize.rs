@@ -211,6 +211,47 @@ fn times_observed_execution_across_sparse_updates_excluding_pending_approval_and
 }
 
 #[test]
+fn a_call_that_skips_in_progress_runs_from_its_last_pending_input() {
+  // claude-agent-acp: pending, input streamed while pending, a progress beat while it runs, then completed
+  let mut s = state();
+  s.turns.push(turn(json!({ "role": "agent", "blocks": [], "startedAt": 1000 })));
+  let clock = Clock::at(2000);
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "sh", "title": "Terminal", "kind": "execute", "status": "pending", "rawInput": {} }));
+  clock.set(3000);
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "sh", "rawInput": { "command": "pnpm test" } }));
+  clock.set(9000);
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "sh", "_meta": { "claudeCode": { "elapsedTimeSeconds": 6 } } }));
+  // No running clock on a pending row
+  expect_absent(block(&s, 0, 0), "startedAt");
+  clock.set(15000);
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "sh", "status": "completed" }));
+  expect_match(&s.turns[0], json!({ "blocks": [{ "startedAt": 3000, "endedAt": 15000 }] }));
+}
+
+#[test]
+fn counts_the_wait_on_background_work_past_the_grace_period() {
+  let mut s = state();
+  s.turns.push(turn(json!({ "role": "agent", "blocks": [], "startedAt": 1000 })));
+  let clock = Clock::at(2000);
+  let backgrounded = json!({ "jetbrains": { "air": { "asyncTasks": { "backgrounded": true } } } });
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "mon", "title": "Monitor", "status": "in_progress", "_meta": backgrounded }));
+  // The model goes quiet for 100 s, then reports back
+  clock.set(102_000);
+  apply(&mut s, json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "done" } }));
+  // A silence inside the grace period is the model working
+  clock.set(112_000);
+  apply(&mut s, json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "." } }));
+  // A foreground call open beside it is tool time, not waiting
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "sh", "kind": "execute", "status": "in_progress" }));
+  clock.set(200_000);
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "sh", "status": "completed" }));
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "mon", "status": "completed" }));
+  clock.set(260_000);
+  end_turn(&mut s, TurnStop::EndTurn);
+  expect_match(&s.turns[0], json!({ "idleMs": 80_000 }));
+}
+
+#[test]
 fn freezes_outstanding_tool_timers_when_the_turn_ends() {
   for (stop, status) in [(TurnStop::Cancelled, "cancelled"), (TurnStop::EndTurn, "failed")] {
     let mut s = state();

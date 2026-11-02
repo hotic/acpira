@@ -118,6 +118,25 @@ describe('turnOutputTps', () => {
     })).toBe(100);
   });
 
+  it('leaves out the background waits the engine counted', () => {
+    // Window [1000, 61000] = 60000 ms, minus a 58000 ms wait on a background task -> 2000 ms active
+    expect(turnOutputTps({
+      ...turn([text('hi')]),
+      startedAt: 500, respondedAt: 1_000, endedAt: 61_000, idleMs: 58_000,
+      usage: { output: 201 },
+    })).toBe(100);
+  });
+
+  it('takes the decode time an agent measured itself, one first token per call left out', () => {
+    // 203 tokens over 3 calls -> 200 / 2s, whatever the wall clock says
+    expect(turnOutputTps({
+      ...turn([text('hi')]),
+      startedAt: 0, respondedAt: 500, endedAt: 600_000,
+      usage: { output: 203, modelCalls: 3, decodeMs: 2_000 },
+    })).toBe(100);
+    expect(turnOutputTps({ ...turn([text('hi')]), usage: { output: 203, decodeMs: 100 } })).toBeUndefined();
+  });
+
   it('measures only after the last foreground tool when the tally covers just the last model call (Devin)', () => {
     const blocks = [
       { ...read, startedAt: 2_000, endedAt: 5_000 },
