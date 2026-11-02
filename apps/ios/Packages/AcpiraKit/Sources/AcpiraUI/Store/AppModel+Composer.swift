@@ -130,7 +130,8 @@ extension AppModel {
 
   /// The auto-compact threshold the context ring marks (App.tsx compactAt); the demo reads the defaults
   var compactAt: Int? {
-    if let settings { return settings.autoCompact ? settings.compactAtTokens : nil }
+    // 0 follows the model's window: no fixed mark on the ring
+    if let settings { return settings.autoCompact && settings.compactAtTokens > 0 ? settings.compactAtTokens : nil }
     return 300_000
   }
 }

@@ -1123,6 +1123,8 @@
   "settings.autoCompact": "컨텍스트 자동 압축",
   "settings.autoCompact.desc": "임계값을 넘으면 다음 메시지 전에 압축",
   "settings.compactAt": "압축 임계값",
+  "settings.compactAt.model": "모델 한도",
+  "settings.compactAt.custom": "사용자 지정",
   "settings.sessionListPosition": "세션 목록",
   "settings.sessionListPosition.desc": "세션 목록을 채팅 옆에 둡니다. 좁은 패널에서는 서랍으로 열립니다.",
   "settings.sessionListPosition.hidden": "접기",

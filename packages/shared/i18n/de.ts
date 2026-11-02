@@ -1145,6 +1145,8 @@ export const de = {
   'settings.autoCompact': 'Kontext automatisch komprimieren',
   'settings.autoCompact.desc': 'Vor der nächsten Nachricht komprimieren',
   'settings.compactAt': 'Komprimierungsschwelle',
+  'settings.compactAt.model': 'Modelllimit',
+  'settings.compactAt.custom': 'Benutzerdefiniert',
   'settings.sessionListPosition': 'Sitzungsliste',
   'settings.sessionListPosition.desc': 'Sitzungsliste neben dem Chat. Schmale Bereiche nutzen eine Schublade.',
   'settings.sessionListPosition.hidden': 'Eingeklappt',

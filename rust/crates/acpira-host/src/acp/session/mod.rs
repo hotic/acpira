@@ -92,6 +92,7 @@ pub trait SessionAccountHooks: Send + Sync {
 
 #[derive(Debug, Clone, Copy)]
 pub struct CompactionPolicy {
+  /// 0 = the model's window: the session's reported context size less room for an answer
   pub at_tokens: f64,
   pub auto: bool,
 }

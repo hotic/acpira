@@ -13,6 +13,8 @@ pub type HiddenMap = BTreeMap<AgentId, BTreeMap<String, Vec<String>>>;
 pub const UI_FONT_SIZE: (i64, i64, i64) = (10, 20, 13);
 pub const CODE_FONT_SIZE: (i64, i64, i64) = (9, 20, 12);
 pub const MIN_COMPACT_AT_TOKENS: i64 = 10_000;
+/// `compactAtTokens` value meaning "the model's own window": each session compacts near the context size its agent reports
+pub const COMPACT_AT_MODEL: i64 = 0;
 /// Share of all logical cores every agent of an engine may use together, in percent; 100 lifts the cap (Windows only)
 pub const AGENT_CPU_CAP: (i64, i64, i64) = (10, 100, 80);
 /// The `proxy` setting's default: the local 127.0.0.1:7890 proxy while it listens, the inherited environment otherwise
@@ -254,7 +256,7 @@ pub fn sanitize_setting(key: &str, value: &Value) -> Value {
     "notifySystem" => Value::from(value.as_bool().unwrap_or(false)),
     "compactAtTokens" => {
       let n = value.as_f64().filter(|n| n.is_finite()).map(|n| js_round(n) as i64).unwrap_or(300_000);
-      Value::from(n.max(MIN_COMPACT_AT_TOKENS))
+      Value::from(if n <= COMPACT_AT_MODEL { COMPACT_AT_MODEL } else { n.max(MIN_COMPACT_AT_TOKENS) })
     }
     "uiFontSize" => Value::from(clamp_size(value, UI_FONT_SIZE)),
     "codeFontSize" => Value::from(clamp_size(value, CODE_FONT_SIZE)),

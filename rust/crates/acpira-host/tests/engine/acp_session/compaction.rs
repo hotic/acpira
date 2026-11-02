@@ -71,6 +71,21 @@ async fn auto_compaction_runs_before_a_follow_up_queued_during_the_over_threshol
   assert!(view(&s)["usage"]["used"].as_f64().unwrap() < 300_000.0);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn auto_compaction_at_the_model_window_waits_for_the_reported_context_size() {
+  let fake = fake_or_skip!();
+  // at_tokens 0 = the model's window: the fake reports a 1M context, so the threshold sits just under it
+  let h = Harness::with_compaction(&fake, json!({}), Some(acpira_host::acp::session::CompactionPolicy { at_tokens: 0.0, auto: true }));
+  let s = started(&h, "/tmp").await;
+  prompt(&s, "big").await;
+  prompt(&s, "big").await;
+  tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+  assert_eq!(user_texts(&s), ["big", "big"]);
+  prompt(&s, "big").await;
+  until(|| !s.is_running() && user_texts(&s).len() == 4, 5000).await;
+  assert_eq!(user_texts(&s), ["big", "big", "big", "/compact"]);
+}
+
 /// A compaction policy whose `auto` flag the test flips mid-way (the TS `let auto` captured by the deps closure)
 fn switchable_compaction() -> (Arc<std::sync::atomic::AtomicBool>, Arc<dyn Fn() -> acpira_host::acp::session::CompactionPolicy + Send + Sync>) {
   let auto = Arc::new(std::sync::atomic::AtomicBool::new(false));

@@ -725,7 +725,7 @@ export function App() {
       modelShapes={session?.modelShapes}
       usage={session?.usage}
       commands={session?.commands}
-      compactAt={settings.autoCompact ? settings.compactAtTokens : undefined}
+      compactAt={settings.autoCompact && settings.compactAtTokens > 0 ? settings.compactAtTokens : undefined}
       shareEditorSelection={settings.shareEditorSelection}
       steerQueued={settings.steerQueued && !!session?.canSteer}
       sshLocalAgents={settings.sshLocalAgents}

@@ -1146,6 +1146,8 @@ export const es = {
   'settings.autoCompact': 'Compactar el contexto automáticamente',
   'settings.autoCompact.desc': 'Compactar antes del siguiente mensaje al pasar el umbral',
   'settings.compactAt': 'Umbral de compactación',
+  'settings.compactAt.model': 'Límite del modelo',
+  'settings.compactAt.custom': 'Personalizado',
   'settings.sessionListPosition': 'Lista de sesiones',
   'settings.sessionListPosition.desc': 'Lista de sesiones junto al chat. En paneles estrechos se abre como cajón.',
   'settings.sessionListPosition.hidden': 'Contraída',

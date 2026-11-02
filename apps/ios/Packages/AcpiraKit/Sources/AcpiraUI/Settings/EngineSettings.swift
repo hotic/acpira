@@ -79,7 +79,7 @@ struct EngineSettingsSections: View {
             get: { settings.compactAtTokens },
             set: { model.setSetting(\.compactAtTokens, "compactAtTokens", $0) })) {
             ForEach(compactPresets(settings.compactAtTokens), id: \.self) { n in
-              Text(verbatim: "\(n / 1000)\(t("settings.compactAt.unit"))").tag(n)
+              Text(verbatim: n == 0 ? t("settings.compactAt.model") : "\(n / 1000)\(t("settings.compactAt.unit"))").tag(n)
             }
           }
         }
@@ -91,10 +91,10 @@ struct EngineSettingsSections: View {
     }
   }
 
-  /// settings.ts MIN_COMPACT_AT_TOKENS and up, the current value kept in its place; the top preset matches the 1M
-  /// windows (the built-in agent caps it at the model's window less its output room)
+  /// 0 first (settings.ts COMPACT_AT_MODEL: each session's own model window), then MIN_COMPACT_AT_TOKENS and up, the
+  /// current value kept in its place (a count typed on the desktop); the top preset matches the 1M windows
   private func compactPresets(_ current: Int) -> [Int] {
-    Array(Set([100_000, 200_000, 300_000, 400_000, 600_000, 800_000, 1_000_000, current])).sorted()
+    Array(Set([0, 100_000, 200_000, 300_000, 400_000, 600_000, 800_000, 1_000_000, current])).sorted()
   }
 }
 

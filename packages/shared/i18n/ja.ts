@@ -1147,6 +1147,8 @@ export const ja = {
   'settings.autoCompact': 'コンテキストを自動圧縮',
   'settings.autoCompact.desc': 'しきい値を超えたら次のメッセージの前に圧縮',
   'settings.compactAt': '圧縮のしきい値',
+  'settings.compactAt.model': 'モデルの上限',
+  'settings.compactAt.custom': 'カスタム',
   'settings.sessionListPosition': 'セッション一覧',
   'settings.sessionListPosition.desc': 'セッション一覧をチャットの横に表示します。狭いパネルではドロワーになります。',
   'settings.sessionListPosition.hidden': '折りたたむ',

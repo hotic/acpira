@@ -1,7 +1,7 @@
 import { useEffect, useState, type KeyboardEvent } from 'react';
 import { useDesktop } from '../desktop';
 import type { AgentInfo } from '@acpira/shared/transcript';
-import { ACCOUNT_SWITCH_STRATEGIES, AGENT_CPU_CAP, AUTO_PROXY_URL, FILE_OPENER_NAMES, FILE_OPENERS, MIN_COMPACT_AT_TOKENS, proxyUrl, SESSION_SCOPES, type AccountSwitchStrategy, type FileOpener, type SessionScope, type SettingsView } from '@acpira/shared/settings';
+import { ACCOUNT_SWITCH_STRATEGIES, AGENT_CPU_CAP, AUTO_PROXY_URL, FILE_OPENER_NAMES, FILE_OPENERS, COMPACT_AT_MODEL, DEFAULT_SETTINGS, MIN_COMPACT_AT_TOKENS, proxyUrl, SESSION_SCOPES, type AccountSwitchStrategy, type FileOpener, type SessionScope, type SettingsView } from '@acpira/shared/settings';
 import { LANGUAGES, type Language } from '@acpira/shared/i18n/core';
 import { launchable, pickDefaultAgent } from '@acpira/shared/agentOrder';
 import { AgentMark } from '../chat/AgentMark';
@@ -61,14 +61,7 @@ export function General({ settings, agents, on, onTour }: { settings: SettingsVi
           <Switch checked={settings.autoCompact} onChange={v => on.setSetting('autoCompact', v)} label={t('settings.autoCompact')} />
         </Field>
         <Field label={t('settings.compactAt')}>
-          <NumberField
-            value={Math.round(settings.compactAtTokens / K)}
-            min={MIN_COMPACT_AT_TOKENS / K}
-            step={10}
-            unit={t('settings.compactAt.unit')}
-            label={t('settings.compactAt')}
-            onCommit={v => on.setSetting('compactAtTokens', v * K)}
-          />
+          <CompactAtField value={settings.compactAtTokens} onCommit={v => on.setSetting('compactAtTokens', v)} />
         </Field>
       </Section>
 
@@ -111,6 +104,36 @@ type ProxyChoice = 'auto' | 'off' | 'custom';
 
 // The `proxy` setting: Auto / Off, or Custom with a URL field. Picking Custom shows the field without writing anything; a URL
 // is written on Enter or blur once it parses (proxyUrl), otherwise the field goes back to the saved value
+type CompactChoice = 'model' | 'custom';
+
+// The compaction threshold: the model's own window, or a fixed token count typed beside the picker (as ProxyField)
+function CompactAtField({ value, onCommit }: { value: number; onCommit: (v: number) => void }) {
+  const saved: CompactChoice = value === COMPACT_AT_MODEL ? 'model' : 'custom';
+  const choices: { value: CompactChoice; label: string }[] = [
+    { value: 'model', label: t('settings.compactAt.model') },
+    { value: 'custom', label: t('settings.compactAt.custom') },
+  ];
+  // Leaving the model's window lands on the default count, ready to edit
+  const pick = (next: CompactChoice) => {
+    if (next !== saved) onCommit(next === 'model' ? COMPACT_AT_MODEL : DEFAULT_SETTINGS.compactAtTokens);
+  };
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      {saved === 'custom' && (
+        <NumberField
+          value={Math.round(value / K)}
+          min={MIN_COMPACT_AT_TOKENS / K}
+          step={10}
+          unit={t('settings.compactAt.unit')}
+          label={t('settings.compactAt')}
+          onCommit={v => onCommit(v * K)}
+        />
+      )}
+      <Select<CompactChoice> options={choices} value={saved} onChange={pick} label={t('settings.compactAt')} />
+    </div>
+  );
+}
+
 function ProxyField({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
   const saved: ProxyChoice = value === 'auto' || value === 'off' ? value : 'custom';
   const [choice, setChoice] = useState<ProxyChoice>(saved);

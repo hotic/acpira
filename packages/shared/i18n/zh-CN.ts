@@ -1185,6 +1185,8 @@ export const zhCN = {
   'settings.autoCompact.desc': '用量超过阈值时，在发下一条消息前压缩',
   'settings.compactAt': '压缩阈值',
   'settings.compactAt.unit': 'k',
+  'settings.compactAt.model': '模型上限',
+  'settings.compactAt.custom': '自定义',
   // Appearance page
   'settings.sessionListPosition': '会话列表',
   'settings.sessionListPosition.desc': '在聊天旁常驻显示会话列表；面板较窄时改为抽屉',

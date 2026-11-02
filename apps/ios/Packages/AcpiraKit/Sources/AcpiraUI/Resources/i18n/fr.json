@@ -1127,6 +1127,8 @@
   "settings.autoCompact": "Compacter le contexte automatiquement",
   "settings.autoCompact.desc": "Compacter avant le message suivant une fois le seuil passé",
   "settings.compactAt": "Seuil de compactage",
+  "settings.compactAt.model": "Limite du modèle",
+  "settings.compactAt.custom": "Personnalisé",
   "settings.sessionListPosition": "Liste des sessions",
   "settings.sessionListPosition.desc": "Liste des sessions à côté du chat. Les panneaux étroits utilisent un tiroir.",
   "settings.sessionListPosition.hidden": "Réduite",
