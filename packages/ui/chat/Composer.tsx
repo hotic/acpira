@@ -29,6 +29,7 @@ import { parkDraftText, useComposerDraft } from './useComposerDraft';
 import { PromptRecall } from './promptHistory';
 import { contextDrafts, copiedSelection, markContextSent, markSelectionSent, sameContext, sameRange, selectionDraft, selectionKey, useEditorSelection, useLiveContexts, type LiveContext } from './editorContext';
 import { PromptInput } from './PromptInput';
+import type { SqueezeLevel } from './useFitStage';
 import { imeKey } from '../ui/ime';
 import { SlotPieces } from '../plugins/Pieces';
 
@@ -85,7 +86,7 @@ export interface ComposerProps {
   // Session-level navigation is omitted from history and queued-message editors.
   toolbarStart?: ReactNode;
   // The agent takes its models from the user's own sources (the built-in agent): with none offered, the model chip's
-  // place holds a shortcut to the page where they are added
+  // place holds a shortcut to the page where they are added; with some, the model panel's footer leads there
   onAddModel?: () => void;
   // The session's own composer (not an inline editor): it takes drafts pushed from outside (editor "Add to chat", transcript quotes)
   // and, with `shareSelection`, offers the editor's live selection as a toolbar chip that goes out with the next prompt
@@ -157,14 +158,16 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
   // The beam lights up while the composer is focused (focus-within semantics), not while it's working.
   // Overlays portal to the shell root, so opening a menu blurs the composer; "a menu is open" therefore also counts as focused
   const [focused, setFocused] = useState(false);
-  // The model chip cannot keep its name in the room left: the toolbar's icon chips drop their labels first (useFitStage squeeze)
-  const [squeezed, setSqueezed] = useState(false);
+  // The model chip cannot keep its name in the room left: the toolbar's icon chips drop their labels first, and below its
+  // last form the optional icon chips go too, so the marks never run under the send button (useFitStage squeeze)
+  const [squeeze, setSqueeze] = useState<SqueezeLevel>(0);
+  const tight = squeeze === 2;
   const [openMenus, setOpenMenus] = useState(0);
   const onOpenChange = useCallback((open: boolean) => setOpenMenus(n => n + (open ? 1 : -1)), []);
   const beamActive = focused || openMenus > 0;
   useLayoutEffect(() => { onBeam(beamActive); }, [onBeam, beamActive]);
   const dim = p.running || p.disabled;
-  const { models, reasoning, modelConfig, collaboration, permission, sidekick, sidekickEffort, other } = composerControls(p.controls.options);
+  const { models, reasoning, modelConfig, collaboration, permission, sidekick, sidekickEffort, sidekickFast, other } = composerControls(p.controls.options);
   const canCompact = !!p.commands?.some(c => c.name === 'compact');
   // Files are read asynchronously after a paste / drop; sending is held until every read has landed, so a message never leaves without its attachments
   const [reading, setReading] = useState(0);
@@ -468,7 +471,7 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
           a fieldset lays children out in an anonymous inner box that ignores the fieldset's min-height, so items-center there
           only centered the chips within their own --ctl-sm height and they rode a few px above the row-centered send button.
           box-content keeps the floor off the padding: under the preflight's border-box, min-h-ctl minus pt-1 / pb-2 left less than a chip */}
-      <div className="group/bar @container box-content flex min-h-ctl min-w-0 items-center gap-1 px-2 pt-1 pb-2" data-squeezed={squeezed || undefined}>
+      <div className="group/bar @container box-content flex min-h-ctl min-w-0 items-center gap-1 px-2 pt-1 pb-2" data-squeezed={squeeze > 0 || undefined}>
         <fieldset disabled={p.disabled || p.controlsLocked || sending} className="m-0 flex min-w-0 shrink-0 items-center gap-1 border-0 p-0">
           <div className="flex shrink-0 items-center gap-1">
             {/* Working mode first (Codex collaboration_mode: Build / Plan), then the permission modes; both are solid chips that never truncate */}
@@ -490,32 +493,33 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
         {/* The live chips share one slot, however many sources there are, and give way first: the slot starts at its content
             width and its huge shrink factor takes the whole shortfall before the model side loses a pixel. Splitting the free
             width evenly instead let a long label push the model chip over the send button */}
-        {(offered || contexts.length > 0) && <div className="flex min-w-0 max-w-fit flex-[0_1000_auto] items-center gap-1">
+        {(offered || contexts.length > 0) && !tight && <div className="flex min-w-0 max-w-fit flex-[0_1000_auto] items-center gap-1">
           {offered && <SelectionChip selection={offered} cwd={p.cwd} on={offeredOn} narrow={liveNarrow} onToggle={() => setExcluded(offeredOn ? selectionKey(offered) : undefined)} />}
           {contexts.length > MAX_CONTEXT_CHIPS
             ? <ContextsMenu contexts={contexts} on={contextOn} narrow={liveNarrow} onToggle={toggleContext} onOpenChange={onOpenChange} />
             : contexts.map(c => <ContextChip key={c.source.id} context={c} on={contextOn(c)} narrow={liveNarrow} onToggle={() => toggleContext(c)} />)}
         </div>}
-        {!p.edit && p.toolbarStart}
-        {!p.edit && p.main && (
+        {!p.edit && !tight && p.toolbarStart}
+        {!p.edit && p.main && !tight && (
           <CommandButtons commands={p.commands} sessionId={p.sessionId} draft={text} disabled={p.disabled || p.controlsLocked || sending}
             onSend={as => { void send(as); }} onSendBare={command => { void sendBare(command); }} onDraft={onRewritten} onRewriting={busy => setRewrite(busy ? 'busy' : undefined)} onNotice={p.onNotice} onOpenChange={onOpenChange} />
         )}
         {/* Plugin chips (plugins/Pieces.tsx) after the built-in ones, on the main composer only */}
-        {!p.edit && p.main && <SlotPieces slot="composer.toolbar" className="flex shrink-0 items-center gap-1" />}
-        {!p.edit && p.main && !!personas?.length && <SummonMenu personas={personas} onOpenChange={onOpenChange} onPick={persona => summon(persona.name, caret)} />}
+        {!p.edit && p.main && !tight && <SlotPieces slot="composer.toolbar" className="flex shrink-0 items-center gap-1" />}
+        {!p.edit && p.main && !tight && !!personas?.length && <SummonMenu personas={personas} onOpenChange={onOpenChange} onPick={persona => summon(persona.name, caret)} />}
         {/* flex-auto: the model side's base size is its content, so the live chips above shrink before it does */}
         <fieldset disabled={p.disabled || p.controlsLocked || sending} className="m-0 flex min-w-0 flex-auto items-center gap-1 border-0 p-0">
           <div className="min-w-0 flex-1" />
-          {[...other, ...(!models.length ? [...modelConfig, ...sidekick, ...sidekickEffort] : [])].map(c => (
+          {[...other, ...(!models.length ? [...modelConfig, ...sidekick, ...sidekickEffort, ...sidekickFast] : [])].map(c => (
             <OptionControl key={c.id} end control={c} hidden={p.hidden?.[c.id]} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />
           ))}
-          {p.usage && <ContextRing usage={p.usage} turns={p.turns} compacting={p.compacting} canCompact={canCompact} disabled={p.disabled} compactAt={p.compactAt} running={p.running} onCompact={p.onCompact} onOpenChange={onOpenChange} />}
+          {p.usage && !tight && <ContextRing usage={p.usage} turns={p.turns} compacting={p.compacting} canCompact={canCompact} disabled={p.disabled} compactAt={p.compactAt} running={p.running} onCompact={p.onCompact} onOpenChange={onOpenChange} />}
           {models.map((c, i) => (
             <ModelControl key={c.id} control={c} hidden={p.hidden?.[c.id]} reasoning={i === 0 ? reasoning : undefined}
-              modelConfig={i === 0 ? modelConfig : undefined} sidekick={i === 0 ? sidekick[0] : undefined} sidekickEffort={i === 0 ? sidekickEffort[0] : undefined}
+              modelConfig={i === 0 ? modelConfig : undefined} sidekick={i === 0 ? sidekick[0] : undefined} sidekickEffort={i === 0 ? sidekickEffort[0] : undefined} sidekickFast={i === 0 ? sidekickFast[0] : undefined}
               sidekickLive={i === 0 && p.sidekickLive}
-              hiddenConfig={p.hidden} onSqueeze={i === 0 ? setSqueezed : undefined}
+              onConfigure={i === 0 && p.main && !p.edit ? p.onAddModel : undefined}
+              hiddenConfig={p.hidden} onSqueeze={i === 0 ? setSqueeze : undefined}
               onSetConfig={p.onSetConfig} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />
           ))}
           {p.onAddModel && p.main && !p.edit && !p.controlsLocked && !models.length && (
