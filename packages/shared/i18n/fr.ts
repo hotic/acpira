@@ -688,6 +688,8 @@ export const fr = {
   'mention.noFiles': 'Aucun fichier correspondant',
 
   'host.notFound': '{command} introuvable — installez d’abord la CLI {agent}',
+  'host.engineReplaced': 'Acpira a été mis à jour sur cette machine. Rechargez la fenêtre pour utiliser la nouvelle version.',
+  'host.reloadWindow': 'Recharger la fenêtre',
   'host.remoteBuiltinOnly': '{agent} s’exécute dans l’Acpira de {host}, et {host} est désactivé ou n’a pas été ajouté. Activez-le dans Réglages → Connexions',
   'host.remoteFile': '{path} se trouve sur {host}, pas sur cette machine',
   'host.remoteFileFailed': 'Impossible de récupérer {path} depuis {host}',

@@ -254,7 +254,7 @@ impl AcpSession {
           .registry
           .resolve_binary(&self.agent)
           .await
-          .ok_or_else(|| anyhow!(tp("host.notFound", &[("command", &def.command), ("agent", &def.name)])))?;
+          .ok_or_else(|| crate::acp::agents::registry::not_found(&def))?;
         self.log(&format!("spawn {bin} {} (cwd {}){account_note}", def.args.join(" "), self.cwd));
         let env = match (&account, &self.deps.accounts) {
           (Some(a), Some(h)) => h.spawn_env(self.agent.clone(), a.clone()).await,

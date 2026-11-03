@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use serde_json::Value;
 
 use acpira_shared::protocol::SessionHit;
@@ -14,7 +14,7 @@ use super::fork::holds_unseen_turns;
 use super::{SessionManager, Viewer};
 use crate::acp::agents::native_sessions::list_native_sessions;
 use crate::acp::session::AcpSession;
-use crate::i18n::{t, tp};
+use crate::i18n::t;
 use crate::limits::RENAME_MAX;
 use crate::relay::wire::{SessionReadArgs, SessionSearchArgs};
 use crate::session_library::{
@@ -183,7 +183,7 @@ impl SessionManager {
     let bin = registry
       .resolve_binary(agent)
       .await
-      .ok_or_else(|| anyhow!(tp("host.notFound", &[("command", &def.command), ("agent", &def.name)])))?;
+      .ok_or_else(|| crate::acp::agents::registry::not_found(&def))?;
     let acc = self.default_account(agent);
     let env = match (&acc, &self.deps.accounts) {
       (Some(a), Some(m)) => m.spawn_env_for(agent, a).await,

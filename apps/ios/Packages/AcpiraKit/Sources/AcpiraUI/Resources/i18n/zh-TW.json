@@ -679,6 +679,8 @@
   "attach.viewSource": "檢視原文",
   "mention.noFiles": "沒有匹配的檔案",
   "host.notFound": "找不到 {command}，請先安裝 {agent} CLI",
+  "host.engineReplaced": "本機的 Acpira 已更新，重新載入視窗即可使用新版本。",
+  "host.reloadWindow": "重新載入視窗",
   "host.remoteBuiltinOnly": "{agent} 要在 {host} 上執行，但這台主機已關閉或沒有新增。到設定 → 連線裡開啟它",
   "host.remoteFile": "{path} 在 {host} 上，不在本機",
   "host.remoteFileFailed": "無法從 {host} 取回 {path}",

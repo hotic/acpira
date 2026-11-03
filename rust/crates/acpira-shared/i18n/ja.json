@@ -681,6 +681,8 @@
   "attach.viewSource": "ソースを表示",
   "mention.noFiles": "一致するファイルはありません",
   "host.notFound": "{command} が見つかりません。先に {agent} CLI をインストールしてください",
+  "host.engineReplaced": "このマシンの Acpira が更新されました。ウィンドウを再読み込みすると新しいバージョンを使用できます。",
+  "host.reloadWindow": "ウィンドウを再読み込み",
   "host.remoteBuiltinOnly": "{agent} は {host} 上の Acpira で動きますが、このホストはオフか未追加です。設定 → 接続でオンにしてください",
   "host.remoteFile": "{path} は {host} 上にあり、このマシンにはありません",
   "host.remoteFileFailed": "{host} から {path} を取得できませんでした",

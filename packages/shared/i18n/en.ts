@@ -695,6 +695,8 @@ export const en = {
   'mention.noFiles': 'No matching files',
 
   'host.notFound': '{command} not found — install the {agent} CLI first',
+  'host.engineReplaced': 'Acpira was updated on this machine. Reload the window to use the new version.',
+  'host.reloadWindow': 'Reload Window',
   'host.remoteBuiltinOnly': '{agent} runs in {host}\'s own Acpira, and {host} is turned off or not added. Turn it on in Settings → Connections',
   'host.remoteFile': '{path} is on {host}, not on this machine',
   'host.remoteFileFailed': 'Could not fetch {path} from {host}',
