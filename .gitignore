@@ -3,6 +3,7 @@ node_modules/
 
 # Build
 dist/
+rust/.build/
 *.vsix
 # Sidecar binary staged into a platform VSIX by scripts/release/package-vsix.mjs
 /bin/
