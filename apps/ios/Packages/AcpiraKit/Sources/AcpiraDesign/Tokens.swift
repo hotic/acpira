@@ -495,10 +495,9 @@ public enum Motion {
   /// A chip's glyph swapping for × as its pieces leave, and back as they land
   public static let gooSwap = Animation.easeOut(duration: 0.18)
   public static let gooSwapBack = Animation.easeOut(duration: 0.22).delay(0.22)
-  /// A panel swapping its rows for a list and back: what leaves fades out in half a `dur` and what comes in fades in
-  /// after it, so the two never show through each other (the desktop's lead / sidekick views)
-  public static let gooListOut = Animation.easeOut(duration: dur / 2)
-  public static let gooListIn = Animation.easeOut(duration: dur).delay(dur / 2)
+  /// A chip's beans trading for another level's (the sidekick's own beans): the beans head home on `gooSpring` and
+  /// the next level's leave the chip after this long, while the old ones are small enough to hide the swap
+  public static let gooLevelSwap: Double = 0.26
   /// The dim lifting behind a closing picker: held while the pieces go home
   public static let gooDimOut = Animation.easeIn(duration: 0.42)
   /// When a closing picker's last drop is home in its chip (`gooSwapBack` brings the chip's glyph back then)
