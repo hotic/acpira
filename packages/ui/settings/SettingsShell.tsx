@@ -216,7 +216,8 @@ export function SettingsShell(p: SettingsShellProps) {
             <div className="flex min-h-0 flex-1">
               <PageRail page={p.page} onPage={trail.go} onBack={p.onBack} desktop={desktop} width={desktop ? railWidth : undefined} opening={opening} connections={remote || chatgpt || !!access} index={index} searchRef={search}
                 marks={{ models: agentUpdates(p.agents), about: appUpdatePending(update) }} />
-              <div data-sheet={desktop || undefined} className="relative flex min-w-0 flex-1 flex-col">
+              {/* No header on this sheet: its top strip is the title bar all the same (the desktop shell reads data-drag-top) */}
+              <div data-sheet={desktop || undefined} data-drag-top={desktop || undefined} className="relative flex min-w-0 flex-1 flex-col">
               <main key={page.kind === 'agent' ? 'models' : page.kind === 'chatgpt' ? 'connections' : page.kind} className="min-h-0 min-w-0 flex-1 overflow-y-auto scroll-stable">
                 <Page>
                   <PageHeader title={title} action={action} />
