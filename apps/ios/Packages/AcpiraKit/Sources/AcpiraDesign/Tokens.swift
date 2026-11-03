@@ -460,8 +460,6 @@ public enum Metrics {
   public static let sidekickNotch: CGFloat = 2
   /// The dot on the composer's model mark while the sidekick works a round (the desktop's `.sidekick-pulse`)
   public static let sidekickPulse: CGFloat = 6
-  /// The user card's text cap: five body lines
-  public static var userMessageMax: CGFloat { 5 * TypeScale.text1.lineHeight }
 }
 
 // MARK: - Glass
