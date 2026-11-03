@@ -112,6 +112,7 @@ struct Composer: View {
               hintText(rest ? "" : restHint)
             }
             .focused($focused)
+            .attachLongPastes(to: $staged) { actions.toast($0, .fileText) }
           }
           // At rest the field takes no touches (the bar's tap focuses it) and its hint is plain text over it: a drag
           // on the bar scrolled the field's own text view, and the hint stayed cut by the one-line frame
@@ -190,7 +191,7 @@ struct Composer: View {
     var bytes = text.utf8.count
     for a in staged {
       switch a {
-      case let .image(blob?, _, _): bytes += blob.utf8.count
+      case let .image(blob?, _, _), let .text(blob?, _, _): bytes += blob.utf8.count
       case let .file(uri, _):
         if let url = URL(string: uri), AttachmentFile.isCopy(url),
            let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int {
@@ -813,8 +814,8 @@ struct StagedAttachments: View {
                   items.remove(at: i)
                 }
               }
-            case .text(_, let name, _):
-              AttachmentPill(name: name, icon: .fileText) { items.remove(at: i) }
+            case .text(let blob, let name, _):
+              TextAttachmentChip(blob: blob, name: name) { items.remove(at: i) }
             // Only a sent prompt taken in for editing brings a selection back
             case .selection(let uri, let name, let start, let end, _):
               AttachmentPill(name: "\(name) \(start == end ? "L\(start)" : "L\(start)-\(end)")", icon: .textSelect,

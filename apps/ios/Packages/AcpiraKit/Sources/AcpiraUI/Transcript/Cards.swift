@@ -114,8 +114,8 @@ struct TurnAttachments: View {
             AttachmentPill(name: name, icon: Attachment.isVideo(name: name) ? .fileVideo : .fileText,
                            onOpen: opener.open(uri: uri))
           }
-        case .text(_, let name, _):
-          AttachmentPill(name: name, icon: .fileText)
+        case .text(let blob, let name, _):
+          TextAttachmentChip(blob: blob, name: name)
         case .selection(let uri, let name, let start, let end, _):
           AttachmentPill(name: "\(name) \(start == end ? "L\(start)" : "L\(start)-\(end)")", icon: .textSelect,
                          onOpen: opener.open(uri: uri, line: start))

@@ -192,7 +192,8 @@ struct ChatScreen: View {
       editQueued: { item in
         // Edit takes the prompt out of the queue and back into the composer, ahead of whatever is being typed there
         // rather than over it
-        if let prompt = model.takeQueued(id, item) {
+        Task {
+          guard let prompt = await model.editQueued(id, item: item) else { return }
           let draft = model.draft(for: id)
           let typed = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
           draft.text = typed.isEmpty ? prompt.text : prompt.text + "\n\n" + draft.text
