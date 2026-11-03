@@ -14,6 +14,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.intellij.util.concurrency.AppExecutorUtil
+import java.io.IOException
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.concurrent.TimeUnit
@@ -23,9 +24,10 @@ import java.util.concurrent.atomic.AtomicInteger
 // Protocol version of packages/shared/sidecar.ts; a sidecar built for another version is rejected at hello, never guessed around
 const val SIDECAR_PROTOCOL_VERSION = 1
 
-// One sidecar per project window: the sidecar runs with the project folder as its cwd (sessions belong to a project), the views of
-// this window (tool window, later editor tabs) attach to it. Envelopes before hello completes wait in an outbox; a crash restarts the
-// process with backoff and re-attaches every view on the session it was showing.
+// One sidecar link per project window: on macOS and Linux a connection to the machine's engine (MachineEngine), on Windows (or with
+// ACPIRA_ENGINE=stdio) a child process with the project folder as its cwd. Either way hello carries the project folder (sessions belong
+// to a project), and the views of this window (tool window, later editor tabs) attach to it. Envelopes before hello completes wait in
+// an outbox; a crash or a closed connection reconnects with backoff and re-attaches every view on the session it was showing.
 //
 // Start, handshake, attach, outbox drain, and ordinary sends share one single-thread executor so a second view cannot spawn a second
 // process while the binary is located, and a page's one-shot ready cannot overtake attachView. Each process has a generation; stale stdout and
@@ -50,7 +52,7 @@ class SidecarService(private val project: Project) : Disposable {
     private val platform = IdePlatform(project, this)
     private val settings = AcpiraSettings.getInstance()
     private val unsubscribeSettings: () -> Unit
-    private var process: SidecarProcess? = null
+    private var process: SidecarLink? = null
     private var starting = false
     private val generation = AtomicInteger(0)
     @Volatile var state = SidecarState.STOPPED
@@ -61,6 +63,10 @@ class SidecarService(private val project: Project) : Disposable {
     private var restarts = 0
     private var lastStart = 0L
     private var helloSeq = 0
+    // A machine engine refused hello because it is ending: the next exit reconnects at once instead of backing off. Bounded by
+    // `drainRefusals` (consecutive refusals since the last helloOk) so an engine that keeps refusing still lands in the backoff
+    private var reconnectPromptly = false
+    private var drainRefusals = 0
 
     // Attachment blobs are read from here by the resource handler; the sidecar reports it in helloOk
     @Volatile var sessionsDir: Path? = null
@@ -101,6 +107,7 @@ class SidecarService(private val project: Project) : Disposable {
     private fun startOnIo() {
         if (disposed.get() || process?.alive == true || starting) return
         starting = true
+        reconnectPromptly = false
         val gen = generation.incrementAndGet()
         setState(SidecarState.STARTING, null)
         lastStart = System.currentTimeMillis()
@@ -110,13 +117,21 @@ class SidecarService(private val project: Project) : Disposable {
                 starting = false
                 return
             }
-            process = SidecarProcess(
-                command, project.basePath?.let { Paths.get(it) },
+            val cwd = project.basePath?.let { Paths.get(it) }
+            if (MachineEngine.wanted()) {
+                // `acpira engine` may take tens of seconds (landing the binary, an older engine handing over): it runs off this
+                // executor, and `starting` keeps a second start out meanwhile
+                AppExecutorUtil.getAppExecutorService().execute { reachEngine(gen, command, cwd) }
+                return
+            }
+            val child = SidecarProcess(
+                command, cwd,
                 { env -> enqueue { onEnvelope(gen, env) } },
-                { code -> enqueue { onExit(gen, code) } },
+                { what -> enqueue { onExit(gen, what) } },
             )
+            process = child
             starting = false
-            Acpira.LOG.info("sidecar started: pid ${process?.pid}, ${command.label}, cwd ${project.basePath}, remoteDevHost=${IdeProductMode.isBackend}")
+            Acpira.LOG.info("sidecar started: pid ${child.pid}, ${command.label}, cwd ${project.basePath}, remoteDevHost=${IdeProductMode.isBackend}")
             hello()
         } catch (e: SidecarSetupException) {
             if (gen != generation.get()) return
@@ -128,6 +143,48 @@ class SidecarService(private val project: Project) : Disposable {
             starting = false
             Acpira.LOG.error("sidecar failed to start", e)
             setState(SidecarState.FAILED, e.toString())
+        }
+    }
+
+    // Off the serial executor: ensure the machine's engine, then connect on the executor (unless disposed or superseded meanwhile).
+    // The engine `acpira engine` named can be gone by the time we connect (a newer build took the machine over, or it idled out
+    // in between): within one start, ask again with a short backoff until `deadline`, and only then fail
+    private fun reachEngine(gen: Int, command: SidecarCommand, cwd: Path?, deadline: Long = System.currentTimeMillis() + ENGINE_REACH_MS, attempt: Int = 0) {
+        if (disposed.get() || gen != generation.get()) return
+        val failed = { e: Exception ->
+            enqueue {
+                if (gen == generation.get()) {
+                    starting = false
+                    Acpira.LOG.warn("machine engine unreachable (${command.label}): ${e.message ?: e}")
+                    setState(SidecarState.FAILED, e.message ?: e.toString())
+                }
+            }
+        }
+        val socket = try { MachineEngine.reach(command, SafeMode.home(), cwd) } catch (e: Exception) { failed(e); return }
+        enqueue {
+            if (gen != generation.get()) return@enqueue
+            try {
+                process = EngineConnection(socket, { env -> enqueue { onEnvelope(gen, env) } }, { what -> enqueue { onExit(gen, what) } })
+            } catch (e: IOException) {
+                // No such socket / connection refused: the engine that answered has ended since
+                val wait = minOf(1000L, 100L shl attempt)
+                if (System.currentTimeMillis() + wait >= deadline) {
+                    failed(e)
+                    return@enqueue
+                }
+                Acpira.LOG.info("machine engine at $socket is gone ($e); asking again in ${wait}ms")
+                AppExecutorUtil.getAppScheduledExecutorService().schedule(
+                    { AppExecutorUtil.getAppExecutorService().execute { reachEngine(gen, command, cwd, deadline, attempt + 1) } },
+                    wait, TimeUnit.MILLISECONDS,
+                )
+                return@enqueue
+            } catch (e: Exception) {
+                failed(e)
+                return@enqueue
+            }
+            starting = false
+            Acpira.LOG.info("engine connected: $socket, cwd ${project.basePath}, remoteDevHost=${IdeProductMode.isBackend}")
+            hello()
         }
     }
 
@@ -222,6 +279,7 @@ class SidecarService(private val project: Project) : Disposable {
         when (m.get("type")?.asString) {
             "helloOk" -> {
                 sessionsDir = m.get("sessionsDir")?.asString?.let { Paths.get(it) }
+                drainRefusals = 0
                 val attaches = views.values.map { attachEnvelope(it) }
                 for (e in outbox.flush(attaches)) process?.send(e)
                 setState(SidecarState.READY, null)
@@ -229,6 +287,13 @@ class SidecarService(private val project: Project) : Disposable {
             "helloReject" -> {
                 val reason = m.get("reason")?.asString ?: "rejected"
                 Acpira.LOG.warn("sidecar rejected hello: $reason")
+                // A machine engine that is just ending: dropping the connection reconnects right away (onExit), and `acpira engine`
+                // waits for its handover or launches the next one
+                if (process is EngineConnection && reason.contains("shutting down")) {
+                    reconnectPromptly = ++drainRefusals <= MAX_DRAIN_REFUSALS
+                    process?.stop()
+                    return
+                }
                 setState(SidecarState.FAILED, "The sidecar does not speak protocol $SIDECAR_PROTOCOL_VERSION: $reason")
                 process?.stop(500)
             }
@@ -242,23 +307,30 @@ class SidecarService(private val project: Project) : Disposable {
         }
     }
 
-    private fun onExit(gen: Int, code: Int) {
+    private fun onExit(gen: Int, what: String) {
         if (gen != generation.get()) return
         outbox.reset()
         process = null
         starting = false
         if (disposed.get() || state == SidecarState.FAILED) return
-        Acpira.LOG.warn("sidecar exited with code $code")
+        Acpira.LOG.warn("sidecar exited ($what)")
+        if (reconnectPromptly) {
+            // Not a failure: the restart counter stays as it is
+            reconnectPromptly = false
+            setState(SidecarState.STARTING, "The engine is restarting, reconnecting…")
+            AppExecutorUtil.getAppScheduledExecutorService().schedule({ enqueue { if (!disposed.get() && process == null) startOnIo() } }, DRAIN_RECONNECT_MS, TimeUnit.MILLISECONDS)
+            return
+        }
         // Exponential backoff, giving up after a burst of failures. helloOk does not reset the counter: a process that
         // handshakes and dies immediately still counts. A long-lived run starts a new burst; Retry zeroes it
         val uptime = System.currentTimeMillis() - lastStart
         restarts = if (uptime > 60_000) 1 else restarts + 1
         if (restarts > 5) {
-            setState(SidecarState.FAILED, "The sidecar keeps exiting (last code $code); see the IDE log.")
+            setState(SidecarState.FAILED, "The sidecar keeps exiting (last: $what); see the IDE log.")
             return
         }
         val delay = minOf(30_000L, 1000L shl (restarts - 1))
-        setState(SidecarState.STARTING, "Sidecar exited (code $code), restarting in ${delay / 1000}s…")
+        setState(SidecarState.STARTING, "Sidecar exited ($what), restarting in ${delay / 1000}s…")
         AppExecutorUtil.getAppScheduledExecutorService().schedule({ enqueue { if (!disposed.get() && process == null) startOnIo() } }, delay, TimeUnit.MILLISECONDS)
     }
 
@@ -280,6 +352,11 @@ class SidecarService(private val project: Project) : Disposable {
     }
 
     companion object {
+        // One start's budget for reaching the machine's engine across retries (`acpira engine` itself may take up to 40 s)
+        private const val ENGINE_REACH_MS = 45_000L
+        private const val DRAIN_RECONNECT_MS = 200L
+        private const val MAX_DRAIN_REFUSALS = 5
+
         fun getInstance(project: Project): SidecarService = project.service()
     }
 }

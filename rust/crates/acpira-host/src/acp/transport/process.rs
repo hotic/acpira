@@ -219,6 +219,9 @@ impl AgentProcess {
       job,
       reaped: Arc::new(parking_lot::Mutex::new(false)),
     });
+    if let (Some(pid), Some(sig)) = (pid, &signals) {
+      LIVE_AGENTS.lock().insert(pid, sig.clone());
+    }
     let stdin = child.stdin.take().ok_or_else(|| anyhow!("agent stdin is not piped"))?;
     let stdout = child.stdout.take().ok_or_else(|| anyhow!("agent stdout is not piped"))?;
     let stderr = child.stderr.take().ok_or_else(|| anyhow!("agent stderr is not piped"))?;
@@ -260,6 +263,12 @@ impl AgentProcess {
         #[cfg(windows)]
         sig.job.terminate();
         *sig.reaped.lock() = true;
+        #[cfg(unix)]
+        LIVE_AGENTS.lock().remove(&sig.pid);
+      }
+      #[cfg(not(unix))]
+      if let Some(pid) = pid {
+        LIVE_AGENTS.lock().remove(&pid);
       }
       let (code, signal) = match status {
         Ok(s) => (s.code(), signal_name(&s)),
@@ -323,6 +332,20 @@ impl AgentProcess {
     self.kill_now();
     let mut life = self.life.clone();
     let _ = life.wait_for(|l| *l == Life::Exited).await;
+  }
+}
+
+/// Every agent process this engine started and has not reaped yet, by pid. Kept apart from the sessions, whose locks a
+/// wedged engine may never release (`kill_all_hard`)
+static LIVE_AGENTS: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashMap<u32, Signals>>> = std::sync::LazyLock::new(Default::default);
+
+/// SIGKILL to every agent this engine started (its process group, or its Job on Windows), for an engine about to exit
+/// without its normal teardown: its leases come free with it, and no agent may still write a native session that the
+/// next engine resumes
+pub fn kill_all_hard() {
+  let all: Vec<Signals> = LIVE_AGENTS.lock().values().cloned().collect();
+  for sig in all {
+    sig.send(true);
   }
 }
 

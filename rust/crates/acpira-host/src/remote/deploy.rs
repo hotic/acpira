@@ -1,7 +1,9 @@
 //! Putting the helper on a host. One ssh command probes (platform, machine id, home, the installed copy's digest); when
 //! the copy is missing or differs, a second one takes the gzipped binary on stdin, checks its digest on the host and
-//! renames it into place. Each build has its own folder, `~/.acpira/remote/bin/<version>-<digest>/`, so two machines
-//! deploying at once only race to rename identical bytes, and a host serving an older engine elsewhere keeps its copy.
+//! renames it into place. Each build has its own folder, `~/.acpira/engine/<version>-<digest>/` (the same folders the
+//! host's own shells land their engines in, `machine_engine/stage.rs`), so two machines deploying at once only race to
+//! rename identical bytes, a host serving an older engine elsewhere keeps its copy, and the helper's build can serve as
+//! the host's engine without another copy.
 //! The host never downloads anything: gen1 sits in a server room with no promise of reaching GitHub
 
 use std::path::{Path, PathBuf};
@@ -48,7 +50,7 @@ impl Probe {
 
 /// The folder, relative to the host's home, a build lives in
 pub fn build_dir(version: &str, digest: &str) -> String {
-  format!(".acpira/remote/bin/{version}-{}", digest.get(..DIGEST_DIR).unwrap_or(digest))
+  format!(".acpira/{}/{version}-{}", crate::machine_engine::stage::DIR, digest.get(..DIGEST_DIR).unwrap_or(digest))
 }
 
 /// The probe script (POSIX sh). It cannot know the digest to look for before it knows the platform, so it lists this
@@ -61,7 +63,7 @@ mid="${{ACPIRA_REMOTE_MACHINE_ID:-}}"
 [ -n "$mid" ] || mid=$(/usr/sbin/ioreg -rd1 -c IOPlatformExpertDevice 2>/dev/null | sed -n 's/.*"IOPlatformUUID" = "\(.*\)"/\1/p')
 printf '{PROBE}machine=%s\n' "$mid"
 printf '{PROBE}home=%s\n' "$HOME"
-for f in "$HOME"/.acpira/remote/bin/{version}-*/acpira; do
+for f in "$HOME"/.acpira/engine/{version}-*/acpira; do
   [ -f "$f" ] && [ ! -L "$f" ] || continue
   d=${{f%/acpira}}; printf '{PROBE}installed=%s\n' "${{d##*/{version}-}}"
 done
@@ -86,6 +88,8 @@ if command -v sha256sum >/dev/null 2>&1; then s=$(sha256sum "$T"); else s=$(shas
 s="${{s%% *}}"
 [ "$s" = "{digest}" ] || {{ printf '{DEPLOY}error=digest %s after the upload\n' "$s"; exit 1; }}
 chmod 700 "$T" && mv -f "$T" "$D/acpira" || {{ printf '{DEPLOY}error=cannot put the binary in place\n'; exit 1; }}
+# What the host's engine pruning looks for: processes running this copy hold it (machine_engine/stage.rs)
+: >> "$D/.in-use"
 trap - EXIT
 printf '{DEPLOY}ok\n'
 "#
@@ -159,11 +163,14 @@ pub fn local_binary(platform: &str) -> Option<PathBuf> {
   if beside.is_file() {
     return Some(beside);
   }
-  // rust/target/<profile>/acpira → <checkout>/dist/sidecar
-  if let Some(checkout) = dir.parent().and_then(Path::parent).and_then(Path::parent) {
-    let dist = checkout.join("dist").join("sidecar").join(platform).join("acpira");
-    if dist.is_file() {
-      return Some(dist);
+  // rust/target/<profile>/acpira → <checkout>/dist/sidecar, also for an engine landed from there (`machine_engine::stage`)
+  let source = crate::machine_engine::stage::source_of(dir);
+  for from in std::iter::once(dir.to_path_buf()).chain(source.as_deref().and_then(Path::parent).map(Path::to_path_buf)) {
+    if let Some(checkout) = from.parent().and_then(Path::parent).and_then(Path::parent) {
+      let dist = checkout.join("dist").join("sidecar").join(platform).join("acpira");
+      if dist.is_file() {
+        return Some(dist);
+      }
     }
   }
   (platform == local_platform()).then_some(exe)
@@ -298,7 +305,7 @@ mod tests {
     );
     // Cut short (the connection dropped mid-way): no probe
     assert_eq!(parse_probe("ACPIRA-PROBE platform=Linux x86_64\n"), None);
-    assert_eq!(build_dir("1.10.8", "0123456789abcdef0123"), ".acpira/remote/bin/1.10.8-0123456789abcdef");
+    assert_eq!(build_dir("1.10.8", "0123456789abcdef0123"), ".acpira/engine/1.10.8-0123456789abcdef");
   }
 
   // The scripts run on the SSH host; Windows has no /bin/sh to parse them with

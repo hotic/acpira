@@ -105,6 +105,11 @@ lto = "thin"
 strip = "symbols"
 panic = "abort"
 
+# Debug builds hash their own binary (~150 MB) when they land as the machine's engine (machine_engine/stage.rs) and when
+# they deploy to an SSH host: unoptimized sha2 takes seconds for it, optimized a fraction of one
+[profile.dev.package.sha2]
+opt-level = 3
+
 # Shipped engines (scripts/release/build-sidecar.mjs in CI, with --all or --dist): whole-program LTO in one codegen unit
 # is ~35% smaller (33 → 22 MB on darwin-arm64, 2026-10-25) for ~4x the build time, which day-to-day `--release` builds
 # (pnpm harness, probes) do not pay

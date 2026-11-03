@@ -78,9 +78,9 @@ jobs:
         if: matrix.platform == 'linux-x86_64' && github.event_name == 'workflow_dispatch'
         working-directory: rust
         run: cargo test --workspace --locked
-      # A Developer ID signature on the macOS engine and gateway keeps macOS privacy grants (App Management for the
-      # agents the gateway runs) across upgrades; build-sidecar.mjs signs with it when the keychain has one, and the
-      # binaries stay ad hoc without the secret
+      # A Developer ID signature on the macOS engine keeps macOS privacy grants (App Management for the agents the
+      # engine remote access's login service starts runs) across upgrades; build-sidecar.mjs signs with it when the
+      # keychain has one, and the binaries stay ad hoc without the secret
       - name: Import the Developer ID certificate into a temporary keychain
         if: runner.os == 'macOS' && env.HAS_APPLE_CERT == 'true'
         env:
@@ -330,7 +330,7 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
         run: |
-          chmod +x dist/sidecar/*/acpira dist/sidecar/*/acpira-gateway
+          chmod +x dist/sidecar/*/acpira
           pnpm build
           export APPLE_API_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
           printf '%s' "$APPLE_API_KEY_P8" > "$APPLE_API_KEY_PATH"
@@ -545,7 +545,7 @@ jobs:
           path: dist/sidecar
       - name: Build the packages
         run: |
-          chmod +x dist/sidecar/*/acpira dist/sidecar/*/acpira-gateway
+          chmod +x dist/sidecar/*/acpira
           pnpm build
           node apps/desktop/scripts/package-linux.mjs
           mkdir -p dl sums

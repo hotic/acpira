@@ -18,6 +18,7 @@ pub mod i18n;
 pub mod inventory;
 pub mod json;
 pub mod limits;
+pub mod machine_engine;
 pub mod model_catalog;
 pub mod net_proxy;
 pub mod node_files;

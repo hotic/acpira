@@ -1,5 +1,5 @@
-//! Windows GUI programs (the desktop exe, `acpira-gateway`) start without a console, so a command typed in a terminal
-//! (`Acpira.exe agents`, `acpira-gateway status`) has nowhere to print: it borrows the terminal's console when its output
+//! Windows GUI programs (the desktop exe) start without a console, so a command typed in a terminal
+//! (`Acpira.exe agents`, `Acpira.exe gateway status`) has nowhere to print: it borrows the terminal's console when its output
 //! goes nowhere else. The terminal does not wait for a GUI program, so its output lands after the next prompt. Nothing
 //! elsewhere
 

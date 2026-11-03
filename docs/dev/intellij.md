@@ -26,6 +26,7 @@ A modular Kotlin shell (frontend tool window + JCEF, backend sidecar, native pla
 - Each view's post channel stays gated until the attach flow emits its first state, so page `ready` cannot overtake attach; a later backend `READY` reloads the page so it sends `ready` again.
 - `ProjectRemoteTopic`'s listener API is internal on 261 and fails Plugin Verifier, hence the `uiRequests` flow.
 - `SidecarService` (one per project): start, handshake, attach, outbox drain and sends share one single-thread executor and a generation number: two views cannot spawn two processes, and a replaced process's callbacks cannot touch the new one.
+- On macOS / Linux the link is a connection to the machine engine (`MachineEngine.kt`, `acpira engine` off the executor so sends keep queueing); Windows and `ACPIRA_ENGINE=stdio` keep a child per project. A closed connection or a "shutting down" hello reject (a newer build took over) counts as an exit: the restart re-runs `acpira engine` and lands on whatever serves now. Reads and writes go straight to the `SocketChannel`: `Channels.newInputStream` / `newOutputStream` share one blocking lock, so a write can wait behind a parked read.
 - `helloOk` does not reset the restart counter (only a >60 s run or Retry), so a crash-on-start loop still ends in `FAILED`.
 - `AcpiraSettings` stores the `acpira.*` JSON as one string: `SerializablePersistentStateComponent` over an immutable data class saved an empty `<State />` (`AcpiraSettingsStateTest`).
 - `IdeTerminalRunner`: a `null` env value must unset the variable in the shell's own dialect (`env -u`, `$env:X=$null`, `set "X="`).
@@ -33,7 +34,7 @@ A modular Kotlin shell (frontend tool window + JCEF, backend sidecar, native pla
 
 ## Split mode (2026.1 / 262 Client)
 
-- One sidecar, in the backend; the frontend never starts one.
+- The engine link lives in the backend; the frontend never starts or reaches one.
 - JCEF and `AcpiraScheme` stay frontend-only: a projected backend browser does not know the backend-registered factory (`ERR_UNKNOWN_URL_SCHEME`).
 - File opening: the backend sends absolute paths, the frontend calls `resolveFile` over RPC, and the backend calls `rpcId()` inside that Client session. `rpcId()` on the sidecar reader thread loses the session (`serializedValue=null`); frontend `LocalFileSystem` works only on one machine.
 - `resolveFile` returns the backend's directory flag (Client VFS may call directories files); selection uses `SelectInTarget.selectIn`, since `ProjectView.select` only expands remote roots.

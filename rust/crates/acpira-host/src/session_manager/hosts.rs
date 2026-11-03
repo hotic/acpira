@@ -7,13 +7,13 @@
 //! the host, `acp/session/remote.rs`), on the host for every other. The last list a host sent stays (also on disk) while
 //! it is away
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -25,6 +25,7 @@ use acpira_shared::sidecar::SessionListScope;
 use acpira_shared::transcript::SessionSummary;
 
 use super::{SessionManager, Viewer, is_forwarded, remote_view, session_id_of};
+use crate::remote::client::Event;
 use crate::remote::peer::{PeerHello, PeerLink};
 
 /// How long one attempt waits for the host's helper channel
@@ -38,9 +39,14 @@ const NEW_WAIT: Duration = Duration::from_secs(60);
 /// What this engine serves for the host's engine (the requests its views cause come back here).
 /// A local terminal cannot run host logins, and a fresh SSH login cannot unlock the engine's macOS keychain session.
 const PEER_CAPS: &[&str] = &["toast"];
-/// How long a host session's view is held back for the blobs it shows to come over from the host; then it goes out
-/// with whatever arrived
-const BLOB_WAIT: Duration = Duration::from_secs(20);
+/// Blob fetches from one host at a time: a session full of pictures must not queue the view stream behind them all
+const BLOB_FETCHES: usize = 3;
+/// The largest blob fetched without being asked for; a larger one stays on the host and its view shows it as missing
+const AUTO_BLOB_MAX: u64 = 64 << 20;
+/// Blobs landing this close together put their session's view out once
+const BLOB_SETTLE: Duration = Duration::from_millis(200);
+/// A cut-off fetch nobody resumed within this long is dropped
+const PARTIAL_KEEP: Duration = Duration::from_secs(7 * 24 * 3600);
 /// A bounded on-demand metadata query; disconnected hosts never block a history search.
 const QUERY_WAIT: Duration = Duration::from_secs(15);
 
@@ -74,13 +80,13 @@ struct HostRun {
   seq: AtomicU64,
   task: parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>,
   /// Blobs being fetched from the host into this machine's store, as `<session>/<name>`
-  blobs: parking_lot::Mutex<std::collections::HashSet<String>>,
+  blobs: parking_lot::Mutex<HashSet<String>>,
+  /// Fetches running at once (`BLOB_FETCHES`)
+  slots: Arc<tokio::sync::Semaphore>,
+  /// Sessions whose view goes out again shortly, with the blobs that landed meanwhile (`blob_landed`)
+  settling: parking_lot::Mutex<HashSet<String>>,
   /// Public account metadata for this host only; never merged into this machine's account list.
   auth: parking_lot::Mutex<Value>,
-  /// Blob fetches each session's view waits for, by session id: while any runs, its views are kept here instead of
-  /// sent, so a page never loads an image before its file is on this machine. Kept apart from `Shown`, which a page
-  /// switching away and back drops and builds anew while the fetch still runs
-  fetching: parking_lot::Mutex<HashMap<String, usize>>,
 }
 
 /// One host session's view here
@@ -92,6 +98,25 @@ struct Shown {
   host_rev: Option<i64>,
   parts: Option<ViewParts>,
   msg: Option<HostMsg>,
+  /// Blobs the view names that are not on this machine (yet): left out of what pages get, since a page loads a blob
+  /// from this machine's store and never reloads one that failed
+  absent: HashSet<String>,
+}
+
+impl Shown {
+  fn new(view_id: String) -> Shown {
+    Shown { view_id, epoch: crate::acp::session::next_view_epoch(), host_rev: None, parts: None, msg: None, absent: HashSet::new() }
+  }
+
+  /// Keep the host's view as `parts` (what its patches apply to) and build what pages get from it, without the
+  /// `absent` blobs
+  fn publish(&mut self, id: &str, head: &RawValue, rev: i64, turns: Vec<Box<RawValue>>, last: Option<LastTurnParts>) -> Option<HostMsg> {
+    let (parts, msg) = remote_view(id, head, rev, self.epoch, turns, last)?;
+    let msg = if self.absent.is_empty() { msg } else { without_blobs(id, &parts, &self.absent, rev, self.epoch).unwrap_or(msg) };
+    self.parts = Some(parts);
+    self.msg = Some(msg.clone());
+    Some(msg)
+  }
 }
 
 /// Cancellation drops pending replies and closes temporary lookup views as well as timeouts do.
@@ -116,11 +141,6 @@ impl HostRun {
     let _pending = HostRequest { run: self, key };
     send();
     tokio::time::timeout(QUERY_WAIT, rx).await.ok().and_then(Result::ok)
-  }
-
-  /// Whether a blob fetch session `id`'s view waits for still runs (`fetch_host_blobs`)
-  fn is_fetching(&self, id: &str) -> bool {
-    self.fetching.lock().get(id).is_some_and(|n| *n > 0)
   }
 
   async fn lookup(&self, id: &str) -> bool {
@@ -287,6 +307,15 @@ impl SessionManager {
     }));
     *self.hosts.sub.lock() = Some(id);
     self.sync_hosts(&connections.views());
+    // Cut-off blob fetches of sessions nobody opened again (`fetch_host_blob`)
+    let partials = self.deps.store.partial_dir();
+    tokio::task::spawn_blocking(move || {
+      for e in std::fs::read_dir(&partials).into_iter().flatten().flatten() {
+        if e.metadata().ok().and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok()).is_some_and(|age| age > PARTIAL_KEEP) {
+          let _ = std::fs::remove_file(e.path());
+        }
+      }
+    });
   }
 
   pub(super) fn stop_hosts(&self) {
@@ -300,8 +329,25 @@ impl SessionManager {
     }
   }
 
+  /// The set of windows changed: SSH host lists follow what the connected windows show (`host_folders`)
+  pub(super) fn viewers_moved(&self) {
+    if !self.hosts.runs.lock().is_empty() {
+      self.sync_host_scopes();
+    }
+  }
+
+  /// Whether host lists narrow to the registered projects: only while every connected window is a project shell (a
+  /// window with a workspace lists all of a host's sessions); with no window's viewer, the engine-wide shell decides
+  fn lists_by_project(&self) -> bool {
+    let shells: Vec<bool> = self.viewers().iter().filter_map(|v| v.shell.as_ref().map(|s| (s.projects)())).collect();
+    if shells.is_empty() {
+      return (self.deps.projects)();
+    }
+    shells.into_iter().all(|p| p)
+  }
+
   fn host_folders(&self, alias: &str) -> Option<Vec<String>> {
-    if !(self.deps.projects)() {
+    if !self.lists_by_project() {
       return None;
     }
     Some(
@@ -371,8 +417,9 @@ impl SessionManager {
           seq: Default::default(),
           task: Default::default(),
           blobs: Default::default(),
+          slots: Arc::new(tokio::sync::Semaphore::new(BLOB_FETCHES)),
+          settling: Default::default(),
           auth: parking_lot::Mutex::new(json!({ "agents": [], "accounts": [], "actions": [] })),
-          fetching: Default::default(),
         });
         *run.task.lock() = Some(tokio::spawn(drive(Arc::downgrade(self), run.clone())));
         runs.insert(alias.to_owned(), run);
@@ -503,8 +550,7 @@ impl SessionManager {
   /// A shown host session's current push
   pub(super) fn host_msg(&self, id: &str) -> Option<HostMsg> {
     let run = self.host_of(id)?;
-    // Not while it is held for its blobs: a page that loads it now would show broken images (`fetch_host_blobs`)
-    run.shown.lock().get(id).filter(|_| !run.is_fetching(id)).and_then(|s| s.msg.clone())
+    run.shown.lock().get(id).and_then(|s| s.msg.clone())
   }
 
   pub(super) fn host_cwd(&self, id: &str) -> Option<String> {
@@ -538,7 +584,7 @@ impl SessionManager {
       _ => None,
     };
     if let (W::NewSession { agent, .. }, Some((f, run))) = (m, asked_on) {
-      self.register_project(&local_folder(&f.alias, &f.path)).await;
+      self.register_project(Some(v), &local_folder(&f.alias, &f.path)).await;
       // A host still being reached (the first connection deploys the helper) is waited for
       let mut up = run.up.subscribe();
       let _ = tokio::time::timeout(NEW_WAIT, up.wait_for(|u| *u)).await;
@@ -615,20 +661,10 @@ impl SessionManager {
     let current = {
       let mut shown = run.shown.lock();
       match shown.get(id) {
-        // A view held for its blobs goes out once they are here (`fetch_host_blobs`)
-        Some(s) => s.msg.clone().filter(|_| !run.is_fetching(id)),
+        Some(s) => s.msg.clone(),
         None => {
           let view_id = run.next_view_id();
-          shown.insert(
-            id.to_owned(),
-            Shown {
-              view_id: view_id.clone(),
-              epoch: crate::acp::session::next_view_epoch(),
-              host_rev: None,
-              parts: None,
-              msg: None,
-            },
-          );
+          shown.insert(id.to_owned(), Shown::new(view_id.clone()));
           drop(shown);
           run.open_view(&view_id, json!({ "sessionList": { "folders": [] }, "session": id }));
           None
@@ -771,10 +807,8 @@ impl SessionManager {
         head["remoteAuth"] = remote_auth(&run.auth.lock(), head.get("agent")?.as_str()?);
         let head = serde_json::value::to_raw_value(&head).ok()?;
         let last = prev.0.last.as_ref().map(|l| LastTurnParts { head: l.head.clone(), blocks: l.blocks.clone() });
-        let (parts, msg) = remote_view(id, &head, self.next_mirror_rev(), s.epoch, prev.0.turns.clone(), last)?;
-        s.parts = Some(parts);
-        s.msg = Some(msg.clone());
-        (!run.is_fetching(id)).then(|| (id.clone(), msg))
+        let turns = prev.0.turns.clone();
+        s.publish(id, &head, self.next_mirror_rev(), turns, last).map(|msg| (id.clone(), msg))
       }).collect()
     };
     for (id, msg) in messages {
@@ -831,76 +865,66 @@ impl SessionManager {
   /// Bring the blobs a host session's view shows into this machine's store, where every page loads them from (the
   /// webview's blob URLs, a paired phone's blob requests). True while the session's view is held for a fetch, its own
   /// or one already running; the latest view goes out once the last one ends
-  fn fetch_host_blobs(self: &Arc<Self>, run: &Arc<HostRun>, id: &str, refs: Vec<String>) -> bool {
-    let store = self.deps.store.clone();
-    let missing: Vec<String> = {
-      let mut flying = run.blobs.lock();
-      let mut names = vec![];
-      for name in refs {
-        let key = format!("{id}/{name}");
-        if names.contains(&name) || flying.contains(&key) || store.blob_path(id, &name).is_none_or(|p| p.exists()) {
-          continue;
+  /// Bring blobs a host session's view names into this machine's store, in the background: the view went out without
+  /// them (`Shown::publish`), and it goes out again as they land (`blob_landed`)
+  fn fetch_host_blobs(self: &Arc<Self>, run: &Arc<HostRun>, id: &str, names: Vec<String>) {
+    if names.is_empty() {
+      return;
+    }
+    let Some(client) = self.deps.remote.as_ref().and_then(|c| c.client(&run.alias)) else { return };
+    for name in names {
+      let key = format!("{id}/{name}");
+      if !run.blobs.lock().insert(key.clone()) {
+        continue;
+      }
+      let (weak, run, id, client, store) = (Arc::downgrade(self), run.clone(), id.to_owned(), client.clone(), self.deps.store.clone());
+      tokio::spawn(async move {
+        let fetched = match run.slots.clone().acquire_owned().await {
+          Ok(_slot) => fetch_host_blob(&client, &store, &id, &name).await,
+          Err(_) => return,
+        };
+        run.blobs.lock().remove(&key);
+        let Some(m) = weak.upgrade() else { return };
+        match fetched {
+          Ok(true) => m.blob_landed(&run, &id, &name),
+          Ok(false) => m.log(&format!("remote run: {id}/{name} on {} is over {} MB, left there", run.alias, AUTO_BLOB_MAX >> 20)),
+          Err(e) => m.log(&format!("remote run: {id}/{name} from {}: {e:#}", run.alias)),
         }
-        flying.insert(key);
-        names.push(name);
-      }
-      names
-    };
-    if !run.shown.lock().contains_key(id) {
-      return false;
+      });
     }
-    let held = {
-      let mut fetching = run.fetching.lock();
-      if !missing.is_empty() {
-        *fetching.entry(id.to_owned()).or_default() += 1;
+  }
+
+  /// A blob of a shown host session is on this machine now: its view goes out again with it, once for the blobs that
+  /// land within `BLOB_SETTLE` (each rebuild touches the whole view)
+  fn blob_landed(self: &Arc<Self>, run: &Arc<HostRun>, id: &str, name: &str) {
+    {
+      let mut shown = run.shown.lock();
+      let Some(s) = shown.get_mut(id) else { return };
+      if !s.absent.remove(name) {
+        return;
       }
-      fetching.get(id).is_some_and(|n| *n > 0)
-    };
-    if missing.is_empty() {
-      return held;
     }
-    let client = self.deps.remote.as_ref().and_then(|c| c.client(&run.alias));
+    if !run.settling.lock().insert(id.to_owned()) {
+      return;
+    }
     let (weak, run, id) = (Arc::downgrade(self), run.clone(), id.to_owned());
     tokio::spawn(async move {
-      if let Some(client) = client {
-        let fetch = async {
-          for name in &missing {
-            if let Err(e) = fetch_host_blob(&client, &store, &id, name).await
-              && let Some(m) = weak.upgrade()
-            {
-              m.log(&format!("remote run: {id}/{name} from {}: {e:#}", run.alias));
-            }
-          }
-        };
-        if tokio::time::timeout(BLOB_WAIT, fetch).await.is_err()
-          && let Some(m) = weak.upgrade()
-        {
-          m.log(&format!("remote run: {id}'s blobs from {} took over {}s, showing it without them", run.alias, BLOB_WAIT.as_secs()));
-        }
-      }
-      run.blobs.lock().retain(|k| !missing.iter().any(|n| *k == format!("{id}/{n}")));
-      {
-        let mut fetching = run.fetching.lock();
-        let left = fetching.get_mut(&id).map(|n| {
-          *n = n.saturating_sub(1);
-          *n
-        });
-        match left {
-          Some(0) => {
-            fetching.remove(&id);
-          }
-          Some(_) => return,
-          None => {}
-        }
-      }
-      let Some(latest) = run.shown.lock().get(&id).map(|s| s.msg.clone()) else { return };
-      if let (Some(msg), Some(m)) = (latest, weak.upgrade()) {
+      tokio::time::sleep(BLOB_SETTLE).await;
+      run.settling.lock().remove(&id);
+      let Some(m) = weak.upgrade() else { return };
+      let msg = {
+        let mut shown = run.shown.lock();
+        let Some(s) = shown.get_mut(&id) else { return };
+        let Some(parts) = s.parts.clone() else { return };
+        let last = parts.0.last.as_ref().map(|l| LastTurnParts { head: l.head.clone(), blocks: l.blocks.clone() });
+        s.publish(&id, &parts.0.head, m.next_mirror_rev(), parts.0.turns.clone(), last)
+      };
+      if let Some(msg) = msg {
         for v in m.viewers_on(&id, None) {
           v.emit(msg.clone());
         }
       }
     });
-    true
   }
 
   fn on_host_view(self: &Arc<Self>, run: &Arc<HostRun>, view_id: &str, msg: &Value) {
@@ -926,16 +950,7 @@ impl SessionManager {
         let previous = shown.iter().find(|(old, s)| old.as_str() != id && s.view_id == view_id).map(|(old, _)| old.clone());
         if let Some(old) = &previous {
           shown.remove(old);
-          shown.insert(
-            id.to_owned(),
-            Shown {
-              view_id: view_id.to_owned(),
-              epoch: crate::acp::session::next_view_epoch(),
-              host_rev: None,
-              parts: None,
-              msg: None,
-            },
-          );
+          shown.insert(id.to_owned(), Shown::new(view_id.to_owned()));
         }
         previous
       };
@@ -955,16 +970,7 @@ impl SessionManager {
       && !again
       && let Some(viewer) = run.asked.lock().remove(view_id)
     {
-      run.shown.lock().insert(
-        id.to_owned(),
-        Shown {
-          view_id: view_id.to_owned(),
-          epoch: crate::acp::session::next_view_epoch(),
-          host_rev: None,
-          parts: None,
-          msg: None,
-        },
-      );
+      run.shown.lock().insert(id.to_owned(), Shown::new(view_id.to_owned()));
       if let Some(v) = viewer.upgrade() {
         self.set_active(&v, Some(id.to_owned()));
       }
@@ -975,9 +981,15 @@ impl SessionManager {
     if let Some(step) = whole.or(patch) {
       blob_refs(step, &id, &mut refs);
     }
+    // Those not on this machine: the view goes out without them now, and each comes back with its file
+    refs.sort_unstable();
+    refs.dedup();
+    let store = &self.deps.store;
+    refs.retain(|name| store.blob_path(&id, name).is_some_and(|p| !p.exists()));
     let built = {
       let mut shown = run.shown.lock();
       let Some(s) = shown.get_mut(&id) else { return };
+      s.absent.extend(refs.iter().cloned());
       let step = match (whole, patch) {
         (Some(w), _) => split_view(w),
         (None, Some(p)) if p.get("id").and_then(Value::as_str) == Some(id.as_str()) => {
@@ -1001,19 +1013,13 @@ impl SessionManager {
           }
           let rev = self.next_mirror_rev();
           let head = serde_json::value::to_raw_value(&head).ok();
-          head.and_then(|h| remote_view(&id, &h, rev, s.epoch, turns, last)).map(|(parts, msg)| {
-            s.parts = Some(parts);
-            s.msg = Some(msg.clone());
-            msg
-          })
+          head.and_then(|h| s.publish(&id, &h, rev, turns, last))
         }
       }
     };
     match built {
       Some(msg) => {
-        if self.fetch_host_blobs(run, &id, refs) {
-          return;
-        }
+        self.fetch_host_blobs(run, &id, refs);
         for v in self.viewers_on(&id, None) {
           v.emit(msg.clone());
         }
@@ -1070,21 +1076,91 @@ fn blob_refs(v: &Value, session_id: &str, out: &mut Vec<String>) {
   }
 }
 
-/// One blob of a host session from the host's store into this machine's. Blobs are named by their content, so bytes that
-/// do not match the name are refused
+/// The view pages get of a host session: its parts without the `absent` blobs. Every block and attachment kind takes a
+/// missing `blob` for a file that could not be read, so a page shows the rest and loads the file once the next view
+/// names it
+fn without_blobs(id: &str, parts: &ViewParts, absent: &HashSet<String>, rev: i64, epoch: u64) -> Option<HostMsg> {
+  fn strip(v: &mut Value, absent: &HashSet<String>) {
+    match v {
+      Value::Object(m) => {
+        if m.get("blob").and_then(Value::as_str).is_some_and(|b| absent.contains(b)) {
+          m.remove("blob");
+        }
+        m.values_mut().for_each(|x| strip(x, absent));
+      }
+      Value::Array(a) => a.iter_mut().for_each(|x| strip(x, absent)),
+      _ => {}
+    }
+  }
+  // Only the pieces naming one are parsed again; the rest are shared as they are
+  let mask = |raw: &RawValue| -> Option<Box<RawValue>> {
+    if !absent.iter().any(|n| raw.get().contains(n.as_str())) {
+      return Some(raw.to_owned());
+    }
+    let mut v: Value = serde_json::from_str(raw.get()).ok()?;
+    strip(&mut v, absent);
+    serde_json::value::to_raw_value(&v).ok()
+  };
+  let turns = parts.0.turns.iter().map(|t| mask(t)).collect::<Option<Vec<_>>>()?;
+  let last = match &parts.0.last {
+    Some(l) => Some(LastTurnParts { head: l.head.clone(), blocks: l.blocks.iter().map(|b| mask(b)).collect::<Option<Vec<_>>>()? }),
+    None => None,
+  };
+  remote_view(id, &parts.0.head, rev, epoch, turns, last).map(|(_, msg)| msg)
+}
+
+/// One blob of a host session from the host's store into this machine's, written as it comes (`<sessions>/.partial/`)
+/// and resumed from there after a cut. Blobs are named by their content, so a file that does not match the name is
+/// refused. False when the host left it out as too large (`AUTO_BLOB_MAX`)
 async fn fetch_host_blob(
   client: &crate::remote::client::RemoteClient,
   store: &crate::store::transcript_store::TranscriptStore,
   id: &str,
   name: &str,
-) -> Result<()> {
-  let reply = client.call("storeBlobGet", json!({ "id": id, "name": name })).await.map_err(|e| anyhow!("{e}"))?;
+) -> Result<bool> {
+  use tokio::io::AsyncWriteExt;
   let ext = name.rsplit_once('.').map(|(_, e)| format!(".{e}")).unwrap_or_default();
-  if crate::store::transcript_store::blob_name(&ext, &reply.data) != name {
-    return Err(anyhow!("the host's bytes do not match the name"));
+  let dir = store.partial_dir();
+  tokio::fs::create_dir_all(&dir).await?;
+  let part = dir.join(format!("{id}-{name}"));
+  let have = match tokio::fs::metadata(&part).await {
+    Ok(m) if m.modified().ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age < PARTIAL_KEEP) => m.len(),
+    _ => {
+      let _ = tokio::fs::remove_file(&part).await;
+      0
+    }
+  };
+  let mut call = client.request("storeBlobGet", json!({ "id": id, "name": name, "offset": have, "max": AUTO_BLOB_MAX }));
+  let mut file = tokio::fs::OpenOptions::new().create(true).append(true).open(&part).await?;
+  let reply = loop {
+    match call.next().await {
+      Some(Event::Chunk { stream, bytes }) if stream == "data" => file.write_all(&bytes).await?,
+      Some(Event::Chunk { .. }) => {}
+      Some(Event::Done(r)) => break r.map_err(|e| anyhow!("{e}"))?,
+      None => bail!("the connection ended"),
+    }
+  };
+  file.flush().await?;
+  drop(file);
+  if reply.get("skipped").and_then(Value::as_bool) == Some(true) {
+    if have == 0 {
+      let _ = tokio::fs::remove_file(&part).await;
+    }
+    return Ok(false);
   }
-  store.save_blob(id, &ext, &reply.data).await?;
-  Ok(())
+  // A helper that does not resume (an older release a local build deployed) sent the whole blob after the kept piece
+  if have > 0 && reply.get("offset").and_then(Value::as_u64) != Some(have) {
+    let _ = tokio::fs::remove_file(&part).await;
+    bail!("the host sent the blob from its start again; fetching it whole next time");
+  }
+  let (check, ext_of) = (part.clone(), ext.clone());
+  let got = tokio::task::spawn_blocking(move || crate::store::transcript_store::blob_name_of_file(&ext_of, &check)).await??;
+  if got != name {
+    let _ = tokio::fs::remove_file(&part).await;
+    bail!("the host's bytes do not match the name");
+  }
+  store.adopt_blob(id, name, part).await?;
+  Ok(true)
 }
 
 /// One host's connection, for as long as the host stays in remote run: reach its engine, open the list view and the
@@ -1157,7 +1233,17 @@ async fn drive(weak: Weak<SessionManager>, run: Arc<HostRun>) {
         }
       }
     }
-    tokio::time::sleep(retry).await;
+    // A helper channel that comes up during the backoff ends it: the page shows the host as connected from then on, and
+    // every pick or new session would otherwise queue until the backoff ran out (up to RETRY_MAX). A channel that was up
+    // already (its engine failed) waits the backoff out, or this would spin
+    let wake = weak.upgrade().and_then(|m| m.deps.remote.clone()).filter(|c| !c.is_up(&run.alias));
+    match wake {
+      Some(c) => tokio::select! {
+        _ = tokio::time::sleep(retry) => {}
+        _ = c.until_up(&run.alias) => {}
+      },
+      None => tokio::time::sleep(retry).await,
+    }
     retry = (retry * 2).min(RETRY_MAX);
   }
 }

@@ -503,10 +503,29 @@ async fn dispatch(op: &str, a: Value, id: u64, out: &Out, stdin: Option<mpsc::Un
     // This host's session store, for the engines that keep one history per host (`host_store.rs`)
     "storeStat" | "storePut" | "storeBlob" | "storeRemove" => super::host_store::serve(op, &a, stdin).await,
     // One blob of a host session, for an engine showing that session (`session_manager/hosts.rs`)
+    // Read and sent in pieces, so a large one never sits whole in memory. `offset` resumes a fetch cut off before;
+    // `max` skips a blob larger than that (answered with its size, no data)
     "storeBlobGet" => {
-      let bytes = super::host_store::read_blob(&a).await?;
-      out.chunks(id, "data", &bytes).await;
-      Ok(json!({ "size": bytes.len() }))
+      use tokio::io::{AsyncReadExt, AsyncSeekExt};
+      let (mut file, size) = super::host_store::open_blob(&a).await?;
+      if a.get("max").and_then(Value::as_u64).is_some_and(|max| size > max) {
+        return Ok(json!({ "size": size, "skipped": true }));
+      }
+      let offset = a.get("offset").and_then(Value::as_u64).unwrap_or(0);
+      if offset > size {
+        return Err(WireError::new("invalid", format!("offset {offset} is past the end ({size})")));
+      }
+      let name = a.get("name").and_then(Value::as_str).unwrap_or("");
+      file.seek(std::io::SeekFrom::Start(offset)).await.map_err(|e| WireError::io(&e, name))?;
+      let mut buf = vec![0u8; CHUNK];
+      loop {
+        let n = file.read(&mut buf).await.map_err(|e| WireError::io(&e, name))?;
+        if n == 0 {
+          break;
+        }
+        out.chunks(id, "data", &buf[..n]).await;
+      }
+      Ok(json!({ "size": size, "offset": offset }))
     }
     other => Err(WireError::new("unknownOp", format!("unknown operation \"{other}\""))),
   }

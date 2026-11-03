@@ -22,7 +22,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 use acpira_shared::protocol::HostMsg;
-use acpira_shared::sidecar::{Hello, PlatformEvent, SIDECAR_PROTOCOL_VERSION, ShellMsg, SidecarInfo, SidecarMsg};
+use acpira_shared::sidecar::{Hello, PlatformEvent, SIDECAR_PROTOCOL_MIN, SIDECAR_PROTOCOL_VERSION, ShellMsg, SidecarInfo, SidecarMsg};
 
 use super::platform::SidecarPlatform;
 use crate::bridge_core::BridgeCore;
@@ -78,7 +78,31 @@ pub struct Engine {
   ssh_connection: Option<String>,
   /// The browser panels' preview proxies, leased per wire
   previews: Arc<crate::preview::Previews>,
+  /// A stretch the runtime is out of the watchdog's sight (being created, or torn down after `finish` took it), and
+  /// since when: the watchdog bounds it by `PHASE_LIMIT`
+  phase: parking_lot::Mutex<Option<(&'static str, std::time::Instant)>>,
+  /// Gives up the endpoint (stops accepting, removes the socket, frees its lock); set by `acpira serve`, taken once by
+  /// a drain or the end
+  endpoint: parking_lot::Mutex<Option<Box<dyn FnOnce() + Send>>>,
+  /// The socket a successor takes over after a drain, watched before the wires are let go
+  endpoint_path: parking_lot::Mutex<Option<PathBuf>>,
+  /// A newer build took the machine's endpoint over (`drain`): no new wires, sessions go as soon as they can, the engine
+  /// ends once its running turns have
+  draining: AtomicBool,
+  /// Raised once the successor answers on the endpoint: every wire closes, so its shell reconnects there
+  wires_released: tokio::sync::watch::Sender<bool>,
+  /// The paired devices' gateway runs in this engine (`devices::host`): it stays up for them with no window connected
+  hosting: AtomicBool,
 }
+
+// The watchdog's pace, and how long it waits to take one of the engine's locks before counting the engine as wedged. These
+// locks are never held across an await, but some sync work runs under them (record serialization, an image read): the
+// wait leaves a slow disk ample room, at the price of a minute before a wedged engine goes
+const WATCH_EVERY: Duration = Duration::from_secs(10);
+const WEDGED_AFTER: Duration = Duration::from_secs(60);
+// How long creating the runtime or tearing it down may take before the engine counts as wedged
+const PHASE_LIMIT: Duration = Duration::from_secs(90);
+const EXIT_WEDGED: i32 = 3;
 
 /// What one shell message did to its wire
 enum Flow {
@@ -102,6 +126,7 @@ impl Engine {
     let previews = crate::preview::Previews::new(opts.log.clone());
     Arc::new(Engine {
       previews,
+      phase: Default::default(),
       opts,
       persistent,
       init: tokio::sync::Mutex::new(()),
@@ -110,7 +135,35 @@ impl Engine {
       next_wire: AtomicU64::new(1),
       changed: tokio::sync::Notify::new(),
       ssh_connection: std::env::var("SSH_CONNECTION").ok().filter(|s| !s.is_empty()),
+      endpoint: Default::default(),
+      endpoint_path: Default::default(),
+      draining: AtomicBool::new(false),
+      wires_released: tokio::sync::watch::Sender::new(false),
+      hosting: AtomicBool::new(false),
     })
+  }
+
+  /// A wire inside this process (the gateway's devices, `acpira_gateway::engine::Link`): lines to the engine and lines
+  /// back, the way back ended by an empty line once the wire is over (a running turn's view may outlive it with a sender)
+  pub fn link(self: &Arc<Self>) -> (mpsc::UnboundedSender<String>, mpsc::UnboundedReceiver<String>) {
+    let (line_tx, line_rx) = mpsc::unbounded_channel();
+    let (out_tx, out_rx) = mpsc::unbounded_channel();
+    let (engine, end) = (self.clone(), out_tx.clone());
+    tokio::spawn(async move {
+      engine.serve(out_tx, line_rx).await;
+      let _ = end.send(String::new());
+    });
+    (line_tx, out_rx)
+  }
+
+  /// The gateway started or stopped in this engine
+  pub fn set_hosting(&self, on: bool) {
+    self.hosting.store(on, Ordering::Release);
+    self.changed.notify_waiters();
+  }
+
+  pub fn hosting(&self) -> bool {
+    self.hosting.load(Ordering::Acquire)
   }
 
   fn log(&self, line: &str) {
@@ -136,13 +189,61 @@ impl Engine {
     self.inner.lock().runtime.clone()
   }
 
+  /// A persistent engine that wedges logs what is stuck and exits, so the next connection of a phone or window starts a
+  /// fresh engine and the leases it held come free. A thread of its own: a wedged engine's tasks may never run again,
+  /// and it no longer answers hellos or ends on SIGTERM (its teardown waits on the same locks)
+  pub fn watch_for_wedge(self: &Arc<Self>) {
+    let weak = Arc::downgrade(self);
+    let spawned = std::thread::Builder::new().name("acpira-watchdog".into()).spawn(move || {
+      loop {
+        std::thread::sleep(WATCH_EVERY);
+        let Some(engine) = weak.upgrade() else { return };
+        if let Some(what) = engine.stuck() {
+          engine.log(&format!("wedged: {what}; ending its agents and exiting so the next connection starts a fresh engine"));
+          // Its leases come free with it: no agent of its may go on writing a native session the next engine resumes
+          crate::acp::transport::process::kill_all_hard();
+          std::process::exit(EXIT_WEDGED);
+        }
+      }
+    });
+    if let Err(e) = spawned {
+      self.log(&format!("watchdog did not start: {e}"));
+    }
+  }
+
+  /// What keeps the engine wedged, if anything: a runtime creation or teardown past `PHASE_LIMIT`, else the first of its
+  /// locks (its wires, then the session manager's) it could not take within `WEDGED_AFTER`
+  fn stuck(&self) -> Option<String> {
+    if let Some((what, since)) = *self.phase.lock()
+      && since.elapsed() > PHASE_LIMIT
+    {
+      return Some(format!("{what} for over {}s", PHASE_LIMIT.as_secs()));
+    }
+    let runtime = match self.inner.try_lock_for(WEDGED_AFTER) {
+      Some(inner) => inner.runtime.clone(),
+      None => return Some(format!("the engine's wire table stayed locked for {}s", WEDGED_AFTER.as_secs())),
+    };
+    let what = runtime?.manager.stuck_lock(WEDGED_AFTER)?;
+    Some(format!("{what} stayed locked for {}s", WEDGED_AFTER.as_secs()))
+  }
+
+  fn enter_phase(&self, what: &'static str) {
+    *self.phase.lock() = Some((what, std::time::Instant::now()));
+  }
+
   /// Serve one wire until it closes, asks to leave or the engine ends; resolves to the wire's exit code (2 = protocol
   /// rejected). For an attached engine that is also the end of the engine
   pub async fn serve(self: &Arc<Self>, out: mpsc::UnboundedSender<String>, mut lines: mpsc::UnboundedReceiver<String>) -> i32 {
     let id = self.next_wire.fetch_add(1, Ordering::Relaxed);
     let mut wire = Wire { id, peer: false, engine: self.clone(), me: WireOut { out, closed: Default::default() }, views: HashMap::new() };
+    let mut released = self.wires_released.subscribe();
     let code = loop {
-      let Some(line) = lines.recv().await else {
+      let next = tokio::select! {
+        line = lines.recv() => line,
+        // A drained engine lets every wire go once its successor listens: the shell reconnects there
+        _ = async { drop(released.wait_for(|r| *r).await) } => break self.wire_ended(&mut wire, "the engine handed over to a newer build", 0, false).await,
+      };
+      let Some(line) = next else {
         // Lines received before EOF were all honoured above
         break self.wire_ended(&mut wire, "wire closed", 0, false).await;
       };
@@ -175,15 +276,18 @@ impl Engine {
   /// sessions stay open (and leased) until the engine ends
   fn leave(&self, wire: &mut Wire, reason: &str) {
     wire.me.closed.store(true, Ordering::Release);
-    let (runtime, platform) = {
+    let (runtime, platform, moved, joined) = {
       let mut inner = self.inner.lock();
-      inner.wires.remove(&wire.id);
+      let joined = inner.wires.remove(&wire.id).is_some();
       inner.peers.remove(&wire.id);
+      let mut moved = None;
       if inner.active == Some(wire.id) {
         let peers = inner.peers.clone();
         inner.active = inner.wires.keys().rev().find(|id| !peers.contains(id)).copied();
+        // Switched under the wire table so the platform's active window never disagrees with `route`'s
+        moved = inner.platform.as_ref().map(|p| p.set_active(inner.active));
       }
-      (inner.runtime.clone(), inner.platform.clone())
+      (inner.runtime.clone(), inner.platform.clone(), moved, joined)
     };
     if let Some(rt) = &runtime {
       for (_, core) in wire.views.drain() {
@@ -191,11 +295,17 @@ impl Engine {
       }
     }
     if let Some(p) = &platform {
-      p.drop_peer(wire.id);
+      p.drop_wire(wire.id);
       p.fail_wire(wire.id, reason);
+      if let Some(moved) = moved {
+        p.announce(moved);
+      }
     }
     self.previews.release_wire(wire.id);
-    self.log(&format!("wire {} left ({reason}); {} still connected", wire.id, self.wire_count()));
+    // A probe or drain asks and goes without ever joining
+    if joined {
+      self.log(&format!("wire {} left ({reason}); {} still connected", wire.id, self.wire_count()));
+    }
     self.changed.notify_waiters();
   }
 
@@ -213,10 +323,20 @@ impl Engine {
           return;
         }
       }
+      let draining = self.draining();
       if let Some(rt) = self.runtime() {
         rt.manager.sync_leases();
+        // Sessions nobody can be shown here any more go now, so the successor opens them; running ones when they end
+        if draining {
+          rt.manager.release_idle(Duration::ZERO, 0).await;
+        }
       }
-      if self.wire_count() > 0 || self.busy() {
+      let grace = if draining { Duration::ZERO } else { grace };
+      let wires = if draining && *self.wires_released.borrow() { 0 } else { self.wire_count() };
+      // A handed-over engine ends with no window, so it waits for every unfinished piece of work, not just turns. One
+      // running the gateway waits for its devices, which may connect at any time
+      let busy = |e: &Self| e.busy() || e.hosting() || (draining && e.runtime().is_some_and(|rt| rt.manager.in_flight()));
+      if wires > 0 || busy(self) {
         idle_since = None;
         continue;
       }
@@ -224,9 +344,9 @@ impl Engine {
         // Decided under `init`: a hello holds it from its check until its wire is registered, so no window can slip in
         // between this last look and the seal
         let _init = self.init.lock().await;
-        if !self.busy() {
+        if !busy(self) {
           let mut inner = self.inner.lock();
-          if inner.wires.is_empty() {
+          if inner.wires.is_empty() || (draining && *self.wires_released.borrow()) {
             inner.sealed = true;
             return;
           }
@@ -241,6 +361,60 @@ impl Engine {
     self.finish(reason, 0, None, &mut HashMap::new()).await
   }
 
+  /// `acpira serve` hands over how to give up its endpoint (`path`: the Unix socket a successor binds)
+  pub fn set_endpoint(&self, path: Option<PathBuf>, release: Box<dyn FnOnce() + Send>) {
+    *self.endpoint_path.lock() = path;
+    *self.endpoint.lock() = Some(release);
+  }
+
+  /// Gives up the endpoint now, if it still has it
+  pub fn release_endpoint(&self) {
+    let release = self.endpoint.lock().take();
+    if let Some(r) = release {
+      r();
+    }
+  }
+
+  pub fn draining(&self) -> bool {
+    self.draining.load(Ordering::Acquire)
+  }
+
+  /// A newer build (`machine_engine::ensure`) takes the machine's endpoint over. Refused unless it is newer by the same
+  /// rule the asker applied (`policy::takes_over`), so a confused older client cannot end a newer engine. The endpoint
+  /// goes at once; the wires go once the successor answers there (so a shell reconnecting meanwhile does not start
+  /// another engine), and the engine ends when its running turns have (`idle`)
+  pub fn drain(self: &Arc<Self>, successor: &str, allow_dev: bool) -> Result<(), String> {
+    if !self.persistent {
+      return Err("this engine is not the machine's".into());
+    }
+    if !crate::machine_engine::policy::takes_over(successor, &self.opts.version, allow_dev) {
+      return Err(format!("{successor} does not replace {}", self.opts.version));
+    }
+    if self.draining.swap(true, Ordering::AcqRel) {
+      return Ok(());
+    }
+    self.log(&format!("draining: {successor} takes the endpoint over"));
+    self.release_endpoint();
+    let (engine, path) = (self.clone(), self.endpoint_path.lock().clone());
+    tokio::spawn(async move {
+      // The successor starts within a second; past the wait the wires go anyway and their shells start what they carry
+      let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+      while let Some(p) = &path
+        && tokio::time::Instant::now() < deadline
+      {
+        if crate::machine_engine::ensure::probe(p).await.ok().flatten().is_some_and(|a| a.pid != std::process::id()) {
+          break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+      }
+      engine.log("draining: letting the wires go to the successor");
+      engine.wires_released.send_replace(true);
+      engine.changed.notify_waiters();
+    });
+    self.changed.notify_waiters();
+    Ok(())
+  }
+
   /// Tear everything down once: pending platform RPCs fail, sessions flush and their agents end, `ack` gets shutdownOk
   async fn finish(&self, reason: &str, code: i32, ack: Option<WireOut>, views: &mut HashMap<String, Arc<BridgeCore>>) -> i32 {
     // A hello creating the runtime right now finishes first, so the runtime it creates is the one disposed below
@@ -252,6 +426,8 @@ impl Engine {
       }
       // Refuses wires that say hello from here on
       inner.done = true;
+      // From here the runtime is out of `inner`: the watchdog bounds the teardown by time instead
+      self.enter_phase("tearing down");
       (inner.runtime.take(), inner.platform.clone())
     };
     self.log(&format!("sidecar finishing: {reason}"));
@@ -281,8 +457,8 @@ impl Engine {
     })
   }
 
-  /// The platform's way out: the peer whose view caused the request, else the active window, else the newest peer (a
-  /// host only peers use); none while nothing is connected
+  /// The platform's way out: the wire (window or peer) whose view caused the request, else the active window, else the
+  /// newest peer (a host only peers use); none while nothing is connected
   fn route(self: &Arc<Self>) -> super::platform::Route {
     let weak = Arc::downgrade(self);
     Arc::new(move |m: SidecarMsg| {
@@ -292,7 +468,7 @@ impl Engine {
       }
       let (id, w) = {
         let inner = engine.inner.lock();
-        let origin = super::platform::origin().filter(|o| inner.peers.contains(o));
+        let origin = super::platform::origin().filter(|o| inner.wires.contains_key(o));
         let id = origin.or(inner.active).or_else(|| inner.peers.iter().next_back().copied())?;
         (id, inner.wires.get(&id)?.clone())
       };
@@ -305,9 +481,17 @@ impl Engine {
   }
 
   fn activate(&self, wire: u64) {
-    let mut inner = self.inner.lock();
-    if inner.wires.contains_key(&wire) && !inner.peers.contains(&wire) {
+    let moved = {
+      let mut inner = self.inner.lock();
+      if !inner.wires.contains_key(&wire) || inner.peers.contains(&wire) || inner.active == Some(wire) {
+        return;
+      }
       inner.active = Some(wire);
+      // Switched under the wire table, announced after it: the listeners call back through `route`
+      inner.platform.as_ref().map(|p| (p.clone(), p.set_active(Some(wire))))
+    };
+    if let Some((p, moved)) = moved {
+      p.announce(moved);
     }
   }
 
@@ -318,7 +502,8 @@ impl Engine {
   /// Observed 2026-10-10 on acpira 1.9.0 over Remote-SSH: an engine left by an earlier connection stayed locked while
   /// the window's terminal unlocked the keychain, and the unlock notice waited out its 5 minutes
   async fn retires_for(&self, hello: &Hello, rt: &HostRuntime) -> bool {
-    if !self.persistent {
+    // Retiring would take the gateway, and with it every device, down with nothing to start it again
+    if !self.persistent || self.hosting() {
       return false;
     }
     let another_session = if hello.client.is_peer() {
@@ -407,6 +592,29 @@ impl Wire {
         let engine = self.engine.clone();
         return Flow::Leave(engine.wire_ended(self, "shutdown requested", 0, true).await);
       }
+      // `acpira engine`: answered without joining, so asking never starts the runtime or counts as a window
+      ShellMsg::Probe { request_id } => {
+        self.send(SidecarMsg::ProbeOk {
+          request_id,
+          version: self.engine.opts.version.clone(),
+          pid: std::process::id(),
+          protocol_version: SIDECAR_PROTOCOL_VERSION,
+          protocol_min: SIDECAR_PROTOCOL_MIN,
+          // Also once it is ending (idle, or retired): a shell must not hand out a socket about to go away
+          draining: self.engine.draining() || {
+            let inner = self.engine.inner.lock();
+            inner.done || inner.sealed
+          },
+        });
+        return Flow::Continue;
+      }
+      ShellMsg::Drain { request_id, version, allow_dev } => {
+        self.send(match self.engine.drain(&version, allow_dev) {
+          Ok(()) => SidecarMsg::DrainOk { request_id },
+          Err(reason) => SidecarMsg::DrainRefused { request_id, reason },
+        });
+        return Flow::Continue;
+      }
       _ => {}
     }
     let joined = self.engine.inner.lock().wires.contains_key(&self.id);
@@ -427,7 +635,8 @@ impl Wire {
         let send = self.engine.sender_of(&self.me);
         let vid = view_id.clone();
         let post = Arc::new(move |message: HostMsg| send(SidecarMsg::HostMessage { view_id: vid.clone(), message }));
-        let core = runtime.attach_view(host, initial, blob_base.or_else(|| platform.blob_base()), post);
+        // The view reads its own window's facts (workspace, project mode, session scope, blob base)
+        let core = runtime.attach_view(host, initial, blob_base.or_else(|| platform.blob_base_of(Some(self.id))), post, Some(self.id));
         self.views.insert(view_id, core);
       }
       ShellMsg::DetachView { view_id } => {
@@ -441,14 +650,13 @@ impl Wire {
         }
       }
       ShellMsg::WebviewMessage { view_id, message } => match self.views.get(&view_id) {
-        Some(core) if self.peer => {
-          // A peer's view: the platform requests its handling makes go back to that peer
-          crate::util::run_prefix(super::platform::ORIGIN.scope(self.id, core.clone().handle(message)))
-        }
         Some(core) => {
           // The window the user is typing in serves the IDE actions that follow (file opens, terminals)
-          self.engine.activate(self.id);
-          crate::util::run_prefix(core.clone().handle(message))
+          if !self.peer {
+            self.engine.activate(self.id);
+          }
+          // The platform requests its handling makes go back to this wire, under its own capabilities
+          crate::util::run_prefix(super::platform::ORIGIN.scope(self.id, core.clone().handle(message)))
         }
         None => {
           let kind = message.get("type").and_then(Value::as_str).unwrap_or("undefined");
@@ -480,21 +688,22 @@ impl Wire {
         if matches!(event, PlatformEvent::WindowFocus) {
           self.engine.activate(self.id);
         }
-        platform.on_event(event)
+        platform.on_wire_event(Some(self.id), event)
       }
       // Both returned at the top of this function
-      ShellMsg::Hello(_) | ShellMsg::Shutdown => {}
+      ShellMsg::Hello(_) | ShellMsg::Shutdown | ShellMsg::Probe { .. } | ShellMsg::Drain { .. } => {}
     }
     Flow::Continue
   }
 
   async fn hello(&mut self, m: Hello) -> Flow {
     let engine = self.engine.clone();
-    if m.protocol_version != SIDECAR_PROTOCOL_VERSION {
+    // Every protocol from the oldest still served to this engine's own: changes in between are additive
+    if !(SIDECAR_PROTOCOL_MIN..=SIDECAR_PROTOCOL_VERSION).contains(&m.protocol_version) {
       self.send(SidecarMsg::HelloReject {
         request_id: m.request_id,
         protocol_version: SIDECAR_PROTOCOL_VERSION,
-        reason: format!("protocol version {} is not {SIDECAR_PROTOCOL_VERSION}", m.protocol_version),
+        reason: format!("protocol version {} is outside {SIDECAR_PROTOCOL_MIN}..={SIDECAR_PROTOCOL_VERSION}", m.protocol_version),
       });
       let reason = format!("protocol version mismatch ({})", m.protocol_version);
       return Flow::Leave(engine.wire_ended(self, &reason, 2, false).await);
@@ -511,7 +720,8 @@ impl Wire {
       let _init = engine.init.lock().await;
       let refused = {
         let inner = engine.inner.lock();
-        inner.done || inner.sealed
+        // A draining engine takes no new window: the shell reconnects on "shutting down" and reaches the successor
+        inner.done || inner.sealed || engine.draining()
       };
       if refused {
         self.send(SidecarMsg::HelloReject {
@@ -532,26 +742,31 @@ impl Wire {
           return Flow::Leave(1);
         }
         Some(rt) => {
-          // A later window joins the running engine: its environment and settings snapshot become current. Bound first:
-          // the change handlers it fires may call back into the platform, which takes `inner`. A peer changes nothing
+          // A later window joins the running engine with facts of its own, current once it is made active below. A peer
+          // changes nothing
           let platform = engine.platform();
           if let Some(p) = platform {
             if m.client.is_peer() {
               p.add_peer(self.id, &m);
             } else {
-              p.rebind(&m);
+              p.add_window(self.id, &m);
             }
           }
           Ok(rt)
         }
         None => {
-          // A peer first: the platform starts from its hello (the next window's rebinds it), but the peer stays a peer
+          // A peer first: the platform starts from its hello (until a window is active), but the peer stays a peer
           let platform = SidecarPlatform::routed(engine.route(), &m, engine.opts.log.clone(), engine.opts.ignore_client_agents);
           if m.client.is_peer() {
             platform.add_peer(self.id, &m);
+          } else {
+            platform.add_window(self.id, &m);
           }
           engine.inner.lock().platform = Some(platform.clone());
-          match HostRuntime::create(platform, engine.opts.home.clone(), engine.opts.bridge_exe.clone()).await {
+          engine.enter_phase("creating its runtime");
+          let created = HostRuntime::create(platform, engine.opts.home.clone(), engine.opts.bridge_exe.clone()).await;
+          *engine.phase.lock() = None;
+          match created {
             Ok(rt) => {
               engine.inner.lock().runtime = Some(rt.clone());
               Ok(rt)
@@ -561,13 +776,22 @@ impl Wire {
         }
       };
       if created.is_ok() {
-        let mut inner = engine.inner.lock();
-        inner.wires.insert(self.id, self.me.clone());
-        if m.client.is_peer() {
-          inner.peers.insert(self.id);
-          self.peer = true;
-        } else {
-          inner.active = Some(self.id);
+        let moved = {
+          let mut inner = engine.inner.lock();
+          inner.wires.insert(self.id, self.me.clone());
+          if m.client.is_peer() {
+            inner.peers.insert(self.id);
+            self.peer = true;
+            None
+          } else {
+            inner.active = Some(self.id);
+            // Listeners hear about every key whose value differs from the previous window's (the settings may also have
+            // changed while no shell was connected); they call back into the platform, which takes `inner`
+            inner.platform.as_ref().map(|p| (p.clone(), p.set_active(Some(self.id))))
+          }
+        };
+        if let Some((p, moved)) = moved {
+          p.announce(moved);
         }
       }
       created
@@ -620,6 +844,8 @@ fn shell_kind(m: &ShellMsg) -> &'static str {
     ShellMsg::PreviewOpen { .. } => "previewOpen",
     ShellMsg::PreviewClose { .. } => "previewClose",
     ShellMsg::Shutdown => "shutdown",
+    ShellMsg::Probe { .. } => "probe",
+    ShellMsg::Drain { .. } => "drain",
   }
 }
 

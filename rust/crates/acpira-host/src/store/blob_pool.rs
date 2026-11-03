@@ -97,6 +97,29 @@ pub fn place(pool: &Path, dir: &Path, name: &str, bytes: &[u8]) -> io::Result<Pa
   Ok(target)
 }
 
+/// `place` for a finished download: the file `src` (on the same volume as `dir`) becomes `dir/name` without being read
+/// into memory, or goes when that content is there already
+pub fn adopt(pool: &Path, dir: &Path, name: &str, src: &Path) -> io::Result<PathBuf> {
+  let target = dir.join(name);
+  let len = fs::metadata(src)?.len();
+  if is_file_of(&target, len) {
+    let _ = fs::remove_file(src);
+    return Ok(target);
+  }
+  let pooled = pool.join(name);
+  if is_file_of(&pooled, len) && same_bytes(&pooled, src) && link_into(&pooled, &target).is_ok() {
+    let _ = fs::remove_file(src);
+    // As in `place`: a link made now must not look like an old leftover
+    if let Ok(f) = fs::File::options().write(true).open(&target) {
+      let _ = f.set_modified(SystemTime::now());
+    }
+    return Ok(target);
+  }
+  fs::rename(src, &target)?;
+  enter(pool, &target, name);
+  Ok(target)
+}
+
 /// Upkeep for one blob already in a session folder: enter it in the index, or, when the index holds the same content
 /// as another file, replace this one with a link to it. Returns the bytes that sharing freed
 pub fn share(pool: &Path, file: &Path, name: &str) -> u64 {

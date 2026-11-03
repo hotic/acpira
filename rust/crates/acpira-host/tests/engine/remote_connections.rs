@@ -80,7 +80,7 @@ exec /bin/sh -c "$last"
   }
 
   fn builds(&self) -> Vec<String> {
-    let dir = self.host_home().join(".acpira/remote/bin");
+    let dir = self.host_home().join(".acpira/engine");
     let mut v: Vec<String> = std::fs::read_dir(dir).map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
     v.sort();
     v
@@ -169,12 +169,12 @@ async fn the_first_connection_deploys_and_later_ones_reuse_the_build() {
   add(&c).await;
   let v = connected(&c).await;
   assert_eq!(v.address.as_deref(), Some("hotic@10.0.0.9:2222"));
-  assert_eq!(v.remote_version.as_deref(), Some(env!("CARGO_PKG_VERSION")));
+  assert_eq!(v.remote_version.as_deref(), Some(acpira_shared::version::VERSION));
   assert_eq!(lab.calls(), ["probe", "upload", "start"]);
   let builds = lab.builds();
   assert_eq!(builds.len(), 1);
   assert!(builds[0].starts_with(&format!("{VERSION}-")), "{builds:?}");
-  let installed = lab.host_home().join(".acpira/remote/bin").join(&builds[0]).join("acpira");
+  let installed = lab.host_home().join(".acpira/engine").join(&builds[0]).join("acpira");
   use std::os::unix::fs::PermissionsExt;
   assert_eq!(std::fs::metadata(&installed).unwrap().permissions().mode() & 0o777, 0o700);
 
@@ -231,7 +231,7 @@ async fn a_corrupted_upload_never_lands_and_is_retried() {
   let e = v.error.unwrap();
   assert_eq!((e.kind, e.step), (ConnectFailure::Other, ConnectStep::Upload));
   assert!(e.message.contains("digest"), "{}", e.message);
-  let bin = lab.host_home().join(".acpira/remote/bin");
+  let bin = lab.host_home().join(".acpira/engine");
   let placed = lab.builds().iter().any(|b| bin.join(b).join("acpira").exists());
   assert!(!placed, "nothing unverified is put in place");
   // Transient: the driver keeps trying, and the next clean upload connects
@@ -247,7 +247,7 @@ async fn an_installed_copy_that_does_not_start_is_uploaded_again() {
   add(&c).await;
   connected(&c).await;
   c.op(ConnectionOp::Disconnect { alias: ALIAS.into() }).await.unwrap();
-  let installed = lab.host_home().join(".acpira/remote/bin").join(&lab.builds()[0]).join("acpira");
+  let installed = lab.host_home().join(".acpira/engine").join(&lab.builds()[0]).join("acpira");
   write_exec(&installed, "#!/bin/sh\necho broken >&2\nexit 1\n");
   c.op(ConnectionOp::Connect { alias: ALIAS.into(), accept_new_machine: false }).await.unwrap();
   connected(&c).await;

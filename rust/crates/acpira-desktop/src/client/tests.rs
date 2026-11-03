@@ -89,7 +89,7 @@ impl Engine {
     let dir = tempfile::Builder::new().prefix("acd").tempdir_in("/tmp").unwrap();
     let socket = dir.path().join("e.sock");
     let listener = UnixListener::bind(&socket).unwrap();
-    let ep = EngineEndpoint { socket, log: dir.path().join("e.log") };
+    let ep = EngineEndpoint { socket, log: dir.path().join("e.log"), machine: None };
     (Engine { listener, _dir: dir }, ep)
   }
 

@@ -2,10 +2,15 @@
 //! which runs `run` for the arguments `is_engine_command` claims (apps/desktop/src/main.rs).
 //!   acpira [stdio] [--home DIR]                  the sidecar: envelope protocol over stdio (stdout carries envelopes only);
 //!                                                `stdio` names it where no arguments mean something else (the desktop exe)
-//!   acpira serve --socket PATH [--idle-grace S] [--home DIR]
-//!                                                the persistent engine (Unix): the same protocol per socket connection;
+//!   acpira serve --socket PATH [--idle-grace S] [--home DIR] [--service] [--gateway] [--log FILE]
+//!                                                the persistent engine: the same protocol per socket connection;
 //!                                                sessions outlive the shells, the engine ends S seconds (default 30,
-//!                                                10800 over SSH) after the last connection left and the last turn ended
+//!                                                10800 over SSH) after the last connection left and the last turn ended,
+//!                                                and not while it runs the paired devices' gateway (devices/host.rs).
+//!                                                `--service`: started by remote access's login service; `--gateway`:
+//!                                                runs the gateway whether remote access is on or not (test gateways)
+//!   acpira gateway pair | devices | status | revoke ID | stop | try LINK | push-check TEAM [--home DIR]
+//!                                                the paired devices' gateway, over its control channel
 //!   acpira --ws [PORT] [--token T] [--home DIR]  the browser harness, one sidecar per WebSocket, data in ~/.acpira/harness
 //!   acpira bridge <action> ...                   the ChatGPT event-mirror CLI
 //!   acpira agents [--json]                       the built-in agents, where each CLI was found and how it is initialized
@@ -22,6 +27,9 @@
 //!                                                the pages as JSON on stdout), so a parser panic ends only that child
 //!   acpira remote --stdio                       the helper an SSH host runs for another machine's engine (frames over stdio,
 //!                                                docs/dev/remote.md); ends on stdin EOF or a missed heartbeat
+//!   acpira engine [--home DIR] [--no-dev-takeover]
+//!                                                the machine's one engine: started, or taken over from an older build,
+//!                                                then `{"socket","version","pid"}` on stdout (machine_engine/ensure.rs)
 //!   acpira --version
 
 use std::path::PathBuf;
@@ -72,12 +80,16 @@ pub fn is_engine_command(first: Option<&str>) -> bool {
         | "pdf-pages"
         | "plugin"
         | "safe-mode"
+        | "engine"
+        | "gateway"
     )
   )
 }
 
 /// Runs the command line `args` (without the program name) to its end; the exit code
 pub fn run(args: Vec<String>) -> i32 {
+  // A process running from a landed engine copy keeps it from being pruned (machine_engine/stage.rs)
+  crate::machine_engine::stage::hold_in_use();
   if args.first().map(String::as_str) == Some("--version") {
     println!("{VERSION}");
     return 0;
@@ -93,6 +105,12 @@ pub fn run(args: Vec<String>) -> i32 {
   }
   if args.first().map(String::as_str) == Some("install-agent") {
     return install_agent(&args[1..]);
+  }
+  if args.first().map(String::as_str) == Some("gateway") {
+    return acpira_gateway::cli::main(args[1..].to_vec());
+  }
+  if args.first().map(String::as_str) == Some("serve") {
+    serve_prelude(&args);
   }
   // The built-in agent's PDF parser in a process of its own (acpira_agent::tools::pdf::in_child)
   if args.first().map(String::as_str) == Some(acpira_agent::tools::pdf::CHILD_COMMAND) {
@@ -127,6 +145,9 @@ pub fn run(args: Vec<String>) -> i32 {
     }
     if args.first().map(String::as_str) == Some("safe-mode") {
       return crate::plugins::cli::safe_mode(&args[1..], &explicit_home.unwrap_or_else(acpira_home)).await;
+    }
+    if args.first().map(String::as_str) == Some("engine") {
+      return crate::machine_engine::ensure::cli(&args[1..], explicit_home.unwrap_or_else(acpira_home)).await;
     }
     // An engine whose plugins keep it from working starts with all of them unloaded (docs/dev/plugins.md, Safe mode)
     if args.iter().any(|a| a == "--safe-mode") {
@@ -382,7 +403,8 @@ async fn serve_connection(engine: Arc<Engine>, stream: impl tokio::io::AsyncRead
   let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();
   let writer = tokio::spawn(async move {
     while let Some(line) = out_rx.recv().await {
-      if write.write_all(line.as_bytes()).await.is_err() || write.write_all(b"\n").await.is_err() {
+      // The empty line is the end marker below; envelopes are never empty
+      if line.is_empty() || write.write_all(line.as_bytes()).await.is_err() || write.write_all(b"\n").await.is_err() {
         break;
       }
     }
@@ -396,24 +418,34 @@ async fn serve_connection(engine: Arc<Engine>, stream: impl tokio::io::AsyncRead
       }
     }
   });
+  let end = out_tx.clone();
   let code = engine.serve(out_tx, line_rx).await;
-  // The wire's senders are gone with `serve`: the writer drains what was queued (shutdownOk last) and closes
+  // The writer sends what was queued (shutdownOk last) and closes the connection. A running turn's view may still hold a
+  // sender (a handed-over engine finishing it), so it stops at an end marker rather than waiting for every sender, and
+  // is ended outright if the shell does not read: the shell must see the close to reconnect
+  let _ = end.send(String::new());
   reader.abort();
-  let _ = tokio::time::timeout(std::time::Duration::from_secs(2), writer).await;
+  let mut writer = writer;
+  if tokio::time::timeout(std::time::Duration::from_secs(2), &mut writer).await.is_err() {
+    writer.abort();
+  }
   if code != 0 {
     stderr(&format!("connection ended ({code})"));
   }
 }
 
 /// Runs the persistent engine until it has been idle for `grace` (or a signal ends it), then stops it
-async fn run_until_idle(engine: Arc<Engine>, accept: tokio::task::JoinHandle<()>, grace: std::time::Duration, cleanup: impl FnOnce()) -> i32 {
+async fn run_until_idle(engine: Arc<Engine>, grace: std::time::Duration) -> i32 {
   let reason = tokio::select! {
-    _ = engine.idle(grace) => format!("idle for {}s with no window connected", grace.as_secs()),
+    _ = engine.idle(grace) => match engine.draining() {
+      true => "handed over to a newer build".to_owned(),
+      false => format!("idle for {}s with no window connected", grace.as_secs()),
+    },
     _ = shutdown_signal() => "signal".to_owned(),
   };
-  // Stop taking connections before the teardown: a shell arriving now starts the next engine, which waits for this lock
-  accept.abort();
-  cleanup();
+  // Stop taking connections before the teardown: a shell arriving now starts the next engine, which waits for this lock.
+  // A drained engine gave the endpoint up already
+  engine.release_endpoint();
   engine.stop(&reason).await
 }
 
@@ -429,14 +461,26 @@ async fn serve(args: &[String], home: PathBuf, exe: Option<String>) -> i32 {
     return 2;
   };
   let grace = idle_grace(flag(args, "--idle-grace").as_deref(), over_ssh());
+  let forced = args.iter().any(|a| a == "--gateway");
+  // The machine's engine runs the gateway while remote access is on
+  let hosts = forced || args.iter().any(|a| a == "--service") || socket == crate::machine_engine::ensure::socket_path(&home);
   if let Some(dir) = socket.parent()
     && let Err(e) = private_dir(dir)
   {
     stderr(&format!("serve: {e}"));
     return 1;
   }
+  let service = args.iter().any(|a| a == "--service");
+  if service && let Some(code) = crate::devices::host::before_service(&socket, &home, crate::devices::host::SERVICE_CONFIRM_WAIT, &stderr).await {
+    return code;
+  }
   let lock = match take_lock(&socket.with_extension("lock")).await {
     Ok(l) => l,
+    // Another engine won the socket meanwhile: the service is done only if that one runs the gateway
+    Err(0) if service => {
+      let deadline = tokio::time::Instant::now() + crate::devices::host::SERVICE_CONFIRM_WAIT;
+      return crate::devices::host::confirm_gateway(&home, None, deadline, &stderr).await;
+    }
     Err(code) => return code,
   };
   // Holding the lock, whatever socket file is there was left by an engine that died without cleaning up
@@ -451,7 +495,10 @@ async fn serve(args: &[String], home: PathBuf, exe: Option<String>) -> i32 {
   let _ = std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600));
   stderr(&format!("engine {VERSION} pid {} serving {} (home {})", std::process::id(), socket.display(), home.display()));
 
-  let engine = Engine::persistent(ServerOpts { version: VERSION.into(), home, log: Arc::new(stderr), ignore_client_agents: false, bridge_exe: exe });
+  let engine =
+    Engine::persistent(ServerOpts { version: VERSION.into(), home: home.clone(), log: Arc::new(stderr), ignore_client_agents: false, bridge_exe: exe });
+  engine.watch_for_wedge();
+  let host = hosts.then(|| crate::devices::host::Host::start(&engine, &home, forced, Arc::new(stderr)));
   let accept_engine = engine.clone();
   let accept = tokio::spawn(async move {
     loop {
@@ -466,11 +513,23 @@ async fn serve(args: &[String], home: PathBuf, exe: Option<String>) -> i32 {
       }
     }
   });
-  let code = run_until_idle(engine, accept, grace, || {
-    let _ = std::fs::remove_file(&socket);
-  })
-  .await;
-  drop(lock);
+  // Given up at the end, or earlier to a newer build (`Engine::drain`): the order lets a successor bind only once
+  // nothing here accepts or will remove its socket. The gateway goes with it, to the successor
+  let path = socket.clone();
+  let gateway = host.clone();
+  engine.set_endpoint(
+    Some(socket),
+    Box::new(move || {
+      accept.abort();
+      let _ = std::fs::remove_file(&path);
+      drop(lock);
+      if let Some(h) = gateway {
+        h.release();
+      }
+    }),
+  );
+  let code = run_until_idle(engine, grace).await;
+  drop(host);
   code
 }
 
@@ -486,6 +545,9 @@ async fn serve(args: &[String], home: PathBuf, exe: Option<String>) -> i32 {
     return 2;
   };
   let grace = idle_grace(flag(args, "--idle-grace").as_deref(), over_ssh());
+  // Windows has no machine engine: the gateway runs in the engine remote access's logon task starts
+  let forced = args.iter().any(|a| a == "--gateway");
+  let hosts = forced || args.iter().any(|a| a == "--service");
   let run = home.join("run");
   if let Err(e) = std::fs::create_dir_all(&run) {
     stderr(&format!("serve: {}: {e}", run.display()));
@@ -525,7 +587,10 @@ async fn serve(args: &[String], home: PathBuf, exe: Option<String>) -> i32 {
   };
   stderr(&format!("engine {VERSION} pid {} serving {pipe} (home {})", std::process::id(), home.display()));
 
-  let engine = Engine::persistent(ServerOpts { version: VERSION.into(), home, log: Arc::new(stderr), ignore_client_agents: false, bridge_exe: exe });
+  let engine =
+    Engine::persistent(ServerOpts { version: VERSION.into(), home: home.clone(), log: Arc::new(stderr), ignore_client_agents: false, bridge_exe: exe });
+  engine.watch_for_wedge();
+  let host = hosts.then(|| crate::devices::host::Host::start(&engine, &home, forced, Arc::new(stderr)));
   let accept_engine = engine.clone();
   let accept = tokio::spawn(async move {
     loop {
@@ -550,13 +615,114 @@ async fn serve(args: &[String], home: PathBuf, exe: Option<String>) -> i32 {
       tokio::spawn(serve_connection(accept_engine.clone(), std::mem::replace(&mut server, next)));
     }
   });
-  let code = run_until_idle(engine, accept, grace, || {}).await;
-  drop(lock);
+  let gateway = host.clone();
+  engine.set_endpoint(
+    None,
+    Box::new(move || {
+      accept.abort();
+      drop(lock);
+      if let Some(h) = gateway {
+        h.release();
+      }
+    }),
+  );
+  let code = run_until_idle(engine, grace).await;
+  drop(host);
   code
 }
 
+/// Set on the engine `serve --service` hands over to (`exec_landed`), so it never hands over again
+#[cfg(unix)]
+const LANDED_ENV: &str = "ACPIRA_SERVICE_LANDED";
+
+/// What `serve` does before any thread exists: `--service` moves into this build's landed copy (Unix) and takes the
+/// login shell's environment, since a login service starts it with launchd's or systemd's; `--log` sends its output to
+/// that file, where nothing else captures it (a Windows logon task, an autostart entry)
+fn serve_prelude(args: &[String]) {
+  let service = args.iter().any(|a| a == "--service");
+  #[cfg(unix)]
+  if service {
+    exec_landed(args);
+  }
+  if let Some(log) = flag(args, "--log").filter(|l| !l.is_empty()) {
+    redirect_output(&absolute(&PathBuf::from(log)));
+  }
+  if service && let Some(env) = acpira_desktop::login_env::resolve_login_env(&stderr, None) {
+    for (k, v) in env {
+      // SAFETY: no other thread exists yet (`run` builds the runtime after this)
+      unsafe { std::env::set_var(k, v) };
+    }
+  }
+}
+
+/// The login service starts the copy at its fixed path (devices/stage.rs); the engine runs from this build's landed
+/// copy instead (machine_engine/stage.rs), as every machine engine does, so the copy may be replaced or removed under
+/// it. The same process (`exec`), so launchd and systemd keep tracking it. Returns only when it cannot
+#[cfg(unix)]
+fn exec_landed(args: &[String]) {
+  use std::os::unix::process::CommandExt;
+  if std::env::var_os(LANDED_ENV).is_some() {
+    // SAFETY: no other thread exists yet
+    unsafe { std::env::remove_var(LANDED_ENV) };
+    return;
+  }
+  let home = flag(args, "--home").filter(|h| !h.is_empty()).map(|h| absolute(&PathBuf::from(h))).unwrap_or_else(acpira_home);
+  let Ok(exe) = std::env::current_exe() else { return };
+  let root = crate::machine_engine::stage::root(&home);
+  let canon = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_owned());
+  if canon(&exe).starts_with(canon(&root)) {
+    return;
+  }
+  match crate::machine_engine::stage::stage(&home, &exe, VERSION) {
+    Ok(landed) => {
+      let e = std::process::Command::new(&landed).args(args).env(LANDED_ENV, "1").exec();
+      stderr(&format!("serve: running from {} instead failed: {e}", landed.display()));
+    }
+    Err(e) => stderr(&format!("serve: landing {}: {e:#}", exe.display())),
+  }
+}
+
+/// This process's stdout and stderr go to `log` (appended; started over beside a `.1` once large)
+fn redirect_output(log: &std::path::Path) {
+  if let Some(dir) = log.parent() {
+    let _ = std::fs::create_dir_all(dir);
+  }
+  if std::fs::metadata(log).is_ok_and(|m| m.len() > 4 * 1024 * 1024) {
+    let _ = std::fs::rename(log, log.with_extension("log.1"));
+  }
+  let mut open = std::fs::OpenOptions::new();
+  open.create(true).append(true);
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::OpenOptionsExt;
+    open.mode(0o600);
+  }
+  let Ok(file) = open.open(log) else { return };
+  #[cfg(unix)]
+  {
+    use std::os::fd::AsRawFd;
+    // SAFETY: both descriptors are valid; dup2 replaces stdout and stderr with the log's
+    unsafe {
+      libc::dup2(file.as_raw_fd(), 1);
+      libc::dup2(file.as_raw_fd(), 2);
+    }
+  }
+  #[cfg(windows)]
+  {
+    use std::os::windows::io::IntoRawHandle;
+    use windows_sys::Win32::System::Console::{STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle};
+    // Kept open for the process's life: the standard handles name it from here on
+    let h = file.into_raw_handle();
+    // SAFETY: `h` is an open file handle that is never closed
+    unsafe {
+      SetStdHandle(STD_OUTPUT_HANDLE, h);
+      SetStdHandle(STD_ERROR_HANDLE, h);
+    }
+  }
+}
+
 /// Whether this engine runs inside an SSH login (sshd sets these; VS Code Server and its extension host inherit them)
-fn over_ssh() -> bool {
+pub(crate) fn over_ssh() -> bool {
   ["SSH_CONNECTION", "SSH_CLIENT"].iter().any(|k| std::env::var_os(k).is_some_and(|v| !v.is_empty()))
 }
 
@@ -570,7 +736,7 @@ fn idle_grace(flag: Option<&str>, remote: bool) -> std::time::Duration {
 /// The socket's directory must be this user's and closed to everyone else: whoever can create files there could pose as
 /// the engine, or put a socket of theirs where the shell looks. A directory of this user's that is too open is tightened
 #[cfg(unix)]
-fn private_dir(dir: &std::path::Path) -> Result<(), String> {
+pub(crate) fn private_dir(dir: &std::path::Path) -> Result<(), String> {
   use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
   std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
   let meta = std::fs::symlink_metadata(dir).map_err(|e| format!("{}: {e}", dir.display()))?;

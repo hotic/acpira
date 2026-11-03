@@ -237,6 +237,46 @@ async fn project_subscriptions_prune_caches_and_query_hidden_sessions_on_demand(
   connections.dispose();
 }
 
+// A host's list narrows to the registered projects only while every connected window is a project shell: a window with
+// a workspace attaching widens it to all of the host's sessions, and its leaving narrows it again
+#[tokio::test(flavor = "multi_thread")]
+async fn a_workspace_window_widens_a_host_list_the_project_shells_narrow() {
+  let fake = crate::fake_or_skip!();
+  let lab = Lab::new();
+  let _stop = StopEngines::for_lab(&lab);
+  let home = lab.host_home().join(".acpira");
+  let host = home.join("sessions");
+  std::fs::create_dir_all(&host).unwrap();
+  std::fs::write(home.join("agents.json"), serde_json::to_vec(&fake.setting(json!({}))).unwrap()).unwrap();
+  let (work, other) = (lab.path().join("hostfs/work"), lab.path().join("hostfs/other"));
+  for (id, path) in [("s-work", &work), ("s-other", &other)] {
+    std::fs::create_dir_all(path).unwrap();
+    std::fs::write(host.join(format!("{id}.json")), serde_json::to_vec(&list_record(id, &path.to_string_lossy(), id, false)).unwrap()).unwrap();
+  }
+  let dir = tempfile::tempdir().unwrap();
+  let projects = json!({ "categories": [], "collapsedProjects": [], "projects": [format!("ssh://gen1{}", work.display())] });
+  std::fs::write(dir.path().join("categories.json"), serde_json::to_vec(&projects).unwrap()).unwrap();
+  let connections = lab.engine("engine");
+  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  let mut opts = crate::session_manager::Opts::fake(&fake).projects();
+  opts.remote = Some(connections.clone());
+  let m = crate::session_manager::Mgr::new(dir.path(), opts);
+  m.init().await;
+  wait(&m, "the project-scoped host list", 30_000, || m.session_ids() == vec!["s-work"]).await;
+
+  let window = acpira_host::session_manager::ViewerShell {
+    cwd: std::sync::Arc::new(|| "/tmp".into()),
+    projects: std::sync::Arc::new(|| false),
+    scope: std::sync::Arc::new(|| "workspace".into()),
+  };
+  let v = m.m.attach_in(None, Some(window));
+  wait(&m, "the whole host list", 30_000, || m.session_ids().len() == 2).await;
+  m.m.detach(&v);
+  wait(&m, "the narrowed host list again", 30_000, || m.session_ids() == vec!["s-work"]).await;
+  m.dispose().await;
+  connections.dispose();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_peer_reaches_the_hosts_engine_which_outlives_the_connection() {
   let lab = Lab::new();
@@ -546,7 +586,7 @@ async fn host_account_metadata_and_actions_never_use_the_local_account_store() {
 /// A host session's images live in the host's store: they come over into this machine's before its view is shown, so a
 /// page (or a paired phone, which reads the same directory) loads them as any session's
 #[tokio::test(flavor = "multi_thread")]
-async fn a_host_sessions_blobs_come_over_before_its_view_shows() {
+async fn a_host_sessions_view_shows_at_once_and_its_blobs_follow() {
   let fake = crate::fake_or_skip!();
   let lab = Lab::new();
   let _stop = StopEngines::for_lab(&lab);
@@ -585,13 +625,23 @@ async fn a_host_sessions_blobs_come_over_before_its_view_shows() {
   wait(&m, "the host's list", 30_000, || m.sessions().iter().any(|s| s["id"] == "s-pic" && s["cwd"] == folder.as_str())).await;
   let here = dir.path().join("s-pic").join(&name);
   assert!(!here.exists());
+  // A fetch cut off earlier left its first bytes: the rest comes from where it stopped
+  let partial = dir.path().join(".partial").join(format!("s-pic-{name}"));
+  std::fs::create_dir_all(partial.parent().unwrap()).unwrap();
+  std::fs::write(&partial, &pixels[..5]).unwrap();
 
   m.handle(json!({ "type": "selectSession", "id": "s-pic" })).await;
   wait(&m, "the host's session on screen", 30_000, || m.active().is_some_and(|v| v["title"] == "With a picture")).await;
-  // Held until the blob was here: the first view a page gets can already load it
-  assert_eq!(std::fs::read(&here).ok(), Some(pixels), "the blob is in this machine's store once the view shows; log: {:#?}", m.logs());
+  wait(&m, "the picture on screen", 30_000, || m.active().is_some_and(|v| v["turns"].to_string().contains(&name))).await;
+  assert_eq!(std::fs::read(&here).ok(), Some(pixels), "the blob is in this machine's store; log: {:#?}", m.logs());
+  assert!(!partial.exists());
   assert_eq!(std::fs::read(dir.path().join("s-pic").join(&video)).ok(), Some(recording), "a staged file URI is cached too");
-  assert!(m.active().unwrap()["turns"].to_string().contains(&name));
+  // The first view did not wait for the picture, and named it only once its file was here: a page never loads a
+  // blob that is not on this machine
+  let views: Vec<String> = m.events.lock().unwrap().iter()
+    .filter(|e| e["type"] == "session" && e["session"]["id"] == "s-pic").map(|e| e["session"]["turns"].to_string()).collect();
+  assert!(views.first().is_some_and(|t| !t.contains(&name) && t.contains("draw it")), "{views:#?}");
+  assert!(views.last().is_some_and(|t| t.contains(&name)), "{views:#?}");
   m.dispose().await;
   connections.dispose();
 }

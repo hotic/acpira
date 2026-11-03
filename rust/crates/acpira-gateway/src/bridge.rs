@@ -14,10 +14,9 @@ use acpira_shared::devices::{PushTarget, device_allowed};
 use acpira_shared::protocol::WebviewMsg;
 use acpira_shared::sidecar::SIDECAR_PROTOCOL_VERSION;
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::engine::{EngineSpec, Log, connect};
+use crate::engine::{Link, Log};
 use crate::wire_stats::WireStats;
 
 /// What a device may leave unread before the gateway drops it: it reconnects and gets whole views again, where a queue
@@ -53,7 +52,7 @@ pub type OnPush = Arc<dyn Fn(Option<PushTarget>) + Send + Sync>;
 /// counts what passes each way (`wire_stats`)
 #[expect(clippy::too_many_arguments, reason = "one stream's wiring, called from one place")]
 pub async fn run(
-  spec: &EngineSpec,
+  engine: &Link,
   log: &Log,
   who: &Who,
   mut tx: EnvelopeTx,
@@ -89,24 +88,12 @@ pub async fn run(
   // Stable across reconnects, disjoint from desktop tabs and other devices even when their client ids coincide.
   let terminal_prefix = format!("device:{}:", who.id);
 
-  let stream = match connect(spec, log).await {
-    Ok(s) => s,
-    Err(e) => return Ended::Engine(e.to_string()),
-  };
-  let (engine_read, mut engine_write) = tokio::io::split(stream);
+  // To the engine: fed by the device loop and by the refusals of platform requests; the wire ends once every sender
+  // is gone
+  let (to_engine, mut from_engine) = engine();
+  let _ = to_engine.send(hello.to_string());
   // Replacing an envelope stream aborts this future; its children must not retain the old engine wire and viewers.
   let mut tasks = tokio::task::JoinSet::new();
-
-  // To the engine: one writer, fed by the device loop and by the refusals of platform requests
-  let (to_engine, mut engine_lines) = mpsc::unbounded_channel::<String>();
-  let _ = to_engine.send(hello.to_string());
-  let engine_writer = tasks.spawn(async move {
-    while let Some(line) = engine_lines.recv().await {
-      if engine_write.write_all(line.as_bytes()).await.is_err() || engine_write.write_all(b"\n").await.is_err() {
-        break;
-      }
-    }
-  });
 
   // To the device: one writer owning the stream's send half; `queued` counts what it has not written yet
   let queued = Arc::new(AtomicUsize::new(0));
@@ -152,15 +139,11 @@ pub async fn run(
     let to_engine = to_engine.clone();
     let terminal_prefix = terminal_prefix.clone();
     tasks.spawn(async move {
-      let mut lines = BufReader::new(engine_read).lines();
-      let why = loop {
-        match lines.next_line().await {
-          Ok(Some(line)) => from_engine(line, &*push, &to_engine, &sessions_dir, &terminal_prefix),
-          Ok(None) => break "the engine closed the connection".to_owned(),
-          Err(e) => break e.to_string(),
-        }
-      };
-      let _ = engine_end_tx.send(why);
+      // The empty line: the engine let the wire go
+      while let Some(line) = from_engine.recv().await.filter(|l| !l.is_empty()) {
+        engine_line(line, &*push, &to_engine, &sessions_dir, &terminal_prefix);
+      }
+      let _ = engine_end_tx.send("the engine closed the connection".to_owned());
     })
   };
 
@@ -185,7 +168,8 @@ pub async fn run(
     _ = behind => Ended::Behind,
   };
   engine_reader.abort();
-  engine_writer.abort();
+  // The engine's wire ends with the last sender, not after the wait below
+  drop(to_engine);
   drop(push);
   drop(to_device);
   // Let what is queued reach a device that is still there (an engine error it should read), within reason
@@ -229,7 +213,7 @@ fn peer_hello(device: &Value, who: &Who) -> Value {
   })
 }
 
-fn from_engine(
+fn engine_line(
   line: String,
   push: &dyn Fn(FrameKind, Vec<u8>),
   to_engine: &mpsc::UnboundedSender<String>,
@@ -392,7 +376,7 @@ mod tests {
         let push = |kind, body: Vec<u8>| frames.lock().push((kind, serde_json::from_slice::<Value>(&body).unwrap()));
         let (tx, _rx) = mpsc::unbounded_channel();
         let line = serde_json::to_string(&SidecarMsg::HostMessage { view_id: "V".into(), message }).unwrap();
-        from_engine(line.clone(), &push, &tx, &Default::default(), "device:a:");
+        engine_line(line.clone(), &push, &tx, &Default::default(), "device:a:");
         let frames = frames.into_inner();
         if id.starts_with("device:a:") {
           let mut expected: Value = serde_json::from_str(&line).unwrap();

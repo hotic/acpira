@@ -1,23 +1,26 @@
-//! The login service that runs the gateway, per platform: a LaunchAgent on macOS (launch_agent.rs), a systemd user unit
-//! on Linux (systemd.rs), a logon task on Windows (schtask.rs). Where none can be had, an autostart entry
-//! (autostart.rs: XDG on Linux, the Run key on Windows) starts it at login with `--supervise`, the gateway restarting
-//! itself as the services do. The engine asks it a few things only: is it installed (the switch), is its definition
-//! this one, install it (replacing what was there) and start it, start it again, remove it.
+//! The login service that runs the engine with the gateway in it, per platform: a LaunchAgent on macOS
+//! (launch_agent.rs), a systemd user unit on Linux (systemd.rs), a logon task on Windows (schtask.rs). Where none can be
+//! had, an autostart entry (autostart.rs: XDG on Linux, the Run key on Windows) starts it at login. Each starts
+//! `acpira serve --service` from the service's copy (stage.rs): on macOS and Linux the machine's engine, which a window
+//! may have started already (the service's start then ends at once), on Windows an engine of remote access's own. The
+//! label names of builds up to 2.0.6, which ran a standalone `acpira-gateway`, stay, so those builds see the switch as
+//! it is. The engine asks it a few things only: is it installed (the switch), is its definition this one, install it
+//! (replacing what was there) and start it, start it again, remove it. None of them ends an engine that runs: it may
+//! be serving every window's sessions.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use sha2::{Digest, Sha256};
 
-/// How the gateway is started: a program and the arguments before its own (`gateway` for the Windows desktop exe's role)
+/// What the service starts: the engine's copy (stage.rs)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {
   pub exe: PathBuf,
-  pub prefix: Vec<String>,
 }
 
 /// A service name for this data root: the default `~/.acpira` gets the plain `base`, any other root (the harness,
-/// tests) one of its own, so two roots never replace each other's gateway
+/// tests) one of its own, so two roots never replace each other's service
 pub fn label(base: &str, sep: &str, root: &Path, user_home: &Path) -> String {
   if root == user_home.join(".acpira") {
     return base.into();
@@ -26,22 +29,28 @@ pub fn label(base: &str, sep: &str, root: &Path, user_home: &Path) -> String {
   format!("{base}{sep}{}", d.iter().take(4).map(|b| format!("{b:02x}")).collect::<String>())
 }
 
-/// The gateway's log, which a start that fails quotes from
+/// The engine's log, shared with the machine engine's other starts (machine_engine/ensure.rs); a start that fails
+/// quotes from it
 pub fn log_path(root: &Path) -> PathBuf {
-  root.join("devices").join("gateway.log")
+  root.join("run").join("engine.log")
 }
 
-/// The gateway's arguments after the program's prefix. Services without a restart of their own get `--supervise`; the
-/// gateway writes its log itself where nothing captures its output
-#[cfg_attr(target_os = "macos", allow(dead_code, reason = "the LaunchAgent's plist names its arguments itself"))]
-pub fn args(program: &Program, root: &Path, supervise: bool) -> Vec<String> {
-  let mut a = program.prefix.clone();
-  a.extend(["run".to_owned(), "--home".to_owned(), root.to_string_lossy().into_owned()]);
-  a.extend(["--log".to_owned(), log_path(root).to_string_lossy().into_owned()]);
-  if supervise {
-    a.push("--supervise".to_owned());
+/// Where the service's engine listens: the machine's socket; on Windows, which has no machine engine, a pipe of the
+/// data root's own (named after it, case aside, as paths there are)
+pub fn socket(root: &Path) -> PathBuf {
+  if cfg!(windows) {
+    let d = Sha256::digest(root.to_string_lossy().to_lowercase().as_bytes());
+    let hex: String = d.iter().take(8).map(|b| format!("{b:02x}")).collect();
+    return PathBuf::from(format!(r"\\.\pipe\acpira-remote-{hex}"));
   }
-  a
+  crate::machine_engine::ensure::socket_path(root)
+}
+
+/// The engine's arguments: `serve` for this data root, `--service` (it runs the gateway, waits for no window, reads
+/// the login shell's environment) and its log
+pub fn args(root: &Path) -> Vec<String> {
+  let s = |p: &Path| p.to_string_lossy().into_owned();
+  vec!["serve".into(), "--socket".into(), s(&socket(root)), "--home".into(), s(root), "--service".into(), "--log".into(), s(&log_path(root))]
 }
 
 pub struct Service {
@@ -54,6 +63,10 @@ pub struct Service {
 impl Service {
   pub fn new(root: &Path, user_home: &Path) -> Service {
     Service { root: root.to_owned(), user_home: user_home.to_owned() }
+  }
+
+  pub fn user_home(&self) -> &Path {
+    &self.user_home
   }
 
   pub fn label(&self) -> String {
@@ -88,80 +101,76 @@ impl Service {
     return false;
   }
 
-  /// The installed definition starts `program` from this data root, and its service has it loaded: nothing to replace
+  /// The installed definition starts `program` for this data root, and its service has it: nothing to replace
   pub async fn current(&self, program: &Program) -> bool {
     let label = self.label();
+    let a = args(&self.root);
     #[cfg(target_os = "macos")]
     {
+      let _ = a;
       let plist = super::launch_agent::plist_path(&label, &self.user_home);
       let text = super::launch_agent::plist(&label, &program.exe, &self.root);
       return tokio::fs::read_to_string(&plist).await.is_ok_and(|t| t == text) && super::launch_agent::loaded(&label).await;
     }
     #[cfg(target_os = "linux")]
     {
-      let unit = super::systemd::unit(program, &args(program, &self.root, false));
+      let unit = super::systemd::unit(program, &a);
       if tokio::fs::read_to_string(super::systemd::unit_path(&label, &self.user_home)).await.is_ok_and(|t| t == unit) {
-        return super::systemd::active(&label).await;
+        return super::systemd::enabled(&label).await;
       }
-      let entry = super::autostart::entry(program, &args(program, &self.root, true));
+      let entry = super::autostart::entry(program, &a);
       return tokio::fs::read_to_string(super::autostart::entry_path(&label, &self.user_home)).await.is_ok_and(|t| t == entry);
     }
     #[cfg(windows)]
     {
-      let a = args(program, &self.root, true);
       return super::schtask::current(&self.root, &label, program, &a).await || super::autostart::current(&self.root, &label, program, &a);
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
-      let _ = (label, program);
+      let _ = (label, program, a);
       return false;
     }
   }
 
-  /// Write the definition (replacing one there) and start the gateway from it. The gateway must be stopped first
+  /// Write the definition (replacing one there) and start it, unless its engine runs already: the new definition then
+  /// applies from the next login. A standalone gateway of an earlier build must be stopped first
   pub async fn install(&self, program: &Program, log: &(dyn Fn(&str) + Send + Sync)) -> Result<()> {
     let label = self.label();
+    let a = args(&self.root);
     #[cfg(target_os = "macos")]
     {
-      let _ = log;
-      let plist = super::launch_agent::plist_path(&label, &self.user_home);
-      let text = super::launch_agent::plist(&label, &program.exe, &self.root);
-      if let Some(dir) = plist.parent() {
-        tokio::fs::create_dir_all(dir).await?;
-      }
-      crate::store::file_lock::write_atomic(&plist, text.as_bytes(), Some(0o644)).await?;
-      super::launch_agent::unload(&label).await?;
-      return super::launch_agent::load(&label, &plist).await;
+      let _ = (log, a);
+      return super::launch_agent::install(&label, &self.user_home, &super::launch_agent::plist(&label, &program.exe, &self.root)).await;
     }
     #[cfg(target_os = "linux")]
     {
       if super::systemd::available() {
         super::autostart::remove(&label, &self.user_home).await;
-        return super::systemd::install(&label, &self.user_home, &super::systemd::unit(program, &args(program, &self.root, false))).await;
+        return super::systemd::install(&label, &self.user_home, &super::systemd::unit(program, &a)).await;
       }
-      log("remote access: no user service manager here; starting the gateway from an autostart entry");
-      return super::autostart::install(&label, &self.user_home, program, &args(program, &self.root, true)).await;
+      log("remote access: no user service manager here; starting the engine from an autostart entry");
+      return super::autostart::install(&label, &self.user_home, program, &a).await;
     }
     #[cfg(windows)]
     {
-      let a = args(program, &self.root, true);
       match super::schtask::install(&self.root, &label, program, &a).await {
         Ok(()) => {
           super::autostart::remove(&self.root, &label).await;
           return Ok(());
         }
-        Err(e) => log(&format!("remote access: the logon task was refused ({e:#}); starting the gateway from the Run key")),
+        Err(e) => log(&format!("remote access: the logon task was refused ({e:#}); starting the engine from the Run key")),
       }
       return super::autostart::install(&self.root, &label, program, &a).await;
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
-      let _ = (label, program, log);
+      let _ = (label, program, log, a);
       anyhow::bail!("remote access does not run on this system");
     }
   }
 
-  /// Start the installed gateway (not running after a stop, a crash past its restarts, a load that failed)
+  /// Start the installed service (not running after a stop, a crash past its restarts, a load that failed); one whose
+  /// engine runs is left alone
   pub async fn start(&self) -> Result<()> {
     let label = self.label();
     #[cfg(target_os = "macos")]
@@ -192,15 +201,12 @@ impl Service {
     }
   }
 
-  /// Remove the definition so nothing starts the gateway at login any more. The gateway must be stopped first (a service
-  /// that stops it itself does so too)
+  /// Remove the definition so nothing starts the engine at login any more. An engine it started goes on running (it
+  /// may serve every window's sessions); its gateway is stopped over the control channel instead
   pub async fn uninstall(&self) -> Result<()> {
     let label = self.label();
     #[cfg(target_os = "macos")]
-    {
-      super::launch_agent::unload(&label).await?;
-      let _ = tokio::fs::remove_file(super::launch_agent::plist_path(&label, &self.user_home)).await;
-    }
+    super::launch_agent::uninstall(&label, &self.user_home).await?;
     #[cfg(target_os = "linux")]
     {
       super::systemd::uninstall(&label, &self.user_home).await?;
@@ -263,11 +269,15 @@ mod tests {
     assert_eq!(label("acpira-gateway", "-", Path::new("/home/u/.acpira"), home), "acpira-gateway");
     let other = label("acpira-gateway", "-", Path::new("/home/u/.acpira/harness"), home);
     assert!(other.starts_with("acpira-gateway-") && other.len() == "acpira-gateway-".len() + 8);
-    let p = Program { exe: PathBuf::from("/x/Acpira.exe"), prefix: vec!["gateway".into()] };
-    let a = args(&p, Path::new("/r"), true);
-    assert_eq!(a[..4], ["gateway", "run", "--home", "/r"]);
-    assert_eq!(a.last().map(String::as_str), Some("--supervise"));
-    assert!(a.iter().any(|x| x.ends_with("gateway.log")));
+    let a = args(Path::new("/r"));
+    assert_eq!(a[0], "serve");
+    assert_eq!(a[3..6], ["--home", "/r", "--service"]);
+    assert!(a.last().is_some_and(|l| l.ends_with("engine.log")));
+    if cfg!(unix) {
+      assert_eq!(a[2], "/r/run/engine.sock", "the machine's engine");
+    } else {
+      assert!(a[2].starts_with(r"\\.\pipe\acpira-remote-"));
+    }
   }
 
   #[test]

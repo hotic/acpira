@@ -10,15 +10,16 @@ use serde_json::Value;
 use acpira_shared::protocol::HostMsg;
 use acpira_shared::transcript::*;
 
-use super::{CHATS_DIR, INDEX_DEBOUNCE, INDEX_MAX_WAIT, SessionManager, Viewer};
+use super::{CHATS_DIR, INDEX_DEBOUNCE, INDEX_MAX_WAIT, SessionManager, Viewer, ViewerShell};
 use crate::acp::transport::rpc::BoxFuture;
 use crate::i18n::{t, tp};
 use crate::store::transcript_store::sort_index;
 
 impl SessionManager {
   /// A project shell's first connect: the folders sessions already ran in, newest first, become the list's first order
+  /// Called at init for an engine-wide project shell, else when the first project shell's viewer attaches; runs once
   pub(super) async fn seed_projects(&self) {
-    if !(self.deps.projects)() || self.state.lock().categories.projects.is_some() {
+    if self.state.lock().categories.projects.is_some() {
       return;
     }
     // A host's own sessions are not this machine's history: a host lists every folder it ever ran one in
@@ -54,8 +55,8 @@ impl SessionManager {
     if let Some(dir) = explicit.filter(|d| !d.trim().is_empty()) {
       return Some(dir);
     }
-    if !(self.deps.projects)() {
-      return Some((self.deps.cwd)());
+    if !self.projects_of(v) {
+      return Some(self.cwd_in(v.and_then(|v| v.shell.as_ref())));
     }
     if let Some(dir) = v.and_then(|v| v.active_id()).and_then(|id| self.session_cwd(&id)) {
       return Some(dir);
@@ -66,9 +67,25 @@ impl SessionManager {
     self.state.lock().categories.projects.as_ref().and_then(|p| p.first().cloned())
   }
 
-  /// A folder a project shell starts something in joins its list (at the end) the first time; a chat's folder never does
-  pub(super) async fn register_project(&self, cwd: &str) {
-    if !(self.deps.projects)() || self.is_chat(cwd) || self.state.lock().categories.projects.as_ref().is_some_and(|p| p.iter().any(|x| x == cwd)) {
+  /// The workspace of a viewer's window (`shell`), else the engine-wide one
+  pub(super) fn cwd_in(&self, shell: Option<&ViewerShell>) -> String {
+    shell.map_or_else(|| (self.deps.cwd)(), |s| (s.cwd)())
+  }
+
+  /// The session scope of a viewer's window (`shell`), else the engine-wide one
+  pub(super) fn scope_in(&self, shell: Option<&ViewerShell>) -> String {
+    shell.map_or_else(|| (self.deps.scope)(), |s| (s.scope)())
+  }
+
+  /// Whether a viewer's window is a project shell; without a viewer (or one from no window), the engine-wide answer
+  pub(super) fn projects_of(&self, v: Option<&Viewer>) -> bool {
+    v.and_then(|v| v.shell.as_ref()).map_or_else(|| (self.deps.projects)(), |s| (s.projects)())
+  }
+
+  /// A folder a project shell (the one of `v`) starts something in joins its list (at the end) the first time; a chat's
+  /// folder never does
+  pub(super) async fn register_project(&self, v: Option<&Viewer>, cwd: &str) {
+    if !self.projects_of(v) || self.is_chat(cwd) || self.state.lock().categories.projects.as_ref().is_some_and(|p| p.iter().any(|x| x == cwd)) {
       return;
     }
     if let Err(e) = self.category_op(&CategoryOp::AddProject { cwd: cwd.to_owned() }).await {

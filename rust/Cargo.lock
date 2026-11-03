@@ -80,6 +80,8 @@ name = "acpira-host"
 version = "2.0.6"
 dependencies = [
  "acpira-agent",
+ "acpira-desktop",
+ "acpira-gateway",
  "acpira-rpc",
  "acpira-shared",
  "anyhow",

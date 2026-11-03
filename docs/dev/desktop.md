@@ -9,7 +9,7 @@
 
 ## Contracts
 
-- One `SidecarClient` per app with `shell: 'desktop'` in the socket key, so no IDE window shares the engine; quitting only disconnects. Hello sends `env.projects: true`, no `cwd` and no `searchFiles` capability (the engine walks the project).
+- One `SidecarClient` per app on the machine engine the IDE windows share (`host-architecture.md`, Machine engine; Windows: its own `shell: 'desktop'` pipe); quitting only disconnects. Hello sends `env.projects: true`, no `cwd` and no `searchFiles` capability (the engine walks the project).
 - Page origin `acpira-app://localhost/` (custom scheme: secure context, no back entry); every response `no-store` so a reload takes a new bundle; blobs never fall back to a `.zst` sibling.
 - `src/init.js` (top frame only) sends one `invoke('acpira_post')` at a time carrying everything posted meanwhile, because separate invokes may overtake each other; down, `Channel` messages carry an index the page reorders by.
 - Window state lives in `sessionStorage`; only `sessionListView` also goes to `localStorage`, namespaced per profile since WKWebView ignores `data_directory` there.
@@ -62,7 +62,7 @@ No Sparkle or `tauri-plugin-updater`: `acpira-desktop/src/update/`, shell side `
 - The manifest's Ed25519 signature covers every digest; a build without `update::PUBLIC_KEYS`, or a macOS build without `TEAM_ID`, never checks.
 - The bundle must match the base byte for byte, else the full package; the result is checked against the manifest file list including `_CodeSignature` and the stapled ticket, so the client never signs.
 - https to GitHub hosts only, every redirect hop checked. Staging sits on the install's volume, passes `codesign --verify --deep --strict` with the team and `spctl`, then `renamex_np(RENAME_SWAP)`.
-- Running turns survive: the engine socket key is the engine binary's path, size and mtime, so the new app gets a new engine.
+- Running turns survive: the updated app's engine binary is a newer build, which takes the machine engine over while the old one finishes its running turns (Windows: a new binary is a new pipe key).
 - Windows: a running exe can be renamed, not overwritten, so it moves to `.old` (held by the old engine too, deleted best effort later). The unsigned exe's whole check is the signed manifest. Writability is a probe file: the read-only attribute means nothing.
 - Unverified: a real update's team check, App Translocation, read-only volumes, a proxied download, the release update jobs.
 
@@ -81,7 +81,7 @@ Observed on WebKit 22625 (macOS 27), tauri 2.12.5.
 One portable `Acpira.exe` (WebView2) carrying engine and page; observed on wry 0.57.1.
 
 - The custom scheme is `http://acpira-app.localhost` in navigation and `location` (the handler sees `acpira-app://`); `page::app_origin` is the one source. Windows start on the page, not `/blank`, which WebView2 keeps as a back entry.
-- One exe, four roles by first argument (`is_engine_command`, then `gateway`); the attached engine needs explicit `stdio`, a bare start is the window. `test/rustWorkspace.test.ts` keeps `apps/desktop/Cargo.lock` engine crates at `rust/Cargo.lock`'s versions.
+- One exe, its roles by first argument (`is_engine_command`: the engine's commands, `gateway` among them); the attached engine needs explicit `stdio`, a bare start is the window. `test/rustWorkspace.test.ts` keeps `apps/desktop/Cargo.lock` engine crates at `rust/Cargo.lock`'s versions.
 - Named pipes are owner-only and the client checks the server pid's user, since another user could create the name first.
 - Every child the engine starts needs `CREATE_NO_WINDOW` or a console pops up.
 - `additional_browser_args` replaces wry's defaults and must match for every webview of the process, so `browser_args` repeats them.
@@ -102,7 +102,7 @@ WebKitGTK 4.1, deb / rpm / AppImage, no in-app updates; observed on WebKitGTK 2.
 - Drags expose no files to the page (`allowsFileAccess` false outside Cocoa, webkit.org/b/271957), so `linux::hook_webview` records `text/uri-list` before `dragenter` for `dragPaths()`. Pasting copied files is not wired.
 - `system::run` waits at most 1 s: KDE's `xdg-open` hands its handles to the browser, and a piped wait held the main thread until it quit.
 - No GPU means no WebGL in `OffscreenCanvas` (`effects/webgl.ts` falls back).
-- Build on Ubuntu 22.04 for a low glibc floor. The engine sits in `libexec/acpira/` with `acpira-gateway` beside it: linuxdeploy patchelfs every ELF under `usr/bin` and `usr/lib`, treats static-pie as dynamic, and crashed the engine.
+- Build on Ubuntu 22.04 for a low glibc floor. The engine sits in `libexec/acpira/`: linuxdeploy patchelfs every ELF under `usr/bin` and `usr/lib`, treats static-pie as dynamic, and crashed the engine.
 - AppImage compression must match its runtime: Tauri's bundled type2 runtime supports zlib / zstd, not xz. Keep linuxdeploy's runtime and AppDir when recompressing (`scripts/repack-appimage.mjs`); swapping runtimes changes mounted-startup and mount-lifetime behaviour. Use Tauri's cached `appimagetool`, not a raw SquashFS replacement: the ELF carries a whole-image `.digest_md5` that must be regenerated.
 - An AppImage relaunch mounts at a new path, so it starts a second engine.
 - Smoke-verified under Xvfb + openbox. Not yet: GNOME / Plasma Wayland, NVIDIA (blank window; `WEBKIT_DISABLE_DMABUF_RENDERER=1` usual remedy), IME, fractional scaling; the release ships the packages (`desktop-linux`) as a preview until those are checked. AppImage needs libfuse2 and registers no `acpira://`. Flatpak / Snap would cut the engine off from CLIs on PATH.

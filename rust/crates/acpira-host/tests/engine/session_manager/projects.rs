@@ -265,3 +265,79 @@ async fn a_host_file_the_page_shows_is_read_once_until_it_changes() {
   assert_eq!(m.m.stage_file("s1", &ws, Path::new("/acpira-virtual-host/work/gone.png")).await, None);
   connections.dispose();
 }
+
+// One engine serves several windows: each viewer reads its own window's workspace, project mode and session scope
+// (`ViewerShell`), so two VS Code windows on different folders and the desktop app neither share a folder nor flip each
+// other's project mode
+#[tokio::test(flavor = "multi_thread")]
+async fn viewers_of_different_windows_keep_their_own_workspace_scope_and_project_mode() {
+  use acpira_host::session_manager::ViewerShell;
+  use acpira_shared::sidecar::InitialView;
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let (a, b, home) = (folder(dir.path(), "a"), folder(dir.path(), "b"), folder(dir.path(), "home"));
+  // The engine-wide facts are window A's: a workspace shell scoped to its folder
+  let opts = Opts::fake(&fake).cwd(&a);
+  *opts.scope.lock().unwrap() = "workspace".into();
+  let m = Mgr::new(&dir.path().join("sessions"), opts);
+  m.init().await;
+  let shell = |cwd: &str, projects: bool| {
+    let cwd = cwd.to_owned();
+    let scope = if projects { "all" } else { "workspace" };
+    Some(ViewerShell { cwd: Arc::new(move || cwd.clone()), projects: Arc::new(move || projects), scope: Arc::new(move || scope.into()) })
+  };
+  let va = m.m.attach_in(None, shell(&a, false));
+  let vb = m.m.attach_in(None, shell(&b, false));
+  let desk = m.m.attach_in(None, shell(&home, true));
+
+  // Each window starts its sessions in its own workspace
+  m.handle_on(&va, json!({ "type": "newSession" })).await;
+  m.handle_on(&va, json!({ "type": "send", "text": "in a" })).await;
+  let sa = va.active_id().unwrap();
+  m.handle_on(&vb, json!({ "type": "newSession" })).await;
+  m.handle_on(&vb, json!({ "type": "send", "text": "in b" })).await;
+  let sb = vb.active_id().unwrap();
+  assert_eq!(m.active_of(&va).unwrap()["cwd"], a.as_str());
+  assert_eq!(m.active_of(&vb).unwrap()["cwd"], b.as_str());
+  let listed = |id: &str| m.sessions().iter().any(|s| s["id"] == id);
+  until(|| listed(&sa) && listed(&sb), 5000).await;
+
+  // "Most recent" opens on the newest session of the window's own workspace, not the engine's
+  let most_recent = || Some(InitialView::MostRecent { most_recent: true });
+  assert_eq!(m.m.attach_in(most_recent(), shell(&a, false)).active_id(), Some(sa.clone()));
+  assert_eq!(m.m.attach_in(most_recent(), shell(&b, false)).active_id(), Some(sb.clone()));
+
+  // The desktop window means the newest session's project; the workspace windows keep theirs
+  assert_eq!(m.m.folder_for(Some(&desk), None).as_deref(), Some(b.as_str()));
+  assert_eq!(m.m.folder_for(Some(&va), None).as_deref(), Some(a.as_str()));
+  // A chat is a project shell's: the desktop window gets a chat folder, a workspace window's new session stays in its folder
+  m.handle_on(&desk, json!({ "type": "newSession", "chat": true })).await;
+  assert!(m.m.is_chat(m.active_of(&desk).unwrap()["cwd"].as_str().unwrap()));
+  m.handle_on(&va, json!({ "type": "newSession", "chat": true })).await;
+  assert_eq!(m.active_of(&va).unwrap()["cwd"], a.as_str());
+  m.dispose().await;
+}
+
+// An engine a workspace window started never seeded the project list at init: the first project shell to attach does
+#[tokio::test(flavor = "multi_thread")]
+async fn the_first_project_shell_to_attach_seeds_the_project_list() {
+  use acpira_host::session_manager::ViewerShell;
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let (a, b) = (folder(dir.path(), "a"), folder(dir.path(), "b"));
+  let m = Mgr::new(&dir.path().join("sessions"), Opts::fake(&fake).cwd(&a));
+  m.init().await;
+  for cwd in [&a, &b] {
+    m.handle(json!({ "type": "newSession", "cwd": cwd })).await;
+    m.handle(json!({ "type": "send", "text": "hi" })).await;
+    let id = m.active_id().unwrap();
+    until(|| m.sessions().iter().any(|s| s["id"] == id.as_str()), 5000).await;
+  }
+  assert!(projects_of(&m).is_null(), "a workspace window seeds nothing");
+  let home = dir.path().to_string_lossy().into_owned();
+  let desk = ViewerShell { cwd: Arc::new(move || home.clone()), projects: Arc::new(|| true), scope: Arc::new(|| "all".into()) };
+  let _v = m.m.attach_in(None, Some(desk));
+  until(|| !projects_of(&m).is_null(), 5000).await;
+  assert_eq!(projects_of(&m), json!([b, a]));
+  m.dispose().await;
+}

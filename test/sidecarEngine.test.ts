@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -285,6 +285,32 @@ function recorder(ep: EngineEndpoint, cwd: string, home: string, role: 'peer' | 
   return c;
 }
 
+describe('machine engine', { timeout: 60_000 }, () => {
+  it('reaches one engine for every window of a data root, running from its copy under the root', async () => {
+    const home = tmp('acpira-engine-home-');
+    const [cwdA, cwdB] = [tmp('acpira-engine-ws-'), tmp('acpira-engine-ws-')];
+    const logsA: string[] = [], logsB: string[] = [];
+    const open = async (id: string, cwd: string, logs: string[]) => {
+      const c = client({ home }, cwd, home, logs);
+      const v = new View(id, { mostRecent: true });
+      c.attach(v);
+      c.send(id, { type: 'ready' });
+      c.start();
+      await v.session(s => s.status === 'ready');
+      return c;
+    };
+    const a = await open('A', cwdA, logsA);
+    const b = await open('B', cwdB, logsB);
+    const pid = pidOf(logsA);
+    expect(pidOf(logsB)).toBe(pid);
+    expect(logsA.some(l => l.includes(join(home, 'run', 'engine.sock')))).toBe(true);
+    expect(readdirSync(join(home, 'engine')).filter(n => !n.startsWith('.'))).toHaveLength(1);
+    await a.dispose();
+    await b.dispose();
+    await expect.poll(() => alive(pid), { timeout: 10_000 }).toBe(false);
+  });
+});
+
 describe('peer wire', { timeout: 60_000 }, () => {
   it('serves its own views without taking the window\'s place', async () => {
     const home = tmp('acpira-engine-home-');
@@ -314,6 +340,39 @@ describe('peer wire', { timeout: 60_000 }, () => {
     await expect.poll(() => fromWindow).toContainEqual({ method: 'openExternal', url: 'https://example.com/window' });
     expect(fromWindow).not.toContainEqual(expect.objectContaining({ url: 'https://example.com/peer' }));
     expect(fromPeer).not.toContainEqual(expect.objectContaining({ url: 'https://example.com/window' }));
+  });
+});
+
+describe('windows on one engine', { timeout: 60_000 }, () => {
+  it('give each window its own workspace, and a window\'s view requests go back to that window', async () => {
+    const home = tmp('acpira-engine-home-');
+    const [cwdA, cwdB] = [tmp('acpira-engine-ws-'), tmp('acpira-engine-ws-')];
+    // Both windows reach the same engine, whatever folder each has open
+    const ep = engineEndpoint({ binary: SIDECAR, home, cwd: cwdA });
+    const fromA: unknown[] = [], fromB: unknown[] = [];
+    const open = async (id: string, cwd: string, requests: unknown[]) => {
+      const c = recorder(ep, cwd, home, undefined, requests);
+      const v = new View(id, { mostRecent: true });
+      c.attach(v);
+      c.send(id, { type: 'ready' });
+      c.start();
+      return { c, v, session: await v.session(s => s.status === 'ready') };
+    };
+    const a = await open('A', cwdA, fromA);
+    const b = await open('B', cwdB, fromB);
+    const initCwd = (v: View) => v.messages.map(m => m.type === 'init' ? m.state.cwd : undefined).find(Boolean);
+    expect([initCwd(a.v), a.session.cwd]).toEqual([cwdA, cwdA]);
+    expect([initCwd(b.v), b.session.cwd]).toEqual([cwdB, cwdB]);
+    // A's next session still starts in A's folder after B joined
+    a.c.send('A', { type: 'send', sessionId: a.session.id, text: 'hi' });
+    await a.v.session(s => s.id === a.session.id && s.turns.length > 0 && !s.running);
+    a.c.send('A', { type: 'newSession' });
+    expect((await a.v.session(s => s.id !== a.session.id)).cwd).toBe(cwdA);
+
+    // B joined last, yet what A's view causes goes back to A
+    a.c.send('A', { type: 'openExternal', url: 'https://example.com/a' });
+    await expect.poll(() => fromA).toContainEqual({ method: 'openExternal', url: 'https://example.com/a' });
+    expect(fromB).not.toContainEqual(expect.objectContaining({ url: 'https://example.com/a' }));
   });
 });
 

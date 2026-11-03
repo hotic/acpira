@@ -1,10 +1,11 @@
-//! Remote access on the settings page: the engine's side of `acpira-gateway`, the process paired devices connect to
-//! (a binary of its own so the engine does not link the network stack; docs/dev/host-architecture.md, Remote access gateway). The engine turns it
-//! on and off through a login service (service.rs: a LaunchAgent, a systemd user unit or a logon task), writes its
-//! `gateway.json`, and relays what its control channel reports to the pages that asked. Every engine sharing the data
-//! root sees the same gateway.
+//! Remote access on the settings page: the engine's side of its gateway, which paired devices connect to and which
+//! runs inside the machine's engine while remote access is on (host.rs; docs/dev/host-architecture.md, Remote access
+//! gateway). The switch is a login service (service.rs: a LaunchAgent, a systemd user unit or a logon task) that starts
+//! that engine at login; this side installs it, writes `gateway.json`, and relays what the gateway's control channel
+//! reports to the pages that asked. Every engine sharing the data root sees the same gateway, whichever process runs it.
 
 mod autostart;
+pub mod host;
 pub mod launch_agent;
 #[cfg_attr(not(windows), allow(dead_code, reason = "registered on Windows; its XML is tested everywhere"))]
 mod schtask;
@@ -37,31 +38,19 @@ const RETRY: Duration = Duration::from_secs(2);
 const IDLE_RETRY: Duration = Duration::from_secs(30);
 /// How long a control request may take (pairing answers at once; nothing waits on the network)
 const REQUEST_WAIT: Duration = Duration::from_secs(5);
-/// How long a (re)started gateway may take to answer: the login shell's environment, then its endpoint; a gateway
-/// that exits at once is started again by its service after its throttle (10 s)
-const START_WAIT: Duration = Duration::from_secs(20);
+/// How long a (re)started gateway may take to answer: an engine starting (the login shell's environment, a predecessor
+/// letting go of its endpoint), then the gateway's endpoint
+const START_WAIT: Duration = Duration::from_secs(30);
 /// How long a stopped gateway may take to let go of its control channel (its devices are told it is going first)
 const STOP_WAIT: Duration = Duration::from_secs(10);
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-/// The gateway's file name beside the engine
-const GATEWAY_FILE: &str = if cfg!(windows) { "acpira-gateway.exe" } else { "acpira-gateway" };
-
-/// The first argument that runs the gateway inside this binary, when it has that role (the Windows desktop exe)
-static GATEWAY_ROLE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-
-/// Declares that this binary runs the gateway behind `role` (`Acpira.exe gateway run …`): remote access installs it from
-/// there when no acpira-gateway sits beside it
-pub fn set_gateway_role(role: &str) {
-  let _ = GATEWAY_ROLE.set(role.to_owned());
-}
+const VERSION: &str = acpira_shared::version::VERSION;
 
 pub struct RemoteAccess {
   root: PathBuf,
-  /// The engine binary this engine runs from: what gets copied for the gateway, with the gateway binary beside it
+  /// The engine binary this engine runs from: what the login service's copy is made from
   exe: Option<PathBuf>,
   service: Service,
-  /// Why no login service can run the gateway here, once asked
+  /// Why no login service can run the engine here, once asked
   no_service: std::sync::OnceLock<Option<String>>,
   log: LogFn,
   gateway: parking_lot::Mutex<Option<GatewayStatus>>,
@@ -100,32 +89,18 @@ impl RemoteAccess {
     local_ipc::gateway_endpoint(&self.root)
   }
 
-  fn config_path(&self) -> PathBuf {
-    self.root.join("devices").join("gateway.json")
-  }
-
-  /// How the gateway is started from this build: the acpira-gateway beside the engine, else this binary's own gateway role
-  fn gateway_program(&self) -> Option<Program> {
-    let exe = self.exe.as_ref()?;
-    let beside = exe.with_file_name(GATEWAY_FILE);
-    if beside.is_file() {
-      return Some(Program { exe: beside, prefix: Vec::new() });
-    }
-    GATEWAY_ROLE.get().map(|role| Program { exe: exe.clone(), prefix: vec![role.clone()] })
-  }
-
   fn no_service(&self) -> Option<String> {
     self.no_service.get_or_init(|| self.service.unavailable()).clone()
   }
 
   fn config(&self) -> Value {
-    std::fs::read(self.config_path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_else(|| serde_json::json!({}))
+    read_config(&self.root)
   }
 
   pub fn view(&self) -> RemoteAccessView {
     let unavailable = if !cfg!(any(target_os = "macos", target_os = "linux", windows)) {
       Some("platform")
-    } else if self.gateway_program().is_none() {
+    } else if self.exe.is_none() {
       Some("component")
     } else if self.no_service().is_some() {
       Some("service")
@@ -221,12 +196,12 @@ impl RemoteAccess {
       O::AllowLan => self.request(&GatewayRequest::AllowLan).await.map(drop),
       O::SetRelays { relays } => {
         self.edit_config(|c| c["relays"] = serde_json::to_value(&relays).unwrap_or_default()).await?;
-        // The endpoint is bound with its relays: a running gateway starts over (its devices reconnect on their own)
-        if self.service.installed() {
+        // The endpoint is bound with its relays: a running gateway starts over in its engine (its devices reconnect
+        // on their own)
+        if self.service.installed() && self.request(&GatewayRequest::Restart).await.is_ok() {
           self
             .busy_while(async {
-              self.stop_gateway().await;
-              self.service.start().await?;
+              self.wait_gone(STOP_WAIT).await;
               self.wait_up(START_WAIT).await
             })
             .await?;
@@ -265,84 +240,29 @@ impl RemoteAccess {
   }
 
   async fn edit_config(&self, f: impl FnOnce(&mut Value)) -> Result<()> {
-    let path = self.config_path();
-    crate::store::file_lock::with_file_lock(&path, || async {
-      if let Some(dir) = path.parent() {
-        tokio::fs::create_dir_all(dir).await?;
-      }
-      let mut c = self.config();
-      if !c.is_object() {
-        c = serde_json::json!({});
-      }
-      f(&mut c);
-      crate::store::file_lock::write_atomic(&path, serde_json::to_string_pretty(&c)?.as_bytes(), Some(0o600)).await
-    })
-    .await
+    edit_config(&self.root, f).await
   }
 
   async fn enable(&self) -> Result<()> {
-    let (Some(exe), Some(program)) = (self.exe.clone(), self.gateway_program()) else {
-      bail!("this build has no acpira-gateway beside the engine");
+    let Some(exe) = self.exe.clone() else {
+      bail!("this engine does not know its own binary");
     };
     if let Some(why) = self.no_service() {
       bail!("remote access needs {why}");
     }
-    self.install(&exe, &program).await
-  }
-
-  /// Install the gateway as a login service and start it, as one transaction across the engines sharing the data root
-  /// (`devices/install.lock`): copies made from this build, a service already starting them and answering left alone,
-  /// otherwise the running gateway stopped, the copies made, the service written and started, older copies removed
-  async fn install(&self, exe: &Path, program: &Program) -> Result<()> {
-    let lock = self.root.join("devices").join("install");
-    // The lock file lives in `devices/`, which a data root that never had remote access on does not have yet
-    tokio::fs::create_dir_all(self.root.join("devices")).await.context("creating the devices directory")?;
-    let deadline = tokio::time::Instant::now() + START_WAIT + STOP_WAIT;
-    loop {
-      let r = crate::store::file_lock::with_file_lock(&lock, || self.install_locked(exe, program)).await;
-      // Another engine is installing: once it is done, this one most likely finds its gateway current
-      match r {
-        Err(e) if e.to_string().contains("is locked by another host") && tokio::time::Instant::now() < deadline => continue,
-        r => return r,
-      }
-    }
-  }
-
-  async fn install_locked(&self, exe: &Path, program: &Program) -> Result<()> {
-    let staged = stage::plan(&self.root, VERSION, exe, &program.exe).await?;
-    let target = Program { exe: staged.gateway.clone(), prefix: program.prefix.clone() };
-    let engine_str = staged.engine.to_string_lossy().into_owned();
-    let built = stage::built(exe);
-    self
-      .edit_config(move |c| {
-        c["engine"] = Value::String(engine_str);
-        // What `refresh_installed` compares a later build of the same version with
-        match built {
-          Some(b) => c["engineBuilt"] = Value::from(b),
-          None => drop(c.as_object_mut().map(|o| o.remove("engineBuilt"))),
-        }
-      })
-      .await?;
-    // Installed from these binaries and answering (switched on from another window, the desktop card opening while it
-    // starts): a restart would only cut off its devices. A gateway still starting answers once it does
-    if staged.engine.is_file() && staged.gateway.is_file() && self.service.current(&target).await && self.wait_up(REQUEST_WAIT).await.is_ok() {
-      return Ok(());
-    }
-    // The gateway running now (an older install, one started by hand) lets go of the control channel and its binary
-    self.stop_gateway().await;
-    stage::stage(&self.root, exe, &program.exe, &staged).await?;
-    self.service.install(&target, &*self.log).await?;
-    stage::prune(&self.root, staged.engine.parent()).await;
-    (self.log)(&format!("remote access: {} installed ({})", self.service.label(), target.exe.display()));
+    install(&self.root, &self.service, &exe, &*self.log).await?;
     self.wait_up(START_WAIT).await
   }
 
   /// Ask the running gateway to stop and wait until its control channel is gone; nothing running is fine
   async fn stop_gateway(&self) {
-    if self.request(&GatewayRequest::Stop).await.is_err() {
-      return;
+    if self.request(&GatewayRequest::Stop).await.is_ok() {
+      self.wait_gone(STOP_WAIT).await;
     }
-    let deadline = tokio::time::Instant::now() + STOP_WAIT;
+  }
+
+  async fn wait_gone(&self, within: Duration) {
+    let deadline = tokio::time::Instant::now() + within;
     while tokio::time::Instant::now() < deadline && self.request(&GatewayRequest::Status).await.is_ok() {
       tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -374,42 +294,39 @@ impl RemoteAccess {
 
   async fn disable(&self) -> Result<()> {
     let label = self.service.label();
-    // Stopped through its control channel first: a clean exit, which no service restarts
-    self.stop_gateway().await;
+    // The definition first, so no engine takes the gateway up again; then the gateway stops, its engine running on
     self.service.uninstall().await?;
-    stage::prune(&self.root, None).await;
+    self.stop_gateway().await;
+    stage::remove(&self.root).await;
     self.set_gateway(None);
     (self.log)(&format!("remote access: {label} removed"));
     Ok(())
   }
 
-  /// At engine start: a gateway installed by an older version, or by an earlier build of this version (a local package,
-  /// an extension and the desktop app updated apart), is reinstalled from this one, so devices never keep talking to an
-  /// old engine. An older engine still running beside a newer one leaves it alone, and so does an earlier build: two
-  /// engines of one version never take turns reinstalling it. Switched on but not running (a load that failed, a stop
-  /// by hand): started again, as the switch says
+  /// At engine start: a service installed by an older version, by an earlier build of this version (a local package,
+  /// an extension and the desktop app updated apart) or by a build that ran a standalone gateway is reinstalled from
+  /// this one, so devices never keep talking to an old engine. An older engine still running beside a newer one leaves
+  /// it alone, and so does an earlier build: two engines of one version never take turns reinstalling it. Switched on
+  /// but not running (a crash, a load that failed, a stop by hand): started again, as the switch says
   pub async fn refresh_installed(&self) {
     if !self.service.installed() {
       return;
     }
-    let config = self.config();
-    let installed = config.get("engine").and_then(Value::as_str).and_then(|e| stage::installed_version(Path::new(e)));
-    let mine = self.exe.as_deref().filter(|exe| !stage::is_staged(&self.root, exe)).and_then(stage::built);
-    let theirs = config.get("engineBuilt").and_then(Value::as_u64);
-    if stage::keeps_installed(VERSION, mine, installed.as_deref(), theirs) {
-      if self.wait_up(REQUEST_WAIT).await.is_err()
+    if let Some(exe) = &self.exe {
+      let r = self.busy_while(refresh(&self.root, self.service.user_home(), exe, &self.log)).await;
+      if let Err(e) = r {
+        (self.log)(&format!("remote access: reinstalling for {VERSION} failed: {e:#}"));
+      }
+    }
+    if self.wait_up(REQUEST_WAIT).await.is_err() {
+      // This engine runs the gateway itself once it looks again; another one is started by the service
+      if !host::kick()
         && let Err(e) = self.service.start().await
       {
         (self.log)(&format!("remote access: starting {} failed: {e:#}", self.service.label()));
       }
-      return;
     }
-    let (Some(exe), Some(program)) = (self.exe.clone(), self.gateway_program()) else { return };
-    let r = self.busy_while(self.install(&exe, &program)).await;
     self.emit();
-    if let Err(e) = r {
-      (self.log)(&format!("remote access: reinstalling for {VERSION} failed: {e:#}"));
-    }
   }
 
   /// A session wants the user: the gateway pushes it to the paired phones that asked for notifications. Nothing to
@@ -426,22 +343,135 @@ impl RemoteAccess {
     });
   }
 
-  /// One request on the control channel and its answer
   async fn request(&self, req: &GatewayRequest) -> Result<Value> {
-    let socket = self.socket();
-    let exchange = async {
-      let answer = local_ipc::exchange(&socket, &serde_json::to_string(req)?)
-        .await
-        .map_err(|_| anyhow!("remote access is not running"))?
-        .ok_or_else(|| anyhow!("the gateway hung up"))?;
-      let v: Value = serde_json::from_str(&answer)?;
-      if let Some(e) = v.get("error").and_then(Value::as_str) {
-        bail!("{e}");
-      }
-      Ok(v)
-    };
-    tokio::time::timeout(REQUEST_WAIT, exchange).await.map_err(|_| anyhow!("the gateway did not answer"))?
+    request(&self.socket(), req).await
   }
+}
+
+fn read_config(root: &Path) -> Value {
+  std::fs::read(root.join("devices").join("gateway.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_else(|| serde_json::json!({}))
+}
+
+async fn edit_config(root: &Path, f: impl FnOnce(&mut Value)) -> Result<()> {
+  let path = root.join("devices").join("gateway.json");
+  crate::store::file_lock::with_file_lock(&path, || async {
+    if let Some(dir) = path.parent() {
+      tokio::fs::create_dir_all(dir).await?;
+    }
+    let mut c = read_config(root);
+    if !c.is_object() {
+      c = serde_json::json!({});
+    }
+    f(&mut c);
+    crate::store::file_lock::write_atomic(&path, serde_json::to_string_pretty(&c)?.as_bytes(), Some(0o600)).await
+  })
+  .await
+}
+
+/// The service's copy and definition from `exe` unless what is installed is newer (`stage::keeps_installed`) and
+/// current. The engine that runs the gateway calls this once it serves, every engine at its start
+pub async fn refresh(root: &Path, user_home: &Path, exe: &Path, log: &LogFn) -> Result<()> {
+  let service = Service::new(root, user_home);
+  let config = read_config(root);
+  let installed = config.get("engine").and_then(Value::as_str).and_then(|e| stage::installed_version(Path::new(e)));
+  let mine = Some(exe).filter(|exe| !stage::is_copy(root, exe)).and_then(stage::built);
+  let theirs = config.get("engineBuilt").and_then(Value::as_u64);
+  let program = Program { exe: stage::exe(root) };
+  if stage::keeps_installed(VERSION, mine, installed.as_deref(), theirs) {
+    // The copy stays; only a definition that went missing or stale (unloaded by hand) is written again
+    if program.exe.is_file() && !service.current(&program).await {
+      service.install(&program, &**log).await?;
+    }
+    return Ok(());
+  }
+  // The engine started from the copy cannot tell its build: whoever installed it keeps it current
+  if stage::is_copy(root, exe) {
+    return Ok(());
+  }
+  install(root, &service, exe, &**log).await
+}
+
+/// Install the login service from `exe` and start it, as one transaction across the engines sharing the data root
+/// (`devices/install.lock`): a standalone gateway of an earlier build stopped, the copy made, the definition written
+/// and started (an engine it runs already is left running), the copies of earlier builds removed
+async fn install(root: &Path, service: &Service, exe: &Path, log: &(dyn Fn(&str) + Send + Sync)) -> Result<()> {
+  let lock = root.join("devices").join("install");
+  // The lock file lives in `devices/`, which a data root that never had remote access on does not have yet
+  tokio::fs::create_dir_all(root.join("devices")).await.context("creating the devices directory")?;
+  let deadline = tokio::time::Instant::now() + START_WAIT + STOP_WAIT;
+  loop {
+    let r = crate::store::file_lock::with_file_lock(&lock, || install_locked(root, service, exe, log)).await;
+    // Another engine is installing: once it is done, this one most likely finds the service current
+    match r {
+      Err(e) if e.to_string().contains("is locked by another host") && tokio::time::Instant::now() < deadline => continue,
+      r => return r,
+    }
+  }
+}
+
+async fn install_locked(root: &Path, service: &Service, exe: &Path, log: &(dyn Fn(&str) + Send + Sync)) -> Result<()> {
+  let socket = local_ipc::gateway_endpoint(root);
+  let program = Program { exe: stage::exe(root) };
+  let built = stage::built(exe).filter(|_| !stage::is_copy(root, exe));
+  // A gateway that answers without an engine of its own is a standalone one from before the gateway moved into the
+  // engine; its login service is replaced below. On Windows the engine running the gateway runs from the copy: it lets
+  // the next one take over first
+  let running = request(&socket, &GatewayRequest::Status).await.ok().and_then(|v| serde_json::from_value::<GatewayStatus>(v).ok());
+  let copy_changes = !stage::is_copy(root, exe) && !same_build(root, built);
+  if running.as_ref().is_some_and(|s| s.engine_pid.is_none() || (cfg!(windows) && copy_changes)) {
+    stop(&socket).await;
+  }
+  stage::stage(root, exe).await?;
+  let record = stage::record(root, VERSION).to_string_lossy().into_owned();
+  edit_config(root, move |c| {
+    c["engine"] = Value::String(record);
+    // What `refresh` compares a later build of the same version with
+    match built {
+      Some(b) => c["engineBuilt"] = Value::from(b),
+      None => drop(c.as_object_mut().map(|o| o.remove("engineBuilt"))),
+    }
+  })
+  .await?;
+  service.install(&program, log).await?;
+  stage::remove_aside(root).await;
+  log(&format!("remote access: {} installed ({})", service.label(), program.exe.display()));
+  // This process may be the one to run it
+  let _ = host::kick();
+  Ok(())
+}
+
+/// `gateway.json` names this version and build already
+fn same_build(root: &Path, built: Option<u64>) -> bool {
+  let config = read_config(root);
+  let installed = config.get("engine").and_then(Value::as_str).and_then(|e| stage::installed_version(Path::new(e)));
+  installed.as_deref() == Some(VERSION) && config.get("engineBuilt").and_then(Value::as_u64) == built
+}
+
+/// Ask the gateway on `socket` to stop and wait until its control channel is gone
+async fn stop(socket: &Path) {
+  if request(socket, &GatewayRequest::Stop).await.is_err() {
+    return;
+  }
+  let deadline = tokio::time::Instant::now() + STOP_WAIT;
+  while tokio::time::Instant::now() < deadline && request(socket, &GatewayRequest::Status).await.is_ok() {
+    tokio::time::sleep(Duration::from_millis(100)).await;
+  }
+}
+
+/// One request on the control channel and its answer
+async fn request(socket: &Path, req: &GatewayRequest) -> Result<Value> {
+  let exchange = async {
+    let answer = local_ipc::exchange(socket, &serde_json::to_string(req)?)
+      .await
+      .map_err(|_| anyhow!("remote access is not running"))?
+      .ok_or_else(|| anyhow!("the gateway hung up"))?;
+    let v: Value = serde_json::from_str(&answer)?;
+    if let Some(e) = v.get("error").and_then(Value::as_str) {
+      bail!("{e}");
+    }
+    Ok(v)
+  };
+  tokio::time::timeout(REQUEST_WAIT, exchange).await.map_err(|_| anyhow!("the gateway did not answer"))?
 }
 
 /// Follows the gateway's `watch` stream while a page is subscribed; a gateway that is not running (or restarting) is

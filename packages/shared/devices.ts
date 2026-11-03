@@ -1,5 +1,6 @@
 // Paired devices and the settings page's remote access, mirrored by acpira_shared::devices. A device (a phone, another
-// computer) reaches the engine through `acpira-gateway`; the engine installs it and relays its control socket's reports
+// computer) reaches the engine through the gateway running inside it; the engine turns it on and relays its control
+// socket's reports
 
 export type DeviceKind = 'phone' | 'tablet' | 'computer';
 

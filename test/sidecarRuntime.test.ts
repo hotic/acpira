@@ -163,6 +163,8 @@ describe('sidecar runtime', () => {
     const { s, init, cwd, requests } = await setup();
     const id = init.state.active!.id;
     const opened = () => requests('openResolvedFile') as Extract<PlatformRequest, { method: 'openResolvedFile' }>[];
+    mkdirSync(join(cwd, 'src'));
+    for (const path of ['src/a.ts', 'b.ts', 'src/shot.png', 'c.ts']) writeFileSync(join(cwd, path), '');
     s.view('V', { type: 'openFile', sessionId: id, path: 'src/a.ts', line: 12 });
     await until(() => opened().length === 1);
     expect(opened()[0]).toMatchObject({ path: resolve(cwd, 'src/a.ts'), line: 12 });
@@ -187,6 +189,23 @@ describe('sidecar runtime', () => {
     s.view('V', { type: 'openFile', sessionId: id, path: 'c.ts' });
     await until(() => toasts(s).some(t => t.level === 'error' && t.text.includes('no editor')));
     expect(opened().length).toBe(3);
+  });
+
+  it('localizes missing file links before asking the shell to open or reveal them', async () => {
+    const { s, init, cwd, shared, posted, requests } = await setup();
+    shared({ language: 'zh-CN' });
+    await until(() => posted().some(m => m.type === 'settings' && m.locale === 'zh-CN'));
+    const path = 'app/build/outputs/apk/bench/app-bench.apk';
+    for (const reveal of [false, true]) {
+      s.view('V', { type: 'openFile', sessionId: init.state.active!.id, path, reveal });
+      await until(() => toasts(s).length === (reveal ? 2 : 1));
+    }
+    expect(toasts(s)).toEqual([
+      { method: 'toast', level: 'error', text: `文件 ${join(cwd, path)} 不存在` },
+      { method: 'toast', level: 'error', text: `文件 ${join(cwd, path)} 不存在` },
+    ]);
+    expect(requests('openResolvedFile')).toHaveLength(0);
+    expect(requests('revealInOS')).toHaveLength(0);
   });
 
   it('only forwards allowlisted external URLs', async () => {

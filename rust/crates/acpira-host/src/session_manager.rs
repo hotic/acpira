@@ -263,11 +263,21 @@ struct Remote {
   msg: Option<HostMsg>,
 }
 
+/// The facts of the window a viewer belongs to, when one engine serves several: its workspace, whether it is a project
+/// shell, and its session scope. A viewer without one (tests, peers' views) reads `ManagerDeps`' engine-wide ones
+#[derive(Clone)]
+pub struct ViewerShell {
+  pub cwd: Arc<dyn Fn() -> String + Send + Sync>,
+  pub projects: Arc<dyn Fn() -> bool + Send + Sync>,
+  pub scope: Arc<dyn Fn() -> String + Send + Sync>,
+}
+
 /// One per webview: its own active session over the shared pool and list
 pub struct Viewer {
   id: u64,
   state: parking_lot::Mutex<ViewerState>,
   sink: parking_lot::Mutex<Option<Sink>>,
+  shell: Option<ViewerShell>,
 }
 
 impl Viewer {
@@ -677,7 +687,9 @@ impl SessionManager {
       st.prefs = prefs;
       st.categories = categories;
     }
-    self.seed_projects().await;
+    if (self.deps.projects)() {
+      self.seed_projects().await;
+    }
     self.backfill_models();
     // The login shell's PATH decides where CLIs are found, and running the user's rc files takes a while (~0.6 s for an
     // oh-my-zsh setup, up to `FIRST_WAIT`). Nothing the first window shows needs it: a stored session is shown from its
@@ -734,6 +746,17 @@ impl SessionManager {
 
   fn live_sessions(&self) -> Vec<Arc<AcpSession>> {
     self.state.lock().live.values().cloned().collect()
+  }
+
+  /// The engine watchdog's look (`Engine::watch_for_wedge`): the manager's state, or the core of a session open here
+  /// (live or mirrored), that stayed locked for all of `wait`. None of them is held across an await, so a hold that long
+  /// is a blocking call that is not coming back
+  pub fn stuck_lock(&self, wait: Duration) -> Option<String> {
+    let sessions: Vec<Arc<AcpSession>> = match self.state.try_lock_for(wait) {
+      Some(st) => st.live.values().chain(st.mirrors.values()).cloned().collect(),
+      None => return Some("the session manager's state".into()),
+    };
+    sessions.iter().find(|s| s.core.try_lock_for(wait).is_none()).map(|s| format!("session {}'s core", s.id))
   }
 
   /// A session open in this engine, for callers outside the manager (a relay grant in the engine tests)

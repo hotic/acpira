@@ -3,9 +3,9 @@ import { chmodSync, copyFileSync, mkdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { signMacSidecar } from './sign-mac.mjs';
-import { GATEWAY_EXE, SIDECAR_TARGETS, exeName, gatewayName, hostPlatform, targetFor } from './sidecar-targets.mjs';
+import { SIDECAR_TARGETS, exeName, hostPlatform, targetFor } from './sidecar-targets.mjs';
 
-// Builds the release Rust sidecar into dist/sidecar/<platform>/ (with acpira-gateway beside it where the target ships one):
+// Builds the release Rust sidecar into dist/sidecar/<platform>/:
 // `node scripts/release/build-sidecar.mjs [--dist] [--all | <platform>...]`, this machine's
 // platform by default. Windows targets build on Windows. macOS targets build on macOS, or anywhere else through cargo-zigbuild with
 // SDKROOT pointing at a macOS SDK (a copy of the Mac's /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk). Linux targets are static
@@ -28,22 +28,20 @@ const fastLocal = !full;
 const profile = full ? 'dist' : 'release';
 
 for (const platform of platforms) {
-  const { triple, gateway } = targetFor(platform);
+  const { triple } = targetFor(platform);
   run('rustup', ['target', 'add', triple]);
   const linuxZig = triple.includes('-linux-') && platform !== hostPlatform();
   const macZig = triple.endsWith('-apple-darwin') && process.platform !== 'darwin';
   if (macZig && !process.env.SDKROOT) throw new Error(`${platform} builds off macOS need SDKROOT set to a macOS SDK`);
   const zig = linuxZig || macZig;
   const fastFlags = fastLocal && !linuxZig ? ['--config', 'profile.release.lto=false', '--config', 'profile.release.incremental=true'] : [];
-  const bins = ['--bin', 'acpira', ...(gateway ? ['--bin', GATEWAY_EXE] : [])];
-  run('cargo', [zig ? 'zigbuild' : 'build', '--profile', profile, '--locked', '--target', triple, ...bins, ...fastFlags], join(root, 'rust'));
+  run('cargo', [zig ? 'zigbuild' : 'build', '--profile', profile, '--locked', '--target', triple, '--bin', 'acpira', ...fastFlags], join(root, 'rust'));
   const out = join(root, 'dist', 'sidecar', platform);
   mkdirSync(out, { recursive: true });
-  for (const exe of [exeName(platform), ...(gateway ? [gatewayName(platform)] : [])]) {
-    copyFileSync(join(root, 'rust', 'target', triple, profile, exe), join(out, exe));
-    if (!exe.endsWith('.exe')) chmodSync(join(out, exe), 0o755);
-    console.log(`${platform}: ${(statSync(join(out, exe)).size / 1e6).toFixed(1)} MB → dist/sidecar/${platform}/${exe}`);
-  }
+  const exe = exeName(platform);
+  copyFileSync(join(root, 'rust', 'target', triple, profile, exe), join(out, exe));
+  if (!exe.endsWith('.exe')) chmodSync(join(out, exe), 0o755);
+  console.log(`${platform}: ${(statSync(join(out, exe)).size / 1e6).toFixed(1)} MB → dist/sidecar/${platform}/${exe}`);
   // A Developer ID signature keeps macOS privacy grants across builds (sign-mac.mjs); off macOS the copy keeps the
   // linker's ad hoc one until a Mac signs it
   signMacSidecar(root, platform);

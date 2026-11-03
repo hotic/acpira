@@ -7,11 +7,21 @@ import { dirname, join, resolve } from 'node:path';
 import type { SidecarCommand } from './SidecarClient';
 
 // The persistent engine (`acpira serve --socket`): sessions run there, not in the window. A window that reloads, a remote
-// connection that drops while the laptop sleeps, or an IDE that quits only disconnects; the next window for the same
-// workspace connects to the same engine and finds its turns still running. The engine ends on its own once no window is
-// connected and no turn runs (see rust/crates/acpira-host/src/sidecar/server.rs)
+// connection that drops while the laptop sleeps, or an IDE that quits only disconnects; the next window connects to the
+// same engine and finds its turns still running. The engine ends on its own once no window is connected and no turn runs
+// (see rust/crates/acpira-host/src/sidecar/server.rs)
 
-export interface EngineEndpoint {
+// Where to reach it: the machine's one engine (`{ home }`: `acpira engine` starts it, or hands it to this build when that is
+// newer, and names its socket; rust/crates/acpira-host/src/machine_engine/), or an engine on a socket of the caller's
+// choosing (tests running two engines side by side)
+export type EngineEndpoint = MachineEndpoint | SocketEndpoint;
+
+export interface MachineEndpoint {
+  // ACPIRA_HOME: one engine per data root
+  home: string;
+}
+
+export interface SocketEndpoint {
   // Where the engine for this window listens
   socket: string;
   // Where a launched engine writes its stderr (it outlives the window, so there is no output channel to write to)
@@ -41,7 +51,7 @@ const MAX_SOCKET_PATH = 100;
 const LAUNCH_WAIT_MS = 15_000;
 const LOG_ROTATE_BYTES = 4 * 1024 * 1024;
 
-export function engineEndpoint(o: EndpointOpts): EngineEndpoint {
+export function engineEndpoint(o: EndpointOpts): SocketEndpoint {
   const parts = [binaryIdentity(o.binary), resolve(o.home), o.cwd ? resolve(o.cwd) : '', ...(o.shell ? [o.shell] : [])];
   const key = createHash('sha256').update(parts.join('\0')).digest('hex').slice(0, 16);
   const run = join(o.home, 'run');
@@ -53,8 +63,9 @@ export function engineEndpoint(o: EndpointOpts): EngineEndpoint {
   return { socket: join(o.tmp ?? tmpdir(), `acpira-${uid}`, `engine-${key}.sock`), log };
 }
 
-// The path, size and mtime of the real binary: a rebuilt or upgraded sidecar is a different engine
-function binaryIdentity(binary: string): string {
+// The path, size and mtime of the real binary: a rebuilt or upgraded sidecar is a different engine. A missing binary is
+// its bare path, so one deleted under a running window differs too
+export function binaryIdentity(binary: string): string {
   try {
     const real = realpathSync(binary);
     const st = statSync(real);
@@ -71,9 +82,64 @@ export interface ReachOpts {
   log: (line: string) => void;
 }
 
-// A connection to the engine on `ep.socket`, launching it first when nothing listens there. The launched engine is
-// detached (its own session, no stdio tied to this process) so it survives this window's extension host
+// How long `acpira engine` may take: landing a large debug build, an older engine handing over, a fresh start (its own
+// limit is 40 s)
+const ENSURE_WAIT_MS = 45_000;
+
+// A connection to the engine at `ep`, launching it first when nothing listens there. A launched engine is detached (its
+// own session, no stdio tied to this process) so it survives this window's extension host
 export async function reachEngine(cmd: SidecarCommand, ep: EngineEndpoint, o: ReachOpts): Promise<Socket> {
+  return 'home' in ep ? reachMachineEngine(cmd, ep, o) : reachSocketEngine(cmd, ep, o);
+}
+
+// The machine's engine: `<binary> engine --home H` makes sure it runs (and is at least this build) and prints where it
+// listens; the shell then connects there. Its stderr goes to the log
+async function reachMachineEngine(cmd: SidecarCommand, ep: MachineEndpoint, o: ReachOpts): Promise<Socket> {
+  const deadline = Date.now() + ENSURE_WAIT_MS;
+  for (let wait = 100; ; wait = Math.min(wait * 2, 1000)) {
+    const socket = await ensureMachineEngine(cmd, ep, o);
+    try {
+      return await connectOnce(socket);
+    } catch (e) {
+      // Gone between the answer and the connect (a newer build took over, or it idled out): ask again
+      const code = (e as NodeJS.ErrnoException).code;
+      if ((code !== 'ENOENT' && code !== 'ECONNREFUSED') || Date.now() + wait > deadline || o.cancelled()) throw e;
+      o.log(`machine engine at ${socket} went away (${code}); asking again`);
+      await new Promise(r => setTimeout(r, wait));
+    }
+  }
+}
+
+async function ensureMachineEngine(cmd: SidecarCommand, ep: MachineEndpoint, o: ReachOpts): Promise<string> {
+  const out = await new Promise<string>((resolve, reject) => {
+    const child = spawn(cmd.command, ['engine', '--home', ep.home, ...cmd.args], {
+      cwd: o.cwd, env: { ...process.env, ...cmd.env }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+    });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => { child.kill(); reject(new Error(`acpira engine gave no answer within ${ENSURE_WAIT_MS / 1000}s`)); }, ENSURE_WAIT_MS);
+    child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
+    child.stderr.on('data', (d: Buffer) => {
+      stderr += d.toString();
+      for (const line of d.toString().split('\n')) if (line.trim()) o.log(line.trim());
+    });
+    child.on('error', e => { clearTimeout(timer); reject(e); });
+    child.on('exit', code => {
+      clearTimeout(timer);
+      if (code === 0) resolve(stdout);
+      else reject(new Error(stderr.trim().split('\n').pop() || `acpira engine exited ${code}`));
+    });
+  });
+  if (o.cancelled()) throw new Error('cancelled');
+  const line = out.trim().split('\n').pop() ?? '';
+  let reached: { socket?: unknown; version?: unknown; pid?: unknown };
+  try { reached = JSON.parse(line) as typeof reached; } catch { throw new Error(`acpira engine printed ${line || 'nothing'}`); }
+  if (typeof reached.socket !== 'string') throw new Error(`acpira engine printed ${line}`);
+  o.log(`machine engine ${String(reached.version)} (pid ${String(reached.pid)}) at ${reached.socket}`);
+  return reached.socket;
+}
+
+async function reachSocketEngine(cmd: SidecarCommand, ep: SocketEndpoint, o: ReachOpts): Promise<Socket> {
   // Checked before connecting too: a socket in a directory someone else controls may not be this user's engine
   privateDir(dirname(ep.socket));
   try {

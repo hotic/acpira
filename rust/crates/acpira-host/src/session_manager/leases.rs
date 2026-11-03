@@ -267,6 +267,11 @@ impl SessionManager {
     self.live_sessions().iter().any(|s| s.is_running())
   }
 
+  /// Some session has work in flight beyond a running turn (`AcpSession::in_flight`)
+  pub fn in_flight(&self) -> bool {
+    self.live_sessions().iter().any(|s| s.in_flight())
+  }
+
   /// Sessions whose lease this engine holds (tests)
   pub fn leased(&self) -> Vec<String> {
     self.leases.held()

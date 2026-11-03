@@ -3,7 +3,7 @@ import { chmodSync, copyFileSync, existsSync, globSync, mkdirSync, mkdtempSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SIDECAR_TARGETS, exeName, gatewayName, hostPlatform, targetFor } from './sidecar-targets.mjs';
+import { SIDECAR_TARGETS, exeName, hostPlatform, targetFor } from './sidecar-targets.mjs';
 
 // Packages VSIXes from an existing build (`pnpm build` + dist/sidecar/<platform>/ from build-sidecar.mjs):
 //   node scripts/release/package-vsix.mjs                 this machine's platform package
@@ -17,7 +17,9 @@ import { SIDECAR_TARGETS, exeName, gatewayName, hostPlatform, targetFor } from '
 // README, CHANGELOG and LICENSE from the repository root
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const app = join(root, 'apps', 'vscode');
-const { name, version } = JSON.parse(readFileSync(join(app, 'package.json'), 'utf8'));
+const { name, version: released } = JSON.parse(readFileSync(join(app, 'package.json'), 'utf8'));
+// A local package's prerelease version (local-version.mjs), matching the engine binary it carries; CI leaves it unset
+const version = process.env.ACPIRA_VERSION || released;
 const args = process.argv.slice(2);
 const allTargets = SIDECAR_TARGETS.flatMap(t => t.vsce);
 const hostTarget = targetFor(hostPlatform()).vsce[0];
@@ -52,6 +54,7 @@ try {
   // mean something inside this repository
   const manifest = JSON.parse(readFileSync(join(stage, 'package.json'), 'utf8'));
   for (const key of ['scripts', 'dependencies', 'devDependencies']) delete manifest[key];
+  manifest.version = version;
   writeFileSync(join(stage, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   const bin = join(stage, 'bin');
   for (const target of targets) {
@@ -59,13 +62,11 @@ try {
     const t = SIDECAR_TARGETS.find(x => x.vsce.includes(target));
     if (!t) throw new Error(`unknown VS Code target ${target}; one of ${allTargets.join(', ')}`);
     mkdirSync(bin);
-    // The engine, and the paired-remote gateway it looks for beside itself where the target ships one
-    for (const exe of [exeName(t.platform), ...(t.gateway ? [gatewayName(t.platform)] : [])]) {
-      const from = join(root, 'dist', 'sidecar', t.platform, exe);
-      if (!existsSync(from)) throw new Error(`${from} is missing: run \`node scripts/release/build-sidecar.mjs ${t.platform}\` first`);
-      copyFileSync(from, join(bin, exe));
-      if (!exe.endsWith('.exe')) chmodSync(join(bin, exe), 0o755);
-    }
+    const exe = exeName(t.platform);
+    const from = join(root, 'dist', 'sidecar', t.platform, exe);
+    if (!existsSync(from)) throw new Error(`${from} is missing: run \`node scripts/release/build-sidecar.mjs ${t.platform}\` first`);
+    copyFileSync(from, join(bin, exe));
+    if (!exe.endsWith('.exe')) chmodSync(join(bin, exe), 0o755);
     const argv = ['package', '--no-dependencies', '--target', target, '-o', join(root, `${name}-${version}-${target}.vsix`)];
     console.log(`$ vsce ${argv.join(' ')}`);
     // Windows runs the .cmd shim through the shell, which splits unquoted paths at their spaces

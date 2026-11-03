@@ -1,5 +1,6 @@
 //! Envelope protocol between a shell and the sidecar (mirror of packages/shared/sidecar.ts): ndjson, one envelope per line,
-//! stdout carries only these. Both sides must speak the same protocolVersion; a mismatch is rejected at hello
+//! stdout carries only these. An engine accepts every protocolVersion from SIDECAR_PROTOCOL_MIN to its own: changes are
+//! additive (unknown fields and envelope types are skipped on both sides), and only a breaking change raises the number
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -7,6 +8,9 @@ use serde_json::{Map, Value};
 use crate::protocol::{HostMsg, WebviewHost};
 
 pub const SIDECAR_PROTOCOL_VERSION: i64 = 1;
+/// The oldest protocol this engine still serves. Raised only after a breaking change has been out for a release, so a
+/// client one breaking change behind (the phone, which updates slowest) still connects
+pub const SIDECAR_PROTOCOL_MIN: i64 = 1;
 
 /// Requests the shell must answer (platformResponse); the rest are fire-and-forget
 pub const PLATFORM_RPC_METHODS: [&str; 6] = ["openResolvedFile", "openPlanDocument", "revealInOS", "searchFiles", "writeSetting", "openBrowser"];
@@ -289,6 +293,19 @@ pub enum ShellMsg {
     panel_id: String,
   },
   Shutdown,
+  /// `acpira engine` asks the machine's engine who it is, without joining (answered by `probeOk` before any hello)
+  Probe {
+    request_id: String,
+  },
+  /// A newer build (`acpira engine`) takes the machine's endpoint over: the engine hands the socket over, closes its
+  /// wires and ends once its running turns have (answered by `drainOk`, or `drainRefused` when `version` is not newer)
+  Drain {
+    request_id: String,
+    version: String,
+    /// The successor is a local build installed on purpose, which may replace a release (`machine_engine::policy`)
+    #[serde(default)]
+    allow_dev: bool,
+  },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -338,6 +355,22 @@ pub enum SidecarMsg {
     error: Option<String>,
   },
   ShutdownOk,
+  ProbeOk {
+    request_id: String,
+    version: String,
+    pid: u32,
+    protocol_version: i64,
+    protocol_min: i64,
+    /// Drain was asked of it already: the endpoint is about to change hands
+    draining: bool,
+  },
+  DrainOk {
+    request_id: String,
+  },
+  DrainRefused {
+    request_id: String,
+    reason: String,
+  },
 }
 
 #[cfg(test)]

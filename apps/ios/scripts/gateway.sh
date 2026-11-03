@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# A paired-remote gateway for the app and AcpiraRemote's integration test: `acpira-gateway run` on a throwaway home and
-# HOME with relays off (LAN only), bridged to an `acpira serve` whose only enabled agent is the fake agent
+# A paired-remote gateway for the app and AcpiraRemote's integration test: `acpira serve --gateway` on a throwaway home and
+# HOME with relays off (LAN only), the gateway running in an engine whose only enabled agent is the fake agent
 # (test/fake-agent.ts), so nothing spends a model call, reads a real login or touches ~/.acpira. It keeps a pairing
 # window open (one pairing each) and the window's link in a file whose path it prints, and serves until stopped; the
 # home, the engine and its agents go with it.
@@ -13,7 +13,7 @@ repo="$(cd "$ios/../.." && pwd)"
 bin="$repo/rust/target/debug"
 fake="$repo/node_modules/.cache/acpira-test/fake-agent.mjs"
 
-(cd "$repo/rust" && cargo build --quiet --bin acpira --bin acpira-gateway)
+(cd "$repo/rust" && cargo build --quiet --bin acpira)
 if [ ! -f "$fake" ]; then
   (cd "$repo" && pnpm exec tsx -e "import('./test/fakeAgentBundle.ts').then(m => m.bundleFakeAgent())")
 fi
@@ -24,8 +24,8 @@ home="$root/acpira"
 mkdir -p "$home"
 gw=""
 cleanup() {
-  # The gateway, its `pair` windows and the engine it started all name the home on their command line; the engine
-  # ends its agents when it is stopped
+  # The engine and its `pair` windows name the home on their command line; the engine ends its agents when it is
+  # stopped
   [ -n "$gw" ] && kill "$gw" 2>/dev/null
   pkill -f -- "$home" 2>/dev/null || true
   wait 2>/dev/null || true
@@ -39,10 +39,12 @@ disabled="$(env HOME="$root" "$bin/acpira" agents --json --home "$home" 2>/dev/n
   | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.stringify(JSON.parse(s).agents.map(a=>a.id))))')"
 printf '{"fake":{"name":"Fake agent","command":"%s","args":["%s"]}}\n' "$(command -v node)" "$fake" > "$home/agents.json"
 printf '{"defaultAgent":"fake","disabledAgents":%s}\n' "$disabled" > "$home/settings.json"
-mkdir -p "$root/project"
+mkdir -p "$root/project" "$home/devices"
+printf '{"relays":{"mode":"off"}}\n' > "$home/devices/gateway.json"
 
-gateway() { env HOME="$root" ACPIRA_CATALOG_REFRESH=0 "$bin/acpira-gateway" "$@" --home "$home"; }
-gateway run --engine "$bin/acpira" --relays off 2> "$root/gateway.log" &
+gateway() { env HOME="$root" ACPIRA_CATALOG_REFRESH=0 "$bin/acpira" gateway "$@" --home "$home"; }
+env HOME="$root" ACPIRA_CATALOG_REFRESH=0 "$bin/acpira" serve --socket "$home/run/engine.sock" --home "$home" --gateway --idle-grace 86400 \
+  2> "$root/gateway.log" &
 gw=$!
 until [ -S "$home/run/gateway.sock" ]; do
   kill -0 "$gw" 2>/dev/null || { cat "$root/gateway.log" >&2; exit 1; }

@@ -1,5 +1,5 @@
-//! The gateway against the real engine (acpira-host's persistent server, in process, on a Unix socket or a named pipe)
-//! and the fake ACP agent, with a phone played by an endpoint on loopback: pairing, the session list, a turn, a resend
+//! The gateway against the real engine (acpira-host's persistent server, in process, as the engine runs it) and the
+//! fake ACP agent, with a phone played by an endpoint on loopback: pairing, the session list, a turn, a resend
 //! with the same clientId, a refused message, a blob, and revocation. No model calls. Skipped without the repository's
 //! node_modules
 
@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use acpira_gateway::engine::EngineSpec;
+use acpira_gateway::engine::Link;
 use acpira_gateway::gateway::{Gateway, Opts};
 use acpira_host::sidecar::server::{Engine, ServerOpts};
 use acpira_net::endpoint::{self, ALPN_LINK, Options, Relays};
@@ -19,24 +19,12 @@ use acpira_net::pair::{self, DeviceKind, PairReply};
 use acpira_net::ticket::PairTicket;
 use acpira_net::SecretKey;
 use serde_json::{Value, json};
-use acpira_shared::local_ipc::Listener;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
 /// A short private directory: a Unix socket path must fit sun_path, which a deep temporary directory may not
 fn short_tmp() -> tempfile::TempDir {
   let base = if cfg!(unix) { PathBuf::from("/tmp") } else { std::env::temp_dir() };
   tempfile::Builder::new().prefix("acgw").tempdir_in(base).unwrap_or_else(|_| tempfile::tempdir().unwrap())
-}
-
-/// Where the in-process engine listens: a socket in `dir`, or a pipe of this test's own on Windows
-fn engine_socket(dir: &Path) -> PathBuf {
-  if cfg!(windows) {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    static N: AtomicU32 = AtomicU32::new(0);
-    return PathBuf::from(format!(r"\\.\pipe\acpira-gateway-test-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
-  }
-  dir.join("e.sock")
 }
 
 /// test/fake-agent.ts as one ES module node runs directly (acpira-desktop tests/engine.rs builds it the same way)
@@ -69,30 +57,10 @@ fn fake_agent() -> Option<PathBuf> {
   Some(out)
 }
 
-async fn serve_engine(engine: Arc<Engine>, mut listener: Listener) {
-  loop {
-    let Ok(stream) = listener.accept().await else { return };
-    let (read, mut write) = tokio::io::split(stream);
-    let (line_tx, line_rx) = mpsc::unbounded_channel::<String>();
-    let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();
-    tokio::spawn(async move {
-      while let Some(line) = out_rx.recv().await {
-        if write.write_all(line.as_bytes()).await.is_err() || write.write_all(b"\n").await.is_err() {
-          break;
-        }
-      }
-    });
-    tokio::spawn(async move {
-      let mut lines = BufReader::new(read).lines();
-      while let Ok(Some(l)) = lines.next_line().await {
-        if line_tx.send(l).is_err() {
-          break;
-        }
-      }
-    });
-    let e = engine.clone();
-    tokio::spawn(async move { e.serve(out_tx, line_rx).await });
-  }
+/// The gateway's way into `engine`, as acpira-host's `devices::host` gives it
+fn link(engine: &Arc<Engine>) -> Link {
+  let e = engine.clone();
+  Arc::new(move || e.link())
 }
 
 /// The phone's view of the link: envelopes in, kept in order, plus the control frames
@@ -214,18 +182,15 @@ fn a_phone_pairs_drives_a_session_and_is_revoked() {
   rt.block_on(async move {
     let home = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
-    let run = short_tmp();
     // The agents and the default every shell shares (written by the shells in real life)
     std::fs::write(home.path().join("agents.json"), json!({ "fake": { "name": "Fake", "command": "node", "args": [fake.to_string_lossy()] } }).to_string()).unwrap();
     std::fs::write(home.path().join("settings.json"), json!({ "defaultAgent": "fake" }).to_string()).unwrap();
 
-    let socket = engine_socket(run.path());
     let engine = Engine::persistent(ServerOpts { version: "test".into(), home: home.path().to_path_buf(), log: Arc::new(|_: &str| {}), ignore_client_agents: false, bridge_exe: None });
-    let acceptor = tokio::spawn(serve_engine(engine.clone(), Listener::bind(&socket).await.unwrap()));
 
     let g = Gateway::start(Opts {
       home: home.path().to_path_buf(),
-      engine: EngineSpec { binary: "/nonexistent/acpira".into(), home: home.path().to_path_buf(), explicit_home: true, env: Default::default(), socket: Some(socket.clone()) },
+      engine: link(&engine),
       relays: Some(Relays::Off),
       bind: Some("127.0.0.1:0".parse().unwrap()),
       log: Arc::new(|l: &str| eprintln!("gateway: {l}")),
@@ -388,7 +353,6 @@ fn a_phone_pairs_drives_a_session_and_is_revoked() {
 
     phone.close().await;
     g.stop().await;
-    acceptor.abort();
     engine.stop("test over").await;
     let _ = std::fs::remove_file(Path::new(&fake));
   });
@@ -402,7 +366,6 @@ fn replacing_an_envelope_stream_keeps_terminal_acks_flowing() {
   rt.block_on(async move {
     let home = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
-    let run = tempfile::Builder::new().prefix("acgw").tempdir_in("/tmp").unwrap();
     // Wait in the same pty across replacement, then emit 330 KB: well above the terminal's ACK high-water mark.
     let line = "0123456789012345678901234567890123456789012345678901234567890123";
     std::fs::write(
@@ -422,7 +385,6 @@ printf '\037'
       ),
     )
     .unwrap();
-    let socket = run.path().join("e.sock");
     let engine = Engine::persistent(ServerOpts {
       version: "test".into(),
       home: home.path().to_path_buf(),
@@ -430,16 +392,9 @@ printf '\037'
       ignore_client_agents: false,
       bridge_exe: None,
     });
-    let acceptor = tokio::spawn(serve_engine(engine.clone(), Listener::bind(&socket).await.unwrap()));
     let g = Gateway::start(Opts {
       home: home.path().to_path_buf(),
-      engine: EngineSpec {
-        binary: "/nonexistent/acpira".into(),
-        home: home.path().to_path_buf(),
-        explicit_home: true,
-        env: Default::default(),
-        socket: Some(socket),
-      },
+      engine: link(&engine),
       relays: Some(Relays::Off),
       bind: Some("127.0.0.1:0".parse().unwrap()),
       log: Arc::new(|l: &str| eprintln!("gateway: {l}")),
@@ -500,7 +455,6 @@ printf '\037'
     p.msg("V", json!({ "type": "terminalKill", "id": id })).await;
     phone.close().await;
     g.stop().await;
-    acceptor.abort();
     engine.stop("test over").await;
 
     assert!(
@@ -525,15 +479,15 @@ fn the_settings_page_follows_the_gateway() {
     let user_home = tempfile::tempdir().unwrap();
     let g = Gateway::start(Opts {
       home: home.path().to_path_buf(),
-      engine: EngineSpec { binary: "/nonexistent/acpira".into(), home: home.path().to_path_buf(), explicit_home: true, env: Default::default(), socket: None },
+      engine: acpira_gateway::engine::none(),
       relays: Some(Relays::Off),
       bind: Some("127.0.0.1:0".parse().unwrap()),
       log: Arc::new(|l: &str| eprintln!("gateway: {l}")),
     })
     .await
     .unwrap();
-    let stop = Arc::new(tokio::sync::Notify::new());
-    let control = tokio::spawn(acpira_gateway::control::serve(g.clone(), acpira_gateway::control::bind(&g.paths.socket).await.unwrap(), stop));
+    let (on, _on) = mpsc::unbounded_channel();
+    let control = tokio::spawn(acpira_gateway::control::serve(g.clone(), acpira_gateway::control::bind(&g.paths.socket).await.unwrap(), on));
 
     let ra = acpira_host::devices::RemoteAccess::new(home.path(), user_home.path(), None, Arc::new(|l: &str| eprintln!("engine: {l}")));
     let (tx, mut views) = mpsc::unbounded_channel();
@@ -551,7 +505,7 @@ fn the_settings_page_follows_the_gateway() {
     };
 
     let v = next("the gateway's report", &|v| v.gateway.is_some()).await;
-    // No engine binary given, so no gateway beside it
+    // No engine binary given, so nothing to install the login service from
     assert!(!v.available && v.unavailable.as_deref() == Some("component"));
     assert!(!v.enabled);
     assert_eq!(v.gateway.as_ref().unwrap().id, g.endpoint().id().to_string());
@@ -576,50 +530,74 @@ fn the_settings_page_follows_the_gateway() {
     assert!(cfg.get("name").is_none(), "blank goes back to the computer's own name");
     assert_ne!(g.name(), "Studio");
 
+    // Stopping the control channel (`Hosted::stop`) ends its subscriptions, so a page finds the next gateway instead of
+    // following this one forever
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+    let (r, mut w) = tokio::io::split(acpira_shared::local_ipc::connect(&g.paths.socket).await.unwrap());
+    let mut req = serde_json::to_string(&acpira_shared::devices::GatewayRequest::Watch).unwrap();
+    req.push('\n');
+    w.write_all(req.as_bytes()).await.unwrap();
+    let mut lines = tokio::io::BufReader::new(r).lines();
+    assert!(lines.next_line().await.unwrap().is_some(), "the first status");
     ra.dispose();
     control.abort();
+    let end = tokio::time::timeout(Duration::from_secs(2), async {
+      while let Ok(Some(_)) = lines.next_line().await {}
+    });
+    assert!(end.await.is_ok(), "a watch outlived its control channel");
     g.stop().await;
   });
 }
 
-/// The switch for real: the engine copies the binaries, writes the LaunchAgent and loads it, the gateway launchd starts
-/// answers, a relay change restarts it, and turning it off unloads it. Its plist stays in a temporary home (launchd
-/// loads it from anywhere), its relays are off, and the data root is temporary. By hand, after a build of `acpira`:
+/// The engine binary the ignored round trips install: `cargo build --bin acpira` first
+fn built_engine() -> PathBuf {
+  let target = std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target"));
+  let exe = target.join("debug").join(if cfg!(windows) { "acpira.exe" } else { "acpira" });
+  assert!(exe.is_file(), "build the engine first ({})", exe.display());
+  exe
+}
+
+/// The switch for real: the engine copies itself, writes the LaunchAgent and loads it, the engine launchd starts runs
+/// the gateway, a relay change restarts the gateway in that same engine, and turning it off leaves the engine running
+/// with its gateway stopped. The plist sits in this user's LaunchAgents under a label of the temporary data root's
+/// own, since the engine looks for it there; its relays are off. By hand: `cargo build --bin acpira`, then
 /// `cargo test -p acpira-gateway --test e2e -- --ignored launch_agent`
 #[cfg(target_os = "macos")]
 #[test]
 #[ignore = "loads a real LaunchAgent"]
 fn launch_agent_round_trip() {
-  use acpira_host::devices::{RemoteAccess, launch_agent};
+  use acpira_host::devices::{RemoteAccess, launch_agent, stage};
   use acpira_shared::devices::RemoteAccessOp as O;
-  let gateway = PathBuf::from(env!("CARGO_BIN_EXE_acpira-gateway"));
-  let exe = gateway.with_file_name("acpira");
-  assert!(exe.is_file(), "build the engine first ({})", exe.display());
+  let exe = built_engine();
+  let user_home = PathBuf::from(std::env::var_os("HOME").unwrap());
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
   rt.block_on(async move {
     let root = tempfile::Builder::new().prefix("acgw").tempdir_in("/tmp").unwrap();
-    let user_home = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(root.path().join("devices")).unwrap();
-    std::fs::write(root.path().join("devices/gateway.json"), json!({ "relays": { "mode": "off" } }).to_string()).unwrap();
-    let label = launch_agent::label(root.path(), user_home.path());
-    // Unloaded however the test ends
-    struct Unload(String);
+    // The engine resolves the data root as given; /tmp is /private/tmp on macOS
+    let root_path = root.path().canonicalize().unwrap();
+    std::fs::create_dir_all(root_path.join("devices")).unwrap();
+    std::fs::write(root_path.join("devices/gateway.json"), json!({ "relays": { "mode": "off" } }).to_string()).unwrap();
+    let label = launch_agent::label(&root_path, &user_home);
+    // Unloaded, its plist and its engine gone however the test ends
+    struct Unload(String, PathBuf, PathBuf);
     impl Drop for Unload {
       fn drop(&mut self) {
         // SAFETY: getuid has no preconditions
         let uid = unsafe { libc::getuid() };
         let _ = std::process::Command::new("/bin/launchctl").args(["bootout", &format!("gui/{uid}/{}", self.0)]).output();
+        let _ = std::fs::remove_file(&self.1);
+        let _ = std::process::Command::new("pkill").args(["-f", &format!("serve .*--home {}", self.2.display())]).status();
       }
     }
-    let _unload = Unload(label.clone());
+    let _unload = Unload(label.clone(), launch_agent::plist_path(&label, &user_home), root_path.clone());
 
-    let ra = RemoteAccess::new(root.path(), user_home.path(), Some(exe), Arc::new(|l: &str| eprintln!("engine: {l}")));
+    let ra = RemoteAccess::new(&root_path, &user_home, Some(exe), Arc::new(|l: &str| eprintln!("engine: {l}")));
     let (tx, mut views) = mpsc::unbounded_channel();
     ra.subscribe(Arc::new(move |v| {
       let _ = tx.send(v.clone());
     }));
     let mut next = async |what: &str, pred: &dyn Fn(&acpira_shared::devices::RemoteAccessView) -> bool| {
-      let deadline = Instant::now() + Duration::from_secs(20);
+      let deadline = Instant::now() + Duration::from_secs(60);
       loop {
         let v = tokio::time::timeout_at(deadline.into(), views.recv()).await.unwrap_or_else(|_| panic!("no view: {what}")).unwrap();
         if pred(&v) {
@@ -639,57 +617,53 @@ fn launch_agent_round_trip() {
 
     ra.op(O::Enable).await.unwrap();
     // The op ends on a gateway that answers, never on a view that reads as stopped while it starts
-    assert!(ra.view().gateway.is_some(), "running once the op returns");
-    let v = next("the LaunchAgent's gateway", &|v| v.gateway.is_some()).await;
-    assert!(v.enabled);
-    let first = v.gateway.unwrap();
-    // Turning it on again (another window, the desktop card opening) leaves the running gateway alone
-    let before = pid();
-    assert!(before.is_some());
+    let first = ra.view().gateway.expect("running once the op returns");
+    assert!(ra.view().enabled);
+    let engine = pid().expect("launchd runs the engine");
+    assert_eq!(first.engine_pid.map(|p| p.to_string()), Some(engine.clone()), "the gateway runs in the engine launchd started");
+    assert!(stage::exe(&root_path).is_file(), "the service's copy");
+    // Turning it on again (another window, the desktop card opening) leaves the running engine alone
     ra.op(O::Enable).await.unwrap();
-    assert_eq!(pid(), before, "not restarted");
+    assert_eq!(pid().as_deref(), Some(engine.as_str()), "not restarted");
 
-    // Unloaded behind the engine's back: the next engine start loads it again
+    // A relay change restarts the gateway in the same engine: same identity, same process
+    ra.op(O::SetRelays { relays: Relays::Off }).await.unwrap();
+    let again = next("back after the relay change", &|v| v.gateway.is_some()).await.gateway.unwrap();
+    assert_eq!(again.id, first.id);
+    assert_eq!(again.engine_pid, first.engine_pid);
+
+    // Unloaded behind the engine's back (its engine ends with it): the next engine start loads it again
     let out = std::process::Command::new("/bin/launchctl").args(["bootout", &target]).output().unwrap();
     assert!(out.status.success());
     next("gone after the bootout", &|v| v.gateway.is_none()).await;
     ra.refresh_installed().await;
     next("loaded again", &|v| v.gateway.is_some()).await;
-    let cfg: Value = serde_json::from_str(&std::fs::read_to_string(root.path().join("devices/gateway.json")).unwrap()).unwrap();
-    let engine = PathBuf::from(cfg["engine"].as_str().unwrap());
-    assert!(engine.starts_with(root.path().join("devices/bin")) && engine.is_file(), "{}", engine.display());
 
-    // A relay change restarts it: same identity, a new process
-    ra.op(O::SetRelays { relays: Relays::Off }).await.unwrap();
-    next("gone while it restarts", &|v| v.gateway.is_none()).await;
-    let again = next("back", &|v| v.gateway.is_some()).await.gateway.unwrap();
-    assert_eq!(again.id, first.id);
-
+    // Off: the gateway stops and the plist goes, the engine (which may serve windows) runs on
+    let engine = pid();
     ra.op(O::Disable).await.unwrap();
     let v = ra.view();
     assert!(!v.enabled && v.gateway.is_none());
-    assert!(!root.path().join("devices/bin").read_dir().unwrap().any(|_| true), "copies removed");
-    let loaded = std::process::Command::new("/bin/launchctl").args(["print", &target]).output().unwrap();
-    assert!(!loaded.status.success(), "unloaded");
+    assert!(!launch_agent::plist_path(&label, &user_home).exists(), "the plist is removed");
+    assert!(!stage::exe(&root_path).exists(), "the copy is removed");
+    assert_eq!(pid(), engine, "the engine keeps running");
     ra.dispose();
   });
 }
 
-/// The switch for real on Linux and Windows: the engine copies the binaries, installs the login service (a systemd user
-/// unit, or a logon task) and starts it, the gateway answers, a gateway killed outright is started again by its service
-/// (systemd's restart, the task's supervisor), a relay change restarts it, and turning it off removes the service and
-/// the copies. The service is named after the temporary data root and sits in this user's real service directory, since
-/// that is where the service manager looks. By hand, after a build of `acpira`:
-/// `cargo test -p acpira-gateway --test e2e -- --ignored login_service`
+/// The switch for real on Linux and Windows: the engine copies itself, installs the login service (a systemd user unit,
+/// or a logon task) and starts it, the engine it starts runs the gateway, an engine killed outright is started again
+/// (systemd's restart; on Windows the next engine start), a relay change restarts the gateway in the same engine, and
+/// turning it off removes the service and the copy. The service is named after the temporary data root and sits in this
+/// user's real service directory, since that is where the service manager looks. By hand: `cargo build --bin acpira`,
+/// then `cargo test -p acpira-gateway --test e2e -- --ignored login_service`
 #[cfg(any(target_os = "linux", windows))]
 #[test]
 #[ignore = "installs a real login service"]
 fn login_service_round_trip() {
-  use acpira_host::devices::RemoteAccess;
+  use acpira_host::devices::{RemoteAccess, stage};
   use acpira_shared::devices::RemoteAccessOp as O;
-  let gateway = PathBuf::from(env!("CARGO_BIN_EXE_acpira-gateway"));
-  let exe = gateway.with_file_name(if cfg!(windows) { "acpira.exe" } else { "acpira" });
-  assert!(exe.is_file(), "build the engine first ({})", exe.display());
+  let exe = built_engine();
   let user_home = PathBuf::from(std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).unwrap());
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
   rt.block_on(async move {
@@ -697,8 +671,17 @@ fn login_service_round_trip() {
     std::fs::create_dir_all(root.path().join("devices")).unwrap();
     std::fs::write(root.path().join("devices/gateway.json"), json!({ "relays": { "mode": "off" } }).to_string()).unwrap();
     let ra = RemoteAccess::new(root.path(), &user_home, Some(exe), Arc::new(|l: &str| eprintln!("engine: {l}")));
-    // Removed however the test ends
-    struct Off(Arc<RemoteAccess>, tokio::runtime::Handle);
+    let home = root.path().to_string_lossy().into_owned();
+    let kill = |home: &str| {
+      if cfg!(windows) {
+        let script = format!("Get-CimInstance Win32_Process | Where-Object {{ $_.CommandLine -like '*serve*--home*{home}*' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}");
+        std::process::Command::new("powershell").args(["-NoProfile", "-Command", &script]).status().unwrap().success()
+      } else {
+        std::process::Command::new("pkill").args(["-9", "-f", &format!("serve .*--home {home}")]).status().unwrap().success()
+      }
+    };
+    // Removed, and its engine gone, however the test ends
+    struct Off(Arc<RemoteAccess>, tokio::runtime::Handle, String);
     impl Drop for Off {
       fn drop(&mut self) {
         let ra = self.0.clone();
@@ -707,15 +690,20 @@ fn login_service_round_trip() {
           move || h.block_on(async move { ra.op(acpira_shared::devices::RemoteAccessOp::Disable).await })
         })
         .join();
+        // The engine goes once idle on its own; a test leaves none behind
+        #[cfg(unix)]
+        let _ = std::process::Command::new("pkill").args(["-f", &format!("serve .*--home {}", self.2)]).status();
+        #[cfg(not(unix))]
+        let _ = &self.2;
       }
     }
-    let _off = Off(ra.clone(), tokio::runtime::Handle::current());
+    let _off = Off(ra.clone(), tokio::runtime::Handle::current(), home.clone());
     let (tx, mut views) = mpsc::unbounded_channel();
     ra.subscribe(Arc::new(move |v| {
       let _ = tx.send(v.clone());
     }));
     let mut next = async |what: &str, pred: &dyn Fn(&acpira_shared::devices::RemoteAccessView) -> bool| {
-      let deadline = Instant::now() + Duration::from_secs(40);
+      let deadline = Instant::now() + Duration::from_secs(60);
       loop {
         let v = tokio::time::timeout_at(deadline.into(), views.recv()).await.unwrap_or_else(|_| panic!("no view: {what}")).unwrap();
         if pred(&v) {
@@ -727,37 +715,33 @@ fn login_service_round_trip() {
     assert!(v.available, "{v:?}");
 
     ra.op(O::Enable).await.unwrap();
-    assert!(ra.view().gateway.is_some(), "running once the op returns");
-    let first = next("the service's gateway", &|v| v.gateway.is_some()).await;
-    assert!(first.enabled);
-    let first = first.gateway.unwrap();
+    let first = ra.view().gateway.expect("running once the op returns");
+    assert!(first.engine_pid.is_some(), "the gateway runs in an engine");
     let t = Instant::now();
     ra.op(O::Enable).await.unwrap();
-    assert!(t.elapsed() < Duration::from_secs(5), "turning it on again leaves the running gateway alone");
+    assert!(t.elapsed() < Duration::from_secs(5), "turning it on again leaves the running engine alone");
 
-    // Killed outright: its service starts it again (after its 10 s throttle)
-    let home = root.path().to_string_lossy().into_owned();
-    if cfg!(windows) {
-      let script = format!(
-        "Get-CimInstance Win32_Process | Where-Object {{ $_.CommandLine -like '*run --home*{home}*' -and $_.CommandLine -notlike '*--supervise*' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}"
-      );
-      assert!(std::process::Command::new("powershell").args(["-NoProfile", "-Command", &script]).status().unwrap().success());
-    } else {
-      assert!(std::process::Command::new("pkill").args(["-9", "-f", &format!("acpira-gateway run --home {home}")]).status().unwrap().success());
-    }
+    // Killed outright: systemd starts it again after its 10 s; on Windows the next engine start does
+    assert!(kill(&home));
     next("gone after the kill", &|v| v.gateway.is_none()).await;
-    let back = next("started again by its service", &|v| v.gateway.is_some()).await.gateway.unwrap();
+    if cfg!(windows) {
+      ra.refresh_installed().await;
+    }
+    let back = next("started again", &|v| v.gateway.is_some()).await.gateway.unwrap();
     assert_eq!(back.id, first.id);
 
-    // A relay change restarts it: same identity
+    // A relay change restarts the gateway in the same engine: same identity, same process
     ra.op(O::SetRelays { relays: Relays::Off }).await.unwrap();
     let again = next("back after the relay change", &|v| v.gateway.is_some()).await.gateway.unwrap();
     assert_eq!(again.id, first.id);
+    assert_eq!(again.engine_pid, back.engine_pid);
 
     ra.op(O::Disable).await.unwrap();
     let v = ra.view();
     assert!(!v.enabled && v.gateway.is_none());
-    assert!(!root.path().join("devices/bin").read_dir().is_ok_and(|mut d| d.next().is_some()), "copies removed");
+    if cfg!(unix) {
+      assert!(!stage::exe(root.path()).exists(), "the copy is removed");
+    }
     ra.dispose();
   });
 }
@@ -770,7 +754,7 @@ fn a_phone_on_the_network_pairs_with_the_code() {
     let home = tempfile::tempdir().unwrap();
     let g = Gateway::start(Opts {
       home: home.path().to_path_buf(),
-      engine: EngineSpec { binary: "/nonexistent/acpira".into(), home: home.path().to_path_buf(), explicit_home: true, env: Default::default(), socket: None },
+      engine: acpira_gateway::engine::none(),
       relays: Some(Relays::Off),
       bind: Some("127.0.0.1:0".parse().unwrap()),
       log: Arc::new(|_: &str| {}),

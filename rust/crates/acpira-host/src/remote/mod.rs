@@ -5,6 +5,7 @@
 
 pub mod client;
 pub mod connections;
+pub mod deflate;
 pub mod deploy;
 pub mod fetch;
 pub mod helper;

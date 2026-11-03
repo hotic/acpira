@@ -88,15 +88,19 @@ fn subagent_messages_coalesce_per_session_and_subagent_not_per_type() {
 type Store = Arc<Mutex<HashMap<String, Value>>>;
 
 fn center(store: Store) -> SettingsCenter {
+  SettingsCenter::new(deps(store))
+}
+
+fn deps(store: Store) -> SettingsDeps {
   let (r, w) = (store.clone(), store);
-  SettingsCenter::new(SettingsDeps {
+  SettingsDeps {
     agent_config_path: std::env::temp_dir().join("acpira-bridge-agents.json"),
-    read: Arc::new(move |k| r.lock().unwrap().get(k).cloned()),
+    read: Arc::new(move |_, k| r.lock().unwrap().get(k).cloned()),
     write: Arc::new(move |k, x| {
       w.lock().unwrap().insert(k, x);
       Box::pin(async { Ok(()) })
     }),
-    host_language: Arc::new(|| "en".into()),
+    host_language: Arc::new(|_| "en".into()),
     registry: Arc::new(|| Arc::new(AgentRegistry::new(&json!({})))),
     runtime_info: Arc::new(|_| None),
     health: Arc::new(|_| None),
@@ -109,7 +113,26 @@ fn center(store: Store) -> SettingsCenter {
       &std::env::temp_dir().join("acpira-bridge-providers"),
       Arc::new(acpira_host::accounts::account_store::FileVault::new(std::env::temp_dir().join("acpira-bridge-providers/secrets.json"), Arc::new(|_: &str| {}))),
     )),
-  })
+  }
+}
+
+// Two windows on one engine: each page hears its own window's shell keys, and a background window's change reaches only
+// its own pages
+#[test]
+fn each_window_s_pages_get_their_own_shell_settings() {
+  let scope = |wire: Option<u64>| json!(if wire == Some(2) { "all" } else { "workspace" });
+  let c = SettingsCenter::new(SettingsDeps { read: Arc::new(move |wire, k| (k == "sessionScope").then(|| scope(wire))), ..deps(Default::default()) });
+  let heard = Arc::new(Mutex::new(Vec::<(u64, Value)>::new()));
+  for wire in [1, 2] {
+    let h = heard.clone();
+    c.subscribe(Some(wire), Arc::new(move |view, _| h.lock().unwrap().push((wire, v(view)["sessionScope"].clone()))));
+  }
+  c.emit();
+  assert_eq!(*heard.lock().unwrap(), [(1, json!("workspace")), (2, json!("all"))]);
+  heard.lock().unwrap().clear();
+  c.emit_wire(2);
+  assert_eq!(*heard.lock().unwrap(), [(2, json!("all"))]);
+  assert_eq!(v(c.view_for(Some(1)))["sessionScope"], "workspace");
 }
 
 #[tokio::test]
@@ -118,7 +141,7 @@ async fn session_list_placement_round_trips_and_unknown_positions_are_rejected()
   let c = center(store.clone());
   let positions = Arc::new(Mutex::new(Vec::<Value>::new()));
   let p = positions.clone();
-  c.subscribe(Arc::new(move |view, _| p.lock().unwrap().push(v(view)["sessionListPosition"].clone())));
+  c.subscribe(None, Arc::new(move |view, _| p.lock().unwrap().push(v(view)["sessionListPosition"].clone())));
   for value in ["left", "right", "hidden", "outside"] {
     c.set("sessionListPosition", &json!(value)).await.ok();
   }

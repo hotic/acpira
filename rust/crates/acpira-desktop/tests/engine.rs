@@ -162,7 +162,7 @@ fn a_session_comes_back_on_the_same_engine_after_the_connection_drops() {
     let conns = Arc::new(Mutex::new(Vec::new()));
     let acceptor = tokio::spawn(accept(engine.clone(), UnixListener::bind(&socket).unwrap(), conns.clone()));
 
-    let ep = EngineEndpoint { socket: socket.clone(), log: run.path().join("e.log") };
+    let ep = EngineEndpoint { socket: socket.clone(), log: run.path().join("e.log"), machine: None };
     let cwd_s = cwd.path().to_string_lossy().into_owned();
     let mut settings = Map::new();
     settings.insert("defaultAgent".into(), json!("fake"));

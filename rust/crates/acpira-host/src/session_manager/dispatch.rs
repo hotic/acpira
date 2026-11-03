@@ -276,7 +276,7 @@ impl SessionManager {
         }
       }
       // A chat (project shells): a fresh folder of its own, unfiled
-      W::NewSession { agent, chat: Some(true), .. } if (self.deps.projects)() => {
+      W::NewSession { agent, chat: Some(true), .. } if self.projects_of(Some(v)) => {
         let dir = self.new_chat_folder().await?;
         self.new_session_for(v, agent, None, None, Some(dir)).await?
       }
@@ -311,7 +311,7 @@ impl SessionManager {
         self.mark_hosts_read();
         self.emit_sessions();
       }
-      W::MoveSession { id, cwd, category } => self.move_session(&id, cwd, category).await?,
+      W::MoveSession { id, cwd, category } => self.move_session(Some(v), &id, cwd, category).await?,
       W::ForkSession { session_id, turn_index, agent } => self.fork_session(v, &session_id, turn_index, agent).await?,
       W::ObserveSubagent { session_id, subagent_id } => {
         {
