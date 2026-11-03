@@ -758,6 +758,7 @@
   "host.moveWhileRunning": "Vor dem Verschieben dieser Sitzung warten, bis die aktuelle Antwort fertig ist",
   "host.moveFolderMissing": "Der Ordner {folder} existiert nicht mehr, daher kann die Sitzung nicht dorthin verschoben werden",
   "host.folderMissing": "Der Ordner {folder} existiert nicht",
+  "host.fileMissing": "Die Datei {path} existiert nicht",
   "host.noProject": "Öffnen Sie zuerst einen Ordner, um eine Sitzung zu starten",
   "host.loginTerminalTitle": "Anmeldung bei {agent}",
   "host.loginThenRetry": "Die Anmeldung bei {agent} im Terminal abschließen und dann „Wiederholen“ drücken",

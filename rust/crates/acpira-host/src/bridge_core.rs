@@ -387,6 +387,11 @@ impl BridgeCore {
         };
         match resolved {
           Ok(p) => {
+            // Localize a missing link before the OS opener returns its own untranslated error.
+            if tokio::fs::metadata(&p).await.is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+              platform.toast("error", &tp("host.fileMissing", &[("path", &p)]));
+              return Ok(());
+            }
             let res = if reveal {
               platform.reveal_in_os(&p).await
             } else {

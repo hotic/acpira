@@ -778,6 +778,7 @@ export const ja = {
   'host.moveWhileRunning': '現在の返信が終わるまで待ってからセッションを移動してください',
   'host.moveFolderMissing': 'フォルダー {folder} が存在しないため、セッションを移動できません',
   'host.folderMissing': 'フォルダー {folder} が存在しません',
+  'host.fileMissing': 'ファイル {path} が存在しません',
   'host.noProject': 'セッションを始めるには、まずフォルダーを開いてください',
   'host.loginTerminalTitle': '{agent} のサインイン',
   'host.loginThenRetry': 'ターミナルで {agent} へのサインインを完了してから「再試行」を押してください',

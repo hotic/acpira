@@ -790,6 +790,7 @@ export const zhTW = {
   'host.moveWhileRunning': '等這輪回覆結束再移動這個工作階段',
   'host.moveFolderMissing': '資料夾 {folder} 已不存在，無法把工作階段移過去',
   'host.folderMissing': '資料夾 {folder} 不存在',
+  'host.fileMissing': '檔案 {path} 不存在',
   'host.noProject': '請先開啟一個資料夾，才能開始工作階段',
   'host.loginTerminalTitle': '{agent} 登入',
   'host.loginThenRetry': '在終端裡完成 {agent} 登入後，點「重試」',
