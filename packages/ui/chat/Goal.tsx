@@ -71,10 +71,11 @@ export interface GoalHeadProps {
 // 2026-10-26), so the dock keeps one silhouette: status label and objective on one truncating line, the elapsed time,
 // and the advertised controls, which unfold beside the time while the line is hovered or holds focus (`.goal-actions`).
 // Under a to-do list `toggle` trails the count and caret and stretches a button over the row that folds the list; without
-// one the card is this line alone. The hover title carries the full objective and spend. Buttons follow the advertised
-// actions, so Claude (set / clear) shows only the bin.
+// one the card is this line alone. A one-entry list has nothing to fold, so it leaves `onToggle` out and only the count
+// trails. The hover title carries the full objective and spend. Buttons follow the advertised actions, so Claude
+// (set / clear) shows only the bin.
 export function GoalHead({ goal, actions, running, onAction, toggle }: GoalHeadProps & {
-  toggle?: { open: boolean; onToggle: () => void; trailing: ReactNode };
+  toggle?: { open: boolean; onToggle?: () => void; trailing: ReactNode };
 }) {
   useLocale();
   const can = (a: GoalAction) => !!onAction && !!actions?.includes(a);
@@ -95,7 +96,7 @@ export function GoalHead({ goal, actions, running, onAction, toggle }: GoalHeadP
       dense
       data-goal-head
       title={title}
-      className={cn('goal-head relative', toggle && 'goal-head-toggle -mx-hit px-hit rounded-md transition-colors')}
+      className={cn('goal-head relative', toggle?.onToggle && 'goal-head-toggle -mx-hit px-hit rounded-md transition-colors')}
       lead={<GoalGlyph status={goal.status} live={live} />}
       trailing={<span className="flex items-center">
         {meta && <span className="whitespace-nowrap">{meta}</span>}
@@ -103,7 +104,7 @@ export function GoalHead({ goal, actions, running, onAction, toggle }: GoalHeadP
         {toggle && <span className="ml-2 flex items-center gap-2">{toggle.trailing}</span>}
       </span>}
     >
-      {toggle && <button type="button" className="goal-toggle" aria-expanded={toggle.open} aria-label={t('plan.todoTitle')} onClick={toggle.onToggle} />}
+      {toggle?.onToggle && <button type="button" className="goal-toggle" aria-expanded={toggle.open} aria-label={t('plan.todoTitle')} onClick={toggle.onToggle} />}
       {/* Label and objective share one line and one shimmer, so the sweep crosses the whole goal while a turn runs
           instead of two glints at different speeds; the line truncates as a whole */}
       <Shimmer active={live} className="min-w-0 truncate">
