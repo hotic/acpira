@@ -12,10 +12,10 @@ func absorbedNotices(_ turn: AgentTurn) -> [NoticeBlock] {
   return turn.blocks.compactMap { block in if case .notice(let n) = block, n.severity == "error" { n } else { nil } }
 }
 
-/// hasTurnContent: copy, fork and stats only mean something for a turn that produced more than notices and goal rows
+/// hasTurnContent: copy, fork and stats need content beyond notices, goal rows and compaction status
 func hasTurnContent(_ turn: AgentTurn) -> Bool {
   turn.blocks.contains { block in
-    switch block { case .notice, .goal: false; default: true }
+    switch block { case .notice, .goal, .compaction: false; default: true }
   }
 }
 
