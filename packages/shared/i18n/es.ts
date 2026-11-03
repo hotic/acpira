@@ -425,7 +425,7 @@ export const es = {
   'composer.modeShort.build': 'Build',
   'composer.modeShort.workspace': 'Espacio de trabajo',
   'composer.effort': 'Esfuerzo de razonamiento',
-  'composer.configureModels': 'Configurar modelos…',
+  'composer.addModel': 'Añadir',
   'composer.standard': 'Estándar',
   'composer.lead': 'Principal',
   'composer.sidekick': 'Asistente',

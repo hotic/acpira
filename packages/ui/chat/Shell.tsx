@@ -880,7 +880,7 @@ export function Shell(p: ShellProps) {
       on.send(text, attachments);
     } : steering ? (text: string, attachments: Draft[]) => on.send(text, attachments, true) : on.send, onSearchFiles: on.searchFiles, onNotice: notice, onStop: on.stop,
     onSetMode: on.setMode, onSetConfig: on.setConfig, onCompact: on.compact, personas: p.personas,
-    onAddModel: p.agent.id === BUILTIN_AGENT_ID && p.onOpenSettings ? () => p.onOpenSettings!({ kind: 'agent', id: BUILTIN_AGENT_ID }) : undefined,
+    onAddModel: p.onOpenSettings ? () => p.onOpenSettings!({ kind: 'agent', id: p.agent.id, tab: p.agent.id === BUILTIN_AGENT_ID ? 'sources' : 'models' }) : undefined,
   }), [p.running, steering, reviseBlock, reviseChoice, p.activeSessionId, on.permission, p.status, p.theme, turnCount, isCompacting, p.controls, p.hidden, p.agent.id, p.usage, p.commands, p.compactAt, p.cwd, on.send, on.searchFiles, notice, on.stop, on.setMode, on.setConfig, on.compact, p.personas, p.onOpenSettings]);
   // Context values above the transcript must not change on every stream push: React walks the whole memoized tree for consumers each time
   const permissions = useStableList(useMemo(() => p.turns.flatMap(t => t.role === 'agent' ? t.blocks.filter((b): b is PermissionBlock => b.type === 'permission') : []), [p.turns]));

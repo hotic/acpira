@@ -426,7 +426,7 @@ export const de = {
   'composer.modeShort.build': 'Build',
   'composer.modeShort.workspace': 'Arbeitsbereich',
   'composer.effort': 'Denkaufwand',
-  'composer.configureModels': 'Modelle konfigurieren…',
+  'composer.addModel': 'Hinzufügen',
   'composer.lead': 'Hauptmodell',
   'composer.sidekick': 'Helfer',
   'composer.sidekickNone': 'Keiner',

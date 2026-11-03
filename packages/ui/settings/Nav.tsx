@@ -15,7 +15,7 @@ import { t } from '../i18n';
 // rail's search can land on one
 export type SettingsPage = { kind: 'general' } | { kind: 'appearance' } | { kind: 'models' } | { kind: 'plugins'; tab?: string } | { kind: 'shared' } | { kind: 'connections' }
   | { kind: 'subagents'; persona?: string; group?: string } | { kind: 'storage' } | { kind: 'about' }
-  | { kind: 'agent'; id: AgentInfo['id'] } | { kind: 'chatgpt' };
+  | { kind: 'agent'; id: AgentInfo['id']; tab?: 'models' | 'sources' } | { kind: 'chatgpt' };
 
 // Two pages are the same place (a click on the page already shown adds nothing to the trail)
 export const samePage = (a: SettingsPage, b: SettingsPage) => JSON.stringify(a) === JSON.stringify(b);

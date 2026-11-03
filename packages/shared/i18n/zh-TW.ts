@@ -431,7 +431,7 @@ export const zhTW = {
   'composer.modeShort.build': '執行模式',
   'composer.modeShort.workspace': '僅工作區',
   'composer.effort': '推理強度',
-  'composer.configureModels': '設定模型…',
+  'composer.addModel': '新增',
   'composer.standard': '標準',
   'composer.lead': '主模型',
   'composer.sidekick': '副手',
