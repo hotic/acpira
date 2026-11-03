@@ -17,6 +17,7 @@ struct ExpandedComposer: View {
   var onCollapse: () -> Void
   /// Closes the editor for a file page the strip opens
   var onLeave: () -> Void = {}
+  @Environment(\.sessionActions) private var actions
   @FocusState private var focused: Bool
   @State private var appeared = false
 
@@ -30,6 +31,7 @@ struct ExpandedComposer: View {
         }
         TextEditor(text: $text)
           .focused($focused)
+          .attachLongPastes(to: $staged) { actions.toast($0, .fileText) }
           .textStyle(TypeScale.field)
           .foregroundStyle(Palette.fgStrong)
           .scrollContentBackground(.hidden)

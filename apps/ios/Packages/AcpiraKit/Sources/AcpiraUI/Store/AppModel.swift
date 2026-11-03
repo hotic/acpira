@@ -630,6 +630,9 @@ final class AppModel {
     attachments.compactMap { a -> Draft? in
       switch a {
       case let .image(blob?, mime, name): return .image(mimeType: mime, data: blob, name: name)
+      case let .text(blob, name, context):
+        guard let text = PastedText.inline(blob) else { return nil }
+        return .text(name: name, text: text, context: context)
       case let .file(uri, name):
         guard let url = URL(string: uri), AttachmentFile.isCopy(url) else { return .file(uri: uri, name: name) }
         guard let bytes = try? Data(contentsOf: url) else { return nil }
@@ -651,6 +654,50 @@ final class AppModel {
     guard let prompt = takeQueued(id, item) else { return }
     if views[id]?.running == true { stop(id) }
     startTurn(id, text: prompt.text, attachments: prompt.attachments ?? [])
+  }
+
+  /// Edit: takes a prompt out of the queue for the composer. The engine's queue row names the blobs it stored, which a
+  /// send cannot hand back (`drafts` takes local bytes only), so they are read back first; while one cannot be read the
+  /// prompt stays queued and a toast says so. nil: nothing to edit (also when the prompt went out during the read)
+  func editQueued(_ id: String, item: String) async -> QueuedPrompt? {
+    guard var prompt = views[id]?.queued?.first(where: { $0.id == item }) else { return nil }
+    if let attachments = prompt.attachments {
+      let media = media
+      do {
+        prompt.attachments = try await Self.localCopies(attachments) { try await media.bytes(session: id, blob: $0) }
+      } catch {
+        show(t("attach.loadFailed", ["name": Self.failedName(attachments)]), icon: .triangleAlert)
+        return nil
+      }
+    }
+    return takeQueued(id, item) == nil ? nil : prompt
+  }
+
+  /// The attachments with every stored text or photo replaced by its bytes, base64 like a fresh paste or pick
+  static func localCopies(_ attachments: [Attachment], read: (String) async throws -> Data) async throws -> [Attachment] {
+    var out: [Attachment] = []
+    for a in attachments {
+      switch a {
+      case let .text(blob?, name, context) where Self.isStored(blob):
+        out.append(.text(blob: try await read(blob).base64EncodedString(), name: name, context: context))
+      case let .image(blob?, mimeType, name) where Self.isStored(blob):
+        out.append(.image(blob: try await read(blob).base64EncodedString(), mimeType: mimeType, name: name))
+      default: out.append(a)
+      }
+    }
+    return out
+  }
+
+  /// A blob the engine stored is named `<hash>.<ext>`; base64 never holds a dot (`PastedText.inline`)
+  private static func isStored(_ blob: String) -> Bool { blob.contains(".") }
+
+  /// The attachment the failure toast names: the first one still stored
+  private static func failedName(_ attachments: [Attachment]) -> String {
+    for a in attachments {
+      if case let .text(blob?, name, _) = a, isStored(blob) { return name }
+      if case let .image(blob?, _, name) = a, isStored(blob) { return name ?? t("common.image") }
+    }
+    return ""
   }
 
   /// Takes a prompt out of the queue (edit puts its text back in the composer, remove drops it)

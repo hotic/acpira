@@ -245,6 +245,11 @@ final class MediaLoader {
     String(decoding: try await fetch(session, blob), as: UTF8.self)
   }
 
+  /// A stored blob's bytes as they are, for an attachment going back into the composer (`AppModel.editQueued`)
+  func bytes(session: String, blob: String) async throws -> Data {
+    try await fetch(session, blob)
+  }
+
   /// Every image a session shows, loaded before a still render or a launch-time Lightbox (tasks do not run in
   /// `ImageRenderer`); failures are left to the views
   func preload(_ view: SessionView) async {

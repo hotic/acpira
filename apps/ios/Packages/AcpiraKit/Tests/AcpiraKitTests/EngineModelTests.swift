@@ -157,6 +157,26 @@ struct EngineModelTests {
                        .file(uri: "file:///Users/me/w/a.swift", name: "a.swift"), .quote(text: "q", comment: nil)])
   }
 
+  @Test func pastedAttachmentsReachTheEngineWithoutChangingThePrompt() async throws {
+    let (model, wire) = try await connected()
+    let text = String(repeating: "  原文\r\n", count: 20)
+    let name = "Pasted text.txt"
+    guard case .attachment(let attachment) = PastedText.collect(text, name: name) else {
+      Issue.record("Expected a text attachment"); return
+    }
+    model.send("s1", text: "Read the attachment", attachments: [attachment])
+    try await until { wire.types.last == "webviewMessage:send" }
+    let envelope = try #require(wire.sent.last).data(using: .utf8)!
+    let json = try #require(JSONSerialization.jsonObject(with: envelope) as? [String: Any])
+    let message = try #require(json["message"] as? [String: Any])
+    #expect(message["text"] as? String == "Read the attachment")
+    let drafts = try #require(message["attachments"] as? [[String: Any]])
+    #expect(drafts.count == 1)
+    #expect(drafts.first?["kind"] as? String == "text")
+    #expect(drafts.first?["name"] as? String == name)
+    #expect(drafts.first?["text"] as? String == text)
+  }
+
   @Test func aNewSessionTakesThePickedControls() async throws {
     let (model, wire) = try await connected()
     let picked = try JSONDecoder().decode(SessionControls.self, from: Data(#"{"modes":[{"id":"plan","name":"Plan"}],"modeId":"plan","options":[]}"#.utf8))

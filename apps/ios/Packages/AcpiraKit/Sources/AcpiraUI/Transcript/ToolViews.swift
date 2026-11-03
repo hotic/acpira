@@ -1091,6 +1091,10 @@ struct CodeSheet<Content: View>: View {
   var copyLabel: String
   var read: (() async -> String)? = nil
   var wrapInScrollView = true
+  var detents: Set<PresentationDetent> = [.medium, .large]
+  var copyEnabled = true
+  /// Optional raw / rendered toggle; copying always uses the original text.
+  var markdownPreview: Binding<Bool>? = nil
   let content: () -> Content
   @Environment(\.dismiss) private var dismiss
   @State private var copied = false
@@ -1111,7 +1115,14 @@ struct CodeSheet<Content: View>: View {
         ToolbarItem(placement: .cancellationAction) {
           Button(role: .close) { dismiss() }
         }
-        ToolbarItem(placement: .primaryAction) {
+        ToolbarItemGroup(placement: .primaryAction) {
+          if let markdownPreview {
+            Button { markdownPreview.wrappedValue.toggle() } label: {
+              Image(systemName: markdownPreview.wrappedValue ? "book.fill" : "book")
+            }
+            .accessibilityLabel(Text(web: t("panel.markdownPreview")))
+            .accessibilityAddTraits(markdownPreview.wrappedValue ? .isSelected : [])
+          }
           Button {
             guard let read else {
               UIPasteboardBridge.copy(copy)
@@ -1126,10 +1137,11 @@ struct CodeSheet<Content: View>: View {
             Image(systemName: copied ? "checkmark" : "doc.on.doc")
           }
           .accessibilityLabel(Text(web: copied ? t("code.copied") : copyLabel))
+          .disabled(!copyEnabled)
         }
       }
     }
-    .presentationDetents([.medium, .large])
+    .presentationDetents(detents)
     .task(id: copied) {
       guard copied else { return }
       try? await Task.sleep(for: .milliseconds(1500))
