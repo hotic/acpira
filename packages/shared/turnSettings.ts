@@ -29,6 +29,15 @@ export function openTurnControls(live: SessionControls, settings: TurnSettings |
   return settings ? reshape(fallback, settings, live, shapes) : fallback;
 }
 
+// Refresh an open or parked editor's choices without replacing its unsent selections or an unknown model's shape.
+export function refreshTurnControls(editor: SessionControls, live: SessionControls, shapes?: ModelShapes): SessionControls {
+  const fallback = controlsForTurn({
+    ...live,
+    options: [...live.options.filter(isModelControl), ...editor.options.filter(c => !isModelControl(c))],
+  }, captureTurnSettings(editor));
+  return reshape(fallback, captureTurnSettings(fallback), live, shapes);
+}
+
 // One pick in the editor; a model pick brings that model's own parameters along
 export function editTurnConfig(editor: SessionControls, live: SessionControls, id: string, value: string, shapes?: ModelShapes): SessionControls {
   const next = { ...editor, options: editor.options.map(c => c.id === id ? { ...c, value } : c) };
