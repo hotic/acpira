@@ -25,7 +25,7 @@ use crate::acp::agents::registry::{AgentRegistry, SELF_AGENT_ID};
 use crate::acp::session::CompactionPolicy;
 use crate::bridge_core::{BridgeCore, Post};
 use crate::external::chatgpt_store::ChatGptBridgeStore;
-use crate::i18n::{set_host_locale, tp};
+use crate::i18n::{set_host_locale, set_wire_locale, tp};
 use acpira_shared::devices::{PushKind, PushNote};
 use crate::session_manager::{Attention, AttentionKind, ManagerDeps, SessionManager, ViewerShell};
 use crate::settings::{SettingsCenter, SettingsDeps};
@@ -410,6 +410,9 @@ impl HostRuntime {
       }
     }));
     set_host_locale(runtime.settings.locale());
+    // Weak: the process-wide hook must not keep a disposed runtime's settings alive
+    let settings = Arc::downgrade(&runtime.settings);
+    set_wire_locale(Arc::new(move |wire| settings.upgrade().map(|s| s.locale_for(Some(wire)))));
     runtime.apply_cpu_cap();
     crate::net_proxy::set_setting(&runtime.settings.view().proxy);
     // Whether npm's global prefix is writable decides the copyable install line of the npm agents (installer.rs)
