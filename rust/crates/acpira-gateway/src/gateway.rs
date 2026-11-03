@@ -20,6 +20,7 @@ use acpira_net::iroh::endpoint::Connection;
 use crate::bridge::{self, Who};
 use crate::engine::{EngineSpec, Log};
 use crate::store::{Config, Device, Devices, Paths, now_ms};
+use crate::wire_stats;
 
 pub struct Opts {
   pub home: PathBuf,
@@ -312,10 +313,13 @@ async fn serve_device(g: Arc<Gateway>, conn: Connection, device: Device) {
   (g.log)(&format!("{} connected", device.name));
   let paths = {
     let g = g.clone();
-    let (id, conn2) = (id.clone(), conn.clone());
+    let (id, conn2, name) = (id.clone(), conn.clone(), device.name.clone());
     endpoint::on_path_change(&conn, move |kind| {
-      if let Some(l) = g.live.lock().get_mut(&id).filter(|l| l.conn.stable_id() == conn2.stable_id()) {
-        l.path = Some(kind);
+      let changed =
+        g.live.lock().get_mut(&id).filter(|l| l.conn.stable_id() == conn2.stable_id()).is_some_and(|l| l.path.replace(kind) != Some(kind));
+      // The log keeps every move between paths (direct and relay), with the round trip right after it
+      if changed {
+        (g.log)(&format!("{name}: path {}", wire_stats::path_label(endpoint::selected_path(&conn2))));
       }
       g.bump();
     })
@@ -338,7 +342,10 @@ async fn serve_device(g: Arc<Gateway>, conn: Connection, device: Device) {
         let (push, device_id) = (g.push.clone(), id.clone());
         let on_push: bridge::OnPush = Arc::new(move |target| push.set(&device_id, target));
         current = Some(tokio::spawn(async move {
-          let ended = bridge::run(&g2.engine, &g2.log, &who, tx, rx, dir, on_push).await;
+          let stats = Arc::new(wire_stats::WireStats::default());
+          // Logs while the stream is up and once when this task ends or is aborted
+          let _report = wire_stats::Report::start(&stats, &conn2, &g2.log, format!("{} ({})", who.device, conn2.remote_id().fmt_short()));
+          let ended = bridge::run(&g2.engine, &g2.log, &who, tx, rx, dir, on_push, stats).await;
           (g2.log)(&format!("{}: {ended:?}", who.device));
           match ended {
             bridge::Ended::Behind => conn2.close(close::BEHIND.into(), b"behind"),

@@ -12,3 +12,4 @@ pub mod gateway;
 pub mod presence;
 pub mod push;
 pub mod store;
+pub mod wire_stats;

@@ -48,13 +48,15 @@ pub struct FrameWriter<W> {
   z: Option<Compress>,
   plain: Vec<u8>,
   out: Vec<u8>,
+  /// Bytes written to the stream so far, after the codec: what the link actually carried
+  written: u64,
 }
 
 impl<W: AsyncWrite + Unpin> FrameWriter<W> {
   pub async fn start(mut w: W, codec: Codec) -> io::Result<Self> {
     w.write_all(&[codec as u8]).await?;
     let z = (codec == Codec::Deflate).then(|| Compress::new(Compression::new(6), false));
-    Ok(Self { w, z, plain: Vec::new(), out: Vec::new() })
+    Ok(Self { w, z, plain: Vec::new(), out: Vec::new(), written: 1 })
   }
 
   pub async fn send(&mut self, kind: FrameKind, payload: &[u8]) -> io::Result<()> {
@@ -66,14 +68,23 @@ impl<W: AsyncWrite + Unpin> FrameWriter<W> {
     self.plain.extend_from_slice(&u32::try_from(payload.len()).map_err(|_| invalid("frame too large"))?.to_be_bytes());
     self.plain.extend_from_slice(payload);
     match &mut self.z {
-      None => self.w.write_all(&self.plain).await?,
+      None => {
+        self.w.write_all(&self.plain).await?;
+        self.written += self.plain.len() as u64;
+      }
       Some(z) => {
         self.out.clear();
         deflate_all(z, &self.plain, &mut self.out)?;
         self.w.write_all(&self.out).await?;
+        self.written += self.out.len() as u64;
       }
     }
     self.w.flush().await
+  }
+
+  /// Bytes written to the stream so far (codec byte and frame headers included, compressed when the codec is)
+  pub fn written(&self) -> u64 {
+    self.written
   }
 
   pub fn into_inner(self) -> W {
@@ -108,6 +119,8 @@ pub struct FrameReader<R> {
   /// Decoded bytes not yet taken as frames
   plain: Vec<u8>,
   raw: Vec<u8>,
+  /// Bytes read from the stream so far, before decoding
+  read: u64,
 }
 
 impl<R: AsyncRead + Unpin> FrameReader<R> {
@@ -118,7 +131,7 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
       1 => Some(Decompress::new(false)),
       c => return Err(invalid(format!("unknown codec {c}"))),
     };
-    Ok(Self { r, z, plain: Vec::new(), raw: vec![0; 16 * 1024] })
+    Ok(Self { r, z, plain: Vec::new(), raw: vec![0; 16 * 1024], read: 1 })
   }
 
   /// The next frame; `None` when the stream ended cleanly between frames
@@ -128,6 +141,7 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
         return Ok(Some(f));
       }
       let n = self.r.read(&mut self.raw).await?;
+      self.read += n as u64;
       if n == 0 {
         return if self.plain.is_empty() { Ok(None) } else { Err(io::ErrorKind::UnexpectedEof.into()) };
       }
@@ -155,6 +169,11 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
 
   pub fn get_mut(&mut self) -> &mut R {
     &mut self.r
+  }
+
+  /// Bytes read from the stream so far (codec byte included, still compressed when the codec is)
+  pub fn read_bytes(&self) -> u64 {
+    self.read
   }
 
   /// What the reader pulled in past the last frame: with the plain codec, the start of raw bytes that follow the frames
@@ -222,6 +241,9 @@ mod tests {
     for (k, p) in &frames {
       w.send(*k, p).await.unwrap();
     }
+    let written = w.written();
+    drop(w);
+    assert_eq!(written, sink.len() as u64);
     assert!(sink.len() * 20 < raw, "{} of {raw}", sink.len());
   }
 
