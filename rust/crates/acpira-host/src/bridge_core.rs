@@ -108,6 +108,15 @@ pub struct BridgeCore {
   /// The session views this page holds as far as patches go: the one on screen and the last one sent of each recent
   /// session, what the next patch of that session is computed against (`SentViews`)
   sent: parking_lot::Mutex<SentViews>,
+  /// The page applies `sessionsPatch` messages (it said so in `ready`)
+  list_patches: std::sync::atomic::AtomicBool,
+  /// The session list this page holds and its revision (0 for a whole list, one more per patch), what the next list
+  /// patch is computed against; only kept for list patches. Swapped under `sent` too, so a list push racing init waits
+  /// for init's list
+  listed: parking_lot::Mutex<Option<(u64, Vec<acpira_shared::transcript::SessionSummary>)>>,
+  /// Held from taking messages out of the batch until they are posted: two flushes on different threads (the window's
+  /// timer and an immediate edge) would otherwise post their batches crosswise, an older list after a newer one
+  order: parking_lot::Mutex<()>,
   batch: parking_lot::Mutex<MsgBatch>,
   settings_sub: parking_lot::Mutex<Option<u64>>,
   /// The stored session the page opens on, read from attach on (`ready` waits for this load instead of starting its own)
@@ -172,6 +181,9 @@ impl BridgeCore {
       ready: Default::default(),
       view_shown: Default::default(),
       patches: Default::default(),
+      list_patches: Default::default(),
+      listed: Default::default(),
+      order: Default::default(),
       sent: Default::default(),
       batch: Default::default(),
       settings_sub: Default::default(),
@@ -227,8 +239,9 @@ impl BridgeCore {
     let (manager, platform) = (&self.manager, &self.platform);
     match m {
       W::ViewFocus => {}
-      W::Ready { patches } => {
+      W::Ready { patches, list_patches } => {
         self.patches.store(patches, std::sync::atomic::Ordering::Release);
+        self.list_patches.store(list_patches, std::sync::atomic::Ordering::Release);
         // A view (re)opening is a cheap moment to re-check executables and pick up sessions another window created
         let m2 = manager.clone();
         tokio::spawn(async move { m2.reprobe().await });
@@ -288,6 +301,8 @@ impl BridgeCore {
         if let Some(parts) = active_parts.as_ref().filter(|_| self.patches.load(std::sync::atomic::Ordering::Acquire)) {
           sent.deliver(Some(parts));
         }
+        // Init's list is the base of the next list patch, so the corrective list below goes as a patch (none if equal)
+        *self.listed.lock() = list_patches.then(|| (0, state.sessions.clone()));
         self.emit(HostMsg::Init { state: Box::new(state) });
         drop(sent);
         // A batched list may reach the page around init and lose to init's copy, and the manager does not repeat an
@@ -333,6 +348,13 @@ impl BridgeCore {
         if let Some(m) = manager.session_msg(self.viewer.active_id().as_deref()) {
           self.deliver(m);
         }
+      }
+      W::ResyncSessions => {
+        {
+          let _sent = self.sent.lock();
+          *self.listed.lock() = None;
+        }
+        manager.sessions_in_order(&self.viewer);
       }
       W::ChatgptStatus => {
         let status = manager.chatgpt_status(manager.folder_for(Some(&self.viewer), None)).await;
@@ -876,6 +898,7 @@ impl BridgeCore {
       }
       return;
     }
+    let _order = self.order.lock();
     let pushed = self.batch.lock().push(m);
     match pushed {
       Pushed::Flush(queued) => queued.into_iter().for_each(|m| self.deliver(m)),
@@ -893,6 +916,7 @@ impl BridgeCore {
   }
 
   fn flush(&self) {
+    let _order = self.order.lock();
     let queued = self.batch.lock().flush();
     for m in queued {
       self.deliver(m);
@@ -903,6 +927,10 @@ impl BridgeCore {
   /// the one on screen or one it keeps from before a switch (`SentViews`). The diff and the post happen under one lock, so
   /// two flushes racing on different threads can never post patches out of order
   fn deliver(&self, m: HostMsg) {
+    let m = match m {
+      HostMsg::Sessions { sessions } => return self.deliver_list(sessions),
+      m => m,
+    };
     let HostMsg::Session { parts, .. } = &m else { return self.emit(m) };
     let mut sent = self.sent.lock();
     let next = parts.as_ref().filter(|_| self.patches.load(std::sync::atomic::Ordering::Acquire));
@@ -911,6 +939,32 @@ impl BridgeCore {
       Delivery::Stale => {}
       Delivery::Patch(patch) => self.emit(HostMsg::SessionPatch { patch }),
       Delivery::Whole => self.emit(m),
+    }
+  }
+
+  /// A session list goes out as runs over the list the page holds when the page takes list patches; an unchanged list
+  /// is not sent at all. Diffed and posted under `sent`, ordered against init like session views
+  fn deliver_list(&self, sessions: Vec<acpira_shared::transcript::SessionSummary>) {
+    if !self.list_patches.load(std::sync::atomic::Ordering::Acquire) {
+      return self.emit(HostMsg::Sessions { sessions });
+    }
+    let _order = self.sent.lock();
+    let mut listed = self.listed.lock();
+    match listed.take() {
+      Some((rev, held)) => {
+        let next = match acpira_shared::sessions_patch::diff(&held, &sessions, rev) {
+          Some(patch) => {
+            self.emit(HostMsg::SessionsPatch { patch });
+            rev + 1
+          }
+          None => rev,
+        };
+        *listed = Some((next, sessions));
+      }
+      None => {
+        *listed = Some((0, sessions.clone()));
+        self.emit(HostMsg::Sessions { sessions });
+      }
     }
   }
 

@@ -27,6 +27,8 @@ struct ProtocolTests {
     try roundTrip(WebviewMsg.send(sessionId: nil, text: "hi", steer: true), #"{"type":"send","text":"hi","steer":true}"#)
     try roundTrip(WebviewMsg.ready(), #"{"type":"ready"}"#)
     try roundTrip(WebviewMsg.ready(patches: true), #"{"type":"ready","patches":true}"#)
+    try roundTrip(WebviewMsg.ready(patches: true, listPatches: true), #"{"type":"ready","patches":true,"listPatches":true}"#)
+    try roundTrip(WebviewMsg.resyncSessions, #"{"type":"resyncSessions"}"#)
   }
 
   /// test/sidecarContract.test.ts: the actions it sends the real sidecar, with its ids filled in

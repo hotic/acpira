@@ -31,7 +31,7 @@ pub fn device_allowed(m: &WebviewMsg) -> bool {
   use WebviewMsg as W;
   match m {
     // The view itself
-    W::Ready { .. } | W::Resync => true,
+    W::Ready { .. } | W::Resync | W::ResyncSessions => true,
     // Driving a session. The ones that act on a session another engine runs are forwarded there over the push bus
     W::Send { .. }
     // A command button with `draft`: what sending `/name` runs, its text coming back instead of going out

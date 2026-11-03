@@ -73,6 +73,12 @@ final class AppModel {
   /// Agents whose empty `controls` answer was followed by a fresh probe on this wire, so it is asked once
   var probedControls: Set<AgentId> = []
   var summaries: [SessionSummary]
+  /// The session list exactly as the engine last sent it, the base its next `sessionsPatch` applies to (`summaries`
+  /// carries local pending feedback on top)
+  @ObservationIgnored var engineSummaries: [SessionSummary] = []
+  /// The revision of `engineSummaries` (0 for a whole list); nil from a patch that did not fit until the whole list
+  /// asked for lands, so the patches in flight meanwhile neither apply nor ask again
+  @ObservationIgnored var engineListRev: Int? = 0
   /// List feedback stays until the list itself acknowledges it, even after a queued copy settles `outgoing`.
   var pendingSummaries: [String: PendingSummary] = [:]
   var views: [String: SessionView]

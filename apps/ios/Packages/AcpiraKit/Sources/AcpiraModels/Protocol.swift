@@ -542,10 +542,13 @@ public struct SessionPatch: Codable, Hashable, Sendable {
 /// permission, answer, steerQueued): set by a paired device, which resends with the same id after a lost link; the
 /// engine running the session runs each id once
 public enum WebviewMsg: Codable, Hashable, Sendable {
-  /// The page is mounted: the engine answers with `init`. patches: the page applies `sessionPatch` (the app sends true)
-  case ready(patches: Bool? = nil)
+  /// The page is mounted: the engine answers with `init`. patches: the page applies `sessionPatch`; listPatches:
+  /// `sessionsPatch` (the app sends both)
+  case ready(patches: Bool? = nil, listPatches: Bool? = nil)
   /// A sessionPatch did not fit the view the page holds: the engine sends the whole view again
   case resync
+  /// A sessionsPatch did not fit the list the page holds: the engine sends the whole list again
+  case resyncSessions
   /// steer: join the running turn instead of queueing behind it (SessionView.canSteer)
   case send(sessionId: String?, text: String, attachments: [Draft]? = nil, steer: Bool? = nil, clientId: String? = nil)
   case stop(sessionId: String?, clientId: String? = nil)
@@ -662,7 +665,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
 
   /// The `type` literals this build mirrors: the actions the app can send
   public static let types = [
-    "ready", "resync", "send", "stop", "permission", "answer", "buildPlan", "setMode", "setConfig", "selectSession",
+    "ready", "resync", "resyncSessions", "send", "stop", "permission", "answer", "buildPlan", "setMode", "setConfig", "selectSession",
     "deselectSession", "newSession", "renameSession", "deleteSession", "restoreSession", "pinSession", "archiveSession", "setSessionUnread", "markAllRead", "searchSessions",
     "forkSession", "selectAccount", "refreshQuota", "compact", "retry", "takeOverSession", "dequeue", "sendQueued",
     "steerQueued", "editQueued", "categoryOp", "moveSession", "sessionMarkdown", "addAccount", "removeAccount",
@@ -677,6 +680,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     switch self {
     case .ready: "ready"
     case .resync: "resync"
+    case .resyncSessions: "resyncSessions"
     case .send: "send"
     case .stop: "stop"
     case .permission: "permission"
@@ -742,7 +746,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   }
 
   private enum Keys: String, CodingKey {
-    case type, patches, sessionId, text, attachments, steer, blockId, optionId, answers, images, skip, planId, model, id, configId
+    case type, patches, listPatches, sessionId, text, attachments, steer, blockId, optionId, answers, images, skip, planId, model, id, configId
     case value, agent, category, cwd, chat, title, pinned, archived, unread, query, seq, turnIndex, retainedAttachments, clientId
     case file, via, methodId, requestId, edit, subagentId, taskId, action, objective, key, fresh, dir, path, base
     case toolCallId, nth, cols, rows, data, binary, chars, format, shown
@@ -754,8 +758,10 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     func opt(_ k: Keys) throws -> String? { try c.decodeIfPresent(String.self, forKey: k) }
     func int(_ k: Keys) throws -> Int { try c.decode(Int.self, forKey: k) }
     switch try str(.type) {
-    case "ready": self = .ready(patches: try c.decodeIfPresent(Bool.self, forKey: .patches))
+    case "ready":
+      self = .ready(patches: try c.decodeIfPresent(Bool.self, forKey: .patches), listPatches: try c.decodeIfPresent(Bool.self, forKey: .listPatches))
     case "resync": self = .resync
+    case "resyncSessions": self = .resyncSessions
     case "send":
       self = .send(sessionId: try opt(.sessionId), text: try str(.text), attachments: try c.decodeIfPresent([Draft].self, forKey: .attachments),
                    steer: try c.decodeIfPresent(Bool.self, forKey: .steer), clientId: try opt(.clientId))
@@ -847,8 +853,9 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     var c = encoder.container(keyedBy: Keys.self)
     try c.encode(type, forKey: .type)
     switch self {
-    case .ready(let patches):
+    case let .ready(patches, listPatches):
       try c.encodeIfPresent(patches, forKey: .patches)
+      try c.encodeIfPresent(listPatches, forKey: .listPatches)
     case let .send(sessionId, text, attachments, steer, clientId):
       try c.encodeIfPresent(sessionId, forKey: .sessionId)
       try c.encode(text, forKey: .text)
@@ -1018,7 +1025,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case let .terminalAck(id, chars):
       try c.encode(id, forKey: .id)
       try c.encode(chars, forKey: .chars)
-    case .resync, .markAllRead, .connections, .unknown:
+    case .resync, .resyncSessions, .markAllRead, .connections, .unknown:
       break
     }
   }
@@ -1040,6 +1047,8 @@ public enum HostMsg: Codable, Hashable, Sendable {
   case session(session: SessionView)
   /// The changes since the view sent last; only to pages that said `patches` in ready
   case sessionPatch(patch: SessionPatch)
+  /// The session list as runs over the list sent last; only to pages that said `listPatches` in ready
+  case sessionsPatch(patch: SessionsPatch)
   case accounts(accounts: [AccountInfo])
   case accountActions(actions: [AccountAction])
   case hidden(hidden: HiddenMap)
@@ -1087,7 +1096,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
 
   /// The `type` literals this build mirrors
   public static let types = [
-    "init", "agents", "sessions", "categories", "noSession", "session", "sessionPatch", "accounts", "accountActions",
+    "init", "agents", "sessions", "categories", "noSession", "session", "sessionPatch", "sessionsPatch", "accounts", "accountActions",
     "hidden", "settings", "controls", "sessionHits", "subagent", "files", "diffSource", "imageBlob", "sessionMarkdown",
     "projectDir", "projectStatus", "projectFile", "sessionChanges", "terminalOutput", "terminalState", "editTurnResult",
     "deleteSessionResult", "appearance", "connections",
@@ -1103,6 +1112,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case .noSession: "noSession"
     case .session: "session"
     case .sessionPatch: "sessionPatch"
+    case .sessionsPatch: "sessionsPatch"
     case .accounts: "accounts"
     case .accountActions: "accountActions"
     case .hidden: "hidden"
@@ -1148,6 +1158,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case "noSession": self = .noSession
     case "session": self = .session(session: try c.decode(SessionView.self, forKey: .session))
     case "sessionPatch": self = .sessionPatch(patch: try c.decode(SessionPatch.self, forKey: .patch))
+    case "sessionsPatch": self = .sessionsPatch(patch: try c.decode(SessionsPatch.self, forKey: .patch))
     case "accounts": self = .accounts(accounts: try c.decode([AccountInfo].self, forKey: .accounts))
     case "accountActions": self = .accountActions(actions: try c.decode([AccountAction].self, forKey: .actions))
     case "hidden": self = .hidden(hidden: try c.decode(HiddenMap.self, forKey: .hidden))
@@ -1197,6 +1208,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case .categories(let categories): try c.encode(categories, forKey: .categories)
     case .session(let session): try c.encode(session, forKey: .session)
     case .sessionPatch(let patch): try c.encode(patch, forKey: .patch)
+    case .sessionsPatch(let patch): try c.encode(patch, forKey: .patch)
     case .accounts(let accounts): try c.encode(accounts, forKey: .accounts)
     case .accountActions(let actions): try c.encode(actions, forKey: .actions)
     case .hidden(let hidden): try c.encode(hidden, forKey: .hidden)

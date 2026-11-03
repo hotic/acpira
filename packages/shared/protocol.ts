@@ -14,6 +14,16 @@ import type { SessionPatch } from './sessionPatch';
 import type { PageContextOp } from './picker';
 import type { ModelShapes } from './modelShapes';
 
+// The new session list built from runs: [from, count] copies that many entries of the held list from index `from`, an
+// object is a new or changed entry. `base` / `rev`: the list revision it applies to and makes (a whole list is 0, each
+// patch one more); `size` is the length of the list it applies to (rust/crates/acpira-shared/src/sessions_patch.rs)
+export interface SessionsPatch {
+  base: number;
+  rev: number;
+  size: number;
+  runs: Array<[number, number] | SessionSummary>;
+}
+
 // Session export formats: Markdown to read, JSON for tooling, plain text holding only what was said (export_transcript.rs export_text)
 export type ExportFormat = 'markdown' | 'json' | 'text';
 
@@ -279,6 +289,8 @@ export type HostMsg =
   | { type: 'session'; session: SessionView }
   // Only to pages that said `patches` in ready: the changes since the view sent last (sessionPatch.ts)
   | { type: 'sessionPatch'; patch: SessionPatch }
+  // Only to pages that said `listPatches` in ready: the session list as runs over the list sent last (sessions_patch.rs)
+  | { type: 'sessionsPatch'; patch: SessionsPatch }
   // One observed subagent's transcript, pushed to the viewer that asked for it; rev grows with every change
   | { type: 'subagent'; sessionId: string; subagentId: string; rev: number; running: boolean; turns: Turn[] }
   | { type: 'accounts'; accounts: AccountInfo[] }
@@ -397,9 +409,11 @@ export type WebviewMsg =
   | { type: 'connectChatgpt' }
   | { type: 'editTurn'; requestId: string; edit: EditTurnRequest }
   // patches: the page applies sessionPatch messages; without it every push is the whole view
-  | { type: 'ready'; patches?: boolean }
+  | { type: 'ready'; patches?: boolean; listPatches?: boolean }
   // A sessionPatch did not fit the view the page holds: the host sends the whole view again
   | { type: 'resync' }
+  // A sessionsPatch did not fit the list the page holds: the host sends the whole list again
+  | { type: 'resyncSessions' }
   // The page's window got focus. The VS Code shell keeps it (the last-used chat is where "Add to Chat" goes); the sidecar ignores it
   | { type: 'viewFocus' }
   // probeUrl's answer, kept in the VS Code shell like viewFocus: ok when anything answered over HTTP

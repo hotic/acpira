@@ -34,7 +34,7 @@ extension AppModel {
   /// Says ready (queued until the view is attached) and applies every event until the wire ends
   func connect() {
     guard let link else { return }
-    link.client.post(.ready(patches: true))
+    link.client.post(.ready(patches: true, listPatches: true))
     Task { [weak self] in
       await link.client.start()
       for await event in link.client.events {
@@ -83,6 +83,8 @@ extension AppModel {
       agents = state.agents
       accounts = state.accounts
       settings = state.settings
+      engineSummaries = state.sessions
+      engineListRev = 0
       summaries = state.sessions.map { pendingSummary($0, fresh: resumed) }
       if let categories = state.categories { follow(categories) }
       present(message)
@@ -96,6 +98,19 @@ extension AppModel {
     case .agents(let list):
       agents = list
     case .sessions(let list):
+      engineSummaries = list
+      engineListRev = 0
+      summaries = list.map { pendingSummary($0) }
+    case .sessionsPatch(let patch):
+      // A patch that does not fit the held list (one before it failed to decode) asks for the whole list, once
+      guard let rev = engineListRev else { break }
+      guard let list = patch.apply(to: engineSummaries, at: rev) else {
+        engineListRev = nil
+        post(.resyncSessions)
+        break
+      }
+      engineSummaries = list
+      engineListRev = patch.rev
       summaries = list.map { pendingSummary($0) }
     case .categories(let categories):
       follow(categories)

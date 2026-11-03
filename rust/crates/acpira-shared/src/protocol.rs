@@ -284,6 +284,11 @@ pub enum HostMsg {
   SessionPatch {
     patch: RawJson,
   },
+  /// The session list as runs over the list this viewer was sent last (`sessions_patch.rs`); only for pages that asked
+  /// for list patches
+  SessionsPatch {
+    patch: crate::sessions_patch::SessionsPatch,
+  },
   Subagent {
     session_id: String,
     subagent_id: String,
@@ -546,6 +551,7 @@ impl HostMsg {
       HostMsg::NoSession => "noSession",
       HostMsg::Session { .. } => "session",
       HostMsg::SessionPatch { .. } => "sessionPatch",
+      HostMsg::SessionsPatch { .. } => "sessionsPatch",
       HostMsg::Subagent { .. } => "subagent",
       HostMsg::Accounts { .. } => "accounts",
       HostMsg::AccountActions { .. } => "accountActions",
@@ -622,12 +628,17 @@ pub enum WebviewMsg {
     edit: EditTurnRequest,
   },
   /// `patches`: the page applies `sessionPatch` messages (the real webview always does; scripts and tests take whole views)
+  /// `listPatches`: the page applies `sessionsPatch` messages (the paired phone, where the whole list is costly)
   Ready {
     #[serde(default)]
     patches: bool,
+    #[serde(default)]
+    list_patches: bool,
   },
   /// A `sessionPatch` did not fit the view the page holds: send the whole view again
   Resync,
+  /// A `sessionsPatch` did not fit the list the page holds: send the whole list again
+  ResyncSessions,
   /// The page's window got focus: only the VS Code shell uses it (the "Add to Chat" target)
   ViewFocus,
   Send {
@@ -1184,9 +1195,9 @@ mod tests {
     let m: WebviewMsg = serde_json::from_str(r#"{"type":"openFile","sessionId":"s","path":"a.ts","line":3}"#).unwrap();
     assert!(matches!(m, WebviewMsg::OpenFile { line: Some(3), .. }));
     let r: WebviewMsg = serde_json::from_str(r#"{"type":"ready"}"#).unwrap();
-    assert_eq!(r, WebviewMsg::Ready { patches: false });
+    assert_eq!(r, WebviewMsg::Ready { patches: false, list_patches: false });
     let r: WebviewMsg = serde_json::from_str(r#"{"type":"ready","patches":true}"#).unwrap();
-    assert_eq!(r, WebviewMsg::Ready { patches: true });
+    assert_eq!(r, WebviewMsg::Ready { patches: true, list_patches: false });
   }
 
   #[test]

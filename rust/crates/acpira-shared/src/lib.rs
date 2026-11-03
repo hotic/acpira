@@ -30,6 +30,7 @@ pub mod providers;
 pub mod remote;
 pub mod session_links;
 pub mod session_patch;
+pub mod sessions_patch;
 pub mod settings;
 pub mod shared_config;
 pub mod sidecar;
