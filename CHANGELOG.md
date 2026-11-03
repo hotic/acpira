@@ -11,6 +11,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [2.0.7] - 2026-11-04
+
+### Added
+
+- **Add models from the model panel.** The panel's header has an Add chip for every agent. It opens that agent's settings on Models, or on Sources for the built-in agent.
+- **The built-in agent's sidekick has its own Fast switch** while its model offers a fast tier, saved with the session and tagged on the chip. A lone model's panel fits on one row with a short effort scale.
+- **Remote access names a blocked network on Windows.** When Windows Firewall turns away devices on this network, the pairing card offers an Allow button. While no relay is reachable it asks to join the same Wi-Fi.
+- The built-in agent's Raw mode settings apply to sessions already open, and an edited Raw system prompt applies from the next message.
+- The desktop app's window drags from the settings page's title strip.
+
+### Changed
+
+- **One engine per machine on macOS and Linux.** VS Code, the desktop app, IntelliJ and SSH peers share it, running from a copy under `~/.acpira/engine/`. A newer build takes over while the older one finishes its running turns, and a window whose engine was replaced offers a reload. Windows keeps one engine per shell.
+- **Remote access runs inside the engine.** The separate `acpira-gateway` program is gone, and the login service starts the engine instead. A gateway left by 2.0.6 or older is stopped when the new engine takes over.
+- Output speed leaves out tool waits and background waits, and Claude Code's tool rows carry their timing.
+- Pairing addresses leave out WSL, Hyper-V, VM bridge and proxy TUN adapters on Linux and Windows.
+- Paired devices receive session list changes as patches instead of the whole list.
+- Long transcripts skip style, layout and paint for exchanges out of sight, except in WebKit.
+- The Linux AppImage, still a preview, is compressed with zstd.
+
+### Fixed
+
+- A session whose agent does not answer its start within 90 seconds fails instead of waiting forever.
+- A settings file that never opens no longer wedges a session's start.
+- Editing a message in a session another engine runs takes effect in that engine.
+- Toasts and other engine messages use the language of the window that asked, and a missing file link is reported in that language instead of the OS opener's error.
+- The built-in agent runs the default model it shows when the session's model was switched off.
+- An open history editor shows newly added models without losing its picks, and a failed history edit is reported in the composer's toast.
+- `show_widget` frames can play `data:` audio.
+- A plan with a single to-do shows it without a fold.
+- The About page in Settings is titled About.
+
 ## [2.0.6] - 2026-11-02
 
 ### Added

@@ -1,6 +1,6 @@
 {
   "name": "acpira-workspace",
-  "version": "2.0.6",
+  "version": "2.0.7",
   "description": "The Acpira repository: the Rust engine, the shared packages and every shell (apps/)",
   "license": "MIT",
   "private": true,
