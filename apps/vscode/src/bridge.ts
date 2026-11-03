@@ -197,8 +197,9 @@ export function chatPageHtml(webview: vscode.Webview, extensionUri: vscode.Uri, 
     `font-src ${webview.cspSource}`,
     `script-src 'nonce-${nonce}' 'wasm-unsafe-eval'`,
     "worker-src blob:",
-    // The chime uses blob:; inline recordings load only from the session's resource origin.
-    `media-src blob: ${webview.cspSource}`,
+    // The chime uses blob:; inline recordings load only from the session's resource origin. data: is for show_widget
+    // frames, which inherit this policy: models embed a widget's sounds as data: URIs, and the frame's own CSP allows them
+    `media-src blob: data: ${webview.cspSource}`,
   ].join('; ');
   return `<!doctype html>
 <html lang="${lang}">

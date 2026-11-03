@@ -232,8 +232,9 @@ pub fn page_html_on(c: &PageConfig, origin: &str, platform: &str) -> String {
     format!("font-src {src} data:"),
     format!("script-src 'nonce-{nonce}' 'wasm-unsafe-eval'"),
     "worker-src blob:".to_owned(),
-    // The attention chime is a WAV synthesized in the page (effects/chime.ts); the tool panel plays local files from /file
-    format!("media-src blob: {src}"),
+    // The attention chime is a WAV synthesized in the page (effects/chime.ts); the tool panel plays local files from /file.
+    // data: is for show_widget frames, which inherit this policy: models embed a widget's sounds as data: URIs
+    format!("media-src blob: data: {src}"),
   ];
   match c.host {
     // The browser panel frames the preview proxy, which listens on loopback (the engine runs on this machine)
