@@ -239,6 +239,76 @@ private let commands: [SlashCommand] = decode(#"""
     #expect(sets == ["model=opus-4-6-thinking"])
   }
 
+  // FusionParams' real wire combinations: the sidekick list stays visible even where a pair is unavailable.
+  private let fusionOptions: [SessionOption] = [
+    ("plain", "GPT-6 Astra High Thinking"),
+    ("gpt-low-swe", "Fusion (GPT-6 Astra Low Thinking + SWE-2 Medium)"),
+    ("gpt-high-swe", "Fusion (GPT-6 Astra High Thinking + SWE-2 Medium)"),
+    ("gpt-high-luna", "Fusion (GPT-6 Astra High Thinking + GPT-5.6 Luna High Thinking)"),
+    ("gpt-high-luna-fast", "Fusion (GPT-6 Astra High Thinking Fast + GPT-5.6 Luna High Thinking Fast)"),
+    ("opus-medium-glm", "Fusion (Claude Opus 5 Medium + GLM-5.2 High)"),
+  ].map { SessionOption(id: $0.0, name: $0.1) }
+
+  private func fusionChoices(_ value: String, native: [ConfigControl] = [],
+                             set: @escaping (String, String) -> Void = { _, _ in }) -> ModelChoices {
+    ModelChoices(controls: SessionControls(options: [ConfigControl(id: "model", name: "Model", category: "model",
+      options: fusionOptions, value: value)] + native), onSetConfig: set)
+  }
+
+  @Test func fusionPicksKeepThePairAndResolveOnlyOfferedCombinations() {
+    var sets: [String] = []
+    let c = fusionChoices("gpt-high-luna") { sets.append("\($0)=\($1)") }
+    #expect(c.fusion?.leads == ["GPT-6 Astra", "Claude Opus 5"])
+    #expect(c.fusion?.sidekicks == ["SWE-2 Medium", "GPT-5.6 Luna High", "GLM-5.2 High"])
+    #expect(c.offersSidekick("SWE-2 Medium") && !c.offersSidekick("GLM-5.2 High"))
+    c.pickFusion(sidekick: "SWE-2 Medium")
+    c.pickFusion(lead: "Claude Opus 5")
+    #expect(sets == ["model=gpt-high-swe", "model=opus-medium-glm"])
+    #expect(!fusionChoices("gpt-low-swe").offersSidekick("GPT-5.6 Luna High"))
+    #expect(fusionChoices("plain").fusion == nil)
+  }
+
+  @Test func fusionEmbeddedEffortAndFastChangeTheModelNotTheNativeControls() {
+    var sets: [String] = []
+    let c = fusionChoices("gpt-high-luna") { sets.append("\($0)=\($1)") }
+    #expect(c.hasEffort && c.effort?.levels.map(\.id) == ["Low", "High"])
+    #expect(c.effort?.value == "High")
+    c.fast?.set(true)
+    c.effort?.pick("Low")
+    #expect(sets == ["model=gpt-high-luna-fast", "model=gpt-low-swe"])
+    // No Fast for this exact pair: never jump to a different sidekick just to enable it.
+    #expect(fusionChoices("gpt-high-swe").fast == nil)
+    #expect(!fusionChoices("opus-medium-glm").hasEffort)
+  }
+
+  @Test func modernFusionKeepsNativeReasoningAndSpeedIndependentOfThePair() {
+    var sets: [String] = []
+    let model = ConfigControl(id: "model", name: "Model", category: "model", options: fusionOptions.filter {
+      ["gpt-high-swe", "gpt-high-luna"].contains($0.id)
+    }, value: "gpt-high-luna")
+    let thought = ConfigControl(id: "thought_level", name: "Thinking", category: "thought_level",
+      options: [SessionOption(id: "low", name: "Low"), SessionOption(id: "high", name: "High")], value: "high")
+    let speed = ConfigControl(id: "speed", name: "Speed", category: "model_config",
+      options: [SessionOption(id: "standard", name: "Standard"), SessionOption(id: "fast", name: "Fast")], value: "standard")
+    let c = ModelChoices(controls: SessionControls(options: [model, thought, speed])) { sets.append("\($0)=\($1)") }
+    #expect(c.effort?.levels.map(\.id) == ["low", "high"])
+    c.effort?.pick("low")
+    c.fast?.set(true)
+    c.pickFusion(sidekick: "SWE-2 Medium")
+    #expect(sets == ["thought_level=low", "speed=fast", "model=gpt-high-swe"])
+    let fastOnly = ModelChoices(controls: SessionControls(options: [model, speed]), onSetConfig: { _, _ in })
+    #expect(!fastOnly.hasEffort && fastOnly.fast?.disabled == false)
+  }
+
+  @Test func switchingIntoFusionKeepsTheLeadAndLeavingKeepsItsEffort() {
+    var sets: [String] = []
+    let plain = fusionChoices("plain") { sets.append("\($0)=\($1)") }
+    plain.pickFamily(plain.families.first { $0.fusion != nil }!)
+    let fusion = fusionChoices("gpt-high-luna") { sets.append("\($0)=\($1)") }
+    fusion.pickFamily(fusion.families.first { $0.fusion == nil }!)
+    #expect(sets == ["model=gpt-high-swe", "model=plain"])
+  }
+
   @Test func theSidekickHasItsOwnPlace() {
     let sidekick = #"{"id":"sidekick","name":"Sidekick","category":"_sidekick","value":"none","options":[{"id":"none","name":"None"},{"id":"gpt-6","name":"GPT-6"}]}"#
     let level = #"{"id":"sidekick_effort","name":"Sidekick effort","category":"_sidekick_effort","value":"high","options":[{"id":"low","name":"low"},{"id":"high","name":"high"}]}"#

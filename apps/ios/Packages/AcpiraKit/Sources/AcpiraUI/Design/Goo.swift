@@ -653,7 +653,8 @@ struct LiquidControls: View {
 
   var body: some View {
     let c = ModelChoices(controls: controls, hidden: hidden, onSetConfig: onSetConfig)
-    let beans = deeper == Self.sidekickLevel && c.sidekick != nil ? sidekickBeans(c) : beans(c)
+    let nested = deeper == Self.sidekickLevel && (c.fusion != nil || c.sidekick != nil)
+    let beans = nested ? (c.fusion != nil ? [fusionModelBean(c, sidekick: true)] : sidekickBeans(c)) : beans(c)
     let inside = stage > 0 || deeper != nil
     if !beans.isEmpty {
       GooChip(id: "model", open: $open, stage: $stage, deeper: $deeper, held: held, leave: { enter(nil) },
@@ -690,7 +691,6 @@ struct LiquidControls: View {
   private func beans(_ c: ModelChoices) -> [GooBean] {
     let families = c.families
     let effort = c.effort
-    let mode = c.mode
     var out: [GooBean] = []
     if c.hasModel, let cur = c.cur {
       out.append(GooBean(key: "model", title: t("stats.model"),
@@ -708,6 +708,7 @@ struct LiquidControls: View {
                         }
                       })))
     }
+    if c.fusion != nil { out.append(fusionModelBean(c, sidekick: false)) }
     if c.hasEffort, let effort {
       let levels = effort.levels.count > 1 ? effort.levels : []
       let thinking = effort.thinking
@@ -766,8 +767,42 @@ struct LiquidControls: View {
     }
     if !c.modes.isEmpty { out.append(modeBean(c)) }
     if let access = c.access { out.append(accessBean(access)) }
-    if let sk = c.sidekick { out.append(sidekickBean(sk, fast: c.sidekickFast)) }
+    if c.fusion != nil {
+      let picked = SessionOption(id: c.curVar?.sidekick ?? "", name: c.curVar?.sidekick ?? "")
+      out.append(GooBean(key: "sidekick", title: t("composer.sidekick"),
+                         glyph: AnyView(SidekickMark(picked: picked).foregroundStyle(Palette.fg1)),
+                         caption: AnyView(GooCaption(text: picked.name, note: t("composer.sidekick"))),
+                         tap: { enter(Self.sidekickLevel) }))
+    } else if let sk = c.sidekick { out.append(sidekickBean(sk, fast: c.sidekickFast)) }
     return out
+  }
+
+  /// Fusion uses the built-in sidekick's bean navigation, but every pick still writes the real pair's model id.
+  /// Unavailable sidekicks stay in the list, disabled just as in the desktop's FusionParams.
+  private func fusionModelBean(_ c: ModelChoices, sidekick: Bool) -> GooBean {
+    let names = (sidekick ? c.fusion?.sidekicks : c.fusion?.leads) ?? []
+    let current = (sidekick ? c.curVar?.sidekick : c.curVar?.lead) ?? names.first ?? ""
+    let picked = SessionOption(id: current, name: current)
+    let title = t(sidekick ? "composer.sidekick" : "composer.lead")
+    let glyph = sidekick
+      ? AnyView(SidekickMark(picked: picked).foregroundStyle(Palette.fg1))
+      : AnyView(VendorMark(brand: ModelCatalog.optionBrand(picked), name: current, size: Metrics.barIcon).foregroundStyle(Palette.fg1))
+    return GooBean(key: sidekick ? "sidekick.model" : "lead", title: title, glyph: glyph,
+                   caption: AnyView(GooCaption(text: current, note: title)), rows: names.count,
+                   panel: AnyView(GooList(current: current) {
+                     ForEach(names, id: \.self) { name in
+                       let available = !sidekick || c.offersSidekick(name)
+                       GooRow(name: name, checked: name == current) {
+                         VendorMark(brand: VendorBrand.of(name), name: name, size: Metrics.iconCtl)
+                       } action: {
+                         if sidekick { c.pickFusion(sidekick: name) } else { c.pickFusion(lead: name) }
+                         fold()
+                       }
+                       .disabled(!available)
+                       .opacity(available ? 1 : 0.4)
+                       .id(name)
+                     }
+                   }))
   }
 
   /// The agent's modes, one row each. The approval level is a bean of its own (`accessBean`), not a control inside
@@ -1003,6 +1038,7 @@ struct ModelChoices {
   let sidekick: ConfigControl?
   let sidekickEffort: ConfigControl?
   let sidekickFast: FastState?
+  private let nativeFast: FastState?
   private let onSetConfig: (String, String) -> Void
 
   /// hidden: the agent's settings `hiddenOptions` (option id → hidden family keys); the model in use always stays
@@ -1025,6 +1061,7 @@ struct ModelChoices {
     self.sidekick = sidekick?.select
     self.sidekickEffort = sidekick?.effort
     self.sidekickFast = split.sidekickFast.first.map { c in nativeFastState(c) { onSetConfig(c.id, $0) } }
+    self.nativeFast = split.modelConfig.first(where: ComposerControls.isFast).map { c in nativeFastState(c) { onSetConfig(c.id, $0) } }
     self.onSetConfig = onSetConfig
   }
 
@@ -1048,11 +1085,43 @@ struct ModelChoices {
 
   /// Fast, when the model in use can switch it at the level in force, or while it is on (the bolt on the chip says
   /// so). A family with Fast at other levels only offers none here, rather than a switch that cannot move
-  var fast: FastState? { effort?.fast.flatMap { $0.disabled && !$0.on ? nil : $0 } }
+  var fast: FastState? { (effort?.fast ?? nativeFast).flatMap { $0.disabled && !$0.on ? nil : $0 } }
+
+  var fusion: (leads: [String], sidekicks: [String])? { cur?.fusion }
+
+  /// Keep the lead's effort and the other side where possible; the shared resolver picks the nearest offered pair.
+  func pickFusion(lead: String? = nil, effort: String? = nil, sidekick: String? = nil, fast: Bool? = nil) {
+    guard let f = cur, f.fusion != nil, let v = curVar, let modelId,
+          let hit = ModelCatalog.findFusionVariant(f, lead: lead ?? v.lead ?? "", effort: effort ?? v.effort,
+            sidekick: sidekick ?? v.sidekick, fast: fast ?? v.fast) else { return }
+    onSetConfig(modelId, hit.id)
+  }
+
+  func offersSidekick(_ name: String) -> Bool {
+    guard let f = cur, let v = curVar else { return false }
+    return f.variants.contains { $0.lead == v.lead && $0.effort == v.effort && $0.sidekick == name }
+  }
 
   private static func effort(split: ComposerControls.Split, cur: ModelFamily?, curVar: ModelVariant?, modelId: String?,
                              onSetConfig: @escaping (String, String) -> Void) -> Effort? {
     let nativeFast = split.modelConfig.first(where: ComposerControls.isFast).map { c in nativeFastState(c) { onSetConfig(c.id, $0) } }
+    var fusionFast: FastState?
+    if let f = cur, f.fusion != nil, let v = curVar, let modelId {
+      let pick = { (e: String, fast: Bool) in
+        if let hit = ModelCatalog.findFusionVariant(f, lead: v.lead ?? "", effort: e, sidekick: v.sidekick, fast: fast) {
+          onSetConfig(modelId, hit.id)
+        }
+      }
+      if f.hasFast {
+        let can = f.variants.contains { $0.lead == v.lead && $0.effort == v.effort && $0.sidekick == v.sidekick && $0.fast != v.fast }
+        fusionFast = FastState(on: v.fast, disabled: !can) { pick(v.effort, $0) }
+      }
+      let levels = ModelCatalog.fusionEfforts(f, v)
+      if levels.count > 1 {
+        return (levels.map { ($0, $0.isEmpty ? t("composer.standard") : $0) }, v.effort,
+                { pick($0, v.fast) }, fusionFast ?? nativeFast, nil)
+      }
+    }
     if let f = cur, let v = curVar, let modelId, f.fusion == nil, ModelCatalog.variantScale(f) || ModelCatalog.thinkingOnly(f) {
       let fast: FastState? = f.hasFast ? {
         func at(_ long: Bool) -> ModelVariant? { f.variants.first { $0.effort == v.effort && $0.fast == !v.fast && $0.long == long } }
@@ -1082,9 +1151,10 @@ struct ModelChoices {
         }
       }
       guard p.efforts.count > 1 || thinking != nil else { return nil }
-      return (p.efforts.map { ($0.id, $0.name) }, p.off ? "" : p.value ?? "", { onSetConfig(c.id, $0) }, nativeFast, thinking)
+      return (p.efforts.map { ($0.id, $0.name) }, p.off ? "" : p.value ?? "", { onSetConfig(c.id, $0) }, fusionFast ?? nativeFast, thinking)
     }
-    return nil
+    // A fixed lead level can still have pair-level Fast, without a reasoning bean to own it.
+    return fusionFast.map { ([], curVar?.effort ?? "", { _ in }, $0, nil) }
   }
 
   /// ModelPanel.pickFamily: into Fusion the model in use becomes the lead; out of it the lead's effort carries over
