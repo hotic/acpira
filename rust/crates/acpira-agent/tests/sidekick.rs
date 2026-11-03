@@ -325,6 +325,39 @@ async fn the_sidekick_effort_follows_the_sidekicks_model_and_comes_back_with_the
   assert_eq!(effort(&loaded["configOptions"]).unwrap()["currentValue"], "low");
 }
 
+#[tokio::test]
+async fn the_sidekick_fast_is_offered_while_its_model_has_a_fast_tier_and_comes_back_with_the_session() {
+  let h = engine().await;
+  let model = MockModel::start();
+  h.providers(&model.base_url(), json!([{ "id": "m1", "name": "Model One" }, { "id": "m2", "name": "Model Two", "fast": true }]));
+  let fast = |options: &Value| options.as_array().unwrap().iter().find(|o| o["id"] == "sidekick_fast").cloned();
+  let set = |sid: String, value: Value| {
+    let conn = &h.conn;
+    async move { conn.request("session/set_config_option", json!({ "sessionId": sid, "configId": "sidekick_fast", "value": value })).await.map_err(|e| e.message) }
+  };
+  let (sid, options) = session(&h, json!([])).await;
+  assert!(fast(&options).is_none(), "no sidekick, no Fast: {options}");
+  let e = set(sid.clone(), json!(true)).await.unwrap_err();
+  assert!(e.contains("not offered"), "{e}");
+  assert!(fast(&pick(&h, &sid, "mock/m1").await.unwrap()["configOptions"]).is_none(), "m1 has no fast tier");
+
+  let switch = fast(&pick(&h, &sid, "mock/m2").await.unwrap()["configOptions"]).unwrap();
+  // Its own custom category, so the composer does not take it for the lead's Fast; off to begin with. This client takes
+  // no booleans, so it is the Standard / Fast select, and a boolean is still accepted
+  assert_eq!((&switch["category"], &switch["currentValue"]), (&json!("_sidekick_fast"), &json!("standard")));
+  assert_eq!(fast(&set(sid.clone(), json!(true)).await.unwrap()["configOptions"]).unwrap()["currentValue"], "fast");
+  assert_eq!(fast(&set(sid.clone(), json!("standard")).await.unwrap()["configOptions"]).unwrap()["currentValue"], "standard");
+  set(sid.clone(), json!("fast")).await.unwrap();
+  model.push(mock::text("one"));
+  prompt(&h, &sid, "first").await;
+
+  let Harness { conn, home, cwd, .. } = h;
+  drop(conn);
+  let h = Harness::start_with(home, cwd, engine_caps()).await;
+  let loaded = h.conn.request("session/load", json!({ "sessionId": sid, "cwd": h.cwd(), "mcpServers": [] })).await.unwrap();
+  assert_eq!(fast(&loaded["configOptions"]).unwrap()["currentValue"], "fast");
+}
+
 /// Every event of the session's log
 fn events(h: &Harness, sid: &str) -> Vec<Value> {
   let file = h.home().join("agent").join("sessions").join(format!("{sid}.jsonl"));

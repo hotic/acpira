@@ -387,6 +387,8 @@ public struct SubagentPersona: Codable, Hashable, Sendable, Identifiable {
   public var model: String?
   /// A value of its reasoning-effort select; absent: the default
   public var effort: String?
+  /// Its Fast switch (only the built-in agent's sidekick sets it); absent: left as the CLI has it
+  public var fast: Bool?
   public var mode: RelayMode
   /// Tells the model when to summon it
   public var when: String

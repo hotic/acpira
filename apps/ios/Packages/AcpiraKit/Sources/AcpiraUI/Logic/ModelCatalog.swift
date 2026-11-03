@@ -357,8 +357,8 @@ enum ComposerControls {
     return tags
   }
 
-  /// The built-in agent's sidekick select (custom category) and its level, the model panel's second side
-  static let sidekickCategory = "_sidekick", sidekickEffortCategory = "_sidekick_effort"
+  /// The built-in agent's sidekick select (custom category), its level and its Fast, the model panel's second side
+  static let sidekickCategory = "_sidekick", sidekickEffortCategory = "_sidekick_effort", sidekickFastCategory = "_sidekick_fast"
   /// The sidekick's value for none
   static let noSidekick = "none"
 
@@ -370,7 +370,8 @@ enum ComposerControls {
   struct Split {
     var models: [ConfigControl] = []; var reasoning: [ConfigControl] = []; var modelConfig: [ConfigControl] = []; var collaboration: [ConfigControl] = []
     var permission: [ConfigControl] = []
-    var sidekick: [ConfigControl] = []; var sidekickEffort: [ConfigControl] = []; var other: [ConfigControl] = []
+    var sidekick: [ConfigControl] = []; var sidekickEffort: [ConfigControl] = []; var sidekickFast: [ConfigControl] = []
+    var other: [ConfigControl] = []
   }
 
   static func split(_ options: [ConfigControl]) -> Split {
@@ -381,6 +382,7 @@ enum ComposerControls {
       else if c.category == permissionCategory && c.type != "boolean" { s.permission.append(c) }
       else if c.category == sidekickCategory && c.type != "boolean" { s.sidekick.append(c) }
       else if c.category == sidekickEffortCategory && c.type != "boolean" { s.sidekickEffort.append(c) }
+      else if c.category == sidekickFastCategory { s.sidekickFast.append(c) }
       else if c.category == "model_config" { s.modelConfig.append(c) }
       else if c.type != "boolean" && (c.category == "model" || (c.category == nil && (c.id == "model" || ModelCatalog.group(c.options).count < c.options.count))) { s.models.append(c) }
       else { s.other.append(c) }

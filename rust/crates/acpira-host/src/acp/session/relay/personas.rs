@@ -33,6 +33,7 @@ pub(super) fn node_persona(h: &SubagentHarness, name: Option<&str>) -> SubagentP
     agent: h.agent.clone(),
     model: None,
     effort: None,
+    fast: None,
     mode: h.mode,
     when: String::new(),
     brief: None,
@@ -91,6 +92,10 @@ pub(super) const NO_SIDEKICK: &str = "none";
 /// Its effort select, there while the sidekick's model has levels
 pub(super) const SIDEKICK_EFFORT_CONFIG: &str = "sidekick_effort";
 pub(super) const SIDEKICK_EFFORT_CATEGORY: &str = "_sidekick_effort";
+
+/// Its Fast switch, there while the sidekick's model has a fast tier
+pub(super) const SIDEKICK_FAST_CONFIG: &str = "sidekick_fast";
+pub(super) const SIDEKICK_FAST_CATEGORY: &str = "_sidekick_fast";
 
 /// The sidekick's line in ask_agent: Fusion's split of the work, where the lead plans, decides and checks while the
 /// sidekick does the well-specified parts. The Fusion bench (docs/dev/evals.md, 2026-10-21) showed the lead waiting on

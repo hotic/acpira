@@ -41,6 +41,9 @@ pub struct SessionState {
   /// The sidekick's reasoning effort (the `sidekick_effort` select). None, or a level its model does not offer, shows and
   /// runs as that model's default (`sidekick_effort_of`)
   pub sidekick_effort: Option<String>,
+  /// The sidekick's Fast switch (the `sidekick_fast` option). Kept across sidekick switches and applied only while the
+  /// sidekick's model offers it (`sidekick_fast_of`)
+  pub sidekick_fast: bool,
   /// The sidekick the model last learned of, from acpira's tool list or a note: one picked since is told with the next
   /// message (`turn.rs`), so the tool table stays as it was listed
   pub sidekick_told: Option<String>,
@@ -157,7 +160,7 @@ impl Session {
   pub fn save_state(&self, st: &SessionState) {
     self.store.prelude(json!({
       "type": "state", "mode": st.mode, "announced": st.announced, "model": st.model, "effort": st.effort, "fast": st.fast,
-      "sidekick": st.sidekick, "sidekick_effort": st.sidekick_effort, "approval": st.approval.id(),
+      "sidekick": st.sidekick, "sidekick_effort": st.sidekick_effort, "sidekick_fast": st.sidekick_fast, "approval": st.approval.id(),
     }));
   }
 
@@ -510,6 +513,7 @@ impl Server {
     st.fast = loaded.state.get("fast").and_then(Value::as_bool).unwrap_or(false);
     st.sidekick = s("sidekick");
     st.sidekick_effort = s("sidekick_effort");
+    st.sidekick_fast = loaded.state.get("sidekick_fast").and_then(Value::as_bool).unwrap_or(false);
     // A record from before the level was the session's starts on the settings file's
     st.approval = s("approval").and_then(|a| Approval::parse(&a)).unwrap_or_else(|| config.approval());
     // An active goal comes back paused: its run ended with the process that ran it (`goal::revive`)
@@ -601,7 +605,7 @@ impl Server {
     let config_id = str_param(params, "configId")?;
     let raw = params.get("value").unwrap_or(&Value::Null);
     let value = raw.as_str().unwrap_or_default();
-    if config_id != FAST && !raw.is_string() {
+    if config_id != FAST && config_id != SIDEKICK_FAST && !raw.is_string() {
       return Err(RpcError::new(-32602, "value must be a string"));
     }
     let config = self.config.get();
@@ -669,6 +673,17 @@ impl Server {
           return Err(RpcError::new(-32602, format!("Unknown sidekick effort: {value}")));
         }
         st.sidekick_effort = Some(value.to_owned());
+      }
+      SIDEKICK_FAST => {
+        if sidekick_fast_of(&config, &st).is_none() {
+          return Err(RpcError::new(-32602, "Fast is not offered for the sidekick's model"));
+        }
+        st.sidekick_fast = match (raw.as_bool(), value) {
+          (Some(on), _) => on,
+          (None, "true" | FAST) => true,
+          (None, "false" | STANDARD) => false,
+          _ => return Err(RpcError::new(-32602, format!("Unknown sidekick fast value: {raw}"))),
+        };
       }
       other => return Err(RpcError::new(-32602, format!("Unknown config option: {other}"))),
     }
@@ -820,6 +835,10 @@ const SIDEKICK_CATEGORY: &str = "_sidekick";
 /// does not take it for the lead's effort
 pub const SIDEKICK_EFFORT: &str = "sidekick_effort";
 const SIDEKICK_EFFORT_CATEGORY: &str = "_sidekick_effort";
+/// The sidekick's Fast switch, offered while the sidekick's model has a fast tier. Its own custom category, so a client
+/// does not take it for the lead's Fast
+pub const SIDEKICK_FAST: &str = "sidekick_fast";
+const SIDEKICK_FAST_CATEGORY: &str = "_sidekick_fast";
 
 /// The engine's own MCP server (`acpira mcp`), whose ask_agent lists the sidekick
 pub const ACPIRA_SERVER: &str = "acpira";
@@ -846,6 +865,12 @@ fn sidekick_effort_of(config: &Config, catalog: &Catalog, st: &SessionState) -> 
   st.sidekick_effort.clone().filter(|e| efforts.contains(e)).or_else(|| default_effort(config, catalog, Some(&pick)))
 }
 
+/// The sidekick's Fast as the switch shows it. None while there is no sidekick or its model has no fast tier
+fn sidekick_fast_of(config: &Config, st: &SessionState) -> Option<bool> {
+  let pick = sidekick_of(config, st)?;
+  config.find(&pick).is_some_and(|(p, m)| crate::llm::fast::offered(p, m)).then_some(st.sidekick_fast)
+}
+
 /// Where a data root keeps this agent's sessions: one `<id>.jsonl` log each, with an `<id>/` folder beside it (spilled
 /// tool output, the plan). The engine reads it to delete both together with the Acpira session that drove them
 pub fn sessions_root(home: &Path) -> PathBuf {
@@ -858,10 +883,24 @@ pub fn session_paths(home: &Path, id: &str) -> [PathBuf; 2] {
   [root.join(format!("{id}.jsonl")), root.join(id)]
 }
 
+/// A Fast switch: a boolean, or a Standard / Fast select for a client that does not take booleans
+fn fast_option(id: &str, name: &str, category: &str, on: bool, booleans: bool) -> Value {
+  let description = "The provider's faster tier, billed at a higher rate";
+  if booleans {
+    json!({ "id": id, "name": name, "description": description, "category": category, "type": "boolean", "currentValue": on })
+  } else {
+    json!({
+      "id": id, "name": name, "description": description, "category": category, "type": "select",
+      "currentValue": if on { FAST } else { STANDARD },
+      "options": [{ "value": STANDARD, "name": "Standard" }, { "value": FAST, "name": "Fast" }],
+    })
+  }
+}
+
 /// The full configOptions set: the model select (every usable model, labelled with its source), the effort select when
 /// the current model offers levels, the Fast switch when it has a fast tier (a boolean, or a Standard / Fast select
 /// for a client that does not take booleans; the composer shows either as its Fast toggle), and for a client that runs
-/// one the sidekick select (none, or any usable model) and, while the sidekick's model has levels, its effort select;
+/// one the sidekick select (none, or any usable model) and, while the sidekick's model has levels, its effort select and, while it has a fast tier, its Fast switch;
 /// last the approval level, with `full` marked `full_access`
 pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState, offers: Offers) -> Vec<Value> {
   let mut out = vec![];
@@ -887,16 +926,7 @@ pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState, off
       }));
     }
     if config.find(&current).is_some_and(|(p, m)| crate::llm::fast::offered(p, m)) {
-      let description = "The provider's faster tier, billed at a higher rate";
-      out.push(if offers.booleans {
-        json!({ "id": FAST, "name": "Fast", "description": description, "category": "model_config", "type": "boolean", "currentValue": st.fast })
-      } else {
-        json!({
-          "id": FAST, "name": "Fast", "description": description, "category": "model_config", "type": "select",
-          "currentValue": if st.fast { FAST } else { STANDARD },
-          "options": [{ "value": STANDARD, "name": "Standard" }, { "value": FAST, "name": "Fast" }],
-        })
-      });
+      out.push(fast_option(FAST, "Fast", "model_config", st.fast, offers.booleans));
     }
     if let Some(list) = sidekicks {
       let value = sidekick_of(config, st).unwrap_or_else(|| NO_SIDEKICK.to_owned());
@@ -910,6 +940,9 @@ pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState, off
           "id": SIDEKICK_EFFORT, "name": "Sidekick effort", "category": SIDEKICK_EFFORT_CATEGORY, "type": "select", "currentValue": value,
           "options": efforts.iter().map(|e| json!({ "value": e, "name": title_case(e) })).collect::<Vec<_>>(),
         }));
+      }
+      if let Some(on) = sidekick_fast_of(config, st) {
+        out.push(fast_option(SIDEKICK_FAST, "Sidekick fast", SIDEKICK_FAST_CATEGORY, on, offers.booleans));
       }
     }
   }

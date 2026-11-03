@@ -72,9 +72,11 @@ func editTurnConfig(_ editor: SessionControls, live: SessionControls, id: String
 
 /// The built-in agent offers the sidekick's level select only once a sidekick is set, so a pick nothing answers (a new
 /// session's draft, the editor) takes it from the picked model's learned shape: its levels, the level held while still
-/// offered, else the one the model last ran at. None, or a model never seen, drops it
+/// offered, else the one the model last ran at. None, or a model never seen, drops it. Its Fast goes either way: no
+/// learned shape says whether the new model has a fast tier, and the engine refuses a switch it does not offer
 private func seatSidekickEffort(_ controls: SessionControls, sidekick: String, shapes: ModelShapes?) -> SessionControls {
   var next = controls
+  next.options.removeAll { $0.category == ComposerControls.sidekickFastCategory }
   let held = controls.options.first { $0.category == ComposerControls.sidekickEffortCategory }
   next.options.removeAll { $0.category == ComposerControls.sidekickEffortCategory }
   guard sidekick != ComposerControls.noSidekick, let model = controls.options.first(where: isModelControl),

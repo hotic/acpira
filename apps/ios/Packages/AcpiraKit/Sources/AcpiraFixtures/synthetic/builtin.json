@@ -53,6 +53,10 @@
         ]
       },
       {
+        "id": "sidekick_fast", "name": "Sidekick fast", "category": "_sidekick_fast", "type": "boolean", "value": "true",
+        "options": [{ "id": "false", "name": "Off" }, { "id": "true", "name": "On" }]
+      },
+      {
         "id": "approval", "name": "Approval", "category": "_permission_mode", "value": "full",
         "options": [{ "id": "ask", "name": "Ask" }, { "id": "auto-edit", "name": "Auto-edit" }, { "id": "full", "name": "Full access", "kind": "full_access" }]
       }

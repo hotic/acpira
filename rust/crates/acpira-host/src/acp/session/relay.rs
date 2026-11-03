@@ -103,8 +103,8 @@ pub(crate) struct RelayProc {
   start_mode: Option<String>,
   /// The mode the previous round ran in (None = not confirmed: the next round applies it again)
   mode: Option<RelayMode>,
-  /// The persona's model / effort as last applied: a persona edited since gets them applied again
-  applied: (Option<String>, Option<String>),
+  /// The persona's model / effort / Fast as last applied: a persona edited since gets them applied again
+  applied: (Option<String>, Option<String>, Option<bool>),
 }
 
 /// Per-session relay state (in `Core`)
@@ -597,6 +597,7 @@ mod tests {
       agent: "codex".into(),
       model: None,
       effort: None,
+      fast: None,
       mode: RelayMode::Consult,
       when: String::new(),
       brief: Some("Three severity levels.".into()),

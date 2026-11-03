@@ -265,10 +265,10 @@ enum ModelSettings {
   struct Catalog { var control: ConfigControl; var families: [ModelFamily] }
   struct Group { var control: ConfigControl; var key: String; var title: String; var rows: [ModelFamily]; var sources: [String] }
 
-  /// The controls whose options are models (no reasoning levels, no switches, not the built-in agent's sidekick pick
-  /// and its levels), their families newest first; nil before the engine answered
+  /// The controls whose options are models (no reasoning levels, no switches, not the built-in agent's sidekick pick,
+  /// its levels and its Fast), their families newest first; nil before the engine answered
   static func catalogs(_ controls: [ConfigControl]?) -> [Catalog]? {
-    let sidekick = [ComposerControls.sidekickCategory, ComposerControls.sidekickEffortCategory]
+    let sidekick = [ComposerControls.sidekickCategory, ComposerControls.sidekickEffortCategory, ComposerControls.sidekickFastCategory]
     return controls?.filter { !ComposerControls.isReasoning($0) && $0.type != "boolean" && !sidekick.contains($0.category ?? "") }
       .map { Catalog(control: $0, families: ModelCatalog.prioritize(ModelCatalog.group($0.options))) }
   }

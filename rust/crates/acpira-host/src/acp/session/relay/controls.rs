@@ -218,6 +218,31 @@ pub(super) async fn relay_controls(proc: &AgentProcess, sid: &str, opened: &mut 
       None => notes.push(format!("{} offers no reasoning effort {e:?} for this model; its default applies", persona.agent)),
     }
   }
+  if let Some(on) = persona.fast {
+    match fast_value(opened.get("configOptions"), on) {
+      Some((id, value)) => {
+        if let Err(e) = set_config(proc, sid, opened, &id, &value).await {
+          notes.push(format!("Fast was refused ({e})"));
+        }
+      }
+      None if on => notes.push(format!("{} offers no Fast for this model; it runs at the standard tier", persona.agent)),
+      None => {}
+    }
+  }
+}
+
+/// `(config id, value)` that turns the session's own Fast switch on or off (the built-in agent's `fast`: a boolean, or
+/// a Standard / Fast select for a client without booleans). None when the model has no fast tier
+fn fast_value(options: Option<&Value>, on: bool) -> Option<(String, String)> {
+  let o = options?.as_array()?.iter().find(|o| o.get("id").and_then(Value::as_str) == Some("fast"))?;
+  let select = o.get("type").and_then(Value::as_str) == Some("select");
+  let value = match (select, on) {
+    (true, true) => "fast",
+    (true, false) => "standard",
+    (false, true) => "true",
+    (false, false) => "false",
+  };
+  Some(("fast".to_owned(), value.to_owned()))
 }
 
 /// The round's mode: a consult switches to the CLI's read-only mode where it has one; a bypass round to its full-access
