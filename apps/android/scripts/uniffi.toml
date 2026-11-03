@@ -1,0 +1,11 @@
+# Kotlin-only names for acpira-mobile's interface (the Swift bindings keep the Rust names). Kotlin cannot take two of
+# them as they are: a variant field called `message` clashes with Throwable.message, and a `close` method with
+# AutoCloseable.close, which every generated object implements
+[crates.acpira_mobile.bindings.kotlin.rename]
+"LinkFailure.Incompatible.message" = "detail"
+"LinkFailure.Engine.message" = "detail"
+"LinkFailure.Other.message" = "detail"
+"NodeFailure.Other.message" = "detail"
+"PairFailure.Other.message" = "detail"
+"Link.close" = "end"
+"Node.close" = "shutdown"

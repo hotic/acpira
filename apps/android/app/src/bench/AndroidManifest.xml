@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Perfetto and simpleperf may sample the bench build's process without it being debuggable -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application>
+    <profileable android:shell="true" />
+  </application>
+</manifest>
