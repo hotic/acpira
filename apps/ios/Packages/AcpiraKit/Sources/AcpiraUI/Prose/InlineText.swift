@@ -79,8 +79,11 @@ private func hasChip(_ line: Text.Layout.Line) -> Bool {
 
 /// The height chip lines add to a laid-out paragraph
 private func chipGrowth(_ layouts: [Text.LayoutKey.AnchoredLayout], _ growth: (top: CGFloat, bottom: CGFloat)) -> CGFloat {
+  let extra = growth.top + growth.bottom
+  // Most paragraphs have no code. Walking their glyph runs on every hosted layout cannot add any height.
+  guard extra > 0 else { return 0 }
   let lines = layouts.reduce(0) { n, anchored in n + anchored.layout.filter(hasChip).count }
-  return CGFloat(lines) * (growth.top + growth.bottom)
+  return CGFloat(lines) * extra
 }
 
 struct InlineText: View {
@@ -97,13 +100,11 @@ struct InlineText: View {
     // Built once per evaluation of this body: the fade's frames in between only move the renderer's clock
     let paragraph = InlineBuilder(style: style, ink: ink, strongInk: strongInk, accent: accent).paragraph(inlines, weight: weight)
     let growth = hasCode(inlines) ? style.inlineGrowth(WebType.mono) : (top: CGFloat(0), bottom: CGFloat(0))
-    if let fade, !fade.reveals.isEmpty {
-      // Only the streamed tail redraws every frame, and only while its last glyphs fade
-      TimelineView(.animation) { timeline in
-        text(paragraph, growth: growth, now: timeline.date.timeIntervalSinceReferenceDate)
-      }
-    } else {
-      text(paragraph, growth: growth, now: 0)
+    // Pause in place instead of swapping a TimelineView for Text: tearing down the text whenever a fade settled
+    // discarded its layout while the hosted row was still resizing or the process above it was closing.
+    TimelineView(.animation(paused: fade?.reveals.isEmpty != false)) { timeline in
+      // A settled paragraph has no fade clock. A new timestamp would invalidate its renderer during cell sizing.
+      text(paragraph, growth: growth, now: fade?.reveals.isEmpty == false ? timeline.date.timeIntervalSinceReferenceDate : 0)
     }
   }
 

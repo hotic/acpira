@@ -173,7 +173,7 @@ private struct InspectorThread: View {
     .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { _, y in offset.y = y }
   }
 
-  /// A fold about to move keeps the tapped row in place unless the thread follows a streaming child (`Thread.hold`)
+  /// A fold about to move keeps the tapped row in place unless the thread follows a streaming child (`TranscriptControl.hold`)
   private var hold: HoldScroll {
     let pinned = view.running && follow
     let position = $position, offset = offset

@@ -159,10 +159,11 @@ extension Swatch {
 
 /// Colour roles as dynamic colours, `--name` in tokens.css → `Palette.name`
 public enum Palette {
-  public static var fg1: Color { Swatches.fg1.color }
-  public static var fg2: Color { Swatches.fg2.color }
-  public static var fg3: Color { Swatches.fg3.color }
-  public static var fgStrong: Color { Swatches.fgStrong.color }
+  // Keep transcript ink identity across streamed updates; each dynamic-colour factory otherwise compares unequal.
+  public static let fg1 = Swatches.fg1.color
+  public static let fg2 = Swatches.fg2.color
+  public static let fg3 = Swatches.fg3.color
+  public static let fgStrong = Swatches.fgStrong.color
   public static var barHint: Color { Swatches.barHint.color }
   public static var actionFg: Color { Swatches.actionFg.color }
   public static var bg0: Color { Swatches.bg0.color }
@@ -188,7 +189,7 @@ public enum Palette {
   public static var sendRing: Color { Swatches.sendRing.color }
   public static var sendHighlight: Color { Swatches.sendHighlight.color }
   public static var lineStrong: Color { Swatches.lineStrong.color }
-  public static var hover: Color { Swatches.hover.color }
+  public static let hover = Swatches.hover.color
   public static var active: Color { Swatches.active.color }
   public static var focus: Color { Swatches.focus.color }
   public static var scrim: Color { Swatches.scrim.color }

@@ -12,15 +12,17 @@ import SwiftUI
 /// Lazy: a long turn's process is hundreds of rows inside one item of the thread's lazy stack. In a plain stack every
 /// row was built and laid out again on each streamed patch, and the commit redrew the whole process (profiled on the
 /// iOS 27 simulator: layer display took most of the main thread), so a running turn slowed with every step it took. A
-/// lazy stack builds the rows in view only. The full-length render has no scroll view to be lazy in: there a lazy
-/// stack sized itself from estimates and left a band under the process, so it stacks plainly
+/// lazy stack builds the rows in view only. Hosted collection cells already virtualize whole turns and have no
+/// enclosing SwiftUI scroll view: a nested lazy stack there kept replacing estimates as the cell resized or moved,
+/// even during a bottom glide. Like the full-length render, hosted cells must measure their process plainly.
 struct ProcessHistory: View {
   let items: [ProcessItem]
   @Environment(\.snapshot) private var snapshot
+  @Environment(\.hostedTranscript) private var hosted
 
   var body: some View {
     Group {
-      if snapshot {
+      if snapshot || hosted {
         VStack(alignment: .leading, spacing: Metrics.processRowGap) { rows }
       } else {
         LazyVStack(alignment: .leading, spacing: Metrics.processRowGap) { rows }
@@ -94,12 +96,16 @@ struct LineBlockView: View {
 struct QuestionRecord: View {
   let block: QuestionBlock
   @State private var manual: Bool?
+  @Environment(\.foldMemory) private var folds
+  @Environment(\.entranceScope) private var entrance
+  /// The hand-set state, kept by the thread too so a reused cell builds the fold as the reader left it
+  private var fold: Binding<Bool?> { rememberedFold($manual, folds, "\(entrance.scope):question:\(block.id)") }
 
   var body: some View {
     let answers = block.answers ?? [:]
     let label = block.outcome == .answered ? (answers.count == 1 ? t("question.answeredOne") : t("question.answered", ["n": answers.count]))
       : block.outcome == .skipped ? t("question.skipped") : t("question.cancelled")
-    Disclosure(open: foldBinding($manual, block.outcome == .answered), icon: .messageCircleQuestion) {
+    Disclosure(open: foldBinding(fold, block.outcome == .answered), icon: .messageCircleQuestion) {
       RowLabel(label)
     } content: {
       VStack(alignment: .leading, spacing: Metrics.s1_5) {
@@ -497,6 +503,10 @@ struct NoticeRow: View {
   @Environment(\.motionEnabled) private var motion
   @Environment(\.holdScroll) private var holdScroll
   @State private var manual: Bool?
+  @Environment(\.foldMemory) private var folds
+  @Environment(\.entranceScope) private var entrance
+  /// The hand-set state, kept by the thread too so a reused cell builds the fold as the reader left it
+  private var fold: Binding<Bool?> { rememberedFold($manual, folds, "\(entrance.scope):notice:\(block.id)") }
 
   var body: some View {
     if block.id != scope.suppressId && !scope.absorbed.contains(where: { $0.id == block.id }) {
@@ -533,11 +543,11 @@ struct NoticeRow: View {
 
   /// Disclosure's row and body rail with the notice's own tinted glyph in the lead
   private func fold(_ details: String, error: Bool) -> some View {
-    let open = manual ?? error
+    let open = fold.wrappedValue ?? error
     return VStack(alignment: .leading, spacing: 0) {
       Button {
         holdScroll()
-        withAnimation(foldAnimation(opening: !open, motion: motion)) { manual = !open }
+        withAnimation(foldAnimation(opening: !open, motion: motion)) { fold.wrappedValue = !open }
       } label: {
         Row(tone: .action) { glyph(error) } content: {
           RowLabel(block.title).lineLimit(1)

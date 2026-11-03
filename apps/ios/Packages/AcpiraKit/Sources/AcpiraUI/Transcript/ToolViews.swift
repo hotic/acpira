@@ -40,6 +40,10 @@ struct ToolCallView: View {
   var grouped = false
   @Environment(\.preOpen) private var preOpen
   @State private var manual: Bool?
+  @Environment(\.foldMemory) private var folds
+  @Environment(\.entranceScope) private var entrance
+  /// The hand-set state, kept by the thread too so a reused cell builds the fold as the reader left it
+  private var fold: Binding<Bool?> { rememberedFold($manual, folds, "\(entrance.scope):tool:\(block.id)") }
 
   var body: some View {
     EntranceOnce(id: "\(block.id):tool") { rows }
@@ -73,7 +77,7 @@ struct ToolCallView: View {
         ImageResults(block: block, grouped: grouped)
       }
     } else if !files.isEmpty && block.kind == .search {
-      Disclosure(open: foldBinding($manual, preOpen.contains(.results)), icon: icon, indent: false, rail: .rows) { label } trailing: { trailing } content: {
+      Disclosure(open: foldBinding(fold, preOpen.contains(.results)), icon: icon, indent: false, rail: .rows) { label } trailing: { trailing } content: {
         ResultList(items: files, kind: block.kind).environment(\.rowEnterDelay, Motion.rowEnterFile)
       }
     } else if files.count == 1 && block.kind == .read {
@@ -94,14 +98,14 @@ struct ToolCallView: View {
       CommandDisclosure(block: block, command: command, items: visible, icon: icon, label: label, trailing: trailing,
                         defaultOpen: execute && !grouped && running)
     } else if case .list = block.content {
-      Disclosure(open: foldBinding($manual, preOpen.contains(.results)), icon: icon, indent: false, rail: .rows) { label } trailing: { trailing } content: {
+      Disclosure(open: foldBinding(fold, preOpen.contains(.results)), icon: icon, indent: false, rail: .rows) { label } trailing: { trailing } content: {
         ToolBody(block: block, items: visible)
       }
     } else {
       // A diff is a code card too: in the label column on the row's rail, spaced as the command card is (the webview
       // runs it full width, which gave the transcript two card edges)
-      let open = manual ?? preOpen.contains(.results)
-      Disclosure(open: foldBinding($manual, preOpen.contains(.results)), icon: icon, bodyTop: Metrics.codeCardGap) { label } trailing: { trailing } content: {
+      let open = fold.wrappedValue ?? preOpen.contains(.results)
+      Disclosure(open: foldBinding(fold, preOpen.contains(.results)), icon: icon, bodyTop: Metrics.codeCardGap) { label } trailing: { trailing } content: {
         VStack(alignment: .leading, spacing: Metrics.gap) {
           TaskMeta(task: block.asyncTask)
           ToolBody(block: block, items: visible)
@@ -334,6 +338,10 @@ struct CommandDisclosure<Label: View, Trailing: View>: View {
   let trailing: Trailing
   var defaultOpen: Bool
   @State private var manual: Bool?
+  @Environment(\.foldMemory) private var folds
+  @Environment(\.entranceScope) private var entrance
+  /// The hand-set state, kept by the thread too so a reused cell builds the fold as the reader left it
+  private var fold: Binding<Bool?> { rememberedFold($manual, folds, "\(entrance.scope):command:\(block.id)") }
   @Environment(\.preOpen) private var preOpen
 
   init(block: ToolCallBlock, command: String?, items: [ToolContent], icon: LucideIcon, label: Label, trailing: Trailing,
@@ -343,10 +351,10 @@ struct CommandDisclosure<Label: View, Trailing: View>: View {
   }
 
   var body: some View {
-    let open = manual ?? (defaultOpen || preOpen.contains(.command))
+    let open = fold.wrappedValue ?? (defaultOpen || preOpen.contains(.command))
     // The card sits in the label column on the row's rail; the room after it stays outside so the end dot meets the card.
     // The phone keeps it there too: a column-wide card without the rail lost the desktop's reading of the row (2026-10-27)
-    Disclosure(open: foldBinding($manual, defaultOpen || preOpen.contains(.command)), icon: icon,
+    Disclosure(open: foldBinding(fold, defaultOpen || preOpen.contains(.command)), icon: icon,
                bodyTop: Metrics.codeCardGap) { label } trailing: { trailing } content: {
       VStack(alignment: .leading, spacing: Metrics.gap) {
         TaskMeta(task: block.asyncTask)
@@ -559,12 +567,16 @@ struct ToolGroupView: View {
   let blocks: [ToolCallBlock]
   @Environment(\.preOpen) private var preOpen
   @State private var manual: Bool?
+  @Environment(\.foldMemory) private var folds
+  @Environment(\.entranceScope) private var entrance
+  /// The hand-set state, kept by the thread too so a reused cell builds the fold as the reader left it
+  private var fold: Binding<Bool?> { rememberedFold($manual, folds, "\(entrance.scope):group:\(kind):\(blocks.first?.id ?? "")") }
 
   var body: some View {
     let current = blocks.last(where: { $0.status == .pending || $0.status == .in_progress }) ?? blocks.last!
     let names = groupNames(blocks)
     let stat = kind == .edit ? diffStatOf(blocks) : nil
-    Disclosure(open: foldBinding($manual, preOpen.contains(.results)), icon: kind == .read ? .fileText : .pencil,
+    Disclosure(open: foldBinding(fold, preOpen.contains(.results)), icon: kind == .read ? .fileText : .pencil,
                indent: false, rail: .rows, bodyTop: 0) {
       RowLabel(toolVerb(current), shimmer: current.status == .pending || current.status == .in_progress)
       if !names.isEmpty { RowTarget(namesLabel(names), mono: true) }
@@ -606,6 +618,10 @@ struct ReadEntry: View {
 struct EditEntry: View {
   let blocks: [ToolCallBlock]
   @State private var manual: Bool?
+  @Environment(\.foldMemory) private var folds
+  @Environment(\.entranceScope) private var entrance
+  /// The hand-set state, kept by the thread too so a reused cell builds the fold as the reader left it
+  private var fold: Binding<Bool?> { rememberedFold($manual, folds, "\(entrance.scope):edit:\(blocks.first?.id ?? "")") }
   @Environment(\.preOpen) private var preOpen
 
   var body: some View {
@@ -624,8 +640,8 @@ struct EditEntry: View {
     } else {
       // EntryFold: no rail root of its own, so the group's rail runs on through its icon. The diff is a code card in
       // the label column like every other (entries stack without the process rows' gap, so it takes the whole gap)
-      let open = manual ?? preOpen.contains(.edit)
-      Disclosure(open: foldBinding($manual, preOpen.contains(.edit)), dense: true, icon: .pencil, root: false,
+      let open = fold.wrappedValue ?? preOpen.contains(.edit)
+      Disclosure(open: foldBinding(fold, preOpen.contains(.edit)), dense: true, icon: .pencil, root: false,
                  bodyTop: Metrics.codeCardGap) {
         label
       } trailing: { trailing } content: {

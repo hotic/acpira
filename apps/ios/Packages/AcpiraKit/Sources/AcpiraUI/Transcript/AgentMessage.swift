@@ -128,6 +128,10 @@ struct CodexFold: View {
   var running: Bool
   var hasTools: Bool
   @State private var manual: Bool?
+  @Environment(\.foldMemory) private var folds
+  @Environment(\.entranceScope) private var entrance
+  /// The hand-set state, kept by the thread too so a reused cell builds the fold as the reader left it
+  private var fold: Binding<Bool?> { rememberedFold($manual, folds, "\(entrance.scope):process") }
   @State private var hold = FoldHold()
   @Environment(\.threadFollowing) private var following
   @Environment(\.motionEnabled) private var motion
@@ -142,7 +146,7 @@ struct CodexFold: View {
     // A turn with no process worth a head (a plain reply, or only a compaction status) shows no head
     let retired = !running && !hasTools && !blocks.contains { if case .compaction = $0 { false } else { true } }
     let auto = hold.next(running: running, following: following?.value ?? true) || preOpen.contains(.fold)
-    let open = retired || (manual ?? auto)
+    let open = retired || (fold.wrappedValue ?? auto)
     let items = groupProcess(blocks)
     let parts = processParts(items)
     // Only items fold; a process of nothing but delegations has no chevron
@@ -152,7 +156,7 @@ struct CodexFold: View {
         if !retired {
           EntranceOnce(id: "fold-head") { head(open: open, foldable: foldable) }
             // `-popup fold:N` reaches the process fold too, so a recording shows it open and close
-            .foldProbe { toggle(from: manual ?? auto) }
+            .foldProbe { toggle(from: fold.wrappedValue ?? auto) }
         }
         if !blocks.isEmpty {
           VStack(alignment: .leading, spacing: 0) {
@@ -172,6 +176,9 @@ struct CodexFold: View {
                   .padding(.top, retired ? 0 : (i == 0 ? Metrics.s1 : Metrics.processProseGap))
                   .padding(.bottom, !retired && i == parts.count - 1 ? Metrics.s1_5 : 0)
                   .reveal(open)
+                  // An automatic close has no button transaction. Collapse over the fold curve, not in a single
+                  // self-sizing pass that makes UIKit clamp the transcript before the bottom glide can catch up.
+                  .animation(foldAnimation(opening: open, motion: motion), value: open)
               }
             }
           }
@@ -189,7 +196,7 @@ struct CodexFold: View {
   private func toggle(from open: Bool) {
     let next = !open
     holdScroll()
-    withAnimation(foldAnimation(opening: next, motion: motion)) { manual = next }
+    withAnimation(foldAnimation(opening: next, motion: motion)) { fold.wrappedValue = next }
   }
 
   @ViewBuilder
