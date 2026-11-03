@@ -38,7 +38,7 @@ use crate::sidecar::ws::{HarnessOpts, start_harness};
 use crate::store::data_dir::{absolute, acpira_home};
 use crate::util::random_hex;
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+use acpira_shared::version::VERSION;
 
 fn stderr(line: &str) {
   eprintln!("[acpira] {line}");

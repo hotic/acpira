@@ -49,7 +49,7 @@ impl Http {
       .timeout_connect(Some(Duration::from_secs(15)))
       // A tool call may stream for as long as it runs; the caller bounds the whole call
       .timeout_recv_body(None)
-      .user_agent(format!("acpira/{}", env!("CARGO_PKG_VERSION")));
+      .user_agent(format!("acpira/{}", acpira_shared::version::VERSION));
     if crate::tools::web::private_name(url) {
       config = config.proxy(None);
     }

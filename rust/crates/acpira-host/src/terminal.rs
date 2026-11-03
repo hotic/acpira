@@ -748,7 +748,7 @@ pub(crate) fn command(program: Option<&[String]>, cwd: Option<&str>) -> anyhow::
   cmd.env("TERM", "xterm-256color");
   cmd.env("COLORTERM", "truecolor");
   cmd.env("TERM_PROGRAM", "Acpira");
-  cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+  cmd.env("TERM_PROGRAM_VERSION", acpira_shared::version::VERSION);
   // A GUI app starts without a locale, and a shell without one takes UTF-8 for bytes (VS Code's detectLocale does the same)
   if ["LANG", "LC_ALL", "LC_CTYPE"].iter().all(|k| cmd.get_env(k).is_none_or(|v| v.is_empty())) {
     cmd.env("LANG", "en_US.UTF-8");

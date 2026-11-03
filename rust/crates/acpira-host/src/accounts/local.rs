@@ -177,7 +177,7 @@ impl LocalAccounts {
         if x.is_empty() { "unknown".into() } else { x }
       };
       let (os_type, release, arch) = os_facts();
-      let version = env!("CARGO_PKG_VERSION");
+      let version = acpira_shared::version::VERSION;
       headers.extend([
         ("X-Msh-Platform".into(), "kimi_code_cli".into()),
         ("X-Msh-Version".into(), version.into()),

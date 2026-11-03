@@ -268,7 +268,7 @@ pub fn default_http() -> ureq::Agent {
     .http_status_as_error(false)
     .timeout_connect(Some(Duration::from_secs(30)))
     .timeout_recv_response(Some(Duration::from_secs(600)))
-    .user_agent(format!("acpira/{}", env!("CARGO_PKG_VERSION")))
+    .user_agent(format!("acpira/{}", acpira_shared::version::VERSION))
     .build()
     .into()
 }

@@ -60,7 +60,7 @@ pub struct Gateway {
   log: Log,
 }
 
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const VERSION: &str = acpira_shared::version::VERSION;
 
 /// The open pairing window and, while it lasts, its Bonjour advertisement (dropped with it)
 struct OpenWindow {

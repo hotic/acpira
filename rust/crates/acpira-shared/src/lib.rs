@@ -38,6 +38,7 @@ pub mod slash_commands;
 pub mod storage;
 pub mod subagents;
 pub mod time;
+pub mod version;
 pub mod todo_tools;
 pub mod transcript;
 pub mod turn_errors;

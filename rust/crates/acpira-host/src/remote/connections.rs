@@ -53,7 +53,7 @@ impl Default for ConnectionsOpts {
     ConnectionsOpts {
       ssh: ssh::ssh_program(),
       binary: Arc::new(deploy::local_binary),
-      version: env!("CARGO_PKG_VERSION").to_owned(),
+      version: acpira_shared::version::VERSION.to_owned(),
       client: ClientOpts::default(),
       retry_base: Duration::from_secs(1),
       retry_max: Duration::from_secs(60),

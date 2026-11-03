@@ -335,7 +335,7 @@ pub fn fetch(url: &str, format: Format, timeout_s: u64, approved: bool, ctx: &Ct
     };
     // Cloudflare's bot check rejects a browser agent whose TLS fingerprint is not a browser's; an honest one may pass
     if res.status() == 403 && res.headers().get("cf-mitigated").and_then(|v| v.to_str().ok()) == Some("challenge") {
-      res = match get(&format!("acpira/{}", env!("CARGO_PKG_VERSION"))) {
+      res = match get(&format!("acpira/{}", acpira_shared::version::VERSION)) {
         Ok(r) => r,
         Err(e) => return Output::error(format!("Could not fetch {current}: {e}")),
       };

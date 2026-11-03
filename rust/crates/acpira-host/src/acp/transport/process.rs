@@ -24,7 +24,7 @@ pub(crate) const KILL_GRACE: Duration = Duration::from_secs(5);
 pub const INIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub fn client_version() -> &'static str {
-  env!("CARGO_PKG_VERSION")
+  acpira_shared::version::VERSION
 }
 
 /// What the client side accepts from the agent. Every handler here is advertised; the session and the idle stubs both

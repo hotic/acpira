@@ -261,7 +261,7 @@ async fn connect(spec: &Spec, cwd: &Path) -> Result<Arc<Live>, String> {
     "protocolVersion": PROTOCOL_VERSION,
     "capabilities": { "roots": { "listChanged": false } },
     // The engine's `acpira mcp` lets an `ask_agent` call of this client wait as long as a child round takes
-    "clientInfo": { "name": "acpira", "title": "Acpira", "version": env!("CARGO_PKG_VERSION") },
+    "clientInfo": { "name": "acpira", "title": "Acpira", "version": acpira_shared::version::VERSION },
   });
   let answer = match transport.request("initialize", init, None, START_TIMEOUT).await {
     Ok(a) => a,
