@@ -15,7 +15,7 @@ Acpira is built on [ACP](https://agentclientprotocol.com) with a Rust core. It r
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/hotic/acpira/main/media/readme/hero-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/hotic/acpira/main/media/readme/hero-light.png">
-  <img src="media/readme/hero-light.png" alt="Acpira showing a coding conversation, an expanded execution history, an inline code diff, and model controls." width="960">
+  <img src="media/readme/hero-light.png" alt="The Acpira desktop app: sessions grouped by project, a finished Kimi Code turn with its execution history open, and the model controls." width="960">
 </picture>
 
 - **An agent of its own.** The built-in agent reads, edits, runs commands, searches the web, and plans with any OpenAI- or Anthropic-compatible endpoint. Vendor CLIs keep their own harness and run beside it.
@@ -38,13 +38,13 @@ Acpira is built on [ACP](https://agentclientprotocol.com) with a Rust core. It r
     </td>
     <td width="50%" valign="top">
       <a href="media/readme/agents.gif">
-        <img src="media/readme/agents.gif" width="100%" alt="From a Claude Code session, OpenCode is installed on its settings page. A new OpenCode session then starts from the + menu and runs the tests.">
+        <img src="media/readme/agents.gif" width="100%" alt="From a Claude Code session, OpenCode is installed from its card on the Models page. A new session then picks OpenCode on its start page and runs the tests.">
       </a>
     </td>
   </tr>
   <tr>
     <td valign="top">Reads, edits, and test runs appear as they happen. A message sent while the agent works joins the running turn, and the finished turn folds into one row that opens again on click.</td>
-    <td valign="top">Install an agent from its settings page, then start a session with it from the + menu.</td>
+    <td valign="top">Install an agent from its settings, then pick it on a new session's start page.</td>
   </tr>
   <tr>
     <th width="50%">Cross-agent subagents</th>
@@ -82,6 +82,35 @@ The desktop app and the IDE plugins run the same engine and share sessions, acco
 | **iPhone** | iOS, paired with a computer running Acpira | In testing, not yet on the App Store |
 
 The desktop app adds a tool panel beside the conversation with files, terminals, and a browser, plus SSH remote folders and device pairing. A Linux build of the desktop app works but is not released yet.
+
+<p align="center">
+  <img src="media/readme/os.gif" width="720" alt="The same desktop window as macOS, Windows, and Linux frame it: the traffic lights on macOS, the page-drawn caption buttons on Windows and Linux, and each system's shortcut keys.">
+</p>
+
+<table width="100%">
+  <tr>
+    <th width="50%">VS Code</th>
+    <th width="50%">IntelliJ IDEA</th>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="media/readme/vscode.gif">
+        <img src="media/readme/vscode.gif" width="100%" alt="In the VS Code side bar, a Kimi Code turn reads, edits, and runs the tests. Its file link then opens Search.tsx in the editor at the changed lines.">
+      </a>
+    </td>
+    <td width="50%" valign="top">
+      <a href="media/readme/intellij.gif">
+        <img src="media/readme/intellij.gif" width="100%" alt="In an IntelliJ IDEA tool window, the same turn runs. The edit's diff opens in place, and its file link moves the editor to the change.">
+      </a>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">The extension sits in the side bar, and file links in the conversation open the editor at the change.</td>
+    <td valign="top">The plugin runs as a tool window beside the editor, with the same conversation and diffs.</td>
+  </tr>
+</table>
+
+*The IDE clips run the extension and the plugin inside VS Code and IntelliJ IDEA, driven by a scripted agent. The desktop frames for Windows and Linux are rendered from the same interface on a Mac.*
 
 ## Why keep the native agents?
 

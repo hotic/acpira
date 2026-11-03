@@ -15,7 +15,7 @@ Acpira 用 Rust 写成，通过 [ACP](https://agentclientprotocol.com) 让 Claud
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/hotic/acpira/main/media/readme/hero-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/hotic/acpira/main/media/readme/hero-light.png">
-  <img src="media/readme/hero-light.png" alt="Acpira 编程对话：展开的执行过程、文件修改对比和模型控制。" width="960">
+  <img src="media/readme/hero-light.png" alt="Acpira 桌面端：按项目分组的会话列表，一个已完成的 Kimi Code 回合展开了执行过程，以及模型控制。" width="960">
 </picture>
 
 - **自带 Agent。** 内置 Agent 接上任何 OpenAI 或 Anthropic 兼容的端点，就能读文件、改代码、跑命令、联网搜索和制定计划。厂商的 CLI 保留自己的 Harness，与它并列可选。
@@ -38,13 +38,13 @@ Acpira 用 Rust 写成，通过 [ACP](https://agentclientprotocol.com) 让 Claud
     </td>
     <td width="50%" valign="top">
       <a href="media/readme/agents.gif">
-        <img src="media/readme/agents.gif" width="100%" alt="在 Claude Code 会话中打开设置，在 OpenCode 的设置页安装它，再从「+」菜单新建 OpenCode 会话并运行测试。">
+        <img src="media/readme/agents.gif" width="100%" alt="在 Claude Code 会话中打开设置，在「模型」页的 OpenCode 卡片里安装它，再在新会话的起始页选中 OpenCode 并运行测试。">
       </a>
     </td>
   </tr>
   <tr>
     <td valign="top">读取、修改、测试按进度逐条出现。Agent 工作时发出的消息直接加入正在运行的回合，结束后整个过程收成一行，点击即可重新展开。</td>
-    <td valign="top">在设置页安装 Agent，再从「+」菜单用它开始新会话。</td>
+    <td valign="top">在设置里安装 Agent，再在新会话的起始页选中它。</td>
   </tr>
   <tr>
     <th width="50%">跨 Agent 子代理</th>
@@ -82,6 +82,35 @@ Acpira 用 Rust 写成，通过 [ACP](https://agentclientprotocol.com) 让 Claud
 | **iPhone** | iOS，与运行 Acpira 的电脑配对使用 | 测试中，尚未上架 App Store |
 
 桌面端在对话旁边多了一个工具面板，内含文件、终端和浏览器，另外还支持 SSH 远程文件夹和设备配对。Linux 版桌面端已经能用，但还没有正式发布。
+
+<p align="center">
+  <img src="media/readme/os.gif" width="720" alt="同一个桌面窗口在 macOS、Windows、Linux 上的样子：macOS 是红绿灯，Windows 与 Linux 由页面绘制窗口按钮，快捷键也随系统变化。">
+</p>
+
+<table width="100%">
+  <tr>
+    <th width="50%">VS Code</th>
+    <th width="50%">IntelliJ IDEA</th>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="media/readme/vscode.gif">
+        <img src="media/readme/vscode.gif" width="100%" alt="在 VS Code 侧边栏里，Kimi Code 的回合读取文件、修改代码并运行测试，点击文件链接后编辑器打开 Search.tsx 并定位到改动的行。">
+      </a>
+    </td>
+    <td width="50%" valign="top">
+      <a href="media/readme/intellij.gif">
+        <img src="media/readme/intellij.gif" width="100%" alt="在 IntelliJ IDEA 的工具窗口里运行同一个回合，修改的差异在原地展开，点击文件链接后编辑器跳到改动处。">
+      </a>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">扩展位于侧边栏，对话里的文件链接会在编辑器中打开并定位到改动处。</td>
+    <td valign="top">插件以工具窗口的形式放在编辑器旁边，对话与差异展示和其他端一致。</td>
+  </tr>
+</table>
+
+*IDE 片段是扩展与插件在 VS Code 和 IntelliJ IDEA 中实际运行的画面，由脚本化的示例 Agent 驱动。Windows 与 Linux 的桌面窗口由同一套界面在 Mac 上渲染。*
 
 ## 为什么保留原生 Agent
 
