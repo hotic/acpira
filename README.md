@@ -83,10 +83,6 @@ The desktop app and the IDE plugins run the same engine and share sessions, acco
 
 The desktop app adds a tool panel beside the conversation with files, terminals, and a browser, plus SSH remote folders and device pairing. A Linux build of the desktop app works but is not released yet.
 
-<p align="center">
-  <img src="media/readme/os.gif" width="720" alt="The same desktop window as macOS, Windows, and Linux frame it: the traffic lights on macOS, the page-drawn caption buttons on Windows and Linux, and each system's shortcut keys.">
-</p>
-
 <table width="100%">
   <tr>
     <th width="50%">VS Code</th>
@@ -110,7 +106,7 @@ The desktop app adds a tool panel beside the conversation with files, terminals,
   </tr>
 </table>
 
-*The IDE clips run the extension and the plugin inside VS Code and IntelliJ IDEA, driven by a scripted agent. The desktop frames for Windows and Linux are rendered from the same interface on a Mac.*
+*The IDE clips run the extension and the plugin inside VS Code and IntelliJ IDEA, driven by a scripted agent.*
 
 ## Why keep the native agents?
 
