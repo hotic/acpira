@@ -136,9 +136,20 @@
   // a move begun on the press hands the pointer to the window manager, and the page never sees a double click's
   // second press (WebKitGTK 2.50 under KWin, 2026-10-26)
   const CONTROLS = 'button, input, textarea, select, a, [role="button"], [contenteditable=""], [contenteditable="true"]';
+  // A sheet with no header of its own (the settings page) marks itself data-drag-top: its top title-bar height (--hdr)
+  // moves the window like the chat sheet's header, whatever content sits or scrolls under it
+  const titleBand = e => {
+    const sheet = e.target.closest('[data-drag-top]');
+    if (!sheet) return null;
+    // A press on a scroller's own scrollbar grabs the bar
+    const t = e.target;
+    if (t.scrollHeight > t.clientHeight && e.offsetX >= t.clientWidth) return null;
+    const hdr = parseFloat(getComputedStyle(sheet).getPropertyValue('--hdr')) || 0;
+    return e.clientY - sheet.getBoundingClientRect().top < hdr ? sheet : null;
+  };
   document.addEventListener('mousedown', e => {
     if (e.button !== 0 || !(e.target instanceof Element)) return;
-    const region = e.target.closest('[data-drag-region]');
+    const region = e.target.closest('[data-drag-region]') ?? titleBand(e);
     if (!region) return;
     const control = e.target.closest(CONTROLS);
     if (control && region.contains(control)) return;
