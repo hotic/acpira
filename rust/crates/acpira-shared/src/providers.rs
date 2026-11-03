@@ -63,7 +63,7 @@ pub struct ProvidersFile {
   /// `APPROVAL_LEVELS`; absent (or unknown) is `ask`. The level itself belongs to the session (its `approval` select)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub approval: Option<String>,
-  /// Raw mode (`acpira_agent::modes::RAW`) is offered in the mode picker; absent is off. Read when a session opens
+  /// Raw mode (`acpira_agent::modes::RAW`) is offered in the mode picker; absent is off. Open sessions update too
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub raw_mode: Option<bool>,
   /// The model for quick side jobs such as naming a session (`<provider id>/<model id>`), or `FAST_MODEL_OFF`; absent,

@@ -472,6 +472,33 @@ fn a_mode_config_option_duplicating_modes_stays_out_of_the_controls() {
 }
 
 #[test]
+fn current_mode_updates_replace_the_advertised_list_without_resetting_model_controls() {
+  let mut s = state();
+  init_controls(&mut s.controls, Some(&json!({ "currentModeId": "agent", "availableModes": [
+    { "id": "agent", "name": "Agent" }, { "id": "plan", "name": "Plan" }
+  ] })), Some(&json!([
+    { "id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": "m1", "options": [{ "value": "m1", "name": "Model 1" }] }
+  ])));
+  let options = s.controls.options.clone();
+  assert!(apply(&mut s, json!({ "sessionUpdate": "current_mode_update", "currentModeId": "agent", "_meta": { "acpira/availableModes": [
+    { "id": "agent", "name": "Agent" }, { "id": "plan", "name": "Plan" }, { "id": "raw", "name": "Raw", "description": "No tools" }
+  ] } })));
+  assert_eq!(s.controls.mode_id.as_deref(), Some("agent"));
+  assert_eq!(s.controls.modes.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["agent", "plan", "raw"]);
+  assert_eq!(s.controls.modes[2].description.as_deref(), Some("No tools"));
+  assert_eq!(s.controls.options, options);
+  // Ordinary ACP current-mode updates still only change the selection
+  apply(&mut s, json!({ "sessionUpdate": "current_mode_update", "currentModeId": "raw" }));
+  assert_eq!(s.controls.mode_id.as_deref(), Some("raw"));
+  assert_eq!(s.controls.modes.len(), 3);
+  apply(&mut s, json!({ "sessionUpdate": "current_mode_update", "currentModeId": "agent", "_meta": { "acpira/availableModes": [
+    { "id": "agent", "name": "Agent" }, { "id": "plan", "name": "Plan" }
+  ] } }));
+  assert_eq!(s.controls.modes.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["agent", "plan"]);
+  assert_eq!(s.controls.options, options);
+}
+
+#[test]
 fn usage_update_stamps_the_context_snapshot_on_the_trailing_agent_turn_only() {
   let mut s = state();
   s.turns.push(turn(json!({ "role": "user", "text": "hi" })));

@@ -14,11 +14,17 @@ fn kind_of(meta: Option<&Value>) -> Option<String> {
 /// Build the controls from a session/new / resume / load response
 pub fn init_controls(controls: &mut SessionControls, modes: Option<&Value>, config_options: Option<&Value>) {
   let modes = modes.filter(|m| !m.is_null());
+  apply_modes(controls, modes.and_then(|m| m.get("availableModes")).and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]));
+  controls.mode_id = modes.and_then(|m| str_of(m, "currentModeId")).map(str::to_owned);
+  if let Some(opts) = config_options.and_then(Value::as_array) {
+    apply_config_options(controls, opts);
+  }
+}
+
+/// Replace the mode list without resetting the independent config options
+pub(super) fn apply_modes(controls: &mut SessionControls, modes: &[Value]) {
   controls.modes = modes
-    .and_then(|m| m.get("availableModes"))
-    .and_then(Value::as_array)
-    .into_iter()
-    .flatten()
+    .iter()
     .map(|m| SessionOption {
       id: str_of(m, "id").unwrap_or("").to_owned(),
       name: str_of(m, "name").unwrap_or("").to_owned(),
@@ -27,10 +33,6 @@ pub fn init_controls(controls: &mut SessionControls, modes: Option<&Value>, conf
       ..Default::default()
     })
     .collect();
-  controls.mode_id = modes.and_then(|m| str_of(m, "currentModeId")).map(str::to_owned);
-  if let Some(opts) = config_options.and_then(Value::as_array) {
-    apply_config_options(controls, opts);
-  }
 }
 
 const CATEGORY_ORDER: [&str; 3] = ["model", "thought_level", "model_config"];
