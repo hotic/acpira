@@ -116,6 +116,45 @@ async fn peer_list_scopes_filter_the_wire_and_leave_other_views_independent() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_page_taking_list_patches_gets_only_the_changed_entries() {
+  let lab = Lab::new();
+  let _stop = StopEngines::for_lab(&lab);
+  let host = lab.host_home().join(".acpira/sessions");
+  std::fs::create_dir_all(&host).unwrap();
+  for id in ["s-a", "s-b", "s-c"] {
+    std::fs::write(host.join(format!("{id}.json")), serde_json::to_vec(&list_record(id, "/w", id, false)).unwrap()).unwrap();
+  }
+  let connections = lab.engine("engine");
+  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  let client = connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
+  let mut link = PeerLink::connect(&client, None, ME).await.unwrap();
+  link.send(&json!({ "type": "attachView", "viewId": "L", "host": "sidebar", "initial": { "empty": true } }));
+  link.send(&json!({ "type": "webviewMessage", "viewId": "L", "message": { "type": "ready", "listPatches": true } }));
+  let init = next_of(&mut link, |v| v["message"]["type"] == "init").await;
+  let held: Vec<acpira_shared::transcript::SessionSummary> = serde_json::from_value(init["message"]["state"]["sessions"].clone()).unwrap();
+  assert_eq!(held.len(), 3);
+  link.send(&json!({ "type": "webviewMessage", "viewId": "L", "message": { "type": "renameSession", "id": "s-b", "title": "Changed" } }));
+  // The corrective list after init equals init's: nothing goes, so the first list message is the rename's patch
+  let e = next_of(&mut link, |v| matches!(v["message"]["type"].as_str(), Some("sessions" | "sessionsPatch"))).await;
+  assert_eq!(e["message"]["type"], "sessionsPatch", "{e}");
+  let patch: acpira_shared::sessions_patch::SessionsPatch = serde_json::from_value(e["message"]["patch"].clone()).unwrap();
+  let entries: Vec<_> = patch.runs.iter().filter_map(|r| match r {
+    acpira_shared::sessions_patch::ListRun::Entry(s) => Some(s.id.as_str()),
+    _ => None,
+  }).collect();
+  assert_eq!(entries, ["s-b"], "only the renamed entry is resent");
+  assert_eq!((patch.base, patch.rev), (0, 1), "init's list is revision 0");
+  let next = acpira_shared::sessions_patch::apply(&held, 0, &patch).unwrap();
+  assert!(next.iter().any(|s| s.id == "s-b" && s.title == "Changed"));
+  // A page that lost track asks again and gets the whole list
+  link.send(&json!({ "type": "webviewMessage", "viewId": "L", "message": { "type": "resyncSessions" } }));
+  let whole = next_of(&mut link, |v| v["message"]["type"] == "sessions").await;
+  assert_eq!(whole["message"]["sessions"].as_array().unwrap().len(), 3);
+  drop(link);
+  connections.dispose();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn project_subscriptions_prune_caches_and_query_hidden_sessions_on_demand() {
   let fake = crate::fake_or_skip!();
   let lab = Lab::new();

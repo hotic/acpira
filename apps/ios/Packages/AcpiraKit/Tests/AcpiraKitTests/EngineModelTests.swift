@@ -47,6 +47,23 @@ struct EngineModelTests {
     #expect(wire.types.filter { $0 == "webviewMessage:resync" }.count == 1)
   }
 
+  @Test func appliesListPatchesAndAsksForTheWholeListWhenOneDoesNotFit() async throws {
+    let (model, wire) = try await connected()
+    #expect(wire.sent.contains { $0.contains(#""listPatches":true"#) })
+    // A new entry above the held one, which is copied
+    push(wire, #"{"type":"sessionsPatch","patch":{"base":0,"rev":1,"size":1,"runs":[{"id":"s2","title":"New","agent":"fake","cwd":"/w","updatedAt":"2026-10-28T00:00:01.000Z"},[0,1]]}}"#)
+    try await until { model.summaries.count == 2 }
+    #expect(model.summaries.map(\.id) == ["s2", "s1"])
+    // Built on a revision the app never got: it asks for the whole list once and ignores patches until it lands
+    push(wire, #"{"type":"sessionsPatch","patch":{"base":5,"rev":6,"size":2,"runs":[[0,2]]}}"#)
+    push(wire, #"{"type":"sessionsPatch","patch":{"base":6,"rev":7,"size":2,"runs":[[1,1]]}}"#)
+    push(wire, #"{"type":"sessions","sessions":[\#(Self.summary)]}"#)
+    try await until { model.summaries.count == 1 }
+    #expect(wire.types.filter { $0 == "webviewMessage:resyncSessions" }.count == 1)
+    push(wire, #"{"type":"sessionsPatch","patch":{"base":0,"rev":1,"size":1,"runs":[]}}"#)
+    try await until { model.summaries.isEmpty }
+  }
+
   @Test func controlsPostTheEnginesActions() async throws {
     let (model, wire) = try await connected()
     model.open("s1")

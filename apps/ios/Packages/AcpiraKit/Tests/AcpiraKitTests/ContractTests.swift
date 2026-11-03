@@ -135,7 +135,7 @@ struct ContractTests {
     try checkStruct(try need(categories.sections?.first), try need(TS.interface(transcript, "SessionSection")))
     try checkStruct(try need(state.accountActions?.first), try need(TS.interface(proto, "AccountAction")))
 
-    guard case .sessionHits(_, let hits) = try decode(ContractSamples.pushes[12]) as HostMsg else { Issue.record("not sessionHits"); return }
+    guard case .sessionHits(_, let hits) = try decode(ContractSamples.pushes[13]) as HostMsg else { Issue.record("not sessionHits"); return }
     try checkStruct(try need(hits.first), try need(TS.interface(proto, "SessionHit")))
     guard case .sessionPatch(let patch) = try decode(ContractSamples.pushes[6]) as HostMsg else { Issue.record("not sessionPatch"); return }
     try checkStruct(patch, try need(TS.interface(Self.source("sessionPatch.ts"), "SessionPatch")))
@@ -550,8 +550,9 @@ enum ContractSamples {
   ]
 
   static let actions: [WebviewMsg] = [
-    .ready(patches: true),
+    .ready(patches: true, listPatches: true),
     .resync,
+    .resyncSessions,
     .send(sessionId: "s1", text: "hi", attachments: [drafts[0]], steer: true, clientId: "c1"),
     .stop(sessionId: "s1", clientId: "c2"),
     .permission(sessionId: "s1", blockId: "b1", optionId: "allow", clientId: "c3"),
@@ -656,6 +657,7 @@ enum ContractSamples {
     #"{"type":"noSession"}"#,
     #"{"type":"session","session":\#(view)}"#,
     #"{"type":"sessionPatch","patch":{"id":"s1","base":1,"view":\#(view),"keep":3,"turns":[{"role":"agent","blocks":[]}],"keepBlocks":1,"blocks":[{"type":"text","markdown":"yz"}]}}"#,
+    #"{"type":"sessionsPatch","patch":{"base":3,"rev":4,"size":2,"runs":[{"id":"s3","title":"t","agent":"claude","cwd":"/w","updatedAt":"2026-10-27T19:33:34.971Z"},[0,2]]}}"#,
     #"{"type":"accounts","accounts":[{"id":"acc-1","agent":"claude","label":"me@example.com","addedAt":"2026-10-27T19:33:28.658Z"}]}"#,
     #"{"type":"accountActions","actions":[{"agent":"claude","via":"login","status":"pending"}]}"#,
     #"{"type":"hidden","hidden":{"claude":{"effort":["low"]}}}"#,
