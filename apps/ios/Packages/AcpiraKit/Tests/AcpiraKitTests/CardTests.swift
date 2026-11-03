@@ -136,6 +136,16 @@ private let claudeOptions: [PermissionOption] = decode("""
     #expect(!showsTurnActions(turn, running: true))
   }
 
+  @Test func compactionAloneOffersNoTurnActions() {
+    var turn = AgentTurn(blocks: [.compaction(decode(#"{"id":"compact","status":"completed"}"#))], stop: .end_turn)
+    #expect(!hasTurnContent(turn))
+    #expect(!showsTurnActions(turn, running: false))
+    // A reply that also compacted still owns its normal actions.
+    turn.blocks.append(.text(decode(#"{"markdown":"Done."}"#)))
+    #expect(hasTurnContent(turn))
+    #expect(showsTurnActions(turn, running: false))
+  }
+
   @Test func aRevisedPlanEndsQuietly() {
     let doc: PlanDocumentBlock = decode(#"{"id":"d","title":"T","markdown":"m","toolCallId":"t","status":"rejected"}"#)
     var turn = AgentTurn(blocks: [.planDocument(doc)], stop: .cancelled)
