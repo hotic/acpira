@@ -127,16 +127,18 @@ struct PlanCard: View {
   var body: some View {
     let done = entries?.filter { $0.status == .completed }.count ?? 0
     let current: Int? = entries.flatMap(Self.current)
+    // A single entry always shows itself, so there is nothing to fold: no summary, caret or toggle
+    let foldable = (entries?.count ?? 0) > 1
     VStack(alignment: .leading, spacing: Metrics.planSectionGap) {
       if let goal {
         GoalHead(goal: goal.goal, actions: goal.actions, running: goal.running, onAction: goal.onAction,
-                 onToggle: entries == nil ? nil : { toggle() }) {
-          if let entries { count(done, entries.count) }
+                 onToggle: foldable ? { toggle() } : nil) {
+          if let entries { count(done, entries.count, foldable: foldable) }
         }
       } else if let entries {
-        head(done: done, total: entries.count, working: current != nil)
+        head(done: done, total: entries.count, working: current != nil, foldable: foldable)
       }
-      if let entries { list(entries, current: current) }
+      if let entries { list(entries, current: current, foldable: foldable) }
     }
     .padding(.horizontal, Metrics.pad)
     .padding(.vertical, Metrics.planPadY)
@@ -164,22 +166,23 @@ struct PlanCard: View {
   }
 
   /// The title row without a goal: the list glyph, the title (shimmering while the turn works), the count and caret
-  private func head(done: Int, total: Int, working: Bool) -> some View {
+  private func head(done: Int, total: Int, working: Bool, foldable: Bool) -> some View {
     Button(action: toggle) {
       Row(dense: true) {
         Icon(.listTodo, size: WebMetrics.icon, strokeWidth: 1.5)
       } content: {
         RowLabel(t("plan.todoTitle"), shimmer: live && working)
       } trailing: {
-        count(done, total)
+        count(done, total, foldable: foldable)
       }
     }
     .buttonStyle(.plain)
+    .allowsHitTesting(foldable)
     .accessibilityAddTraits(.isHeader)
   }
 
   /// Every entry, those away from the current one collapsed while folded; "all n done" in their place once all are
-  private func list(_ entries: [PlanEntry], current: Int?) -> some View {
+  private func list(_ entries: [PlanEntry], current: Int?, foldable: Bool) -> some View {
     ScrollView(.vertical) {
       VStack(alignment: .leading, spacing: 0) {
         Row(dense: true, leadTop: true) {
@@ -189,10 +192,10 @@ struct PlanCard: View {
         }
         .environment(\.rowDenseHeight, WebType.text2.lineHeight)
         .padding(.vertical, Metrics.planEntryPadY)
-        .modifier(PlanFold(shown: !open && current == nil))
+        .modifier(PlanFold(shown: foldable && !open && current == nil))
         ForEach(Array(entries.enumerated()), id: \.offset) { i, entry in
           PlanEntries(entries: [entry], docked: true)
-            .modifier(PlanFold(shown: open || i == current))
+            .modifier(PlanFold(shown: open || !foldable || i == current))
         }
       }
     }
@@ -207,10 +210,12 @@ struct PlanCard: View {
   }
 
   /// The done count and the caret that folds the list
-  @ViewBuilder private func count(_ done: Int, _ total: Int) -> some View {
+  @ViewBuilder private func count(_ done: Int, _ total: Int, foldable: Bool) -> some View {
     Text(web: "\(done)/\(total)")
-    Icon(.chevronDown, size: Metrics.icon)
-      .rotationEffect(.degrees(open ? 180 : 0))
+    if foldable {
+      Icon(.chevronDown, size: Metrics.icon)
+        .rotationEffect(.degrees(open ? 180 : 0))
+    }
   }
 }
 
@@ -219,12 +224,13 @@ struct PlanCard: View {
 private struct PlanFold: ViewModifier {
   var shown: Bool
   func body(content: Content) -> some View {
-    content
-      .fixedSize(horizontal: false, vertical: true)
-      .frame(height: shown ? nil : 0, alignment: .top)
-      .clipped()
-      .opacity(shown ? 1 : 0)
-      .accessibilityHidden(!shown)
+    FoldLayout(progress: shown ? 1 : 0) {
+      // TextRenderer's ink and the row's icons must follow one placement, not animate independently under the clip.
+      content.geometryGroup()
+    }
+    .clipped()
+    .opacity(shown ? 1 : 0)
+    .accessibilityHidden(!shown)
   }
 }
 

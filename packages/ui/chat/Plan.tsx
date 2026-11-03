@@ -22,16 +22,18 @@ export function PlanCard({ entries, live, goal }: { entries?: PlanEntry[]; live?
   const fade = useScrollFade<HTMLDivElement>();
   const done = entries?.filter(e => e.status === 'completed').length ?? 0;
   const current = entries?.find(e => e.status === 'in_progress') ?? entries?.find(e => e.status === 'pending');
+  // A single entry always shows itself, so there is nothing to fold: no summary, caret or toggle
+  const foldable = !!entries && entries.length > 1;
   const toggle = () => setOpen(o => !o);
   const count = entries && <>
     <span>{done}/{entries.length}</span>
-    <PlanCaret open={open} />
+    {foldable && <PlanCaret open={open} />}
   </>;
   return (
     <Card className="flex min-w-0 flex-col gap-(--plan-section-gap) px-pad py-(--plan-pad-y)" data-open={open || undefined}>
       {goal
-        ? <GoalHead {...goal} toggle={entries && { open, onToggle: toggle, trailing: count }} />
-        : (
+        ? <GoalHead {...goal} toggle={entries && { open, onToggle: foldable ? toggle : undefined, trailing: count }} />
+        : foldable ? (
           <Row
             as="button" interactive dense aria-expanded={open} onClick={toggle}
             lead={<ListTodo className="size-icon" strokeWidth={1.5} />}
@@ -39,15 +41,19 @@ export function PlanCard({ entries, live, goal }: { entries?: PlanEntry[]; live?
           >
             <RowLabel shimmer={live && !!current}>{t('plan.todoTitle')}</RowLabel>
           </Row>
+        ) : (
+          <Row dense lead={<ListTodo className="size-icon" strokeWidth={1.5} />} trailing={count}>
+            <RowLabel shimmer={live && !!current}>{t('plan.todoTitle')}</RowLabel>
+          </Row>
         )}
       {entries && (
         <div ref={fade} className="scroll-fade scroll-thin scroll-stable max-h-plan overflow-y-auto [--scroll-fade-size:var(--gap)] [overflow-anchor:none]">
-          <Collapsible.Root open={!open && !current}><Collapsible.Panel className="plan-entry-fold">
+          <Collapsible.Root open={foldable && !open && !current}><Collapsible.Panel className="plan-entry-fold">
             <Row className={cn('items-start lead-top', dockEntryClass)} dense lead={<PlanDot status="completed" />}>
               <span className="text-fg-2">{t('plan.completed', { n: entries.length })}</span>
             </Row>
           </Collapsible.Panel></Collapsible.Root>
-          <PlanEntries entries={entries} expanded={open} current={current} entryClass={dockEntryClass} />
+          <PlanEntries entries={entries} expanded={open || !foldable} current={current} entryClass={dockEntryClass} />
         </div>
       )}
     </Card>
