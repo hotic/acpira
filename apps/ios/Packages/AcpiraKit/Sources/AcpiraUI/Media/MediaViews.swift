@@ -1,6 +1,7 @@
 import AcpiraDesign
 import AcpiraMarkdown
 import AcpiraModels
+import ImageIO
 import Observation
 import SwiftUI
 #if canImport(UIKit)
@@ -101,7 +102,7 @@ struct MediaImage<Content: View, Placeholder: View, Failure: View>: View {
 }
 
 /// A decoded image as a resizable picture; an animation plays on the frame clock (`DecodedImage.frame(at:)`), as an
-/// `<img>` plays a GIF on the desktop
+/// `<img>` plays a GIF on the desktop, and a streamed one through `StreamPlayer` while on screen
 struct Picture: View {
   let image: DecodedImage
 
@@ -110,8 +111,64 @@ struct Picture: View {
       TimelineView(.animation(minimumInterval: image.frameDuration)) { context in
         Image(decorative: image.frame(at: context.date), scale: 1).resizable()
       }
+    } else if let stream = image.stream {
+      // A new image starts its own playback rather than inheriting the old one's frame
+      StreamedPicture(still: image.cgImage, stream: stream).id(ObjectIdentifier(image.cgImage))
     } else {
       Image(decorative: image.cgImage, scale: 1).resizable()
+    }
+  }
+}
+
+/// A streamed animation: the first frame until playback takes over, played only while the view is on screen
+private struct StreamedPicture: View {
+  let still: CGImage
+  let stream: Data
+  @State private var frame: CGImage?
+  @State private var player = StreamPlayer()
+
+  var body: some View {
+    Image(decorative: frame ?? still, scale: 1).resizable()
+      .onAppear { player.play(stream) { frame = $0 } }
+      .onDisappear { player.stop() }
+  }
+}
+
+/// Plays an animation's encoded bytes one frame at a time: a background task decodes the next frame and hands it to the
+/// main actor when the file's delay says it is due, looping as the decoded path does. A long GIF so holds a frame or
+/// two instead of all of them. `CGAnimateImageDataWithBlock` would do this, but it floors every delay at 50 ms, which
+/// played a 25 fps recording a fifth slow. One playback at a time: `play` and `stop` end the previous one
+final class StreamPlayer {
+  private var task: Task<Void, Never>?
+
+  func play(_ data: Data, frame: @escaping @MainActor (CGImage) -> Void) {
+    task?.cancel()
+    task = Task { await Self.run(data, frame: frame) }
+  }
+
+  func stop() {
+    task?.cancel()
+    task = nil
+  }
+
+  @concurrent nonisolated private static func run(_ data: Data, frame: @escaping @MainActor (CGImage) -> Void) async {
+    // Uncached: the source keeps no decoded frames of its own
+    guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary)
+    else { return }
+    let count = CGImageSourceGetCount(source)
+    guard count > 1 else { return }
+    let clock = ContinuousClock()
+    var due = clock.now
+    var index = 0
+    while !Task.isCancelled {
+      guard let image = MediaLoader.streamFrame(source, at: index) else { return }
+      try? await clock.sleep(until: due)
+      guard !Task.isCancelled else { return }
+      await frame(image)
+      let delay = Duration.seconds(max(MediaLoader.minFrameDelay, MediaLoader.frameDelay(source, at: index)))
+      // Fallen more than a frame behind (a busy main thread, a suspended app): go on from now rather than race
+      due = max(due + delay, clock.now - delay)
+      index = (index + 1) % count
     }
   }
 }

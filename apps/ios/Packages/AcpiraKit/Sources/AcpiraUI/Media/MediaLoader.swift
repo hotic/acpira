@@ -79,23 +79,28 @@ nonisolated struct DecodedImage: @unchecked Sendable, Equatable {
   /// The still picture: an animation's first frame
   let cgImage: CGImage
   /// An animation's frames on an even beat of `frameDuration` (a frame held longer repeats, the same CGImage); empty
-  /// for a still picture
+  /// for a still picture and a streamed animation
   let frames: [CGImage]
   let frameDuration: Double
-  /// Bytes the bitmaps hold, the cache's measure
+  /// An animation too long to hold decoded (`decodeAnimation` declined it, e.g. a 30 s screen recording): its encoded
+  /// bytes, which `StreamPlayer` plays one frame at a time. nil for a still picture and a decoded animation
+  let stream: Data?
+  /// Bytes the bitmaps (and a streamed animation's encoded file) hold, the cache's measure
   let cost: Int
 
-  init(cgImage: CGImage) {
+  init(cgImage: CGImage, stream: Data? = nil) {
     self.cgImage = cgImage
     frames = []
     frameDuration = 0
-    cost = cgImage.bytesPerRow * cgImage.height
+    self.stream = stream
+    cost = cgImage.bytesPerRow * cgImage.height + (stream?.count ?? 0)
   }
 
   init(frames: [CGImage], frameDuration: Double, cost: Int) {
     cgImage = frames[0]
     self.frames = frames
     self.frameDuration = frameDuration
+    stream = nil
     self.cost = cost
   }
 
@@ -308,8 +313,26 @@ final class MediaLoader {
     guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
     let count = CGImageSourceGetCount(source)
     guard count > 0 else { return nil }
-    if count > 1, let animation = decodeAnimation(source, count: count) { return animation }
-    return CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnail(maxPixel) as CFDictionary).map(DecodedImage.init(cgImage:))
+    let still = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnail(maxPixel) as CFDictionary)
+    guard count > 1 else { return still.map { DecodedImage(cgImage: $0) } }
+    if let animation = decodeAnimation(source, count: count) { return animation }
+    // Too long to hold decoded: the first frame shows at once and the bytes play frame by frame
+    return still.map { DecodedImage(cgImage: $0, stream: streamable(source) ? data : nil) }
+  }
+
+  /// One frame of a streamed animation, decoded now (off the main thread) and capped like a still, so it matches the
+  /// first frame's size
+  nonisolated static func streamFrame(_ source: CGImageSource, at index: Int) -> CGImage? {
+    CGImageSourceCreateThumbnailAtIndex(source, index, thumbnail(maxPixel) as CFDictionary)
+  }
+
+  /// Whether an animation's frames are small enough to decode one at a time: ImageIO decodes each at full size before
+  /// scaling it, so within the still cap's area
+  nonisolated static func streamable(_ source: CGImageSource) -> Bool {
+    guard let first = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+          let width = first[kCGImagePropertyPixelWidth] as? Int, let height = first[kCGImagePropertyPixelHeight] as? Int
+    else { return false }
+    return width > 0 && height > 0 && width * height <= maxPixel * maxPixel
   }
 
   nonisolated private static func thumbnail(_ side: Int) -> [CFString: Any] {
@@ -323,7 +346,7 @@ final class MediaLoader {
 
   /// Every frame of an animation (GIF, APNG, animated WebP), decoded up front and scaled so all of them together stay
   /// within `animationBudget`. nil when even `animationMinPixel` frames would not fit, or the file holds too many: the
-  /// caller then keeps the first frame as a still picture
+  /// caller then streams it (`DecodedImage.stream`)
   nonisolated static func decodeAnimation(_ source: CGImageSource, count: Int) -> DecodedImage? {
     guard count <= animationMaxFrames,
           let first = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
