@@ -792,15 +792,19 @@ pub(crate) fn default_effort(config: &Config, catalog: &Catalog, pick: Option<&s
 }
 
 /// Bring the session's model and effort in line with what `config_options` shows: a session opened before any model
-/// existed takes the default, and an effort the current model does not offer (or none, where it now offers levels)
+/// existed, or holding one no longer usable, takes the default, and an effort the current model does not offer (or none, where it now offers levels)
 /// becomes the model's default. Without this the picker showed a fallback the session did not hold, so setting the
 /// shown effort was refused and a turn sent no effort until the model was switched once. True when something changed
 pub(crate) fn reconcile(config: &Config, catalog: &Catalog, st: &mut SessionState) -> bool {
   let before = (st.model.clone(), st.effort.clone());
-  if st.model.is_none() {
-    st.model = config.default_pick();
+  // A model no longer usable (removed, or switched off in settings) gives way to the default, the one the picker shows
+  // for it (`config_options`). A broken file, or no usable model at all, keeps the pick for when the file comes back
+  if config.error.is_none()
+    && !st.model.as_deref().is_some_and(|p| config.find(p).is_some())
+    && let Some(pick) = config.default_pick()
+  {
+    st.model = Some(pick);
   }
-  // A model that is no longer configured keeps its effort: the turn refuses to run it anyway
   if st.model.as_deref().is_some_and(|p| config.find(p).is_some()) {
     let efforts = efforts_of(config, catalog, st.model.as_deref());
     if !st.effort.as_ref().is_some_and(|e| efforts.contains(e)) {
