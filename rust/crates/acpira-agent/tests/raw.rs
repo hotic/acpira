@@ -5,6 +5,8 @@
 
 mod support;
 
+use std::time::Duration;
+
 use serde_json::{Value, json};
 
 use acpira_agent::mock::{self, MockModel};
@@ -23,6 +25,52 @@ fn raw_prompt(h: &Harness, text: &str) {
   let mut file: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
   file["rawSystemPrompt"] = json!(text);
   std::fs::write(&path, file.to_string()).unwrap();
+}
+
+#[tokio::test]
+async fn raw_mode_visibility_updates_existing_sessions_without_changing_their_mode() {
+  let h = Harness::start().await;
+  h.providers("http://127.0.0.1:1", json!([{ "id": "m1" }]));
+  let session = h.new_session().await;
+  let sid = session["sessionId"].as_str().unwrap();
+  assert!(!session["modes"]["availableModes"].as_array().unwrap().iter().any(|m| m["id"] == "raw"));
+  let path = h.home().join("providers.json");
+  let mut file: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+  file["rawMode"] = json!(true);
+  std::fs::write(&path, file.to_string()).unwrap();
+
+  let wait_modes = async |count: usize| {
+    tokio::time::timeout(Duration::from_secs(5), async {
+      loop {
+        let updates: Vec<Value> = h.updates().into_iter().filter(|u| u["sessionUpdate"] == "current_mode_update").collect();
+        if updates.len() >= count {
+          return updates[count - 1].clone();
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+      }
+    }).await.expect("no mode-list update after changing Raw mode visibility")
+  };
+  let shown = wait_modes(1).await;
+  assert_eq!(shown["currentModeId"], "agent", "showing Raw must not select it");
+  assert!(shown["_meta"]["acpira/availableModes"].as_array().unwrap().iter().any(|m| m["id"] == "raw"));
+
+  file["rawMode"] = json!(false);
+  std::fs::write(&path, file.to_string()).unwrap();
+  let hidden = wait_modes(2).await;
+  assert_eq!(hidden["currentModeId"], "agent");
+  assert!(!hidden["_meta"]["acpira/availableModes"].as_array().unwrap().iter().any(|m| m["id"] == "raw"));
+
+  // A session already using Raw keeps its choice even while the setting hides it from other sessions
+  set_mode(&h, sid, "raw").await.unwrap();
+  let active = wait_modes(3).await;
+  assert_eq!(active["currentModeId"], "raw");
+  assert!(active["_meta"]["acpira/availableModes"].as_array().unwrap().iter().any(|m| m["id"] == "raw"));
+  set_mode(&h, sid, "agent").await.unwrap();
+  let left = wait_modes(4).await;
+  assert_eq!(left["currentModeId"], "agent");
+  assert!(!left["_meta"]["acpira/availableModes"].as_array().unwrap().iter().any(|m| m["id"] == "raw"));
+  tokio::time::sleep(Duration::from_millis(1500)).await;
+  assert_eq!(h.updates().iter().filter(|u| u["sessionUpdate"] == "current_mode_update").count(), 4, "unchanged lists are not pushed again");
 }
 
 #[tokio::test]
@@ -60,12 +108,20 @@ async fn raw_mode_sends_the_conversation_alone_and_agent_mode_takes_over_without
   assert_eq!(body["messages"][0], json!({ "role": "system", "content": "You are terse." }));
   assert_eq!(body["messages"].as_array().unwrap().len(), 4, "system, two user messages and the first reply: {body}");
 
+  // Clearing the setting also applies to this same conversation, without losing its messages
+  raw_prompt(&h, "");
+  server.push(mock::text("still here"));
+  prompt(&h, &sid, "one more").await;
+  let body = &server.requests()[2].body;
+  assert_eq!(body["messages"].as_array().unwrap().len(), 5, "all previous messages remain: {body}");
+  assert!(body["messages"].as_array().unwrap().iter().all(|m| m["role"] != "system"), "the old system prompt must be gone: {body}");
+
   // Agent mode brings the composed prompt (with AGENTS.md) and the tools back, and no mode note
   set_mode(&h, &sid, "agent").await.unwrap();
   server.push(mock::tools(&[("c1", "list", json!({ "path": "." }))]));
   server.push(mock::text("done"));
   prompt(&h, &sid, "look around").await;
-  let body = &server.requests()[2].body;
+  let body = &server.requests()[3].body;
   assert!(body["messages"][0]["content"].as_str().unwrap().contains("Always answer in rhymes."));
   assert!(body["tools"].as_array().is_some_and(|t| !t.is_empty()));
   let last = body["messages"].as_array().unwrap().last().unwrap().clone();

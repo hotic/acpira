@@ -54,7 +54,7 @@ Modelled on OpenCode's `webfetch` / `websearch` (`tools/web.rs`, `tools/html.rs`
 
 - Plan may write only the session's `plan.md`; `full` widens the card for commands, not what the reminder tells the model to attempt. `exit_plan` goes through `session/request_permission` with `_meta["acpira/planApproval"]` and a `switch_mode` call, so the host's plan card works unchanged; the reminder follows Cursor's plan mode.
 - Team changes only the mode note, never tools, keeping the cache; unprompted summoning belongs to Team only. Profiles never offer it.
-- Raw sends no tools, only `rawSystemPrompt`; listed only while `rawMode` is on (ACP has no mode-list update), refused once the history holds a tool call, because Anthropic refuses `tool_use` / `tool_result` without `tools` (recalled, not re-verified).
+- Raw sends no tools, only `rawSystemPrompt` (re-read each turn); listed while `rawMode` is on or the session is in Raw. ACP has no mode-list update, so `current_mode_update._meta["acpira/availableModes"]` replaces the host's list on settings changes without reopening. Refused once the history holds a tool call, because Anthropic refuses `tool_use` / `tool_result` without `tools` (recalled, not re-verified).
 
 ## Questions
 

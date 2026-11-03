@@ -193,6 +193,44 @@ async fn run(s: &Arc<AcpSession>, text: &str) -> Vec<Value> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn raw_settings_reach_existing_sessions_without_reopening_them() {
+  let env = Env::new();
+  let s = env.session().await;
+  let other = env.session().await;
+  let native_id = s.to_record().acp_session_id;
+  let has_raw = |s: &AcpSession| view(s)["controls"]["modes"].as_array().unwrap().iter().any(|m| m["id"] == "raw");
+  assert!(!has_raw(&s) && !has_raw(&other));
+  let path = env.root.path().join("providers.json");
+  let mut file: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+  file["rawMode"] = json!(true);
+  file["rawSystemPrompt"] = json!("Answer briefly.");
+  std::fs::write(&path, file.to_string()).unwrap();
+  until(|| has_raw(&s) && has_raw(&other), 5000).await;
+  assert_eq!(view(&s)["controls"]["modeId"], "agent", "showing Raw must not select it");
+  s.set_mode("raw".into()).await.unwrap();
+  env.server.push(mock::text("Hello."));
+  run(&s, "hello").await;
+  assert_eq!(env.server.requests()[0].body["messages"][0], json!({ "role": "system", "content": "Answer briefly." }));
+
+  file["rawMode"] = json!(false);
+  file["rawSystemPrompt"] = json!("Answer in French.");
+  std::fs::write(&path, file.to_string()).unwrap();
+  until(|| !has_raw(&other), 5000).await;
+  assert!(has_raw(&s), "a session already in Raw keeps its mode");
+  assert_eq!(view(&s)["controls"]["modeId"], "raw");
+  env.server.push(mock::text("Bonjour."));
+  run(&s, "again").await;
+  let requests = env.server.requests();
+  assert_eq!(requests[1].body["messages"][0], json!({ "role": "system", "content": "Answer in French." }));
+  assert!(requests[1].body.get("tools").is_none());
+  assert_eq!(s.to_record().acp_session_id, native_id, "the same native conversation continues");
+  assert_eq!(view(&s)["turns"].as_array().unwrap().len(), 4);
+  s.set_mode("agent".into()).await.unwrap();
+  until(|| !has_raw(&s), 5000).await;
+  env.assert_prefix_stable(&env.log_of(&s));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_edit_waits_for_its_card_then_lands_with_a_diff() {
   let env = Env::new();
   std::fs::write(env.cwd().join("a.txt"), "hello world\n").unwrap();

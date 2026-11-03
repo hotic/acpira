@@ -67,6 +67,8 @@ pub struct SessionState {
   pub last_view: Option<Value>,
   /// The config options the client last got for this session (`Server::push_controls` sends a change)
   pub sent_options: Option<Vec<Value>>,
+  /// The mode list last sent to the client; settings changes update it on already open sessions
+  pub sent_modes: Vec<Value>,
   /// The context (used, size) of the last `usage_update` sent: a window changed in the settings is pushed with the
   /// same `used` (`Server::push_controls`), so the client's meter does not wait for the next model call
   pub reported: Option<(u64, u64)>,
@@ -251,12 +253,14 @@ impl Server {
   }
 
   /// The mode picker: Raw mode only while the settings page offers it, or while the session is in it
-  fn modes_of(&self, config: &Config, st: &SessionState) -> Value {
+  fn mode_options(&self, config: &Config, st: &SessionState) -> Vec<Value> {
     let shown = |id: &str| self.offers_mode(id) && (id != modes::RAW || config.raw_mode() || st.mode == modes::RAW);
-    json!({
-      "currentModeId": st.mode,
-      "availableModes": modes::MODES.iter().filter(|m| shown(m.id)).map(|m| json!({ "id": m.id, "name": m.name, "description": m.description })).collect::<Vec<_>>(),
-    })
+    modes::MODES.iter().filter(|m| shown(m.id)).map(|m| json!({ "id": m.id, "name": m.name, "description": m.description })).collect()
+  }
+
+  fn modes_of(&self, config: &Config, st: &mut SessionState) -> Value {
+    st.sent_modes = self.mode_options(config, st);
+    json!({ "currentModeId": st.mode, "availableModes": st.sent_modes })
   }
 
   /// The folder processes of the session start in here (MCP servers): the session folder, or for a folder on an SSH
@@ -416,7 +420,7 @@ impl Server {
     state.effort = default_effort(&config, &catalog, state.model.as_deref());
     let response = json!({
       "sessionId": id,
-      "modes": self.modes_of(&config, &state),
+      "modes": self.modes_of(&config, &mut state),
       "configOptions": sent_options(&config, &catalog, &mut state, self.offers()),
     });
     let store = Store::new(self.session_file(&id), &id, std::path::Path::new(cwd));
@@ -488,7 +492,7 @@ impl Server {
     if reconcile(&config, &catalog, &mut st) {
       session.save_state(&st);
     }
-    Ok(json!({ "modes": self.modes_of(&config, &st), "configOptions": sent_options(&config, &catalog, &mut st, self.offers()) }))
+    Ok(json!({ "modes": self.modes_of(&config, &mut st), "configOptions": sent_options(&config, &catalog, &mut st, self.offers()) }))
   }
 
   /// A session object from its file: the history, the controls and the system prompt as they were
@@ -691,15 +695,14 @@ impl Server {
     Ok(json!({ "configOptions": sent_options(&config, &catalog, &mut st, self.offers()) }))
   }
 
-  /// Send `config_option_update` to every open session whose options changed since the client last got them: a model
-  /// source saved in settings (or edited elsewhere) adds or removes models, and the composer's picker reads the
-  /// session's own options, not the settings page's probe
+  /// Push changed modes and config options to open sessions: settings edits update the composer's own pickers,
+  /// not just the settings page's probe
   pub fn push_controls(&self) {
     let config = self.config.get();
     let catalog = self.catalog.get();
     let sessions: Vec<Arc<Session>> = self.sessions.lock().values().cloned().collect();
     for s in sessions {
-      let (options, usage) = {
+      let (options, modes, usage) = {
         let mut st = s.state.lock();
         if reconcile(&config, &catalog, &mut st) {
           s.save_state(&st);
@@ -711,6 +714,13 @@ impl Server {
           st.sent_options = Some(options.clone());
           Some(options)
         };
+        let modes = self.mode_options(&config, &st);
+        let modes = if st.sent_modes == modes {
+          None
+        } else {
+          st.sent_modes = modes.clone();
+          Some((st.mode.clone(), modes))
+        };
         // The window of the session's model as configured now (edited in the settings, or another model picked)
         let window = st.model.as_deref().and_then(|p| crate::turn::limits(&config, &catalog, p)).map(|m| m.context.unwrap_or(crate::turn::DEFAULT_CONTEXT));
         let usage = match (st.reported, window) {
@@ -720,10 +730,16 @@ impl Server {
           }
           _ => None,
         };
-        (options, usage)
+        (options, modes, usage)
       };
       if let Some(options) = options {
         self.conn().notify("session/update", json!({ "sessionId": s.id, "update": { "sessionUpdate": "config_option_update", "configOptions": options } }));
+      }
+      if let Some((mode, modes)) = modes {
+        // ACP has no mode-list update; the standard current-mode notification carries our additive extension
+        self.conn().notify("session/update", json!({ "sessionId": s.id, "update": {
+          "sessionUpdate": "current_mode_update", "currentModeId": mode, "_meta": { "acpira/availableModes": modes }
+        } }));
       }
       if let Some((used, size)) = usage {
         // Recorded like the turn's own, so a replay ends on the current window

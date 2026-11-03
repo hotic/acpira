@@ -409,6 +409,9 @@ fn apply_update_kind(s: &mut NormalizeState, u: &Value) -> bool {
       true
     }
     "current_mode_update" => {
+      if let Some(modes) = u.pointer("/_meta/acpira~1availableModes").and_then(Value::as_array) {
+        controls::apply_modes(&mut s.controls, modes);
+      }
       s.controls.mode_id = str_of(u, "currentModeId").map(str::to_owned);
       true
     }

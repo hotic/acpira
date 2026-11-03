@@ -276,7 +276,7 @@ function CompactionField({ state, on }: { state: ProvidersState; on: SettingsHan
 }
 
 // Raw mode in the mode menu (`rawMode`): off by default, since it is for talking to a model with nothing around it.
-// Sessions pick it up when they open; one already in Raw mode keeps it either way
+// Open sessions pick up changes too; one already in Raw mode keeps it either way
 function RawModeField({ state, on }: { state: ProvidersState; on: SettingsHandlers }) {
   const [shown, pick] = usePick(state, !!state.view.rawMode);
   return (
