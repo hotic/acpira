@@ -69,8 +69,15 @@ impl SessionManager {
   }
 
   pub async fn edit_turn(&self, edit: EditTurnRequest) -> Result<()> {
-    let s = self.live(&edit.session_id).ok_or_else(|| anyhow!(t("history.unavailable")))?;
-    s.edit_turn(edit).await
+    if let Some(s) = self.live(&edit.session_id) {
+      return s.edit_turn(edit).await;
+    }
+    // Shown here while another engine owns it and pushes its view: the edit runs there, like a send or a stop
+    let id = edit.session_id.clone();
+    if self.state.lock().remote.get(&id).is_some_and(|r| r.parts.is_some()) {
+      return self.forward(&id, &WebviewMsg::EditTurn { request_id: String::new(), edit }).await;
+    }
+    Err(anyhow!(t("history.unavailable")))
   }
 
   /// The whole files behind a diff a page was sent without them: the open session (or the read-only copy shown for it)

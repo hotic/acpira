@@ -347,6 +347,13 @@ impl SessionManager {
   /// Run an action a page of another engine took on a session this one owns, as if from a page showing it here
   pub(super) async fn run_forwarded(self: Arc<Self>, session: String, msg: Value) -> Result<(), String> {
     let m: WebviewMsg = serde_json::from_value(msg).map_err(|e| e.to_string())?;
+    // An edit answers its page with a result instead of going through `dispatch`: run it here and hand the error back
+    if let WebviewMsg::EditTurn { edit, .. } = m {
+      if edit.session_id != session {
+        return Err(format!("not an action on {session}"));
+      }
+      return self.edit_turn(edit).await.map_err(|e| error_text(&e));
+    }
     let target = session_id_of(&m).or_else(|| list_edit_target(&m).map(str::to_owned));
     if !(is_forwarded(&m) || list_edit_target(&m).is_some()) || target.is_some_and(|id| id != session) {
       return Err(format!("not an action on {session}"));

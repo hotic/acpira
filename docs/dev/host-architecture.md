@@ -29,8 +29,7 @@ What a change to the engine (`rust/`) or its shells cannot learn quickly from th
 - Idle exit over SSH waits as long as VS Code Server (3 h): a reconnected Remote-SSH window is a new macOS security session with the login keychain locked, and only the earlier engine still reads Claude Code's login. An engine from another SSH login (or an SSH-started peer engine on macOS when `gui/<uid>` can run it) retires when idle and a store is locked (`Engine::retires_for`). The engine never holds its state lock while calling the runtime, since platform calls come back through it.
 - Leases (`store/session_lease.rs`): one engine drives a session; without the lease turns are refused and the record opens read-only. Mirror revs start at −2⁴⁰ so pages accept the live view afterwards; `SentViews::deliver` drops only an older rev of the same epoch.
 - Takeover: `<id>.takeover`. Handover without a click: an eligible mirror keeps `<id>.wanted` fresh and the holder releases a session none of its own viewers shows once `can_let_go` (idle, or stopped on sign-in). A credential-locked engine must not request it or explicit takeover, nor open a mirrored session whose lease frees (it stays read-only until the store unlocks): SSH can share the account files without sharing the desktop login's keychain access. Pushed viewers keep the owner alive against idle release. `lease_pin` is released only after the final flush succeeded.
-- Known limits: the engine keeps the launching extension host's environment (a stale `SSH_AUTH_SOCK` reaches later agents); edits of historical turns are not forwarded to the owner.
-
+- Known limit: the engine keeps the launching extension host's environment (a stale `SSH_AUTH_SOCK` reaches later agents).
 ## Engine push bus
 
 - `bus.rs`, modeled on Codex (openai.chatgpt 26.917: one app-server per client joined through `~/.codex/ipc/ipc.sock`; the owner pushes, followers forward actions), over Acpira's leases instead of one engine for every window.

@@ -569,6 +569,46 @@ async fn a_resent_client_id_runs_once_here_and_over_the_bus() {
   b.dispose().await;
 }
 
+// Editing a message of a session another engine runs (a desktop window showing a VS Code window's session) goes to that
+// engine like a send: it used to fail at once with "wait until the session is ready", even on an idle session
+#[tokio::test(flavor = "multi_thread")]
+async fn an_edit_from_an_engine_showing_another_engines_session_runs_in_the_owner() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let a = Mgr::new(dir.path(), Opts::fake(&fake));
+  let b = Mgr::new(dir.path(), Opts::fake(&fake));
+  a.init().await;
+  b.init().await;
+  until(|| a.m.bus_connected() && b.m.bus_connected(), 3000).await;
+  a.new_session(None).await;
+  a.handle(json!({ "type": "send", "text": "first" })).await;
+  let id = a.active_id().unwrap();
+  until(|| a.active().is_some_and(|s| turns_in(&s) == 2 && s["running"] == false), 5000).await;
+  until(|| dir.path().join(format!("{id}.json")).exists(), 3000).await;
+  a.m.refresh_index().await;
+  b.m.refresh_index().await;
+  b.m.select_session_for(&b.v, &id).await;
+  until(|| b.active().is_some_and(|s| s["id"] == id.as_str() && s["status"] != "readonly"), 3000).await;
+
+  // The edited turn is still answering in A: the edit stops it there, then replaces it
+  let running = a.spawn_handle(json!({ "type": "send", "text": "slow" }));
+  until(|| b.active().is_some_and(|s| s["running"] == true && turns_in(&s) == 4), 5000).await;
+  let shown = b.active().unwrap();
+  let turn = &shown["turns"][2];
+  let edit = serde_json::from_value(json!({
+    "sessionId": id, "turnIndex": 2, "turnCount": 4, "originalText": turn["text"], "turnId": turn["id"], "text": "from B",
+  }))
+  .unwrap();
+  b.m.edit_turn(edit).await.unwrap();
+  running.await.unwrap();
+  until(|| b.active().is_some_and(|s| turns_in(&s) == 4 && s["running"] == false && s["turns"][2]["text"] == "from B"), 5000).await;
+  let owner = a.active().unwrap();
+  expect_match(&owner["turns"][2], json!({ "text": "from B", "edited": true }));
+  assert!(!b.m.leased().contains(&id));
+  a.dispose().await;
+  b.dispose().await;
+}
+
 // The engine that ran an id may be gone when the resend comes: the gateway's engine quits when idle with no window, and
 // the device's return starts a new one. The ids are saved with the record, so the new engine still runs the resend once
 #[tokio::test(flavor = "multi_thread")]
