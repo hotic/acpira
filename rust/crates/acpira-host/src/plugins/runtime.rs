@@ -739,7 +739,7 @@ impl Runtimes {
     let mut init = json!({
       "protocolVersion": PROTOCOL_VERSION,
       "plugin": { "id": want.id, "version": want.version, "snapshot": want.hash, "dir": want.dir, "data": data },
-      "engine": { "name": "acpira", "version": env!("CARGO_PKG_VERSION") },
+      "engine": { "name": "acpira", "version": acpira_shared::version::VERSION },
       "hooks": want.hooks(),
       "events": want.def.events,
       "methods": want.def.methods,

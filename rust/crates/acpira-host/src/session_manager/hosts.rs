@@ -1097,7 +1097,7 @@ async fn drive(weak: Weak<SessionManager>, run: Arc<HostRun>) {
     drop(m);
     let attempt: Result<PeerLink> = async {
       let client = connections.follow(&run.alias, CONNECT_WAIT).await?;
-      PeerLink::connect(&client, None, PeerHello { version: env!("CARGO_PKG_VERSION"), capabilities: PEER_CAPS, host_language: "en" }).await
+      PeerLink::connect(&client, None, PeerHello { version: acpira_shared::version::VERSION, capabilities: PEER_CAPS, host_language: "en" }).await
     }
     .await;
     match attempt {

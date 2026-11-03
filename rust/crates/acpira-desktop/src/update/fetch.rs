@@ -55,7 +55,7 @@ pub fn agent(proxy: Option<&str>) -> ureq::Agent {
     .timeout_recv_body(Some(Duration::from_secs(30 * 60)))
     .http_status_as_error(false)
     .max_redirects(0)
-    .user_agent(format!("acpira-desktop/{}", env!("CARGO_PKG_VERSION")));
+    .user_agent(format!("acpira-desktop/{}", acpira_shared::version::VERSION));
   if let Some(p) = proxy.and_then(proxy_of) {
     b = b.proxy(Some(p));
   }

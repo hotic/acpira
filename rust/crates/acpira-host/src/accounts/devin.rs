@@ -170,7 +170,7 @@ impl AccountProvider for DevinAccountProvider {
         .cloned()
         .unwrap_or_else(|| DEFAULT_API_SERVER.into());
       let base = base.strip_suffix('/').unwrap_or(&base).to_owned();
-      let version = env!("CARGO_PKG_VERSION");
+      let version = acpira_shared::version::VERSION;
       let body = json!({ "metadata": { "apiKey": cred.secret, "ideName": "acpira", "ideVersion": version, "extensionVersion": version } });
       let (status, json) = crate::http::post_json(
         format!("{base}{USER_STATUS_PATH}"),

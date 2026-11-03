@@ -269,7 +269,7 @@ fn http() -> ureq::Agent {
       .http_status_as_error(false)
       .timeout_connect(Some(std::time::Duration::from_secs(15)))
       .timeout_global(Some(std::time::Duration::from_secs(90)))
-      .user_agent(format!("acpira/{}", env!("CARGO_PKG_VERSION"))),
+      .user_agent(format!("acpira/{}", acpira_shared::version::VERSION)),
   )
   .build()
   .into()
