@@ -96,6 +96,7 @@ export interface SubagentPersona {
   agent: AgentId;       // the CLI it runs in
   model?: string;       // a value of that agent's model select; absent = the CLI's default
   effort?: string;      // a value of its reasoning-effort select; absent = the default
+  fast?: boolean;       // its Fast switch (only the built-in agent's sidekick sets it); absent = left as the CLI has it
   mode: RelayMode;      // consult = the CLI's own read-only mode where it has one
   when: string;         // tells the model when to summon it
   brief?: string;       // appended to every task

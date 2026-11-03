@@ -224,7 +224,7 @@ impl AcpSession {
   /// `_starting` keeps the session's close waiting until this returns (the process registered, or ended)
   async fn relay_connect(self: &Arc<Self>, r: &Round, notes: &mut Vec<String>, _starting: Starting) -> Result<(Arc<AgentProcess>, String, (Option<String>, Option<String>))> {
     let thread = r.thread.as_str();
-    let wanted = (r.persona.model.clone(), r.persona.effort.clone());
+    let wanted = (r.persona.model.clone(), r.persona.effort.clone(), r.persona.fast);
     let live = {
       let c = self.core.lock();
       c.relays
@@ -233,7 +233,7 @@ impl AcpSession {
         .filter(|rp| rp.proc.alive() && !rp.peer.is_empty())
         .map(|rp| (rp.proc.clone(), rp.peer.clone(), rp.opened.clone(), rp.start_mode.clone(), rp.mode, rp.applied.clone()))
     };
-    // A live thread keeps its process and session; a persona whose model / effort changed since is applied again, and
+    // A live thread keeps its process and session; a persona whose model / effort / Fast changed since is applied again, and
     // the mode follows the round
     if let Some((proc, sid, mut opened, start_mode, last, applied)) = live {
       if applied != wanted {
@@ -280,7 +280,7 @@ impl AcpSession {
     let closed = {
       let mut c = self.core.lock();
       if !c.relays.closed {
-        let rp = RelayProc { proc: proc.clone(), peer: String::new(), opened: Value::Null, start_mode: None, mode: None, applied: (None, None) };
+        let rp = RelayProc { proc: proc.clone(), peer: String::new(), opened: Value::Null, start_mode: None, mode: None, applied: (None, None, None) };
         c.relays.procs.insert(thread.to_owned(), rp);
       }
       c.relays.closed

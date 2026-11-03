@@ -259,6 +259,9 @@ pub struct SubagentPersona {
   /// A value of that agent's reasoning-effort select; absent = the default
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub effort: Option<String>,
+  /// Its Fast switch (only the built-in agent's sidekick sets it); absent = left as the CLI has it
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub fast: Option<bool>,
   #[serde(default)]
   pub mode: RelayMode,
   /// Tells the model when to summon it
@@ -339,6 +342,7 @@ pub fn sanitize_personas(v: &serde_json::Value) -> Vec<SubagentPersona> {
       agent,
       model: opt("model", ID_MAX),
       effort: opt("effort", ID_MAX),
+      fast: None,
       mode: RelayMode::parse(o.get("mode").and_then(serde_json::Value::as_str)),
       when: text("when", TEXT_MAX),
       brief: opt("brief", TEXT_MAX),

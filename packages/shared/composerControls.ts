@@ -165,6 +165,8 @@ export const SIDEKICK_CATEGORY = '_sidekick';
 export const NO_SIDEKICK = 'none';
 // The sidekick's effort select, offered while the sidekick's model has levels (custom category, so it is never the lead's)
 export const SIDEKICK_EFFORT_CATEGORY = '_sidekick_effort';
+// The sidekick's Fast switch, offered while the sidekick's model has a fast tier (custom category, so it is never the lead's)
+export const SIDEKICK_FAST_CATEGORY = '_sidekick_fast';
 
 // A level as the folded side of the model panel's lead / sidekick switch shows it: the narrow chip's short form
 export function levelShort(label: string): string {
@@ -177,17 +179,18 @@ export function levelShort(label: string): string {
 // and so does a permission level offered as a config option (custom category `_permission_mode`, the built-in agent's
 // approval level): the composer folds it into the mode chip's menu when the agent has modes. The right side is the model's
 export function composerControls(options: ConfigControl[]) {
-  const models: ConfigControl[] = [], reasoning: ConfigControl[] = [], modelConfig: ConfigControl[] = [], collaboration: ConfigControl[] = [], permission: ConfigControl[] = [], sidekick: ConfigControl[] = [], sidekickEffort: ConfigControl[] = [], other: ConfigControl[] = [];
+  const models: ConfigControl[] = [], reasoning: ConfigControl[] = [], modelConfig: ConfigControl[] = [], collaboration: ConfigControl[] = [], permission: ConfigControl[] = [], sidekick: ConfigControl[] = [], sidekickEffort: ConfigControl[] = [], sidekickFast: ConfigControl[] = [], other: ConfigControl[] = [];
   for (const c of options) {
     if (isReasoningControl(c)) reasoning.push(c);
     else if (c.category === 'collaboration_mode' && c.type !== 'boolean') collaboration.push(c);
     else if (c.category === '_permission_mode' && c.type !== 'boolean') permission.push(c);
     else if (c.category === SIDEKICK_CATEGORY && c.type !== 'boolean') sidekick.push(c);
     else if (c.category === SIDEKICK_EFFORT_CATEGORY && c.type !== 'boolean') sidekickEffort.push(c);
+    else if (c.category === SIDEKICK_FAST_CATEGORY) sidekickFast.push(c);
     else if (c.category === 'model_config') modelConfig.push(c);
     // A boolean's synthetic Off/On pair is not a model family even under a `model` category; it chips in `other`
     else if (c.type !== 'boolean' && (c.category === 'model' || (!c.category && (c.id === 'model' || groupModels(c.options).length < c.options.length)))) models.push(c);
     else other.push(c);
   }
-  return { models, reasoning, modelConfig, collaboration, permission, sidekick, sidekickEffort, other };
+  return { models, reasoning, modelConfig, collaboration, permission, sidekick, sidekickEffort, sidekickFast, other };
 }

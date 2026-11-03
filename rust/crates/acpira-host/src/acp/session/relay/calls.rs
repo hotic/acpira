@@ -14,7 +14,7 @@ use acpira_shared::subagents::{
 
 use super::controls::{caller_access, round_mode};
 use super::personas::{
-  NO_SIDEKICK, SIDEKICK_CATEGORY, SIDEKICK_CONFIG, SIDEKICK_EFFORT_CATEGORY, SIDEKICK_EFFORT_CONFIG, SIDEKICK_WHEN, call_fits, idle_thread,
+  NO_SIDEKICK, SIDEKICK_CATEGORY, SIDEKICK_CONFIG, SIDEKICK_EFFORT_CATEGORY, SIDEKICK_EFFORT_CONFIG, SIDEKICK_FAST_CATEGORY, SIDEKICK_FAST_CONFIG, SIDEKICK_WHEN, call_fits, idle_thread,
   node_persona, thread_persona, who,
 };
 use super::texts::{
@@ -37,11 +37,16 @@ impl AcpSession {
   /// record's value included), as the executor the hub lists first for the root: the built-in agent on that model,
   /// following the caller's mode, at the effort picked for it, in one conversation that later calls continue
   pub(crate) fn sidekick_persona(&self) -> Option<SubagentPersona> {
-    let (pick, effort) = {
+    let (pick, effort, fast) = {
       let c = self.core.lock();
       let options = picked_controls(&c).options;
       let value = |id: &str, category: &str| options.iter().find(|o| o.id == id && o.category.as_deref() == Some(category)).and_then(|o| o.value.clone());
-      (value(SIDEKICK_CONFIG, SIDEKICK_CATEGORY), value(SIDEKICK_EFFORT_CONFIG, SIDEKICK_EFFORT_CATEGORY))
+      (
+        value(SIDEKICK_CONFIG, SIDEKICK_CATEGORY),
+        value(SIDEKICK_EFFORT_CONFIG, SIDEKICK_EFFORT_CATEGORY),
+        // A boolean option or the Standard / Fast select, both read as their value
+        value(SIDEKICK_FAST_CONFIG, SIDEKICK_FAST_CATEGORY).map(|v| v == "true" || v == "fast"),
+      )
     };
     let pick = pick?;
     (!pick.is_empty() && pick != NO_SIDEKICK).then(|| SubagentPersona {
@@ -50,6 +55,7 @@ impl AcpSession {
       agent: self.agent.clone(),
       model: Some(pick),
       effort: effort.filter(|e| !e.is_empty()),
+      fast,
       mode: RelayMode::Inherit,
       when: SIDEKICK_WHEN.into(),
       brief: Some(EXECUTOR_BRIEF.into()),
