@@ -18,6 +18,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::engine::{EngineSpec, Log, connect};
+use crate::wire_stats::WireStats;
 
 /// What a device may leave unread before the gateway drops it: it reconnects and gets whole views again, where a queue
 /// with no bound would grow with every patch of every running session
@@ -48,7 +49,9 @@ pub enum Ended {
 /// Where a device's notifications go, or none to stop them (`Control::Push`, read before and after its hello)
 pub type OnPush = Arc<dyn Fn(Option<PushTarget>) + Send + Sync>;
 
-/// Runs until either side ends. `sessions_dir` receives the engine's (from `helloOk`) for the blob streams
+/// Runs until either side ends. `sessions_dir` receives the engine's (from `helloOk`) for the blob streams; `stats`
+/// counts what passes each way (`wire_stats`)
+#[expect(clippy::too_many_arguments, reason = "one stream's wiring, called from one place")]
 pub async fn run(
   spec: &EngineSpec,
   log: &Log,
@@ -57,6 +60,7 @@ pub async fn run(
   mut rx: EnvelopeRx,
   sessions_dir: Arc<parking_lot::Mutex<Option<PathBuf>>>,
   on_push: OnPush,
+  stats: Arc<WireStats>,
 ) -> Ended {
   let welcome = Control::Welcome { name: who.computer.clone(), version: who.version.clone(), protocol: SIDECAR_PROTOCOL_VERSION };
   if tx.send(FrameKind::Control, &link::control(&welcome)).await.is_err() {
@@ -64,7 +68,7 @@ pub async fn run(
   }
   // The device's hello, answering its pings meanwhile
   let hello = loop {
-    match rx.next().await {
+    match next_frame(&mut rx, &stats).await {
       Ok(Some((FrameKind::Control, body))) => match serde_json::from_slice(&body) {
         Ok(Control::Ping { n }) => {
           if tx.send(FrameKind::Control, &link::control(&Control::Pong { n })).await.is_err() {
@@ -109,11 +113,15 @@ pub async fn run(
   let (to_device, mut device_frames) = mpsc::unbounded_channel::<(FrameKind, Vec<u8>)>();
   let (behind_tx, behind) = oneshot::channel::<()>();
   {
-    let queued = queued.clone();
+    let (queued, stats) = (queued.clone(), stats.clone());
     tasks.spawn(async move {
       while let Some((kind, body)) = device_frames.recv().await {
         let n = body.len();
         let ok = tx.send(kind, &body).await.is_ok();
+        // Counted once the stream took it, with the wire bytes it cost: both land in the same periodic line
+        if ok {
+          stats.to_device(kind, &body, tx.written());
+        }
         queued.fetch_sub(n, Ordering::Relaxed);
         if !ok {
           break;
@@ -159,7 +167,7 @@ pub async fn run(
   // From the device
   let device_loop = async {
     loop {
-      match rx.next().await {
+      match next_frame(&mut rx, &stats).await {
         Ok(Some((FrameKind::Control, body))) => match serde_json::from_slice(&body) {
           Ok(Control::Ping { n }) => push(FrameKind::Control, link::control(&Control::Pong { n })),
           Ok(Control::Push { target }) => on_push(target),
@@ -184,6 +192,15 @@ pub async fn run(
   // The set also aborts a writer that cannot finish draining before the timeout.
   let _ = tokio::time::timeout(std::time::Duration::from_secs(2), async { while tasks.join_next().await.is_some() {} }).await;
   ended
+}
+
+/// The device's next frame, counted
+async fn next_frame(rx: &mut EnvelopeRx, stats: &WireStats) -> std::io::Result<Option<(FrameKind, Vec<u8>)>> {
+  let next = rx.next().await;
+  if let Ok(Some((kind, body))) = &next {
+    stats.to_engine(*kind, body, rx.read_bytes());
+  }
+  next
 }
 
 /// The hello the engine gets: the device's protocol version, request id, language and version; everything that grants
