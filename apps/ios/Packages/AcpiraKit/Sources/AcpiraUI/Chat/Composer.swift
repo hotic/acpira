@@ -519,8 +519,8 @@ struct Composer: View {
     #endif
   }
 
-  /// `-popup attach`, `-popup model` or `-popup model.2` (a bean's panel out; `attach.N` for `+`, `model.N.model` or
-  /// `model.N.effort` for a list the sidekick's panel opens, and `attach.paste`
+  /// `-popup attach`, `-popup model` or `-popup model.2` (a bean's panel out; `attach.N` for `+`, `model.0.sidekick`
+  /// for the sidekick's own beans and `model.N.sidekick` for one of their panels, and `attach.paste`
   /// offers the paste bean whatever the pasteboard holds) for screenshots; a `focus.` prefix
   /// (`-popup focus`, `-popup focus.model`) raises the keyboard first. With motion on both wait a moment after launch,
   /// so a recording shows them change. `-popup demo` plays every liquid transition in turn, for a recording read
@@ -562,8 +562,8 @@ struct Composer: View {
 
   /// The demo's steps, each after a pause: the model's beans, two panels in and out, one panel back and another bean
   /// tapped as soon as the beans take taps (the first panel's spring still settling), closing, `+`, then the same from
-  /// the card, closing from an open panel; last the sidekick's bean where the agent has one: its panel, the model list
-  /// in and back, the level list, and closing from inside it
+  /// the card, closing from an open panel; last the sidekick's beans where the agent has one: out in place of the
+  /// lead's, their model list in and back, and closing from inside it
   private func demo() async {
     var steps: [(Double, () -> Void)] = [
       (1.0, { goo = "model" }), (1.2, { gooStage = 2 }), (1.4, { gooStage = 0 }), (1.2, { gooStage = 1 }),
@@ -571,9 +571,9 @@ struct Composer: View {
       (1.4, { goo = nil; gooStage = 0 }), (1.4, { goo = "attach" }), (1.2, { goo = nil }), (1.2, { focused = true }),
       (1.4, { goo = "model" }), (1.2, { gooStage = 3 }), (1.4, { goo = nil; gooStage = 0 }), (1.4, { focused = false }),
     ]
-    if let k = ModelChoices(controls: session.controls, onSetConfig: { _, _ in }).sidekickStage {
-      steps += [(1.4, { goo = "model" }), (1.2, { gooStage = k }), (1.4, { gooDeeper = "model" }), (1.4, { gooDeeper = nil }),
-                (1.2, { gooDeeper = "effort" }), (1.4, { goo = nil; gooStage = 0 }), (1.0, { gooDeeper = nil })]
+    if ModelChoices(controls: session.controls, onSetConfig: { _, _ in }).sidekick != nil {
+      steps += [(1.4, { goo = "model" }), (1.2, { gooDeeper = LiquidControls.sidekickLevel }), (1.4, { gooStage = 1 }),
+                (1.4, { gooStage = 0 }), (1.2, { gooStage = 1 }), (1.4, { goo = nil; gooStage = 0 }), (1.0, { gooDeeper = nil })]
     }
     for (pause, step) in steps {
       try? await Task.sleep(for: .seconds(pause))
