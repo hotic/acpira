@@ -236,10 +236,10 @@ function FastModelField({ state, on }: { state: ProvidersState; on: SettingsHand
   const names = models.map(name);
   const auto = models.find(m => m.pick === state.view.fastModelAuto);
   const options = [
-    // No icon: automatic and off are plain words in the field, as the other selects' picks; the list keeps them on the
-    // marks' column. Automatic names the model it lands on now
-    { value: '', label: auto ? t('settings.agent.fastModel.autoModel', { model: name(auto) }) : t('settings.agent.fastModel.auto') },
-    { value: FAST_MODEL_OFF, label: t('settings.agent.fastModel.off') },
+    // Automatic and off carry a line glyph on the marks' column, so every row of the list leads with one.
+    // Automatic names the model it lands on now
+    { value: '', label: auto ? t('settings.agent.fastModel.autoModel', { model: name(auto) }) : t('settings.agent.fastModel.auto'), icon: <WandSparkles strokeWidth={1.5} /> },
+    { value: FAST_MODEL_OFF, label: t('settings.agent.fastModel.off'), icon: <Ban strokeWidth={1.5} /> },
     // The model on the row; its source as the caption only when two sources offer the same name, one line otherwise
     ...models.map((m, i) => ({
       value: m.pick,
