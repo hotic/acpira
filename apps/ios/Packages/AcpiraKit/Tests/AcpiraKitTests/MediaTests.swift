@@ -258,6 +258,12 @@ struct MediaLoaderTests {
     // A single frame stays a still picture
     let still = try #require(MediaLoader.decodeNow(try Self.gif(delays: [0.1])))
     #expect(!still.animated)
+    #expect(still.stream == nil)
+    // One too long to hold decoded streams from its bytes instead of freezing on its first frame
+    let long = try Self.gif(delays: Array(repeating: 0.04, count: MediaLoader.animationMaxFrames + 1))
+    let streamed = try #require(MediaLoader.decodeNow(long))
+    #expect(!streamed.animated)
+    #expect(streamed.stream == long)
   }
 
   /// A GIF of solid 4×4 frames, one colour each, with these delays

@@ -146,6 +146,7 @@ struct ZoomableImage: UIViewRepresentable {
       ? UIImage.animatedImage(with: image.frames.map { UIImage(cgImage: $0) }, duration: image.loopDuration)
       : nil
     let view = ZoomView(image: picture ?? UIImage(cgImage: image.cgImage))
+    view.stream = image.stream
     updateUIView(view, context: context)
     return view
   }
@@ -163,6 +164,9 @@ final class ZoomView: UIView, UIScrollViewDelegate {
   var onClose: () -> Void = {}
   var onTap: () -> Void = {}
   var motion = true
+  /// A streamed animation's bytes, played while the view is in a window
+  var stream: Data?
+  private let player = StreamPlayer()
   private let scroll = UIScrollView()
   private let picture: UIImageView
   private let pan = UIPanGestureRecognizer()
@@ -191,6 +195,12 @@ final class ZoomView: UIView, UIScrollViewDelegate {
   }
 
   required init?(coder: NSCoder) { nil }
+
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    guard let stream, window != nil else { player.stop(); return }
+    player.play(stream) { [weak self] in self?.picture.image = UIImage(cgImage: $0) }
+  }
 
   override func layoutSubviews() {
     super.layoutSubviews()
