@@ -16,16 +16,16 @@ SwiftUI, Liquid Glass, WebKit and text-layout traps of `apps/ios/Packages/Acpira
 ## Text layout against Chrome
 
 - Blink places a line's baseline from the primary face alone; SwiftUI uses the tallest face, so a PingFang line sits a point lower. `CSSLineRenderer` moves lines to Blink's depth; `cssBaseline()` aligns on it.
-- Chrome advances PingFang by 1.02 em, CoreText by 1 em: `CJKWidth` kerns Han and fullwidth punctuation by 0.02 em.
+- Chrome advances PingFang by 1.02 em, CoreText by 1 em: `CJKWidth` kerns Han and fullwidth punctuation by 0.02 em. Zero-width breaks between widened characters must share the kern span: leaving them unkerned splits a CJK passage into a run per character and per break, multiplying SwiftUI's text resolution during hosted-cell sizing without changing the glyph positions.
 - Chrome breaks between any two ideographs, kana or Hangul; CoreText segments Chinese by words. A zero-width space between them restores Chrome's breaks.
 - TextKit avoids a lone CJK word on the last line; `CJKWidth.paragraphEnd` (U+2060) defeats it.
 - CoreText's fallback from Inter sets PingFang SC Regular at every weight; `InterFont.ctFont` puts the matching weight first.
 
 ## SwiftUI traps
 
-- Environment values never compare closures or dynamic colours equal: a screen handing out fresh ones redraws every reader. Closure sets are made once per session and model (`Memo`); agent accents are static colours.
+- Environment values never compare closures or dynamic colours equal: a screen handing out fresh ones redraws every reader. Closure sets are made once per session and model (`Memo`); the transcript's hold callback stays with `TranscriptControl`, and its text inks and agent accents keep their dynamic colour identity.
 - A plain stack inside one item of a lazy stack is built and laid out whole on any change. Long lists there (a project's rows, a turn's process rows) need their own lazy stack. Outside a scroll view a lazy stack sizes from estimates, so the full-length render stacks plainly.
-- A lazy stack opened at the bottom sizes the items it has not laid out from the ones it has. One item many screens tall (a running turn's open process) made it take every earlier exchange for that tall, and the bottom it opened at held no rows: a blank chat until a drag. The thread's last exchange therefore sits after the lazy stack, not in it, and size changes anchor to the bottom until the first scroll or fold (`Thread`, `ThreadContent`).
+- A lazy stack opened at the bottom sizes the items it has not laid out from the ones it has. One item many screens tall (a running turn's open process) made it take every earlier exchange for that tall, and the bottom it opened at held no rows: a blank chat until a drag. `ThreadContent` (the subagent inspector, the macOS build) therefore keeps the last exchange after the lazy stack, not in it.
 - A `Group` with empty content is no view, so its modifiers never run (`StreamProse` holds a zero-height view).
 - A `@State` initial value is built on every parent rebuild: keep it cheap.
 - A `.task` loop that copies state before `Task.sleep` and writes it back overwrites what `.onChange` stored meanwhile.

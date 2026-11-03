@@ -21,14 +21,25 @@ public enum CJKWidth {
 
   /// Kerns every widened character of `text` by 0.02em of `size`
   public static func widen(_ text: inout AttributedString, size: CGFloat) {
-    var start = text.startIndex
-    while start < text.endIndex {
-      let next = text.characters.index(after: start)
-      if let scalar = text.characters[start].unicodeScalars.first, widened(scalar) {
-        text[start..<next].kern = size * extra
+    var run: AttributedString.Index?
+    var index = text.startIndex
+    while index < text.endIndex {
+      let next = text.characters.index(after: index)
+      let scalar = text.characters[index].unicodeScalars.first
+      let wide = scalar.map(widened) == true
+      // A zero-width break between two widened characters has no advance. Give it the same kern so a CJK
+      // paragraph resolves as a few attributed runs, not a separate run for every ideograph and every break.
+      let bridge = scalar == "\u{200B}" && run != nil && next < text.endIndex
+        && text.characters[next].unicodeScalars.first.map(widened) == true
+      if wide {
+        if run == nil { run = index }
+      } else if !bridge, let start = run {
+        text[start..<index].kern = size * extra
+        run = nil
       }
-      start = next
+      index = next
     }
+    if let start = run { text[start..<text.endIndex].kern = size * extra }
   }
 
   /// Characters Chrome may break between (`word-break: normal`: any two ideographs, kana or Hangul syllables). CoreText
