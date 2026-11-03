@@ -423,6 +423,7 @@
   "composer.modeShort.build": "执行模式",
   "composer.modeShort.workspace": "仅工作区",
   "composer.effort": "推理强度",
+  "composer.configureModels": "配置模型…",
   "composer.standard": "标准",
   "composer.lead": "主模型",
   "composer.sidekick": "副手",

@@ -428,6 +428,7 @@ export const ru = {
   'composer.modeShort.build': 'Сборка',
   'composer.modeShort.workspace': 'Рабочая папка',
   'composer.effort': 'Глубина рассуждений',
+  'composer.configureModels': 'Настроить модели…',
   'composer.standard': 'Стандартный',
   'composer.lead': 'Ведущая',
   'composer.sidekick': 'Помощник',

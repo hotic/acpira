@@ -421,6 +421,7 @@
   "composer.modeShort.build": "빌드",
   "composer.modeShort.workspace": "워크스페이스",
   "composer.effort": "추론 강도",
+  "composer.configureModels": "모델 설정…",
   "composer.standard": "표준",
   "composer.lead": "주 모델",
   "composer.sidekick": "보조 모델",

@@ -424,6 +424,7 @@ export const fr = {
   'composer.modeShort.build': 'Build',
   'composer.modeShort.workspace': 'Espace de travail',
   'composer.effort': 'Effort de raisonnement',
+  'composer.configureModels': 'Configurer les modèles…',
   'composer.lead': 'Principal',
   'composer.sidekick': 'Assistant',
   'composer.sidekickNone': 'Aucun',

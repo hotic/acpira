@@ -113,21 +113,23 @@ export interface SegmentScaleProps<V extends string> {
   bare?: boolean;
   // Every segment the same width instead of sized to its label (equal-length labels, as the approval levels are)
   equal?: boolean;
+  // Label, segments and actions on one row: a panel whose only content is this scale (a single model's effort)
+  inline?: boolean;
 }
 
 // An ordinal single-select (reasoning effort) as one segmented capsule with every level spelled out; the current segment is raised.
 // The header carries only the label and `actions` at its end: the raised segment already names the current level, so it is not repeated.
 // Segments size to their labels and share the spare width, so six Codex levels fit a --pop-w-lg panel on one line.
 // Arrow keys move between segments (Base UI radio group)
-export function SegmentScale<V extends string>({ label, options, value, onChange, actions, bare, equal }: SegmentScaleProps<V>) {
+export function SegmentScale<V extends string>({ label, options, value, onChange, actions, bare, equal, inline }: SegmentScaleProps<V>) {
   return (
-    <div className={cn('flex flex-col gap-1 px-2 pb-1', bare && 'pt-0.5')}>
-      {!bare && <div className="flex min-h-ctl-sm items-center gap-2 text-2">
-        <span className="min-w-0 flex-1 truncate text-fg-2">{label}</span>
-        {actions && <span className="flex shrink-0 items-center gap-1">{actions}</span>}
+    <div className={cn('flex gap-1 px-2 pb-1', inline ? 'items-center gap-2 py-0.5' : 'flex-col', bare && 'pt-0.5')}>
+      {!bare && <div className={cn('flex min-h-ctl-sm items-center gap-2 text-2', inline ? 'shrink-0' : undefined)}>
+        <span className={cn('min-w-0 truncate text-fg-2', !inline && 'flex-1')}>{label}</span>
+        {!inline && actions && <span className="flex shrink-0 items-center gap-1">{actions}</span>}
       </div>}
       <RadioGroup value={value} onValueChange={v => onChange(v as V)} aria-label={label}
-        className="flex min-w-0 gap-0.5 rounded-md bg-hover p-0.5">
+        className={cn('flex min-w-0 gap-0.5 rounded-md bg-hover p-0.5', inline && 'flex-1')}>
         {options.map(o => {
           const on = o.value === value;
           return (
@@ -156,6 +158,7 @@ export function SegmentScale<V extends string>({ label, options, value, onChange
           );
         })}
       </RadioGroup>
+      {inline && actions && <span className="flex shrink-0 items-center gap-1">{actions}</span>}
     </div>
   );
 }

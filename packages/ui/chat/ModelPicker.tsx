@@ -1,5 +1,5 @@
 import { Fragment, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Zap } from 'lucide-react';
+import { Settings, Zap } from 'lucide-react';
 import type { ConfigControl } from '@acpira/shared/transcript';
 import { findFusionVariant, findVariant, fusionLabel, groupModels, optionBrand, visibleOptions, type ModelFamily, type ModelVariant } from '@acpira/shared/models';
 import { chipTags, fastOn, fastValue, isFastControl, isUltraLevel, levelShort, NO_SIDEKICK, presentReasoning, reasoningChip, reasoningVisible } from '@acpira/shared/composerControls';
@@ -11,10 +11,11 @@ import { Popover } from '../ui/Popover';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { Command, SEARCH_FROM } from '../ui/Command';
 import { OptionContent } from '../ui/Panel';
+import { optionClass } from '../ui/DropdownMenu';
 import { ModelMark } from './ModelMark';
 import { PairSwitch, PairViews, type PairRole } from './SidekickPair';
 import { brandStyle } from './subagents/SidekickRelay';
-import { useFitStage } from './useFitStage';
+import { useFitStage, type SqueezeLevel } from './useFitStage';
 import { Collapsible } from '../ui/Collapsible';
 import { cssTimeVar } from '../ui/cssTime';
 
@@ -50,19 +51,24 @@ export function ModelOptions({ control, hidden, onSelect, close }: {
 
 // Every ACP uses the Devin-style model chip and panel. Native reasoning and model
 // parameters join the footer, while embedded variants retain their wire IDs.
-export function ModelControl({ control, hidden, reasoning = [], modelConfig = [], sidekick, sidekickEffort, sidekickLive, hiddenConfig, onSetConfig, onSqueeze, onSelect, onOpenChange }: OptionMenuProps & {
+export function ModelControl({ control, hidden, reasoning = [], modelConfig = [], sidekick, sidekickEffort, sidekickFast, sidekickLive, hiddenConfig, onSetConfig, onSqueeze, onSelect, onOpenChange, onConfigure }: OptionMenuProps & {
   hidden?: string[];
   reasoning?: ConfigControl[];
   modelConfig?: ConfigControl[];
   // The built-in agent's sidekick select and its effort: the panel's second side (PairSwitch); a picked one is spelled out on the chip
   sidekick?: ConfigControl;
   sidekickEffort?: ConfigControl;
+  // Its Fast switch, while its model has a fast tier: the toggle on its side of the panel
+  sidekickFast?: ConfigControl;
   // The sidekick is working a round (chat/subagents/SidekickRelay.tsx)
   sidekickLive?: boolean;
   hiddenConfig?: Record<string, string[]>;
   onSetConfig: (id: string, value: string) => void;
-  // Asks the toolbar to fold its other chips to their icons while the chip cannot keep its name (useFitStage squeeze)
-  onSqueeze?: (on: boolean) => void;
+  // Asks the toolbar to give way while the chip cannot keep its name, then its last form (useFitStage squeeze)
+  onSqueeze?: (level: SqueezeLevel) => void;
+  // Opens the agent's model settings (the built-in agent's providers): the panel's footer entry, so a configured
+  // model list keeps a way back to settings the way the empty composer's add-model chip offers one
+  onConfigure?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const c = useMemo(() => ({ ...control, options: visibleOptions(control.options, hidden, control.value) }), [control, hidden]);
@@ -77,13 +83,14 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
   // when the toolbar has no room; without it the pair was only visible with the panel open (reported 2026-10-26)
   const skPicked = sidekick?.options.find(o => o.id === sidekick.value && o.id !== NO_SIDEKICK);
   const skLevel = skPicked && sidekickEffort ? reasoningChip(sidekickEffort) : undefined;
-  const skLabel = skPicked && [skPicked.name, skLevel].filter(Boolean).join(' ');
+  const skLabel = skPicked && [skPicked.name, skLevel, sidekickFast && fastOn(sidekickFast) ? 'Fast' : undefined].filter(Boolean).join(' ');
   // A single model steps down too (its level to the short form first), not only a pair: it used to keep its full width and
   // run past the send button in a narrow window. Below the compact form the toolbar folds its other chips first (onSqueeze)
   const fit = useFitStage<HTMLButtonElement, HTMLSpanElement>(true, onSqueeze && { stage: 1, set: onSqueeze });
   // Keep the last picked sidekick, its level and its fit stage while the chip's trail folds back for None
   const [lastSk, setLastSk] = useState(skPicked);
   const [lastSkLevel, setLastSkLevel] = useState(skLevel);
+  const skFast = !!skPicked && !!sidekickFast && fastOn(sidekickFast);
   const [lastStage, setLastStage] = useState(0);
   if (skPicked && skPicked !== lastSk) setLastSk(skPicked);
   if (skPicked && skLevel !== lastSkLevel) setLastSkLevel(skLevel);
@@ -100,7 +107,7 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
     const on = CHIP_STAGES[stage]!;
     const skOn = CHIP_STAGES[skPicked ? stage : lastStage]!;
     return <Chip ref={ref} data-land="models" data-part={ref ? 'composer-model' : undefined} narrow="text" title={chip.title} caret={on.caret} data-compact={on.compact ? '' : undefined} icon={<ModelMark family={chip.family} brand={chip.brand} />}
-      trail={sidekick && <SidekickTail open={!!skPicked} live={!!skPicked && !!sidekickLive} name={shownSk?.name} brand={shownSk && optionBrand(shownSk)} named={skOn.names} level={skOn.levels ? shownSkLevel : undefined} animate={!!ref} />}
+      trail={sidekick && <SidekickTail open={!!skPicked} live={!!skPicked && !!sidekickLive} name={shownSk?.name} brand={shownSk && optionBrand(shownSk)} named={skOn.names} level={skOn.levels ? shownSkLevel : undefined} fast={skOn.levels && skFast} animate={!!ref} />}
       tags={on.levels && chip.tags.length ? chip.tags.map(tag => <ChipTag key={tag.label} tone={tag.ultra ? 'ultra' : undefined} icon={tag.fast ? <FastIcon /> : undefined} short={tag.short}>{tag.label}</ChipTag>) : undefined}
       tagsKey={ref ? (on.levels ? chip.tags.map(tag => tag.label).join(' ') : '') : undefined}>
       {on.names ? chip.name : null}
@@ -110,8 +117,15 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
     <Popover.Root open={open} onOpenChange={setOpen} onOpenLifecycle={onOpenChange}>
       <Popover.Trigger render={at(fit.stage, fit.item)} />
       <Popover.Portal><Popover.Positioner side="top" align="end" width="lg"><Popover.Popup palette="menu">
-        <ModelPanel families={families} cur={cur} curVar={curVar} onSelect={onSelect} close={() => setOpen(false)}
-          reasoning={reasoning} modelConfig={modelConfig} sidekick={sk} sidekickEffort={sidekickEffort} hiddenConfig={hiddenConfig} onSetConfig={onSetConfig} />
+        <ModelPanel families={families} cur={cur} curVar={curVar} onSelect={onSelect} close={() => setOpen(false)} fold
+          reasoning={reasoning} modelConfig={modelConfig} sidekick={sk} sidekickEffort={sidekickEffort} sidekickFast={sidekickFast} hiddenConfig={hiddenConfig} onSetConfig={onSetConfig} />
+        {/* The way back to the model settings: a plain menu row under the panel, its gear in the marks' column */}
+        {onConfigure && <div className="mt-1 border-t border-line pt-1">
+          <button type="button" onClick={() => { setOpen(false); onConfigure(); }}
+            className={cn(optionClass, 'transition-colors hover:option-highlighted focus-visible:option-highlighted')}>
+            <OptionContent icon={<Settings className="text-fg-2" strokeWidth={1.5} />}>{t('composer.configureModels')}</OptionContent>
+          </button>
+        </div>}
       </Popover.Popup></Popover.Positioner></Popover.Portal>
     </Popover.Root>
     {/* Every stage laid out once, out of sight and out of the row's flow, for useFitStage to measure */}
@@ -136,14 +150,14 @@ const CHIP_STAGES = [
 // Unfolds when a sidekick is picked and folds back for None (matching the panel's effort section); switching between
 // two sidekicks or levels while open glides the width and fades the new model in place
 // While it works a round its mark takes its vendor's colour with a breathing dot and its name the chip's strong text
-function SidekickTail({ open, live, name, brand, named, level, animate }: {
-  open: boolean; live: boolean; name?: string; brand?: string; named: boolean; level?: string; animate?: boolean;
+function SidekickTail({ open, live, name, brand, named, level, fast, animate }: {
+  open: boolean; live: boolean; name?: string; brand?: string; named: boolean; level?: string; fast?: boolean; animate?: boolean;
 }) {
   const body = useRef<HTMLSpanElement>(null);
   const id = useRef<HTMLSpanElement>(null);
   const width = useRef(0);
   const run = useRef<Animation | null>(null);
-  const prev = useRef({ open, name, level, named });
+  const prev = useRef({ open, name, level, fast, named });
   useLayoutEffect(() => {
     const el = body.current;
     if (!el || !animate) return;
@@ -155,7 +169,7 @@ function SidekickTail({ open, live, name, brand, named, level, animate }: {
   }, [animate]);
   useLayoutEffect(() => {
     const was = prev.current;
-    prev.current = { open, name, level, named };
+    prev.current = { open, name, level, fast, named };
     const el = body.current;
     if (!el || !animate) return;
     if (!open) {
@@ -169,7 +183,7 @@ function SidekickTail({ open, live, name, brand, named, level, animate }: {
     run.current = null;
     const to = el.scrollWidth;
     width.current = to;
-    if (!was.open || was.named !== named || (was.name === name && was.level === level)) return;
+    if (!was.open || was.named !== named || (was.name === name && was.level === level && was.fast === fast)) return;
     if (el.closest('[data-motion="none"]') || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
     if (from > 0 && to > 0 && Math.abs(to - from) > 0.5) {
       const anim = el.animate([{ width: `${from}px` }, { width: `${to}px` }], { duration: cssTimeVar(el, '--dur-open', 220), easing: 'ease-out' });
@@ -179,7 +193,7 @@ function SidekickTail({ open, live, name, brand, named, level, animate }: {
     if (was.name !== name && id.current) {
       id.current.animate([{ opacity: 0, transform: 'translateY(2px)' }, { opacity: 1, transform: 'none' }], { duration: cssTimeVar(el, '--dur', 150), easing: 'ease-out' });
     }
-  }, [open, name, level, named, animate]);
+  }, [open, name, level, fast, named, animate]);
   return (
     <span className="chip-trail sidekick-tail" style={brandStyle(brand)} data-open={open ? '' : undefined} data-live={live ? '' : undefined} aria-hidden={!open || undefined}>
       <span ref={body}>
@@ -190,6 +204,8 @@ function SidekickTail({ open, live, name, brand, named, level, animate }: {
             {named && <span className="sidekick-tail-name whitespace-nowrap">{name}</span>}
           </span>
           {level && <ChipTag tone={isUltraLevel(level) ? 'ultra' : undefined} short={levelShort(level)}>{level}</ChipTag>}
+          {/* The sidekick's Fast, tagged as the lead's is */}
+          {fast && <ChipTag icon={<FastIcon />} short="">Fast</ChipTag>}
         </>}
       </span>
     </span>
@@ -224,31 +240,50 @@ interface ModelPanelProps {
   modelConfig?: ConfigControl[];
   sidekick?: ConfigControl;
   sidekickEffort?: ConfigControl;
+  sidekickFast?: ConfigControl;
   hiddenConfig?: Record<string, string[]>;
   onSetConfig?: (id: string, value: string) => void;
+  // The composer's panel, where a lone model offers no sidekick and its effort fits one row (a plan's Build menu keeps the
+  // stacked form)
+  fold?: boolean;
 }
 
 // One Fast toggle per panel, whatever its source: an embedded model-name variant, a Fusion pair, or a native model_config control
 interface FastState { on: boolean; disabled: boolean; set: (on: boolean) => void }
 
+// The Fast toggle in an effort header: the lead's, and the sidekick's in the same place on its side
+function FastToggle({ fast }: { fast: FastState }) {
+  return <HeaderToggle label="Fast" icon={<Zap className={cn('size-3 shrink-0', fast.on && 'fill-current text-fast')} strokeWidth={2} aria-hidden />}
+    pressed={fast.on} disabled={fast.disabled} onChange={fast.set} />;
+}
+
 function ModelPanel(props: ModelPanelProps) {
-  const { cur, curVar, reasoning = [], modelConfig = [], sidekick, sidekickEffort, onSetConfig } = props;
+  const { cur, curVar, reasoning = [], modelConfig = [], sidekick, sidekickEffort, sidekickFast, onSetConfig } = props;
   // Every open starts on the lead
   const [role, setRole] = useState<PairRole>('lead');
   if (!sidekick) return <LeadPanel {...props} />;
   const picked = sidekick.options.find(o => o.id === sidekick.value && o.id !== NO_SIDEKICK);
+  // A lone model offers no sidekick: the panel is its parameters alone. One still picked from a longer list keeps the pair,
+  // so it can be switched off
+  if (isLone(props) && !picked) return <LeadPanel {...props} />;
   const leadLevel = chipTags(cur, curVar, reasoning, modelConfig, t('composer.standard')).find(tag => !tag.fast)?.label;
   return <>
     <PairSwitch role={role} onRole={setRole}
       lead={{ name: cur?.name, brand: cur?.brand, level: leadLevel }}
       sidekick={{ name: picked?.name, brand: picked && optionBrand(picked), level: picked && sidekickEffort ? reasoningChip(sidekickEffort) : undefined }} />
     <PairViews role={role} lead={<LeadPanel {...props} />}
-      sidekick={<SidekickPanel control={sidekick} effort={sidekickEffort} onSetConfig={(id, value) => onSetConfig?.(id, value)} />} />
+      sidekick={<SidekickPanel control={sidekick} effort={sidekickEffort} fast={sidekickFast} onSetConfig={(id, value) => onSetConfig?.(id, value)} />} />
   </>;
 }
 
+// One model with something to set, in the composer's panel
+function isLone({ families, cur, curVar, reasoning = [], modelConfig = [], fold }: ModelPanelProps) {
+  const params = !!(cur && curVar && cur.variants.length > 1) || reasoning.some(reasoningVisible) || modelConfig.length > 0;
+  return !!fold && params && families.length === 1 && families[0] === cur;
+}
+
 // The model list and the lead's parameters: the whole panel, or the lead's side of PairSwitch (which sets the panel's height)
-function LeadPanel({ families, cur, curVar, onSelect, close, reasoning = [], modelConfig = [], hiddenConfig, onSetConfig }: ModelPanelProps) {
+function LeadPanel({ families, cur, curVar, onSelect, close, reasoning = [], modelConfig = [], hiddenConfig, onSetConfig, fold }: ModelPanelProps) {
   const pickFamily = (key: string) => {
     const f = families.find(x => x.key === key);
     if (!f) return;
@@ -272,11 +307,15 @@ function LeadPanel({ families, cur, curVar, onSelect, close, reasoning = [], mod
   const embeddedScale = showParams && (cur!.fusion ? fusionEfforts(cur!, curVar!).length > 1 : variantScale(cur!));
   const reasoningScale = shown.findIndex(control => presentReasoning(control).efforts.length > 1);
   const owner = !fast ? undefined : embeddedScale ? 'embedded' : reasoningScale >= 0 ? 'reasoning' : 'row';
-  const toggle = fast && <HeaderToggle label="Fast" icon={<Zap className={cn('size-3 shrink-0', fast.on && 'fill-current text-fast')} strokeWidth={2} aria-hidden />}
-    pressed={fast.on} disabled={fast.disabled} onChange={fast.set} />;
+  const toggle = fast && <FastToggle fast={fast} />;
   const rest = modelConfig.filter(control => control !== usedNative);
+  const hasParams = showParams || shown.length > 0 || modelConfig.length > 0;
+  // One model and something to set: a lone effort scale fits on one row
+  const lone = isLone({ families, cur, curVar, reasoning, modelConfig, fold, onSelect, close });
+  const inline = lone && (showParams ? 1 : 0) + shown.length + rest.length + (owner === 'row' ? 1 : 0) === 1;
   return (
     <>
+      {/* Always listed, a lone model too: its checked row is what the panel is about */}
       <Command.Root items={families} value={cur ?? null} itemToStringLabel={f => [f.name, f.source].filter(Boolean).join(' ')}
         itemToStringValue={f => f.key} isItemEqualToValue={(a, b) => a.key === b.key}>
         <Command.Input visible={families.length >= SEARCH_FROM} />
@@ -287,12 +326,12 @@ function LeadPanel({ families, cur, curVar, onSelect, close, reasoning = [], mod
           </Command.Item>}
         </Command.List>
       </Command.Root>
-      {(showParams || shown.length > 0 || modelConfig.length > 0) && <div className="mt-1 flex flex-col gap-0.5 border-t border-line pt-1.5">
+      {hasParams && <div className="mt-1 flex flex-col gap-0.5 border-t border-line pt-1.5">
         {showParams && (cur!.fusion
           ? <FusionParams family={cur!} variant={curVar!} onSelect={onSelect} actions={owner === 'embedded' ? toggle : undefined} />
-          : <ModelParams family={cur!} variant={curVar!} onSelect={onSelect} actions={owner === 'embedded' ? toggle : undefined} />)}
+          : <ModelParams family={cur!} variant={curVar!} onSelect={onSelect} actions={owner === 'embedded' ? toggle : undefined} inline={inline} />)}
         {shown.map((control, i) => <ReasoningParams key={control.id} control={control} onChange={value => onSetConfig?.(control.id, value)}
-          actions={owner === 'reasoning' && i === reasoningScale ? toggle : undefined} />)}
+          actions={owner === 'reasoning' && i === reasoningScale ? toggle : undefined} inline={inline} />)}
         {owner === 'row' && <SwitchRow label="Fast" checked={fast!.on} disabled={fast!.disabled} onChange={fast!.set} />}
         {rest.map(control => <ModelConfigParams key={control.id} control={control} hidden={hiddenConfig?.[control.id]} onChange={value => onSetConfig?.(control.id, value)} />)}
       </div>}
@@ -373,12 +412,15 @@ function FusionParams({ family: f, variant: v, onSelect, actions }: { family: Mo
 // sidekick's own effort scale while its model has levels. A pick keeps the panel open, since the effort is set right below.
 // The side fills the lead's height (`.pair-view`), its list taking what the scale leaves: the scale slides in under the list
 // once a model with levels is picked and back out for none, keeping the last levels while it closes
-function SidekickPanel({ control, effort, onSetConfig }: { control: ConfigControl; effort?: ConfigControl; onSetConfig: (id: string, value: string) => void }) {
+function SidekickPanel({ control, effort, fast: fastControl, onSetConfig }: { control: ConfigControl; effort?: ConfigControl; fast?: ConfigControl; onSetConfig: (id: string, value: string) => void }) {
   const cur = control.options.find(o => o.id === (control.value ?? NO_SIDEKICK));
   const live = effort && reasoningVisible(effort) ? effort : undefined;
   const [last, setLast] = useState(live);
   if (live && live !== last) setLast(live);
   const scale = live ?? last;
+  // The sidekick's Fast sits where the lead's does: in the effort scale's header, else a switch row of its own
+  const fast = fastControl && nativeFastState(fastControl, undefined, value => onSetConfig(fastControl.id, value));
+  const onScale = !!fast && !!live && presentReasoning(live).efforts.length > 1;
   const twoLine = control.options.some(o => o.description);
   return <>
     <Command.Root items={control.options} value={cur ?? null} itemToStringValue={o => o.id} isItemEqualToValue={(a, b) => a.id === b.id}
@@ -393,9 +435,10 @@ function SidekickPanel({ control, effort, onSetConfig }: { control: ConfigContro
         </Command.Item>}
       </Command.List>
     </Command.Root>
-    <Collapsible.Section open={!!live} className="shrink-0">
-      {scale && <div className="mt-1 flex flex-col gap-0.5 border-t border-line pt-1.5">
-        <ReasoningParams control={scale} onChange={value => onSetConfig(scale.id, value)} />
+    <Collapsible.Section open={!!live || !!fast} className="shrink-0">
+      {(scale || fast) && <div className="mt-1 flex flex-col gap-0.5 border-t border-line pt-1.5">
+        {scale && (live || !fast) && <ReasoningParams control={scale} onChange={value => onSetConfig(scale.id, value)} actions={onScale ? <FastToggle fast={fast!} /> : undefined} />}
+        {fast && !onScale && <SwitchRow label="Fast" checked={fast.on} disabled={fast.disabled} onChange={fast.set} />}
       </div>}
     </Collapsible.Section>
   </>;
@@ -404,12 +447,12 @@ function SidekickPanel({ control, effort, onSetConfig }: { control: ConfigContro
 // Params of the current family as a small form under the list: reasoning levels as one segmented scale (every level spelled out, one click),
 // Fast as a toggle in its header. A lone Standard / Thinking pair is a Thinking switch. Every change applies immediately; 1M variants are
 // not offered (a level change keeps the standard context), and a Fast the current level lacks is disabled rather than hidden
-function ModelParams({ family: f, variant: v, onSelect, actions }: { family: ModelFamily; variant: ModelVariant; onSelect: (id: string) => void; actions?: ReactNode }) {
+function ModelParams({ family: f, variant: v, onSelect, actions, inline }: { family: ModelFamily; variant: ModelVariant; onSelect: (id: string) => void; actions?: ReactNode; inline?: boolean }) {
   const pickEffort = (e: string) => { const hit = findVariant(f, e, v.fast, false); if (hit) onSelect(hit.id); };
   return (
     <div className="flex flex-col">
       {variantScale(f) && (
-        <EffortField options={f.efforts.map(e => ({ value: e, label: e || t('composer.standard') }))} value={v.effort} onChange={pickEffort} actions={actions} />
+        <EffortField options={f.efforts.map(e => ({ value: e, label: e || t('composer.standard') }))} value={v.effort} onChange={pickEffort} actions={actions} inline={inline && fitsRow(f.efforts.length, actions)} />
       )}
       {thinkingOnly(f) && (
         <SwitchRow label="Thinking" checked={v.effort === 'Thinking'} disabled={!findVariant(f, v.effort === 'Thinking' ? '' : 'Thinking', v.fast, false)} onChange={on => pickEffort(on ? 'Thinking' : '')} />
@@ -419,28 +462,33 @@ function ModelParams({ family: f, variant: v, onSelect, actions }: { family: Mod
 }
 
 // Native thought_level: effort segments (Codex's Ultra tinted as the last one), plus a Thinking switch when the agent can turn it off.
-function ReasoningParams({ control, onChange, actions }: { control: ConfigControl; onChange: (value: string) => void; actions?: ReactNode }) {
+function ReasoningParams({ control, onChange, actions, inline }: { control: ConfigControl; onChange: (value: string) => void; actions?: ReactNode; inline?: boolean }) {
   const p = presentReasoning(control);
   const turnOn = p.efforts.find(o => o.id === 'high')?.id ?? p.efforts[0]?.id ?? p.onId;
   return (
     <div className="flex flex-col">
       {p.offId && <SwitchRow label="Thinking" checked={!p.off} onChange={on => { if (on) { if (turnOn) onChange(turnOn); } else onChange(p.offId!); }} />}
       {p.efforts.length > 1 && (
-        <EffortField options={p.efforts.map(o => ({ value: o.id, label: o.name, ultra: isUltraLevel(o.name) }))} value={p.off ? '' : (p.value ?? '')} onChange={onChange} actions={actions} />
+        <EffortField options={p.efforts.map(o => ({ value: o.id, label: o.name, ultra: isUltraLevel(o.name) }))} value={p.off ? '' : (p.value ?? '')} onChange={onChange} actions={actions} inline={inline && !p.offId && fitsRow(p.efforts.length, actions)} />
       )}
     </div>
   );
 }
 
+// One row holds the label and four segments at the panel's width, or three beside a header action (the Fast toggle);
+// longer scales keep the label above them
+const fitsRow = (levels: number, actions?: ReactNode) => levels + (actions ? 1 : 0) <= 4;
+
 // Shared ordinal field for embedded variants, Fusion leads and native thought_level: one segmented scale for any level count
-function EffortField({ options, value, onChange, actions, label = t('composer.effort') }: {
+function EffortField({ options, value, onChange, actions, inline, label = t('composer.effort') }: {
   options: { value: string; label: string; ultra?: boolean }[];
   value: string;
   onChange: (value: string) => void;
   actions?: ReactNode;
+  inline?: boolean;
   label?: string;
 }) {
-  return <SegmentScale label={label} options={options} value={value} onChange={onChange} actions={actions} />;
+  return <SegmentScale label={label} options={options} value={value} onChange={onChange} actions={actions} inline={inline} />;
 }
 
 // Flat configOption menu; long lists are searchable. Vendor marks only appear when at least one option has a known brand
