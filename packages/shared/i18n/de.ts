@@ -704,6 +704,7 @@ export const de = {
   'host.sessionElsewhere': 'Eine andere Acpira-Engine hat diese Sitzung geöffnet (ein anderer Arbeitsbereich oder ein anderes Fenster, oder eine ältere Version nach einem Update). Übernimm sie hier, um fortzufahren; die andere Seite wird schreibgeschützt.',
   'host.sessionTakenOver': 'Eine andere Acpira-Engine hat diese Sitzung übernommen; hier ist sie jetzt schreibgeschützt. Übernimm sie hier, um fortzufahren.',
   'host.takeOverTimeout': 'Die andere Acpira-Engine hat die Sitzung nicht innerhalb von 10 Sekunden freigegeben; versuche es erneut.',
+  'host.newSessionTimeout': 'Der Agent hat die Sitzung nicht innerhalb von 90 Sekunden geöffnet; versuche es erneut.',
   'host.sessionBusyElsewhere': 'Eine andere Acpira-Engine hat diese Sitzung gerade geöffnet; übernimm sie hier, um fortzufahren.',
   'host.sessionCopy': 'Diese Sitzung läuft auf {machine}. Hier ist sie nur lesbar; fahre auf diesem Computer fort.',
   'host.sessionCopyAnother': 'einem anderen Computer',

@@ -710,6 +710,7 @@ export const en = {
   'host.sessionElsewhere': 'Another Acpira engine has this session open (another workspace or window, or an older version after an update). Take it over to continue here; the other side becomes read-only.',
   'host.sessionTakenOver': 'Another Acpira engine took this session over; it is read-only here now. Take it over to continue here.',
   'host.takeOverTimeout': 'The other Acpira engine did not let go of the session within 10 seconds; try again.',
+  'host.newSessionTimeout': 'The agent did not open the session within 90 seconds; try again.',
   'host.sessionBusyElsewhere': 'Another Acpira engine has this session open right now; take it over to continue here.',
   'host.sessionCopy': 'This session runs on {machine}. It is read-only here; continue it on that computer.',
   'host.sessionCopyAnother': 'another computer',

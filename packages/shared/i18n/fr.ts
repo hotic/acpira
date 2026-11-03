@@ -703,6 +703,7 @@ export const fr = {
   'host.sessionElsewhere': 'Un autre moteur Acpira a cette session ouverte (un autre espace de travail ou une autre fenêtre, ou une ancienne version après une mise à jour). Reprenez-la ici pour continuer ; l\'autre côté passe en lecture seule.',
   'host.sessionTakenOver': 'Un autre moteur Acpira a repris cette session ; elle est en lecture seule ici. Reprenez-la ici pour continuer.',
   'host.takeOverTimeout': 'L\'autre moteur Acpira n\'a pas libéré la session en 10 secondes ; réessayez.',
+  'host.newSessionTimeout': 'L\'agent n\'a pas ouvert la session en 90 secondes ; réessayez.',
   'host.sessionBusyElsewhere': 'Un autre moteur Acpira a cette session ouverte ; reprenez-la ici pour continuer.',
   'host.sessionCopy': 'Cette session s\'exécute sur {machine}. Ici, elle est en lecture seule ; poursuivez-la sur cet ordinateur.',
   'host.sessionCopyAnother': 'un autre ordinateur',
