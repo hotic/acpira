@@ -55,9 +55,15 @@ pub async fn online(ep: &Endpoint, within: Duration) -> bool {
 /// How this endpoint can be reached now: its home relay and the addresses worth giving a peer (no proxy TUN address,
 /// no loopback). What goes into a ticket and the `addresses` update
 pub fn reachable_at(ep: &Endpoint) -> (Option<RelayUrl>, Vec<SocketAddr>) {
+  reachable_without(ep, &[])
+}
+
+/// `reachable_at` without the addresses in `skip` (adapters no device reaches this computer through), dropped before
+/// the few are picked so they never take a real address's place
+pub fn reachable_without(ep: &Endpoint, skip: &[std::net::IpAddr]) -> (Option<RelayUrl>, Vec<SocketAddr>) {
   let a = ep.addr();
   let relay = a.relay_urls().next().cloned();
-  (relay, worth_giving(a.ip_addrs().copied()))
+  (relay, worth_giving(a.ip_addrs().copied().filter(|sa| !skip.contains(&sa.ip()))))
 }
 
 /// At most a few addresses of each kind, the likeliest first: a Mac on IPv6 lists half a dozen rotating privacy

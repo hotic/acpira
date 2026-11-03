@@ -242,6 +242,10 @@ pub struct GatewayStatus {
   /// Keeping the computer awake was asked for and could not be had: why (the system's refusal, a missing tool)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub awake_error: Option<String>,
+  /// Windows Firewall turns away devices on the network this computer is on (gateway `firewall.rs`): only the relay
+  /// reaches it until `AllowLan`
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub lan_blocked: bool,
 }
 
 /// A request on the gateway's control socket (`<ACPIRA_HOME>/run/gateway.sock`): one JSON line each, answered by one
@@ -258,6 +262,8 @@ pub enum GatewayRequest {
   Rename { id: String, name: String },
   /// Read `gateway.json` again (keep-awake; relays need a restart)
   Reload,
+  /// Let devices on this network in through Windows Firewall (a UAC prompt). Answered at once; the status follows
+  AllowLan,
   Stop,
   /// A session wants the user: the gateway pushes it to the paired phones that registered for notifications. Sent by
   /// the engine that runs the session, whatever its shell; the gateway decides whether the user is at the computer
@@ -347,6 +353,8 @@ pub enum RemoteAccessOp {
   SetKeepAwake { on: bool },
   /// The name devices see for this computer; blank goes back to the computer's own name
   SetName { name: String },
+  /// Let devices on this network in through Windows Firewall (`GatewayStatus::lan_blocked`)
+  AllowLan,
 }
 
 #[cfg(test)]

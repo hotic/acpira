@@ -50,6 +50,8 @@ export interface GatewayStatus {
   pairing?: PairingStatus;
   /** Keeping the computer awake was asked for and could not be had: why */
   awakeError?: string;
+  /** Windows Firewall turns away devices on this computer's network: only the relay reaches it until `allowLan` */
+  lanBlocked?: boolean;
 }
 
 export interface RemoteAccessView {
@@ -83,4 +85,6 @@ export type RemoteAccessOp =
   | { op: 'setRelays'; relays: Relays }
   | { op: 'setKeepAwake'; on: boolean }
   // This computer's name as devices see it; blank goes back to the computer's own
-  | { op: 'setName'; name: string };
+  | { op: 'setName'; name: string }
+  // Windows Firewall lets devices on this network in (a UAC prompt); the view follows once it is answered
+  | { op: 'allowLan' };
