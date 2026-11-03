@@ -50,6 +50,8 @@ pub struct Gateway {
   keep_awake: std::sync::atomic::AtomicBool,
   /// Why keeping the computer awake failed, while it does
   awake_error: parking_lot::Mutex<Option<String>>,
+  /// Windows Firewall turns away devices on this network (`firewall.rs`); read at start and with each pairing window
+  lan_blocked: std::sync::atomic::AtomicBool,
   window: parking_lot::Mutex<Option<OpenWindow>>,
   live: parking_lot::Mutex<HashMap<String, Live>>,
   changed: tokio::sync::watch::Sender<u64>,
@@ -88,6 +90,7 @@ impl Gateway {
       engine: o.engine,
       keep_awake: cfg.keep_awake.into(),
       awake_error: Default::default(),
+      lan_blocked: Default::default(),
       window: Default::default(),
       live: Default::default(),
       changed: tokio::sync::watch::channel(0).0,
@@ -97,6 +100,9 @@ impl Gateway {
     (g.log)(&format!("gateway {} listening as {}", VERSION, g.ep.id()));
     tokio::spawn(accept_loop(g.clone()));
     tokio::spawn(relay_watch(g.clone()));
+    if !g.test_bind {
+      tokio::spawn(check_lan(g.clone()));
+    }
     if g.relays != Relays::Off {
       let log = g.log.clone();
       endpoint::watch_relay(g.ep.clone(), Duration::from_secs(30), move |l| log(l));
@@ -136,6 +142,21 @@ impl Gateway {
     self.bump();
   }
 
+  /// Let devices on this network in through Windows Firewall: a UAC prompt, then the rules read again. The answer comes
+  /// back as the status, so the engine's request never waits on the user
+  pub fn allow_lan(self: &Arc<Self>) {
+    let g = self.clone();
+    tokio::spawn(async move {
+      match crate::firewall::allow().await {
+        Ok(()) => (g.log)("firewall: inbound rule for this network written"),
+        Err(e) => (g.log)(&format!("firewall: not allowed ({e:#})")),
+      }
+      check_lan(g.clone()).await;
+      // Declined leaves the answer as it was: the push still tells the page the prompt is over
+      g.bump();
+    });
+  }
+
   fn bump(&self) {
     self.changed.send_modify(|n| *n += 1);
   }
@@ -168,11 +189,12 @@ impl Gateway {
       devices,
       pairing,
       awake_error: self.awake_error.lock().clone(),
+      lan_blocked: self.lan_blocked.load(std::sync::atomic::Ordering::Relaxed),
     }
   }
 
   fn ticket(&self, secret: [u8; 32]) -> PairTicket {
-    let (relay, mut addrs) = endpoint::reachable_at(&self.ep);
+    let (relay, mut addrs) = self.reachable();
     if self.test_bind {
       addrs = self.ep.bound_sockets();
     }
@@ -188,6 +210,10 @@ impl Gateway {
     let secret = w.secret();
     *self.window.lock() = Some(OpenWindow { w, _advert: advert });
     self.bump();
+    // The network may have changed since the last look (a new Wi-Fi is filed as public)
+    if !self.test_bind {
+      tokio::spawn(check_lan(self.clone()));
+    }
     // The window closes on its own: drop it, and with it the advertisement, unless a newer one replaced it
     let me = Arc::downgrade(self);
     tokio::spawn(async move {
@@ -203,11 +229,16 @@ impl Gateway {
     p
   }
 
+  /// Where devices can reach this computer, as a ticket and a pairing reply give it: the endpoint's addresses without
+  /// those on virtual adapters (`virtual_ips`)
+  fn reachable(&self) -> (Option<acpira_net::RelayUrl>, Vec<SocketAddr>) {
+    endpoint::reachable_without(&self.ep, &virtual_ips())
+  }
+
   /// LAN addresses for the advertisement: a phone on this network dials one of them
   fn lan_addrs(&self) -> Vec<SocketAddr> {
-    let (_, addrs) = endpoint::reachable_at(&self.ep);
-    let bridges = bridge_ips();
-    addrs.into_iter().filter(|a| acpira_net::path::classify_ip(a.ip()) == PathKind::Lan && !bridges.contains(&a.ip())).collect()
+    let (_, addrs) = self.reachable();
+    addrs.into_iter().filter(|a| acpira_net::path::classify_ip(a.ip()) == PathKind::Lan).collect()
   }
 
   pub fn cancel_pairing(&self) {
@@ -266,7 +297,7 @@ impl Gateway {
     }
     (self.log)(&format!("paired {} ({})", req.name, conn_id.fmt_short()));
     self.bump();
-    let (relay, addrs) = endpoint::reachable_at(&self.ep);
+    let (relay, addrs) = self.reachable();
     PairReply::Paired { name: self.name(), relay: relay.map(|u| u.to_string()), addrs: addrs.iter().map(ToString::to_string).collect() }
   }
 }
@@ -394,12 +425,26 @@ async fn read_blob(sessions_dir: Option<&Path>, req: &BlobRequest) -> std::resul
   }
 }
 
-/// The home relay comes and goes (a network change, a relay restart): the status shows it
+/// Whether Windows Firewall turns devices on this network away; the status changes only when the answer does
+async fn check_lan(g: Arc<Gateway>) {
+  let now = crate::firewall::blocked().await;
+  if g.lan_blocked.swap(now, std::sync::atomic::Ordering::Relaxed) != now {
+    (g.log)(if now { "firewall: devices on this network are turned away" } else { "firewall: devices on this network get in" });
+    g.bump();
+  }
+}
+
+/// The home relay comes and goes (a network change, a relay restart): the status shows it, and the log keeps each
+/// change, so a pairing that found no way through can be told apart from one the LAN alone failed
 async fn relay_watch(g: Arc<Gateway>) {
   let mut last = None;
   loop {
     let now = (endpoint::relay_connected(&g.ep), endpoint::reachable_at(&g.ep).0);
     if last.as_ref() != Some(&now) {
+      if g.relays != Relays::Off {
+        let at = now.1.as_ref().map(ToString::to_string).unwrap_or_else(|| "none".into());
+        (g.log)(&format!("relay: {} (home {at})", if now.0 { "connected" } else { "not connected" }));
+      }
       last = Some(now);
       g.bump();
     }
@@ -410,18 +455,31 @@ async fn relay_watch(g: Arc<Gateway>) {
   }
 }
 
-/// Addresses on Linux's container and VM bridges (Docker, Podman, libvirt, LXC): private, yet no phone reaches the computer
-/// through one, and each takes room in the TXT record's 255-byte `a=` item, which would cut the real address off
-#[cfg(target_os = "linux")]
-fn bridge_ips() -> Vec<std::net::IpAddr> {
-  const BRIDGES: &[&str] = &["docker", "br-", "veth", "virbr", "podman", "cni", "flannel", "lxc", "lxd"];
+/// Addresses on virtual adapters: container and VM bridges (Docker, Podman, libvirt, LXC; on Windows WSL and Hyper-V's
+/// vEthernet, VMware, VirtualBox) and proxy TUN devices (Clash Verge's Meta / Mihomo). No phone reaches the computer
+/// through one, yet each would take one of the few places in the QR code and the TXT record's 255-byte `a=` item, and
+/// cut the real address off. Tailscale stays: a phone on the same tailnet does reach it there
+#[cfg(any(target_os = "linux", windows))]
+fn virtual_ips() -> Vec<std::net::IpAddr> {
+  #[cfg(target_os = "linux")]
+  const VIRTUAL: &[&str] = &["docker", "br-", "veth", "virbr", "podman", "cni", "flannel", "lxc", "lxd", "meta", "mihomo", "clash"];
+  // Adapters' friendly names, as Get-NetIPAddress shows them
+  #[cfg(windows)]
+  const VIRTUAL: &[&str] = &["vethernet", "vmware", "virtualbox", "meta", "mihomo", "clash"];
   let all = if_addrs::get_if_addrs().unwrap_or_default();
-  all.into_iter().filter(|i| BRIDGES.iter().any(|b| i.name.starts_with(b))).map(|i| i.ip()).collect()
+  all.into_iter().filter(|i| virtual_name(&i.name, VIRTUAL)).map(|i| i.ip()).collect()
 }
 
-#[cfg(not(target_os = "linux"))]
-fn bridge_ips() -> Vec<std::net::IpAddr> {
+#[cfg(not(any(target_os = "linux", windows)))]
+fn virtual_ips() -> Vec<std::net::IpAddr> {
   Vec::new()
+}
+
+/// An adapter name starting with one of `prefixes`, case aside
+#[cfg_attr(not(any(target_os = "linux", windows, test)), expect(dead_code, reason = "only Linux and Windows read adapter names"))]
+fn virtual_name(name: &str, prefixes: &[&str]) -> bool {
+  let name = name.to_ascii_lowercase();
+  prefixes.iter().any(|p| name.starts_with(p))
 }
 
 /// The computer's name as the user set it (macOS: Sharing settings; Linux: the pretty host name), else the host name
@@ -515,6 +573,17 @@ pub fn qr_rows(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn tells_virtual_adapters_by_name() {
+    let win = &["vethernet", "vmware", "virtualbox", "meta", "mihomo", "clash"];
+    assert!(virtual_name("vEthernet (WSL (Hyper-V firewall))", win));
+    assert!(virtual_name("Meta", win));
+    assert!(virtual_name("VMware Network Adapter VMnet8", win));
+    assert!(!virtual_name("WLAN 3", win));
+    assert!(!virtual_name("Tailscale", win));
+    assert!(!virtual_name("以太网 2", win));
+  }
 
   #[test]
   fn the_pretty_host_name_reads_as_hostnamectl_writes_it() {

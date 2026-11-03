@@ -82,6 +82,10 @@ async fn client(g: Arc<Gateway>, s: ServerStream, stop: Arc<tokio::sync::Notify>
         g.reload();
         json!({ "ok": true })
       }
+      Request::AllowLan => {
+        g.allow_lan();
+        json!({ "ok": true })
+      }
       Request::Notify(note) => {
         g.notify(note);
         json!({ "ok": true })

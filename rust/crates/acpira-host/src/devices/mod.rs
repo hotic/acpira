@@ -218,6 +218,7 @@ impl RemoteAccess {
       O::CancelPair => self.request(&GatewayRequest::CancelPair).await.map(drop),
       O::Revoke { id } => self.request(&GatewayRequest::Revoke { id }).await.map(drop),
       O::Rename { id, name } => self.request(&GatewayRequest::Rename { id, name }).await.map(drop),
+      O::AllowLan => self.request(&GatewayRequest::AllowLan).await.map(drop),
       O::SetRelays { relays } => {
         self.edit_config(|c| c["relays"] = serde_json::to_value(&relays).unwrap_or_default()).await?;
         // The endpoint is bound with its relays: a running gateway starts over (its devices reconnect on their own)

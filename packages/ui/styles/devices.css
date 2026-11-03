@@ -130,6 +130,9 @@
   .dv-name[data-editing] .dv-name-pen { opacity: 0; pointer-events: none; }
 
   /* The code's slot: the code in its block, and once paired the live path in its place, under the title */
+  .dv-lan { text-wrap: balance; animation: dv-fade 320ms ease backwards; }
+  /* The firewall's row starts where the code slot's label does */
+  .dv-lan-row { padding-left: 12px; }
   .dv-slot { position: relative; height: 46px; }
   .dv-slot-bg { position: absolute; inset: 0; border-radius: var(--r-lg); background: var(--chip); transition: opacity 220ms ease; }
   .dv-slot[data-success] .dv-slot-bg { opacity: 0; }

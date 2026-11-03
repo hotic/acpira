@@ -8,6 +8,7 @@ pub mod bridge;
 pub mod cli;
 pub mod control;
 pub mod engine;
+pub mod firewall;
 pub mod gateway;
 pub mod presence;
 pub mod push;

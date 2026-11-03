@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type 
 import { Check, Laptop, Pencil, Smartphone, Tablet } from 'lucide-react';
 import type { DeviceKind, DeviceStatus, GatewayStatus, PathKind } from '@acpira/shared/devices';
 import { cn } from '../ui/cn';
-import { ChipTag } from '../ui/Button';
+import { Button, ChipTag } from '../ui/Button';
 import { MarkSvg } from '../chat/marks';
 import { windowsOS } from '../desktop';
 import { t } from '../i18n';
@@ -23,6 +23,8 @@ const RENEW_LEAD_MS = 1500;
 const LATE_MS = 30_000;
 // A fresh code's ring fills clockwise before it starts burning
 const REFILL_MS = 560;
+// How long the home relay may be missing before the card says so: a gateway that just started is still reaching it
+const RELAY_GRACE_MS = 8000;
 
 const still = (el?: Element | null) => (el?.closest('[data-motion="none"]') ?? null) !== null || matchMedia('(prefers-reduced-motion: reduce)').matches;
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
@@ -100,6 +102,22 @@ export function usePairing(active: boolean): Pairing {
     return () => clearTimeout(id);
   }, [active, paired, code]);
   return { gateway, clock, paired: devices?.find(d => d.id === paired) };
+}
+
+/**
+ * Why only a device on this computer's network can pair now: relays turned off, or the home relay out of reach past a
+ * grace (just started, a network change). The QR code then carries LAN addresses alone, and the code needs the LAN anyway
+ */
+export function useLanOnly(gateway?: GatewayStatus): boolean {
+  const off = gateway?.relays.mode === 'off';
+  const down = !!gateway && !off && !gateway.relayConnected;
+  const [late, setLate] = useState(false);
+  useEffect(() => {
+    if (!down) { setLate(false); return; }
+    const id = setTimeout(() => setLate(true), RELAY_GRACE_MS);
+    return () => clearTimeout(id);
+  }, [down]);
+  return off || (down && late);
 }
 
 // One line replaced in place: every variant in one grid cell, so the box keeps the largest
@@ -298,7 +316,20 @@ export function PairingCore({ pairing, glyphRef, className }: PairingCoreProps) 
   const digits = shown?.key ?? code?.code;
   // No code yet (the gateway starting, the first code on its way): the ring's track and the mark hold the place
   const waiting = !shown && !success;
+  const lanOnly = useLanOnly(gateway);
+  const lanBlocked = !!gateway?.lanBlocked;
+  // The UAC prompt is up: one at a time, until the gateway's next report
+  const [asking, setAsking] = useState(false);
+  useEffect(() => setAsking(false), [gateway]);
   return <div className={cn('flex flex-col items-center', className)}>
+    {/* Over the code, so it comes in above and nothing under it moves (the card hangs from its bottom edge); it stays
+        through a pairing, so the success moment keeps its frame. The firewall comes first: it is the one with a fix */}
+    {lanBlocked
+      ? <div className="dv-lan dv-lan-row mb-pad flex w-full items-center justify-between gap-gap">
+        <span className="min-w-0 truncate text-3 text-fg-2">{t('devices.lanBlocked')}</span>
+        <Button disabled={asking} onClick={() => { setAsking(true); remoteAccessOp({ op: 'allowLan' }); }}>{t('devices.lanBlocked.allow')}</Button>
+      </div>
+      : lanOnly && <p className="dv-lan mb-pad text-center text-3 text-fg-2">{t('devices.lanOnly')}</p>}
     <div className="dv-qr" data-success={success || undefined} data-copied={copied || undefined} data-waiting={waiting || undefined}
       style={{ '--dv-qr': `${QR_BOX}px`, '--dv-hole': hole, '--dv-bands': BAND_COUNT } as CSSProperties}>
       <button type="button" className="dv-qr-hit" onClick={copy} disabled={success || !code} title={t('devices.copyLink')} aria-label={t('devices.qrLabel')}>

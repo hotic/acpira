@@ -30,10 +30,13 @@ webpki-roots = "1"
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 
-# The pairing window's advertisement on Linux, beside Avahi (bonjour.rs), without container and VM bridges (gateway.rs)
+# The pairing window's advertisement on Linux, beside Avahi (bonjour.rs)
 [target.'cfg(target_os = "linux")'.dependencies]
-if-addrs = "0.15"
 mdns-sd = { version = "0.21", default-features = false }
+
+# Adapter names, to leave virtual adapters out of the addresses a device is given (gateway.rs `virtual_ips`)
+[target.'cfg(any(target_os = "linux", windows))'.dependencies]
+if-addrs = "0.15"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true
