@@ -323,6 +323,23 @@ pub fn self_agent(exe: &str, root: &std::path::Path) -> AgentDef {
   }
 }
 
+/// The error for an agent whose binary cannot be found. When that binary is the engine's own (the built-in agent, a
+/// plugin's specialised agent), an IDE replaced the install under this running engine, and the cure is reloading the
+/// window onto the new engine, not installing a CLI
+pub fn not_found(def: &AgentDef) -> anyhow::Error {
+  let own = std::env::current_exe().ok().is_some_and(|exe| is_own_binary(&def.command, &exe.to_string_lossy()));
+  if own {
+    anyhow!(crate::i18n::t("host.engineReplaced"))
+  } else {
+    anyhow!(tp("host.notFound", &[("command", &def.command), ("agent", &def.name)]))
+  }
+}
+
+/// Linux reports a deleted executable as `<path> (deleted)`
+fn is_own_binary(command: &str, exe: &str) -> bool {
+  command == exe || exe.strip_suffix(" (deleted)") == Some(command)
+}
+
 /// Custom agents from the machine-local agents.json (id → definition fragment)
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -675,6 +675,8 @@
   "attach.viewSource": "Ver código fuente",
   "mention.noFiles": "No hay archivos que coincidan",
   "host.notFound": "No se encontró {command}: instala primero el CLI de {agent}",
+  "host.engineReplaced": "Acpira se actualizó en este equipo. Recarga la ventana para usar la nueva versión.",
+  "host.reloadWindow": "Recargar ventana",
   "host.remoteBuiltinOnly": "{agent} se ejecuta en el Acpira de {host}, y {host} está desactivado o no se ha añadido. Actívalo en Ajustes → Conexiones",
   "host.remoteFile": "{path} está en {host}, no en este equipo",
   "host.remoteFileFailed": "No se pudo obtener {path} de {host}",

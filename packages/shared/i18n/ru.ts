@@ -700,6 +700,8 @@ export const ru = {
   'mention.noFiles': 'Подходящих файлов нет',
 
   'host.notFound': '{command} не найден — сначала установите CLI {agent}',
+  'host.engineReplaced': 'Acpira на этом компьютере обновлена. Перезагрузите окно, чтобы использовать новую версию.',
+  'host.reloadWindow': 'Перезагрузить окно',
   'host.remoteBuiltinOnly': '{agent} работает в собственном Acpira на {host}, а этот хост выключен или не добавлен. Включите его в Настройки → Подключения',
   'host.remoteFile': '{path} находится на {host}, а не на этом компьютере',
   'host.remoteFileFailed': 'Не удалось получить {path} с {host}',

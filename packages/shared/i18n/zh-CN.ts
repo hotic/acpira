@@ -709,6 +709,8 @@ export const zhCN = {
 
   // Host-side, user-visible (toasts / error texts / titles); log lines are not translated
   'host.notFound': '找不到 {command}，请先安装 {agent} CLI',
+  'host.engineReplaced': '本机的 Acpira 已更新，重载窗口即可使用新版本。',
+  'host.reloadWindow': '重载窗口',
   'host.remoteBuiltinOnly': '{agent} 要在 {host} 上运行，但这台主机已关闭或没有添加。到设置 → 连接里打开它',
   'host.remoteFile': '{path} 在 {host} 上，不在本机',
   'host.remoteFileFailed': '无法从 {host} 取回 {path}',
