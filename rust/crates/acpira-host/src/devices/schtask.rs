@@ -1,10 +1,12 @@
-//! Windows: the gateway as a task the Task Scheduler starts at this user's logon, as a LaunchAgent runs on macOS. Its
-//! definition is imported from XML (UTF-16 with a BOM, as schtasks reads it): the user named by SID, an interactive
-//! token at the least privilege, no time limit, on battery too, and priority 5, since the default 7 is below normal and
-//! the engines and agents a device starts inherit it. A registered task does not run until its next logon trigger, so
-//! it is run at once. The Task Scheduler's restart covers a start that fails, not a process that crashes later, so the
-//! task runs the gateway with `--supervise` (acpira-gateway cli.rs). The imported XML is kept beside the gateway's
-//! settings: the switch, and what an install compares with.
+//! Windows: remote access's engine (with the gateway in it) as a task the Task Scheduler starts at this user's logon,
+//! as a LaunchAgent runs on macOS. Its definition is imported from XML (UTF-16 with a BOM, as schtasks reads it): the
+//! user named by SID, an interactive token at the least privilege, no time limit, on battery too, and priority 5, since
+//! the default 7 is below normal and the agents a device starts inherit it. A registered task does not run until its
+//! next logon trigger, so it is run at once. Instances run in parallel: a newer build's engine starts while the one it
+//! replaces finishes its turns (the pipe's lock decides which serves). Nothing restarts an engine that crashes; the next
+//! engine start of any shell starts the task again (`RemoteAccess::refresh_installed`). The task is never ended from
+//! here: that would end the sessions it runs. The imported XML is kept beside the service's copy: the switch, and what
+//! an install compares with.
 
 use std::path::{Path, PathBuf};
 
@@ -25,7 +27,7 @@ pub fn task_xml(label: &str, sid: &str, program: &Program, args: &[String]) -> S
     r#"<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>Acpira remote access: lets paired devices reach this computer. Removed when remote access is turned off</Description>
+    <Description>Acpira remote access: the engine paired devices reach this computer through. Removed when remote access is turned off</Description>
     <URI>\{label}</URI>
   </RegistrationInfo>
   <Triggers>
@@ -42,7 +44,7 @@ pub fn task_xml(label: &str, sid: &str, program: &Program, args: &[String]) -> S
     </Principal>
   </Principals>
   <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <MultipleInstancesPolicy>Parallel</MultipleInstancesPolicy>
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
     <AllowHardTerminate>true</AllowHardTerminate>
@@ -147,13 +149,12 @@ pub async fn run(label: &str) -> Result<()> {
   Ok(())
 }
 
-/// End and delete the task; one that is not there is not an error
+/// Delete the task, leaving an engine it started running; one that is not there is not an error
 pub async fn uninstall(root: &Path, label: &str) -> Result<()> {
   let path = record(root, label);
   if !path.exists() {
     return Ok(());
   }
-  let _ = schtasks(&["/End", "/TN", label]).await;
   let out = schtasks(&["/Delete", "/TN", label, "/F"]).await?;
   if !out.status.success() && schtasks(&["/Query", "/TN", label]).await.is_ok_and(|o| o.status.success()) {
     bail!("schtasks /Delete: {}", said(&out));
@@ -168,12 +169,13 @@ mod tests {
 
   #[test]
   fn the_task_names_the_user_and_quotes_its_command() {
-    let p = Program { exe: PathBuf::from(r"C:\Users\张 三\.acpira\devices\bin\gateway\Acpira.exe"), prefix: vec!["gateway".into()] };
-    let args = vec!["gateway".to_owned(), "run".to_owned(), "--home".to_owned(), r"C:\Users\张 三\.acpira".to_owned(), "--supervise".to_owned()];
+    let p = Program { exe: PathBuf::from(r"C:\Users\张 三\.acpira\devices\service\acpira.exe") };
+    let args = vec!["serve".to_owned(), "--home".to_owned(), r"C:\Users\张 三\.acpira".to_owned(), "--service".to_owned()];
     let x = task_xml("AcpiraGateway", "S-1-5-21-1-2-3-1001", &p, &args);
     assert!(x.contains("<UserId>S-1-5-21-1-2-3-1001</UserId>"));
-    assert!(x.contains(r"<Command>C:\Users\张 三\.acpira\devices\bin\gateway\Acpira.exe</Command>"));
-    assert!(x.contains(r#"<Arguments>gateway run --home &quot;C:\Users\张 三\.acpira&quot; --supervise</Arguments>"#), "{x}");
+    assert!(x.contains(r"<Command>C:\Users\张 三\.acpira\devices\service\acpira.exe</Command>"));
+    assert!(x.contains(r#"<Arguments>serve --home &quot;C:\Users\张 三\.acpira&quot; --service</Arguments>"#), "{x}");
+    assert!(x.contains("<MultipleInstancesPolicy>Parallel</MultipleInstancesPolicy>"));
     assert!(x.contains("<Priority>5</Priority>") && x.contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"));
     let b = utf16_with_bom("<a/>");
     assert_eq!(b[..4], [0xFF, 0xFE, b'<', 0]);

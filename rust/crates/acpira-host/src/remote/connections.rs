@@ -224,6 +224,22 @@ impl Connections {
     self.hosts.lock().iter().find(|e| e.saved.alias == alias).and_then(|e| e.live.client.clone())
   }
 
+  /// Whether the host's helper channel is up now
+  pub fn is_up(&self, alias: &str) -> bool {
+    self.client(alias).is_some_and(|c| c.closed_reason().is_none())
+  }
+
+  /// Resolves once the host's helper channel is up (at once when it already is)
+  pub async fn until_up(&self, alias: &str) {
+    let mut rx = self.changed.subscribe();
+    while !self.is_up(alias) {
+      // The sender lives as long as `self`, so this never ends in an error while anyone can still call
+      if rx.changed().await.is_err() {
+        std::future::pending::<()>().await;
+      }
+    }
+  }
+
   /// The host's channel, connecting when it is not already: waits up to `wait` for the attempt (a reconnect in
   /// progress included). A disabled or unknown host, or a failure only the user can settle, answers at once
   pub async fn ensure(&self, alias: &str, wait: Duration) -> Result<RemoteClient> {
@@ -555,11 +571,20 @@ impl Connections {
       }
     }
 
-    let binary = match (self.opts.binary)(&probe.platform).or_else(|| super::fetch::installed(&self.builds, &version, &probe.platform)) {
-      Some(b) => b,
+    // A local build (`X.Y.Z-dev.<stamp>`) was never published: without a build of its own for the host's platform it
+    // deploys the release it was built on, which its engine speaks with like any older one
+    let released = env!("CARGO_PKG_VERSION");
+    let (binary, version) = match (self.opts.binary)(&probe.platform).or_else(|| super::fetch::installed(&self.builds, &version, &probe.platform)) {
+      Some(b) => (b, version),
+      None if crate::machine_engine::policy::is_local_package(&version) => {
+        match super::fetch::installed(&self.builds, released, &probe.platform) {
+          Some(b) => (b, released.to_owned()),
+          None => (self.fetch_build(alias, generation, released, &probe.platform).await?, released.to_owned()),
+        }
+      }
       // Nothing here for the host's platform: the release build of this version, checked against its SHA256SUMS, as an
       // app update would be. Users rarely read a "download" step as part of connecting, so it is one
-      None => self.fetch_build(alias, generation, &version, &probe.platform).await?,
+      None => (self.fetch_build(alias, generation, &version, &probe.platform).await?, version),
     };
     let artifact =
       deploy::prepare(&probe.platform, &binary, &self.cache).await.map_err(|e| Failure::new(K::Unsupported, S::Probe, format!("{e:#}")))?;

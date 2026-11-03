@@ -53,6 +53,23 @@ pub fn blob_name(ext: &str, bytes: &[u8]) -> String {
   format!("{hex}{ext}")
 }
 
+/// `blob_name` of a file's contents, read in pieces (a blob can be large). Blocking
+pub fn blob_name_of_file(ext: &str, path: &Path) -> std::io::Result<String> {
+  use std::io::Read;
+  let mut f = std::fs::File::open(path)?;
+  let mut h = Sha256::new();
+  let mut buf = vec![0u8; 256 * 1024];
+  loop {
+    let n = f.read(&mut buf)?;
+    if n == 0 {
+      break;
+    }
+    h.update(&buf[..n]);
+  }
+  let hex: String = h.finalize().iter().take(8).map(|b| format!("{b:02x}")).collect();
+  Ok(format!("{hex}{ext}"))
+}
+
 /// Cross-session memory that is not a setting; unknown keys another build wrote are kept
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -973,6 +990,38 @@ impl TranscriptStore {
     let dir = confined(&self.dir, session_id).await.ok_or_else(illegal)?;
     let file = confined(&dir, name).await.ok_or_else(illegal)?;
     Ok(fs::read(file).await?)
+  }
+
+  /// Blob `name` of session `id` opened for reading, with its length
+  pub async fn open_blob(&self, session_id: &str, name: &str) -> Result<(fs::File, u64)> {
+    let illegal = || anyhow!(tp("host.blobIllegal", &[("path", &format!("{session_id}/{name}"))]));
+    if !is_session_id(session_id) || !is_blob_name(name) {
+      return Err(illegal());
+    }
+    let dir = confined(&self.dir, session_id).await.ok_or_else(illegal)?;
+    let file = confined(&dir, name).await.ok_or_else(illegal)?;
+    let f = fs::File::open(file).await?;
+    let len = f.metadata().await?.len();
+    Ok((f, len))
+  }
+
+  /// Where a blob still coming over (`session_manager/hosts.rs`) is written: inside the sessions folder, so it moves in
+  /// with a rename, and under a dot name no reader takes for a session
+  pub fn partial_dir(&self) -> PathBuf {
+    self.dir.join(".partial")
+  }
+
+  /// Move the finished file `src` in as blob `name` of session `id` (`blob_pool::adopt`); the caller checked that the
+  /// name fits the content
+  pub async fn adopt_blob(&self, id: &str, name: &str, src: PathBuf) -> Result<PathBuf> {
+    let illegal = || anyhow!(tp("host.blobIllegal", &[("path", &format!("{id}/{name}"))]));
+    if !is_session_id(id) || !is_blob_name(name) {
+      return Err(illegal());
+    }
+    fs::create_dir_all(self.dir.join(id)).await?;
+    let dir = confined(&self.dir, id).await.ok_or_else(illegal)?;
+    let (pool, file) = (self.dir.join(blob_pool::POOL_DIR), name.to_owned());
+    Ok(tokio::task::spawn_blocking(move || blob_pool::adopt(&pool, &dir, &file, &src)).await??)
   }
 
   /// A finished export lands next to the sessions dir (~/.acpira/exports)

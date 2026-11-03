@@ -1,5 +1,5 @@
 //! acpira-mobile against an in-process gateway bridged to the real engine (acpira-host's persistent server, in process,
-//! on a Unix socket), everything on loopback with relays off: pairing by link and by code, hello → helloOk through the
+//! as the engine runs it), everything on loopback with relays off: pairing by link and by code, hello → helloOk through the
 //! bridge, a blob, a probe, and how each way a link ends reaches Swift. No agent runs and nothing leaves the machine
 
 #![cfg(unix)]
@@ -9,15 +9,11 @@ use std::path::PathBuf;
 use std::sync::{Arc, Once};
 use std::time::Duration;
 
-use acpira_gateway::engine::EngineSpec;
 use acpira_gateway::gateway::{Gateway, Opts};
 use acpira_host::sidecar::server::{Engine, ServerOpts};
 use acpira_mobile::{ComputerAddr, DeviceType, Link, LinkEvent, LinkFailure, LinkPath, Node, PairFailure, RelayChoice, decode_link, generate_key, protocol_version};
 use acpira_net::endpoint::Relays;
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixListener;
-use tokio::sync::mpsc;
 
 const LOOPBACK: &str = "127.0.0.1:0";
 
@@ -31,62 +27,36 @@ fn quiet_engine() {
   });
 }
 
-async fn serve_engine(engine: Arc<Engine>, listener: UnixListener) {
-  loop {
-    let Ok((stream, _)) = listener.accept().await else { return };
-    let (read, mut write) = stream.into_split();
-    let (line_tx, line_rx) = mpsc::unbounded_channel::<String>();
-    let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();
-    tokio::spawn(async move {
-      while let Some(line) = out_rx.recv().await {
-        if write.write_all(line.as_bytes()).await.is_err() || write.write_all(b"\n").await.is_err() {
-          break;
-        }
-      }
-    });
-    tokio::spawn(async move {
-      let mut lines = BufReader::new(read).lines();
-      while let Ok(Some(l)) = lines.next_line().await {
-        if line_tx.send(l).is_err() {
-          break;
-        }
-      }
-    });
-    let e = engine.clone();
-    tokio::spawn(async move { e.serve(out_tx, line_rx).await });
-  }
-}
-
 /// A gateway on loopback and, when `with_engine`, the engine it bridges to; dropped in order by `stop`
 struct Desk {
   g: Arc<Gateway>,
-  engine: Option<(Arc<Engine>, tokio::task::JoinHandle<()>)>,
+  engine: Option<Arc<Engine>>,
   _home: tempfile::TempDir,
-  _run: tempfile::TempDir,
 }
 
 impl Desk {
   async fn start(with_engine: bool) -> Desk {
     let home = tempfile::tempdir().unwrap();
-    // Short: the engine's socket lives under it
-    let run = tempfile::Builder::new().prefix("acmb").tempdir_in("/tmp").unwrap();
     std::fs::write(home.path().join("agents.json"), "{}").unwrap();
-    let socket = run.path().join("e.sock");
-    let engine = with_engine.then(|| {
-      let e = Engine::persistent(ServerOpts { version: "test".into(), home: home.path().to_path_buf(), log: Arc::new(|_: &str| {}), ignore_client_agents: false, bridge_exe: None });
-      let acceptor = tokio::spawn(serve_engine(e.clone(), UnixListener::bind(&socket).unwrap()));
-      (e, acceptor)
-    });
+    let engine = with_engine
+      .then(|| Engine::persistent(ServerOpts { version: "test".into(), home: home.path().to_path_buf(), log: Arc::new(|_: &str| {}), ignore_client_agents: false, bridge_exe: None }));
+    let link: acpira_gateway::engine::Link = match &engine {
+      Some(e) => {
+        let e = e.clone();
+        Arc::new(move || e.link())
+      }
+      None => acpira_gateway::engine::none(),
+    };
     let g = Gateway::start(Opts {
       home: home.path().to_path_buf(),
-      engine: EngineSpec { binary: "/nonexistent/acpira".into(), home: home.path().to_path_buf(), explicit_home: true, env: Default::default(), socket: Some(socket) },
+      engine: link,
       relays: Some(Relays::Off),
       bind: Some(LOOPBACK.parse().unwrap()),
       log: Arc::new(|l: &str| eprintln!("gateway: {l}")),
     })
     .await
     .unwrap();
-    Desk { g, engine, _home: home, _run: run }
+    Desk { g, engine, _home: home }
   }
 
   /// Where the Bonjour record would say the computer is
@@ -96,8 +66,7 @@ impl Desk {
 
   async fn stop(self) {
     self.g.stop().await;
-    if let Some((e, acceptor)) = self.engine {
-      acceptor.abort();
+    if let Some(e) = self.engine {
       e.stop("test over").await;
     }
   }

@@ -1,14 +1,10 @@
 [package]
 name = "acpira-gateway"
-description = "The computer side of paired devices: admits paired phones and computers and bridges them to an engine as peer wires"
+description = "The computer side of paired devices: admits paired phones and computers and bridges them to the engine it runs in as peer wires"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-
-[[bin]]
-name = "acpira-gateway"
-path = "src/main.rs"
 
 [dependencies]
 acpira-desktop = { path = "../acpira-desktop" }

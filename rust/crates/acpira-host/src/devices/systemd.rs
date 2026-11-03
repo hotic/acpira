@@ -1,17 +1,15 @@
-//! Linux: the gateway as a systemd user unit, started with the user's manager and restarted when it fails, as the
-//! LaunchAgent is on macOS. `KillMode=process`: a stop or a restart ends the gateway alone, never the engine it started
-//! (which may be running a device's turn and the agents under it) that systemd would otherwise count in the unit's
-//! cgroup. The manager must outlive this session: a graphical session or lingering; a user manager that comes and goes
-//! with SSH logins does not count, the gateway would end with the connection.
+//! Linux: remote access's systemd user unit, which starts the machine's engine (and with it the gateway) with the user's
+//! manager and restarts it when it fails, as the LaunchAgent does on macOS. `KillMode=mixed`: a stop reaches the engine
+//! first, which ends its agents and terminals itself; what an engine that crashed left behind goes before its restart.
+//! Installing never restarts a running unit, and removing it never stops one: its engine may serve every window. The
+//! manager must outlive this session: a graphical session or lingering; a user manager that comes and goes with SSH
+//! logins does not count, the engine would end with the connection.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
 use super::service::Program;
-
-/// The exit code of a gateway that found another one serving the data root (acpira-gateway cli.rs): no restart
-const ALREADY_RUNNING: i32 = 3;
 
 pub fn unit_name(label: &str) -> String {
   format!("{label}.service")
@@ -36,14 +34,13 @@ pub fn unit(program: &Program, args: &[String]) -> String {
   format!(
     "# Written by Acpira for remote access; removed when remote access is turned off\n\
      [Unit]\n\
-     Description=Acpira remote access (paired devices)\n\
+     Description=Acpira engine for remote access (paired devices)\n\
      \n\
      [Service]\n\
      ExecStart={}\n\
      Restart=on-failure\n\
      RestartSec=10\n\
-     RestartPreventExitStatus={ALREADY_RUNNING}\n\
-     KillMode=process\n\
+     KillMode=mixed\n\
      \n\
      [Install]\n\
      WantedBy=default.target\n",
@@ -92,7 +89,7 @@ fn outlives_ssh(props: &str) -> bool {
   get("Linger") == "yes" || !get("Display").is_empty()
 }
 
-/// Write the unit, enable it and (re)start it; on a failure the unit is removed again
+/// Write the unit, enable it and start it (a running one stays as it is); on a failure the unit is removed again
 pub async fn install(label: &str, user_home: &Path, text: &str) -> Result<()> {
   let path = unit_path(label, user_home);
   if let Some(dir) = path.parent() {
@@ -103,7 +100,7 @@ pub async fn install(label: &str, user_home: &Path, text: &str) -> Result<()> {
   let r = async {
     checked(systemctl(&["daemon-reload"]).await?, "daemon-reload")?;
     checked(systemctl(&["enable", &unit]).await?, "enable")?;
-    checked(systemctl(&["restart", &unit]).await?, "restart")
+    checked(systemctl(&["start", &unit]).await?, "start")
   }
   .await;
   if r.is_err() {
@@ -114,21 +111,22 @@ pub async fn install(label: &str, user_home: &Path, text: &str) -> Result<()> {
   r
 }
 
-pub async fn active(label: &str) -> bool {
-  systemctl(&["is-active", "--quiet", &unit_name(label)]).await.is_ok_and(|o| o.status.success())
+/// Enabled to start with the user's manager
+pub async fn enabled(label: &str) -> bool {
+  systemctl(&["is-enabled", "--quiet", &unit_name(label)]).await.is_ok_and(|o| o.status.success())
 }
 
 pub async fn start(label: &str) -> Result<()> {
   checked(systemctl(&["start", &unit_name(label)]).await?, "start")
 }
 
-/// Stop and disable the unit and remove it; a unit that is not there is not an error
+/// Disable the unit and remove it, leaving a running engine running; a unit that is not there is not an error
 pub async fn uninstall(label: &str, user_home: &Path) -> Result<()> {
   let path = unit_path(label, user_home);
   if !path.exists() {
     return Ok(());
   }
-  let _ = systemctl(&["disable", "--now", &unit_name(label)]).await;
+  let _ = systemctl(&["disable", &unit_name(label)]).await;
   tokio::fs::remove_file(&path).await?;
   checked(systemctl(&["daemon-reload"]).await?, "daemon-reload")
 }
@@ -139,11 +137,10 @@ mod tests {
 
   #[test]
   fn the_unit_keeps_the_engine_and_quotes_its_command() {
-    let p = Program { exe: PathBuf::from("/home/u/.acpira/devices/bin/2.0.0-ab/acpira-gateway"), prefix: vec![] };
-    let u = unit(&p, &["run".into(), "--home".into(), "/home/u/my data/.acpira".into(), "--log".into(), "/x/100%$HOME".into()]);
-    assert!(u.contains("ExecStart=/home/u/.acpira/devices/bin/2.0.0-ab/acpira-gateway run --home \"/home/u/my data/.acpira\" --log /x/100%%$$HOME\n"), "{u}");
-    assert!(u.contains("KillMode=process\n"));
-    assert!(u.contains("RestartPreventExitStatus=3\n"));
+    let p = Program { exe: PathBuf::from("/home/u/.acpira/devices/service/acpira") };
+    let u = unit(&p, &["serve".into(), "--home".into(), "/home/u/my data/.acpira".into(), "--log".into(), "/x/100%$HOME".into()]);
+    assert!(u.contains("ExecStart=/home/u/.acpira/devices/service/acpira serve --home \"/home/u/my data/.acpira\" --log /x/100%%$$HOME\n"), "{u}");
+    assert!(u.contains("KillMode=mixed\n") && u.contains("Restart=on-failure\n"));
     assert_eq!(escape(r#"a"b\c"#), r#""a\"b\\c""#);
     assert_eq!(escape(""), "\"\"");
     assert!(outlives_ssh("Linger=yes\nDisplay=\n"));

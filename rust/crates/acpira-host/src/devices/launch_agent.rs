@@ -1,4 +1,5 @@
-//! macOS: the gateway as a LaunchAgent, so it runs from login on without a window open (the copies it runs: stage.rs).
+//! macOS: remote access's LaunchAgent, which starts the machine's engine (and with it the gateway) at login without a
+//! window open, from the service's copy (stage.rs); and the `gui/<uid>` jobs of engines started over SSH.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -6,7 +7,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 
 /// The label for this data root: the default `~/.acpira` gets the plain one, any other root (the harness, tests) one
-/// of its own, so two roots never replace each other's gateway
+/// of its own, so two roots never replace each other's. The name is from when it ran a standalone gateway
 pub fn label(root: &Path, user_home: &Path) -> String {
   super::service::label("com.hotic.acpira.gateway", ".", root, user_home)
 }
@@ -113,6 +114,47 @@ pub async fn can_use_gui(home: &Path) -> bool {
 /// `<home>/run/` rather than `~/Library/LaunchAgents/` so it neither triggers a Login Items notification nor starts
 /// every old version at login
 pub async fn start_peer(version: &str, exe: &Path, socket: &Path, home: &Path, log: &Path) -> Result<()> {
+  start_serve(&peer_label(version), &format!("peer-{version}"), exe, socket, home, log).await
+}
+
+const ENGINE_LABEL: &str = "com.hotic.acpira.engine";
+
+/// The machine's one engine (`machine_engine`), started from an SSH login on a Mac whose user is logged into the
+/// desktop: in `gui/<uid>` like a peer engine, so it reads the login keychain. One label per landed build (`build`
+/// names its folder): replacing one job's plist means a `bootout`, which would end an older engine still finishing its
+/// turns after it handed the socket over. Jobs of other builds that no longer run are unloaded here. Returns the label
+pub async fn start_machine_engine(build: &str, exe: &Path, socket: &Path, home: &Path, log: &Path) -> Result<String> {
+  let label = format!("{ENGINE_LABEL}.{build}");
+  let stem = format!("engine-{build}");
+  let run = home.join("run");
+  if let Ok(entries) = std::fs::read_dir(&run) {
+    for e in entries.flatten() {
+      let name = e.file_name().to_string_lossy().into_owned();
+      let Some(other) = name.strip_prefix("engine-").and_then(|n| n.strip_suffix(".plist")) else { continue };
+      if other == build {
+        continue;
+      }
+      let other_label = format!("{ENGINE_LABEL}.{other}");
+      if !running(&other_label).await {
+        let _ = bootout(&other_label).await;
+        let _ = std::fs::remove_file(e.path());
+      }
+    }
+  }
+  start_serve(&label, &stem, exe, socket, home, log).await?;
+  Ok(label)
+}
+
+/// Whether the job has a process right now (loaded alone is not enough: a job without KeepAlive stays loaded after it
+/// exits)
+pub async fn running(label: &str) -> bool {
+  launchctl(&["print", &format!("{}/{label}", domain())])
+    .await
+    .is_ok_and(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).lines().any(|l| l.trim_start().starts_with("pid = ")))
+}
+
+/// `acpira serve` as a job in `gui/<uid>`; `stem` names its plist and lock under `<home>/run/`
+async fn start_serve(label: &str, stem: &str, exe: &Path, socket: &Path, home: &Path, log: &Path) -> Result<()> {
   for p in [exe, socket, home, log] {
     if p.to_string_lossy().bytes().any(|b| b < 0x20) {
       bail!("path contains control characters: {}", p.display());
@@ -121,31 +163,33 @@ pub async fn start_peer(version: &str, exe: &Path, socket: &Path, home: &Path, l
   if !gui_available().await {
     bail!("no GUI login session ({})", domain());
   }
-  let label = peer_label(version);
   let run = home.join("run");
-  let plist_path = run.join(format!("peer-{version}.plist"));
-  let lock_path = run.join(format!("peer-{version}.plist.lock"));
-  let text = peer_plist(&label, exe, socket, home, log);
+  let plist_path = run.join(format!("{stem}.plist"));
+  let lock_path = run.join(format!("{stem}.plist.lock"));
+  let text = peer_plist(label, exe, socket, home, log);
   crate::store::file_lock::with_file_lock(&lock_path, || async {
     let same = tokio::fs::read_to_string(&plist_path).await.is_ok_and(|t| t == text);
     if !same {
       crate::store::file_lock::write_atomic(&plist_path, text.as_bytes(), Some(0o600)).await?;
     }
-    if loaded(&label).await {
+    if loaded(label).await {
       if !same {
-        unload(&label).await?;
-        return load(&label, &plist_path).await;
+        unload(label).await?;
+        return load(label, &plist_path).await;
       }
-      return kickstart(&label, false).await;
+      return kickstart(label, false).await;
     }
-    load(&label, &plist_path).await
+    load(label, &plist_path).await
   })
   .await
 }
 
-/// The LaunchAgent: started at login, restarted when it crashes or exits with an error (not after `acpira-gateway stop`)
-pub fn plist(label: &str, gateway: &Path, root: &Path) -> String {
-  let log = root.join("devices").join("gateway.log");
+/// The LaunchAgent: started at login, restarted when it crashes or exits with an error (not after an idle exit, a
+/// handover to a newer build or `serve` finding the engine running already). `serve` moves into its landed copy at once
+/// (`cli::run`) and writes its log itself; launchd's capture covers what comes before
+pub fn plist(label: &str, exe: &Path, root: &Path) -> String {
+  let log = super::service::log_path(root);
+  let args: String = super::service::args(root).iter().map(|a| format!("\n    <string>{}</string>", xml(a))).collect();
   format!(
     r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -155,10 +199,7 @@ pub fn plist(label: &str, gateway: &Path, root: &Path) -> String {
   <string>{label}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>{gateway}</string>
-    <string>run</string>
-    <string>--home</string>
-    <string>{root}</string>
+    <string>{exe}</string>{args}
   </array>
   <key>RunAtLoad</key>
   <true/>
@@ -177,10 +218,43 @@ pub fn plist(label: &str, gateway: &Path, root: &Path) -> String {
 </plist>
 "#,
     label = xml(label),
-    gateway = xml(&gateway.to_string_lossy()),
-    root = xml(&root.to_string_lossy()),
+    exe = xml(&exe.to_string_lossy()),
     log = xml(&log.to_string_lossy()),
   )
+}
+
+/// Write `text` as the label's plist and have launchd run it, leaving a job whose engine runs as it is (its process may
+/// be the very engine serving every window; the new text applies from the next login)
+pub async fn install(label: &str, user_home: &Path, text: &str) -> Result<()> {
+  let path = plist_path(label, user_home);
+  if let Some(dir) = path.parent() {
+    tokio::fs::create_dir_all(dir).await?;
+  }
+  let changed = !tokio::fs::read_to_string(&path).await.is_ok_and(|t| t == text);
+  if changed {
+    crate::store::file_lock::write_atomic(&path, text.as_bytes(), Some(0o644)).await?;
+  }
+  if !loaded(label).await {
+    return load(label, &path).await;
+  }
+  if running(label).await {
+    return Ok(());
+  }
+  if changed {
+    unload(label).await?;
+    return load(label, &path).await;
+  }
+  kickstart(label, false).await
+}
+
+/// Remove the label's plist so nothing starts it at login; a job without a process is unloaded too, one whose engine
+/// runs stays loaded until logout (ending it would end every session it runs)
+pub async fn uninstall(label: &str, user_home: &Path) -> Result<()> {
+  if !running(label).await {
+    unload(label).await?;
+  }
+  let _ = tokio::fs::remove_file(plist_path(label, user_home)).await;
+  Ok(())
 }
 
 fn domain() -> String {
@@ -231,7 +305,7 @@ pub async fn load(label: &str, plist: &Path) -> Result<()> {
   let mut msg = format!("launchctl bootstrap: {}", err.lines().next().unwrap_or("").trim());
   if out.status.code() == Some(5) {
     // Neither loaded nor being torn down: launchd answers 5 for a job switched off too
-    msg.push_str(" (is acpira-gateway switched off under System Settings > General > Login Items?)");
+    msg.push_str(" (is Acpira switched off under System Settings > General > Login Items?)");
   }
   bail!(msg)
 }
@@ -267,7 +341,9 @@ mod tests {
     let home = Path::new("/Users/u");
     assert_eq!(label(Path::new("/Users/u/.acpira"), home), "com.hotic.acpira.gateway");
     assert!(label(Path::new("/Users/u/.acpira/harness"), home).starts_with("com.hotic.acpira.gateway."));
-    assert!(plist("l", Path::new("/a&b/acpira-gateway"), Path::new("/r")).contains("<string>/a&amp;b/acpira-gateway</string>"));
+    let p = plist("l", Path::new("/a&b/acpira"), Path::new("/r"));
+    assert!(p.contains("<string>/a&amp;b/acpira</string>\n    <string>serve</string>"), "{p}");
+    assert!(p.contains("<string>--service</string>") && p.contains("<string>/r/run/engine.log</string>"));
     assert_eq!(peer_label("2.0.5"), "com.hotic.acpira.peer.2.0.5");
     let peer = peer_plist("com.hotic.acpira.peer.2.0.5", Path::new("/a'b/acpira"), Path::new("/r/peer.sock"), Path::new("/r"), Path::new("/r/peer.log"));
     assert!(peer.contains("<string>Aqua</string>") && peer.contains("/a&apos;b/acpira") && !peer.contains("KeepAlive"));

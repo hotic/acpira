@@ -24,8 +24,8 @@ OpenSSH behaviour the code relies on (OpenSSH 10.3 client, Ubuntu and macOS serv
 
 - A dropped channel fails pending requests as `Disconnected`: the operation may or may not have happened, and nothing replays it. Every `exec` runs in its own process group, killed on cancel, timeout or helper exit.
 - The helper never hashes itself (slow on a debug build); the deployer passes `--digest`.
-- Each build gets its own `~/.acpira/remote/bin/<version>-<digest16>/` on the host; uploads are sha256-checked there, then `mv -f`. The host never downloads anything. No lock on purpose: concurrent engines rename identical verified bytes over each other.
-- Other platforms' helpers are not packaged, so connecting fetches a missing build as one of its steps (`remote/fetch.rs`, from the engine version's VSIX on the `packages` Release, checked against the version's `SHA256SUMS`); a separate download button went unnoticed. A fetch failure is final until a retry; a dev build with no release always fails.
+- Each build gets its own `~/.acpira/engine/<version>-<digest16>/` on the host, the folders the host's machine engine runs from (`host-architecture.md`, Machine engine); uploads are sha256-checked there, then `mv -f`. The host never downloads anything. No lock on purpose: concurrent engines rename identical verified bytes over each other.
+- Other platforms' helpers are not packaged, so connecting fetches a missing build as one of its steps (`remote/fetch.rs`, from the engine version's VSIX on the `packages` Release, checked against the version's `SHA256SUMS`); a separate download button went unnoticed. A fetch failure is final until a retry; a local build (`-dev.<stamp>`) without its own helper for the platform deploys the release it was built on.
 
 ## Connections
 
@@ -68,14 +68,15 @@ Its file and shell tools live in its own process, so under local run it runs her
 - `remote/host_store.rs` copies this engine's records in host folders to the host's store, as stdin frames since a record can outgrow one wire line. A copy never replaces one the host updated later or holds in its trash.
 - A copy carries `copyOf` and opens read-only on every other engine, so only the creating machine writes a session; no lease spans machines.
 - A deletion stays in `run/remote/gone.json` until the host confirms, so a restart cannot relist it as a host session.
-- Host session blobs are fetched into the local store before the view is released: every reader uses only the local sessions directory, and a page never reloads a failed image.
+- Host session blobs come over in the background, never ahead of the view: every reader uses only the local sessions directory and a page never reloads a failed image, so pages get the view without the `blob` fields not yet here and again as each lands (`hosts.rs` `Shown::publish`). Holding the view for them makes opening wait on every picture. Above a size cap a blob stays on the host; a cut-off fetch resumes from `<sessions>/.partial/`.
 - Limits: the built-in agent's log stays here, so the host cannot resume a copy's agent context; a copy whose machine is gone stays read-only.
 - Unverified: a real host (tests use a fake ssh, `tests/engine/remote_*.rs`), incl. a macOS one over the network.
 
 ## Remote run: the peer wire
 
-- The helper's `engine` op reaches the host's `acpira serve` of its own version, starting it on macOS in `gui/<uid>` (`Aqua`, plist under `<home>/run/`, no `KeepAlive`) when the user is logged into the desktop so the login keychain is unlocked, or under `setsid` otherwise; it outlives the connection and ends by idle grace.
-- `PeerLink` hellos with `client.role: "peer"`; only the same version connects. A peer never rebinds the platform or becomes the active wire; its platform requests route back via `platform::ORIGIN`.
+- The helper's `engine` op reaches the host's machine engine through `machine_engine::ensure` with `allow_dev` off: a newer release replaces the host's engine like any shell, a local build never does, and with nothing running a local build starts the newest landed release instead of itself. Started over SSH on a Mac with a desktop login, the engine runs in `gui/<uid>` (`Aqua`, one label and plist `<home>/run/engine-<build>.plist` per landed build, since replacing a job's plist means a `bootout` that would end a draining engine's turns; no `KeepAlive`) so the login keychain is unlocked, else under `setsid`.
+- `PeerLink` hellos with `client.role: "peer"`; any version within the protocol range connects. A peer never rebinds the platform or becomes the active wire; its platform requests route back via `platform::ORIGIN`. Clients up to 2.0.6 still start a `peer-<version>.sock` engine of their own.
+- The engine stream is deflated when the client asks (`remote/deflate.rs`); the `open` chunk says whether it is, since a local build may deploy an older release's helper.
 - The last host list is cached at `<ACPIRA_HOME>/run/remote/<alias>.sessions.json` so an absent host still shows. Host views get this engine's revs; a misfit patch triggers `resync`. Unread marks live on the host.
 - Chat accounts belong to the engine running the agent, never the local settings store. Only public metadata crosses the peer wire; credentials stay on that host.
 - Host login / unlock terminals cannot become local terminals. On macOS a fresh SSH login has a different keychain security session from the engine (`accounts/keychain.rs`), so opening another SSH terminal is not an unlock path for it.

@@ -1,4 +1,4 @@
-import { accessSync, chmodSync, constants, existsSync, statSync } from 'node:fs';
+import { accessSync, chmodSync, constants, existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { SidecarCommand } from './SidecarClient';
 
@@ -22,6 +22,23 @@ export function sidecarCommands(opts: LocateOpts): SidecarCommand[] {
   const found = [join(opts.root, 'bin', exe), ...(dir ? [join(opts.root, 'dist', 'sidecar', dir, exe)] : [])]
     .find(path => usable(path, platform));
   return found ? [binary(found)] : [];
+}
+
+// The most recently landed engine copy under `<home>/engine/` (rust/crates/acpira-host/src/machine_engine/stage.rs): what a window
+// whose extension folder an update deleted still reaches the machine's engine with. It never takes the machine over for a local
+// build that copy may be (one an SSH session landed is not this machine's to start)
+export function landedEngine(home: string, platform: NodeJS.Platform = process.platform): SidecarCommand | undefined {
+  const exe = platform === 'win32' ? 'acpira.exe' : 'acpira';
+  const root = join(home, 'engine');
+  let names: string[];
+  try { names = readdirSync(root); } catch { return undefined; }
+  const newest = names
+    .filter(n => !n.startsWith('.'))
+    .map(n => join(root, n, exe))
+    .filter(path => usable(path, platform))
+    .map(path => ({ path, mtime: statSync(path).mtimeMs }))
+    .sort((a, b) => b.mtime - a.mtime)[0];
+  return newest && { command: newest.path, args: ['--no-dev-takeover'], label: `landed ${newest.path}` };
 }
 
 function binary(path: string): SidecarCommand {

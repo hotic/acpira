@@ -116,19 +116,18 @@ pub(crate) async fn serve(op: &str, a: &Value, stdin: Option<mpsc::UnboundedRece
   }
 }
 
-/// One blob of a session in this host's store (`storeBlobGet`): the store confines both names to its sessions directory
-pub(crate) async fn read_blob(a: &Value) -> Result<Vec<u8>, WireError> {
+/// One blob of a session in this host's store opened for `storeBlobGet`, with its length: the store confines both names
+/// to its sessions directory
+pub(crate) async fn open_blob(a: &Value) -> Result<(tokio::fs::File, u64), WireError> {
   let root = a.get("home").and_then(Value::as_str).map(PathBuf::from).unwrap_or_else(crate::store::data_dir::acpira_home);
   let store = TranscriptStore::new(root.join("sessions"), Arc::new(|_: &str| {}), None);
   let id = a.get("id").and_then(Value::as_str).unwrap_or("");
   let name = a.get("name").and_then(Value::as_str).unwrap_or("");
   let Some(path) = store.blob_path(id, name) else { return Err(WireError::new("invalid", format!("\"{id}/{name}\" is not a blob"))) };
-  match tokio::fs::metadata(&path).await {
-    Ok(m) if m.len() as usize > MAX_BODY => return Err(WireError::new("invalid", format!("{name} is too large"))),
-    Ok(_) => {}
-    Err(e) => return Err(WireError::io(&e, name)),
+  if let Err(e) = tokio::fs::metadata(&path).await {
+    return Err(WireError::io(&e, name));
   }
-  store.read_blob(id, name).await.map_err(|e| WireError::new("io", format!("{e:#}")))
+  store.open_blob(id, name).await.map_err(|e| WireError::new("io", format!("{e:#}")))
 }
 
 /// Told about deletions on a host (`alias`): a session id as it is deleted here, so the host's list drops it at once;

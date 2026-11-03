@@ -1,6 +1,6 @@
-//! Paired devices (a phone, another computer) reach the engine through `acpira-gateway` as a `peer` wire. The gateway is
-//! the only process facing the network, so it is where a device's messages are filtered: the engine socket is the
-//! user's own (mode 600), and any local process could already talk to it as a window.
+//! Paired devices (a phone, another computer) reach the engine through its gateway (acpira-gateway) as a `peer` wire.
+//! The gateway is the only part facing the network, so it is where a device's messages are filtered: the engine socket
+//! is the user's own (mode 600), and any local process could already talk to it as a window.
 
 use serde::{Deserialize, Serialize};
 
@@ -246,11 +246,15 @@ pub struct GatewayStatus {
   /// reaches it until `AllowLan`
   #[serde(default, skip_serializing_if = "std::ops::Not::not")]
   pub lan_blocked: bool,
+  /// The engine process the gateway runs in; absent from the standalone `acpira-gateway` of builds up to 2.0.6, which a
+  /// newer engine stops before it serves the data root itself
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub engine_pid: Option<u32>,
 }
 
 /// A request on the gateway's control socket (`<ACPIRA_HOME>/run/gateway.sock`): one JSON line each, answered by one
-/// line (`watch`: a `GatewayStatus` line on every change until the client hangs up). Here rather than in the gateway so
-/// the engine can speak it without linking the network stack
+/// line (`watch`: a `GatewayStatus` line on every change until the client hangs up). Every engine on the data root
+/// speaks it, whichever process runs the gateway
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase")]
 pub enum GatewayRequest {
@@ -264,7 +268,11 @@ pub enum GatewayRequest {
   Reload,
   /// Let devices on this network in through Windows Firewall (a UAC prompt). Answered at once; the status follows
   AllowLan,
+  /// The gateway stops; the engine it runs in keeps its sessions (on Windows it also lets the next engine of remote
+  /// access's login task take over, and ends once idle)
   Stop,
+  /// The gateway starts over in the same engine, its endpoint bound again (a relay change)
+  Restart,
   /// A session wants the user: the gateway pushes it to the paired phones that registered for notifications. Sent by
   /// the engine that runs the session, whatever its shell; the gateway decides whether the user is at the computer
   Notify(PushNote),
@@ -315,8 +323,8 @@ pub struct PushTarget {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteAccessView {
-  /// This engine can turn remote access on here; when not, `unavailable` says why (`component`: no gateway binary beside
-  /// the engine; `service`: no login service to run it from, such as a Linux user manager that ends with an SSH
+  /// This engine can turn remote access on here; when not, `unavailable` says why (`component`: the engine does not know
+  /// its own binary; `service`: no login service to run it from, such as a Linux user manager that ends with an SSH
   /// session; `platform`: a system the gateway does not run on)
   pub available: bool,
   #[serde(default, skip_serializing_if = "Option::is_none")]

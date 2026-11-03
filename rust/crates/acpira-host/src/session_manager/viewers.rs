@@ -12,7 +12,7 @@ use acpira_shared::settings::in_workspace;
 use acpira_shared::transcript::*;
 
 use super::dispatch::list_edit_target;
-use super::{PUSH_QUANTUM, SessionManager, Viewer, ViewerState, is_forwarded, session_id_of};
+use super::{PUSH_QUANTUM, SessionManager, Viewer, ViewerShell, ViewerState, is_forwarded, session_id_of};
 use crate::acp::session::AcpSession;
 use crate::acp::session::errors::error_text;
 use crate::i18n::t;
@@ -164,13 +164,10 @@ impl SessionManager {
     self.host_msg(id).is_some() || self.live(id).is_some() || self.mirror_of(id).is_some() || self.deps.chatgpt.as_ref().is_some_and(|c| c.view(id).is_some())
   }
 
-  pub(super) fn most_recent(&self) -> Option<String> {
-    self.most_recent_except(None)
-  }
-
-  pub(super) fn most_recent_except(&self, except: Option<&str>) -> Option<String> {
-    let scope = (self.deps.scope)();
-    let cwd = (self.deps.cwd)();
+  /// The newest session in the scope of a viewer's window (`shell`; None: the engine-wide one), `except` aside
+  pub(super) fn most_recent_except(&self, shell: Option<&ViewerShell>, except: Option<&str>) -> Option<String> {
+    let scope = self.scope_in(shell);
+    let cwd = self.cwd_in(shell);
     let deleting: HashSet<String> = self.state.lock().deleting.keys().cloned().collect();
     self.sessions().into_iter()
       .find(|s| except != Some(s.id.as_str()) && !deleting.contains(&s.id) && (scope == "all" || in_workspace(&s.cwd, &cwd)))
@@ -179,6 +176,11 @@ impl SessionManager {
 
   /// Attach a viewer: `initial` is the session it opens on, or the newest listed one
   pub fn attach(&self, initial: Option<acpira_shared::sidecar::InitialView>) -> Arc<Viewer> {
+    self.attach_in(initial, None)
+  }
+
+  /// Attach a viewer of one window among several (`shell`): its folder, scope and project mode are that window's
+  pub fn attach_in(&self, initial: Option<acpira_shared::sidecar::InitialView>, shell: Option<ViewerShell>) -> Arc<Viewer> {
     use acpira_shared::sidecar::InitialView;
     let empty = matches!(initial, Some(InitialView::Empty { empty: true } | InitialView::Scoped { .. }));
     let session_list = match &initial {
@@ -188,7 +190,7 @@ impl SessionManager {
     let id = match initial {
       Some(InitialView::Id(id)) => Some(id),
       Some(InitialView::Scoped { session, .. }) => session,
-      Some(InitialView::MostRecent { most_recent: true }) => self.most_recent(),
+      Some(InitialView::MostRecent { most_recent: true }) => self.most_recent_except(shell.as_ref(), None),
       _ => None,
     };
     if let Some(id) = &id {
@@ -199,8 +201,19 @@ impl SessionManager {
       id: self.viewer_seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
       state: parking_lot::Mutex::new(ViewerState { active_id: id, session_list, empty, ..Default::default() }),
       sink: Default::default(),
+      shell,
     });
     st.viewers.push(v.clone());
+    let unseeded = st.categories.projects.is_none();
+    drop(st);
+    // The first project shell to show up seeds the project list, also on an engine a workspace window started
+    if unseeded
+      && v.shell.as_ref().is_some_and(|s| (s.projects)())
+      && let Some(m) = self.me.upgrade()
+    {
+      tokio::spawn(async move { m.seed_projects().await });
+    }
+    self.viewers_moved();
     v
   }
 
@@ -209,7 +222,9 @@ impl SessionManager {
     self.state.lock().viewers.retain(|x| x.id != v.id);
     self.prune_host_views();
     self.sync_node_subs();
+    self.viewers_moved();
   }
+
 
   pub(super) fn viewers(&self) -> Vec<Arc<Viewer>> {
     self.state.lock().viewers.clone()
@@ -366,6 +381,7 @@ impl SessionManager {
       id: self.viewer_seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
       state: parking_lot::Mutex::new(ViewerState { active_id: Some(session), ..Default::default() }),
       sink: Default::default(),
+      shell: None,
     });
     self.dispatch(&v, m).await.map_err(|e| error_text(&e))
   }

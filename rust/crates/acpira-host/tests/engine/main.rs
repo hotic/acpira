@@ -17,6 +17,8 @@ mod golden;
 mod harness;
 mod inventory;
 mod local_accounts;
+#[cfg(unix)]
+mod machine_engine;
 mod normalize;
 mod plans;
 // Plugin runtimes are Node scripts driven over Unix process groups; every case in these two is Unix-only

@@ -27,7 +27,7 @@ use crate::bridge_core::{BridgeCore, Post};
 use crate::external::chatgpt_store::ChatGptBridgeStore;
 use crate::i18n::{set_host_locale, tp};
 use acpira_shared::devices::{PushKind, PushNote};
-use crate::session_manager::{Attention, AttentionKind, ManagerDeps, SessionManager};
+use crate::session_manager::{Attention, AttentionKind, ManagerDeps, SessionManager, ViewerShell};
 use crate::settings::{SettingsCenter, SettingsDeps};
 use crate::sidecar::platform::{Affects, SidecarPlatform};
 use crate::store::agent_config::AgentConfig;
@@ -242,12 +242,7 @@ impl HostRuntime {
         hidden: Arc::new(move || {
           r4("hiddenOptions").filter(is_hidden_map).and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default()
         }),
-        // A project shell has no workspace to scope to
-        scope: Arc::new(move || match r5("sessionScope").and_then(|v| v.as_str().map(str::to_owned)).as_deref() {
-          _ if scope_p.projects() => "all".into(),
-          Some("all") => "all".into(),
-          _ => "workspace".into(),
-        }),
+        scope: Arc::new(move || session_scope(scope_p.projects(), r5("sessionScope"))),
         lease_root: root.clone(),
         bus: true,
         remote: Some(connections.clone()),
@@ -303,12 +298,12 @@ impl HostRuntime {
     let (m1, m2, m3) = (manager.clone(), manager.clone(), manager.clone());
     let (pr, pw, ph, phome) = (platform.clone(), platform.clone(), platform.clone(), platform.clone());
     let settings = Arc::new(SettingsCenter::new(SettingsDeps {
-      read: Arc::new(move |k| pr.read_setting(k)),
+      read: Arc::new(move |wire, k| pr.read_setting_of(wire, k)),
       write: Arc::new(move |k, v| {
         let p = pw.clone();
         Box::pin(async move { p.write_setting(&k, v).await })
       }),
-      host_language: Arc::new(move || ph.host_language()),
+      host_language: Arc::new(move |wire| ph.host_language_of(wire)),
       registry: Arc::new(move || m1.registry()),
       runtime_info: Arc::new(move |a| m2.runtime_info(a)),
       health: Arc::new(move |a| m3.agent_health(a)),
@@ -353,6 +348,13 @@ impl HostRuntime {
     platform.on_settings_changed(Arc::new(move |affects| {
       if let Some(rt) = weak.upgrade() {
         rt.settings_changed(affects);
+      }
+    }));
+    // A background window's own shell settings or language: only its pages get a new view
+    let weak = Arc::downgrade(&runtime);
+    platform.on_wire_settings_changed(Arc::new(move |wire| {
+      if let Some(rt) = weak.upgrade() {
+        rt.settings.emit_wire(wire);
       }
     }));
     let weak = Arc::downgrade(&runtime);
@@ -459,12 +461,15 @@ impl HostRuntime {
     appearance_from_settings(|k| self.platform.read_setting(&format!("appearance.{k}")))
   }
 
+  /// `wire`: the shell connection the view belongs to, whose own facts (workspace, project mode, session scope) it reads;
+  /// None: the engine-wide ones
   pub fn attach_view(
     self: &Arc<Self>,
     host: WebviewHost,
     initial: Option<InitialView>,
     blob_base: Option<String>,
     post: Post,
+    wire: Option<u64>,
   ) -> Arc<BridgeCore> {
     let rt = Arc::downgrade(self);
     let appearance = Arc::new(move || rt.upgrade().map(|r| r.appearance()).unwrap_or_default());
@@ -477,6 +482,8 @@ impl HostRuntime {
       host,
       blob_base,
       initial,
+      wire,
+      wire.map(|w| self.viewer_shell(w)),
       self.terminals.clone(),
       self.connections.clone(),
       self.plugins.clone(),
@@ -484,6 +491,16 @@ impl HostRuntime {
     );
     self.bridges.lock().push(core.clone());
     core
+  }
+
+  /// One window's facts as its viewers read them, live: a later envChanged / settingsChanged from it applies
+  fn viewer_shell(&self, wire: u64) -> ViewerShell {
+    let (p1, p2, p3) = (self.platform.clone(), self.platform.clone(), self.platform.clone());
+    ViewerShell {
+      cwd: Arc::new(move || p1.cwd_of(Some(wire))),
+      projects: Arc::new(move || p2.projects_of(Some(wire))),
+      scope: Arc::new(move || session_scope(p3.projects_of(Some(wire)), p3.read_setting_of(Some(wire), "sessionScope"))),
+    }
   }
 
   pub fn detach_view(&self, core: &Arc<BridgeCore>) {
@@ -582,6 +599,15 @@ fn registry_of(custom: &Value, self_agent: Option<&(String, PathBuf)>, plugin_ag
   }
 }
 
+
+/// `ManagerDeps.scope` from a shell's facts: a project shell has no workspace to scope to
+fn session_scope(projects: bool, setting: Option<Value>) -> String {
+  match setting.as_ref().and_then(Value::as_str) {
+    _ if projects => "all".into(),
+    Some("all") => "all".into(),
+    _ => "workspace".into(),
+  }
+}
 #[cfg(test)]
 mod tests {
   use super::*;

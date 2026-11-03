@@ -62,6 +62,12 @@ impl App {
         if std::env::var("ACPIRA_ENGINE").as_deref() == Ok("stdio") {
           return None;
         }
+        // The machine's one engine, shared with the IDE windows and the gateway (acpira-host machine_engine/)
+        #[cfg(unix)]
+        let _ = cmd;
+        #[cfg(unix)]
+        return Some(acpira_desktop::engine::machine_endpoint(&data_home));
+        #[cfg(not(unix))]
         Some(acpira_desktop::engine::engine_endpoint(&acpira_desktop::engine::EndpointOpts {
           binary: &cmd.command,
           home: &data_home,

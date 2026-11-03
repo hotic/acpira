@@ -663,6 +663,23 @@ impl AcpSession {
       && !c.tree.any_running()
   }
 
+  /// Something it started is not finished: a turn, edit, gate run, compaction, plan build, queued or pending prompt, open
+  /// card, background task, subagent or summoned round. A scheduled wakeup does not count (it may be hours away). An
+  /// engine that handed the machine over ends only once none of its sessions has any
+  pub fn in_flight(&self) -> bool {
+    let c = self.core.lock();
+    Self::busy(&c)
+      || c.building_plan
+      || c.pending_prompt.is_some()
+      || c.compaction.completion.is_some()
+      || !c.queue.entries.is_empty()
+      || !c.perms.pending.is_empty()
+      || !c.questions.pending.is_empty()
+      || !c.relays.rounds.is_empty()
+      || c.tree.any_running()
+      || has_live_async_task(&c.state)
+  }
+
   /// Its agent process can go now: idle and restorable, or stopped on sign-in with nothing to lose
   pub fn can_let_go(&self) -> bool {
     self.releasable() || self.stalled_on_sign_in()

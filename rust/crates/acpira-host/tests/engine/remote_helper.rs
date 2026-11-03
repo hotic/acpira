@@ -262,3 +262,29 @@ async fn a_frozen_helper_is_given_up_and_its_requests_fail_as_unknown() {
   unsafe { libc::kill(helper, libc::SIGCONT) };
   assert!(gone_within(helper, Duration::from_secs(5)).await);
 }
+
+#[tokio::test]
+async fn a_blob_comes_in_pieces_from_any_offset_and_one_over_the_cap_is_skipped() {
+  let dir = tempfile::tempdir().unwrap();
+  let client = start(dir.path()).await;
+  let home = dir.path().join("home");
+  // Several wire chunks long, so the pieces have to be put back together in order
+  let bytes: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+  let name = acpira_host::store::transcript_store::blob_name(".png", &bytes);
+  std::fs::create_dir_all(home.join("sessions").join("s-1")).unwrap();
+  std::fs::write(home.join("sessions").join("s-1").join(&name), &bytes).unwrap();
+  let ask = |extra: serde_json::Value| {
+    let mut a = json!({ "home": home.to_string_lossy(), "id": "s-1", "name": name });
+    a.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+    a
+  };
+  let whole = client.call("storeBlobGet", ask(json!({}))).await.unwrap();
+  assert_eq!(whole.data, bytes);
+  // A fetch cut off before resumes from what it kept
+  let rest = client.call("storeBlobGet", ask(json!({ "offset": 150_000 }))).await.unwrap();
+  assert_eq!((rest.data.as_slice(), rest.value["offset"].as_u64()), (&bytes[150_000..], Some(150_000)));
+  let skipped = client.call("storeBlobGet", ask(json!({ "max": 1000 }))).await.unwrap();
+  assert!(skipped.data.is_empty());
+  assert_eq!((skipped.value["skipped"].as_bool(), skipped.value["size"].as_u64()), (Some(true), Some(200_000)));
+  assert!(client.call("storeBlobGet", ask(json!({ "offset": 200_001 }))).await.is_err());
+}

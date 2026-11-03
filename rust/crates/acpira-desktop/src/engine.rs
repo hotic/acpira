@@ -18,6 +18,16 @@ pub struct EngineEndpoint {
   pub socket: PathBuf,
   /// Where a launched engine writes its stderr (it outlives the app, so there is no other place for it)
   pub log: PathBuf,
+  /// The machine's one engine for this data root (`machine_endpoint`): `acpira engine` starts it, or hands it to this
+  /// build when that is newer, and names its socket (acpira-host machine_engine/). `socket` and `log` are then only
+  /// where it is expected
+  pub machine: Option<PathBuf>,
+}
+
+/// The machine's one engine for `home` (Unix): every shell on the machine connects to it
+pub fn machine_endpoint(home: &Path) -> EngineEndpoint {
+  let run = home.join("run");
+  EngineEndpoint { socket: run.join("engine.sock"), log: run.join("engine.log"), machine: Some(home.to_path_buf()) }
 }
 
 pub struct EndpointOpts<'a> {
@@ -76,16 +86,16 @@ pub fn engine_endpoint(o: &EndpointOpts) -> EngineEndpoint {
   let log = run.join(format!("engine-{key}.log"));
   // Windows: a pipe of that key, which only this user may open (the engine's lock stays under run/)
   if cfg!(windows) {
-    return EngineEndpoint { socket: PathBuf::from(format!(r"\\.\pipe\acpira-engine-{key}")), log };
+    return EngineEndpoint { socket: PathBuf::from(format!(r"\\.\pipe\acpira-engine-{key}")), log, machine: None };
   }
   let socket = run.join(format!("engine-{key}.sock"));
   if socket.as_os_str().len() <= MAX_SOCKET_PATH {
-    return EngineEndpoint { socket, log };
+    return EngineEndpoint { socket, log, machine: None };
   }
   // A deep ACPIRA_HOME: a private directory under the system temp dir instead
   let uid = o.uid.unwrap_or_else(current_uid);
   let tmp = o.tmp.map(Path::to_path_buf).unwrap_or_else(std::env::temp_dir);
-  EngineEndpoint { socket: tmp.join(format!("acpira-{uid}")).join(format!("engine-{key}.sock")), log }
+  EngineEndpoint { socket: tmp.join(format!("acpira-{uid}")).join(format!("engine-{key}.sock")), log, machine: None }
 }
 
 fn current_uid() -> u32 {
@@ -184,6 +194,10 @@ pub async fn reach_engine(
   cancelled: &(dyn Fn() -> bool + Send + Sync),
   log: &(dyn Fn(&str) + Send + Sync),
 ) -> std::io::Result<EngineStream> {
+  #[cfg(unix)]
+  if let Some(home) = &ep.machine {
+    return reach_machine_engine(cmd, home, cancelled, log).await;
+  }
   // Checked before connecting too: a socket in a directory someone else controls may not be this user's engine
   #[cfg(unix)]
   if let Some(dir) = ep.socket.parent() {
@@ -264,6 +278,73 @@ pub async fn reach_engine(
     crate::process::reap(child);
   }
   result
+}
+
+/// How long `acpira engine` may take: landing a large debug build, an older engine handing over, a fresh start (its own
+/// limit is 40 s)
+#[cfg(unix)]
+const ENSURE_WAIT: Duration = Duration::from_secs(45);
+
+/// The machine's engine: `<binary> engine --home H` makes sure it runs (and is at least this build) and prints where it
+/// listens; then a connection there. Its stderr goes to `log`
+#[cfg(unix)]
+async fn reach_machine_engine(
+  cmd: &SidecarCommand,
+  home: &Path,
+  cancelled: &(dyn Fn() -> bool + Send + Sync),
+  log: &(dyn Fn(&str) + Send + Sync),
+) -> std::io::Result<EngineStream> {
+  let deadline = tokio::time::Instant::now() + ENSURE_WAIT;
+  let mut wait = std::time::Duration::from_millis(100);
+  loop {
+    let socket = ensure_machine_engine(cmd, home, cancelled, log).await?;
+    match EngineStream::connect(&socket).await {
+      // Gone between the answer and the connect (a newer build took over, or it idled out): ask again
+      Err(e)
+        if matches!(e.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused)
+          && tokio::time::Instant::now() + wait < deadline
+          && !cancelled() =>
+      {
+        log(&format!("machine engine at {socket} went away ({e}); asking again"));
+        tokio::time::sleep(wait).await;
+        wait = (wait * 2).min(std::time::Duration::from_secs(1));
+      }
+      r => return r,
+    }
+  }
+}
+
+#[cfg(unix)]
+async fn ensure_machine_engine(
+  cmd: &SidecarCommand,
+  home: &Path,
+  cancelled: &(dyn Fn() -> bool + Send + Sync),
+  log: &(dyn Fn(&str) + Send + Sync),
+) -> std::io::Result<String> {
+  let mut c = tokio::process::Command::new(&cmd.command);
+  c.arg("engine").arg("--home").arg(home).args(&cmd.args).envs(&cmd.env).stdin(std::process::Stdio::null()).kill_on_drop(true);
+  let out = tokio::time::timeout(ENSURE_WAIT, c.output())
+    .await
+    .map_err(|_| std::io::Error::other(format!("acpira engine gave no answer within {}s", ENSURE_WAIT.as_secs())))??;
+  let stderr = String::from_utf8_lossy(&out.stderr);
+  for line in stderr.lines().filter(|l| !l.trim().is_empty()) {
+    log(line.trim());
+  }
+  if !out.status.success() {
+    let last = stderr.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_owned();
+    return Err(std::io::Error::other(if last.is_empty() { format!("acpira engine exited ({})", out.status) } else { last }));
+  }
+  if cancelled() {
+    return Err(std::io::Error::other("cancelled"));
+  }
+  let stdout = String::from_utf8_lossy(&out.stdout);
+  let line = stdout.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("");
+  let reached: serde_json::Value = serde_json::from_str(line).map_err(|_| std::io::Error::other(format!("acpira engine printed {line:?}")))?;
+  let Some(socket) = reached.get("socket").and_then(|s| s.as_str()) else {
+    return Err(std::io::Error::other(format!("acpira engine printed {line:?}")));
+  };
+  log(&format!("machine engine {} (pid {}) at {socket}", reached["version"], reached["pid"]));
+  Ok(socket.to_owned())
 }
 
 #[cfg(test)]

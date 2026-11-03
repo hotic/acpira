@@ -123,6 +123,7 @@ describe('sidecar (stdio envelopes)', () => {
     expect(files.files).toEqual([{ uri: 'file:///w/idx.ts', path: 'idx-q.ts' }]);
 
     // openResolvedFile is declared but never answered here: the request stays pending until shutdown fails it
+    writeFileSync(join(s.cwd, 'x.ts'), '');
     s.view('V', { type: 'openFile', sessionId: init.state.active!.id, path: 'x.ts' });
     await s.next((m): m is Extract<SidecarMsg, { type: 'platformRequest' }> => m.type === 'platformRequest' && m.request.method === 'openResolvedFile');
     s.send({ type: 'shutdown' });

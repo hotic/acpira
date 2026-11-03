@@ -12,8 +12,8 @@ import { FileVault } from './accounts/AccountStore';
 import { BrowserPanel, WebviewBridge, openTourPanel, pageFont } from './bridge';
 import { setHostLocale, t } from './i18n';
 import { SidecarClient } from '@acpira/engine-client/SidecarClient';
-import { engineEndpoint } from '@acpira/engine-client/engine';
-import { sidecarCommands } from '@acpira/engine-client/sidecarLocator';
+import { binaryIdentity } from '@acpira/engine-client/engine';
+import { landedEngine, sidecarCommands } from '@acpira/engine-client/sidecarLocator';
 import { safeModeOn, setSafeMode } from '@acpira/engine-client/safeMode';
 import { acpiraHome, displayHome, migrateOnce } from './store/dataDir';
 import { EDITOR_VIEW_TYPE, fileColumn, VscodePlatform } from './vscodePlatform';
@@ -57,8 +57,14 @@ export async function activate(context: vscode.ExtensionContext) {
   // Windows has no Unix sockets for it and keeps the child-process sidecar; ACPIRA_ENGINE=stdio opts out anywhere (debugging)
   const persistent = process.platform !== 'win32' && process.env.ACPIRA_ENGINE !== 'stdio';
   const sidecar = client = new SidecarClient({
-    commands: () => sidecarCommands({ root: resources.fsPath, env: process.env }),
-    engine: cmd => persistent ? engineEndpoint({ binary: cmd.command, home, cwd: platform.cwd() }) : undefined,
+    // An update deletes this extension's folder under a window not yet reloaded: it reconnects with a landed engine copy
+    commands: () => {
+      const bundled = sidecarCommands({ root: resources.fsPath, env: process.env });
+      const landed = persistent && !bundled.length ? landedEngine(home) : undefined;
+      return landed ? [landed] : bundled;
+    },
+    // The machine's one engine, shared with every other window, the desktop app and IntelliJ (machine_engine/ in rust/)
+    engine: () => persistent ? { home } : undefined,
     cwd: () => platform.cwd(),
     hello: () => platform.hello(),
     onRequest: r => platform.handle(r),
@@ -497,6 +503,32 @@ export async function activate(context: vscode.ExtensionContext) {
       void vscode.commands.executeCommand('workbench.action.moveEditorToNewWindow');
     }),
   );
+
+  // An update or a local reinstall replaces this install under the running window, which keeps its old code (the
+  // machine engine of macOS / Linux runs from its own copy). Ask once for a reload, so the window gets the new
+  // page and its engine takes the machine over
+  const installed = context.extensionMode === vscode.ExtensionMode.Production && !process.env.ACPIRA_SIDECAR_BIN?.trim()
+    ? sidecarCommands({ root: resources.fsPath, env: process.env })[0]?.command
+    : undefined;
+  if (installed) {
+    const identity = binaryIdentity(installed);
+    let asked = false;
+    const checkInstall = () => {
+      if (asked || binaryIdentity(installed) === identity) return;
+      asked = true;
+      log.info(`install replaced under this window: ${installed}`);
+      const reload = t('host.reloadWindow');
+      void vscode.window.showWarningMessage(t('host.engineReplaced'), reload).then(pick => {
+        if (pick === reload) void vscode.commands.executeCommand('workbench.action.reloadWindow');
+      });
+    };
+    // A focus covers an install from another window; the timer, one from a terminal while this window stays in front
+    const timer = setInterval(checkInstall, 30_000);
+    context.subscriptions.push(
+      { dispose: () => clearInterval(timer) },
+      vscode.window.onDidChangeWindowState(e => { if (e.focused) checkInstall(); }),
+    );
+  }
 
   if (consented) sidecar.start();
   else log.info(`first run: no ${home}, the engine waits for consent`);

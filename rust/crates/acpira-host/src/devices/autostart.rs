@@ -1,7 +1,7 @@
-//! The fallback when no service manager will run the gateway: an entry the desktop starts at login (Linux: an XDG
-//! autostart file; Windows: a value under the user's Run key), started at once as well. Neither restarts what it starts,
-//! so the entry runs the gateway with `--supervise`, which does. A Windows Run value has no file of its own to read back,
-//! so its command line is kept beside the gateway's settings too.
+//! The fallback when no service manager will run remote access's engine: an entry the desktop starts at login (Linux:
+//! an XDG autostart file; Windows: a value under the user's Run key), started at once as well. Neither restarts what it
+//! starts; the next engine start of any shell starts it again. A Windows Run value has no file of its own to read back,
+//! so its command line is kept beside the service's copy too.
 
 #[cfg(target_os = "linux")]
 pub use linux::*;
@@ -33,7 +33,7 @@ fn spawn_detached(program: &std::path::Path, args: &[String]) -> std::io::Result
     Err(e) if cfg!(windows) && e.kind() == std::io::ErrorKind::PermissionDenied => command(false).spawn()?,
     other => other?,
   };
-  // The supervisor outlives this engine; nothing waits for it here
+  // The engine outlives this one; nothing waits for it here
   std::thread::spawn(move || {
     let mut child = child;
     let _ = child.wait();
@@ -145,11 +145,11 @@ mod linux {
 
     #[test]
     fn exec_lines_round_trip() {
-      let p = Program { exe: PathBuf::from("/opt/Acpira Beta/acpira-gateway"), prefix: vec![] };
-      let args = vec!["run".to_owned(), "--home".to_owned(), "/home/u/a\"b$c\\d".to_owned(), "--log".to_owned(), "/l/100%".to_owned(), "".to_owned()];
+      let p = Program { exe: PathBuf::from("/opt/Acpira Beta/acpira") };
+      let args = vec!["serve".to_owned(), "--home".to_owned(), "/home/u/a\"b$c\\d".to_owned(), "--log".to_owned(), "/l/100%".to_owned(), "".to_owned()];
       let e = entry(&p, &args);
       let exec = e.lines().find_map(|l| l.strip_prefix("Exec=")).unwrap();
-      let mut want = vec!["/opt/Acpira Beta/acpira-gateway".to_owned()];
+      let mut want = vec!["/opt/Acpira Beta/acpira".to_owned()];
       want.extend(args);
       assert_eq!(unescape(exec), want, "{exec}");
     }
@@ -166,7 +166,7 @@ mod windows {
 
   const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 
-  /// The command line the Run value holds, kept beside the gateway's settings (the switch reads it without the registry)
+  /// The command line the Run value holds, kept beside the service's copy (the switch reads it without the registry)
   fn record(root: &Path, label: &str) -> PathBuf {
     root.join("devices").join("service").join(format!("{label}.run"))
   }
@@ -266,7 +266,7 @@ mod windows {
 
     #[test]
     fn command_lines_round_trip() {
-      for argv in [vec![r"C:\Program Files\Acpira\Acpira.exe", "gateway", "run", "--home", r"C:\Users\张 三\.acpira\", ""], vec![r#"a"b"#, r"c\\", r#"d\"e"#]] {
+      for argv in [vec![r"C:\Program Files\Acpira\Acpira.exe", "serve", "--home", r"C:\Users\张 三\.acpira\", ""], vec![r#"a"b"#, r"c\\", r#"d\"e"#]] {
         let line = windows_command_line(argv.iter().copied());
         assert_eq!(split_command_line(&line), argv, "{line}");
       }

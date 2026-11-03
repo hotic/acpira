@@ -9,7 +9,7 @@ use serde_json::Value;
 use acpira_shared::protocol::{HostMsg, RawJson};
 
 use super::leases::LeaseHold;
-use super::{SessionManager, TRASH_TTL, Trash};
+use super::{SessionManager, TRASH_TTL, Trash, Viewer};
 use crate::acp::session::AcpSession;
 use crate::acp::transport::rpc::BoxFuture;
 use crate::i18n::{t, tp};
@@ -316,7 +316,7 @@ impl SessionManager {
       }
       for v in me.viewers_on(&id, None) {
         me.set_active(&v, None);
-        match me.most_recent_except(Some(&id)) {
+        match me.most_recent_except(v.shell.as_ref(), Some(&id)) {
           Some(next) => me.select_session_for(&v, &next).await,
           // A project shell whose last session went and that has no project left shows its empty state
           None if me.folder_for(Some(&v), None).is_none() => v.emit(HostMsg::NoSession),
@@ -333,7 +333,7 @@ impl SessionManager {
   /// Re-home a session into another project folder: `to` (a project the list shows), or this window's workspace folder
   /// without one. `category` files it under one of the destination project's categories in the same step; any other id
   /// leaves it unfiled there
-  pub async fn move_session(self: &Arc<Self>, id: &str, to: Option<String>, category: Option<String>) -> Result<()> {
+  pub async fn move_session(self: &Arc<Self>, v: Option<&Viewer>, id: &str, to: Option<String>, category: Option<String>) -> Result<()> {
     if !is_session_id(id) {
       return Ok(());
     }
@@ -344,7 +344,7 @@ impl SessionManager {
     let cwd = match to {
       // The agent is spawned in the folder from the next open on, so a project whose folder is gone cannot take it
       Some(dir) => self.check_folder(&dir, "host.moveFolderMissing").await?,
-      None => self.folder_for(None, None).ok_or_else(|| anyhow!(t("host.noProject")))?,
+      None => self.folder_for(v, None).ok_or_else(|| anyhow!(t("host.noProject")))?,
     };
     // A category belongs to the project the session leaves; only one of the destination's survives the move
     let category = self.category_for(category, &cwd).flatten();

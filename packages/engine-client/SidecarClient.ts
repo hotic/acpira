@@ -42,7 +42,7 @@ export interface SidecarClientOpts {
   onState?: (state: SidecarState, detail?: string) => void;
   // Delay before the nth consecutive restart
   backoff?: (attempt: number) => number;
-  // The persistent engine for a command: connect to its socket (launching it detached when nothing listens) instead of
+  // The persistent engine for a command (engine.ts): connect to it (launching it detached when nothing listens) instead of
   // spawning a child over stdio. Disconnecting leaves it and its sessions running. Undefined: a child over stdio
   engine?: (cmd: SidecarCommand) => EngineEndpoint | undefined;
 }
@@ -152,7 +152,7 @@ export class SidecarClient {
     if (gen !== this.gen || this.disposed) { sock.destroy(); return; }
     this.connecting = false;
     this.sock = sock;
-    this.opts.log(`engine connected: ${ep.socket}`);
+    this.opts.log(`engine connected${'socket' in ep ? `: ${ep.socket}` : ''}`);
     sock.on('error', e => this.opts.log(`engine connection: ${String(e)}`));
     sock.on('close', () => {
       if (this.sock === sock) this.sock = undefined;

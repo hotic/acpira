@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
+import { existsSync, globSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hostPlatform, targetFor } from './sidecar-targets.mjs';
@@ -7,8 +7,8 @@ import { hostPlatform, targetFor } from './sidecar-targets.mjs';
 // Installs what scripts/release/package-local.mjs left on this machine: the VSIX into every VS Code / Cursor whose CLI is
 // found, and on macOS the packaged Acpira.app into /Applications (a running copy is asked to quit first).
 //   node scripts/release/install-local.mjs [--vsix | --desktop]
-// Open editor windows keep the old extension until Developer: Reload Window; the persistent engine (`acpira serve`) moves
-// to the new sidecar once it ends after its idle grace
+// Open editor windows keep the old extension until they reload (each offers it once it notices the replaced install);
+// the first shell to start the new engine binary hands the machine's engine over to it (machine_engine/ensure.rs)
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const args = process.argv.slice(2);
 const doVsix = !args.includes('--desktop');
@@ -21,8 +21,12 @@ const which = cmd => spawnSync('/usr/bin/env', ['which', cmd], { encoding: 'utf8
 let failed = false;
 
 if (doVsix) {
-  const { name, version } = JSON.parse(readFileSync(join(root, 'apps', 'vscode', 'package.json'), 'utf8'));
-  const vsix = join(root, `${name}-${version}-${targetFor(hostPlatform()).vsce[0]}.vsix`);
+  const { name } = JSON.parse(readFileSync(join(root, 'apps', 'vscode', 'package.json'), 'utf8'));
+  // The newest package for this platform: local ones carry a prerelease version of their own (local-version.mjs)
+  const target = targetFor(hostPlatform()).vsce[0];
+  const vsix = globSync(`${name}-*-${target}.vsix`, { cwd: root })
+    .map(f => join(root, f))
+    .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0] ?? join(root, `${name}-<version>-${target}.vsix`);
   if (!existsSync(vsix)) {
     console.error(`${vsix} is missing: run \`pnpm package\` first`);
     failed = true;

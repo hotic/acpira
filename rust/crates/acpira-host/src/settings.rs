@@ -20,11 +20,16 @@ use crate::shared_config::{AGENTS, Outcome, Places, SharedConfig};
 use acpira_shared::providers::{ProviderAction, ProvidersView};
 use acpira_shared::shared_config::{SharedAction, SharedView};
 
+/// A setting as one window's shell sees it (None: the current window)
+pub type WireRead = Arc<dyn Fn(Option<u64>, &str) -> Option<Value> + Send + Sync>;
+
 pub struct SettingsDeps {
   pub agent_config_path: std::path::PathBuf,
-  pub read: crate::util::Lookup<Value>,
+  /// A setting as one window's shell sees it (its own snapshot for shell keys; None: the current window)
+  pub read: WireRead,
   pub write: Arc<dyn Fn(String, Value) -> BoxFuture<Result<()>> + Send + Sync>,
-  pub host_language: Arc<dyn Fn() -> String + Send + Sync>,
+  /// One window's IDE language (None: the current window's)
+  pub host_language: Arc<dyn Fn(Option<u64>) -> String + Send + Sync>,
   pub registry: Arc<dyn Fn() -> Arc<AgentRegistry> + Send + Sync>,
   pub runtime_info: crate::util::Lookup<AgentRuntimeInfo>,
   pub health: crate::util::Lookup<AgentHealth>,
@@ -40,7 +45,8 @@ pub type SettingsListener = Arc<dyn Fn(&SettingsView, Locale) + Send + Sync>;
 
 pub struct SettingsCenter {
   deps: SettingsDeps,
-  listeners: parking_lot::Mutex<Vec<(u64, SettingsListener)>>,
+  /// Each listener with the window wire whose view it hears (None: the current window's)
+  listeners: parking_lot::Mutex<Vec<(u64, Option<u64>, SettingsListener)>>,
   seq: std::sync::atomic::AtomicU64,
 }
 
@@ -53,52 +59,63 @@ impl SettingsCenter {
     SettingsCenter { deps, listeners: Default::default(), seq: Default::default() }
   }
 
-  fn read(&self, key: &str) -> Value {
-    sanitize_setting(key, &(self.deps.read)(key).unwrap_or(Value::Null))
+  fn read_on(&self, wire: Option<u64>, key: &str) -> Value {
+    sanitize_setting(key, &(self.deps.read)(wire, key).unwrap_or(Value::Null))
   }
 
   pub fn view(&self) -> SettingsView {
-    let str_of = |k: &str| self.read(k).as_str().unwrap_or("").to_owned();
-    let list = |k: &str| serde_json::from_value(self.read(k)).unwrap_or_default();
+    self.view_for(None)
+  }
+
+  /// The view one window's pages get: shared keys are everyone's, shell keys (`SHELL_SETTING_KEYS`) its own
+  pub fn view_for(&self, wire: Option<u64>) -> SettingsView {
+    let read = |k: &str| self.read_on(wire, k);
+    let str_of = |k: &str| read(k).as_str().unwrap_or("").to_owned();
+    let list = |k: &str| serde_json::from_value(read(k)).unwrap_or_default();
     SettingsView {
       language: Language::parse(&str_of("language")).unwrap_or(Language::Auto),
-      locale: self.locale(),
+      locale: self.locale_for(wire),
       default_agent: str_of("defaultAgent"),
       agent_order: list("agentOrder"),
       disabled_agents: list("disabledAgents"),
       session_scope: str_of("sessionScope"),
       session_list_position: str_of("sessionListPosition"),
-      auto_compact: self.read("autoCompact").as_bool().unwrap_or(true),
-      compact_at_tokens: self.read("compactAtTokens").as_i64().unwrap_or(300_000),
-      hidden_options: serde_json::from_value(self.read("hiddenOptions")).unwrap_or_default(),
+      auto_compact: read("autoCompact").as_bool().unwrap_or(true),
+      compact_at_tokens: read("compactAtTokens").as_i64().unwrap_or(300_000),
+      hidden_options: serde_json::from_value(read("hiddenOptions")).unwrap_or_default(),
       account_switch: str_of("accountSwitch"),
       theme: str_of("theme"),
-      ui_font_size: self.read("uiFontSize").as_i64().unwrap_or(13),
-      code_font_size: self.read("codeFontSize").as_i64().unwrap_or(12),
+      ui_font_size: read("uiFontSize").as_i64().unwrap_or(13),
+      code_font_size: read("codeFontSize").as_i64().unwrap_or(12),
       diff_markers: str_of("diffMarkers"),
-      font_smoothing: self.read("fontSmoothing").as_bool().unwrap_or(false),
-      share_editor_selection: self.read("shareEditorSelection").as_bool().unwrap_or(true),
-      steer_queued: self.read("steerQueued").as_bool().unwrap_or(false),
-      notify_sound: self.read("notifySound").as_bool().unwrap_or(true),
-      notify_system: self.read("notifySystem").as_bool().unwrap_or(false),
+      font_smoothing: read("fontSmoothing").as_bool().unwrap_or(false),
+      share_editor_selection: read("shareEditorSelection").as_bool().unwrap_or(true),
+      steer_queued: read("steerQueued").as_bool().unwrap_or(false),
+      notify_sound: read("notifySound").as_bool().unwrap_or(true),
+      notify_system: read("notifySystem").as_bool().unwrap_or(false),
       plan_auto_approve: list("planAutoApprove"),
       ssh_local_agents: list("sshLocalAgents"),
       subagents: self.deps.roster.list(),
       subagent_groups: self.deps.roster.groups(),
-      agent_cpu_cap: self.read("agentCpuCap").as_i64().unwrap_or(acpira_shared::settings::AGENT_CPU_CAP.2),
+      agent_cpu_cap: read("agentCpuCap").as_i64().unwrap_or(acpira_shared::settings::AGENT_CPU_CAP.2),
       proxy: str_of("proxy"),
       open_files_with: str_of("openFilesWith"),
       desktop_layout: str_of("desktopLayout"),
       panel_scope: str_of("panelScope"),
-      panel_files: self.read("panelFiles").as_bool().unwrap_or(true),
-      panel_terminal: self.read("panelTerminal").as_bool().unwrap_or(true),
-      panel_browser: self.read("panelBrowser").as_bool().unwrap_or(true),
+      panel_files: read("panelFiles").as_bool().unwrap_or(true),
+      panel_terminal: read("panelTerminal").as_bool().unwrap_or(true),
+      panel_browser: read("panelBrowser").as_bool().unwrap_or(true),
     }
   }
 
   pub fn locale(&self) -> Locale {
-    let lang = Language::parse(self.read("language").as_str().unwrap_or("auto"));
-    resolve_locale(lang, &(self.deps.host_language)())
+    self.locale_for(None)
+  }
+
+  /// The locale of one window's pages: the shared language setting over that window's IDE language
+  pub fn locale_for(&self, wire: Option<u64>) -> Locale {
+    let lang = Language::parse(self.read_on(wire, "language").as_str().unwrap_or("auto"));
+    resolve_locale(lang, &(self.deps.host_language)(wire))
   }
 
   /// Write, then push; the value is checked like a hand edit of the settings file
@@ -147,7 +164,7 @@ impl SettingsCenter {
   /// Built-in agents whose CLI resolves on this machine: only they get links or show up on the Shared tab
   /// Agents turned off in the settings (`disabledAgents`): the Shared tab leaves them out and takes their links back
   fn disabled_agents(&self) -> Vec<String> {
-    serde_json::from_value(self.read("disabledAgents")).unwrap_or_default()
+    serde_json::from_value(self.read_on(None, "disabledAgents")).unwrap_or_default()
   }
 
   async fn installed_agents(&self) -> Vec<String> {
@@ -198,23 +215,35 @@ impl SettingsCenter {
     self.deps.providers.probe(probe).await
   }
 
-  pub fn subscribe(&self, f: SettingsListener) -> u64 {
+  /// `wire`: the window whose view the listener hears (None: the current window's)
+  pub fn subscribe(&self, wire: Option<u64>, f: SettingsListener) -> u64 {
     let id = self.seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    self.listeners.lock().push((id, f));
+    self.listeners.lock().push((id, wire, f));
     id
   }
 
   pub fn unsubscribe(&self, id: u64) {
-    self.listeners.lock().retain(|(i, _)| *i != id);
+    self.listeners.lock().retain(|(i, _, _)| *i != id);
   }
 
-  /// Re-read everything and push
+  /// Re-read everything and push, each listener its own window's view
   pub fn emit(&self) {
-    let view = self.view();
-    let locale = self.locale();
-    let ls: Vec<SettingsListener> = self.listeners.lock().iter().map(|(_, f)| f.clone()).collect();
-    for f in ls {
-      f(&view, locale);
+    self.emit_where(|_| true);
+  }
+
+  /// Push to the listeners of one window only: its own shell settings or language changed while another was active
+  pub fn emit_wire(&self, wire: u64) {
+    self.emit_where(|w| w == Some(wire));
+  }
+
+  fn emit_where(&self, pick: impl Fn(Option<u64>) -> bool) {
+    let ls: Vec<(Option<u64>, SettingsListener)> =
+      self.listeners.lock().iter().filter(|(_, w, _)| pick(*w)).map(|(_, w, f)| (*w, f.clone())).collect();
+    // One view per window, however many pages it has
+    let mut views: std::collections::HashMap<Option<u64>, (SettingsView, Locale)> = Default::default();
+    for (wire, f) in ls {
+      let (view, locale) = views.entry(wire).or_insert_with(|| (self.view_for(wire), self.locale_for(wire)));
+      f(view, *locale);
     }
   }
 }

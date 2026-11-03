@@ -16,7 +16,7 @@ Windows boundaries the code works around, their checks, and what lacks native ac
 - ChatGPT bridge commands drain output after exit, since a helper can hold the pipe open.
 - Remote / WSL: the backend OS decides command syntax; `agents.json` keeps local Windows and remote Linux config apart.
 - Release sidecars: MSVC target, static CRT (`scripts/release/sidecar-targets.mjs`).
-- Remote access gateway: a GUI-subsystem `--supervise` program from a logon task so no console opens; owner-only control pipe and DACLs (`host-architecture.md`, Remote access gateway).
+- Remote access: the logon task runs the GUI-subsystem engine (`serve --service --log`, the exe's own output redirected) so no console opens; owner-only control pipe and DACLs (`host-architecture.md`, Remote access gateway). Unverified on Windows: `/Create /F` over a running instance, `SetStdHandle` redirection.
 
 ## Regression checks
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # End to end over paired remote access on the emulator: the app against a real gateway (apps/ios/scripts/gateway.sh:
-# `acpira-gateway` with relays off on a throwaway home, bridged to an engine whose only agent is the fake one), driven
+# `acpira serve --gateway` with relays off on a throwaway home, an engine whose only agent is the fake one), driven
 # through its own screens with uiautomator.
 #   1. a fresh install opens on the connect page; Add computer, the computer nearby, its 6-digit code: paired
 #   2. the wire comes up and the list follows the computer
 #   3. a new chat's reply streams in, then a tool turn is approved and runs
 # The emulator reaches neither the computer's LAN nor its Bonjour, only its loopback as 10.0.2.2, so the debug build's
-# `nearby` launch extra lists the gateway there (LaunchOptions.kt) and the code comes from `acpira-gateway status`.
+# `nearby` launch extra lists the gateway there (LaunchOptions.kt) and the code comes from `acpira gateway status`.
 # Needs a booted emulator; SKIP_BUILD=1 reuses the installed build. Clears the app's data (its pairing state).
 # Usage: apps/android/scripts/e2e-paired.sh
 set -euo pipefail
@@ -40,10 +40,10 @@ for _ in $(seq 600); do
 done
 root="$(dirname "$(sed -n 's/^ACPIRA_TEST_GATEWAY=//p' "$log")")"
 [ -d "$root" ] || { cat "$log" >&2; echo "the gateway printed no home" >&2; exit 1; }
-status() { env HOME="$root" "$repo/rust/target/debug/acpira-gateway" status --json --home "$root/acpira"; }
+status() { env HOME="$root" "$repo/rust/target/debug/acpira" gateway status --json --home "$root/acpira"; }
 id="$(status | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
 # The gateway's IPv4 port, which the emulator reaches as 10.0.2.2
-pid="$(pgrep -f "acpira-gateway run .*--home $root/acpira" | head -1)"
+pid="$(pgrep -f "acpira serve .*--home $root/acpira --gateway" | head -1)"
 port="$(lsof -nP -a -p "$pid" -i 4UDP | awk 'NR>1 { sub(/.*:/, "", $9); print $9; exit }')"
 [ -n "$id" ] && [ -n "$port" ] || { echo "no gateway id or port" >&2; exit 1; }
 

@@ -11,6 +11,7 @@ use tokio::sync::mpsc;
 use acpira_shared::sidecar::SIDECAR_PROTOCOL_VERSION;
 
 use crate::remote::client::{Event, RemoteClient};
+use crate::remote::deflate::{Inflater, OPEN_DEFLATE};
 
 /// How long the host's engine gets to come up and answer hello
 const HELLO_WAIT: Duration = Duration::from_secs(30);
@@ -58,17 +59,19 @@ impl PeerLink {
   }
 
   async fn connect_once(client: &RemoteClient, home: Option<&str>, me: &PeerHello<'_>) -> Result<PeerLink> {
-    let mut args = json!({});
+    // Deflated: a session view is JSON of up to many MB, and every patch resends the growing tail block
+    let mut args = json!({ "deflate": true });
     if let Some(h) = home {
       args["home"] = json!(h);
     }
     let mut call = client.request("engine", args);
-    match tokio::time::timeout(HELLO_WAIT, call.next()).await {
-      Ok(Some(Event::Chunk { stream, .. })) if stream == "open" => {}
+    // A helper that cannot compress (an older release a local build deployed) opens with `1` and sends plain bytes
+    let mut z = match tokio::time::timeout(HELLO_WAIT, call.next()).await {
+      Ok(Some(Event::Chunk { stream, bytes })) if stream == "open" => (bytes == OPEN_DEFLATE).then(Inflater::default),
       Ok(Some(Event::Done(Err(e)))) => bail!("the host's engine cannot be reached: {e}"),
       Ok(_) => bail!("the host closed the connection to its engine"),
       Err(_) => bail!("the host's engine did not come up within {}s", HELLO_WAIT.as_secs()),
-    }
+    };
     let (out, mut lines) = mpsc::unbounded_channel::<String>();
     let (to_inbox, mut inbox) = mpsc::unbounded_channel::<Value>();
     let task = tokio::spawn(async move {
@@ -84,7 +87,14 @@ impl PeerLink {
           },
           ev = call.next() => match ev {
             Some(Event::Chunk { bytes, .. }) => {
-              pending.extend_from_slice(&bytes);
+              match &mut z {
+                None => pending.extend_from_slice(&bytes),
+                Some(z) => {
+                  if z.unpack(&bytes, &mut pending).is_err() {
+                    break;
+                  }
+                }
+              }
               while let Some(at) = pending.iter().position(|b| *b == b'\n') {
                 let line: Vec<u8> = pending.drain(..=at).collect();
                 if let Ok(v) = serde_json::from_slice::<Value>(&line) {

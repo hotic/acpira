@@ -18,7 +18,7 @@ use crate::acp::transcript::normalize::file_url_to_path;
 use crate::i18n::{t, tp};
 use crate::project_files;
 use crate::remote::connections::Connections;
-use crate::session_manager::{SessionManager, Viewer};
+use crate::session_manager::{SessionManager, Viewer, ViewerShell};
 use crate::settings::SettingsCenter;
 use crate::sidecar::platform::SidecarPlatform;
 use crate::store::data_dir::{home_dir, normalize};
@@ -91,6 +91,19 @@ impl MsgBatch {
   }
 }
 
+/// `tokio::spawn` keeping the page's wire as `ORIGIN`: a task-local does not cross a spawn, and without it a request the
+/// task makes later (a fetched remote file opening, a toast) would go to whichever window is active by then
+fn spawn_on<F>(wire: Option<u64>, fut: F) -> tokio::task::JoinHandle<F::Output>
+where
+  F: std::future::Future + Send + 'static,
+  F::Output: Send + 'static,
+{
+  match wire {
+    Some(w) => tokio::spawn(crate::sidecar::platform::ORIGIN.scope(w, fut)),
+    None => tokio::spawn(fut),
+  }
+}
+
 pub struct BridgeCore {
   pub viewer: Arc<Viewer>,
   manager: Arc<SessionManager>,
@@ -100,6 +113,9 @@ pub struct BridgeCore {
   post: Post,
   host: WebviewHost,
   blob_base: Option<String>,
+  /// The shell connection this page belongs to (None: tests, a viewer-less harness): its settings view, and the
+  /// `ORIGIN` its spawned tasks keep so the platform requests they make later go back to it
+  wire: Option<u64>,
   ready: std::sync::atomic::AtomicBool,
   /// A session view was pushed before the page was ready: the session it opens has a view to put into init
   view_shown: tokio::sync::Notify,
@@ -156,18 +172,20 @@ impl BridgeCore {
     host: WebviewHost,
     blob_base: Option<String>,
     initial: Option<InitialView>,
+    wire: Option<u64>,
+    shell: Option<ViewerShell>,
     terminals: Arc<TerminalHub>,
     connections: Arc<Connections>,
     plugins: Arc<crate::plugins::host::PluginHost>,
     remote_access: Arc<crate::devices::RemoteAccess>,
   ) -> Arc<BridgeCore> {
-    let viewer = manager.attach(initial);
+    let viewer = manager.attach_in(initial, shell);
     // The page loads its bundle between attach and `ready`: a stored session it opens on is read and brought live meanwhile,
     // so `ready` finds its view instead of starting a long record's read only then. A page opening on a new session
     // still starts it at `ready`
     let preload = viewer.active_id().map(|_| {
       let (m, v) = (manager.clone(), viewer.clone());
-      tokio::spawn(async move { m.ensure_active_for(&v).await })
+      spawn_on(wire, async move { m.ensure_active_for(&v).await })
     });
     let core = Arc::new_cyclic(|me: &Weak<BridgeCore>| BridgeCore {
       viewer,
@@ -178,6 +196,7 @@ impl BridgeCore {
       post,
       host,
       blob_base,
+      wire,
       ready: Default::default(),
       view_shown: Default::default(),
       patches: Default::default(),
@@ -210,7 +229,7 @@ impl BridgeCore {
       }
     }));
     let weak = core.me.clone();
-    let id = core.settings.subscribe(Arc::new(move |view, locale| {
+    let id = core.settings.subscribe(wire, Arc::new(move |view, locale| {
       if let Some(c) = weak.upgrade() {
         c.queue(HostMsg::Settings { settings: view.clone(), locale });
       }
@@ -244,14 +263,14 @@ impl BridgeCore {
         self.list_patches.store(list_patches, std::sync::atomic::Ordering::Release);
         // A view (re)opening is a cheap moment to re-check executables and pick up sessions another window created
         let m2 = manager.clone();
-        tokio::spawn(async move { m2.reprobe().await });
+        spawn_on(self.wire, async move { m2.reprobe().await });
         manager.refresh_index().await;
         // Init waits for the session on screen to have a view, not for its agent: a stored session is shown as soon as
         // its record is read, while starting the agent and resuming can take seconds, and the page stays blank until init
         let ensure = {
           let (m, v) = (manager.clone(), self.viewer.clone());
           let preload = self.preload.lock().take();
-          tokio::spawn(async move {
+          spawn_on(self.wire, async move {
             // The load begun at attach goes first: a session it could not open is replaced below, as without it
             if let Some(load) = preload {
               let _ = load.await;
@@ -287,8 +306,8 @@ impl BridgeCore {
           sessions: self.viewer.listed_sessions(manager.sessions()),
           categories: manager.categories(),
           active,
-          settings: self.settings.view(),
-          locale: self.settings.locale(),
+          settings: self.settings.view_for(self.wire),
+          locale: self.settings.locale_for(self.wire),
           home: platform.home(),
           // A project shell without a project yet has the home directory here, like a shell without a workspace
           cwd: manager.folder_for(Some(&self.viewer), None).unwrap_or_else(|| platform.home()),
@@ -313,7 +332,7 @@ impl BridgeCore {
         *self.theme.lock() = None;
         *self.ui.lock() = None;
         let me = self.clone();
-        tokio::spawn(async move {
+        spawn_on(self.wire, async move {
           me.push_theme().await;
           me.push_ui().await;
         });
@@ -322,7 +341,7 @@ impl BridgeCore {
           let weak = self.me.clone();
           *sub = Some(self.plugins.subscribe(Arc::new(move || {
             if let Some(c) = weak.upgrade() {
-              tokio::spawn(async move {
+              spawn_on(c.wire, async move {
                 c.push_theme().await;
                 c.push_ui().await;
               });
@@ -377,7 +396,7 @@ impl BridgeCore {
           };
           let core = self.clone();
           let copy = remote_copy_path(&manager.data_root(), &f.alias, &host_path);
-          tokio::spawn(async move { core.open_remote_file(cwd, f.alias, host_path, copy, line.filter(|l| *l > 0)).await });
+          spawn_on(self.wire, async move { core.open_remote_file(cwd, f.alias, host_path, copy, line.filter(|l| *l > 0)).await });
           return Ok(());
         }
         let resolved = if crate::platform::file_url::is_file_url(&path) {
@@ -438,7 +457,7 @@ impl BridgeCore {
         // A folder on an SSH host is searched there; the shell's own search only knows this machine
         if let Some(root) = root.clone().filter(|r| crate::workspace::is_remote(r)) {
           let core = self.clone();
-          tokio::spawn(async move {
+          spawn_on(self.wire, async move {
             let files = match core.workspace(Some(root)).await {
               Ok(ws) => ws.search_files(&query).await,
               Err(_) => vec![],
@@ -470,7 +489,7 @@ impl BridgeCore {
       // path (every one of a session on an SSH host), or a file reference clicked for preview
       W::ImageBlob { session_id, path, seq, shown } => {
         let (core, cwd) = (self.clone(), manager.session_cwd(&session_id));
-        tokio::spawn(async move {
+        spawn_on(self.wire, async move {
           let blob = async {
             // A paired device may stage only what the session shows, never any path of this machine
             if shown && !core.manager.shows_file(&session_id, &path) {
@@ -501,7 +520,7 @@ impl BridgeCore {
       // status or a large file must not hold up the messages behind it
       W::ProjectDir { session_id, dir, seq } => {
         let (core, root) = (self.clone(), manager.session_cwd(&session_id));
-        tokio::spawn(async move {
+        spawn_on(self.wire, async move {
           let (entries, error) = match core.workspace(root).await {
             Err(e) => (vec![], Some(e.code())),
             Ok(ws) => match ws.list_dir(&dir).await {
@@ -514,7 +533,7 @@ impl BridgeCore {
       }
       W::ProjectStatus { session_id, seq } => {
         let (core, root) = (self.clone(), manager.session_cwd(&session_id));
-        tokio::spawn(async move {
+        spawn_on(self.wire, async move {
           let marks = match core.workspace(root.clone()).await {
             Ok(ws) => ws.git_marks().await,
             Err(_) => Default::default(),
@@ -551,7 +570,7 @@ impl BridgeCore {
           }
           None => None,
         };
-        tokio::spawn(async move {
+        spawn_on(self.wire, async move {
           let ws = match core.workspace(root).await {
             Ok(ws) => ws,
             Err(e) => {
@@ -614,7 +633,7 @@ impl BridgeCore {
       }
       W::ConnectionOp { op } => {
         let (core, connections) = (self.clone(), self.connections.clone());
-        tokio::spawn(async move {
+        spawn_on(self.wire, async move {
           if let Err(e) = connections.op(op).await {
             core.platform.toast("error", &format!("{e:#}"));
             // The page may have shown the edit already: the list as it is puts it right
@@ -638,7 +657,7 @@ impl BridgeCore {
       }
       W::RemoteAccessOp { op } => {
         let (core, ra) = (self.clone(), self.remote_access.clone());
-        tokio::spawn(async move {
+        spawn_on(self.wire, async move {
           if let Err(e) = ra.op(op).await {
             core.platform.toast("error", &format!("{e:#}"));
           }
@@ -646,14 +665,14 @@ impl BridgeCore {
       }
       W::SshHosts => {
         let (core, connections) = (self.clone(), self.connections.clone());
-        tokio::spawn(async move {
+        spawn_on(self.wire, async move {
           let hosts = connections.ssh_hosts().await;
           core.post_now(HostMsg::SshHosts { hosts, error: None });
         });
       }
       W::RemoteDir { alias, path, seq } => {
         let (core, connections) = (self.clone(), self.connections.clone());
-        tokio::spawn(async move {
+        spawn_on(self.wire, async move {
           let msg = match connections.browse(&alias, path.as_deref()).await {
             Ok((path, entries)) => HostMsg::RemoteDir { seq, alias, path, entries, error: None },
             Err(e) => HostMsg::RemoteDir { seq, alias, path: path.unwrap_or_default(), entries: vec![], error: Some(format!("{e:#}")) },
@@ -663,7 +682,7 @@ impl BridgeCore {
       }
       W::SessionChanges { session_id, seq } => {
         let (core, root, bases) = (self.clone(), manager.session_cwd(&session_id), manager.edit_bases(&session_id).await);
-        tokio::spawn(async move {
+        spawn_on(self.wire, async move {
           let files = match core.workspace(root).await {
             Ok(ws) => ws.session_changes(bases).await,
             Err(_) => vec![],
@@ -775,7 +794,7 @@ impl BridgeCore {
             let weak = self.me.clone();
             *sub = Some(self.plugins.subscribe(Arc::new(move || {
               if let Some(c) = weak.upgrade() {
-                tokio::spawn(async move {
+                spawn_on(c.wire, async move {
                   let view = c.plugins_view().await;
                   c.post_now(HostMsg::Plugins { view, error: None });
                 });
@@ -803,7 +822,7 @@ impl BridgeCore {
       // A card's thumbnail: the backdrop of the version it offers, read from the frozen copy
       W::PluginBackdrop { plugin, snapshot } => {
         let (me, plugins) = (self.clone(), self.plugins.clone());
-        tokio::spawn(async move {
+        spawn_on(self.wire, async move {
           let (p, s) = (plugin.clone(), snapshot.clone());
           let html = tokio::task::spawn_blocking(move || plugins.backdrop_of(&p, &s)).await.ok().flatten();
           me.post_now(HostMsg::PluginBackdrop { plugin, snapshot, html });
@@ -812,7 +831,7 @@ impl BridgeCore {
       // A plugin method may take its process's full time limit: off the message loop, answered by id
       W::PluginCall { id, plugin, method, params } => {
         let me = self.clone();
-        tokio::spawn(async move {
+        spawn_on(self.wire, async move {
           let (result, error) = match me.plugins.runtimes().rpc(&plugin, &method, params, "page").await {
             Ok(v) => (Some(v), None),
             Err(e) => (None, Some(e)),
@@ -832,7 +851,7 @@ impl BridgeCore {
       // Network round trips (a test call takes seconds): off the message loop, answered by id
       W::ProviderProbe { id, probe } => {
         let me = self.clone();
-        tokio::spawn(async move {
+        spawn_on(self.wire, async move {
           let outcome = me.settings.provider_probe(probe).await;
           me.post_now(HostMsg::ProviderProbed { id, outcome });
         });
@@ -1113,5 +1132,13 @@ mod tests {
     assert_eq!(remote_copy_path(root, "..", "/x"), cache.join("__/x"));
     assert_eq!(remote_copy_path(root, "u@h:22", "/x"), cache.join("u@h_22/x"));
     assert!(remote_copy_path(root, "h", "/a/b:c?.txt").starts_with(cache.join("h")));
+  }
+
+  // A page's spawned task still answers to its window when it calls the platform later
+  #[tokio::test]
+  async fn a_spawned_task_keeps_its_page_s_wire_as_origin() {
+    use crate::sidecar::platform::origin;
+    assert_eq!(super::spawn_on(Some(7), async { tokio::task::yield_now().await; origin() }).await.ok(), Some(Some(7)));
+    assert_eq!(super::spawn_on(None, async { origin() }).await.ok(), Some(None));
   }
 }

@@ -1,10 +1,13 @@
 import type { HostMsg, WebviewHost, WebviewMsg } from './protocol';
 
 // Envelope protocol between a shell (the VS Code extension, the IntelliJ plugin, the browser harness) and the Rust sidecar (`acpira`):
-// ndjson, one envelope per line, stdout carries only these (logs go to stderr). Both sides must speak the same protocolVersion;
-// a mismatch is rejected at hello, never guessed around. A shell that restarts the sidecar re-sends hello and every attachView
+// ndjson, one envelope per line, stdout carries only these (logs go to stderr). An engine accepts every protocolVersion from
+// SIDECAR_PROTOCOL_MIN to its own: changes are additive (unknown fields and envelope types are skipped on both sides), and only
+// a breaking change raises the number. A shell that restarts the sidecar re-sends hello and every attachView
 
 export const SIDECAR_PROTOCOL_VERSION = 1;
+// Mirrors acpira_shared::sidecar::SIDECAR_PROTOCOL_MIN
+export const SIDECAR_PROTOCOL_MIN = 1;
 
 // IDE actions the sidecar may ask the shell for. Arguments are already resolved (absolute paths, allowlisted URLs, install lines):
 // the shell executes, it does not decide. Methods without a result are notifications (no requestId, no response expected)
@@ -78,7 +81,10 @@ export type ShellMsg =
   // `folder`: the session folder on an SSH host (ssh://alias/path) the panel belongs to; the page is that host's dev server
   | { type: 'previewOpen'; requestId: string; panelId: string; url: string; picker: string; folder?: string }
   | { type: 'previewClose'; panelId: string }
-  | { type: 'shutdown' };
+  | { type: 'shutdown' }
+  // `acpira engine` only (machine_engine/ensure.rs): who serves the machine's endpoint, and handing it to a newer build
+  | { type: 'probe'; requestId: string }
+  | { type: 'drain'; requestId: string; version: string; allowDev?: boolean };
 
 export type PlatformEvent =
   | { type: 'windowFocus' }
@@ -96,7 +102,10 @@ export type SidecarMsg =
   | { type: 'platformRequest'; requestId?: string; request: PlatformRequest }
   // The proxied address of a previewed page and the token its picker stamps messages with, or why not
   | { type: 'previewOpened'; requestId: string; url?: string; token?: string; error?: string }
-  | { type: 'shutdownOk' };
+  | { type: 'shutdownOk' }
+  | { type: 'probeOk'; requestId: string; version: string; pid: number; protocolVersion: number; protocolMin: number; draining: boolean }
+  | { type: 'drainOk'; requestId: string }
+  | { type: 'drainRefused'; requestId: string; reason: string };
 
 // Local folders only. Selectors are a union; null folders selects all, [] selects none.
 export interface SessionListScope {

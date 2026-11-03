@@ -50,7 +50,6 @@ name = "acpira-desktop-tauri"
 version = "2.0.6"
 dependencies = [
  "acpira-desktop",
- "acpira-gateway",
  "acpira-host",
  "acpira-shared",
  "block2",
@@ -100,6 +99,8 @@ name = "acpira-host"
 version = "2.0.6"
 dependencies = [
  "acpira-agent",
+ "acpira-desktop",
+ "acpira-gateway",
  "acpira-rpc",
  "acpira-shared",
  "anyhow",

@@ -1,7 +1,7 @@
 //! The gateway's control channel (`acpira_shared::local_ipc`: `<ACPIRA_HOME>/run/gateway.sock` in the engines' private
 //! directory, a pipe of this user's on Windows): one JSON request per line, one JSON answer per line. The settings page
-//! (through the engine) and the `acpira-gateway` commands use it; `watch` keeps answering with the status on every
-//! change until the client hangs up.
+//! (through any engine on the data root) and the `acpira gateway` commands use it; `watch` keeps answering with the
+//! status on every change until the client hangs up. Whoever binds it runs the data root's gateway.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -10,10 +10,18 @@ use acpira_shared::local_ipc::{self, Listener, ServerStream};
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, WriteHalf};
+use tokio::sync::mpsc;
 
 use crate::gateway::Gateway;
 
 pub use acpira_shared::devices::GatewayRequest as Request;
+
+/// What a control request asks of the engine the gateway runs in
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lifecycle {
+  Stop,
+  Restart,
+}
 
 /// Another gateway answers on the control channel
 #[derive(Debug)]
@@ -39,17 +47,25 @@ pub async fn bind(endpoint: &Path) -> Result<Listener> {
   }
 }
 
-pub async fn serve(g: Arc<Gateway>, mut l: Listener, stop: Arc<tokio::sync::Notify>) {
+pub async fn serve(g: Arc<Gateway>, mut l: Listener, on: mpsc::UnboundedSender<Lifecycle>) {
+  // The connections belong to this task: aborting it (`Hosted::stop`) closes them, `watch` subscriptions included, so a
+  // subscriber sees the end and finds whichever gateway runs next instead of following this one forever
+  let mut clients = tokio::task::JoinSet::<()>::new();
   loop {
-    let Ok(s) = l.accept().await else { return };
-    let (g, stop) = (g.clone(), stop.clone());
-    tokio::spawn(async move {
-      let _ = client(g, s, stop).await;
-    });
+    tokio::select! {
+      s = l.accept() => {
+        let Ok(s) = s else { return };
+        let (g, on) = (g.clone(), on.clone());
+        clients.spawn(async move {
+          let _ = client(g, s, on).await;
+        });
+      }
+      Some(_) = clients.join_next(), if !clients.is_empty() => {}
+    }
   }
 }
 
-async fn client(g: Arc<Gateway>, s: ServerStream, stop: Arc<tokio::sync::Notify>) -> Result<()> {
+async fn client(g: Arc<Gateway>, s: ServerStream, on: mpsc::UnboundedSender<Lifecycle>) -> Result<()> {
   let (r, mut w) = tokio::io::split(s);
   let mut lines = BufReader::new(r).lines();
   while let Some(line) = lines.next_line().await? {
@@ -90,9 +106,9 @@ async fn client(g: Arc<Gateway>, s: ServerStream, stop: Arc<tokio::sync::Notify>
         g.notify(note);
         json!({ "ok": true })
       }
-      Request::Stop => {
+      Request::Stop | Request::Restart => {
         write(&mut w, &json!({ "ok": true })).await?;
-        stop.notify_one();
+        let _ = on.send(if req == Request::Stop { Lifecycle::Stop } else { Lifecycle::Restart });
         return Ok(());
       }
     };

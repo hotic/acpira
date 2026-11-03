@@ -1,6 +1,6 @@
-//! The gateway: the only process on this computer facing the network. It admits paired devices by EndpointId before
-//! reading anything from them, pairs new ones while a pairing window is open, bridges each device's envelope stream to
-//! the engine, serves its blob requests, and reports who is online on which path.
+//! The gateway: the part of the engine facing the network. It admits paired devices by EndpointId before reading
+//! anything from them, pairs new ones while a pairing window is open, bridges each device's envelope stream to the
+//! engine it runs in, serves its blob requests, and reports who is online on which path.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -18,13 +18,14 @@ use anyhow::Result;
 use acpira_net::iroh::endpoint::Connection;
 
 use crate::bridge::{self, Who};
-use crate::engine::{EngineSpec, Log};
+use crate::engine::{Link, Log};
 use crate::store::{Config, Device, Devices, Paths, now_ms};
 use crate::wire_stats;
 
 pub struct Opts {
   pub home: PathBuf,
-  pub engine: EngineSpec,
+  /// The engine this gateway runs in
+  pub engine: Link,
   /// Overrides `gateway.json` (tests: relays off)
   pub relays: Option<Relays>,
   /// Tests: IPv4 on this address only, and its bound sockets go into tickets (loopback is never worth one otherwise)
@@ -45,7 +46,7 @@ pub struct Gateway {
   relays: Relays,
   test_bind: bool,
   devices: Devices,
-  engine: EngineSpec,
+  engine: Link,
   /// `gateway.json` `keepAwake`, read again on `reload`
   keep_awake: std::sync::atomic::AtomicBool,
   /// Why keeping the computer awake failed, while it does
@@ -190,6 +191,7 @@ impl Gateway {
       pairing,
       awake_error: self.awake_error.lock().clone(),
       lan_blocked: self.lan_blocked.load(std::sync::atomic::Ordering::Relaxed),
+      engine_pid: Some(std::process::id()),
     }
   }
 
