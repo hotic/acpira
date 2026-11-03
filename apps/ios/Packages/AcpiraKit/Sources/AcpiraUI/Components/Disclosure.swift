@@ -14,20 +14,34 @@ struct Reveal: ViewModifier, Animatable {
     get { progress }
     set { progress = newValue }
   }
-  @State private var natural: CGFloat = 0
-
   func body(content: Content) -> some View {
     if progress <= 0 {
       Color.clear.frame(height: 0)
     } else {
-      content
-        .fixedSize(horizontal: false, vertical: true)
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { natural = $0 }
-        .frame(height: progress >= 1 ? nil : natural * progress, alignment: .top)
+      FoldLayout(progress: progress) { content.geometryGroup() }
         .clipped()
         // The body fades in over the first part of the reveal, as the system's disclosures do
         .opacity(handOff ? max(0, progress * 2 - 1) : min(1, progress * 2))
     }
+  }
+}
+
+/// Measure at the natural height on every pass, interpolating only the space given to the content. Reading the
+/// height back through state lagged behind streamed growth and made an automatic close first shrink, then grow.
+struct FoldLayout: Layout {
+  var progress: CGFloat
+  var animatableData: CGFloat {
+    get { progress }
+    set { progress = newValue }
+  }
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    let size = subviews.first?.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil)) ?? .zero
+    return CGSize(width: size.width, height: size.height * min(1, max(0, progress)))
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    subviews.first?.place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(width: bounds.width, height: nil))
   }
 }
 
@@ -57,6 +71,27 @@ extension EnvironmentValues {
 }
 
 /// A fold's state: the reader's choice once they tapped, the pre-opened default before
+/// Folds the reader opened or closed by hand in a thread, by key: the thread's cells are reused once they scroll far
+/// away, and a row built again reads its folds back from here. Plain storage, read when a row draws and written on a
+/// tap; nil outside a thread
+final class FoldMemory: @unchecked Sendable {
+  private var states: [String: Bool] = [:]
+  subscript(key: String) -> Bool? {
+    get { states[key] }
+    set { states[key] = newValue }
+  }
+}
+
+extension EnvironmentValues {
+  @Entry var foldMemory: FoldMemory?
+}
+
+/// A fold's hand-set state, the view's own first and else the thread's memory of it under `key`; a write goes to both
+func rememberedFold(_ manual: Binding<Bool?>, _ memory: FoldMemory?, _ key: String) -> Binding<Bool?> {
+  guard let memory else { return manual }
+  return Binding(get: { manual.wrappedValue ?? memory[key] }, set: { manual.wrappedValue = $0; memory[key] = $0 })
+}
+
 func foldBinding(_ manual: Binding<Bool?>, _ fallback: Bool) -> Binding<Bool> {
   Binding(get: { manual.wrappedValue ?? fallback }, set: { manual.wrappedValue = $0 })
 }
