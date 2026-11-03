@@ -83,10 +83,6 @@ Acpira 用 Rust 写成，通过 [ACP](https://agentclientprotocol.com) 让 Claud
 
 桌面端在对话旁边多了一个工具面板，内含文件、终端和浏览器，另外还支持 SSH 远程文件夹和设备配对。Linux 版桌面端已经能用，但还没有正式发布。
 
-<p align="center">
-  <img src="media/readme/os.gif" width="720" alt="同一个桌面窗口在 macOS、Windows、Linux 上的样子：macOS 是红绿灯，Windows 与 Linux 由页面绘制窗口按钮，快捷键也随系统变化。">
-</p>
-
 <table width="100%">
   <tr>
     <th width="50%">VS Code</th>
@@ -110,7 +106,7 @@ Acpira 用 Rust 写成，通过 [ACP](https://agentclientprotocol.com) 让 Claud
   </tr>
 </table>
 
-*IDE 片段是扩展与插件在 VS Code 和 IntelliJ IDEA 中实际运行的画面，由脚本化的示例 Agent 驱动。Windows 与 Linux 的桌面窗口由同一套界面在 Mac 上渲染。*
+*IDE 片段是扩展与插件在 VS Code 和 IntelliJ IDEA 中实际运行的画面，由脚本化的示例 Agent 驱动。*
 
 ## 为什么保留原生 Agent
 
