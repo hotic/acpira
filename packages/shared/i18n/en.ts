@@ -427,7 +427,7 @@ export const en = {
   'composer.modeShort.build': 'Build',
   'composer.modeShort.workspace': 'Workspace',
   'composer.effort': 'Reasoning effort',
-  'composer.configureModels': 'Configure models…',
+  'composer.addModel': 'Add',
   'composer.standard': 'Standard',
   'composer.lead': 'Lead',
   'composer.sidekick': 'Sidekick',

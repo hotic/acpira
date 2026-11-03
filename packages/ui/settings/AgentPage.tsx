@@ -87,6 +87,8 @@ export function agentTabs(agent: AgentInfo, inventory: AgentInventory | undefine
 // The dialog: the agent's mark and name, its version (or that it is not installed) as the subtitle, its switch; the
 // tab strip over the tab's blocks; a footer with the refresh and Done. One fixed height, so a tab switch never resizes it
 export function AgentDialog(p: AgentSettingsProps & {
+  // A composer shortcut lands directly on models / sources rather than the overview.
+  initialTab?: AgentTab;
   enabled: boolean;
   // The last agent on cannot be switched off
   last: boolean;
@@ -97,7 +99,7 @@ export function AgentDialog(p: AgentSettingsProps & {
 }) {
   const { agent, inventory } = p;
   const tabs = agentTabs(agent, inventory, p.accounts, p.controls);
-  const [tab, setTab] = useState<AgentTab>(tabs[0]!.value);
+  const [tab, setTab] = useState<AgentTab>(p.initialTab ?? tabs[0]!.value);
   // A tab that went away (the built-in agent's skills emptied) falls back to the first
   const shown = tabs.some(x => x.value === tab) ? tab : tabs[0]!.value;
   const version = inventory?.runtime?.version ?? inventory?.adapter?.adapter?.version;

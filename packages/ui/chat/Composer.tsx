@@ -85,8 +85,7 @@ export interface ComposerProps {
   onCompact: () => void;
   // Session-level navigation is omitted from history and queued-message editors.
   toolbarStart?: ReactNode;
-  // The agent takes its models from the user's own sources (the built-in agent): with none offered, the model chip's
-  // place holds a shortcut to the page where they are added; with some, the model panel's footer leads there
+  // Opens this agent's model settings: an empty composer's shortcut or the shared header of its model panel
   onAddModel?: () => void;
   // The session's own composer (not an inline editor): it takes drafts pushed from outside (editor "Add to chat", transcript quotes)
   // and, with `shareSelection`, offers the editor's live selection as a toolbar chip that goes out with the next prompt

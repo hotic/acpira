@@ -429,7 +429,7 @@ export const ja = {
   'composer.modeShort.build': 'ビルド',
   'composer.modeShort.workspace': 'ワークスペース',
   'composer.effort': '推論の強さ',
-  'composer.configureModels': 'モデルを設定…',
+  'composer.addModel': '追加',
   'composer.standard': '標準',
   'composer.lead': 'メイン',
   'composer.sidekick': 'サブ',

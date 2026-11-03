@@ -1,5 +1,5 @@
 import { Fragment, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Settings, Zap } from 'lucide-react';
+import { Plus, Zap } from 'lucide-react';
 import type { ConfigControl } from '@acpira/shared/transcript';
 import { findFusionVariant, findVariant, fusionLabel, groupModels, optionBrand, visibleOptions, type ModelFamily, type ModelVariant } from '@acpira/shared/models';
 import { chipTags, fastOn, fastValue, isFastControl, isUltraLevel, levelShort, NO_SIDEKICK, presentReasoning, reasoningChip, reasoningVisible } from '@acpira/shared/composerControls';
@@ -66,8 +66,7 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
   onSetConfig: (id: string, value: string) => void;
   // Asks the toolbar to give way while the chip cannot keep its name, then its last form (useFitStage squeeze)
   onSqueeze?: (level: SqueezeLevel) => void;
-  // Opens the agent's model settings (the built-in agent's providers): the panel's footer entry, so a configured
-  // model list keeps a way back to settings the way the empty composer's add-model chip offers one
+  // Opens the current agent's model settings from the shared header above both sides
   onConfigure?: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -117,15 +116,15 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
     <Popover.Root open={open} onOpenChange={setOpen} onOpenLifecycle={onOpenChange}>
       <Popover.Trigger render={at(fit.stage, fit.item)} />
       <Popover.Portal><Popover.Positioner side="top" align="end" width="lg"><Popover.Popup palette="menu">
+        {/* Adding models belongs to the agent, not the currently selected side. */}
+        {onConfigure && <div className="mb-1 flex min-h-ctl-sm shrink-0 items-center justify-between px-2">
+          <span className="text-3 text-fg-3">{t('settings.agentTab.models')}</span>
+          <Chip caret={false} className="-mr-1.5 shrink-0" icon={<Plus strokeWidth={1.75} />}
+            title={t('settings.providers.addModel')} aria-label={t('settings.providers.addModel')}
+            onClick={() => { setOpen(false); onConfigure(); }}>{t('composer.addModel')}</Chip>
+        </div>}
         <ModelPanel families={families} cur={cur} curVar={curVar} onSelect={onSelect} close={() => setOpen(false)} fold
           reasoning={reasoning} modelConfig={modelConfig} sidekick={sk} sidekickEffort={sidekickEffort} sidekickFast={sidekickFast} hiddenConfig={hiddenConfig} onSetConfig={onSetConfig} />
-        {/* The way back to the model settings: a plain menu row under the panel, its gear in the marks' column */}
-        {onConfigure && <div className="mt-1 border-t border-line pt-1">
-          <button type="button" onClick={() => { setOpen(false); onConfigure(); }}
-            className={cn(optionClass, 'transition-colors hover:option-highlighted focus-visible:option-highlighted')}>
-            <OptionContent icon={<Settings className="text-fg-2" strokeWidth={1.5} />}>{t('composer.configureModels')}</OptionContent>
-          </button>
-        </div>}
       </Popover.Popup></Popover.Positioner></Popover.Portal>
     </Popover.Root>
     {/* Every stage laid out once, out of sight and out of the row's flow, for useFitStage to measure */}

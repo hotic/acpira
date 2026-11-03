@@ -243,8 +243,9 @@ export function SettingsShell(p: SettingsShellProps) {
                   {page.kind === 'subagents' && <SubagentsPage page={page} onPage={trail.go} onReplace={trail.replace} settings={p.settings} agents={p.agents} controls={p.controls} shapes={p.modelShapes} on={p.on} />}
                   {agent && (
                     <AgentDialog
-                      key={agent.id}
+                      key={`${agent.id}:${page.kind === 'agent' ? page.tab ?? '' : ''}`}
                       agent={agent}
+                      initialTab={page.kind === 'agent' ? page.tab : undefined}
                       accounts={p.accounts.filter(a => a.agent === agent.id)}
                       install={p.installs?.find(i => i.agent === agent.id)}
                       inventory={p.inventories[agent.id]}
