@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { packPage } from './pack-page.mjs';
+import { repackAppImage } from './repack-appimage.mjs';
 
 // The Linux x64 packages through the Tauri CLI (tauri.conf.json's bundle.linux): a .deb (Debian, Ubuntu), an .rpm
 // (Fedora, openSUSE) and an AppImage (one file that carries WebKitGTK with it). The page, the picker and the static musl
@@ -65,11 +66,15 @@ const r = spawnSync('pnpm', ['dlx', TAURI_CLI, 'build', '--target', TRIPLE, ...w
 if (r.status !== 0) process.exit(r.status ?? 1);
 
 // What came out, and how big (decimal megabytes, as the other package scripts print them)
-const target = process.env.CARGO_TARGET_DIR || join(shell, 'target');
+const target = resolve(shell, process.env.CARGO_TARGET_DIR || 'target');
 const release = join(target, TRIPLE, 'release');
 const mb = n => `${(n / 1e6).toFixed(1)} MB`;
 // The shell under tauri.conf.json's mainBinaryName, which the Tauri CLI renames the cargo binary to
-const { version, mainBinaryName } = JSON.parse(readFileSync(join(shell, 'tauri.conf.json'), 'utf8'));
+const { version, mainBinaryName, productName } = JSON.parse(readFileSync(join(shell, 'tauri.conf.json'), 'utf8'));
+if (bundles.split(',').includes('appimage')) {
+  const dir = join(release, 'bundle', 'appimage');
+  repackAppImage(join(dir, `${productName}_${version}_amd64.AppImage`), join(dir, `${productName}.AppDir`));
+}
 console.log(`shell ${mb(statSync(join(release, mainBinaryName)).size)}, engine ${mb(statSync(join(repo, 'dist/sidecar/linux-x86_64/acpira')).size)} (${version})`);
 for (const dir of ['deb', 'rpm', 'appimage']) {
   const d = join(release, 'bundle', dir);
