@@ -105,7 +105,6 @@ function HistoryEditor({ turn, turnIndex, blobUrl, context: c, onClose }: {
     dropDraft(key);
   };
   const [turnCount] = useState(composer.turnCount ?? composer.turns?.length ?? 0);
-  const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
   const insidePointer = useRef(false);
   useEffect(() => {
@@ -119,7 +118,6 @@ function HistoryEditor({ turn, turnIndex, blobUrl, context: c, onClose }: {
     return () => document.removeEventListener('pointerdown', outside);
   }, [onClose, pending]);
   const send = async (text: string, attachments: Draft[]) => {
-    setError(undefined);
     setPending(true);
     try {
       await c.edit({ sessionId: c.sessionId, turnIndex, turnCount, originalText: turn.text, turnId: turn.id,
@@ -129,10 +127,10 @@ function HistoryEditor({ turn, turnIndex, blobUrl, context: c, onClose }: {
     } finally { setPending(false); }
   };
   return <div className="flex min-w-0 flex-col gap-gap" onPointerDownCapture={() => { insidePointer.current = true; }}>
-    {/* A running turn does not lock the editor: sending stops that turn first (engine `edit_turn`) */}
+    {/* A running turn does not lock the editor: sending stops that turn first (engine `edit_turn`). A failed send keeps
+        the text here and reports through the composer's own toast, like the main composer, never as a line under the card */}
     <Composer {...composer} running={false} disabled={pending || composer.disabled}
       controls={controls} usage={undefined} draftKey={key}
-      onNotice={setError}
       onSetMode={modeId => setControls(c => ({ ...c, modeId }))}
       onSetConfig={(id, value) => setControls(cur => editTurnConfig(cur, composer.controls, id, value, c.shapes))}
       edit={{ text: turn.text, hasAttachments: retained.length > 0, onCancel: () => { discard(); onClose(); }, dismissOnOutside: true,
@@ -140,7 +138,6 @@ function HistoryEditor({ turn, turnIndex, blobUrl, context: c, onClose }: {
       }}
       onSend={send}
     />
-    {error && <p role="alert" className="px-pad text-2 text-danger">{error}</p>}
   </div>;
 }
 
