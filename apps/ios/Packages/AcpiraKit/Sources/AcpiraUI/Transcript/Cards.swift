@@ -33,7 +33,6 @@ struct UserMessageCard: View {
           Text(web: shown)
             .textStyle(WebType.text1)
             .foregroundStyle(Palette.fgStrong)
-            .lineLimit(Int(Metrics.userMessageMax / WebType.text1.lineHeight))
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, Metrics.s3 + Metrics.s0_5)
             .padding(.vertical, Metrics.s2_5)
