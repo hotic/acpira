@@ -127,18 +127,32 @@ public final class PushCenter: NSObject {
   }
 }
 
+// The completion-handler forms, not the `async` ones: the `@objc` thunk of a nonisolated `async` method calls UIKit's
+// handler from the global executor, and the open handler updates the app snapshot, which asserts the main thread (a
+// SIGABRT when a notification cold-launches the app). Each handler is called from the main actor here.
 extension PushCenter: UNUserNotificationCenterDelegate {
   /// In the foreground: shown, unless the screen already shows that session
-  public nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+  public nonisolated func userNotificationCenter(
+    _ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+    withCompletionHandler completionHandler: @escaping @Sendable (UNNotificationPresentationOptions) -> Void
+  ) {
     let origin = Self.origin(notification.request.content.userInfo)
-    let shown = await MainActor.run { origin.map { showing($0.computer, $0.session) } ?? false }
-    return shown ? [] : [.banner, .list, .sound]
+    Task { @MainActor in
+      let shown = origin.map { showing($0.computer, $0.session) } ?? false
+      completionHandler(shown ? [] : [.banner, .list, .sound])
+    }
   }
 
   /// Opened: RootView follows that computer and opens the session
-  public nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-    guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
-          let origin = Self.origin(response.notification.request.content.userInfo) else { return }
-    await MainActor.run { opening = origin }
+  public nonisolated func userNotificationCenter(
+    _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+    withCompletionHandler completionHandler: @escaping @Sendable () -> Void
+  ) {
+    let origin = response.actionIdentifier == UNNotificationDefaultActionIdentifier
+      ? Self.origin(response.notification.request.content.userInfo) : nil
+    Task { @MainActor in
+      if let origin { opening = origin }
+      completionHandler()
+    }
   }
 }
