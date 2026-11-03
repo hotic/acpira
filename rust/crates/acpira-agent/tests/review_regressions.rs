@@ -154,6 +154,21 @@ fn a_full_responses_endpoint_can_derive_its_model_list() {
   assert_eq!(acpira_agent::llm::discover::models_url(&p).as_deref(), Some("https://example.test/v1/models"));
 }
 
+// A session opened on the first model, which is then switched off in settings: the picker shows the next one, and the
+// turn runs that one instead of refusing the model the session was opened on
+#[tokio::test]
+async fn a_model_switched_off_after_the_session_opened_gives_way_to_the_shown_one() {
+  let h = Harness::start().await;
+  let server = MockModel::start();
+  h.providers(&server.base_url(), json!([{"id":"m1"},{"id":"m2"}]));
+  let sid = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
+  h.providers(&server.base_url(), json!([{"id":"m1","enabled":false},{"id":"m2"}]));
+  server.push(mock::text("hi"));
+  let r = prompt(&h, &sid).await;
+  assert_eq!(r["stopReason"], "end_turn", "{r}");
+  assert_eq!(server.requests()[0].body["model"], "m2");
+}
+
 #[tokio::test]
 async fn a_saved_model_source_updates_the_open_session_options() {
   let h = Harness::start().await;
