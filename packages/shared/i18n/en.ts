@@ -1608,6 +1608,7 @@ export const en = {
   'mobile.pair.scan.again': 'Scan again',
   'mobile.pair.closed': '{name} is not pairing right now. Open pairing on the computer again.',
   'mobile.pair.unreachable': '{name} did not answer. Check that it is awake and online.',
+  'mobile.pair.noRelay': 'Connect this device to the same Wi‑Fi as {name}, then try again.',
   'mobile.pair.impostor': 'This computer could not prove who it is, so pairing stopped.',
   'mobile.pair.invalidLink': 'This is not an Acpira pairing code this version can read.',
   'mobile.pair.failed': 'Pairing did not finish.',

@@ -57,6 +57,9 @@ public enum PairingError: Error, Equatable, Sendable {
   case invalidLink
   /// The computer did not answer in time
   case unreachable
+  /// The computer did not answer and no relay could carry the pairing: the computer's link named none, or this device
+  /// could not reach its own. Only the same network joins them then
+  case noRelay
   /// The computer answered but could not prove it knows the code: not the computer it claims to be
   case impostor
   case other(String)

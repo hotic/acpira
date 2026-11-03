@@ -58,7 +58,7 @@ struct PairSheet: View {
                       lead: inline == nil ? nil : t("mobile.pair.connectHint"), onLink: { pair($0, scanned: $1) })
             .transition(.opacity)
         } else {
-          PairStage(phase: phase, code: code?.rows, finish: finish, onConnect: connectConfirmed, onRetry: retry)
+          PairStage(phase: phase, code: code?.rows, finish: finish, onConnect: connectConfirmed, onRetry: retry, onRescan: rescan)
             .transition(.opacity)
         }
       }
@@ -70,9 +70,10 @@ struct PairSheet: View {
       }
       .toolbar {
         if let inline {
-          if phase == .choose {
+          // Back from the form leaves the step; back from a failure goes to the form, its camera scanning again
+          if phase == .choose || failed {
             ToolbarItem(placement: .navigation) {
-              Button(action: inline.onBack) { Image(systemName: "chevron.backward") }
+              Button(action: failed ? rescan : inline.onBack) { Image(systemName: "chevron.backward") }
                 .accessibilityLabel(Text(web: t("welcome.back")))
             }
           }
@@ -115,8 +116,10 @@ struct PairSheet: View {
     do {
       phase = .confirm(link: link, name: try pairing.service.computerName(link: link))
       show(link)
-      // `-popup pair.link.go|pair.link.expired`: the yes given at once
-      if initialPopup == "pair.link.go" || initialPopup == "pair.link.expired" { connectConfirmed() }
+      // `-popup pair.link.go|pair.link.expired|pair.link.fail.…`: the yes given at once
+      if initialPopup == "pair.link.go" || initialPopup == "pair.link.expired" || initialPopup?.hasPrefix("pair.link.fail.") == true {
+        connectConfirmed()
+      }
     } catch {
       code = nil
       phase = .failed(name: nil, message: Self.message(error, name: nil), retry: .scan)
@@ -135,6 +138,17 @@ struct PairSheet: View {
   private func connectConfirmed() {
     guard case .confirm(let link, _) = phase else { return }
     pair(link)
+  }
+
+  private var failed: Bool {
+    if case .failed = phase { return true }
+    return false
+  }
+
+  /// Back to the form from a failure, whichever way on it offered: another code may be the one that works
+  private func rescan() {
+    path = []
+    phase = .choose
   }
 
   private func retry() {
@@ -164,7 +178,11 @@ struct PairSheet: View {
         await pairing.paired(computer)
       } catch {
         guard phase == .pairing(link: link, name: name) else { return }
-        let unanswered = (error as? PairingError) == .unreachable
+        // Not answered: the same link may work once the computer or this network comes back
+        let unanswered = switch error as? PairingError {
+        case .unreachable?, .noRelay?: true
+        default: false
+        }
         phase = .failed(name: name, message: Self.message(error, name: name), retry: unanswered ? .link(link) : .scan)
       }
     }
@@ -178,6 +196,8 @@ struct PairSheet: View {
     case .used?: t("mobile.pair.scan.used")
     case .closed? where name != nil: t("mobile.pair.closed", named)
     case .unreachable? where name != nil: t("mobile.pair.unreachable", named)
+    // No relay on one side: only the same Wi-Fi joins the two now
+    case .noRelay? where name != nil: t("mobile.pair.noRelay", named)
     case .impostor?: t("mobile.pair.impostor")
     case .invalidLink?: t("mobile.pair.invalidLink")
     default: t("mobile.pair.failed")
@@ -287,6 +307,8 @@ struct PairStage: View {
   var finish: () -> Void
   var onConnect: () -> Void = {}
   var onRetry: () -> Void = {}
+  /// Back to the form from a failure that offers the same link again
+  var onRescan: () -> Void = {}
   @Environment(\.pairing) private var pairing
   /// When the computer answered the pairing
   @State private var pairedAt: ContinuousClock.Instant?
@@ -294,7 +316,7 @@ struct PairStage: View {
   var body: some View {
     PairHeroPlacement(box: code == nil ? Metrics.pairGlyphBox : Metrics.pairCode) {
       PairHero(symbol: symbol, ring: ring, code: code, paired: paired, name: name, line: line, path: path, action: action,
-               dim: dim, onAction: act)
+               secondary: secondary, dim: dim, onAction: act, onSecondary: onRescan)
     }
     .background(Palette.formPage)
     .onChange(of: paired, initial: true) { _, now in pairedAt = now ? .now : nil }
@@ -380,6 +402,12 @@ struct PairStage: View {
     case .failed(_, _, .link): t("mobile.pair.retry")
     default: nil
     }
+  }
+
+  /// A retry of the same link still leaves the way to another code
+  private var secondary: String? {
+    if case .failed(_, _, .link) = phase { return t("mobile.pair.scan.again") }
+    return nil
   }
 
   private var dim: Bool {

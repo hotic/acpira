@@ -165,7 +165,8 @@ struct PairCodePage: View {
     case .expired?: t("mobile.pair.code.expired")
     case .used?: t("mobile.pair.code.used")
     case .closed?: t("mobile.pair.closed", ["name": name])
-    case .unreachable?: t("mobile.pair.unreachable", ["name": name])
+    // A code pairs over this network only, so no relay never stands in its way
+    case .unreachable?, .noRelay?: t("mobile.pair.unreachable", ["name": name])
     case .impostor?: t("mobile.pair.impostor")
     case .invalidLink?, .other?, nil: t("mobile.pair.failed")
     }

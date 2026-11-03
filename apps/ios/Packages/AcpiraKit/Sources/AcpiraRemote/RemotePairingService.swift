@@ -99,7 +99,12 @@ public actor RemotePairingService: PairingService {
       let p = try await node.pairLink(link: link, name: me.name, kind: me.kind, version: me.version, withinMs: 20_000)
       return try keep(PairedComputer(id: p.id, name: p.name, relay: p.relay, addrs: p.addrs))
     } catch {
-      throw PairingError(error)
+      let e = PairingError(error)
+      guard e == .unreachable, relays != .off else { throw e }
+      // No answer and no relay to carry it: the link names none (the computer's relay was down when it drew the
+      // code), or this device never reached its own (blocked, or no route abroad). Only a LAN path was left
+      if (try? decodeLink(link: link))?.relay == nil || !node.relayConnected() { throw PairingError.noRelay }
+      throw e
     }
   }
 

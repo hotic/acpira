@@ -16,7 +16,8 @@ nonisolated final class PreviewPairingService: PairingService {
   /// The code every nearby computer shows; `expiredCode` is refused as expired, anything else as wrong
   static let code = "384917"
   static let expiredCode = "000000"
-  /// A link as the computer's QR code would carry it (`n`: the name, `m`: hw.model); `expired=1` is refused as expired
+  /// A link as the computer's QR code would carry it (`n`: the name, `m`: hw.model); `expired=1` is refused as expired,
+  /// `fail=…` goes unanswered (`pair(link:)`)
   static let link = "acpira://pair/preview?n=Mac%20mini&m=Macmini9,1"
   static let expiredLink = "acpira://pair/preview?n=Mac%20mini&m=Macmini9,1&expired=1"
 
@@ -91,6 +92,12 @@ nonisolated final class PreviewPairingService: PairingService {
     try await wait(1.6)
     let items = URLComponents(string: link)?.queryItems ?? []
     if items.contains(where: { $0.name == "expired" }) { throw PairingError.expired }
+    // `fail=unreachable|norelay`: no answer, with or without a relay to carry it
+    switch items.first(where: { $0.name == "fail" })?.value {
+    case "unreachable"?: throw PairingError.unreachable
+    case "norelay"?: throw PairingError.noRelay
+    default: break
+    }
     let model = items.first { $0.name == "m" }?.value
     let known = [Self.mini, Self.air, Self.imac, Self.pc].first { $0.name == name }
     let computer = PairedComputer(id: known?.id ?? "preview-\(name)", name: name, model: model ?? known?.model, pairedAt: .now)

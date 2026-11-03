@@ -1559,6 +1559,7 @@ export const fr = {
   'mobile.pair.scan.again': 'Scanner à nouveau',
   'mobile.pair.closed': '{name} n’accepte pas d’appairage pour l’instant. Rouvrez l’appairage sur l’ordinateur.',
   'mobile.pair.unreachable': '{name} ne répond pas. Vérifiez qu’il est allumé et en ligne.',
+  'mobile.pair.noRelay': 'Connectez cet appareil au même Wi‑Fi que {name}, puis réessayez.',
   'mobile.pair.impostor': 'Cet ordinateur n’a pas pu prouver son identité : l’appairage s’est arrêté.',
   'mobile.pair.invalidLink': 'Ce n’est pas un code d’appairage Acpira lisible par cette version.',
   'mobile.pair.failed': 'L’appairage n’a pas abouti.',
