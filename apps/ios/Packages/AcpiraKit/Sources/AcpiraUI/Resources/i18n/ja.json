@@ -1547,6 +1547,7 @@
   "mobile.pair.scan.again": "もう一度読み取る",
   "mobile.pair.closed": "{name} は現在ペアリングを受け付けていません。コンピューターでペアリングを開き直してください。",
   "mobile.pair.unreachable": "{name} から応答がありません。起動してネットワークにつながっているか確認してください。",
+  "mobile.pair.noRelay": "このデバイスを {name} と同じ Wi‑Fi に接続して、もう一度お試しください。",
   "mobile.pair.impostor": "このコンピューターは身元を証明できなかったため、ペアリングを中止しました。",
   "mobile.pair.invalidLink": "このバージョンで読み取れる Acpira のペアリングコードではありません。",
   "mobile.pair.failed": "ペアリングが完了しませんでした。",

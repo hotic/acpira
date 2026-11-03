@@ -1537,6 +1537,7 @@
   "mobile.pair.scan.again": "Erneut scannen",
   "mobile.pair.closed": "{name} koppelt gerade nicht. Öffne die Kopplung auf dem Computer erneut.",
   "mobile.pair.unreachable": "{name} antwortet nicht. Prüfe, ob er wach und online ist.",
+  "mobile.pair.noRelay": "Verbinde dieses Gerät mit demselben WLAN wie {name} und versuche es erneut.",
   "mobile.pair.impostor": "Dieser Computer konnte sich nicht ausweisen, die Kopplung wurde abgebrochen.",
   "mobile.pair.invalidLink": "Das ist kein Acpira-Kopplungscode, den diese Version lesen kann.",
   "mobile.pair.failed": "Die Kopplung wurde nicht abgeschlossen.",

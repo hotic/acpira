@@ -1562,6 +1562,7 @@ export const es = {
   'mobile.pair.scan.again': 'Escanear de nuevo',
   'mobile.pair.closed': '{name} no está emparejando ahora. Vuelve a abrir el emparejamiento en el ordenador.',
   'mobile.pair.unreachable': '{name} no responde. Comprueba que esté encendido y conectado.',
+  'mobile.pair.noRelay': 'Conecta este dispositivo a la misma Wi‑Fi que {name} y vuelve a intentarlo.',
   'mobile.pair.impostor': 'Este ordenador no pudo demostrar quién es, así que el emparejamiento se detuvo.',
   'mobile.pair.invalidLink': 'No es un código de emparejamiento de Acpira que esta versión pueda leer.',
   'mobile.pair.failed': 'El emparejamiento no terminó.',

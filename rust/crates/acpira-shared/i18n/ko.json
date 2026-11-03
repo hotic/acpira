@@ -1542,6 +1542,7 @@
   "mobile.pair.scan.again": "다시 스캔",
   "mobile.pair.closed": "{name}이(가) 지금 페어링을 받지 않습니다. 컴퓨터에서 페어링을 다시 여세요.",
   "mobile.pair.unreachable": "{name}이(가) 응답하지 않습니다. 켜져 있고 네트워크에 연결되어 있는지 확인하세요.",
+  "mobile.pair.noRelay": "이 기기를 {name}과(와) 같은 Wi‑Fi에 연결한 뒤 다시 시도하세요.",
   "mobile.pair.impostor": "이 컴퓨터가 자신을 증명하지 못해 페어링을 중단했습니다.",
   "mobile.pair.invalidLink": "이 버전에서 읽을 수 있는 Acpira 페어링 코드가 아닙니다.",
   "mobile.pair.failed": "페어링이 완료되지 않았습니다.",

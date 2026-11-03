@@ -140,12 +140,15 @@ struct PairingLayer: ViewModifier {
     }
   }
 
-  /// `-popup pair.add|pair.code…|pair.link…`: the sheet, a code page, or a link as if opened from outside.
+  /// `-popup pair.add|pair.code…|pair.link…`: the sheet, a code page, or a link as if opened from outside (`pair.link.go`
+  /// and `pair.link.fail.<how>` say yes at once).
   /// `-pairing.link URL` (debug builds) puts a real gateway's link there, so a simulator pairs without a tap
   private func popup(_ pairing: PairingModel) async {
     guard let popup = initialPopup, popup.hasPrefix("pair.") else { return }
     if popup.hasPrefix("pair.link") {
       var link = popup == "pair.link.expired" ? PreviewPairingService.expiredLink : PreviewPairingService.link
+      // `pair.link.fail.<how>`: a link that goes unanswered that way
+      if popup.hasPrefix("pair.link.fail.") { link += "&fail=" + popup.dropFirst("pair.link.fail.".count) }
       #if DEBUG
       let args = ProcessInfo.processInfo.arguments
       if let at = args.firstIndex(of: "-pairing.link"), at + 1 < args.count { link = args[at + 1] }

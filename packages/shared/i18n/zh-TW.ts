@@ -1596,6 +1596,7 @@ export const zhTW = {
   'mobile.pair.scan.again': '重新掃描',
   'mobile.pair.closed': '{name} 已關閉配對，請在電腦上重新開啟。',
   'mobile.pair.unreachable': '{name} 沒有回應，請確認它已開機並連上網路。',
+  'mobile.pair.noRelay': '請將這台裝置與 {name} 連接同一個 Wi‑Fi 後重試。',
   'mobile.pair.impostor': '這台電腦無法證明自己的身分，配對已停止。',
   'mobile.pair.invalidLink': '這不是此版本能辨識的 Acpira 配對碼。',
   'mobile.pair.failed': '配對沒有完成。',

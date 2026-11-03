@@ -1618,6 +1618,7 @@ export const zhCN = {
   'mobile.pair.scan.again': '重新扫描',
   'mobile.pair.closed': '{name} 已关闭配对，请在电脑上重新打开。',
   'mobile.pair.unreachable': '{name} 没有响应，请确认它已开机并联网。',
+  'mobile.pair.noRelay': '请将这台设备与 {name} 连接同一 Wi‑Fi 后重试。',
   'mobile.pair.impostor': '这台电脑无法证明自己的身份，配对已停止。',
   'mobile.pair.invalidLink': '这不是此版本能识别的 Acpira 配对码。',
   'mobile.pair.failed': '配对没有完成。',

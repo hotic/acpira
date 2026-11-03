@@ -24,9 +24,12 @@ struct PairHero: View {
   var path: PathKind?
   var lineInk: Color = Palette.fg2
   var action: String?
+  /// A quieter way on under the action (scan another code after a failure)
+  var secondary: String?
   /// The computer does not answer: its glyph steps back
   var dim = false
   var onAction: () -> Void = {}
+  var onSecondary: () -> Void = {}
   @Environment(\.motionEnabled) private var motion
 
   var body: some View {
@@ -77,6 +80,13 @@ struct PairHero: View {
         .disabled(action == nil)
         .accessibilityHidden(action == nil)
         .padding(.top, Metrics.s2)
+      // Under the action, so the glyph and everything above stay where they were
+      if let secondary {
+        Button(action: onSecondary) { Text(web: secondary, size: TypeScale.body.size, paragraph: false) }
+          .buttonStyle(PairQuietStyle())
+          .padding(.top, Metrics.s1)
+          .transition(.opacity)
+      }
     }
     .padding(.horizontal, Metrics.page)
   }
@@ -163,6 +173,20 @@ struct PairPrimaryStyle: ButtonStyle {
       .brightness(configuration.isPressed ? Motion.pressBrightness : 0)
       .scaleEffect(configuration.isPressed && motion ? Motion.pressScale : 1)
       .animation(motion ? Motion.press : nil, value: configuration.isPressed)
+  }
+}
+
+/// The way on under the primary action: its text alone, at the primary's height so the two read as one stack
+struct PairQuietStyle: ButtonStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .textStyle(TypeScale.body, weight: .medium)
+      .foregroundStyle(Palette.fg2)
+      .lineLimit(1)
+      .padding(.horizontal, Metrics.page)
+      .frame(minHeight: Metrics.barCtl)
+      .background(Capsule().fill(configuration.isPressed ? Palette.hover : .clear))
+      .contentShape(Capsule())
   }
 }
 
