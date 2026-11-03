@@ -216,8 +216,11 @@ pub async fn read_model_facts(def: &AgentDef, cwd: &str) -> ModelFacts {
     return ModelFacts::default();
   }
   let (agent, env, cwd) = (def.id.clone(), def.env.clone().unwrap_or_default(), cwd.to_owned());
-  tokio::task::spawn_blocking(move || facts(&agent, &env.into_iter().collect(), Path::new(&cwd))).await.unwrap_or_default()
+  // A config open() that never returns must not hold the session's start: unlabelled controls instead
+  crate::util::blocking_within(FACTS_WAIT, move || facts(&agent, &env.into_iter().collect(), Path::new(&cwd))).await.unwrap_or_default()
 }
+
+const FACTS_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[cfg(test)]
 mod tests {

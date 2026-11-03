@@ -199,3 +199,38 @@ pub fn run_prefix<F: std::future::Future<Output = ()> + Send + 'static>(fut: F) 
     tokio::spawn(fut);
   }
 }
+
+// Blocking reads given up on (`blocking_within`) that have not returned yet. Each keeps a blocking-pool thread for as
+// long as its syscall hangs, so past this many no new one starts: a file that never opens must not drain the pool
+const ABANDONED_MAX: usize = 8;
+static ABANDONED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Run a blocking read on the blocking pool for at most `wait`: None when it took longer, failed, or too many earlier
+/// reads are still stuck. A read that overruns keeps running (a syscall cannot be cancelled); it counts as abandoned
+/// until it returns
+pub async fn blocking_within<T: Send + 'static>(wait: std::time::Duration, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+  use std::sync::atomic::Ordering;
+  if ABANDONED.load(Ordering::Acquire) >= ABANDONED_MAX {
+    return None;
+  }
+  let abandoned = Arc::new(std::sync::atomic::AtomicBool::new(false));
+  let flag = abandoned.clone();
+  let task = tokio::task::spawn_blocking(move || {
+    let out = f();
+    // Given up on meanwhile: this read no longer holds a slot
+    if flag.swap(true, Ordering::AcqRel) {
+      ABANDONED.fetch_sub(1, Ordering::AcqRel);
+    }
+    out
+  });
+  match tokio::time::timeout(wait, task).await {
+    Ok(out) => out.ok(),
+    Err(_) => {
+      // The read may have finished just now: only one that is still running takes a slot
+      if !abandoned.swap(true, Ordering::AcqRel) {
+        ABANDONED.fetch_add(1, Ordering::AcqRel);
+      }
+      None
+    }
+  }
+}

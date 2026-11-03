@@ -163,7 +163,7 @@ pub fn workflows_enabled(env_value: Option<&str>, settings: &[Value]) -> bool {
 /// `workflows_enabled` for an agent: the definition's env first, then the sidecar's own (the child sees them in that
 /// order of precedence), and the settings files under its `CLAUDE_CONFIG_DIR` (or `~/.claude`) and `cwd`
 pub fn workflows_enabled_for(def_env: Option<&acpira_shared::transcript::StrMap>, cwd: &str) -> bool {
-  let var = |key: &str| def_env.and_then(|e| e.get(key).cloned()).or_else(|| std::env::var(key).ok());
+  let var = |key: &str| env_var(def_env, key);
   let config_dir =
     var("CLAUDE_CONFIG_DIR").filter(|d| !d.trim().is_empty()).map(PathBuf::from).unwrap_or_else(|| crate::store::data_dir::home_dir().join(".claude"));
   let files: Vec<Value> = settings_files(&config_dir, Path::new(cwd))
@@ -172,6 +172,28 @@ pub fn workflows_enabled_for(def_env: Option<&acpira_shared::transcript::StrMap>
     .filter_map(|text| serde_json::from_str(&text).ok())
     .collect();
   workflows_enabled(var(WORKFLOWS_ENV).as_deref(), &files)
+}
+
+fn env_var(def_env: Option<&acpira_shared::transcript::StrMap>, key: &str) -> Option<String> {
+  def_env.and_then(|e| e.get(key).cloned()).or_else(|| std::env::var(key).ok())
+}
+
+/// `workflows_enabled` from the environment alone, without reading a settings file
+pub fn workflows_enabled_by_env(def_env: Option<&acpira_shared::transcript::StrMap>) -> bool {
+  workflows_enabled(env_var(def_env, WORKFLOWS_ENV).as_deref(), &[])
+}
+
+// An open() of a settings file can block in the kernel and never return (seen in an engine started by the remote-access
+// gateway, on a project on an external volume)
+const SETTINGS_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// `workflows_enabled_for` bounded by `SETTINGS_WAIT` (`util::blocking_within`); past it, the environment alone decides.
+/// Never call the file reads under a session's core lock: a read that hangs there wedged every page of the engine
+pub async fn read_workflows_enabled(def_env: Option<acpira_shared::transcript::StrMap>, cwd: String) -> bool {
+  let env = def_env.clone();
+  crate::util::blocking_within(SETTINGS_WAIT, move || workflows_enabled_for(def_env.as_ref(), &cwd))
+    .await
+    .unwrap_or_else(|| workflows_enabled_by_env(env.as_ref()))
 }
 
 #[cfg(test)]
