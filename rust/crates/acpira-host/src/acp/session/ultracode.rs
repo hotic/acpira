@@ -56,7 +56,8 @@ impl AcpSession {
     if !self.vendor.ultracode() {
       return false;
     }
-    *c.ultracode.workflows.get_or_insert_with(|| uc::workflows_enabled_for(self.def().env.as_ref(), &self.cwd))
+    // `connect` reads the settings files off this lock; until it has, the environment alone
+    c.ultracode.workflows.unwrap_or_else(|| uc::workflows_enabled_by_env(self.def().env.as_ref()))
   }
 
   /// The value a session request carries now

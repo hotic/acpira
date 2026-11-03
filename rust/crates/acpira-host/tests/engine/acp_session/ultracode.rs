@@ -270,6 +270,36 @@ async fn no_ultra_without_claude_or_with_workflows_off() {
   assert!(wire_efforts(dir.path()).is_empty());
 }
 
+/// A settings file whose open() never returns (a FIFO nobody writes) once held the session's core lock for good and
+/// wedged the whole engine: the session still starts, on the environment alone, and its view stays readable
+#[cfg(unix)]
+#[test]
+fn a_settings_file_that_never_opens_does_not_hold_the_session() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let project = dir.path().join("project");
+  std::fs::create_dir_all(project.join(".claude")).unwrap();
+  let fifo = project.join(".claude").join("settings.local.json");
+  let c = std::ffi::CString::new(fifo.to_string_lossy().as_bytes()).unwrap();
+  // SAFETY: `c` is a NUL-terminated path that outlives the call
+  assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+  // The abandoned reads never end: the runtime is shut down without waiting for them, and a start that waits for them
+  // (on a worker of its own) fails the timeout instead of hanging the suite
+  let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+  let root = dir.path().to_owned();
+  let start = rt.spawn(async move {
+    let h = claude(&fake, &root, json!({}));
+    let s = started(&h, project.to_str().unwrap()).await;
+    let vw = view(&s);
+    (vw["status"].clone(), efforts(&vw))
+  });
+  let outcome = rt.block_on(async { tokio::time::timeout(std::time::Duration::from_secs(20), start).await });
+  rt.shutdown_background();
+  let (status, efforts) = outcome.expect("the start waited for the read").unwrap();
+  assert_eq!(status, "ready");
+  assert!(efforts.contains(&ULTRA.to_owned()), "CLAUDE_CODE_WORKFLOWS=1 alone offers Ultra");
+}
+
 fn async_task(s: &AcpSession) -> Value {
   agent_blocks(&view(s)).into_iter().find(|b| b["type"] == "tool_call" && b["id"] == "bg-1").map(|b| b["asyncTask"].clone()).unwrap_or(Value::Null)
 }

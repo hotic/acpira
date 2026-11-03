@@ -224,7 +224,16 @@ impl AcpSession {
       (c.proc_gen, c.account_id.clone())
     };
     let facts = read_model_facts(&def, &dir).await;
-    self.core.lock().model_facts = facts;
+    let workflows = if self.vendor.ultracode() {
+      Some(crate::acp::vendors::claude_ultracode::read_workflows_enabled(self.def().env.clone(), self.cwd.clone()).await)
+    } else {
+      None
+    };
+    {
+      let mut c = self.core.lock();
+      c.model_facts = facts;
+      c.ultracode.workflows = workflows;
+    }
     let handlers: Arc<dyn ClientHandlers> = Arc::new(SessionHandlers { session: self.me.clone(), gen_id });
     let account_note = account.as_ref().map(|a| format!(" account {}", a.chars().take(8).collect::<String>())).unwrap_or_default();
     let borrowed = match &self.deps.pool {
