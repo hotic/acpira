@@ -6,7 +6,7 @@ import type { SubagentSummary } from '@acpira/shared/subagents';
 import type { ModelShapes } from '@acpira/shared/modelShapes';
 import type { HiddenMap, SessionScope } from '@acpira/shared/settings';
 import type { AccountAction, AddAccountVia, EditTurnRequest, ExportFormat, FileHit, NativeSessionsState, SessionHit, ShellCommand } from '@acpira/shared/protocol';
-import { AppearanceContext, appearanceDataAttrs, type Appearance } from '../appearance';
+import { AppearanceContext, appearanceDataAttrs, useAppearance, type Appearance } from '../appearance';
 import { lookAttrs, ThemeContext, type ShellLook, type Theme } from '../look';
 import { t, useLocale } from '../i18n';
 import { ShellLayerContext } from '../ui/Popover';
@@ -21,6 +21,7 @@ import { useMergedRefs } from '../ui/mergeRefs';
 import { QuietEntranceContext } from '../ui/Row';
 import { FollowContext, useBottomFollow } from './useBottomFollow';
 import { captureSliceScroll, restoreSliceScroll, type SliceScroll } from './sliceScroll';
+import { useExchangeSkip } from './exchangeSkip';
 import { Header } from './Header';
 import { SessionList, projectName } from './SessionList';
 import { isChatFolder, type MoveTarget } from './sessionTree';
@@ -1206,7 +1207,7 @@ export function Shell(p: ShellProps) {
                       <WidgetPromptContext.Provider value={widgetPrompt}>
                         <TurnActionsContext.Provider value={turnActions}>
                           <SidekickModelsContext.Provider value={sidekickModels}>
-                          <Thread key={p.activeSessionId} session={p.activeSessionId} turns={held.turns} running={held.running} wide={wide} replayKey={p.replayKey} catchingUp={p.catchingUp} blobUrl={blobUrl} contentRef={contentRef} commands={p.commands} summons={summons}
+                          <Thread key={p.activeSessionId} session={p.activeSessionId} fontSizes={p.look && `${p.look.uiFontSize}/${p.look.codeFontSize}`} turns={held.turns} running={held.running} wide={wide} replayKey={p.replayKey} catchingUp={p.catchingUp} blobUrl={blobUrl} contentRef={contentRef} commands={p.commands} summons={summons}
                             onSetGoal={setGoal} goalRoom={goalRoom} subagents={p.subagents} onInspect={onInspect} onFailureAction={failureAction}
                             forkedFrom={p.external ? undefined : p.forkedFrom} agents={p.agents} agentId={p.agent.id}
                             onPermission={onPermission} />
@@ -1381,6 +1382,8 @@ export function Shell(p: ShellProps) {
 interface ThreadProps {
   // The session shown, for what plugin frames hear of it (plugins/outline.ts)
   session?: string;
+  // The settings' UI / code font sizes: they set the text metrics through CSS variables, not the appearance context
+  fontSizes?: string;
   turns: Turn[];
   running: boolean;
   wide: boolean;
@@ -1483,8 +1486,10 @@ function useExchangeWindow(
 // Whether each agent's last ready session offered "Set as goal" (see goalRoom in Shell)
 const goalSetByAgent = new Map<AgentId, boolean>();
 
-const Thread = memo(function Thread({ session, turns, running, wide, replayKey, catchingUp, blobUrl, contentRef, commands, summons, subagents, forkedFrom, agents, agentId, onInspect, onPermission, onFailureAction, onSetGoal, goalRoom }: ThreadProps) {
-  useLocale();
+const Thread = memo(function Thread({ session, fontSizes, turns, running, wide, replayKey, catchingUp, blobUrl, contentRef, commands, summons, subagents, forkedFrom, agents, agentId, onInspect, onPermission, onFailureAction, onSetGoal, goalRoom }: ThreadProps) {
+  const locale = useLocale();
+  // Exchanges out of sight skip style, layout and paint once laid out at their real size (chat/exchangeSkip.ts)
+  const exchangeRef = useExchangeSkip(useAppearance(), locale, fontSizes);
   const ref = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const bodyRef = useMergedRefs(contentRef, body);
@@ -1593,7 +1598,7 @@ const Thread = memo(function Thread({ session, turns, running, wide, replayKey, 
             // transcript render budget); the clip it brings is pushed out by --hit on the left and bottom, where row hit areas and
             // card shadows reach past the column, and on the right only as far as the thread's right padding (--hit-end), and the top edge stays put for the sentinel. An exchange ending in a reply's action
             // row pulls the next one up to a row gap: the row's own height already separates them (TurnActions).
-            <section data-exchange data-exchange-start={slot.key} className="relative -ml-hit -mr-hit-end -mb-hit flex min-w-0 flex-col gap-msg pl-hit pr-hit-end pb-hit contain-paint has-[>:last-child>[data-turn-actions]:last-child]:-mb-[calc(var(--spacing-hit)+var(--spacing-msg-join))]">
+            <section ref={exchangeRef} data-exchange data-exchange-start={slot.key} className="relative -ml-hit -mr-hit-end -mb-hit flex min-w-0 flex-col gap-msg pl-hit pr-hit-end pb-hit contain-paint has-[>:last-child>[data-turn-actions]:last-child]:-mb-[calc(var(--spacing-hit)+var(--spacing-msg-join))]">
               {messages}
             </section>
           }{k === forkAfter && forkedFrom && <ForkBoundary origin={forkedFrom} agents={agents} agentId={agentId} />}</Fragment>;

@@ -150,6 +150,10 @@
   /* Session list rows (SessionList's Item): a store lists hundreds of them, and the ones out of sight skip layout and
      paint (a mark's 3D flip card is a compositor layer each) until they near the viewport. One row tall until laid out once */
   [data-session] { content-visibility: auto; contain-intrinsic-block-size: auto var(--row); }
+  /* Transcript exchanges: one marked as laid out at its real size (chat/exchangeSkip.ts, never in WebKit) skips style,
+     layout and paint out of sight and keeps that size, so the thread's height does not move when it comes back */
+  [data-exchange] { contain-intrinsic-block-size: auto var(--row); }
+  [data-exchange][data-seen] { content-visibility: auto; }
   /* Keep WebKit's row contents in the paint tree: skipped descendants can stay blank while the row's own hover fill
      still paints. This WebKit-only property leaves Chromium's off-screen optimization intact. */
   @supports (-webkit-nbsp-mode: space) {
