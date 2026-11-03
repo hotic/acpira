@@ -1,7 +1,7 @@
-import { createContext, memo, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createContext, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { EditTurnRequest } from '@acpira/shared/protocol';
 import type { Draft, SlashCommand, UserTurn } from '@acpira/shared/transcript';
-import { captureTurnSettings, editTurnConfig, openTurnControls } from '@acpira/shared/turnSettings';
+import { captureTurnSettings, editTurnConfig, openTurnControls, refreshTurnControls } from '@acpira/shared/turnSettings';
 import type { ModelShapes } from '@acpira/shared/modelShapes';
 import { useAppearance } from '../appearance';
 import { Composer, type ComposerProps } from './Composer';
@@ -97,7 +97,8 @@ function HistoryEditor({ turn, turnIndex, blobUrl, context: c, onClose }: {
   // Provided together with HistoryContext by the shell; the editor is the only reader
   const composer = useContext(HistoryComposerContext)!;
   const [key] = useState(() => `edit:${c.sessionId}:${turn.id ?? `${turnIndex}:${turn.text}`}`);
-  const [controls, setControls] = useState(() => EDIT_PICKS.get(key)?.controls ?? openTurnControls(composer.controls, turn.settings, c.shapes));
+  const [picks, setControls] = useState(() => EDIT_PICKS.get(key)?.controls ?? openTurnControls(composer.controls, turn.settings, c.shapes));
+  const controls = useMemo(() => refreshTurnControls(picks, composer.controls, c.shapes), [picks, composer.controls, c.shapes]);
   const [retained, setRetained] = useState(() => EDIT_PICKS.get(key)?.retained ?? (turn.attachments ?? []).map((_, i) => i));
   useEffect(() => { EDIT_PICKS.set(key, { controls, retained }); }, [key, controls, retained]);
   const discard = () => {
@@ -131,8 +132,8 @@ function HistoryEditor({ turn, turnIndex, blobUrl, context: c, onClose }: {
         the text here and reports through the composer's own toast, like the main composer, never as a line under the card */}
     <Composer {...composer} running={false} disabled={pending || composer.disabled}
       controls={controls} usage={undefined} draftKey={key}
-      onSetMode={modeId => setControls(c => ({ ...c, modeId }))}
-      onSetConfig={(id, value) => setControls(cur => editTurnConfig(cur, composer.controls, id, value, c.shapes))}
+      onSetMode={modeId => setControls(cur => ({ ...refreshTurnControls(cur, composer.controls, c.shapes), modeId }))}
+      onSetConfig={(id, value) => setControls(cur => editTurnConfig(refreshTurnControls(cur, composer.controls, c.shapes), composer.controls, id, value, c.shapes))}
       edit={{ text: turn.text, hasAttachments: retained.length > 0, onCancel: () => { discard(); onClose(); }, dismissOnOutside: true,
         attachments: <EditAttachments attachments={turn.attachments ?? []} retained={retained} blobUrl={blobUrl} disabled={pending} onRemove={i => setRetained(r => r.filter(n => n !== i))} />,
       }}

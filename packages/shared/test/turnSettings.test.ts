@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { captureTurnSettings, controlsForTurn, editTurnConfig, openTurnControls } from '../turnSettings';
+import { captureTurnSettings, controlsForTurn, editTurnConfig, openTurnControls, refreshTurnControls } from '../turnSettings';
 import { learnShape } from '../modelShapes';
 import type { SessionControls } from '../transcript';
 
@@ -100,6 +100,35 @@ describe('historical turn selections', () => {
     expect(learnShape(shapes, { ...controls, options: [controls.options[0]!, { ...controls.options[1]!, value: 'high' }] })).toBeUndefined();
     expect(learnShape(shapes, { ...controls, options: [controls.options[0]!, { ...controls.options[1]!, options: [option('high')] }] })?.a).toHaveLength(1);
     expect(learnShape(shapes, { modes: [], options: [controls.options[1]!] })).toBeUndefined();
+  });
+
+  it('refreshes a parked editor with newly added models without losing its unsent picks', () => {
+    const editor = openTurnControls(controls, { modeId: 'plan', config: { model: 'custom/k3', effort: 'low' } });
+    const live: SessionControls = { ...controls, options: [
+      { ...controls.options[0]!, options: [...controls.options[0]!.options, { id: 'custom/new', name: 'New model' }] },
+      controls.options[1]!,
+    ] };
+    const refreshed = refreshTurnControls(editor, live, learnShape(undefined, controls));
+    expect(refreshed.options[0]!.options.map(o => o.id)).toEqual(['official/k3', 'custom/k3', 'custom/new']);
+    expect(captureTurnSettings(refreshed)).toEqual(captureTurnSettings(editor));
+    expect(editor.options[0]!.options).toHaveLength(2);
+    expect(captureTurnSettings(editTurnConfig(refreshed, live, 'model', 'custom/new')).config)
+      .toEqual({ model: 'custom/new', effort: 'low' });
+  });
+
+  it('keeps an unknown historical model\'s parameters while refreshing its model list', () => {
+    const editor: SessionControls = { ...controls, options: [
+      { ...controls.options[0]!, value: 'custom/k3' },
+      { id: 'speed', name: 'Speed', value: 'fast', options: [{ id: 'fast', name: 'Fast' }] },
+    ] };
+    const refreshed = refreshTurnControls(editor, controls, learnShape(undefined, controls));
+    expect(captureTurnSettings(refreshed).config).toEqual({ model: 'custom/k3', speed: 'fast' });
+    // A removed pick yields to the current default instead of surviving as an invalid model id.
+    const live: SessionControls = { ...controls, options: [
+      { ...controls.options[0]!, options: [controls.options[0]!.options[0]!] }, controls.options[1]!,
+    ] };
+    expect(captureTurnSettings(refreshTurnControls(editor, live)).config)
+      .toEqual({ model: 'official/k3', effort: 'high' });
   });
 
   it('uses live defaults for old records and unavailable historical values', () => {
