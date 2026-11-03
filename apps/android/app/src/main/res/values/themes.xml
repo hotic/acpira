@@ -1,0 +1,8 @@
+<resources>
+  <!-- The window behind Compose: edge to edge, no action bar; Compose draws every surface -->
+  <style name="Theme.Acpira" parent="android:Theme.Material.Light.NoActionBar">
+    <item name="android:windowBackground">@color/page</item>
+    <item name="android:statusBarColor">@android:color/transparent</item>
+    <item name="android:navigationBarColor">@android:color/transparent</item>
+  </style>
+</resources>

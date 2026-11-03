@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+  <uses-permission android:name="android.permission.INTERNET" />
+  <!-- Paired remote access: the default network's changes, and the camera card that scans a pairing code -->
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+  <uses-permission android:name="android.permission.CAMERA" />
+  <!-- Android 17: dialing a computer on this network and browsing the ones with pairing open (a runtime permission;
+       without it NSD falls back to the system's device picker and LAN paths are refused, so only the relay is left) -->
+  <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
+  <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+  <application
+    android:allowBackup="false"
+    android:label="@string/app_name"
+    android:icon="@mipmap/ic_launcher"
+    android:roundIcon="@mipmap/ic_launcher"
+    android:supportsRtl="true"
+    android:networkSecurityConfig="@xml/network_security"
+    android:theme="@style/Theme.Acpira">
+    <activity
+      android:name=".MainActivity"
+      android:exported="true"
+      android:launchMode="singleTask"
+      android:windowSoftInputMode="adjustResize"
+      android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+      <!-- acpira://pair/… from outside the app (the camera app, a tapped link): the add-computer sheet confirms it -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="acpira" android:host="pair" />
+      </intent-filter>
+    </activity>
+  </application>
+</manifest>
