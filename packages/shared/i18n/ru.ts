@@ -783,6 +783,7 @@ export const ru = {
   'host.moveWhileRunning': 'Дождитесь окончания текущего ответа, прежде чем переносить эту сессию',
   'host.moveFolderMissing': 'Папки {folder} больше нет, поэтому сессию нельзя туда перенести',
   'host.folderMissing': 'Папки {folder} не существует',
+  'host.fileMissing': 'Файла {path} не существует',
   'host.noProject': 'Сначала откройте папку, чтобы начать сессию',
   'host.loginTerminalTitle': 'Вход в {agent}',
   'host.loginThenRetry': 'Завершите вход в {agent} в терминале и нажмите «Повторить»',

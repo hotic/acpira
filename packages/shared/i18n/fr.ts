@@ -771,6 +771,7 @@ export const fr = {
   'host.moveWhileRunning': 'Attendez la fin de la réponse en cours avant de déplacer cette session',
   'host.moveFolderMissing': 'Le dossier {folder} n’existe plus : impossible d’y déplacer la session',
   'host.folderMissing': 'Le dossier {folder} n’existe pas',
+  'host.fileMissing': 'Le fichier {path} n’existe pas',
   'host.noProject': 'Ouvrez d’abord un dossier pour démarrer une session',
   'host.loginTerminalTitle': 'Connexion à {agent}',
   'host.loginThenRetry': 'Terminez la connexion à {agent} dans le terminal, puis appuyez sur « Réessayer »',
