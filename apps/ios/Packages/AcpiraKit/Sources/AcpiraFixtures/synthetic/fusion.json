@@ -1,0 +1,42 @@
+{
+  "id": "fusion",
+  "agent": "devin",
+  "title": "Fusion 模型选择",
+  "cwd": "/Users/dev/projects/acpira",
+  "status": "ready",
+  "running": false,
+  "turns": [],
+  "controls": {
+    "modes": [
+      { "id": "accept-edits", "name": "Code" },
+      { "id": "plan", "name": "Plan" },
+      { "id": "bypassPermissions", "name": "Full access", "kind": "full_access" }
+    ],
+    "modeId": "bypassPermissions",
+    "options": [
+      {
+        "id": "model", "name": "Model", "category": "model",
+        "value": "fusion-gpt-6-astra-high-sidekick-swe-2-medium",
+        "options": [
+          { "id": "gpt-6-astra-high", "name": "GPT-6 Astra High Thinking" },
+          { "id": "claude-opus-5-high", "name": "Claude Opus 5 High" },
+          { "id": "fusion-gpt-6-astra-high-sidekick-swe-2-medium", "name": "Fusion (GPT-6 Astra High Thinking + SWE-2 Medium)" },
+          { "id": "fusion-gpt-6-astra-high-sidekick-gpt-5-6-luna-high", "name": "Fusion (GPT-6 Astra High Thinking + GPT-5.6 Luna High Thinking)" },
+          { "id": "fusion-claude-opus-5-high-sidekick-swe-2-medium", "name": "Fusion (Claude Opus 5 High + SWE-2 Medium)" },
+          { "id": "fusion-claude-opus-5-high-sidekick-glm-5-2-high", "name": "Fusion (Claude Opus 5 High + GLM-5.2 High)" }
+        ]
+      },
+      {
+        "id": "thought_level", "name": "Thinking", "category": "thought_level", "value": "high",
+        "options": [{ "id": "low", "name": "Low" }, { "id": "medium", "name": "Medium" }, { "id": "high", "name": "High" }]
+      },
+      {
+        "id": "speed", "name": "Speed", "category": "model_config", "value": "standard",
+        "options": [{ "id": "standard", "name": "Standard" }, { "id": "fast", "name": "Fast" }]
+      }
+    ]
+  },
+  "commands": [],
+  "createdAt": "2026-10-09T09:00:00Z",
+  "updatedAt": "2026-10-09T09:05:18Z"
+}
