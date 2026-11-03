@@ -704,6 +704,7 @@ export const es = {
   'host.sessionElsewhere': 'Otro motor de Acpira tiene esta sesión abierta (otro espacio de trabajo o ventana, o una versión anterior tras una actualización). Tómala aquí para continuar; el otro lado pasa a solo lectura.',
   'host.sessionTakenOver': 'Otro motor de Acpira tomó esta sesión; aquí ahora es de solo lectura. Tómala aquí para continuar.',
   'host.takeOverTimeout': 'El otro motor de Acpira no soltó la sesión en 10 segundos; inténtalo de nuevo.',
+  'host.newSessionTimeout': 'El agente no abrió la sesión en 90 segundos; inténtalo de nuevo.',
   'host.sessionBusyElsewhere': 'Otro motor de Acpira tiene esta sesión abierta; tómala aquí para continuar.',
   'host.sessionCopy': 'Esta sesión se ejecuta en {machine}. Aquí solo se puede leer; continúala en ese equipo.',
   'host.sessionCopyAnother': 'otro equipo',

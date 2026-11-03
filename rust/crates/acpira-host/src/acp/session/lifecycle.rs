@@ -18,12 +18,15 @@ use crate::acp::session::queue::{PeerTurn, PromptQueue};
 use crate::acp::session::{AcpSession, Core, StartOutcome};
 use crate::acp::transcript::normalize::{disconnect_async_tasks, has_live_async_task, runtime_info_of, seal_replay};
 use crate::acp::transport::process::{AgentProcess, AgentSpawnError, ClientHandlers};
-use crate::acp::transport::rpc::BoxFuture;
+use crate::acp::transport::rpc::{BoxFuture, Handoff, RpcError};
 use crate::acp::vendors::{Vendor, claude_auth};
 use crate::i18n::{t, tp};
 use crate::util::now_iso;
 
 pub(super) const CLOSE_GRACE: Duration = Duration::from_secs(3);
+// A fresh session has nothing to replay; slow agents (Claude starting its MCP servers) answer well inside this.
+// The user-facing text (`host.newSessionTimeout`) names the same number
+const NEW_SESSION_WAIT: Duration = Duration::from_secs(90);
 
 impl AcpSession {
   /// The plugins' prompt folders for a built-in agent session (`acpira_agent::acp::LAYERS_META`), taken as it opens.
@@ -485,12 +488,12 @@ impl AcpSession {
     self.core.lock().state.commands = vec![];
     // Ordered: pi-acp re-sends the startup banner as a chunk right after this response, which must meet the recorded banner
     let req = self.session_request(&proc, None).await;
-    let (r, handoff) = match proc.request_ordered("session/new", req.clone()).await {
+    let (r, handoff) = match self.request_new(&proc, req.clone()).await? {
       // An agent that cannot start Acpira's MCP server must still get a session: retry once without it, and leave it out
       // of this agent's later requests for the life of the sidecar
       Err(e) if crate::host_mcp::has_server(&req) => {
         self.log(&format!("session/new with the Acpira MCP server failed ({e}); retrying without it"));
-        let (r, h) = proc.request_ordered("session/new", crate::host_mcp::without_server(req)).await.map_err(anyhow::Error::new)?;
+        let (r, h) = self.request_new(&proc, crate::host_mcp::without_server(req)).await?.map_err(anyhow::Error::new)?;
         if let Some(h) = &self.deps.host_mcp {
           h.refuse(&self.agent);
         }
@@ -515,6 +518,19 @@ impl AcpSession {
     drop(handoff);
     self.log(&line);
     Ok(())
+  }
+
+  /// session/new, bounded: an agent that never answers (a reused warm process seen wedged with the request unread)
+  /// would leave the session starting forever on every page showing it. The outer error is the timeout, which skips
+  /// the retry without Acpira's MCP server; the session fails, and its retry starts a fresh process
+  async fn request_new(&self, proc: &AgentProcess, req: Value) -> Result<Result<(Value, Handoff), RpcError>> {
+    match tokio::time::timeout(NEW_SESSION_WAIT, proc.request_ordered("session/new", req)).await {
+      Ok(answer) => Ok(answer),
+      Err(_) => {
+        self.log(&format!("session/new: no answer within {} s", NEW_SESSION_WAIT.as_secs()));
+        Err(anyhow!(t("host.newSessionTimeout")))
+      }
+    }
   }
 
   pub(crate) fn fail(&self, c: &mut Core, e: &anyhow::Error) {
