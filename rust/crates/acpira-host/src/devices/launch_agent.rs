@@ -343,7 +343,9 @@ mod tests {
     assert!(label(Path::new("/Users/u/.acpira/harness"), home).starts_with("com.hotic.acpira.gateway."));
     let p = plist("l", Path::new("/a&b/acpira"), Path::new("/r"));
     assert!(p.contains("<string>/a&amp;b/acpira</string>\n    <string>serve</string>"), "{p}");
-    assert!(p.contains("<string>--service</string>") && p.contains("<string>/r/run/engine.log</string>"));
+    // The log path is joined natively, so Windows (where this file's text is also tested) puts backslashes in it
+    let log = super::super::service::log_path(Path::new("/r"));
+    assert!(p.contains("<string>--service</string>") && p.contains(&format!("<string>{}</string>", log.display())), "{p}");
     assert_eq!(peer_label("2.0.5"), "com.hotic.acpira.peer.2.0.5");
     let peer = peer_plist("com.hotic.acpira.peer.2.0.5", Path::new("/a'b/acpira"), Path::new("/r/peer.sock"), Path::new("/r"), Path::new("/r/peer.log"));
     assert!(peer.contains("<string>Aqua</string>") && peer.contains("/a&apos;b/acpira") && !peer.contains("KeepAlive"));
