@@ -1316,7 +1316,9 @@ function GroupHeader({ project, sub, name, title, folder, badge, count, open, st
             {count !== undefined && <span className="text-right">{count}</span>}
           </span>
           {actions && (
-            <span className={cn('flex items-center justify-end gap-0.5', REVEAL)} onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
+            // justify-self-end: only as wide as the buttons. Stretched to the cell, which a wide resting tail (an SSH
+            // host's name) sets, the span's stopPropagation swallowed clicks on the blank beside them and the row never toggled
+            <span className={cn('flex items-center justify-end justify-self-end gap-0.5', REVEAL)} onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
               {onNewCategory && (
                 <button type="button" title={t('session.category.new')} aria-label={t('session.category.new')} onClick={onNewCategory} className={act}>
                   <CategoryAddIcon />
