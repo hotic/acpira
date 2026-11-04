@@ -294,6 +294,9 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
     }
     let mut thread = args.thread.as_deref().map(str::trim).filter(|x| !x.is_empty()).map(str::to_owned);
     let prompt = args.prompt.trim().to_owned();
+    // `answers` holding no answer counts as left out: a client that fills in every parameter (a strict schema) sends
+    // `answers: []` with a plain follow-up, which must not read as an answer to a question nobody asked
+    let answers = args.answers.as_deref().filter(|a| a.iter().any(|x| !x.trim().is_empty()));
     // A scout or an executor keeps its conversation: a new task without `thread` continues the idle one this caller
     // started (unless the call asks for a fresh start); a reviewer, and any other persona, starts fresh
     if thread.is_none() && !prompt.is_empty() && args.new_thread != Some(true)
@@ -314,14 +317,14 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
         // A child waiting on a question: `answers` (or a prompt, for a single question) answers it, like the user's card
         let open = { Self::relay_question(&self.core.lock(), node) };
         if let Some((block, questions)) = open
-          && (args.answers.is_some() || !prompt.is_empty())
+          && (answers.is_some() || !prompt.is_empty())
         {
-          let answers = caller_answers(&questions, args.answers.as_deref(), &prompt).map_err(|e| anyhow!("{} {e}", who(&shown)))?;
+          let answers = caller_answers(&questions, answers, &prompt).map_err(|e| anyhow!("{} {e}", who(&shown)))?;
           self.answer_questions(&block, &answers, false);
           self.core.lock().relays.told.insert(block);
           return Ok(Start::Answered { thread: th, persona: shown });
         }
-        if args.answers.is_some() {
+        if answers.is_some() {
           return Err(anyhow!("{} has no open question now (the user may have answered it already).", who(&shown)));
         }
         if prompt.is_empty() {
@@ -329,7 +332,7 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
         }
         return Err(busy(&shown, &th));
       }
-      if args.answers.is_some() {
+      if answers.is_some() {
         return Err(anyhow!("{} has no open question: its round is over.", who(&shown)));
       }
       if prompt.is_empty() {
