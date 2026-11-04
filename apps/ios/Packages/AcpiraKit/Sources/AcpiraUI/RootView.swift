@@ -84,6 +84,8 @@ extension EnvironmentValues {
   /// Seconds the app's clock runs ahead of the real one: the fixtures' clock runs on from launch (`AppModel.now`), so a
   /// live counter reads the time the demo turns are stamped with; 0 on the real clock
   @Entry var clockOffset: TimeInterval = 0
+  /// The real time the screens stopped following the engine live (`AppModel.clockHeld`): running counters stand at it
+  @Entry var clockHeld: Date? = nil
   /// The screens show what an ended wire left (`AppModel.current` false): live marks stop moving and stop is off until
   /// the engine's own state is back, so a turn that ended meanwhile does not read as still running
   @Entry var syncing = false
@@ -307,6 +309,7 @@ public struct RootView: View {
     // Fixtures carry their own clock (quota resets count down from it); an engine runs on the real one
     .environment(\.now, model.live ? .now : Fixtures.now)
     .environment(\.clockOffset, model.clockOffset)
+    .environment(\.clockHeld, model.clockHeld)
     .environment(\.syncing, !model.current)
     .tint(Palette.fg1)
     .onAppear(perform: followPairing)

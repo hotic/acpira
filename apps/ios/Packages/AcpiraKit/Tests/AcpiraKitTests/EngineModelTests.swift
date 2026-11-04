@@ -461,6 +461,38 @@ struct EngineModelTests {
     #expect(model.current)
   }
 
+  /// Running counters stand from the moment the app leaves until the engine's view of the chat on screen comes again,
+  /// across a lost wire too: they never run on through the absence and jump back to the engine's time
+  @Test func countersStandWhileAwayUntilTheEnginesViewComesAgain() async throws {
+    let (before, lost) = try await connected()
+    before.path = [.chat("s1")]
+    before.open("s1")
+    #expect(before.clockHeld == nil)
+    before.setAway(true)
+    let held = try #require(before.clockHeld)
+    lost.feed.finish(throwing: CancellationError())
+    try await until { before.ended }
+    // The wire's end keeps the moment the app left
+    #expect(before.clockHeld == held)
+    let wire = FakeTransport()
+    let model = AppModel(link: EngineLink(transport: wire, language: "en"), options: LaunchOptions.current(["app"]))
+    model.resume(from: before)
+    #expect(model.clockHeld == held)
+    wire.feed.yield(EngineClientTests.helloOk)
+    push(wire, #"{"type":"init","state":{"host":"sidebar","agents":[],"accounts":[],"hidden":{},"sessions":[],"settings":{},"locale":"en","home":"/h","cwd":"/w"}}"#)
+    try await until { model.synced }
+    // Still in the background: the view's answer waits for the way back
+    push(wire, #"{"type":"session","session":\#(Self.session)}"#)
+    try await Task.sleep(for: .milliseconds(30))
+    #expect(model.clockHeld == held)
+    model.setAway(false)
+    try await until { wire.types.last == "webviewMessage:selectSession" }
+    #expect(model.clockHeld == held)
+    push(wire, #"{"type":"session","session":\#(Self.session)}"#)
+    try await until { model.clockHeld == nil }
+    #expect(model.clockHeld == nil)
+  }
+
   /// The steer cards that end the thread's last turn
   func steers(_ view: SessionView) -> [SteerBlock] {
     guard case .agent(let turn)? = view.turns.last else { return [] }

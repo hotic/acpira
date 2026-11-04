@@ -179,15 +179,18 @@ struct CodexFold: View {
                   // An automatic close has no button transaction. Collapse over the fold curve, not in a single
                   // self-sizing pass that makes UIKit clamp the transcript before the bottom glide can catch up.
                   .animation(foldAnimation(opening: open, motion: motion), value: open)
+              case .media(_, let block):
+                // Keep one live result outside every reveal. Cross-fading two clipped copies wipes the image white
+                // midway through a fold; only the process rows around it should collapse.
+                ImageResults(block: block)
+                  .padding(.top, Metrics.gap)
+                  .padding(.bottom, !retired && i == parts.count - 1 ? Metrics.s1_5 : 0)
+                  .geometryGroup()
               }
             }
           }
-          .environment(\.imageInFold, open)
+          .environment(\.imageInFold, false)
         }
-        // Generated and shown images stay in view once the fold closes (Turns.tsx). They fold the other way on the same
-        // curve, cross-fading with their copies in the body, rather than being inserted or removed: a transition there
-        // ran on its own and slid them up while the body above opened downward
-        FoldImageResults(blocks: blocks).reveal(!open, handOff: true)
       }
     }
   }
@@ -269,16 +272,20 @@ final class FoldHold {
   }
 }
 
-/// The turn's process cut where something has to stay in view while the parts around it fold: a steered prompt (what
-/// the user said) and the subagent rows at a delegation (the work the turn handed off). Runs of items fold. A part is
+/// The turn's process cut where something has to stay in view while the parts around it fold: a steered prompt,
+/// subagent rows and media results. Only runs of process items fold. A part is
 /// keyed by its first item, so content arriving later leaves the earlier parts mounted
 enum FoldPart: Identifiable {
   case items(id: String, items: [ProcessItem])
   case steer(id: String, block: SteerBlock)
   /// Back-to-back delegations (a parallel launch) share one part
   case subagents(id: String, ids: [String])
+  case media(id: String, block: ToolCallBlock)
   var id: String {
-    switch self { case .items(let id, _), .steer(let id, _), .subagents(let id, _): id }
+    switch self {
+    case .items(let id, _), .steer(let id, _), .subagents(let id, _): id
+    case .media(let id, _): "media:\(id)"
+    }
   }
 }
 
@@ -305,6 +312,11 @@ func processParts(_ items: [ProcessItem]) -> [FoldPart] {
       if !children.isEmpty { close() }
       if rows.isEmpty { runId = item.id }
       rows.append(item)
+      if case .block(let id, let block) = item, let call = block.toolCall, isImageResult(call) {
+        // The tool's row folds with the process, but its result keeps a stable identity and never gets clipped.
+        close()
+        out.append(.media(id: id, block: call))
+      }
     }
   }
   close()

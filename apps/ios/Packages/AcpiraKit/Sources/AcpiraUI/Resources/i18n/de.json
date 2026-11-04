@@ -73,6 +73,7 @@
   "permission.plan.buildBypass": "Mit umgangenen Berechtigungen ausführen",
   "permission.plan.rejectExit": "Ablehnen und Planmodus beenden",
   "history.edit": "Bearbeiten und erneut senden",
+  "history.selectText": "Text auswählen",
   "history.cancel": "Bearbeitung abbrechen",
   "history.unavailable": "Warten, bis die Sitzung bereit und untätig ist.",
   "history.stale": "Das Gespräch hat sich geändert. Die Nachricht zum Bearbeiten erneut öffnen.",

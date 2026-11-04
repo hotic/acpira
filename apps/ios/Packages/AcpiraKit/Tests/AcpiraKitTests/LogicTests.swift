@@ -58,6 +58,14 @@ private let command = block(#"{"type":"tool_call","id":"x","kind":"execute","ver
     #expect(blocks.map(\.id) == ["r1", "r2"])
   }
 
+  @Test func mediaResultsNeverDisappearIntoAFileGroup() {
+    let media = block(#"{"type":"tool_call","id":"image","kind":"edit","verb":"Image edit","verbKey":"verb.imagegen","status":"completed"}"#)
+    let parts = processParts(groupProcess([edit("e1", "/a.ts"), media, edit("e2", "/b.ts")]))
+    #expect(parts.map(\.id) == ["e1", "media:image", "e2"])
+    guard case .media(_, let call)? = parts.dropFirst().first else { Issue.record("media result is inside a file group"); return }
+    #expect(call.id == "image")
+  }
+
   @Test func editsOfOneFileShareAnEntry() {
     let blocks = [edit("e1", "/src/Turns.tsx"), edit("e2", "/src/prompt.rs"), edit("e3", "/src/Turns.tsx")].map(call)
     #expect(editEntries(blocks).map { "\($0.key) \($0.blocks.map(\.id))" } == [#"/src/Turns.tsx ["e1", "e3"]"#, #"/src/prompt.rs ["e2"]"#])
@@ -166,6 +174,14 @@ private let command = block(#"{"type":"tool_call","id":"x","kind":"execute","ver
     #expect(ids(s.process) == ["先检查项目。", "read", "继续验证。", "run"])
     #expect(s.reply.map(\.markdown) == ["检查完成。"])
     #expect(splitCodexBlocks([intro, read, progress]).reply.map(\.markdown) == ["继续验证。"])
+  }
+
+  @Test func retryRowsKeepTheirPlace() {
+    let retry = block(#"{"type":"notice","id":"retry:1","severity":"warning","category":"service","title":"r","actions":[],"retry":{"status":"completed","attempts":[]}}"#)
+    let failure = block(#"{"type":"notice","id":"f","severity":"error","category":"service","title":"f","actions":[]}"#)
+    let s = splitCodexBlocks([read, retry, run, failure])
+    #expect(s.process.map(\.blockId) == ["read", "retry:1", "run"])
+    #expect(s.notices.map(\.id) == ["f"])
   }
 
   @Test func trailingThoughtOrTodoKeepsTheReply() {

@@ -17,6 +17,9 @@ struct ChatScreen: View {
   /// The bottom safe area (the home indicator), read before the dock takes part of it over
   @State private var homeInset: CGFloat = 0
   @State private var renaming = false
+  /// A composer picker is out: its dim covers the page up to the screen's top, and the bar steps aside under it
+  @State private var picking = false
+  @Environment(\.motionEnabled) private var motion
   @State private var newTitle = ""
   @State private var deleting = false
   /// The move menu's "Add folder" alert
@@ -63,7 +66,7 @@ struct ChatScreen: View {
     let sent = model.outgoing[id] ?? []
     let held = heldPrompt(session, outgoing: sent)
     return Thread(session: held)
-      .modifier(StartingTitle(session: held))
+      .modifier(StartingTitle(session: held, aside: picking))
       .environment(\.liveStage, heldStage(session, outgoing: sent, agent: agent.name))
       // An inset reserves scroll clearance without clipping the transcript at the composer's rectangular top edge.
       // Messages pass behind the glass and remain visible beside its rounded corners, as under the navigation bar.
@@ -79,8 +82,9 @@ struct ChatScreen: View {
     // The keyboard's safe area still lifts the dock; only the container's (the home indicator) is taken over
     .ignoresSafeArea(.container, edges: .bottom)
     .modifier(HomeInset(inset: $homeInset))
-    // The thread fades into the page as it scrolls up under the bar's glass buttons
-    .topFade()
+    // The thread fades into the page as it scrolls up under the bar's glass buttons. Not while a picker is out: the
+    // fade lies over the composer too, and a column reaching the bar came out washed in the page's colour
+    .topFade(hidden: picking)
     .onAppear {
       if let initialDraft, draft.text.isEmpty { draft.text = initialDraft }
       // `-popup account`: the account sheet open on launch (screenshots); `-popup toast`: a moment later, the toast of
@@ -103,8 +107,12 @@ struct ChatScreen: View {
     }
     // The composer's liquid pickers, drawn over the whole screen so every piece takes taps
     .gooLayer()
+    // The bar's items leave as the beans come out and come back as the dim lifts (the new session's hero)
+    .onPreferenceChange(ComposerPickerKey.self) { now in
+      withAnimation(motion ? now ? .easeOut(duration: Motion.durOpen) : Motion.gooDimOut : nil) { picking = now }
+    }
     .modifier(SystemChatBar(pinned: pinned, unread: summary.map(isUnread) ?? false, archived: summary?.archived == true,
-                            actions: headerActions(session, agent)))
+                            aside: picking, actions: headerActions(session, agent)))
     // Under the keyboard too: its rounded corners show the page's ground, not the hosting view's black (a colour's own
     // background ignores the container's safe area only)
     .background(Palette.bg0.ignoresSafeArea())
@@ -265,6 +273,8 @@ struct SystemChatBar: ViewModifier {
   var pinned: Bool
   var unread = false
   var archived = false
+  /// A composer picker is out: the items leave the bar (`barAside`)
+  var aside = false
   var actions: HeaderActions
 
   func body(content: Content) -> some View {
@@ -272,13 +282,16 @@ struct SystemChatBar: ViewModifier {
       .navigationTitle("")
       .navigationBarTitleDisplayModeInline()
       .backWithoutTitle()
+      .barAside(aside)
       .toolbar {
-        ToolbarItemGroup(placement: .primaryAction) {
-          // The pencil's ink sits low in its box: lifted, it reads centred in the glass
-          Button(action: actions.new) { Image(systemName: "square.and.pencil").offset(y: -Metrics.pencilLift) }
-            .accessibilityLabel(Text(web: t("session.new")))
-          Menu { NativeSessionMenu(pinned: pinned, unread: unread, archived: archived, actions: actions) } label: { Image(systemName: "ellipsis") }
-            .accessibilityLabel(Text(web: t("session.more")))
+        if !aside {
+          ToolbarItemGroup(placement: .primaryAction) {
+            // The pencil's ink sits low in its box: lifted, it reads centred in the glass
+            Button(action: actions.new) { Image(systemName: "square.and.pencil").offset(y: -Metrics.pencilLift) }
+              .accessibilityLabel(Text(web: t("session.new")))
+            Menu { NativeSessionMenu(pinned: pinned, unread: unread, archived: archived, actions: actions) } label: { Image(systemName: "ellipsis") }
+              .accessibilityLabel(Text(web: t("session.more")))
+          }
         }
       }
   }
@@ -298,9 +311,6 @@ struct Thread: View {
   @State private var gate = QuietGate()
   #if os(iOS)
   @State private var control = TranscriptControl()
-  /// The thread's safe frame in screen space: the collection view, spanning the bars and docks, insets its content
-  /// to it
-  @State private var safe = CGRect.zero
   #endif
 
   var body: some View {
@@ -311,8 +321,11 @@ struct Thread: View {
     let session = session
     // The collection view spans the bars and docks and scrolls behind their glass; how far it reaches past the safe
     // area on each side (the bars above, the docks below) is its content inset
-    ZStack {
-      TranscriptCollection(items: threadItems(session, preOpen: preOpen), safe: safe, control: control,
+    // The reader keeps to the safe frame (SwiftUI reports a view that ignores the safe area at its safe frame while its
+    // platform view still spans the bars). Read in the reader's body rather than copied into state, so the collection
+    // view gets it in the transaction that moved it and can tell an animated dock from one that moves at once
+    GeometryReader { proxy in
+      TranscriptCollection(items: threadItems(session, preOpen: preOpen), safe: proxy.frame(in: .global), control: control,
                            running: session.running, motion: motion) { values in
         values.applyThread(session, quiet: quiet)
         values.holdScroll = control.holdScroll
@@ -321,12 +334,6 @@ struct Thread: View {
         values.foldMemory = control.folds
       }
       .ignoresSafeArea(.container)
-      // SwiftUI reports a view that ignores the safe area at its safe frame (its platform view still spans the bars),
-      // and the stack and a plain view in it at the whole screen once a sibling ignores it; a reader keeps to it
-      GeometryReader { _ in
-        Color.clear.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { safe = $0 }
-      }
-      .allowsHitTesting(false)
     }
     // Another session is another thread: its rows, offset and follow start afresh
     .id(session.id)
@@ -530,6 +537,7 @@ struct DockSeat<Content: View>: View {
   let content: Content
   @State private var keyboard = false
   @Environment(\.horizontalSizeClass) private var widthClass
+  @Environment(\.motionEnabled) private var motion
 
   init(homeInset: CGFloat, @ViewBuilder content: () -> Content) {
     self.homeInset = homeInset
@@ -540,6 +548,9 @@ struct DockSeat<Content: View>: View {
     content
       // A regular width keeps the dock out of the home band, level with the sidebar's foot
       .padding(.bottom, keyboard ? Metrics.s2 : max(Metrics.s2, homeInset - (widthClass == .regular ? 0 : Metrics.barSink)))
+      // On the composer's curve: the will-show notice lands a moment before the keyboard moves, and the dock (with a
+      // thread at its end) dropped by the difference in one frame first
+      .animation(motion ? Motion.composerMorph : nil, value: keyboard)
       .modifier(KeyboardWatch(up: $keyboard))
   }
 }

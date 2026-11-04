@@ -10,12 +10,19 @@ struct LiveTime<Content: View>: View {
   let since: Double
   @ViewBuilder let content: (Double) -> Content
   @Environment(\.clockOffset) private var offset
+  /// Back from the background or off a lost wire, the engine's view may have moved on (the turn may have ended): the
+  /// counter stands where the screens stopped following it instead of running on and jumping back
+  @Environment(\.clockHeld) private var held
 
   var body: some View {
-    // The real time at which the app's clock reads `since`
-    TimelineView(.periodic(from: Date(timeIntervalSince1970: since / 1000 - offset), by: 1)) { _ in
-      // The schedule only lands the redraws on whole seconds; the value is read off the clock itself
-      content((Date().timeIntervalSince1970 + offset) * 1000 - since)
+    if let held {
+      content((held.timeIntervalSince1970 + offset) * 1000 - since)
+    } else {
+      // The real time at which the app's clock reads `since`
+      TimelineView(.periodic(from: Date(timeIntervalSince1970: since / 1000 - offset), by: 1)) { _ in
+        // The schedule only lands the redraws on whole seconds; the value is read off the clock itself
+        content((Date().timeIntervalSince1970 + offset) * 1000 - since)
+      }
     }
   }
 }
@@ -28,9 +35,10 @@ struct LiveElapsed: View {
   @Environment(\.clockOffset) private var offset
   /// Syncing, the counter stands still where it was: the turn may have ended since
   @Environment(\.syncing) private var syncing
+  @Environment(\.clockHeld) private var held
 
   var body: some View {
-    if syncing {
+    if syncing, held == nil {
       label((Date().timeIntervalSince1970 + offset) * 1000 - since)
     } else {
       LiveTime(since: since) { label($0) }

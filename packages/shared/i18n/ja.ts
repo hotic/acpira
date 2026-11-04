@@ -77,6 +77,7 @@ export const ja = {
   'permission.plan.buildBypass': '権限確認をバイパスして実行',
   'permission.plan.rejectExit': '拒否してプランモードを終了',
   'history.edit': '編集して再送信',
+  'history.selectText': 'テキストを選択',
   'history.cancel': '編集をキャンセル',
   'history.unavailable': 'セッションの準備ができて待機状態になるまでお待ちください。',
   'history.stale': '会話が更新されました。メッセージを開き直して編集してください。',

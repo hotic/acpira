@@ -9,15 +9,17 @@ import SwiftUI
 // MARK: - User message
 
 /// A sent prompt: a right-aligned bubble on the chip fill, no outline; attachments above it, also right-aligned. The
-/// bubble's right edge meets the prose's (the agent turn's --pad). A long press opens its menu: Edit (the desktop's
-/// click on the card, while the session is idle), Copy, and on the newest typed prompt Set as goal (Goal.tsx
-/// PromptFooter) where the agent takes one
+/// bubble's right edge meets the prose's (the agent turn's --pad). A long press opens message actions; Select text
+/// hands the same bubble to native range selection without hiding Edit or Set as goal (Goal.tsx).
 struct UserMessageCard: View {
   let turn: UserTurn
   /// The prompt's place in the transcript; nil for a prompt steered into a turn, which is not rewritten on its own
   var index: Int?
   var editable = false
   var goal = false
+  #if canImport(UIKit)
+  @State private var selection = TextSelectionScope()
+  #endif
   @Environment(\.sessionActions) private var actions
 
   var body: some View {
@@ -34,6 +36,15 @@ struct UserMessageCard: View {
             .textStyle(WebType.text1)
             .foregroundStyle(Palette.fgStrong)
             .fixedSize(horizontal: false, vertical: true)
+            #if canImport(UIKit)
+            .accessibilityHidden(true)
+            .overlay {
+              TextSelectionSurface(text: selectionContent(shown, style: WebType.text1), actions: promptActions(edit: edit))
+                .environment(\.textSelectionScope, selection)
+            }
+            #else
+            .textSelection(.enabled)
+            #endif
             .padding(.horizontal, Metrics.s3 + Metrics.s0_5)
             .padding(.vertical, Metrics.s2_5)
             .background(shape.fill(Palette.bg0).overlay(shape.fill(Palette.bubbleBg)))
@@ -54,24 +65,53 @@ struct UserMessageCard: View {
             actions.goal(.set, turn.text.trimmingCharacters(in: .whitespacesAndNewlines))
           }
         }
+        #if canImport(UIKit)
+        if !shown.isEmpty {
+          Button(t("history.selectText"), systemImage: "text.cursor") { selection.select() }
+        }
+        #endif
       })
+      #if canImport(UIKit)
+      .environment(\.textSelectionScope, selection)
+      #endif
       .padding(.leading, Metrics.bubbleInset)
       .padding(.horizontal, Metrics.pad)
       .frame(maxWidth: .infinity, alignment: .trailing)
     }
   }
+
+  #if canImport(UIKit)
+  private func promptActions(edit: Int?) -> [SelectionAction] {
+    var items: [SelectionAction] = []
+    if let edit {
+      items.append(SelectionAction(title: t("history.edit"), image: "pencil") { _ in actions.editPrompt(edit) })
+    }
+    if goal {
+      items.append(SelectionAction(title: t("goal.setFromPrompt"), image: "flag") { _ in
+        actions.goal(.set, turn.text.trimmingCharacters(in: .whitespacesAndNewlines))
+      })
+    }
+    return items
+  }
+  #endif
 }
 
 /// The prompt's long-press menu, left off when it would hold nothing; the lifted preview keeps the bubble's corners
 private struct PromptMenu<Items: View>: ViewModifier {
   var show: Bool
   var shape: RoundedRectangle
+  #if canImport(UIKit)
+  @Environment(\.textSelectionScope) private var selection
+  #endif
   @ViewBuilder var items: Items
 
   func body(content: Content) -> some View {
     if show {
       #if canImport(UIKit)
-      content.contentShape(.contextMenuPreview, shape).contextMenu { items }
+      content.contentShape(.contextMenuPreview, shape).contextMenu {
+        // Keep the same view tree when handing the gesture to selection, so its native text view survives.
+        if selection?.active != true { items }
+      }
       #else
       content.contextMenu { items }
       #endif

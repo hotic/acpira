@@ -66,6 +66,7 @@ extension AppModel {
     case .closed(let reason):
       EngineLink.log.notice("closed \(reason ?? "", privacy: .public)")
       ended = true
+      holdClocks()
       // A paired computer's wire has its own screens for an ended connection; the development engine gets a toast,
       // unless the version notice already said why
       if let onClosed { onClosed() } else if !incompatible {
@@ -177,6 +178,8 @@ extension AppModel {
       let kept = Set(link.feed.views.kept)
       views = views.filter { kept.contains($0.key) }
       views[view.id] = view
+      // The engine's view of the chat on screen, back in the foreground: the counters run on the engine's times again
+      if clockHeld != nil, !away, view.id == watching { clockHeld = nil }
       // A prompt still on its way gives up its place once the session shows the engine's copy; the ones sent after it
       // keep theirs until their own copies arrive
       if let sent = outgoing[view.id] {
@@ -233,6 +236,7 @@ extension AppModel {
     // waiting for its own init; the engine runs each clientId once, so a resend that did arrive changes nothing
     replay = previous.replay + (previous.link?.client.unsent() ?? [])
     away = previous.away
+    clockHeld = previous.clockHeld
     resumed = true
   }
 
@@ -289,7 +293,13 @@ extension AppModel {
   func setAway(_ now: Bool) {
     guard now != away else { return }
     away = now
+    if now { holdClocks() }
     syncWatching(back: !now)
+  }
+
+  /// The screens stop following the engine live: running counters stand at this moment (`clockHeld`)
+  private func holdClocks() {
+    if live, clockHeld == nil { clockHeld = Date() }
   }
 
   /// The session's view came on this wire: a view carried over from the wire before waits for the engine to show it

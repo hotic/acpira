@@ -3,7 +3,7 @@ import AcpiraModels
 import SwiftUI
 
 // chat/Questions.tsx: the open question card docked above the composer, one question per page, lettered options,
-// an Other field, Skip on the left and Next / Submit on the right of a hairline footer.
+// an Other field, Skip on the left and Next / Submit on the right of the footer, as system glass buttons.
 
 struct QuestionCard: View {
   let block: QuestionBlock
@@ -41,7 +41,7 @@ struct QuestionCard: View {
               Text(web: t("question.of", ["n": index + 1, "total": qs.count]))
             }
             if let message = block.message, index == 0 {
-              Text(web: message).textStyle(TypeScale.text2).foregroundStyle(Palette.fg2)
+              Text(web: message).textStyle(TypeScale.text2).foregroundStyle(Palette.popFg2)
             }
             options(current)
           }
@@ -56,23 +56,21 @@ struct QuestionCard: View {
 
         HStack(spacing: Metrics.gap) {
           Button(web: t("question.skip")) { onAnswer(answers, true) }
-            .buttonStyle(QuestionButtonStyle(primary: false, enabled: true))
+            .modifier(CardButton(primary: false))
           Spacer(minLength: 0)
           if index > 0 {
             Button(web: t("question.prev")) { page = index - 1 }
-              .buttonStyle(QuestionButtonStyle(primary: false, enabled: true))
+              .modifier(CardButton(primary: false))
           }
           Button(web: t(last ? "question.submit" : "question.next")) {
             if last { onAnswer(answers, false) } else { page = index + 1 }
           }
-          .buttonStyle(QuestionButtonStyle(primary: true, enabled: canAdvance))
+          .modifier(CardButton(primary: true))
           .disabled(!canAdvance)
         }
         .padding(.horizontal, Metrics.pad)
-        .padding(.vertical, Metrics.questionSectionGap)
-        // border-t: the hairline takes its own pixel above the footer's padding
-        .padding(.top, Metrics.hairline)
-        .overlay(alignment: .top) { Rectangle().fill(Palette.line).frame(height: Metrics.hairline) }
+        .padding(.top, Metrics.s1)
+        .padding(.bottom, Metrics.pad)
       }
       .modifier(CardSurface())
     }
@@ -83,7 +81,7 @@ struct QuestionCard: View {
     let pick = picks[q.id] ?? Pick()
     VStack(alignment: .leading, spacing: 0) {
       if q.kind == .multiple {
-        Text(web: t("question.multiple")).textStyle(TypeScale.text3).foregroundStyle(Palette.fg2)
+        Text(web: t("question.multiple")).textStyle(TypeScale.text3).foregroundStyle(Palette.popFg2)
           .padding(.bottom, Metrics.questionSectionGap)
       }
       ForEach(Array(q.options.enumerated()), id: \.element.id) { i, option in
@@ -93,7 +91,7 @@ struct QuestionCard: View {
             VStack(alignment: .leading, spacing: Metrics.questionDescriptionGap) {
               Text(web: option.label).foregroundStyle(Palette.fg1)
               if let description = option.description {
-                Text(web: description).textStyle(TypeScale.text3).foregroundStyle(Palette.fg2)
+                Text(web: description).textStyle(TypeScale.text3).foregroundStyle(Palette.popFg2)
               }
             }
             .fixedSize(horizontal: false, vertical: true)
@@ -108,11 +106,11 @@ struct QuestionCard: View {
             if snapshot {
               // A snapshot draws the placeholder where the field would be (ImageRenderer cannot draw a TextField)
               Text(web: pick.text.isEmpty ? t("question.other") : pick.text)
-                .foregroundStyle(pick.text.isEmpty ? Palette.fg2 : Palette.fg1)
+                .foregroundStyle(pick.text.isEmpty ? Palette.popFg2 : Palette.fg1)
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
               TextField(text: binding(q)) {
-                Text(web: t("question.other")).foregroundStyle(Palette.fg2)
+                Text(web: t("question.other")).foregroundStyle(Palette.popFg2)
               }
               .focused($otherFocused)
             }
@@ -128,10 +126,10 @@ struct QuestionCard: View {
         Group {
           if snapshot {
             Text(web: pick.text.isEmpty ? placeholder : pick.text)
-              .foregroundStyle(pick.text.isEmpty ? Palette.fg3 : Palette.fg1)
+              .foregroundStyle(pick.text.isEmpty ? Palette.popFg3 : Palette.fg1)
               .frame(maxWidth: .infinity, alignment: .leading)
           } else {
-            TextField(text: binding(q)) { Text(web: placeholder).foregroundStyle(Palette.fg3) }
+            TextField(text: binding(q)) { Text(web: placeholder).foregroundStyle(Palette.popFg3) }
           }
         }
         .textStyle(TypeScale.text2)
@@ -192,12 +190,19 @@ struct OptionRow<Content: View>: View {
 
   var body: some View {
     Row(leadTop: leadTop) {
+      // The key ring is as large as the header's glyph, so it reads as a lead mark, not a control; the lead slot keeps
+      // its width, so labels stay on the header's text line
       Group {
-        if selected { Icon(.check, size: Metrics.icon, strokeWidth: 1.75) } else { Text(web: key).textStyle(TypeScale.text3) }
+        if selected {
+          Icon(.check, size: WebMetrics.chevron, strokeWidth: 2)
+        } else {
+          Text(web: key).textStyle(TypeScale.optionKey, weight: .medium)
+        }
       }
-      .foregroundStyle(selected ? Palette.fg1 : Palette.fg2)
+      .foregroundStyle(selected ? Palette.fg1 : Palette.popFg2)
+      .frame(width: Metrics.icon, height: Metrics.icon)
+      .overlay(Circle().strokeBorder(Palette.lineStrong))
       .frame(width: Metrics.lead, height: Metrics.lead)
-      .overlay(RoundedRectangle(cornerRadius: Metrics.rSm).strokeBorder(Palette.lineStrong))
     } content: {
       content().frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -229,34 +234,50 @@ struct OptionFill: ViewModifier {
   }
 }
 
-/// The footer's --ctl-sm buttons: secondary on a half-strength hairline, primary dimmed to text while it cannot advance
-struct QuestionButtonStyle: ButtonStyle {
-  var primary: Bool
-  var enabled: Bool
-  func makeBody(configuration: Configuration) -> some View {
-    let lit = primary && enabled
-    configuration.label
-      .textStyle(TypeScale.text2, weight: lit ? .medium : .regular)
-      .foregroundStyle(lit ? Palette.fgStrong : primary ? Palette.fg3 : Palette.fg2)
-      // px-3 inside a 1 px border
-      .padding(.horizontal, Metrics.s3 + Metrics.hairline)
-      .frame(height: Metrics.ctlSm)
-      .background(RoundedRectangle(cornerRadius: Metrics.rMd).fill(lit ? Palette.active : configuration.isPressed ? Palette.hover : .clear))
-      .overlay(RoundedRectangle(cornerRadius: Metrics.rMd).strokeBorder(lit ? Palette.lineStrong : Palette.line.opacity(0.5)))
+/// The dock cards' surface: the system's Liquid Glass in the composer's variant (`GlassStyle.bar`), rounded like the
+/// composer's card, so a card floating over the thread reads as the same material as the bar under it. Glass brings
+/// its own edge and depth: no drawn line or shadow
+struct CardSurface: ViewModifier {
+  func body(content: Content) -> some View {
+    let shape = RoundedRectangle(cornerRadius: Metrics.rCardRound, style: .continuous)
+    content
+      .clipShape(shape)
+      // Tinted toward the page ground: the composer's bar holds one line, a card holds paragraphs, and plain
+      // `.regular` let the reply behind it read through its own text
+      .glassEffect(GlassStyle.bar.tint(Palette.bg0.opacity(0.55)), in: shape)
   }
 }
 
-/// The `card` surface under the tonal axis: rounded-lg, --card-line, --card-bg and the card shadow
-struct CardSurface: ViewModifier {
+/// A dock card's action: the system's glass capsule; the way on is prominent in the send button's ink, and falls
+/// back to plain glass with faint text while it cannot run, so a disabled step never reads as a lit one
+struct CardButton: ViewModifier {
+  var primary: Bool
+  @Environment(\.isEnabled) private var enabled
   func body(content: Content) -> some View {
-    // A card over the composer rounds like it
-    let shape = RoundedRectangle(cornerRadius: Metrics.rCardRound, style: .continuous)
-    content
-      // `border`: the 1 px card line sits outside the content box
-      .padding(Metrics.hairline)
-      .clipShape(shape)
-      .background(shape.fill(Palette.cardBg).shadow(color: .black.opacity(0.3), radius: 1, y: 1))
-      .overlay(shape.strokeBorder(Palette.cardLine))
+    let lit = primary && enabled
+    let label = content.textStyle(TypeScale.text2, weight: lit ? .medium : .regular)
+    if lit {
+      label.buttonStyle(.glassProminent).tint(Palette.fgStrong).foregroundStyle(Palette.bg0)
+    } else {
+      label.buttonStyle(.glass).foregroundStyle(enabled ? Palette.fg1 : Palette.popFg3)
+    }
+  }
+}
+
+/// A dock card's corner control (close, retry): a small glass circle, as a system sheet's close button
+struct CardCornerButton: View {
+  let icon: LucideIcon
+  let label: String
+  var action: () -> Void
+  var body: some View {
+    Button(action: action) {
+      Icon(icon, size: Metrics.icon, strokeWidth: 1.75)
+        .foregroundStyle(Palette.fg1)
+        .frame(width: Metrics.icon, height: Metrics.icon)
+    }
+    .buttonStyle(.glass)
+    .buttonBorderShape(.circle)
+    .accessibilityLabel(Text(web: label))
   }
 }
 

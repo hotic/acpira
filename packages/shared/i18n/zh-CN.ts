@@ -79,6 +79,7 @@ export const zhCN = {
   'permission.plan.rejectExit': '拒绝并退出计划模式',
   // Shared verbs / labels
   'history.edit': '编辑并重新发送',
+  'history.selectText': '选择文本',
   'history.cancel': '取消编辑',
   'history.unavailable': '请等待会话就绪并结束当前回复。',
   'history.stale': '对话已更新，请重新打开此条消息进行编辑。',

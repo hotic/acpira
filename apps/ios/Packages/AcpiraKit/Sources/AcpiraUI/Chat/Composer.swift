@@ -108,8 +108,8 @@ struct Composer: View {
           FieldHeight(cap: rest ? TypeScale.field.lineHeight
                         : CGFloat(room.lines(Self.maxLines, lineHeight: TypeScale.field.lineHeight)) * TypeScale.field.lineHeight) {
             TextField(text: fieldText, selection: $selection, axis: .vertical) {
-              // At rest the hint is drawn over the field instead (below)
-              hintText(rest ? "" : restHint)
+              // The hint is drawn over the field instead, in both forms (below)
+              hintText("")
             }
             .focused($focused)
             .attachLongPastes(to: $staged) { actions.toast($0, .fileText) }
@@ -118,10 +118,12 @@ struct Composer: View {
           // on the bar scrolled the field's own text view, and the hint stayed cut by the one-line frame
           .allowsHitTesting(!rest)
           .overlay(alignment: .topLeading) {
-            if rest && text.isEmpty {
-              hintText(restHint).allowsHitTesting(false)
-                // Gone at once, the frame the field's own hint appears: faded over the card's growth it showed under
-                // that hint, set with other spacing, and the two read as garbled doubled text
+            // The one hint for the bar and the card, so opening the card only carries it up with the card's top. The
+            // field's own placeholder took over in the card: drawn by the text view, off the `CSSLineRenderer`
+            // baseline, it popped up a few points on the tap and scaled in over the card's growth
+            if text.isEmpty {
+              hintText(restHint).lineLimit(1).allowsHitTesting(false)
+                // Gone at once with the first keystroke, as the field's own text appears
                 .transition(.identity)
             }
           }
@@ -294,8 +296,11 @@ struct Composer: View {
                              onSetMode: onSetMode, onSetConfig: onSetConfig)
             }
             .gooGlass()
-            // On the card the chips are bare glyphs with no glass circle of their own (`GooChip`)
-            .environment(\.gooBare, expanded || bare)
+            // The chips keep their glass circles on the card, merged into its glass as into the bar's: a circle removed
+            // as the card opened (or added as it closed) ran its own glass transition and stood apart as a dark disc
+            // behind the glyph until it ended. Bare glyphs only over the plate, where a circle would read as a button
+            // (`GooChip`)
+            .environment(\.gooBare, plate || bare)
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { lead = $0 }
             .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(GooColumn.space)).minY } action: { chipTop = $0 }
             Spacer(minLength: 0)

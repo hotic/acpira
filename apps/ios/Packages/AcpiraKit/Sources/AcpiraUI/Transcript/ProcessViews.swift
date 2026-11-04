@@ -509,7 +509,9 @@ struct NoticeRow: View {
   private var fold: Binding<Bool?> { rememberedFold($manual, folds, "\(entrance.scope):notice:\(block.id)") }
 
   var body: some View {
-    if block.id != scope.suppressId && !scope.absorbed.contains(where: { $0.id == block.id }) {
+    if let log = block.retry {
+      RetryRow(id: block.id, log: log)
+    } else if block.id != scope.suppressId && !scope.absorbed.contains(where: { $0.id == block.id }) {
       let error = block.severity == "error"
       let buttons = error && scope.showActions ? (block.actions ?? []).filter { $0 == .retry || $0 == .new_session } : []
       VStack(alignment: .leading, spacing: Metrics.s0_5) {
@@ -564,6 +566,86 @@ struct NoticeRow: View {
         .reveal(open)
     }
     .connectedRail(enabled: open, endAtLastRow: false, action: true)
+  }
+}
+
+/// RetryRow.tsx: one run of provider retries, drawn like a tool row. The verb says where the run stands (shimmering
+/// while live), the trailing text counts the attempt and the wait while it lasts, then the outcome glyph; the card
+/// under it holds every failed attempt in the provider's own words. A lost connection leads with a plug
+struct RetryRow: View {
+  let id: String
+  let log: RetryLog
+  @State private var manual: Bool?
+  @Environment(\.foldMemory) private var folds
+  @Environment(\.entranceScope) private var entrance
+  private var fold: Binding<Bool?> { rememberedFold($manual, folds, "\(entrance.scope):retry:\(id)") }
+
+  var body: some View {
+    let running = log.status == "in_progress"
+    let n = log.attempts.count
+    let reconnect = log.reconnect == true
+    let verb = running ? t(reconnect ? "retry.reconnecting" : "retry.retrying")
+      : log.status == "completed" ? t("retry.recovered", ["n": n])
+      : log.status == "failed" ? t("retry.failed", ["n": n]) : t("retry.stopped")
+    Disclosure(open: foldBinding(fold, false), icon: reconnect ? .unplug : .rotateCw) {
+      RowLabel(verb, shimmer: running)
+    } trailing: {
+      if running { RetryMeta(attempt: log.attempts.last?.attempt, max: log.max, nextAt: log.nextAt) }
+      CommandOutcome(status: ToolStatus(rawValue: log.status) ?? .in_progress)
+    } content: {
+      RetryOutput(log: log)
+    }
+  }
+}
+
+/// "Attempt 5/10, in 12s" while the next attempt waits, the bare attempt once it is under way
+private struct RetryMeta: View {
+  let attempt: Int?
+  let max: Int?
+  let nextAt: Double?
+
+  var body: some View {
+    if let nextAt, nextAt > Date().timeIntervalSince1970 * 1000 {
+      TimelineView(.periodic(from: .now, by: 1)) { context in
+        let left = Int((nextAt - context.date.timeIntervalSince1970 * 1000) / 1000 + 0.999)
+        if let text = label(left) { Text(web: text) }
+      }
+    } else if let text = label(0) {
+      Text(web: text)
+    }
+  }
+
+  private func label(_ left: Int) -> String? {
+    if let attempt, let max {
+      return left > 0 ? t("retry.attemptIn", ["attempt": attempt, "max": max, "seconds": left])
+        : t("retry.attempt", ["attempt": attempt, "max": max])
+    }
+    return left > 0 ? t("retry.in", ["seconds": left]) : nil
+  }
+}
+
+/// Every attempt on its own line: when it failed and which attempt it was (muted), then the error verbatim. Extra
+/// lines of one error hang under its first
+private struct RetryOutput: View {
+  let log: RetryLog
+
+  var body: some View {
+    let lines = log.attempts.flatMap { a -> [(head: String, text: String)] in
+      let time = Date(timeIntervalSince1970: a.at / 1000).formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits))
+      let head = [time, a.attempt.flatMap { at in log.max.map { t("retry.attempt", ["attempt": at, "max": $0]) } }]
+        .compactMap { $0 }.joined(separator: "  ")
+      let parts = a.text.components(separatedBy: "\n")
+      return [(head, parts.first ?? "")] + parts.dropFirst().map { ("", $0) }
+    }
+    let text = lines.enumerated().reduce(Text(web: "")) { acc, item in
+      let (i, line) = item
+      let end = i < lines.count - 1 ? "\n" : ""
+      let head = line.head.isEmpty ? Text(web: "  ", paragraph: false)
+        : Text("\(Text(web: line.head, paragraph: false).foregroundStyle(Palette.fg3))\(Text(web: "  ", paragraph: false))")
+      return Text("\(acc)\(head)\(Text(web: (line.text.isEmpty ? " " : line.text) + end, paragraph: false))")
+    }
+    OutputPane(top: Metrics.commandY) { text }
+      .modifier(CodeOutputFrame())
   }
 }
 

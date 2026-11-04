@@ -89,6 +89,8 @@ public enum TypeScale {
   public static let text3: TextStyle = TextStyle(size: ui - 1, lineHeight: ui + 4)
   /// Micro: 13 / 18 (iOS footnote)
   public static let text4: TextStyle = TextStyle(size: ui - 3, lineHeight: ui + 2)
+  /// A question option's key letter inside its glyph-sized ring: 11 / 14
+  public static let optionKey: TextStyle = TextStyle(size: ui - 5, lineHeight: ui - 2)
   /// The phone's own steps for system surfaces (sheets, forms): iOS body (17) and footnote (13) at the default size
   public static let body = TextStyle(size: ui + 1, lineHeight: ui + 6)
   public static let footnote = TextStyle(size: ui - 3, lineHeight: ui + 2)

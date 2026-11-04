@@ -109,6 +109,15 @@ final class VideoCache {
   /// A poster already at hand, drawn without waiting
   func cached(_ source: VideoSource) -> CGImage? { posters[source] }
 
+  /// Whether the source's file is on the phone already, so its poster costs no download
+  func kept(_ source: VideoSource) -> Bool {
+    switch source {
+    case .local(let url): FileManager.default.fileExists(atPath: url.path)
+    case .blob(_, let name): FileManager.default.fileExists(atPath: Self.folder.appendingPathComponent(name).path)
+    case .staged: false
+    }
+  }
+
   /// Keeps a poster taken elsewhere (a staged video's original, VideoJobs)
   func remember(_ image: CGImage, for source: VideoSource) { posters[source] = image }
 

@@ -79,6 +79,7 @@ export const zhTW = {
   'permission.plan.rejectExit': '拒絕並退出計畫模式',
   // Shared verbs / labels
   'history.edit': '編輯並重新傳送',
+  'history.selectText': '選取文字',
   'history.cancel': '取消編輯',
   'history.unavailable': '請等待工作階段就緒並結束目前回覆。',
   'history.stale': '對話已更新，請重新開啟此條訊息進行編輯。',

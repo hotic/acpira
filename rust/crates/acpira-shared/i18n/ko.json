@@ -73,6 +73,7 @@
   "permission.plan.buildBypass": "권한 확인을 우회하여 실행",
   "permission.plan.rejectExit": "거부하고 플랜 모드 종료",
   "history.edit": "수정 후 다시 보내기",
+  "history.selectText": "텍스트 선택",
   "history.cancel": "수정 취소",
   "history.unavailable": "세션이 준비되고 유휴 상태가 될 때까지 기다리세요.",
   "history.stale": "대화가 변경되었습니다. 메시지를 다시 열어 수정하세요.",
