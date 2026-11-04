@@ -1018,6 +1018,8 @@ export const es = {
   'settings.agent.raw': 'Modo directo',
   'settings.agent.rawMode': 'Mostrar en el menú de modos',
   'settings.agent.rawMode.desc': 'También actualiza las sesiones existentes',
+  'settings.agent.scratchFolder': 'Archivos temporales en el proyecto',
+  'settings.agent.scratchFolder.desc': 'En .acpira/tmp, se eliminan con la sesión',
   'settings.agent.rawPrompt': 'Prompt de sistema',
   'settings.agent.rawPrompt.desc': 'Solo se envía este prompt; los cambios rigen desde el siguiente mensaje',
   'settings.agent.rawPrompt.placeholder': 'Vacío no envía prompt de sistema',

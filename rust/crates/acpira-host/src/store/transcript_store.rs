@@ -823,6 +823,14 @@ impl TranscriptStore {
       }
     }
     let root = acpira_agent::acp::sessions_root(&home);
+    // The session's scratch folder in its project, found through the log's header, so before the log goes. One left
+    // behind (a file Windows keeps open) is swept by the next session there (`acpira_agent::scratch::sweep`)
+    if let Some(log) = confined(&root, &format!("{acp}.jsonl")).await {
+      let data = home.clone();
+      if let Ok(Err(e)) = tokio::task::spawn_blocking(move || acpira_agent::scratch::remove_for_log(&log, &data)).await {
+        (self.log)(&format!("session {removed}: scratch folder not removed ({e})"));
+      }
+    }
     for path in acpira_agent::acp::session_paths(&home, acp) {
       let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else { continue };
       let Some(target) = confined(&root, &name).await else { continue };
@@ -1373,6 +1381,30 @@ mod tests {
     next.sweep_trash(Duration::ZERO).await;
     assert!(!log_exists("acp-2"));
     assert!(!root.path().join("sessions/trash/a.json").exists());
+  }
+
+  #[tokio::test]
+  async fn the_scratch_folder_goes_with_the_last_record_driving_the_session() {
+    let (root, s, log_exists) = rooted();
+    let project = tempfile::tempdir().unwrap();
+    let acp = "abcdef12-0000-0000-0000-000000000001";
+    write_log(root.path(), acp);
+    let [file, _] = acpira_agent::acp::session_paths(root.path(), acp);
+    std::fs::write(&file, format!("{}\n", serde_json::json!({ "type": "session", "id": acp, "cwd": project.path() }))).unwrap();
+    let folder = project.path().join(".acpira/tmp/abcdef12");
+    acpira_agent::scratch::Scratch::new(Some(folder.clone()), acp, root.path()).ensure().unwrap();
+    s.flush(Arc::new(builtin("a", acp))).await.unwrap();
+    s.flush(Arc::new(builtin("b", acp))).await.unwrap();
+    s.load_index().await.unwrap();
+    s.trash("a").await.unwrap();
+    s.load_index().await.unwrap();
+    s.remove("a").await;
+    assert!(folder.exists(), "b still drives the session");
+    s.trash("b").await.unwrap();
+    s.load_index().await.unwrap();
+    s.remove("b").await;
+    assert!(!log_exists(acp));
+    assert!(!project.path().join(".acpira").exists(), "no empty shell is left in the project");
   }
 
   #[tokio::test]

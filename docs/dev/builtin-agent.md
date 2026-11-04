@@ -5,6 +5,7 @@ Acpira's own agent (`acpira`) for models without an official harness: OpenAI-com
 ## Layout
 
 - `<root>/providers.json` (contract `acpira-shared/src/providers.rs`); keys live only in `secrets.json`, never in it or the view.
+- Scratch folders (`scratch.rs`): only the `.owner` file proves ownership, for the engine's delete (via the log header) and the sibling sweep; never delete by a key-shaped name. The path limit is for Unix sockets under TMPDIR. Revived sessions keep their recorded prompt, so only new ones are told of the folder.
 - Trap: background jobs (`tools/jobs.rs`) run in their own process groups, out of the engine's signals, so they are killed on stdin EOF or SIGTERM; a SIGKILL of the agent leaves them running.
 
 ## ACP surface
@@ -14,8 +15,8 @@ Acpira's own agent (`acpira`) for models without an official harness: OpenAI-com
 - Approval is the `approval` select (category `_permission_mode`); the host never treats `full` as full access, a plugin may not pick it. Edits to the agent's own config (`providers.json`, `secrets.json`, prompt overrides, `.agents/hooks.json`) ask even under `full`, through symlinks too.
 - Permissions follow OpenCode: layered rules, last match wins. Mode and approval changes re-evaluate waiting actions and govern the rest of the running turn; started tools are not interrupted. Under `full` the mode layer drops its `ask` rules, but a mode's deny holds and "always allow" never widens a mode rule. A newly allowed waiting action is withdrawn and re-requested with `_meta["acpira/autoApprove"]`, so the host's workspace and plugin gates still judge it; protected config edits keep asking.
 - Trap: an allow narrower than `*` never matches a command with shell structure (`;`, `&`, `|`, redirects, backtick, `$(`, newline; quoting not parsed), so it always asks.
-- `acp::reconcile` (resume, `set_config_option`, turn start) makes the session hold what the picker shows; without it a session opened before any model existed refused remembered efforts, and one whose model was switched off showed the default yet refused to run. A broken `providers.json` or no usable model keeps the stored pick.
-- Titles (`title.rs`) are a fast-model side call logged as `title`, not `request`, since it shares no prefix. Unset fast model means automatic; only `off` disables it.
+- `acp::reconcile` (resume, `set_config_option`, turn start) makes the session hold what the picker shows, so a remembered effort or a switched-off model never leaves it refusing to run. A broken `providers.json` or no usable model keeps the stored pick.
+- Titles (`title.rs`) are a fast-model side call logged as `title`, not `request`, since it shares no prefix.
 - Fast on the wire: Anthropic `speed: "fast"` plus the fast-mode beta header; Chat / Responses `service_tier: "priority"` (the spelling older models and gateways accept). A toggle is a `view` change, as a speed change invalidates Anthropic's cache.
 - The tool table stays as first sent, since a changed tool definition invalidates the whole Anthropic cache: a sidekick pick after the first message goes as a `<sidekick>` note. Only a pick while `ask_agent` is absent, or a roster edit, costs a rebuild. Sidekick selects go only to a client declaring `_meta["acpira/sidekick"]`, in custom categories.
 - `available_commands_update` is never recorded (replay would repeat a stale list). `/skill` detection (`skills::sigil_lead`) mirrors the composer's `SIGIL_LEAD`; change both together.
@@ -85,7 +86,6 @@ A step is seconds of model time against milliseconds of tool time, so tools do m
 
 - Every change of the request prefix between two calls (model, prompt, tools, fast) must be a `view` event; the engine scenarios assert this against the log. The system prompt is recomposed only when a model switch selects another family variant; bump the base prompt's version when changing it.
 - `compaction` and `prune` events must carry enough for `store::load` to rebuild the same view without the folded items.
-- `session/load` replays recorded updates; `session/resume` (the engine's reopen) does not.
 
 ## Model discovery
 
@@ -97,7 +97,7 @@ A step is seconds of model time against milliseconds of tool time, so tools do m
 ## Windows
 
 - The bash tool runs `powershell.exe`, never `bash.exe` on PATH (often WSL's launcher). Each command first sets `[Console]::OutputEncoding` and `$OutputEncoding` to UTF-8: PowerShell 5.1 pipes in the OEM code page (936 on Chinese systems).
-- Results use forward slashes (joining `src/util` with a name gave `src/util\b.rs`). Only crate tests were run (`x86_64-pc-windows-gnu`).
+- Results use forward slashes.
 
 ## Tests
 
@@ -116,7 +116,6 @@ A step is seconds of model time against milliseconds of tool time, so tools do m
 - DeepSeek's own API: thinking on by default, usage carries `prompt_cache_hit_tokens`; requests without earlier `reasoning_content` are accepted.
 - Some gateway routes (`glm-5.3-flash`, `deepseek-v4.1-flash`) ignore every thinking-off switch except `reasoning_effort: "none"` (Chat) or `reasoning: { effort: "none" }` (Responses); GLM then moves reasoning into the answer text.
 - Gemini 4 Argon via a gateway's Antigravity channel maps effort to tiered ids; at high it can spend the whole 32768-token output cap thinking and return no text (`length` / `incomplete`). The channel keeps thought signatures itself.
-- Base prompt version 2 stopped `glm-5.3-flash` saying "run `echo …`" without running it.
 
 ## Harness comparison
 

@@ -73,6 +73,8 @@ export interface ProvidersView {
   approval?: string;
   // Raw mode is offered in the mode picker
   rawMode?: boolean;
+  // New sessions keep temp files in the system's temp folder instead of a scratch folder in the project (absent: on)
+  scratchFolderOff?: boolean;
   // The model for quick side jobs such as naming a session (`<provider id>/<model id>`), or FAST_MODEL_OFF; absent picks
   // one (`fastModelAuto`)
   fastModel?: string;
@@ -160,6 +162,7 @@ export type ProviderAction =
   | { kind: 'delete'; id: string }
   | { kind: 'approval'; level: ApprovalLevel }
   | { kind: 'rawMode'; on: boolean }
+  | { kind: 'scratchFolder'; on: boolean }
   // pick: a usable `<provider id>/<model id>` or FAST_MODEL_OFF; absent picks one automatically
   | { kind: 'fastModel'; pick?: string }
   // key: that backend's; absent keeps the stored key, empty removes it. via: the model source DeepSeek-shaped search goes

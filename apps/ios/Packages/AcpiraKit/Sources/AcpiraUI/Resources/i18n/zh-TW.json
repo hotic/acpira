@@ -1000,6 +1000,8 @@
   "settings.agent.raw": "原始模式",
   "settings.agent.rawMode": "在模式選單中顯示",
   "settings.agent.rawMode.desc": "現有工作階段也會立即更新",
+  "settings.agent.scratchFolder": "暫存檔放在專案裡",
+  "settings.agent.scratchFolder.desc": "放在 .acpira/tmp，隨工作階段刪除",
   "settings.agent.rawPrompt": "系統提示詞",
   "settings.agent.rawPrompt.desc": "只傳送這段提示詞，修改後從下一則訊息生效",
   "settings.agent.rawPrompt.placeholder": "留空則不傳送系統提示詞",

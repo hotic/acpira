@@ -8,9 +8,9 @@ use std::process::{Command, Stdio};
 
 use regex::Regex;
 
-/// Never descended into by the fallback walk
+/// Never descended into by the fallback walk (`.acpira`: sessions' scratch folders, `scratch.rs`)
 const SKIP_DIRS: &[&str] =
-  &[".git", "node_modules", "target", ".venv", "venv", "__pycache__", ".next", ".turbo", "dist", "build", ".gradle", ".cache", ".hg", ".svn"];
+  &[".git", ".acpira", "node_modules", "target", ".venv", "venv", "__pycache__", ".next", ".turbo", "dist", "build", ".gradle", ".cache", ".hg", ".svn"];
 
 /// Files under `root`, sorted; the flag says the list was cut at `cap`
 pub fn list(root: &Path, cap: usize) -> (Vec<String>, bool) {

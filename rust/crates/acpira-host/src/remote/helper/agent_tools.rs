@@ -106,6 +106,8 @@ pub(super) async fn tool(a: &Value, id: u64, out: &Out) -> Result<Value, WireErr
         search: Default::default(),
         mcp: Arc::new(acpira_agent::mcp::Hub::default()),
         history: PathBuf::new(),
+        // Remote sessions take no scratch folder (`acpira_agent::scratch`)
+        scratch: None,
       };
       let run = action.run(ctx);
       tokio::pin!(run);

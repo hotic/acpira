@@ -119,6 +119,8 @@ pub struct Session {
   pub layers: Layers,
   /// Wakes open permission requests when the mode or approval level changes
   pub permissions_changed: tokio::sync::Notify,
+  /// Where its commands keep temp files (`scratch.rs`)
+  pub scratch: crate::scratch::Scratch,
 }
 
 /// The plugins' folders a session reads besides the user's and the project's
@@ -269,6 +271,12 @@ impl Server {
     if remote { self.config.home().to_path_buf() } else { cwd.to_path_buf() }
   }
 
+  /// A session's scratch folder: none on an SSH host or with the setting off (`scratch.rs`)
+  fn scratch_of(&self, cwd: &std::path::Path, id: &str, remote: bool, config: &Config) -> crate::scratch::Scratch {
+    let place = (!remote && config.scratch_folder()).then(|| crate::scratch::place(cwd, id, crate::turn::user_home().as_deref())).flatten();
+    crate::scratch::Scratch::new(place, id, self.config.home())
+  }
+
   /// The file Plan mode writes its plan to
   pub fn plan_file(&self, id: &str) -> PathBuf {
     self.session_dir(id).join("plan.md")
@@ -415,7 +423,8 @@ impl Server {
     state.approval = config.approval();
     let remote = crate::remote::Remote::of(params);
     let layers = layers_of(params);
-    let places = self.places_of(std::path::Path::new(cwd), remote.as_deref(), layers.clone());
+    let scratch = self.scratch_of(std::path::Path::new(cwd), &id, remote.is_some(), &config);
+    let places = self.places_of(std::path::Path::new(cwd), remote.as_deref(), layers.clone()).with_scratch(scratch.path());
     state.prompt = crate::prompt::compose(&places, state.model.as_deref().and_then(|p| config.find(p)));
     state.effort = default_effort(&config, &catalog, state.model.as_deref());
     let response = json!({
@@ -429,7 +438,7 @@ impl Server {
       "text": state.prompt.text, "sampling": state.prompt.sampling, "thinking": state.prompt.thinking }));
     let mcp = crate::mcp::Hub::start(params.get("mcpServers").unwrap_or(&Value::Null), &self.process_dir(std::path::Path::new(cwd), remote.is_some()));
     let session =
-      Session { id: id.clone(), cwd: PathBuf::from(cwd), state: parking_lot::Mutex::new(state), store, tool_seq: AtomicU64::new(0), jobs: Default::default(), mcp, remote, layers, permissions_changed: Default::default() };
+      Session { id: id.clone(), cwd: PathBuf::from(cwd), state: parking_lot::Mutex::new(state), store, tool_seq: AtomicU64::new(0), jobs: Default::default(), mcp, remote, layers, permissions_changed: Default::default(), scratch };
     // The starting controls too: a reopen must not take a default that changed in the meantime
     session.save_state(&session.state.lock());
     let (remote, layers) = (session.remote.clone(), session.layers.clone());
@@ -555,7 +564,9 @@ impl Server {
       .max()
       .unwrap_or(0);
     let mcp = crate::mcp::Hub::start(mcp_servers, &self.process_dir(&cwd, remote.is_some()));
-    Session { id: id.to_owned(), cwd, state: parking_lot::Mutex::new(st), store, tool_seq: AtomicU64::new(seq), jobs: Default::default(), mcp, remote, layers: Layers::default(), permissions_changed: Default::default() }
+    // Its commands use the folder from now on; the recorded prompt names it only once a model switch composes it again
+    let scratch = self.scratch_of(&cwd, id, remote.is_some(), &config);
+    Session { id: id.to_owned(), cwd, state: parking_lot::Mutex::new(st), store, tool_seq: AtomicU64::new(seq), jobs: Default::default(), mcp, remote, layers: Layers::default(), permissions_changed: Default::default(), scratch }
   }
 
   /// `session/list`: this data root's sessions with at least one message, newest first, filtered by `cwd` when given

@@ -66,6 +66,8 @@ pub struct Places {
   pub skill_layers: Vec<PathBuf>,
   /// A plugin's specialised agent: its prompt in place of the built-in base and its variants (`profile.rs`)
   pub profile: Option<Arc<crate::profile::Profile>>,
+  /// The session's scratch folder (`scratch.rs`), named in the environment section
+  pub scratch: Option<PathBuf>,
 }
 
 /// A session folder's prompt files as its SSH host read them (`gather`, run there by the engine's helper at session
@@ -116,12 +118,18 @@ impl HostFiles {
 
 impl Places {
   pub fn new(cwd: &Path, home: Option<&Path>) -> Places {
-    Places { cwd: cwd.to_path_buf(), home: home.map(Path::to_path_buf), root: project_root(cwd, home), host: None, layers: vec![], skill_layers: vec![], profile: None }
+    Places { cwd: cwd.to_path_buf(), home: home.map(Path::to_path_buf), root: project_root(cwd, home), host: None, layers: vec![], skill_layers: vec![], profile: None, scratch: None }
   }
 
   /// A folder on an SSH host, read from what the host sent
   pub fn on_host(cwd: &Path, files: Arc<HostFiles>) -> Places {
-    Places { cwd: cwd.to_path_buf(), home: files.home.clone(), root: files.root.clone(), host: Some(files), layers: vec![], skill_layers: vec![], profile: None }
+    Places { cwd: cwd.to_path_buf(), home: files.home.clone(), root: files.root.clone(), host: Some(files), layers: vec![], skill_layers: vec![], profile: None, scratch: None }
+  }
+
+  /// With the session's scratch folder
+  pub fn with_scratch(mut self, scratch: Option<&Path>) -> Places {
+    self.scratch = scratch.map(Path::to_path_buf);
+    self
   }
 
   /// With the plugins' prompt folders
@@ -356,7 +364,7 @@ fn environment(places: &Places) -> String {
     None => (std::env::consts::OS.to_owned(), std::env::consts::ARCH.to_owned(), crate::tools::bash::shell().0),
   };
   let shell = Path::new(&shell).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or(shell);
-  format!(
+  let mut text = format!(
     "\n\n## Environment\n- Session folder: {}\n- Platform: {os} ({arch})\n- Shell for the bash tool: {shell}\n- Git repository: {}\n",
     places.cwd.display(),
     match &places.root {
@@ -364,7 +372,14 @@ fn environment(places: &Places) -> String {
       Some(_) => "yes".to_owned(),
       None => "no".to_owned(),
     },
-  )
+  );
+  if let Some(s) = &places.scratch {
+    text.push_str(&format!(
+      "- Scratch folder: {}; TMPDIR, TEMP and TMP point at it. It is git-ignored and deleted with the session: put temp files and throwaway scripts there, not in /tmp or elsewhere in the project\n",
+      s.display()
+    ));
+  }
+  text
 }
 
 #[cfg(test)]

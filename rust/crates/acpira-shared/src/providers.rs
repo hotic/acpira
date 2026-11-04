@@ -66,6 +66,10 @@ pub struct ProvidersFile {
   /// Raw mode (`acpira_agent::modes::RAW`) is offered in the mode picker; absent is off. Open sessions update too
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub raw_mode: Option<bool>,
+  /// Sessions keep temp files in a scratch folder in the project (`acpira_agent::scratch`); absent is on. Sessions
+  /// opened from then on follow it
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub scratch_folder: Option<bool>,
   /// The model for quick side jobs such as naming a session (`<provider id>/<model id>`), or `FAST_MODEL_OFF`; absent,
   /// or a model no longer usable, picks one (`ProvidersFile::fast_pick`)
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -387,6 +391,10 @@ pub struct ProvidersView {
   /// Raw mode is offered in the mode picker (`ProvidersFile::raw_mode`)
   #[serde(default, skip_serializing_if = "std::ops::Not::not")]
   pub raw_mode: bool,
+  /// Sessions keep temp files in a scratch folder in the project (`ProvidersFile::scratch_folder`); sent only when off,
+  /// so absent reads as on
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub scratch_folder_off: bool,
   /// The file's fast model pick as written (`ProvidersFile::fast_model`)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub fast_model: Option<String>,
@@ -475,6 +483,8 @@ pub enum ProviderAction {
   Approval { level: String },
   /// Offer Raw mode in the mode picker, or stop offering it
   RawMode { on: bool },
+  /// Keep new sessions' temp files in a scratch folder in the project, or in the system's temp folder
+  ScratchFolder { on: bool },
   /// Set the fast model (a usable `<provider id>/<model id>`, or `FAST_MODEL_OFF`); absent or empty picks one
   FastModel {
     #[serde(default, skip_serializing_if = "Option::is_none")]

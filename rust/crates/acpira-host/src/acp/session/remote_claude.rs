@@ -208,6 +208,8 @@ impl AcpSession {
       search: Default::default(),
       mcp: Arc::new(acpira_agent::mcp::Hub::default()),
       history: PathBuf::new(),
+      // A folder on an SSH host takes no scratch folder (`acpira_agent::scratch`)
+      scratch: None,
     };
     action.run(ctx).await
   }

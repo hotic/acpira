@@ -447,9 +447,13 @@ fn runs_remotely(server: &Arc<Server>, session: &Arc<Session>, action: &Action) 
 }
 
 /// Run a prepared call, on the session's SSH host when it belongs there
-pub(super) async fn run_action(server: &Arc<Server>, session: &Arc<Session>, action: Action, ctx: Ctx) -> Output {
+pub(super) async fn run_action(server: &Arc<Server>, session: &Arc<Session>, action: Action, mut ctx: Ctx) -> Output {
   if let Some(r) = session.remote.as_ref().filter(|_| runs_remotely(server, session, &action)) {
     return r.run(server.conn(), &session.id, action, ctx).await;
+  }
+  // Commands get the scratch folder; a write makes it first too, so one into the folder finds its ignore file there
+  if matches!(action, Action::Bash { .. } | Action::Write { .. }) {
+    ctx.scratch = session.scratch.ensure();
   }
   action.run(ctx).await
 }
@@ -464,6 +468,7 @@ pub(super) fn ctx_for(server: &Arc<Server>, session: &Arc<Session>, acp: &str) -
     search: server.config.get().web_search(),
     mcp: session.mcp.clone(),
     history: server.session_file(&session.id),
+    scratch: None,
     progress: Arc::new(move |mut u: Value| {
       u["sessionUpdate"] = "tool_call_update".into();
       u["toolCallId"] = id.clone().into();

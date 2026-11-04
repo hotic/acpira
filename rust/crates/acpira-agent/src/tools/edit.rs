@@ -356,7 +356,7 @@ mod tests {
   }
 
   fn ctx(dir: &Path) -> Ctx {
-    Ctx { cwd: dir.to_owned(), outputs: dir.join("o"), call_id: "c".into(), progress: std::sync::Arc::new(|_| {}), jobs: Default::default(), search: Default::default(), mcp: Default::default(), history: Default::default() }
+    Ctx { cwd: dir.to_owned(), outputs: dir.join("o"), call_id: "c".into(), progress: std::sync::Arc::new(|_| {}), jobs: Default::default(), search: Default::default(), mcp: Default::default(), history: Default::default(), scratch: None }
   }
 
   #[test]

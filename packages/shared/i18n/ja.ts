@@ -1019,6 +1019,8 @@ export const ja = {
   'settings.agent.raw': 'ダイレクトモード',
   'settings.agent.rawMode': 'モードメニューに表示',
   'settings.agent.rawMode.desc': '既存のセッションにもすぐ反映',
+  'settings.agent.scratchFolder': '一時ファイルをプロジェクト内に置く',
+  'settings.agent.scratchFolder.desc': '.acpira/tmp に置き、セッションと一緒に削除',
   'settings.agent.rawPrompt': 'システムプロンプト',
   'settings.agent.rawPrompt.desc': 'このプロンプトのみを送信し、変更は次のメッセージから反映',
   'settings.agent.rawPrompt.placeholder': '空欄ならシステムプロンプトを送りません',

@@ -41,6 +41,11 @@ impl Config {
     self.providers.raw_mode == Some(true)
   }
 
+  /// Sessions take a scratch folder in the project (`scratch.rs`)
+  pub fn scratch_folder(&self) -> bool {
+    self.providers.scratch_folder != Some(false)
+  }
+
   /// Chunk compaction is picked on the settings page (`chunk.rs`); otherwise the summary
   pub fn chunked(&self) -> bool {
     self.providers.compaction.as_deref() == Some(crate::chunk::STRATEGY)

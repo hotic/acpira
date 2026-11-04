@@ -537,3 +537,22 @@ async fn the_prompt_variant_follows_the_model_and_is_recorded_per_turn() {
   assert!(system(0).contains("## Tool calls") && !system(0).contains("## Scope"));
   assert!(system(2).contains("## Scope") && !system(2).contains("## Tool calls"));
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn commands_keep_temp_files_in_the_sessions_scratch_folder() {
+  // A short project path: the system temp dir alone is past the scratch folder's length limit on macOS
+  let cwd = tempfile::Builder::new().tempdir_in("/tmp").unwrap();
+  let h = Harness::start_in(tempfile::tempdir().unwrap(), cwd).await;
+  let server = MockModel::start();
+  h.providers(&server.base_url(), json!([{ "id": "m1" }]));
+  let sid = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
+  server.push(mock::tools(&[("c1", "bash", json!({ "command": "printf %s \"$TMPDIR\" > \"$TMPDIR/where\"" }))]));
+  server.push(mock::text("done"));
+  prompt(&h, &sid, "go").await;
+  let dir = h.cwd().join(".acpira/tmp").join(&sid[..8]);
+  assert_eq!(std::fs::read_to_string(dir.join("where")).unwrap(), dir.display().to_string());
+  assert_eq!(std::fs::read_to_string(h.cwd().join(".acpira/tmp/.gitignore")).unwrap(), "*\n");
+  let first = server.requests()[0].body.to_string();
+  assert!(first.contains(&format!("Scratch folder: {}", dir.display())), "the prompt names the folder");
+}

@@ -1011,6 +1011,8 @@
   "settings.agent.raw": "Raw mode",
   "settings.agent.rawMode": "Show in the mode menu",
   "settings.agent.rawMode.desc": "Updates existing sessions too",
+  "settings.agent.scratchFolder": "Temp files in the project",
+  "settings.agent.scratchFolder.desc": "In .acpira/tmp, removed with the session",
   "settings.agent.rawPrompt": "System prompt",
   "settings.agent.rawPrompt.desc": "The only system prompt in Raw mode, applied on the next message",
   "settings.agent.rawPrompt.placeholder": "Empty sends no system prompt",
