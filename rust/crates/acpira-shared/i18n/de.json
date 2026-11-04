@@ -999,6 +999,8 @@
   "settings.agent.raw": "Rohmodus",
   "settings.agent.rawMode": "Im Modusmenü anzeigen",
   "settings.agent.rawMode.desc": "Aktualisiert auch bestehende Sitzungen",
+  "settings.agent.scratchFolder": "Temporäre Dateien im Projekt",
+  "settings.agent.scratchFolder.desc": "In .acpira/tmp, mit der Sitzung gelöscht",
   "settings.agent.rawPrompt": "Systemprompt",
   "settings.agent.rawPrompt.desc": "Nur dieser Prompt wird gesendet; Änderungen gelten ab der nächsten Nachricht",
   "settings.agent.rawPrompt.placeholder": "Leer sendet keinen Systemprompt",

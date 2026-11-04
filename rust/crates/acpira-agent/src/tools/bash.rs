@@ -177,7 +177,11 @@ pub(crate) fn command(command: &str, workdir: &Path) -> tokio::process::Command 
 }
 
 pub async fn run(command_line: &str, workdir: &Path, timeout_ms: u64, ctx: &Ctx) -> Output {
-  let mut child = match command(command_line, workdir).spawn() {
+  let mut cmd = command(command_line, workdir);
+  crate::scratch::apply(ctx.scratch.as_deref(), |k, v| {
+    cmd.env(k, v);
+  });
+  let mut child = match cmd.spawn() {
     Ok(c) => c,
     Err(e) => return Output::error(format!("Cannot start {}: {e}", shell().0)),
   };
@@ -296,6 +300,7 @@ mod tests {
       search: Default::default(),
       mcp: Default::default(),
       history: Default::default(),
+      scratch: None,
     }
   }
 
@@ -344,7 +349,7 @@ mod windows_tests {
 
   fn ctx(dir: &Path) -> Ctx {
     let seen = Arc::new(parking_lot::Mutex::new(String::new()));
-    Ctx { cwd: dir.to_owned(), outputs: dir.join("outputs"), call_id: "b1".into(), progress: std::sync::Arc::new(move |u| seen.lock().push_str(u.to_string().as_str())), jobs: Default::default(), search: Default::default(), mcp: Default::default(), history: Default::default() }
+    Ctx { cwd: dir.to_owned(), outputs: dir.join("outputs"), call_id: "b1".into(), progress: std::sync::Arc::new(move |u| seen.lock().push_str(u.to_string().as_str())), jobs: Default::default(), search: Default::default(), mcp: Default::default(), history: Default::default(), scratch: None }
   }
 
   #[tokio::test]

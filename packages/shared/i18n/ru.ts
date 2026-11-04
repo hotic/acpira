@@ -1039,6 +1039,8 @@ export const ru = {
   'settings.agent.raw': 'Прямой режим',
   'settings.agent.rawMode': 'Показывать в меню режимов',
   'settings.agent.rawMode.desc': 'Обновляет и существующие сессии',
+  'settings.agent.scratchFolder': 'Временные файлы в проекте',
+  'settings.agent.scratchFolder.desc': 'В .acpira/tmp, удаляются вместе с сеансом',
   'settings.agent.rawPrompt': 'Системный промпт',
   'settings.agent.rawPrompt.desc': 'Отправляется только этот промпт; изменения действуют со следующего сообщения',
   'settings.agent.rawPrompt.placeholder': 'Пусто: системный промпт не отправляется',

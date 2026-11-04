@@ -1019,6 +1019,8 @@ export const fr = {
   'settings.agent.raw': 'Mode brut',
   'settings.agent.rawMode': 'Afficher dans le menu des modes',
   'settings.agent.rawMode.desc': 'Actualise aussi les sessions existantes',
+  'settings.agent.scratchFolder': 'Fichiers temporaires dans le projet',
+  'settings.agent.scratchFolder.desc': 'Dans .acpira/tmp, supprimés avec la session',
   'settings.agent.rawPrompt': 'Prompt système',
   'settings.agent.rawPrompt.desc': 'Seul ce prompt est envoyé ; les changements s’appliquent au prochain message',
   'settings.agent.rawPrompt.placeholder': 'Vide : aucun prompt système',

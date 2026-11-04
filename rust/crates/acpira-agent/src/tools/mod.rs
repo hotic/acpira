@@ -43,6 +43,9 @@ pub struct Ctx {
   pub mcp: std::sync::Arc<crate::mcp::Hub>,
   /// The session's log, which the history tools read
   pub history: PathBuf,
+  /// The session's scratch folder, made by the time a command or a write runs (`scratch.rs`); None leaves the system's
+  /// temp folder
+  pub scratch: Option<PathBuf>,
 }
 
 /// A validated call, ready to describe and run. The variants an SSH host runs (`remote.rs`) cross the wire as JSON; the

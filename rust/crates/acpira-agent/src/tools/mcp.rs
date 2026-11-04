@@ -80,6 +80,7 @@ mod tests {
       search: Default::default(),
       mcp: Default::default(),
       history: Default::default(),
+      scratch: None,
     }
   }
 

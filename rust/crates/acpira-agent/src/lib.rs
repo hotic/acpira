@@ -22,6 +22,7 @@ pub mod modes;
 pub mod permission;
 pub mod prompt;
 pub mod remote;
+pub mod scratch;
 pub mod skills;
 pub mod steer;
 pub mod store;

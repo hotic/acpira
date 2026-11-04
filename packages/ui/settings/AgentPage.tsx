@@ -209,6 +209,7 @@ function BehaviorTab({ state, on }: { state?: ProvidersState; on: SettingsHandle
       <FastModelField state={state} on={on} />
       <CompactionField state={state} on={on} />
       <WebSearchFields state={state} on={on} />
+      <ScratchFolderField state={state} on={on} />
     </Group>
     <Section title={t('settings.agent.raw')} desc={t('settings.agent.rawPrompt.desc')}>
       <RawModeField state={state} on={on} />
@@ -284,6 +285,17 @@ function RawModeField({ state, on }: { state: ProvidersState; on: SettingsHandle
   return (
     <Field label={t('settings.agent.rawMode')} desc={t('settings.agent.rawMode.desc')}>
       <Switch checked={shown} onChange={v => { if (pick(v)) on.providerAction?.({ kind: 'rawMode', on: v }); }} label={t('settings.agent.rawMode')} />
+    </Field>
+  );
+}
+
+// Temp files in the project (`scratchFolder`): on by default, each session's in `.acpira/tmp/<key>`, gone with the
+// session. Off is for projects on a synced or slow disk; sessions opened from then on follow it
+function ScratchFolderField({ state, on }: { state: ProvidersState; on: SettingsHandlers }) {
+  const [shown, pick] = usePick(state, !state.view.scratchFolderOff);
+  return (
+    <Field label={t('settings.agent.scratchFolder')} desc={t('settings.agent.scratchFolder.desc')}>
+      <Switch checked={shown} onChange={v => { if (pick(v)) on.providerAction?.({ kind: 'scratchFolder', on: v }); }} label={t('settings.agent.scratchFolder')} />
     </Field>
   );
 }

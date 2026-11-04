@@ -1011,6 +1011,8 @@
   "settings.agent.raw": "原始模式",
   "settings.agent.rawMode": "在模式菜单中显示",
   "settings.agent.rawMode.desc": "已有会话也会立即更新",
+  "settings.agent.scratchFolder": "临时文件放在项目里",
+  "settings.agent.scratchFolder.desc": "放在 .acpira/tmp，随会话删除",
   "settings.agent.rawPrompt": "系统提示词",
   "settings.agent.rawPrompt.desc": "只发送这一段提示词，修改后从下一条消息生效",
   "settings.agent.rawPrompt.placeholder": "留空则不发送系统提示词",

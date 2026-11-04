@@ -71,7 +71,7 @@ impl ProviderStore {
         web_keys.push(backend.to_owned());
       }
     }
-    ProvidersView { providers, error: None, approval: file.approval, raw_mode: file.raw_mode == Some(true), fast_model: file.fast_model, fast_model_auto, web_search: file.web_search, web_search_via: file.web_search_via, web_keys, compaction: file.compaction, raw_system_prompt: file.raw_system_prompt, ..tables() }
+    ProvidersView { providers, error: None, approval: file.approval, raw_mode: file.raw_mode == Some(true), scratch_folder_off: file.scratch_folder == Some(false), fast_model: file.fast_model, fast_model_auto, web_search: file.web_search, web_search_via: file.web_search_via, web_keys, compaction: file.compaction, raw_system_prompt: file.raw_system_prompt, ..tables() }
   }
 
   /// The key a probe uses: one typed into the form, else the stored key of the source with that id
@@ -167,6 +167,15 @@ impl ProviderStore {
           .edit(|file| {
             // Off is written as no entry, like the other defaults
             file.raw_mode = on.then_some(true);
+            Ok(())
+          })
+          .await
+      }
+      ProviderAction::ScratchFolder { on } => {
+        self
+          .edit(|file| {
+            // On is the default, written as no entry
+            file.scratch_folder = (!on).then_some(false);
             Ok(())
           })
           .await
