@@ -954,6 +954,54 @@ async fn a_single_question_takes_the_prompt_as_its_answer_and_the_users_card_cou
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn empty_answers_on_a_finished_thread_count_as_left_out_and_real_ones_are_still_refused() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let roster = roster(h.dir.path()).await;
+  let s = Disposing(h.session("/tmp"));
+  s.start().await;
+  let (_, text) = last_text(&run(&s, &roster, 0, ask("fake-review", "relay: first look")).await);
+  let thread = thread_of(&text);
+  // A client that fills in every parameter sends `answers: []` with a follow-up: the thread takes it as its next round
+  let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), answers: Some(vec![]), ..ask("", "relay: and now?") }).await);
+  assert!(ok && text.starts_with("reply to relay: and now? (round 2"), "{text}");
+  // Blank entries and no prompt read the last reply, like a plain wait
+  let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), answers: Some(vec![" ".into()]), ..ask("", "") }).await);
+  assert!(ok && text.starts_with("reply to relay: and now? (round 2"), "{text}");
+  // A real answer still has no question to go to, prompt or not
+  let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread), answers: Some(vec!["Blue".into()]), ..ask("", "relay: again") }).await);
+  assert!(!ok && text.contains("no open question: its round is over"), "{text}");
+  assert_eq!(nodes(&s).len(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn empty_answers_on_a_running_round_answer_nothing_and_a_prompt_still_answers_a_single_question() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let roster = roster(h.dir.path()).await;
+  let s = Disposing(h.session("/tmp"));
+  s.start().await;
+  let (_, text) = last_text(&run(&s, &roster, 0, ask("fake-worker", "relay: askme which")).await);
+  let thread = thread_of(&text);
+  // Empty answers and no prompt answer nothing: the call waits, which repeats the open question
+  let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), answers: Some(vec![]), ..ask("", "") }).await);
+  assert!(ok && text.contains("1. Colour: Which colour?"), "{text}");
+  assert!(nodes(&s)[0]["question"].is_object());
+  // With a prompt, the single question still takes it as its answer
+  let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread), answers: Some(vec![]), ..ask("", "Blue") }).await);
+  assert!(ok && text.contains(r#""q0":"Blue""#), "{text}");
+
+  // A round held on a permission card asks nothing: a real answer is refused, empty answers wait like none at all
+  last_text(&run(&s, &roster, 0, send_off("fake-worker", "relay: perm hold")).await);
+  until(|| nodes(&s).get(1).is_some_and(|n| n["permissions"].as_array().is_some_and(|p| p.len() == 1)), 8000).await;
+  let thread = nodes(&s)[1]["harness"]["thread"].as_str().unwrap().to_owned();
+  let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), answers: Some(vec!["Blue".into()]), ..ask("", "") }).await);
+  assert!(!ok && text.contains("no open question now"), "{text}");
+  let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread), answers: Some(vec![]), wait_secs: Some(0), ..ask("", "") }).await);
+  assert!(ok && text.contains("is still working"), "{text}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_idle_root_hears_a_childs_question_once_and_then_its_reply() {
   let fake = fake_or_skip!();
   let h = Harness::new(&fake, json!({}));
