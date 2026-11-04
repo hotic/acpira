@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The iOS app icon (apps/ios/Acpira/Assets.xcassets) on its own backdrop colour -->
+<!-- The iOS app icon (apps/ios/Acpira/Assets.xcassets) split in two: its glyph alone as the foreground, sized so the
+     launcher's visible middle (72 of 108 dp) holds it as the iOS icon does, over the same backdrop -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-  <background android:drawable="@color/icon_backdrop" />
+  <background android:drawable="@drawable/ic_launcher_backdrop" />
   <foreground android:drawable="@mipmap/ic_launcher_foreground" />
 </adaptive-icon>

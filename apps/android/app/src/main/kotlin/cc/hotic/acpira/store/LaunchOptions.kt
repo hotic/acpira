@@ -26,11 +26,20 @@ data class LaunchOptions(
   val prompt: String? = null,
   /** `none`: entrances and spinners rest (screenshots) */
   val motion: Boolean = true,
+  /** The chat's composer opens holding this draft (screenshots of the card) */
+  val draft: String? = null,
+  /** A composer picker open on launch, as the iOS app's `-popup`: `model`, `model.2` (its second bean's panel), `attach` */
+  val popup: String? = null,
   /**
    * Debug builds: `ID@HOST:PORT`, a computer the add-computer sheet lists as nearby. The emulator cannot browse or
    * reach the computer's LAN, only its loopback as 10.0.2.2, so scripts/e2e-paired.sh pairs through this and the code
    */
   val nearby: String? = null,
+  /**
+   * `play | intro | pair`: the first-run flow on launch whatever has been paired, from its start or on that step with
+   * the intro already drawn (screenshots)
+   */
+  val welcome: String? = null,
   /** The launch asked for the demo's fixtures (`screen`, `fixture` or `demo`): no pairing, the synthetic sessions */
   val demo: Boolean = false,
 ) {
@@ -48,8 +57,11 @@ data class LaunchOptions(
         agent = s("agent"),
         prompt = s("prompt"),
         motion = s("motion") != "none",
+        draft = s("draft"),
+        popup = s("popup"),
         nearby = s("nearby"),
-        demo = s("screen") != null || s("fixture") != null || s("demo") != null,
+        welcome = s("welcome"),
+        demo = s("screen") != null || s("fixture") != null || s("demo") != null || s("popup") != null || s("draft") != null,
       )
     }
   }

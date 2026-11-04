@@ -67,6 +67,17 @@ object Swatches {
   val railColor = fg3.mix(bg1, 0.65f)
   /** A card (alert, permission, plan): white on the light page, a step up in dark */
   val card = Swatch(hex(0x1c1c1c), hex(0xffffff))
+  /** A menu (the iOS app's system menus): a step lighter than any page or card under it, hairline-edged */
+  val menuBg = Swatch(hex(0x2a2a2a), hex(0xffffff))
+  val menuLine = Swatch(white(0.08f), black(0.06f))
+  /** The band between a menu's sections, as UIMenu's thick separator */
+  val menuGap = Swatch(black(0.22f), black(0.05f))
+  /** The page under an open composer picker, and a panel's backing over it (Goo.swift) */
+  val gooDim = Swatch(black(0.62f), black(0.18f))
+  /** Fast's bolt while it is on */
+  val fast = Swatch(hex(0xf0b440), hex(0xb7791f))
+  /** The composer's hint, as the list's search field sets its own */
+  val barHint = Swatch(white(0.4f), black(0.42f))
 }
 
 val LocalDark = staticCompositionLocalOf { false }
@@ -107,6 +118,13 @@ object Palette {
   val diffDel @Composable @ReadOnlyComposable get() = of(Swatches.diffDel)
   val rail @Composable @ReadOnlyComposable get() = of(Swatches.railColor)
   val card @Composable @ReadOnlyComposable get() = of(Swatches.card)
+  val scrim @Composable @ReadOnlyComposable get() = of(Swatches.scrim)
+  val menuBg @Composable @ReadOnlyComposable get() = of(Swatches.menuBg)
+  val menuLine @Composable @ReadOnlyComposable get() = of(Swatches.menuLine)
+  val menuGap @Composable @ReadOnlyComposable get() = of(Swatches.menuGap)
+  val gooDim @Composable @ReadOnlyComposable get() = of(Swatches.gooDim)
+  val fast @Composable @ReadOnlyComposable get() = of(Swatches.fast)
+  val barHint @Composable @ReadOnlyComposable get() = of(Swatches.barHint)
 }
 
 /** Spacing, control and slot sizes (airy density, the phone's reading sizes), `--name` → `Metrics.name` */
@@ -164,11 +182,21 @@ object Metrics {
   val barCtl = 48.dp
   /** A code card's height cap in the transcript */
   val codeOutputMax = 176.dp
+  /** A wide popover card (a reply's statistics): three timing tiles at the phone's reading size fit in it */
+  val popWide = 336.dp
   /** The floating bar pieces' and the toast's shadows */
   val barShadow = 3.dp
   val toastShadow = 6.dp
   val heroTile = 64.dp
   val heroBare = 38.dp
+  /**
+   * The agent ring (new session, apps/ios Metrics.ring*): the other agents' bubbles round the hero's mark, their marks,
+   * the ring's least radius, and the room between neighbouring centres along it (the radius grows with the count)
+   */
+  val ringBubble = 48.dp
+  val ringMark = 22.dp
+  val ringRadiusMin = 96.dp
+  val ringPitch = 104.dp
   val contentW = 720.dp
   /** A settings row's online dot */
   val rowDot = 8.dp
@@ -200,6 +228,31 @@ object Metrics {
   val pairPathH = 22.dp
   /** The connect frame's glyph centre sits this far down the page: its optical centre, a little above the middle */
   const val heroRise = 0.42f
+  /** A menu: its corner, row, narrowest width, shadow and the gap band between sections (AppMenu) */
+  val rMenu = 26.dp
+  val menuRow = 44.dp
+  val menuMinW = 220.dp
+  val menuShadow = 12.dp
+  /** The composer's glyphs on the bar (`+`, the model's mark, a bean's) and the chip's × / ‹ */
+  val barIcon = 22.dp
+  val gooBack = 26.dp
+  /** A bean's panel: width, row, rows shown before it scrolls, corner, row inset, and the beans' spacing */
+  val gooPanelW = 232.dp
+  val gooRow = 40.dp
+  const val gooPanelRows = 6.5f
+  val rGooPanel = 22.dp
+  val gooPadX = 14.dp
+  val gooGap = 12.dp
+  /** The page's blur under an open picker */
+  val gooBlur = 16.dp
+  /** The room a bean's caption gets beside it */
+  val gooAside = 240.dp
+  /** A staged attachment in the composer's card: an image tile (Metrics.thumb), a file chip's widest, the remove mark */
+  val stagedTile = 56.dp
+  val stagedFileW = 200.dp
+  val stagedRemove = 20.dp
+  /** The context ring's card */
+  val usageCardW = 260.dp
 }
 
 /** The phone type scale: ui 16 / code 13, as the iOS app and the web reference page */
@@ -226,4 +279,67 @@ object Type {
   val pairNameLine = 28.sp
   /** A digit in a code box */
   val pairDigit = 28.sp
+  /** The composer's field (TypeScale.field): ui + 1 on a ui + 8 line */
+  val field = 17.sp
+  val fieldLine = 24.sp
+  /** A page's own large title (the first-run pairing step's form) */
+  val largeTitle = 28.sp
+  val largeTitleLine = 34.sp
+  /** The first-run intro's headline, at the design page's scale */
+  val welcomeHeadline = 34.sp
+  val welcomeHeadlineLine = 42.sp
+}
+
+/**
+ * The first-run flow (apps/ios Welcome/WelcomeFlow.swift `WL`). Every screen shows one composition laid out on a phone's
+ * page (upright or on its side) and scaled with every size in it to fit, so a tablet shows the phone's page larger
+ */
+object WelcomeMetrics {
+  val portraitW = 402.dp
+  val portraitH = 778.dp
+  val landscapeW = 750.dp
+  val landscapeH = 381.dp
+  /** A screen smaller than the design page shrinks it no further than this */
+  const val minScale = 0.8f
+  /** Wider than tall by this much: the mark and the copy stand side by side */
+  const val sideBySide = 1.15f
+  /** On its side with height to spare, the pair sits this share of the spare below the middle */
+  const val wideDrop = 0.2f
+  /** The copy column beside the mark on a page on its side */
+  val wideColumn = 330.dp
+  /** Upright, the mark's room above the copy, and how far the copy rises into it */
+  val markRoom = 478.dp
+  val copyLift = 48.dp
+  /** The mark's widest; its width against the room, and its height against a short room */
+  val markMax = 300.dp
+  const val posterScale = 0.7f
+  const val markFill = 0.62f
+  /** How far the copy sits in from the button's edge, so it lines up with the capsule's round end by eye */
+  val copyInset = 10.dp
+  val brandMarkW = 17.dp
+  val brandMarkH = 16.dp
+  val headlineGap = 18.dp
+  val agentsGap = 30.dp
+  val agentsRow = 12.dp
+  val agentMark = 22.dp
+  val agentStep = 20.dp
+  val actionsGap = 40.dp
+  /** The pairing step keeps to a phone's column on a wide screen */
+  val column = 480.dp
+  /** The outline's thinnest stroke, the finger's spotlight and its outline */
+  val outlineMin = 0.75.dp
+  val spot = 150.dp
+  val spotLine = 1.2.dp
+  /** Entrances: a block rises this far, a headline glyph this far, an agent mark slides in this far */
+  val rise = 6.dp
+  val glyphRise = 7.5.dp
+  val slide = 4.dp
+  /** The intro stepping back under the pairing step: down this far, blurred this much */
+  val swapDrop = 14.dp
+  val swapBlur = 10.dp
+  /** The solid mark's machined edge: a fine light rim along its top edges, a faint shade along its feet */
+  val rimDrop = 1.dp
+  val rimBlur = 0.6.dp
+  val shadeRise = 2.dp
+  val shadeBlur = 3.dp
 }

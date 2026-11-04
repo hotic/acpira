@@ -17,6 +17,19 @@
 - Components use no raw numbers: sizes, spacing, radii and type come from `design/Tokens.kt`.
 - Compose test tags double as resource ids (`testTagsAsResourceId` in `ui/Root.kt`): `scripts/ui.py`, `scripts/e2e.sh` and the touch-sim skill find controls by them, so a renamed tag breaks those.
 - Real prompts from the app spend model calls: develop against fixtures or the fake agent.
+- Menus go through `ui/Menu.kt` (the iOS menu look), never a bare Material `DropdownMenu`.
+- Transcript rows, folds and code cards read `design/WebScale.kt` (the iOS app's `WebType` / `WebMetrics`), not the chrome's `Metrics` / `Type`, and go through `ui/Rows.kt` (`AcpRow`, `Disclosure`, `Reveal`, `RailColumn`). A fold never uses `AnimatedVisibility`'s defaults: outside a `ColumnScope` they resolve to `expandIn`, which grows the body from its top-left corner on both axes. A long choice list goes behind a submenu level (the new session's folders), as the iOS system menus do.
+- A `clickable` on a shaped background clips to that shape first, or the press lights a square.
+- The launcher foreground is the iOS `AppIcon.png`'s glyph alone, scaled so the whole iOS icon maps onto the launcher's visible 72 of 108 dp; the full icon as the foreground reads oversized next to other apps.
+- Pages run under the gesture bar: a scrolling page pads `navigationBars` inside its scroll, never on the Scaffold, or the bar's strip shows as a black band.
+
+## Composer
+
+- Ported from the iOS `Chat/Composer.swift`, `Design/Goo.swift` and `Logic/ModelCatalog.swift` (Fusion and sidekick are not ported). The pickers' layer (`GooLayer`) sits over the whole Scaffold, the composer included: under the bar a card grown round a long prompt or attachments covered the lowest beans and took their taps. The layer handles the chip's own tap (one level back) itself.
+- Model family keys are the TS ones verbatim (JSON-array strings from `models.ts`): the settings' `hiddenOptions` stores them and the desktop and iOS read the same lists, so `ModelCatalog.group` must not invent its own key format.
+- A new session's chips come from a `controls {agent}` request; the page's picks are applied with `setConfig` once `session/new` answers, before the first prompt.
+- The camera writes through the `FileProvider` (`res/xml/shared_files.xml`). Because the manifest declares `CAMERA` (for the pairing scan), `ACTION_IMAGE_CAPTURE` throws until that permission is granted, so it is asked first.
+- Launch extras `draft` and `popup` (`model`, `model.N`, `attach`) open a chat with text typed or a picker out, for screenshots against the demo.
 
 ## Paired remote access
 
@@ -27,7 +40,9 @@
 - Android 17 (target 37): LAN dials and NSD need the runtime `ACCESS_LOCAL_NETWORK`; without it NSD raises the system's device picker and only the relay is left. Asked when the add sheet opens, and on launch once a computer is paired.
 - A sheet or menu is a window of its own: its test tags need `testTagsAsResourceId` again.
 - Emulator: it reaches the computer only as 10.0.2.2 (its loopback), not its LAN addresses or Bonjour, so iroh's first dial spends its deadline on the LAN addresses. Debug builds take `nearby=ID@10.0.2.2:PORT` to list the gateway in the sheet; a code pairing stores the address it reached first.
-- Open: real-device pairing, the camera scan, NSD on a real network, background grace under Doze.
+- First run (`ui/Welcome.kt`, the iOS flow's rules: a bare launch with no computer paired, until it finishes once): its pairing step is the add sheet's own `PairFlow` in place, so `PairingModel.onboarding` keeps the sheet down meanwhile. No notification step: the app has no push channel. A fresh install opens on it, so scripts that pair go through `welcome.start`.
+- Compose's `PathParser` misreads arc flags run together with the next number (`0 01-4.45`, as the minified lobehub marks write them); `IconStore.mark` spells them out first.
+- Open: the camera scan, NSD on a real network, background grace under Doze.
 
 ## Wire traps
 
@@ -40,4 +55,4 @@
 - `cd apps/android && ./gradlew :model:test :sync:test :app:assembleDebug` (JDK 21: `JAVA_HOME=$(/usr/libexec/java_home -v 21)`).
 - `apps/android/scripts/e2e.sh`: the app against `apps/ios/scripts/engine.sh` (fake agent only) on a booted emulator, driven through its screens: a new chat's reply, then a permission approved.
 - `apps/android/scripts/e2e-paired.sh`: a fresh install against `apps/ios/scripts/gateway.sh` (fake agent, relays off): pair by code, the wire, a reply and a permission over the link. It clears the app's data.
-- An `adb install -r` relaunches the replaced activity with its old intent; a launch right after it can show the old screen. Force-stop and wait a second first, as the scripts do.
+- An `adb install -r` relaunches the replaced activity with its old intent; a launch right after it can show the old screen. Force-stop and wait a second first, as the scripts do. The same goes after `pm clear` / `pm grant`: the system's teardown can kill a launch that follows at once, leaving the splash up.

@@ -1,6 +1,4 @@
 <resources>
   <!-- Swatches.bg0 (apps/ios AcpiraDesign/Tokens.swift), the page under the first frame -->
   <color name="page">#F8F8F8</color>
-  <!-- The app icon artwork's own dark backdrop -->
-  <color name="icon_backdrop">#26272C</color>
 </resources>

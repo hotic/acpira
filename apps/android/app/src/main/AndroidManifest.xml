@@ -36,5 +36,13 @@
         <data android:scheme="acpira" android:host="pair" />
       </intent-filter>
     </activity>
+    <!-- The composer's camera bean: the system camera writes its photo into a file of this app's cache -->
+    <provider
+      android:name="androidx.core.content.FileProvider"
+      android:authorities="${applicationId}.files"
+      android:exported="false"
+      android:grantUriPermissions="true">
+      <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/shared_files" />
+    </provider>
   </application>
 </manifest>

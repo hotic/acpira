@@ -20,8 +20,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
@@ -38,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -73,7 +72,8 @@ fun SettingsScreen(model: AppModel) {
     },
   ) { padding ->
     Column(
-      Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = Metrics.pad).navigationBarsPadding(),
+      // The page runs under the gesture bar; only the content keeps clear of it, so it never ends in a hard cut above the bar
+      Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()).verticalScroll(rememberScrollState()).padding(horizontal = Metrics.pad).navigationBarsPadding().padding(bottom = Metrics.pad),
       verticalArrangement = Arrangement.spacedBy(Metrics.s6),
     ) {
       FormSection(t("settings.appearance.title")) {
@@ -93,26 +93,9 @@ fun SettingsScreen(model: AppModel) {
           Switch(checked = model.motion, onCheckedChange = model::pickMotion, colors = SwitchDefaults.colors())
         }
       }
-      val agents = model.startable
-      FormSection(t("mobile.settings.agents")) {
-        PickRow(
-          t("settings.defaultAgent"), model.settings.defaultAgent, agents.map { it.id },
-          name = { id -> model.agent(id).name }, tag = "settings.defaultAgent", onPick = model::setDefaultAgent,
-        )
-      }
-      FormCard {
-        agents.forEachIndexed { i, a ->
-          if (i > 0) RowRule(lead = true)
-          Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Metrics.gap),
-            modifier = Modifier.fillMaxWidth().heightIn(min = Metrics.formRowHeight).padding(horizontal = Metrics.pad).testTag("settings.agent:${a.id}"),
-          ) {
-            VendorMark(a.id, a.name, Palette.fg2, size = Metrics.rowMark, fit = true)
-            Text(a.name, color = Palette.fg1, fontSize = Type.text1, modifier = Modifier.weight(1f))
-          }
-        }
-      }
+      // The engine's own settings, shared with the computer (AgentSettings.kt)
+      AgentsSections(model)
+      SessionsSection(model)
       // Paired remote access: the computers in place of the engine row
       val pairing = LocalPairing.current
       if (pairing != null) PairComputersSection(pairing) { model.push(cc.hotic.acpira.store.Screen.Computer(it.id)) }
@@ -152,7 +135,8 @@ internal fun FormSection(title: String?, footer: String? = null, content: @Compo
 
 @Composable
 internal fun FormCard(content: @Composable ColumnScope.() -> Unit) {
-  Column(Modifier.fillMaxWidth().background(Palette.formRow, RoundedCornerShape(Metrics.rCardRound)), content = content)
+  // Clipped, so a pressed first or last row lights the card's rounded corners rather than a square over them
+  Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(Metrics.rCardRound)).background(Palette.formRow), content = content)
 }
 
 /** The hairline between rows, from the text's start (past the mark with [lead]) to the card's end */
@@ -180,7 +164,7 @@ internal fun FormRow(label: String, modifier: Modifier = Modifier, lead: (@Compo
 
 /** A row whose value opens a menu of [options] at the row's end; the picked one carries a tick */
 @Composable
-private fun PickRow(label: String, value: String, options: List<String>, name: (String) -> String, tag: String, onPick: (String) -> Unit) {
+internal fun PickRow(label: String, value: String, options: List<String>, name: (String) -> String, tag: String, onPick: (String) -> Unit) {
   var open by remember { mutableStateOf(false) }
   FormRow(label, Modifier.clickable { open = true }.testTag(tag)) {
     Box {
@@ -188,12 +172,12 @@ private fun PickRow(label: String, value: String, options: List<String>, name: (
         Text(name(value), color = Palette.fg2, fontSize = Type.text1)
         Lucide("chevronsUpDown", Palette.fg3, size = Metrics.chevron)
       }
-      DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+      AppMenu(expanded = open, onDismiss = { open = false }) {
         for (o in options) {
-          DropdownMenuItem(
-            text = { Text(name(o)) },
-            trailingIcon = { if (o == value) Lucide("check", Palette.fg1) },
+          AppMenuItem(
+            name(o),
             onClick = { open = false; if (o != value) onPick(o) },
+            checked = o == value,
             modifier = Modifier.testTag("$tag:$o"),
           )
         }

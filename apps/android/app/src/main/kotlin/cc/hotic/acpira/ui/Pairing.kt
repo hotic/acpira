@@ -30,8 +30,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
@@ -50,6 +48,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -245,31 +244,27 @@ fun ListBarTitle(pairing: PairingModel) {
     Row(
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(Metrics.s1),
-      modifier = Modifier.clickable { open = true }.testTag("list.computer"),
+      modifier = Modifier.clip(RoundedCornerShape(percent = 50)).clickable { open = true }.padding(horizontal = Metrics.s2, vertical = Metrics.s1).testTag("list.computer"),
     ) {
       Text(current.name, fontWeight = FontWeight.SemiBold, fontSize = Type.barTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
       Lucide("chevronDown", Palette.fg3, size = Metrics.icon)
     }
-    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+    AppMenu(expanded = open, onDismiss = { open = false }) {
       for (c in pairing.computers) {
-        DropdownMenuItem(
-          text = {
-            Column {
-              Text(c.name)
-              pairing.status(c)?.let { Text(it, color = Palette.fg3, fontSize = Type.text4) }
-            }
-          },
-          leadingIcon = { Lucide(computerIcon(c.model), Palette.fg2) },
-          trailingIcon = { if (c.id == current.id) Lucide("check", Palette.fg1) },
+        AppMenuItem(
+          c.name,
           onClick = { open = false; pairing.select(c.id) },
+          subtitle = pairing.status(c),
+          checked = c.id == current.id,
+          icon = { MenuGlyph(computerIcon(c.model)) },
           modifier = Modifier.testTag("list.computer:${c.id}"),
         )
       }
-      HorizontalDivider(color = Palette.line)
-      DropdownMenuItem(
-        text = { Text(t("mobile.pair.add")) },
-        leadingIcon = { Lucide("plus", Palette.fg2) },
+      AppMenuGap()
+      AppMenuItem(
+        t("mobile.pair.add"),
         onClick = { open = false; pairing.addOpen = true },
+        icon = { MenuGlyph("plus") },
         modifier = Modifier.testTag("list.computer.add"),
       )
     }
@@ -329,7 +324,8 @@ fun ComputerScreen(model: AppModel, pairing: PairingModel, id: String) {
   ) { padding ->
     if (computer == null) return@Scaffold
     Column(
-      Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = Metrics.pad).navigationBarsPadding(),
+      // The page runs under the gesture bar; only the content keeps clear of it, so it never ends in a hard cut above the bar
+      Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()).verticalScroll(rememberScrollState()).padding(horizontal = Metrics.pad).navigationBarsPadding().padding(bottom = Metrics.pad),
       verticalArrangement = Arrangement.spacedBy(Metrics.s6),
     ) {
       FormCard {
