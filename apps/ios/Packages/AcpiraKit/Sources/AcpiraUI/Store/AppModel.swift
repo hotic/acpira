@@ -125,6 +125,10 @@ final class AppModel {
   @ObservationIgnored var away = false
   /// This model's wire ended; the screens keep what it showed until the next wire's model takes them over
   var ended = false
+  /// The real time the screens stopped following the engine live: the app went to the background or the wire ended.
+  /// Running counters stand at it until the engine's view of the chat on screen comes again, so they never run on
+  /// through the absence and then jump back to the engine's time (a turn that ended meanwhile)
+  var clockHeld: Date?
   /// Each chat's unsent draft (AppModel+Composer.swift): the map is not observed, each draft is
   @ObservationIgnored var drafts: [String: ComposerDraft] = [:]
   /// The composer's `@` file search, answered by the engine's `files`

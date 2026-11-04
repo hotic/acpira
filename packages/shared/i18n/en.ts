@@ -75,6 +75,7 @@ export const en = {
   'permission.plan.buildBypass': 'Build with Bypass Permissions',
   'permission.plan.rejectExit': 'Reject and exit Plan mode',
   'history.edit': 'Edit and resend',
+  'history.selectText': 'Select text',
   'history.cancel': 'Cancel editing',
   'history.unavailable': 'Wait until the session is ready and idle.',
   'history.stale': 'The conversation changed. Reopen the message to edit it.',

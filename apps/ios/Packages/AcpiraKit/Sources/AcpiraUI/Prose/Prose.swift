@@ -192,8 +192,9 @@ struct ProseBlocks: View {
     VStack(alignment: .leading, spacing: Metrics.gap) {
       ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
         ProseBlock(block: block, style: style, first: index == 0)
-          // Quoted whole: the blocks nested in a list or a quote take no menu of their own
+          #if !canImport(UIKit)
           .environment(\.quoteProse, nil)
+          #endif
           .quoteMenu(block, quote)
           .tailOnly(index == blocks.count - 1)
       }
@@ -351,6 +352,7 @@ struct CodeSurface: View {
         .textStyle(WebType.mono)
         .foregroundStyle(Palette.fg1)
         .fixedSize()
+        .selectableText(text, style: WebType.mono)
         .padding(.horizontal, Metrics.pad)
         .padding(.vertical, Metrics.pad - 2)
     }

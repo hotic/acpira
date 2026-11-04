@@ -73,6 +73,7 @@
   "permission.plan.buildBypass": "Выполнить без подтверждений",
   "permission.plan.rejectExit": "Отклонить и выйти из режима плана",
   "history.edit": "Изменить и отправить снова",
+  "history.selectText": "Выбрать текст",
   "history.cancel": "Отменить изменение",
   "history.unavailable": "Дождитесь, пока сессия будет готова и свободна.",
   "history.stale": "Диалог изменился. Откройте сообщение заново, чтобы изменить его.",

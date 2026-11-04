@@ -62,14 +62,14 @@ struct AlertCard: View {
           .textStyle(TypeScale.text2, weight: .semibold)
           .foregroundStyle(Palette.fgStrong)
           .frame(maxWidth: .infinity, alignment: .leading)
-        IconButton(.x, label: t("common.close"), action: onDismiss)
-          .padding(.vertical, -Metrics.s1)
-          .padding(.trailing, -Metrics.s1_5)
+        CardCornerButton(icon: .x, label: t("common.close"), action: onDismiss)
+          .padding(.vertical, -Metrics.s2)
+          .padding(.trailing, -Metrics.s1)
       }
       if let message {
         Text(web: message)
           .textStyle(TypeScale.text3)
-          .foregroundStyle(Palette.fg2)
+          .foregroundStyle(Palette.popFg2)
           .fixedSize(horizontal: false, vertical: true)
       }
       // The code and kind ride on "Copy details" (Cursor's "Copy Request (id)") while they fit
@@ -80,16 +80,16 @@ struct AlertCard: View {
           copied = true
         } ways: {
           if let fresh {
-            Button(web: t("notice.continueNew"), action: fresh).buttonStyle(AcpButtonStyle(.secondary, fixed: true))
+            Button(web: t("notice.continueNew"), action: fresh).modifier(CardButton(primary: false))
           }
           if retry {
-            Button(web: t("common.retry"), action: onRetry).buttonStyle(AcpButtonStyle(.primary, fixed: true))
+            Button(web: t("common.retry"), action: onRetry).modifier(CardButton(primary: true))
           }
           if carry {
-            Button(web: t("alert.continue"), action: onContinue).buttonStyle(AcpButtonStyle(.primary, fixed: true))
+            Button(web: t("alert.continue"), action: onContinue).modifier(CardButton(primary: true))
           }
           if let compact {
-            Button(web: t("alert.contextLength.compact"), action: compact).buttonStyle(AcpButtonStyle(.primary, fixed: true))
+            Button(web: t("alert.contextLength.compact"), action: compact).modifier(CardButton(primary: true))
           }
         }
         .padding(.top, Metrics.s1)
@@ -158,6 +158,6 @@ struct CardActions<Ways: View>: View {
 
   private func copyButton(_ label: String) -> some View {
     Button(action: onCopy) { Text(web: label) }
-      .buttonStyle(AcpButtonStyle(.secondary, fixed: true))
+      .modifier(CardButton(primary: false))
   }
 }

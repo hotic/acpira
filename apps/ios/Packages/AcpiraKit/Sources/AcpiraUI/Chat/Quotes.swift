@@ -3,12 +3,11 @@ import AcpiraMarkdown
 import AcpiraModels
 import SwiftUI
 
-// QuoteToolbar.tsx and Quotes.tsx on a touch screen. The phone has no text selection in the transcript, so a long press
-// on a block of the agent's reply (a paragraph, a list, a code block …) offers "Add to chat", which stages the block as a
-// `quote` attachment; the quotes wait in the composer's strip as one "N annotations" chip whose card lists them, each
-// with its optional comment.
+// QuoteToolbar.tsx and Quotes.tsx on a touch screen. A block's long-press menu keeps its whole-source actions;
+// double tap or Select text enters native range selection, whose menu quotes just the selected text.
+// The quotes wait in the composer's strip as one "N annotations" chip, each with its optional comment.
 
-/// What a long press on a reply block quotes into. Every one compares equal: a chat's transcript only ever quotes into
+/// What selected reply text quotes into. Every one compares equal: a chat's transcript only ever quotes into
 /// that chat, and the fresh closure each render of the chat builds must not count as a change that redraws every
 /// reply's prose
 struct QuoteAction: Equatable {
@@ -17,23 +16,64 @@ struct QuoteAction: Equatable {
 }
 
 extension EnvironmentValues {
-  /// Set along the agent's reply: a long press on one of its blocks quotes it into the composer
+  /// Set along the agent's reply: its selection menu quotes the selected text into the composer
   @Entry var quoteProse: QuoteAction? = nil
 }
 
 extension View {
-  /// The reply block's long-press menu: quote it into the composer, or copy it
+  /// The original block actions and an explicit entry into native range selection.
   @ViewBuilder func quoteMenu(_ block: MDBlock, _ quote: QuoteAction?) -> some View {
     if let quote, block != .rule {
+      #if canImport(UIKit)
+      modifier(QuoteMenu(block: block, quote: quote))
+      #else
       contextMenu {
         Button(t("quote.add"), systemImage: "text.quote") { quote.run(QuoteText.of(block)) }
         Button(t("common.copy"), systemImage: "doc.on.doc") { UIPasteboardBridge.copy(QuoteText.of(block)) }
       }
+      #endif
     } else {
       self
     }
   }
 }
+
+#if canImport(UIKit)
+private struct QuoteMenu: ViewModifier {
+  let block: MDBlock
+  let quote: QuoteAction
+  @State private var selection = TextSelectionScope()
+  @Environment(\.textSelectionScope) private var parentSelection
+
+  func body(content: Content) -> some View {
+    if parentSelection != nil {
+      // A list or block quote keeps its original whole-block menu, including its nested paragraphs.
+      content
+    } else {
+      content
+        .environment(\.textSelectionScope, selection)
+        .contextMenu {
+          if !selection.active {
+            Button(t("quote.add"), systemImage: "text.quote") { quote.run(QuoteText.of(block)) }
+            Button(t("common.copy"), systemImage: "doc.on.doc") { UIPasteboardBridge.copy(QuoteText.of(block)) }
+            // Diagrams, formulas and image-only blocks have no native text surface.
+            if offersSelection {
+              Button(t("history.selectText"), systemImage: "text.cursor") { selection.select() }
+            }
+          }
+        }
+    }
+  }
+
+  private var offersSelection: Bool {
+    switch block {
+    case .math, .rule, .code(lang: "mermaid", _): false
+    case .paragraph(let inlines): !holdsImage(inlines)
+    default: true
+    }
+  }
+}
+#endif
 
 /// The plain text a quoted block carries: what a selection over it would copy
 enum QuoteText {

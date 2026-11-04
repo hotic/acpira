@@ -77,6 +77,7 @@ export const fr = {
   'permission.plan.buildBypass': 'Exécuter en contournant les autorisations',
   'permission.plan.rejectExit': 'Refuser et quitter le mode plan',
   'history.edit': 'Modifier et renvoyer',
+  'history.selectText': 'Sélectionner le texte',
   'history.cancel': 'Annuler la modification',
   'history.unavailable': 'Attendez que la session soit prête et inactive.',
   'history.stale': 'La conversation a changé. Rouvrez le message pour le modifier.',

@@ -77,6 +77,7 @@ export const es = {
   'permission.plan.buildBypass': 'Ejecutar omitiendo los permisos',
   'permission.plan.rejectExit': 'Rechazar y salir del modo plan',
   'history.edit': 'Editar y reenviar',
+  'history.selectText': 'Seleccionar texto',
   'history.cancel': 'Cancelar edición',
   'history.unavailable': 'Espera a que la sesión esté lista e inactiva.',
   'history.stale': 'La conversación cambió. Vuelve a abrir el mensaje para editarlo.',

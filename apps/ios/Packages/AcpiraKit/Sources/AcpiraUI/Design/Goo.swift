@@ -414,8 +414,8 @@ struct GooChip<Glyph: View>: View {
     .buttonStyle(.plain)
     // A glass circle of its own, so a press lights this chip alone. Inset so that at rest it lies wholly inside the
     // bar and the container merges it away: at full size its outline ran along the bar's round end and swelled it
-    // On the card the chip is a bare glyph, as at rest: once the card's glass gave way to its plate under the beans,
-    // the circles stood out as two small buttons, and a press swelled one into a bright disc across the card's edge
+    // On the card it is merged away the same way. Over the plate that stands in for the card's glass under the beans
+    // the chip is a bare glyph (`gooBare`): there the circles stood out as two small buttons
     .glassEffect(bare ? .identity : GlassStyle.bar.interactive(), in: Circle().inset(by: Metrics.gooChipInset))
     // The glass's shape is also the button's hit shape, so only the inset circle (half the slot) took taps: a touch a
     // little below the glyph fell through to the bar or card under it and only focused the field. The whole slot takes
@@ -1311,6 +1311,6 @@ struct FastGlyph: View {
 extension EnvironmentValues {
   /// The chat agent's hidden model families by option id (settings → Agents → Models), for the model chip's lists
   @Entry var hiddenModels: [String: [String]] = [:]
-  /// The chips sit bare on the composer's card: no glass circle of their own, and their beans grow out of nothing
+  /// The chips sit bare on the composer's plate: no glass circle of their own, and their beans grow out of nothing
   @Entry var gooBare = false
 }

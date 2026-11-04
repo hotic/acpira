@@ -106,6 +106,15 @@ struct InlineText: View {
       // A settled paragraph has no fade clock. A new timestamp would invalidate its renderer during cell sizing.
       text(paragraph, growth: growth, now: fade?.reveals.isEmpty == false ? timeline.date.timeIntervalSinceReferenceDate : 0)
     }
+    #if canImport(UIKit)
+    .accessibilityHidden(true)
+    .overlay {
+      TextSelectionSurface(text: InlineBuilder(style: style, ink: ink, strongInk: strongInk, accent: accent)
+        .selectionParagraph(inlines, weight: weight))
+    }
+    #else
+    .textSelection(.enabled)
+    #endif
   }
 
   private func text(_ paragraph: Text, growth: (top: CGFloat, bottom: CGFloat), now: Double) -> some View {

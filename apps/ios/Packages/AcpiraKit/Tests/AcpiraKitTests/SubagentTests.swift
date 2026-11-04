@@ -68,6 +68,7 @@ private let permission = #","permissions":[{"type":"permission","id":"p1","title
       case .items(let id, let items): "items \(id) \(items.count)"
       case .steer(let id, _): "steer \(id)"
       case .subagents(let id, let ids): "subagents \(id) \(ids.joined(separator: ","))"
+      case .media(let id, _): "media \(id)"
       }
     }
     #expect(parts == ["items e1 1", "subagents t1 a,b", "items e3 1"])

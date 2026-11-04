@@ -7,6 +7,8 @@ import SwiftUI
 struct TopFade: ViewModifier {
   /// How far past the bar the fade reaches into the scrolling content
   var tail: CGFloat = Metrics.topFadeTail
+  /// Lifted, on the caller's transaction
+  var hidden = false
 
   func body(content: Content) -> some View {
     content
@@ -21,6 +23,7 @@ struct TopFade: ViewModifier {
             .frame(height: top + tail)
             .offset(y: -top)
         }
+        .opacity(hidden ? 0 : 1)
         .allowsHitTesting(false)
       }
   }
@@ -36,5 +39,7 @@ private struct TopFadeLayers: View {
 
 extension View {
   /// The page-colour top fade (TopFade)
-  func topFade(tail: CGFloat = Metrics.topFadeTail) -> some View { modifier(TopFade(tail: tail)) }
+  func topFade(tail: CGFloat = Metrics.topFadeTail, hidden: Bool = false) -> some View {
+    modifier(TopFade(tail: tail, hidden: hidden))
+  }
 }

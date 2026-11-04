@@ -71,8 +71,12 @@ struct NewSessionScreen: View {
             .animation(motion ? picking ? .easeOut(duration: Motion.durOpen) : Motion.gooDimOut : nil, value: picking)
             .position(x: page.size.width / 2, y: page.size.height * Metrics.heroRise)
         }
-        // The dim lifts with an ease-in, held while the bubbles go home (the composer pickers' dim)
-        .animation(ring ? .easeOut(duration: Motion.durOpen) : Motion.gooDimOut, value: ring)
+        // The dim lifts with an ease-in, held while the bubbles go home (the composer pickers' dim). After a pick it
+        // lifts on the flight's own spring instead: the ease-in put most of the change into its last frames, a
+        // second step right as the picked agent's name came back
+        .transaction(value: ring) {
+          $0.animation = ring ? .easeOut(duration: Motion.durOpen) : $0[RingPick.self] ? Motion.ringFlight : Motion.gooDimOut
+        }
       }
       .overlay(alignment: .bottom) {
         // The composer rests where the list's system bottom bar does
@@ -91,7 +95,10 @@ struct NewSessionScreen: View {
       }
     }
     .coordinateSpace(.named(Self.page))
-    .onPreferenceChange(ComposerPickerKey.self) { picking = $0 }
+    // Animated, so the bar's items leave and come back with the hero rather than at once (`barAside`)
+    .onPreferenceChange(ComposerPickerKey.self) { now in
+      withAnimation(motion ? now ? .easeOut(duration: Motion.durOpen) : Motion.gooDimOut : nil) { picking = now }
+    }
     .onAppear { if let initialDraft, text.isEmpty { text = initialDraft } }
     .ignoresSafeArea(.container, edges: .bottom)
     .modifier(HomeInset(inset: $homeInset))
@@ -116,7 +123,8 @@ struct NewSessionScreen: View {
     .gooLayer()
     // Under the keyboard too, behind its rounded corners (ChatScreen)
     .background(Palette.bg0.ignoresSafeArea())
-    .modifier(SystemTitle(title: t("session.new")))
+    // The title and back button leave the bar while a picker is out (`barAside`)
+    .modifier(SystemTitle(title: t("session.new"), aside: picking))
     .environment(\.agentAccent, Palette.accent(for: draft.agent))
     .environment(\.hiddenModels, model.settings?.hiddenOptions[draft.agent] ?? [:])
     .environment(\.sessionActions, SessionActions(toast: { model.show($0, icon: $1) }))
@@ -188,6 +196,9 @@ struct NewSessionHero: View {
   @Binding var ring: Bool
   /// The name and the folder are hidden while the ring is out and until AgentRing lets them back
   @State private var veil = false
+  /// The agent picked on the ring while its mark flies into the centre (AgentRing): the name already shows it, so
+  /// it can rise during the flight rather than wait for the swap
+  @State private var landing: AgentId?
   @State private var adding = false
   /// The folder popover is open (regular width)
   @State private var folders = false
@@ -197,13 +208,13 @@ struct NewSessionHero: View {
 
   var body: some View {
     VStack(spacing: Metrics.s2) {
-      AgentRing(agent: agent, agents: agents, open: $ring, veil: $veil, onSelect: onAgent)
+      AgentRing(agent: agent, agents: agents, open: $ring, veil: $veil, onSelect: onAgent, picking: $landing)
         .padding(.bottom, Metrics.s3)
       VStack(spacing: Metrics.s3) {
         name
           // A new agent's name is a new text, swapped at once while hidden. A `.transaction` with no animation here
           // also stopped the group's offset from reaching it, so the name jumped up as the ring opened
-          .id(agent.id)
+          .id(landing ?? agent.id)
           .transition(.identity)
         folderButton
           .modifier(AddProjectAlert(isPresented: $adding, onAdd: onAdd))
@@ -265,7 +276,7 @@ struct NewSessionHero: View {
   }
 
   private var name: some View {
-    Text(web: agent.name, paragraph: false)
+    Text(web: (agents.first { $0.id == landing } ?? agent).name, paragraph: false)
       .textStyle(TypeScale.field, weight: .semibold)
       .foregroundStyle(Palette.fgStrong)
   }
@@ -276,7 +287,12 @@ struct NewSessionHero: View {
 /// them back. A pick sends the picked bubble into the drop while the others fold home: its mark grows to the centre's
 /// size as the old mark shrinks away under it, and the picked agent takes the centre where its mark has landed. The
 /// drop stays: clearing it after a pick, even with the name rising in the same move, read as two things at once. An
-/// agent that is not installed stays on the ring, dimmed
+/// agent that is not installed stays on the ring, dimmed.
+///
+/// Every bubble runs on a progress of its own (`RingBubble`), and its glass, its mark, its caption and the flown mark
+/// are all placed from that progress frame by frame. Animated as plain `offset` / `scaleEffect`, the glass moved on
+/// the container's own clock, well ahead of the marks: the picked mark trailed outside its drop, and the others' marks
+/// were left hanging on the centre's rim after their glass had melted in
 struct AgentRing: View {
   let agent: AgentInfo
   let agents: [AgentInfo]
@@ -284,44 +300,48 @@ struct AgentRing: View {
   /// Holds the hero's name and folder back until the picked mark has landed or the bubbles are home
   @Binding var veil: Bool
   var onSelect: (AgentId) -> Void
-  /// The bubble on its way into the centre after a pick, until its agent takes the centre
-  @State private var picking: AgentId?
+  /// The bubble on its way into the centre after a pick, until its agent takes the centre (held by the hero, whose
+  /// name shows it meanwhile)
+  @Binding var picking: AgentId?
   /// Where the picked bubble sat on the ring, from the centre: its mark flies in from there
   @State private var flightFrom = CGSize.zero
-  /// A missing agent's mark, faded as a disabled row's
-  private static let missingInk: Double = 0.35
   @Environment(\.motionEnabled) private var motion
   @Environment(\.initialPopup) private var initialPopup
 
   var body: some View {
     let others = launchable(agents).filter { $0.id != agent.id }
-    GlassEffectContainer(spacing: Metrics.s6) {
-      ZStack {
-        ForEach(Array(others.enumerated()), id: \.element.id) { i, a in
-          bubble(a, at: i, of: others.count)
+    let n = others.count
+    let out: CGFloat = open ? 1 : 0
+    ZStack {
+      GlassEffectContainer(spacing: Metrics.s6) {
+        ZStack {
+          ForEach(Array(others.enumerated()), id: \.element.id) { i, a in
+            let spot = spot(i, of: n)
+            RingBubble(t: out, agent: a, spot: spot, flying: picking == a.id, live: open && picking == nil) {
+              pick(a, from: spot)
+            }
+            .animation(motion ? move(i, of: n) : nil, value: open)
+          }
+          hub
         }
-        hub
       }
+      // The captions ride the same progress as their bubbles, outside the glass: inside it the merging drops
+      // refracted a caption they passed over
+      ForEach(Array(others.enumerated()), id: \.element.id) { i, a in
+        RingCaption(t: out, agent: a, spot: spot(i, of: n))
+          .animation(motion ? move(i, of: n) : nil, value: open)
+          .opacity(open ? 1 : 0)
+          .animation(motion ? (open ? Motion.ringCaption.delay(Double(i) * Motion.ringStagger(n) + Motion.ringCaptionDelay)
+                               : Motion.ringCaptionOut) : nil,
+                     value: open)
+      }
+      // The picked agent's mark, over all the glass: as the bubble's own content it went under the drop's glass the
+      // moment the two met, and the centre stood empty until the swap. Looked up among all agents: it is the centre's
+      // own agent for the last part of the flight. On the flight's spring, as the picked bubble is
+      RingFlown(t: out, agent: picking.flatMap { id in agents.first { $0.id == id } }, from: flightFrom)
+        .animation(motion ? Motion.ringFlight : nil, value: open)
     }
     .frame(width: Metrics.heroTile, height: Metrics.heroTile)
-    // The picked agent's mark, over all the glass: as the bubble's own content it went under the drop's glass the
-    // moment the two met, and the centre stood empty until the swap
-    .overlay {
-      ZStack {
-        // Looked up among all agents: it is the centre's own agent for the last part of the flight
-        if let id = picking, let a = agents.first(where: { $0.id == id }) {
-          VendorMark(brand: a.id, name: a.name, size: Metrics.heroBare)
-            .foregroundStyle(Palette.fgStrong)
-            .transition(.asymmetric(insertion: .modifier(active: RingFlight(offset: flightFrom, scale: Metrics.ringMark / Metrics.heroBare),
-                                                         identity: RingFlight(offset: .zero, scale: 1)),
-                                    removal: .identity))
-            .allowsHitTesting(false)
-        }
-      }
-      // Its own clock: the screen's dim animation (keyed on the ring) would otherwise run the flight on an ease-in,
-      // and the mark trailed the bubble's glass into the drop
-      .transaction { $0.animation = motion ? Motion.ringFlight : nil }
-    }
     .task(id: open) {
       if open {
         veil = true
@@ -350,13 +370,20 @@ struct AgentRing: View {
     return CGSize(width: cos(angle) * r, height: sin(angle) * r)
   }
 
+  /// How bubble `i` of `n` moves: out clockwise one lag after another, home the last one first at half the lag. After
+  /// a pick the others fold home together with the flight, on its spring and without the lag: on the staggered
+  /// `ringSpring` the last one was still creeping into the drop well after the picked mark had landed, which read as a
+  /// stall before the name came back
+  private func move(_ i: Int, of n: Int) -> Animation {
+    if picking != nil && !open { return Motion.ringFlight }
+    let lag = Motion.ringStagger(n)
+    return Motion.ringSpring.delay(open ? Double(i) * lag : Double(n - 1 - i) * lag / 2)
+  }
+
   /// The centre: the mark in its drop of glass. During a pick the old mark shrinks away under the arriving one
   private var hub: some View {
     Button { if picking == nil { open.toggle() } } label: {
-      VendorMark(brand: agent.id, name: agent.name, size: Metrics.heroBare)
-        .foregroundStyle(Palette.fgStrong)
-        .opacity(picking == nil ? 1 : 0)
-        .scaleEffect(picking == nil ? 1 : Metrics.gooSeed)
+      RingHubMark(t: picking == nil ? 1 : 0, agent: agent)
         .animation(motion ? Motion.ringFlight : nil, value: picking)
         .frame(width: Metrics.heroTile, height: Metrics.heroTile)
         .contentShape(Circle())
@@ -366,7 +393,7 @@ struct AgentRing: View {
     .accessibilityLabel(agent.name)
   }
 
-  /// A pick: the bubble's glass flies into the drop while its mark flies over the glass (the overlay) and grows to
+  /// A pick: the bubble's glass flies into the drop while its mark flies over the glass (`RingFlown`) and grows to
   /// the centre's size as the old mark shrinks away. As it nears the centre the agent changes under it and the hero's
   /// name and folder rise back; once landed the flown mark leaves in the frame the centre's own mark shows, so it stays
   private func pick(_ a: AgentInfo, from spot: CGSize) {
@@ -377,87 +404,161 @@ struct AgentRing: View {
       return
     }
     flightFrom = spot
-    withAnimation(Motion.ringFlight) {
+    // Marked as a pick, so the screen's dim lifts on the flight too (RingPick)
+    var fly = Transaction(animation: Motion.ringFlight)
+    fly[RingPick.self] = true
+    withTransaction(fly) {
       picking = a.id
       open = false
     }
     Task { @MainActor in
       var swap = Transaction()
       swap.disablesAnimations = true
-      try? await Task.sleep(for: .seconds(Motion.ringLand))
-      // Under the flown mark: the centre's mark is still hidden while picking, the name still veiled
-      withTransaction(swap) { onSelect(a.id) }
+      // The name (already the picked agent's) rises while the mark is still landing, so the two read as one move
+      try? await Task.sleep(for: .seconds(Motion.ringHeroLead))
       veil = false
+      try? await Task.sleep(for: .seconds(Motion.ringLand - Motion.ringHeroLead))
+      // Under the flown mark, once its glass is inside the drop: the centre's mark is still hidden while picking. The
+      // picked bubble leaves the ring here, right where its mark has landed
+      withTransaction(swap) { onSelect(a.id) }
       try? await Task.sleep(for: .seconds(Motion.ringFlightTime - Motion.ringLand))
       withTransaction(swap) { picking = nil }
     }
   }
+}
 
-  private func bubble(_ a: AgentInfo, at i: Int, of n: Int) -> some View {
-    let spot = spot(i, of: n)
-    let missing = a.available == false
-    let flying = picking == a.id
-    // Out on the ring, or on its way into the centre after a pick
-    let shown = open || flying
-    let lag = Motion.ringStagger(n)
-    let outDelay = Double(i) * lag
-    let homeDelay = Double(n - 1 - i) * lag / 2
-    return Button { pick(a, from: spot) } label: {
-      VendorMark(brand: a.id, name: a.name, size: Metrics.ringMark)
-        .foregroundStyle(Palette.fg1)
-        .opacity(missing ? Self.missingInk : 1)
-        // A picked bubble flies as glass alone: its mark leaves at once for the overlay, which starts on this spot
-        .opacity(flying ? 0 : 1)
-        .transaction { $0.animation = nil }
-        .frame(width: Metrics.ringBubble, height: Metrics.ringBubble)
-        // Glass hosts its content in a layer of its own, so the bubble's opacity and scale below do not reach the mark:
-        // it carries both itself, fading on the bubble's own delays and shrinking with its glass on the same spring.
-        // Faded at once on the way home, it left empty drops drifting into the centre
-        .opacity(shown ? 1 : 0)
-        .animation(motion ? (flying ? Motion.ringFlight
-                             : open ? Motion.ringShow.delay(outDelay + Motion.ringShowDelay)
-                             : Motion.ringHide.delay(homeDelay + Motion.ringHideDelay)) : nil,
-                   value: open)
-        .scaleEffect(shown ? 1 : Metrics.gooSeed)
-        .animation(motion ? (flying ? Motion.ringFlight : Motion.ringSpring.delay(open ? outDelay : homeDelay)) : nil,
-                   value: open)
+/// What a ring bubble shows at one point of its way out: 0 home inside the drop, 1 on the ring (a spring's overshoot
+/// passes through, so the ring wobbles as one)
+private enum RingGeometry {
+  /// Under this a bubble is home and nothing of it is drawn
+  static let gone: CGFloat = 0.001
+  /// The mark shows over the last part of the way out, so it has left before its glass melts into the drop
+  static let glyphFrom: CGFloat = 0.5, glyphSpan: CGFloat = 0.4
+  /// Taps land once a bubble has arrived
+  static let arrived: CGFloat = 0.9
+  /// A missing agent's mark, faded as a disabled row's
+  static let missingInk: Double = 0.35
+
+  static func unit(_ x: CGFloat) -> CGFloat { min(1, max(0, x)) }
+  /// The bubble swells out of the drop from `gooSeed` of its size
+  static func side(_ t: CGFloat) -> CGFloat { max(0, Metrics.ringBubble * (Metrics.gooSeed + (1 - Metrics.gooSeed) * t)) }
+  static func glyph(_ t: CGFloat) -> Double { Double(unit((t - glyphFrom) / glyphSpan)) }
+  static func at(_ spot: CGSize, _ t: CGFloat) -> CGSize { CGSize(width: spot.width * t, height: spot.height * t) }
+}
+
+/// One bubble of the ring, its glass and its mark placed from its own progress. The mark keeps its size: scaling
+/// glass content shifts it off the glass's centre. The picked bubble flies home at full size, its mark gone at once
+/// to the flown one over the glass
+private struct RingBubble: View, Animatable {
+  var t: CGFloat
+  let agent: AgentInfo
+  let spot: CGSize
+  let flying: Bool
+  let live: Bool
+  let onTap: () -> Void
+
+  var animatableData: CGFloat {
+    get { t }
+    set { t = newValue }
+  }
+
+  var body: some View {
+    if t > RingGeometry.gone || flying {
+      let missing = agent.available == false
+      let side = flying ? Metrics.ringBubble : RingGeometry.side(t)
+      Button(action: onTap) {
+        VendorMark(brand: agent.id, name: agent.name, size: Metrics.ringMark)
+          .foregroundStyle(Palette.fg1)
+          .opacity(flying ? 0 : RingGeometry.glyph(t) * (missing ? RingGeometry.missingInk : 1))
+          // The progress already moves it frame by frame: the pick's own transaction faded the picked mark out on
+          // the flight's spring, a dim second copy under the flown one
+          .transaction { $0.animation = nil }
+          .frame(width: side, height: side)
+      }
+      .buttonStyle(.plain)
+      .glassEffect(GlassStyle.control.interactive(), in: Circle())
+      // Comes and goes inside the drop, where the system's own morph would only lag the spring
+      .glassEffectTransition(.identity)
+      .disabled(missing)
+      .allowsHitTesting(live && t > RingGeometry.arrived)
+      .accessibilityLabel(agent.name)
+      .offset(RingGeometry.at(spot, t))
+      .transition(.identity)
     }
-    .buttonStyle(.plain)
-    .glassEffect(GlassStyle.control.interactive(), in: Circle())
-    // Comes and goes inside the drop, where the system's own morph would only lag the spring
-    .glassEffectTransition(.identity)
-    .overlay(alignment: .bottom) {
-      Text(web: a.name, paragraph: false)
-        // The hero's name style, so a name reads the same on the ring and in the centre
-        .textStyle(TypeScale.field, weight: .semibold)
-        .foregroundStyle(missing ? Palette.fg3 : Palette.fgStrong)
-        .fixedSize()
-        .offset(y: Metrics.s6 - Metrics.s0_5)
-        .opacity(open ? 1 : 0)
-        .animation(motion ? (open ? Motion.ringCaption.delay(outDelay + Motion.ringCaptionDelay) : Motion.ringCaptionOut) : nil,
-                   value: open)
-    }
-    .disabled(missing)
-    .accessibilityLabel(a.name)
-    // The picked bubble leaves the ring at once when its agent takes the centre, right where its mark has landed
-    .transition(.identity)
-    .opacity(shown ? 1 : 0)
-    .animation(motion ? (flying ? Motion.ringFlight
-                         : open ? Motion.ringShow.delay(outDelay + Motion.ringShowDelay)
-                         : Motion.ringHide.delay(homeDelay + Motion.ringHideDelay)) : nil,
-               value: open)
-    .scaleEffect(shown ? 1 : Metrics.gooSeed)
-    .offset(open && !flying ? spot : .zero)
-    .animation(motion ? (flying ? Motion.ringFlight : Motion.ringSpring.delay(open ? outDelay : homeDelay)) : nil,
-               value: open)
   }
 }
 
-/// The flown mark's way in: from its bubble's spot at the ring's size to the centre at full size
-private struct RingFlight: ViewModifier {
-  var offset: CGSize
-  var scale: CGFloat
-  func body(content: Content) -> some View {
-    content.scaleEffect(scale).offset(offset)
+/// A bubble's name under it, placed from the bubble's progress (its fade runs on its own timing in `AgentRing`)
+private struct RingCaption: View, Animatable {
+  var t: CGFloat
+  let agent: AgentInfo
+  let spot: CGSize
+
+  var animatableData: CGFloat {
+    get { t }
+    set { t = newValue }
   }
+
+  var body: some View {
+    Color.clear
+      .frame(width: Metrics.ringBubble, height: Metrics.ringBubble)
+      .overlay(alignment: .bottom) {
+        Text(web: agent.name, paragraph: false)
+          // The hero's name style, so a name reads the same on the ring and in the centre
+          .textStyle(TypeScale.field, weight: .semibold)
+          .foregroundStyle(agent.available == false ? Palette.fg3 : Palette.fgStrong)
+          .fixedSize()
+          .offset(y: Metrics.s6 - Metrics.s0_5)
+      }
+      .offset(RingGeometry.at(spot, t))
+      .allowsHitTesting(false)
+      .accessibilityHidden(true)
+  }
+}
+
+/// The centre's mark, 1 shown and 0 shrunk away under an arriving mark. Sized rather than scaled, as glass content
+private struct RingHubMark: View, Animatable {
+  var t: CGFloat
+  let agent: AgentInfo
+
+  var animatableData: CGFloat {
+    get { t }
+    set { t = newValue }
+  }
+
+  var body: some View {
+    VendorMark(brand: agent.id, name: agent.name, size: Metrics.heroBare * (Metrics.gooSeed + (1 - Metrics.gooSeed) * t))
+      .foregroundStyle(Palette.fgStrong)
+      .opacity(Double(t))
+  }
+}
+
+/// The picked agent's mark on its way in: from its bubble's spot at the ring's size (t 1) to the centre at the
+/// centre's size (t 0), in step with the picked bubble's glass
+private struct RingFlown: View, Animatable {
+  var t: CGFloat
+  let agent: AgentInfo?
+  let from: CGSize
+
+  var animatableData: CGFloat {
+    get { t }
+    set { t = newValue }
+  }
+
+  var body: some View {
+    if let agent {
+      VendorMark(brand: agent.id, name: agent.name, size: Metrics.heroBare + (Metrics.ringMark - Metrics.heroBare) * t)
+        .foregroundStyle(Palette.fgStrong)
+        .offset(RingGeometry.at(from, t))
+        .allowsHitTesting(false)
+        // Shown whole the moment the bubble's own mark goes: inserted in the pick's transaction it faded in on the
+        // flight's spring
+        .transition(.identity)
+    }
+  }
+}
+
+/// Set on the transaction that closes the ring after a pick, as opposed to a plain close
+private struct RingPick: TransactionKey {
+  static let defaultValue = false
 }

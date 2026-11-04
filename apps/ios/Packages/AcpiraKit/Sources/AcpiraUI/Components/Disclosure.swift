@@ -7,9 +7,6 @@ import SwiftUI
 /// Height reveal between 0 and the content's natural height; at rest open the content sizes itself
 struct Reveal: ViewModifier, Animatable {
   var progress: Double
-  /// The content stands in for a copy the opposite fold reveals (a closed fold's images): it shows only over the far
-  /// half of its reveal, so the two cross-fade instead of both showing whole halfway through
-  var handOff = false
   var animatableData: Double {
     get { progress }
     set { progress = newValue }
@@ -21,7 +18,7 @@ struct Reveal: ViewModifier, Animatable {
       FoldLayout(progress: progress) { content.geometryGroup() }
         .clipped()
         // The body fades in over the first part of the reveal, as the system's disclosures do
-        .opacity(handOff ? max(0, progress * 2 - 1) : min(1, progress * 2))
+        .opacity(min(1, progress * 2))
     }
   }
 }
@@ -47,7 +44,7 @@ struct FoldLayout: Layout {
 
 extension View {
   /// Collapses to zero height when closed; animate the change with `Motion.open` / `Motion.close`
-  func reveal(_ open: Bool, handOff: Bool = false) -> some View { modifier(Reveal(progress: open ? 1 : 0, handOff: handOff)) }
+  func reveal(_ open: Bool) -> some View { modifier(Reveal(progress: open ? 1 : 0)) }
 }
 
 /// Folds a screenshot or a preview opens before anyone taps (`-render all`); a tap still wins

@@ -7,6 +7,11 @@ import Foundation
 
 // MARK: - Codex split
 
+/// isAdvisory: a notice that only informs, with nothing to act on and no known transient cause
+func isAdvisory(_ n: NoticeBlock) -> Bool {
+  n.severity == "warning" && n.category == "unknown" && (n.actions ?? []).isEmpty
+}
+
 /// A turn's blocks split the way CodexMessage renders them
 public struct CodexSplit {
   public var process: [AgentBlock]
@@ -40,7 +45,9 @@ public func splitCodexBlocks(_ blocks: [AgentBlock]) -> CodexSplit {
   for (i, block) in blocks.enumerated() {
     switch block {
     case .permission(let p): permissions.append(p)
-    case .notice(let n): notices.append(n)
+    // Failure notices are status rows lifted under the fold; an advisory and a retry row keep their place in the
+    // process (a retry row is a step of the work, and lifted out it stacked under the live fold for the whole turn)
+    case .notice(let n) where !isAdvisory(n) && n.retry == nil: notices.append(n)
     case .question(let q) where q.outcome == nil: break
     case .goal(let g) where firstOther.map({ i < $0 }) ?? true: goalsLead.append(g)
     case .goal(let g) where lastAction.map({ i > $0 }) ?? true: goals.append(g)
@@ -88,8 +95,8 @@ public enum ProcessItem: Identifiable, Hashable {
 func groupKind(_ block: AgentBlock) -> GroupKind? {
   guard case .toolCall(let b) = block, b.status != .failed, b.status != .cancelled, b.asyncTask == nil,
         b.subagentId == nil else { return nil }
-  // Session reads are not file groups: their rows resolve titles and turn ranges separately.
-  if SessionLinks.isTool(b) { return nil }
+  // Session reads resolve titles separately; media results must stay individual so the fold can keep them visible.
+  if SessionLinks.isTool(b) || isImageResult(b) { return nil }
   // A read with locations always names files; only one without them needs `toolFiles`, which runs on every patch
   if b.kind == .read { return b.status != .completed || !(b.locations ?? []).isEmpty || !toolFiles(b).isEmpty ? .read : nil }
   if b.kind == .edit { return .edit }
@@ -135,6 +142,7 @@ public func itemSettled(_ item: ProcessItem) -> Bool {
     switch block {
     case .thought(let t): t.streaming != true
     case .toolCall(let b): b.background == true || (b.status != .pending && b.status != .in_progress)
+    case .notice(let n): n.retry?.status != "in_progress"
     default: true
     }
   }
@@ -407,7 +415,9 @@ public func liveActivity(_ turn: AgentTurn) -> LiveActivity {
   if turn.blocks.contains(where: { if case .question(let q) = $0 { q.outcome == nil } else { false } }) {
     return LiveActivity(label: t("host.awaitingAnswers"), active: false, lead: .question)
   }
-  if let retry = turn.retry {
+  // A provider retry relabels the working row, unless the turn's retry row already says so
+  let retryRow = turn.blocks.contains { if case .notice(let n) = $0 { n.retry?.status == "in_progress" } else { false } }
+  if let retry = turn.retry, !retryRow {
     let label = retry.attempt != nil && retry.max != nil
       ? t("turns.retryingAttempt", ["attempt": retry.attempt!, "max": retry.max!]) : t("turns.retrying")
     return LiveActivity(label: label, active: true, lead: .orb)

@@ -71,7 +71,7 @@ struct ToolCallView: View {
       // A skill load is one row naming the skill; only a failure opens to its message
       Row(tone: .action) { LeadIcon(icon) } content: { label } trailing: { trailing }
     } else if isImageResult(block) {
-      // Generated and shown images: under their row in an open process fold, after the fold once it closes (CodexFold)
+      // A process fold owns a separate, persistent media part; standalone tool rows keep their own result.
       VStack(alignment: .leading, spacing: Metrics.gap) {
         Row(tone: .action) { LeadIcon(icon) } content: { label } trailing: { trailing }
         ImageResults(block: block, grouped: grouped)
@@ -794,10 +794,23 @@ struct CommandPrompt: View {
     HStack(alignment: .firstTextBaseline, spacing: 0) {
       Text(web: "$ ", size: WebType.mono.size).accessibilityHidden(true)
       VStack(alignment: .leading, spacing: 0) {
-        Text(web: command, size: WebType.mono.size)
-          .lineLimit(expanded ? nil : Metrics.commandPromptLines)
-          .truncationMode(.tail)
-          .fixedSize(horizontal: false, vertical: true)
+        Group {
+          if clipped {
+            // The height eases between the cut and the whole command through the layout, as a fold's reveal does.
+            // Switching the line limit inside the animation resized the hosted thread row in one step, and the rows
+            // above the card jumped and slid back
+            LineClamp(progress: expanded ? 1 : 0) {
+              Text(web: command, size: WebType.mono.size)
+                .fixedSize(horizontal: false, vertical: true)
+                .opacity(expanded ? 1 : 0)
+                .accessibilityHidden(!expanded)
+              cut.opacity(expanded ? 0 : 1).accessibilityHidden(expanded)
+            }
+            .clipped()
+          } else {
+            cut
+          }
+        }
           .background {
             // Measure the uncut height to know whether the cut hides anything
             Text(web: command, size: WebType.mono.size).textStyle(mono).fixedSize(horizontal: false, vertical: true).hidden()
@@ -807,7 +820,7 @@ struct CommandPrompt: View {
           }
         if clipped {
           Button {
-            withAnimation(motion ? Motion.open : nil) { expanded.toggle() }
+            toggle()
           } label: {
             Icon(.chevronDown, size: WebMetrics.chevron, strokeWidth: 1.75)
               .rotationEffect(.degrees(expanded ? 180 : 0))
@@ -826,6 +839,46 @@ struct CommandPrompt: View {
     .padding(.top, Metrics.commandY)
     .padding(.bottom, last ? Metrics.commandY : 0)
     .frame(maxWidth: .infinity, alignment: .leading)
+    // The chevron alone is far below a finger's size, and a miss opened the code sheet: a cut command expands from
+    // anywhere on its lines, ahead of the card's own tap
+    .contentShape(Rectangle())
+    .gesture(TapGesture().onEnded { toggle() }, including: clipped ? .all : .subviews)
+  }
+
+  /// The command cut at `commandPromptLines`
+  private var cut: some View {
+    Text(web: command, size: WebType.mono.size)
+      .lineLimit(Metrics.commandPromptLines)
+      .truncationMode(.tail)
+      .fixedSize(horizontal: false, vertical: true)
+  }
+
+  private func toggle() {
+    withAnimation(motion ? Motion.open : nil) { expanded.toggle() }
+  }
+}
+
+/// The whole text (first subview) shown down to a height between the cut text's (second subview) and its own:
+/// `FoldLayout` with the cut as its floor. Both sit at the top; the caller clips and cross-fades them
+private struct LineClamp: Layout {
+  var progress: CGFloat
+  var animatableData: CGFloat {
+    get { progress }
+    set { progress = newValue }
+  }
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    let free = ProposedViewSize(width: proposal.width, height: nil)
+    let whole = subviews.first?.sizeThatFits(free) ?? .zero
+    let cut = subviews.dropFirst().first?.sizeThatFits(free) ?? whole
+    let shown = min(1, max(0, progress))
+    return CGSize(width: proposal.width ?? max(whole.width, cut.width), height: cut.height + (whole.height - cut.height) * shown)
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    for subview in subviews {
+      subview.place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(width: bounds.width, height: nil))
+    }
   }
 }
 

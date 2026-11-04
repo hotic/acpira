@@ -87,6 +87,11 @@ struct TranscriptCollection: UIViewRepresentable {
     view.motion = motion
     if view.safeFrame != safe {
       view.safeFrame = safe
+      // A dock that moves in an animated transaction (the composer's bar opening into its card and back) is followed
+      // with the glide, which runs on the main thread like the card's own animation and so keeps pace with it. A
+      // Core Animation curve ran on through the stall while the keyboard comes up and left the card behind; a snap
+      // jumped the card's whole growth ahead of it. A dock that moves at once (a line typed into the card) still snaps
+      view.dockGlides = context.transaction.animation != nil && !context.transaction.disablesAnimations
       view.setNeedsLayout()
     }
     context.coordinator.update(items: items, environment: values, in: view)
@@ -193,6 +198,16 @@ struct TranscriptCollection: UIViewRepresentable {
       UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+      // The selectable transcript text owns taps, including its double-tap selection and handle gestures.
+      var target = touch.view
+      while let view = target {
+        if view is SelectionTextView { return false }
+        target = view.superview
+      }
+      return true
+    }
+
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 
@@ -253,6 +268,13 @@ struct TranscriptViewportGeometry: Equatable {
     return bottomOffset
   }
 
+  /// Only the dock moved: the bottom inset changed and nothing else did
+  func onlyDockMoved(after previous: Self?) -> Bool {
+    guard let previous, previous.contentHeight > 0 else { return false }
+    return abs(viewportHeight - previous.viewportHeight) <= 0.5 && abs(topInset - previous.topInset) <= 0.5
+      && abs(contentHeight - previous.contentHeight) <= 0.5 && abs(bottomInset - previous.bottomInset) > 0.5
+  }
+
   /// Only content growth or shrink glides; a changed viewport (the keyboard, a dock) snaps with it
   func glidesToBottom(after previous: Self?) -> Bool {
     guard let previous, previous.contentHeight > 0 else { return false }
@@ -298,6 +320,9 @@ final class TranscriptCollectionView: UICollectionView {
   /// The safe area's frame in the window. The view spans the bars and docks around it, and how far it reaches past it
   /// on each side is the content inset, worked out on every layout so the keyboard moving the frame lands in the same pass
   var safeFrame = CGRect.zero
+  /// The last `safeFrame` change came in an animated transaction: a dock that only moved the bottom inset glides
+  /// (`updateUIView`); taken by the next layout
+  var dockGlides = false
 
   /// A row's height before it is first measured; rows still at it are no reading position (`firstVisibleItem`)
   static let estimatedRowHeight: CGFloat = 120
@@ -459,7 +484,9 @@ final class TranscriptCollectionView: UICollectionView {
     } else if let visibleAnchor { keepOnScreen(visibleAnchor) }
 
     let geometry = viewportGeometry
+    let dockGlides = dockGlides
     defer {
+      self.dockGlides = false
       lastLaidOutGeometry = geometry
       lastLaidOutWidth = bounds.width
       if pendingReaderAnchor == nil, !maintainsBottomAnchor, !isTracking, !isDragging, !isDecelerating {
@@ -498,8 +525,9 @@ final class TranscriptCollectionView: UICollectionView {
     guard let bottomY = geometry.restoredBottomOffset(after: lastLaidOutGeometry, maintainsBottomAnchor: maintainsBottomAnchor,
                                                       isInteracting: isInteracting),
           abs(contentOffset.y - bottomY) > 0.5 else { return }
-    // Viewport changes (the keyboard, a dock) land with the change itself
-    if geometry.glidesToBottom(after: lastLaidOutGeometry), lastLaidOutWidth == bounds.width {
+    // Viewport changes (the keyboard, a dock) land with the change itself, but for a dock moving in an animation
+    if geometry.glidesToBottom(after: lastLaidOutGeometry) || (dockGlides && geometry.onlyDockMoved(after: lastLaidOutGeometry)),
+       lastLaidOutWidth == bounds.width {
       followBottom(animated: true)
       return
     }

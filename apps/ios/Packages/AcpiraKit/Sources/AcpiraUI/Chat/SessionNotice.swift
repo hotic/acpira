@@ -97,21 +97,21 @@ struct SessionNotice: View {
   private func card(_ state: NoticeState) -> some View {
     VStack(alignment: .leading, spacing: Metrics.s2) {
       HStack(spacing: Metrics.s2) {
-        Icon(state.icon, size: Metrics.icon, strokeWidth: 1.75).foregroundStyle(Palette.fg3)
+        Icon(state.icon, size: Metrics.icon, strokeWidth: 1.75).foregroundStyle(Palette.popFg3)
         Text(web: state.title)
           .textStyle(TypeScale.text2, weight: .semibold)
           .foregroundStyle(Palette.fgStrong)
           .lineLimit(1)
           .frame(maxWidth: .infinity, alignment: .leading)
         if state.showRetry {
-          IconButton(.rotateCw, label: t("common.retry"), action: actions.restart)
-            .padding(.vertical, -Metrics.s1)
-            .padding(.trailing, -Metrics.s1_5)
+          CardCornerButton(icon: .rotateCw, label: t("common.retry"), action: actions.restart)
+            .padding(.vertical, -Metrics.s2)
+            .padding(.trailing, -Metrics.s1)
         }
       }
       Text(web: state.text)
         .textStyle(TypeScale.text3)
-        .foregroundStyle(Palette.fg2)
+        .foregroundStyle(Palette.popFg2)
         .fixedSize(horizontal: false, vertical: true)
       if state.detail != nil || state.primary != nil || !state.others.isEmpty {
         CardActions(copy: state.detail == nil ? [] : [copied ? t("alert.copied") : t("alert.copy")]) {
@@ -119,20 +119,20 @@ struct SessionNotice: View {
           copied = true
         } ways: {
           if state.others.count == 1, let other = state.others.first {
-            Button(web: other.label) { run(other) }.buttonStyle(AcpButtonStyle(.secondary, fixed: true))
+            Button(web: other.label) { run(other) }.modifier(CardButton(primary: false))
           } else if state.others.count > 1 {
             PopupMenu {
               ForEach(state.others, id: \.self) { way in Button(web: way.label) { run(way) } }
             } label: {
               Text(web: t("notice.moreWays"))
-              Icon(.chevronDown, size: Metrics.chevron, strokeWidth: 1.75).foregroundStyle(Palette.fg3)
+              Icon(.chevronDown, size: Metrics.chevron, strokeWidth: 1.75).foregroundStyle(Palette.popFg3)
             }
-            .buttonStyle(AcpButtonStyle(.secondary, fixed: true))
+            .modifier(CardButton(primary: false))
             .menuStyle(.button)
             .fixedSize()
           }
           if let primary = state.primary {
-            Button(web: primary.label) { run(primary) }.buttonStyle(AcpButtonStyle(.primary, fixed: true))
+            Button(web: primary.label) { run(primary) }.modifier(CardButton(primary: true))
           }
         }
         .padding(.top, Metrics.s1)
@@ -173,24 +173,24 @@ struct ExternalSessionNotice: View {
           .frame(maxWidth: .infinity, alignment: .leading)
         Text(web: t("chatgpt.\(info.state.rawValue)"))
           .textStyle(TypeScale.text3)
-          .foregroundStyle(Palette.fg2)
+          .foregroundStyle(Palette.popFg2)
           .multilineTextAlignment(.trailing)
       }
       Text(web: t("chatgpt.boundary"))
         .textStyle(TypeScale.text3)
-        .foregroundStyle(Palette.fg2)
+        .foregroundStyle(Palette.popFg2)
         .fixedSize(horizontal: false, vertical: true)
       if let prompt = info.connectionPrompt {
         HStack(spacing: Metrics.gap) {
           Text(web: info.state == .unbound ? t("chatgpt.noEvent") : "\(t("chatgpt.lastEvent")) \(eventTime(info.lastEventAt))")
             .textStyle(TypeScale.text3)
-            .foregroundStyle(Palette.fg3)
+            .foregroundStyle(Palette.popFg3)
             .frame(maxWidth: .infinity, alignment: .leading)
           Button(web: t(copied ? "chatgpt.copyDone" : "chatgpt.copy")) {
             UIPasteboardBridge.copy(prompt)
             copied = true
           }
-          .buttonStyle(AcpButtonStyle(.secondary, fixed: true))
+          .modifier(CardButton(primary: false))
         }
       }
     }
@@ -233,6 +233,8 @@ private let startingDelay = Duration.milliseconds(400)
 /// iOS 26 lays the title slot out beside the back button, not centred
 struct StartingTitle: ViewModifier {
   let session: SessionView
+  /// A composer picker is out: the pill leaves the bar with its other items (`barAside`)
+  var aside = false
   @Environment(\.chatAgent) private var agent
   @Environment(\.snapshot) private var snapshot
   @State private var late = false
@@ -242,14 +244,14 @@ struct StartingTitle: ViewModifier {
     content
       .toolbar {
         #if os(iOS)
-        if active && (late || snapshot) {
+        if active && (late || snapshot) && !aside {
           ToolbarItem(placement: .title) {
             HStack(spacing: Metrics.s2) {
               Orb()
               Text(web: t("devices.starting"), paragraph: false).lineLimit(1)
             }
             .textStyle(TypeScale.text3, weight: .medium)
-            .foregroundStyle(Palette.fg2)
+            .foregroundStyle(Palette.popFg2)
             .padding(.horizontal, Metrics.pad)
             .frame(height: Metrics.glassCtl)
             .glassEffect(.regular, in: Capsule())

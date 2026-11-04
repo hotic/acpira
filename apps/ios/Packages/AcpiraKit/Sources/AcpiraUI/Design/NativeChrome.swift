@@ -436,8 +436,10 @@ struct NativeAccountRow: View {
 /// A pushed screen's inline title in the system bar, with the bare back chevron
 struct SystemTitle: ViewModifier {
   var title: String
+  /// The title and back button leave the bar (`barAside`)
+  var aside = false
   func body(content: Content) -> some View {
-    content.navigationTitle(title).navigationBarTitleDisplayModeInline().backWithoutTitle()
+    content.navigationTitle(aside ? "" : title).navigationBarTitleDisplayModeInline().backWithoutTitle().barAside(aside)
   }
 }
 
@@ -475,6 +477,18 @@ extension View {
   func listSectionSpacingCompact() -> some View {
     #if os(iOS)
     listSectionSpacing(.compact)
+    #else
+    self
+    #endif
+  }
+
+  /// While a composer picker is out its dim spreads to the screen's top, but the system bar is drawn over every view
+  /// of the page, so its title and glass buttons lay across the beans and captions that rise that far (a column above
+  /// a long draft with the keyboard up). The items leave instead, the back button with them (the screen also drops
+  /// its own), and the bar keeps its height so nothing under the dim moves
+  func barAside(_ aside: Bool) -> some View {
+    #if os(iOS)
+    navigationBarBackButtonHidden(aside)
     #else
     self
     #endif

@@ -515,21 +515,24 @@ public enum Motion {
   public static let ringShowDelay: Double = 0.12
   public static let ringHide = Animation.easeIn(duration: 0.12)
   public static let ringHideDelay: Double = 0.22
-  /// The bubbles' captions: in after the bubble, out first
+  /// The bubbles' captions: in after the bubble, out first. Out on an ease-out, so most of a caption is gone before
+  /// the drops merge under it: on an ease-in it still lay half-faded over the closing glass for a few frames
   public static let ringCaption = Animation.easeOut(duration: 0.25)
   public static let ringCaptionDelay: Double = 0.3
-  public static let ringCaptionOut = Animation.easeIn(duration: 0.1)
+  public static let ringCaptionOut = Animation.easeOut(duration: 0.1)
   /// The name and folder under the mark: away as the ring opens, back as a picked mark lands or, after a plain close,
   /// once the bubbles are home (`ringHeroHold`)
   public static let ringHeroAway = Animation.easeOut(duration: 0.2)
   public static let ringHeroBack = Animation.spring(response: 0.45, dampingFraction: 0.85)
   public static let ringHeroHold: Double = 0.45
   /// A pick: the bubble's flight into the drop (critically damped, so it lands without overshoot and the swap to the
-  /// centre's own mark is invisible), how long until the flown mark gives way to the centre's, and how far into the
-  /// flight the agent changes and the name comes back
+  /// centre's own mark is invisible), how long until the flown mark gives way to the centre's, how far into the
+  /// flight the agent changes (its glass must be inside the drop by then, or it pops off the edge) and how far the
+  /// name comes back. At the swap's time the name trailed a landed mark that sat still meanwhile
   public static let ringFlight = Animation.spring(response: 0.42, dampingFraction: 1)
   public static let ringFlightTime: Double = 0.5
   public static let ringLand: Double = 0.28
+  public static let ringHeroLead: Double = 0.1
   /// How long a toast stays up (the phone's confirmation of copy, pin, export …)
   public static let toast: Double = 1.8
   /// A toast offering undo stays long enough to reach for it

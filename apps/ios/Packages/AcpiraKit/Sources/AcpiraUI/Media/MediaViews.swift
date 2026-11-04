@@ -22,8 +22,7 @@ struct MediaScope {
 
 extension EnvironmentValues {
   @Entry var media = MediaScope()
-  /// The process fold is open: generated and shown images stay under their row; once it closes the fold shows them
-  /// after itself (GeneratedImage.tsx ImageInFoldContext)
+  /// Whether a tool row owns its media. A process fold renders media as separate, always-visible parts.
   @Entry var imageInFold = true
   /// The engine-read local images of the text being drawn (Prose.tsx MarkdownImages)
   @Entry var markdownImages: [ImageRef]? = nil
@@ -275,9 +274,9 @@ struct ImagePlaceholder: View {
   }
 }
 
-/// GeneratedImage.tsx GeneratedImages: an image generation's or show_image's pictures under its row while the process
-/// fold is open, after the fold once it closes (`grouped`: the call sits in the fold). A generation still running with
-/// nothing saved holds the card's place; shown images drop their path captions, as their row names the files
+/// GeneratedImage.tsx GeneratedImages: image, video and widget results. A process fold keeps these outside the
+/// collapsing rows (`grouped`: the caller is a tool row in that fold). A generation still running with nothing saved
+/// holds the card's place; shown images drop their path captions, as their row names the files
 struct ImageResults: View {
   let block: ToolCallBlock
   var grouped = false
@@ -312,21 +311,6 @@ struct ImageResults: View {
           }
         }
       }
-    }
-  }
-}
-
-/// Turns.tsx: the generated and shown images of a closed process fold, after it, so a collapsed turn still shows them
-struct FoldImageResults: View {
-  let blocks: [AgentBlock]
-
-  var body: some View {
-    let results = blocks.compactMap { $0.toolCall.flatMap { isImageResult($0) ? $0 : nil } }
-    if !results.isEmpty {
-      VStack(alignment: .leading, spacing: Metrics.gap) {
-        ForEach(results, id: \.id) { ImageResults(block: $0) }
-      }
-      .padding(.top, Metrics.gap)
     }
   }
 }
