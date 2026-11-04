@@ -69,6 +69,16 @@ object IconStore {
     }
   }
 
+  private val elements = HashMap<String, List<Path>>()
+
+  /** A lucide icon's elements as separate 24-unit paths, in source order (for glyphs drawn or animated by hand) */
+  fun lucidePaths(context: Context, name: String): List<Path>? = synchronized(elements) {
+    elements[name] ?: run {
+      val data = load(context).lucide[name] ?: return@synchronized null
+      data.map { PathParser().parsePathString(it).toPath() }.also { elements[name] = it }
+    }
+  }
+
   /** The brand key of a model name or id ("Claude Fable 5.1" → claude), by shared/models.ts BRAND, first match wins */
   fun brandOf(context: Context, model: String): String? {
     val rules = brandRules ?: load(context).brands.mapNotNull { r -> r.getOrNull(1)?.let { Regex(r[0]) to it } }.also { brandRules = it }
@@ -83,12 +93,52 @@ object IconStore {
     val data = icons.paths[icons.alias[brand] ?: brand]
     val made = data?.let { ds ->
       val path = Path().apply { fillType = PathFillType.EvenOdd }
-      for (d in ds) path.addPath(PathParser().parsePathString(d).toPath())
+      for (d in ds) path.addPath(PathParser().parsePathString(expandArcFlags(d)).toPath())
       path to path.getBounds()
     }
     marks[brand] = made
     made
   }
+}
+
+private val svgNumber = Regex("""[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?""")
+
+/**
+ * Spells out the arc flags SVG lets run together with what follows (`a14 14 0 01-4.45-3`, as the lobehub marks are
+ * minified): PathParser reads `01` as one number, which breaks the Gemini mark
+ */
+internal fun expandArcFlags(d: String): String {
+  if (d.none { it == 'a' || it == 'A' }) return d
+  val out = StringBuilder(d.length + 16)
+  var i = 0
+  var command = ' '
+  fun skip() {
+    while (i < d.length && (d[i] == ' ' || d[i] == ',' || d[i].isWhitespace())) i++
+  }
+  fun number() {
+    val m = svgNumber.find(d, i)?.takeIf { it.range.first == i } ?: error("bad path at $i")
+    out.append(' ').append(m.value)
+    i = m.range.last + 1
+  }
+  while (true) {
+    skip()
+    if (i >= d.length) break
+    val c = d[i]
+    if (c.isLetter()) {
+      command = c
+      out.append(c)
+      i++
+    } else if (command == 'a' || command == 'A') {
+      // rx ry rotation large-arc sweep x y: the two flags are one character each
+      for (p in 0 until 7) {
+        skip()
+        if (p == 3 || p == 4) out.append(' ').append(d[i++]) else number()
+      }
+    } else {
+      number()
+    }
+  }
+  return out.toString()
 }
 
 /** A lucide icon by its camelCase name (`chevronRight`), tinted like text */

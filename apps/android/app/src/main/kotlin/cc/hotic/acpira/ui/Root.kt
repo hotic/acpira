@@ -19,6 +19,14 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.semantics
@@ -43,7 +51,13 @@ object Motion {
  */
 @Composable
 fun Root(model: AppModel, pairing: cc.hotic.acpira.store.PairingModel? = null) {
-  androidx.compose.runtime.CompositionLocalProvider(LocalPairing provides pairing) { Stack(model, pairing) }
+  // The settings' hidden models reach every composer's model menu (ChatScreen.swift `.environment(\.hiddenModels)`)
+  androidx.compose.runtime.CompositionLocalProvider(
+    LocalPairing provides pairing,
+    LocalHiddenModels provides model.settings.hiddenOptions,
+    // The transcript's folds, rails and entrances read the motion switch (the webview's motion axis)
+    cc.hotic.acpira.design.LocalMotion provides model.motion,
+  ) { Stack(model, pairing) }
 }
 
 @Composable
@@ -73,11 +87,13 @@ private fun Stack(model: AppModel, pairing: cc.hotic.acpira.store.PairingModel?)
           is Screen.New -> NewSessionScreen(model, screen)
           Screen.Settings -> SettingsScreen(model)
           is Screen.Computer -> if (pairing != null) ComputerScreen(model, pairing, screen.id)
+          is Screen.AgentSettings -> AgentSettingsScreen(model, screen.id)
+          is Screen.ModelSettings -> ModelsSettingsScreen(model, screen.id)
         }
       }
     }
-    // The add-computer sheet, also for an `acpira://pair/…` link opened from outside
-    if (pairing != null && pairing.addOpen) PairSheet(pairing)
+    // The add-computer sheet, also for an `acpira://pair/…` link opened from outside; the first-run flow pairs in place
+    if (pairing != null && pairing.addOpen && !pairing.onboarding) PairSheet(pairing)
     // The engine's and the app's own notices, over every screen
     val toast = model.toast
     val fade = if (model.motion) Motion.fade else 0
@@ -98,12 +114,54 @@ private fun Stack(model: AppModel, pairing: cc.hotic.acpira.store.PairingModel?)
         )
       }
     }
+    if (pairing != null) Welcome(model, pairing)
   }
 }
+
+/**
+ * The first-run flow over every screen, once the paired computers are known: for a build that pairs, launched bare,
+ * with none paired yet and the flow never finished. A launch that finds a computer already paired never shows it, and
+ * it does not come back, even with every computer removed (apps/ios RootView `startWelcome`)
+ */
+@Composable
+private fun Welcome(model: AppModel, pairing: cc.hotic.acpira.store.PairingModel) {
+  val context = LocalContext.current
+  val prefs = remember { context.getSharedPreferences(WELCOME_PREFS, android.content.Context.MODE_PRIVATE) }
+  var welcoming by rememberSaveable { mutableStateOf(false) }
+  val options = model.options
+  LaunchedEffect(pairing.loaded) {
+    if (!pairing.loaded || welcoming) return@LaunchedEffect
+    if (options.welcome == null) {
+      if (prefs.getBoolean(WELCOMED, false) || options.demo || options.engine != null) return@LaunchedEffect
+      if (pairing.computers.isNotEmpty()) {
+        prefs.edit().putBoolean(WELCOMED, true).apply()
+        return@LaunchedEffect
+      }
+    }
+    welcoming = true
+  }
+  // The add sheet stays down while the flow pairs in place, also after the activity is recreated
+  SideEffect { pairing.onboarding = welcoming }
+  val fade = if (model.motion) Motion.push else 0
+  AnimatedVisibility(visible = welcoming, enter = fadeIn(tween(fade)), exit = fadeOut(tween(fade))) {
+    WelcomeFlow(pairing, options.welcome, model.motion, onDone = {
+      prefs.edit().putBoolean(WELCOMED, true).apply()
+      welcoming = false
+      pairing.onboarding = false
+      // A pairing link the flow took leaves the add sheet asked for
+      pairing.addOpen = false
+    })
+  }
+}
+
+private const val WELCOME_PREFS = "welcome"
+private const val WELCOMED = "welcomed"
 
 private fun key(screen: Screen): String = when (screen) {
   is Screen.Chat -> "chat:${screen.id}"
   is Screen.New -> "new"
   Screen.Settings -> "settings"
   is Screen.Computer -> "computer:${screen.id}"
+  is Screen.AgentSettings -> "agent:${screen.id}"
+  is Screen.ModelSettings -> "models:${screen.id}"
 }

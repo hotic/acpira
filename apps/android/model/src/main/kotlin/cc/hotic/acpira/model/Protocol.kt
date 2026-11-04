@@ -40,10 +40,18 @@ data class SettingsView(
   val defaultAgent: AgentId = "acpira",
   val agentOrder: List<AgentId> = emptyList(),
   val disabledAgents: List<AgentId> = emptyList(),
+  val autoCompact: Boolean = true,
+  val compactAtTokens: Int = 300_000,
+  /** agent → control id → hidden model family keys (models.ts keys, shared with the desktop) */
+  val hiddenOptions: Map<AgentId, Map<String, List<String>>> = emptyMap(),
+  /** off | earliestReset | mostRemaining | listOrder */
+  val accountSwitch: String = "off",
   val theme: String = "auto",
   val steerQueued: Boolean = false,
   val notifySound: Boolean = true,
   val notifySystem: Boolean = false,
+  /** Agents whose Plan mode approves tool requests without a card */
+  val planAutoApprove: List<AgentId> = emptyList(),
 )
 
 /** Everything a page needs to start (protocol.ts InitState), sent once after `ready` */
@@ -129,14 +137,19 @@ sealed interface HostMsg {
   }
 }
 
-/** An attachment as the composer sends it (protocol.ts Draft); the phone sends images and pasted text */
+/**
+ * An attachment as the composer sends it (protocol.ts Draft); the phone sends images, pasted text and files it picked,
+ * a file's bytes in `data` (the engine stages them and links the staged path)
+ */
 sealed interface Draft {
   data class Image(val mimeType: String, val data: String, val name: String? = null) : Draft
   data class Text(val name: String, val text: String) : Draft
+  data class File(val uri: String, val name: String, val data: String? = null) : Draft
 
   fun toJson(): JsonObject = when (this) {
     is Image -> buildJsonObject { put("kind", "image"); put("mimeType", mimeType); put("data", data); name?.let { put("name", it) } }
     is Text -> buildJsonObject { put("kind", "text"); put("name", name); put("text", text) }
+    is File -> buildJsonObject { put("kind", "file"); put("uri", uri); put("name", name); data?.let { put("data", it) } }
   }
 }
 
@@ -167,6 +180,10 @@ sealed interface WebviewMsg {
   data class SendQueued(val sessionId: String, val id: String) : WebviewMsg
   data class Controls(val agent: AgentId, val fresh: Boolean? = null) : WebviewMsg
   data class Retry(val sessionId: String?) : WebviewMsg
+  /** The failed last turn and its prompt go, the prompt runs again (`retry` restarts the session instead) */
+  data class RetryTurn(val sessionId: String?) : WebviewMsg
+  /** A new session holding this one's turns through `turnIndex`; agent: continue it on another agent */
+  data class ForkSession(val sessionId: String, val turnIndex: Int, val agent: AgentId? = null) : WebviewMsg
   data class Reconnect(val sessionId: String?) : WebviewMsg
   /** One engine setting by its SettingsView key; the engine answers with `settings` to every window */
   data class SetSetting(val key: String, val value: JsonElement) : WebviewMsg
@@ -193,6 +210,8 @@ sealed interface WebviewMsg {
       is SendQueued -> "sendQueued"
       is Controls -> "controls"
       is Retry -> "retry"
+      is RetryTurn -> "retryTurn"
+      is ForkSession -> "forkSession"
       is Reconnect -> "reconnect"
       is SetSetting -> "setSetting"
     }
@@ -242,6 +261,8 @@ sealed interface WebviewMsg {
       is SendQueued -> { put("sessionId", m.sessionId); put("id", m.id) }
       is Controls -> { put("agent", m.agent); m.fresh?.let { put("fresh", it) } }
       is Retry -> opt("sessionId", m.sessionId)
+      is RetryTurn -> opt("sessionId", m.sessionId)
+      is ForkSession -> { put("sessionId", m.sessionId); put("turnIndex", m.turnIndex); opt("agent", m.agent) }
       is Reconnect -> opt("sessionId", m.sessionId)
       is SetSetting -> { put("key", m.key); put("value", m.value) }
     }
@@ -252,7 +273,7 @@ sealed interface WebviewMsg {
     val types = listOf(
       "ready", "resync", "send", "stop", "permission", "answer", "setMode", "setConfig", "selectSession", "deselectSession",
       "newSession", "renameSession", "deleteSession", "pinSession", "archiveSession", "dequeue", "sendQueued", "controls",
-      "retry", "reconnect", "setSetting",
+      "retry", "retryTurn", "forkSession", "reconnect", "setSetting",
     )
   }
 }

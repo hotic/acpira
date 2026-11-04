@@ -1,0 +1,20 @@
+package cc.hotic.acpira.design
+
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.vector.PathParser
+
+/**
+ * The Acpira mark at full resolution (apps/ios AcpiraDesign/Logo.swift): two docks sharing an open centre
+ * (apps/desktop/icons/icon.svg, Welcome.tsx DOCK_A / DOCK_B), in its own 407 x 380 units
+ */
+object AcpiraLogo {
+  const val width = 407f
+  const val height = 380f
+  private val sources = listOf(
+    "M88 0H266C286 0 300 14 300 36V60C300 84 285 98 261 98H145C121 98 108 111 108 135V224C108 240 114 247 132 247H164C178 247 188 257 188 272V282H150C117 282 97 302 97 332V336H78C35 336 0 302 0 260V94C0 43 41 0 88 0Z",
+    "M316 50C370 50 407 91 407 145V299C407 344 372 380 326 380H152C127 380 113 366 113 342V332C113 311 127 298 150 298H264C285 298 298 282 298 261V168C298 151 291 145 276 145H244C229 145 222 135 222 121V114H266C297 114 316 94 316 64Z",
+  )
+
+  /** A fresh copy of each dock, free to transform */
+  fun docks(): List<Path> = sources.map { PathParser().parsePathString(it).toPath() }
+}

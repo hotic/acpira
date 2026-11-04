@@ -52,6 +52,8 @@ class PairingModel(val service: PairingService, context: Context, private val sc
   var addOpen by mutableStateOf(false)
   /** A computer the sheet lists as nearby whatever NSD finds (debug builds' `nearby` launch extra) */
   var pinnedNearby: cc.hotic.acpira.sync.NearbyComputer? = null
+  /** The first-run flow is up and pairs in place: the add sheet stays down meanwhile */
+  var onboarding by mutableStateOf(false)
   /** An `acpira://pair/…` link waiting for confirmation in the sheet */
   var pendingLink by mutableStateOf<String?>(null)
 

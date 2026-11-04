@@ -12,6 +12,8 @@ import cc.hotic.acpira.i18n.t
 import cc.hotic.acpira.model.AgentInfo
 import cc.hotic.acpira.model.AgentTurn
 import cc.hotic.acpira.model.ClientInfo
+import cc.hotic.acpira.model.ConfigControl
+import cc.hotic.acpira.model.Draft
 import cc.hotic.acpira.model.Hello
 import cc.hotic.acpira.model.HostMsg
 import cc.hotic.acpira.model.PlatformRequest
@@ -43,6 +45,9 @@ sealed interface Screen {
   data object Settings : Screen
   /** One paired computer's page, from the settings */
   data class Computer(val id: String) : Screen
+  /** One agent's settings page, and its models page under it */
+  data class AgentSettings(val id: String) : Screen
+  data class ModelSettings(val id: String) : Screen
 }
 
 /** The wire to the engine as the screens show it */
@@ -105,6 +110,15 @@ class AppModel(
   /** Took over the screens of the model before it (a new wire to the same computer) */
   var resumed by mutableStateOf(false)
     private set
+  /**
+   * The moment the screens stopped following the engine live: the app went to the background or the wire ended. The
+   * running turn's clock stands at it until the engine's view of the chat on screen comes again, so it never runs on
+   * through the absence and then jumps back to the engine's time (apps/ios AppModel `clockHeld`)
+   */
+  var clockHeld by mutableStateOf<Instant?>(null)
+    private set
+  /** The app is in the background (`setAway`) */
+  private var away = false
   /** The wire ended (its failure, null when closed from this side); the pairing model takes it from here */
   var onClosed: ((String?) -> Unit)? = null
   /** Session actions the wire before may not have delivered, sent once this wire's init is in */
@@ -200,6 +214,25 @@ class AppModel(
     path.lastOrNull()?.let { if (it is Screen.Chat) select(it.id) }
   }
 
+  /** The clocks' time: the held moment while what the screens show may be stale, else now */
+  fun clockNow(): Instant = clockHeld ?: now()
+
+  /**
+   * The app went to the background (true) or came back. Back on a wire that stayed up, the chat on screen is selected
+   * again so the engine answers with its view as it is now; a new wire reopens it after its init (`reopen`)
+   */
+  fun setAway(background: Boolean) {
+    if (background == away) return
+    away = background
+    if (background) holdClock() else if (connection == Connection.Live) onScreenChat()?.let { select(it) }
+  }
+
+  private fun holdClock() {
+    if (live && clockHeld == null) clockHeld = now()
+  }
+
+  private fun onScreenChat(): String? = (path.lastOrNull { it is Screen.Chat } as Screen.Chat?)?.id
+
   private fun select(id: String) {
     if (!live) return
     feed.select(id)?.let { views[id] = it }
@@ -214,14 +247,28 @@ class AppModel(
     return true
   }
 
-  fun send(sessionId: String, text: String) {
+  fun send(sessionId: String, text: String, attachments: List<Draft> = emptyList()) {
     val body = text.trim()
-    if (body.isEmpty()) return
+    if (body.isEmpty() && attachments.isEmpty()) return
     val view = views[sessionId]
     val users = view?.turns?.count { it is UserTurn } ?: 0
     outgoing[sessionId] = outgoing[sessionId].orEmpty() + Outgoing(body, users)
-    if (post(WebviewMsg.Send(sessionId, body))) return
+    if (post(WebviewMsg.Send(sessionId, body, attachments.takeIf { it.isNotEmpty() }))) return
     demoSend(sessionId, body)
+  }
+
+  /** The composer's mode pick (Goo.swift onSetMode); the demo changes its own view */
+  fun setMode(sessionId: String, id: String) {
+    if (post(WebviewMsg.SetMode(sessionId, id))) return
+    update(sessionId) { v -> v.copy(controls = v.controls.copy(modeId = id)) }
+  }
+
+  /** The composer's pick of a config option (model, effort, Fast, working mode, approval) */
+  fun setConfig(sessionId: String, configId: String, value: String) {
+    if (post(WebviewMsg.SetConfig(sessionId, configId, value))) return
+    update(sessionId) { v ->
+      v.copy(controls = v.controls.copy(options = v.controls.options.map { if (it.id == configId) it.copy(value = value) else it }))
+    }
   }
 
   fun stop(sessionId: String) {
@@ -237,13 +284,60 @@ class AppModel(
     })
   }
 
+  /** Retry: the failed turn goes, its prompt runs again (`retryTurn`; `retry` restarts the session) */
+  fun retryTurn(sessionId: String) {
+    if (post(WebviewMsg.RetryTurn(sessionId))) return
+    // The demo drops the failed turn and its prompt, then sends the prompt again
+    val view = views[sessionId] ?: return
+    if (view.turns.lastOrNull() !is AgentTurn) return
+    val prompt = view.turns.getOrNull(view.turns.size - 2) as? UserTurn ?: return
+    views[sessionId] = view.copy(turns = view.turns.dropLast(2))
+    send(sessionId, prompt.text)
+  }
+
+  /**
+   * Fork from a turn: a new session holding the transcript through that turn, opened over this one (apps/ios AppModel
+   * `fork` / `engineFork`). The engine makes it and shows it on this view; that view opens its chat
+   */
+  fun fork(sessionId: String, turnIndex: Int) {
+    val source = views[sessionId] ?: return
+    if (turnIndex !in source.turns.indices) return
+    val opened: (String) -> Unit = { id ->
+      path.add(Screen.Chat(id))
+      showToast(t("mobile.forked"))
+    }
+    if (live) {
+      awaiting = sessionId to opened
+      post(WebviewMsg.ForkSession(sessionId, turnIndex))
+      return
+    }
+    val id = "demo-${++demoSeq}"
+    val stamp = now().toString()
+    val title = t("session.forkTitle", "title" to source.title)
+    views[id] = source.copy(
+      id = id, title = title, turns = source.turns.take(turnIndex + 1), running = false, queued = null, createdAt = stamp, updatedAt = stamp,
+    )
+    summaries = listOf(SessionSummary(id = id, title = title, agent = source.agent, cwd = source.cwd, updatedAt = stamp, accountId = source.accountId)) + summaries
+    opened(id)
+  }
+
   /** Starts a session of [agent] in [cwd] (a chat when null) and sends [text] once the engine has opened it */
-  fun start(agent: String?, cwd: String?, text: String) {
+  /**
+   * A new session from the new-session page: [picked] are the page's model / effort / mode picks, applied where they
+   * differ from what the engine started it with (apps/ios AppModel+Engine.swift apply), before the first prompt goes
+   */
+  fun start(agent: String?, cwd: String?, text: String, attachments: List<Draft> = emptyList(), picked: List<ConfigControl> = emptyList()) {
     val body = text.trim()
     val replace: (String) -> Unit = { id ->
       val at = path.indexOfLast { it is Screen.New }
       if (at >= 0) path[at] = Screen.Chat(id) else path.add(Screen.Chat(id))
-      if (body.isNotEmpty()) send(id, body)
+      val made = views[id]?.controls?.options.orEmpty()
+      for (option in picked) {
+        val value = option.value ?: continue
+        val now = made.firstOrNull { it.id == option.id } ?: continue
+        if (now.value != value) setConfig(id, option.id, value)
+      }
+      if (body.isNotEmpty() || attachments.isNotEmpty()) send(id, body, attachments)
     }
     if (live) {
       awaiting = feed.views.current?.id to replace
@@ -257,6 +351,17 @@ class AppModel(
     views[id] = SessionView(id = id, agent = chosen, title = body.take(40).ifEmpty { t("session.new") }, cwd = folder, createdAt = stamp, updatedAt = stamp)
     summaries = listOf(SessionSummary(id = id, title = views[id]!!.title, agent = chosen, cwd = folder, updatedAt = stamp)) + summaries
     replace(id)
+  }
+
+  /** New-session controls by agent (HostMsg.Controls): the new session page's model chip before a session exists */
+  val agentControls = mutableStateMapOf<String, List<ConfigControl>>()
+
+  /** Asks the engine for an agent's new-session controls; the demo reads them off one of the agent's views */
+  fun loadControls(agent: String) {
+    if (post(WebviewMsg.Controls(agent))) return
+    if (agentControls[agent] == null) {
+      agentControls[agent] = views.values.firstOrNull { it.agent == agent && it.controls.options.isNotEmpty() }?.controls?.options.orEmpty()
+    }
   }
 
   fun togglePin(id: String) {
@@ -375,6 +480,7 @@ class AppModel(
       is EngineEvent.Closed -> {
         Log.i(TAG, "closed ${event.reason}")
         connection = Connection.Closed(event.reason)
+        holdClock()
         // A paired computer's wire has its own screens for an ended connection; the development engine gets a toast
         val ended = onClosed
         if (ended != null) ended(event.reason) else showToast(t("mobile.engine.disconnected"))
@@ -403,6 +509,7 @@ class AppModel(
       is HostMsg.Sessions -> summaries = message.sessions
       is HostMsg.Categories -> message.categories.projects?.let { projectOrder = it }
       is HostMsg.Settings -> settings = message.settings
+      is HostMsg.Controls -> agentControls[message.agent] = message.controls
       is HostMsg.Session, is HostMsg.Patch, HostMsg.NoSession -> present(message)
       else -> {}
     }
@@ -416,6 +523,8 @@ class AppModel(
         val kept = feed.views.kept.toSet()
         views.keys.filter { it !in kept }.forEach { views.remove(it) }
         views[view.id] = view
+        // The engine's view of the chat on screen, back in the foreground: the clock runs on the engine's times again
+        if (clockHeld != null && !away && view.id == onScreenChat()) clockHeld = null
         // A prompt still on its way gives up its place once the session shows the engine's copy
         outgoing[view.id]?.let { sent ->
           val users = view.turns.count { it is UserTurn }
@@ -454,6 +563,8 @@ class AppModel(
     projectOrder = from.projectOrder
     path.addAll(from.path)
     replay = from.replay + (from.client?.unsent() ?: emptyList())
+    clockHeld = from.clockHeld
+    away = from.away
     resumed = true
   }
 

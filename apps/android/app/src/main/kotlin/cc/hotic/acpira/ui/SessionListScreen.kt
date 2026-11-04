@@ -30,8 +30,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.CenterAlignedTopAppBar
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
@@ -242,16 +240,18 @@ private fun SessionRow(
         }
       }
     }
-    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-      DropdownMenuItem(
-        text = { Text(t(if (session.pinned == true) "common.unpin" else "common.pin")) },
-        leadingIcon = { Lucide(if (session.pinned == true) "pinOff" else "pin", Palette.fg1) },
+    AppMenu(expanded = menu, onDismiss = { menu = false }) {
+      AppMenuItem(
+        t(if (session.pinned == true) "common.unpin" else "common.pin"),
         onClick = { menu = false; onPin() },
+        icon = { MenuGlyph(if (session.pinned == true) "pinOff" else "pin") },
       )
-      DropdownMenuItem(
-        text = { Text(t("common.delete"), color = Palette.danger) },
-        leadingIcon = { Lucide("trash2", Palette.danger) },
+      AppMenuGap()
+      AppMenuItem(
+        t("common.delete"),
         onClick = { menu = false; onDelete() },
+        danger = true,
+        icon = { MenuGlyph("trash2", danger = true) },
       )
     }
   }

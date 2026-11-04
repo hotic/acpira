@@ -1,5 +1,7 @@
 package cc.hotic.acpira.ui
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -10,23 +12,46 @@ import cc.hotic.acpira.logic.permissionOption
 import cc.hotic.acpira.logic.planApprovalTitle
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Context
+import android.os.Build
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
+import cc.hotic.acpira.logic.hasTurnContent
+import cc.hotic.acpira.logic.modelLabel
+import cc.hotic.acpira.logic.showsTurnActions
+import cc.hotic.acpira.logic.turnStatsContent
+import cc.hotic.acpira.model.SessionControls
+import cc.hotic.acpira.model.TurnSettings
 import androidx.compose.ui.layout.layout
 import androidx.compose.material3.IconButton
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.delay
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,79 +66,62 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import cc.hotic.acpira.design.Lucide
 import cc.hotic.acpira.design.Metrics
 import cc.hotic.acpira.design.Palette
 import cc.hotic.acpira.design.Type
 import cc.hotic.acpira.i18n.t
-import cc.hotic.acpira.logic.GroupKind
 import cc.hotic.acpira.logic.LiveActivity
 import cc.hotic.acpira.logic.ProcessItem
 import cc.hotic.acpira.logic.clockStart
-import cc.hotic.acpira.logic.durationText
 import cc.hotic.acpira.logic.elapsedLabel
-import cc.hotic.acpira.logic.groupNames
 import cc.hotic.acpira.logic.groupProcess
 import cc.hotic.acpira.logic.liveActivity
-import cc.hotic.acpira.logic.namesLabel
-import cc.hotic.acpira.logic.retiredProcess
 import cc.hotic.acpira.logic.splitCodexBlocks
-import cc.hotic.acpira.logic.toolIcon
 import cc.hotic.acpira.logic.toolVerb
 import cc.hotic.acpira.logic.turnOutcome
-import cc.hotic.acpira.logic.visibleToolContents
 import cc.hotic.acpira.model.AgentBlock
 import cc.hotic.acpira.model.AgentTurn
 import cc.hotic.acpira.model.Attachment
 import cc.hotic.acpira.model.CompactionBlock
-import cc.hotic.acpira.model.DiffLine
-import cc.hotic.acpira.model.GoalBlock
-import cc.hotic.acpira.model.NoticeBlock
 import cc.hotic.acpira.model.PermissionBlock
 import cc.hotic.acpira.model.PermissionKind
-import cc.hotic.acpira.model.PlanBlock
-import cc.hotic.acpira.model.PlanStatus
-import cc.hotic.acpira.model.QuestionBlock
 import cc.hotic.acpira.model.SteerBlock
 import cc.hotic.acpira.model.TextBlock
 import cc.hotic.acpira.model.ThoughtBlock
 import cc.hotic.acpira.model.ToolCallBlock
-import cc.hotic.acpira.model.ToolContent
-import cc.hotic.acpira.model.ToolKind
 import cc.hotic.acpira.model.ToolStatus
-import cc.hotic.acpira.model.UnknownBlock
 import cc.hotic.acpira.model.UserTurn
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.material3.LocalContentColor
+import cc.hotic.acpira.design.WebMetrics
+import cc.hotic.acpira.model.TurnStop
 
 // The transcript's pieces (apps/ios Transcript/, chat/Turns.tsx under fold = codex): the prompt as a right-hand bubble,
 // each agent turn as one process fold whose head carries the live activity or the finished time, the reply outside
 // it, permission cards after the reply, the outcome row last.
 
-/** The prompt: a right-aligned bubble that always leaves `bubbleInset` free on its left; attachments ride above it */
+/**
+ * The prompt: a right-aligned bubble that always leaves `bubbleInset` free on its left; attachments ride above it. A
+ * long press opens its menu (Cards.swift UserMessageCard) when [onToast] is given: Copy for now
+ */
 @Composable
-fun UserBubble(turn: UserTurn, pending: Boolean = false) {
+fun UserBubble(turn: UserTurn, pending: Boolean = false, onToast: ((String) -> Unit)? = null) {
   if (turn.auto == true) return
   Column(
     Modifier.fillMaxWidth().padding(start = Metrics.bubbleInset, end = Metrics.pad).alpha(if (pending) 0.55f else 1f),
@@ -127,15 +135,41 @@ fun UserBubble(turn: UserTurn, pending: Boolean = false) {
       }
     }
     if (turn.text.isNotBlank()) {
-      Box(
-        Modifier.background(Palette.bubbleBg, RoundedCornerShape(Metrics.rBubble))
-          .padding(horizontal = Metrics.pad + Metrics.s1, vertical = Metrics.gap)
-          .testTag("bubble"),
-      ) {
-        Text(turn.text, color = Palette.fg1, fontSize = Type.body, lineHeight = Type.bodyLine)
+      val context = LocalContext.current
+      val haptics = LocalHapticFeedback.current
+      var menu by remember { mutableStateOf(false) }
+      Box {
+        Box(
+          Modifier.background(Palette.bubbleBg, RoundedCornerShape(Metrics.rBubble))
+            .then(if (onToast == null) Modifier else Modifier.pointerInput(Unit) {
+              detectTapGestures(onLongPress = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); menu = true })
+            })
+            .padding(horizontal = Metrics.pad + Metrics.s1, vertical = Metrics.gap)
+            .testTag("bubble"),
+        ) {
+          Text(turn.text, color = Palette.fg1, fontSize = Type.body, lineHeight = Type.bodyLine)
+        }
+        // Edit (`history.edit`, while idle) is pending: it needs the composer's edit mode
+        AppMenu(expanded = menu, onDismiss = { menu = false }) {
+          AppMenuItem(
+            t("common.copy"),
+            onClick = {
+              menu = false
+              if (copyText(context, turn.text.trimEnd())) onToast?.invoke(t("code.copied"))
+            },
+            modifier = Modifier.testTag("bubble.copy"),
+            icon = { MenuGlyph("copy") },
+          )
+        }
       }
     }
   }
+}
+
+/** Puts [text] on the clipboard; true when the app should confirm it, as Android 13+ shows its own confirmation */
+internal fun copyText(context: Context, text: String): Boolean {
+  context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText(t("common.copy"), text))
+  return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
 }
 
 @Composable
@@ -166,32 +200,93 @@ fun AgentMessage(
   key: String,
   now: () -> Long,
   onPermission: (blockId: String, optionId: String) -> Unit,
+  /** The turn's place in the session (fork from here) */
+  index: Int = 0,
+  /** The reply failed in a way Retry answers (`retryableTurn`): its action row offers it */
+  retry: Boolean = false,
+  /** The selections the prompt went out with: the statistics name the model from them when the peer did not */
+  settings: TurnSettings? = null,
+  controls: SessionControls = SessionControls(),
+  actions: TurnHandlers? = null,
 ) {
-  val split = remember(turn) { splitCodexBlocks(turn.blocks) }
-  Column(Modifier.fillMaxWidth().padding(horizontal = Metrics.pad + Metrics.threadInset), verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
-    for (goal in split.goalsLead) GoalRow(goal)
-    ProcessFold(turn, split.process, running, key, now)
-    for (n in split.notices) NoticeRow(n)
-    for (reply in split.reply) {
-      if (reply.markdown.isNotBlank()) Prose(reply.markdown, Modifier.testTag("reply"))
+  // A call whose observation was lost reads as settled before anything groups or draws it
+  val split = remember(turn) { splitCodexBlocks(turn.blocks.map(::observedBlock)) }
+  val hasTools = remember(turn) { turn.blocks.any { it is ToolCallBlock } }
+  // Content already there when the turn comes into view stays still: only what arrives afterwards enters. A new turn
+  // is first composed with at most its first block, which keeps its entrance
+  remember(key) { if (turn.blocks.size > 1) seedEntrances(turn, split.process, key) }
+  CompositionLocalProvider(
+    LocalRowHeight provides WebMetrics.chatRow,
+    LocalEntranceScope provides EntranceScope(live = running, scope = key),
+    LocalClock provides now,
+  ) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = Metrics.pad + Metrics.threadInset), verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
+      // Goal milestones before anything else open the turn above the fold
+      for (goal in split.goalsLead) GoalRow(goal)
+      CodexFold(turn, split.process, running, hasTools, key, now)
+      for (n in split.notices) NoticeRow(n)
+      for (reply in split.reply) {
+        if (reply.markdown.isNotBlank()) Prose(reply.markdown, Modifier.testTag("reply"))
+      }
+      // Later milestones (paused, met, cleared …) close the reply they followed
+      for (goal in split.goals) GoalRow(goal)
+      for (p in split.permissions.filter { it.planId == null }) PermissionCard(p) { onPermission(p.id, it) }
+      if (!running) turnOutcome(turn)?.let { OutcomeRow(turn, it) }
+      if (showsTurnActions(turn, running)) TurnActions(turn, index, retry, settings, controls, actions)
     }
-    for (goal in split.goals) GoalRow(goal)
-    for (p in split.permissions.filter { it.planId == null }) PermissionCard(p) { onPermission(p.id, it) }
-    if (!running) turnOutcome(turn)?.let { OutcomeRow(it) }
-    if (!running) TurnActions(turn)
   }
 }
 
 /**
- * The reply's actions under it (Cards.swift TurnActions), hugging the reply: copy for now. Android 13+ confirms a copy
- * itself, so the glyph only turns into a tick for a moment
+ * A call whose observation was lost must not pass for running work (ToolCall.tsx): it shows settled, so nothing
+ * shimmers or ticks, and `toolVerb` says its result is unconfirmed
+ */
+private fun observedBlock(block: AgentBlock): AgentBlock =
+  if (block is ToolCallBlock && block.observation == "unknown" && (block.status == ToolStatus.pending || block.status == ToolStatus.in_progress)) {
+    block.copy(status = ToolStatus.cancelled)
+  } else block
+
+/** Marks every entrance identity of [turn] as entered (EntranceLedger.seed) */
+private fun seedEntrances(turn: AgentTurn, process: List<AgentBlock>, scope: String) {
+  fun claim(id: String) = EntranceLedger.claim("$scope\u0000$id")
+  claim("fold-head")
+  for (item in groupProcess(process)) claim(itemEntrance(item.id))
+  for (block in turn.blocks) {
+    when (block) {
+      is ThoughtBlock -> claim("thought:${block.startedAt?.toLong() ?: ""}")
+      is ToolCallBlock -> {
+        claim(itemEntrance(block.id))
+        claim("${block.id}:tool")
+        claim("${block.id}:files")
+      }
+      else -> {}
+    }
+  }
+}
+
+/** What a settled turn's actions do (apps/ios `sessionActions`); the chat wires them to its session */
+class TurnHandlers(val retry: () -> Unit, val fork: (turnIndex: Int) -> Unit, val toast: (String) -> Unit)
+
+/**
+ * The reply's actions under it (Cards.swift TurnActions), hugging the reply: retry, copy, fork from this turn, the
+ * statistics. Retry shows only on the newest reply when it failed in a way Retry answers; a reply with nothing in it
+ * offers no copy or statistics. Android 13+ confirms a copy itself, so the glyph only turns into a tick for a moment
  */
 @Composable
-private fun TurnActions(turn: AgentTurn) {
+private fun TurnActions(
+  turn: AgentTurn,
+  index: Int,
+  retry: Boolean,
+  settings: TurnSettings?,
+  controls: SessionControls,
+  actions: TurnHandlers?,
+) {
   val reply = remember(turn) { replyMarkdown(turn) }
-  if (reply.isEmpty()) return
+  val content = remember(turn) { hasTurnContent(turn) }
+  if (actions == null && reply.isEmpty() && !content) return
   val context = LocalContext.current
   var copied by remember { mutableStateOf(false) }
+  var stats by remember { mutableStateOf(false) }
   LaunchedEffect(copied) {
     if (copied) { delay(COPIED_MS); copied = false }
   }
@@ -202,19 +297,185 @@ private fun TurnActions(turn: AgentTurn) {
       val pull = Metrics.gap.roundToPx()
       layout(row.width, maxOf(row.height - pull, 0)) { row.place(0, -pull) }
     },
-    horizontalArrangement = Arrangement.End,
+    horizontalArrangement = Arrangement.spacedBy(Metrics.s0_5, Alignment.End),
   ) {
-    IconButton(
-      onClick = {
-        context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText(t("turn.copy"), reply))
+    if (retry && actions != null) ActionButton("rotateCcw", t("common.retry"), "turn.retry") { actions.retry() }
+    if (reply.isNotEmpty()) {
+      ActionButton(if (copied) "check" else "copy", t(if (copied) "code.copied" else "turn.copy"), "turn.copy") {
+        if (copyText(context, reply)) actions?.toast?.invoke(t("code.copied"))
         copied = true
-      },
-      modifier = Modifier.size(Metrics.ctlSm).testTag("turn.copy"),
-    ) {
-      Lucide(if (copied) "check" else "copy", Palette.fg2, size = Metrics.chevron, contentDescription = t(if (copied) "code.copied" else "turn.copy"))
+      }
+    }
+    if (actions != null) ActionButton("gitBranch", t("turn.fork"), "turn.fork") { actions.fork(index) }
+    if (content) {
+      Box {
+        ActionButton("chartNoAxesColumn", t("turn.stats"), "turn.stats", open = stats) { stats = !stats }
+        if (stats) StatsPopup(turn, remember(turn.usage, settings, controls) { modelLabel(turn.usage, settings, controls) }) { stats = false }
+      }
     }
   }
 }
+
+/** One glyph of the action row; `open` marks the one whose card is showing */
+@Composable
+private fun ActionButton(icon: String, label: String, tag: String, open: Boolean = false, onClick: () -> Unit) {
+  IconButton(
+    onClick = onClick,
+    colors = IconButtonDefaults.iconButtonColors(containerColor = if (open) Palette.active else Color.Transparent),
+    modifier = Modifier.size(Metrics.ctlSm).testTag(tag),
+  ) {
+    Lucide(icon, if (open) Palette.fg1 else Palette.fg2, size = Metrics.chevron, contentDescription = label)
+  }
+}
+
+/**
+ * The statistics card as a popover on its button (the iOS app's `.popover`): above the button when there is room, else
+ * below it; an outside tap or back closes it. A popup is a window of its own, so its test tags need the flag again
+ */
+@Composable
+private fun StatsPopup(turn: AgentTurn, model: String?, onDismiss: () -> Unit) {
+  val margin = with(LocalDensity.current) { Metrics.s2.roundToPx() }
+  val position = remember(margin) { PopoverPosition(margin) }
+  Popup(popupPositionProvider = position, onDismissRequest = onDismiss, properties = PopupProperties(focusable = true)) {
+    TurnStatsCard(turn, model, Modifier.semantics { testTagsAsResourceId = true }.testTag("turn.statsCard"))
+  }
+}
+
+/** Its trailing edge on the anchor's, kept [margin] inside the window; above the anchor when it fits, else below */
+private class PopoverPosition(private val margin: Int) : PopupPositionProvider {
+  override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
+    val maxX = maxOf(margin, windowSize.width - popupContentSize.width - margin)
+    val x = (anchorBounds.right - popupContentSize.width).coerceIn(margin, maxX)
+    val above = anchorBounds.top - margin - popupContentSize.height
+    return IntOffset(x, if (above >= margin) above else anchorBounds.bottom + margin)
+  }
+}
+
+/**
+ * Cards.swift TurnStats (StatsCard): the title with the model, the timing tiles, the token lines with their share
+ * chips, the context under a thin divider, and the vendor's request id with its copy action at the foot
+ */
+@Composable
+private fun TurnStatsCard(turn: AgentTurn, model: String?, modifier: Modifier = Modifier) {
+  val content = remember(turn) { turnStatsContent(turn) }
+  val shape = RoundedCornerShape(Metrics.rLg)
+  Column(
+    modifier.width(Metrics.popWide)
+      .shadow(Metrics.toastShadow, shape)
+      .background(Palette.bg1, shape)
+      .border(Metrics.hairline, Palette.conversationLine, shape)
+      .padding(horizontal = Metrics.s2, vertical = Metrics.s3),
+    verticalArrangement = Arrangement.spacedBy(Metrics.s1),
+  ) {
+    Row(
+      Modifier.fillMaxWidth().heightIn(min = Metrics.ctl).padding(horizontal = Metrics.s2),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(Metrics.s3),
+    ) {
+      Text(t("turn.stats"), color = Palette.fg1, fontSize = Type.text2, fontWeight = FontWeight.Medium, maxLines = 1)
+      Text(
+        model.orEmpty(), color = Palette.fg3, fontSize = Type.text3, maxLines = 1, overflow = TextOverflow.MiddleEllipsis,
+        textAlign = TextAlign.End, modifier = Modifier.weight(1f),
+      )
+    }
+    // Inset like the web's mx-1.5, so the tile sheet sits inside the token lines instead of running edge to edge
+    if (content.tiles.isNotEmpty()) {
+      Row(
+        Modifier.padding(horizontal = Metrics.s1_5).fillMaxWidth().height(IntrinsicSize.Min)
+          .background(Palette.active, RoundedCornerShape(Metrics.rMd)),
+      ) {
+        content.tiles.forEachIndexed { i, tile ->
+          if (i > 0) Box(Modifier.width(Metrics.hairline).fillMaxHeight().background(Palette.line))
+          Column(
+            Modifier.weight(1f).padding(horizontal = Metrics.s2, vertical = Metrics.s1_5),
+            verticalArrangement = Arrangement.spacedBy(Metrics.s0_5),
+          ) {
+            Text(figure(tile.value), maxLines = 1, overflow = TextOverflow.Ellipsis, style = tabular)
+            Text(tile.label, color = Palette.fg3, fontSize = Type.text4, lineHeight = Type.text4Line, maxLines = 1, overflow = TextOverflow.Ellipsis)
+          }
+        }
+      }
+    }
+    if (content.tokens.isNotEmpty() || content.context != null) {
+      Column {
+        for (line in content.tokens) StatRow(line.label, AnnotatedString(line.value), line.chip)
+        content.context?.let { c ->
+          if (content.tokens.isNotEmpty()) StatDivider(Modifier.padding(horizontal = Metrics.s2, vertical = Metrics.s1))
+          val fg3 = Palette.fg3
+          StatRow(t("stats.contextShort"), buildAnnotatedString { append(c.used); withStyle(SpanStyle(color = fg3)) { append(" / ${c.size}") } }, c.share)
+        }
+      }
+    }
+    turn.usage?.requestId?.let { RequestIdFooter(it) }
+  }
+}
+
+@Composable
+private fun StatDivider(modifier: Modifier = Modifier) {
+  Box(modifier.fillMaxWidth().height(Metrics.hairline).background(Palette.line))
+}
+
+/** Figure: the digits large, the unit words between them small and faint ("2 分钟 24 秒", "33 tok/s") */
+@Composable
+private fun figure(text: String): AnnotatedString {
+  val unit = SpanStyle(color = Palette.fg3, fontSize = Type.text4)
+  val digits = SpanStyle(color = Palette.fg1, fontSize = Type.text2, fontWeight = FontWeight.SemiBold)
+  return buildAnnotatedString {
+    var at = 0
+    for (m in FIGURE_DIGITS.findAll(text)) {
+      if (m.range.first > at) withStyle(unit) { append(text.substring(at, m.range.first)) }
+      withStyle(digits) { append(m.value) }
+      at = m.range.last + 1
+    }
+    if (at < text.length) withStyle(unit) { append(text.substring(at)) }
+  }
+}
+
+/** A label / value line; the chip (cache share, context share) rides with the value on the right */
+@Composable
+private fun StatRow(label: String, value: AnnotatedString, chip: String?) {
+  Row(
+    Modifier.fillMaxWidth().padding(horizontal = Metrics.s2, vertical = Metrics.s0_5),
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(Metrics.s2),
+  ) {
+    Text(label, color = Palette.fg2, fontSize = Type.text3, lineHeight = Type.text3Line, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+    chip?.let {
+      Text(
+        it, color = Palette.fg2, fontSize = Type.text3, lineHeight = Type.text3Line, maxLines = 1, style = tabular,
+        modifier = Modifier.background(Palette.active, RoundedCornerShape(Metrics.rSm)).padding(horizontal = Metrics.s1),
+      )
+    }
+    Text(value, color = Palette.fg1, fontSize = Type.text3, lineHeight = Type.text3Line, maxLines = 1, style = tabular)
+  }
+}
+
+/** PanelFooter: the id in faint text and the copy button, under one divider across the card's content */
+@Composable
+private fun RequestIdFooter(requestId: String) {
+  val context = LocalContext.current
+  var copied by remember { mutableStateOf(false) }
+  LaunchedEffect(copied) {
+    if (copied) { delay(COPIED_MS); copied = false }
+  }
+  Column(verticalArrangement = Arrangement.spacedBy(Metrics.s1)) {
+    StatDivider()
+    Row(Modifier.padding(start = Metrics.s2), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Metrics.s1)) {
+      Text(
+        requestId, color = Palette.fg3, fontSize = Type.text3, lineHeight = Type.text3Line, maxLines = 1,
+        overflow = TextOverflow.MiddleEllipsis, modifier = Modifier.weight(1f),
+      )
+      ActionButton(if (copied) "check" else "copy", t(if (copied) "stats.requestIdCopied" else "stats.copyRequestId"), "stats.copyRequestId") {
+        copyText(context, requestId)
+        copied = true
+      }
+    }
+  }
+}
+
+/** Figures line up in columns (the iOS card's monospacedDigit) */
+private val tabular: TextStyle @Composable get() = LocalTextStyle.current.copy(fontFeatureSettings = "tnum")
+private val FIGURE_DIGITS = Regex("""\d(?:[\d.,\u00a0\u202f]*\d)?""")
 
 /** The text a copy takes: the turn's final prose, else its plain text blocks */
 private fun replyMarkdown(turn: AgentTurn): String {
@@ -227,296 +488,106 @@ private const val COPIED_MS = 1500L
 
 /**
  * The process fold: open while the turn works, closed once it is done; a tap on the head always wins (Turns.tsx
- * CodexFold). A turn with nothing but a reply shows no head
+ * CodexFold). A turn with no process worth a head (a plain reply, or only a compaction status) shows no head. A steered
+ * prompt stays in view while the parts around it fold
  */
 @Composable
-private fun ProcessFold(turn: AgentTurn, blocks: List<AgentBlock>, running: Boolean, key: String, now: () -> Long) {
-  if (retiredProcess(running, turn, blocks)) return
+private fun CodexFold(turn: AgentTurn, blocks: List<AgentBlock>, running: Boolean, hasTools: Boolean, key: String, now: () -> Long) {
+  val retired = !running && !hasTools && blocks.all { it is CompactionBlock }
+  if (retired && blocks.isEmpty()) return
   var manual by rememberSaveable(key) { mutableStateOf<Boolean?>(null) }
-  val open = manual ?: running
+  val open = retired || (manual ?: running)
   val items = remember(blocks) { groupProcess(blocks) }
+  val parts = remember(items) { processParts(items) }
+  // Only items fold; a process of nothing but steered prompts has no chevron
+  val foldable = parts.any { it is FoldPart.Items }
   Column(Modifier.fillMaxWidth()) {
-    FoldHead(turn, running, open, foldable = items.isNotEmpty(), now = now) { manual = !open }
-    AnimatedVisibility(open && items.isNotEmpty(), enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-      Column(Modifier.padding(top = Metrics.s1, bottom = Metrics.s1_5)) {
-        for (item in items) ProcessItemView(item)
+    if (!retired) EntranceOnce("fold-head") { FoldHead(turn, running, open, foldable, now) { manual = !open } }
+    parts.forEachIndexed { i, part ->
+      androidx.compose.runtime.key(part.id) {
+        when (part) {
+          is FoldPart.Steer -> EntranceOnce(itemEntrance(part.id)) {
+            Box(Modifier.padding(top = Metrics.processProseGap)) { SteeredMessage(part.block) }
+          }
+          is FoldPart.Items -> Reveal(open) {
+            ProcessHistory(
+              part.items,
+              Modifier.padding(
+                top = if (retired) Metrics.s0 else if (i == 0) Metrics.s1 else Metrics.processProseGap,
+                bottom = if (!retired && i == parts.size - 1) Metrics.s1_5 else Metrics.s0,
+              ),
+            )
+          }
+        }
       }
     }
   }
 }
 
-/** The fold's head: the orb (or hand, plan, question) and the activity while live; a tick and the time once done */
+/** The fold's head: the Orb (or hand, plan, question) and the activity while live; a tick, ✗ or warning and the time once done */
 @Composable
 private fun FoldHead(turn: AgentTurn, running: Boolean, open: Boolean, foldable: Boolean, now: () -> Long, onToggle: () -> Unit) {
   val activity = liveActivity(turn)
   val outcome = turnOutcome(turn)
   val label = if (running) activity.label else outcome ?: t("turns.done")
-  Row(
-    verticalAlignment = Alignment.CenterVertically,
-    modifier = Modifier.fillMaxWidth().heightIn(min = Metrics.chatRow).clickable(enabled = foldable, onClick = onToggle).testTag("fold.head"),
-  ) {
-    Box(Modifier.width(Metrics.lead + Metrics.gap), contentAlignment = Alignment.CenterStart) {
+  // A turn that rounds to 0s shows the bare Done label, as the live counter stays hidden for its first second
+  val since = clockStart(turn)
+  val end = turn.endedAt
+  val elapsed = if (!running && turn.startedAt != null && end != null && (since == null || end - since >= HALF_SECOND_MS)) elapsedLabel(turn) else null
+  AcpRow(
+    Modifier.rowButton(if (foldable) open else null, onToggle).testTag("fold.head"),
+    lead = {
+      val ink = LocalContentColor.current
       when {
-        !running -> Lucide("check", Palette.fg3, size = Metrics.icon)
-        activity.lead == LiveActivity.Lead.hand -> Lucide("hand", Palette.fg3, size = Metrics.icon)
-        activity.lead == LiveActivity.Lead.question -> Lucide("messageCircleQuestion", Palette.fg3, size = Metrics.icon)
-        activity.lead == LiveActivity.Lead.plan -> Lucide("listTodo", Palette.fg3, size = Metrics.icon)
+        !running -> Glyph(if (turn.stop == TurnStop.cancelled) "x" else if (outcome != null) "triangleAlert" else "check", ink, Metrics.icon)
+        activity.lead == LiveActivity.Lead.hand -> Glyph("hand", ink)
+        activity.lead == LiveActivity.Lead.question -> Glyph("messageCircleQuestion", ink)
+        activity.lead == LiveActivity.Lead.plan -> Glyph("listTodo", ink)
         else -> Orb()
       }
-    }
-    if (running && activity.active) Shimmer(label) else Text(label, color = Palette.fg2, fontSize = Type.text1, lineHeight = Type.text2Line)
-    val time = if (running) liveClock(turn, now) else if (outcome == null) elapsedLabel(turn) else ""
-    if (time.isNotEmpty()) {
-      Spacer(Modifier.width(Metrics.s2))
-      Text(time, color = Palette.fg3, fontSize = Type.text1, lineHeight = Type.text2Line)
-    }
-    if (foldable) {
-      Spacer(Modifier.width(Metrics.s1_5))
-      Lucide("chevronRight", Palette.fg3, Modifier.rotate(if (open) 90f else 0f), size = Metrics.chevron)
-    }
-  }
-}
-
-/** The live turn's clock: hidden for its first second, then whole seconds */
-@Composable
-private fun liveClock(turn: AgentTurn, now: () -> Long): String {
-  val start = clockStart(turn) ?: return ""
-  var tick by remember { mutableLongStateOf(now()) }
-  LaunchedEffect(start) {
-    while (true) {
-      tick = now()
-      kotlinx.coroutines.delay(CLOCK_TICK_MS)
-    }
-  }
-  val ms = tick - start
-  return if (ms < CLOCK_TICK_MS) "" else durationText(ms.toDouble())
-}
-
-private const val CLOCK_TICK_MS = 1000L
-
-/** The working orb: a ring turning once a second, the head's live lead */
-@Composable
-fun Orb(size: Dp = Metrics.icon) {
-  val loop = rememberInfiniteTransition(label = "orb")
-  val turn by loop.animateFloat(0f, 360f, infiniteRepeatable(tween(1000, easing = LinearEasing)), label = "spin")
-  Lucide("loaderCircle", Palette.fg2, Modifier.rotate(turn), size = size)
-}
-
-/** A live label: its ink breathes between the shimmer base and the full ink (ui/Shimmer) */
-@Composable
-fun Shimmer(text: String) {
-  val loop = rememberInfiniteTransition(label = "shimmer")
-  val a by loop.animateFloat(0.45f, 1f, infiniteRepeatable(tween(900), androidx.compose.animation.core.RepeatMode.Reverse), label = "ink")
-  Text(text, color = Palette.fg2, fontSize = Type.text1, lineHeight = Type.text2Line, modifier = Modifier.alpha(a))
-}
-
-/** One process item: a block row, or a group of reads / edits under one head */
-@Composable
-private fun ProcessItemView(item: ProcessItem) {
-  when (item) {
-    is ProcessItem.Group -> {
-      var open by rememberSaveable(item.id) { mutableStateOf(false) }
-      val first = item.blocks.first()
-      ProcessRow(
-        icon = if (item.kind == GroupKind.read) "files" else "pencil",
-        verb = toolVerb(first),
-        target = namesLabel(groupNames(item.blocks)),
-        mono = false,
-        onTap = { open = !open },
-      )
-      AnimatedVisibility(open) {
-        Column(Modifier.padding(start = Metrics.lead + Metrics.gap)) {
-          for (b in item.blocks) ToolRow(b)
-        }
-      }
-    }
-    is ProcessItem.Block -> when (val b = item.block) {
-      is ToolCallBlock -> ToolRow(b)
-      is ThoughtBlock -> ThoughtRow(b)
-      is PlanBlock -> PlanList(b)
-      is TextBlock -> if (b.markdown.isNotBlank()) Prose(b.markdown, Modifier.padding(vertical = Metrics.s1_5), color = Palette.fg2)
-      is CompactionBlock -> ProcessRow(
-        "chevronsDownUp",
-        t(when (b.status) {
-          cc.hotic.acpira.model.CompactionStatus.in_progress -> "turns.compacting"
-          cc.hotic.acpira.model.CompactionStatus.completed -> "turns.compacted"
-          cc.hotic.acpira.model.CompactionStatus.failed -> "turns.compactFailed"
-          cc.hotic.acpira.model.CompactionStatus.cancelled -> "turns.compactCancelled"
-        }),
-        null, false, running = b.status == cc.hotic.acpira.model.CompactionStatus.in_progress,
-      )
-      is SteerBlock -> Box(Modifier.padding(vertical = Metrics.processProseGap)) { UserBubble(UserTurn(text = b.text)) }
-      is QuestionBlock -> ProcessRow("messageCircleQuestion", t("question.title"), b.questions.firstOrNull()?.text, false)
-      is GoalBlock -> GoalRow(b)
-      is UnknownBlock -> {}
-      else -> {}
-    }
-  }
-}
-
-/** One tool call: its row, and its output under it once tapped open */
-@Composable
-private fun ToolRow(block: ToolCallBlock) {
-  var open by rememberSaveable(block.id) { mutableStateOf(false) }
-  val contents = visibleToolContents(block)
-  val target = block.mcpServer?.let { "${it} ${block.target.orEmpty()}" } ?: block.target
-  ProcessRow(
-    icon = toolIcon(block),
-    verb = toolVerb(block),
-    target = target,
-    mono = block.targetMono == true,
-    failed = block.status == ToolStatus.failed,
-    running = block.status.live,
-    onTap = if (contents.isNotEmpty()) ({ open = !open }) else null,
-  )
-  AnimatedVisibility(open) {
-    Column(Modifier.padding(start = Metrics.lead + Metrics.gap, top = Metrics.gapHalf, bottom = Metrics.gapHalf), verticalArrangement = Arrangement.spacedBy(Metrics.s2)) {
-      for (c in contents) ToolOutput(c)
-    }
-  }
-}
-
-@Composable
-private fun ToolOutput(content: ToolContent) {
-  when (content) {
-    is ToolContent.Text -> CodeCard(content.text.trimEnd(), Modifier.heightIn(max = Metrics.codeOutputMax))
-    is ToolContent.Diff -> DiffCard(content.lines)
-    is ToolContent.ListItems -> CodeCard(content.items.joinToString("\n"), Modifier.heightIn(max = Metrics.codeOutputMax))
-    is ToolContent.Image, is ToolContent.Unknown -> {}
-  }
-}
-
-/** A diff: added lines on the ok wash, removed on the danger wash, hunks faint */
-@Composable
-private fun DiffCard(lines: List<DiffLine>) {
-  Column(
-    Modifier.fillMaxWidth().heightIn(max = Metrics.codeOutputMax).background(Palette.bgCode, RoundedCornerShape(Metrics.rLg))
-      .horizontalScroll(rememberScrollState()).padding(vertical = Metrics.s2),
+    },
   ) {
-    for (line in lines.take(DIFF_PREVIEW_LINES)) {
-      val (bg, fg, sign) = when (line.kind) {
-        DiffLine.Kind.add -> Triple(Palette.diffAdd, Palette.ok, "+")
-        DiffLine.Kind.del -> Triple(Palette.diffDel, Palette.danger, "-")
-        DiffLine.Kind.hunk -> Triple(androidx.compose.ui.graphics.Color.Transparent, Palette.fg3, "")
-        DiffLine.Kind.ctx -> Triple(androidx.compose.ui.graphics.Color.Transparent, Palette.fg2, " ")
-      }
-      Text(
-        "$sign${line.text}", color = fg, fontFamily = FontFamily.Monospace, fontSize = Type.codeOutput, lineHeight = Type.codeOutputLine,
-        softWrap = false, modifier = Modifier.background(bg).padding(horizontal = Metrics.pad),
-      )
-    }
+    RowLabel(label, shimmer = running && activity.active)
+    if (running && since != null) LiveElapsed(since, now)
+    if (elapsed != null) Text(elapsed, color = Palette.fg3, maxLines = 1, softWrap = false, modifier = Modifier.alignByBaseline())
+    if (foldable) FoldChevron(open, Palette.fg2, markOnBaseline())
   }
 }
 
-private const val DIFF_PREVIEW_LINES = 80
+private const val HALF_SECOND_MS = 500
 
 /**
- * ui/Row under process rows: the kind's icon in the lead slot, the verb in the row ink, the target after it (mono for
- * paths and commands), one line, truncated
+ * The turn's process cut where something has to stay in view while the parts around it fold: a steered prompt. Runs
+ * of items fold. A part is keyed by its first item, so content arriving later leaves the earlier parts in place
  */
-@Composable
-private fun ProcessRow(
-  icon: String,
-  verb: String,
-  target: String?,
-  mono: Boolean,
-  failed: Boolean = false,
-  running: Boolean = false,
-  onTap: (() -> Unit)? = null,
-) {
-  Row(
-    verticalAlignment = Alignment.CenterVertically,
-    modifier = Modifier.fillMaxWidth().heightIn(min = Metrics.processRow)
-      .then(if (onTap != null) Modifier.clickable(onClick = onTap) else Modifier)
-      .testTag("row"),
-  ) {
-    Box(Modifier.width(Metrics.lead + Metrics.gap), contentAlignment = Alignment.CenterStart) {
-      Lucide(icon, if (failed) Palette.danger else Palette.fg3, size = Metrics.icon)
-    }
-    Text(
-      buildString {
-        append(verb)
-      },
-      color = if (failed) Palette.danger else Palette.fg2, fontSize = Type.text1, lineHeight = Type.text2Line, maxLines = 1,
-      modifier = if (running) Modifier.alpha(RUNNING_ALPHA) else Modifier,
-    )
-    if (!target.isNullOrBlank()) {
-      Spacer(Modifier.width(Metrics.s2))
-      Text(
-        target.replace('\n', ' '), color = Palette.fg2, fontSize = if (mono) Type.mono else Type.text1,
-        fontFamily = if (mono) FontFamily.Monospace else null, lineHeight = Type.text2Line,
-        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
-      )
-    }
-  }
+private sealed interface FoldPart {
+  val id: String
+  data class Items(override val id: String, val items: List<ProcessItem>) : FoldPart
+  data class Steer(override val id: String, val block: SteerBlock) : FoldPart
 }
 
-private const val RUNNING_ALPHA = 0.75f
+private fun processParts(items: List<ProcessItem>): List<FoldPart> {
+  val out = ArrayList<FoldPart>()
+  var rows = ArrayList<ProcessItem>()
+  var runId = ""
+  fun close() {
+    if (rows.isNotEmpty()) { out += FoldPart.Items(runId, rows); rows = ArrayList() }
+  }
+  for (item in items) {
+    val steer = (item as? ProcessItem.Block)?.block as? SteerBlock
+    if (steer != null) {
+      close()
+      out += FoldPart.Steer(item.id, steer)
+    } else {
+      if (rows.isEmpty()) runId = item.id
+      rows += item
+    }
+  }
+  close()
+  return out
+}
+
 private const val QUOTE_CHIP = 24
-
-/** A thought: its row reads 思考, a tap shows the reasoning under it */
-@Composable
-private fun ThoughtRow(block: ThoughtBlock) {
-  var open by rememberSaveable(block.startedAt ?: block.text.hashCode()) { mutableStateOf(false) }
-  ProcessRow("brain", t("thought.label"), null, false, running = block.streaming == true, onTap = if (block.text.isNotBlank()) ({ open = !open }) else null)
-  AnimatedVisibility(open) {
-    Text(
-      block.text, color = Palette.fg3, fontSize = Type.text2, lineHeight = Type.text2Line,
-      modifier = Modifier.padding(start = Metrics.lead + Metrics.gap, bottom = Metrics.s2),
-    )
-  }
-}
-
-/** The agent's to-do list: one row per entry with its status mark */
-@Composable
-private fun PlanList(block: PlanBlock) {
-  Column(Modifier.padding(vertical = Metrics.s1)) {
-    for (e in block.entries) {
-      Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.heightIn(min = Metrics.rowDense)) {
-        Box(Modifier.width(Metrics.lead + Metrics.gap), contentAlignment = Alignment.CenterStart) {
-          when (e.status) {
-            PlanStatus.completed -> Lucide("circleCheck", Palette.ok, size = Metrics.icon)
-            PlanStatus.in_progress -> Lucide("circleDot", Palette.fg1, size = Metrics.icon)
-            PlanStatus.pending -> Lucide("circle", Palette.fg3, size = Metrics.icon)
-          }
-        }
-        Text(
-          e.title, color = if (e.status == PlanStatus.completed) Palette.fg3 else Palette.fg1, fontSize = Type.text2, lineHeight = Type.text2Line,
-        )
-      }
-    }
-  }
-}
-
-@Composable
-private fun GoalRow(block: GoalBlock) {
-  ProcessRow("goal", t("goal.event.${block.event.name}"), block.objective, false)
-}
-
-@Composable
-private fun NoticeRow(block: NoticeBlock) {
-  val tint = when {
-    block.severity == "error" -> Palette.danger
-    block.info == true -> Palette.fg3
-    else -> Palette.warn
-  }
-  Row(verticalAlignment = Alignment.Top, modifier = Modifier.fillMaxWidth().padding(vertical = Metrics.s1)) {
-    Box(Modifier.width(Metrics.lead + Metrics.gap).heightIn(min = Metrics.s6), contentAlignment = Alignment.CenterStart) {
-      Lucide(if (block.severity == "error") "circleAlert" else "info", tint, size = Metrics.icon)
-    }
-    Column {
-      Text(block.title, color = Palette.fg1, fontSize = Type.text2, lineHeight = Type.text2Line)
-      block.details?.takeIf { it.isNotBlank() }?.let { Text(it, color = Palette.fg3, fontSize = Type.text3, lineHeight = Type.text3Line, maxLines = NOTICE_LINES, overflow = TextOverflow.Ellipsis) }
-    }
-  }
-}
-
-private const val NOTICE_LINES = 4
-
-@Composable
-private fun OutcomeRow(text: String) {
-  ProcessRow("ban", text, null, false)
-}
 
 /**
  * A permission request (Cards.swift PermissionCard): the request's title and command on a card, Allow once as the
@@ -560,18 +631,13 @@ fun PermissionCard(block: PermissionBlock, onPick: (String) -> Unit) {
             PillButton(t("permission.more"), onClick = { menu = true }, modifier = Modifier.testTag("permission.more"), oneLine = true) {
               Lucide("chevronDown", Palette.fg2, size = Metrics.chevron)
             }
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-              for (o in more.filter { !it.bypass } + more.filter { it.bypass }) {
-                DropdownMenuItem(
-                  text = {
-                    Column {
-                      Text(o.label, fontSize = Type.text2)
-                      o.detail?.let { Text(it, color = Palette.fg3, fontSize = Type.text3) }
-                    }
-                  },
-                  onClick = { menu = false; onPick(o.id) },
-                )
-              }
+            // The everyday grants first, the bypassing ones after a gap
+            AppMenu(expanded = menu, onDismiss = { menu = false }) {
+              val plain = more.filter { !it.bypass }
+              val bypass = more.filter { it.bypass }
+              for (o in plain) AppMenuItem(o.label, onClick = { menu = false; onPick(o.id) }, subtitle = o.detail)
+              if (plain.isNotEmpty() && bypass.isNotEmpty()) AppMenuGap()
+              for (o in bypass) AppMenuItem(o.label, onClick = { menu = false; onPick(o.id) }, subtitle = o.detail)
             }
           }
         }

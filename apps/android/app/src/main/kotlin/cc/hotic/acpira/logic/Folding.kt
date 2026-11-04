@@ -35,6 +35,9 @@ data class CodexSplit(
   val goals: List<GoalBlock>,
 )
 
+/** isAdvisory: a notice that only informs, with nothing to act on and no known transient cause */
+fun isAdvisory(n: NoticeBlock) = n.severity == "warning" && n.category == "unknown" && n.actions.isNullOrEmpty()
+
 /**
  * splitCodexBlocks: the text after the last action stays outside the process fold; explicit phases win. Goal
  * milestones are status rows: the leading ones open the turn, the ones after the last action follow the reply
@@ -55,7 +58,9 @@ fun splitCodexBlocks(blocks: List<AgentBlock>): CodexSplit {
   blocks.forEachIndexed { i, block ->
     when {
       block is PermissionBlock -> permissions += block
-      block is NoticeBlock -> notices += block
+      // Failure notices are status rows lifted under the fold; an advisory and a retry row keep their place in the
+      // process (a retry row is a step of the work, and lifted out it stacked under the live fold for the whole turn)
+      block is NoticeBlock && !isAdvisory(block) && block.retry == null -> notices += block
       block is QuestionBlock && block.outcome == null -> {}
       block is GoalBlock && (firstOther == null || i < firstOther) -> goalsLead += block
       block is GoalBlock && (lastAction == null || i > lastAction) -> goals += block
@@ -250,6 +255,26 @@ fun elapsedLabel(turn: AgentTurn): String {
   return durationText(end - start)
 }
 
+/** The turn's span from its clock start to its end ("5m 35s"); empty while it has no end */
+fun elapsedDuration(turn: AgentTurn): String {
+  val start = clockStart(turn) ?: return ""
+  val end = turn.endedAt ?: return ""
+  return durationText(end - start)
+}
+
+/** commandDuration: tenths below ten seconds once finished; `whole` is the live clock */
+fun commandDuration(ms: Double, whole: Boolean = false): String {
+  val clamped = maxOf(0.0, ms)
+  if (!whole && clamped < 10_000) {
+    return t("turns.elapsed.s", "s" to if (clamped < 100) "<0.1" else String.format(java.util.Locale.ROOT, "%.1f", clamped / 1000))
+  }
+  val seconds = if (whole) (clamped / 1000).toInt() else (clamped / 1000).roundToInt()
+  val m = seconds / 60
+  val s = seconds % 60
+  if (m > 0) return if (s > 0) t("turns.elapsed.ms", "m" to m, "s" to s) else t("turns.elapsed.m", "m" to m)
+  return t("turns.elapsed.s", "s" to s)
+}
+
 /** turnOutcome: a line for a short stop, or for a normal end with nothing to show */
 fun turnOutcome(turn: AgentTurn): String? {
   if (turn.observation == "unknown") return t("chatgpt.unknownTurn")
@@ -281,7 +306,9 @@ fun liveActivity(turn: AgentTurn): LiveActivity {
   if (turn.blocks.any { it is PermissionBlock && it.planId == null }) return LiveActivity(t("host.awaitingApproval"), false, LiveActivity.Lead.hand)
   if (turn.blocks.any { it is PermissionBlock }) return LiveActivity(t("plan.awaitingBuild"), false, LiveActivity.Lead.plan)
   if (turn.blocks.any { it is QuestionBlock && it.outcome == null }) return LiveActivity(t("host.awaitingAnswers"), false, LiveActivity.Lead.question)
-  turn.retry?.let { r ->
+  // A provider retry relabels the working row, unless the turn's retry row already says so
+  val retryRow = turn.blocks.any { it is NoticeBlock && it.retry?.status == "in_progress" }
+  if (!retryRow) turn.retry?.let { r ->
     val label = if (r.attempt != null && r.max != null) t("turns.retryingAttempt", "attempt" to r.attempt!!, "max" to r.max!!) else t("turns.retrying")
     return LiveActivity(label, true, LiveActivity.Lead.orb)
   }

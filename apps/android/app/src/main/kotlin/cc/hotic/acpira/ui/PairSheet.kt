@@ -113,17 +113,39 @@ private const val PAIR_DONE_MS = 600L
 private const val PAIR_NOTICE_MS = 2_400L
 private const val CODE_LENGTH = 6
 
+/** The sheet's content in place instead of in a sheet: the first-run flow's pairing step (WelcomeFlow) */
+class PairInline(val onBack: () -> Unit, val onDone: () -> Unit)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PairSheet(pairing: PairingModel) {
   val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
   val scope = rememberCoroutineScope()
+  ModalBottomSheet(
+    onDismissRequest = { pairing.addOpen = false },
+    sheetState = state,
+    containerColor = Palette.formPage,
+    dragHandle = null,
+    modifier = Modifier.testTag("pair.sheet"),
+  ) {
+    PairFlow(pairing, inline = null, onClose = { scope.launch { state.hide() }.invokeOnCompletion { pairing.addOpen = false } })
+  }
+}
+
+/**
+ * The sheet's form and stages. [inline]: in place on the first-run flow's page, a large title over the computer's hint,
+ * back to the flow instead of close, and the flow moves on where the sheet would go
+ */
+@Composable
+fun PairFlow(pairing: PairingModel, inline: PairInline?, onClose: () -> Unit = {}) {
+  val scope = rememberCoroutineScope()
   var phase by remember { mutableStateOf<PairPhase>(PairPhase.Choose) }
   var nearby by remember { mutableStateOf<List<NearbyComputer>>(emptyList()) }
   var browsing by remember { mutableStateOf(true) }
 
-  fun close() {
-    scope.launch { state.hide() }.invokeOnCompletion { pairing.addOpen = false }
+  /** Paired and done: the sheet goes, or the flow it stands in moves on */
+  fun finish() {
+    if (inline != null) inline.onDone() else onClose()
   }
 
   /** Pairs through a scanned, pasted or confirmed link */
@@ -180,52 +202,55 @@ fun PairSheet(pairing: PairingModel) {
     }
   }
 
-  ModalBottomSheet(
-    onDismissRequest = { pairing.addOpen = false },
-    sheetState = state,
-    containerColor = Palette.formPage,
-    dragHandle = null,
-    modifier = Modifier.testTag("pair.sheet"),
-  ) {
-    BackHandler(enabled = phase is PairPhase.Code || phase is PairPhase.Failed) { phase = PairPhase.Choose }
-    // A sheet is a window of its own: its tags need the resource-id switch again for the scripts to find them
-    Column(Modifier.fillMaxWidth().fillMaxHeight().navigationBarsPadding().imePadding().semantics { testTagsAsResourceId = true }) {
-      SheetBar(
-        title = when (val p = phase) {
-          PairPhase.Choose -> t("mobile.pair.add")
-          is PairPhase.Code -> t("mobile.pair.code.title")
-          else -> ""
-        },
-        subtitle = (phase as? PairPhase.Code)?.computer?.name,
-        onBack = if (phase is PairPhase.Code) ({ phase = PairPhase.Choose }) else null,
-        onClose = ::close,
-      )
-      AnimatedContent(
-        targetState = phase,
-        contentKey = { it::class },
-        transitionSpec = { fadeIn(tween(Motion.fade)) togetherWith fadeOut(tween(Motion.fade)) },
-        label = "pairPhase",
-        modifier = Modifier.weight(1f),
-      ) { p ->
-        when (p) {
-          PairPhase.Choose -> PairAddForm(
-            nearby = nearby, browsing = browsing,
-            onLink = ::pair,
-            onNearby = { phase = PairPhase.Code(it) },
-          )
-          is PairPhase.Code -> PairCodePage(pairing, p.computer, onJoined = { phase = PairPhase.Joined(it) })
-          else -> PairStage(pairing, p, onFinish = ::close, onConnect = { (p as? PairPhase.Confirm)?.let { pair(it.link) } },
-            onRetry = { (p as? PairPhase.Failed)?.retryLink?.let { pair(it) } ?: run { phase = PairPhase.Choose } },
-            onRescan = { phase = PairPhase.Choose })
-        }
+  val failed = phase is PairPhase.Failed
+  BackHandler(enabled = phase is PairPhase.Code || failed) { phase = PairPhase.Choose }
+  // In place, back from the form leaves the step
+  BackHandler(enabled = inline != null && phase == PairPhase.Choose) { inline?.onBack() }
+  // A sheet is a window of its own: its tags need the resource-id switch again for the scripts to find them
+  Column(Modifier.fillMaxWidth().fillMaxHeight().navigationBarsPadding().imePadding().semantics { testTagsAsResourceId = true }) {
+    SheetBar(
+      title = when (phase) {
+        // In place the form carries its own large title
+        PairPhase.Choose -> if (inline == null) t("mobile.pair.add") else ""
+        is PairPhase.Code -> t("mobile.pair.code.title")
+        else -> ""
+      },
+      subtitle = (phase as? PairPhase.Code)?.computer?.name,
+      onBack = when {
+        phase is PairPhase.Code -> ({ phase = PairPhase.Choose })
+        // In place: back from the form leaves the step, back from a failure goes to the form
+        inline != null && phase == PairPhase.Choose -> inline.onBack
+        inline != null && failed -> ({ phase = PairPhase.Choose })
+        else -> null
+      },
+      onClose = if (inline == null) onClose else null,
+    )
+    AnimatedContent(
+      targetState = phase,
+      contentKey = { it::class },
+      transitionSpec = { fadeIn(tween(Motion.fade)) togetherWith fadeOut(tween(Motion.fade)) },
+      label = "pairPhase",
+      modifier = Modifier.weight(1f),
+    ) { p ->
+      when (p) {
+        PairPhase.Choose -> PairAddForm(
+          nearby = nearby, browsing = browsing,
+          lead = if (inline != null) t("mobile.pair.connectTitle") to t("mobile.pair.connectHint") else null,
+          onLink = ::pair,
+          onNearby = { phase = PairPhase.Code(it) },
+        )
+        is PairPhase.Code -> PairCodePage(pairing, p.computer, onJoined = { phase = PairPhase.Joined(it) })
+        else -> PairStage(pairing, p, onFinish = ::finish, onConnect = { (p as? PairPhase.Confirm)?.let { pair(it.link) } },
+          onRetry = { (p as? PairPhase.Failed)?.retryLink?.let { pair(it) } ?: run { phase = PairPhase.Choose } },
+          onRescan = { phase = PairPhase.Choose })
       }
     }
   }
 }
 
-/** The sheet's bar: back (on the code page), the title with the computer's name under it, close */
+/** The sheet's bar: back (on the code page), the title with the computer's name under it, close (in a sheet) */
 @Composable
-private fun SheetBar(title: String, subtitle: String?, onBack: (() -> Unit)?, onClose: () -> Unit) {
+private fun SheetBar(title: String, subtitle: String?, onBack: (() -> Unit)?, onClose: (() -> Unit)?) {
   Row(
     verticalAlignment = Alignment.CenterVertically,
     modifier = Modifier.fillMaxWidth().heightIn(min = Metrics.barCtl + Metrics.s2).padding(horizontal = Metrics.s1),
@@ -239,15 +264,21 @@ private fun SheetBar(title: String, subtitle: String?, onBack: (() -> Unit)?, on
       Text(title, color = Palette.fgStrong, fontSize = Type.text1, fontWeight = FontWeight.SemiBold, maxLines = 1)
       subtitle?.let { Text(it, color = Palette.fg3, fontSize = Type.text4, maxLines = 1) }
     }
-    IconButton(onClick = onClose, modifier = Modifier.size(Metrics.barCtl).testTag("pair.close")) {
+    if (onClose != null) IconButton(onClick = onClose, modifier = Modifier.size(Metrics.barCtl).testTag("pair.close")) {
       Lucide("x", Palette.fg1, size = Metrics.iconCtl, contentDescription = t("common.close"))
-    }
+    } else Box(Modifier.size(Metrics.barCtl))
   }
 }
 
-/** The sheet's form: the camera card, the computers nearby, a pasted link */
+/** The sheet's form: the camera card, the computers nearby, a pasted link; [lead] a large title and hint over them */
 @Composable
-private fun PairAddForm(nearby: List<NearbyComputer>, browsing: Boolean, onLink: (String) -> Unit, onNearby: (NearbyComputer) -> Unit) {
+private fun PairAddForm(
+  nearby: List<NearbyComputer>,
+  browsing: Boolean,
+  lead: Pair<String, String>? = null,
+  onLink: (String) -> Unit,
+  onNearby: (NearbyComputer) -> Unit,
+) {
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
   var notice by remember { mutableStateOf<String?>(null) }
@@ -256,6 +287,12 @@ private fun PairAddForm(nearby: List<NearbyComputer>, browsing: Boolean, onLink:
     Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = Metrics.pad),
     verticalArrangement = Arrangement.spacedBy(Metrics.s6),
   ) {
+    lead?.let { (title, hint) ->
+      Column(Modifier.padding(horizontal = Metrics.s1), verticalArrangement = Arrangement.spacedBy(Metrics.s1)) {
+        Text(title, color = Palette.fgStrong, fontSize = Type.largeTitle, lineHeight = Type.largeTitleLine, fontWeight = FontWeight.Bold)
+        Text(hint, color = Palette.fg2, fontSize = Type.text3, lineHeight = Type.text3Line)
+      }
+    }
     FormCard {
       Box(Modifier.fillMaxWidth().height(Metrics.pairScanCard).clip(RoundedCornerShape(Metrics.rCardRound))) {
         PairCameraCard(onLink = { link -> if (isPairingLink(link)) onLink(link) })

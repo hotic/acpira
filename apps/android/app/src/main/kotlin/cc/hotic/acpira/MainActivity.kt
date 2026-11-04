@@ -108,6 +108,7 @@ class MainActivity : ComponentActivity() {
 
   override fun onStart() {
     super.onStart()
+    model?.setAway(false)
     val pairing = pairing ?: return
     pairing.service.enterForeground()
     // Back from the background, where the service closed the wire: dial the followed computer again
@@ -115,6 +116,8 @@ class MainActivity : ComponentActivity() {
   }
 
   override fun onStop() {
+    // The running clock stands from here until the engine's view comes again (AppModel `clockHeld`)
+    model?.setAway(true)
     pairing?.service?.enterBackground()
     super.onStop()
   }

@@ -139,9 +139,14 @@ data class SessionOption(
   val description: String? = null,
   val group: Group? = null,
   val kind: String? = null,
+  /** Where the model comes from; kind `official` / `custom` splits the settings' model page */
+  val source: Source? = null,
 ) {
   @Serializable
   data class Group(val id: String, val name: String)
+
+  @Serializable
+  data class Source(val id: String, val name: String, val kind: String? = null)
 }
 
 @Serializable
@@ -346,7 +351,29 @@ data class NoticeBlock(
   val title: String = "",
   val details: String? = null,
   val actions: List<FailureAction>? = null,
+  /** Set on the row that logs one run of provider retries */
+  val retry: RetryLog? = null,
 ) : AgentBlock
+
+/** One run of provider retries: every failed attempt with the provider's own error text */
+@Serializable
+data class RetryLog(
+  /** A tool status: in_progress, completed, failed, cancelled */
+  val status: String = "in_progress",
+  val max: Int? = null,
+  /** When the next attempt starts (epoch ms) */
+  val nextAt: Double? = null,
+  val reconnect: Boolean? = null,
+  val attempts: List<RetryAttempt> = emptyList(),
+)
+
+@Serializable
+data class RetryAttempt(
+  /** Epoch ms */
+  val at: Double = 0.0,
+  val attempt: Int? = null,
+  val text: String = "",
+)
 
 @Serializable
 data class SteerBlock(val id: String, val text: String = "", val attachments: List<Attachment>? = null) : AgentBlock

@@ -62,8 +62,9 @@ sleep 2
 
 step "pair by code"
 adb shell am start -S -n "$package/.MainActivity" --es nearby "$id@10.0.2.2:$port" --es locale en --es motion none >/dev/null
-ui wait "No computer connected" 30
-ui tap pair.action
+# A fresh install opens on the first-run flow, which pairs in place
+ui wait welcome.start 30
+ui tap welcome.start
 ui tap "10.0.2.2:$port"
 # The digits' field is painted clear under the boxes, so uiautomator does not list it; it has focus once the page is in
 ui wait "Enter pairing code"
