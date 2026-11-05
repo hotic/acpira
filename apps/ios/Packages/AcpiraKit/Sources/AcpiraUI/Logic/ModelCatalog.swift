@@ -43,6 +43,17 @@ struct ModelFamily: Hashable, Sendable {
   func hash(into hasher: inout Hasher) { hasher.combine(key) }
 }
 
+/// Compiled once: a regex literal is compiled again each time it is evaluated, and the composer's chips and the thread's
+/// sidekick names run these for every option on every build
+private enum CatalogPatterns {
+  nonisolated(unsafe) static let fusion = /^(?i)Fusion\s*\((.+?)\s+\+\s+(.+)\)$/
+  nonisolated(unsafe) static let levelWords = /(?:reasoning|thinking|effort|level)/
+  nonisolated(unsafe) static let separators = /[\s_-]/
+  nonisolated(unsafe) static let reasoningId = /reasoning_effort|thought_level|thinking|thinking_level/
+  nonisolated(unsafe) static let fastId = /(^|[\s_-])(?i)fast($|[\s_-])/
+  nonisolated(unsafe) static let fastName = /(?i)fast( mode)?/
+}
+
 enum ModelCatalog {
   static let fusion = "Fusion"
   private static let levels: [String: String] = [
@@ -64,7 +75,7 @@ enum ModelCatalog {
   /// "GPT-5.6 Luna High", Fast from either side (one pair-level switch on the wire)
   static func parseFusion(_ name: String) -> Parsed? {
     let trimmed = name.trimmingCharacters(in: .whitespaces)
-    guard let m = trimmed.firstMatch(of: /^(?i)Fusion\s*\((.+?)\s+\+\s+(.+)\)$/) else { return nil }
+    guard let m = trimmed.firstMatch(of: CatalogPatterns.fusion) else { return nil }
     let lead = parse(String(m.1)), sk = parse(String(m.2))
     return Parsed(family: fusion, effort: lead.effort, fast: lead.fast || sk.fast, long: lead.long, lead: lead.family,
                   sidekick: [sk.family, sk.effort].filter { !$0.isEmpty }.joined(separator: " "))
@@ -251,7 +262,7 @@ enum ComposerControls {
   private static let levels = ["None", "Minimal", "Low", "Medium", "High", "XHigh", "Max", "Ultra", "Thinking"]
 
   private static func compact(_ value: String) -> String {
-    value.lowercased().replacing(/(?:reasoning|thinking|effort|level)/, with: "").replacing(/[\s_-]/, with: "")
+    value.lowercased().replacing(CatalogPatterns.levelWords, with: "").replacing(CatalogPatterns.separators, with: "")
   }
 
   /// Presentation only: Low / Medium / High / XHigh / Max / Ultra; the wire ids stay
@@ -273,7 +284,7 @@ enum ComposerControls {
   static func isUltra(_ label: String?) -> Bool { label == "Ultra" }
 
   static func isReasoning(_ c: ConfigControl) -> Bool {
-    c.category == "thought_level" || (c.category == nil && c.id.wholeMatch(of: /reasoning_effort|thought_level|thinking|thinking_level/) != nil)
+    c.category == "thought_level" || (c.category == nil && c.id.wholeMatch(of: CatalogPatterns.reasoningId) != nil)
   }
 
   /// Kimi folds thinking on / off into the effort select
@@ -327,7 +338,7 @@ enum ComposerControls {
 
   static func isFast(_ c: ConfigControl) -> Bool {
     if c.type == "boolean" {
-      return c.id.firstMatch(of: /(^|[\s_-])(?i)fast($|[\s_-])/) != nil || c.name.wholeMatch(of: /(?i)fast( mode)?/) != nil
+      return c.id.firstMatch(of: CatalogPatterns.fastId) != nil || c.name.wholeMatch(of: CatalogPatterns.fastName) != nil
     }
     return c.options.count == 2 && ["standard", "fast"].allSatisfy { id in c.options.contains { $0.id == id } }
   }

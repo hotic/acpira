@@ -174,7 +174,8 @@ extension AppModel {
       } else {
         liveSessions.insert(view.id)
       }
-      // Only the views the feed keeps stay, so a long transcript is not held past its cache bound
+      // Only the views the feed keeps stay, so a long transcript is not held past its cache bound. Filtered only when
+      // one has to go, so a streamed chunk writes `views` once and its readers hear one change
       let kept = Set(link.feed.views.kept)
       // Views carried over from the wire before stay too, while the bound leaves them room; one this wire shows
       // becomes the feed's own
@@ -329,7 +330,8 @@ extension AppModel {
     if let kept = link.feed.select(id) {
       liveSessions.remove(id)
       EntranceLedger.seed(kept)
-      views[id] = kept
+      // Usually the view already shown: an equal write would still redraw the chat in the middle of its push
+      if views[id] != kept { views[id] = kept }
     }
     watching = id
     link.client.post(.selectSession(id: id))

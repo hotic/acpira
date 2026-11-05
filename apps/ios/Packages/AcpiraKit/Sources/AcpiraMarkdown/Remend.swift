@@ -199,7 +199,8 @@ private struct Run {
         o += 2
         continue
       }
-      if U.sub(n, o, o + 3) == U.units("```") {
+      // `fenceAt` is the substring test without copying three units out for every offset
+      if fenceAt(n, o) {
         fence.toggle()
         let s: UInt8 = inline || fence ? 1 : 0
         let t = min(o + 3, n.count)
@@ -225,8 +226,7 @@ private struct Run {
 
   /// `In`: part of a triple backtick
   static func partOfFence(_ n: S, _ r: Int) -> Bool {
-    let f = U.units("```")
-    return U.sub(n, r, r + 3) == f || (r > 0 && U.sub(n, r - 1, r + 2) == f) || (r > 1 && U.sub(n, r - 2, r + 1) == f)
+    fenceAt(n, r) || (r > 0 && fenceAt(n, r - 1)) || (r > 1 && fenceAt(n, r - 2))
   }
 
   /// `E`: unescaped single backticks
@@ -245,7 +245,7 @@ private struct Run {
     var open = false, fence = false, start = -1, s = 0
     while s < n.count {
       if n[s] == U.backslash && s + 1 < n.count && n[s + 1] == U.tick { s += 2; continue }
-      if U.sub(n, s, s + 3) == U.units("```") { fence.toggle(); s += 3; continue }
+      if fenceAt(n, s) { fence.toggle(); s += 3; continue }
       if !fence && n[s] == U.tick {
         if open {
           if start < r && r < s { return true }
@@ -384,6 +384,8 @@ private struct Run {
   /// `v`: single asterisks that open or close emphasis
   static func singleStars(_ n: S) -> Int {
     var r = 0, fence = false, chain = false, s = 0
+    // Once per text rather than once per asterisk
+    let math = hasMath(n)
     while s < n.count {
       if fenceAt(n, s) { fence.toggle(); s += 3; continue }
       if fence { s += 1; continue }
@@ -393,7 +395,7 @@ private struct Run {
         continue
       }
       let t = n[js: s - 1], a = n[js: s + 1]
-      if skipStar(n, s, t, a) { s += 1; continue }
+      if skipStar(n, s, t, a, math: math) { s += 1; continue }
       // `_n`
       let both = U.word(t) && U.word(a)
       let after = a != nil && !U.blank(a), before = t != nil && !U.blank(t)
@@ -408,8 +410,8 @@ private struct Run {
   }
 
   /// `Sn`
-  static func skipStar(_ n: S, _ r: Int, _ e: UInt16?, _ i: UInt16?) -> Bool {
-    if e == U.backslash || (hasMath(n) && inMath(n, r)) { return true }
+  static func skipStar(_ n: S, _ r: Int, _ e: UInt16?, _ i: UInt16?, math: Bool) -> Bool {
+    if e == U.backslash || (math && inMath(n, r)) { return true }
     if e != U.star && i == U.star { return n[js: r + 2] != U.star }
     return e == U.star || ((e == nil || U.blank(e)) && (i == nil || U.blank(i)))
   }
@@ -417,11 +419,12 @@ private struct Run {
   /// `Pn`: underscores that open or close emphasis
   static func singleUnderscores(_ n: S) -> Int {
     var r = 0, fence = false, o = 0
+    let math = hasMath(n)
     while o < n.count {
       if fenceAt(n, o) { fence.toggle(); o += 3; continue }
       if fence || n[o] != U.under { o += 1; continue }
       let s = n[js: o - 1], t = n[js: o + 1]
-      let skip = s == U.backslash || (hasMath(n) && inMath(n, o)) || inLinkURL(n, o) || inHTMLTag(n, o)
+      let skip = s == U.backslash || (math && inMath(n, o)) || inLinkURL(n, o) || inHTMLTag(n, o)
         || s == U.under || t == U.under || (U.word(s) && U.word(t))
       if !skip { r += 1 }
       o += 1

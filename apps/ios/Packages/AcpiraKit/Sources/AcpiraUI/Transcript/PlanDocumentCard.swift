@@ -7,8 +7,9 @@ import SwiftUI
 // action bar while it can still be built: the execution model with the extra approvals behind one chip, and Build.
 // Revising is a message: the composer's send answers the plan's revise option (Dock / AppModel.send).
 
-/// What the plan card reads from its session (PlanDocumentContext)
-struct PlanContext {
+/// What the plan card reads from its session (PlanDocumentContext). Equatable, so an environment value rebuilt from
+/// each push's freshly decoded controls reads as unchanged when they are
+struct PlanContext: Equatable {
   var controls = SessionControls()
   var running = false
   /// The session can take a build (status ready)

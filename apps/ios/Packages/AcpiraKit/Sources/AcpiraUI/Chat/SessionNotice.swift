@@ -212,7 +212,11 @@ struct ExternalSessionNotice: View {
 /// its history up: the docked to-do card
 struct ThreadDock: View {
   let session: SessionView
-  var body: some View { PlanDock(session: session) }
+  // Values rather than the session: a streamed chunk leaves them equal and the card is not rebuilt with it
+  var body: some View {
+    PlanDock(entries: dockPlan(session.turns, running: session.running), running: session.running,
+             goal: session.external == nil ? session.goal : nil, goalActions: session.goalActions)
+  }
 }
 
 extension EnvironmentValues {
@@ -232,15 +236,18 @@ private let startingDelay = Duration.milliseconds(400)
 /// running, and that reply's working row speaks instead (`heldStage`), so the words never show in two places.
 /// iOS 26 lays the title slot out beside the back button, not centred
 struct StartingTitle: ViewModifier {
-  let session: SessionView
+  /// The session is starting with no reply to say it on (status starting, not running, not a mirror). A flag rather
+  /// than the session, so a streamed chunk does not rebuild the bar's items
+  let active: Bool
+  /// The session's agent, named when the chat's agent is unknown
+  let agent: AgentId
   /// A composer picker is out: the pill leaves the bar with its other items (`barAside`)
   var aside = false
-  @Environment(\.chatAgent) private var agent
+  @Environment(\.chatAgent) private var chatAgent
   @Environment(\.snapshot) private var snapshot
   @State private var late = false
 
   func body(content: Content) -> some View {
-    let active = session.status == .starting && !session.running && session.external == nil
     content
       #if os(iOS)
       // Its own glass, the height of the bar's buttons; the shared one would draw a second capsule around it

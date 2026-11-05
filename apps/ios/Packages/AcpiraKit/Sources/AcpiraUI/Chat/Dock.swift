@@ -10,7 +10,10 @@ import UIKit
 
 /// The surfaces under the thread, top to bottom
 struct Dock: View {
+  /// The chat hands its dock `dockSession(_:)`, a copy without the streamed transcript
   let session: SessionView
+  /// The session's turn count, which that copy does not keep; nil counts the given session's turns
+  var turns: Int?
   @Binding var draft: String
   @Binding var staged: [Attachment]
   /// A sent prompt being rewritten in the composer (PromptEdit.swift); nil while the composer writes a new one
@@ -25,14 +28,15 @@ struct Dock: View {
     let question = openQuestion(session)
     let alertTurn = shortStop(session)
     let editing = edit.wrappedValue
+    let turnCount = turns ?? session.turns.count
     VStack(spacing: Metrics.dockGap) {
       if let question {
         QuestionCard(block: question) { actions.answer(question.id, $0, $1) }
           // A new question starts on its first page
           .id(question.id)
       }
-      if let alertTurn, dismissedAlert != session.turns.count {
-        AlertCard(turn: alertTurn, onDismiss: { dismissedAlert = session.turns.count },
+      if let alertTurn, dismissedAlert != turnCount {
+        AlertCard(turn: alertTurn, onDismiss: { dismissedAlert = turnCount },
                   onRetry: actions.retry, onContinue: actions.carryOn,
                   onCompact: session.commands.contains { $0.name == "compact" } ? actions.compact : nil,
                   onNewSession: actions.newSession)
@@ -68,6 +72,42 @@ struct Dock: View {
     // The dock runs closer to the screen edges than the transcript (--page): a phone composer spans the width
     .padding(.horizontal, Metrics.pad)
   }
+}
+
+/// The dock's copy of a session: everything but the transcript, of which it keeps the newest turn with only what the
+/// dock's surfaces read there (`openQuestion`, `pendingPlanReview`, `shortStop` and the alert card: open questions, plan
+/// approvals, the stop and its error). A streamed chunk leaves the copy equal, so the dock, the composer and the bar's
+/// stand-in are not rebuilt with every chunk, which took most of a streaming chat's main thread. `rev` and `updatedAt`
+/// move with every push and nothing under the dock reads them. A dock surface reading more of the transcript must
+/// keep it here
+func dockSession(_ session: SessionView) -> SessionView {
+  var view = session
+  view.rev = nil
+  view.updatedAt = ""
+  view.turns = session.turns.last.map { [dockTurn($0)] } ?? []
+  return view
+}
+
+private func dockTurn(_ turn: Turn) -> Turn {
+  guard case .agent(var agent) = turn else { return turn }
+  agent.blocks = agent.blocks.filter { block in
+    switch block {
+    case .question(let q): q.outcome == nil
+    case .permission(let p): p.planId != nil
+    default: false
+    }
+  }
+  // Timing and progress change while the turn streams; the dock reads none of them
+  agent.observation = nil
+  agent.usage = nil
+  agent.startedAt = nil
+  agent.respondedAt = nil
+  agent.endedAt = nil
+  agent.idleMs = nil
+  agent.activity = nil
+  agent.command = nil
+  agent.retry = nil
+  return .agent(agent)
 }
 
 /// The question waiting for an answer in the latest agent turn
@@ -244,17 +284,19 @@ struct GoalDock {
 
 /// The plan card floating over the bottom of the thread, `--dock-gap` above the dock; the session goal heads it
 struct PlanDock: View {
-  let session: SessionView
+  /// `dockPlan` of the session's turns
+  let entries: [PlanEntry]?
+  let running: Bool
+  /// The session's goal; nil for a ChatGPT mirror, which has no goal of its own to steer
+  let goal: SessionGoal?
+  let goalActions: [GoalAction]?
   @Environment(\.sessionActions) private var actions
 
   var body: some View {
-    let entries = dockPlan(session.turns, running: session.running)
-    // A ChatGPT mirror has no goal of its own to steer
-    let goal = session.external == nil ? session.goal : nil
     if entries != nil || goal != nil {
       // px-page like the dock under it, so on the phone the dock's edges (--pad)
-      PlanCard(entries: entries, live: session.running, goal: goal.map {
-        GoalDock(goal: $0, actions: goalHeadActions($0, advertised: session.goalActions), running: session.running,
+      PlanCard(entries: entries, live: running, goal: goal.map {
+        GoalDock(goal: $0, actions: goalHeadActions($0, advertised: goalActions), running: running,
                  onAction: { actions.goal($0, nil) })
       })
       .padding(.horizontal, Metrics.pad)

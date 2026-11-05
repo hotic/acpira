@@ -758,7 +758,8 @@ struct FileOpener {
     if AttachmentFile.isCopy(url) {
       return FileManager.default.fileExists(atPath: url.path) ? { preview(url) } : nil
     }
-    guard let model, let session, model.views[session] != nil else { return nil }
+    // Asked from row bodies: reading `views` there would observe every streamed chunk of every session
+    guard let model, let session, model.holdsView(session) else { return nil }
     return { [leave] in
       leave?()
       model.path.append(.file(session: session, path: url.path, line: line))

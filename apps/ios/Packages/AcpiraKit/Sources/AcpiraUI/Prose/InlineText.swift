@@ -93,8 +93,11 @@ struct InlineText: View {
   let strongInk: Color
   let accent: Color
   var weight: FontWeight = .regular
+  /// The streamed tail's fade, on the last text of a live Prose only. It changes on every pacing tick, so it is an
+  /// input of this view rather than an environment value: written into the environment, each tick handed every
+  /// selection text view below the write a new environment, which UIKit compares in full as a trait change
+  var fade: StreamFade?
   @State private var extra: CGFloat = 0
-  @Environment(\.streamFade) private var fade
 
   var body: some View {
     // Built once per evaluation of this body: the fade's frames in between only move the renderer's clock
@@ -122,7 +125,7 @@ struct InlineText: View {
       .lineBox(style)
       .foregroundStyle(ink)
       .textRenderer(InlineCodeRenderer(fill: Palette.hover, radius: Metrics.rSm, outsetY: (WebType.mono.size * 0.1).rounded(.up),
-                                       lineHeight: style.lineHeight, depth: style.baselineDepth, growth: growth, extra: extra,
+                                       lineHeight: style.lineHeight, depth: style.renderDepth, growth: growth, extra: extra,
                                        fade: fade, now: now))
       .fixedSize(horizontal: false, vertical: true)
       .onPreferenceChange(Text.LayoutKey.self) { layouts in

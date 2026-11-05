@@ -402,6 +402,8 @@ func holdsImage(_ inlines: [MDInline]) -> Bool {
 struct ImageParagraph: View {
   let inlines: [MDInline]
   let style: ProseStyle
+  /// The streamed tail's fade when the paragraph is the last block, for its last run
+  var fade: StreamFade?
 
   var body: some View {
     let parts = paragraphParts(inlines)
@@ -409,8 +411,8 @@ struct ImageParagraph: View {
       ForEach(Array(parts.enumerated()), id: \.offset) { i, part in
         switch part {
         case .text(let run):
-          InlineText(inlines: run, style: style.body, ink: style.ink, strongInk: style.strongInk, accent: style.accent)
-            .tailOnly(i == parts.count - 1)
+          InlineText(inlines: run, style: style.body, ink: style.ink, strongInk: style.strongInk, accent: style.accent,
+                     fade: i == parts.count - 1 ? fade : nil)
         case .image(let src, let alt):
           MarkdownImage(src: src, alt: alt)
         }
