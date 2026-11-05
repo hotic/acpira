@@ -10,7 +10,7 @@ struct SidebarFoot: View {
   @Environment(\.pairing) private var pairing
 
   var body: some View {
-    GlassEffectContainer {
+    GlassGroup {
       HStack(spacing: Metrics.gap) {
         Button { model.settingsOpen = true } label: {
           Image(systemName: "gearshape").font(.system(size: Metrics.glassGlyph, weight: .medium))
@@ -19,7 +19,7 @@ struct SidebarFoot: View {
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .glassEffect(GlassStyle.control.interactive(), in: Circle())
+        .glassSurface(GlassStyle.control.interactive(), in: Circle())
         .accessibilityLabel(Text(web: t("session.settings")))
         if let pairing, let current = pairing.selected { computer(pairing, current) }
       }
@@ -46,7 +46,7 @@ struct SidebarFoot: View {
     }
     .menuStyle(.button)
     .buttonStyle(.plain)
-    .glassEffect(GlassStyle.control.interactive(), in: Capsule())
+    .glassSurface(GlassStyle.control.interactive(), in: Capsule())
     .accessibilityLabel(Text(verbatim: [current.name, pairing.status(current)].compactMap { $0 }.joined(separator: t("common.metaSep"))))
   }
 }

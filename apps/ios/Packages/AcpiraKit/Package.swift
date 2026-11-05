@@ -45,7 +45,7 @@ let netTargets: [Target] = !net ? [] : [
 
 let package = Package(
   name: "AcpiraKit",
-  platforms: [.iOS(.v26), .macOS(.v26)],
+  platforms: [.iOS(.v18), .macOS(.v26)],
   products: [
     // One product for the app to link; it imports the modules it needs one by one
     // With the networking artifacts built it carries the real pairing service too, so the app target links nothing

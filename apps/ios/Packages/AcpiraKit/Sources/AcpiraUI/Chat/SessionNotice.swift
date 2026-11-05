@@ -242,29 +242,24 @@ struct StartingTitle: ViewModifier {
   func body(content: Content) -> some View {
     let active = session.status == .starting && !session.running && session.external == nil
     content
-      .toolbar {
-        #if os(iOS)
-        if active && (late || snapshot) && !aside {
-          ToolbarItem(placement: .title) {
-            HStack(spacing: Metrics.s2) {
-              Orb()
-              Text(web: t("devices.starting"), paragraph: false).lineLimit(1)
-            }
-            .textStyle(TypeScale.text3, weight: .medium)
-            .foregroundStyle(Palette.popFg2)
-            .padding(.horizontal, Metrics.pad)
-            .frame(height: Metrics.glassCtl)
-            .glassEffect(.regular, in: Capsule())
-            .fixedSize()
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(Text(web: t("notice.connecting", ["agent": agent?.name ?? session.agent])))
-            .accessibilityAddTraits(.updatesFrequently)
-          }
-          // Its own glass, the height of the bar's buttons; the shared one would draw a second capsule around it
-          .sharedBackgroundVisibility(.hidden)
+      #if os(iOS)
+      // Its own glass, the height of the bar's buttons; the shared one would draw a second capsule around it
+      .bareToolbarItem(placement: .title, shown: active && (late || snapshot) && !aside) {
+        HStack(spacing: Metrics.s2) {
+          Orb()
+          Text(web: t("devices.starting"), paragraph: false).lineLimit(1)
         }
-        #endif
+        .textStyle(TypeScale.text3, weight: .medium)
+        .foregroundStyle(Palette.popFg2)
+        .padding(.horizontal, Metrics.pad)
+        .frame(height: Metrics.glassCtl)
+        .glassSurface(.regular, in: Capsule())
+        .fixedSize()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(web: t("notice.connecting", ["agent": chatAgent?.name ?? agent])))
+        .accessibilityAddTraits(.updatesFrequently)
       }
+      #endif
       .task(id: active) {
         late = false
         guard active else { return }

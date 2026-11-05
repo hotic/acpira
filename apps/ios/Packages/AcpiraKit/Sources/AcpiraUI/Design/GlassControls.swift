@@ -17,7 +17,7 @@ struct GlassIconButton: View {
         .contentShape(Capsule())
     }
     .buttonStyle(.plain)
-    .glassEffect(GlassStyle.control.interactive(), in: Capsule())
+    .glassSurface(GlassStyle.control.interactive(), in: Capsule())
     .accessibilityLabel(Text(web: label))
   }
 }

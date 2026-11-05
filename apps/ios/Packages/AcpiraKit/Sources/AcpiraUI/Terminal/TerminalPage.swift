@@ -24,7 +24,7 @@ struct TerminalPage: View {
       // Paint behind the keyboard's rounded corners; only the ground ignores its safe area, not the terminal grid.
       .background(Palette.bg0.ignoresSafeArea())
       .navigationTitle(session.title ?? t("panel.terminal"))
-      .navigationSubtitle(folderName(cwd))
+      .navigationSubtitleIfAvailable(folderName(cwd))
       .navigationBarTitleDisplayModeInline()
       .backWithoutTitle()
       .toolbar {

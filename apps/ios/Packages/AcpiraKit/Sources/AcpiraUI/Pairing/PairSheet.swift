@@ -78,7 +78,7 @@ struct PairSheet: View {
             }
           }
         } else {
-          ToolbarItem(placement: .primaryAction) { Button(role: .close) { dismiss() } }
+          ToolbarItem(placement: .primaryAction) { CloseButton { dismiss() } }
         }
       }
     }

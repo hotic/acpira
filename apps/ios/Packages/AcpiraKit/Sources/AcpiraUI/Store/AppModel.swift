@@ -1125,7 +1125,7 @@ struct ToastView: View {
     .foregroundStyle(Palette.fgStrong)
     .padding(.horizontal, Metrics.pad)
     .frame(height: Metrics.mCtl)
-    .glassEffect(toast.action == nil ? .regular : .regular.interactive(), in: Capsule())
+    .glassSurface(toast.action == nil ? .regular : .regular.interactive(), in: Capsule())
     // Translucent, it would show the system bar's glass buttons through it: it drops in under the bar instead
     .padding(.top, Metrics.navBar)
     .padding(.horizontal, Metrics.page)

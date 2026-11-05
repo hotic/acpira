@@ -13,7 +13,7 @@ import UIKit
 // tap; a tap anywhere else closes everything, as outside a system menu. One spring drives a progress vector: the chip's own value, then one
 // per bean that opens a panel.
 //
-// Every silhouette is Liquid Glass in the composer's own `GlassEffectContainer` (`gooGlass()` on the group), so a
+// Every silhouette is Liquid Glass in the composer's own `GlassGroup` (`gooGlass()` on the group), so a
 // bean melts out of the group, into its neighbours and into its panel as the system's glass controls do, and the
 // group is never covered by a second copy of itself. The glyphs are the glass's own content. The captions, the
 // panels' rows and every hit target are drawn by the screen (`gooLayer()`): drawn by the composer they hang outside
@@ -226,10 +226,10 @@ private struct GooGlass: View, Animatable {
               .scaleEffect(f.scale)
               .opacity(f.glyph)
               .frame(width: f.size.width, height: f.size.height)
-              .glassEffect(GlassStyle.bar, in: RoundedRectangle(cornerRadius: f.radius, style: .continuous))
+              .glassSurface(GlassStyle.bar, in: RoundedRectangle(cornerRadius: f.radius, style: .continuous))
               // A bean comes and goes inside the chip, where nothing shows: the system's own morph on insertion would
               // run its own clock over the spring
-              .glassEffectTransition(.identity)
+              .glassMorph(.identity)
               .position(x: chip.midX + f.centre.x, y: chip.midY + f.centre.y)
           }
         }
@@ -340,7 +340,7 @@ struct GooKey: PreferenceKey {
 
 extension View {
   /// Draws the glass of the liquid pickers published inside this view; applied to the glass the chips sit on, inside
-  /// its `GlassEffectContainer`, so the beans melt out of it
+  /// its `GlassGroup`, so the beans melt out of it
   func gooGlass() -> some View {
     overlayPreferenceValue(GooKey.self) { items in
       GeometryReader { proxy in
@@ -416,7 +416,7 @@ struct GooChip<Glyph: View>: View {
     // bar and the container merges it away: at full size its outline ran along the bar's round end and swelled it
     // On the card it is merged away the same way. Over the plate that stands in for the card's glass under the beans
     // the chip is a bare glyph (`gooBare`): there the circles stood out as two small buttons
-    .glassEffect(bare ? .identity : GlassStyle.bar.interactive(), in: Circle().inset(by: Metrics.gooChipInset))
+    .glassSurface(bare ? .identity : GlassStyle.bar.interactive(), in: Circle().inset(by: Metrics.gooChipInset))
     // The glass's shape is also the button's hit shape, so only the inset circle (half the slot) took taps: a touch a
     // little below the glyph fell through to the bar or card under it and only focused the field. The whole slot takes
     // them again

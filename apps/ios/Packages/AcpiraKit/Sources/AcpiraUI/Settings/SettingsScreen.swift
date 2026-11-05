@@ -42,7 +42,7 @@ struct SettingsSheet: View {
       SettingsScreen()
         .backWithoutMenu()
         .toolbar {
-          ToolbarItem(placement: .primaryAction) { Button(role: .close) { dismiss() } }
+          ToolbarItem(placement: .primaryAction) { CloseButton { dismiss() } }
         }
     }
   }

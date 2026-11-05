@@ -473,21 +473,71 @@ struct SystemListBar: ViewModifier {
     #endif
   }
 
-  private func phone(_ content: Content) -> some View {
-    content
-      .navigationBarTitleDisplayModeInline()
-      .toolbar {
-        #if os(iOS)
-        DefaultToolbarItem(kind: .search, placement: .bottomBar)
-        ToolbarSpacer(.fixed, placement: .bottomBar)
-        ToolbarItem(placement: .bottomBar) {
-          Button(action: onNew) { Image(systemName: "square.and.pencil") }
-            .accessibilityLabel(Text(web: t("session.new")))
+  @ViewBuilder private func phone(_ content: Content) -> some View {
+    if #available(iOS 26, *) {
+      content
+        .navigationBarTitleDisplayModeInline()
+        .toolbar {
+          #if os(iOS)
+          DefaultToolbarItem(kind: .search, placement: .bottomBar)
+          ToolbarSpacer(.fixed, placement: .bottomBar)
+          ToolbarItem(placement: .bottomBar) {
+            Button(action: onNew) { Image(systemName: "square.and.pencil") }
+              .accessibilityLabel(Text(web: t("session.new")))
+          }
+          #endif
         }
-        #endif
+        // The engine searches the conversations too, so the field says so
+        .searchable(text: $query, prompt: Text(web: t("session.searchContent")))
+    } else {
+      // Before iOS 26 the system search field cannot ride the bottom bar: the same field and new button are drawn
+      // here, floating over the list as 26's bar does
+      content
+        .navigationBarTitleDisplayModeInline()
+        .safeAreaInset(edge: .bottom) { LegacyListFoot(query: $query, onNew: onNew) }
+    }
+  }
+}
+
+/// iOS 18's stand-in for the bottom bar's search field and new button (`SystemListBar`): a glass capsule holding the
+/// field, a glass circle beside it
+private struct LegacyListFoot: View {
+  @Binding var query: String
+  var onNew: () -> Void
+  @FocusState private var focused: Bool
+
+  var body: some View {
+    HStack(spacing: Metrics.gap) {
+      HStack(spacing: Metrics.s2) {
+        Image(systemName: "magnifyingglass").foregroundStyle(Palette.fg3)
+        TextField(text: $query) { Text(web: t("session.searchContent")).foregroundStyle(Palette.fg3) }
+          .textStyle(TypeScale.text2)
+          .foregroundStyle(Palette.fg1)
+          .submitLabel(.search)
+          .autocorrectionDisabled()
+          .focused($focused)
+        if !query.isEmpty {
+          Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Palette.fg3) }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text(web: t("panel.clear")))
+        }
       }
-      // The engine searches the conversations too, so the field says so
-      .searchable(text: $query, prompt: Text(web: t("session.searchContent")))
+      .padding(.horizontal, Metrics.pad)
+      .frame(height: Metrics.glassCtl)
+      .glassSurface(GlassStyle.bar, in: Capsule())
+      .onTapGesture { focused = true }
+      Button(action: onNew) {
+        Image(systemName: "square.and.pencil")
+          .font(.system(size: Metrics.glassGlyph, weight: .medium))
+          .foregroundStyle(Palette.fg1)
+          .frame(width: Metrics.glassCtl, height: Metrics.glassCtl)
+      }
+      .buttonStyle(.plain)
+      .glassSurface(GlassStyle.control.interactive(), in: Circle())
+      .accessibilityLabel(Text(web: t("session.new")))
+    }
+    .padding(.horizontal, Metrics.pad)
+    .padding(.bottom, Metrics.s2)
   }
 }
 
@@ -522,13 +572,14 @@ struct ListTopBar: ViewModifier {
       .navigationTitle("")
       .navigationBarTitleDisplayModeInline()
       .backWithoutMenu()
+      #if os(iOS)
+      // The title is text, not a control: no glass capsule behind it
+      .bareToolbarItem(placement: .principal, shown: !inSidebar) { ListBarTitle() }
+      #endif
       .toolbar {
         #if os(iOS)
         if let filter { ToolbarItem(placement: .topBarLeading) { filter } }
         if !inSidebar {
-          ToolbarItem(placement: .principal) { ListBarTitle() }
-            // The title is text, not a control: no glass capsule behind it
-            .sharedBackgroundVisibility(.hidden)
           ToolbarItem(placement: .topBarTrailing) {
             Button(action: onSettings) { Image(systemName: "gearshape") }
               .accessibilityLabel(Text(web: t("session.settings")))
@@ -536,7 +587,7 @@ struct ListTopBar: ViewModifier {
         }
         #endif
       }
-      .safeAreaBar(edge: .bottom) { if inSidebar { SidebarFoot() } }
+      .safeAreaBarIfAvailable(edge: .bottom) { if inSidebar { SidebarFoot() } }
   }
 }
 

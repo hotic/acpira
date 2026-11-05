@@ -78,7 +78,7 @@ struct ChatScreen: View {
         // The inset takes the dock's ideal height, including long drafts and attachments above the keyboard.
         .fixedSize(horizontal: false, vertical: true)
       }
-      .scrollEdgeEffectHidden(true, for: .bottom)
+      .scrollEdgeEffectHiddenIfAvailable(for: .bottom)
     // The keyboard's safe area still lifts the dock; only the container's (the home indicator) is taken over
     .ignoresSafeArea(.container, edges: .bottom)
     .modifier(HomeInset(inset: $homeInset))
@@ -395,7 +395,7 @@ struct ScrollToLatest: View {
 
   var body: some View {
     let shown = far.value && !hidden
-    GlassEffectContainer {
+    GlassGroup {
       if shown {
         Button(action: action) {
           Icon(.arrowDown, size: Metrics.icon)
@@ -405,9 +405,9 @@ struct ScrollToLatest: View {
         }
         .buttonStyle(.plain)
         // The composer's glass, frosted enough for prose passing behind
-        .glassEffect(GlassStyle.bar.interactive(), in: Circle())
+        .glassSurface(GlassStyle.bar.interactive(), in: Circle())
         // Glass cannot fade; the system's own materialise is how a drop of it comes and goes
-        .glassEffectTransition(.materialize)
+        .glassMorph(.materialize)
         .accessibilityLabel(Text(web: t("mobile.scrollToLatest")))
       }
     }

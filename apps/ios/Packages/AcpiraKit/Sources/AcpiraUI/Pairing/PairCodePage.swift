@@ -35,11 +35,11 @@ struct PairCodePage: View {
     .animation(motion ? Motion.ease : nil, value: joined)
     .background(Palette.formPage)
     .navigationTitle(joined == nil ? t("mobile.pair.code.title") : "")
-    .navigationSubtitle(joined == nil ? computer.name : "")
+    .navigationSubtitleIfAvailable(joined == nil ? computer.name : "")
     .navigationBarTitleDisplayModeInline()
     .navigationBarBackButtonHidden(joined != nil)
     .toolbar {
-      if closes { ToolbarItem(placement: .primaryAction) { Button(role: .close, action: finish) } }
+      if closes { ToolbarItem(placement: .primaryAction) { CloseButton(action: finish) } }
     }
     .task { await start() }
   }

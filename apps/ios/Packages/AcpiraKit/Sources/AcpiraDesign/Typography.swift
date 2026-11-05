@@ -209,14 +209,44 @@ public enum InterFont {
   }
 }
 
+extension TextStyle {
+  /// Before iOS 26 SwiftUI has no exact line height: lines keep the face's natural height, this much apart, and
+  /// `lineBox` pads half of it above and below, so a run of lines in the primary face is as tall as CSS's. A line with
+  /// a taller fallback face (PingFang) still grows there
+  var legacyLeading: CGFloat {
+    let f = ctFont()
+    return max(0, lineHeight - (CTFontGetAscent(f) + CTFontGetDescent(f) + CTFontGetLeading(f)))
+  }
+
+  /// The depth a renderer places each line's baseline at, from the laid-out line's top: the line box's own depth on
+  /// iOS 26, less the padding above the text before it
+  public var renderDepth: CGFloat {
+    if #available(iOS 26, macOS 26, *) { baselineDepth } else { baselineDepth - legacyLeading / 2 }
+  }
+}
+
+extension View {
+  /// Every line of the text exactly `style.lineHeight` tall (`lineHeight(.exact)`), or as near as iOS 18 gets
+  /// (`legacyLeading`); pair it with a renderer at `style.renderDepth`
+  @ViewBuilder
+  public func lineBox(_ style: TextStyle) -> some View {
+    if #available(iOS 26, macOS 26, *) {
+      lineHeight(.exact(points: style.lineHeight))
+    } else {
+      let leading = style.legacyLeading
+      lineSpacing(leading).padding(.vertical, leading / 2)
+    }
+  }
+}
+
 extension View {
   /// Font plus the CSS line box: every line of the text is exactly `style.lineHeight` tall
   /// The glyphs sit in the line box where CSS puts them, mono at the webview's advance
   public func textStyle(_ style: TextStyle, weight: FontWeight = .regular) -> some View {
     font(style.font(weight))
-      .lineHeight(.exact(points: style.lineHeight))
+      .lineBox(style)
       .tracking(style.tracking)
-      .textRenderer(CSSLineRenderer(lineHeight: style.lineHeight, depth: style.baselineDepth))
+      .textRenderer(CSSLineRenderer(lineHeight: style.lineHeight, depth: style.renderDepth))
       .environment(\.cssBaselineDepth, style.baselineDepth)
   }
 

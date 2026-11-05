@@ -1166,7 +1166,7 @@ struct CodeSheet<Content: View>: View {
       .navigationBarTitleDisplayModeInline()
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
-          Button(role: .close) { dismiss() }
+          CloseButton { dismiss() }
         }
         ToolbarItemGroup(placement: .primaryAction) {
           if let markdownPreview {
