@@ -141,12 +141,13 @@ function AddHostDialog({ taken, onAdd, onClose }: { taken: string[]; onAdd: (ali
         <Command.Root items={items} value={null} inputValue={query} onInputValueChange={setQuery}
           itemToStringValue={(h: HostPick | null) => h?.alias ?? ''} itemToStringLabel={(h: HostPick | null) => (h ? [h.alias, h.address].filter(Boolean).join(' ') : '')}>
           <Command.Input box placeholder={t('connections.addSearch')} />
-          {/* Every state under the search shares one region of the list's full height, so the dialog keeps one size */}
-          <div className="flex h-pop min-h-0 flex-col">
+          {/* Every state under the search shares one region of the list's full height, so the dialog keeps one size; the
+              cards inside hug their rows instead of stretching a filled slab over the region */}
+          <div className="flex h-pop min-h-0 flex-col gap-gap">
             {!listing && <Group><Note shimmer>{t('connections.reading')}</Note></Group>}
             {error && <Group><Note><span className="text-danger [overflow-wrap:anywhere]">{error}</span></Note></Group>}
             {listing && <Command.Empty>{t('connections.noHostMatch')}</Command.Empty>}
-            <Command.List searchable fill flush className={blockList}>
+            <Command.List searchable flush className={cn(blockList, 'min-h-0 max-h-none')}>
               {(h: HostPick) => {
                 const done = taken.includes(h.alias);
                 return <Command.Item key={h.typed ? `typed:${h.alias}` : h.alias} value={h} disabled={done} title={done ? t('connections.added') : undefined}
