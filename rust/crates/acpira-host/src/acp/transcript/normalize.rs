@@ -239,6 +239,11 @@ fn apply_update_kind(s: &mut NormalizeState, u: &Value) -> bool {
         Some(ToolContent::Text { text }) => text,
         _ => text_of_content(&content),
       };
+      // OpenAI-compatible streams carry `content: ""` beside every reasoning delta (anvil forwards each one), so an
+      // empty chunk must not seal the streaming thought and open a new row per thought batch
+      if text.is_empty() {
+        return false;
+      }
       if let Some(found) = s.agent.as_deref().and_then(|a| compaction_text::markers(a, &text))
         && apply_compaction_markers(s, i, &found)
       {
@@ -259,6 +264,10 @@ fn apply_update_kind(s: &mut NormalizeState, u: &Value) -> bool {
         last.markdown.push_str(&text);
         resolve_markdown_images(last, from, ctx);
         return true;
+      }
+      // Whitespace alone opens no reply: it would seal the thought before it for an invisible block
+      if text.trim().is_empty() {
+        return false;
       }
       seal(s, i);
       let mut block = TextBlock { id: None, phase: None, markdown: text, streaming: Some(true), images: None };
