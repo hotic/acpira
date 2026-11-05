@@ -512,7 +512,7 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
           {[...other, ...(!models.length ? [...modelConfig, ...sidekick, ...sidekickEffort, ...sidekickFast] : [])].map(c => (
             <OptionControl key={c.id} end control={c} hidden={p.hidden?.[c.id]} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />
           ))}
-          {p.usage && !tight && <ContextRing usage={p.usage} turns={p.turns} compacting={p.compacting} canCompact={canCompact} disabled={p.disabled} compactAt={p.compactAt} running={p.running} onCompact={p.onCompact} onOpenChange={onOpenChange} />}
+          {p.usage && !tight && <ContextRing sessionId={p.sessionId} usage={p.usage} turns={p.turns} compacting={p.compacting} canCompact={canCompact} disabled={p.disabled} compactAt={p.compactAt} running={p.running} onCompact={p.onCompact} onOpenChange={onOpenChange} />}
           {models.map((c, i) => (
             <ModelControl key={c.id} control={c} hidden={p.hidden?.[c.id]} reasoning={i === 0 ? reasoning : undefined}
               modelConfig={i === 0 ? modelConfig : undefined} sidekick={i === 0 ? sidekick[0] : undefined} sidekickEffort={i === 0 ? sidekickEffort[0] : undefined} sidekickFast={i === 0 ? sidekickFast[0] : undefined}

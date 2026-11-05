@@ -11,6 +11,7 @@ import { FileTree } from './FileTree';
 import { FileGlyph, nameOf } from './files';
 import { NewTab, type TabPick } from './NewTab';
 import { FILES_TAB, allLiveTabs, panel, sameView, scopedRoot, usePanel } from './store';
+import { ContextTab, type ContextTabInfo } from '../context/ContextTab';
 import { TerminalFrame } from './TerminalFrame';
 import { PluginFrame } from './PluginFrame';
 import { usePluginPieces } from '../pluginSlots';
@@ -36,6 +37,8 @@ export interface FilesLayoutProps {
   // The session column at the window's right edge: whether it shows, and its fold
   sessionsShown: boolean;
   onToggleSessions: () => void;
+  // What the context tab reads beside the agent's report
+  context?: ContextTabInfo;
 }
 
 export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
@@ -156,6 +159,7 @@ export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
             : <NewTab focus={false} changes={{ files: f.changes, onOpen: f.open }} onPick={choice => pick(choice)} />)}
           {pages.map(tab => {
             if (tab.kind === 'new' && tab.id === s.tab) return <NewTab key={tab.id} onPick={choice => pick(choice, tab.id)} />;
+            if (tab.kind === 'context') return <ContextTab key={tab.id} sessionId={p.sessionId} root={root} running={p.running} shown={s.tab === tab.id} info={p.context ?? {}} />;
             return null;
           })}
           {livePages.map(tab => {

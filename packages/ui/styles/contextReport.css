@@ -1,0 +1,89 @@
+/* The tool panel's context tab (context/ContextTab.tsx, context/ContextReport.tsx): one column, the figure line and the
+   map sticky on top, the full tree under them on the shared branch lines (branchTree.css). The tab is the size container,
+   so the map keeps its shape as the panel is dragged wider or narrower */
+[data-context-report] {
+  --report-gap: 24px;
+  --report-map-h: clamp(200px, 64cqw, 420px);
+  /* The tree's figure columns: tokens, then the share of the used figure */
+  --report-figure-w: 7ch;
+  --report-share-w: 4ch;
+  /* A leaf's content scrolls inside this */
+  --report-part-h: 280px;
+  /* A category's mark in the tree, the map's tint at a row's size */
+  --report-mark: 8px;
+  --report-mark-r: 2px;
+  /* Row bands sit flush with the report's edges; their content is inset this much */
+  --ctx-inset: 8px;
+}
+
+@layer components {
+  [data-context-tab] { container-type: inline-size; }
+
+  /* Dense rows, so a lighter stroke and a shorter elbow; every stem starts just under its parent's small mark */
+  .ctx-tree {
+    --row: var(--row-dense);
+    --branch-line: 1.5px;
+    --branch-elbow: calc(var(--lead) / 2 + 2px);
+  }
+  .ctx-tree ul {
+    --stem-reach: max(0px, calc((var(--row) - var(--icon)) / 2 - var(--branch-line)));
+    --stem-fade: min(var(--rail-fade), calc((var(--row) / 2 + var(--stem-reach)) * .4));
+    margin-left: calc(var(--ctx-inset) + var(--lead) / 2 - var(--branch-line) / 2);
+  }
+  /* A bare block (no row of its own) takes the elbow into its first line, ending at its edge */
+  .ctx-tree ul > li[data-bare]::after { width: calc(var(--pl) - 2px); }
+  /* The branch under the zoomed row stands out a step, the map's only "you are here" */
+  .ctx-tree ul[data-focus] { --branch-color: color-mix(in srgb, var(--fg-1) 45%, transparent); }
+
+  /* A row's band: lit from the map, or marking the zoomed row and the open leaf. Flush with the report's edges, the
+     row's content inset inside it */
+  .ctx-band { position: relative; isolation: isolate; padding-inline: var(--ctx-inset); }
+  .ctx-band::before {
+    content: ''; position: absolute; inset: 3px 0; z-index: -1; pointer-events: none;
+    border-radius: var(--r-md); transition: background-color var(--dur-open);
+  }
+  .ctx-band[data-current]::before { background: var(--hover); }
+  .ctx-band[data-lit]::before { background: var(--active); }
+
+  /* A map tile: its category's tone mixed into the card colour, stronger while lit or marked; a stub of thin tiles fainter */
+  .ctx-tile {
+    --tone: var(--context-chat);
+    --mix: 22%;
+    position: absolute; overflow: hidden; cursor: pointer; white-space: nowrap; border-radius: var(--r-sm);
+    background: color-mix(in srgb, var(--tone) var(--mix), var(--bg-1));
+    transition: background-color var(--dur-open), opacity var(--dur-open), box-shadow var(--dur-open);
+  }
+  .ctx-tile[data-more] { --mix: 14%; }
+  .ctx-tile[data-lit] { --mix: 38%; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg-1) 30%, transparent); }
+  .ctx-tile[data-more][data-lit] { --mix: 30%; }
+  .ctx-tile[data-marked] { --mix: 38%; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--fg-1) 70%, transparent); }
+  .ctx-tile > [data-label] { display: flex; flex-direction: column; padding: 4px 6px 0; }
+  .ctx-tile[data-upright] { display: flex; align-items: center; gap: 4px; padding-top: 6px; writing-mode: vertical-rl; }
+  /* A group's plate, outlined while something in it is hovered */
+  .ctx-plate {
+    position: absolute; cursor: pointer; border-radius: var(--r-md);
+    background: color-mix(in srgb, var(--fg-1) 4.5%, transparent);
+    transition: box-shadow var(--dur-open);
+  }
+  .ctx-plate[data-ring] { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg-1) 26%, transparent); }
+  /* Labels stay out of a zoom: hidden at once while the layers scale, faded back in once they land */
+  .ctx-map .ctx-text { transition: opacity 200ms; }
+  .ctx-map[data-zoom] .ctx-text { opacity: 0; transition-duration: 0s; }
+
+  .ctx-mark {
+    --tone: var(--context-chat);
+    width: var(--report-mark); height: var(--report-mark); border-radius: var(--report-mark-r);
+    background: color-mix(in srgb, var(--tone) 44%, var(--bg-1));
+  }
+  :is(.ctx-tile, .ctx-mark)[data-cat="system"] { --tone: var(--context-system); }
+  :is(.ctx-tile, .ctx-mark)[data-cat="tools"] { --tone: var(--context-tools); }
+  :is(.ctx-tile, .ctx-mark)[data-cat="docs"] { --tone: var(--context-docs); }
+  :is(.ctx-tile, .ctx-mark)[data-cat="skills"] { --tone: var(--context-skills); }
+  :is(.ctx-tile, .ctx-mark)[data-cat="mcp"] { --tone: var(--context-mcp); }
+
+  /* The sticky head fades the tree out as it scrolls under it */
+  [data-report-sticky]::after {
+    content: ''; position: absolute; inset-inline: 0; top: 100%; height: 16px; pointer-events: none;
+    background: linear-gradient(to bottom, var(--bg-0), transparent);
+  }
+}

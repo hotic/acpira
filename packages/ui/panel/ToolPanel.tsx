@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import type { FileHit, ProjectBase, ProjectChange } from '@acpira/shared/protocol';
-import { Folder, Globe, LayoutGrid, PanelRight, Plus, Puzzle, SquareTerminal, X, type LucideIcon } from 'lucide-react';
+import { ChartBarStacked, Folder, Globe, LayoutGrid, PanelRight, Plus, Puzzle, SquareTerminal, X, type LucideIcon } from 'lucide-react';
 import { parseRemoteFolder } from '@acpira/shared/remote';
 import { t, useLocale } from '../i18n';
 import { IconButton } from '../ui/Button';
@@ -18,12 +18,13 @@ import { FileTree, ancestors } from './FileTree';
 import { FileViewer, ReviewView, preferMarkdownPreview } from './FileViewer';
 import { NewTab, type TabPick } from './NewTab';
 import { PluginFrame } from './PluginFrame';
+import { ContextTab, type ContextTabInfo } from '../context/ContextTab';
 import { pieceKey, pluginPiece, usePluginPieces } from '../pluginSlots';
 import { takeArrival } from '../plugins/arrivals';
 import { flyStandIn } from '../plugins/Pieces';
 import { motionOff } from '../effects/magic';
 import { playWhoosh } from '../effects/whoosh';
-import { FILES_TAB, allLiveTabs, anyModule, panel, panelState, usePanel, viewKey, type LineRange, type PanelTab, type PanelView } from './store';
+import { FILES_TAB, allLiveTabs, anyTab, panel, panelState, usePanel, viewKey, type LineRange, type PanelTab, type PanelView } from './store';
 import { TerminalFrame } from './TerminalFrame';
 
 // The desktop app's tool panel (picked in the LAB, lab/desk-panel.preview, 2026-10-23): right of the chat sheet on the
@@ -86,6 +87,8 @@ export interface ToolPanelDockProps {
   openPlan?: (planId: string) => void;
   // The composer offers a picked range as the live selection (the shell's "share editor selection" setting)
   shareSelection?: boolean;
+  // What the context tab reads beside the agent's report
+  context?: ContextTabInfo;
 }
 
 // The open panel's width as chosen, clamped to the room beside the chat
@@ -124,7 +127,7 @@ export const ToolPanelDock = memo(function ToolPanelDock(p: ToolPanelDockProps) 
       }, flight.signal);
     }
   }, [tabPieces]);
-  const anyEnabled = anyModule(s);
+  const anyEnabled = anyTab(s);
   const aside = useRef<HTMLElement>(null);
   const shown = anyEnabled && s.open && !!p.cwd && !!p.sessionId;
   const [moving, setMoving] = useState(0);
@@ -184,7 +187,7 @@ export const ToolPanelDock = memo(function ToolPanelDock(p: ToolPanelDockProps) 
           <InspectorSplitter width={width} bounds={bounds} onDrag={dragTo} onCommit={commitWidth} onReset={resetWidth} />
         )}
         {p.cwd && p.sessionId && opened && (
-          <ToolPanel sessionId={p.sessionId} root={p.cwd} running={p.running} panelShown={shown} searchFiles={p.searchFiles} openEditor={p.openEditor} openPlan={p.openPlan} shareSelection={p.shareSelection} />
+          <ToolPanel sessionId={p.sessionId} root={p.cwd} running={p.running} panelShown={shown} searchFiles={p.searchFiles} openEditor={p.openEditor} openPlan={p.openPlan} shareSelection={p.shareSelection} context={p.context} />
         )}
       </aside>
       {p.cwd && p.sessionId && (
@@ -198,7 +201,7 @@ export const ToolPanelDock = memo(function ToolPanelDock(p: ToolPanelDockProps) 
   );
 });
 
-export const TAB_ICON: Record<PanelTab['kind'], LucideIcon> = { files: Folder, new: LayoutGrid, terminal: SquareTerminal, browser: Globe, plugin: Puzzle };
+export const TAB_ICON: Record<PanelTab['kind'], LucideIcon> = { files: Folder, new: LayoutGrid, terminal: SquareTerminal, browser: Globe, plugin: Puzzle, context: ChartBarStacked };
 const hostOf = (url: string) => { try { return new URL(url).host; } catch { return url; } };
 export function tabLabel(tab: PanelTab): string {
   switch (tab.kind) {
@@ -208,6 +211,7 @@ export function tabLabel(tab: PanelTab): string {
     case 'terminal': return tab.title || t('panel.terminal');
     case 'browser': return tab.title || (tab.url ? hostOf(tab.url) : t('panel.browser'));
     case 'plugin': return tab.title || tab.plugin;
+    case 'context': return t('usage.title');
   }
 }
 // A tab's tooltip: a terminal's folder, a plugin piece's plugin, else its label
@@ -350,6 +354,7 @@ interface ToolPanelProps {
   openEditor?: (path: string, line?: number) => void;
   openPlan?: (planId: string) => void;
   shareSelection?: boolean;
+  context?: ContextTabInfo;
 }
 
 function ToolPanel(p: ToolPanelProps) {
@@ -381,6 +386,9 @@ function ToolPanel(p: ToolPanelProps) {
           if (tab.kind === 'new' && tab.id === s.tab) {
             return <NewTab key={tab.id} onPick={choice => pickNewTab(tab.id, choice, p.root)} />;
           }
+          if (tab.kind === 'context') {
+            return <ContextTab key={tab.id} sessionId={p.sessionId} root={p.root} running={p.running} shown={p.panelShown && s.tab === tab.id} info={p.context ?? NO_INFO} />;
+          }
           return null;
         })}
         {livePages.map(tab => {
@@ -394,6 +402,8 @@ function ToolPanel(p: ToolPanelProps) {
     </div>
   );
 }
+
+const NO_INFO: ContextTabInfo = {};
 
 const BROWSER_SLEEP_MS = 10 * 60_000;
 

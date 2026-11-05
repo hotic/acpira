@@ -52,7 +52,7 @@ pub(super) fn call_title<'a>(name: &'a str, tools: &[&'a str]) -> &'a str {
 const EXIT_PLAN_TITLE: &str = "Exit plan mode";
 
 /// ACP ToolKind for a tool name, before its arguments are known
-pub(super) fn kind_of(name: &str, tools: &[&str]) -> &'static str {
+pub(crate) fn kind_of(name: &str, tools: &[&str]) -> &'static str {
   match shown_name(name, tools) {
     tools::READ | tools::LIST | tools::SKILL => "read",
     tools::WRITE | tools::EDIT => "edit",

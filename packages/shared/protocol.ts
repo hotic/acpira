@@ -1,4 +1,5 @@
 import type { ChatGptIntegrationStatus } from './chatgptIntegration';
+import type { ContextContent, ContextRaw, ContextReport } from './context';
 import type { RemoteAccessOp, RemoteAccessView } from './devices';
 import type { ConnectionOp, ConnectionView, RemoteDirEntry, SshHost } from './remote';
 import type { AccountInfo, AgentId, AgentInfo, CategoryOp, ConfigControl, Draft, FullDiffSource, GoalAction, ImageDraft, NativeSessionInfo, QuestionAnswers, SessionCategories, SessionSummary, SessionView, SlashCommand, Turn, TurnSettings } from './transcript';
@@ -347,6 +348,11 @@ export type HostMsg =
   | { type: 'projectStatus'; seq: number; root?: string; marks: Record<string, GitMark> }
   | { type: 'projectFile'; seq: number; text?: string; hunks?: ProjectHunk[]; error?: ProjectError | string }
   | { type: 'sessionChanges'; seq: number; files: ProjectChange[] }
+  // Replies to the context reads (context.ts), each echoing its request's seq: absent when the session's agent reports no
+  // split (or no longer holds the conversation it was asked about)
+  | { type: 'sessionContext'; seq: number; report?: ContextReport }
+  | { type: 'sessionContextItem'; seq: number; content?: ContextContent }
+  | { type: 'sessionContextRaw'; seq: number; raw?: ContextRaw; error?: string }
   // SSH hosts (helloOk.features has 'remote'): the list on every change, the add dialog's ~/.ssh/config hosts, and a folder
   // listing of a host for the remote folder picker, echoing its request's seq
   | { type: 'connections'; connections: ConnectionView[] }
@@ -477,6 +483,12 @@ export type WebviewMsg =
   | { type: 'projectStatus'; sessionId: string; seq: number }
   | { type: 'projectFile'; sessionId: string; path: string; base?: ProjectBase; seq: number }
   | { type: 'sessionChanges'; sessionId: string; seq: number }
+  // A session's context split (context.ts): the category sums for the composer ring's card, the whole tree (`detail`) for
+  // the report tab; one leaf's content in the report `rev` describes; the last request as sent. Each answered with
+  // its own message echoing seq
+  | { type: 'sessionContext'; sessionId: string; seq: number; detail?: boolean }
+  | { type: 'sessionContextItem'; sessionId: string; rev: string; id: string; seq: number }
+  | { type: 'sessionContextRaw'; sessionId: string; seq: number }
   // The whole files behind the `nth` diff of a tool call (counted in `contents`, or `content` alone): page views carry
   // diff sources without their texts. Answered with a `diffSource` message echoing seq. subagentId names the subagent
   // transcript the diff was shown in (the inspector); absent, the session's own turns

@@ -137,7 +137,7 @@ describe('sidecar session contract', () => {
     const s = shell(at);
     const id = await started(s);
     let seq = 0;
-    const ask = async <T extends 'projectDir' | 'projectStatus' | 'projectFile' | 'sessionChanges'>(type: T, extra: Record<string, unknown> = {}) => {
+    const ask = async <T extends 'projectDir' | 'projectStatus' | 'projectFile' | 'sessionChanges' | 'sessionContext' | 'sessionContextItem' | 'sessionContextRaw'>(type: T, extra: Record<string, unknown> = {}) => {
       const mine = ++seq;
       s.view('V', { type, sessionId: id, seq: mine, ...extra } as never);
       return s.hostMsg('V', type, m => (m as { seq?: number }).seq === mine);
@@ -162,6 +162,11 @@ describe('sidecar session contract', () => {
     s.view('V', { type: 'permission', sessionId: id, blockId: card!.id, optionId: 'allow' });
     await s.hostMsg('V', 'session', idle(2));
     expect((await ask('sessionChanges')).files).toEqual([{ path: '/repo/a.ts', add: 0, del: 3, gone: true }]);
+    // An agent that does not split its context (the fake one) is still answered, with nothing: the card keeps the bare
+    // figure (the built-in agent's split: rust/crates/acpira-host/tests/engine/builtin_agent.rs)
+    expect(await ask('sessionContext', { detail: true })).not.toHaveProperty('report');
+    expect(await ask('sessionContextItem', { rev: 'r', id: 'sys:base' })).not.toHaveProperty('content');
+    expect(await ask('sessionContextRaw')).not.toHaveProperty('raw');
   });
 
   // The tool panel's terminal tabs: the engine runs a login shell on a pty (SHELL picks it; a temp HOME keeps the real rc

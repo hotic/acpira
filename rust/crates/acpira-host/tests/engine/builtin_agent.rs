@@ -549,6 +549,37 @@ async fn a_message_steered_into_a_command_round_reaches_the_next_call_in_the_sam
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_context_split_adds_up_to_the_last_call_and_opens_what_it_sent() {
+  use acpira_shared::context::{ContextCategory, ContextContent, ContextNode};
+  let env = Env::new();
+  std::fs::write(env.cwd().join("notes.txt"), "alpha\n").unwrap();
+  let s = env.session().await;
+  // Nothing went out yet: no split, the card keeps the bare figure
+  assert!(s.context_report(true).await.is_none());
+  env.server.push(mock::tools(&[("c1", "read", json!({ "path": "notes.txt" }))]));
+  env.server.push(mock::text("It says alpha."));
+  run(&s, "what is in notes.txt?").await;
+  let r = s.context_report(true).await.expect("the built-in agent reports its split");
+  // The mock counts 100 in and 10 out per call: the parts add up to the last one
+  assert_eq!(r.used, 110);
+  assert_eq!(r.categories.iter().map(|c| c.tokens).sum::<u64>(), 110);
+  let chat = r.categories.iter().find(|c| c.id == ContextCategory::Chat).expect("a conversation part");
+  let turn: &ContextNode = &chat.nodes.as_ref().unwrap()[0];
+  assert_eq!((turn.index, turn.title.as_deref()), (Some(1), Some("what is in notes.txt?")));
+  let call = turn.children.as_ref().unwrap().iter().find(|n| n.tool_kind.as_deref() == Some("read")).expect("the read call");
+  assert_eq!(call.title.as_deref(), Some("notes.txt"));
+  let Some(ContextContent::Call { input, output, .. }) = s.context_item(&r.rev, &call.id).await else { panic!("the call's content") };
+  assert!(input.contains("notes.txt") && output.is_some_and(|o| o.contains("alpha")));
+  assert!(s.context_report(false).await.unwrap().categories.iter().all(|c| c.nodes.is_none()));
+  let raw = s.context_raw().await.unwrap().expect("the last request");
+  assert_eq!(raw.format, "openai-chat");
+  // The last request carried the read's result; the reply it got back is not part of it
+  let messages = raw.body["messages"].to_string();
+  assert!(messages.contains("alpha") && !messages.contains("It says alpha"), "{messages}");
+  assert!(!raw.body.to_string().contains("sk-test"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_reopened_session_resumes_with_the_same_prefix() {
   let env = Env::new();
   let s = env.session().await;

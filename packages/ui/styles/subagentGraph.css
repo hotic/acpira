@@ -1,10 +1,6 @@
 @layer components {
-  /* Summon graph (chat/subagents/SubagentGraph.tsx): a vertical tree of rows. Each nested list steps one lead + --gap in;
-     its rounded elbows start under the parent's mark and run up to the child's. */
+  /* Summon graph (chat/subagents/SubagentGraph.tsx): a vertical tree of rows on the shared branch lines (branchTree.css) */
   .subagent-graph-scroll {
-    --subagent-graph-elbow: calc(var(--lead) / 2 + var(--gap));
-    /* Twice the hairline, matched by the heavier marks below; Chromium floors fractional borders, so 1.5px would draw as 1px */
-    --subagent-graph-line: 2px;
     --subagent-graph-check-scale: .85;
     min-height: 0;
     overflow: auto;
@@ -13,62 +9,14 @@
     padding: var(--gap) var(--pad) var(--pad);
   }
 
-  .subagent-graph-tree,
-  .subagent-graph-tree ul {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-  }
-
-  .subagent-graph-tree li { position: relative; }
-
-  /* --pl is the indent a list gives its children; the elbows hang off it */
-  .subagent-graph-tree ul {
-    --pl: var(--subagent-graph-elbow);
-    --stem-reach: calc(var(--gap) / 2);
-    --stem-fade: min(var(--rail-fade), calc(var(--subagent-graph-line) * 2));
-    margin-left: calc(var(--lead) / 2);
-    padding-left: var(--pl);
-  }
   /* Keep the trunk under GitBranch's stem (x 6 of its 24 grid), but start below the icon box with a small gap so the
-     heavier stroke cannot pierce the circle. Nested stems reach slightly into the parent's row with a shorter fade. */
+     heavier stroke cannot pierce the circle. Nested stems keep branchTree.css's short reach and fade. */
   .subagent-graph-tree > li > ul {
     --stem: calc((var(--lead) - var(--icon)) / 2 + var(--icon) * 6 / 24);
-    --pl: calc(var(--subagent-graph-elbow) + var(--lead) / 2 - var(--stem) + var(--subagent-graph-line) / 2);
-    --stem-reach: max(0px, calc((var(--row) - var(--icon)) / 2 - var(--subagent-graph-line)));
+    --pl: calc(var(--branch-elbow) + var(--lead) / 2 - var(--stem) + var(--branch-line) / 2);
+    --stem-reach: max(0px, calc((var(--row) - var(--icon)) / 2 - var(--branch-line)));
     --stem-fade: min(var(--rail-fade), calc((var(--row) / 2 + var(--stem-reach)) * .4));
-    margin-left: calc(var(--stem) - var(--subagent-graph-line) / 2);
-  }
-
-  /* One rounded elbow per child, running up to its mark; the trunk only continues past the siblings that follow */
-  .subagent-graph-tree ul > li::before,
-  .subagent-graph-tree ul > li::after {
-    content: '';
-    position: absolute;
-    left: calc(-1 * var(--pl));
-    border-left: var(--subagent-graph-line) solid var(--line-strong);
-  }
-  .subagent-graph-tree ul > li::before { top: 0; bottom: 0; }
-  .subagent-graph-tree ul > li:last-child::before { display: none; }
-  .subagent-graph-tree ul > li::after {
-    top: 0;
-    height: calc(var(--row) / 2);
-    width: calc(var(--pl) + var(--subagent-graph-line) / 2);
-    border-bottom: var(--subagent-graph-line) solid var(--line-strong);
-    border-bottom-left-radius: var(--radius-sm);
-    /* Fade toward the child mark without weakening the vertical trunk or the rounded corner. */
-    --elbow-fade: 0px;
-    mask-image: linear-gradient(to bottom, transparent, #000 var(--elbow-fade)),
-      linear-gradient(to right, #000 calc(100% - min(var(--rail-fade), 40%)), transparent);
-    mask-composite: intersect;
-  }
-  /* Fade only the new stem, not its rows or later junctions. The solid continuation starts after the fade, so the
-     overlapping borders cannot double its opacity; a single child keeps the same fade with no continuation. */
-  .subagent-graph-tree ul > li:first-child::before { top: calc(var(--stem-fade) - var(--stem-reach)); }
-  .subagent-graph-tree ul > li:first-child::after {
-    top: calc(-1 * var(--stem-reach));
-    height: calc(var(--row) / 2 + var(--stem-reach));
-    --elbow-fade: var(--stem-fade);
+    margin-left: calc(var(--stem) - var(--branch-line) / 2);
   }
 
   /* The inspected child stays marked while the graph is open over it */

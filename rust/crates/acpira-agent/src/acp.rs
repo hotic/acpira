@@ -74,6 +74,9 @@ pub struct SessionState {
   /// The context (used, size) of the last `usage_update` sent: a window changed in the settings is pushed with the
   /// same `used` (`Server::push_controls`), so the client's meter does not wait for the next model call
   pub reported: Option<(u64, u64)>,
+  /// What the last counted model call sent and got back, or the history a compaction left: the context report's source
+  /// (`context.rs`). None until the session's first call since it opened
+  pub context: Option<Arc<crate::context::Snapshot>>,
   /// Naming the session from its first prompt has started (`title.rs`); it happens once
   pub titled: bool,
   /// The first item is a compaction's summary (`compact.rs`)
@@ -346,8 +349,12 @@ impl Server {
       },
       "authMethods": [],
       // The steering extension claude-agent-acp and codex-acp implement, advertised at the top level as they do,
-      // codex-acp's goal extension (`goal.rs`), and Acpira's own history rewind (`_session/rewind`)
-      "_meta": { "steering": { "supported": true }, "goal": crate::goal::capability(), "acpira/rewind": { "supported": true } },
+      // codex-acp's goal extension (`goal.rs`), Acpira's own history rewind (`_session/rewind`) and context report
+      // (`context.rs`)
+      "_meta": {
+        "steering": { "supported": true }, "goal": crate::goal::capability(), "acpira/rewind": { "supported": true },
+        "acpira/context": crate::context::capability(),
+      },
     })
   }
 
@@ -1071,6 +1078,9 @@ impl Inbound for Handler {
         "_session/steering" => server.steer(&params),
         "_session/rewind" => server.rewind(&params),
         crate::goal::METHOD => crate::goal::control(&server, &params),
+        crate::context::METHOD_REPORT => crate::context::report_of(&server, &params),
+        crate::context::METHOD_ITEM => crate::context::item_of(&server, &params),
+        crate::context::METHOD_RAW => crate::context::raw_of(&server, &params),
         _ => Err(RpcError::method_not_found(&method)),
       }
     })

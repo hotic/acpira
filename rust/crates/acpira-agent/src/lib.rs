@@ -8,6 +8,7 @@ pub mod budget;
 pub mod catalog;
 pub mod chunk;
 pub mod compact;
+pub mod context;
 pub mod config;
 pub mod frames;
 pub mod generate;

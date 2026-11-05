@@ -993,6 +993,9 @@ export function Shell(p: ShellProps) {
   }, [p.activeSessionId, on.openFile, filePanelRoot, previewImage, p.home, blobUrl]);
   const activeCwdRef = useRef<string | undefined>(undefined);
   activeCwdRef.current = p.sessions.find(s => s.id === p.activeSessionId)?.cwd || p.cwd;
+  // The panel's context tab: the threshold for its bar, the home folder for its paths, the figure that marks a new request
+  const usedTokens = p.usage?.used;
+  const contextTab = useMemo(() => ({ compactAt: p.compactAt, home: p.home, used: usedTokens }), [p.compactAt, p.home, usedTokens]);
   const homeRef = useRef(p.home);
   homeRef.current = p.home;
   const toolFileActions = useMemo<ToolFileActions | undefined>(() => {
@@ -1341,9 +1344,9 @@ export function Shell(p: ShellProps) {
           )}
           {panelRoot && (files
             ? <FilesLayout sessionId={p.activeSessionId!} root={panelRoot} running={p.running} searchFiles={on.searchFiles} openEditor={openInEditor}
-                openPlan={openPlanInEditor} shareSelection={p.shareEditorSelection} foot={gear} sessionsShown={!columnHidden} onToggleSessions={toggleSessions} />
+                openPlan={openPlanInEditor} shareSelection={p.shareEditorSelection} foot={gear} sessionsShown={!columnHidden} onToggleSessions={toggleSessions} context={contextTab} />
             : <ToolPanelDock sessionId={p.activeSessionId} cwd={panelRoot} running={p.running} narrow={!canDock} sheet={mainColumn}
-                searchFiles={on.searchFiles} openEditor={openInEditor} openPlan={openPlanInEditor} shareSelection={p.shareEditorSelection} />)}
+                searchFiles={on.searchFiles} openEditor={openInEditor} openPlan={openPlanInEditor} shareSelection={p.shareEditorSelection} context={contextTab} />)}
           {/* Last, so it stays over the drawer of a narrow window. The files layout's left column is the explorer */}
           {desktop && <TitleRow onBack={trail.back} onForward={trail.forward}
             column={files

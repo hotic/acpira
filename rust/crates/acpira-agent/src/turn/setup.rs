@@ -37,6 +37,8 @@ pub(super) struct Setup {
   pub(super) system: String,
   /// (variant, version, digest) of the system prompt
   pub(super) prompt: (String, String, String),
+  /// What `system` is made of (`prompt::Section`), for the context report
+  pub(super) sections: Vec<prompt::Section>,
   tools: &'static [&'static str],
   pub(super) specs: Vec<ToolSpec>,
   pub(super) rules: Rules,
@@ -169,6 +171,7 @@ pub(super) fn setup(server: &Server, session: &Session, params: &Value, mcp: &[c
     thinking,
     system: composed.text,
     prompt: (composed.variant, composed.version, composed.digest),
+    sections: composed.sections,
     tools,
     specs,
     rules,
@@ -245,7 +248,14 @@ pub(super) async fn compact_history(server: &Server, session: &Session, s: &Setu
 
 /// The context after a compaction, as an estimate until the next call reports it
 pub(super) fn report_usage(server: &Server, session: &Session, s: &Setup) {
-  let used = approx(&s.system, &session.state.lock().items, &s.specs);
+  let used = {
+    let mut st = session.state.lock();
+    let used = approx(&s.system, &st.items, &s.specs);
+    // The context report describes what the ring shows: the compacted history, estimated the same way
+    let setting = crate::context::Setting { system: &s.system, sections: &s.sections, mcp: &s.mcp };
+    st.context = Some(Arc::new(crate::context::Snapshot::estimate(s.system.clone(), s.specs.clone(), setting, used, &st)));
+    used
+  };
   send_usage(server, session, used, s.model.context.unwrap_or(DEFAULT_CONTEXT));
 }
 
