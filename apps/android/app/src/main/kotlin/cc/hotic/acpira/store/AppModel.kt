@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import cc.hotic.acpira.design.IconStore
 import cc.hotic.acpira.i18n.L10n
 import cc.hotic.acpira.i18n.t
 import cc.hotic.acpira.model.AgentInfo
@@ -29,6 +30,7 @@ import cc.hotic.acpira.sync.EngineClient
 import cc.hotic.acpira.sync.EngineEvent
 import cc.hotic.acpira.sync.EngineTransport
 import cc.hotic.acpira.sync.SessionFeed
+import cc.hotic.acpira.sync.VIEW_CACHE_ENTRIES
 import cc.hotic.acpira.sync.WebSocketTransport
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -87,7 +89,14 @@ class AppModel(
   private val scope: CoroutineScope,
   wire: Wire = options.engine?.let(EngineAddress::parse)?.let { Wire.Engine(it) } ?: Wire.Demo,
 ) {
-  var agents by mutableStateOf<List<AgentInfo>>(emptyList())
+  private var agentList by mutableStateOf<List<AgentInfo>>(emptyList())
+  /** Every agent the engine lists; their own marks (plugin and agents.json agents) go to the icon store as they come */
+  var agents: List<AgentInfo>
+    get() = agentList
+    set(value) {
+      IconStore.adopt(value.mapNotNull { a -> a.mark?.takeIf { it.isNotEmpty() }?.let { a.id to it } }.toMap())
+      agentList = value
+    }
   var summaries by mutableStateOf<List<SessionSummary>>(emptyList())
   var settings by mutableStateOf(SettingsView())
   /** The views the screens show, by session id */
@@ -128,6 +137,12 @@ class AppModel(
 
   private var client: EngineClient? = null
   private val feed = SessionFeed()
+  /**
+   * Views carried over from the wire before (`resume`) that this wire has not shown yet, least recently shown first.
+   * They stay beside the feed's own until the cache bound needs their room, so a chat opened after a reconnect shows
+   * its last copy at once instead of waiting for the whole transcript (apps/ios AppModel `carried`)
+   */
+  private var carried: List<String> = emptyList()
   /** After newSession: the next session the engine shows that is not `from` is the one it made */
   private var awaiting: Pair<String?, (String) -> Unit>? = null
   private var demoSeq = 0
@@ -523,7 +538,14 @@ class AppModel(
         val view = outcome.view ?: return
         // Only the views the feed keeps stay, so a long transcript is not held past its cache bound
         val kept = feed.views.kept.toSet()
-        views.keys.filter { it !in kept }.forEach { views.remove(it) }
+        // Views carried over from the wire before stay too, while the bound leaves them room; one this wire shows
+        // becomes the feed's own
+        if (carried.isNotEmpty()) {
+          val left = carried.filter { it !in kept }
+          carried = left.takeLast(maxOf(0, VIEW_CACHE_ENTRIES - kept.size))
+        }
+        val keep = if (carried.isEmpty()) kept else kept + carried
+        views.keys.filter { it !in keep }.forEach { views.remove(it) }
         views[view.id] = view
         // The engine's view of the chat on screen, back in the foreground: the clock runs on the engine's times again
         if (clockHeld != null && !away && view.id == onScreenChat()) clockHeld = null
@@ -559,6 +581,8 @@ class AppModel(
     settings = from.settings
     summaries = from.summaries
     from.views.forEach { (id, v) -> views[id] = v }
+    // Least recently shown first: what the wire before still carried itself, then its own feed's order
+    carried = (from.carried + from.feed.views.kept).distinct().filter { it in views }
     from.outgoing.forEach { (id, o) -> outgoing[id] = o }
     chatRoot = from.chatRoot
     home = from.home

@@ -117,6 +117,10 @@ data class AgentInfo(
   val searched: List<String>? = null,
   val install: AgentInstall? = null,
   val update: String? = null,
+  /** Who makes the CLI, for an agent the app knows no vendor of (an agents.json entry or a plugin's) */
+  val vendor: String? = null,
+  /** The agent's own mark as SVG path data on a 24 x 24 box, for an agent the app has no mark of its own for */
+  val mark: List<String>? = null,
 )
 
 @Serializable

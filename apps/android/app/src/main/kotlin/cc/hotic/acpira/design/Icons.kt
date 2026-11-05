@@ -9,7 +9,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
@@ -86,11 +89,30 @@ object IconStore {
     return rules.firstOrNull { it.first.containsMatchIn(lower) }?.second
   }
 
+  /** Marks the engine sent with its agents (AgentInfo.mark: plugin and agents.json agents), by agent id */
+  private val adopted = HashMap<String, List<String>>()
+
+  /** Bumped when [adopt] changes a mark, so a VendorMark drawn before the agents arrived draws again */
+  var marksVersion by mutableIntStateOf(0)
+    private set
+
+  /** Takes the agents' own marks; a built-in brand of the same id still wins in [mark] */
+  fun adopt(byId: Map<String, List<String>>) {
+    val changed = synchronized(marks) {
+      val ids = (adopted.keys + byId.keys).filter { adopted[it] != byId[it] }
+      adopted.clear()
+      adopted.putAll(byId)
+      ids.forEach { marks.remove(it) }
+      ids.isNotEmpty()
+    }
+    if (changed) marksVersion++
+  }
+
   /** A vendor mark's filled path (even-odd) and the bounds of its ink, null for an unknown brand */
   fun mark(context: Context, brand: String): Pair<Path, Rect>? = synchronized(marks) {
     if (marks.containsKey(brand)) return@synchronized marks[brand]
     val icons = load(context).marks
-    val data = icons.paths[icons.alias[brand] ?: brand]
+    val data = icons.paths[icons.alias[brand] ?: brand] ?: adopted[brand]
     val made = data?.let { ds ->
       val path = Path().apply { fillType = PathFillType.EvenOdd }
       for (d in ds) path.addPath(PathParser().parsePathString(expandArcFlags(d)).toPath())
@@ -158,7 +180,7 @@ fun Lucide(name: String, tint: Color, modifier: Modifier = Modifier, size: Dp = 
 @Composable
 fun VendorMark(brand: String?, name: String, tint: Color, modifier: Modifier = Modifier, size: Dp = Metrics.icon, fit: Boolean = false) {
   val context = LocalContext.current
-  val mark = remember(brand) { brand?.let { IconStore.mark(context, it) } }
+  val mark = remember(brand, IconStore.marksVersion) { brand?.let { IconStore.mark(context, it) } }
   if (mark != null) {
     val (path, bounds) = mark
     Canvas(modifier.size(size)) {
