@@ -32,6 +32,10 @@
 		<key>UIApplicationSupportsMultipleScenes</key>
 		<false/>
 	</dict>
+	<!-- ProMotion: without it an iPhone caps the app's own frames (SwiftUI and Core Animation animations, display
+	     links such as the thread's bottom glide) at 60 Hz while system scrolling runs at 120 Hz -->
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
 	<!-- The app's own languages (packages/shared/i18n), so system controls such as PasteButton read in the same ones -->
 	<key>CFBundleLocalizations</key>
 	<array>

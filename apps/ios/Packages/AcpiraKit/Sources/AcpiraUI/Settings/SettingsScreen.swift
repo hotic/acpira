@@ -22,6 +22,9 @@ enum Prefs {
   static let pinPlace = "acpira.pinPlace"
   /// The first-run flow is over, or was never due (a computer already paired when it would have shown)
   static let welcomed = "acpira.welcomed"
+  /// Developer switches for the frame-rate and hitch overlay (`PerfHUD`)
+  static let hudFPS = "acpira.hud.fps"
+  static let hudHitches = "acpira.hud.hitches"
 
   /// The table a stored language choice selects
   static func resolve(_ locale: String) -> String { locale == "auto" ? L10n.preferred() : locale }
@@ -32,7 +35,7 @@ enum Prefs {
 /// at the left edge, where the system's own pages centre it beside back
 struct SettingsSheet: View {
   @Environment(\.dismiss) private var dismiss
-  /// `-settingsPage agents | agent:ID | models:ID` opens a page for screenshots
+  /// `-settingsPage agents | agent:ID | models:ID | developer` opens a page for screenshots
   @State private var path = SettingsRoute.launchPath(UserDefaults.standard.string(forKey: "settingsPage"))
   var body: some View {
     NavigationStack(path: $path) {
@@ -101,6 +104,8 @@ struct SettingsScreen: View {
       }
       Section(t("mobile.about")) {
         LabeledContent(t("settings.fact.version"), value: version)
+        // Developer tools sit under the version, one tap away, as the system's own Developer page does
+        NavigationLink(value: SettingsRoute.developer) { Text(web: t("mobile.dev"), paragraph: false) }
       }
     }
     // The sheet sits outside the root's `.id(locale)`, and its sections are views of their own whose inputs a language
@@ -113,6 +118,7 @@ struct SettingsScreen: View {
       switch route {
       case .agent(let id): AgentSettingsPage(id: id)
       case .models(let id): ModelsSettingsPage(id: id)
+      case .developer: DeveloperSettingsPage()
       }
     }
     .navigationTitle(t("session.settings"))
@@ -160,6 +166,26 @@ struct NotificationsSection: View {
       if let url = URL(string: UIApplication.openNotificationSettingsURLString) { UIApplication.shared.open(url) }
       #endif
     }
+  }
+}
+
+/// Developer: the on-screen frame-rate and hitch overlay (`PerfHUD`), for judging smoothness on the phone itself
+struct DeveloperSettingsPage: View {
+  @AppStorage(Prefs.hudFPS) private var fps = false
+  @AppStorage(Prefs.hudHitches) private var hitches = false
+
+  var body: some View {
+    Form {
+      Section {
+        Toggle(t("mobile.dev.fps"), isOn: $fps).tint(.green)
+        Toggle(t("mobile.dev.hitches"), isOn: $hitches).tint(.green)
+      } footer: {
+        Text(web: t("mobile.dev.desc"))
+      }
+    }
+    .formPage()
+    .navigationTitle(t("mobile.dev"))
+    .navigationBarTitleDisplayModeInline()
   }
 }
 
