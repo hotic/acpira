@@ -135,7 +135,7 @@ fun turnStatsContent(turn: AgentTurn): TurnStatsContent {
   // Floored, so a 99.6% hit never reads as a full 100%
   fun share(part: Int, whole: Int) = percents.format(floor(part.toDouble() / whole * 100) / 100)
   val tiles = buildList {
-    if (turn.startedAt != null && turn.endedAt != null) add(StatLine(t("stats.duration"), elapsedDuration(turn)))
+    if (turn.startedAt != null && turn.endedAt != null) add(StatLine(t("stats.duration"), elapsedDuration(turn, precise = true)))
     turnTtft(turn)?.let { add(StatLine(t("stats.firstToken"), it)) }
     turnOutputTps(turn)?.let { add(StatLine(t("stats.outputShort"), "${number(it)} tok/s")) }
   }

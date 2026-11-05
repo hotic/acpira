@@ -187,6 +187,8 @@ describe('Codex process folding', () => {
     expect(elapsedDuration({ ...turn, endedAt: 61000 })).toBe('1m');
     expect(elapsedDuration({ ...turn, endedAt: 6000 })).toBe('5s');
     expect(elapsedDuration({ ...turn, startedAt: undefined })).toBe('');
+    expect(elapsedDuration({ ...turn, endedAt: 1400 }, true)).toBe('0.4s');
+    expect(elapsedDuration({ ...turn, endedAt: 287000 }, true)).toBe('4m 46s');
   });
 
   it('follows the locale: zh-CN renders the same labels in Chinese', () => {

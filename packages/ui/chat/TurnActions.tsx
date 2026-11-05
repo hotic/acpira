@@ -122,7 +122,7 @@ function StatsCard({ turn, model }: { turn: AgentTurn; model?: string }) {
   const copied = useCopied(requestId ?? '');
 
   const tiles: { label: string; value: string }[] = [];
-  if (turn.startedAt !== undefined && turn.endedAt !== undefined) tiles.push({ label: t('stats.duration'), value: elapsedDuration(turn) });
+  if (turn.startedAt !== undefined && turn.endedAt !== undefined) tiles.push({ label: t('stats.duration'), value: elapsedDuration(turn, true) });
   const ttft = turnTtft(turn);
   if (ttft) tiles.push({ label: t('stats.firstToken'), value: ttft });
   const tps = turnOutputTps(turn);

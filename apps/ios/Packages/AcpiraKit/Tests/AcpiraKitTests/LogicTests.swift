@@ -278,14 +278,25 @@ private let command = block(#"{"type":"tool_call","id":"x","kind":"execute","ver
 
   @Test func commandDurationTenthsThenWholeSeconds() {
     #expect(commandDuration(ms: 180) == "0.2 秒")
-    #expect(commandDuration(ms: 40) == "<0.1 秒")
-    #expect(commandDuration(ms: -5) == "<0.1 秒")
+    #expect(commandDuration(ms: 40) == "0.1 秒")
+    #expect(commandDuration(ms: -5) == "0.1 秒")
     #expect(commandDuration(ms: 2_400) == "2.4 秒")
+    #expect(commandDuration(ms: 9_940) == "9.9 秒")
+    #expect(commandDuration(ms: 9_960) == "10 秒")
     #expect(commandDuration(ms: 41_800) == "42 秒")
     #expect(commandDuration(ms: 125_000) == "2 分钟 5 秒")
     #expect(commandDuration(ms: 120_000) == "2 分钟")
     #expect(commandDuration(ms: 5_900, whole: true) == "5 秒")
     #expect(commandDuration(ms: 61_500, whole: true) == "1 分钟 1 秒")
+  }
+
+  // folding.test.ts elapsedDuration, precise form
+  @Test func statsDurationKeepsTenthsUnderTenSeconds() {
+    let quick: AgentTurn = decode(#"{"startedAt":0,"endedAt":1400,"blocks":[]}"#)
+    #expect(elapsedDuration(quick, precise: true) == "1.4 秒")
+    #expect(elapsedDuration(quick) == "1 秒")
+    let long: AgentTurn = decode(#"{"startedAt":0,"endedAt":286000,"blocks":[]}"#)
+    #expect(elapsedDuration(long, precise: true) == "4 分钟 46 秒")
   }
 
   func display(_ label: String, _ kind: PermissionKind = .allow_always) -> DisplayOption {

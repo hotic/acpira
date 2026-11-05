@@ -2,6 +2,7 @@ import { isSessionTool, sessionRead, splitSessionTarget, type SessionRead } from
 import type { AgentBlock, AgentTurn, CompactionBlock, GoalBlock, NoticeBlock, TextBlock, ToolCallBlock, ToolKind } from '@acpira/shared/transcript';
 import type { MsgKey } from '@acpira/shared/i18n/core';
 import { getLocale, t } from '../i18n';
+import { commandDuration } from './commandDuration';
 import { planApprovalTitle } from './permissionOptions';
 import { visibleToolContents } from './toolDetails';
 
@@ -167,11 +168,13 @@ export function clockStart(turn: AgentTurn): number | undefined {
 }
 
 // Thought durations omit tool execution and waiting, so they cannot substitute for turn timing.
-// Bare "5m 35s", the same on the turn's fold head, its live counter and the stats card.
-export function elapsedDuration(turn: AgentTurn): string {
+// Bare "5m 35s", the same on the turn's fold head and its live counter; `precise` keeps tenths under ten seconds,
+// like a finished command row.
+export function elapsedDuration(turn: AgentTurn, precise = false): string {
   const from = clockStart(turn);
   if (from === undefined || turn.endedAt === undefined) return '';
-  return durationText(turn.endedAt - from);
+  const ms = turn.endedAt - from;
+  return precise ? commandDuration(ms) : durationText(ms);
 }
 
 // "5m 35s" for a span in ms; shared by the finished label and the live counter on a running turn's head
