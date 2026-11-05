@@ -112,6 +112,9 @@ public struct RootView: View {
   @AppStorage(Prefs.welcomed) private var welcomed = false
   /// The first-run flow is on screen over the screens
   @State private var welcoming = false
+  /// The link handler, made once per app model (`Memo`): a new one on every rebuild of the root (each push, pop and
+  /// toast) never compares equal and updated every selectable paragraph on screen
+  @State private var openURLMemo = Memo<OpenURLAction>()
 
   @Environment(\.scenePhase) private var phase
 
@@ -299,7 +302,9 @@ public struct RootView: View {
     .environment(handoff)
     .environment(\.pairing, pairing)
     // Session links in replies and from outside open that session; any other link goes to the system
-    .environment(\.openURL, OpenURLAction { url in model.openLink(url) ? .handled : .systemAction })
+    .environment(\.openURL, openURLMemo("\(ObjectIdentifier(model).hashValue)") { [model] in
+      OpenURLAction { url in model.openLink(url) ? .handled : .systemAction }
+    })
     .onOpenURL { url in _ = model.openLink(url) }
     .preferredColorScheme(scheme)
     .environment(\.motionEnabled, options.motion && motion)

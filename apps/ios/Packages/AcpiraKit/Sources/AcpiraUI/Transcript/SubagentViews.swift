@@ -18,7 +18,8 @@ struct SubagentInspect: Equatable {
 extension EnvironmentValues {
   /// A tap on a subagent row; nil where rows only draw (the full-length render)
   @Entry var inspectSubagent: SubagentInspect? = nil
-  /// The session's every node, for descendant counts and provenance that cross turns
+  /// The session's every node, for descendant counts and provenance that cross turns; the thread hands out its
+  /// `linkOnly` copies
   @Entry var allSubagents: [SubagentSummary] = []
   /// The nodes placed at this turn's delegation rows, by delegation (`placeNodes`)
   @Entry var delegations: [String: [SubagentSummary]] = [:]

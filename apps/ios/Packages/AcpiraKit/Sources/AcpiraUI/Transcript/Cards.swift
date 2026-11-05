@@ -293,13 +293,25 @@ private let planOptions: [(kind: PermissionKind, labels: [String], key: String, 
   (.reject_once, ["No, start implementing now"], "permission.plan.start", false),
 ]
 
+/// permissionOption's patterns, compiled once each: the card relabels its options every time it is built
+private enum PermissionPatterns {
+  private static var cache: [String: NSRegularExpression] = [:]
+
+  static func compiled(_ pattern: String) -> NSRegularExpression? {
+    if let kept = cache[pattern] { return kept }
+    let made = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+    cache[pattern] = made
+    return made
+  }
+}
+
 /// permissionOption: ACP kinds say nothing of scope, so only complete, known labels are rewritten. `plan`: the option
 /// belongs to a linked plan approval, where Build / Revise and Kimi's reject-and-exit are localized too
 func permissionOption(_ option: PermissionOption, plan: Bool = false) -> DisplayOption {
   var out = DisplayOption(id: option.id, label: option.label, kind: option.kind, detail: option.detail)
   let label = option.label
   func matches(_ pattern: String) -> [String]? {
-    guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+    guard let regex = PermissionPatterns.compiled(pattern),
           let m = regex.firstMatch(in: label, range: NSRange(label.startIndex..., in: label)) else { return nil }
     return (0..<m.numberOfRanges).map { i in
       Range(m.range(at: i), in: label).map { String(label[$0]) } ?? ""

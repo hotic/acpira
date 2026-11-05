@@ -117,13 +117,24 @@ struct SubagentReport: Equatable {
   var line: String?
 }
 
+/// Compiled once: a regex literal is compiled again each time it is evaluated, and the wake prompts are read on every
+/// streamed chunk (`threadItems`)
+private enum SubagentPatterns {
+  /// A report's heading: `## Persona (cli)` or `## Persona (cli) asks`
+  nonisolated(unsafe) static let reportHead = /## (.+) \(([^()]*)\)( asks)?/
+  /// A string field of a JSON object, up to its closing quote or the end of a cut-off text
+  nonisolated(unsafe) static let jsonField = /"([^"\\]+)"\s*:\s*"((?:[^"\\]|\\.)*)"?/
+  /// An escape sequence a cut left unfinished at the end
+  nonisolated(unsafe) static let partialEscape = /\\(?:u[0-9a-fA-F]{0,3})?$/
+}
+
 /// shownReports: the wake message's `## Persona (cli)` / `## Persona (cli) asks` sections, the sidekick's left out (its
 /// relay's handback row already shows its return)
 func shownReports(_ text: String) -> [SubagentReport] {
   let lines = text.components(separatedBy: "\n")
   var out: [SubagentReport] = []
   for line in lines {
-    if let m = line.wholeMatch(of: /## (.+) \(([^()]*)\)( asks)?/) {
+    if let m = line.wholeMatch(of: SubagentPatterns.reportHead) {
       out.append(SubagentReport(name: String(m.1), agent: String(m.2), asks: m.3 != nil, line: nil))
     } else if !out.isEmpty, out[out.count - 1].line == nil {
       let shown = line.trimmingCharacters(in: .whitespaces)
@@ -156,6 +167,23 @@ func stateLabel(_ node: SubagentSummary) -> String {
 }
 
 /// subagentTitle: the agent's short label, else its role
+extension SubagentSummary {
+  /// The node as the thread's environment carries it (`allSubagents`): what descendant counts and provenance paths read
+  /// (ids, parent, title, role, state). The task, result and live detail stay out: a hosted cell compares its whole
+  /// environment on every update, and a long session's children's texts made that comparison the costliest step of
+  /// a stream
+  var linkOnly: SubagentSummary {
+    var node = self
+    node.task = nil
+    node.result = nil
+    node.activity = nil
+    node.permissions = nil
+    node.question = nil
+    node.steps = nil
+    return node
+  }
+}
+
 func subagentTitle(_ node: SubagentSummary) -> String { node.title ?? node.role ?? t("subagents.untitled") }
 
 /// What the row says the child is doing: a pending card beats the state
@@ -184,9 +212,7 @@ func secondLine(_ node: SubagentSummary) -> String {
 /// through unchanged
 func resultText(_ result: String) -> String {
   guard result.drop(while: \.isWhitespace).first == "{" else { return result }
-  // A string field of a JSON object, up to its closing quote or the end of a cut-off text
-  let field = /"([^"\\]+)"\s*:\s*"((?:[^"\\]|\\.)*)"?/
-  let fields = result.matches(of: field).map { (String($0.1), unescapeJSON(String($0.2))) }
+  let fields = result.matches(of: SubagentPatterns.jsonField).map { (String($0.1), unescapeJSON(String($0.2))) }
     .filter { !$0.1.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
   guard !fields.isEmpty else { return result }
   return fields.first { $0.0 == "summary" }?.1 ?? fields.prefix(3).map(\.1).joined(separator: t("common.listSep"))
@@ -194,7 +220,7 @@ func resultText(_ result: String) -> String {
 
 private func unescapeJSON(_ raw: String) -> String {
   // A cut can land inside an escape sequence; drop the partial one
-  let whole = raw.replacing(/\\(?:u[0-9a-fA-F]{0,3})?$/, with: "")
+  let whole = raw.replacing(SubagentPatterns.partialEscape, with: "")
   return (try? JSONDecoder().decode(String.self, from: Data("\"\(whole)\"".utf8))) ?? whole
 }
 

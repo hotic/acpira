@@ -60,6 +60,10 @@ func observedBlock(_ block: AgentBlock) -> AgentBlock {
 func isContextLengthError(_ error: TurnError?) -> Bool {
   guard let error else { return false }
   if ["context_length_exceeded", "context_window_exceeded", "prompt_too_long"].contains(error.kind ?? "") { return true }
-  let pattern = /(?i)\bprompt (?:to the model )?(?:was|is) too long\b|\bcontext (?:length|window) (?:exceeded|limit exceeded)\b|\bmaximum context length\b/
-  return error.message.firstMatch(of: pattern) != nil
+  return error.message.firstMatch(of: ContextLengthPattern.message) != nil
+}
+
+/// Compiled once: a regex literal is compiled again each time it is evaluated
+private enum ContextLengthPattern {
+  nonisolated(unsafe) static let message = /(?i)\bprompt (?:to the model )?(?:was|is) too long\b|\bcontext (?:length|window) (?:exceeded|limit exceeded)\b|\bmaximum context length\b/
 }

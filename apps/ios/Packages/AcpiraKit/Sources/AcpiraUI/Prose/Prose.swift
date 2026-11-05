@@ -12,6 +12,8 @@ public enum ProseTone: Sendable { case reply, thought }
 public struct Prose: View {
   let blocks: [MDBlock]
   var tone: ProseTone
+  /// The streamed tail's fade, handed to the last text only (`ProseBlocks`)
+  var fade: StreamFade?
   @Environment(\.agentAccent) private var accent
 
   /// `streaming`: the text is still arriving, so its unfinished tail is repaired first (streamdown's streaming mode)
@@ -26,14 +28,15 @@ public struct Prose: View {
   }
 
   /// Blocks parsed already (a streamed text's `StreamParse`)
-  init(blocks: [MDBlock], tone: ProseTone) {
+  init(blocks: [MDBlock], tone: ProseTone, fade: StreamFade? = nil) {
     self.blocks = blocks
     self.tone = tone
+    self.fade = fade
   }
 
   public var body: some View {
     if !blocks.isEmpty {
-      ProseBlocks(blocks: blocks, style: ProseStyle(tone: tone, accent: accent))
+      ProseBlocks(blocks: blocks, style: ProseStyle(tone: tone, accent: accent), fade: fade)
     }
   }
 }
@@ -41,8 +44,6 @@ public struct Prose: View {
 extension EnvironmentValues {
   /// --accent under accent = agent
   @Entry public var agentAccent: Color = Palette.brand
-  /// The streamed tail's fade; set only along the path to the last text of a live Prose
-  @Entry var streamFade: StreamFade?
 }
 
 // MARK: - Streaming
@@ -102,10 +103,10 @@ public struct StreamProse: View {
         // mounted quietly or after its entrance settled shows its existing text on the first frame, before `onAppear`
         let resume = pacer.target.isEmpty && (quiet || !rowEnter || gesture.active)
         let text = resume ? markdown : pacer.visible
-        // The turn heading already indicates waiting before the first visible words
-        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-          Prose(blocks: parse(text), tone: tone)
-            .environment(\.streamFade, resume ? nil : StreamFade(count: pacer.count, reveals: pacer.reveals))
+        // The turn heading already indicates waiting before the first visible words. Stops at the first visible
+        // character instead of trimming a copy of the whole text on every tick
+        if !text.unicodeScalars.allSatisfy(CharacterSet.whitespacesAndNewlines.contains) {
+          Prose(blocks: parse(text), tone: tone, fade: resume ? nil : StreamFade(count: pacer.count, reveals: pacer.reveals))
         } else {
           // An empty Group is no view at all and would never start the task below; this holds it for the first tick
           Color.clear.frame(height: 0)
@@ -155,9 +156,15 @@ public struct StreamProse: View {
 /// so the view's body advances it; it is only a cache, its result always that of a whole parse of the repaired text
 final class StreamParse {
   private var stream = MarkdownStream()
+  /// The last text parsed and its blocks. The body runs again with the same visible text whenever only the pacer's
+  /// speed, a fade or the received tail moved, and each of those ran the whole repair again
+  private var last: (text: String, blocks: [MDBlock])?
 
   func callAsFunction(_ text: String) -> [MDBlock] {
-    stream.parse(Remend.repair(text).trimmingCharacters(in: .newlines))
+    if let last, last.text.utf8.count == text.utf8.count, last.text.utf8.elementsEqual(text.utf8) { return last.blocks }
+    let blocks = stream.parse(Remend.repair(text).trimmingCharacters(in: .newlines))
+    last = (text, blocks)
+    return blocks
   }
 }
 
@@ -186,17 +193,18 @@ struct ProseStyle {
 struct ProseBlocks: View {
   let blocks: [MDBlock]
   let style: ProseStyle
+  /// The streamed tail's fade: the last block's alone, earlier blocks have finished fading by construction
+  var fade: StreamFade?
   @Environment(\.quoteProse) private var quote
 
   var body: some View {
     VStack(alignment: .leading, spacing: Metrics.gap) {
       ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
-        ProseBlock(block: block, style: style, first: index == 0)
+        ProseBlock(block: block, style: style, first: index == 0, fade: index == blocks.count - 1 ? fade : nil)
           #if !canImport(UIKit)
           .environment(\.quoteProse, nil)
           #endif
           .quoteMenu(block, quote)
-          .tailOnly(index == blocks.count - 1)
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
@@ -207,24 +215,27 @@ struct ProseBlock: View {
   let block: MDBlock
   let style: ProseStyle
   var first: Bool
+  /// The streamed tail's fade when this is the last block; tables, code and math appear whole and take none
+  var fade: StreamFade?
 
   var body: some View {
     switch block {
     case .paragraph(let inlines) where holdsImage(inlines):
-      ImageParagraph(inlines: inlines, style: style)
+      ImageParagraph(inlines: inlines, style: style, fade: fade)
     case .paragraph(let inlines):
-      InlineText(inlines: inlines, style: style.body, ink: style.ink, strongInk: style.strongInk, accent: style.accent)
+      InlineText(inlines: inlines, style: style.body, ink: style.ink, strongInk: style.strongInk, accent: style.accent,
+                 fade: fade)
     case .heading(let level, let inlines):
       InlineText(inlines: inlines, style: style.heading(level), ink: style.tone == .reply ? Palette.fgStrong : style.strongInk,
-                 strongInk: style.tone == .reply ? Palette.fgStrong : style.strongInk, accent: style.accent, weight: .semibold)
+                 strongInk: style.tone == .reply ? Palette.fgStrong : style.strongInk, accent: style.accent, weight: .semibold,
+                 fade: fade)
         // :not(:first-child) gets margin-top: var(--gap) on top of the block gap
         .padding(.top, first ? 0 : Metrics.gap)
     case .list(let ordered, let start, let items):
-      ProseList(ordered: ordered, start: start, items: items, style: style)
+      ProseList(ordered: ordered, start: start, items: items, style: style, fade: fade)
     case .quote(let inner):
-      ProseQuote(blocks: inner, style: style)
+      ProseQuote(blocks: inner, style: style, fade: fade)
     case .code(let lang, let text):
-      Group {
       // A mermaid block the flowchart parser reads is drawn natively; any other diagram goes to mermaid itself in a web
       // view, and stays source if mermaid cannot read it either, as a failed render does in the webview
       if lang == "mermaid", let diagram = MermaidBlock(source: text) {
@@ -234,14 +245,13 @@ struct ProseBlock: View {
       } else {
         CodeSurface(text: text, lang: lang)
       }
-      }.tailOnly(false)
     case .table(let align, let header, let rows):
       // Tables, code and math appear whole: a fade by distance from the end does not map onto their cells
-      ProseTable(align: align, header: header, rows: rows, style: style).tailOnly(false)
+      ProseTable(align: align, header: header, rows: rows, style: style)
     case .rule:
       Rectangle().fill(Palette.conversationLine).frame(height: 1).padding(.vertical, Metrics.gap)
     case .math(let tex):
-      MathBlock(tex: tex, style: style).tailOnly(false)
+      MathBlock(tex: tex, style: style)
     }
   }
 }
@@ -253,6 +263,8 @@ struct ProseList: View {
   let start: Int
   let items: [[MDBlock]]
   let style: ProseStyle
+  /// The streamed tail's fade, for the last block of the last item
+  var fade: StreamFade?
 
   var body: some View {
     // li + li: margin-top 2px
@@ -263,15 +275,14 @@ struct ProseList: View {
             .frame(width: style.listIndent, alignment: .trailing)
           VStack(alignment: .leading, spacing: Metrics.s0_5) {
             ForEach(Array(item.enumerated()), id: \.offset) { i, block in
-              ProseBlock(block: block, style: style, first: i == 0)
-                .tailOnly(i == item.count - 1)
+              ProseBlock(block: block, style: style, first: i == 0,
+                         fade: index == items.count - 1 && i == item.count - 1 ? fade : nil)
             }
           }
           .frame(maxWidth: .infinity, alignment: .leading)
         }
         // streamdown's li carries py-1
         .padding(.vertical, Metrics.s1)
-        .tailOnly(index == items.count - 1)
       }
     }
   }
@@ -305,11 +316,12 @@ struct ProseList: View {
 struct ProseQuote: View {
   let blocks: [MDBlock]
   let style: ProseStyle
+  var fade: StreamFade?
 
   var body: some View {
     var quiet = style
     quiet.inkOverride = Palette.fg2
-    return ProseBlocks(blocks: blocks, style: quiet)
+    return ProseBlocks(blocks: blocks, style: quiet, fade: fade)
       .padding(.vertical, Metrics.gap)
       .padding(.horizontal, Metrics.pad)
       .background(alignment: .leading) {
@@ -442,10 +454,3 @@ struct ProseTable: View {
 // MARK: - Math
 
 // MathBlock (KaTeX-faithful `$$` display math) lives in MathTypeset.swift
-
-extension View {
-  /// Keeps the stream fade on the last text only; earlier blocks have finished fading by construction
-  @ViewBuilder func tailOnly(_ tail: Bool) -> some View {
-    if tail { self } else { environment(\.streamFade, nil) }
-  }
-}

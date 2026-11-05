@@ -47,7 +47,9 @@ func splitPlanSections(_ blocks: [AgentBlock], placed: Set<String> = []) -> [Pla
       continue
     case .toolCall(let call) where call.subagentId.map { !placed.contains($0) || seen.contains($0) } ?? false:
       continue
-    case .thought(let thought) where thought.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
+    // Runs for every block of the turn on each streamed chunk: stops at the first visible character instead of
+    // trimming a copy of each thought
+    case .thought(let thought) where thought.text.unicodeScalars.allSatisfy(CharacterSet.whitespacesAndNewlines.contains):
       continue
     default: break
     }

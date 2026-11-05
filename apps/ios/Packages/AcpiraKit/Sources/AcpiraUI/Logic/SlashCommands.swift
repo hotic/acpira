@@ -18,6 +18,12 @@ struct PromptEdit: Equatable {
 }
 
 enum SlashCommands {
+  /// Compiled once: a regex literal is compiled again each time it is evaluated, and the composer asks on every build
+  private enum Patterns {
+    nonisolated(unsafe) static let scope = /^(?:agents|claude):/
+    nonisolated(unsafe) static let lastCommand = /(?:^|\s)\/(\S+)\s*$/
+  }
+
   /// What may sit right before a sigil for it to count (SIGIL_LEAD): whitespace, or CJK text and its full-width
   /// punctuation, which those languages write without spaces (`问问@GPT`, `然后/review`). Latin letters, digits and ASCII
   /// punctuation keep `a@b.com`, `a/b` and `https://` plain
@@ -86,14 +92,14 @@ enum SlashCommands {
   private static func mergeSkillCopies(_ commands: [SlashCommand]) -> [SlashCommand] {
     var seen = Set<String>()
     return commands.filter { c in
-      guard let scope = c.name.firstMatch(of: /^(?:agents|claude):/) else { return true }
+      guard let scope = c.name.firstMatch(of: Patterns.scope) else { return true }
       return seen.insert(String(c.name[scope.range.upperBound...])).inserted
     }
   }
 
   /// commandHint: the input hint of the command the prompt's last token names, while its arguments are still empty
   static func hint(_ commands: [SlashCommand], text: String) -> String? {
-    guard let m = text.firstMatch(of: /(?:^|\s)\/(\S+)\s*$/) else { return nil }
+    guard let m = text.firstMatch(of: Patterns.lastCommand) else { return nil }
     let name = String(m.1)
     return commands.first { $0.name == name }?.input?.hint
   }

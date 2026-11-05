@@ -5,6 +5,12 @@ import Foundation
 // …) name a session; the TypeScript, the Rust mirror and this one agree on every case of test/fixtures/session-links.json.
 
 enum SessionLinks {
+  /// Compiled once: a regex literal is compiled again each time it is evaluated, and every link and code span of a
+  /// paragraph is asked about each time the paragraph is built
+  private enum Patterns {
+    nonisolated(unsafe) static let schemed = /([A-Za-z][A-Za-z0-9+.\-]*):\/\/(.*)/
+  }
+
   static let prefix = "acpira://session/"
   private static let reserved: Set<String> = ["index", "prefs", "categories", "trash"]
 
@@ -29,7 +35,7 @@ enum SessionLinks {
     var s = unwrap(href)
     if let cut = s.firstIndex(where: { $0 == "?" || $0 == "#" }) { s = String(s[..<cut]) }
     if s.hasSuffix("/") { s.removeLast() }
-    guard let m = s.wholeMatch(of: /([A-Za-z][A-Za-z0-9+.\-]*):\/\/(.*)/) else { return nil }
+    guard let m = s.wholeMatch(of: Patterns.schemed) else { return nil }
     let scheme = m.1.lowercased()
     let rest = String(m.2)
     let slash = rest.firstIndex(of: "/")

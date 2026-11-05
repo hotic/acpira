@@ -28,6 +28,10 @@ struct ChatScreen: View {
   /// The closures the chat hands its views, made once per session and app model (`Memo`): a reconnect swaps the model
   @State private var actionsMemo = Memo<SessionActions>()
   @State private var diffMemo = Memo<((DiffLocation) async -> FullDiffSource?)?>()
+  /// The header's closures and the draft's bindings, made once per session, app model (and draft) for the same reason:
+  /// a fresh binding or closure never compares equal, so the dock and the navigation bar were rebuilt on every chunk
+  @State private var headerMemo = Memo<HeaderActions>()
+  @State private var draftMemo = Memo<DraftBindings>()
   @Environment(\.initialPopup) private var initialPopup
   @Environment(\.initialDraft) private var initialDraft
   @Environment(\.syncing) private var syncing
@@ -65,14 +69,18 @@ struct ChatScreen: View {
     // and so does the phone's own prompt still on its way to the engine; its working row says which stage holds it
     let sent = model.outgoing[id] ?? []
     let held = heldPrompt(session, outgoing: sent)
+    let bindings = draftMemo("\(memoKey):\(ObjectIdentifier(draft).hashValue)") { DraftBindings(draft) }
     return Thread(session: held)
-      .modifier(StartingTitle(session: held, aside: picking))
+      .modifier(StartingTitle(active: held.status == .starting && !held.running && held.external == nil,
+                              agent: held.agent, aside: picking))
       .environment(\.liveStage, heldStage(session, outgoing: sent, agent: agent.name))
       // An inset reserves scroll clearance without clipping the transcript at the composer's rectangular top edge.
       // Messages pass behind the glass and remain visible beside its rounded corners, as under the navigation bar.
       .safeAreaInset(edge: .bottom, spacing: 0) {
         DockSeat(homeInset: homeInset) {
-          Dock(session: session, draft: Bindable(draft).text, staged: Bindable(draft).staged, edit: Bindable(draft).edit)
+          // The dock's copy of the session leaves out the streamed transcript, so a chunk does not rebuild the dock
+          Dock(session: dockSession(session), turns: session.turns.count, draft: bindings.text, staged: bindings.staged,
+               edit: bindings.edit)
             .readableWidth()
         }
         // The inset takes the dock's ideal height, including long drafts and attachments above the keyboard.
@@ -157,10 +165,29 @@ struct ChatScreen: View {
   private func helpers(_ session: SessionView) -> [SubagentSummary] { (session.subagents ?? []).filter { !isSidekick($0) } }
 
   private func headerActions(_ session: SessionView, _ agent: AgentInfo) -> HeaderActions {
+    var actions = headerMemo(memoKey) { headerClosures }
+    // The sidekick's rounds are the lead's own relay, not subagents: they neither offer the graph nor count in it
+    let helpers = helpers(session)
+    if !hasAccountMenu(agent) { actions.account = nil }
+    if helpers.isEmpty { actions.subagents = nil }
+    if session.cwd.isEmpty { actions.changes = nil }
+    actions.subagentCounts = countsLabel(helpers)
+    actions.cwd = session.cwd
+    actions.projects = model.projects
+    actions.chat = model.isChat(session.cwd)
+    return actions
+  }
+
+  /// Every header action, made once per session and app model (`headerMemo`): each reads the session when it runs
+  /// rather than capturing the one on screen when the bar was built, so the bar compares equal across streamed chunks
+  private var headerClosures: HeaderActions {
     HeaderActions(
       back: { if !model.path.isEmpty { model.path.removeLast() } },
-      new: { model.path.append(.new(agent: session.agent, cwd: session.cwd)) },
-      account: hasAccountMenu(agent) ? { accountOpen = true } : nil,
+      new: {
+        guard let session = model.views[id] else { return }
+        model.path.append(.new(agent: session.agent, cwd: session.cwd))
+      },
+      account: { accountOpen = true },
       pin: { model.togglePin(id) },
       unread: { model.setUnread(id, $0) },
       // An archived chat leaves the list; going back shows where it went
@@ -168,19 +195,14 @@ struct ChatScreen: View {
         model.setArchived(id, archived)
         if archived && !model.path.isEmpty { model.path.removeLast() }
       },
-      rename: { newTitle = session.title; renaming = true },
+      rename: { newTitle = model.views[id]?.title ?? ""; renaming = true },
       export: { model.export(id, format: $0) },
-      terminal: { model.openTerminal(session.cwd) },
-      // The sidekick's rounds are the lead's own relay, not subagents: they neither offer the graph nor count in it
-      subagents: helpers(session).isEmpty ? nil : { model.path.append(.subagents(session: id)) },
-      subagentCounts: countsLabel(helpers(session)),
+      terminal: { if let cwd = model.views[id]?.cwd { model.openTerminal(cwd) } },
+      subagents: { model.path.append(.subagents(session: id)) },
       settings: { model.settingsOpen = true },
       delete: { deleting = true },
-      changes: session.cwd.isEmpty ? nil : { model.path.append(.changes(id)) },
+      changes: { model.path.append(.changes(id)) },
       copy: { kind in Task { await model.copy(id, kind) } },
-      cwd: session.cwd,
-      projects: model.projects,
-      chat: model.isChat(session.cwd),
       move: { model.move(id, to: $0) },
       addFolder: { addingFolder = true })
   }
@@ -583,6 +605,21 @@ final class Memo<Value> {
     let value = make()
     made = (key, value)
     return value
+  }
+}
+
+/// The draft's bindings the dock writes through, made once per draft (`ChatScreen.draftMemo`): a binding made on each
+/// rebuild holds a new location and never compares equal
+struct DraftBindings {
+  let text: Binding<String>
+  let staged: Binding<[Attachment]>
+  let edit: Binding<TurnEdit?>
+
+  init(_ draft: ComposerDraft) {
+    let bindable = Bindable(draft)
+    text = bindable.text
+    staged = bindable.staged
+    edit = bindable.edit
   }
 }
 

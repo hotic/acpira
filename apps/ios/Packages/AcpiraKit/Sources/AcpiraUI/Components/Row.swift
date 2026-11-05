@@ -65,11 +65,13 @@ enum EntranceLedger {
   /// or by opening a fold never play an entrance for content that was already there when the session opened or
   /// caught up
   static func seed(_ session: SessionView) {
+    // Only the newest agent turn can be live (`AgentMessage` hands `running` to the scope, and a claim plays an
+    // entrance only in a live scope), so earlier turns need no claims. Walking every turn's display pipeline on each
+    // open and catch-up cost a long session tens of milliseconds, several times per push
+    guard let index = session.turns.lastIndex(where: { if case .agent = $0 { true } else { false } }),
+          case .agent(let agent) = session.turns[index] else { return }
     let nodes = nodesByTurn(session.subagents ?? [])
-    for (index, turn) in session.turns.enumerated() {
-      guard case .agent(let agent) = turn else { continue }
-      seed(turn: agent, scope: "\(session.id):\(index)", subagents: nodes[index] ?? [])
-    }
+    seed(turn: agent, scope: "\(session.id):\(index)", subagents: nodes[index] ?? [])
   }
 
   static func seed(turn: AgentTurn, scope: String, subagents: [SubagentSummary]) {
