@@ -84,6 +84,26 @@ fn ignores_empty_thought_deltas_while_retaining_whitespace_inside_real_reasoning
   expect_match(&s.turns[0], json!({ "blocks": [{ "type": "thought", "text": "Hello world", "streaming": false }, { "type": "tool_call" }] }));
 }
 
+// anvil over an OpenAI-compatible API: `content: ""` rides every reasoning delta while thoughts arrive in batches
+#[test]
+fn empty_or_blank_message_chunks_between_thought_batches_keep_one_thought() {
+  let mut s = state();
+  for (kind, text) in [
+    ("agent_thought_chunk", "verify the current"),
+    ("agent_message_chunk", ""),
+    ("agent_message_chunk", "\n\n"),
+    ("agent_thought_chunk", " file content"),
+    ("agent_message_chunk", "Done"),
+    ("agent_message_chunk", "\n"),
+  ] {
+    apply(&mut s, json!({ "sessionUpdate": kind, "content": { "type": "text", "text": text } }));
+  }
+  expect_match(
+    &s.turns[0],
+    json!({ "blocks": [{ "type": "thought", "text": "verify the current file content", "streaming": false }, { "type": "text", "markdown": "Done\n" }] }),
+  );
+}
+
 #[test]
 fn kimi_edit_diff_followed_by_a_text_result() {
   for status in ["completed", "failed"] {
