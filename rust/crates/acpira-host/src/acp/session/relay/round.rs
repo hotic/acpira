@@ -13,7 +13,7 @@ use acpira_shared::transcript::Draft;
 
 use super::controls::{current_mode, relay_controls, relay_mode, running_controls, stuck_in_bypass};
 use super::texts::{change_note, compose_brief, round_edits, short, wake_text};
-use super::{MAX_WAKES, NOTE_FILES, Owed, PACK_LINE, PACK_NAME, RelayHandlers, RelayProc, Round, Starting, route_key};
+use super::{MAX_WAKES, NOTE_FILES, Owed, PACK_NAME, RelayHandlers, RelayProc, Round, Starting, route_key};
 use crate::acp::session::attachments::{prepare_prompt, prompt_caps_of};
 use crate::acp::session::turn_usage::turn_usage_of;
 use crate::acp::session::updates::current_turn_index;
@@ -112,7 +112,8 @@ impl AcpSession {
   /// otherwise); a later round of the same thread hears in one line what moved since. Answers a note for the caller
   /// when there was nothing to hand over, or the pack had to be cut down to fit
   async fn relay_blocks(&self, r: &Round, proc: &AgentProcess) -> (Vec<Value>, Option<String>) {
-    let plain = |handover: Option<&str>| vec![json!({ "type": "text", "text": compose_brief(&r.prompt, &r.persona, r.mode, handover) })];
+    let prompts = self.prompts();
+    let plain = |handover: Option<&str>| vec![json!({ "type": "text", "text": compose_brief(&r.prompt, &r.persona, r.mode, handover, &prompts) })];
     let Some(h) = &r.handoff else { return (plain(None), None) };
     let told = self.core.lock().relays.packs.get(&r.thread).cloned();
     if let Some((base, before)) = told {
@@ -145,7 +146,7 @@ impl AcpSession {
     let def = self.deps.registry.try_get(&r.persona.agent).cloned().unwrap_or_default();
     let caps = prompt_caps_of(Some(&proc.init), &def);
     let draft = Draft::Text { name: PACK_NAME.into(), text: pack.text.clone(), context: None };
-    let brief = compose_brief(&r.prompt, &r.persona, r.mode, Some(PACK_LINE));
+    let brief = compose_brief(&r.prompt, &r.persona, r.mode, Some(&prompts.text("relay/pack", acpira_agent::prompt::BASE)), &prompts);
     let files = self.file_reader(Some(std::slice::from_ref(&draft))).await;
     let prepared = prepare_prompt(&self.id, &brief, &[draft], &self.deps.blobs, &files, Some(caps)).await;
     let cut = match pack.level {

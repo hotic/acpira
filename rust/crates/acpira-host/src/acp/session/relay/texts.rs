@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use anyhow::anyhow;
 use serde_json::Value;
 
+use acpira_agent::prompt::{BASE, Library};
 use acpira_shared::subagents::{RelayMode, SubagentDuty, SubagentGroup, SubagentPersona, SubagentState};
 use acpira_shared::transcript::{AgentBlock, DiffKind, ToolContent, ToolKind, ToolStatus, Turn};
 
@@ -31,34 +32,28 @@ pub(super) fn clip(s: &str, max: usize) -> String {
 /// The task the child receives: the caller's prompt, the persona's standing brief, the read-only rule for a consult, what
 /// is handed over of the caller's changes, and how to end: the caller reads only the final reply, so it says what was changed, checked and assumed (a reviewer:
 /// its findings by severity and place), which is what the caller weighs before it acts on any of it
-pub(super) fn compose_brief(prompt: &str, persona: &SubagentPersona, mode: RelayMode, handover: Option<&str>) -> String {
+pub(super) fn compose_brief(prompt: &str, persona: &SubagentPersona, mode: RelayMode, handover: Option<&str>, prompts: &Library) -> String {
   let mut parts = vec![prompt.trim().to_owned()];
   if let Some(b) = persona.brief.as_deref().filter(|b| !b.trim().is_empty()) {
     parts.push(b.trim().to_owned());
   }
   if mode == RelayMode::Consult {
-    parts.push("You are consulted for an opinion: read whatever you need, but do not modify any file.".into());
+    parts.push(prompts.text("relay/consult", BASE));
   }
   if let Some(h) = handover {
     parts.push(h.to_owned());
   }
-  parts.push(format!(
-    "(Another agent working in this same repository asked you this. It reads only your final reply, so make that reply \
-self-contained. {} When a decision only it can make blocks you, ask it with ask_caller; otherwise decide yourself.)",
-    closing(persona.duty, mode)
-  ));
+  let closing = prompts.text(closing(persona.duty, mode), BASE);
+  parts.push(prompts.render("relay/frame", BASE, &[("closing", &closing)]));
   parts.join("\n\n")
 }
 
-/// What the final reply ends with, by what the round was for
+/// The prompt saying what the final reply ends with, by what the round was for
 pub(super) fn closing(duty: SubagentDuty, mode: RelayMode) -> &'static str {
   match (duty, mode) {
-    (SubagentDuty::Reviewer, _) => {
-      "End with your findings, most severe first, each as: severity (high / medium / low), path:line, what is wrong and a \
-concrete way it fails; if you found nothing wrong, say so plainly."
-    }
-    (_, RelayMode::Consult) => "End with what you found, each point with its path:line, and what you assumed.",
-    _ => "End with the files you changed (or that you changed none), what you ran to check the work and its result, and what you assumed.",
+    (SubagentDuty::Reviewer, _) => "relay/closing-review",
+    (_, RelayMode::Consult) => "relay/closing-consult",
+    _ => "relay/closing-work",
   }
 }
 

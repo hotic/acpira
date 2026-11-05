@@ -261,7 +261,7 @@ async fn a_same_agent_forks_lead_is_the_plain_fork_lead() {
   prompt(&s, "inspect-history").await;
   let wire = wire_prompt(&last_turn(&view(&s)));
   let history = wire["prompt"][0]["text"].as_str().unwrap();
-  let lead = acpira_host::acp::session::edit::FORK_HISTORY_LEAD;
+  let lead = acpira_agent::prompt::Library::builtin().text("fork/history", acpira_agent::prompt::BASE);
   assert!(history.starts_with(&format!("{lead}\n[")), "{history}");
 }
 

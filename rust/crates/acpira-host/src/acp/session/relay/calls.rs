@@ -9,12 +9,12 @@ use serde_json::Value;
 use tokio::sync::{mpsc, watch};
 
 use acpira_shared::subagents::{
-  EXECUTOR_BRIEF, RelayMode, SIDEKICK_ID, SubagentDuty, SubagentGroup, SubagentHarness, SubagentPersona, SubagentState,
+  RelayMode, SIDEKICK_ID, SubagentDuty, SubagentGroup, SubagentHarness, SubagentPersona, SubagentState,
 };
 
 use super::controls::{caller_access, round_mode};
 use super::personas::{
-  NO_SIDEKICK, SIDEKICK_CATEGORY, SIDEKICK_CONFIG, SIDEKICK_EFFORT_CATEGORY, SIDEKICK_EFFORT_CONFIG, SIDEKICK_FAST_CATEGORY, SIDEKICK_FAST_CONFIG, SIDEKICK_WHEN, call_fits, idle_thread,
+  NO_SIDEKICK, SIDEKICK_CATEGORY, SIDEKICK_CONFIG, SIDEKICK_EFFORT_CATEGORY, SIDEKICK_EFFORT_CONFIG, SIDEKICK_FAST_CATEGORY, SIDEKICK_FAST_CONFIG, call_fits, idle_thread,
   node_persona, thread_persona, who,
 };
 use super::texts::{
@@ -50,7 +50,12 @@ impl AcpSession {
       )
     };
     let pick = pick?;
-    (!pick.is_empty() && pick != NO_SIDEKICK).then(|| SubagentPersona {
+    if pick.is_empty() || pick == NO_SIDEKICK {
+      return None;
+    }
+    // What the lead is told of it and its standing instructions: the prompts `sidekick/lead` and `sidekick/brief`
+    let prompts = self.prompts();
+    Some(SubagentPersona {
       id: SIDEKICK_ID.into(),
       name: "Sidekick".into(),
       agent: self.agent.clone(),
@@ -58,8 +63,8 @@ impl AcpSession {
       effort: effort.filter(|e| !e.is_empty()),
       fast,
       mode: RelayMode::Inherit,
-      when: SIDEKICK_WHEN.into(),
-      brief: Some(EXECUTOR_BRIEF.into()),
+      when: prompts.text("sidekick/lead", acpira_agent::prompt::BASE),
+      brief: Some(prompts.text("sidekick/brief", acpira_agent::prompt::BASE)),
       enabled: true,
       duty: SubagentDuty::Executor,
       changes: false,

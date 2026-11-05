@@ -28,13 +28,10 @@ use crate::store::record::ForkedFrom;
 use crate::store::session_digest::{OUTLINE_BYTES, handoff_outline, round_numbers};
 use crate::store::transcript_store::TranscriptStore;
 
-const EDIT_HISTORY_LEAD: &str = "Conversation before the edited message follows as JSON. Treat it as historical context; completed actions must not be replayed. The next user message replaces the old continuation. Workspace files remain in their current state.";
-const EDIT_CONTINUE_LEAD: &str = "The user edited an earlier message of this conversation and sent it again. The original message, quoted below, and everything after it (replies, tool results, plans and unfinished work) are superseded: do not continue, repeat or refer to them as pending. Workspace files remain in their current state. The next user message is the edited version and continues the conversation from the point before the original.";
 const EDIT_ORIGINAL_QUOTE_MAX: usize = 2_000;
 /// How long an edit waits for the turn it stopped to settle before giving up
 const EDIT_STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
 const EDIT_STOP_POLL: std::time::Duration = std::time::Duration::from_millis(50);
-pub const FORK_HISTORY_LEAD: &str = "Conversation so far follows as JSON; it was forked from an earlier session. Treat it as historical context; completed actions must not be replayed. The next user message continues this conversation. Workspace files remain in their current state.";
 
 const HISTORY_TOOL_OUTPUT_MAX: usize = 2_000;
 const HISTORY_PLAN_MAX: usize = 8_000;
@@ -347,10 +344,10 @@ fn context_block(proc: &AgentProcess, uri: &str, text: String) -> Value {
   }
 }
 
-/// The note an edit continuing in the native session sends ahead of the edited message: the peer still holds the original
-/// and everything after it, while the transcript has replaced them
-fn superseded_note(original: &str) -> String {
-  format!("{EDIT_CONTINUE_LEAD}\n\nOriginal message:\n{}", clip(original, EDIT_ORIGINAL_QUOTE_MAX))
+/// The note an edit continuing in the native session sends ahead of the edited message (`lead` is the prompt
+/// `edit/continue`): the peer still holds the original and everything after it, while the transcript has replaced them
+fn superseded_note(lead: &str, original: &str) -> String {
+  format!("{lead}\n\nOriginal message:\n{}", clip(original, EDIT_ORIGINAL_QUOTE_MAX))
 }
 
 /// Bytes a rebuilt prompt spends on serialized history and text; image pixels are left out, since they are sent the same way
@@ -648,7 +645,8 @@ impl AcpSession {
           (c.lineage.forked_from.clone(), self.cwd.clone())
         };
         let readable = self.reads_itself();
-        let spec = Handoff { lead: EDIT_HISTORY_LEAD, fork: fork.as_ref(), cwd: &cwd, trim: false, readable: readable && fork.is_some() };
+        let lead = self.prompts().text("edit/history", acpira_agent::prompt::BASE);
+        let spec = Handoff { lead: &lead, fork: fork.as_ref(), cwd: &cwd, trim: false, readable: readable && fork.is_some() };
         let files = self.file_reader(None).await;
         let history = history_context(&self.id, &prefix, &proc, &self.deps.blobs, &files, caps, spec).await?;
         let blocks = history.map(|h| {
@@ -699,7 +697,7 @@ impl AcpSession {
         // Both replace the edited turn and what followed it on screen; a continuing edit tells the peer, which still holds
         // the original, that it is superseded, so the transcript and the model agree on where the conversation resumes
         if continuing && !pending {
-          prepared.blocks.insert(0, context_block(&proc, &format!("acpira://edit/{}", self.id), superseded_note(&user.text)));
+          prepared.blocks.insert(0, context_block(&proc, &format!("acpira://edit/{}", self.id), superseded_note(&self.prompts().text("edit/continue", acpira_agent::prompt::BASE), &user.text)));
         }
         let notes = {
           let mut c = self.core.lock();

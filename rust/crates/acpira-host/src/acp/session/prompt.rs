@@ -12,7 +12,7 @@ use acpira_shared::turn_settings::capture_turn_settings;
 
 use crate::acp::session::attachments::{PreparedPrompt, prepare_prompt, prompt_caps_of};
 use crate::acp::session::compaction::{CompactionCompletion, is_compact_command};
-use crate::acp::session::edit::{FORK_HISTORY_LEAD, Handoff, HistoryContext, history_context};
+use crate::acp::session::edit::{Handoff, HistoryContext, history_context};
 use crate::acp::session::errors::{is_auth, is_session_gone, turn_error_of};
 use crate::acp::session::failure::{failure_of, failure_turn_error};
 use crate::acp::session::turn_usage::turn_usage_of;
@@ -376,7 +376,8 @@ impl AcpSession {
     let mut fork_history = None;
     let mut fork_error = None;
     if let (Some(turns), Some(proc)) = (turns_copy, proc.as_ref()) {
-      let spec = Handoff { lead: FORK_HISTORY_LEAD, fork: fork.as_ref(), cwd: &cwd, trim: true, readable: fork.is_some() && self.reads_itself() };
+      let lead = self.prompts().text("fork/history", acpira_agent::prompt::BASE);
+      let spec = Handoff { lead: &lead, fork: fork.as_ref(), cwd: &cwd, trim: true, readable: fork.is_some() && self.reads_itself() };
       match history_context(&self.id, &turns, proc, &self.deps.blobs, &self.file_reader(None).await, caps, spec).await {
         Ok(h) => fork_history = h,
         Err(e) => {

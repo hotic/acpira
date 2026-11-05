@@ -217,4 +217,7 @@ pub struct HostFeatures {
   /// The engine's plugins folder, named in the server's instructions (a data home other than ~/.acpira moves it)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub plugins_root: Option<String>,
+  /// The server's instructions as the engine composed them from the session's prompts (`host_mcp::instructions`)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub instructions: Option<String>,
 }

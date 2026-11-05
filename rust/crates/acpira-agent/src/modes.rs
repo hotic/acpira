@@ -23,8 +23,9 @@ pub struct Mode {
   pub id: &'static str,
   pub name: &'static str,
   pub description: &'static str,
-  /// Told to the model at the start of the first turn after the session entered this mode
-  pub overlay: &'static str,
+  /// The prompt told to the model at the start of the first turn after the session entered this mode (`prompt::library`;
+  /// empty: nothing is told)
+  pub note: &'static str,
   /// (permission, pattern, decision), evaluated after every other layer
   pub rules: &'static [(&'static str, &'static str, Decision)],
 }
@@ -48,8 +49,7 @@ pub const MODES: &[Mode] = &[
     name: "Agent",
     description: "Reads, edits and runs commands; what asks first is the session's approval level",
     // Also the note after Team mode, so it says again that summoning is the user's call
-    overlay: "You are in Agent mode (Plan and Team mode are off): you can edit files and run commands, within the permission \
-rules. Do the work yourself; summon another agent only when the user names one or asks for it.",
+    note: "mode/agent",
     rules: &[],
   },
   Mode {
@@ -60,24 +60,7 @@ rules. Do the work yourself; summon another agent only when the user names one o
     // structure, and the steps on the to-do list before approval, so the to-do bar shows the plan's order while the user
     // reviews it and becomes the progress of the build after approval. The plan card renders the file with the chat's
     // Markdown (mermaid included) and takes its title from the leading `# heading`
-    overlay: "Plan mode is on. Work out how to do the task, but change nothing yet.
-- If the request is unclear in a way that would change the plan (facts missing, several real approaches, a scope far \
-too large), ask one or two questions with the question tool before you research further, each with two or more options \
-and the one you recommend first. Otherwise go ahead and state your assumptions in the plan.
-- Read, search and list as much as needed, until you can say what changes, why, and how to check it. Run only the \
-commands that change nothing (git diff, ls, wc, grep …), never one that writes, deletes or installs.
-- The one file you may write is the plan: {plan}. Write it there, and edit the same file to revise.
-- Open the plan with a `# Title`, then use the sections the task needs, in this order: scope (what changes, what stays \
-untouched), current problems (each with its file path and line as evidence), target design, changes by file or module \
-(what and why), verification (exact commands or steps), stages, out of scope. Say why each step is needed and what it \
-enables. Quote only the few lines of code that decide the design. A one-function fix takes a few paragraphs; only a \
-change across modules needs every section.
-- Draw architecture, data flow, module boundaries and sequences as mermaid code blocks. Node ids have no spaces and are \
-not end, graph, subgraph or flowchart; quote a label holding brackets, parentheses, commas or colons \
-(A[\"Step 1: init\"], A -->|\"O(1)\"| B); write subgraph id [Label]; no style, classDef or click.
-- Unless the plan is a single step, put its steps on the to-do list with the todo tool before exit_plan: all pending, \
-in the order they must be done, one checkable change each. Keep the list in step with the plan when you revise it.
-- When the plan is ready, call exit_plan. The user either approves it, and you then carry it out, or asks for changes.",
+    note: "mode/plan",
     // An MCP tool its server does not mark read-only may change anything, so it asks like a command (the engine's own
     // tools excepted)
     rules: &[(EDIT, "*", Decision::Deny), (EDIT, "{plan}", Decision::Allow), (BASH, "*", Decision::Ask), (MCP, "*", Decision::Ask), (MCP, ENGINE_MCP, Decision::Allow)],
@@ -90,30 +73,7 @@ in the order they must be done, one checkable change each. Keep the list in step
     id: TEAM,
     name: "Team",
     description: "Leads the summoned agents: hands them the work, then checks and merges what they did",
-    overlay: "Team mode is on. You lead a team: the agents listed by acpira_ask_agent do the substantial work, while you \
-divide it, brief them, check their results and put them together.
-- If acpira_ask_agent is not offered (no agent is set up), say so in one line and do the work yourself as in Agent mode.
-- Small tasks stay with you: a question, a one-file fix, anything one quick look settles. Read and search as much as you \
-need to divide the work well, then hand off implementation, long investigations, test runs and reviews.
-- Prefer one agent that owns a whole piece of work (investigate, change, test) over several narrow ones. Split only along \
-real seams: separate modules or services, separate asks from the user, or independent answers worth comparing. Never give \
-one agent both a change and its review.
-- Pick agents by what the roster says: their duty, whether they are read-only, and when to use them. A read-only agent \
-gets research or review, never edits.
-- Agents editing at the same time get disjoint files or modules, named in their briefs; work that may touch the same \
-files runs one after another. Where two pieces meet, write the interface once and put the same text in both briefs.
-- A brief stands alone, since the agent cannot see this conversation: the goal, what you already know (paths, not pasted \
-code), the exact scope and what is out of it, the files it owns, how to verify, and what the reply must hold (files \
-changed, commands run with their results, open problems). For a review, hand over `changes` and the original \
-requirement, not your account of the change.
-- Keep the to-do list as the team's board: one item per handoff, in dependency order, in_progress when sent, completed \
-only after you checked the result.
-- Send independent handoffs together in one message, then end your turn: each reply arrives as a message. Do not poll, and \
-do not redo delegated work meanwhile; when a result falls short, say so in the same thread.
-- A reply is a claim. Read the actual diff and rerun the deciding check before you mark it done, then check the pieces \
-against each other (interfaces, types, tests). After parallel edits, run the full checks once at the end, yourself or \
-through one agent.
-- Report to the user only when every handoff is back and checked: who did what, what you verified, what is still open.",
+    note: "mode/team",
     rules: &[],
   },
   // The plain endpoint: the turn sends the conversation alone (`turn::setup` leaves the tools, the composed prompt and
@@ -124,7 +84,7 @@ through one agent.
     id: RAW,
     name: "Raw",
     description: "Talks to the model directly: no system prompt, tools or project instructions",
-    overlay: "",
+    note: "",
     rules: &[(EDIT, "*", Decision::Deny), (BASH, "*", Decision::Deny), (MCP, "*", Decision::Deny)],
   },
 ];
@@ -139,8 +99,12 @@ pub fn get(id: &str) -> &'static Mode {
 }
 
 impl Mode {
-  pub fn overlay(&self, plan: &Path) -> String {
-    self.overlay.replace("{plan}", &plan.to_string_lossy())
+  /// What the model is told on entering this mode, in the session's prompts for its family
+  pub fn note(&self, prompts: &crate::prompt::Library, family: &str, plan: &Path) -> String {
+    if self.note.is_empty() {
+      return String::new();
+    }
+    prompts.render(self.note, family, &[("plan", &plan.to_string_lossy())])
   }
 
   /// The mode's rules, evaluated after every other layer. The approval level widens a mode's `ask` rules only: full
@@ -188,7 +152,9 @@ mod tests {
     // A session "always allow" cannot widen them either
     let allowed = [Rule::new(BASH, "ls *", Decision::Allow)];
     assert_eq!(evaluate(&[&defaults, &allowed, &get(PLAN).rules(plan, cwd, Approval::Ask)], BASH, "ls -la"), Decision::Ask);
-    assert!(get(PLAN).overlay(plan).contains("/h/agent/sessions/s/plan.md"));
+    let prompts = crate::prompt::Library::builtin();
+    assert!(get(PLAN).note(&prompts, crate::prompt::BASE, plan).contains("/h/agent/sessions/s/plan.md"));
+    assert!(get(RAW).note(&prompts, crate::prompt::BASE, plan).is_empty());
     assert!(get(AGENT).rules(plan, cwd, Approval::Full).is_empty() && get("nope").id == AGENT);
     // Team mode only changes what the model is told, never what it may do
     assert!(get(TEAM).rules(plan, cwd, Approval::Ask).is_empty());

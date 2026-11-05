@@ -30,6 +30,9 @@ pub use acpira_shared::host_tools::{
 mod relay_client;
 mod tools;
 
+use acpira_agent::prompt::{BASE, Library};
+
+use crate::relay::wire::HostFeatures;
 use self::relay_client::{Relay, listing_print};
 use self::tools::{
   ask_tool_def, browser_tool_def, call_show_image, call_show_video, call_show_widget, call_workspace_hooks, caller_tool_def, hooks_tool_def, plugin_activate_def,
@@ -40,51 +43,25 @@ pub use self::tools::{video_mime_of, widget_mime_of};
 /// Answered when the client does not name a protocol version
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
-const INSTRUCTIONS: &str = "The user reads this conversation in Acpira, which can display images and interactive HTML widgets inline. \
-When the user should see an image (a screenshot you took, a chart or diagram you rendered, a generated or downloaded picture), \
-call show_image with its absolute path instead of only printing the path. For an MP4 or WebM recording, call show_video; it appears as a paused player, not an autoplaying GIF. When a small interactive view would serve them better \
-than more text (tuning parameters with sliders, comparing options in tabs, exploring numbers), write it as one HTML file and \
-call show_widget; when the user should pick or fill something in it for you, its buttons call window.acpira.sendPrompt(text), \
-which reaches you as their next message. Project gates and reviews live in `.agents/hooks.json`, which Acpira runs for every agent: before writing or changing that file (or a hook script it names), call workspace_hooks for the format, and again afterwards to check it.";
-
-/// Appended to the instructions when the relay env is on the entry. Server instructions reach the model even where
-/// the client defers tools behind a search, so `@name` is tied to `ask_agent` before the model goes looking for it
-const RELAY_INSTRUCTIONS: &str = "When the user writes @name for an agent listed by the ask_agent tool, that is an \
-Acpira agent, not one of your own subagents: call ask_agent for it right away, without listing agents first. \
-Several agents named = one ask_agent call each, all in the same message; they run in parallel. A group named = one call \
-with the group as `agent`, which summons every member.";
-
-/// Appended with the relay env: the session tools are found by their links even where the client defers them
-const SESSIONS_INSTRUCTIONS: &str = "Links like `acpira://session/<id>` or `vscode://hotic.acpira/session/<id>` point at \
-another Acpira session, whichever agent ran it. Read one with read_session (its outline first, then only the turns you need) \
-instead of opening files under ~/.acpira; search_sessions finds earlier sessions when the user refers to one without a link. \
-When a long session would flood your context, ask_agent (if offered) can hand the reading to a read-only agent that answers \
-with the conclusion only. When you mention a session, write the Markdown link the tools gave for it.";
-
-/// Appended with the relay env: the model learns that it may extend Acpira itself (`docs/dev/plugins.md`). `{root}` is the
-/// engine's plugins folder, which a data home other than ~/.acpira moves
-const PLUGINS_INSTRUCTIONS: &str = "You can extend Acpira for every agent without a build or a restart: a plugin is a folder \
-under {root}/<id>/ with a plugin.json, written in TypeScript with React for its interface (Acpira compiles it), \
-or as plain scripts. It can add tools, hooks into every prompt and permission, slash commands and composer buttons, \
-interface pieces, schedules, skills, model sources, a theme or style, MCP servers or a specialised agent. Call plugin_guide \
-for the format and examples, write the folder, then call plugin_activate: the user confirms on a card.";
-
-/// The plugins paragraph for the engine's folder; an engine too old to report it keeps the default home's
-fn plugins_instructions(root: Option<&str>) -> String {
-  PLUGINS_INSTRUCTIONS.replace("{root}", root.unwrap_or("~/.acpira/plugins"))
+/// The server's instructions for what the serving engine offers, from the session's prompts (`mcp/*`, composed by the
+/// engine: `AcpSession::prompts`). Server instructions reach the model even where the client defers tools behind a
+/// search, so `@name` is tied to `ask_agent`, sessions to their links and the browser to `open_browser` before the
+/// model goes looking. `plugins_root` is the engine's plugins folder, which a data home other than ~/.acpira moves
+pub fn instructions(prompts: &Library, features: &HostFeatures) -> String {
+  let text = |name: &str| prompts.text(name, BASE);
+  let mut out = vec![text("mcp/base"), text("mcp/relay")];
+  if features.summoned {
+    out.push(text("mcp/caller"));
+  }
+  if features.browser {
+    out.push(text("mcp/browser"));
+  }
+  out.push(text("mcp/sessions"));
+  out.push(prompts.render("mcp/plugins", BASE, &[("root", features.plugins_root.as_deref().unwrap_or("~/.acpira/plugins"))]));
+  out.join("\n\n")
 }
 
 pub use acpira_shared::host_tools::{PLUGIN_ACTIVATE, PLUGIN_GUIDE};
-
-/// Appended to the instructions of a summoned child's server, so a deferred `ask_caller` is still found
-const CALLER_INSTRUCTIONS: &str = "Another agent summoned you through Acpira and reads only your final reply. When a decision \
-only it can make blocks you (a choice between approaches it would care about, a missing requirement), ask it with ask_caller \
-and wait for the answer; for anything you can reasonably decide yourself, decide and say what you assumed.";
-
-/// Appended to the instructions while the serving shell can show pages, so a deferred `open_browser` is still found
-const BROWSER_INSTRUCTIONS: &str = "When the user wants to see a web page (a local dev server, a tool's web UI), call open_browser \
-with its URL: Acpira opens it in a browser tab inside their editor, forwarding the port when the workspace is remote. \
-Do not tell them to open it by hand unless the call fails.";
 
 /// The host's server for session requests, shared by every session of one manager. An agent whose session/new failed
 /// with it (and worked without) is remembered, and its later requests leave the server out
@@ -487,15 +464,9 @@ pub fn run(version: &str) -> i32 {
     }
     let Some(mut reply) = handle_line(&line, version) else { continue };
     if initialize && let Some(result) = reply.get_mut("result") {
-      let mut extra = String::new();
-      if features.summoned {
-        extra.push_str(&format!("\n\n{CALLER_INSTRUCTIONS}"));
-      }
-      if features.browser {
-        extra.push_str(&format!("\n\n{BROWSER_INSTRUCTIONS}"));
-      }
-      let plugins = plugins_instructions(features.plugins_root.as_deref());
-      result["instructions"] = json!(format!("{INSTRUCTIONS}\n\n{RELAY_INSTRUCTIONS}{extra}\n\n{SESSIONS_INSTRUCTIONS}\n\n{plugins}"));
+      // The engine composes them from the session's prompts; one that sent none gets the built-in texts
+      let text = features.instructions.clone().unwrap_or_else(|| instructions(&Library::builtin(), &features));
+      result["instructions"] = json!(text);
       // ask_agent's agents follow the roster while the session runs (see `Relay::watch`)
       result["capabilities"]["tools"]["listChanged"] = json!(true);
     }
@@ -524,7 +495,7 @@ pub fn handle_line(line: &str, version: &str) -> Option<Value> {
       "protocolVersion": params.get("protocolVersion").and_then(Value::as_str).unwrap_or(PROTOCOL_VERSION),
       "capabilities": { "tools": { "listChanged": false } },
       "serverInfo": { "name": SERVER_NAME, "title": "Acpira", "version": version },
-      "instructions": INSTRUCTIONS,
+      "instructions": Library::builtin().text("mcp/base", BASE),
     }),
     "ping" => json!({}),
     "tools/list" => json!({ "tools": [tool_def(), video_tool_def(), widget_tool_def(), hooks_tool_def()] }),
@@ -733,10 +704,13 @@ mod tests {
       assert!(d["_meta"].get("anthropic/alwaysLoad").is_none());
     }
     assert_eq!(defs[1]["inputSchema"]["required"], json!(["session"]));
-    assert!(SESSIONS_INSTRUCTIONS.contains("acpira://session/<id>") && SESSIONS_INSTRUCTIONS.contains("read_session"));
+    let lib = Library::builtin();
+    let plain = instructions(&lib, &HostFeatures::default());
+    assert!(plain.contains("acpira://session/<id>") && plain.contains("read_session") && !plain.contains("ask_caller"));
     // The plugins folder follows the engine's data home
-    assert!(plugins_instructions(Some("/tmp/home/plugins")).contains("under /tmp/home/plugins/<id>/"));
-    assert!(plugins_instructions(None).contains("under ~/.acpira/plugins/<id>/"));
+    let moved = HostFeatures { plugins_root: Some("/tmp/home/plugins".into()), summoned: true, ..Default::default() };
+    assert!(instructions(&lib, &moved).contains("under /tmp/home/plugins/<id>/") && instructions(&lib, &moved).contains("ask_caller"));
+    assert!(plain.contains("under ~/.acpira/plugins/<id>/"));
   }
 
   #[test]

@@ -96,14 +96,3 @@ pub(super) const SIDEKICK_EFFORT_CATEGORY: &str = "_sidekick_effort";
 /// Its Fast switch, there while the sidekick's model has a fast tier
 pub(super) const SIDEKICK_FAST_CONFIG: &str = "sidekick_fast";
 pub(super) const SIDEKICK_FAST_CATEGORY: &str = "_sidekick_fast";
-
-/// The sidekick's line in ask_agent: Fusion's split of the work, where the lead plans, decides and checks while the
-/// sidekick does the well-specified parts. The Fusion bench (docs/dev/evals.md, 2026-10-21) showed the lead waiting on
-/// steps it would have finished sooner itself, while a second look at its finished change caught real defects
-pub(super) const SIDEKICK_WHEN: &str = "Your sidekick, the second model picked for this session. It works at its own pace, often \
-slower than you, so hand it work that runs while you do something else: edits you can describe precisely (across files, \
-repetitive, boilerplate), scouting that does not decide the plan (where something lives, what a log says), or a second look \
-at your finished change against the requirements, which catches what you missed. A step you would finish sooner yourself, \
-such as a handful of tests, is faster done than handed over and waited for. Brief it with the goal, the constraints and \
-what done means; keep the plan and the decisions yourself, check its diff before building on it, and when it falls short \
-say so in the same thread.";
