@@ -582,7 +582,7 @@ mod tests {
 
   #[test]
   fn a_steered_message_rides_behind_the_results_and_the_turns_thinking_comes_back() {
-    let steer = crate::steer::item(&[json!([{ "type": "text", "text": "use printf" }])], true, &[]);
+    let steer = crate::steer::item("Note.", &[json!([{ "type": "text", "text": "use printf" }])], true, &[]);
     let items = vec![user("one"), signed_call("t1", ORIGIN), result("t1", "x"), steer.clone(), signed_call("t2", ORIGIN), result("t2", "y")];
     // A family that echoes only the running turn's reasoning: the steered message does not start a turn
     let b = body(&req(items), &by_name("deepseek").unwrap(), ORIGIN);

@@ -117,6 +117,9 @@ pub struct Session {
   pub remote: Option<Arc<crate::remote::Remote>>,
   /// The plugins' prompt and skill folders as the engine sent them when the session opened (`LAYERS_META`, `SKILLS_META`)
   pub layers: Layers,
+  /// Every prompt text this session's model gets beside the system prompt (mode notes, compaction, goals, ...), with
+  /// the override folders read when it opened (`prompt::library`)
+  pub prompts: Arc<crate::prompt::Library>,
   /// Wakes open permission requests when the mode or approval level changes
   pub permissions_changed: tokio::sync::Notify,
   /// Where its commands keep temp files (`scratch.rs`)
@@ -172,7 +175,7 @@ impl Session {
   pub fn save_prompt(&self, p: &crate::prompt::Composed) {
     self.store.append(json!({
       "type": "prompt", "variant": p.variant, "version": p.version, "digest": p.digest, "text": p.text,
-      "sampling": p.sampling, "thinking": p.thinking,
+      "sampling": p.sampling, "thinking": p.thinking, "overrides": p.overrides, "sections": p.sections,
     }));
   }
 }
@@ -241,7 +244,7 @@ impl Server {
       },
       None => crate::prompt::Places::new(cwd, crate::turn::user_home().as_deref()),
     };
-    places.with_layers(layers.prompts).with_skill_layers(layers.skills).with_profile(self.profile.clone())
+    places.with_data(Some(self.config.home())).with_layers(layers.prompts).with_skill_layers(layers.skills).with_profile(self.profile.clone())
   }
 
   /// The model a new session starts on: the profile's when it is configured, else the settings page's default
@@ -425,7 +428,8 @@ impl Server {
     let layers = layers_of(params);
     let scratch = self.scratch_of(std::path::Path::new(cwd), &id, remote.is_some(), &config);
     let places = self.places_of(std::path::Path::new(cwd), remote.as_deref(), layers.clone()).with_scratch(scratch.path());
-    state.prompt = crate::prompt::compose(&places, state.model.as_deref().and_then(|p| config.find(p)));
+    let prompts = Arc::new(crate::prompt::Library::load(&places));
+    state.prompt = crate::prompt::compose(&places, &prompts, state.model.as_deref().and_then(|p| config.find(p)));
     state.effort = default_effort(&config, &catalog, state.model.as_deref());
     let response = json!({
       "sessionId": id,
@@ -435,10 +439,10 @@ impl Server {
     let store = Store::new(self.session_file(&id), &id, std::path::Path::new(cwd));
     // The file starts with the first event; the prompt goes first so a reopen keeps the very same text
     store.prelude(json!({ "type": "prompt", "variant": state.prompt.variant, "version": state.prompt.version, "digest": state.prompt.digest,
-      "text": state.prompt.text, "sampling": state.prompt.sampling, "thinking": state.prompt.thinking }));
+      "text": state.prompt.text, "sampling": state.prompt.sampling, "thinking": state.prompt.thinking, "overrides": state.prompt.overrides }));
     let mcp = crate::mcp::Hub::start(params.get("mcpServers").unwrap_or(&Value::Null), &self.process_dir(std::path::Path::new(cwd), remote.is_some()));
     let session =
-      Session { id: id.clone(), cwd: PathBuf::from(cwd), state: parking_lot::Mutex::new(state), store, tool_seq: AtomicU64::new(0), jobs: Default::default(), mcp, remote, layers, permissions_changed: Default::default(), scratch };
+      Session { id: id.clone(), cwd: PathBuf::from(cwd), state: parking_lot::Mutex::new(state), store, tool_seq: AtomicU64::new(0), jobs: Default::default(), mcp, remote, layers, prompts, permissions_changed: Default::default(), scratch };
     // The starting controls too: a reopen must not take a default that changed in the meantime
     session.save_state(&session.state.lock());
     let (remote, layers) = (session.remote.clone(), session.layers.clone());
@@ -478,6 +482,7 @@ impl Server {
         let mut revived = self.revive(id, cwd, &loaded, path, params.get("mcpServers").unwrap_or(&Value::Null), crate::remote::Remote::of(params));
         // The recorded prompt stays as it was; these apply when a model switch composes it again
         revived.layers = layers_of(params);
+        revived.prompts = Arc::new(crate::prompt::Library::load(&self.places_of(&revived.cwd, revived.remote.as_deref(), revived.layers.clone())));
         let session = Arc::new(revived);
         self.sessions.lock().insert(id.to_owned(), session.clone());
         (session, loaded.updates)
@@ -543,6 +548,8 @@ impl Server {
         digest: ps("digest"),
         sampling: p.get("sampling").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default(),
         thinking: p.get("thinking").cloned().and_then(|v| serde_json::from_value(v).ok()),
+        overrides: p.get("overrides").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default(),
+        sections: p.get("sections").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default(),
       };
     }
     // A turn cut off by a crash leaves calls without results; the next request must be well formed
@@ -566,7 +573,7 @@ impl Server {
     let mcp = crate::mcp::Hub::start(mcp_servers, &self.process_dir(&cwd, remote.is_some()));
     // Its commands use the folder from now on; the recorded prompt names it only once a model switch composes it again
     let scratch = self.scratch_of(&cwd, id, remote.is_some(), &config);
-    Session { id: id.to_owned(), cwd, state: parking_lot::Mutex::new(st), store, tool_seq: AtomicU64::new(seq), jobs: Default::default(), mcp, remote, layers: Layers::default(), permissions_changed: Default::default(), scratch }
+    Session { id: id.to_owned(), cwd, state: parking_lot::Mutex::new(st), store, tool_seq: AtomicU64::new(seq), jobs: Default::default(), mcp, remote, layers: Layers::default(), prompts: Default::default(), permissions_changed: Default::default(), scratch }
   }
 
   /// `session/list`: this data root's sessions with at least one message, newest first, filtered by `cwd` when given

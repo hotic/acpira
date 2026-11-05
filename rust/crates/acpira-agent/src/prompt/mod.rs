@@ -1,14 +1,16 @@
-//! The system prompt, composed in layers: the built-in base, a variant for the model's family, the user's same-name
-//! files under `~/.agents/acpira/prompts/` and the project's `.agents/acpira/prompts/` (section by section, see
-//! `doc.rs`), then AGENTS.md and the environment. A variant declares the models it fits (`match` patterns over
-//! `<preset>/<model>`, `<source id>/<model>` and the bare model id) and may carry default sampling; a model's pinned
-//! `family` names its variant directly. Adding a variant is adding a file.
+//! The system prompt, composed in layers: the built-in `system`, the version for the model's family, the same-name
+//! files of the override folders (section by section, see `doc.rs` and `library.rs`), then AGENTS.md and the
+//! environment. A family is declared by its `system@<family>` file, whose `match` patterns over `<preset>/<model>`,
+//! `<source id>/<model>` and the bare model id pick the models it fits; it may carry default sampling, and a model's
+//! pinned `family` names it directly. Adding a family is adding a file.
 //!
 //! The result stays fixed for the session, so prompt caches keep hitting: it is composed again only when a model
-//! switch selects another variant. What changes during a session (the mode, later the date) goes into user messages
+//! switch selects another family. What changes during a session (the mode, later the date) goes into user messages
 
 pub mod doc;
+pub mod library;
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -19,15 +21,7 @@ use acpira_shared::providers::{Provider, ProviderModel, Sampling, Thinking};
 
 use crate::permission::wildcard;
 use doc::Doc;
-
-/// Built-in variants: (file name, text). `base` first
-const BUILTIN: &[(&str, &str)] = &[
-  ("base", include_str!("builtin/base.md")),
-  ("deepseek", include_str!("builtin/deepseek.md")),
-  ("claude", include_str!("builtin/claude.md")),
-];
-
-pub const BASE: &str = "base";
+pub use library::{BASE, Library};
 /// The variant name Raw mode's prompt records
 pub const RAW: &str = "raw";
 /// An AGENTS.md longer than this is cut, with a note
@@ -47,6 +41,50 @@ pub struct Composed {
   /// The variant's default sampling; a model's own values win
   pub sampling: Sampling,
   pub thinking: Option<Thinking>,
+  /// The prompts an override folder changed for this session, each with its text's digest (`Library::overrides`)
+  pub overrides: BTreeMap<String, String>,
+  /// What the text is made of, in order and covering it whole (the context report splits the prompt by these). Empty for
+  /// a prompt recorded before sections were: the report then counts it as one part
+  pub sections: Vec<Section>,
+}
+
+/// A part of a composed prompt, as a byte range of its text
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Section {
+  pub kind: SectionKind,
+  /// The instruction file a `Doc` section holds
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub path: Option<String>,
+  pub start: usize,
+  pub end: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SectionKind {
+  /// The agent's own instructions (the variant, a profile's prompt, Raw mode's text), with the heading over the files
+  Base,
+  /// One AGENTS.md file
+  Doc,
+  Environment,
+}
+
+/// The instruction files and the environment after `base`, each recorded as a section; the base covers what precedes
+/// the first of them, the heading over the files included
+fn assemble(mut text: String, heading: &str, docs: Vec<(PathBuf, String)>, environment: String) -> (String, Vec<Section>) {
+  if !docs.is_empty() {
+    text.push_str(heading);
+  }
+  let mut sections = vec![Section { kind: SectionKind::Base, path: None, start: 0, end: text.len() }];
+  for (path, block) in docs {
+    let start = text.len();
+    text.push_str(&block);
+    sections.push(Section { kind: SectionKind::Doc, path: Some(path.display().to_string()), start, end: text.len() });
+  }
+  let start = text.len();
+  text.push_str(&environment);
+  sections.push(Section { kind: SectionKind::Environment, path: None, start, end: text.len() });
+  (text, sections)
 }
 
 /// Where a session's prompt files are
@@ -54,6 +92,8 @@ pub struct Places {
   pub cwd: PathBuf,
   /// The user's home (`~/.agents` lives there)
   pub home: Option<PathBuf>,
+  /// Acpira's data home (`~/.acpira`): its `prompts/` is the user's override folder, read from this disk
+  pub data: Option<PathBuf>,
   /// The nearest ancestor of cwd holding `.git`, home excluded
   pub root: Option<PathBuf>,
   /// A folder on an SSH host: its files as the host read them, never this disk
@@ -71,7 +111,8 @@ pub struct Places {
 }
 
 /// A session folder's prompt files as its SSH host read them (`gather`, run there by the engine's helper at session
-/// start, docs/dev/remote.md): AGENTS.md, prompt overrides and skills, with the host's home, project root and shell
+/// start, docs/dev/remote.md): AGENTS.md, the project's prompt overrides and skills, with the host's home, project root
+/// and shell
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostFiles {
@@ -95,7 +136,7 @@ impl HostFiles {
     let places = Places::new(cwd, home);
     let mut paths = places.instructions();
     for dir in places.prompt_dirs() {
-      paths.extend(places.entries(&dir, false).into_iter().filter(|p| p.extension().is_some_and(|x| x == "md")));
+      paths.extend(places.md_files(&dir, library::MAX_DEPTH).into_iter().map(|(_, p)| p));
     }
     for root in crate::skills::roots(&places) {
       paths.extend(places.entries(&root, true).into_iter().map(|d| d.join("SKILL.md")));
@@ -118,12 +159,18 @@ impl HostFiles {
 
 impl Places {
   pub fn new(cwd: &Path, home: Option<&Path>) -> Places {
-    Places { cwd: cwd.to_path_buf(), home: home.map(Path::to_path_buf), root: project_root(cwd, home), host: None, layers: vec![], skill_layers: vec![], profile: None, scratch: None }
+    Places { cwd: cwd.to_path_buf(), home: home.map(Path::to_path_buf), data: None, root: project_root(cwd, home), host: None, layers: vec![], skill_layers: vec![], profile: None, scratch: None }
   }
 
   /// A folder on an SSH host, read from what the host sent
   pub fn on_host(cwd: &Path, files: Arc<HostFiles>) -> Places {
-    Places { cwd: cwd.to_path_buf(), home: files.home.clone(), root: files.root.clone(), host: Some(files), layers: vec![], skill_layers: vec![], profile: None, scratch: None }
+    Places { cwd: cwd.to_path_buf(), home: files.home.clone(), data: None, root: files.root.clone(), host: Some(files), layers: vec![], skill_layers: vec![], profile: None, scratch: None }
+  }
+
+  /// With Acpira's data home, whose `prompts/` is the user's override folder
+  pub fn with_data(mut self, data: Option<&Path>) -> Places {
+    self.data = data.map(Path::to_path_buf);
+    self
   }
 
   /// With the session's scratch folder
@@ -149,9 +196,14 @@ impl Places {
     self
   }
 
-  /// Whether `path` is in a plugin's prompt or skill folder, which is always on this disk
+  /// Whether `path` is in the user's prompt folder or a plugin's prompt or skill folder, which are always on this disk
   fn in_layer(&self, path: &Path) -> bool {
-    self.layers.iter().chain(&self.skill_layers).any(|l| path.starts_with(l))
+    self.user_prompts().iter().chain(&self.layers).chain(&self.skill_layers).any(|l| path.starts_with(l))
+  }
+
+  /// The user's override folder: Acpira's own settings, so a folder on an SSH host takes this machine's
+  fn user_prompts(&self) -> Option<PathBuf> {
+    self.data.as_ref().map(|d| d.join("prompts"))
   }
 
   /// A file's text
@@ -185,18 +237,41 @@ impl Places {
     out
   }
 
-  /// Override directories, the later winning: the user's, the plugins', the project's
-  fn prompt_dirs(&self) -> Vec<PathBuf> {
-    let mut out = vec![];
-    if let Some(h) = &self.home {
-      out.push(h.join(".agents").join("acpira").join("prompts"));
-    }
+  /// Override directories, the later winning: the user's (`~/.acpira/prompts`), the plugins', the project's
+  /// (`.acpira/prompts` at its root, beside the scratch folders)
+  pub(crate) fn prompt_dirs(&self) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = self.user_prompts().into_iter().collect();
     out.extend(self.layers.iter().cloned());
     if let Some(r) = self.root.as_ref().or(Some(&self.cwd)) {
-      out.push(r.join(".agents").join("acpira").join("prompts"));
+      out.push(project_prompts(r));
     }
     out.dedup();
     out
+  }
+
+  /// The Markdown files under `dir` at most `depth` folders down, by prompt name
+  fn md_files(&self, dir: &Path, depth: usize) -> Vec<(String, PathBuf)> {
+    let files: Vec<PathBuf> = match &self.host {
+      Some(h) if !self.in_layer(dir) => h.files.iter().filter(|f| f.path.starts_with(dir)).map(|f| f.path.clone()).collect(),
+      _ => {
+        let mut out = vec![];
+        let mut stack = vec![(dir.to_path_buf(), 1)];
+        while let Some((d, level)) = stack.pop() {
+          // Links followed: a prompt file may be a link into a dotfiles repo
+          for p in std::fs::read_dir(&d).into_iter().flatten().flatten().map(|e| e.path()) {
+            if p.is_dir() {
+              if level < depth {
+                stack.push((p, level + 1));
+              }
+            } else if p.is_file() {
+              out.push(p);
+            }
+          }
+        }
+        out
+      }
+    };
+    library::names_in(dir, files, depth)
   }
 
   /// AGENTS.md files in reading order: the user's, the project's, then the session folder's own when it is deeper
@@ -219,43 +294,12 @@ pub fn project_root(cwd: &Path, home: Option<&Path>) -> Option<PathBuf> {
   cwd.ancestors().find(|d| d.join(".git").exists()).filter(|r| Some(*r) != home).map(Path::to_path_buf)
 }
 
-/// One candidate variant: the built-in text (if any) with the user's files over it
-struct Variant {
-  name: String,
-  doc: Doc,
+/// The project's override folder, at its root
+pub fn project_prompts(root: &Path) -> PathBuf {
+  root.join(".acpira").join("prompts")
 }
 
-/// Every variant, the user's own first (they take over a match), then the built-in ones in table order. The user's
-/// `base.md` overlays the base and is not a variant of its own
-fn variants(places: &Places) -> (Doc, Vec<Variant>) {
-  let mut base = Doc::parse(BUILTIN[0].1);
-  let mut list: Vec<Variant> = BUILTIN[1..].iter().map(|(name, text)| Variant { name: (*name).to_owned(), doc: Doc::parse(text) }).collect();
-  let mut user_names: Vec<String> = vec![];
-  for dir in places.prompt_dirs() {
-    let files: Vec<PathBuf> = places.entries(&dir, false).into_iter().filter(|p| p.extension().is_some_and(|x| x == "md")).collect();
-    for path in files {
-      let Some(stem) = path.file_stem().map(|s| s.to_string_lossy().into_owned()) else { continue };
-      let Some(text) = places.read(&path) else { continue };
-      let doc = Doc::parse(&text);
-      if stem == BASE {
-        base.overlay(&doc);
-        continue;
-      }
-      match list.iter_mut().find(|v| v.name == stem) {
-        Some(v) => v.doc.overlay(&doc),
-        None => list.push(Variant { name: stem.clone(), doc }),
-      }
-      if !user_names.contains(&stem) {
-        user_names.push(stem);
-      }
-    }
-  }
-  // User variants match before the built-in ones
-  list.sort_by_key(|v| !user_names.contains(&v.name));
-  (base, list)
-}
-
-/// The keys a variant's `match` patterns are tried against, lowercase
+/// The keys a family's `match` patterns are tried against, lowercase
 fn keys(provider: &Provider, model: &ProviderModel) -> Vec<String> {
   let id = model.id.to_lowercase();
   let mut out = vec![];
@@ -267,44 +311,43 @@ fn keys(provider: &Provider, model: &ProviderModel) -> Vec<String> {
   out
 }
 
-fn select<'a>(list: &'a [Variant], target: Option<(&Provider, &ProviderModel)>) -> Option<&'a Variant> {
+/// The family a model gets, with its system prompt document
+fn select<'a>(lib: &'a Library, target: Option<(&Provider, &ProviderModel)>) -> Option<(&'a str, &'a Doc)> {
   let (provider, model) = target?;
-  // A pinned family that names a variant decides; one that names only a request family falls through to matching
-  if let Some(v) = model.family.as_deref().and_then(|pin| list.iter().find(|v| v.name == pin)) {
-    return Some(v);
+  let families = lib.families();
+  // A pinned family that names a declared one decides; one that names only a request family falls through to matching
+  if let Some(f) = model.family.as_deref().and_then(|pin| families.iter().find(|(name, _)| *name == pin)) {
+    return Some(*f);
   }
   let keys = keys(provider, model);
-  list.iter().find(|v| v.doc.list("match").iter().any(|p| keys.iter().any(|k| wildcard(&p.to_lowercase(), k))))
+  families.into_iter().find(|(_, d)| d.list("match").iter().any(|p| keys.iter().any(|k| wildcard(&p.to_lowercase(), k))))
 }
 
-/// The variant a model gets, without composing (to see whether a model switch changes the prompt)
-pub fn variant_name(places: &Places, target: Option<(&Provider, &ProviderModel)>) -> String {
+/// The family a model's prompts are taken for, whatever a profile replaces (a compaction's writer, a title's model)
+pub fn family(lib: &Library, target: Option<(&Provider, &ProviderModel)>) -> String {
+  select(lib, target).map_or_else(|| BASE.to_owned(), |(f, _)| f.to_owned())
+}
+
+/// The family a model gets, without composing (to see whether a model switch changes the prompt)
+pub fn variant_name(places: &Places, lib: &Library, target: Option<(&Provider, &ProviderModel)>) -> String {
   if let Some(p) = &places.profile {
     return p.variant();
   }
-  let (_, list) = variants(places);
-  select(&list, target).map(|v| v.name.clone()).unwrap_or_else(|| BASE.to_owned())
+  family(lib, target)
 }
 
 /// Compose the system prompt for a model (None before any model is configured)
-pub fn compose(places: &Places, target: Option<(&Provider, &ProviderModel)>) -> Composed {
+pub fn compose(places: &Places, lib: &Library, target: Option<(&Provider, &ProviderModel)>) -> Composed {
   if let Some(p) = &places.profile {
-    return profiled(places, p);
+    return Composed { overrides: lib.overrides(), ..profiled(places, p) };
   }
-  let (mut doc, list) = variants(places);
-  let chosen = select(&list, target);
-  let mut version = doc.text("version").unwrap_or("0").to_owned();
-  if let Some(v) = chosen {
-    doc.overlay(&v.doc);
-    version = v.doc.text("version").unwrap_or("0").to_owned();
-  }
-  let mut text = doc.render();
-  let instructions = instructions(places);
-  if !instructions.is_empty() {
-    text.push_str("\n\n## Instructions from AGENTS.md\nThe user's own instructions. Where they differ from the guidance above, they win.\n");
-    text.push_str(&instructions);
-  }
-  text.push_str(&environment(places));
+  let family = select(lib, target).map_or(BASE, |(f, _)| f);
+  let doc = lib.doc(library::SYSTEM, family);
+  // The family's own version, else the plain prompt's (an override's wins over the built-in one either way)
+  let own = (family != BASE).then(|| lib.doc(&format!("{}@{family}", library::SYSTEM), BASE));
+  let version = own.as_ref().unwrap_or(&doc).text("version").unwrap_or("0").to_owned();
+  let heading = "\n\n## Instructions from AGENTS.md\nThe user's own instructions. Where they differ from the guidance above, they win.\n";
+  let (text, sections) = assemble(doc.render(), heading, instructions(places), environment(places));
   let num = |k: &str| doc.text(k).and_then(|v| v.parse::<f64>().ok());
   let sampling = Sampling { temperature: num("temperature"), top_p: num("top_p"), top_k: num("top_k").map(|k| k as u64) };
   let thinking = match doc.text("thinking") {
@@ -314,24 +357,21 @@ pub fn compose(places: &Places, target: Option<(&Provider, &ProviderModel)>) -> 
     _ => None,
   };
   let digest = digest(&text);
-  Composed { text, variant: chosen.map(|v| v.name.clone()).unwrap_or_else(|| BASE.to_owned()), version, digest, sampling, thinking }
+  Composed { text, variant: family.to_owned(), version, digest, sampling, thinking, overrides: lib.overrides(), sections }
 }
 
 /// A specialised agent's prompt: the profile's text, AGENTS.md when it asks for it, the environment; no variant defaults
 fn profiled(places: &Places, p: &crate::profile::Profile) -> Composed {
-  let mut text = p.prompt.trim_end().to_owned();
-  let instructions = if p.instructions { instructions(places) } else { String::new() };
-  if !instructions.is_empty() {
-    text.push_str("\n\n## Instructions from AGENTS.md\nThe user's own instructions for this folder.\n");
-    text.push_str(&instructions);
-  }
-  text.push_str(&environment(places));
-  Composed { digest: digest(&text), text, variant: p.variant(), version: "0".into(), ..Default::default() }
+  let docs = if p.instructions { instructions(places) } else { vec![] };
+  let heading = "\n\n## Instructions from AGENTS.md\nThe user's own instructions for this folder.\n";
+  let (text, sections) = assemble(p.prompt.trim_end().to_owned(), heading, docs, environment(places));
+  Composed { digest: digest(&text), text, variant: p.variant(), version: "0".into(), sections, ..Default::default() }
 }
 
 /// Raw mode's prompt: the settings page's text as it is, with nothing composed around it and no variant defaults
 pub fn raw(text: &str) -> Composed {
-  Composed { text: text.to_owned(), variant: RAW.to_owned(), digest: digest(text), ..Default::default() }
+  let sections = vec![Section { kind: SectionKind::Base, path: None, start: 0, end: text.len() }];
+  Composed { text: text.to_owned(), variant: RAW.to_owned(), digest: digest(text), sections, ..Default::default() }
 }
 
 /// SHA-256 of a prompt, first 12 hex digits
@@ -339,8 +379,9 @@ fn digest(text: &str) -> String {
   Sha256::digest(text.as_bytes()).iter().take(6).map(|b| format!("{b:02x}")).collect()
 }
 
-fn instructions(places: &Places) -> String {
-  let mut out = String::new();
+/// Each instruction file with the block the prompt carries it in
+fn instructions(places: &Places) -> Vec<(PathBuf, String)> {
+  let mut out = vec![];
   for path in places.instructions() {
     let Some(text) = places.read(&path) else { continue };
     let text = text.trim();
@@ -352,7 +393,8 @@ fn instructions(places: &Places) -> String {
     } else {
       text.to_owned()
     };
-    out.push_str(&format!("\n<instructions path=\"{}\">\n{body}\n</instructions>\n", path.display()));
+    let block = format!("\n<instructions path=\"{}\">\n{body}\n</instructions>\n", path.display());
+    out.push((path, block));
   }
   out
 }
@@ -392,7 +434,11 @@ mod tests {
   }
 
   fn places(dir: &Path) -> Places {
-    Places::new(&dir.join("work"), Some(&dir.join("home")))
+    Places::new(&dir.join("work"), Some(&dir.join("home"))).with_data(Some(&dir.join("data")))
+  }
+
+  fn composed(pl: &Places, target: Option<(&Provider, &ProviderModel)>) -> Composed {
+    compose(pl, &Library::load(pl), target)
   }
 
   #[test]
@@ -400,70 +446,95 @@ mod tests {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("work")).unwrap();
     let pl = places(dir.path());
+    let lib = Library::load(&pl);
     let (p, m) = target("deepseek", "deepseek-chat");
-    let c = compose(&pl, Some((&p, &m)));
+    let c = compose(&pl, &lib, Some((&p, &m)));
     assert_eq!((c.variant.as_str(), c.version.as_str(), c.digest.len()), ("deepseek", "1", 12));
     assert!(c.text.starts_with("You are Acpira") && c.text.contains("## Tool calls\n- A tool runs only") && c.text.contains("## Environment"));
+    assert!(c.overrides.is_empty());
     let (p, m) = target("custom", "my-model");
-    assert_eq!(compose(&pl, Some((&p, &m))).variant, "base");
+    assert_eq!(compose(&pl, &lib, Some((&p, &m))).variant, "base");
     let (p, mut m) = target("custom", "gw/Claude-Opus-5-5");
-    assert_eq!(variant_name(&pl, Some((&p, &m))), "claude");
+    assert_eq!(variant_name(&pl, &lib, Some((&p, &m))), "claude");
     m.family = Some("deepseek".into());
-    assert_eq!(variant_name(&pl, Some((&p, &m))), "deepseek");
+    assert_eq!(variant_name(&pl, &lib, Some((&p, &m))), "deepseek");
     // A pin that names only a request family falls back to matching
     m.family = Some("glm".into());
-    assert_eq!(variant_name(&pl, Some((&p, &m))), "claude");
-    assert_eq!(compose(&pl, None).variant, "base");
+    assert_eq!(variant_name(&pl, &lib, Some((&p, &m))), "claude");
+    assert_eq!(compose(&pl, &lib, None).variant, "base");
   }
 
   #[test]
   fn user_files_override_sections_add_variants_and_agents_md_is_read() {
     let dir = tempfile::tempdir().unwrap();
-    let (home, work) = (dir.path().join("home"), dir.path().join("work"));
+    let (home, work, data) = (dir.path().join("home"), dir.path().join("work"), dir.path().join("data"));
     std::fs::create_dir_all(work.join(".git")).unwrap();
-    let global = home.join(".agents/acpira/prompts");
-    let project = work.join(".agents/acpira/prompts");
+    let global = data.join("prompts");
+    let project = project_prompts(&work);
     std::fs::create_dir_all(&global).unwrap();
     std::fs::create_dir_all(&project).unwrap();
-    std::fs::write(global.join("base.md"), "## Answering\n- Answer in French.\n").unwrap();
-    std::fs::write(project.join("deepseek.md"), "---\nversion: 7\ntemperature: 0.3\n---\n## Tool calls\n\n## Style\n- Terse.\n").unwrap();
-    std::fs::write(project.join("mine.md"), "---\nmatch: [\"*-mine\"]\nthinking: off\n---\nYou are Mine.\n").unwrap();
+    std::fs::create_dir_all(home.join(".agents")).unwrap();
+    std::fs::write(global.join("system.md"), "## Answering\n- Answer in French.\n").unwrap();
+    std::fs::write(project.join("system@deepseek.md"), "---\nversion: 7\ntemperature: 0.3\n---\n## Tool calls\n\n## Style\n- Terse.\n").unwrap();
+    std::fs::write(project.join("system@mine.md"), "---\nmatch: [\"*-mine\"]\nthinking: off\n---\nYou are Mine.\n").unwrap();
     std::fs::write(home.join(".agents/AGENTS.md"), "Use tabs.").unwrap();
     std::fs::write(work.join("AGENTS.md"), "Run make check.").unwrap();
     let pl = places(dir.path());
     let (p, m) = target("deepseek", "deepseek-chat");
-    let c = compose(&pl, Some((&p, &m)));
+    let c = composed(&pl, Some((&p, &m)));
     assert_eq!((c.version.as_str(), c.sampling.temperature), ("7", Some(0.3)));
     assert!(c.text.contains("## Answering\n- Answer in French.") && !c.text.contains("## Tool calls") && c.text.contains("## Style\n- Terse."));
+    assert_eq!(c.overrides.keys().collect::<Vec<_>>(), ["system", "system@deepseek", "system@mine"]);
     let global_md = c.text.find("Use tabs.").unwrap();
     assert!(global_md < c.text.find("Run make check.").unwrap(), "the user's file first, then the project's");
     let (p, m) = target("custom", "big-mine");
-    let c = compose(&pl, Some((&p, &m)));
+    let c = composed(&pl, Some((&p, &m)));
     assert_eq!((c.variant.as_str(), c.thinking), ("mine", Some(Thinking::Off)));
     assert!(c.text.starts_with("You are Mine.") && c.text.contains("## Working"));
 
-    // A folder on an SSH host composes the same prompt from what the host read (`HostFiles::gather` there)
+    // A folder on an SSH host composes the same prompt from what the host read (`HostFiles::gather` there), with the
+    // user's folder from this disk
     let sent = Arc::new(HostFiles::gather(&work, Some(&home)));
-    std::fs::remove_dir_all(dir.path()).unwrap();
-    assert_eq!(compose(&Places::on_host(&work, sent), Some((&p, &m))), c);
+    std::fs::remove_dir_all(&work).unwrap();
+    std::fs::remove_dir_all(&home).unwrap();
+    assert_eq!(composed(&Places::on_host(&work, sent).with_data(Some(&data)), Some((&p, &m))), c);
+  }
+
+  #[test]
+  fn sections_cover_the_prompt_one_per_instruction_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let (home, work) = (dir.path().join("home"), dir.path().join("work"));
+    std::fs::create_dir_all(work.join(".git")).unwrap();
+    std::fs::create_dir_all(home.join(".agents")).unwrap();
+    std::fs::write(home.join(".agents/AGENTS.md"), "Use tabs.").unwrap();
+    std::fs::write(work.join("AGENTS.md"), "## Rules\nRun make check.").unwrap();
+    let c = composed(&places(dir.path()), None);
+    let kinds: Vec<SectionKind> = c.sections.iter().map(|s| s.kind).collect();
+    assert_eq!(kinds, [SectionKind::Base, SectionKind::Doc, SectionKind::Doc, SectionKind::Environment]);
+    assert!(c.sections.windows(2).all(|w| w[0].end == w[1].start) && c.sections[0].start == 0 && c.sections[3].end == c.text.len());
+    let doc = c.text.get(c.sections[2].start..c.sections[2].end).unwrap();
+    assert!(doc.contains("## Rules\nRun make check.") && c.sections[2].path.as_deref().is_some_and(|p| p.ends_with("AGENTS.md")), "{doc}");
+    assert!(c.text.get(c.sections[3].start..).unwrap().contains("## Environment"));
+    assert_eq!(raw("x").sections.len(), 1);
   }
 
   #[test]
   fn a_plugin_s_prompt_folder_sits_between_the_user_s_and_the_project_s() {
     let dir = tempfile::tempdir().unwrap();
-    let (home, work, layer) = (dir.path().join("home"), dir.path().join("work"), dir.path().join("plugin/prompts"));
+    let (home, work, data, layer) = (dir.path().join("home"), dir.path().join("work"), dir.path().join("data"), dir.path().join("plugin/prompts"));
     std::fs::create_dir_all(work.join(".git")).unwrap();
-    for d in [home.join(".agents/acpira/prompts"), work.join(".agents/acpira/prompts"), layer.clone()] {
+    for d in [data.join("prompts"), project_prompts(&work), layer.clone()] {
       std::fs::create_dir_all(d).unwrap();
     }
-    std::fs::write(home.join(".agents/acpira/prompts/base.md"), "## Answering\n- From the user.\n## Style\n- User style.\n").unwrap();
-    std::fs::write(layer.join("base.md"), "## Answering\n- From the plugin.\n## Style\n- Plugin style.\n").unwrap();
-    std::fs::write(work.join(".agents/acpira/prompts/base.md"), "## Style\n- Project style.\n").unwrap();
-    let c = compose(&Places::new(&work, Some(&home)).with_layers(vec![layer.clone()]), None);
+    std::fs::write(data.join("prompts/system.md"), "## Answering\n- From the user.\n## Style\n- User style.\n").unwrap();
+    std::fs::write(layer.join("system.md"), "## Answering\n- From the plugin.\n## Style\n- Plugin style.\n").unwrap();
+    std::fs::write(project_prompts(&work).join("system.md"), "## Style\n- Project style.\n").unwrap();
+    let pl = Places::new(&work, Some(&home)).with_data(Some(&data)).with_layers(vec![layer.clone()]);
+    let c = composed(&pl, None);
     assert!(c.text.contains("- From the plugin.") && !c.text.contains("- From the user."), "{}", c.text);
     assert!(c.text.contains("- Project style.") && !c.text.contains("- Plugin style."), "{}", c.text);
     // A folder on an SSH host still reads the plugin's folder from this disk
     let sent = Arc::new(HostFiles::gather(&work, Some(&home)));
-    assert!(compose(&Places::on_host(&work, sent).with_layers(vec![layer]), None).text.contains("- From the plugin."));
+    assert!(composed(&Places::on_host(&work, sent).with_layers(vec![layer]), None).text.contains("- From the plugin."));
   }
 }

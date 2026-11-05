@@ -165,6 +165,7 @@ impl SessionManager {
       shared_mcp: self.deps.shared_mcp.clone(),
       plugin_hooks: self.deps.plugin_hooks.clone(),
       plugin_prompts: self.deps.plugin_prompts.clone(),
+      data_home: Some(self.deps.lease_root.clone()),
       plugin_runtime: self.deps.plugin_runtime.clone(),
       remote: self.deps.remote.clone(),
     }

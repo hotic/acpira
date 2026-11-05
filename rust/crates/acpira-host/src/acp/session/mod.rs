@@ -144,6 +144,9 @@ pub struct SessionDeps {
   pub plugin_hooks: Option<crate::hooks::PluginHooks>,
   /// The plugins' prompt folders, sent to the built-in agent when a session opens; None: no plugins (tests)
   pub plugin_prompts: Option<crate::hooks::PluginPrompts>,
+  /// Acpira's data home, whose `prompts/` overrides the texts the engine writes for agents (`AcpSession::prompts`);
+  /// None: the built-in texts and the project's (tests)
+  pub data_home: Option<std::path::PathBuf>,
   /// The plugins' resident processes, which hear the session's events; None: no plugins (tests)
   pub plugin_runtime: Option<std::sync::Arc<crate::plugins::runtime::Runtimes>>,
   /// The `mcpServers` entry of Acpira's own MCP server (`host_mcp.rs`), sent with session/new, load and resume

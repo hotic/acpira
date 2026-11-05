@@ -46,6 +46,21 @@ impl AcpSession {
     }
   }
 
+  /// The texts the engine writes for this session's agent (MCP instructions, edit / fork leads, briefs), read now:
+  /// built-in, with Acpira's own overrides, the plugins' and the project's (`acpira_agent::prompt::library`). Engine
+  /// texts take no model family. A folder on an SSH host leaves the project's out, since this disk's copy of the path
+  /// may be another project
+  pub(crate) fn prompts(&self) -> acpira_agent::prompt::Library {
+    use acpira_agent::prompt::{Library, Places};
+    let cwd = std::path::Path::new(&self.cwd);
+    let places = match self.remote_folder() {
+      Some(_) => Places::on_host(cwd, Default::default()),
+      None => Places::new(cwd, acpira_agent::turn::user_home().as_deref()),
+    };
+    let layers = self.deps.plugin_prompts.as_ref().map(|f| f()).unwrap_or_default();
+    Library::load(&places.with_data(self.deps.data_home.as_deref()).with_layers(layers))
+  }
+
   /// Params for session/new, resume and load (and an edit's fresh session): the shared MCP servers for this agent and
   /// cwd (`shared_config::mcp`, filtered by the process's `mcpCapabilities`) plus Acpira's own server (`host_mcp.rs`);
   /// Claude sessions also ask for summarized thinking (see `claude_thinking`), the raw workflow progress frames

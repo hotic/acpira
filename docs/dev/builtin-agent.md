@@ -84,7 +84,7 @@ A step is seconds of model time against milliseconds of tool time, so tools do m
 
 `store.rs` appends one JSON event per line; nothing is rewritten except Rewind's cut, and the model's view is projected from `item` events.
 
-- Every change of the request prefix between two calls (model, prompt, tools, fast) must be a `view` event; the engine scenarios assert this against the log. The system prompt is recomposed only when a model switch selects another family variant; bump the base prompt's version when changing it.
+- Every change of the request prefix between two calls (model, prompt, tools, fast) must be a `view` event; the engine scenarios assert this against the log. The system prompt is recomposed only when a model switch selects another family; bump `system.md`'s version when changing it.
 - `compaction` and `prune` events must carry enough for `store::load` to rebuild the same view without the folded items.
 
 ## Model discovery

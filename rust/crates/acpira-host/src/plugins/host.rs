@@ -1018,7 +1018,7 @@ mod tests {
     for id in ["pal", "claude"] {
       let dir = tmp.path().join(id);
       std::fs::create_dir_all(dir.join("prompts")).unwrap();
-      std::fs::write(dir.join("prompts/base.md"), "## Style\n- Short.\n").unwrap();
+      std::fs::write(dir.join("prompts/system.md"), "## Style\n- Short.\n").unwrap();
       std::fs::write(dir.join("run.sh"), "").unwrap();
       let m = json!({ "schema": 1, "id": id, "version": "1", "description": "Pal",
         "contributes": { "agent": { "command": "run.sh", "args": ["acp", "${ACPIRA_PLUGIN_DATA}"] }, "prompts": "prompts" } });

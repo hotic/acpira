@@ -185,7 +185,8 @@ impl RelayHub {
         // The project tools go to the session's own agent; a summoned child's CLI keeps its own
         let remote_tools = session.as_ref().filter(|_| caller.is_none()).and_then(|s| s.claude_stand()).map(|st| st.alias);
         let plugins_root = self.plugin_host().map(|p| p.store().root().display().to_string());
-        let features = HostFeatures { browser, summoned: caller.is_some(), remote, remote_tools, plugins_root };
+        let mut features = HostFeatures { browser, summoned: caller.is_some(), remote, remote_tools, plugins_root, instructions: None };
+        features.instructions = session.as_ref().map(|s| crate::host_mcp::instructions(&s.prompts(), &features));
         let _ = write.write_all(reply(HubReply::Features(features)).as_bytes()).await;
       }
       HubOp::HostHooks { cwd } => {

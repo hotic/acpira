@@ -55,9 +55,6 @@ const TITLE_MAX: usize = 48;
 const NOTE_FILES: usize = 20;
 /// The handoff pack's name as an attachment
 const PACK_NAME: &str = "handoff-pack.md";
-/// What the brief says of an attached pack
-const PACK_LINE: &str = "Attached is the handoff pack of the caller's uncommitted changes: their diff and, where they are small, the \
-changed files in full. Start from it, and open other files only for what it does not show.";
 /// Mode ids that mean "read only" across the built-in CLIs: codex-acp `read-only`, Claude / OpenCode / Grok `plan`
 const READ_ONLY_MODES: [&str; 3] = ["read-only", "plan", "ask"];
 /// Modes that skip the CLI's own approvals: Claude `bypassPermissions`, Codex `agent-full-access`, Devin `bypass`,
@@ -605,22 +602,24 @@ mod tests {
       duty: SubagentDuty::General,
       changes: false,
     };
-    let consult = compose_brief(" review the diff ", &p, RelayMode::Consult, None);
+    let lib = acpira_agent::prompt::Library::builtin();
+    let consult = compose_brief(" review the diff ", &p, RelayMode::Consult, None, &lib);
     assert!(consult.starts_with("review the diff\n\nThree severity levels."));
     assert!(consult.contains("do not modify any file"));
-    assert!(!compose_brief("fix it", &p, RelayMode::Work, None).contains("do not modify"));
+    assert!(!compose_brief("fix it", &p, RelayMode::Work, None, &lib).contains("do not modify"));
     // How the reply ends follows what the round is for: findings by severity and place for a reviewer, sources for a
     // consult, changes, checks and assumptions for work
     assert!(consult.contains("each point with its path:line, and what you assumed"));
-    let work = compose_brief("fix it", &p, RelayMode::Work, None);
+    let work = compose_brief("fix it", &p, RelayMode::Work, None, &lib);
     assert!(work.contains("End with the files you changed (or that you changed none), what you ran to check the work"));
     let reviewer = SubagentPersona { duty: SubagentDuty::Reviewer, ..p };
-    let review = compose_brief("review", &reviewer, RelayMode::Work, None);
+    let review = compose_brief("review", &reviewer, RelayMode::Work, None, &lib);
     assert!(review.contains("severity (high / medium / low), path:line") && !review.contains("files you changed"));
     assert!(review.ends_with("otherwise decide yourself.)"));
     // What is handed over sits after the persona's brief and before how the reply ends
-    let handed = compose_brief("review", &reviewer, RelayMode::Consult, Some(PACK_LINE));
-    let at = handed.find(PACK_LINE).unwrap();
+    let pack = lib.text("relay/pack", acpira_agent::prompt::BASE);
+    let handed = compose_brief("review", &reviewer, RelayMode::Consult, Some(&pack), &lib);
+    let at = handed.find(&pack).unwrap();
     assert!(at > handed.find("Three severity levels.").unwrap() && at < handed.find("severity (high / medium / low)").unwrap(), "{handed}");
   }
 

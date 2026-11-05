@@ -310,11 +310,14 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
     return Ok(Stop::EndTurn);
   }
   // A goal turn's message opens with the goal's note (`goal::turn_parts`); the goal may have been cleared meanwhile
-  let goal_now = session.state.lock().goal.clone();
+  let (goal_now, family) = {
+    let st = session.state.lock();
+    (st.goal.clone(), st.prompt.variant.clone())
+  };
   let (mut parts, words) = match (kind, &goal_now) {
     (None, _) => (prompt_parts(prompt, s.model.takes_images()), text.as_str()),
     (Some(kind), Some(g)) => {
-      let note = goal::note(kind, g, &goal::objective_file(server, session));
+      let note = goal::note(kind, g, &goal::objective_file(server, session), &session.prompts, &family);
       let words = if kind == goal::Kind::Set { g.objective.as_str() } else { "" };
       (goal::turn_parts(kind, note, Some(&g.objective), prompt, s.model.takes_images()), words)
     }
@@ -334,7 +337,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
     // A mode entered since the model last heard about it is announced in the user message: the system prompt stays fixed.
     // Raw mode is announced to no one, and Agent mode right after it needs no note: its system prompt says it all
     if st.mode != st.announced {
-      let overlay = modes::get(&st.mode).overlay(&server.plan_file(&session.id));
+      let overlay = modes::get(&st.mode).note(&session.prompts, &st.prompt.variant, &server.plan_file(&session.id));
       let silent = s.raw || (st.mode == modes::AGENT && st.announced == modes::RAW);
       st.announced = st.mode.clone();
       if !silent {
@@ -359,7 +362,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
     // offered: the tool table stays as it was listed, so the prompt cache holds
     let sidekick = crate::acp::sidekick_of(&server.config.get(), &st);
     if !s.raw && sidekick != st.sidekick_told && offers_ask(&offer) {
-      let note = sidekick_note(&server.config.get(), st.sidekick_told.is_some(), sidekick.as_deref());
+      let note = sidekick_note(&server.config.get(), &session.prompts, &st.prompt.variant, st.sidekick_told.is_some(), sidekick.as_deref());
       st.sidekick_told = sidekick;
       match parts.first_mut() {
         Some(Part::Text(t)) => *t = format!("<sidekick>\n{note}\n</sidekick>\n\n{t}"),
@@ -536,7 +539,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
         let compacted = if overflows == 1 {
           compact_history(server, session, &s, Reason::Overflow, None).await
         } else {
-          compact::run(server, session, &summary_call(server, &s), Reason::Overflow).await.map(|done| done.then_some(false))
+          compact::run(server, session, &summary_call(server, session, &s), Reason::Overflow).await.map(|done| done.then_some(false))
         };
         match compacted {
           Ok(Some(chunked)) => {

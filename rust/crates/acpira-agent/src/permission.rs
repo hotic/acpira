@@ -218,14 +218,14 @@ impl Guard {
       // The engine writes the plugins' model sources; an edit here would reroute calls like providers.json
       acpira_shared::providers::plugin_providers_path(home),
     ];
-    let mut dirs = vec![home.join("agent").join("config"), cwd.join(".agents").join("acpira"), home.join("plugins").join(".versions")];
+    // Prompt overrides change what every later session is told: Acpira's own and the project's (`prompt::library`)
+    let mut dirs = vec![home.join("agent").join("config"), home.join("prompts"), crate::prompt::project_prompts(cwd), home.join("plugins").join(".versions")];
     // The project's own files when the session folder is below its root (`prompt::project_root`)
     if let Some(root) = crate::prompt::project_root(cwd, user_home).filter(|r| r != cwd) {
-      dirs.push(root.join(".agents").join("acpira"));
+      dirs.push(crate::prompt::project_prompts(&root));
       files.push(root.join(".agents").join("hooks.json"));
     }
     if let Some(u) = user_home {
-      dirs.push(u.join(".agents").join("acpira"));
       files.push(u.join(".agents").join("hooks.json"));
     }
     // Each protected path in both spellings: as written and with its symlinks resolved (a temp or home folder is often
@@ -370,8 +370,10 @@ mod tests {
     assert!(g.protects(Path::new("/h/.acpira/plugins/.versions/demo/abc/go.sh")));
     assert!(!g.protects(Path::new("/h/.acpira/plugins/demo/go.sh")));
     assert!(g.protects(Path::new("/w/sub/../.agents/hooks.json")));
-    assert!(g.protects(Path::new("/w/.agents/acpira/prompts/base.md")));
-    assert!(g.protects(Path::new("/h/.agents/acpira/prompts/x.md")));
+    assert!(g.protects(Path::new("/w/.acpira/prompts/system.md")));
+    assert!(g.protects(Path::new("/h/.acpira/prompts/mode/plan.md")));
+    // The project's scratch folders beside them stay the agent's to write
+    assert!(!g.protects(Path::new("/w/.acpira/tmp/0123abcd/out.txt")));
     assert!(!g.protects(Path::new("/w/.agents/skills/x/SKILL.md")));
     assert!(!g.protects(Path::new("/w/src/providers.json")));
   }

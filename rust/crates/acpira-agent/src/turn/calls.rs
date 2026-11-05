@@ -379,18 +379,19 @@ async fn exit_plan(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, p
     r.pointer("/outcome/outcome").and_then(Value::as_str) == Some("selected") && r.pointer("/outcome/optionId").and_then(Value::as_str) == Some("approved")
   });
   if !approved {
-    let out = Output::error("The user did not approve the plan yet. Stop here and wait for their feedback, then revise the plan file and call exit_plan again.");
+    let out = Output::error(session.prompts.text("plan/rejected", &session.state.lock().prompt.variant));
     return (out, Some(false));
   }
-  {
+  let family = {
     let mut st = session.state.lock();
     st.mode = modes::AGENT.to_owned();
     st.announced = modes::AGENT.to_owned();
     session.save_state(&st);
-  }
+    st.prompt.variant.clone()
+  };
   server.update(&session.id, json!({ "sessionUpdate": "current_mode_update", "currentModeId": modes::AGENT }));
-  let model = format!("The user approved the plan. {} Carry out the plan now, item by item in the to-do list's order: mark an item in_progress when you start it and \
-completed once it is checked. If the plan turns out wrong, correct the plan file before going on.", modes::get(modes::AGENT).overlay(&path));
+  let mode = modes::get(modes::AGENT).note(&session.prompts, &family, &path);
+  let model = session.prompts.render("plan/approved", &family, &[("mode", &mode)]);
   (Output { model, is_error: false, content: vec![], raw_output: None }, Some(true))
 }
 

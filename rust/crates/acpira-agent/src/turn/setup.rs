@@ -107,10 +107,10 @@ pub(super) fn setup(server: &Server, session: &Session, params: &Value, mcp: &[c
   let composed = if raw {
     prompt::raw(config.raw_system_prompt())
   } else {
-    let variant = prompt::variant_name(&places, Some((provider, model)));
+    let variant = prompt::variant_name(&places, &session.prompts, Some((provider, model)));
     let mut st = session.state.lock();
     if st.prompt.variant != variant || st.prompt.text.is_empty() {
-      st.prompt = prompt::compose(&places, Some((provider, model)));
+      st.prompt = prompt::compose(&places, &session.prompts, Some((provider, model)));
       session.save_prompt(&st.prompt);
     }
     st.prompt.clone()
@@ -184,7 +184,7 @@ pub(super) fn setup(server: &Server, session: &Session, params: &Value, mcp: &[c
 /// A compaction's models: the turn's model sets the tail; the summary is written by the fast model in effect (the
 /// settings page's pick or the automatic one, read at the moment, like the title's), then by the turn's model when that
 /// fails
-pub(super) fn summary_call<'a>(server: &Server, s: &'a Setup) -> compact::Call<'a> {
+pub(super) fn summary_call<'a>(server: &Server, session: &Session, s: &'a Setup) -> compact::Call<'a> {
   let mut writers = Vec::with_capacity(2);
   let config = server.config.get();
   let catalog = server.catalog.get();
@@ -197,9 +197,19 @@ pub(super) fn summary_call<'a>(server: &Server, s: &'a Setup) -> compact::Call<'
     let pick = model_pick(&provider.id, &model.id);
     // The fast model thinks at the level a new session on it would start with
     let effort = crate::acp::default_effort(&config, &catalog, Some(&pick));
-    writers.push(compact::Writer { endpoint, thinking: model.thinking, model, pick, cost, effort });
+    let family = prompt::family(&session.prompts, Some((provider, &model)));
+    writers.push(compact::Writer { endpoint, thinking: model.thinking, model, pick, cost, effort, family });
   }
-  writers.push(compact::Writer { endpoint: s.endpoint.clone(), model: s.model.clone(), pick: s.pick.clone(), cost: s.cost, thinking: s.thinking, effort: s.effort.clone() });
+  let family = prompt::family(&session.prompts, config.find(&s.pick));
+  writers.push(compact::Writer {
+    endpoint: s.endpoint.clone(),
+    model: s.model.clone(),
+    pick: s.pick.clone(),
+    cost: s.cost,
+    thinking: s.thinking,
+    effort: s.effort.clone(),
+    family,
+  });
   let limit = s.policy.threshold(s.model.context.unwrap_or(DEFAULT_CONTEXT), s.model.output);
   compact::Call { http: server.http.clone(), model: &s.model, writers, limit }
 }
@@ -230,7 +240,7 @@ pub(super) async fn compact_history(server: &Server, session: &Session, s: &Setu
       Err(e) => eprintln!("[acpira agent] chunk compaction failed, summarizing instead: {e}"),
     }
   }
-  compact::run(server, session, &summary_call(server, s), reason).await.map(|done| done.then_some(false))
+  compact::run(server, session, &summary_call(server, session, s), reason).await.map(|done| done.then_some(false))
 }
 
 /// The context after a compaction, as an estimate until the next call reports it
@@ -280,20 +290,19 @@ pub(super) fn sidekick_unlisted(server: &Server, session: &Session, offer: &crat
   st.mode != modes::RAW && now.is_some() && now != st.sidekick_told
 }
 
-/// What the model is told of a sidekick picked (`had`: there was one before), changed or dropped since it last heard
-pub(super) fn sidekick_note(config: &crate::config::Config, had: bool, now: Option<&str>) -> String {
+/// What the model is told of a sidekick picked (`had`: there was one before), changed or dropped since it last heard:
+/// the prompts `sidekick/added`, `/changed` or `/removed` for the session's family. The lead text inside the first is
+/// the plain `sidekick/lead`, the same the engine lists the sidekick with in ask_agent
+pub(super) fn sidekick_note(config: &crate::config::Config, prompts: &crate::prompt::Library, family: &str, had: bool, now: Option<&str>) -> String {
   let name = |pick: &str| config.find(pick).map(|(_, m)| m.display_name().to_owned()).unwrap_or_else(|| pick.to_owned());
+  let tool = format!("{}_ask_agent", crate::acp::ACPIRA_SERVER);
+  let (agent, tool) = (("agent", acpira_shared::subagents::SIDEKICK_ID), ("tool", tool.as_str()));
   match (had, now) {
-    (_, None) => "You no longer have a sidekick: agent \"sidekick\" of acpira_ask_agent is gone. Do that work yourself or give it to \
-another agent."
-      .to_owned(),
-    (false, Some(pick)) => format!(
-      "You now have a sidekick, {}: summon it with acpira_ask_agent, agent \"sidekick\". It works at its own pace, often \
-slower than you: hand it work that runs while you do something else (edits you can describe precisely, scouting that does \
-not decide the plan) or a second look at your finished change, not a quick step you would then wait for, and keep the \
-decisions yourself; check its diff afterwards, and when it falls short say so in the same thread.",
-      name(pick)
-    ),
-    (true, Some(pick)) => format!("Your sidekick now runs {} (acpira_ask_agent, agent \"sidekick\"); its thread continues.", name(pick)),
+    (_, None) => prompts.render("sidekick/removed", family, &[agent, tool]),
+    (false, Some(pick)) => {
+      let lead = prompts.text("sidekick/lead", prompt::BASE);
+      prompts.render("sidekick/added", family, &[("model", &name(pick)), agent, tool, ("lead", &lead)])
+    }
+    (true, Some(pick)) => prompts.render("sidekick/changed", family, &[("model", &name(pick)), agent, tool]),
   }
 }

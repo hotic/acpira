@@ -295,7 +295,7 @@ async fn the_built_in_agents_sidekick_is_listed_first_for_the_root_and_keeps_one
   let root = listed(&hub, token(None, 0)).await;
   assert_eq!(ids(&root), ["sidekick", "fake-review", "fake-worker"]);
   expect_match(&root[0], json!({ "name": "Sidekick", "agent": "fake", "model": "m2", "mode": "inherit", "duty": "executor" }));
-  assert!(root[0]["brief"].as_str().unwrap().starts_with("You carry out a plan another agent made."));
+  assert!(root[0]["brief"].as_str().unwrap().starts_with("You are the sidekick of another agent, the lead,"));
   // The root's own: a summoned child does not get it
   assert_eq!(ids(&listed(&hub, token(Some("thr"), 1)).await), ["fake-review", "fake-worker"]);
 
