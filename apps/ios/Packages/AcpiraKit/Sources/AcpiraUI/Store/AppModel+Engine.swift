@@ -176,7 +176,15 @@ extension AppModel {
       }
       // Only the views the feed keeps stay, so a long transcript is not held past its cache bound
       let kept = Set(link.feed.views.kept)
-      views = views.filter { kept.contains($0.key) }
+      // Views carried over from the wire before stay too, while the bound leaves them room; one this wire shows
+      // becomes the feed's own
+      if !carried.isEmpty {
+        carried.removeAll { kept.contains($0) }
+        let room = max(0, viewCacheEntries - kept.count)
+        if carried.count > room { carried.removeFirst(carried.count - room) }
+      }
+      let keep = carried.isEmpty ? kept : kept.union(carried)
+      if views.keys.contains(where: { !keep.contains($0) }) { views = views.filter { keep.contains($0.key) } }
       views[view.id] = view
       // The engine's view of the chat on screen, back in the foreground: the counters run on the engine's times again
       if clockHeld != nil, !away, view.id == watching { clockHeld = nil }
@@ -217,6 +225,9 @@ extension AppModel {
     agentShapes = previous.agentShapes
     summaries = previous.summaries
     views = previous.views
+    // Least recently shown first: what the wire before still carried itself, then its own feed's order
+    var seen = Set<String>()
+    carried = (previous.carried + (previous.link?.feed.views.kept ?? [])).filter { views[$0] != nil && seen.insert($0).inserted }
     // The replay below sends them again, so they keep reading as sent, and this wire's loader keeps their photos too
     outgoing = previous.outgoing
     pendingSummaries = previous.pendingSummaries

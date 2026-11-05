@@ -82,6 +82,10 @@ final class AppModel {
   /// List feedback stays until the list itself acknowledges it, even after a queued copy settles `outgoing`.
   var pendingSummaries: [String: PendingSummary] = [:]
   var views: [String: SessionView]
+  /// Views carried over from the wire before (`resume`) that this wire has not shown yet, least recently shown first.
+  /// They stay beside the feed's own until the cache bound needs their room, so a chat opened after a reconnect shows
+  /// its last copy at once (syncing) instead of a spinner until the whole transcript arrives again
+  @ObservationIgnored var carried: [String] = []
   /// Prompts sent to the engine that their session does not show yet, by session (Outgoing.swift)
   var outgoing: [String: [Outgoing]] = [:]
   var path: [Route] = []
