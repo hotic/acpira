@@ -104,6 +104,7 @@ struct SelectionAction {
 /// One message or Markdown block owns its menu; its last touched paragraph supplies the native range selection.
 @Observable final class TextSelectionScope {
   var active = false
+  var previewText: String?
   @ObservationIgnored weak var target: SelectionTextView?
 
   func select() {
@@ -120,10 +121,24 @@ final class SelectionTextView: UITextView, UIEditMenuInteractionDelegate {
   var actions: [SelectionAction] = []
   weak var selectionScope: TextSelectionScope?
   lazy var selectionMenu = UIEditMenuInteraction(delegate: self)
+  private var previewOffset = 0
+
+  /// Start a long paragraph's preview near the touched line, not at an off-screen beginning.
+  var previewText: String {
+    let start = max(0, min(previewOffset, attributedText.length))
+    return selectionText(attributedText, range: NSRange(location: start, length: attributedText.length - start))
+  }
 
   override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
     let hit = super.hitTest(point, with: event)
-    if hit != nil { selectionScope?.target = self }
+    if hit != nil {
+      selectionScope?.target = self
+      if let position = closestPosition(to: point),
+         let line = tokenizer.rangeEnclosingPosition(position, with: .line, inDirection: UITextDirection(rawValue: UITextStorageDirection.forward.rawValue)) {
+        previewOffset = offset(from: beginningOfDocument, to: line.start)
+      }
+      if event?.type == .touches { selectionScope?.previewText = previewText }
+    }
     return hit
   }
 

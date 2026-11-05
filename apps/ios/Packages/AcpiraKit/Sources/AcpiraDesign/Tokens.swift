@@ -348,6 +348,8 @@ public enum Metrics {
   public static let glassGlyph: CGFloat = 19
   /// How far the new-session pencil is lifted in its glass: its ink sits low in the symbol's box
   public static let pencilLift: CGFloat = 1.5
+  /// A reply's long-press preview is an excerpt, never a full-screen sheet of text.
+  public static let messagePreviewLines = 6
   /// A popover's width (--pop-w-lg)
   public static let popLg: CGFloat = 300
   /// The widest card a compact-adapted popover shows unclipped on a 402 pt screen (the stats card's three tiles)

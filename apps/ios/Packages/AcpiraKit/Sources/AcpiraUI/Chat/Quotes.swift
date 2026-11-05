@@ -61,6 +61,21 @@ private struct QuoteMenu: ViewModifier {
               Button(t("history.selectText"), systemImage: "text.cursor") { selection.select() }
             }
           }
+        } preview: {
+          if offersSelection {
+            // Only the preview is shortened. Copy and quote still use the complete original block.
+            Text(web: selection.previewText ?? QuoteText.of(block))
+              .textStyle(WebType.text1)
+              .foregroundStyle(Palette.fg1)
+              .lineLimit(Metrics.messagePreviewLines)
+              .truncationMode(.tail)
+              .frame(width: Metrics.popLg, alignment: .leading)
+              .fixedSize(horizontal: false, vertical: true)
+              .padding(Metrics.s3)
+              .background(Palette.bg2, in: RoundedRectangle(cornerRadius: Metrics.rCardRound))
+          } else {
+            content.background(Palette.bg0)
+          }
         }
     }
   }
