@@ -45,6 +45,8 @@ export const CONFIGS: Record<string, Config> = {
   // Devin's own Fusion: Cognition's recommended pair, and Astra with SWE-2 (option ids of Devin 3000.11.92)
   'devin-opus-luna': { harness: 'devin', model: 'claude-opus-5.5', pick: { model: 'fusion-claude-opus-5-5-high-sidekick-gpt-6-luna-high' } },
   'devin-astra-swe': { harness: 'devin', model: 'gpt-6-astra', pick: { model: 'fusion-gpt-6-astra-high-sidekick-swe-2-medium' } },
+  // The pair acpira-astra-luna runs, head to head (offered by Devin 3000.11)
+  'devin-astra-luna': { harness: 'devin', model: 'gpt-6-astra', pick: { model: 'fusion-gpt-6-astra-high-sidekick-gpt-6-luna-high' } },
   // Acpira's orchestration: Claude Code with Opus 5.5 leads; a review group of Astra (Codex) and Argon (the built-in
   // agent) and an executor on GPT-6 Luna are there for it to use or not
   'acpira-orch': {
@@ -62,8 +64,11 @@ export const CONFIGS: Record<string, Config> = {
   // The built-in agent's sidekick on Devin's pairs, both models on the gateway (P1)
   'acpira-opus-luna': { harness: 'acpira', model: 'claude-opus-5.5', sidekick: 'gpt-6-luna' },
   'acpira-astra-swe': { harness: 'acpira', model: 'gpt-6-astra', sidekick: 'swe-2' },
-  // The same lead without a sidekick, which tells the sidekick's effect apart from the harness's
+  // Astra with the sidekick Cognition pairs with Opus: the widest price gap on the gateway (about a hundredfold)
+  'acpira-astra-luna': { harness: 'acpira', model: 'gpt-6-astra', sidekick: 'gpt-6-luna' },
+  // The same leads without a sidekick, which tells the sidekick's effect apart from the harness's
   'acpira-astra': { harness: 'acpira', model: 'gpt-6-astra' },
+  'acpira-opus': { harness: 'acpira', model: 'claude-opus-5.5' },
   // The same lead with only a reviewer persona and no sidekick: does a second look alone buy what the sidekick did, at
   // less wall time? The reviewer is the review bench's `opus` (Claude Code, Opus at xhigh, Max login), a model family
   // other than the lead's

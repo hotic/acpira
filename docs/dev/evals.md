@@ -34,7 +34,11 @@ Scripts under `scripts/eval/` measuring orchestration choices against real CLIs 
 
 - Picks are checked on the new session: a missing option or value fails the run rather than running another model.
 - `agent-gaps` and `steering` come from this repository's history, as the first five tasks sit near the ceiling; their hidden tests run one target at a time under a watchdog, as a failing steering test can hang its runtime. `calc-lang` adds a post-hoc nesting probe, since its hidden tests did not tell leads apart.
-- Outcome: every configuration sat at the quality ceiling. A sidekick bought no hidden-test quality and cost wall time, as the lead hands over tests and waits; its only value was a second look at a finished change, which reviewer personas already give. Hence the sidekick slot stays in the built-in agent's panel only, its guidance asking for parallel work or a second look.
+- Outcome: every configuration sat near the quality ceiling, so the comparison is cost and time. Orchestration on vendor CLIs bought nothing over their own model, hence the sidekick slot stays in the built-in agent's panel only.
+- A sidekick saves only the lead's own steps: each re-reads the lead's whole context at the lead's price, while the sidekick's tokens are cheap whatever it does. Guidance that kept the lead working (parallel pieces or a second look only) cost more than the lead alone. Fusion's split (`SIDEKICK_LEAD`, `SIDEKICK_BRIEF` in `acpira-shared/src/subagents.rs`) on GPT-6 Astra with GPT-6 Luna passed what Astra alone passed except `semver-port`, cheaper in step with the task's share of implementation (most on `steering` and `agent-gaps`, about even on the smallest tasks, where briefing and review cost what doing would), at two to four times the wall time.
+- What raised the lead's cost, each answered in the guidance: review in several rounds, probe scripts the lead wrote itself, taking over a fix while the sidekick's thread was busy, a separate call to wait.
+- A brief carries the lead's reading of the task: `semver-port`'s JavaScript numbers as floats, a misreading Astra alone made now and then, went into every sidekick brief as a requirement.
+- Unmeasured: Claude leads under this split, and the cache a long round lets expire (small at the lead's context on the gateway's GPT route).
 
 ## Evolve loop
 
