@@ -185,13 +185,14 @@ struct SessionListScreen: View {
     let pins = pinsInProject ? all.filter { $0.pinned == true }.sorted { $0.updatedAt > $1.updatedAt } : []
     let sessions = all.filter { $0.pinned != true }.sorted { $0.updatedAt > $1.updatedAt }
     let open = model.openProjects.contains(cwd)
-    // The latest few (all of them when only one more would hide), then the pages "N more" brought out
+    // The latest few (all of them when only one more would hide), plus the desktop's live / attention exceptions.
     let cut = sessions.count <= Self.perProject + 1 ? sessions.count : Self.perProject
     let extra = moreShown[cwd] ?? 0
-    let rows = open ? Array(sessions.prefix(cut + extra)) : []
-    let rest = Array(sessions.dropFirst(rows.count))
-    // The "N more" row stays once paging began, reading "show less" with everything out
-    let paged = open && sessions.count > cut
+    let page = SessionListRows(sessions, cut: cut, extra: extra, activeId: activeId)
+    let rows = open ? page.rows : []
+    let rest = page.rest
+    // The "N more" row stays once paging began, reading "show less" with everything out.
+    let paged = open && page.canFold
     // A group rather than a stack: the lazy list then builds a project's rows as they scroll in, not all of them on
     // any change (a project of hundreds hitched on every tap)
     Group {
@@ -235,8 +236,9 @@ struct SessionListScreen: View {
       let sessions = all.filter { $0.pinned != true }.sorted { $0.updatedAt > $1.updatedAt }
       let cut = sessions.count <= Self.perProject + 1 ? sessions.count : Self.perProject
       let extra = moreShown[Self.chatsKey] ?? 0
-      let rows = Array(sessions.prefix(cut + extra))
-      let rest = Array(sessions.dropFirst(rows.count))
+      let page = SessionListRows(sessions, cut: cut, extra: extra, activeId: activeId)
+      let rows = page.rows
+      let rest = page.rest
       Group {
         Caption(text: t("session.group.chats"))
         ForEach(pins, id: \.id) { s in
@@ -246,7 +248,7 @@ struct SessionListScreen: View {
         ForEach(rows, id: \.id) { s in
           row(s, place: nil, time: sessionTime(s.updatedAt, now: now), divider: false, projects: projects)
         }
-        if sessions.count > cut {
+        if page.canFold {
           MoreRow(rest: rest, nameOf: { model.agent($0).name }, nested: false) {
             if closeSwipe() { return }
             withAnimation(Motion.ease) { moreShown[Self.chatsKey] = rest.isEmpty ? nil : extra + Self.morePage }
@@ -257,6 +259,12 @@ struct SessionListScreen: View {
         }
       }
     }
+  }
+
+  /// The selected chat stays outside paging even when it is older and idle (the regular-width sidebar).
+  private var activeId: String? {
+    guard case .chat(let id) = model.path.first else { return nil }
+    return id
   }
 
   /// The chats' key among the projects' `moreShown` (a project's is its folder, never blank-led)
