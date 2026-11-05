@@ -112,18 +112,20 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
       {on.names ? chip.name : null}
     </Chip>;
   };
+  const add = onConfigure && <Chip caret={false} className="-mr-1.5 shrink-0" icon={<Plus strokeWidth={1.75} />}
+    title={t('settings.providers.addModel')} aria-label={t('settings.providers.addModel')}
+    onClick={() => { setOpen(false); onConfigure(); }}>{null}</Chip>;
   return (<>
     <Popover.Root open={open} onOpenChange={setOpen} onOpenLifecycle={onOpenChange}>
       <Popover.Trigger render={at(fit.stage, fit.item)} />
       <Popover.Portal><Popover.Positioner side="top" align="end" width="lg"><Popover.Popup palette="menu">
-        {/* Adding models belongs to the agent, not the currently selected side. */}
-        {onConfigure && <div className="mb-1 flex min-h-ctl-sm shrink-0 items-center justify-between px-2">
+        {/* Adding models belongs to the agent, not the currently selected side: a bare + at the end of the model search,
+            or on a head line of its own for a lone model, which lists no search */}
+        {add && !modelSearch(families, true) && <div className="mb-1 flex min-h-ctl-sm shrink-0 items-center justify-between px-2">
           <span className="text-3 text-fg-3">{t('settings.agentTab.models')}</span>
-          <Chip caret={false} className="-mr-1.5 shrink-0" icon={<Plus strokeWidth={1.75} />}
-            title={t('settings.providers.addModel')} aria-label={t('settings.providers.addModel')}
-            onClick={() => { setOpen(false); onConfigure(); }}>{t('composer.addModel')}</Chip>
+          {add}
         </div>}
-        <ModelPanel families={families} cur={cur} curVar={curVar} onSelect={onSelect} close={() => setOpen(false)} fold
+        <ModelPanel families={families} cur={cur} curVar={curVar} onSelect={onSelect} close={() => setOpen(false)} fold add={add}
           reasoning={reasoning} modelConfig={modelConfig} sidekick={sk} sidekickEffort={sidekickEffort} sidekickFast={sidekickFast} hiddenConfig={hiddenConfig} onSetConfig={onSetConfig} />
       </Popover.Popup></Popover.Positioner></Popover.Portal>
     </Popover.Root>
@@ -229,6 +231,12 @@ export function ReasoningControl({ control: c, onSelect, onOpenChange }: OptionM
   </Popover.Root>;
 }
 
+// The composer's panel always offers the model search once there is a choice to make, so its add button keeps one place;
+// other model lists search from SEARCH_FROM like any menu
+function modelSearch(families: ModelFamily[], fold?: boolean) {
+  return fold ? families.length > 1 : families.length >= SEARCH_FROM;
+}
+
 interface ModelPanelProps {
   families: ModelFamily[];
   cur?: ModelFamily;
@@ -238,6 +246,8 @@ interface ModelPanelProps {
   reasoning?: ConfigControl[];
   modelConfig?: ConfigControl[];
   sidekick?: ConfigControl;
+  // The add-model button, placed at the end of the model search when the list shows one
+  add?: ReactNode;
   sidekickEffort?: ConfigControl;
   sidekickFast?: ConfigControl;
   hiddenConfig?: Record<string, string[]>;
@@ -282,7 +292,7 @@ function isLone({ families, cur, curVar, reasoning = [], modelConfig = [], fold 
 }
 
 // The model list and the lead's parameters: the whole panel, or the lead's side of PairSwitch (which sets the panel's height)
-function LeadPanel({ families, cur, curVar, onSelect, close, reasoning = [], modelConfig = [], hiddenConfig, onSetConfig, fold }: ModelPanelProps) {
+function LeadPanel({ families, cur, curVar, onSelect, close, reasoning = [], modelConfig = [], hiddenConfig, onSetConfig, fold, add }: ModelPanelProps) {
   const pickFamily = (key: string) => {
     const f = families.find(x => x.key === key);
     if (!f) return;
@@ -317,9 +327,9 @@ function LeadPanel({ families, cur, curVar, onSelect, close, reasoning = [], mod
       {/* Always listed, a lone model too: its checked row is what the panel is about */}
       <Command.Root items={families} value={cur ?? null} itemToStringLabel={f => [f.name, f.source].filter(Boolean).join(' ')}
         itemToStringValue={f => f.key} isItemEqualToValue={(a, b) => a.key === b.key}>
-        <Command.Input visible={families.length >= SEARCH_FROM} />
+        <Command.Input visible={modelSearch(families, fold)} action={add} />
         <Command.Empty />
-        <Command.List searchable={families.length >= SEARCH_FROM}>
+        <Command.List searchable={modelSearch(families, fold)}>
           {(f: ModelFamily) => <Command.Item key={f.key} value={f} title={f.description} onClick={() => pickFamily(f.key)} className={twoLine ? 'min-h-0 py-1.5' : undefined}>
             <OptionContent icon={<ModelMark family={f.name} brand={f.brand} />} description={f.source} checked={f === cur} checkSlot={!!cur}>{f.name}</OptionContent>
           </Command.Item>}

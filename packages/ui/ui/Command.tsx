@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ComponentProps } from 'react';
+import { useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import { Combobox as Base } from '@base-ui/react/combobox';
 import { Search } from 'lucide-react';
 import { cn, cnState } from './cn';
@@ -19,8 +19,8 @@ function Root<Value>({ inputValue: controlled, onInputValueChange, ...props }: B
     }} />;
 }
 // `box`: the settings dialogs' search field (a bordered box, its glass in a slot as wide as a row's icon column) instead
-// of a popup's ruled search line
-function Input({ className, visible = true, box = false, ref, ...props }: ComponentProps<typeof Base.Input> & { visible?: boolean; box?: boolean }) {
+// of a popup's ruled search line. `action`: a control at the line's end (the model panel's add button)
+function Input({ className, visible = true, box = false, action, ref, ...props }: ComponentProps<typeof Base.Input> & { visible?: boolean; box?: boolean; action?: ReactNode }) {
   const input = useRef<HTMLInputElement>(null);
   const inputRef = useMergedRefs(input, ref);
   useLayoutEffect(() => { if (visible) input.current?.focus({ preventScroll: true }); }, [visible]);
@@ -33,6 +33,7 @@ function Input({ className, visible = true, box = false, ref, ...props }: Compon
       : <Search className="size-icon shrink-0" strokeWidth={1.5} />}
     <Base.Input ref={inputRef} placeholder={t('common.search')} spellCheck={false} aria-label={t('common.search')} {...props}
       className={cnState(cn('min-w-0 flex-1 bg-transparent text-2 text-fg-1 outline-none placeholder:text-fg-3'), className)} />
+    {action}
   </label>;
 }
 // `fill`: the list takes the height its flex column leaves instead of capping at --pop rows (the model panel's sidekick side).
