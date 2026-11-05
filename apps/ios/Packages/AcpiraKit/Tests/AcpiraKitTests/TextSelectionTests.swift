@@ -39,6 +39,25 @@ import UIKit
     #expect(abs(before.height - after.height) < 0.5)
   }
 
+  @Test func previewStartsAtTouchedLineWithoutChangingTheCopySource() throws {
+    let source = "开头的内容\n中间的内容\n末尾的内容"
+    let view = SelectionTextView(frame: CGRect(x: 0, y: 0, width: 300, height: 200))
+    view.isEditable = false
+    view.isScrollEnabled = false
+    view.textContainerInset = .zero
+    view.textContainer.lineFragmentPadding = 0
+    view.attributedText = selectionContent(source, style: WebType.text1)
+    view.layoutIfNeeded()
+    let range = (view.attributedText.string as NSString).range(of: "末")
+    let start = try #require(view.position(from: view.beginningOfDocument, offset: range.location))
+    let end = try #require(view.position(from: start, offset: 1))
+    let textRange = try #require(view.textRange(from: start, to: end))
+    let rect = view.firstRect(for: textRange)
+    _ = view.hitTest(CGPoint(x: rect.midX, y: rect.midY), with: nil)
+    #expect(view.previewText == "末尾的内容")
+    #expect(selectionText(view.attributedText, range: NSRange(location: 0, length: view.attributedText.length)) == source)
+  }
+
   @Test func promptLeavesLongPressToMessageActionsUntilSelectionIsRequested() async throws {
     let text = "Edit this whole historical message, not just the selected word."
     let scope = TextSelectionScope()
