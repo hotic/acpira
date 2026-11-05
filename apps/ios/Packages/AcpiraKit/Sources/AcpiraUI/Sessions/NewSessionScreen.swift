@@ -129,7 +129,7 @@ struct NewSessionScreen: View {
     .environment(\.hiddenModels, model.settings?.hiddenOptions[draft.agent] ?? [:])
     .environment(\.sessionActions, SessionActions(toast: { model.show($0, icon: $1) }))
     // Staged photos open in a Lightbox, as in a chat (the draft has no blobs of its own: they are inline pixels)
-    .modifier(MediaLayer(session: draft, loader: model.media))
+    .modifier(MediaLayer(session: draft.id, loader: model.media))
   }
 
   /// Ends typing in the composer, whichever field holds the keyboard

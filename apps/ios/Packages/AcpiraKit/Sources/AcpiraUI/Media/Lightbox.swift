@@ -1,4 +1,5 @@
 import AcpiraDesign
+import AcpiraModels
 import SwiftUI
 #if canImport(UIKit)
 import UIKit
@@ -6,7 +7,8 @@ import UIKit
 
 // chat/Lightbox.tsx on the phone: the picture over black, full screen. Pinch or a double tap zooms it, a zoomed picture
 // pans, and a swipe down at rest closes it, as ✕ does; share hands it to the system share sheet (Save Image, Copy,
-// AirDrop). A tap hides the bars. The desktop's wheel zoom, backdrop click and right-click menu have no phone form.
+// AirDrop). A tap hides the bars. A sideways swipe turns to the session's previous or next image, as Photos does (the
+// desktop shows one image at a time). The desktop's wheel zoom, backdrop click and right-click menu have no phone form.
 
 /// The Lightbox's arithmetic, apart from UIKit so it is tested on the Mac
 nonisolated enum LightboxGeometry {
@@ -20,12 +22,15 @@ nonisolated enum LightboxGeometry {
   /// `closeSpeed` (points per second)
   static let closeShare: CGFloat = 0.15
   static let closeSpeed: CGFloat = 800
+  /// How near an edge a zoomed picture counts as at it, so a sideways drag turns the page (points)
+  static let edgeSlop: CGFloat = 0.5
 
-  /// The picture fitted into the screen, aspect kept (enlarged when smaller, as Photos shows it)
+  /// The picture fitted into the screen, aspect kept (enlarged when smaller, as Photos shows it). Clamped to the
+  /// screen: a rounding error past its edge made the unzoomed picture scroll sideways and take the page swipe
   static func fit(_ size: CGSize, in bounds: CGSize) -> CGSize {
     guard size.width > 0, size.height > 0 else { return .zero }
     let scale = min(bounds.width / size.width, bounds.height / size.height)
-    return CGSize(width: size.width * scale, height: size.height * scale)
+    return CGSize(width: min(bounds.width, size.width * scale), height: min(bounds.height, size.height * scale))
   }
 
   /// The insets that centre content smaller than the screen (none along an axis it overflows)
@@ -65,8 +70,32 @@ nonisolated enum LightboxGeometry {
   }
 }
 
+/// One page of the Lightbox: its pixels when already at hand (the tapped picture), else where to load them
+struct LightboxPage: Equatable {
+  var source: MediaSource?
+  var name: String?
+  var image: DecodedImage?
+}
+
+extension LightboxItem {
+  /// The pages the Lightbox swipes through: the session's images in reading order, opened at this one, which keeps the
+  /// pixels and name its view gave it (a file row names its path). One not among them (no source or session, a photo
+  /// not yet sent) stands alone
+  func gallery(in view: SessionView?) -> (pages: [LightboxPage], start: Int) {
+    let tapped = LightboxPage(source: source, name: name, image: image)
+    guard let source, let view else { return ([tapped], 0) }
+    var pages = MediaLoader.entries(in: view).map { LightboxPage(source: $0.source, name: $0.name) }
+    guard let start = pages.firstIndex(where: { $0.source == source }) else { return ([tapped], 0) }
+    pages[start] = tapped
+    return (pages, start)
+  }
+}
+
 struct Lightbox: View {
   let item: LightboxItem
+  let loader: MediaLoader
+  /// The chat's session as it is now, read once when the Lightbox appears
+  var session: () -> SessionView?
   var onClose: () -> Void
   @Environment(\.motionEnabled) private var motion
   /// Faded in once on screen, out before the cover goes
@@ -77,23 +106,40 @@ struct Lightbox: View {
   /// The swipe-down's progress, 0 at rest
   @State private var pull: CGFloat = 0
   @State private var bars = true
+  /// The tapped picture alone until the session's other images join it on appear
+  @State private var pages: [LightboxPage]
+  @State private var index = 0
+  /// The pixels of the page in view, nil while they load (no share button then)
+  @State private var current: DecodedImage?
+
+  init(item: LightboxItem, loader: MediaLoader, session: @escaping () -> SessionView?, onClose: @escaping () -> Void) {
+    self.item = item
+    self.loader = loader
+    self.session = session
+    self.onClose = onClose
+    _pages = State(initialValue: [LightboxPage(source: item.source, name: item.name, image: item.image)])
+    _current = State(initialValue: item.image)
+  }
 
   var body: some View {
-    let image = Image(decorative: item.image.cgImage, scale: 1)
+    let name = pages[min(index, pages.count - 1)].name
     NavigationStack {
-      ZoomableImage(image: item.image, onPull: { pull = $0 }, onClose: close, onTap: toggleBars)
+      pager
         .ignoresSafeArea()
         .opacity(shown ? 1 : 0)
         .background { Color.black.opacity(shown ? 1 - pull : 0).ignoresSafeArea() }
-        .navigationTitle(Text(web: item.name ?? ""))
+        .navigationTitle(Text(web: name ?? ""))
         .navigationBarTitleDisplayModeInline()
         .toolbar {
           ToolbarItem(placement: .cancellationAction) {
-            Button(role: .close, action: close)
+            CloseButton(action: close)
           }
-          ToolbarItem(placement: .primaryAction) {
-            ShareLink(item: image, preview: SharePreview(Text(web: item.name ?? t("common.image")), image: image)) {
-              Label { Text(web: t("mobile.share")) } icon: { Image(systemName: "square.and.arrow.up") }
+          if let current {
+            ToolbarItem(placement: .primaryAction) {
+              let image = Image(decorative: current.cgImage, scale: 1)
+              ShareLink(item: image, preview: SharePreview(Text(web: name ?? t("common.image")), image: image)) {
+                Label { Text(web: t("mobile.share")) } icon: { Image(systemName: "square.and.arrow.up") }
+              }
             }
           }
         }
@@ -106,11 +152,23 @@ struct Lightbox: View {
     .presentationBackground(.clear)
     .allowsHitTesting(!closing)
     .onAppear {
+      let gallery = item.gallery(in: session())
+      pages = gallery.pages
+      index = gallery.start
       // Wait until black is opaque before exposing the preview's glass controls.
       withAnimation(motion ? Motion.open : nil) { shown = true } completion: {
         if !closing { chrome = true }
       }
     }
+  }
+
+  @ViewBuilder private var pager: some View {
+    #if canImport(UIKit)
+    LightboxPager(pages: pages, index: index, loader: loader, onPage: { index = $0; current = $1 },
+                  onPull: { pull = $0 }, onClose: close, onTap: toggleBars)
+    #else
+    ZoomableImage(image: item.image, onPull: { pull = $0 }, onClose: close, onTap: toggleBars)
+    #endif
   }
 
   private func toggleBars() {
@@ -132,42 +190,253 @@ struct Lightbox: View {
 }
 
 #if canImport(UIKit)
-/// The picture in a zooming scroll view: pinch, double tap and panning are UIScrollView's own, and a one-finger
-/// downward pan at rest pulls the picture away (`onPull` 0…1), closing past the threshold
-struct ZoomableImage: UIViewRepresentable {
-  let image: DecodedImage
+/// The pages side by side in a paging scroll view, `Metrics.page` apart as Photos keeps them. The page in view and its
+/// neighbours are built, each a ZoomView, or a spinner while its pixels load. A sideways drag turns the page (a zoomed
+/// picture pans to its edge first, `ZoomScrollView`); an upright drag is the page's own, its pull or a zoomed pan
+struct LightboxPager: UIViewRepresentable {
+  let pages: [LightboxPage]
+  let index: Int
+  let loader: MediaLoader
+  /// The page now in view and its pixels, nil while they load
+  var onPage: (Int, DecodedImage?) -> Void
   var onPull: (CGFloat) -> Void
   var onClose: () -> Void
   var onTap: () -> Void
 
-  func makeUIView(context: Context) -> ZoomView {
-    // An animation plays in UIImageView itself; its frames are already on an even beat
-    let picture = image.animated
-      ? UIImage.animatedImage(with: image.frames.map { UIImage(cgImage: $0) }, duration: image.loopDuration)
-      : nil
-    let view = ZoomView(image: picture ?? UIImage(cgImage: image.cgImage))
-    view.stream = image.stream
+  func makeUIView(context: Context) -> PagerView {
+    let view = PagerView(loader: loader)
     updateUIView(view, context: context)
     return view
   }
 
-  func updateUIView(_ view: ZoomView, context: Context) {
+  func updateUIView(_ view: PagerView, context: Context) {
+    view.onPage = onPage
     view.onPull = onPull
     view.onClose = onClose
     view.onTap = onTap
     view.motion = context.environment.motionEnabled
+    view.show(pages, at: index)
   }
 }
 
-final class ZoomView: UIView, UIScrollViewDelegate {
+final class PagerView: UIView, UIScrollViewDelegate {
+  var onPage: (Int, DecodedImage?) -> Void = { _, _ in }
+  var onPull: (CGFloat) -> Void = { _ in }
+  var onClose: () -> Void = {}
+  var onTap: () -> Void = {}
+  var motion = true {
+    didSet { for case let zoom as ZoomView in slots.values { zoom.motion = motion } }
+  }
+  private let loader: MediaLoader
+  private let scroll = PagingScrollView()
+  private(set) var pages: [LightboxPage] = []
+  private(set) var index = 0
+  /// The built pages by index: a ZoomView, or a PagePlaceholder
+  private var slots: [Int: UIView] = [:]
+  /// Pixels a load brought for a built page, kept in case the cache lets them go
+  private var held: [Int: DecodedImage] = [:]
+  private var loads: [Int: Task<Void, Never>] = [:]
+  private var failed: Set<Int> = []
+  /// The size the pages were last arranged for; a new one (rotation) arranges them again
+  private var arranged: CGSize = .zero
+  /// Set while layout moves the offset itself, which is no page turn
+  private var arranging = false
+  private static let gap = Metrics.page
+
+  init(loader: MediaLoader) {
+    self.loader = loader
+    super.init(frame: .zero)
+    // The scroll view is a gap wider than the screen, so a page and its gap turn as one
+    clipsToBounds = true
+    scroll.isPagingEnabled = true
+    scroll.showsHorizontalScrollIndicator = false
+    scroll.showsVerticalScrollIndicator = false
+    scroll.contentInsetAdjustmentBehavior = .never
+    // The navigation bar takes this scroll view for its content and laid its edge effect, a grey band, over the black
+    if #available(iOS 26, *) { scroll.topEdgeEffect.isHidden = true }
+    scroll.delegate = self
+    addSubview(scroll)
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  /// Shows these pages from `index`; the same pages again change nothing, so the page the reader turned to stays
+  func show(_ pages: [LightboxPage], at index: Int) {
+    guard pages != self.pages else { return }
+    loads.values.forEach { $0.cancel() }
+    slots.values.forEach { $0.removeFromSuperview() }
+    (loads, slots, held, failed) = ([:], [:], [:], [])
+    self.pages = pages
+    self.index = max(0, min(index, pages.count - 1))
+    arranged = .zero
+    setNeedsLayout()
+  }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    let size = bounds.size
+    guard size.width > 0, size != arranged else { return }
+    arranged = size
+    let stride = size.width + Self.gap
+    arranging = true
+    scroll.frame = CGRect(x: 0, y: 0, width: stride, height: size.height)
+    scroll.contentSize = CGSize(width: stride * CGFloat(pages.count), height: size.height)
+    scroll.contentOffset = CGPoint(x: stride * CGFloat(index), y: 0)
+    arranging = false
+    for (i, slot) in slots { slot.frame = frame(of: i) }
+    fill()
+  }
+
+  func scrollViewDidScroll(_ scrollView: UIScrollView) {
+    guard !arranging, bounds.width > 0, !pages.isEmpty else { return }
+    let turned = Int((scroll.contentOffset.x / (bounds.width + Self.gap)).rounded())
+    let i = max(0, min(pages.count - 1, turned))
+    guard i != index else { return }
+    index = i
+    fill()
+    report()
+  }
+
+  private func report() {
+    onPage(index, (slots[index] as? ZoomView)?.decoded)
+  }
+
+  private func frame(of i: Int) -> CGRect {
+    CGRect(x: (bounds.width + Self.gap) * CGFloat(i), y: 0, width: bounds.width, height: bounds.height)
+  }
+
+  /// Builds the page in view and its neighbours and drops the rest, so a page turned back to starts unzoomed, as in
+  /// Photos
+  private func fill() {
+    guard !pages.isEmpty, bounds.width > 0 else { return }
+    let keep = max(0, index - 1)...min(pages.count - 1, index + 1)
+    for (i, slot) in slots where !keep.contains(i) {
+      slot.removeFromSuperview()
+      slots[i] = nil
+      held[i] = nil
+    }
+    for i in keep where slots[i] == nil {
+      let slot = makeSlot(i)
+      slot.frame = frame(of: i)
+      scroll.addSubview(slot)
+      slots[i] = slot
+    }
+  }
+
+  private func makeSlot(_ i: Int) -> UIView {
+    let page = pages[i]
+    if let image = page.image ?? held[i] ?? page.source.flatMap({ loader.peek($0) }) {
+      let zoom = ZoomView(decoded: image)
+      zoom.motion = motion
+      zoom.onPull = { [weak self] in self?.onPull($0) }
+      zoom.onClose = { [weak self] in self?.onClose() }
+      zoom.onTap = { [weak self] in self?.onTap() }
+      return zoom
+    }
+    let lost = page.source == nil || failed.contains(i)
+    if !lost { load(i) }
+    let placeholder = PagePlaceholder(failed: lost, name: page.name)
+    placeholder.onTap = { [weak self] in self?.onTap() }
+    return placeholder
+  }
+
+  private func load(_ i: Int) {
+    guard loads[i] == nil, let source = pages[i].source else { return }
+    loads[i] = Task { [weak self, loader] in
+      let image = try? await loader.image(source)
+      guard let self, !Task.isCancelled else { return }
+      loads[i] = nil
+      if let image { held[i] = image } else { failed.insert(i) }
+      // The spinner gives way to the picture, or to the failure, if the page is still built
+      guard let slot = slots[i] else { return }
+      slot.removeFromSuperview()
+      slots[i] = nil
+      fill()
+      if i == index { report() }
+    }
+  }
+}
+
+/// Turns pages on a sideways drag only, leaving an upright one to the page: its pull, or panning a zoomed picture
+private final class PagingScrollView: UIScrollView {
+  override func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
+    if recognizer === panGestureRecognizer {
+      let velocity = panGestureRecognizer.velocity(in: self)
+      if abs(velocity.y) > abs(velocity.x) { return false }
+    }
+    return super.gestureRecognizerShouldBegin(recognizer)
+  }
+}
+
+/// A page's zooming scroll view. Its pan begins even when the picture cannot move, and then holds the drag from the
+/// pager: a sideways drag toward an edge the picture already shows (always, unzoomed) is left to the pager instead
+private final class ZoomScrollView: UIScrollView {
+  override func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
+    guard recognizer === panGestureRecognizer else { return super.gestureRecognizerShouldBegin(recognizer) }
+    let velocity = panGestureRecognizer.velocity(in: self)
+    if abs(velocity.x) > abs(velocity.y) {
+      let least = -adjustedContentInset.left
+      let most = max(least, contentSize.width + adjustedContentInset.right - bounds.width)
+      // A finger moving right shows more of the left side
+      if velocity.x > 0 ? contentOffset.x <= least + LightboxGeometry.edgeSlop : contentOffset.x >= most - LightboxGeometry.edgeSlop {
+        return false
+      }
+    }
+    return super.gestureRecognizerShouldBegin(recognizer)
+  }
+}
+
+/// A page whose pixels are on their way (a spinner) or could not come (the image glyph); a tap hides the bars, as on a
+/// picture
+private final class PagePlaceholder: UIView {
+  var onTap: () -> Void = {}
+  private let mark: UIView
+
+  init(failed: Bool, name: String?) {
+    if failed {
+      let glyph = UIImageView(image: UIImage(systemName: "photo",
+                                             withConfiguration: UIImage.SymbolConfiguration(pointSize: Metrics.iconCtl)))
+      glyph.tintColor = UIColor(Palette.fg3)
+      mark = glyph
+    } else {
+      let spinner = UIActivityIndicatorView(style: .medium)
+      spinner.color = UIColor(Palette.fg3)
+      spinner.startAnimating()
+      mark = spinner
+    }
+    super.init(frame: .zero)
+    addSubview(mark)
+    addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped)))
+    if failed {
+      isAccessibilityElement = true
+      accessibilityLabel = t("attach.loadFailed", ["name": name ?? t("common.image")])
+    }
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    mark.sizeToFit()
+    mark.center = CGPoint(x: bounds.midX, y: bounds.midY)
+  }
+
+  @objc private func tapped() { onTap() }
+}
+
+/// The picture in a zooming scroll view: pinch, double tap and panning are UIScrollView's own, and a one-finger
+/// downward pan at rest pulls the picture away (`onPull` 0…1), closing past the threshold
+final class ZoomView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
   var onPull: (CGFloat) -> Void = { _ in }
   var onClose: () -> Void = {}
   var onTap: () -> Void = {}
   var motion = true
   /// A streamed animation's bytes, played while the view is in a window
   var stream: Data?
+  /// The pixels shown, for the share button
+  private(set) var decoded: DecodedImage?
   private let player = StreamPlayer()
-  private let scroll = UIScrollView()
+  private let scroll = ZoomScrollView()
   private let picture: UIImageView
   private let pan = UIPanGestureRecognizer()
   /// The size the picture was last fitted to; a new one (rotation) fits it again
@@ -191,7 +460,20 @@ final class ZoomView: UIView, UIScrollViewDelegate {
     pan.maximumNumberOfTouches = 1
     // The scroll view pans a zoomed picture; at rest the pull takes a downward drag first
     scroll.panGestureRecognizer.require(toFail: pan)
+    // UIKit asks the touched view (the scroll view), not this one, whether a recognizer attached here may begin: the
+    // pull's direction check runs only as its delegate. Without it a sideways drag pulled the picture aside
+    pan.delegate = self
     [double, single, pan].forEach(addGestureRecognizer)
+  }
+
+  convenience init(decoded image: DecodedImage) {
+    // An animation plays in UIImageView itself; its frames are already on an even beat
+    let picture = image.animated
+      ? UIImage.animatedImage(with: image.frames.map { UIImage(cgImage: $0) }, duration: image.loopDuration)
+      : nil
+    self.init(image: picture ?? UIImage(cgImage: image.cgImage))
+    decoded = image
+    stream = image.stream
   }
 
   required init?(coder: NSCoder) { nil }
@@ -227,7 +509,7 @@ final class ZoomView: UIView, UIScrollViewDelegate {
     scroll.contentInset = UIEdgeInsets(top: inset.height, left: inset.width, bottom: inset.height, right: inset.width)
   }
 
-  /// The pull only starts at rest and downward, so a zoomed picture pans and a sideways drag does nothing
+  /// The pull only starts at rest and downward, so a zoomed picture pans and a sideways drag turns the page
   override func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
     guard recognizer === pan else { return super.gestureRecognizerShouldBegin(recognizer) }
     let velocity = pan.velocity(in: self)

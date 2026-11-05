@@ -507,7 +507,7 @@ struct FileRow<Label: View, Trailing: View>: View {
   private func open(_ source: MediaSource, name: String) {
     guard pending == nil, let lightbox = media.lightbox else { return }
     if let image = media.loader.peek(source) {
-      lightbox.open(LightboxItem(image: image, name: name))
+      lightbox.open(LightboxItem(image: image, name: name, source: source))
       return
     }
     let (loader, toast, motion) = (media.loader, actions.toast, motion)
@@ -517,7 +517,7 @@ struct FileRow<Label: View, Trailing: View>: View {
       guard !Task.isCancelled else { return }
       withAnimation(motion ? Motion.quick : nil) { pending = nil }
       if let image {
-        lightbox.open(LightboxItem(image: image, name: name))
+        lightbox.open(LightboxItem(image: image, name: name, source: source))
       } else {
         toast(t("attach.loadFailed", ["name": name]), .image)
       }

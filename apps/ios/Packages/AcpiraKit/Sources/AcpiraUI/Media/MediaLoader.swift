@@ -74,6 +74,12 @@ extension MediaSource {
   }
 }
 
+/// One image of a session (`MediaLoader.entries(in:)`): where its pixels are and the name its card gives it
+nonisolated struct MediaEntry: Hashable, Sendable {
+  var source: MediaSource
+  var name: String?
+}
+
 /// Decoded pixels, orientation applied. CGImage is immutable, so the value crosses actors as it is
 nonisolated struct DecodedImage: @unchecked Sendable, Equatable {
   /// The still picture: an animation's first frame
@@ -258,10 +264,22 @@ final class MediaLoader {
 
   /// The image sources of a session in reading order: prompt attachments, agent images, tool images, Markdown images
   static func sources(in view: SessionView) -> [MediaSource] {
-    var out: [MediaSource] = []
-    func add(_ source: MediaSource?) { if let source, !out.contains(source) { out.append(source) } }
+    entries(in: view).map(\.source)
+  }
+
+  /// `sources(in:)` with the name each card gives its image (the Lightbox's title): an attachment's file name, the file
+  /// an agent or tool image's `uri` names, a Markdown image's alt text or file name. Each source once, where it first
+  /// shows
+  static func entries(in view: SessionView) -> [MediaEntry] {
+    var out: [MediaEntry] = []
+    var seen: Set<MediaSource> = []
+    func add(_ source: MediaSource?, _ name: String?) {
+      guard let source, seen.insert(source).inserted else { return }
+      out.append(MediaEntry(source: source, name: name))
+    }
+    func fileName(_ uri: String?) -> String? { uri.flatMap(fileOfURI).map { ($0 as NSString).lastPathComponent } }
     func attachments(_ list: [Attachment]?) {
-      for case .image(let blob, _, _) in list ?? [] { add(.stored(blob, session: view.id)) }
+      for case .image(let blob, _, let name) in list ?? [] { add(.stored(blob, session: view.id), name) }
     }
     for turn in view.turns {
       switch turn {
@@ -270,9 +288,15 @@ final class MediaLoader {
       case .agent(let agent):
         for block in agent.blocks {
           switch block {
-          case .image(let image): add(.agentImage(blob: image.blob, uri: image.uri, session: view.id))
-          case .toolCall(let call): toolImages(call).forEach { add(.agentImage(blob: $0.blob, uri: $0.uri, session: view.id)) }
-          case .text(let text): markdownImages(text.markdown).forEach { add(.markdown($0, images: text.images, session: view.id)) }
+          case .image(let image): add(.agentImage(blob: image.blob, uri: image.uri, session: view.id), fileName(image.uri))
+          case .toolCall(let call):
+            toolImages(call).forEach { add(.agentImage(blob: $0.blob, uri: $0.uri, session: view.id), fileName($0.uri)) }
+          case .text(let text):
+            for image in markdownImages(text.markdown) {
+              // MarkdownImage's name: the alt text, else the file
+              let file = ((image.src.removingPercentEncoding ?? image.src) as NSString).lastPathComponent
+              add(.markdown(image.src, images: text.images, session: view.id), image.alt.isEmpty ? file : image.alt)
+            }
           case .steer(let steer): attachments(steer.attachments)
           default: break
           }
@@ -282,19 +306,19 @@ final class MediaLoader {
     return out
   }
 
-  /// The `![alt](src)` sources of a Markdown text, as the parser reads them
-  static func markdownImages(_ markdown: String) -> [String] {
-    func walk(_ inlines: [MDInline]) -> [String] {
-      inlines.flatMap { inline -> [String] in
+  /// The `![alt](src)` images of a Markdown text, as the parser reads them
+  static func markdownImages(_ markdown: String) -> [(src: String, alt: String)] {
+    func walk(_ inlines: [MDInline]) -> [(src: String, alt: String)] {
+      inlines.flatMap { inline -> [(src: String, alt: String)] in
         switch inline {
-        case .image(let url, _): [url]
+        case .image(let url, let alt): [(url, alt)]
         case .strong(let c), .emphasis(let c), .strike(let c), .link(_, let c): walk(c)
         default: []
         }
       }
     }
-    func blocks(_ list: [MDBlock]) -> [String] {
-      list.flatMap { block -> [String] in
+    func blocks(_ list: [MDBlock]) -> [(src: String, alt: String)] {
+      list.flatMap { block -> [(src: String, alt: String)] in
         switch block {
         case .paragraph(let inlines), .heading(_, let inlines): walk(inlines)
         case .list(_, _, let items): items.flatMap(blocks)
