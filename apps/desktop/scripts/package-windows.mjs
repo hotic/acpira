@@ -3,6 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, wr
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { crc32, deflateRawSync } from 'node:zlib';
+import { signWindowsFiles } from '../../../scripts/release/sign-windows.mjs';
 
 // The Windows x64 app: one portable Acpira.exe that carries the engine (`acpira_host::cli`) and the page (build.rs embeds
 // dist/webview and dist/picker.js), plus Acpira-<version>-windows-x86_64.zip holding it. On Windows the shell builds
@@ -12,7 +13,9 @@ import { crc32, deflateRawSync } from 'node:zlib';
 //   node scripts/package-windows.mjs [--smoke]
 //
 // --smoke compiles the smoke hook in (`node scripts/smoke.mjs --app <Acpira.exe>`); never ship it.
-// Output: target/windows/Acpira.exe and target/windows/Acpira-<version>-windows-x86_64.zip (unsigned)
+// With CERTUM_EMAIL / CERTUM_OTP set the exe is Authenticode-signed before it is zipped (scripts/release/sign-windows.mjs);
+// a --smoke build never is.
+// Output: target/windows/Acpira.exe and target/windows/Acpira-<version>-windows-x86_64.zip
 const TRIPLE = 'x86_64-pc-windows-msvc';
 const shell = fileURLToPath(new URL('..', import.meta.url));
 const repo = join(shell, '..', '..');
@@ -39,6 +42,7 @@ const out = join(shell, 'target', 'windows');
 mkdirSync(out, { recursive: true });
 const exe = join(out, 'Acpira.exe');
 copyFileSync(join(shell, 'target', TRIPLE, 'release', 'acpira-desktop-tauri.exe'), exe);
+if (!smoke) signWindowsFiles([exe]);
 const zip = join(out, `Acpira-${version}-windows-x86_64${smoke ? '-smoke' : ''}.zip`);
 rmSync(zip, { force: true });
 if (!zipWith7z(zip, exe)) writeFileSync(zip, zipOne('Acpira.exe', readFileSync(exe), statSync(exe).mtime));

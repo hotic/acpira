@@ -63,7 +63,7 @@ No Sparkle or `tauri-plugin-updater`: `acpira-desktop/src/update/`, shell side `
 - The bundle must match the base byte for byte, else the full package; the result is checked against the manifest file list including `_CodeSignature` and the stapled ticket, so the client never signs.
 - https to GitHub hosts only, every redirect hop checked. Staging sits on the install's volume, passes `codesign --verify --deep --strict` with the team and `spctl`, then `renamex_np(RENAME_SWAP)`.
 - Running turns survive: the updated app's engine binary is a newer build, which takes the machine engine over while the old one finishes its running turns (Windows: a new binary is a new pipe key).
-- Windows: a running exe can be renamed, not overwritten, so it moves to `.old` (held by the old engine too, deleted best effort later). The unsigned exe's whole check is the signed manifest. Writability is a probe file: the read-only attribute means nothing.
+- Windows: a running exe can be renamed, not overwritten, so it moves to `.old` (held by the old engine too, deleted best effort later). The updater never checks the exe's Authenticode signature: the signed manifest is the whole check. Writability is a probe file: the read-only attribute means nothing.
 - Unverified: a real update's team check, App Translocation, read-only volumes, a proxied download, the release update jobs.
 
 ## WebKit performance
@@ -84,12 +84,13 @@ One portable `Acpira.exe` (WebView2) carrying engine and page; observed on wry 0
 - One exe, its roles by first argument (`is_engine_command`: the engine's commands, `gateway` among them); the attached engine needs explicit `stdio`, a bare start is the window. `test/rustWorkspace.test.ts` keeps `apps/desktop/Cargo.lock` engine crates at `rust/Cargo.lock`'s versions.
 - Named pipes are owner-only and the client checks the server pid's user, since another user could create the name first.
 - Every child the engine starts needs `CREATE_NO_WINDOW` or a console pops up.
+- Authenticode: Certum's cloud certificate through `ssign` (`scripts/release/sign-windows.mjs`), in CI only. Smart App Control blocks unsigned executables with no override, so the engine inside every VSIX and IntelliJ zip is signed too, not just `Acpira.exe`.
 - `additional_browser_args` replaces wry's defaults and must match for every webview of the process, so `browser_args` repeats them.
 - Dropped files have no path: `init.js` sends them via `postMessageWithAdditionalObjects`, the shell reads `ICoreWebView2File::Path`, so `pathForFile` is async.
 - `decorations(false)` + `shadow(true)` keeps Windows 11 corners, shadow and edge resize. Snap Layouts need the system caption (`HTMAXBUTTON`), which windowed WebView2 cannot offer.
 - Building a window inside WebView2's main-thread callback hangs the webview, so menu and caption picks are queued. Maximize calls `ShowWindow`: tao counts a window shown via `SetWindowPos` as hidden.
 - Smoke runs as an Interactive scheduled task (SSH has no desktop), isolating `USERPROFILE`, `APPDATA`, `LOCALAPPDATA` or settings seed from the real VS Code. No background smoke yet.
-- Not yet verified: toast click, the missing-WebView2 box, an Explorer drag, the folder dialog, IME, mixed DPI, CI runs; Authenticode signing undecided.
+- Not yet verified: toast click, the missing-WebView2 box, an Explorer drag, the folder dialog, IME, mixed DPI, CI runs.
 
 ## Linux
 

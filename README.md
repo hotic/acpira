@@ -182,7 +182,7 @@ Optional fields include `env`, `login`, `install`, `requires`, `subagents` and `
 
 ## Install
 
-- **Desktop app.** Download the dmg for macOS, the zip for Windows, or the deb, rpm or AppImage for Linux (x64, a preview) from the [latest release](https://github.com/hotic/acpira/releases/latest). The macOS app is signed and notarized. The Windows app is a single portable `Acpira.exe` and is not code-signed yet. The app updates itself.
+- **Desktop app.** Download the dmg for macOS, the zip for Windows, or the deb, rpm or AppImage for Linux (x64, a preview) from the [latest release](https://github.com/hotic/acpira/releases/latest). The macOS app is signed and notarized. The Windows app is a single portable, code-signed `Acpira.exe`. The app updates itself.
 - **VS Code and Cursor.** Install **Acpira** from the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=hotic.acpira) or [Open VSX](https://open-vsx.org/extension/hotic/acpira). Each release also attaches platform `.vsix` packages (**Extensions: Install from VSIX…**). Open it from the Acpira icon in the **Activity Bar**; if it is hidden, right-click the Activity Bar and enable **Acpira**. The view can be dragged to the secondary sidebar.
 - **IntelliJ IDEA.** Install the plugin from the [JetBrains Marketplace](https://plugins.jetbrains.com/plugin/34192-acpira). The plugin carries the native backend for every supported platform and supports remote development with different client and backend operating systems. Open the **Acpira** tool window on the right; its title bar action opens a conversation as an editor tab.
 
