@@ -485,10 +485,12 @@ extension View {
   /// While a composer picker is out its dim spreads to the screen's top, but the system bar is drawn over every view
   /// of the page, so its title and glass buttons lay across the beans and captions that rise that far (a column above
   /// a long draft with the keyboard up). The items leave instead, the back button with them (the screen also drops
-  /// its own), and the bar keeps its height so nothing under the dim moves
+  /// its own), and the bar keeps its height so nothing under the dim moves. The height is held on purpose: SwiftUI
+  /// drops a bar left with no title and no items, which took its top safe area away and moved the page up under the
+  /// dim (the new session's hero jumped, the thread shifted)
   func barAside(_ aside: Bool) -> some View {
     #if os(iOS)
-    navigationBarBackButtonHidden(aside)
+    navigationBarBackButtonHidden(aside).toolbar(.visible, for: .navigationBar)
     #else
     self
     #endif

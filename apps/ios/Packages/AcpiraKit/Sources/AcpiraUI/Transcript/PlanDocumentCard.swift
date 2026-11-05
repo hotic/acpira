@@ -39,15 +39,13 @@ struct PlanDocumentCard: View {
 
   var body: some View {
     let heading = planHeading(block)
-    let shape = RoundedRectangle(cornerRadius: Metrics.rLg)
     VStack(alignment: .leading, spacing: 0) {
       if !heading.body.isEmpty { planBody(heading.body, title: heading.title) }
       if block.status != "approved" && block.status != "executing" { bar() }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(shape.fill(Palette.bg1))
-    .clipShape(shape)
-    .overlay(shape.strokeBorder(Palette.conversationLine))
+    // The dock cards' glass: a plan waiting to be built asks for an answer as the question card does
+    .modifier(CardSurface())
     .accessibilityElement(children: .contain)
     .accessibilityLabel(Text(web: heading.title))
   }
@@ -60,20 +58,24 @@ struct PlanDocumentCard: View {
       .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { natural = $0 }
       .frame(maxHeight: Metrics.planBody, alignment: .top)
       .clipped()
+      // The cut fades the plan itself out, since glass has no ground colour to fade to; the way to the rest sits in
+      // the space the fade leaves clear
+      .mask {
+        VStack(spacing: 0) {
+          Rectangle()
+          if clipped {
+            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: Metrics.scrollFade)
+            Color.clear.frame(height: WebType.text3.lineHeight + Metrics.s1)
+          }
+        }
+      }
       .overlay(alignment: .bottom) {
         if clipped {
-          // The cut fades out, then the way to the rest on the card's own ground
-          VStack(spacing: 0) {
-            LinearGradient(colors: [Palette.bg1.opacity(0), Palette.bg1], startPoint: .top, endPoint: .bottom)
-              .frame(height: Metrics.scrollFade)
-            Text(web: t("plan.expand"))
-              .textStyle(WebType.text3)
-              .foregroundStyle(Palette.fg2)
-              .frame(maxWidth: .infinity)
-              .padding(.top, Metrics.s1)
-              .background(Palette.bg1)
-          }
-          .allowsHitTesting(false)
+          Text(web: t("plan.expand"))
+            .textStyle(WebType.text3)
+            .foregroundStyle(Palette.popFg2)
+            .frame(maxWidth: .infinity)
+            .allowsHitTesting(false)
         }
       }
       .padding(Metrics.pad)
@@ -99,15 +101,12 @@ struct PlanDocumentCard: View {
       Button(web: primary.map { permissionOption($0, plan: true).label } ?? t("plan.build")) {
         actions.buildPlan(block.id, primary?.id, executor.pick)
       }
-      .buttonStyle(AcpButtonStyle(canBuild ? .primary : .secondary, compact: true, fixed: true))
+      .modifier(CardButton(primary: true))
       .disabled(!canBuild)
     }
-    .padding(.leading, Metrics.pad)
-    .padding(.trailing, Metrics.gapHalf)
-    .padding(.vertical, Metrics.gapHalf)
-    // border-t: the hairline takes its own pixel above the bar's padding
-    .padding(.top, Metrics.hairline)
-    .overlay(alignment: .top) { Rectangle().fill(Palette.line).frame(height: Metrics.hairline) }
+    // The question card's footer: no hairline, the buttons inset like the card's text
+    .padding(.horizontal, Metrics.pad)
+    .padding(.bottom, Metrics.pad)
     .task(id: canBuild) { await probe(canBuild: canBuild, executor: executor, primary: primary) }
   }
 
@@ -155,9 +154,9 @@ struct PlanDocumentCard: View {
         ChipLabel(executor.label ?? t("plan.approvals"), meta: executor.meta)
       }
     }
-    .buttonStyle(AcpButtonStyle(.secondary, compact: true, fixed: true))
+    .modifier(CardButton(primary: false, fixed: false))
     .menuStyle(.button)
-    .fixedSize()
+    .lineLimit(1)
     .accessibilityLabel(Text(web: t("plan.approvalsAria")))
   }
 

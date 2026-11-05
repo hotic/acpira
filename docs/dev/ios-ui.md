@@ -66,12 +66,12 @@ SwiftUI, Liquid Glass, WebKit and text-layout traps of `apps/ios/Packages/Acpira
 
 - Pieces that melt together share one variant: `.clear` on `.regular` pinches (`GlassStyle.bar` vs `GlassStyle.control`). The public `Glass` API has no clear lens like macOS's segmented control.
 - A `GlassEffectContainer` draws glass over every plain view inside and blurs it: a solid control (send) is overlaid outside it.
-- A glass view inserted into a container runs a matched-geometry morph on its own clock unless `glassEffectTransition(.identity)`.
+- A glass view inserted into a container runs a matched-geometry morph on its own clock unless `glassEffectTransition(.identity)`. A progress-gated lens must close without spring rebound: a second crossing of the mount threshold inserts it again and briefly revives its merge silhouette.
 - A glass effect switched to or from `.identity` stands apart from its container's merge until its own transition ends, whatever the transaction; `glassEffectTransition(.identity)` does not stop it. The composer's chips therefore keep their circles on the card (merged away) and drop them only over the plate.
 - Scaling glass content shifts it; an outer `opacity` misses glass content (own layer); glass cannot fade, so a plain plate stands in.
 - Glass moved by an animated `offset` / `scaleEffect` runs on its container's clock, well ahead of content riding the same animation (a mark over it, or its own content): pieces that travel are placed frame by frame from an `Animatable` progress instead (`GooGlass`, `RingBubble`).
 - A glass effect's shape is its view's hit shape: set the content shape after the glass.
-- Plain `.regular` glass on a card holding paragraphs (the dock cards, `CardSurface`) lets the reply behind read through its text, worst in light mode; those cards tint the glass toward the page ground. The one-line composer bar needs no tint.
+- Plain `.regular` glass on a paragraph card (`CardSurface`) lets the reply behind read through; a `.tint` turned it page-black on a phone, not in the simulator, so the cards lay a translucent veil over plain glass.
 - The bottom bar's glass belongs to the bars' container under the navigation controller's view; the search field's hint is white text the glass tints, so pictures of it come out white (`Design/BarHandoff.swift`).
 
 ## WebKit, media, sheets

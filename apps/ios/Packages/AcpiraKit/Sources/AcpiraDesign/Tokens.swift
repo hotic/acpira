@@ -390,6 +390,9 @@ public enum Metrics {
   public static let bubbleInset: CGFloat = 72
   /// A queued prompt's bubble over the composer stays this faint until it is sent
   public static let queuedBubble: Double = 0.55
+  /// The card colour laid over a dock card's glass: the glass keeps the composer bar's tone, and the reply behind it
+  /// stays too faint to read through the card's own text
+  public static let cardVeil: Double = 0.5
   /// The thread's inset on top of the messages' own `pad`: prose, rows and cards sit a little inside the edge the bar's
   /// buttons, the dock and the composer share, as ChatGPT and Claude set their text inside their bar buttons
   public static let threadInset: CGFloat = 4
@@ -483,6 +486,8 @@ public enum Motion {
   public static let dur: Double = 0.150
   /// Liquid pickers: the spring that pulls the pieces out and back, and each piece's lag behind the one before
   public static let gooSpring = Animation.spring(response: 0.7, dampingFraction: 0.76)
+  /// A closing picker must not rebound above zero and reinsert its glass after it has disappeared.
+  public static let gooClose = Animation.smooth(duration: 0.4)
   public static let gooStagger: CGFloat = 0.18
   /// The longest lag the last piece may have, however many pieces there are
   public static let gooStaggerMax: CGFloat = 0.45

@@ -116,7 +116,7 @@ private struct UsageCard: View {
           Icon(.shrink, size: Metrics.icon, strokeWidth: 1.75)
           Text(web: t("usage.compact"), paragraph: false)
         }
-        .buttonStyle(AcpButtonStyle(.secondary, compact: true, fixed: true))
+        .modifier(CardButton(primary: false))
         .disabled(running)
         .opacity(running ? 0.4 : 1)
         .padding(.top, Metrics.s1)

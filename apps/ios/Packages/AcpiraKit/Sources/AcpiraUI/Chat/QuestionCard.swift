@@ -236,15 +236,15 @@ struct OptionFill: ViewModifier {
 
 /// The dock cards' surface: the system's Liquid Glass in the composer's variant (`GlassStyle.bar`), rounded like the
 /// composer's card, so a card floating over the thread reads as the same material as the bar under it. Glass brings
-/// its own edge and depth: no drawn line or shadow
+/// its own edge and depth: no drawn line or shadow. A card holds paragraphs where the bar holds one line, so a veil of
+/// the card colour lies over the glass; a tint on the glass itself took it down to the page's black on a phone
 struct CardSurface: ViewModifier {
   func body(content: Content) -> some View {
     let shape = RoundedRectangle(cornerRadius: Metrics.rCardRound, style: .continuous)
     content
+      .background(shape.fill(Palette.cardBg.opacity(Metrics.cardVeil)))
       .clipShape(shape)
-      // Tinted toward the page ground: the composer's bar holds one line, a card holds paragraphs, and plain
-      // `.regular` let the reply behind it read through its own text
-      .glassEffect(GlassStyle.bar.tint(Palette.bg0.opacity(0.55)), in: shape)
+      .glassSurface(GlassStyle.bar, in: shape)
   }
 }
 
@@ -252,14 +252,19 @@ struct CardSurface: ViewModifier {
 /// back to plain glass with faint text while it cannot run, so a disabled step never reads as a lit one
 struct CardButton: ViewModifier {
   var primary: Bool
+  /// One line at its own width; off for a chip that truncates when the row is short
+  var fixed = true
   @Environment(\.isEnabled) private var enabled
   func body(content: Content) -> some View {
     let lit = primary && enabled
     let label = content.textStyle(TypeScale.text2, weight: lit ? .medium : .regular)
+    // As the web's `h-ctl` buttons: a squeezed footer truncates its chip, never wraps a button
     if lit {
-      label.buttonStyle(.glassProminent).tint(Palette.fgStrong).foregroundStyle(Palette.bg0)
+      label.glassButtonStyle(prominent: true).tint(Palette.fgStrong).foregroundStyle(Palette.bg0)
+        .fixedSize(horizontal: fixed, vertical: false)
     } else {
-      label.buttonStyle(.glass).foregroundStyle(enabled ? Palette.fg1 : Palette.popFg3)
+      label.glassButtonStyle().foregroundStyle(enabled ? Palette.fg1 : Palette.popFg3)
+        .fixedSize(horizontal: fixed, vertical: false)
     }
   }
 }

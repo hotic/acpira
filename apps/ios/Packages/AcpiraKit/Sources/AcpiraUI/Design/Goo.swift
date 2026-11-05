@@ -10,8 +10,8 @@ import UIKit
 // and closing pulls them back in, the outermost first. A bean may turn into a panel of choices: the tapped bean
 // stretches into the panel (its bottom-left corner stays put) and the other beans shrink into it, and a pick shrinks
 // the panel back into the bean. The chip is the way back: × while the beans are out, ‹ while a panel is, one level per
-// tap; a tap anywhere else closes everything, as outside a system menu. One spring drives a progress vector: the chip's own value, then one
-// per bean that opens a panel.
+// tap; a tap anywhere else closes everything, as outside a system menu. One progress vector drives the chip and
+// each bean's panel: a spring while opening or picking, a non-bouncing curve while closing.
 //
 // Every silhouette is Liquid Glass in the composer's own `GlassGroup` (`gooGlass()` on the group), so a
 // bean melts out of the group, into its neighbours and into its panel as the system's glass controls do, and the
@@ -89,8 +89,8 @@ struct GooFrame {
 enum GooGeometry {
   /// Under this the picker is closed and nothing is drawn
   static let gone: CGFloat = 0.001
-  /// A bean's glyph shows over the last part of its way out
-  private static let glyphFrom: CGFloat = 0.5, glyphSpan: CGFloat = 0.4
+  /// Keep the glyph with the shrinking lens until it reaches the chip, rather than leaving an empty glass blob.
+  private static let glyphFrom: CGFloat = 0.15, glyphSpan: CGFloat = 0.65
   /// From a bare chip (no glass for the bean to melt out of) the first bean's glyph, and a panel's closing with the
   /// picker once its rows are gone (`rowsFrom`), ride their drop: shown from this share of a bean's height and sized
   /// with it. Grown out of nothing, the bean rose as an empty grey dot over the chip, and the panel shrank home as an
@@ -100,13 +100,13 @@ enum GooGeometry {
   private static let captionFrom: CGFloat = 0.7, captionMain: CGFloat = 0.85
   /// A panel's rows show once it is mostly grown; the other beans are gone by `swallow` of the way
   private static let rowsFrom: CGFloat = 0.55, rowsSpan: CGFloat = 0.35, swallow: CGFloat = 0.6
-  /// A glyph leaves its bean for the panel early, and is gone well before a swallowed bean is; a caption goes as a
-  /// panel starts and comes back once the beans have nearly grown back
-  private static let glyphOut: CGFloat = 0.3, glyphSwallowed: CGFloat = 0.35, captionOut: CGFloat = 0.1
+  /// Crossfade a bean's glyph with its panel rows. A gap between their ranges left a bare lens during every pick.
+  /// Captions leave as a panel starts and return once the beans have nearly grown back.
+  private static let glyphOut: CGFloat = 0.75, glyphSwallowed: CGFloat = 0.35, captionOut: CGFloat = 0.1
   /// Taps land once a bean or panel has arrived, and on the beans only once no panel is left over them
   private static let arrived: CGFloat = 0.9, uncovered: CGFloat = 0.05
-  /// A bean leaves the chip as the chip's own glass circle and reaches full size by this share of its way out
-  private static let grown: CGFloat = 0.5
+  /// Grow with the whole flight, so a closing bean shrinks before its glyph fades rather than leaving an empty hump.
+  private static let grown: CGFloat = 1
 
   static func frames(_ pieces: [GooPiece], _ progress: GooProgress, chip: CGSize, seed: CGFloat) -> [GooFrame] {
     let main = progress[0]
@@ -219,10 +219,10 @@ private struct GooGlass: View, Animatable {
               .position(x: chip.midX + f.centre.x, y: chip.midY + f.centre.y)
           }
         }
-        ForEach(pieces.indices, id: \.self) { i in
+        ForEach(Array(pieces.enumerated()), id: \.element.id) { i, piece in
           let f = frames[i]
           if f.size.width > Metrics.s0_5 {
-            pieces[i].glyph
+            piece.glyph
               .scaleEffect(f.scale)
               .opacity(f.glyph)
               .frame(width: f.size.width, height: f.size.height)
@@ -276,8 +276,7 @@ private struct GooControls: View, Animatable {
           .accessibilityElement()
           .accessibilityLabel(Text(web: t(frames.contains { $0.panelLive } ? "common.back" : "common.close")))
           .accessibilityAddTraits(.isButton)
-        ForEach(pieces.indices, id: \.self) { i in
-          let piece = pieces[i]
+        ForEach(Array(pieces.enumerated()), id: \.element.id) { i, piece in
           let f = frames[i]
           let c = CGPoint(x: chip.midX + f.centre.x, y: chip.midY + f.centre.y)
           Button(action: piece.action) {
@@ -371,14 +370,14 @@ extension View {
   }
 }
 
-/// Springs its content to a picker's progress: the glass and the rows each run the same spring from the same change
+/// The glass and rows run the same curve from the same change; closing cannot rebound and reinsert a lens.
 private struct GooSpring<Content: View>: View {
   let progress: GooProgress
   @ViewBuilder var content: () -> Content
   @Environment(\.motionEnabled) private var motion
 
   var body: some View {
-    content().animation(motion ? Motion.gooSpring : nil, value: progress)
+    content().animation(motion ? (progress[0] == 0 ? Motion.gooClose : Motion.gooSpring) : nil, value: progress)
   }
 }
 
