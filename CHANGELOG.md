@@ -11,6 +11,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [2.0.8] - 2026-11-05
+
+### Added
+
+- **See what fills the built-in agent's context.** The context ring's card splits the last request into system prompt, tools, instruction files, skills, MCP and conversation. In the desktop app, View report opens a Context tab in the tool panel with a treemap and a tree of every part, and each leaf opens what was sent. After a compaction the parts are estimates until the next call.
+- **Every model-facing text of the built-in agent can be overridden.** The system prompt, mode notes, plan, compaction, goal and title texts, MCP instructions and sidekick notes are Markdown files. A same-name file in `~/.acpira/prompts`, a plugin's prompt folder or the project's `.acpira/prompts` replaces them, and a `name@family` file targets one model family.
+- **The built-in agent keeps its temp files in the project.** Commands and writes get the session's own folder under `.acpira/tmp/` as their temp directory, and it is removed with the session. The Temp files in the project switch on the agent's settings page turns it off. Remote and SSH sessions do not use one.
+
+### Changed
+
+- **The sidekick works with the lead's access.** Every sidekick round takes the root session's mode and approval level, and a running round follows a change at once. The composer's hint now says the sidekick does the work while the lead plans and reviews.
+- **Consults stay read-only.** The built-in agent offers a Read-only mode to summoned sessions, so a consult no longer lands in Plan mode and ends in an approval. A consulted agent's request to leave its mode, such as Claude Code's ExitPlanMode, is declined without a card.
+- **Prompt overrides moved.** Files in `~/.agents/acpira/prompts` or a project's `.agents/acpira/prompts` are no longer read. Move them to `~/.acpira/prompts` or `.acpira/prompts`, and rename `base.md` to `system.md`.
+- The Windows desktop app and the Windows engines in the VS Code and IntelliJ packages are Authenticode-signed, so Smart App Control lets them run.
+- Turns under ten seconds show tenths in the stats card, like finished commands. The shortest duration reads 0.1 s instead of <0.1 s.
+- The add-model button sits at the end of the model search.
+
+### Fixed
+
+- Effort and other model parameters apply to the model a switch selects. While the switch is in flight, the controls follow the target model, and picks made meanwhile are checked once it lands.
+- A Claude Code subagent resumed with SendMessage reads as that agent's thread, with a round label in the subagent list. This also holds when the adapter never announces the resumed run after a session resume.
+- `ask_agent` accepts an empty answer list sent with a plain follow-up, which clients that fill every schema field send.
+- Built-in model source settings no longer drop a toggle when a dialog closes or a reply arrives late. A legacy hidden-model list no longer hides models enabled in `providers.json`, and a keyless custom source is no longer flagged as missing a key.
+- Clicking beside a session group header's actions toggles the group.
+- The add-host dialog's cards fit their rows.
+
 ## [2.0.7] - 2026-11-04
 
 ### Added
