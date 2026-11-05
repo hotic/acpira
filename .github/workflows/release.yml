@@ -75,6 +75,13 @@ jobs:
       - name: Install node_modules for the engine suites
         if: matrix.platform == 'linux-x86_64' && github.event_name == 'workflow_dispatch'
         run: pnpm install --frozen-lockfile
+      # Each engine handover case lands its own copy of the debug engine (hundreds of MB) under a temp home, which
+      # ran the runner's disk full; the preinstalled Android SDK, .NET and GHC are not needed here
+      - name: Free disk space for the engine suites
+        if: matrix.platform == 'linux-x86_64' && github.event_name == 'workflow_dispatch'
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
       - name: Rust tests
         if: matrix.platform == 'linux-x86_64' && github.event_name == 'workflow_dispatch'
         working-directory: rust
