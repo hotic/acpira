@@ -203,7 +203,7 @@ internal fun SessionsSection(model: AppModel) {
 
 /** A switch row: the whole row flips it; [hint] a second line under the title, as the system words a switch */
 @Composable
-private fun SwitchRow(label: String, on: Boolean, tag: String, enabled: Boolean = true, hint: String? = null, onChange: (Boolean) -> Unit) {
+internal fun SwitchRow(label: String, on: Boolean, tag: String, enabled: Boolean = true, hint: String? = null, onChange: (Boolean) -> Unit) {
   Row(
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(Metrics.s2),
@@ -221,7 +221,7 @@ private fun SwitchRow(label: String, on: Boolean, tag: String, enabled: Boolean 
 /** A pushed settings page: back, the title, [actions] at the bar's end, the form scrolling under the gesture bar */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FormPage(model: AppModel, title: String, actions: @Composable () -> Unit = {}, top: @Composable () -> Unit = {}, content: @Composable ColumnScope.() -> Unit) {
+internal fun FormPage(model: AppModel, title: String, actions: @Composable () -> Unit = {}, top: @Composable () -> Unit = {}, content: @Composable ColumnScope.() -> Unit) {
   Scaffold(
     containerColor = Palette.formPage,
     topBar = {

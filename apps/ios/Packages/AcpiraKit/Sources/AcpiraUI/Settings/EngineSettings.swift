@@ -11,6 +11,7 @@ import SwiftUI
 enum SettingsRoute: Hashable {
   case agent(AgentId)
   case models(AgentId)
+  case developer
 
   /// The pages down to a launch argument's page
   static func launchPath(_ arg: String?) -> NavigationPath {
@@ -19,6 +20,7 @@ enum SettingsRoute: Hashable {
     let routes: [SettingsRoute] = switch (parts.first, parts.count > 1 ? parts[1] : nil) {
     case ("agent", let id?): [.agent(id)]
     case ("models", let id?): [.agent(id), .models(id)]
+    case ("developer", _): [.developer]
     default: []
     }
     return NavigationPath(routes)

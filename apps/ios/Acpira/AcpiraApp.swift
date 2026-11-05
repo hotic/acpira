@@ -33,6 +33,8 @@ struct AcpiraApp: App {
 final class AppDelegate: NSObject, UIApplicationDelegate {
   func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
     PushCenter.shared.install()
+    // Settings → Developer's frame-rate and hitch overlay follows its switches from here on
+    PerfHUD.shared.install()
     #if DEBUG
     // `-frameprobe`: frame timing for scripted performance runs (AcpiraUI FrameProbe)
     FrameProbe.installIfAsked()

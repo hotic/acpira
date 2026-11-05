@@ -89,6 +89,7 @@ private fun Stack(model: AppModel, pairing: cc.hotic.acpira.store.PairingModel?)
           is Screen.Computer -> if (pairing != null) ComputerScreen(model, pairing, screen.id)
           is Screen.AgentSettings -> AgentSettingsScreen(model, screen.id)
           is Screen.ModelSettings -> ModelsSettingsScreen(model, screen.id)
+          Screen.Developer -> DeveloperSettingsScreen(model)
         }
       }
     }
@@ -164,4 +165,5 @@ private fun key(screen: Screen): String = when (screen) {
   is Screen.Computer -> "computer:${screen.id}"
   is Screen.AgentSettings -> "agent:${screen.id}"
   is Screen.ModelSettings -> "models:${screen.id}"
+  Screen.Developer -> "developer"
 }

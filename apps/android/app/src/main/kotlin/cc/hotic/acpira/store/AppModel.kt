@@ -48,6 +48,8 @@ sealed interface Screen {
   /** One agent's settings page, and its models page under it */
   data class AgentSettings(val id: String) : Screen
   data class ModelSettings(val id: String) : Screen
+  /** Settings → Developer: the frame-rate and hitch overlay's switches */
+  data object Developer : Screen
 }
 
 /** The wire to the engine as the screens show it */

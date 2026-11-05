@@ -21,6 +21,7 @@
 - Transcript rows, folds and code cards read `design/WebScale.kt` (the iOS app's `WebType` / `WebMetrics`), not the chrome's `Metrics` / `Type`, and go through `ui/Rows.kt` (`AcpRow`, `Disclosure`, `Reveal`, `RailColumn`). A fold never uses `AnimatedVisibility`'s defaults: outside a `ColumnScope` they resolve to `expandIn`, which grows the body from its top-left corner on both axes. A long choice list goes behind a submenu level (the new session's folders), as the iOS system menus do.
 - A `clickable` on a shaped background clips to that shape first, or the press lights a square.
 - The launcher foreground is the iOS `AppIcon.png`'s glyph alone, scaled so the whole iOS icon maps onto the launcher's visible 72 of 108 dp; the full icon as the foreground reads oversized next to other apps.
+- The developer overlay (`design/PerfHud.kt`) is a window of its own, not a Compose layer: every dialog, bottom sheet and focusable popup is a newer app window that covers anything older, so the overlay is added again each time the activity's window loses focus.
 - Pages run under the gesture bar: a scrolling page pads `navigationBars` inside its scroll, never on the Scaffold, or the bar's strip shows as a black band.
 
 ## Composer
