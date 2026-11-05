@@ -20,6 +20,7 @@ SwiftUI, Liquid Glass, WebKit and text-layout traps of `apps/ios/Packages/Acpira
 - Chrome breaks between any two ideographs, kana or Hangul; CoreText segments Chinese by words. A zero-width space between them restores Chrome's breaks.
 - TextKit avoids a lone CJK word on the last line; `CJKWidth.paragraphEnd` (U+2060) defeats it.
 - CoreText's fallback from Inter sets PingFang SC Regular at every weight; `InterFont.ctFont` puts the matching weight first.
+- A one-line `Text` squeezed below an ellipsis's width is laid out untruncated, and `CSSLineRenderer` draws the whole line past its frame: a label that may lose all its width hides itself (`SqueezedTitle`).
 
 ## SwiftUI traps
 

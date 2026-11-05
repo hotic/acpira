@@ -225,7 +225,7 @@ struct CommandOutcome: View {
       }
     }
     .accessibilityHidden(true)
-    // The slot keeps at least the width of the widest time below a minute ("<0.1 s"), so the ticking whole seconds
+    // The slot keeps at least the width of the widest time below a minute ("0.1 s"), so the ticking whole seconds
     // turning into the final tenths never shift the command beside them
     ZStack(alignment: .trailing) {
       if duration != nil || since != nil { Text(web: commandDuration(ms: 50)).hidden() }
@@ -576,8 +576,9 @@ struct ToolGroupView: View {
     let current = blocks.last(where: { $0.status == .pending || $0.status == .in_progress }) ?? blocks.last!
     let names = groupNames(blocks)
     let stat = kind == .edit ? diffStatOf(blocks) : nil
+    // Edit entries have indented cards below their rows; keep the group's rail beside those cards too.
     Disclosure(open: foldBinding(fold, preOpen.contains(.results)), icon: kind == .read ? .fileText : .pencil,
-               indent: false, rail: .rows, bodyTop: 0) {
+               indent: false, rail: .rows, endAtLastRow: kind == .read, bodyTop: 0) {
       RowLabel(toolVerb(current), shimmer: current.status == .pending || current.status == .in_progress)
       if !names.isEmpty { RowTarget(namesLabel(names), mono: true) }
     } trailing: {

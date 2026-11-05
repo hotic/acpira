@@ -8,7 +8,9 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case arrowDown
   case arrowDownWideNarrow
   case arrowLeft
+  case arrowLeftFromLine
   case arrowRight
+  case arrowRightToLine
   case arrowUp
   case arrowUpRight
   case asterisk
@@ -18,12 +20,14 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case blocks
   case bookOpen
   case bot
+  case braces
   case brain
   case brainCircuit
   case bug
   case calendar
   case calendarClock
   case camera
+  case chartBarStacked
   case chartNoAxesColumn
   case check
   case chevronDown
@@ -61,6 +65,7 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case fileDown
   case fileJson
   case fileMusic
+  case filePen
   case fileText
   case fileVideo
   case fileX
@@ -133,6 +138,7 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case pin
   case pinOff
   case play
+  case plug
   case plus
   case puzzle
   case qrCode
@@ -166,6 +172,7 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case tag
   case terminal
   case testTube
+  case textAlignStart
   case textSelect
   case trash2
   case triangleAlert
@@ -192,7 +199,9 @@ extension LucideIcon {
     case .arrowDown: [.path("M12 5v14"), .path("m19 12-7 7-7-7")]
     case .arrowDownWideNarrow: [.path("m3 16 4 4 4-4"), .path("M7 20V4"), .path("M11 4h10"), .path("M11 8h7"), .path("M11 12h4")]
     case .arrowLeft: [.path("m12 19-7-7 7-7"), .path("M19 12H5")]
+    case .arrowLeftFromLine: [.path("m9 6-6 6 6 6"), .path("M3 12h14"), .path("M21 19V5")]
     case .arrowRight: [.path("M5 12h14"), .path("m12 5 7 7-7 7")]
+    case .arrowRightToLine: [.path("M17 12H3"), .path("m11 18 6-6-6-6"), .path("M21 5v14")]
     case .arrowUp: [.path("m5 12 7-7 7 7"), .path("M12 19V5")]
     case .arrowUpRight: [.path("M7 7h10v10"), .path("M7 17 17 7")]
     case .asterisk: [.path("M12 6v12"), .path("M17.196 9 6.804 15"), .path("m6.804 9 10.392 6")]
@@ -202,12 +211,14 @@ extension LucideIcon {
     case .blocks: [.path("M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2"), .rect(x: 14, y: 2, width: 8, height: 8, rx: 1)]
     case .bookOpen: [.path("M12 5v16"), .path("M20.001 19A2 2 0 0022 17V5a2 2 0 00-1.999-2L16 3.002A5 5 0 0012 5a5 5 0 00-4-2H4a2 2 0 00-2 2v12a2 2 0 001.999 2H8a5 5 0 014 2 5 5 0 014-2z")]
     case .bot: [.path("M12 8V4H8"), .rect(x: 4, y: 8, width: 16, height: 12, rx: 2), .path("M2 14h2"), .path("M20 14h2"), .path("M15 13v2"), .path("M9 13v2")]
+    case .braces: [.path("M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"), .path("M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1")]
     case .brain: [.path("M12 18V5"), .path("M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4"), .path("M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5"), .path("M17.997 5.125a4 4 0 0 1 2.526 5.77"), .path("M18 18a4 4 0 0 0 2-7.464"), .path("M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517"), .path("M6 18a4 4 0 0 1-2-7.464"), .path("M6.003 5.125a4 4 0 0 0-2.526 5.77")]
     case .brainCircuit: [.path("M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"), .path("M9 13a4.5 4.5 0 0 0 3-4"), .path("M6.003 5.125A3 3 0 0 0 6.401 6.5"), .path("M3.477 10.896a4 4 0 0 1 .585-.396"), .path("M6 18a4 4 0 0 1-1.967-.516"), .path("M12 13h4"), .path("M12 18h6a2 2 0 0 1 2 2v1"), .path("M12 8h8"), .path("M16 8V5a2 2 0 0 1 2-2"), .circle(cx: 16, cy: 13, r: 0.5), .circle(cx: 18, cy: 3, r: 0.5), .circle(cx: 20, cy: 21, r: 0.5), .circle(cx: 20, cy: 8, r: 0.5)]
     case .bug: [.path("M12 20v-9"), .path("M14 7a4 4 0 0 1 4 4v3a6 6 0 0 1-12 0v-3a4 4 0 0 1 4-4z"), .path("M14.12 3.88 16 2"), .path("M21 21a4 4 0 0 0-3.81-4"), .path("M21 5a4 4 0 0 1-3.55 3.97"), .path("M22 13h-4"), .path("M3 21a4 4 0 0 1 3.81-4"), .path("M3 5a4 4 0 0 0 3.55 3.97"), .path("M6 13H2"), .path("m8 2 1.88 1.88"), .path("M9 7.13V6a3 3 0 1 1 6 0v1.13")]
     case .calendar: [.path("M8 2v3"), .path("M16 2v3"), .rect(x: 3, y: 3, width: 18, height: 18, rx: 2), .path("M3 9h18")]
     case .calendarClock: [.path("M16 14v2.2l1.6 1"), .path("M16 2v3"), .path("M21 7.338V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h2.338"), .path("M3 9h5.859"), .path("M8 2v3"), .circle(cx: 16, cy: 16, r: 6)]
     case .camera: [.path("M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z"), .circle(cx: 12, cy: 13, r: 3)]
+    case .chartBarStacked: [.path("M11 13v4"), .path("M15 5v4"), .path("M3 3v16a2 2 0 0 0 2 2h16"), .rect(x: 7, y: 13, width: 9, height: 4, rx: 1), .rect(x: 7, y: 5, width: 12, height: 4, rx: 1)]
     case .chartNoAxesColumn: [.path("M5 21v-6"), .path("M12 21V3"), .path("M19 21V9")]
     case .check: [.path("M20 6 9 17l-5-5")]
     case .chevronDown: [.path("m6 9 6 6 6-6")]
@@ -245,6 +256,7 @@ extension LucideIcon {
     case .fileDown: [.path("M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"), .path("M14 2v5a1 1 0 0 0 1 1h5"), .path("M12 18v-6"), .path("m9 15 3 3 3-3")]
     case .fileJson: [.path("M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"), .path("M14 2v5a1 1 0 0 0 1 1h5"), .path("M10 12a1 1 0 0 0-1 1v1a1 1 0 0 1-1 1 1 1 0 0 1 1 1v1a1 1 0 0 0 1 1"), .path("M14 18a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1 1 1 0 0 1-1-1v-1a1 1 0 0 0-1-1")]
     case .fileMusic: [.path("M11.65 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v10.35"), .path("M14 2v5a1 1 0 0 0 1 1h5"), .path("M8 20v-7l3 1.474"), .circle(cx: 6, cy: 20, r: 2)]
+    case .filePen: [.path("M12.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v9.34"), .path("M14 2v5a1 1 0 0 0 1 1h5"), .path("M10.378 12.622a1 1 0 0 1 3 3.003L8.36 20.637a2 2 0 0 1-.854.506l-2.867.837a.5.5 0 0 1-.62-.62l.836-2.869a2 2 0 0 1 .506-.853z")]
     case .fileText: [.path("M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"), .path("M14 2v5a1 1 0 0 0 1 1h5"), .path("M10 9H8"), .path("M16 13H8"), .path("M16 17H8")]
     case .fileVideo: [.path("M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"), .path("M14 2v5a1 1 0 0 0 1 1h5"), .path("M15.033 13.44a.647.647 0 0 1 0 1.12l-4.065 2.352a.645.645 0 0 1-.968-.56v-4.704a.645.645 0 0 1 .967-.56z")]
     case .fileX: [.path("M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"), .path("M14 2v5a1 1 0 0 0 1 1h5"), .path("m14.5 12.5-5 5"), .path("m9.5 12.5 5 5")]
@@ -317,6 +329,7 @@ extension LucideIcon {
     case .pin: [.path("M12 17v5"), .path("M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z")]
     case .pinOff: [.path("M12 17v5"), .path("M15 9.34V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H7.89"), .path("m2 2 20 20"), .path("M9 9v1.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h11")]
     case .play: [.path("M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z")]
+    case .plug: [.path("M12 22v-5"), .path("M15 8V2"), .path("M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z"), .path("M9 8V2")]
     case .plus: [.path("M5 12h14"), .path("M12 5v14")]
     case .puzzle: [.path("M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z")]
     case .qrCode: [.rect(x: 3, y: 3, width: 5, height: 5, rx: 1), .rect(x: 16, y: 3, width: 5, height: 5, rx: 1), .rect(x: 3, y: 16, width: 5, height: 5, rx: 1), .path("M21 16h-3a2 2 0 0 0-2 2v3"), .path("M21 21v.01"), .path("M12 7v3a2 2 0 0 1-2 2H7"), .path("M3 12h.01"), .path("M12 3h.01"), .path("M12 16v.01"), .path("M16 12h1"), .path("M21 12v.01"), .path("M12 21v-1")]
@@ -350,6 +363,7 @@ extension LucideIcon {
     case .tag: [.path("M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"), .circle(cx: 7.5, cy: 7.5, r: 0.5)]
     case .terminal: [.path("M12 19h8"), .path("m4 17 6-6-6-6")]
     case .testTube: [.path("M14.5 2v17.5c0 1.4-1.1 2.5-2.5 2.5c-1.4 0-2.5-1.1-2.5-2.5V2"), .path("M8.5 2h7"), .path("M14.5 16h-5")]
+    case .textAlignStart: [.path("M21 5H3"), .path("M15 12H3"), .path("M17 19H3")]
     case .textSelect: [.path("M14 21h1"), .path("M14 3h1"), .path("M19 3a2 2 0 0 1 2 2"), .path("M21 14v1"), .path("M21 19a2 2 0 0 1-2 2"), .path("M21 9v1"), .path("M3 14v1"), .path("M3 9v1"), .path("M5 21a2 2 0 0 1-2-2"), .path("M5 3a2 2 0 0 0-2 2"), .path("M7 12h10"), .path("M7 16h6"), .path("M7 8h8"), .path("M9 21h1"), .path("M9 3h1")]
     case .trash2: [.path("M10 11v6"), .path("M14 11v6"), .path("M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"), .path("M3 6h18"), .path("M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2")]
     case .triangleAlert: [.path("m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"), .path("M12 9v4"), .path("M12 17h.01")]
