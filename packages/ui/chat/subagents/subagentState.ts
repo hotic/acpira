@@ -101,6 +101,23 @@ export function receiptOnly(node: SubagentSummary): boolean {
   return node.visibility === 'receipt' && !node.hasProcess;
 }
 
+// A Claude run resumed by SendMessage: the agent it continues (its sidechain id), whose earlier runs lead its transcript.
+// A workflow agent also has a sidechain id, but it is a receipt node and never a thread
+export function resumedAgent(node: SubagentSummary): string | undefined {
+  return node.visibility === 'session' ? node.peer.sidechainId : undefined;
+}
+
+// Which run of its agent a resumed run is: the first run (the native session named after the agent) and every earlier
+// resume come before it. The host lists nodes in the order they opened, which a millisecond clock can tie. Undefined
+// for anything that is not a resume
+export function resumeRound(node: SubagentSummary, all: SubagentSummary[]): number | undefined {
+  const agent = resumedAgent(node);
+  const at = all.findIndex(o => o.id === node.id);
+  if (agent === undefined || at < 0) return undefined;
+  const earlier = all.slice(0, at).filter(o => o.visibility === 'session' && (o.peer.sessionId === agent || o.peer.sidechainId === agent));
+  return earlier.length + 1;
+}
+
 export function isWaiting(node: SubagentSummary): boolean {
   return !!node.permissions?.length || !!node.question;
 }

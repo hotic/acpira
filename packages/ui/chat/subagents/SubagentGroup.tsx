@@ -7,7 +7,7 @@ import { Row } from '../../ui/Row';
 import { cn } from '../../ui/cn';
 import { AgentMark } from '../AgentMark';
 import { stateIcon } from './icons';
-import { descendantCount, isWaiting, rootRows, secondLine, stateLabel, subagentTitle } from './subagentState';
+import { descendantCount, isWaiting, resumeRound, rootRows, secondLine, stateLabel, subagentTitle } from './subagentState';
 import { useElapsed } from './useElapsed';
 import { SidekickRelay, isSidekick } from './SidekickRelay';
 
@@ -47,6 +47,8 @@ export function SubagentGroup({ nodes, all, onInspect }: GroupProps) {
 function SubagentRow({ node, all, onInspect }: { node: SubagentSummary; all: SubagentSummary[]; onInspect: GroupProps['onInspect'] }) {
   const title = subagentTitle(node, t);
   const descendants = descendantCount(node.id, all);
+  // A SendMessage resume continues an agent above it: the round tells the two rows apart
+  const round = resumeRound(node, all);
   const elapsed = useElapsed(node);
   const line = secondLine(node, t);
   const waiting = isWaiting(node);
@@ -83,6 +85,7 @@ function SubagentRow({ node, all, onInspect }: { node: SubagentSummary; all: Sub
               {h.round > 1 && <span className="shrink-0 text-3 text-fg-3">{t('subagents.round', { n: h.round })}</span>}
             </>
             : node.role !== undefined && node.role !== title && <span className="min-w-0 max-w-project truncate text-3 text-fg-3 [flex-shrink:4]">{node.role}</span>}
+          {round !== undefined && round > 1 && <span className="shrink-0 text-3 text-fg-3">{t('subagents.round', { n: round })}</span>}
           {descendants > 0 && <span className="min-w-0 truncate text-3 text-fg-3 [flex-shrink:4]">{t('subagents.descendants', { n: descendants })}</span>}
           <span className="ml-auto flex shrink-0 items-baseline gap-gap text-3 tabular-nums">
             <span className={cn('whitespace-nowrap', statusTone)}>{status}</span>

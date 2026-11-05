@@ -35,7 +35,7 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 //   =claude sends the legacy `subagent_spawned`/`subagent_state_update` pair plus an `async_launched` toolResponse receipt
 //   (=claude-async never reports a terminal state); =claude-resume runs k1, then a root SendMessage to it whose resumed run
 //   `k1:generation:2` streams nothing for 1.5 s (claude-agent-acp 0.83.0 drops it; =claude-resume-wire sends one chunk
-//   on it, as an adapter that delivers the run would); =devin replays the Devin nested shape (run_subagent / subagent_started /
+//   on it, as an adapter that delivers the run would; =claude-resume-air / -unannounced: see the scenario); =devin replays the Devin nested shape (run_subagent / subagent_started /
 //   subagent_context / read_subagent / subagent_completed, child usage_update); =receipt is Kimi's Agent tool.
 //   Extension kinds leave this process verbatim — the agent side does not validate outgoing params; the host's ndjson
 //   rewrite (subagents/wire.ts) is what parks them in session_info_update
@@ -1442,6 +1442,36 @@ const app = acp.agent({ name: 'fake-agent' })
         }
         await new Promise(r => setTimeout(r, 1500));
         await sendExt({ sessionUpdate: 'subagent_state_update', subagentSessionId: 'k1:generation:2', state: 'completed' });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'root done' } });
+        return { stopReason: 'end_turn' };
+      }
+
+      // claude-agent-acp 0.84.0 to an AIR client: the SendMessage call first names the tool with no input, then the
+      // input and the result come without the tool name (its ChangedMetaFilter strips unchanged meta keys).
+      // =air announces the resumed run in between; =unannounced is a session resumed in a new adapter process, which
+      // drops the run of a child it did not launch and announces nothing of it; =reannounced is that process announcing the
+      // run after its result under the child's plain id, which the finished first run already holds
+      if (text === 'subagents-claude-resume-air' || text === 'subagents-claude-resume-unannounced' || text === 'subagents-claude-resume-reannounced') {
+        await sendExt({ sessionUpdate: 'subagent_spawned', subagentSessionId: 'k1', name: 'Build LAB', task: 'build it', capabilities: {} });
+        await sendExt({ sessionUpdate: 'subagent_state_update', subagentSessionId: 'k1', state: 'completed' });
+        await send({ sessionUpdate: 'tool_call', toolCallId: 'sm-1', title: 'SendMessage', kind: 'other', status: 'pending',
+          _meta: { claudeCode: { toolName: 'SendMessage' } } });
+        await send({ sessionUpdate: 'tool_call_update', toolCallId: 'sm-1', rawInput: { to: 'k1', summary: 'Round 2', message: 'do more' } });
+        if (text === 'subagents-claude-resume-air') {
+          await sendExt({ sessionUpdate: 'subagent_spawned', subagentSessionId: 'k1:generation:2', name: 'Build LAB', task: 'build it', prompt: 'do more', capabilities: {} });
+        }
+        const result = JSON.stringify({ success: true, message: 'Resuming agent k1', resumedAgentId: 'k1' });
+        await send({ sessionUpdate: 'tool_call_update', toolCallId: 'sm-1', status: 'completed',
+          content: [{ type: 'content', content: { type: 'text', text: result } }] });
+        if (text === 'subagents-claude-resume-air') {
+          await new Promise(r => setTimeout(r, 1500));
+          await sendExt({ sessionUpdate: 'subagent_state_update', subagentSessionId: 'k1:generation:2', state: 'completed' });
+        }
+        if (text === 'subagents-claude-resume-reannounced') {
+          await sendExt({ sessionUpdate: 'subagent_spawned', subagentSessionId: 'k1', name: 'Build LAB', task: 'do more', capabilities: {} });
+          await new Promise(r => setTimeout(r, 1500));
+          await sendExt({ sessionUpdate: 'subagent_state_update', subagentSessionId: 'k1', state: 'completed' });
+        }
         await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'root done' } });
         return { stopReason: 'end_turn' };
       }

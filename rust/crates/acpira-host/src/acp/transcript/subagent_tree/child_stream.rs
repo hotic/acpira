@@ -6,7 +6,7 @@ use serde_json::Value;
 use acpira_shared::subagents::{StateSource, SubagentPeer, SubagentState, SubagentVisibility};
 
 use super::{
-  ORPHAN_MAX_IDS, ORPHAN_MAX_UPDATES, RouteCtx, SubagentTree, resumed_task, s, seal_launch_receipt, seal_node, state_name, terminal,
+  Dialect, ORPHAN_MAX_IDS, ORPHAN_MAX_UPDATES, RouteCtx, SubagentTree, resumed_task, s, seal_launch_receipt, seal_node, state_name, terminal,
   tool_count,
 };
 use crate::acp::session::failure::failure_of;
@@ -32,6 +32,25 @@ impl SubagentTree {
     }
     let launch = self.pending_launches.remove(&l.peer_session_id);
     let mut n = self.by(&self.by_session, &l.peer_session_id);
+    // claude-agent-acp in a new process (the session came back through `session/resume`) announces a SendMessage resume
+    // of a child it did not launch under the child's plain id, which its finished first run already holds (0.84.0). The
+    // adapter never announces one id twice, so a spawn on a finished run is a new run of that agent
+    let reannounced = self.resumed_logs
+      && resumed_task(&l.peer_session_id).is_none()
+      && l.meta.get("sessionUpdate").and_then(Value::as_str) == Some("subagent_spawned")
+      && n.is_some_and(|i| {
+        let o = &self.nodes[i];
+        terminal(o.status) && o.visibility == SubagentVisibility::Session && o.harness.is_none() && o.dialect != Some(Dialect::Workflow)
+      });
+    if reannounced {
+      n = None;
+    }
+    // The agent a resumed run continues
+    let resume_of = match (self.resumed_logs, reannounced) {
+      (false, _) => None,
+      (true, true) => Some(l.peer_session_id.clone()),
+      (true, false) => resumed_task(&l.peer_session_id).map(str::to_owned),
+    };
     let is_new = n.is_none();
     if n.is_none()
       && let Some(launch) = &launch
@@ -43,29 +62,43 @@ impl SubagentTree {
       self.adopt_call_node(&id, &l.peer_session_id);
       n = self.idx(&id);
     }
+    // A run the engine opened from a `SendMessage` result before the adapter announced it: the announce takes it over,
+    // and the adapter's terminal word ends it from now on. A plain id stays the first run's peer session
+    if n.is_none()
+      && let Some(agent) = resume_of.as_deref()
+      && let Some(j) = self.nodes.iter().rposition(|o| {
+        o.log_ends && o.peer.session_id.is_none() && o.turn_index == ctx.turn_index as u64 && o.peer.sidechain_id.as_deref() == Some(agent)
+      })
+    {
+      let node = &mut self.nodes[j];
+      if !reannounced {
+        node.peer.session_id = Some(l.peer_session_id.clone());
+      }
+      node.log_ends = false;
+      self.by_session.insert(l.peer_session_id.clone(), node.id.clone());
+      n = Some(j);
+    }
     let i = match n {
       Some(i) => i,
       None => {
-        let mut node = self.new_node(
-          SubagentVisibility::Session,
-          SubagentPeer { session_id: Some(l.peer_session_id.clone()), ..Default::default() },
-          ctx.turn_index,
-          l.cancel == Some(true),
-          None,
-        );
-        let task = if self.resumed_logs { resumed_task(&l.peer_session_id).map(str::to_owned) } else { None };
-        if let Some(task) = &task {
+        let session_id = (!reannounced).then(|| l.peer_session_id.clone());
+        let mut node =
+          self.new_node(SubagentVisibility::Session, SubagentPeer { session_id, ..Default::default() }, ctx.turn_index, l.cancel == Some(true), None);
+        if let Some(agent) = &resume_of {
           node.resumed = true;
-          node.peer.sidechain_id = Some(task.clone());
+          node.peer.sidechain_id = Some(agent.clone());
         }
         self.by_session.insert(l.peer_session_id.clone(), node.id.clone());
         self.nodes.push(node);
         let i = self.nodes.len() - 1;
-        if let Some(task) = task
-          && let Some(pos) = self.send_messages.iter().rposition(|(_, to)| *to == task)
+        if let Some(agent) = resume_of.as_deref()
+          && let Some(pos) = self.send_calls.iter().rposition(|c| c.to.as_deref() == Some(agent))
         {
-          let (call, _) = self.send_messages.remove(pos);
-          self.link_resume_call(i, &call, ctx);
+          let sent = self.send_calls.remove(pos);
+          if self.nodes[i].task.is_none() {
+            self.nodes[i].task = sent.message;
+          }
+          self.link_resume_call(i, &sent.call, ctx);
         }
         i
       }
@@ -96,7 +129,8 @@ impl SubagentTree {
     if l.title.is_some() {
       node.title = l.title;
     }
-    if l.task.is_some() {
+    // A resumed run keeps the SendMessage text it was opened with
+    if l.task.is_some() && !(resume_of.is_some() && node.task.is_some()) {
       node.task = l.task;
     }
     if let Some(c) = l.cancel {

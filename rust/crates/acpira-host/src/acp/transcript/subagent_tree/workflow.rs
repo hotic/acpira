@@ -8,7 +8,7 @@ use serde_json::Value;
 use acpira_shared::subagents::{StateSource, SubagentPeer, SubagentState, SubagentVisibility};
 use acpira_shared::transcript::{AsyncTaskState, TurnStop};
 
-use super::{Dialect, LogTarget, RESUMED_LOG_SLACK_MS, RouteCtx, SubagentTree, has_content, seal_node, terminal, tool_count};
+use super::{Dialect, LogTarget, RESUMED_LOG_SLACK_MS, RouteCtx, SubagentTree, has_content, last_text, seal_node, terminal, tool_count};
 use crate::acp::transcript::normalize::{apply_update, end_turn};
 use crate::acp::transport::wire::WorkflowProgress;
 use crate::acp::vendors::claude_workflow_log::LogWindow;
@@ -143,6 +143,10 @@ impl SubagentTree {
     if terminal(n.status) {
       let stop = if matches!(n.status, SubagentState::Cancelled | SubagentState::Disconnected) { TurnStop::Cancelled } else { TurnStop::EndTurn };
       end_turn(&mut n.state, stop);
+      // The closing reply of a resumed run can land after the run ended: it is still the run's result
+      if n.visibility == SubagentVisibility::Session && n.result.is_none() {
+        n.result = last_text(&n.state.turns);
+      }
     }
     n.log_fed |= n.resumed;
     // The progress frame counts the agent's tool calls too; the log may be behind it or ahead

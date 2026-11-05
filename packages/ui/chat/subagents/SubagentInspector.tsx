@@ -14,7 +14,7 @@ import { HistoryContext } from '../HistoryMessage';
 import { TurnActionsContext } from '../TurnActions';
 import { FollowContext, useBottomFollow } from '../useBottomFollow';
 import { DiffSourceContext } from '../fileLinks';
-import { receiptOnly, subagentTitle } from './subagentState';
+import { receiptOnly, resumedAgent, subagentTitle } from './subagentState';
 import { useDesktop } from '../../desktop';
 
 interface InspectorProps {
@@ -116,9 +116,10 @@ function SessionTab({ node, transcript, onPermission, question, onAnswer, wide, 
   }, [follow]);
   const lastAgent = transcript ? transcript.turns.reduce((at, turn, i) => (turn.role === 'agent' ? i : at), -1) : -1;
   // A summoned round's transcript is its whole thread, each round led by its task: the card would repeat the last one
-  // (and, before the push lands, sit above earlier rounds of a later round)
-  const taskInTurns = node.harness !== undefined
-    && (transcript !== undefined ? transcript.turns[0]?.role === 'user' : node.harness.round > 1);
+  // (and, before the push lands, sit above earlier rounds of a later round). A resumed Claude run reads the same way
+  const threaded = node.harness !== undefined || resumedAgent(node) !== undefined;
+  const taskInTurns = threaded
+    && (transcript !== undefined ? transcript.turns[0]?.role === 'user' : node.harness === undefined || node.harness.round > 1);
   return (
     <QuietEntranceContext.Provider value={opening}>
       {/* The main thread's column: share its dock margins and scrollbar gutter, with turns carrying their own --pad */}

@@ -256,9 +256,11 @@ impl AcpSession {
     }
     if matches!(kind.as_str(), "tool_call" | "tool_call_update") {
       {
-        let Core { tree, state, .. } = &mut *c;
-        tree.annotate_root(&u, &mut RouteCtx { turn_index, root_turns: &mut state.turns });
+        let Core { tree, state, replaying, .. } = &mut *c;
+        tree.annotate_root(&u, !*replaying, &mut RouteCtx { turn_index, root_turns: &mut state.turns });
       }
+      // A run the engine opened from a SendMessage result is read from its sidechain log (`workflow_logs.rs`)
+      self.schedule_workflow_logs(&mut c);
       self.relay_annotate(&mut c, &u, turn_index);
       self.drain_terminal(&mut c);
       c.questions.raw.remember(&session_id, &u);

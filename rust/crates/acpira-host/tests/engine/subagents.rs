@@ -863,7 +863,7 @@ fn resume_log(path: &std::path::Path, now: i64) {
   append(path, &sidechain_line(now, "user", json!({ "role": "user", "content": "The coordinator sent a message while you were working: do more" })));
   append(path, &sidechain_line(now, "assistant", json!({ "id": "m2", "content": [{ "type": "tool_use", "id": "new-t1", "name": "Bash", "input": { "command": "ls" } }] })));
   append(path, &sidechain_line(now, "user", json!({ "content": [{ "type": "tool_result", "tool_use_id": "new-t1", "content": "a.ts" }] })));
-  append(path, &sidechain_line(now, "assistant", json!({ "id": "m3", "content": [{ "type": "text", "text": "landed" }] })));
+  append(path, &sidechain_line(now, "assistant", json!({ "id": "m3", "stop_reason": "end_turn", "content": [{ "type": "text", "text": "landed" }] })));
 }
 
 fn resume_log_path(config: &std::path::Path, sid: &str) -> std::path::PathBuf {
@@ -909,10 +909,108 @@ async fn a_resumed_claude_run_reads_its_own_lines_from_the_sidechain_log_and_sit
     }
   }
   let restored = Disposing(AcpSession::new(record, h.deps.clone()));
-  assert!(child_blocks(&restored, &run).is_empty());
+  // Its view leads with the first run's thread; its own lines are not there yet
+  assert!(!has(&child_blocks(&restored, &run), |b| b["markdown"] == "landed"));
   restored.observe_subagent(&run);
   until(|| has(&child_blocks(&restored, &run), |b| b["markdown"] == "landed"), 8000).await;
   assert!(!has(&child_blocks(&restored, &run), |b| b["id"] == "old-t1"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_air_send_message_without_its_tool_name_on_the_input_still_holds_its_resumed_run() {
+  let fake = fake_or_skip!();
+  let config = tempfile::tempdir().unwrap();
+  let h = Harness::for_agent(&fake, "claude", json!({ "env": { "CLAUDE_CONFIG_DIR": config.path().to_string_lossy() } }));
+  let s = session(&h).await;
+  let p = spawn_prompt(&s, "subagents-claude-resume-air");
+  until(|| sub(&s, "sessionId", "k1:generation:2").is_some(), 8000).await;
+  p.await.unwrap();
+  let run = sub_id(&s, "sessionId", "k1:generation:2");
+  expect_match(sub(&s, "sessionId", "k1:generation:2").unwrap(), json!({ "state": "completed", "peer": { "sidechainId": "k1", "toolCallId": "sm-1" } }));
+  // The SendMessage row is the run's delegation row, with no stand-in row beside it (the first run, launched without
+  // an Agent call here, keeps its own)
+  let root = root_blocks(&s);
+  assert!(has(&root, |b| b["id"] == "sm-1" && b["subagentId"] == run.as_str()), "{root:#?}");
+  assert!(!has(&root, |b| b["id"] == format!("subagent:{run}").as_str()), "{root:#?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unannounced_resume_is_opened_from_its_send_message_result_and_ends_with_its_log() {
+  let fake = fake_or_skip!();
+  let config = tempfile::tempdir().unwrap();
+  let h = Harness::for_agent(&fake, "claude", json!({ "env": { "CLAUDE_CONFIG_DIR": config.path().to_string_lossy() } }));
+  let s = session(&h).await;
+  let sid = s.to_record().acp_session_id.expect("session id");
+  let path = resume_log_path(config.path(), &sid);
+  spawn_prompt(&s, "subagents-claude-resume-unannounced").await.unwrap();
+  // The prompt returned, yet nothing spoke for the run's end: it is still running
+  let node = view(&s)["subagents"].as_array().unwrap().iter().find(|n| n["peer"]["toolCallId"] == "sm-1").cloned().expect("run opened");
+  expect_match(&node, json!({ "state": "running", "title": "Build LAB", "task": "do more", "peer": { "sidechainId": "k1" } }));
+  assert!(node["peer"]["sessionId"].is_null(), "{node:#?}");
+  let run = node["id"].as_str().unwrap().to_owned();
+  assert!(has(&root_blocks(&s), |b| b["id"] == "sm-1" && b["subagentId"] == run.as_str()));
+  resume_log(&path, acpira_host::util::now_ms());
+  until(|| view(&s)["subagents"].as_array().unwrap().iter().any(|n| n["id"] == run.as_str() && n["state"] == "completed"), 8000).await;
+  let blocks = child_blocks(&s, &run);
+  assert!(has(&blocks, |b| b["type"] == "tool_call" && b["id"] == "new-t1" && b["status"] == "completed"), "{blocks:#?}");
+  assert!(has(&blocks, |b| b["markdown"] == "landed"), "{blocks:#?}");
+  assert!(!has(&blocks, |b| b["id"] == "old-t1"), "{blocks:#?}");
+  // The run reads as the agent's thread: the first run's task, then this run's message, each as a user turn
+  let users: Vec<Value> = child_turns(&s, &run).as_array().unwrap().iter().filter(|t| t["role"] == "user").map(|t| t["text"].clone()).collect();
+  assert_eq!(users, vec![json!("build it"), json!("do more")]);
+  // A restored record still reads only its own stretch of the log
+  let mut record = s.to_record();
+  for r in record.subagents.as_mut().unwrap() {
+    if r.core.id == run {
+      r.turns = vec![];
+    }
+  }
+  let restored = Disposing(AcpSession::new(record, h.deps.clone()));
+  restored.observe_subagent(&run);
+  until(|| has(&child_blocks(&restored, &run), |b| b["markdown"] == "landed"), 8000).await;
+  assert!(!has(&child_blocks(&restored, &run), |b| b["id"] == "old-t1"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_resume_announced_under_the_finished_first_runs_id_is_a_new_run_and_leaves_the_first_alone() {
+  let fake = fake_or_skip!();
+  let config = tempfile::tempdir().unwrap();
+  let h = Harness::for_agent(&fake, "claude", json!({ "env": { "CLAUDE_CONFIG_DIR": config.path().to_string_lossy() } }));
+  let s = session(&h).await;
+  let sid = s.to_record().acp_session_id.expect("session id");
+  let path = resume_log_path(config.path(), &sid);
+  let p = spawn_prompt(&s, "subagents-claude-resume-reannounced");
+  until(|| view(&s)["subagents"].as_array().is_some_and(|a| a.iter().any(|n| n["peer"]["toolCallId"] == "sm-1")), 8000).await;
+  resume_log(&path, acpira_host::util::now_ms());
+  p.await.unwrap();
+  let nodes = view(&s)["subagents"].as_array().unwrap().clone();
+  assert_eq!(nodes.len(), 2, "{nodes:#?}");
+  let first = sub(&s, "sessionId", "k1").unwrap();
+  expect_match(&first, json!({ "task": "build it", "state": "completed" }));
+  let run = nodes.iter().find(|n| n["peer"]["toolCallId"] == "sm-1").unwrap();
+  expect_match(run, json!({ "task": "do more", "state": "completed", "peer": { "sidechainId": "k1" } }));
+  let run = run["id"].as_str().unwrap().to_owned();
+  until(|| has(&child_blocks(&s, &run), |b| b["markdown"] == "landed"), 8000).await;
+  assert!(!has(&child_blocks(&s, first["id"].as_str().unwrap()), |b| b["markdown"] == "landed"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_resumed_runs_closing_reply_written_after_it_ended_is_still_read_as_its_result() {
+  let fake = fake_or_skip!();
+  let config = tempfile::tempdir().unwrap();
+  let h = Harness::for_agent(&fake, "claude", json!({ "env": { "CLAUDE_CONFIG_DIR": config.path().to_string_lossy() } }));
+  let s = session(&h).await;
+  let sid = s.to_record().acp_session_id.expect("session id");
+  let path = resume_log_path(config.path(), &sid);
+  let started = acpira_host::util::now_ms();
+  spawn_prompt(&s, "subagents-claude-resume").await.unwrap();
+  expect_match(sub(&s, "sessionId", "k1:generation:2").unwrap(), json!({ "state": "completed" }));
+  // Claude Code writes the lines late: stamped while the run went on, on disk once the adapter called it over
+  tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+  resume_log(&path, started + 500);
+  let run = sub_id(&s, "sessionId", "k1:generation:2");
+  until(|| has(&child_blocks(&s, &run), |b| b["markdown"] == "landed"), 8000).await;
+  expect_match(sub(&s, "sessionId", "k1:generation:2").unwrap(), json!({ "result": "landed" }));
 }
 
 #[tokio::test(flavor = "multi_thread")]
