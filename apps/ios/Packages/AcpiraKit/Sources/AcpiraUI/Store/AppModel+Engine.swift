@@ -352,8 +352,15 @@ extension AppModel {
     if let mode = picked.modeId, mode != made.modeId, made.modes.contains(where: { $0.id == mode }) {
       post(.setMode(sessionId: id, id: mode))
     }
+    let modelChanged = picked.options.contains { option in
+      isModelControl(option) && option.value != made.options.first(where: { $0.id == option.id })?.value
+    }
     for option in picked.options {
-      guard let value = option.value, let now = made.options.first(where: { $0.id == option.id }), now.value != value else { continue }
+      guard let value = option.value else { continue }
+      let now = made.options.first(where: { $0.id == option.id })
+      // A model switch can reset an equal effort or introduce a control absent at startup. Replay the draft's picks
+      // after the model, not just differences against the old model; the engine validates them against the new one.
+      guard modelChanged || (now != nil && now?.value != value) else { continue }
       post(.setConfig(sessionId: id, configId: option.id, value: value))
     }
   }

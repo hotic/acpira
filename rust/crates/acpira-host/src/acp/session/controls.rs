@@ -9,6 +9,8 @@ use serde_json::{Value, json};
 
 use acpira_shared::composer_controls::{is_reasoning_control, thought_correction};
 use acpira_shared::models::parse_fusion_name;
+use acpira_shared::model_shapes::{ModelShapes, is_model_control, shape_for};
+use acpira_shared::turn_settings::{capture_turn_settings, controls_for_turn};
 use acpira_shared::transcript::*;
 
 use crate::acp::agents::model_sources::refine_controls;
@@ -150,6 +152,11 @@ impl AcpSession {
         let c = me.core.lock();
         let opts = &c.state.controls.options;
         let Some(control) = opts.iter().find(|o| o.id == config_id).cloned() else { return Ok(()) };
+        // A queued click may name a level from the previous model's menu. Validate at execution, after the model's
+        // response reshaped the controls, not only when the click first arrived.
+        if !control.options.iter().any(|o| o.id == value) {
+          return Ok(());
+        }
         let Some(proc) = c.proc.clone() else { return Ok(()) };
         if c.status != SessionStatus::Ready {
           return Ok(());
@@ -234,8 +241,8 @@ impl AcpSession {
     let held = {
       let mut c = self.core.lock();
       let control = c.state.controls.options.iter().find(|o| o.id == config_id).cloned();
-      let ok =
-        c.proc.is_some() && c.status == SessionStatus::Ready && control.as_ref().is_some_and(|x| x.options.iter().any(|o| o.id == value));
+      // The pending model may introduce this control or value. The serialized wire path validates against its answer.
+      let ok = c.proc.is_some() && c.status == SessionStatus::Ready;
       if !ok {
         // set_config below does nothing for a session that is not ready: the log is all that tells why the chip stayed put
         if c.proc.is_none() || c.status != SessionStatus::Ready {
@@ -271,15 +278,18 @@ impl AcpSession {
     let me = self.clone();
     let (cid, v) = (config_id.clone(), value.clone());
     let result = self.pick(config_id, value, move || me.set_config(cid, v)).await;
-    let mut c = self.core.lock();
-    for (id, token) in &held {
-      if c.picks.values.get(id).is_some_and(|(_, t)| t == token) {
-        c.picks.values.remove(id);
+    {
+      let mut c = self.core.lock();
+      for (id, token) in &held {
+        if c.picks.values.get(id).is_some_and(|(_, t)| t == token) {
+          c.picks.values.remove(id);
+        }
+      }
+      if !held.is_empty() {
+        self.touch(&mut c);
       }
     }
-    if !held.is_empty() {
-      self.touch(&mut c);
-    }
+    self.flush_queue();
     result
   }
 
@@ -297,7 +307,9 @@ impl AcpSession {
     }
     let me = self.clone();
     let id2 = id.clone();
-    self.pick(MODE_PICK.to_owned(), id, move || me.set_mode(id2)).await
+    let result = self.pick(MODE_PICK.to_owned(), id, move || me.set_mode(id2)).await;
+    self.flush_queue();
+    result
   }
 
   /// Show the pick at once, then serialize the wire requests: a superseded pick never reaches the wire, a failed
@@ -593,8 +605,22 @@ impl AcpSession {
 
 /// Controls with in-flight picks overlaid; a pick the controls do not offer (a held remembered value the agent dropped)
 /// leaves agent truth showing
-pub(crate) fn picked_controls(c: &Core) -> SessionControls {
+pub(crate) fn picked_controls(c: &Core, shapes: Option<&ModelShapes>) -> SessionControls {
   let mut out = c.state.controls.clone();
+  if let Some(model) = c.state.controls.options.iter().find(|o| is_model_control(o))
+    && let Some((value, _)) = c.picks.values.get(&model.id)
+    && model.value.as_ref() != Some(value)
+    && model.options.iter().any(|o| &o.id == value)
+  {
+    if let Some(shape) = shape_for(shapes, model, value) {
+      out.options.retain(is_model_control);
+      out.options.extend(shape.iter().cloned());
+      out = controls_for_turn(&out, Some(&capture_turn_settings(&c.state.controls)));
+    } else {
+      // An unseen model's scale is not known yet. Do not advertise the previous model's effort or Fast meanwhile.
+      out.options.retain(|o| !is_reasoning_control(o) && o.category.as_deref() != Some("model_config"));
+    }
+  }
   for (i, shape) in c.picks.shapes.iter().enumerate() {
     if c.picks.values.contains_key(&shape.id) && !out.options.iter().any(|o| o.id == shape.id) {
       out.options.insert(i.min(out.options.len()), shape.clone());

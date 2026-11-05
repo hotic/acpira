@@ -113,6 +113,25 @@ private func agentTurns(_ view: SessionView) -> [AgentTurn] {
     #expect(live.options.map(\.id) == ["model"])
   }
 
+  @Test func modelSwitchesNeverKeepAnotherModelsReasoningScale() {
+    let qwen: ConfigControl = decode(#"{"id":"effort","name":"Effort","category":"thought_level","value":"xhigh","options":[{"id":"medium","name":"Medium"},{"id":"xhigh","name":"XHigh"}]}"#)
+    let gemini: ConfigControl = decode(#"{"id":"effort","name":"Effort","category":"thought_level","value":"low","options":[{"id":"low","name":"Low"},{"id":"medium","name":"Medium"},{"id":"high","name":"High"}]}"#)
+    let live = SessionControls(options: [
+      decode(#"{"id":"model","name":"Model","category":"model","value":"qwen","options":[{"id":"qwen","name":"Qwen Next"},{"id":"gemini","name":"Gemini Flash"},{"id":"unknown","name":"Unknown"}]}"#),
+      qwen,
+      decode(#"{"id":"fast","name":"Fast","category":"model_config","type":"boolean","value":"true","options":[{"id":"false","name":"Off"},{"id":"true","name":"On"}]}"#),
+    ])
+    let shapes: ModelShapes = ["qwen": [qwen], "gemini": [gemini]]
+    let switched = editTurnConfig(live, live: live, id: "model", value: "gemini", shapes: shapes)
+    #expect(switched.options.map(\.value) == ["gemini", "low"])
+    #expect(switched.options[1].options.map(\.id) == ["low", "medium", "high"])
+    let medium = editTurnConfig(live, live: live, id: "effort", value: "medium", shapes: shapes)
+    #expect(editTurnConfig(medium, live: live, id: "model", value: "gemini", shapes: shapes).options[1].value == "medium")
+    let unknown = editTurnConfig(live, live: live, id: "model", value: "unknown", shapes: shapes)
+    #expect(unknown.options.map(\.id) == ["model"])
+    #expect(captureTurnSettings(unknown).config == ["model": "unknown"])
+  }
+
   @Test func aSidekickPickedInADraftBringsItsModelsLevels() {
     let controls = SessionControls(options: [
       decode(#"{"id":"model","name":"Model","category":"model","value":"a/sol","options":[{"id":"a/sol","name":"Sol"},{"id":"a/terra","name":"Terra"}]}"#),

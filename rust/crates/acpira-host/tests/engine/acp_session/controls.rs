@@ -148,9 +148,93 @@ async fn a_model_switch_keeps_the_chosen_effort_and_never_shows_the_interim_rese
   s.select_config("model".into(), "m2".into()).await.unwrap();
   until(|| !seen.lock().unwrap().is_empty(), 5000).await;
   let seen = seen.lock().unwrap().clone();
-  assert!(seen.iter().all(|x| x.as_deref() == Some("low")), "{seen:?}");
+  assert!(seen.iter().all(|x| x.is_none() || x.as_deref() == Some("low")), "{seen:?}");
   assert_eq!(agent_value(&s, "model").as_deref(), Some("m2"));
   assert_eq!(agent_value(&s, "effort").as_deref(), Some("low"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pending_model_uses_its_own_effort_choices_not_the_previous_models() {
+  struct Shapes(acpira_shared::model_shapes::ModelShapes);
+  impl acpira_host::acp::session::SessionPolicy for Shapes {
+    fn model_shapes(&self, _: &str) -> Option<acpira_shared::model_shapes::ModelShapes> {
+      Some(self.0.clone())
+    }
+  }
+  let fake = fake_or_skip!();
+  let mut h = Harness::new(&fake, json!({ "env": { "FAKE_SPEED": "1", "FAKE_CONFIG_DELAY_MS": "150" } }));
+  let initial = started(&h, "/tmp").await;
+  initial.select_config("model".into(), "m2".into()).await.unwrap();
+  let shape = initial.agent_controls().options.into_iter().filter(|o| o.id != "model").collect();
+  h.deps.policy = Arc::new(Shapes([("m2".into(), shape)].into()));
+  let s = started(&h, "/tmp").await;
+  let pick = claimed({
+    let s = s.0.clone();
+    async move { s.select_config("model".into(), "m2".into()).await }
+  });
+  let pending = view(&s);
+  assert_eq!(option_value(&pending, "model"), "m2");
+  assert_eq!(agent_value(&s, "model").as_deref(), Some("m1"));
+  assert_eq!(option_ids(&pending, "effort"), ["high"]);
+  assert!(option_ids(&pending, "speed").is_empty());
+  pick.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unknown_pending_model_does_not_offer_the_previous_models_parameters() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({ "env": { "FAKE_SPEED": "1", "FAKE_CONFIG_DELAY_MS": "150" } }));
+  let s = started(&h, "/tmp").await;
+  let pick = claimed({
+    let s = s.0.clone();
+    async move { s.select_config("model".into(), "m2".into()).await }
+  });
+  let pending = view(&s);
+  assert_eq!(option_value(&pending, "model"), "m2");
+  assert!(option_ids(&pending, "effort").is_empty());
+  assert!(option_ids(&pending, "speed").is_empty());
+  pick.await.unwrap().unwrap();
+  assert_eq!(option_ids(&view(&s), "effort"), ["high"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn queued_effort_picks_are_checked_after_the_model_switch_and_before_sending() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let log = dir.path().join("config.log");
+  let h = Harness::new(&fake, json!({ "env": { "FAKE_SPEED": "1", "FAKE_CONFIG_DELAY_MS": "150", "FAKE_CONFIG_LOG": log } }));
+  let s = started(&h, "/tmp").await;
+  let model = claimed({
+    let s = s.0.clone();
+    async move { s.select_config("model".into(), "m2".into()).await }
+  });
+  // A delayed tap from the old menu must not send Low to the model that only offers High.
+  let stale = claimed({
+    let s = s.0.clone();
+    async move { s.select_config("effort".into(), "low".into()).await }
+  });
+  prompt(&s, "hi").await;
+  assert!(view(&s)["turns"].as_array().unwrap().is_empty(), "send waits for the model and effort picks");
+  model.await.unwrap().unwrap();
+  stale.await.unwrap().unwrap();
+  until(|| view(&s)["turns"].as_array().unwrap().len() == 2 && !s.is_running(), 5000).await;
+  expect_match(&view(&s)["turns"][0]["settings"], json!({ "config": { "model": "m2", "effort": "high" } }));
+  let wire: Vec<Value> = std::fs::read_to_string(&log).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+  assert!(!wire.iter().any(|r| r["configId"] == "effort" && r["value"] == "low"), "{wire:?}");
+  // The reverse switch brings Low back: a queued pick must be validated against m1, not m2.
+  let model = claimed({
+    let s = s.0.clone();
+    async move { s.select_config("model".into(), "m1".into()).await }
+  });
+  let effort = claimed({
+    let s = s.0.clone();
+    async move { s.select_config("effort".into(), "low".into()).await }
+  });
+  prompt(&s, "again").await;
+  model.await.unwrap().unwrap();
+  effort.await.unwrap().unwrap();
+  until(|| view(&s)["turns"].as_array().unwrap().len() == 4 && !s.is_running(), 5000).await;
+  expect_match(&view(&s)["turns"][2]["settings"], json!({ "config": { "model": "m1", "effort": "low" } }));
 }
 
 #[tokio::test(flavor = "multi_thread")]

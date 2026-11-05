@@ -16,8 +16,8 @@ struct NewSessionScreen: View {
   @State private var text = ""
   @State private var staged: [Attachment] = []
   @State private var homeInset: CGFloat = 0
-  /// A model or mode was picked here, so the engine's later answer for the agent's controls no longer replaces them
-  @State private var picked = false
+  /// Each agent keeps its own picks; later probe replies must not replace a draft that has been edited.
+  @State private var picks: [AgentId: SessionControls] = [:]
   /// The agent ring is out: the page dims under it and a tap anywhere folds it
   @State private var ring = false
   /// The hero's bottom and the composer's top on the page, so a composer grown into the hero hides it
@@ -82,7 +82,7 @@ struct NewSessionScreen: View {
         // The composer rests where the list's system bottom bar does
         DockSeat(homeInset: homeInset) {
           Composer(session: draft, text: $text, staged: $staged, onSend: start,
-                   onSetMode: { picked = true; draft.controls.modeId = $0 }, onSetConfig: setConfig,
+                   onSetMode: { draft.controls.modeId = $0; picks[draft.agent] = draft.controls }, onSetConfig: setConfig,
                    placeholder: t("mobile.new.placeholder"))
             .opacity(handoff?.hidden == draft.id ? 0 : 1)
             #if os(iOS)
@@ -115,7 +115,7 @@ struct NewSessionScreen: View {
     .onChange(of: model.commands(for: draft.agent), initial: true) { _, commands in draft.commands = commands }
     .onChange(of: model.agentControls[draft.agent]) { _, _ in
       model.probeUnknownControls(draft.agent)
-      guard !picked else { return }
+      guard picks[draft.agent] == nil else { return }
       let known = model.controls(for: draft.agent)
       if known != draft.controls { draft.controls = known }
     }
@@ -157,17 +157,16 @@ struct NewSessionScreen: View {
   /// Another agent: its own controls (models and modes differ per CLI)
   private func pickAgent(_ id: AgentId) {
     draft.agent = id
-    draft.controls = model.controls(for: id)
-    picked = false
+    draft.controls = picks[id] ?? model.controls(for: id)
   }
 
   private func setConfig(_ control: String, _ value: String) {
     guard draft.controls.options.contains(where: { $0.id == control }) else { return }
-    picked = true
     // No session answers set_config_option here, so a model pick brings that model's own parameters from the
     // remembered shapes (TurnEdit.swift): a model without Fast loses the previous model's Fast, as on the desktop
     draft.controls = editTurnConfig(draft.controls, live: draft.controls, id: control, value: value,
                                     shapes: model.shapes(for: draft.agent))
+    picks[draft.agent] = draft.controls
   }
 
   /// The first prompt creates the session; its chat takes this screen's place in the stack

@@ -47,7 +47,7 @@ Cross-agent ACP behaviour the host depends on, and the host invariants built aro
 - User picks overlay the view and revert on failure; `agentControls` and `toRecord()` stay agent truth.
 - Every Fast shape is one switch (`isFastControl`): Devin's `speed` select, Codex `fast-mode` and Claude `fast` booleans, model-name variants.
 - AIR `recommendedValue` is advertised so claude-agent-acp reports concrete values, not `default` rows.
-- A model switch re-sets the previous effort when offered (Devin resets `thought_level`, Claude re-seeds effort per model).
+- A model switch re-sets the previous effort when offered (Devin resets `thought_level`, Claude re-seeds effort per model). While it is in flight, dependent controls use the target's learned shape; an unknown target hides the old effort / model parameters. Queued picks are validated after earlier model answers, and prompts wait until picks settle, so an old menu cannot send an unsupported effort or race the new model.
 - Claude's Ultra is host-added and never goes on the wire (`agent-quirks-claude.md`, Orchestration levels).
 
 ## Queue

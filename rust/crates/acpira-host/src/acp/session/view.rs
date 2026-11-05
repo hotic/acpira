@@ -171,7 +171,7 @@ impl AcpSession {
       }
     });
     let subagents = if c.tree.is_empty() { None } else { Some(c.tree.summaries()) };
-    let picked = (!c.picks.values.is_empty()).then(|| picked_controls(&c));
+    let picked = (!c.picks.values.is_empty()).then(|| picked_controls(&c, shapes.as_ref()));
     let queued = queue_snapshot(&c);
     // The plugins' slash commands join the agent's own in the menu
     let merged = self.plugin_commands(&c.state.commands, &c.plugin_state.menus);

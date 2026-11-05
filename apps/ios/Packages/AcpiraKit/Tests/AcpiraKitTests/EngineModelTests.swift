@@ -188,6 +188,22 @@ struct EngineModelTests {
     #expect(wire.sent.last?.contains(#""kind":"image""#) == true)
   }
 
+  @Test func aNewSessionResendsThePickedEffortWhenChangingModelsEvenIfItMatchesTheStartupValue() async throws {
+    let (model, wire) = try await connected()
+    let picked = try JSONDecoder().decode(SessionControls.self, from: Data(#"{"options":[{"id":"model","name":"Model","category":"model","value":"gemini","options":[{"id":"startup","name":"Startup"},{"id":"gemini","name":"Gemini"}]},{"id":"effort","name":"Effort","category":"thought_level","value":"high","options":[{"id":"low","name":"Low"},{"id":"high","name":"High"}]}]}"#.utf8))
+    model.newSession(agent: "fake", cwd: "/w", controls: picked, text: "go", attachments: [])
+    try await until { wire.types.last == "webviewMessage:newSession" }
+    // session/new starts at High, but selecting Gemini will reset its effort to Low.
+    push(wire, #"{"type":"session","session":{"id":"s2","agent":"fake","cwd":"/w","rev":0,"controls":{"options":[{"id":"model","name":"Model","category":"model","value":"startup","options":[{"id":"startup","name":"Startup"},{"id":"gemini","name":"Gemini"}]},{"id":"effort","name":"Effort","category":"thought_level","value":"high","options":[{"id":"low","name":"Low"},{"id":"high","name":"High"}]}]}}}"#)
+    try await until { wire.types.last == "webviewMessage:send" }
+    let messages = try wire.sent.compactMap { line -> [String: Any]? in
+      let envelope = try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any]
+      return envelope?["message"] as? [String: Any]
+    }.filter { $0["type"] as? String == "setConfig" }
+    #expect(messages.compactMap { $0["configId"] as? String } == ["model", "effort"])
+    #expect(messages.compactMap { $0["value"] as? String } == ["gemini", "high"])
+  }
+
   @Test func aNewSessionShowsTheEnginesControlsBeforeItsFirstPrompt() async throws {
     // The listed session was never opened on the phone, so its controls are unknown here: the engine's answer fills in
     let (model, wire) = try await connected()

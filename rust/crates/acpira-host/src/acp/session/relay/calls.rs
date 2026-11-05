@@ -37,9 +37,10 @@ impl AcpSession {
   /// record's value included), as the executor the hub lists first for the root: the built-in agent on that model,
   /// following the caller's mode, at the effort picked for it, in one conversation that later calls continue
   pub(crate) fn sidekick_persona(&self) -> Option<SubagentPersona> {
+    let shapes = self.deps.policy.model_shapes(&self.agent);
     let (pick, effort, fast) = {
       let c = self.core.lock();
-      let options = picked_controls(&c).options;
+      let options = picked_controls(&c, shapes.as_ref()).options;
       let value = |id: &str, category: &str| options.iter().find(|o| o.id == id && o.category.as_deref() == Some(category)).and_then(|o| o.value.clone());
       (
         value(SIDEKICK_CONFIG, SIDEKICK_CATEGORY),
