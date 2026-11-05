@@ -361,6 +361,8 @@ struct Round {
   node: String,
   persona: SubagentPersona,
   mode: RelayMode,
+  /// The caller's approval level a sidekick round copies onto its session; None for any other round
+  approval: Option<String>,
   /// The thread's native session from its earlier rounds, to resume
   peer: Option<String>,
   depth: u32,

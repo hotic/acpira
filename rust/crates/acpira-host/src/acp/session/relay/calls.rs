@@ -12,7 +12,7 @@ use acpira_shared::subagents::{
   RelayMode, SIDEKICK_ID, SubagentDuty, SubagentGroup, SubagentHarness, SubagentPersona, SubagentState,
 };
 
-use super::controls::{caller_access, round_mode};
+use super::controls::{caller_access, relay_approval, relay_mode, round_mode};
 use super::personas::{
   NO_SIDEKICK, SIDEKICK_CATEGORY, SIDEKICK_CONFIG, SIDEKICK_EFFORT_CATEGORY, SIDEKICK_EFFORT_CONFIG, SIDEKICK_FAST_CATEGORY, SIDEKICK_FAST_CONFIG, call_fits, idle_thread,
   node_persona, thread_persona, who,
@@ -69,6 +69,54 @@ impl AcpSession {
       duty: SubagentDuty::Executor,
       changes: false,
     })
+  }
+
+  /// The session's approval level as picked now (the built-in agent's `approval` select), which its sidekick copies
+  fn approval_level(&self) -> Option<String> {
+    let shapes = self.deps.policy.model_shapes(&self.agent);
+    let c = self.core.lock();
+    picked_controls(&c, shapes.as_ref()).options.into_iter().find(|o| o.id == acpira_agent::acp::APPROVAL).and_then(|o| o.value)
+  }
+
+  /// The root's access changed (its mode or approval level): a sidekick round still running takes it over at once, as
+  /// a new round would; other personas keep what their round started with
+  pub(crate) fn sync_sidekick_access(self: &Arc<Self>) {
+    let running: Vec<_> = {
+      let c = self.core.lock();
+      c.relays
+        .procs
+        .iter()
+        .filter(|(_, rp)| !rp.peer.is_empty())
+        .filter_map(|(th, rp)| {
+          let r = c.tree.relay_latest(th)?;
+          let live = r.harness.persona.as_deref() == Some(SIDEKICK_ID) && r.state == SubagentState::Running;
+          live.then(|| (th.clone(), r.node, rp.proc.clone(), rp.peer.clone(), rp.opened.clone(), rp.start_mode.clone()))
+        })
+        .collect()
+    };
+    if running.is_empty() {
+      return;
+    }
+    let me = self.clone();
+    tokio::spawn(async move {
+      let mode = caller_access(&me.core.lock(), None);
+      let approval = me.approval_level();
+      for (thread, node, proc, sid, mut opened, start) in running {
+        let mut notes = vec![];
+        relay_approval(&proc, &sid, &mut opened, approval.as_deref(), &mut notes).await;
+        let ok = relay_mode(&proc, &sid, &mut opened, start.as_deref(), mode, SIDEKICK_ID, &mut notes).await;
+        if !notes.is_empty() {
+          me.log(&format!("relay {thread}: sidekick access: {}", notes.join("; ")));
+        }
+        let mut c = me.core.lock();
+        if let Some(rp) = c.relays.procs.get_mut(&thread) {
+          rp.opened = opened;
+          rp.mode = ok.then_some(mode);
+        }
+        c.tree.relay_set_mode(&node, mode);
+        me.touch(&mut c);
+      }
+    });
   }
 
   /// A persona by id or name as this caller sees it: to the root, `sidekick` is its own sidekick while it has one
@@ -361,7 +409,12 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
     if prompt.is_empty() {
       return Err(anyhow!("`prompt` is empty: say what {} should do.", who(&persona)));
     }
-    let mode = round_mode(persona.mode, args.mode.as_deref(), || caller_access(&self.core.lock(), caller.as_deref()));
+    // The sidekick is the root's other half, not a helper the root hands access to: it runs in the root's access as it
+    // is now, whatever the call asks, and with the root's approval level (the built-in agent's `approval` select)
+    let sidekick = persona.id == SIDEKICK_ID;
+    let asked = if sidekick { None } else { args.mode.as_deref() };
+    let mode = round_mode(persona.mode, asked, || caller_access(&self.core.lock(), caller.as_deref()));
+    let approval = if sidekick { self.approval_level() } else { None };
     if self.deps.registry.try_get(&persona.agent).is_none() {
       return Err(anyhow!("{} runs in {:?}, which is not an agent Acpira knows.", persona.name, persona.agent));
     }
@@ -432,7 +485,7 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
       (node, thread, starting)
     };
     let me = self.clone();
-    let round = Round { thread: thread.clone(), node, persona: persona.clone(), mode, peer, depth, prompt: prompt.clone(), handoff };
+    let round = Round { thread: thread.clone(), node, persona: persona.clone(), mode, approval, peer, depth, prompt: prompt.clone(), handoff };
     tokio::spawn(async move {
       let end = me.clone().relay_round(&round, starting).await;
       let reply = {

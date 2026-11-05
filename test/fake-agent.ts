@@ -742,8 +742,18 @@ const app = acp.agent({ name: 'fake-agent' })
         const picked = perm.outcome.outcome === 'selected' ? perm.outcome.optionId : perm.outcome.outcome;
         await send({ sessionUpdate: 'tool_call_update', toolCallId: `rw${round}`, status: picked === 'yes' ? 'completed' : 'failed' });
       }
-      // "askme" → a form question first (Which colour? Blue / Green), its answer quoted in the reply
+      // "leaveplan" → asks to leave its mode the way Claude Code's ExitPlanMode does, the answer quoted in the reply
       let answered = '';
+      if (first.includes('leaveplan')) {
+        await send({ sessionUpdate: 'tool_call', toolCallId: `rp${round}`, title: 'Ready to code?', kind: 'switch_mode', status: 'pending' });
+        const r = await client.request(acp.methods.client.session.requestPermission, {
+          sessionId: sid,
+          toolCall: { toolCallId: `rp${round}`, title: 'Ready to code?', kind: 'switch_mode' },
+          options: [{ optionId: 'yes', name: 'Yes', kind: 'allow_once' }, { optionId: 'no', name: 'Keep planning', kind: 'reject_once' }],
+        });
+        answered += ` leave=${r.outcome.outcome === 'selected' ? r.outcome.optionId : r.outcome.outcome}`;
+      }
+      // "askme" → a form question first (Which colour? Blue / Green), its answer quoted in the reply
       if (first.includes('askme')) {
         const questions = [{ question: 'Which colour?', options: [{ label: 'Blue', description: 'calm' }, { label: 'Green' }] }];
         await send({ sessionUpdate: 'tool_call', toolCallId: `ra${round}`, title: 'AskUserQuestion', kind: 'other', status: 'pending', rawInput: { questions } });
@@ -751,7 +761,7 @@ const app = acp.agent({ name: 'fake-agent' })
           sessionId: sid, mode: 'form', toolCallId: `ra${round}`, message: 'Which colour?',
           requestedSchema: { type: 'object', required: ['q0'], properties: { q0: { type: 'string', title: 'Colour', oneOf: [{ const: 'Blue', title: 'Blue' }, { const: 'Green', title: 'Green' }] } } },
         });
-        answered = ` answer=${JSON.stringify(r)}`;
+        answered += ` answer=${JSON.stringify(r)}`;
       }
       if (first.includes('slow')) await new Promise(r => setTimeout(r, 1500));
       // "write=<path>" → the child writes "bad\n" there without asking, after any slow wait

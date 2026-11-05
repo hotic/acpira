@@ -167,6 +167,11 @@ impl SubagentTree {
     self.nodes.iter().find(|n| n.id == id).and_then(|n| n.harness.as_ref()).is_some_and(|h| h.mode == acpira_shared::subagents::RelayMode::Bypass)
   }
 
+  /// Whether a summoned node runs a consult round
+  pub fn relay_consult(&self, id: &str) -> bool {
+    self.nodes.iter().find(|n| n.id == id).and_then(|n| n.harness.as_ref()).is_some_and(|h| h.mode == acpira_shared::subagents::RelayMode::Consult)
+  }
+
   /// The thread a node belongs to, when it is a summoned one
   pub fn relay_thread_of(&self, id: &str) -> Option<String> {
     self.nodes.iter().find(|n| n.id == id).and_then(|n| n.harness.as_ref()).map(|h| h.thread.clone())
@@ -192,6 +197,16 @@ impl SubagentTree {
   /// Whether a root tool row already belongs to a node
   pub fn relay_linked(&self, tool_call_id: &str) -> bool {
     self.by_tool.contains_key(tool_call_id)
+  }
+
+  /// A running round's access changed mid-round (a sidekick following its caller)
+  pub fn relay_set_mode(&mut self, id: &str, mode: acpira_shared::subagents::RelayMode) {
+    let Some(i) = self.idx(id) else { return };
+    match self.nodes[i].harness.as_mut() {
+      Some(h) if h.mode != mode => h.mode = mode,
+      _ => return,
+    }
+    self.bump(id);
   }
 
   /// The model and reasoning effort the child really runs (what its config options say after the persona's choice was

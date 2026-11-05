@@ -301,6 +301,13 @@ impl AcpSession {
       if bypass && !insist && let Some(id) = single_allow_once(&options).or_else(|| auto_allow(&options)) {
         return Ok(json!({ "outcome": { "outcome": "selected", "optionId": id } }));
       }
+      // A summoned child in a consult round stays read-only: its request to leave that mode (Claude Code's ExitPlanMode,
+      // a plan's approval) is declined without a card, since the round's access is the caller's to set, not a card
+      // for the user mid-round
+      let consult = matches!(&target, Target::Node(id) if c.tree.relay_consult(id));
+      if consult && !insist && (captured.is_some() || tool_call.get("kind").and_then(Value::as_str) == Some("switch_mode")) {
+        return Ok(rejected_permission(&req));
+      }
       let Some(state) = Self::target_state(&mut c, &target) else { return Ok(cancelled_permission()) };
       let plan = captured
         .as_ref()

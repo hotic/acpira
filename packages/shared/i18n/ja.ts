@@ -436,7 +436,7 @@ export const ja = {
   'composer.sidekick': 'サブ',
   'composer.sidekickNone': 'なし',
   'composer.pairSide': '{role}：{model}',
-  'composer.sidekickHint': 'メインが並行作業やレビューを任せる相手',
+  'composer.sidekickHint': '作業を担当し、メインは計画とレビュー',
   'composer.fusionSummary': 'メイン {leads}、サブ {sidekicks}',
   'composer.addAccount': 'アカウントを追加',
   'composer.accountsOf': '{agent} のアカウント',
