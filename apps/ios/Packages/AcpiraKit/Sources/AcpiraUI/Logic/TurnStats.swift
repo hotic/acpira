@@ -114,7 +114,7 @@ func turnStatsContent(_ turn: AgentTurn) -> TurnStatsContent {
     (floor(Double(part) / Double(whole) * 100) / 100).formatted(.percent.precision(.fractionLength(0)).locale(locale))
   }
   var out = TurnStatsContent()
-  if turn.startedAt != nil && turn.endedAt != nil { out.tiles.append(StatLine(label: t("stats.duration"), value: elapsedDuration(turn))) }
+  if turn.startedAt != nil && turn.endedAt != nil { out.tiles.append(StatLine(label: t("stats.duration"), value: elapsedDuration(turn, precise: true))) }
   if let ttft = turnTtft(turn) { out.tiles.append(StatLine(label: t("stats.firstToken"), value: ttft)) }
   if let tps = turnOutputTps(turn) { out.tiles.append(StatLine(label: t("stats.outputShort"), value: "\(number(tps)) tok/s")) }
   // A stopped turn whose counts are all zero reported nothing (claude-agent-acp answers a cancel with zeros)

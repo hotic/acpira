@@ -255,18 +255,23 @@ fun elapsedLabel(turn: AgentTurn): String {
   return durationText(end - start)
 }
 
-/** The turn's span from its clock start to its end ("5m 35s"); empty while it has no end */
-fun elapsedDuration(turn: AgentTurn): String {
+/**
+ * The turn's span from its clock start to its end ("5m 35s"); empty while it has no end.
+ * `precise` keeps tenths under ten seconds, like a finished command row
+ */
+fun elapsedDuration(turn: AgentTurn, precise: Boolean = false): String {
   val start = clockStart(turn) ?: return ""
   val end = turn.endedAt ?: return ""
-  return durationText(end - start)
+  return if (precise) commandDuration(end - start) else durationText(end - start)
 }
 
-/** commandDuration: tenths below ten seconds once finished; `whole` is the live clock */
+/** commandDuration: tenths below ten seconds once finished, one tenth as the floor; `whole` is the live clock */
 fun commandDuration(ms: Double, whole: Boolean = false): String {
   val clamped = maxOf(0.0, ms)
-  if (!whole && clamped < 10_000) {
-    return t("turns.elapsed.s", "s" to if (clamped < 100) "<0.1" else String.format(java.util.Locale.ROOT, "%.1f", clamped / 1000))
+  // Rounded first, so 9.96 s carries into the whole-second branch as "10 秒" instead of "10.0 秒"
+  val tenths = (maxOf(100.0, clamped) / 100).roundToInt()
+  if (!whole && tenths < 100) {
+    return t("turns.elapsed.s", "s" to String.format(java.util.Locale.ROOT, "%.1f", tenths / 10.0))
   }
   val seconds = if (whole) (clamped / 1000).toInt() else (clamped / 1000).roundToInt()
   val m = seconds / 60

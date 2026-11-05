@@ -7,12 +7,14 @@ afterEach(() => setLocale('en'));
 describe('command run time', () => {
   it('keeps tenths below ten seconds and whole seconds beyond', () => {
     expect(commandDuration(180)).toBe('0.2s');
-    expect(commandDuration(40)).toBe('<0.1s');
+    expect(commandDuration(40)).toBe('0.1s');
     expect(commandDuration(2_400)).toBe('2.4s');
+    expect(commandDuration(9_940)).toBe('9.9s');
+    expect(commandDuration(9_960)).toBe('10s');
     expect(commandDuration(41_800)).toBe('42s');
     expect(commandDuration(125_000)).toBe('2m 5s');
     expect(commandDuration(120_000)).toBe('2m');
-    expect(commandDuration(-5)).toBe('<0.1s');
+    expect(commandDuration(-5)).toBe('0.1s');
   });
 
   it('ticks a live clock in whole seconds', () => {

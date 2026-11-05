@@ -25,7 +25,7 @@ export function CommandOutcome({ status, duration, glyph = true }: { status: Too
       {status === 'completed' && <Check className="size-3 text-ok" strokeWidth={2} aria-hidden="true" />}
       {status === 'failed' && <X className="size-3 text-danger" strokeWidth={2} aria-hidden="true" />}
     </span>}
-    {/* The time's slot keeps at least the width of the widest time below a minute ("<0.1 s"), so the ticking whole
+    {/* The time's slot keeps at least the width of the widest time below a minute ("0.1 s"), so the ticking whole
         seconds turning into the final tenths never shift the command text beside them */}
     {duration && <span className="inline-grid justify-items-end">
       <span aria-hidden className="invisible col-start-1 row-start-1">{commandDuration(50)}</span>

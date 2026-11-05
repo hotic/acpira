@@ -350,9 +350,10 @@ public func durationText(ms: Double) -> String {
   return t("turns.elapsed.s", ["s": rest])
 }
 
-public func elapsedDuration(_ turn: AgentTurn) -> String {
+/// folding.ts elapsedDuration: `precise` keeps tenths under ten seconds, like a finished command row
+public func elapsedDuration(_ turn: AgentTurn, precise: Bool = false) -> String {
   guard let start = clockStart(turn), let end = turn.endedAt else { return "" }
-  return durationText(ms: end - start)
+  return precise ? commandDuration(ms: end - start) : durationText(ms: end - start)
 }
 
 /// The finished head's time: the bare duration ("5m 35s"), as the webview dropped its "took {t}" wrapper key
@@ -361,11 +362,13 @@ public func elapsedLabel(_ turn: AgentTurn) -> String {
   return elapsedDuration(turn)
 }
 
-/// commandDuration: tenths below ten seconds once finished; `whole` is the live clock
+/// commandDuration: tenths below ten seconds once finished, one tenth as the floor; `whole` is the live clock
 public func commandDuration(ms: Double, whole: Bool = false) -> String {
   let clamped = max(0, ms)
-  if !whole && clamped < 10_000 {
-    return t("turns.elapsed.s", ["s": clamped < 100 ? "<0.1" : String(format: "%.1f", clamped / 1000)])
+  // Rounded first, so 9.96 s carries into the whole-second branch as "10 秒" instead of "10.0 秒"
+  let tenths = Int((max(100, clamped) / 100).rounded())
+  if !whole && tenths < 100 {
+    return t("turns.elapsed.s", ["s": String(format: "%.1f", Double(tenths) / 10)])
   }
   let seconds = whole ? Int(clamped / 1000) : Int((clamped / 1000).rounded())
   let m = seconds / 60, s = seconds % 60

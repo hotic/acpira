@@ -69,7 +69,7 @@ describe('modelLabel', () => {
 describe('turnTtft', () => {
   it('formats the latency from startedAt to respondedAt', () => {
     expect(turnTtft({ ...turn([text('hi')]), startedAt: 1_000, respondedAt: 1_580 })).toBe('0.6s');
-    expect(turnTtft({ ...turn([text('hi')]), startedAt: 1_000, respondedAt: 1_040 })).toBe('<0.1s');
+    expect(turnTtft({ ...turn([text('hi')]), startedAt: 1_000, respondedAt: 1_040 })).toBe('0.1s');
   });
 
   it('is undefined when either timestamp is missing', () => {
