@@ -84,10 +84,12 @@ struct SubagentInspector: View {
   /// The child as a session the transcript views can draw: the task as its opening prompt (unless the turns carry it), then its turns
   private func childView(_ root: SessionView, _ node: SubagentSummary, _ transcript: SubagentTranscript?) -> SessionView {
     // A summoned round's transcript is its whole thread, each round led by its task: no second copy on top (and none
-    // above a later round's earlier rounds before the push lands)
+    // above a later round's earlier rounds before the push lands). A Claude run resumed by SendMessage (a session node
+    // with a sidechain id) reads the same way
     let taskInTurns: Bool
-    if let h = node.harness {
-      if let first = transcript?.turns.first, case .user = first { taskInTurns = true } else { taskInTurns = transcript == nil && h.round > 1 }
+    let resumed = node.visibility == .session && node.peer.sidechainId != nil
+    if node.harness != nil || resumed {
+      if let first = transcript?.turns.first, case .user = first { taskInTurns = true } else { taskInTurns = transcript == nil && (node.harness.map { $0.round > 1 } ?? true) }
     } else {
       taskInTurns = false
     }
