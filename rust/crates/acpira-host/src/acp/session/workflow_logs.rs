@@ -16,6 +16,9 @@ use crate::acp::session::{AcpSession, Core};
 use crate::acp::vendors::claude_workflow_log::{self as wlog, LogCursor, LogWindow};
 
 pub const WORKFLOW_LOG_INTERVAL: Duration = Duration::from_millis(1000);
+/// How long after its end a resumed run's log is still read for its closing reply: Claude Code writes a line some time
+/// after the adapter reports the run over, so a single last read can come too early
+const RESUMED_FINAL_GRACE_MS: i64 = 10_000;
 /// A session directory not found yet is looked for again (a scan of every project directory) at most this often
 const RESCAN_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -134,12 +137,22 @@ impl AcpSession {
       c.workflow_logs.session_dir = dir;
     }
     let mut changed = false;
+    let mut ended = false;
     for (j, updates) in jobs {
       if !updates.is_empty() && c.tree.workflow_log(&j.node, &updates) {
         changed = true;
       }
+      // A resumed run the adapter never announced ends where its log does; its last lines get the usual final read
+      if j.running && j.cursor.run_ended() && c.tree.log_run_ended(&j.node) {
+        changed = true;
+        ended = true;
+      }
+      // A resumed run whose closing reply is not on disk yet is read again, for a while
+      let awaiting_reply = j.cursor.located()
+        && !j.cursor.run_ended()
+        && j.window.is_some_and(|w| w.to.is_some_and(|to| crate::util::now_ms() < to + RESUMED_FINAL_GRACE_MS));
       // A node that was not running when this read started has had its last lines read
-      if !j.running && searched {
+      if !j.running && searched && !awaiting_reply {
         c.workflow_logs.done.insert(j.node.clone());
         if !j.cursor.located() {
           self.log(&format!("workflow agent {} has no sidechain log; its node keeps the receipt only", j.agent_id));
@@ -147,6 +160,9 @@ impl AcpSession {
       } else {
         c.workflow_logs.cursors.insert(j.node, j.cursor);
       }
+    }
+    if ended {
+      self.drain_terminal(&mut c);
     }
     if changed {
       self.touch(&mut c);

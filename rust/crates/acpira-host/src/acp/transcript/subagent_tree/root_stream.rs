@@ -6,8 +6,8 @@ use serde_json::{Map, Value};
 use acpira_shared::subagents::{SubagentPeer, SubagentState, SubagentVisibility};
 
 use super::{
-  Dialect, PendingDelegation, PendingLaunch, Route, RouteCtx, SEND_MESSAGES_MAX, SubagentTree, rec, result_text, s, seal_launch_receipt,
-  terminal,
+  Dialect, PendingDelegation, PendingLaunch, Route, RouteCtx, SEND_CALLS_MAX, SendCall, SubagentTree, rec, result_text, run_of, s,
+  seal_launch_receipt, terminal,
 };
 use crate::i18n::t;
 
@@ -192,8 +192,9 @@ impl SubagentTree {
     self.bump(&id);
   }
 
-  /// After a root tool_call / tool_call_update is applied: stamp delegation links, keep nested / receipt nodes in sync
-  pub fn annotate_root(&mut self, u: &Value, ctx: &mut RouteCtx) {
+  /// After a root tool_call / tool_call_update is applied: stamp delegation links, keep nested / receipt nodes in sync.
+  /// `live`: not a history replay, so a call's result may still open the run it started
+  pub fn annotate_root(&mut self, u: &Value, live: bool, ctx: &mut RouteCtx) {
     let kind = u.get("sessionUpdate").and_then(Value::as_str).unwrap_or("");
     if !matches!(kind, "tool_call" | "tool_call_update") {
       return;
@@ -226,12 +227,10 @@ impl SubagentTree {
       return;
     }
     let claude = meta.and_then(|m| rec(m.get("claudeCode")));
-    if self.resumed_logs
-      && self.by(&self.by_tool, &tool_call_id).is_none()
-      && s(claude.and_then(|c| c.get("toolName"))).as_deref() == Some("SendMessage")
-      && let Some(to) = s(raw.and_then(|r| r.get("to")))
-    {
-      self.note_send_message(&tool_call_id, &to, ctx);
+    if self.resumed_logs && self.by(&self.by_tool, &tool_call_id).is_none() && self.note_send_call(&tool_call_id, claude, raw, ctx) {
+      if live && u.get("status").and_then(Value::as_str) == Some("completed") && self.by(&self.by_tool, &tool_call_id).is_none() {
+        self.open_unannounced_resume(&tool_call_id, u, ctx);
+      }
       return;
     }
     let mut n = self.by(&self.by_tool, &tool_call_id);
@@ -303,24 +302,87 @@ impl SubagentTree {
     self.bump(&id);
   }
 
-  /// A root `SendMessage` naming an agent: tied to that agent's resumed run if it is already announced in this turn,
-  /// else remembered for its announce. The call streams in with an empty input first, so `to` may come with an update
-  fn note_send_message(&mut self, call: &str, to: &str, ctx: &mut RouteCtx) {
-    let turn = ctx.turn_index as u64;
-    let run = self.nodes.iter().rposition(|n| {
-      n.resumed && n.peer.tool_call_id.is_none() && n.turn_index == turn && n.peer.sidechain_id.as_deref() == Some(to)
-    });
-    if let Some(i) = run {
-      self.link_resume_call(i, call, ctx);
+  /// A root `SendMessage` report: remembered by id from the one that names the tool, its input taken from whichever
+  /// report carries it, and tied to the run it resumed once that run is announced in this turn. False for any other call
+  fn note_send_call(&mut self, call: &str, claude: Option<&Map<String, Value>>, raw: Option<&Map<String, Value>>, ctx: &mut RouteCtx) -> bool {
+    let named = s(claude.and_then(|c| c.get("toolName"))).as_deref() == Some("SendMessage");
+    let i = match self.send_calls.iter().position(|c| c.call == call) {
+      Some(i) => i,
+      None if named => {
+        if self.send_calls.len() >= SEND_CALLS_MAX {
+          self.send_calls.remove(0);
+        }
+        self.send_calls.push(SendCall { call: call.to_owned(), to: None, message: None });
+        self.send_calls.len() - 1
+      }
+      None => return false,
+    };
+    if let Some(m) = s(raw.and_then(|r| r.get("message"))) {
+      self.send_calls[i].message = Some(m);
+    }
+    let Some(to) = s(raw.and_then(|r| r.get("to"))) else { return true };
+    self.send_calls[i].to = Some(to.clone());
+    if let Some(run) = self.unlinked_resume(&to, ctx.turn_index) {
+      self.send_calls.remove(i);
+      self.link_resume_call(run, call, ctx);
+    }
+    true
+  }
+
+  /// A resumed run of `agent` announced in this turn that no `SendMessage` row holds yet
+  fn unlinked_resume(&self, agent: &str, turn_index: usize) -> Option<usize> {
+    let turn = turn_index as u64;
+    self.nodes.iter().rposition(|n| n.resumed && n.peer.tool_call_id.is_none() && n.turn_index == turn && n.peer.sidechain_id.as_deref() == Some(agent))
+  }
+
+  /// A `SendMessage` whose result says it resumed a finished agent, with no announced run to tie it to. Either `to` named
+  /// the agent some other way than its id (the announce is tied by the result's id instead), or the adapter never
+  /// announces the run: claude-agent-acp 0.84.0 only resumes children it launched itself, so after the session was
+  /// resumed in a new process it drops the run's updates and says nothing of it. The engine then opens the run itself,
+  /// reads it from the sidechain log, and ends it where the log does (`log_run_ended`); a late announce adopts it
+  fn open_unannounced_resume(&mut self, call: &str, u: &Value, ctx: &mut RouteCtx) {
+    let Some(block) = ctx.root_tool(call) else { return };
+    let Some(agent) = result_text(u, block).as_deref().and_then(resumed_agent_of_result) else { return };
+    let started = block.started_at;
+    let sent = self.send_calls.iter().position(|c| c.call == call).map(|i| self.send_calls.remove(i));
+    if let Some(run) = self.unlinked_resume(&agent, ctx.turn_index) {
+      self.link_resume_call(run, call, ctx);
       return;
     }
-    if self.send_messages.iter().any(|(c, _)| c == call) {
-      return;
+    let peer = SubagentPeer { tool_call_id: Some(call.to_owned()), sidechain_id: Some(agent.clone()), ..Default::default() };
+    let mut node = self.new_node(SubagentVisibility::Session, peer, ctx.turn_index, false, None);
+    // The window of its log lines opens where the call did: the CLI writes the resume prompt before the result
+    if let Some(at) = started.filter(|at| *at < node.announced_at) {
+      node.announced_at = at;
     }
-    if self.send_messages.len() >= SEND_MESSAGES_MAX {
-      self.send_messages.remove(0);
+    node.resumed = true;
+    node.log_ends = true;
+    node.task = sent.and_then(|c| c.message);
+    if let Some(p) = self.nodes.iter().rposition(|n| run_of(n, &agent)) {
+      let prior = &self.nodes[p];
+      node.title = prior.title.clone();
+      node.role = prior.role.clone();
+      node.model = prior.model.clone();
     }
-    self.send_messages.push((call.to_owned(), to.to_owned()));
+    let id = node.id.clone();
+    self.by_tool.insert(call.to_owned(), id.clone());
+    self.nodes.push(node);
+    if let Some(block) = ctx.root_tool(call) {
+      block.subagent_id = Some(id.clone());
+      seal_launch_receipt(block);
+    }
+    self.log(&format!("subagent {agent} resumed without an announce; its run is read from the sidechain log"));
+    self.bump(&id);
+  }
+
+  /// The run the adapter never announced ended in its sidechain log (`LogCursor::run_ended`). True when that ended it
+  pub fn log_run_ended(&mut self, id: &str) -> bool {
+    let Some(i) = self.idx(id) else { return false };
+    if !self.nodes[i].log_ends || terminal(self.nodes[i].status) {
+      return false;
+    }
+    self.transition(id, SubagentState::Completed);
+    true
   }
 
   /// A resumed run sits where the `SendMessage` that started it is, the way a first run sits at its Agent call
@@ -355,5 +417,29 @@ impl SubagentTree {
     self.replay_orphans(&format!("tool:{tool_call_id}"), &id, ctx);
     // None only if a replayed update took the new node out again
     self.idx(&id)
+  }
+}
+
+/// The agent a successful `SendMessage` result resumed: Claude Code answers a resume of a finished agent with
+/// `{ success: true, message: "Resuming agent …", resumedAgentId }`, and a message to a running one without the id
+fn resumed_agent_of_result(text: &str) -> Option<String> {
+  let v: Value = serde_json::from_str(text.trim()).ok()?;
+  if v.get("success") != Some(&Value::Bool(true)) {
+    return None;
+  }
+  s(v.get("resumedAgentId"))
+}
+
+#[cfg(test)]
+mod tests {
+  use super::resumed_agent_of_result;
+
+  #[test]
+  fn only_a_successful_resume_names_its_agent() {
+    let resumed = r#"{"success":true,"message":"Resuming agent a6c05ac","resumedAgentId":"a6c05acbd58804bfe","pin":{"id":"a6c05acbd58804bfe"}}"#;
+    assert_eq!(resumed_agent_of_result(resumed).as_deref(), Some("a6c05acbd58804bfe"));
+    assert_eq!(resumed_agent_of_result(r#"{"success":true,"message":"Message queued"}"#), None);
+    assert_eq!(resumed_agent_of_result(r#"{"success":false,"resumedAgentId":"x"}"#), None);
+    assert_eq!(resumed_agent_of_result("Resuming agent x"), None);
   }
 }

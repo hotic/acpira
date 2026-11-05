@@ -35,8 +35,8 @@ const ORPHAN_MAX_UPDATES: usize = 64;
 /// How far around its announce / end a resumed run's log window reaches: the CLI writes the resume prompt just before the
 /// adapter announces the run, and the run's last lines just before its terminal word
 const RESUMED_LOG_SLACK_MS: i64 = 2000;
-/// `SendMessage` calls remembered until the run they resume is announced
-const SEND_MESSAGES_MAX: usize = 16;
+/// Root `SendMessage` calls remembered until the run they resume is announced or their result arrives
+const SEND_CALLS_MAX: usize = 16;
 
 /// What routing may touch on the root side: the anchor turn index and the root transcript itself
 pub struct RouteCtx<'a> {
@@ -146,6 +146,19 @@ struct Node {
   resumed: bool,
   /// Some of that log has landed: a late wire copy of the same run is no longer applied
   log_fed: bool,
+  /// A resumed run the adapter never announced (`open_unannounced_resume`): nothing on the wire ends it, so the end
+  /// of its stretch of the sidechain log does (`log_run_ended`)
+  log_ends: bool,
+}
+
+/// A root `SendMessage` call: an AIR client gets its first report without input and later ones without the tool name
+/// (claude-agent-acp 0.84.0 `ChangedMetaFilter`), so the call is known by id once it named itself
+struct SendCall {
+  call: String,
+  /// The agent it names (`to`), once the input arrived
+  to: Option<String>,
+  /// What it told the agent: the task of the run it resumes
+  message: Option<String>,
 }
 
 /// The task id of a resumed native child run: claude-agent-acp announces the run a `SendMessage` starts on a finished
@@ -213,8 +226,8 @@ pub struct SubagentTree {
   pub terminal_events: Vec<String>,
   /// The adapter drops resumed native runs (`resumed_task`): read them from the sidechain log (`Vendor::resumed_child_logs`)
   resumed_logs: bool,
-  /// Root `SendMessage` calls not yet tied to the run they resume: (tool call id, the agent id it names)
-  send_messages: Vec<(String, String)>,
+  /// Root `SendMessage` calls not yet tied to the run they resume
+  send_calls: Vec<SendCall>,
 }
 
 #[derive(serde::Serialize)]
@@ -271,13 +284,16 @@ impl SubagentTree {
       child_ctx,
       terminal_events: vec![],
       resumed_logs,
-      send_messages: vec![],
+      send_calls: vec![],
     };
     for r in records.unwrap_or_default() {
       let mut c = r.core;
       let was_running = c.state == SubagentState::Running;
-      // A record from before the sidechain read still names its log through the peer id
-      let resumed = resumed_logs && c.peer.session_id.as_deref().and_then(resumed_task).is_some();
+      // A record from before the sidechain read still names its log through the peer id; a run the adapter never
+      // announced has no peer session at all, only its log
+      let resumed = resumed_logs
+        && (c.peer.session_id.as_deref().and_then(resumed_task).is_some()
+          || (c.visibility == SubagentVisibility::Session && c.peer.session_id.is_none() && c.peer.sidechain_id.is_some()));
       if resumed && c.peer.sidechain_id.is_none() {
         c.peer.sidechain_id = c.peer.session_id.as_deref().and_then(resumed_task).map(str::to_owned);
       }
@@ -314,6 +330,7 @@ impl SubagentTree {
         late_logged: false,
         resumed,
         log_fed: false,
+        log_ends: false,
       });
     }
     tree.reindex();
@@ -482,6 +499,7 @@ impl SubagentTree {
       late_logged: false,
       resumed: false,
       log_fed: false,
+      log_ends: false,
     }
   }
 
@@ -495,7 +513,8 @@ impl SubagentTree {
       // A workflow runs in the background past the prompt that launched it; its agents end with the run (`workflow_ended`).
       // A summoned child is Acpira's own process: it keeps working after a tool call that returned early, and the
       // session ends it explicitly (`relay.rs`)
-      if prompt_returned && (n.dialect == Some(Dialect::Workflow) || n.harness.is_some()) {
+      // A resumed run nothing on the wire speaks for ends with its log (`log_run_ended`), whenever the prompt returns
+      if prompt_returned && (n.dialect == Some(Dialect::Workflow) || n.harness.is_some() || n.log_ends) {
         continue;
       }
       if prompt_returned
@@ -611,19 +630,29 @@ impl SubagentTree {
 
   /// What a viewer of node `id` reads. A summoned round shows its whole thread up to itself: every earlier round of the
   /// same native session, then this one, each led by its task as a user turn, so the reader sees what the child already
-  /// heard. The rev sums the shown rounds' revs, which only grows while they stream
+  /// heard. A resumed Claude run (`SendMessage`) reads the same way: the agent's first run and every earlier resume. The
+  /// rev sums the shown rounds' revs, which only grows while they stream
   pub fn transcript(&self, id: &str) -> Option<(Vec<Cow<'_, Turn>>, i64, bool)> {
     let n = self.nodes.iter().find(|n| n.id == id)?;
     let running = n.status == SubagentState::Running;
-    let Some(h) = n.harness.as_ref() else {
-      return Some((n.state.turns.iter().map(Cow::Borrowed).collect(), n.rev, running));
+    let mut rounds: Vec<&Node> = if let Some(h) = n.harness.as_ref() {
+      let mut rounds: Vec<&Node> = self
+        .nodes
+        .iter()
+        .filter(|o| o.harness.as_ref().is_some_and(|oh| oh.thread == h.thread && oh.round < h.round))
+        .collect();
+      rounds.sort_by_key(|o| o.harness.as_ref().map(|oh| oh.round));
+      rounds
+    } else if let Some(agent) = resumed_agent(n) {
+      // Nodes are kept in the order they opened (a record restores that order), which a millisecond clock can tie
+      self.nodes.iter().take_while(|o| o.id != n.id).filter(|o| run_of(o, agent)).collect()
+    } else {
+      vec![]
     };
-    let mut rounds: Vec<&Node> = self
-      .nodes
-      .iter()
-      .filter(|o| o.harness.as_ref().is_some_and(|oh| oh.thread == h.thread && oh.round < h.round))
-      .collect();
-    rounds.sort_by_key(|o| o.harness.as_ref().map(|oh| oh.round));
+    // A summoned first round is still led by its task; anything else alone is just its own turns
+    if rounds.is_empty() && n.harness.is_none() {
+      return Some((n.state.turns.iter().map(Cow::Borrowed).collect(), n.rev, running));
+    }
     rounds.push(n);
     let mut turns = vec![];
     for r in &rounds {
@@ -657,22 +686,26 @@ impl SubagentTree {
   }
 }
 
+/// The agent a resumed native run continues: its sidechain id (a workflow agent's is its own log, never a thread)
+fn resumed_agent(n: &Node) -> Option<&str> {
+  if n.visibility != SubagentVisibility::Session || n.dialect == Some(Dialect::Workflow) {
+    return None;
+  }
+  n.peer.sidechain_id.as_deref()
+}
+
+/// A run of `agent`: its first run (the native session named after it) or a resume of it
+fn run_of(n: &Node, agent: &str) -> bool {
+  n.visibility == SubagentVisibility::Session && (n.peer.session_id.as_deref() == Some(agent) || resumed_agent(n) == Some(agent))
+}
+
 fn seal_node(n: &mut Node, state: SubagentState) {
   if n.ended_at.is_none() {
     n.ended_at = Some(now_ms());
   }
   // A native child's result is what the child last said
   if n.visibility == SubagentVisibility::Session && n.result.is_none() {
-    'outer: for t in n.state.turns.iter().rev().filter_map(Turn::as_agent) {
-      for b in t.blocks.iter().rev() {
-        if let AgentBlock::Text(tx) = b
-          && !tx.markdown.trim().is_empty()
-        {
-          n.result = Some(tx.markdown.clone());
-          break 'outer;
-        }
-      }
-    }
+    n.result = last_text(&n.state.turns);
   }
   if matches!(n.state.turns.last(), Some(Turn::Agent(a)) if a.stop.is_none()) {
     end_turn(
@@ -680,6 +713,14 @@ fn seal_node(n: &mut Node, state: SubagentState) {
       if matches!(state, SubagentState::Cancelled | SubagentState::Disconnected) { TurnStop::Cancelled } else { TurnStop::EndTurn },
     );
   }
+}
+
+/// The last thing a transcript said
+fn last_text(turns: &[Turn]) -> Option<String> {
+  turns.iter().rev().filter_map(Turn::as_agent).flat_map(|t| t.blocks.iter().rev()).find_map(|b| match b {
+    AgentBlock::Text(tx) if !tx.markdown.trim().is_empty() => Some(tx.markdown.clone()),
+    _ => None,
+  })
 }
 
 /// The launch receipt is the delegation call returning; an unswept pending row would be marked failed at turn end

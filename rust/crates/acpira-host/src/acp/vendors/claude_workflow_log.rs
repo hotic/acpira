@@ -31,7 +31,10 @@
 //! A native (Agent tool) subagent keeps the same format one level up, `<sessionId>/subagents/agent-<agentId>.jsonl`, one
 //! file for every run of that agent: a `SendMessage` resume appends the next run to it (observed 2026-10-11, Claude Code
 //! under claude-agent-acp 0.83.0). Such a run is read through a time window (`LogCursor::window`), so only its own lines
-//! land in its node
+//! land in its node. A run opens with a `user` line stamped `origin: { kind: "coordinator" }` ("The coordinator sent a
+//! message while you were working: …") and closes with an `assistant` line whose `message.stop_reason` is `end_turn`
+//! (observed on Claude Code under claude-agent-acp 0.84.0); a run the adapter never announced ends there
+//! (`LogCursor::run_ended`)
 
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
@@ -138,6 +141,9 @@ pub struct LineParser {
   last: Option<(&'static str, String)>,
   /// Only lines stamped inside this window count (`LogCursor::window`)
   window: Option<LogWindow>,
+  /// Inside the window: the resume prompt that opens the run was read, then the reply that closes it
+  run_opened: bool,
+  run_ended: bool,
 }
 
 /// The stretch of a shared log that belongs to one run: `from` and `to` are epoch milliseconds compared with each line's
@@ -170,11 +176,21 @@ impl LineParser {
     let blocks = msg.get("content").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
     match v.get("type").and_then(Value::as_str) {
       Some("assistant") => {
+        // Only after the run's own prompt: the previous run's last reply may fall inside the window's slack
+        if self.run_opened && msg.get("stop_reason").and_then(Value::as_str) == Some("end_turn") {
+          self.run_ended = true;
+        }
         let id = msg.get("id").and_then(Value::as_str).unwrap_or("").to_owned();
         blocks.iter().filter_map(|b| self.assistant_block(b, &id)).collect()
       }
       // A string content is the task prompt (or a harness note): the node already shows its task
-      Some("user") => blocks.iter().filter_map(|b| self.tool_result(b)).collect(),
+      Some("user") => {
+        if opens_run(&v, msg) {
+          self.run_opened = true;
+          self.run_ended = false;
+        }
+        blocks.iter().filter_map(|b| self.tool_result(b)).collect()
+      }
       _ => vec![],
     }
   }
@@ -215,6 +231,12 @@ impl LineParser {
     let content = b.get("content").unwrap_or(&Value::Null);
     Some(tool_result(id, &name, content, b.get("is_error") == Some(&Value::Bool(true))))
   }
+}
+
+/// The prompt a `SendMessage` resume writes as the run's first line
+fn opens_run(line: &Value, msg: &Value) -> bool {
+  line.get("origin").and_then(|o| o.get("kind")).and_then(Value::as_str) == Some("coordinator")
+    || msg.get("content").and_then(Value::as_str).is_some_and(|c| c.starts_with("The coordinator sent a message"))
 }
 
 fn str_in<'a>(input: &'a Value, key: &str) -> Option<&'a str> {
@@ -460,6 +482,11 @@ impl LogCursor {
   /// Whether the log file has been found
   pub fn located(&self) -> bool {
     self.path.is_some()
+  }
+
+  /// The windowed run closed: its prompt and then a final reply (`end_turn`) were read
+  pub fn run_ended(&self) -> bool {
+    self.parser.run_ended
   }
 
   /// The last read reached the end of the file
@@ -761,5 +788,19 @@ mod tests {
     std::fs::write(&path, "{}\n").unwrap();
     assert!(cursor.read(|| panic!("an unchanged log is not looked up again")).is_empty());
     assert!(cursor.stopped);
+  }
+
+  #[test]
+  fn a_run_ends_at_the_final_reply_after_its_own_prompt() {
+    let line = |v: Value| format!("{v}\n");
+    let mut c = LogCursor::new("/tmp");
+    // The previous run's last reply, inside the window's slack
+    c.feed(line(json!({ "type": "assistant", "message": { "id": "m0", "stop_reason": "end_turn", "content": [{ "type": "text", "text": "old" }] } })).as_bytes());
+    assert!(!c.run_ended());
+    c.feed(line(json!({ "type": "user", "origin": { "kind": "coordinator" }, "message": { "role": "user", "content": "The coordinator sent a message while you were working: go" } })).as_bytes());
+    c.feed(line(json!({ "type": "assistant", "message": { "id": "m1", "stop_reason": "tool_use", "content": [{ "type": "tool_use", "id": "t1", "name": "Bash", "input": { "command": "ls" } }] } })).as_bytes());
+    assert!(!c.run_ended());
+    c.feed(line(json!({ "type": "assistant", "message": { "id": "m2", "stop_reason": "end_turn", "content": [{ "type": "text", "text": "done" }] } })).as_bytes());
+    assert!(c.run_ended());
   }
 }
