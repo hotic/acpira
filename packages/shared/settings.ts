@@ -229,8 +229,14 @@ export function sanitizeSetting<K extends SettingKey>(key: K, value: unknown): S
       return (oneOf(value, SESSION_SCOPES) ?? fallback) as SettingsView[K];
     case 'sessionListPosition':
       return (oneOf(value, SESSION_LIST_POSITIONS) ?? fallback) as SettingsView[K];
-    case 'hiddenOptions':
-      return (isHiddenMap(value) ? value : fallback) as SettingsView[K];
+    case 'hiddenOptions': {
+      if (!isHiddenMap(value)) return fallback as SettingsView[K];
+      // Built-in model visibility belongs to providers.json; a legacy hidden list must not hide enabled models again.
+      if (!value.acpira || !Object.hasOwn(value.acpira, 'model')) return value as SettingsView[K];
+      const { model: _model, ...controls } = value.acpira;
+      const { acpira: _agent, ...others } = value;
+      return (Object.keys(controls).length ? { ...others, acpira: controls } : others) as SettingsView[K];
+    }
     case 'accountSwitch':
       return (oneOf(value, ACCOUNT_SWITCH_STRATEGIES) ?? fallback) as SettingsView[K];
     case 'openFilesWith':

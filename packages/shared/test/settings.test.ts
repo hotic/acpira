@@ -43,6 +43,14 @@ describe('sanitizeSetting (appearance)', () => {
     expect(sanitizeSetting('proxy', 7890)).toBe('auto');
   });
 
+  it('ignores legacy built-in model hiding without changing other controls or agents', () => {
+    const legacy = { acpira: { model: ['["1","Qwen3.8-Flash-Next"]'], effort: ['Low'] }, codex: { model: ['GPT'] } };
+    expect(sanitizeSetting('hiddenOptions', legacy)).toEqual({ acpira: { effort: ['Low'] }, codex: { model: ['GPT'] } });
+    expect(legacy.acpira.model).toEqual(['["1","Qwen3.8-Flash-Next"]']);
+    expect(sanitizeSetting('hiddenOptions', { acpira: { model: ['Qwen'] } })).toEqual({});
+    expect(sanitizeSetting('hiddenOptions', { codex: { model: [1] } })).toEqual({});
+  });
+
   it('fontSmoothing is a boolean', () => {
     expect(sanitizeSetting('fontSmoothing', true)).toBe(true);
     expect(sanitizeSetting('fontSmoothing', 'yes')).toBe(DEFAULT_SETTINGS.fontSmoothing);

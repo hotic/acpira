@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -101,6 +101,46 @@ describe('providers contract', () => {
     // hostMsg scans everything received so far: the first, empty view must not stand in for the delete's reply
     await s.hostMsg('V', 'providers', m => m !== empty && m.view.providers.length === 0 && !m.error);
     expect(JSON.parse(readFileSync(join(data, 'secrets.json'), 'utf8'))).not.toHaveProperty(['acpira.provider.deep-seek']);
+  });
+
+  it('offers keyless sources despite legacy hiding and keeps both settings views consistent', async () => {
+    const temp = (p: string) => { const d = mkdtempSync(join(tmpdir(), p)); dirs.push(d); return d; };
+    const data = temp('acpira-providers-data-');
+    const hidden = { acpira: { model: ['["colab","Qwen3.8-Flash-Next"]'], effort: ['Low'] }, codex: { model: ['GPT'] } };
+    writeFileSync(join(data, 'settings.json'), JSON.stringify({ hiddenOptions: hidden }));
+    const s = new Shell(data, temp('acpira-providers-ws-'));
+    shells.push(s);
+    const server = createServer((_req, res) => {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ data: [{ id: 'Qwen3.8-Flash-Next' }] }));
+    });
+    await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+    try {
+      await s.hello({ client: { name: 'contract', version: '0', capabilities: [] } });
+      const init = await s.open('V');
+      const expected = { acpira: { effort: ['Low'] }, codex: { model: ['GPT'] } };
+      expect(init.state.hidden).toEqual(expected);
+      expect(init.state.settings.hiddenOptions).toEqual(expected);
+
+      const provider: Provider = { id: 'colab', name: 'colab', preset: 'custom', format: 'openai-chat',
+        baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`, fullUrl: false, enabled: true,
+        models: [newModel('Qwen3.8-Flash-Next')] };
+      s.view('V', { type: 'providerAction', action: { kind: 'save', provider } });
+      expect((await s.hostMsg('V', 'providers', m => m.view.providers.length === 1)).view.providers[0]).toMatchObject({ enabled: true, hasKey: false });
+      s.view('V', { type: 'providerProbe', id: 'keyless', probe: { kind: 'check', provider } });
+      expect((await s.hostMsg('V', 'providerProbed', m => m.id === 'keyless')).outcome).toEqual({ kind: 'check', count: 1 });
+      s.view('V', { type: 'controls', agent: 'acpira', fresh: true });
+      const controls = await s.hostMsg('V', 'controls', m => m.agent === 'acpira');
+      expect(controls.controls.find(c => c.id === 'model')?.options.map(o => o.id)).toEqual(['colab/Qwen3.8-Flash-Next']);
+
+      // A stale page posting the old map cannot revive the second model-visibility switch.
+      const before = new Set(s.hostMsgs('V'));
+      s.view('V', { type: 'setSetting', key: 'hiddenOptions', value: hidden });
+      expect((await s.hostMsg('V', 'hidden', m => !before.has(m))).hidden).toEqual(expected);
+      expect((await s.hostMsg('V', 'settings', m => !before.has(m))).settings.hiddenOptions).toEqual(expected);
+    } finally {
+      server.close();
+    }
   });
 
   it('carries the families, and answers a model fetch with the stored key', async () => {
