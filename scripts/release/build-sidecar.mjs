@@ -3,6 +3,7 @@ import { chmodSync, copyFileSync, mkdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { signMacSidecar } from './sign-mac.mjs';
+import { signWindowsSidecar } from './sign-windows.mjs';
 import { SIDECAR_TARGETS, exeName, hostPlatform, targetFor } from './sidecar-targets.mjs';
 
 // Builds the release Rust sidecar into dist/sidecar/<platform>/:
@@ -45,4 +46,6 @@ for (const platform of platforms) {
   // A Developer ID signature keeps macOS privacy grants across builds (sign-mac.mjs); off macOS the copy keeps the
   // linker's ad hoc one until a Mac signs it
   signMacSidecar(root, platform);
+  // Authenticode with the Certum cloud certificate when CERTUM_EMAIL / CERTUM_OTP are set (sign-windows.mjs)
+  signWindowsSidecar(root, platform);
 }
