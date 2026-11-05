@@ -234,6 +234,9 @@ public actor RemotePairingService: PairingService {
     }
     // Never left (a foreground notice without a background one): nothing to rebuild
     if node != nil, away == nil { return }
+    // A fresh node reaches the computer over the relay first and finds the LAN path only after, so the next dial
+    // waits for the relay rather than the LAN guess: round trips on that first path can run to seconds
+    lastPath = lastPath.filter { $0.value != .lan }
     let wanted = rebuild || node != nil
     await dropNode(rebuildLater: false)
     if wanted { _ = try? await liveNode() }

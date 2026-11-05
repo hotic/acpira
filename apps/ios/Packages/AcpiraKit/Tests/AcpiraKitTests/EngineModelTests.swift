@@ -362,6 +362,29 @@ struct EngineModelTests {
     #expect(wire.sent.last?.contains(#""id":"s1""#) == true)
   }
 
+  /// The chats kept before a reconnect stay after the new wire shows its first session, so opening one shows its last
+  /// copy (syncing) at once rather than a spinner until its whole transcript arrives
+  @Test func aReconnectKeepsTheOtherChatsViews() async throws {
+    let (before, lost) = try await connected()
+    push(lost, #"{"type":"session","session":{"id":"s2","agent":"fake","title":"U","cwd":"/w","rev":1,"turns":[]}}"#)
+    try await until { before.views["s2"] != nil }
+    before.path = [.chat("s2")]
+    let wire = FakeTransport()
+    let model = AppModel(link: EngineLink(transport: wire, language: "en"), options: LaunchOptions.current(["app"]))
+    model.resume(from: before)
+    wire.feed.yield(EngineClientTests.helloOk)
+    push(wire, #"{"type":"init","state":{"host":"sidebar","agents":[],"accounts":[],"hidden":{},"sessions":[],"settings":{},"locale":"en","home":"/h","cwd":"/w"}}"#)
+    try await until { wire.types.last == "webviewMessage:selectSession" }
+    push(wire, #"{"type":"session","session":{"id":"s2","agent":"fake","title":"U","cwd":"/w","rev":2,"turns":[]}}"#)
+    try await until { model.shown("s2") }
+    #expect(model.views["s1"] != nil && !model.shown("s1"))
+    // This wire's copy takes the carried one's place
+    model.open("s1")
+    push(wire, #"{"type":"session","session":{"id":"s1","agent":"fake","title":"T2","cwd":"/w","rev":3,"turns":[]}}"#)
+    try await until { model.shown("s1") }
+    #expect(model.views["s1"]?.title == "T2" && model.carried.isEmpty)
+  }
+
   /// A prompt sent as the wire was lost goes out again on the next one with the same clientId (the engine runs it once),
   /// after the session is shown again; an action posted before the new wire's init waits for it too
   @Test func aReconnectSendsAgainWhatTheLostWireMayNotHaveDelivered() async throws {

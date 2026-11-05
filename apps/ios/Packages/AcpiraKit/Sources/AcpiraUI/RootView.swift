@@ -320,7 +320,7 @@ public struct RootView: View {
       if now == .background { model.setAway(true) } else if now == .active { model.setAway(false) }
       // Back from the background, where the service closed the wire: dial the followed computer again
       if now == .active, let pairing, pairing.connection == nil, pairing.selected != nil, pairing.link != .connecting {
-        pairing.connectSelected()
+        pairing.connectSelected(resuming: true)
       }
       // Notifications may have been switched in the system's Settings meanwhile
       if now == .active { Task { await push.refresh() } }
@@ -339,7 +339,7 @@ public struct RootView: View {
     // with the service's return) leaves the link idle: nothing else would dial it
     .onChange(of: pairing?.link) { _, link in
       if link == .idle, phase == .active, let pairing, pairing.connection == nil, pairing.selected != nil {
-        pairing.connectSelected()
+        pairing.connectSelected(resuming: true)
       }
     }
     .task {

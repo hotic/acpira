@@ -35,6 +35,8 @@ final class ScriptedService: PairingService, @unchecked Sendable {
   init(_ outcomes: [ConnectionError?]) { script = Mutex(outcomes) }
 
   var dials: Int { wires.withLock { $0.count } + failed.withLock { $0 } }
+  /// Outcomes for the dials after the ones scripted so far
+  func then(_ outcomes: [ConnectionError?]) { script.withLock { $0 += outcomes } }
   private let failed = Mutex(0)
 
   func computers() async -> [PairedComputer] { [computer] }
@@ -76,6 +78,25 @@ struct PairingModelTests {
     try await until { wires == 2 }
     try await until { pairing.link == .online(.relay) }
     #expect(wires == 2)
+  }
+
+  /// Back from the background, where the service closed a wire that was up: a first dial that misses its deadline is
+  /// dialed again with the link connecting, never the offline page and its Retry
+  @Test func aDialBackFromTheBackgroundThatFailsKeepsConnecting() async throws {
+    let service = ScriptedService([])
+    let pairing = PairingModel(service: service, remembers: false)
+    await pairing.load()
+    try await until { pairing.link == .online(.relay) }
+    service.then([.offline])
+    service.wires.withLock { $0[0] }.end(.suspended)
+    try await until { pairing.link == .idle }
+    pairing.connectSelected(resuming: true)
+    try await until { service.dials == 2 }
+    // The failure has landed, the quick redial (300 ms) not yet
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(pairing.link == .connecting)
+    try await until { pairing.link == .online(.relay) }
+    #expect(service.dials == 3)
   }
 
   /// A computer that did not answer in the first place shows as offline at once, and a removal is never dialed again

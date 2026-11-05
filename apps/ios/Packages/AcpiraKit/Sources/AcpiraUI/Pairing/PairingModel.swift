@@ -121,10 +121,12 @@ final class PairingModel {
     connectSelected()
   }
 
-  /// Dials the followed computer, dropping any wire to the previous one
-  func connectSelected() {
+  /// Dials the followed computer, dropping any wire to the previous one. resuming: the app came back from the
+  /// background; a wire the service closed there was up, so a dial that fails now gets the quick dials of a lost wire
+  /// (connecting) rather than the offline page of a computer that never answered
+  func connectSelected(resuming: Bool = false) {
     failures = 0
-    reconnecting = false
+    if !resuming { reconnecting = false }
     dial(quiet: false)
   }
 
@@ -191,9 +193,9 @@ final class PairingModel {
     }
     wiredAt = nil
     // The app's own background close: coming back dials again (RootView), so nothing failed and the screens wait as for
-    // a dial rather than offer Retry on every return
+    // a dial rather than offer Retry on every return. `reconnecting` stays as set above, for that dial
+    // (`connectSelected(resuming:)`): the first one on a fresh node often outlasts its deadline on a slow relay
     if error == .suspended {
-      reconnecting = false
       link = .idle
       return
     }
