@@ -36,7 +36,7 @@ func controlsForTurn(_ controls: SessionControls, _ settings: TurnSettings?) -> 
 
 /// reshape: the editor never calls set_config_option, so a model's dependent controls come from that model itself. Its
 /// learned shape first (the live view can pair a model with another's parameters while a pick is in flight), then the
-/// live controls for the live model, then a family sibling's shape; an unknown model keeps the snapshot
+/// live controls for the live model, then a family sibling's shape; an unknown model drops unverified model parameters
 private func reshape(_ fallback: SessionControls, _ settings: TurnSettings, live: SessionControls, shapes: ModelShapes?) -> SessionControls {
   guard let model = live.options.first(where: isModelControl), let value = settings.config[model.id],
         model.options.contains(where: { $0.id == value }) else { return fallback }
@@ -46,7 +46,12 @@ private func reshape(_ fallback: SessionControls, _ settings: TurnSettings, live
     shaped.options = live.options.filter(isModelControl) + shape
     return controlsForTurn(shaped, settings)
   }
-  return value == model.value ? controlsForTurn(live, settings) : fallback
+  if value == model.value { return controlsForTurn(live, settings) }
+  // A draft has no agent to correct an old scale. Until this model's shape is known, do not offer another model's
+  // effort or Fast as though it belonged to the selected model.
+  var next = fallback
+  next.options.removeAll { ComposerControls.isReasoning($0) || $0.category == "model_config" }
+  return next
 }
 
 /// openTurnControls: the editor's selections when it opens on a sent prompt

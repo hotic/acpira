@@ -193,6 +193,34 @@ async fn run(s: &Arc<AcpSession>, text: &str) -> Vec<Value> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn switching_between_disjoint_effort_scales_sends_the_level_shown_by_the_controls() {
+  let env = Env::new();
+  let path = env.root.path().join("providers.json");
+  let mut file: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+  file["providers"][0]["models"] = json!([
+    { "id": "qwen-next", "efforts": ["medium", "xhigh"] },
+    { "id": "gemini-3.8-flash", "efforts": ["low", "medium", "high"] }
+  ]);
+  std::fs::write(path, file.to_string()).unwrap();
+  let s = env.session().await;
+  let effort = || s.agent_controls().options.iter().find(|o| o.id == "effort").and_then(|o| o.value.clone()).unwrap();
+  assert_eq!(effort(), "xhigh");
+  // A stale High from the previous menu is harmless, not an Unknown effort RPC failure.
+  s.select_config("effort".into(), "high".into()).await.unwrap();
+  assert_eq!(effort(), "xhigh");
+  s.select_config("model".into(), "mock/gemini-3.8-flash".into()).await.unwrap();
+  assert_eq!(effort(), "low");
+  s.select_config("effort".into(), "high".into()).await.unwrap();
+  env.server.push(mock::text("Hello."));
+  run(&s, "hello").await;
+  assert_eq!(env.server.requests()[0].body["reasoning_effort"], "high");
+  expect_match(&view(&s)["turns"][0]["settings"], json!({ "config": { "model": "mock/gemini-3.8-flash", "effort": "high" } }));
+  s.select_config("effort".into(), "medium".into()).await.unwrap();
+  s.select_config("model".into(), "mock/qwen-next".into()).await.unwrap();
+  assert_eq!(effort(), "medium", "a supported effort survives a model switch");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn raw_settings_reach_existing_sessions_without_reopening_them() {
   let env = Env::new();
   let s = env.session().await;

@@ -275,6 +275,7 @@ impl AcpSession {
         || c.switching
         || c.hooks.gating
         || c.picks.adopt_pending
+        || !c.picks.values.is_empty()
         || c.ultracode.rebuilding
         || c.peer.detached
         || c.pending_prompt.is_some()
@@ -298,6 +299,7 @@ impl AcpSession {
       && (c.switching
         || c.hooks.gating
         || c.picks.adopt_pending
+        || !c.picks.values.is_empty()
         || c.ultracode.rebuilding
         || c.phase.running
         || c.peer.detached
