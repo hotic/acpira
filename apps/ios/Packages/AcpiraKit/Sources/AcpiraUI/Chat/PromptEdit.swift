@@ -23,19 +23,20 @@ struct EditingBar: View {
       if let first = firstLine(original.text) {
         Text(web: first)
           .textStyle(TypeScale.text2)
-          .foregroundStyle(Palette.fg3)
+          .foregroundStyle(Palette.popFg3)
           .lineLimit(1)
           .truncationMode(.tail)
           .frame(minWidth: 0, alignment: .leading)
           .layoutPriority(-1)
       }
     } trailing: {
-      IconButton(.x, label: t("history.cancel"), action: onCancel)
+      CardCornerButton(icon: .x, label: t("history.cancel"), action: onCancel)
+        .padding(.trailing, -Metrics.s1)
     }
     .padding(.horizontal, Metrics.pad)
     .padding(.vertical, Metrics.s1)
-    .background(RoundedRectangle(cornerRadius: Metrics.rMd).fill(Palette.cmpBg))
-    .overlay(RoundedRectangle(cornerRadius: Metrics.rMd).strokeBorder(Palette.conversationLine))
+    // The dock cards' glass, so the bar reads as one more card over the composer
+    .modifier(CardSurface())
   }
 }
 

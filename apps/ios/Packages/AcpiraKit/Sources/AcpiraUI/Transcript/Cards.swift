@@ -378,7 +378,7 @@ struct PermissionCard: View {
       Row(dense: true) {
         if block.command != nil { Icon(.terminal, size: WebMetrics.icon) }
       } content: {
-        Text(web: title).textStyle(WebType.text2, weight: .medium).foregroundStyle(Palette.fg2)
+        Text(web: title).textStyle(WebType.text2, weight: .medium).foregroundStyle(Palette.popFg2)
       }
       if let command = block.command {
         Text(web: command, size: WebType.mono.size)
@@ -387,13 +387,13 @@ struct PermissionCard: View {
           .fixedSize(horizontal: false, vertical: true)
       }
       if let description = block.description {
-        Text(web: description).textStyle(WebType.text3).foregroundStyle(Palette.fg2)
+        Text(web: description).textStyle(WebType.text3).foregroundStyle(Palette.popFg2)
           .fixedSize(horizontal: false, vertical: true)
       }
       if flat {
         FlowLayout(spacing: Metrics.gap) {
           ForEach(options) { o in
-            Button(web: o.label) { onChoose(o.id) }.buttonStyle(AcpButtonStyle())
+            Button(web: o.label) { onChoose(o.id) }.modifier(CardButton(primary: false))
           }
         }
       } else {
@@ -411,7 +411,7 @@ struct PermissionCard: View {
               Text(web: t("permission.more"))
               Icon(.chevronDown, size: WebMetrics.icon)
             }
-            .buttonStyle(AcpButtonStyle(fixed: true))
+            .modifier(CardButton(primary: false))
             .menuStyle(.button)
             .fixedSize()
           }
@@ -419,21 +419,20 @@ struct PermissionCard: View {
           HStack(spacing: Metrics.gap) {
             if let reject {
               Button(web: reject.label) { onChoose(reject.id) }
-                .buttonStyle(AcpButtonStyle(block.defaultToNo == true ? .primary : .secondary))
+                .modifier(CardButton(primary: block.defaultToNo == true))
             }
             if let allow {
               Button(web: allow.label) { onChoose(allow.id) }
-                .buttonStyle(AcpButtonStyle(block.defaultToNo == true ? .secondary : .primary))
+                .modifier(CardButton(primary: block.defaultToNo != true))
             }
           }
         }
       }
     }
-    // p-pad inside a 1 px border
-    .padding(Metrics.pad + Metrics.hairline)
+    .padding(Metrics.pad)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(RoundedRectangle(cornerRadius: Metrics.rLg).fill(Palette.bg1))
-    .overlay(RoundedRectangle(cornerRadius: Metrics.rLg).strokeBorder(Palette.conversationLine))
+    // The dock cards' glass: an approval asks for an answer as the question card does
+    .modifier(CardSurface())
   }
 }
 
