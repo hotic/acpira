@@ -10,6 +10,7 @@
 pub mod account_switch;
 pub mod attachments;
 pub mod compaction;
+pub mod context;
 pub mod controls;
 pub mod edit;
 pub mod errors;

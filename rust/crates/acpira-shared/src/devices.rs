@@ -80,6 +80,9 @@ pub fn device_allowed(m: &WebviewMsg) -> bool {
     | W::DiffSource { .. }
     | W::SessionMarkdown { .. }
     | W::SessionChanges { .. }
+    | W::SessionContext { .. }
+    | W::SessionContextItem { .. }
+    | W::SessionContextRaw { .. }
     | W::ProjectDir { .. }
     | W::ProjectStatus { .. }
     | W::ProjectFile { .. }

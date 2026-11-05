@@ -95,6 +95,22 @@ impl SessionManager {
     self.live(session_id).or_else(|| self.mirror_of(session_id)).is_some_and(|s| s.shows_file(path))
   }
 
+  /// The session's context split (`acp::session::context`); none for a session not open in this engine
+  pub async fn session_context(&self, session_id: &str, detail: bool) -> Option<acpira_shared::context::ContextReport> {
+    self.live(session_id)?.context_report(detail).await
+  }
+
+  pub async fn session_context_item(&self, session_id: &str, rev: &str, id: &str) -> Option<acpira_shared::context::ContextContent> {
+    self.live(session_id)?.context_item(rev, id).await
+  }
+
+  pub async fn session_context_raw(&self, session_id: &str) -> Result<Option<acpira_shared::context::ContextRaw>, String> {
+    match self.live(session_id) {
+      Some(s) => s.context_raw().await,
+      None => Ok(None),
+    }
+  }
+
   /// The files the session's own edits touched with their text before its first edit of each (`AcpSession::edit_bases`);
   /// empty for a session that is neither open here nor shown as another engine's copy
   pub async fn edit_bases(&self, session_id: &str) -> Vec<(String, Option<String>)> {

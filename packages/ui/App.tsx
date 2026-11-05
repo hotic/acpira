@@ -17,6 +17,7 @@ import { setAgentMarks } from './chat/AgentMark';
 import { lookFromSettings, resolveTheme } from './look';
 import { useVsCodeTheme } from './useVsCodeTheme';
 import { settleProject } from './panel/api';
+import { settleContext } from './context/api';
 import { deliverToBrowserTab, installBrowserTabs, setRecentPages } from './panel/browserTabs';
 import { panel, panelState } from './panel/store';
 import { deliverTerminal, startTerminals, terminalsConnected } from './panel/terminals';
@@ -394,6 +395,7 @@ export function App() {
         case 'diffSource': diffRequests.settle(m.seq, m.source); break;
         case 'imageBlob': imageBlobRequests.settle(m.seq, m.blob); break;
         case 'projectDir': case 'projectStatus': case 'projectFile': case 'sessionChanges': settleProject(m); break;
+        case 'sessionContext': case 'sessionContextItem': case 'sessionContextRaw': settleContext(m); break;
         case 'terminalOutput': case 'terminalState': deliverTerminal(m); break;
         // SSH hosts: the pushed list, the ~/.ssh/config hosts and the remote folder picker's listings (remote/api.ts)
         case 'connections': case 'sshHosts': case 'remoteDir': deliverRemote(m); break;

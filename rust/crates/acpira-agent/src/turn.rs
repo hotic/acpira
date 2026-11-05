@@ -32,7 +32,8 @@ mod request;
 mod riders;
 mod setup;
 
-use self::calls::{Flow, call_title, hidden, kind_of, mcp_meta, run_tools};
+pub(crate) use self::calls::kind_of;
+use self::calls::{Flow, call_title, hidden, mcp_meta, run_tools};
 use self::request::{
   EMPTY_REPLY, MAX_ATTEMPTS, Unfinished, approx, describe, empty_reply, log_request, log_view, max_tokens, request_event, retriable,
   retry_delay, retry_notice, stream_idle,
@@ -603,6 +604,13 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
         native: reply.native.clone(),
       };
       session.store.item(&item);
+      // What the ring now shows, for the context report; a call the provider did not count leaves the last one
+      if let Some(u) = usage {
+        let wire = crate::context::Wire { format: s.endpoint.format, url: s.endpoint.url.clone(), family: s.endpoint.family };
+        let setting = crate::context::Setting { system: &s.system, sections: &s.sections, mcp: &s.mcp };
+        let snap = crate::context::Snapshot::of_call(request, item.clone(), wire, setting, u, estimated, &st);
+        st.context = Some(Arc::new(snap));
+      }
       st.items.push(item);
     }
     // `stopped`: the user stopped the round (an action rejected, the questions closed, the plan not approved)

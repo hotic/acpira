@@ -471,6 +471,25 @@ pub enum HostMsg {
     seq: i64,
     files: Vec<ProjectChange>,
   },
+  /// Replies to the context reads (`context.rs`), each echoing its request's seq: absent when the session's agent reports
+  /// no split, or no longer holds the conversation it was asked about
+  SessionContext {
+    seq: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    report: Option<crate::context::ContextReport>,
+  },
+  SessionContextItem {
+    seq: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<crate::context::ContextContent>,
+  },
+  SessionContextRaw {
+    seq: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw: Option<crate::context::ContextRaw>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+  },
   /// SSH hosts (helloOk.features has `remote`): the list on every change
   Connections {
     connections: Vec<ConnectionView>,
@@ -581,6 +600,9 @@ impl HostMsg {
       HostMsg::ProjectStatus { .. } => "projectStatus",
       HostMsg::ProjectFile { .. } => "projectFile",
       HostMsg::SessionChanges { .. } => "sessionChanges",
+      HostMsg::SessionContext { .. } => "sessionContext",
+      HostMsg::SessionContextItem { .. } => "sessionContextItem",
+      HostMsg::SessionContextRaw { .. } => "sessionContextRaw",
       HostMsg::Connections { .. } => "connections",
       HostMsg::RemoteAccess { .. } => "remoteAccess",
       HostMsg::SshHosts { .. } => "sshHosts",
@@ -732,6 +754,29 @@ pub enum WebviewMsg {
   },
   /// The files the session's edits left changed, answered with `sessionChanges`
   SessionChanges {
+    session_id: String,
+    #[serde(deserialize_with = "crate::num::lenient_i64")]
+    seq: i64,
+  },
+  /// A session's context split: the category sums (the composer ring's card), the whole tree with `detail` (the report
+  /// window); answered with `sessionContext`
+  SessionContext {
+    session_id: String,
+    #[serde(deserialize_with = "crate::num::lenient_i64")]
+    seq: i64,
+    #[serde(default)]
+    detail: bool,
+  },
+  /// One leaf's content in the report `rev` describes, answered with `sessionContextItem`
+  SessionContextItem {
+    session_id: String,
+    rev: String,
+    id: String,
+    #[serde(deserialize_with = "crate::num::lenient_i64")]
+    seq: i64,
+  },
+  /// The last request as the agent sent it, answered with `sessionContextRaw`
+  SessionContextRaw {
     session_id: String,
     #[serde(deserialize_with = "crate::num::lenient_i64")]
     seq: i64,

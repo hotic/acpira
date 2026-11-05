@@ -28,7 +28,9 @@ export type PanelTab =
   | { id: string; kind: 'browser'; url?: string; title?: string; nav?: number }
   // A plugin's `panel.tab` piece (contributes.ui), in a sandboxed frame; `title` the piece's as last seen, for the tab
   // while the plugin's pieces have not arrived yet
-  | { id: string; kind: 'plugin'; plugin: string; piece: string; title?: string };
+  | { id: string; kind: 'plugin'; plugin: string; piece: string; title?: string }
+  // The context report of the session the panel is on (context/ContextTab.tsx), opened from the composer ring's card
+  | { id: string; kind: 'context' };
 
 // What a Files tab shows: a file (scrolled to `line`, with `selection` picked; `text` / `planId` for a plan outside the
 // project folder), the session's whole review, or nothing (the tree takes the tab)
@@ -103,6 +105,8 @@ const ALL_MODULES: PanelModules = { files: true, terminal: true, browser: true }
 
 // Whether the panel has anything to show: a built-in module switched on or a plugin's tab piece in effect
 export const anyModule = (m: PanelModules) => m.files || m.terminal || m.browser || pluginPieces('panel.tab').length > 0;
+// Whether the panel can open: a module, or a context tab, which needs none
+export const anyTab = (s: PanelState) => anyModule(s) || s.tabs.some(t => t.kind === 'context');
 const isPluginTab = (t: PanelTab): t is Extract<PanelTab, { kind: 'plugin' }> => t.kind === 'plugin';
 
 function validTabs(raw: unknown, m: PanelModules = ALL_MODULES, filesClosed = false): PanelTab[] {
@@ -113,6 +117,7 @@ function validTabs(raw: unknown, m: PanelModules = ALL_MODULES, filesClosed = fa
         || (m.files && t.kind === 'files' && t.id !== FILES_TAB)
         || (m.terminal && t.kind === 'terminal' && typeof t.cwd === 'string')
         || (t.kind === 'plugin' && typeof t.plugin === 'string' && typeof t.piece === 'string')
+        || t.kind === 'context'
       ))
     : [];
   if (m.files && !filesClosed) return [FILES, ...list];
@@ -131,7 +136,7 @@ function normalizeSlot(slot: PanelSlot, m: PanelModules, ensureFiles = false): P
     if (t.kind === 'files') return m.files;
     if (t.kind === 'terminal') return m.terminal;
     if (t.kind === 'browser') return m.browser;
-    if (t.kind === 'plugin') return true;
+    if (t.kind === 'plugin' || t.kind === 'context') return true;
     // A lone new-tab page gives way to the Files tab coming back
     return !(ensureFiles && m.files && slot.tabs.length === 1);
   });
@@ -310,7 +315,7 @@ const originOf = (url: string | undefined) => { try { return url ? new URL(url).
 export const panel = {
   toggle(open = !current().open) {
     const s = current();
-    if (!anyModule(s)) { if (s.open) update({ open: false }); return; }
+    if (!anyTab(s)) { if (s.open) update({ open: false }); return; }
     update({ open });
   },
   select(tab: string) { update({ tab, open: true, ...withFiles(current(), tab) }); },
@@ -531,6 +536,15 @@ export const panel = {
     const tab: PanelTab = { id: nextId('plugin'), kind: 'plugin', plugin, piece, title };
     const tabs = replace ? s.tabs.map(t => (t.id === replace ? tab : t)) : [...s.tabs, tab];
     update({ open: true, tabs, tab: tab.id });
+    return tab.id;
+  },
+  // The context tab: the one this slot has takes the selection, else a new one at the end
+  openContext(): string {
+    const s = current();
+    const same = s.tabs.find(t => t.kind === 'context');
+    if (same) { update({ open: true, tab: same.id }); return same.id; }
+    const tab: PanelTab = { id: nextId('context'), kind: 'context' };
+    update({ open: true, tabs: [...s.tabs, tab], tab: tab.id });
     return tab.id;
   },
   // The plugins' pieces in effect changed: tabs of pieces gone close everywhere, the rest keep their piece's title

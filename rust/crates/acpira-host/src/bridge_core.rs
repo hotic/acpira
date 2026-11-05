@@ -690,6 +690,32 @@ impl BridgeCore {
           core.post_now(HostMsg::SessionChanges { seq, files });
         });
       }
+      // The context split and what its leaves sent (`acp::session::context`), always answered: the card and the report
+      // window wait on them. Off the message loop, since the agent answers over its own wire
+      W::SessionContext { session_id, seq, detail } => {
+        let core = self.clone();
+        spawn_on(self.wire, async move {
+          let report = core.manager.session_context(&session_id, detail).await;
+          core.post_now(HostMsg::SessionContext { seq, report });
+        });
+      }
+      W::SessionContextItem { session_id, rev, id, seq } => {
+        let core = self.clone();
+        spawn_on(self.wire, async move {
+          let content = core.manager.session_context_item(&session_id, &rev, &id).await;
+          core.post_now(HostMsg::SessionContextItem { seq, content });
+        });
+      }
+      W::SessionContextRaw { session_id, seq } => {
+        let core = self.clone();
+        spawn_on(self.wire, async move {
+          let (raw, error) = match core.manager.session_context_raw(&session_id).await {
+            Ok(raw) => (raw, None),
+            Err(e) => (None, Some(e)),
+          };
+          core.post_now(HostMsg::SessionContextRaw { seq, raw, error });
+        });
+      }
       // Always answered, like diffSource: the page's clipboard write waits on it
       W::SessionMarkdown { id, seq, format } => {
         let (markdown, error) = match manager.session_markdown(&id, format.unwrap_or(ExportFormat::Markdown)).await {

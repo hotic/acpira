@@ -74,6 +74,14 @@
   --storage-agent-logs: #199e70;
   --storage-reclaimable: #c98500;
   --storage-other: color-mix(in srgb, var(--fg-1) 28%, var(--bg-1));
+  /* What fills a session's context window (the ring card, the context report), one low-chroma hue per category, the
+     conversation a soft clay: muted beside the storage page's saturated set, since the report paints large areas */
+  --context-system: oklch(0.64 0.012 250);
+  --context-tools: oklch(0.64 0.05 295);
+  --context-docs: oklch(0.66 0.045 165);
+  --context-skills: oklch(0.72 0.05 85);
+  --context-mcp: oklch(0.64 0.045 235);
+  --context-chat: oklch(0.7 0.06 45);
   --diff-add: color-mix(in srgb, var(--ok) 6%, var(--bg-code));
   --diff-del: color-mix(in srgb, var(--danger) 8%, var(--bg-code));
   --diff-number-width: 3.7ch;
@@ -323,6 +331,12 @@
   --storage-attachments: #eb6834;
   --storage-agent-logs: #1baf7a;
   --storage-reclaimable: #eda100;
+  --context-system: oklch(0.6 0.012 250);
+  --context-tools: oklch(0.58 0.06 295);
+  --context-docs: oklch(0.6 0.05 165);
+  --context-skills: oklch(0.66 0.06 85);
+  --context-mcp: oklch(0.58 0.05 235);
+  --context-chat: oklch(0.62 0.07 45);
   --ultra: #6b52c9;
   --brand: #b7791f;
   --brand-fg: #ffffff;
@@ -460,6 +474,12 @@
   --color-storage-agent-logs: var(--storage-agent-logs);
   --color-storage-reclaimable: var(--storage-reclaimable);
   --color-storage-other: var(--storage-other);
+  --color-context-system: var(--context-system);
+  --color-context-tools: var(--context-tools);
+  --color-context-docs: var(--context-docs);
+  --color-context-skills: var(--context-skills);
+  --color-context-mcp: var(--context-mcp);
+  --color-context-chat: var(--context-chat);
   --color-code: var(--bg-code);
   --color-card: var(--card-bg);
   --color-card-line: var(--card-line);

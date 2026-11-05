@@ -1,0 +1,62 @@
+@layer components {
+  /* Branch lines for a nested list of Rows (the subagent graph, the context report's tree): each nested list steps one
+     half lead + elbow in and hangs off a trunk under its parent's mark. Every child gets a rounded elbow that fades
+     into its mark; a new stem fades in from just under the parent's mark. Users tune --branch-line, --branch-color,
+     --branch-elbow, and per list --stem-reach (how far the stem reaches up into the parent row). */
+  .branch-tree {
+    /* Chromium floors fractional borders to whole device pixels, so 1.5px reads as 1px on a 1x screen */
+    --branch-line: 2px;
+    --branch-color: var(--line-strong);
+    --branch-elbow: calc(var(--lead) / 2 + var(--gap));
+  }
+
+  .branch-tree,
+  .branch-tree ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .branch-tree li { position: relative; }
+
+  /* --pl is the indent a list gives its children; the elbows hang off it */
+  .branch-tree ul {
+    --pl: var(--branch-elbow);
+    --stem-reach: calc(var(--gap) / 2);
+    --stem-fade: min(var(--rail-fade), calc(var(--branch-line) * 2));
+    margin-left: calc(var(--lead) / 2);
+    padding-left: var(--pl);
+  }
+
+  /* One rounded elbow per child, running up to its mark; the trunk only continues past the siblings that follow */
+  .branch-tree ul > li::before,
+  .branch-tree ul > li::after {
+    content: '';
+    position: absolute;
+    left: calc(-1 * var(--pl));
+    border-left: var(--branch-line) solid var(--branch-color);
+    pointer-events: none;
+  }
+  /* The trunk past a child starts where that child's elbow begins to curve, so no stretch of line is drawn twice: a
+     translucent --branch-color (a host border colour, the report's lighter focus branch) would brighten at every junction */
+  .branch-tree ul > li::before { top: calc(var(--row) / 2 - var(--radius-sm)); bottom: 0; }
+  .branch-tree ul > li:last-child::before { display: none; }
+  .branch-tree ul > li::after {
+    top: 0;
+    height: calc(var(--row) / 2);
+    width: calc(var(--pl) + var(--branch-line) / 2);
+    border-bottom: var(--branch-line) solid var(--branch-color);
+    border-bottom-left-radius: var(--radius-sm);
+    /* Fade toward the child mark without weakening the vertical trunk or the rounded corner. */
+    --elbow-fade: 0px;
+    mask-image: linear-gradient(to bottom, transparent, #000 var(--elbow-fade)),
+      linear-gradient(to right, #000 calc(100% - min(var(--rail-fade), 40%)), transparent);
+    mask-composite: intersect;
+  }
+  /* Fade only the new stem, not its rows or later junctions: the first elbow reaches up into the parent row and fades in */
+  .branch-tree ul > li:first-child::after {
+    top: calc(-1 * var(--stem-reach));
+    height: calc(var(--row) / 2 + var(--stem-reach));
+    --elbow-fade: var(--stem-fade);
+  }
+}
