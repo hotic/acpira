@@ -118,6 +118,9 @@ impl AcpSession {
         me.flush_permissions(&mut c);
       }
       me.touch(&mut c);
+      drop(c);
+      // A running sidekick follows the root's access at once
+      me.sync_sidekick_access();
       Ok(())
     })
   }
@@ -133,12 +136,18 @@ impl AcpSession {
         let mut c = me.core.lock();
         me.ultracode_pick(&mut c, &config_id, &value)
       };
-      match pick {
+      // The approval level is part of the root's access, which a running sidekick follows at once
+      let access = config_id == acpira_agent::acp::APPROVAL;
+      let done = match pick {
         UltraPick::Wire => me.set_config_wire(config_id, value).await,
         UltraPick::Done => Ok(()),
         UltraPick::Target(wire) => me.set_config_wire(config_id, wire).await,
         UltraPick::Switch(on, level) => me.set_ultracode(on, level).await,
+      };
+      if access && done.is_ok() {
+        me.sync_sidekick_access();
       }
+      done
     })
   }
 

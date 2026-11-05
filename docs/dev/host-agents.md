@@ -31,6 +31,8 @@ Rounds, threads, duties and delivery: `transcript-pipeline.md` (Cross-harness su
 - Personas live in `~/.acpira/subagents.json` (`relay/roster.rs`), not a host setting, so every window and IDE shares them. Saves apply only the diff against the page's `base` under the lock, so two windows editing different personas keep both.
   - `sanitize_personas` and TS `sanitizePersonas` must agree (`test/fixtures/personas-sanitize.json`). Unknown modes read as consult, which is how an older sidecar reads `inherit`.
   - Duty presets (`DUTY_BRIEFS`) are shared with TS via `test/fixtures/duty-presets.json`.
+- A consult round switches the child to its CLI's read-only mode, and Plan counts as one; but a plan ends in an approval, which would reach the user. So the built-in agent lists a Read-only mode to summoned sessions only (`acpira/summoned` in `_meta`), and a consult child's request to leave its mode (Claude Code's ExitPlanMode) is declined without a card (`gates.rs`). Claude Code's reaction to that decline is untested on a live CLI.
+- The sidekick is the root's other half, not a helper granted access: every round takes the root's access as it is (the call's `mode` is ignored) and copies its `approval` level, and a running round follows a root mode or approval change at once (`sync_sidekick_access`). The listing marks it as such, so the lead is not invited to pick a mode.
 - Group ids never collide with a persona's (`ask_agent`'s `agent` names either) or with `SIDEKICK_ID`.
 - Relay hub (`relay/hub.rs`): each session's `acpira` MCP entry carries its own grant (`ACPIRA_RELAY_TOKEN`) mapped to session, thread and depth, so a request cannot reach another session or reset its depth.
 - `ask_agent` (`host_mcp/tools.rs`, `host_mcp/relay_client.rs`):

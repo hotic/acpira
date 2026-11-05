@@ -28,6 +28,8 @@ pub struct SessionState {
   /// The engine's plugin hooks into this loop declared at the start of the turn (`plugin_hooks::refresh`)
   pub plugin_hooks: Vec<String>,
   pub mode: String,
+  /// Opened for a summoned agent (`SUMMONED_META`): Read-only is listed. Not recorded, since every reopen says it again
+  pub summoned: bool,
   /// The mode the model was last told about (`modes::Mode::overlay`)
   pub announced: String,
   /// `<provider>/<model>`; None until a model exists
@@ -141,8 +143,16 @@ pub struct Layers {
 pub const LAYERS_META: &str = "acpira/promptLayers";
 /// `_meta` key of the same requests: the skill folders of the engine's plugins in effect, taken the same way
 pub const SKILLS_META: &str = "acpira/skillLayers";
+/// `_meta` of `session/new` / `load` / `resume`: the engine opens this session for a summoned agent, so its mode list
+/// carries Read-only (`modes::READ_ONLY`), the mode the engine picks for a consult
+pub const SUMMONED_META: &str = "acpira/summoned";
 
 /// The plugin folders a session request carries
+/// Whether the request opens a summoned agent's session (`SUMMONED_META`)
+fn summoned_of(params: &Value) -> bool {
+  params.get("_meta").and_then(|m| m.get(SUMMONED_META)).and_then(Value::as_bool) == Some(true)
+}
+
 fn layers_of(params: &Value) -> Layers {
   let list = |meta: &str| {
     let key = format!("/_meta/{}", meta.replace('/', "~1"));
@@ -257,9 +267,15 @@ impl Server {
     modes::find(mode).is_some() && self.profile.as_ref().is_none_or(|p| p.offers_mode(mode))
   }
 
-  /// The mode picker: Raw mode only while the settings page offers it, or while the session is in it
+  /// The mode picker: Raw mode only while the settings page offers it, Read-only only to a summoned session; either
+  /// also while the session is in it
   fn mode_options(&self, config: &Config, st: &SessionState) -> Vec<Value> {
-    let shown = |id: &str| self.offers_mode(id) && (id != modes::RAW || config.raw_mode() || st.mode == modes::RAW);
+    let listed = |id: &str| match id {
+      modes::RAW => config.raw_mode() || st.mode == modes::RAW,
+      modes::READ_ONLY => st.summoned || st.mode == modes::READ_ONLY,
+      _ => true,
+    };
+    let shown = |id: &str| self.offers_mode(id) && listed(id);
     modes::MODES.iter().filter(|m| shown(m.id)).map(|m| json!({ "id": m.id, "name": m.name, "description": m.description })).collect()
   }
 
@@ -420,7 +436,7 @@ impl Server {
     let config = self.config.get();
     let catalog = self.catalog.get();
     let id = uuid::Uuid::new_v4().to_string();
-    let mut state = SessionState { mode: modes::AGENT.to_owned(), announced: modes::AGENT.to_owned(), ..Default::default() };
+    let mut state = SessionState { mode: modes::AGENT.to_owned(), announced: modes::AGENT.to_owned(), summoned: summoned_of(params), ..Default::default() };
     state.model = self.default_pick(&config);
     // The settings file's level until the host replays the user's last pick
     state.approval = config.approval();
@@ -503,6 +519,7 @@ impl Server {
     let config = self.config.get();
     let catalog = self.catalog.get();
     let mut st = session.state.lock();
+    st.summoned |= summoned_of(params);
     if reconcile(&config, &catalog, &mut st) {
       session.save_state(&st);
     }

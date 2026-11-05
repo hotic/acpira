@@ -18,6 +18,9 @@ pub const AGENT: &str = "agent";
 pub const PLAN: &str = "plan";
 pub const TEAM: &str = "team";
 pub const RAW: &str = "raw";
+/// The mode a summoned agent runs a consult in (`acp::SUMMONED_META`): Plan's limits without its plan and approval,
+/// since the engine picks a CLI's read-only mode for a consult and a plan there would ask the user to approve it
+pub const READ_ONLY: &str = "read-only";
 
 pub struct Mode {
   pub id: &'static str,
@@ -86,6 +89,15 @@ pub const MODES: &[Mode] = &[
     description: "Talks to the model directly: no system prompt, tools or project instructions",
     note: "",
     rules: &[(EDIT, "*", Decision::Deny), (BASH, "*", Decision::Deny), (MCP, "*", Decision::Deny)],
+  },
+  // Listed only to a summoned session (or one already in it), never in the user's picker. Same tools as Agent, so
+  // the engine's switch into it and back keeps the prompt cache
+  Mode {
+    id: READ_ONLY,
+    name: "Read-only",
+    description: "Investigates and answers; changes nothing",
+    note: "mode/read-only",
+    rules: &[(EDIT, "*", Decision::Deny), (BASH, "*", Decision::Ask), (MCP, "*", Decision::Ask), (MCP, ENGINE_MCP, Decision::Allow)],
   },
 ];
 
@@ -156,6 +168,11 @@ mod tests {
     assert!(get(PLAN).note(&prompts, crate::prompt::BASE, plan).contains("/h/agent/sessions/s/plan.md"));
     assert!(get(RAW).note(&prompts, crate::prompt::BASE, plan).is_empty());
     assert!(get(AGENT).rules(plan, cwd, Approval::Full).is_empty() && get("nope").id == AGENT);
+    // Read-only holds Plan's limits with no file to write
+    let ro = |p: &str, t: &str| evaluate(&[&defaults, &Approval::Ask.rules(), &get(READ_ONLY).rules(plan, cwd, Approval::Ask)], p, t);
+    assert_eq!(ro(EDIT, "/h/agent/sessions/s/plan.md"), Decision::Deny);
+    assert_eq!(ro(BASH, "ls -la"), Decision::Ask);
+    assert!(get(READ_ONLY).note(&prompts, crate::prompt::BASE, plan).starts_with("Read-only mode is on"));
     // Team mode only changes what the model is told, never what it may do
     assert!(get(TEAM).rules(plan, cwd, Approval::Ask).is_empty());
     assert!(TOOLS.contains(&EXIT_PLAN) && TOOLS.contains(&QUESTION));

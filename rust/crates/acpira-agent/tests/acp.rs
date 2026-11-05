@@ -14,6 +14,12 @@ async fn session_new_offers_the_configured_models_and_their_efforts() {
   // Raw mode stays out of the picker until the settings page offers it
   let modes = |v: &serde_json::Value| v["modes"]["availableModes"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap().to_owned()).collect::<Vec<_>>();
   assert!(!modes(&empty).contains(&"raw".to_owned()), "{:?}", modes(&empty));
+  // Read-only is the engine's mode for a summoned consult, listed to such a session only, so a consult never lands in Plan
+  assert!(!modes(&empty).contains(&"read-only".to_owned()), "{:?}", modes(&empty));
+  let summoned = h.conn.request("session/new", json!({ "cwd": h.cwd.path(), "mcpServers": [], "_meta": { "acpira/summoned": true } })).await.unwrap();
+  assert_eq!(modes(&summoned), ["agent", "plan", "team", "read-only"]);
+  let sid = summoned["sessionId"].as_str().unwrap();
+  h.conn.request("session/set_mode", json!({ "sessionId": sid, "modeId": "read-only" })).await.unwrap();
   let ids = |v: &serde_json::Value| v["configOptions"].as_array().unwrap().iter().map(|o| o["id"].as_str().unwrap().to_owned()).collect::<Vec<_>>();
   assert_eq!(ids(&empty), ["approval"], "no source, no model select");
 

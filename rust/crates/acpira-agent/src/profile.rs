@@ -77,7 +77,8 @@ impl Profile {
 
   /// The modes its sessions offer: Agent, and Plan only when the profile lets the model leave it (`exit_plan`)
   pub fn offers_mode(&self, mode: &str) -> bool {
-    mode == crate::modes::AGENT || (mode == crate::modes::PLAN && self.allows(crate::tools::EXIT_PLAN))
+    // Read-only only narrows what the profile already allows, so a summoned specialised agent can consult too
+    mode == crate::modes::AGENT || mode == crate::modes::READ_ONLY || (mode == crate::modes::PLAN && self.allows(crate::tools::EXIT_PLAN))
   }
 
   pub fn variant(&self) -> String {

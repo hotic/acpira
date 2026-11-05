@@ -306,12 +306,13 @@ async fn the_built_in_agents_sidekick_is_listed_first_for_the_root_and_keeps_one
   assert!(ok, "{text}");
   let thread = thread_of(&text);
   s.0.set_config("sidekick_effort".into(), "high".into()).await.unwrap();
-  let (ok, text) = last_text(&run(&s, &roster, 0, ask("sidekick", "relay: now the tests")).await);
+  // The sidekick takes the root's access whatever the call asks: a consult call to it still runs as work here
+  let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { mode: Some("consult".into()), ..ask("sidekick", "relay: now the tests") }).await);
   assert!(ok && text.contains("(round 2,"), "{text}");
   assert_eq!(thread_of(&text), thread);
   let list = nodes(&s);
   expect_match(&list[0], json!({ "role": "Sidekick", "model": "Model 2", "harness": { "agent": "fake", "persona": "sidekick", "thread": thread, "round": 1, "effort": "Low" } }));
-  expect_match(&list[1], json!({ "harness": { "thread": thread, "round": 2, "effort": "High" } }));
+  expect_match(&list[1], json!({ "harness": { "thread": thread, "round": 2, "effort": "High", "mode": "work" } }));
   assert_eq!(list[0]["peer"]["sessionId"], list[1]["peer"]["sessionId"]);
 
   // Another pick: the same conversation goes on with the new model
@@ -716,6 +717,10 @@ async fn a_yolo_root_leaves_a_summoned_childs_approval_to_its_own_mode() {
   let (ok, text) = last_text(&run(&s, &roster, 0, ask("fake-twin", "relay: perm edit")).await);
   assert!(ok, "{text}");
   expect_match(&nodes(&s)[1], json!({ "state": "completed", "harness": { "mode": "bypass" } }));
+  // A consult child asking to leave its mode (Claude Code's ExitPlanMode) is declined without a card
+  let (ok, text) = last_text(&run(&s, &roster, 0, ask("fake-review", "relay: leaveplan")).await);
+  assert!(ok && text.contains("leave=no"), "{text}");
+  assert!(nodes(&s)[2]["permissions"].as_array().is_none_or(Vec::is_empty), "{:?}", nodes(&s)[2]);
 }
 
 #[tokio::test(flavor = "multi_thread")]

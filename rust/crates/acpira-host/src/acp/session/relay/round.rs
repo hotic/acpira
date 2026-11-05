@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use acpira_shared::subagents::RelayMode;
 use acpira_shared::transcript::Draft;
 
-use super::controls::{current_mode, relay_controls, relay_mode, running_controls, stuck_in_bypass};
+use super::controls::{current_mode, relay_approval, relay_controls, relay_mode, running_controls, stuck_in_bypass};
 use super::texts::{change_note, compose_brief, round_edits, short, wake_text};
 use super::{MAX_WAKES, NOTE_FILES, Owed, PACK_NAME, RelayHandlers, RelayProc, Round, Starting, route_key};
 use crate::acp::session::attachments::{prepare_prompt, prompt_caps_of};
@@ -240,6 +240,7 @@ impl AcpSession {
       if applied != wanted {
         relay_controls(&proc, &sid, &mut opened, &r.persona, notes).await;
       }
+      relay_approval(&proc, &sid, &mut opened, r.approval.as_deref(), notes).await;
       let mode = if last == Some(r.mode) || relay_mode(&proc, &sid, &mut opened, start_mode.as_deref(), r.mode, &r.persona.agent, notes).await { Some(r.mode) } else { None };
       // Still in full access (a refused step down, or no mode to step down to): the prompt would run without the
       // approvals this round asked for
@@ -347,6 +348,7 @@ impl AcpSession {
     }
     let start_mode = current_mode(&opened);
     relay_controls(proc, &sid, &mut opened, &r.persona, notes).await;
+    relay_approval(proc, &sid, &mut opened, r.approval.as_deref(), notes).await;
     let mode_ok = relay_mode(proc, &sid, &mut opened, start_mode.as_deref(), r.mode, &r.persona.agent, notes).await;
     // A CLI that starts in full access and cannot leave it gets no prompt for a round that wants approvals
     if stuck_in_bypass(&opened, r.mode) {
@@ -399,6 +401,11 @@ impl AcpSession {
     crate::host_mcp::push_entry(&mut servers, entry);
     let mut req = self.with_remote(json!({ "cwd": self.cwd, "mcpServers": servers })).await;
     self.with_prompt_layers(&mut req, agent);
+    // The built-in agent lists its Read-only mode to a summoned session only, so a consult lands there and not in Plan
+    // mode, whose plan would end in an approval put before the user
+    if agent == crate::acp::agents::registry::SELF_AGENT_ID {
+      req["_meta"][acpira_agent::acp::SUMMONED_META] = json!(true);
+    }
     req
   }
 }

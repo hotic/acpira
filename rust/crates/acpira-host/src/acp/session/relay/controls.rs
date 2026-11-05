@@ -231,6 +231,20 @@ pub(super) async fn relay_controls(proc: &AgentProcess, sid: &str, opened: &mut 
   }
 }
 
+/// A sidekick round's approval level: the caller's, set on the child's own `approval` select (both are the built-in
+/// agent) before every round, so it asks exactly where its caller would
+pub(super) async fn relay_approval(proc: &AgentProcess, sid: &str, opened: &mut Value, level: Option<&str>, notes: &mut Vec<String>) {
+  let Some(level) = level else { return };
+  let id = acpira_agent::acp::APPROVAL;
+  let current = opened.get("configOptions").and_then(Value::as_array).and_then(|l| l.iter().find(|o| o.get("id").and_then(Value::as_str) == Some(id)));
+  let Some(current) = current.map(|o| o.get("currentValue").and_then(Value::as_str).unwrap_or_default()) else { return };
+  if current != level
+    && let Err(e) = set_config(proc, sid, opened, id, level).await
+  {
+    notes.push(format!("approval level {level:?} was refused ({e})"));
+  }
+}
+
 /// `(config id, value)` that turns the session's own Fast switch on or off (the built-in agent's `fast`: a boolean, or
 /// a Standard / Fast select for a client without booleans). None when the model has no fast tier
 fn fast_value(options: Option<&Value>, on: bool) -> Option<(String, String)> {

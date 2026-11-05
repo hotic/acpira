@@ -114,6 +114,8 @@ pub(super) fn ask_tool_def(personas: &[acpira_shared::subagents::SubagentPersona
       // The effort is its own field: a model id may carry an unrelated level (Devin's `gemini-4-argon-medium` runs at `high`)
       let effort = p.effort.as_deref().map(|e| format!(" · {e} effort")).unwrap_or_default();
       let mode = match p.mode {
+        // The sidekick takes the caller's access whatever `mode` says, so it is not marked as one that takes a mode
+        _ if p.id == acpira_shared::subagents::SIDEKICK_ID => " · your own access",
         RelayMode::Consult => " · read-only",
         RelayMode::Work => "",
         RelayMode::Bypass => " · edits without approval",
