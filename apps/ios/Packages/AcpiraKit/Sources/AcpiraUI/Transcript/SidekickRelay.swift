@@ -272,11 +272,26 @@ private struct Head: View {
         Text(web: t("subagents.round", ["n": round])).cssBaseline().textStyle(WebType.text3)
           .foregroundStyle(Palette.fg3).lineLimit(1).fixedSize().layoutPriority(2)
       }
-      Text(web: title).foregroundStyle(Palette.fg3).lineLimit(1).truncationMode(.tail).cssBaseline()
+      SqueezedTitle(title: title)
       if level, let effort = node.harness?.effort {
         EffortTag(label: ComposerControls.effortLabel(SessionOption(id: effort, name: effort)))
       }
     }
+  }
+}
+
+/// The task in the handoff row, the first to give up its width (subagents.css `flex-shrink: 1000`). Squeezed below an
+/// ellipsis and a character, a text under the line renderer is laid out untruncated and drew its whole line over the
+/// status and clock; it leaves instead, as the web label's overflow-hidden hides it
+private struct SqueezedTitle: View {
+  let title: String
+  @State private var room = true
+
+  var body: some View {
+    Text(web: title).foregroundStyle(Palette.fg3).lineLimit(1).truncationMode(.tail).cssBaseline()
+      .clipped()
+      .onGeometryChange(for: Bool.self) { $0.size.width >= WebType.text2.size * 2 } action: { room = $0 }
+      .opacity(room ? 1 : 0)
   }
 }
 

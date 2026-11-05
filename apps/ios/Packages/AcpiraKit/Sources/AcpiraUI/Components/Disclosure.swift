@@ -124,6 +124,8 @@ public struct Disclosure<Label: View, Trailing: View, Content: View>: View {
   var icon: LucideIcon?
   var indent: Bool
   var rail: RailMode
+  /// Row lists stop at their last heading by default; indented edit cards extend to the body bottom.
+  var endAtLastRow: Bool
   var root: Bool
   var bodyTop: CGFloat
   let label: () -> Label
@@ -132,7 +134,7 @@ public struct Disclosure<Label: View, Trailing: View, Content: View>: View {
 
   /// `rail` defaults to `.body` for an indented body and `.off` otherwise (`rail = indent ? 'body' : false`)
   public init(open: Binding<Bool>? = nil, defaultOpen: Bool = false, tone: RowTone = .action, dense: Bool = false,
-              icon: LucideIcon? = nil, indent: Bool = true, rail: RailMode? = nil, root: Bool = true,
+              icon: LucideIcon? = nil, indent: Bool = true, rail: RailMode? = nil, endAtLastRow: Bool? = nil, root: Bool = true,
               bodyTop: CGFloat = Metrics.s1,
               @ViewBuilder label: @escaping () -> Label, @ViewBuilder trailing: @escaping () -> Trailing,
               @ViewBuilder content: @escaping () -> Content) {
@@ -140,6 +142,7 @@ public struct Disclosure<Label: View, Trailing: View, Content: View>: View {
     _inner = State(initialValue: defaultOpen)
     self.tone = tone; self.dense = dense; self.icon = icon; self.indent = indent
     self.rail = rail ?? (indent ? .body : .off)
+    self.endAtLastRow = endAtLastRow ?? (self.rail == .rows)
     self.root = root; self.bodyTop = bodyTop
     self.label = label; self.trailing = trailing; self.content = content
   }
@@ -189,7 +192,7 @@ public struct Disclosure<Label: View, Trailing: View, Content: View>: View {
         .reveal(isOpen)
     }
     if root {
-      column.connectedRail(enabled: rail != .off && isOpen && lead != nil, endAtLastRow: rail == .rows, action: tone == .action)
+      column.connectedRail(enabled: rail != .off && isOpen && lead != nil, endAtLastRow: endAtLastRow, action: tone == .action)
     } else {
       column
     }
@@ -198,11 +201,11 @@ public struct Disclosure<Label: View, Trailing: View, Content: View>: View {
 
 extension Disclosure where Trailing == EmptyView {
   public init(open: Binding<Bool>? = nil, defaultOpen: Bool = false, tone: RowTone = .action, dense: Bool = false,
-              icon: LucideIcon? = nil, indent: Bool = true, rail: RailMode? = nil, root: Bool = true,
+              icon: LucideIcon? = nil, indent: Bool = true, rail: RailMode? = nil, endAtLastRow: Bool? = nil, root: Bool = true,
               bodyTop: CGFloat = Metrics.s1,
               @ViewBuilder label: @escaping () -> Label, @ViewBuilder content: @escaping () -> Content) {
     self.init(open: open, defaultOpen: defaultOpen, tone: tone, dense: dense, icon: icon, indent: indent, rail: rail,
-              root: root, bodyTop: bodyTop, label: label, trailing: { EmptyView() }, content: content)
+              endAtLastRow: endAtLastRow, root: root, bodyTop: bodyTop, label: label, trailing: { EmptyView() }, content: content)
   }
 }
 
