@@ -234,7 +234,7 @@ struct Composer: View {
     let room = chipTop - Metrics.s2
     return VStack(alignment: .leading, spacing: Metrics.s1_5) {
       suggestions
-      GlassEffectContainer(spacing: Metrics.gooMerge) {
+      GlassGroup(spacing: Metrics.gooMerge) {
         ZStack(alignment: .bottomLeading) {
           VStack(alignment: .leading, spacing: 0) {
             // Staged attachments ride inside the card over the text, as in the desktop composer; anything staged
@@ -283,7 +283,7 @@ struct Composer: View {
                 .animation(recedeCurve) { $0.opacity(receded ? 1 : 0) }
             }
           }
-          .glassEffect(plate || bare ? .identity : GlassStyle.bar, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+          .glassSurface(plate || bare ? .identity : GlassStyle.bar, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
           .contentShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
           .onTapGesture(perform: focusField)
           // The chips' row at the start; the room after them takes no taps, so they reach the field under it

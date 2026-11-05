@@ -139,7 +139,7 @@ struct TerminalKeys: View {
     }
     .buttonStyle(.plain)
     .buttonRepeatBehavior(repeats ? .enabled : .disabled)
-    .glassEffect(GlassStyle.control.interactive(), in: Capsule())
+    .glassSurface(GlassStyle.control.interactive(), in: Capsule())
   }
 }
 #endif

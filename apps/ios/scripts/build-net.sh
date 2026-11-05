@@ -33,8 +33,10 @@ fi
 
 # xcode-select may still point at the Command Line Tools, which ship no iOS SDK
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
-# The package's platforms (Package.swift): the C parts (ring) and rustc's own objects target the same minimum
-export IPHONEOS_DEPLOYMENT_TARGET=26.0 MACOSX_DEPLOYMENT_TARGET=26.0
+# The package's platforms (Package.swift): the C parts (ring) and rustc's own objects target the same minimum.
+# Trap: blake3's C objects are not rebuilt when this changes; after a change run `cargo clean -p blake3 --target <t>
+# --profile mobile` in build/net/ws with CARGO_TARGET_DIR=../target, or the linker warns of objects newer than the app
+export IPHONEOS_DEPLOYMENT_TARGET=18.0 MACOSX_DEPLOYMENT_TARGET=26.0
 
 installed="$(rustup target list --installed)"
 for t in "${targets[@]}"; do

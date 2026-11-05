@@ -200,6 +200,6 @@ struct PairGlassStyle: ButtonStyle {
       .padding(.horizontal, Metrics.pad)
       .frame(minHeight: Metrics.ctl)
       .contentShape(Capsule())
-      .glassEffect(GlassStyle.control.interactive(), in: Capsule())
+      .glassSurface(GlassStyle.control.interactive(), in: Capsule())
   }
 }

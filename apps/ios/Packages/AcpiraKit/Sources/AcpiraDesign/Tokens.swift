@@ -469,11 +469,11 @@ public enum Metrics {
 /// as a flat grey disc. Glass pieces that melt into each other must share one variant: a `.clear` chip on a `.regular`
 /// bar no longer merged and drew pinched necks between them. The toast carries text over content and keeps `.regular`
 public enum GlassStyle {
-  public static let control: Glass = .clear
+  public static let control: GlassLook = .clear
   /// The composer's bar, card, chips and beans: the system's `.regular`, the glass of the list's bottom search field,
   /// so the bar the list hands over to and from changes only its shape, never its colour. Frosted enough that the
   /// transcript scrolling behind needs no plate under it. One variant for the whole container, as above
-  public static let bar: Glass = .regular
+  public static let bar: GlassLook = .regular
 }
 
 // MARK: - Motion

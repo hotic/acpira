@@ -103,7 +103,7 @@ struct BarHandoffLayer: View {
       let out = BarHandoff.step(0.25, 0.75, p)
       let into = out
       ZStack(alignment: .topLeading) {
-        GlassEffectContainer(spacing: Metrics.gooMerge) {
+        GlassGroup(spacing: Metrics.gooMerge) {
           ZStack(alignment: .topLeading) {
             piece(Capsule(), bar) {
               searchFace.opacity(into).blur(radius: Metrics.s1 * (1 - into))
@@ -134,8 +134,8 @@ struct BarHandoffLayer: View {
       .overlay(alignment: .topLeading) { face() }
       .frame(width: frame.width, height: frame.height)
       .clipShape(shape)
-      .glassEffect(GlassStyle.bar, in: shape)
-      .glassEffectTransition(.identity)
+      .glassSurface(GlassStyle.bar, in: shape)
+      .glassMorph(.identity)
       .position(x: frame.midX, y: frame.midY)
   }
 

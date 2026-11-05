@@ -275,7 +275,7 @@ struct CardCornerButton: View {
         .foregroundStyle(Palette.fg1)
         .frame(width: Metrics.icon, height: Metrics.icon)
     }
-    .buttonStyle(.glass)
+    .glassButtonStyle(circle: true)
     .buttonBorderShape(.circle)
     .accessibilityLabel(Text(web: label))
   }

@@ -271,7 +271,7 @@ struct NewSessionHero: View {
     .foregroundStyle(Palette.fg2)
     .padding(.horizontal, Metrics.s3)
     .padding(.vertical, Metrics.s1_5)
-    .glassEffect(GlassStyle.control.interactive(), in: Capsule())
+    .glassSurface(GlassStyle.control.interactive(), in: Capsule())
   }
 
   private var name: some View {
@@ -312,7 +312,7 @@ struct AgentRing: View {
     let n = others.count
     let out: CGFloat = open ? 1 : 0
     ZStack {
-      GlassEffectContainer(spacing: Metrics.s6) {
+      GlassGroup(spacing: Metrics.s6) {
         ZStack {
           ForEach(Array(others.enumerated()), id: \.element.id) { i, a in
             let spot = spot(i, of: n)
@@ -388,7 +388,7 @@ struct AgentRing: View {
         .contentShape(Circle())
     }
     .buttonStyle(.plain)
-    .glassEffect(GlassStyle.control.interactive(), in: Circle())
+    .glassSurface(GlassStyle.control.interactive(), in: Circle())
     .accessibilityLabel(agent.name)
   }
 
@@ -475,9 +475,9 @@ private struct RingBubble: View, Animatable {
           .frame(width: side, height: side)
       }
       .buttonStyle(.plain)
-      .glassEffect(GlassStyle.control.interactive(), in: Circle())
+      .glassSurface(GlassStyle.control.interactive(), in: Circle())
       // Comes and goes inside the drop, where the system's own morph would only lag the spring
-      .glassEffectTransition(.identity)
+      .glassMorph(.identity)
       .disabled(missing)
       .allowsHitTesting(live && t > RingGeometry.arrived)
       .accessibilityLabel(agent.name)

@@ -12,7 +12,7 @@ struct TopFade: ViewModifier {
 
   func body(content: Content) -> some View {
     content
-      .scrollEdgeEffectHidden(true, for: .top)
+      .scrollEdgeEffectHiddenIfAvailable(for: .top)
       .overlay(alignment: .top) {
         // The page's content starts under the bar (or the status bar); the band reaches from the screen's top edge
         // down to there and on by the tail. A reader ignoring the safe area reports no insets, so the distance is

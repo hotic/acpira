@@ -4,7 +4,7 @@
 
 ## Layout
 
-- `Acpira.xcodeproj`: app target `Acpira` (iPhone and iPad, iOS 26+, Swift 6, main-actor default isolation; one window: the scene manifest comes from `Acpira-Info.plist` because every window's root view would claim the shared push and pairing state) and the hosted `AcpiraTests`. Synchronized groups: a new file joins its target without editing `project.pbxproj`. No signing team is set.
+- `Acpira.xcodeproj`: app target `Acpira` (iPhone and iPad, iOS 18+: an API newer than 18 goes through `AcpiraDesign/Compat26.swift`, Swift 6, main-actor default isolation; one window: the scene manifest comes from `Acpira-Info.plist` because every window's root view would claim the shared push and pairing state) and the hosted `AcpiraTests`. Synchronized groups: a new file joins its target without editing `project.pbxproj`. No signing team is set.
 - `Packages/AcpiraKit` holds nearly all code:
   - `AcpiraModels`: Codable mirrors of the wire. Decoding is tolerant (unknown kind → placeholder): the Mac's engine ships faster than the App Store.
   - `AcpiraSync`: transport, envelope client, session patches (`sessionPatch.ts` / `sessionViews.ts` are the reference; views are values, so `reuse.ts` has no counterpart); no SwiftUI or UIKit. `SyncTests` replays `test/fixtures/engine-patches.json`.

@@ -119,7 +119,7 @@ struct InlineText: View {
 
   private func text(_ paragraph: Text, growth: (top: CGFloat, bottom: CGFloat), now: Double) -> some View {
     paragraph
-      .lineHeight(.exact(points: style.lineHeight))
+      .lineBox(style)
       .foregroundStyle(ink)
       .textRenderer(InlineCodeRenderer(fill: Palette.hover, radius: Metrics.rSm, outsetY: (WebType.mono.size * 0.1).rounded(.up),
                                        lineHeight: style.lineHeight, depth: style.baselineDepth, growth: growth, extra: extra,

@@ -356,11 +356,11 @@ struct NativeAccountSheet: View {
       .scrollContentBackground(.hidden)
       .navigationTitle(t("common.account"))
       // The agent whose channel is open names the sheet under its title, not a caption over the rows
-      .navigationSubtitle(agent.name)
+      .navigationSubtitleIfAvailable(agent.name)
       .navigationBarTitleDisplayModeInline()
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
-          Button(role: .close) { dismiss() }
+          CloseButton { dismiss() }
         }
         if agent.localAccount == nil {
           ToolbarItem(placement: .primaryAction) {
@@ -614,3 +614,18 @@ enum OrientationProbe {
   }
 }
 #endif
+
+/// A sheet's close button: the system's close role (an × in glass) on iOS 26; before it, the same × as a plain bar
+/// button, since `ButtonRole.close` is new in 26
+struct CloseButton: View {
+  var action: () -> Void
+
+  var body: some View {
+    if #available(iOS 26, macOS 26, *) {
+      Button(role: .close, action: action)
+    } else {
+      Button(action: action) { Image(systemName: "xmark") }
+        .accessibilityLabel(Text(web: t("common.close")))
+    }
+  }
+}

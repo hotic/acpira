@@ -71,8 +71,11 @@ struct TranscriptCollection: UIViewRepresentable {
     // The insets come from SwiftUI's safe area (the bars and docks), so the system adds nothing of its own
     view.contentInsetAdjustmentBehavior = .never
     // The page's own fade covers the top (`TopFade`); the composer's glass covers the bottom
-    view.topEdgeEffect.isHidden = true
-    view.bottomEdgeEffect.isHidden = true
+    // (iOS 26 edge effects; iOS 18 draws none)
+    if #available(iOS 26, *) {
+      view.topEdgeEffect.isHidden = true
+      view.bottomEdgeEffect.isHidden = true
+    }
     context.coordinator.connect(view)
     return view
   }

@@ -42,7 +42,7 @@ struct SuggestionList<Item, Label: View>: View {
     .scrollBounceBehavior(.basedOnSize)
     .frame(height: min(rows, Metrics.gooPanelRows) * Metrics.gooRow + Metrics.s1_5 * 2)
     // Text over the transcript: the regular lens, as the toast's (the clear one let the thread read through the rows)
-    .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Metrics.rGooPanel, style: .continuous))
+    .glassSurface(.regular, in: RoundedRectangle(cornerRadius: Metrics.rGooPanel, style: .continuous))
     .transition(.opacity.combined(with: .scale(scale: Metrics.gooSeed, anchor: .bottomLeading)))
   }
 }

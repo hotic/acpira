@@ -50,7 +50,7 @@ struct SubagentInspector: View {
       .topFade()
       .background(Palette.bg0)
       .navigationTitle(subagentTitle(node))
-      .navigationSubtitle(statusLabel(node))
+      .navigationSubtitleIfAvailable(statusLabel(node))
       .navigationBarTitleDisplayModeInline()
       .backWithoutTitle()
       .toolbar {
