@@ -189,6 +189,16 @@ describe('built-in agent model sources', () => {
     expect(markup).not.toContain(t('settings.models.desc', { agent: 'Acpira' }));
   });
 
+  it('does not warn about an absent key for a custom loopback source', () => {
+    const local: ProviderView = { ...sources[0]!, id: 'colab', name: 'colab', preset: 'custom', baseUrl: 'http://127.0.0.1:30000/v1', hasKey: false };
+    const markup = renderToStaticMarkup(page({
+      agent: builtin, accounts: [], settings: DEFAULT_SETTINGS, env: { home: '/preview', cwd: '/preview/project' }, on: handlers,
+      providers: { view: { ...state.view, providers: [local] } }, controls: [],
+    }, 'sources'));
+    expect(markup).toContain(`aria-label="${t('settings.providers.noKey')}"`);
+    expect(markup).not.toContain('bg-warn');
+  });
+
   it('fills the model editor with the model\'s values', () => {
     // The editor is a dialog, which portals and so renders nothing on the server: render its contents directly
     const markup = renderToStaticMarkup(createElement(ModelEditor, {

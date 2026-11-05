@@ -71,7 +71,7 @@ export interface SettingsHandlers {
   sharedAction?: (action: SharedAction) => void;
   // The built-in agent's model sources: read them, apply an edit (the reply is the fresh view)
   providers?: () => void;
-  providerAction?: (action: ProviderAction) => void;
+  providerAction?: (action: ProviderAction, optimistic?: boolean) => void;
   // A network question about a source; the answer lands in ProvidersState.probes under this id
   providerProbe?: (id: string, probe: ProviderProbe) => void;
   // Subagents page: the list it showed and the list it wants; the host applies only the difference to the shared file,

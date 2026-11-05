@@ -11,7 +11,7 @@ use serde_json::Value;
 use acpira_shared::agent_order::AgentPrefs;
 use acpira_shared::appearance::{Appearance, appearance_from_settings};
 use acpira_shared::protocol::WebviewHost;
-use acpira_shared::settings::{SETTING_KEYS, id_list, is_hidden_map, ssh_local_agents};
+use acpira_shared::settings::{SETTING_KEYS, id_list, sanitize_setting, ssh_local_agents};
 use acpira_shared::sidecar::InitialView;
 
 use crate::accounts::account_manager::AccountManager;
@@ -240,7 +240,7 @@ impl HostRuntime {
         plan_auto_approve: Arc::new(move || id_list(&r6("planAutoApprove").unwrap_or(Value::Null))),
         ssh_local_agents: Arc::new(move || ssh_local_agents(&r7("sshLocalAgents").unwrap_or(Value::Null))),
         hidden: Arc::new(move || {
-          r4("hiddenOptions").filter(is_hidden_map).and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default()
+          serde_json::from_value(sanitize_setting("hiddenOptions", &r4("hiddenOptions").unwrap_or(Value::Null))).unwrap_or_default()
         }),
         scope: Arc::new(move || session_scope(scope_p.projects(), r5("sessionScope"))),
         lease_root: root.clone(),

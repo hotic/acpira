@@ -40,6 +40,7 @@ import type { SettingsPage } from './settings/Nav';
 import type { SharedState } from './settings/SharedPage';
 import type { StorageState } from './settings/StoragePage';
 import type { ProvidersState } from './settings/ProvidersSection';
+import { ProviderWrites } from './settings/providerWrites';
 import { SampleShell } from './welcome/SampleShell';
 import { Welcome, type WelcomeMode } from './welcome/Welcome';
 
@@ -206,6 +207,7 @@ export function App() {
   const [inventories, setInventories] = useState<Partial<Record<AgentId, AgentInventory>>>({});
   const [shared, setShared] = useState<SharedState>();
   const [providers, setProviders] = useState<ProvidersState>();
+  const [providerWrites] = useState(() => new ProviderWrites(action => post({ type: 'providerAction', action }), () => post({ type: 'providers' })));
   const [storage, setStorage] = useState<StorageState>();
   const [controls, setControls] = useState<Partial<Record<AgentId, ConfigControl[]>>>({});
   // Each agent's remembered per-model parameters, answered with its controls (the persona page's effort list per model)
@@ -370,7 +372,13 @@ export function App() {
         case 'shared': setShared({ view: m.view, error: m.error }); break;
         // A reply without the review lists (a plain refresh) keeps the ones already shown: a review always re-asks on open
         case 'storage': setStorage(s => ({ outcome: m.outcome, error: m.error, view: { ...m.view, sessions: m.view.sessions ?? s?.view.sessions, residue: m.view.residue ?? s?.view.residue } })); break;
-        case 'providers': setProviders(s => ({ view: m.view, error: m.error, probes: s?.probes })); break;
+        case 'providers': {
+          const settled = providerWrites.receive();
+          const drafts = providerWrites.drafts;
+          const pending = providerWrites.pending;
+          setProviders(s => ({ view: m.view, error: m.error, probes: s?.probes, drafts, pending, settled }));
+          break;
+        }
         case 'providerProbed': setProviders(s => s && ({ ...s, probes: { ...s.probes, [m.id]: m.outcome } })); break;
         case 'controls':
           controlsAsked.current.delete(m.agent);
@@ -596,8 +604,13 @@ export function App() {
     sharedAction: action => post({ type: 'sharedAction', action }),
     storage: detail => post({ type: 'storage', detail }),
     storageAction: (action, detail) => post({ type: 'storageAction', action, detail }),
-    providers: () => post({ type: 'providers' }),
-    providerAction: action => post({ type: 'providerAction', action }),
+    // Reopening settings while a write is pending uses the cached draft, not a read that could overtake its reply.
+    providers: () => providerWrites.refresh(),
+    providerAction: (action, optimistic) => {
+      providerWrites.push(action, optimistic);
+      const drafts = providerWrites.drafts;
+      setProviders(s => s && ({ ...s, drafts, pending: providerWrites.pending }));
+    },
     providerProbe: (id, probe) => post({ type: 'providerProbe', id, probe }),
   }), []);
 

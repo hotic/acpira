@@ -267,11 +267,20 @@ pub fn sanitize_setting(key: &str, value: &Value) -> Value {
     "sessionScope" => Value::from(one_of(value, &["workspace", "all"], "workspace")),
     "sessionListPosition" => Value::from(one_of(value, &["hidden", "left", "right"], "hidden")),
     "hiddenOptions" => {
-      if is_hidden_map(value) {
-        value.clone()
-      } else {
-        Value::Object(Default::default())
+      if !is_hidden_map(value) {
+        return Value::Object(Default::default());
       }
+      // Built-in model visibility belongs to providers.json, not the legacy menu filter.
+      let mut hidden = value.clone();
+      if let Some(agents) = hidden.as_object_mut()
+        && let Some(controls) = agents.get_mut("acpira").and_then(Value::as_object_mut)
+      {
+        controls.remove("model");
+        if controls.is_empty() {
+          agents.remove("acpira");
+        }
+      }
+      hidden
     }
     "accountSwitch" => Value::from(one_of(value, &ACCOUNT_SWITCH_STRATEGIES, DEFAULT_ACCOUNT_SWITCH)),
     "openFilesWith" => Value::from(one_of(value, &FILE_OPENERS, DEFAULT_FILE_OPENER)),
@@ -292,6 +301,16 @@ pub fn in_workspace(cwd: &str, workspace: &str) -> bool {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn legacy_model_hiding_does_not_override_builtin_provider_switches() {
+    use serde_json::json;
+    let legacy = json!({ "acpira": { "model": ["[\"1\",\"Qwen3.8-Flash-Next\"]"], "effort": ["Low"] }, "codex": { "model": ["GPT"] } });
+    assert_eq!(sanitize_setting("hiddenOptions", &legacy), json!({ "acpira": { "effort": ["Low"] }, "codex": { "model": ["GPT"] } }));
+    assert!(legacy["acpira"]["model"].is_array());
+    assert_eq!(sanitize_setting("hiddenOptions", &json!({ "acpira": { "model": ["Qwen"] } })), json!({}));
+    assert_eq!(sanitize_setting("hiddenOptions", &json!({ "codex": { "model": [1] } })), json!({}));
+  }
 
   #[test]
   fn the_agent_cpu_cap_is_a_whole_percentage_between_10_and_100_and_80_otherwise() {
