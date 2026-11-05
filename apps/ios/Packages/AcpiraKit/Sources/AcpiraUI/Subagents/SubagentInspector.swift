@@ -78,7 +78,7 @@ struct SubagentInspector: View {
         permission: { model.choosePermission(session, block: $0, option: $1) },
         answer: { model.answer(session, question: $0, answers: $1, skipped: $2) },
         toast: { model.show($0, icon: $1) }))
-      .modifier(MediaLayer(session: root, loader: model.media))
+      .modifier(MediaLayer(session: root.id, loader: model.media))
   }
 
   /// The child as a session the transcript views can draw: the task as its opening prompt (unless the turns carry it), then its turns

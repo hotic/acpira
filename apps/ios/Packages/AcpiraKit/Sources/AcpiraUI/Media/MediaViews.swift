@@ -13,11 +13,16 @@ import UIKit
 // its pixels land (only the card's width follows the picture); a tap opens it in the Lightbox (Lightbox.swift).
 
 /// What the image views of one chat read: the session their blobs belong to, the loader, and the Lightbox. The default
-/// is no session (only inline pixels show) and no Lightbox: the new-session composer's staged photos
-struct MediaScope {
+/// is no session (only inline pixels show) and no Lightbox: the new-session composer's staged photos. Equatable by the
+/// session's id and the objects' identity, so the scope a chat builds again on each push reads as unchanged
+struct MediaScope: Equatable {
   var session: String?
   var loader: MediaLoader = .demo
   var lightbox: LightboxPresenter?
+
+  static func == (a: Self, b: Self) -> Bool {
+    a.session == b.session && a.loader === b.loader && a.lightbox === b.lightbox
+  }
 }
 
 extension EnvironmentValues {
@@ -28,11 +33,13 @@ extension EnvironmentValues {
   @Entry var markdownImages: [ImageRef]? = nil
 }
 
-/// The image the Lightbox shows, and its name when it has a real one (an attachment's file name, the agent's file)
+/// The image the Lightbox shows, and its name when it has a real one (an attachment's file name, the agent's file).
+/// `source` places it among the session's images, which the Lightbox then swipes through
 struct LightboxItem: Identifiable {
   let id = UUID()
   var image: DecodedImage
   var name: String?
+  var source: MediaSource?
 }
 
 /// Opens and closes a chat's Lightbox. A class in the environment rather than a closure, so the image views do not
@@ -219,7 +226,7 @@ struct ImageSlot: View {
   var body: some View {
     let label = name ?? t("common.image")
     MediaImage(source: source) { image in
-      Button { media.lightbox?.open(LightboxItem(image: image, name: name)) } label: {
+      Button { media.lightbox?.open(LightboxItem(image: image, name: name, source: source)) } label: {
         ImageCard(width: Metrics.agentImage * image.aspect) {
           Picture(image: image).aspectRatio(contentMode: .fit)
         } fill: {
@@ -330,8 +337,9 @@ struct AttachmentThumbnail: View {
     let glyph = shape.fill(Palette.chip)
       .frame(width: side, height: side)
       .overlay { Icon(.image, size: Metrics.icon).foregroundStyle(Palette.fg3) }
-    MediaImage(source: .stored(blob, session: media.session)) { image in
-      Button { media.lightbox?.open(LightboxItem(image: image, name: name)) } label: {
+    let source = MediaSource.stored(blob, session: media.session)
+    MediaImage(source: source) { image in
+      Button { media.lightbox?.open(LightboxItem(image: image, name: name, source: source)) } label: {
         Picture(image: image)
           .scaledToFill()
           .frame(width: side, height: side)
@@ -431,27 +439,37 @@ struct MarkdownImage: View {
 /// The chat's media: the scope its image views read and the Lightbox they open over the whole screen.
 /// `-popup lightbox` opens the session's first image on launch (screenshots)
 struct MediaLayer: ViewModifier {
-  let session: SessionView
+  /// The session's id rather than its view, so a streamed chunk does not rebuild the layer; `-popup lightbox` reads the
+  /// view from the app model when it opens
+  let session: String
   let loader: MediaLoader
   @State private var lightbox = LightboxPresenter()
   @Environment(\.initialPopup) private var initialPopup
+  @Environment(AppModel.self) private var model: AppModel?
 
   func body(content: Content) -> some View {
     content
-      .environment(\.media, MediaScope(session: session.id, loader: loader, lightbox: lightbox))
+      .environment(\.media, MediaScope(session: session, loader: loader, lightbox: lightbox))
       #if os(iOS)
-      .fullScreenCover(item: Bindable(lightbox).item) { item in Lightbox(item: item) { lightbox.close() } }
+      .fullScreenCover(item: Bindable(lightbox).item) { item in lightboxView(item) }
       #else
-      .sheet(item: Bindable(lightbox).item) { item in Lightbox(item: item) { lightbox.close() } }
+      .sheet(item: Bindable(lightbox).item) { item in lightboxView(item) }
       #endif
       .task {
         guard initialPopup == "lightbox", !LightboxProbe.claimed else { return }
         LightboxProbe.claimed = true
+        guard let session = model?.views[session] else { return }
         await loader.preload(session)
-        if let first = MediaLoader.sources(in: session).lazy.compactMap({ loader.peek($0) }).first {
-          lightbox.open(LightboxItem(image: first))
+        if let first = MediaLoader.sources(in: session).lazy.compactMap({ s in loader.peek(s).map { (s, $0) } }).first {
+          lightbox.open(LightboxItem(image: first.1, source: first.0))
         }
       }
+  }
+
+  /// The session's view is read once the Lightbox opens, not here: reading it in the cover's builder would rebuild the
+  /// Lightbox on every streamed chunk
+  private func lightboxView(_ item: LightboxItem) -> Lightbox {
+    Lightbox(item: item, loader: loader, session: { [model, session] in model?.views[session] }) { lightbox.close() }
   }
 }
 
@@ -466,15 +484,22 @@ struct LightboxHost: ViewModifier {
   var onOpen: () -> Void = {}
   @State private var lightbox = LightboxPresenter()
   @Environment(\.media) private var media
+  @Environment(AppModel.self) private var model: AppModel?
 
   func body(content: Content) -> some View {
     content
       .environment(\.media, MediaScope(session: media.session, loader: media.loader, lightbox: lightbox))
       .onChange(of: lightbox.item?.id) { _, item in if item != nil { onOpen() } }
       #if os(iOS)
-      .fullScreenCover(item: Bindable(lightbox).item) { item in Lightbox(item: item) { lightbox.close() } }
+      .fullScreenCover(item: Bindable(lightbox).item) { item in lightboxView(item) }
       #else
-      .sheet(item: Bindable(lightbox).item) { item in Lightbox(item: item) { lightbox.close() } }
+      .sheet(item: Bindable(lightbox).item) { item in lightboxView(item) }
       #endif
+  }
+
+  private func lightboxView(_ item: LightboxItem) -> Lightbox {
+    Lightbox(item: item, loader: media.loader, session: { [model, session = media.session] in session.flatMap { model?.views[$0] } }) {
+      lightbox.close()
+    }
   }
 }

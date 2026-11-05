@@ -123,7 +123,7 @@ struct ChatScreen: View {
     .environment(\.sessionActions, actionsMemo(memoKey) { sessionActions })
     // A subagent row pushes that child's inspector
     .environment(\.inspectSubagent, SubagentInspect(session: id) { model.path.append(.subagent(session: id, id: $0)) })
-    .modifier(MediaLayer(session: session, loader: model.media))
+    .modifier(MediaLayer(session: id, loader: model.media))
     .environment(\.mentionPersonas, model.personas)
     .environment(\.compactAt, model.compactAt)
     .environment(\.hiddenModels, model.settings?.hiddenOptions[session.agent] ?? [:])

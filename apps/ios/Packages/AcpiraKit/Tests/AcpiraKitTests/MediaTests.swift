@@ -189,6 +189,24 @@ struct MediaSourceTests {
     // Every stored blob ships with the fixtures
     for case .blob(_, let name) in sources { #expect(Fixtures.blob(name) != nil, "\(name)") }
   }
+
+  /// The Lightbox swipes through the session's images from the tapped one, which keeps its own pixels and name; one
+  /// the session does not show stands alone
+  @Test func theLightboxGalleryOpensAtTheTappedImage() throws {
+    let view = try #require(Fixtures.session("media"))
+    let entries = MediaLoader.entries(in: view)
+    #expect(entries.map(\.source) == MediaLoader.sources(in: view))
+    let image = try #require(MediaLoader.decodeNow(Data(base64Encoded: dotPNG)!))
+    let tapped = LightboxItem(image: image, name: "row.png", source: entries[2].source)
+    let gallery = tapped.gallery(in: view)
+    #expect(gallery.start == 2)
+    #expect(gallery.pages.map(\.source) == entries.map(\.source))
+    #expect(gallery.pages[2].name == "row.png" && gallery.pages[2].image == image)
+    #expect(gallery.pages[1].image == nil && gallery.pages[1].name == entries[1].name)
+    let stray = LightboxItem(image: image, source: .inline("elsewhere"))
+    #expect(stray.gallery(in: view).pages.count == 1)
+    #expect(tapped.gallery(in: nil).pages.count == 1)
+  }
 }
 
 struct MarkdownImageTests {
@@ -300,6 +318,12 @@ struct LightboxGeometryTests {
     #expect(LightboxGeometry.fit(CGSize(width: 10, height: 20), in: CGSize(width: 400, height: 800)) == CGSize(width: 400, height: 800))
     #expect(LightboxGeometry.centering(CGSize(width: 400, height: 200), in: CGSize(width: 400, height: 800)) == CGSize(width: 0, height: 300))
     #expect(LightboxGeometry.centering(CGSize(width: 900, height: 900), in: CGSize(width: 400, height: 800)) == .zero)
+    // Never a rounding error past the screen, which would let the unzoomed picture scroll sideways
+    let screen = CGSize(width: 402, height: 874)
+    for width in stride(from: 1000.0, to: 4000.0, by: 7.0) {
+      let fit = LightboxGeometry.fit(CGSize(width: width, height: width / 2), in: screen)
+      #expect(fit.width <= screen.width && fit.height <= screen.height)
+    }
   }
 
   @Test func zooming() {

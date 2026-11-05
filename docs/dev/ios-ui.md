@@ -80,10 +80,13 @@ SwiftUI, Liquid Glass, WebKit and text-layout traps of `apps/ios/Packages/Acpira
 - A widget's theme switches by script (`WidgetDoc.theme`): a reload on a scheme change left the page blank.
 - `VideoCompressor` uses reader / writer because export presets fix the bitrate; send waits for the copy (it reads the bytes synchronously).
 - The Lightbox's system navigation bar appears only after its black backdrop is opaque and hides without animation, else the chat's glass controls show through.
+- A plain view's `gestureRecognizerShouldBegin` override is not asked about its own recognizers when a subview (a scroll view) is the touched view; the Lightbox's pull checks its direction as the recognizer's delegate, and the page's zooming scroll view refuses sideways drags at its edges so the pager gets them.
+- The navigation bar takes the Lightbox pager's scroll view for its content and draws its top edge effect (a grey band and hairline) over the black; the pager hides it.
 - A full diff owns the sheet's bounded scroll viewport: an outer vertical scroller or vertical `fixedSize` defeats its lazy rows.
 
 ## Deviations
 
+- Deliberate: the Lightbox swipes through the session's images in reading order (`MediaLoader.entries`, each source once, so a repeated image opens at its first place); the desktop's shows one.
 - Deliberate: no auto-focused search in menus (the keyboard covers them); a queued prompt is a faint bubble at the thread's end with a system menu, not the web's toolbar rows; Retry sits in the newest reply's row (Alert.tsx's rule).
 - Deliberate: a start with no prompt waiting shows in the navigation bar's title slot (`StartingTitle`), not as the web's row at the thread's end. That row pushed the bottom-anchored history up a line and dropped it back, and a pill above the composer covered the last reply's closing line.
 - Not ported: account choices on the session card, opening a plan file on the computer, a workflow task's agent count and links.
