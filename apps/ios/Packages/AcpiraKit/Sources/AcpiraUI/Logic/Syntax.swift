@@ -71,6 +71,8 @@ nonisolated final class SyntaxHighlighter: @unchecked Sendable {
   private var cache: [String: [[CodeToken]]] = [:]
   private var order: [String] = []
   private static let cacheSize = 200
+  /// shiki's per-line `tokenizeTimeLimit` in seconds (scripts/export/ios-shiki.ts)
+  private static let timeLimit: TimeInterval = 5
 
   /// One token array per source line (codeSyntax.ts tokenizeCode); `nil` without a language or a working highlighter
   func tokenize(_ code: String, language: String?, theme: CodeTheme) -> [[CodeToken]]? {
@@ -79,9 +81,21 @@ nonisolated final class SyntaxHighlighter: @unchecked Sendable {
     lock.lock(); defer { lock.unlock() }
     if let hit = cached(code, language: language, theme: theme) { return hit }
     guard let api = ready(language) else { return nil }
-    guard let json = api.invokeMethod("tokenize", withArguments: [code.replacingOccurrences(of: "\r\n", with: "\n"), language, theme.rawValue])?
-      .toString(), let raw = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[[String]]] else { return nil }
+    let source = code.replacingOccurrences(of: "\r\n", with: "\n")
+    let call = { api.invokeMethod("tokenize", withArguments: [source, language, theme.rawValue])?.toString() }
+    // A line that outruns shiki's per-line time limit comes back cut short, its rest one run of the last scope's colour.
+    // Only a call slower than the limit can hold one: most often a grammar's first use, compiling its regexes on a busy
+    // CPU, so it runs once more with them compiled, and an answer still that slow is returned but never cached
+    var started = Date()
+    var answer = call()
+    if Date().timeIntervalSince(started) > Self.timeLimit {
+      started = Date()
+      answer = call()
+    }
+    let truncated = Date().timeIntervalSince(started) > Self.timeLimit
+    guard let json = answer, let raw = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[[String]]] else { return nil }
     let lines = raw.map { Self.merge($0, theme: theme) }
+    if truncated { return lines }
     cacheLock.lock(); defer { cacheLock.unlock() }
     cache[key] = lines
     order.append(key)

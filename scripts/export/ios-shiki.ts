@@ -24,7 +24,8 @@ const THEMES = ['dark-plus', 'light-plus'] as const;
 
 // The script's API, on `globalThis.acpiraShiki`: everything synchronous, JSON in and out, so Swift needs no promise
 // handling. Grammars and themes arrive as JSON text from Swift; `tokenize` answers one line array per source line, each
-// token `[text, colour]` in the theme's own colours (the merge into runs happens in Swift, as codeSyntax.ts does it)
+// token `[text, colour]` in the theme's own colours (the merge into runs happens in Swift, as codeSyntax.ts does it).
+// Syntax.swift `timeLimit` mirrors `tokenizeTimeLimit` below: a slower call may hold a cut-short line and is not cached
 const ENTRY = `
 import { createHighlighterCoreSync } from 'shiki/core';
 import { createJavaScriptRegexEngine, defaultJavaScriptRegexConstructor } from 'shiki/engine/javascript';
