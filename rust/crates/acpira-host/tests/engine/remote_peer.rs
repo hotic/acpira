@@ -321,6 +321,9 @@ async fn a_cli_agent_in_a_host_folder_runs_in_the_hosts_engine_and_lists_here() 
   let fake = crate::fake_or_skip!();
   let lab = Lab::new();
   let _stop = StopEngines::for_lab(&lab);
+  let home = lab.host_home().join(".acpira");
+  std::fs::create_dir_all(&home).unwrap();
+  std::fs::write(home.join("agents.json"), serde_json::to_vec(&fake.setting(json!({}))).unwrap()).unwrap();
   let connections = lab.engine("engine");
   connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
   let work = lab.path().join("hostfs").join("work");
@@ -332,7 +335,7 @@ async fn a_cli_agent_in_a_host_folder_runs_in_the_hosts_engine_and_lists_here() 
   let m = crate::session_manager::Mgr::new(dir.path(), opts);
   m.init().await;
 
-  m.handle(json!({ "type": "newSession", "cwd": folder })).await;
+  m.handle(json!({ "type": "newSession", "agent": "fake", "cwd": folder })).await;
   wait(&m, "the new session on the host", 30_000, || m.active().is_some_and(|v| v["cwd"] == folder.as_str())).await;
   let id = m.active_id().unwrap();
   wait(&m, "the host's list", 15_000, || m.sessions().iter().any(|s| s["id"] == id.as_str())).await;
@@ -355,6 +358,17 @@ async fn a_cli_agent_in_a_host_folder_runs_in_the_hosts_engine_and_lists_here() 
   assert!(view["turns"][0].to_string().contains("hello from here"), "{view}");
   assert_eq!(view["cwd"], folder.as_str());
   assert!(!m.logs().iter().any(|l| l.contains("out of step")), "every patch from the host applied: {:?}", m.logs());
+
+  // Another page (a paired phone) opens the cached host view. Selecting it must read the host's mark too, even when
+  // a desktop page keeps that view alive and the mark was explicitly kept while it was on screen.
+  m.handle(json!({ "type": "setSessionUnread", "id": id, "unread": true })).await;
+  wait(&m, "the host's unread mark", 15_000, || m.sessions().iter().any(|s| s["id"] == id.as_str() && s["state"] == "unread")).await;
+  let phone = m.m.attach(Some(acpira_shared::sidecar::InitialView::Empty { empty: true }));
+  m.handle_on(&phone, json!({ "type": "selectSession", "id": id })).await;
+  wait(&m, "the phone reading the shared host view", 15_000, || m.sessions().iter().any(|s| s["id"] == id.as_str() && s["state"].is_null())).await;
+  m.handle_on(&phone, json!({ "type": "deselectSession", "id": id })).await;
+  assert_eq!(m.active_id().as_deref(), Some(id.as_str()), "leaving the phone must keep the desktop's view");
+  m.m.detach(&phone);
 
   // A deletion completes through the list view, so leaving the shown view cannot swallow its receipt. Undo still routes
   // to the host after the id has left its list (and the shown view was detached here).
