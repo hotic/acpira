@@ -394,6 +394,53 @@ async fn a_cli_agent_in_a_host_folder_runs_in_the_hosts_engine_and_lists_here() 
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_new_session_page_in_a_host_folder_gets_the_hosts_models() {
+  let fake = crate::fake_or_skip!();
+  let lab = Lab::new();
+  let _stop = StopEngines::for_lab(&lab);
+  // The host's engine knows its CLI's models from a session of its own; this machine knows none
+  let store = lab.host_home().join(".acpira/sessions");
+  std::fs::create_dir_all(&store).unwrap();
+  let mut record = list_record("s-host", "/work", "host", false);
+  record["controls"]["options"] = json!([{ "id": "model", "name": "Model", "value": "host-model",
+    "options": [{ "id": "host-model", "name": "Host model" }] }]);
+  std::fs::write(store.join("s-host.json"), serde_json::to_vec(&record).unwrap()).unwrap();
+  let connections = lab.engine("engine");
+  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  let dir = tempfile::tempdir().unwrap();
+  let mut opts = crate::session_manager::Opts::fake(&fake).projects();
+  opts.remote = Some(connections.clone());
+  let m = crate::session_manager::Mgr::new(dir.path(), opts);
+  m.init().await;
+
+  let folder = "ssh://gen1/work";
+  let value = |c: &[acpira_shared::transcript::ConfigControl]| c.first().and_then(|c| c.value.clone());
+  let t0 = std::time::Instant::now();
+  let answer = loop {
+    let answer = m.m.host_controls("fake", folder, false).await;
+    if answer.as_ref().is_some_and(|a| !a.controls.is_empty()) {
+      break answer.unwrap();
+    }
+    assert!(t0.elapsed() < Duration::from_secs(30), "no answer from the host's engine; log: {:#?}", m.logs());
+    tokio::time::sleep(Duration::from_millis(100)).await;
+  };
+  assert_eq!(value(&answer.controls).as_deref(), Some("host-model"));
+  assert!(m.m.host_controls("fake", "/work", false).await.is_none(), "a local folder is answered here");
+  assert!(m.m.known_controls("fake").await.is_empty(), "the host's models never join this machine's");
+
+  // The host's engine goes away: the last answer stands in
+  for (_, pid) in m.m.host_engines() {
+    // SAFETY: SIGTERM to the host engine this test started
+    unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+  }
+  wait(&m, "the host's engine to go", 15_000, || m.m.host_engines().is_empty()).await;
+  let cached = m.m.host_controls("fake", folder, false).await.unwrap();
+  assert_eq!(value(&cached.controls).as_deref(), Some("host-model"));
+  m.dispose().await;
+  connections.dispose();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn sessions_driven_here_and_the_hosts_own_list_once() {
   let fake = crate::fake_or_skip!();
   let lab = Lab::new();
