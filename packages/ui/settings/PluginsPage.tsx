@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { Settings2 } from 'lucide-react';
 import { pluginKinds, PLUGIN_KINDS, type PluginInfo, type PluginKind } from '@acpira/shared/plugins';
 import type { AgentId, AgentInfo } from '@acpira/shared/transcript';
@@ -105,10 +105,21 @@ export function PluginsPage({ tab, onTab }: { tab?: string; onTab: (tab: Filter)
 
 // Past this many pixels a press on a tile becomes a drag; below it the press stays a click
 const DRAG_SLOP = 4;
+// A tile sliding to a new slot: the session list's reorder curve (chat/SessionList.tsx), a touch longer for tiles
+const SLIDE_EASE = 'cubic-bezier(.2,.7,.2,1)';
+const SLIDE_MS = 280;
+
+// The px offsets of a computed `translate` ("none", "Xpx" or "Xpx Ypx")
+function translateOf(el: HTMLElement): { x: number; y: number } {
+  const [x = 0, y = 0] = getComputedStyle(el).translate.split(' ').map(v => parseFloat(v) || 0);
+  return { x, y };
+}
 
 // The agent tiles: drag a tile (or Alt+← / Alt+→ on its gear) to reorder, the switch turns the agent on or off. Both
 // write through the host and come back as a rearranged list; until then the tiles show the local result so nothing
-// snaps back. The last agent on cannot be turned off
+// snaps back. The last agent on cannot be turned off.
+// A dragged tile follows the pointer (an inline translate over its slot in the previewed order); the others slide into
+// their new slots, and on release the dragged one slides from under the pointer into its own
 function AgentTiles({ agents: all, inventories, filter, onReorder, onDisabled, onOpen, installs, onUpdate }: {
   agents: AgentInfo[];
   inventories: Partial<Record<AgentId, AgentInventory>>;
@@ -126,9 +137,21 @@ function AgentTiles({ agents: all, inventories, filter, onReorder, onDisabled, o
   // A fresh list from the host supersedes whatever was shown optimistically
   useEffect(() => setPending({}), [all]);
   const [drag, setDrag] = useState<{ id: AgentId; order: AgentId[] }>();
-  const press = useRef<{ id: AgentId; x: number; y: number; others: { id: AgentId; rect: DOMRect }[] } | undefined>(undefined);
+  // The tile that looks picked up: from the drag's start until it has slid into its slot after the release
+  const [lifted, setLifted] = useState<AgentId>();
+  // The press: where it started and the pointer is now, and the pressed tile's slot then (layout offsets, which a
+  // translate does not move)
+  const press = useRef<{
+    id: AgentId; x: number; y: number; at: { x: number; y: number }; from: { x: number; y: number };
+    others: { id: AgentId; rect: DOMRect }[];
+  } | undefined>(undefined);
   const swallowClick = useRef(false);
   const grid = useRef<HTMLDivElement>(null);
+  const tileEls = useRef(new Map<AgentId, HTMLDivElement>());
+  // Each tile's slot as of the last commit, and what decided the slots then; slides run only when that changed, so a
+  // resize or an inventory update never replays one from stale slots
+  const slots = useRef(new Map<AgentId, { x: number; y: number }>());
+  const lastLayout = useRef('');
 
   // The committed order (host list, or the local result waiting for it); a drag only previews over it
   const settled = pending.order ?? ids;
@@ -138,6 +161,48 @@ function AgentTiles({ agents: all, inventories, filter, onReorder, onDisabled, o
   const enabled = (a: AgentInfo) => pending.enabled?.[a.id] ?? !a.disabled;
   const enabledCount = shown.filter(enabled).length;
   const visible = filter ? shown.filter(filter) : shown;
+
+  // Keep the dragged tile under the pointer wherever its slot has moved to
+  const follow = () => {
+    const p = press.current;
+    const el = p && tileEls.current.get(p.id);
+    if (!p || !el) return;
+    el.style.translate = `${p.at.x - p.x - (el.offsetLeft - p.from.x)}px ${p.at.y - p.y - (el.offsetTop - p.from.y)}px`;
+  };
+
+  useLayoutEffect(() => {
+    const layout = `${drag?.id ?? ''}|${visible.map(a => a.id).join()}`;
+    const changed = layout !== lastLayout.current;
+    lastLayout.current = layout;
+    const box = grid.current;
+    // A tile filtered out loses its slot, so it comes back without a slide
+    for (const id of slots.current.keys()) if (!tileEls.current.has(id)) slots.current.delete(id);
+    const still = !box || !!box.closest('[data-motion="none"]') || !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    for (const [id, el] of tileEls.current) {
+      const was = slots.current.get(id);
+      const now = { x: el.offsetLeft, y: el.offsetTop };
+      slots.current.set(id, now);
+      if (!changed || id === drag?.id || !was) continue;
+      // Only the tile just let go carries an inline translate
+      const released = !!el.style.translate;
+      if (!released && was.x === now.x && was.y === now.y) continue;
+      // Where the tile shows now, measured from its new slot: its old slot plus any slide or drag offset still on it
+      const cur = translateOf(el);
+      for (const a of el.getAnimations()) if (a.id === 'tile-slide') a.cancel();
+      el.style.translate = '';
+      const dx = was.x + cur.x - now.x;
+      const dy = was.y + cur.y - now.y;
+      const land = () => setLifted(l => l === id ? undefined : l);
+      if (still || Math.hypot(dx, dy) < 0.5) {
+        if (released) land();
+        continue;
+      }
+      const slide = el.animate([{ translate: `${dx}px ${dy}px` }, { translate: '0 0' }], { id: 'tile-slide', duration: SLIDE_MS, easing: SLIDE_EASE });
+      // The tile let go keeps its lifted look, above the rest, until it lands
+      if (released) slide.onfinish = slide.oncancel = land;
+    }
+    if (drag) follow();
+  });
 
   const commit = (next: AgentId[]) => {
     if (next.join('\n') === settled.join('\n')) return;
@@ -152,20 +217,31 @@ function AgentTiles({ agents: all, inventories, filter, onReorder, onDisabled, o
 
   const onPointerDown = (e: PointerEvent<HTMLDivElement>, id: AgentId) => {
     if (filter || e.button !== 0 || (e.target as Element).closest('[data-no-drag]')) return;
+    const el = e.currentTarget;
+    // A tile caught mid-slide is picked up from its slot
+    for (const a of el.getAnimations()) if (a.id === 'tile-slide') a.cancel();
     // The other tiles where they stand; the drop slot is how many of them come before the pointer in reading order
     const tiles = [...(grid.current?.querySelectorAll<HTMLElement>('[data-agent-tile]') ?? [])];
-    press.current = { id, x: e.clientX, y: e.clientY, others: tiles.filter(el => el.dataset.agentTile !== id).map(el => ({ id: el.dataset.agentTile!, rect: el.getBoundingClientRect() })) };
+    press.current = {
+      id, x: e.clientX, y: e.clientY, at: { x: e.clientX, y: e.clientY }, from: { x: el.offsetLeft, y: el.offsetTop },
+      others: tiles.filter(t => t.dataset.agentTile !== id).map(t => ({ id: t.dataset.agentTile!, rect: t.getBoundingClientRect() })),
+    };
   };
   const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
     const p = press.current;
     if (!p || (!drag && Math.hypot(e.clientX - p.x, e.clientY - p.y) < DRAG_SLOP)) return;
-    if (!drag) e.currentTarget.setPointerCapture(e.pointerId);
+    if (!drag) {
+      e.currentTarget.setPointerCapture(e.pointerId);
+      setLifted(p.id);
+    }
+    p.at = { x: e.clientX, y: e.clientY };
     // A tile comes before the pointer when its row is above the pointer, or it is on the pointer's row left of it
     const before = (r: DOMRect) => e.clientY >= r.bottom || (e.clientY >= r.top && e.clientX > r.left + r.width / 2);
     const slot = p.others.filter(o => before(o.rect)).length;
     const next = p.others.map(o => o.id);
     next.splice(slot, 0, p.id);
     if (next.join('\n') !== drag?.order.join('\n')) setDrag({ id: p.id, order: next });
+    follow();
   };
   const onPointerEnd = (e: PointerEvent<HTMLDivElement>, drop: boolean) => {
     press.current = undefined;
@@ -185,22 +261,25 @@ function AgentTiles({ agents: all, inventories, filter, onReorder, onDisabled, o
   };
 
   return (
-    <div ref={grid} className="grid grid-cols-2 gap-gap settings-narrow:grid-cols-1">
+    // Move and release are the grid's: React moves tile nodes while the order previews, which drops a tile's pointer
+    // capture, so the capture sits on the grid, which stays put
+    <div ref={grid} className="grid grid-cols-2 gap-gap settings-narrow:grid-cols-1"
+      onPointerMove={onPointerMove}
+      onPointerUp={e => onPointerEnd(e, true)}
+      onPointerCancel={e => onPointerEnd(e, false)}
+      onClickCapture={e => { if (swallowClick.current) { e.preventDefault(); e.stopPropagation(); } }}>
       {visible.map(a => {
         const on = enabled(a);
         const last = on && enabledCount === 1;
         return (
           <div
             key={a.id}
+            ref={el => { if (el) tileEls.current.set(a.id, el); else tileEls.current.delete(a.id); }}
             data-agent-tile={a.id}
             onPointerDown={e => onPointerDown(e, a.id)}
-            onPointerMove={onPointerMove}
-            onPointerUp={e => onPointerEnd(e, true)}
-            onPointerCancel={e => onPointerEnd(e, false)}
-            onClickCapture={e => { if (swallowClick.current) { e.preventDefault(); e.stopPropagation(); } }}
-            className={cn('min-w-0 touch-none', drag?.id === a.id && 'relative z-10 cursor-grabbing')}
+            className={cn('relative min-w-0 touch-none select-none', lifted === a.id && 'z-10')}
           >
-            <AgentTile agent={a} on={on} last={last} dragging={drag?.id === a.id} inventory={inventories[a.id]}
+            <AgentTile agent={a} on={on} last={last} dragging={lifted === a.id} inventory={inventories[a.id]}
               updating={installs?.some(i => i.agent === a.id && i.status === 'running')} onUpdate={() => onUpdate(a.id)}
               onToggle={v => toggle(a.id, v)} onOpen={() => onOpen(a.id)} onKeyDown={e => onKeyDown(e, a.id)} />
           </div>
@@ -230,7 +309,7 @@ function AgentTile({ agent: a, on, last, dragging, inventory, updating, onUpdate
   const settings = t('settings.plugins.settings', { name: a.name });
   return (
     <Card onClick={e => { if (!(e.target as Element).closest('[data-no-drag]')) onOpen(); }}
-      className={cn('flex h-full cursor-pointer flex-col shadow-none transition-[background-color,box-shadow] hover:bg-hover', dragging && 'bg-active shadow-pop')}>
+      className={cn('flex h-full flex-col shadow-none transition-[background-color,box-shadow,scale] hover:bg-hover', dragging ? 'scale-102 cursor-grabbing bg-bg-2 shadow-pop' : 'cursor-pointer')}>
       <div className="flex items-center gap-gap p-pad">
         <span className={cn('flex size-(--tile-mark) shrink-0 items-center justify-center rounded-lg bg-active text-fg-1', !on && 'text-fg-3')}>
           <AgentMark id={a.id} name={a.name} className="size-lead" />
