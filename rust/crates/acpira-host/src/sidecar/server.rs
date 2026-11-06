@@ -532,7 +532,16 @@ impl Engine {
       protocol_version: SIDECAR_PROTOCOL_VERSION,
       sidecar: SidecarInfo { version: self.opts.version.clone(), pid: std::process::id() },
       sessions_dir: rt.sessions_dir.to_string_lossy().into_owned(),
-      features: vec!["preview".into(), "projects".into(), "remote".into(), "plugins".into(), "remoteAccess".into()],
+      features: vec![
+        "preview".into(),
+        "projects".into(),
+        "remote".into(),
+        "plugins".into(),
+        "remoteAccess".into(),
+        // A paired device may browse this computer's folders (`localDir`) and edit the built-in agent's model sources
+        "localDir".into(),
+        "providers".into(),
+      ],
       safe_mode: rt.plugins.loaded().safe_mode,
     }
   }

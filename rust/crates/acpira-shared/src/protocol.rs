@@ -513,6 +513,17 @@ pub enum HostMsg {
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
   },
+  /// A folder of the engine's own computer for a device's add-project picker (`localDir`), echoing its request's seq:
+  /// the normalized path, its parent (absent at a root) and the folders in it
+  LocalDir {
+    seq: i64,
+    path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent: Option<String>,
+    entries: Vec<RemoteDirEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+  },
   /// A terminal's output (terminal.rs), to every page viewing it. Posted at once, never batched: every chunk counts
   TerminalOutput {
     id: String,
@@ -608,6 +619,7 @@ impl HostMsg {
       HostMsg::SshHosts { .. } => "sshHosts",
       // Each listing answers its own request
       HostMsg::RemoteDir { .. } => "remoteDir",
+      HostMsg::LocalDir { .. } => "localDir",
       HostMsg::TerminalOutput { .. } => "terminalOutput",
       HostMsg::TerminalState { .. } => "terminalState",
     }
@@ -723,6 +735,14 @@ pub enum WebviewMsg {
   },
   RemoteDir {
     alias: String,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(deserialize_with = "crate::num::lenient_i64")]
+    seq: i64,
+  },
+  /// A folder of this computer for a paired device's add-project picker (`path` absent: the user's home; a leading `~`
+  /// expands to it), answered with `localDir`. Folders only: the desktop picks a project with its own folder dialog
+  LocalDir {
     #[serde(default)]
     path: Option<String>,
     #[serde(deserialize_with = "crate::num::lenient_i64")]

@@ -691,6 +691,16 @@ impl BridgeCore {
           core.post_now(msg);
         });
       }
+      W::LocalDir { path, seq } => {
+        let core = self.clone();
+        spawn_on(self.wire, async move {
+          let msg = match project_files::local_folders(path.as_deref()).await {
+            Ok((path, parent, entries)) => HostMsg::LocalDir { seq, path, parent, entries, error: None },
+            Err(e) => HostMsg::LocalDir { seq, path: path.unwrap_or_default(), parent: None, entries: vec![], error: Some(e) },
+          };
+          core.post_now(msg);
+        });
+      }
       W::SessionChanges { session_id, seq } => {
         let (core, root, bases) = (self.clone(), manager.session_cwd(&session_id), manager.edit_bases(&session_id).await);
         spawn_on(self.wire, async move {
