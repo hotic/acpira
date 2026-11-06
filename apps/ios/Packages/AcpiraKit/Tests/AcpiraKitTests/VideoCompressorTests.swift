@@ -6,8 +6,9 @@ import Testing
 // The picked-video compressor against a clip made on the spot: a portrait 1080p 60 fps recording with sound comes out
 // as a 720p, 30 fps MP4 with its rotation and audio kept, and a budget nothing could fit is refused.
 
-// A time limit, so a stalled writer fails this suite by name instead of hanging the whole test run
-@Suite(.timeLimit(.minutes(1))) struct VideoCompressorTests {
+// A time limit, so a stalled writer fails this suite by name instead of hanging the whole test run. The simulator has no
+// hardware encoder, so on a busy CI runner the 1080p clip alone can take over a minute; a stall still never ends
+@Suite(.timeLimit(.minutes(3))) struct VideoCompressorTests {
   @Test func shrinksAndKeepsRotationAndSound() async throws {
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent("video-test-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: folder) }
