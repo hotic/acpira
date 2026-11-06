@@ -400,9 +400,11 @@
   --settings-rail-w: 52px;
   --section-gap: calc(var(--pad) + var(--gap));
   --text-2-lh: calc(var(--ui-font-size) + 7px);
-  --setting-row: 48px;
-  --setting-row-detail: 64px;
-  --setting-row-pad: 12px;
+  /* Settings rows on a 4px grid: a one-line row holds a 28px control with 6px around it, a two-line row its title and
+     second line (20 + 3 + 16) with 8.5px above and below; card heads in a dialog block take the same two-line pitch */
+  --setting-row: 40px;
+  --setting-row-detail: 56px;
+  --setting-row-pad: 8px;
   --setting-header-copy: 200px;
   /* The Shared tab's plain-text prompt editor: a few rows tall when empty, scrolling past most of the viewport */
   --prompt-editor-min: calc(var(--setting-row) * 4);
