@@ -947,13 +947,15 @@ struct DiffBlockView: View {
     let tokens = tokens(display, theme: theme)
     Group {
       if inSheet {
-        // Short diffs still hug their rows; long ones take the sheet's finite viewport, never their full height.
-        scroller(display, tokens: tokens, ch: ch).frame(maxHeight: natural > 0 ? natural : nil, alignment: .top)
+        // The reader owns the whole bounded viewport, even when the diff has only a few lines.
+        scroller(display, tokens: tokens, ch: ch)
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
       } else {
-        scroller(display, tokens: tokens, ch: ch).codeCap(natural: natural, inSheet: false)
+        scroller(display, tokens: tokens, ch: ch)
+          .codeCap(natural: natural, inSheet: false)
+          .modifier(CodeOutputFrame())
       }
     }
-    .modifier(CodeOutputFrame())
     // Full-source cache lookup and tokenization stay off the main actor; a stale pass must not replace a newer source.
     .task(id: Pass(lines: display, title: title, theme: theme)) {
       guard !snapshot, tokens == nil, codeLanguage(title) != nil else { return }
@@ -965,7 +967,7 @@ struct DiffBlockView: View {
     // CodeBlock.tsx: copy takes the new file, asked for when the view left its text out, else the visible new code.
     // The diff owns its viewport: an outer vertical scroller would make even a lazy table lay out its entire height.
     .codeViewer(title: title, copy: copyText, copyLabel: t(copiesSource ? "code.copySource" : "code.copyVisible"), read: readSource,
-                wrapInScrollView: false) {
+                wrapInScrollView: false, edgeToEdge: true) {
       DiffBlockView(lines: lines, title: title, source: source, locate: locate)
     }
   }
@@ -1095,8 +1097,10 @@ extension View {
   /// read: the text copy takes when it has to be fetched first (a diff's whole file); `copy` until then
   /// wrapInScrollView: false when the content owns a viewport, so its lazy rows see a bounded height
   func codeViewer<Full: View>(title: String, copy: String, copyLabel: String, read: (() async -> String)? = nil,
-                              wrapInScrollView: Bool = true, @ViewBuilder full: @escaping () -> Full) -> some View {
-    modifier(CodeViewer(title: title, copy: copy, copyLabel: copyLabel, read: read, wrapInScrollView: wrapInScrollView, full: full))
+                              wrapInScrollView: Bool = true, edgeToEdge: Bool = false,
+                              @ViewBuilder full: @escaping () -> Full) -> some View {
+    modifier(CodeViewer(title: title, copy: copy, copyLabel: copyLabel, read: read,
+                        wrapInScrollView: wrapInScrollView, edgeToEdge: edgeToEdge, full: full))
   }
 }
 
@@ -1106,6 +1110,7 @@ private struct CodeViewer<Full: View>: ViewModifier {
   var copyLabel: String
   var read: (() async -> String)?
   var wrapInScrollView: Bool
+  var edgeToEdge: Bool
   let full: () -> Full
   @Environment(\.codeSheet) private var inSheet
   @Environment(\.initialPopup) private var initialPopup
@@ -1117,7 +1122,8 @@ private struct CodeViewer<Full: View>: ViewModifier {
         .contentShape(Rectangle())
         .onTapGesture { shown = true }
         .sheet(isPresented: $shown) {
-          CodeSheet(title: title, copy: copy, copyLabel: copyLabel, read: read, wrapInScrollView: wrapInScrollView, content: full)
+          CodeSheet(title: title, copy: copy, copyLabel: copyLabel, read: read,
+                    wrapInScrollView: wrapInScrollView, edgeToEdge: edgeToEdge, content: full)
         }
         .task {
           // `-popup code` opens the first card that shows, for screenshots
@@ -1145,6 +1151,8 @@ struct CodeSheet<Content: View>: View {
   var copyLabel: String
   var read: (() async -> String)? = nil
   var wrapInScrollView = true
+  /// Readers with their own viewport fill the sheet without an inset card.
+  var edgeToEdge = false
   var detents: Set<PresentationDetent> = [.medium, .large]
   var copyEnabled = true
   /// Optional raw / rendered toggle; copying always uses the original text.
@@ -1162,7 +1170,8 @@ struct CodeSheet<Content: View>: View {
           sheetContent
         }
       }
-      .background(Palette.bg0)
+      .frame(maxWidth: .infinity, maxHeight: edgeToEdge ? .infinity : nil, alignment: .topLeading)
+      .background(edgeToEdge ? Palette.bgCode : Palette.bg0)
       .navigationTitle(title)
       .navigationBarTitleDisplayModeInline()
       .toolbar {
@@ -1206,8 +1215,8 @@ struct CodeSheet<Content: View>: View {
   private var sheetContent: some View {
     content()
       .environment(\.codeSheet, true)
-      .padding(.horizontal, Metrics.pad)
-      .padding(.vertical, Metrics.s2)
+      .padding(.horizontal, edgeToEdge ? 0 : Metrics.pad)
+      .padding(.vertical, edgeToEdge ? 0 : Metrics.s2)
   }
 }
 
