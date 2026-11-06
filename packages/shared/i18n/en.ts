@@ -495,6 +495,7 @@ export const en = {
   'usage.compactedStaleHint': 'The agent did not report its context after compacting. The real figure appears after its next reply.',
   'usage.beforeCompact': 'Before {n}',
   'usage.report': 'View report',
+  'context.cat.agent': "Agent's own",
   'context.cat.system': 'System prompt',
   'context.cat.tools': 'Tool definitions',
   'context.cat.docs': 'Instruction files',

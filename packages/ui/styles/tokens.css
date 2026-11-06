@@ -76,6 +76,8 @@
   --storage-other: color-mix(in srgb, var(--fg-1) 28%, var(--bg-1));
   /* What fills a session's context window (the ring card, the context report), one low-chroma hue per category, the
      conversation a soft clay: muted beside the storage page's saturated set, since the report paints large areas */
+  /* An agent's own unsplit part (the engine's estimate): no hue, it names nothing in particular */
+  --context-agent: oklch(0.6 0 0);
   --context-system: oklch(0.64 0.012 250);
   --context-tools: oklch(0.64 0.05 295);
   --context-docs: oklch(0.66 0.045 165);
@@ -331,6 +333,7 @@
   --storage-attachments: #eb6834;
   --storage-agent-logs: #1baf7a;
   --storage-reclaimable: #eda100;
+  --context-agent: oklch(0.56 0 0);
   --context-system: oklch(0.6 0.012 250);
   --context-tools: oklch(0.58 0.06 295);
   --context-docs: oklch(0.6 0.05 165);
@@ -474,6 +477,7 @@
   --color-storage-agent-logs: var(--storage-agent-logs);
   --color-storage-reclaimable: var(--storage-reclaimable);
   --color-storage-other: var(--storage-other);
+  --color-context-agent: var(--context-agent);
   --color-context-system: var(--context-system);
   --color-context-tools: var(--context-tools);
   --color-context-docs: var(--context-docs);

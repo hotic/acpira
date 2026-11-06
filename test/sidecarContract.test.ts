@@ -162,9 +162,11 @@ describe('sidecar session contract', () => {
     s.view('V', { type: 'permission', sessionId: id, blockId: card!.id, optionId: 'allow' });
     await s.hostMsg('V', 'session', idle(2));
     expect((await ask('sessionChanges')).files).toEqual([{ path: '/repo/a.ts', add: 0, del: 3, gone: true }]);
-    // An agent that does not split its context (the fake one) is still answered, with nothing: the card keeps the bare
-    // figure (the built-in agent's split: rust/crates/acpira-host/tests/engine/builtin_agent.rs)
-    expect(await ask('sessionContext', { detail: true })).not.toHaveProperty('report');
+    // An agent that does not split its context (the fake one) gets the engine's estimate from the transcript
+    // (context_estimate.rs; the built-in agent's own split: rust/crates/acpira-host/tests/engine/builtin_agent.rs)
+    const { report } = await ask('sessionContext', { detail: true }) as { report?: { estimated?: boolean; rev: string; categories: { id: string }[] } };
+    expect(report).toMatchObject({ estimated: true, rev: expect.stringMatching(/^tx:/) });
+    expect(report!.categories.map(c => c.id)).toContain('chat');
     expect(await ask('sessionContextItem', { rev: 'r', id: 'sys:base' })).not.toHaveProperty('content');
     expect(await ask('sessionContextRaw')).not.toHaveProperty('raw');
   });

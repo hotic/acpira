@@ -487,6 +487,7 @@
   "usage.compactedStaleHint": "압축 후 에이전트가 컨텍스트를 보고하지 않았습니다. 다음 응답 후 실제 값이 표시됩니다.",
   "usage.beforeCompact": "압축 전 {n}",
   "usage.report": "보고서 보기",
+  "context.cat.agent": "에이전트 자체",
   "context.cat.system": "시스템 프롬프트",
   "context.cat.tools": "도구 정의",
   "context.cat.docs": "지침 파일",

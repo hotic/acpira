@@ -495,6 +495,7 @@ export const ru = {
   'usage.compactedStaleHint': 'После сжатия агент не сообщил объём контекста. Реальное значение появится после его следующего ответа.',
   'usage.beforeCompact': 'До сжатия {n}',
   'usage.report': 'Открыть отчёт',
+  'context.cat.agent': 'Собственное агента',
   'context.cat.system': 'Системный промпт',
   'context.cat.tools': 'Описания инструментов',
   'context.cat.docs': 'Файлы инструкций',

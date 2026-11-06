@@ -494,6 +494,7 @@ export const de = {
   'usage.report': 'Bericht anzeigen',
   'context.cat.skills': 'Skills',
   'context.cat.mcp': 'MCP',
+  'context.cat.agent': 'Agent-eigen',
   'context.cat.system': 'Systemprompt',
   'context.cat.tools': 'Werkzeugdefinitionen',
   'context.cat.docs': 'Anweisungsdateien',

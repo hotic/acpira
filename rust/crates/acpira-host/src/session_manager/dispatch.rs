@@ -95,13 +95,24 @@ impl SessionManager {
     self.live(session_id).or_else(|| self.mirror_of(session_id)).is_some_and(|s| s.shows_file(path))
   }
 
-  /// The session's context split (`acp::session::context`); none for a session not open in this engine
+  /// The session's context split (`acp::session::context`); a session not open here (another engine's copy, or one only
+  /// on disk) is estimated from its transcript (`context_estimate.rs`)
   pub async fn session_context(&self, session_id: &str, detail: bool) -> Option<acpira_shared::context::ContextReport> {
-    self.live(session_id)?.context_report(detail).await
+    if let Some(s) = self.live(session_id).or_else(|| self.mirror_of(session_id)) {
+      return s.context_report(detail).await;
+    }
+    let record = self.deps.store.load_detailed(session_id).await.ok()?;
+    let known = record_known(&record).await;
+    crate::acp::session::context_estimate::report_with(&record.turns, record.usage.as_ref(), detail, known.as_ref())
   }
 
   pub async fn session_context_item(&self, session_id: &str, rev: &str, id: &str) -> Option<acpira_shared::context::ContextContent> {
-    self.live(session_id)?.context_item(rev, id).await
+    if let Some(s) = self.live(session_id).or_else(|| self.mirror_of(session_id)) {
+      return s.context_item(rev, id).await;
+    }
+    let record = self.deps.store.load_detailed(session_id).await.ok()?;
+    let known = if id.starts_with("summary") { record_known(&record).await } else { None };
+    crate::acp::session::context_estimate::content(&record.turns, record.usage.as_ref(), rev, id, known.as_ref())
   }
 
   pub async fn session_context_raw(&self, session_id: &str) -> Result<Option<acpira_shared::context::ContextRaw>, String> {
@@ -487,4 +498,12 @@ impl SessionManager {
     }
     Ok(())
   }
+}
+
+/// A closed Claude session's split from Claude's own log (other agents have nothing to read without their process)
+async fn record_known(record: &crate::store::record::SessionRecord) -> Option<crate::acp::session::context_estimate::Known> {
+  if record.agent.as_str() != "claude" {
+    return None;
+  }
+  crate::acp::session::context::claude_known(None, record.cwd.clone(), record.acp_session_id.clone()?).await
 }

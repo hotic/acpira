@@ -503,6 +503,7 @@ export const zhCN = {
   'usage.compactedStaleHint': '压缩后 Agent 没有上报上下文用量，下一次回复后显示真实数值。',
   'usage.beforeCompact': '压缩前 {n}',
   'usage.report': '查看报告',
+  'context.cat.agent': '智能体自带',
   'context.cat.system': '系统提示词',
   'context.cat.tools': '工具定义',
   'context.cat.docs': '说明文件',

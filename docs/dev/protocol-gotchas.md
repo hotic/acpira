@@ -92,7 +92,7 @@ Cross-agent ACP behaviour the host depends on, and the host invariants built aro
 - A missing usage report is never replaced by a transcript estimate (the history still holds what the CLI compacted). A completed `/compact` with no new snapshot and no `Tokens after` (Devin) marks usage stale (`compactedFrom`).
 - Background compaction: Devin 3000.6.14 and Kimi 0.41.0 acknowledge `/compact` before it finishes; the queue holds until completion (`acp/session/compaction.rs`). Releasing on the RPC response cancels Devin's compaction or loses Kimi's reply. Grok 1.0.18 waits inside the request.
 - Advertising `clientCapabilities.session.compaction` moves claude-agent-acp and codex-acp to structured `compaction_update`. Prose adapters (devin / kimi / pi) match exact whole-chunk sentences in `compaction_text.rs`; add new ones with the version seen.
-- The ring's split (`shared/context.ts`) comes only from an agent advertising `_meta["acpira/context"]` (the built-in agent): the last request it sent, scaled to the provider's count so the parts add up to the ring, an estimate after a compaction. None after a reopen until the next call, nor for mirrors or SSH sessions.
+- The ring's split (`shared/context.ts`): the built-in agent (`_meta["acpira/context"]`) answers from its last request, or its restored history before the first call after a reopen. Every other agent, and any session without a live process, gets `context_estimate.rs`: the transcript after the last finished compaction scaled into the agent's figure (the transcript can hold more than was sent), the rest one unsplit `agent` part.
 - Reported windows are observations, not model limits (Grok 1.0.18 250,000; Devin 3000.10.21 262,000; Kimi 0.41.0 262,144).
 
 ## Questions

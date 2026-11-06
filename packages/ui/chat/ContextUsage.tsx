@@ -117,9 +117,8 @@ type BudgetTone = keyof typeof BUDGET_TONE;
 // A chip the turn disables keeps its place, so the head never reflows
 const CHIP_DISABLED = 'disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-fg-2';
 
-// The agent-reported context and its model-window bar. With a split (`split`, only from an agent that knows what it
-// sent: context.ts) the bar is cut by category and the categories are listed under it; a transcript-based estimate
-// would describe a window whose compacted contents stay inside the agent, so there is none for the other agents
+// The agent-reported context and its model-window bar. With a split (`split`: the built-in agent's own, or the engine's
+// estimate for any other agent, context.ts) the bar is cut by category and the categories are listed under it
 function UsagePanel({ usage, split, pct, fill, compactAt, canCompact, overAt, pending, compactDisabled, onCompact, onReport }: {
   usage: Usage; split?: ContextReport; pct: number; fill: number;
   compactAt?: number; canCompact: boolean; overAt?: number; pending?: string; compactDisabled?: boolean; onCompact: () => void; onReport?: () => void;

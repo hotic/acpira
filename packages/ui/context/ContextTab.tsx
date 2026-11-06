@@ -91,12 +91,14 @@ export function ContextTab({ sessionId, root, running, shown, info }: {
     else vscodeApi().postMessage({ type: 'openPath', path });
   };
   const rawText = raw?.raw ? JSON.stringify(raw.raw.body, null, 2) : undefined;
+  // The engine's estimate from the transcript (rev prefix of context_estimate.rs) has no request to show
+  const hasRaw = !!report && !report.rev.startsWith('tx:');
   const actions = <>
     {report?.at !== undefined && <span className="text-3 text-fg-3">{ago(report.at, locale)}</span>}
-    <IconButton size="sm" title={t('context.raw')} aria-label={t('context.raw')} aria-pressed={!!raw}
+    {hasRaw && <IconButton size="sm" title={t('context.raw')} aria-label={t('context.raw')} aria-pressed={!!raw}
       className="aria-pressed:bg-active aria-pressed:text-fg-1" onClick={() => (raw ? setRaw(undefined) : void contextApi.raw(sessionId).then(setRaw))}>
       <Braces strokeWidth={1.5} />
-    </IconButton>
+    </IconButton>}
   </>;
   return (
     <div data-context-tab data-report-scroll className="scroll-thin absolute inset-0 overflow-y-auto [scrollbar-gutter:stable]">

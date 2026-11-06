@@ -495,6 +495,7 @@ export const fr = {
   'context.node.message': 'Message',
   'context.cat.mcp': 'MCP',
   'context.cat.chat': 'Conversation',
+  'context.cat.agent': "Propre à l'agent",
   'context.cat.system': 'Prompt système',
   'context.cat.tools': 'Définitions d\'outils',
   'context.cat.docs': 'Fichiers d\'instructions',

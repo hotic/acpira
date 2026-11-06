@@ -306,3 +306,24 @@ async fn a_rewind_takes_the_goal_back_to_how_it_stood_without_refunding_or_resta
   h.conn.request("session/load", json!({ "sessionId": sid, "cwd": h.cwd(), "mcpServers": [] })).await.unwrap();
   assert!(!h.updates().iter().any(|u| u["_meta"]["goal"].is_object()), "{:?}", h.updates());
 }
+
+#[tokio::test]
+async fn a_resumed_session_reports_its_context_before_its_next_call() {
+  let h = Harness::start().await;
+  let server = MockModel::start();
+  h.providers(&server.base_url(), json!([{ "id": "m1", "context": 64000 }]));
+  let sid = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
+  server.push(mock::Reply::Sse(vec![mock::delta(json!({ "role": "assistant", "content": "done" })), mock::finish("stop"), mock::usage(3000, 10, 0)]));
+  prompt(&h, &sid, "first task").await;
+  // Another process opens it, as after an engine restart or an idle release: no call yet, the restored history
+  // stands for it at the figure the ring still shows
+  let h = Harness::start_in(h.home, h.cwd).await;
+  h.conn.request("session/resume", json!({ "sessionId": sid, "cwd": h.cwd(), "mcpServers": [] })).await.unwrap();
+  let r = h.conn.request("_acpira/context", json!({ "sessionId": sid, "detail": true })).await.unwrap();
+  let report = &r["report"];
+  assert_eq!(report["estimated"], true, "{r}");
+  assert_eq!(report["used"], 3010, "{r}");
+  let cats: Vec<&str> = report["categories"].as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap()).collect();
+  assert!(cats.contains(&"system") && cats.contains(&"chat"), "{cats:?}");
+  assert_eq!(server.requests().len(), 1, "no model call is made for it");
+}

@@ -1,12 +1,13 @@
 // A session's context window split by what fills it (the composer ring's card, the tool panel's context report tab). Only an agent
 // that knows what it sent reports one: the built-in agent splits the request it built, part by part, and scales its own
-// size estimates to the provider's count, so the parts add up to the figure the ring shows. For any other agent there is
-// no split and the card keeps the bare figure; nothing is estimated from the transcript, which still holds what an agent
-// has compacted away. Rust mirror: `acpira-shared/src/context.rs`
+// size estimates to the provider's count, so the parts add up to the figure the ring shows. For any other agent the
+// engine estimates one from the transcript since the last compaction, scaled into the agent's figure, the remainder one
+// `rest` part (`acpira-host/src/acp/session/context_estimate.rs`), always marked estimated. Rust mirror:
+// `acpira-shared/src/context.rs`
 
-// In the order a request carries them
-export type ContextCategory = 'system' | 'tools' | 'docs' | 'skills' | 'mcp' | 'chat';
-export const CONTEXT_CATEGORIES: readonly ContextCategory[] = ['system', 'tools', 'docs', 'skills', 'mcp', 'chat'];
+// In the order a request carries them; `agent` is what an agent that reports no split keeps of its own, unsplit
+export type ContextCategory = 'agent' | 'system' | 'tools' | 'docs' | 'skills' | 'mcp' | 'chat';
+export const CONTEXT_CATEGORIES: readonly ContextCategory[] = ['agent', 'system', 'tools', 'docs', 'skills', 'mcp', 'chat'];
 
 // What a node is, which picks its label and icon:
 //   system:  base (the agent's instructions), environment, prompt (a system prompt a plugin rewrote, whole)
@@ -17,8 +18,11 @@ export const CONTEXT_CATEGORIES: readonly ContextCategory[] = ['system', 'tools'
 //   chat:    summary (earlier turns compacted into one message), turn (`title` its prompt, `index` from 1), and in a turn
 //            message (the user's words, steered messages too), note (what the agent stacked in front: mode, MCP
 //            servers, sidekick, goal), thinking, reply, call (`name` the tool, `title` what it worked on, `toolKind`)
+//   rest:    a category known only as a sum (the engine's estimate, `context_estimate.rs`): in agent, what an agent
+//            that reports no split keeps of its own (system prompt, tool definitions, instruction files, a compaction
+//            summary), the figure less the transcript; in another category, the sum the agent reported (Grok)
 export type ContextNodeKind =
-  | 'base' | 'environment' | 'prompt'
+  | 'base' | 'environment' | 'prompt' | 'rest'
   | 'doc'
   | 'tool'
   | 'skill' | 'skillTool'
