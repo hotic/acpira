@@ -1,0 +1,5 @@
+{
+  // A turn that changed a TypeScript contract the iOS app mirrors runs the app's contract tests on the Mac
+  // (scripts/hooks/ios-contract.mjs); a cold build of the package takes a few minutes
+  "afterTurn": { "run": "node scripts/hooks/ios-contract.mjs", "timeout": 900, "rounds": 2 },
+}
