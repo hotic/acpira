@@ -341,3 +341,34 @@ async fn the_first_project_shell_to_attach_seeds_the_project_list() {
   assert_eq!(projects_of(&m), json!([b, a]));
   m.dispose().await;
 }
+
+// A project of several folders: a session in either folder gets the other one as ACP `additionalDirectories` (the
+// agent advertises them), and a session started in the further folder does not list it as a project of its own
+#[tokio::test(flavor = "multi_thread")]
+async fn a_project_of_two_folders_hands_each_session_the_other_folder() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let home = folder(dir.path(), "home");
+  let (app, web) = (folder(dir.path(), "app"), folder(dir.path(), "web"));
+  let meta_log = dir.path().join("meta.log");
+  let opts = Opts::with_agents(fake.setting(json!({ "env": { "FAKE_EXTRA_DIRS": "1", "FAKE_META_LOG": meta_log } })), "fake");
+  let m = Mgr::new(&dir.path().join("sessions"), opts.cwd(&home).projects());
+  m.init().await;
+  m.handle(json!({ "type": "categoryOp", "op": "addProject", "cwd": app })).await;
+  m.handle(json!({ "type": "categoryOp", "op": "editProject", "cwd": app, "primary": app, "name": "Both", "extra": [web] })).await;
+  let read = || std::fs::read_to_string(&meta_log).unwrap_or_default().lines().map(|l| serde_json::from_str::<Value>(l).unwrap()).collect::<Vec<_>>();
+
+  m.handle(json!({ "type": "newSession", "cwd": app })).await;
+  m.handle(json!({ "type": "send", "text": "hi" })).await;
+  until(|| !read().is_empty(), 5000).await;
+  assert_eq!(read()[0]["dirs"], json!([web]));
+
+  m.handle(json!({ "type": "newSession", "cwd": web })).await;
+  m.handle(json!({ "type": "send", "text": "hi" })).await;
+  until(|| read().len() > 1, 5000).await;
+  let last = read().pop().unwrap();
+  assert_eq!(last["cwd"], json!(web));
+  assert_eq!(last["dirs"], json!([app]));
+  assert_eq!(projects_of(&m), json!([app]));
+  m.dispose().await;
+}

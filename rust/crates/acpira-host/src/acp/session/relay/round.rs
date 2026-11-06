@@ -400,6 +400,7 @@ impl AcpSession {
     let entry = self.deps.host_mcp.as_ref().and_then(|h| h.entry_for_session(agent, &self.arc(), Some(thread), depth));
     crate::host_mcp::push_entry(&mut servers, entry);
     let mut req = self.with_remote(json!({ "cwd": self.cwd, "mcpServers": servers })).await;
+    self.with_other_folders(proc, &mut req);
     self.with_prompt_layers(&mut req, agent);
     // The built-in agent lists its Read-only mode to a summoned session only, so a consult lands there and not in Plan
     // mode, whose plan would end in an approval put before the user

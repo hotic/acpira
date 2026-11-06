@@ -542,11 +542,11 @@ impl BridgeCore {
         });
       }
       W::ProjectFile { session_id, path, base, seq } => {
-        let (core, root) = (self.clone(), manager.session_cwd(&session_id));
+        let (core, mut root) = (self.clone(), manager.session_cwd(&session_id));
         // A `~` / `~/…` path on a local workspace resolves against the user's home, and an absolute path inside `root`
         // shortens to its relative path so git marks and HEAD lookups apply
-        let path = match &root {
-          Some(r) if !crate::workspace::is_remote(r) => {
+        let path = match root.clone() {
+          Some(r) if !crate::workspace::is_remote(&r) => {
             let expanded = if path == "~" {
               home_dir().to_string_lossy().into_owned()
             } else if let Some(rest) = path.strip_prefix("~/").or_else(|| if cfg!(windows) { path.strip_prefix("~\\") } else { None }) {
@@ -554,10 +554,21 @@ impl BridgeCore {
             } else {
               path
             };
-            let root_path = crate::workspace::folder_path(r);
+            let root_path = crate::workspace::folder_path(&r);
             match Path::new(&expanded).strip_prefix(&root_path) {
               Ok(rel) if !rel.as_os_str().is_empty() => project_files::relative(&root_path, &expanded),
-              _ => expanded,
+              // A file in another folder of the session's project reads from that folder, its own git marks and HEAD
+              _ => {
+                let other = manager.categories().other_folders(&r).into_iter().find(|f| !crate::workspace::is_remote(f) && Path::new(&expanded).starts_with(crate::workspace::folder_path(f)));
+                match other {
+                  Some(f) => {
+                    let rel = project_files::relative(&crate::workspace::folder_path(&f), &expanded);
+                    root = Some(f);
+                    rel
+                  }
+                  None => expanded,
+                }
+              }
             }
           }
           _ => path,

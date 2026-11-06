@@ -1,6 +1,6 @@
 //! Edits of the session list's layout in `categories.json`: categories, project order and collapse, and sections
 
-use acpira_shared::transcript::{CategoryOp, SessionCategories, SessionCategory, SessionSection};
+use acpira_shared::transcript::{CategoryOp, ProjectMeta, SessionCategories, SessionCategory, SessionSection};
 
 /// One category edit on the list. Edits naming a category that is gone (deleted in another window) do nothing; a blank
 /// name keeps the old one. Reordering only moves a category among its own project's categories
@@ -43,25 +43,34 @@ pub fn apply_category_op(list: &mut SessionCategories, op: &CategoryOp) {
       }
     }
     CategoryOp::AddProject { cwd } => {
+      // A further folder of a project is already listed, as that project
+      if list.project_of(cwd) != cwd {
+        return;
+      }
       list.removed_projects.retain(|p| p != cwd);
       let projects = list.projects.get_or_insert_with(Vec::new);
       if !cwd.is_empty() && !projects.contains(cwd) {
         projects.push(cwd.clone());
       }
     }
-    // Remembered, so a folder its sessions would still list (one an IDE window ran in, or a registered one) stays gone
+    // Remembered, so a folder its sessions would still list (one an IDE window ran in, or a registered one) stays gone.
+    // A project's further folders go with it, else their sessions would list them as projects of their own
     CategoryOp::RemoveProject { cwd } => {
       if let Some(projects) = &mut list.projects {
         projects.retain(|p| p != cwd);
       }
-      if !cwd.is_empty() && !list.removed_projects.contains(cwd) {
-        list.removed_projects.push(cwd.clone());
+      let extra = list.project_meta.remove(cwd).map(|m| m.extra).unwrap_or_default();
+      for f in std::iter::once(cwd).chain(extra.iter()) {
+        if !f.is_empty() && !list.removed_projects.contains(f) {
+          list.removed_projects.push(f.clone());
+        }
       }
       // Off the list is out of its section too
       for s in &mut list.sections {
         s.projects.retain(|p| p != cwd);
       }
     }
+    CategoryOp::EditProject { cwd, primary, name, extra } => edit_project(list, cwd, primary, name.as_deref().and_then(name_of), extra),
     CategoryOp::ReorderProject { cwd, before } => {
       let Some(projects) = &mut list.projects else { return };
       let Some(from) = projects.iter().position(|p| p == cwd) else { return };
@@ -121,5 +130,134 @@ pub fn apply_category_op(list: &mut SessionCategories, op: &CategoryOp) {
         s.projects.insert(at, cwd.clone());
       }
     }
+  }
+}
+
+/// `CategoryOp::EditProject`. Each folder belongs to one project: a member that was a project of its own is folded in
+/// (its categories come along, its own further folders go free), one listed by another project leaves that one. A new
+/// primary folder takes the project's place in the list, its section, fold and categories
+fn edit_project(list: &mut SessionCategories, cwd: &str, primary: &str, name: Option<String>, extra: &[String]) {
+  let primary = if primary.is_empty() { cwd } else { primary };
+  if primary.is_empty() {
+    return;
+  }
+  let mut folders: Vec<String> = vec![primary.to_owned()];
+  for f in extra {
+    if !f.is_empty() && !folders.contains(f) {
+      folders.push(f.clone());
+    }
+  }
+  list.project_meta.remove(cwd);
+  for f in &folders {
+    if f == cwd {
+      continue;
+    }
+    let own = list.project_meta.remove(f).is_some() || list.projects.as_ref().is_some_and(|p| p.contains(f));
+    if own {
+      drop_project(list, f);
+      rename_categories(list, f, primary);
+    }
+    for m in list.project_meta.values_mut() {
+      m.extra.retain(|x| x != f);
+    }
+  }
+  list.project_meta.retain(|_, m| m.name.is_some() || !m.extra.is_empty());
+  if primary != cwd {
+    let projects = list.projects.get_or_insert_with(Vec::new);
+    match projects.iter().position(|p| p == cwd) {
+      Some(i) => projects[i] = primary.to_owned(),
+      None => projects.push(primary.to_owned()),
+    }
+    for s in &mut list.sections {
+      for p in s.projects.iter_mut().filter(|p| *p == cwd) {
+        *p = primary.to_owned();
+      }
+    }
+    for p in list.collapsed_projects.iter_mut().filter(|p| *p == cwd) {
+      *p = primary.to_owned();
+    }
+    rename_categories(list, cwd, primary);
+  } else {
+    let projects = list.projects.get_or_insert_with(Vec::new);
+    if !projects.iter().any(|p| p == primary) {
+      projects.push(primary.to_owned());
+    }
+  }
+  list.removed_projects.retain(|p| !folders.contains(p));
+  let extra: Vec<String> = folders.split_off(1);
+  if name.is_some() || !extra.is_empty() {
+    list.project_meta.insert(primary.to_owned(), ProjectMeta { name, extra });
+  }
+}
+
+/// A project folded into another leaves the list, its sections and the folded projects
+fn drop_project(list: &mut SessionCategories, cwd: &str) {
+  if let Some(projects) = &mut list.projects {
+    projects.retain(|p| p != cwd);
+  }
+  for s in &mut list.sections {
+    s.projects.retain(|p| p != cwd);
+  }
+  list.collapsed_projects.retain(|p| p != cwd);
+}
+
+/// Categories follow their project, since the list files a session by its project, not its own folder
+fn rename_categories(list: &mut SessionCategories, from: &str, to: &str) {
+  for c in list.categories.iter_mut().filter(|c| c.cwd == from) {
+    c.cwd = to.to_owned();
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn edit(list: &mut SessionCategories, cwd: &str, primary: &str, extra: &[&str]) {
+    let extra = extra.iter().map(|s| s.to_string()).collect();
+    apply_category_op(list, &CategoryOp::EditProject { cwd: cwd.into(), primary: primary.into(), name: None, extra });
+  }
+
+  #[test]
+  fn a_registered_folder_added_to_a_project_joins_it_with_its_categories() {
+    let mut list = SessionCategories { projects: Some(vec!["/a".into(), "/web".into()]), ..Default::default() };
+    apply_category_op(&mut list, &CategoryOp::Create { id: "c".into(), name: "x".into(), cwd: "/web".into() });
+    edit(&mut list, "/a", "/a", &["/web"]);
+    assert_eq!(list.projects, Some(vec!["/a".to_string()]));
+    assert_eq!(list.project_meta["/a"].extra, vec!["/web".to_string()]);
+    assert_eq!(list.categories[0].cwd, "/a");
+    assert_eq!(list.project_of("/web"), "/a");
+    assert_eq!(list.other_folders("/web"), vec!["/a".to_string()]);
+    assert_eq!(list.other_folders("/a"), vec!["/web".to_string()]);
+    // A session started in the further folder does not list it again
+    apply_category_op(&mut list, &CategoryOp::AddProject { cwd: "/web".into() });
+    assert_eq!(list.projects, Some(vec!["/a".to_string()]));
+  }
+
+  #[test]
+  fn a_new_primary_takes_the_projects_place_and_the_old_one_stays_a_member() {
+    let mut list = SessionCategories { projects: Some(vec!["/z".into(), "/a".into()]), collapsed_projects: vec!["/a".into()], ..Default::default() };
+    apply_category_op(&mut list, &CategoryOp::CreateSection { id: "s".into(), name: "w".into(), project: Some("/a".into()) });
+    edit(&mut list, "/a", "/b", &["/a"]);
+    assert_eq!(list.projects, Some(vec!["/z".to_string(), "/b".to_string()]));
+    assert_eq!(list.sections[0].projects, vec!["/b".to_string()]);
+    assert_eq!(list.collapsed_projects, vec!["/b".to_string()]);
+    assert_eq!(list.project_of("/a"), "/b");
+    assert!(!list.project_meta.contains_key("/a"));
+  }
+
+  #[test]
+  fn a_folder_listed_elsewhere_moves_and_an_emptied_project_keeps_no_entry() {
+    let mut list = SessionCategories { projects: Some(vec!["/a".into(), "/b".into()]), ..Default::default() };
+    edit(&mut list, "/a", "/a", &["/x"]);
+    edit(&mut list, "/b", "/b", &["/x"]);
+    assert!(!list.project_meta.contains_key("/a"));
+    assert_eq!(list.project_of("/x"), "/b");
+    // Removing the project takes its further folder off the list too
+    apply_category_op(&mut list, &CategoryOp::RemoveProject { cwd: "/b".into() });
+    assert_eq!(list.removed_projects, vec!["/b".to_string(), "/x".to_string()]);
+    assert!(list.project_meta.is_empty());
+    // Adding it back as a member brings it back on the list
+    edit(&mut list, "/a", "/a", &["/x"]);
+    assert_eq!(list.removed_projects, vec!["/b".to_string()]);
   }
 }

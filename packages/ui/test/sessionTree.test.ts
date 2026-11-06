@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionCategory, SessionSummary } from '@acpira/shared/transcript';
-import { buildSessionTree, categoryOf, draggable, dropAction, isChatFolder, projectSessions } from '../chat/sessionTree';
+import { buildSessionTree, categoryOf, draggable, dropAction, isChatFolder, projectOf, projectSessions } from '../chat/sessionTree';
 
 const WS = '/work/acpira';
 const OTHER = '/work/bot';
@@ -172,5 +172,19 @@ describe('session tree', () => {
     // Another project: its group moves the session there, one of its categories files it there too
     expect(dropAction(s('a', { category: 'ui' }), { cwd: OTHER }, categories)).toEqual({ kind: 'move', to: { cwd: OTHER } });
     expect(dropAction(s('a'), { cwd: OTHER, category: 'rel' }, categories)).toEqual({ kind: 'move', to: { cwd: OTHER, category: 'rel' } });
+  });
+
+  it('groups a project of several folders under its primary folder, its categories and drops included', () => {
+    const WEB = '/work/acpira-web';
+    const meta = { [WS]: { extra: [WEB] } };
+    const of = (cwd: string) => projectOf(meta, cwd);
+    expect(of(WEB)).toBe(WS);
+    expect(of(OTHER)).toBe(OTHER);
+    const shown = [s('a'), s('b', { cwd: WEB, category: 'ui' }), s('c', { cwd: OTHER })];
+    const tree = buildSessionTree({ ...base, shown, grouped: true, registered: [WS, OTHER], projectOf: of });
+    expect(tree.projects.map(p => [p.cwd, p.count])).toEqual([[WS, 2], [OTHER, 1]]);
+    expect(tree.projects[0]!.categories[0]!.sessions.map(x => x.id)).toEqual(['b']);
+    // Dropped on its own project, a session of the further folder is filed, never moved to the primary folder
+    expect(dropAction(s('b', { cwd: WEB }), { cwd: WS, category: 'ui' }, categories, of)).toEqual({ kind: 'file', category: 'ui' });
   });
 });

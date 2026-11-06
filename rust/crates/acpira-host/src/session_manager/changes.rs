@@ -218,4 +218,8 @@ impl SessionPolicy for ManagerPolicy {
   fn claim(&self, session: &str) -> Option<Result<u64, String>> {
     Some(self.me.upgrade().map_or(Ok(0), |m| m.claim_turn(session)))
   }
+
+  fn other_folders(&self, cwd: &str) -> Vec<String> {
+    self.me.upgrade().map(|m| m.state.lock().categories.other_folders(cwd)).unwrap_or_default()
+  }
 }

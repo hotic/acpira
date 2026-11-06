@@ -1589,6 +1589,39 @@ pub struct SessionCategories {
   /// Project shells' sections in list order
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub sections: Vec<SessionSection>,
+  /// What a project holds beyond its folder, keyed by that folder (the primary one, `projects`' entry): a name of its
+  /// own and further folders, sent to agents as ACP `additionalDirectories`. A project without either has no entry
+  #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+  pub project_meta: BTreeMap<String, ProjectMeta>,
+}
+
+/// A project's own name and its folders besides the primary one (absolute, in the order the user listed them)
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectMeta {
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub name: Option<String>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub extra: Vec<String>,
+}
+
+impl SessionCategories {
+  /// The project a folder belongs to: the project whose primary folder it is, or the one listing it as a further folder;
+  /// else the folder stands for itself
+  pub fn project_of<'a>(&'a self, folder: &'a str) -> &'a str {
+    if self.project_meta.contains_key(folder) {
+      return folder;
+    }
+    self.project_meta.iter().find(|(_, m)| m.extra.iter().any(|f| f == folder)).map_or(folder, |(k, _)| k.as_str())
+  }
+
+  /// Every folder of the project `folder` belongs to except `folder` itself: what a session running there gets as
+  /// `additionalDirectories`, the primary folder first
+  pub fn other_folders(&self, folder: &str) -> Vec<String> {
+    let key = self.project_of(folder);
+    let Some(meta) = self.project_meta.get(key) else { return vec![] };
+    std::iter::once(key).chain(meta.extra.iter().map(String::as_str)).filter(|f| *f != folder).map(str::to_owned).collect()
+  }
 }
 
 /// One edit of the category list, applied under the file lock to what is on disk so concurrent windows compose
@@ -1611,6 +1644,17 @@ pub enum CategoryOp {
   AddProject { cwd: String },
   /// Take a folder off the list: off `projects`, onto `removed_projects`. Its sessions stay
   RemoveProject { cwd: String },
+  /// Edit a project (`cwd`, its primary folder): its name (blank: the folder's), its primary folder (`primary`, which
+  /// takes over the project's place, section and categories) and its further folders. A folder that was a project of
+  /// its own, or another project's further folder, joins this one
+  EditProject {
+    cwd: String,
+    primary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(default)]
+    extra: Vec<String>,
+  },
   /// Move a registered folder before `before`, or to the end
   ReorderProject {
     cwd: String,

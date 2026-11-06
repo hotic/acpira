@@ -123,6 +123,11 @@ pub trait SessionPolicy: Send + Sync {
   fn claim(&self, _session: &str) -> Option<Result<u64, String>> {
     None
   }
+  /// The other folders of the project `cwd` belongs to (`SessionCategories::other_folders`), sent as ACP
+  /// `additionalDirectories`; none outside a project of several folders
+  fn other_folders(&self, _cwd: &str) -> Vec<String> {
+    vec![]
+  }
 }
 
 /// Every answer the inert default

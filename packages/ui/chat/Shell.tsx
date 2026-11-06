@@ -55,6 +55,7 @@ import { mediaKind } from '../panel/files';
 import { launchable } from '@acpira/shared/agentOrder';
 import { parseRemoteFolder, SSH_LOCAL_AGENTS } from '@acpira/shared/remote';
 import { RemoteFolderDialog } from '../remote/RemoteFolderDialog';
+import { ProjectDialog } from './ProjectDialog';
 import { COLUMN_HIDDEN_KEY, DesktopContext, desktopOS, macOS, pageCaption, useShellCommands, useShellToasts } from '../desktop';
 import { droppedPathResolver, hostDragPaths, setWebviewState, webviewState } from '../vscodeApi';
 import { moveDraft } from './useComposerDraft';
@@ -673,6 +674,8 @@ export function Shell(p: ShellProps) {
   // The column's "remote folder" entries: a folder on that host through the remote folder picker, or a new host on the
   // settings page
   const [remotePick, setRemotePick] = useState<string>();
+  // The project whose name and folders the edit dialog shows (desktop, from a project header's menu)
+  const [editingProject, setEditingProject] = useState<string>();
   const openSettingsPage = p.onOpenSettings;
   const addRemote = useCallback((alias?: string) => {
     closeDrawer();
@@ -846,6 +849,7 @@ export function Shell(p: ShellProps) {
       onNewIn={desktop ? newIn : undefined}
       onAddProject={desktop && on.pickFolder ? addProject : undefined}
       onAddRemote={desktop ? addRemote : undefined}
+      onEditProject={desktop && on.categoryOp ? setEditingProject : undefined}
       onRevealPath={on.revealPath}
       onCopyPath={copyPath}
       fresh={fresh}
@@ -1366,6 +1370,9 @@ export function Shell(p: ShellProps) {
         )}
         {remotePick && <RemoteFolderDialog alias={remotePick} onClose={() => setRemotePick(undefined)}
           onAdd={folder => { setRemotePick(undefined); openProject(folder); }} />}
+        {editingProject && on.categoryOp && <ProjectDialog cwd={editingProject} meta={p.categories?.projectMeta?.[editingProject]} home={p.home}
+          onPickFolder={on.pickFolder} onSave={op => on.categoryOp?.(op)} onRemove={() => on.categoryOp?.({ op: 'removeProject', cwd: editingProject })}
+          onClose={() => setEditingProject(undefined)} />}
       </DiffSourceContext.Provider>
       </AsyncTaskStopContext.Provider>
       </ToolFileActionsContext.Provider>
