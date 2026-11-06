@@ -4,11 +4,14 @@ name: iOS
 # and on a simulator, then the app scheme. Without the networking XCFramework (ACPIRA_NET=0), as a fresh checkout
 # builds it; signing and TestFlight uploads stay off CI.
 
+# packages/shared holds the TypeScript contracts ContractTests reads, so a protocol change runs here before the app
+# drifts from it. Branches only: a release tag carries no iOS change of its own, and its tree misses later test fixes
 on:
   push:
-    paths: ['apps/ios/**', '.github/workflows/ios.yml']
+    branches: ['**']
+    paths: ['apps/ios/**', 'packages/shared/**', '.github/workflows/ios.yml']
   pull_request:
-    paths: ['apps/ios/**', '.github/workflows/ios.yml']
+    paths: ['apps/ios/**', 'packages/shared/**', '.github/workflows/ios.yml']
   workflow_dispatch:
 
 permissions:
