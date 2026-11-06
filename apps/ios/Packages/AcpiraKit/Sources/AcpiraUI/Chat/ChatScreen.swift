@@ -133,6 +133,7 @@ struct ChatScreen: View {
     .environment(\.inspectSubagent, SubagentInspect(session: id) { model.path.append(.subagent(session: id, id: $0)) })
     .modifier(MediaLayer(session: id, loader: model.media))
     .environment(\.mentionPersonas, model.personas)
+    .environment(\.promptCommands, session.commands.map(\.name))
     .environment(\.compactAt, model.compactAt)
     .environment(\.hiddenModels, model.settings?.hiddenOptions[session.agent] ?? [:])
     .environment(\.diffSource, diffMemo("\(memoKey):\(model.live)") { model.live ? { [model, id] in await model.diffSource(id, $0) } : nil })

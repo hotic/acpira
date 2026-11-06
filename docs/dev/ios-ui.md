@@ -21,6 +21,7 @@ SwiftUI, Liquid Glass, WebKit and text-layout traps of `apps/ios/Packages/Acpira
 - TextKit avoids a lone CJK word on the last line; `CJKWidth.paragraphEnd` (U+2060) defeats it.
 - CoreText's fallback from Inter sets PingFang SC Regular at every weight; `InterFont.ctFont` puts the matching weight first.
 - A one-line `Text` squeezed below an ellipsis's width is laid out untruncated, and `CSSLineRenderer` draws the whole line past its frame: a label that may lose all its width hides itself (`SqueezedTitle`).
+- A custom `TextRenderer` on a multi-screen prompt can draw no glyphs in a live scroll view while keeping its layout and background. `UserMessageCard` keeps native drawing; `CALayer.render` still drew the missing glyphs, so a layer snapshot alone did not catch this failure.
 
 ## SwiftUI traps
 

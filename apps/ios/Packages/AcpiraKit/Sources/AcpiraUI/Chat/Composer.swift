@@ -113,6 +113,7 @@ struct Composer: View {
             }
             .focused($focused)
             .attachLongPastes(to: $staged) { actions.toast($0, .fileText) }
+            .promptMarks(text: text, commands: markCommands, summons: markSummons)
           }
           // At rest the field takes no touches (the bar's tap focuses it) and its hint is plain text over it: a drag
           // on the bar scrolled the field's own text view, and the hint stayed cut by the one-line frame
@@ -343,7 +344,7 @@ struct Composer: View {
     .onAppear(perform: startPopup)
     // Collapsing gives the card its focus back; leaving for a file page does not, or the keyboard rose over that page
     .modifier(FullEditorCover(open: $fullEditor, onDismiss: { if leftEditor { leftEditor = false } else { focused = true } }) {
-      ExpandedComposer(text: $text, staged: $staged, filled: filled, onSend: {
+      ExpandedComposer(text: $text, staged: $staged, filled: filled, commands: markCommands, summons: markSummons, onSend: {
         guard fitsOneMessage() else { return }
         onSend(text, staged)
         text = ""
@@ -462,6 +463,10 @@ struct Composer: View {
   private var slashHits: [SlashCommand] {
     slashSpan.map { SlashCommands.match(session.commands, query: $0.query) } ?? []
   }
+
+  /// What the field paints as pills (PromptMarks.swift): the advertised commands and the summonable personas
+  private var markCommands: [String] { session.commands.map(\.name) }
+  private var markSummons: [String] { personas.map(\.name) }
 
   /// The input hint of the command the text names, while the list is not showing it
   private var commandHint: String? { slashHits.isEmpty ? SlashCommands.hint(session.commands, text: text) : nil }
