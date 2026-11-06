@@ -56,6 +56,11 @@ export function useComposerDraft(draftKey?: string, editText?: string, main?: { 
   return { text, setText, drafts, setDrafts };
 }
 
+// What an inline editor parked under this key, read when its card renders closed
+export function parkedDraft(draftKey: string): { text: string; drafts: Draft[] } | undefined {
+  return DRAFTS.get(draftKey);
+}
+
 // A history edit that was sent or cancelled leaves nothing parked behind
 export function dropDraft(draftKey: string) {
   DRAFTS.delete(draftKey);
