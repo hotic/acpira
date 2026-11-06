@@ -11,6 +11,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [2.0.9] - 2026-11-06
+
+### Added
+
+- **A desktop project can hold several folders.** Edit project in a project header's menu gives the project a name of its own and adds further folders. Sessions run in the primary folder, and agents that support ACP `additionalDirectories` get the other folders each time a session opens; the built-in agent names them in its environment section. Sessions from every folder list under the project, and a file in another folder opens with that folder's git changes. A project on an SSH host keeps one folder.
+- **Every agent's context card shows what fills it.** For agents that report no split, the engine estimates the parts from the transcript since the last compaction, scaled to the agent's figure, and shows the rest as the agent's own part. Claude Code's split comes from its own session log and Grok's from its session info. Sessions without a running agent get the estimate too, and the built-in agent shows its restored context after a reopen before its next call. Estimates are marked as such and have no raw request.
+- **A paired phone can add projects and models.** It browses the computer's folders to add a project, and can add, edit or remove the built-in agent's model sources. A key typed on the phone is stored on the computer and never sent back. The agent-wide switches stay on the computer.
+
+### Changed
+
+- A new session in an SSH host folder lists the models of the host's CLI when the agent runs in the host's engine, and keeps the last list while the host is away.
+- In Settings, the agent tiles slide into place while one is dragged, and the dragged tile follows the pointer.
+- Settings rows are shorter.
+
+### Fixed
+
+- A history prompt closed with an unsent edit shows the edited text and attachments instead of the original.
+- Opening an SSH host session from a paired phone while the desktop shows it clears its unread mark.
+- OpenAI-compatible streams that send an empty message beside every reasoning delta keep one Thinking row instead of starting a new one per batch.
+
 ## [2.0.8] - 2026-11-05
 
 ### Added
