@@ -326,7 +326,8 @@ export type HostMsg =
   | { type: 'pluginCalled'; id: string; result?: unknown; error?: string }
   // shapes: the agent's remembered per-model parameters (modelShapes.ts), so a model picked in settings shows its own efforts
   // `commands`: what the agent's newest session advertised, for a page with no session yet (the phone's new session page)
-  | { type: 'controls'; agent: AgentId; controls: ConfigControl[]; shapes?: ModelShapes; commands?: SlashCommand[] }
+  // `cwd`: the request's, echoed; the answer is for a new session in that folder
+  | { type: 'controls'; agent: AgentId; controls: ConfigControl[]; shapes?: ModelShapes; commands?: SlashCommand[]; cwd?: string }
   // The built-in agent's model sources; error when the action that triggered this reply failed
   | { type: 'providers'; view: ProvidersView; error?: string }
   // The answer to the providerProbe with the same id
@@ -627,7 +628,8 @@ export type WebviewMsg =
   // List a source's models, check it, test a model or find local servers; answered by providerProbed
   | { type: 'providerProbe'; id: string; probe: ProviderProbe }
   // fresh: the refresh button — host spawns a throwaway process to re-read the current configOptions; without it, the latest session's list
-  | { type: 'controls'; agent: AgentId; fresh?: boolean }
+  // cwd: the folder a new session would start in; in a folder on an SSH host the agent may run in the host's engine, with that CLI's models
+  | { type: 'controls'; agent: AgentId; fresh?: boolean; cwd?: string }
   // History list → "Import from <agent>": the host spawns a throwaway process, initialize + session/list for this workspace; no session is created
   // cwd: the project folder to list for (a project shell); the view's folder when absent
   | { type: 'listNativeSessions'; agent: AgentId; cwd?: string }

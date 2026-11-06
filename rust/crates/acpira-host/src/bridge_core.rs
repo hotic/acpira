@@ -903,18 +903,24 @@ impl BridgeCore {
           me.post_now(HostMsg::ProviderProbed { id, outcome });
         });
       }
-      W::Controls { agent, fresh } => {
-        if fresh != Some(true) {
+      W::Controls { agent, fresh, cwd } => {
+        // A new session in a folder on an SSH host may start in the host's engine: then the models are the host CLI's
+        if let Some(c) = match cwd.as_deref() {
+          Some(folder) => manager.host_controls(&agent, folder, fresh == Some(true)).await,
+          None => None,
+        } {
+          self.post_now(HostMsg::Controls { agent, controls: c.controls, shapes: c.shapes, commands: c.commands, cwd });
+        } else if fresh != Some(true) {
           let controls = manager.known_controls(&agent).await;
           let shapes = manager.model_shapes(&agent);
           let commands = manager.known_commands(&agent).await;
-          self.post_now(HostMsg::Controls { agent, controls, shapes, commands });
+          self.post_now(HostMsg::Controls { agent, controls, shapes, commands, cwd });
         } else {
           // The probe's initialize brings the version back too; a fresh inventory keeps the facts card in step
           let controls = manager.probe_controls(&agent).await;
           let shapes = manager.model_shapes(&agent);
           let commands = manager.known_commands(&agent).await;
-          self.post_now(HostMsg::Controls { agent: agent.clone(), controls, shapes, commands });
+          self.post_now(HostMsg::Controls { agent: agent.clone(), controls, shapes, commands, cwd });
           let inventory = self.settings.inventory(&agent, &self.folder()).await;
           self.post_now(HostMsg::Inventory { agent, inventory });
         }

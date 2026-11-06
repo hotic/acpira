@@ -403,6 +403,9 @@ pub enum HostMsg {
     /// replaces it once the session runs
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     commands: Vec<SlashCommand>,
+    /// The request's `cwd`, echoed: the answer is for a new session in that folder
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cwd: Option<String>,
   },
   Files {
     seq: i64,
@@ -1184,6 +1187,10 @@ pub enum WebviewMsg {
     agent: AgentId,
     #[serde(default)]
     fresh: Option<bool>,
+    /// The folder a new session would start in: in a folder on an SSH host the agent may run in the host's engine,
+    /// with the host's own CLI config and models
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cwd: Option<String>,
   },
   ListNativeSessions {
     agent: AgentId,

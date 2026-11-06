@@ -22,7 +22,8 @@ use acpira_shared::protocol::{HostMsg, RawJson, SessionHit, WebviewMsg};
 use acpira_shared::remote::{ConnectionView, format_remote_folder, parse_remote_folder};
 use acpira_shared::session_patch::{LastTurnParts, ViewParts};
 use acpira_shared::sidecar::SessionListScope;
-use acpira_shared::transcript::SessionSummary;
+use acpira_shared::model_shapes::ModelShapes;
+use acpira_shared::transcript::{ConfigControl, SessionSummary, SlashCommand};
 
 use super::{SessionManager, Viewer, is_forwarded, remote_view, session_id_of};
 use crate::remote::client::Event;
@@ -87,6 +88,16 @@ struct HostRun {
   settling: parking_lot::Mutex<HashSet<String>>,
   /// Public account metadata for this host only; never merged into this machine's account list.
   auth: parking_lot::Mutex<Value>,
+  /// The host engine's last `controls` answer per agent, for a new session page while the host is away
+  controls: parking_lot::Mutex<HashMap<String, Value>>,
+}
+
+/// A host engine's answer to `controls`
+#[derive(Debug, Default)]
+pub struct HostControls {
+  pub controls: Vec<ConfigControl>,
+  pub shapes: Option<ModelShapes>,
+  pub commands: Vec<SlashCommand>,
 }
 
 /// One host session's view here
@@ -420,6 +431,7 @@ impl SessionManager {
           slots: Arc::new(tokio::sync::Semaphore::new(BLOB_FETCHES)),
           settling: Default::default(),
           auth: parking_lot::Mutex::new(json!({ "agents": [], "accounts": [], "actions": [] })),
+          controls: Default::default(),
         });
         *run.task.lock() = Some(tokio::spawn(drive(Arc::downgrade(self), run.clone())));
         runs.insert(alias.to_owned(), run);
@@ -563,6 +575,41 @@ impl SessionManager {
   }
 
   /// A page's action that belongs to a host session (or starts one in a host folder): sent there. None for the rest
+  /// What a new session of `agent` in `cwd` offers when it would start in a host's engine (the same choice as
+  /// `host_action`): that engine's answer to `controls`, read from the host's own CLI config, or its last one while the
+  /// host is away. None when the session would start here, so the caller answers from this machine
+  pub async fn host_controls(&self, agent: &str, cwd: &str, fresh: bool) -> Option<HostControls> {
+    let folder = parse_remote_folder(cwd)?;
+    if (self.deps.ssh_local_agents)().iter().any(|a| a == agent) {
+      return None;
+    }
+    let run = self.hosts.runs.lock().get(&folder.alias).cloned()?;
+    let reply = if *run.up.borrow() {
+      // Keyed by agent: a second ask for the same agent replaces the first, which falls back to the last answer
+      let message = json!({ "type": "controls", "agent": agent, "fresh": fresh.then_some(true) });
+      run
+        .request(format!("controls-{agent}"), || {
+          run.send_to_view(LIST_VIEW, message);
+        })
+        .await
+    } else {
+      None
+    };
+    let msg = match reply {
+      Some(msg) => {
+        run.controls.lock().insert(agent.to_owned(), msg.clone());
+        msg
+      }
+      None => run.controls.lock().get(agent).cloned().unwrap_or(Value::Null),
+    };
+    let field = |k: &str| msg.get(k).cloned().unwrap_or(Value::Null);
+    Some(HostControls {
+      controls: serde_json::from_value(field("controls")).unwrap_or_default(),
+      shapes: serde_json::from_value(field("shapes")).unwrap_or_default(),
+      commands: serde_json::from_value(field("commands")).unwrap_or_default(),
+    })
+  }
+
   pub(super) async fn host_action(self: &Arc<Self>, v: &Arc<Viewer>, m: &WebviewMsg) -> Option<Result<()>> {
     use WebviewMsg as W;
     if self.hosts.runs.lock().is_empty() {
@@ -730,6 +777,7 @@ impl SessionManager {
         let key = match msg.get("type").and_then(Value::as_str) {
           Some("init") if view_id.starts_with("lookup-") => Some(view_id.clone()),
           Some("sessionHits") => msg.get("seq").and_then(Value::as_u64).map(|seq| format!("search-{seq}")),
+          Some("controls") if view_id == LIST_VIEW => msg.get("agent").and_then(Value::as_str).map(|a| format!("controls-{a}")),
           _ => None,
         };
         if let Some(key) = key {
