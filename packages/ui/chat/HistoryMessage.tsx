@@ -6,7 +6,7 @@ import type { ModelShapes } from '@acpira/shared/modelShapes';
 import { useAppearance } from '../appearance';
 import { Composer, type ComposerProps } from './Composer';
 import { EditAttachments } from './Attachments';
-import { dropDraft } from './useComposerDraft';
+import { dropDraft, parkedDraft } from './useComposerDraft';
 import { UserMessage } from './Turns';
 import { cn } from '../ui/cn';
 import { cssTimeVar } from '../ui/cssTime';
@@ -74,13 +74,16 @@ export const HistoryMessage = memo(function HistoryMessage(p: {
   }, [editing, motion]);
   if (p.turn.auto) return p.turn.autoReason === 'subagents' ? <SubagentsReported text={p.turn.text} /> : null;
   const editable = !!context?.editable;
+  // An unsent edit closed by a click elsewhere keeps showing as edited (its text and the attachments it kept), so the
+  // card never reads as the original until reopened. Read at render: closing the editor re-renders this card
+  const shown = editor || !context ? p.turn : parkedTurn(p.turn, editKey(context.sessionId, p.turn, p.turnIndex));
   return (
     <div data-sticky-prompt className="peer/prompt pointer-events-none sticky top-0 z-10 flex min-w-0 shrink-0 flex-col">
       <div ref={base} data-part="user-message" className="pointer-events-auto flex min-w-0 flex-col rounded-lg bg-bg-0">
         <div key={swap.n} className={cn('flex min-w-0 flex-col', swap.fade && 'fade-in')}>
           {editor
             ? <HistoryEditor {...p} context={editor} onClose={() => select(undefined)} />
-            : <UserMessage {...p} onEdit={editable ? () => select(p.turnIndex) : undefined} />}
+            : <UserMessage {...p} turn={shown} onEdit={editable ? () => select(p.turnIndex) : undefined} />}
         </div>
       </div>
     </div>
@@ -91,12 +94,27 @@ export const HistoryMessage = memo(function HistoryMessage(p: {
 // draft store under the same key) and reopens with them; only Cancel / Escape or a send drops them. Webview memory only
 const EDIT_PICKS = new Map<string, { controls: ComposerProps['controls']; retained: number[] }>();
 
+function editKey(sessionId: string, turn: UserTurn, turnIndex: number) {
+  return `edit:${sessionId}:${turn.id ?? `${turnIndex}:${turn.text}`}`;
+}
+
+// The closed card's view of a parked edit: its text, and the original attachments it still keeps. Attachments added in
+// the editor are not shown, as the card renders only stored blobs
+function parkedTurn(turn: UserTurn, key: string): UserTurn {
+  const text = parkedDraft(key)?.text ?? turn.text;
+  const retained = EDIT_PICKS.get(key)?.retained;
+  const dropped = !!retained && retained.length < (turn.attachments?.length ?? 0);
+  // Opening and closing without a change parks the original: keep the turn object itself
+  if (text === turn.text && !dropped) return turn;
+  return { ...turn, text, ...(dropped ? { attachments: turn.attachments!.filter((_, i) => retained!.includes(i)) } : {}) };
+}
+
 function HistoryEditor({ turn, turnIndex, blobUrl, context: c, onClose }: {
   turn: UserTurn; turnIndex: number; blobUrl?: (blob: string) => string; context: HistoryContextValue; onClose: () => void;
 }) {
   // Provided together with HistoryContext by the shell; the editor is the only reader
   const composer = useContext(HistoryComposerContext)!;
-  const [key] = useState(() => `edit:${c.sessionId}:${turn.id ?? `${turnIndex}:${turn.text}`}`);
+  const [key] = useState(() => editKey(c.sessionId, turn, turnIndex));
   const [picks, setControls] = useState(() => EDIT_PICKS.get(key)?.controls ?? openTurnControls(composer.controls, turn.settings, c.shapes));
   const controls = useMemo(() => refreshTurnControls(picks, composer.controls, c.shapes), [picks, composer.controls, c.shapes]);
   const [retained, setRetained] = useState(() => EDIT_PICKS.get(key)?.retained ?? (turn.attachments ?? []).map((_, i) => i));
