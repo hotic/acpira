@@ -93,7 +93,9 @@ import UIKit
     let scrolls = scrollers(host.view)
     #expect(scrolls.count == 1)
     let scroll = try #require(scrolls.first)
-    #expect(scroll.bounds.height > 0 && scroll.bounds.height < window.bounds.height)
+    // Bounded by the sheet, never the diff's full height; edge to edge it runs under the navigation bar to the window's
+    // bottom, as a scroll view in a NavigationStack does
+    #expect(scroll.bounds.height > 0 && scroll.bounds.height <= window.bounds.height)
     // Short diffs keep the same full-height reading surface instead of shrinking into a card.
     #expect(scroll.bounds.height > window.bounds.height / 2)
     if !short {
