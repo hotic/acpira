@@ -130,7 +130,8 @@ struct ContractTests {
     try checkStruct(try need(state.settings.subagents.first), try need(TS.interface(subagents, "SubagentPersona")))
     try checkStruct(try need(state.settings.subagentGroups.first), try need(TS.interface(subagents, "SubagentGroup")))
     let categories = try need(state.categories)
-    try checkStruct(categories, try need(TS.interface(transcript, "SessionCategories")))
+    // projectMeta: projects of several folders are a desktop list feature; the phone lists each folder on its own
+    try checkStruct(categories, try need(TS.interface(transcript, "SessionCategories")), leftOut: ["projectMeta"])
     try checkStruct(try need(categories.categories.first), try need(TS.interface(transcript, "SessionCategory")))
     try checkStruct(try need(categories.sections?.first), try need(TS.interface(transcript, "SessionSection")))
     try checkStruct(try need(state.accountActions?.first), try need(TS.interface(proto, "AccountAction")))
