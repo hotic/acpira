@@ -300,6 +300,8 @@ public struct RowTarget: View {
       .lineLimit(1)
       .truncationMode(.tail)
       .cssBaseline()
+      // Below an ellipsis's width, the text renderer can draw the untruncated run beyond its frame.
+      .clipped()
       .layoutPriority(-1)
   }
 }
@@ -312,7 +314,7 @@ public struct Aside: View {
   public var body: some View {
     // cssBaseline inside textStyle reads the text-3 line box
     Text(web: text).cssBaseline().textStyle(WebType.text3).monospacedDigit()
-      .foregroundStyle(action ? Palette.actionFg : Palette.fg2).lineLimit(1).fixedSize()
+      .foregroundStyle(action ? Palette.actionFg : Palette.fg2).lineLimit(1).truncationMode(.middle).clipped()
   }
 }
 

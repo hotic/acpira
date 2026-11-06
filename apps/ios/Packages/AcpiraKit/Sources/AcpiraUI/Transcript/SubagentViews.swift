@@ -233,9 +233,9 @@ struct SubagentReturns: View {
           VendorMark(brand: r.agent, name: r.name, size: WebMetrics.icon).foregroundStyle(Palette.fg1)
         } content: {
           HStack(alignment: .firstTextBaseline, spacing: Metrics.s2) {
-            Text(web: r.name).foregroundStyle(Palette.fg1).lineLimit(1).fixedSize().cssBaseline()
+            Text(web: r.name).foregroundStyle(Palette.fg1).lineLimit(1).truncationMode(.tail).cssBaseline().layoutPriority(1)
             Text(web: t(r.asks ? "chat.subagentAsks" : "sidekick.handback")).foregroundStyle(Palette.fg2).lineLimit(1).fixedSize().cssBaseline()
-            if let line = r.line { Text(web: line).foregroundStyle(Palette.fg3).lineLimit(1).truncationMode(.tail).cssBaseline() }
+            if let line = r.line { SqueezedTitle(title: line) }
           }
         }
         .accessibilityElement(children: .combine)
