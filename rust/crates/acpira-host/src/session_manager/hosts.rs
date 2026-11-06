@@ -708,7 +708,14 @@ impl SessionManager {
     let current = {
       let mut shown = run.shown.lock();
       match shown.get(id) {
-        Some(s) => s.msg.clone(),
+        Some(s) => {
+          let (view_id, current) = (s.view_id.clone(), s.msg.clone());
+          drop(shown);
+          // A shared view can carry an explicitly kept unread mark. Landing on its cached transcript must still
+          // select it on the owning host, where the mark lives.
+          run.send_to_view(&view_id, json!({ "type": "selectSession", "id": id }));
+          current
+        }
         None => {
           let view_id = run.next_view_id();
           shown.insert(id.to_owned(), Shown::new(view_id.clone()));
