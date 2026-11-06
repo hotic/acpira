@@ -73,6 +73,48 @@ private let commands: [SlashCommand] = decode(#"""
     #expect(SlashCommands.dropToken("see @Comp", span: SigilSpan(start: 4, query: "Comp"), caret: 9)
             == PromptEdit(text: "see ", caret: 4))
   }
+
+  @Test func commandMarksWhereverTheyStand() {
+    let names = ["review", "compact", "skill:git-commit", "$git-commit"]
+    #expect(SlashCommands.commandMarks(names, text: "/review files") == [PromptMark(start: 0, name: "review")])
+    #expect(SlashCommands.commandMarks(names, text: "/compact 然后 /review")
+      == [PromptMark(start: 0, name: "compact"), PromptMark(start: 12, name: "review")])
+    #expect(SlashCommands.commandMarks(names, text: "然后/review 一下") == [PromptMark(start: 2, name: "review")])
+    #expect(SlashCommands.commandMarks(names, text: "拆分 /skill:git-commit 提交") == [PromptMark(start: 3, name: "skill:git-commit")])
+    #expect(SlashCommands.commandMarks(names, text: "/$git-commit 分批") == [PromptMark(start: 0, name: "$git-commit")])
+    // Partial names, paths, in-word slashes and punctuated tails stay plain
+    for plain in ["foo /rev bar", "a/review", "look at /tmp/review.ts", "foo /review.", "a /$ b /$$x"] {
+      #expect(SlashCommands.commandMarks(names, text: plain) == [])
+    }
+    #expect(SlashCommands.commandMarks(names, text: "/unknown /review") == [PromptMark(start: 9, name: "review")])
+  }
+
+  @Test func summonMarksMatchWholeNames() {
+    #expect(SlashCommands.summonMarks(["审查"], text: "叫 @审查，看看") == [PromptMark(start: 2, name: "审查", summon: true)])
+    #expect(SlashCommands.summonMarks(["GPT"], text: "问问@GPT 的意思") == [PromptMark(start: 2, name: "GPT", summon: true)])
+    for plain in ["@审查员 看看", "a@审查 b", "@别人 看看"] {
+      #expect(SlashCommands.summonMarks(["审查"], text: plain) == [])
+    }
+    #expect(SlashCommands.summonMarks(["code"], text: "@code-review x") == [])
+    #expect(SlashCommands.summonMarks(["code", "code review"], text: "@code review now")
+      == [PromptMark(start: 0, name: "code review", summon: true)])
+    #expect(SlashCommands.promptMarks(commands: ["review"], summons: ["审查"], text: "/review 然后 @审查 看")
+      == [PromptMark(start: 0, name: "review"), PromptMark(start: 11, name: "审查", summon: true)])
+  }
+
+  @Test func markReachFitsTheWhitespaceBeside() {
+    func reach(_ text: String, _ names: [String]) -> [Double] {
+      let marks = SlashCommands.summonMarks(names, text: text)
+      return marks.indices.map { SlashCommands.markReach(Array(text), marks: marks, at: $0, overhang: 4, space: 4, clear: 1.5) }
+    }
+    // Text edges and line breaks leave the full overhang; one space leaves its width less the clearance
+    #expect(reach("@a", ["a"]) == [4])
+    #expect(reach("x\n@a\ny", ["a"]) == [4])
+    #expect(reach("x @a", ["a"]) == [2.5])
+    // CJK prose glued to the sigil leaves no room; two marks share the space between them
+    #expect(reach("问问@a", ["a"]) == [0])
+    #expect(reach("@a @b", ["a", "b"]) == [1.25, 1.25])
+  }
 }
 
 @MainActor struct MentionPersonaTests {

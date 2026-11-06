@@ -86,8 +86,10 @@ import UIKit
     #expect(!scope.active)
   }
 
-  @Test func promptSelectionActionsEditTheWholeHistoricalTurn() throws {
-    let prompt = UserTurn(text: "Original historical prompt")
+  @Test(arguments: [false, true])
+  func promptSelectionActionsEditTheWholeHistoricalTurn(long: Bool) throws {
+    let text = long ? String(repeating: "检查完整任务。Read the existing implementation.\n\n", count: 200) : "Original historical prompt"
+    let prompt = UserTurn(text: text)
     var edited: Int?
     var objective: String?
     var actions = SessionActions()
@@ -102,10 +104,11 @@ import UIKit
     host.view.layoutIfNeeded()
     let view = try #require(selectionView(in: host.view))
     #expect(!view.gestureRecognizerShouldBegin(UILongPressGestureRecognizer()))
+    #expect(selectionText(view.attributedText, range: NSRange(location: 0, length: view.attributedText.length)) == text.trimmingTrailingWhitespace())
     try #require(view.actions.first { $0.title == t("history.edit") }).run("historical")
     #expect(edited == 4)
     try #require(view.actions.first { $0.title == t("goal.setFromPrompt") }).run("historical")
-    #expect(objective == prompt.text)
+    #expect(objective == prompt.text.trimmingCharacters(in: .whitespacesAndNewlines))
   }
 
   private func selectionView(in view: UIView) -> SelectionTextView? {

@@ -21,6 +21,14 @@ struct UserMessageCard: View {
   @State private var selection = TextSelectionScope()
   #endif
   @Environment(\.sessionActions) private var actions
+  @Environment(\.promptCommands) private var commands
+  @Environment(\.mentionPersonas) private var personas
+
+  /// The names whose tokens get pills, as the composer painted them; a recorded command keeps its pill even after the
+  /// agent stops advertising it
+  private var marks: PromptMarkNames {
+    PromptMarkNames(commands: commands + [turn.command].compactMap { $0 }, summons: personas.map(\.name))
+  }
 
   var body: some View {
     if turn.auto != true {
@@ -32,14 +40,19 @@ struct UserMessageCard: View {
         // Packed to the bubble's right edge and never wider than the column: long names truncate, pills wrap
         if !attachments.isEmpty { TurnAttachments(attachments: attachments) }
         if !shown.isEmpty {
-          Text(web: shown)
-            .textStyle(WebType.text1)
+          // Keep native text drawing: a custom TextRenderer can leave multi-screen prompts blank in a live scroll view.
+          // The font, line boxes and CJK wrapping still match the selection surface.
+          Text(markedPrompt(shown, names: marks))
+            .font(WebType.text1.font())
+            .lineBox(WebType.text1)
+            .tracking(WebType.text1.tracking)
             .foregroundStyle(Palette.fgStrong)
             .fixedSize(horizontal: false, vertical: true)
             #if canImport(UIKit)
             .accessibilityHidden(true)
             .overlay {
-              TextSelectionSurface(text: selectionContent(shown, style: WebType.text1), actions: promptActions(edit: edit))
+              TextSelectionSurface(text: selectionContent(shown, style: WebType.text1), actions: promptActions(edit: edit),
+                                   marks: marks)
                 .environment(\.textSelectionScope, selection)
             }
             #else

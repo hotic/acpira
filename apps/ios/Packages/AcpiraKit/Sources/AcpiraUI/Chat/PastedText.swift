@@ -90,32 +90,16 @@ private struct TextPasteProbe: UIViewRepresentable {
     }
 
     func install() {
-      // The background and native field are siblings below SwiftUI's field host. Never search the whole window:
-      // the expanded editor can coexist with the composer's field underneath it.
+      // The background and native field are siblings below SwiftUI's field host
       Task { @MainActor [weak self] in
         guard let self, window != nil else { return }
-        var parent = superview
-        while let view = parent, !(view is UIWindow) {
-          if let field = find(in: view) {
-            if input !== field { detach(); input = field }
-            if field.pasteDelegate !== self {
-              previous = field.pasteDelegate
-              field.pasteDelegate = self
-            }
-            return
-          }
-          parent = view.superview
+        guard let field = nearestTextInput(from: self) else { return }
+        if input !== field { detach(); input = field }
+        if field.pasteDelegate !== self {
+          previous = field.pasteDelegate
+          field.pasteDelegate = self
         }
       }
-    }
-
-    private func find(in view: UIView) -> (UIView & UITextPasteConfigurationSupporting)? {
-      if let field = view as? UITextField { return field }
-      if let field = view as? UITextView { return field }
-      for child in view.subviews where child !== self {
-        if let field = find(in: child) { return field }
-      }
-      return nil
     }
 
     func detach() {
@@ -150,5 +134,24 @@ private struct TextPasteProbe: UIViewRepresentable {
       }
     }
   }
+}
+
+/// The native field a probe in the field's `.background` sits beside: the nearest text field or text view below an
+/// ancestor of `probe`. Never the whole window: the expanded editor can coexist with the composer's field underneath it
+@MainActor func nearestTextInput(from probe: UIView) -> (UIView & UITextPasteConfigurationSupporting)? {
+  func find(in view: UIView) -> (UIView & UITextPasteConfigurationSupporting)? {
+    if let field = view as? UITextField { return field }
+    if let field = view as? UITextView { return field }
+    for child in view.subviews where child !== probe {
+      if let field = find(in: child) { return field }
+    }
+    return nil
+  }
+  var parent = probe.superview
+  while let view = parent, !(view is UIWindow) {
+    if let field = find(in: view) { return field }
+    parent = view.superview
+  }
+  return nil
 }
 #endif

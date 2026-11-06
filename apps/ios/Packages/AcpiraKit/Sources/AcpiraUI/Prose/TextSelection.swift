@@ -9,6 +9,8 @@ import UIKit
 struct TextSelectionSurface: UIViewRepresentable {
   let text: NSAttributedString
   var actions: [SelectionAction] = []
+  /// A sent prompt's command and summon pills, drawn over the SwiftUI text that colours their glyphs (PromptMarks.swift)
+  var marks: PromptMarkNames?
   @Environment(\.textSelectionScope) private var selection
   @Environment(\.quoteProse) private var quote
   @Environment(\.holdScroll) private var holdScroll
@@ -40,6 +42,10 @@ struct TextSelectionSurface: UIViewRepresentable {
     if let quote {
       view.actions.insert(SelectionAction(title: t("quote.add"), image: "text.quote", run: quote.run), at: 0)
     }
+    if let marks {
+      context.coordinator.painter.names = marks
+      context.coordinator.painter.attach(view)
+    }
     guard !view.attributedText.isEqual(to: text) else { return }
     let selected = view.selectedRange
     view.attributedText = text
@@ -55,8 +61,11 @@ struct TextSelectionSurface: UIViewRepresentable {
 
   func makeCoordinator() -> Coordinator { Coordinator(surface: self) }
 
+  static func dismantleUIView(_ view: SelectionTextView, coordinator: Coordinator) { coordinator.painter.detach() }
+
   final class Coordinator: NSObject, UITextViewDelegate {
     var surface: TextSelectionSurface
+    lazy var painter = PromptMarkPainter(tints: false)
     init(surface: TextSelectionSurface) { self.surface = surface }
 
     func textViewDidEndEditing(_ textView: UITextView) {

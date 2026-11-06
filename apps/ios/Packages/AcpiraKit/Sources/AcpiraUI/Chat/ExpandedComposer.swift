@@ -13,6 +13,9 @@ struct ExpandedComposer: View {
   @Binding var staged: [Attachment]
   /// Something to send: text or staged attachments
   var filled: Bool
+  /// The names the editor paints as pills, as the card does (PromptMarks.swift)
+  var commands: [String] = []
+  var summons: [String] = []
   var onSend: () -> Void
   var onCollapse: () -> Void
   /// Closes the editor for a file page the strip opens
@@ -32,6 +35,7 @@ struct ExpandedComposer: View {
         TextEditor(text: $text)
           .focused($focused)
           .attachLongPastes(to: $staged) { actions.toast($0, .fileText) }
+          .promptMarks(text: text, commands: commands, summons: summons)
           .textStyle(TypeScale.field)
           .foregroundStyle(Palette.fgStrong)
           .scrollContentBackground(.hidden)
