@@ -50,6 +50,8 @@ function nodeOf(n: ContextNode, cat: ContextCategory, paths: TreePaths): TNode {
     case 'base': return { ...base, label: t('context.node.base') };
     case 'environment': return { ...base, label: t('context.node.environment') };
     case 'prompt': return { ...base, label: categoryLabel('system') };
+    // A category the agent reports only as a sum: the node is the category itself
+    case 'rest': return { ...base, label: categoryLabel(cat) };
     case 'doc': return { ...base, label: n.name ? short(n.name) : categoryLabel('docs'), mono: true, ...(n.name && isAbsolute(n.name) ? { file: n.name } : {}) };
     case 'tool': case 'skill': case 'mcpTool': return { ...base, label: n.name ?? n.id, mono: true };
     case 'skillTool': return { ...base, label: t('context.node.skillTool') };
@@ -92,6 +94,9 @@ export interface Tree {
 // The tree of a detailed report; categories without nodes (a card-only report) are left out
 export function buildTree(r: ContextReport, paths: TreePaths = {}): Tree {
   const cats: TNode[] = r.categories.filter(c => c.nodes?.length).map(c => {
+    // A category known only as a sum is one leaf, not a group around a node of the same name
+    const only = c.nodes!.length === 1 && c.nodes![0]!.kind === 'rest' ? c.nodes![0]! : undefined;
+    if (only) return { id: c.id, label: categoryLabel(c.id), cat: c.id, node: only, tokens: only.tokens, cached: only.cached ?? 0 };
     const children = c.nodes!.map(n => build(n, c.id, paths));
     return { id: c.id, label: categoryLabel(c.id), cat: c.id, children, tokens: sum(children, x => x.tokens), cached: sum(children, x => x.cached) };
   });

@@ -4,6 +4,7 @@ import { t } from '../i18n';
 
 // What the ring card and the report call each category, and its tone (tokens.css --context-*)
 const LABEL: Record<ContextCategory, MsgKey> = {
+  agent: 'context.cat.agent',
   system: 'context.cat.system',
   tools: 'context.cat.tools',
   docs: 'context.cat.docs',
@@ -16,6 +17,7 @@ export const categoryLabel = (id: ContextCategory) => t(LABEL[id]);
 
 // Fill classes, spelled out so the stylesheet build sees them
 export const CATEGORY_BG: Record<ContextCategory, string> = {
+  agent: 'bg-context-agent',
   system: 'bg-context-system',
   tools: 'bg-context-tools',
   docs: 'bg-context-docs',

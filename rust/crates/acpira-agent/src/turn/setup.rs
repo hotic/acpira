@@ -259,6 +259,31 @@ pub(super) fn report_usage(server: &Server, session: &Session, s: &Setup) {
   send_usage(server, session, used, s.model.context.unwrap_or(DEFAULT_CONTEXT));
 }
 
+/// The context of a session that has made no call since it was opened here (a resume after an engine restart or an
+/// idle release): its restored history at the figure the ring still shows, so the report has parts before the next
+/// call. None while the session has no history or no model to set up
+pub(crate) async fn opened_context(server: &Server, session: &Session) -> Option<Arc<crate::context::Snapshot>> {
+  if session.state.lock().items.is_empty() {
+    return None;
+  }
+  // MCP servers still starting are waited for briefly; their tools are left out past that
+  let offer = tokio::time::timeout(OPENED_MCP_WAIT, session.mcp.offer(&tools::names::ALL)).await.ok();
+  let mcp = offer.map(|o| o.tools).unwrap_or_default();
+  let s = setup(server, session, &Value::Null, &mcp).ok()?;
+  let mut st = session.state.lock();
+  // A call that finished meanwhile left the real one
+  if let Some(c) = &st.context {
+    return Some(c.clone());
+  }
+  let used = st.reported.map(|r| r.0).unwrap_or_else(|| approx(&s.system, &st.items, &s.specs));
+  let setting = crate::context::Setting { system: &s.system, sections: &s.sections, mcp: &s.mcp };
+  let snap = Arc::new(crate::context::Snapshot::estimate(s.system.clone(), s.specs.clone(), setting, used, &st));
+  st.context = Some(snap.clone());
+  Some(snap)
+}
+
+const OPENED_MCP_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// A `usage_update`, remembered so a window edited later can be pushed with the same `used` (`Server::push_controls`)
 pub(super) fn send_usage(server: &Server, session: &Session, used: u64, size: u64) {
   session.state.lock().reported = Some((used, size));

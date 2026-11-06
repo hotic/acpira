@@ -501,6 +501,7 @@ export const zhTW = {
   'usage.compactedStaleHint': '壓縮後 Agent 沒有回報上下文用量，下一次回覆後顯示真實數值。',
   'usage.beforeCompact': '壓縮前 {n}',
   'usage.report': '查看報告',
+  'context.cat.agent': '智慧體自帶',
   'context.cat.system': '系統提示詞',
   'context.cat.tools': '工具定義',
   'context.cat.docs': '說明檔案',

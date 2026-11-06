@@ -802,13 +802,18 @@ fn session_of(server: &Server, params: &Value) -> Result<std::sync::Arc<crate::a
   server.session(id)
 }
 
-/// `_acpira/context`: `{ report }`, none before the session's first counted call
-pub fn report_of(server: &Server, params: &Value) -> Result<Value, RpcError> {
+/// `_acpira/context`: `{ report }`; a session opened without a call since gets its restored history, estimated
+/// (`turn::opened_context`), none before the first call of a new one
+pub async fn report_of(server: &Server, params: &Value) -> Result<Value, RpcError> {
   let session = session_of(server, params)?;
   let detail = params.get("detail").and_then(Value::as_bool) == Some(true);
   let (snap, size) = {
     let st = session.state.lock();
     (st.context.clone(), st.reported.map(|r| r.1))
+  };
+  let snap = match snap {
+    Some(s) => Some(s),
+    None => crate::turn::opened_context(server, &session).await,
   };
   let Some(snap) = snap else { return Ok(json!({})) };
   let report = snap.report(size.unwrap_or(0), detail);

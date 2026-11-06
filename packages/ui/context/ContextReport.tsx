@@ -255,7 +255,9 @@ export function ContextReportView({ report: r, sessionId, compactAt, paths, onOp
   };
   const branch = (n: TNode): ReactNode => {
     const isOpen = open.has(n.id);
-    const Icon = n.node && iconOf(n.node);
+    // A sum the agent did not split has nothing to show under its row; a click only marks it on the map
+    const opens = !!n.children || n.node?.kind !== 'rest';
+    const Icon = n.node && n.node.kind !== 'rest' && iconOf(n.node);
     // A row opens and the map moves to it; the row the map is on folds again
     const toggle = () => {
       if (!n.children) { if (leafNow === n.id) fold(n.id); else openLeaf(n.id); return; }
@@ -266,11 +268,11 @@ export function ContextReportView({ report: r, sessionId, compactAt, paths, onOp
     if (order === 'size') kids.sort((a, b) => b.tokens - a.tokens);
     return (
       <li key={n.id}>
-        <Row as="button" dense data-row={n.id} onClick={toggle} aria-expanded={isOpen}
+        <Row as="button" dense data-row={n.id} onClick={toggle} aria-expanded={opens ? isOpen : undefined}
           className="ctx-band w-full cursor-pointer"
           data-current={n.id === focusNow || n.id === leafNow || undefined} data-lit={over === n.id || (!isOpen && litUnder(n.id)) || undefined}
           onMouseEnter={() => setOver(n.id)} onMouseLeave={() => setOver(undefined)}
-          lead={n.node ? Icon && <Icon strokeWidth={1.5} className="size-3.5 text-fg-3" /> : <span aria-hidden className="ctx-mark" data-cat={n.cat} />}
+          lead={Icon ? <Icon strokeWidth={1.5} className="size-3.5 text-fg-3" /> : <span aria-hidden className="ctx-mark" data-cat={n.cat} />}
           trailing={<>
             <span className="w-(--report-figure-w) text-right text-fg-2">{fmt(n.tokens)}</span>
             <span className="w-(--report-share-w) text-right">{share(n.tokens, r.used)}</span>
@@ -279,7 +281,7 @@ export function ContextReportView({ report: r, sessionId, compactAt, paths, onOp
           {n.target && <span className={cn('min-w-0 truncate text-fg-3', n.monoTarget && 'font-mono text-mono')}>{n.target}</span>}
           {n.children && <span className="shrink-0 text-3 text-fg-3">{leafCount(n)}</span>}
         </Row>
-        {isOpen && (
+        {isOpen && opens && (
           <ul data-focus={n.id === focusNow || undefined}>
             {n.children
               ? kids.map(branch)
@@ -295,7 +297,7 @@ export function ContextReportView({ report: r, sessionId, compactAt, paths, onOp
   return (
     <div className="flex flex-col gap-(--report-gap)">
       {/* The figure and the map stay in view while the tree scrolls under them */}
-      <div ref={sticky} data-report-sticky className="sticky top-0 z-10 -mx-2 flex flex-col gap-2 bg-bg-0 px-2 pt-gap pb-1">
+      <div ref={sticky} data-report-sticky className="sticky top-0 z-10 -mx-2 flex flex-col gap-2 bg-(--report-surface) px-2 pt-gap pb-1">
         <span ref={p3} aria-hidden className="pointer-events-none invisible absolute text-3">x</span>
         <span ref={p4} aria-hidden className="pointer-events-none invisible absolute text-4">x</span>
         <div className="flex flex-col gap-1.5">

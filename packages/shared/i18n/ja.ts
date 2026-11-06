@@ -497,6 +497,7 @@ export const ja = {
   'usage.compactedStaleHint': '圧縮後、エージェントはコンテキストを報告していません。次の返信後に実際の値が表示されます。',
   'usage.beforeCompact': '圧縮前 {n}',
   'usage.report': 'レポートを表示',
+  'context.cat.agent': 'エージェント固有',
   'context.cat.system': 'システムプロンプト',
   'context.cat.tools': 'ツール定義',
   'context.cat.docs': '指示ファイル',

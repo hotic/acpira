@@ -39,6 +39,16 @@ describe('context report tree', () => {
     expect(pathOf('t:1:c:0')).toEqual([ROOT_ID, 'chat', 't:1', 't:1:c:0']);
   });
 
+  it('makes a category the agent reported only as a sum one leaf', () => {
+    const r: ContextReport = { ...REPORT, estimated: true, rev: 'tx:1', categories: [
+      { id: 'agent', tokens: 150, nodes: [{ id: 'rest', kind: 'rest', tokens: 150 }] },
+      ...REPORT.categories.filter(c => c.id === 'chat'),
+    ] };
+    const { root } = buildTree(r);
+    const agent = root.children![0]!;
+    expect([agent.id, agent.label, agent.children, agent.tokens]).toEqual(['agent', "Agent's own", undefined, 150]);
+  });
+
   it('names a turn by its prompt when compaction left it unnumbered', () => {
     const r: ContextReport = { ...REPORT, categories: [{ id: 'chat', tokens: 5, nodes: [
       { id: 't:a', kind: 'turn', title: 'go on', tokens: 5, children: [{ id: 't:a:msg', kind: 'message', tokens: 5 }] },

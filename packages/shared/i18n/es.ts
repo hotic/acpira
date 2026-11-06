@@ -489,6 +489,7 @@ export const es = {
   'usage.compactedStaleHint': 'El agente no informó de su contexto tras compactar. La cifra real aparece tras su próxima respuesta.',
   'usage.beforeCompact': 'Antes {n}',
   'usage.report': 'Ver informe',
+  'context.cat.agent': 'Propio del agente',
   'context.cat.system': 'Prompt del sistema',
   'context.cat.tools': 'Definiciones de herramientas',
   'context.cat.docs': 'Archivos de instrucciones',

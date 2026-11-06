@@ -39,6 +39,7 @@ use self::request::{
   retry_delay, retry_notice, stream_idle,
 };
 pub use self::setup::limits;
+pub(crate) use self::setup::opened_context;
 use self::setup::{
   compact_history, offers_ask, plugin_tools, refresh_limits, report_usage, send_usage, setup, sidekick_note, sidekick_unlisted,
   summary_call,

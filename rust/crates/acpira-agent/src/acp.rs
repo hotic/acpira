@@ -1078,7 +1078,7 @@ impl Inbound for Handler {
         "_session/steering" => server.steer(&params),
         "_session/rewind" => server.rewind(&params),
         crate::goal::METHOD => crate::goal::control(&server, &params),
-        crate::context::METHOD_REPORT => crate::context::report_of(&server, &params),
+        crate::context::METHOD_REPORT => crate::context::report_of(&server, &params).await,
         crate::context::METHOD_ITEM => crate::context::item_of(&server, &params),
         crate::context::METHOD_RAW => crate::context::raw_of(&server, &params),
         _ => Err(RpcError::method_not_found(&method)),

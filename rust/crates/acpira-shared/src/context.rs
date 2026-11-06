@@ -9,6 +9,8 @@ use serde_json::Value;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ContextCategory {
+  /// What an agent that reports no split keeps of its own (the engine's estimate, `rest`)
+  Agent,
   System,
   Tools,
   Docs,
@@ -37,6 +39,7 @@ pub enum ContextNodeKind {
   Thinking,
   Reply,
   Call,
+  Rest,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
