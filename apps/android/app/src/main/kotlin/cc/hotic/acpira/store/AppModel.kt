@@ -52,6 +52,10 @@ sealed interface Screen {
   data class ModelSettings(val id: String) : Screen
   /** Settings → Developer: the frame-rate and hitch overlay's switches */
   data object Developer : Screen
+  /** The built-in agent's model sources, a source's form (id null: a new one; error: why it opened) and its add-model page */
+  data object Providers : Screen
+  data class ProviderForm(val id: String?, val error: String? = null) : Screen
+  data class AddModels(val id: String) : Screen
 }
 
 /** The wire to the engine as the screens show it */
@@ -106,6 +110,15 @@ class AppModel(
   var chatRoot by mutableStateOf<String?>(null)
   var home by mutableStateOf("")
   var projectOrder by mutableStateOf<List<String>>(emptyList())
+  /** Folders added by hand, the latest first: ahead of every other folder in the folder menus */
+  var addedProjects by mutableStateOf<List<String>>(emptyList())
+  /** What the computer's engine offers beyond the protocol (helloOk.features): empty for the demo and older engines */
+  var engineFeatures by mutableStateOf<List<String>>(emptyList())
+    private set
+  /** The computer's folders, for the add-project picker */
+  val folders = LocalFolders(::post)
+  /** The built-in agent's model sources; a saved change asks for fresh controls so the composer's model menu has it */
+  val sources = ModelSources(::post) { post(WebviewMsg.Controls(BUILTIN_AGENT, fresh = true)) }
   var connection by mutableStateOf<Connection>(Connection.Demo)
   /** The latest toast, until it times out */
   var toast by mutableStateOf<String?>(null)
@@ -373,12 +386,36 @@ class AppModel(
   /** New-session controls by agent (HostMsg.Controls): the new session page's model chip before a session exists */
   val agentControls = mutableStateMapOf<String, List<ConfigControl>>()
 
-  /** Asks the engine for an agent's new-session controls; the demo reads them off one of the agent's views */
-  fun loadControls(agent: String) {
-    if (post(WebviewMsg.Controls(agent))) return
+  /**
+   * The engine's new-session controls for a folder on an SSH host, by [hostControlsKey]: there the agent may start in the
+   * host's engine, with the host CLI's own config and models, so the agent-wide lists above do not fit
+   */
+  val hostControls = mutableStateMapOf<String, List<ConfigControl>>()
+
+  /** What a new session of [agent] in [cwd] offers before it runs: a host folder's own answer, else the agent's */
+  fun newSessionControls(agent: String, cwd: String?): List<ConfigControl> =
+    hostControlsKey(agent, cwd)?.let { hostControls[it].orEmpty() } ?: agentControls[agent].orEmpty()
+
+  /**
+   * Asks the engine for an agent's new-session controls, for [cwd] when it is on an SSH host; the demo reads them off one
+   * of the agent's views
+   */
+  fun loadControls(agent: String, cwd: String? = null) {
+    if (post(WebviewMsg.Controls(agent, cwd = cwd?.takeIf { hostControlsKey(agent, it) != null }))) return
     if (agentControls[agent] == null) {
       agentControls[agent] = views.values.firstOrNull { it.agent == agent && it.controls.options.isNotEmpty() }?.controls?.options.orEmpty()
     }
+  }
+
+  /**
+   * A folder picked by hand (apps/ios AppModel `addProject`): first in the folder menus, and registered with the engine,
+   * which puts it at the end of the user's order (back on the list if it was taken off)
+   */
+  fun addProject(path: String) {
+    val folder = path.trim()
+    if (folder.isEmpty()) return
+    addedProjects = listOf(folder) + addedProjects.filter { it != folder }
+    if (!post(WebviewMsg.AddProject(folder)) && folder !in projectOrder) projectOrder = projectOrder + folder
   }
 
   fun togglePin(id: String) {
@@ -483,7 +520,10 @@ class AppModel(
 
   private fun receive(event: EngineEvent) {
     when (event) {
-      is EngineEvent.Connected -> connection = Connection.Live
+      is EngineEvent.Connected -> {
+        engineFeatures = event.ok.features.orEmpty()
+        connection = Connection.Live
+      }
       is EngineEvent.Host -> receive(event.message)
       is EngineEvent.Platform -> when (val r = event.request) {
         is PlatformRequest.Toast -> showToast(r.text)
@@ -526,8 +566,14 @@ class AppModel(
       is HostMsg.Sessions -> summaries = message.sessions
       is HostMsg.Categories -> message.categories.projects?.let { projectOrder = it }
       is HostMsg.Settings -> settings = message.settings
-      is HostMsg.Controls -> agentControls[message.agent] = message.controls
+      is HostMsg.Controls -> {
+        val key = hostControlsKey(message.agent, message.cwd)
+        if (key != null) hostControls[key] = message.controls else agentControls[message.agent] = message.controls
+      }
       is HostMsg.Session, is HostMsg.Patch, HostMsg.NoSession -> present(message)
+      is HostMsg.LocalDir -> folders.receive(message)
+      is HostMsg.Providers -> sources.receive(message)
+      is HostMsg.ProviderProbed -> sources.receive(message)
       else -> {}
     }
   }
@@ -587,6 +633,7 @@ class AppModel(
     chatRoot = from.chatRoot
     home = from.home
     projectOrder = from.projectOrder
+    addedProjects = from.addedProjects
     path.addAll(from.path)
     replay = from.replay + (from.client?.unsent() ?: emptyList())
     clockHeld = from.clockHeld
@@ -628,9 +675,14 @@ class AppModel(
   }
 
   companion object {
+    /** The built-in agent's id (providers.ts BUILTIN_AGENT_ID): the one with model sources */
+    const val BUILTIN_AGENT = "acpira"
     private const val TAG = "acpira"
     private const val TOAST_MS = 3200L
     private const val DEMO_STEP_MS = 700L
     private const val DEMO_WORD_MS = 60L
   }
 }
+
+/** Where [AppModel.hostControls] keeps an agent's answer for a folder on an SSH host (`ssh://<alias>/<path>`); null otherwise */
+fun hostControlsKey(agent: String, cwd: String?): String? = cwd?.takeIf { it.startsWith("ssh://") }?.let { "$it\n$agent" }

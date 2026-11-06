@@ -598,7 +598,7 @@ enum ContractSamples {
     .goal(sessionId: "s1", action: .set, objective: "ship it"),
     .searchFiles(query: "app", seq: 5),
     .setSetting(key: "theme", value: "dark"),
-    .controls(agent: "claude", fresh: true),
+    .controls(agent: "claude", fresh: true, cwd: "ssh://gen1/w"),
     .projectDir(sessionId: "s1", dir: "src", seq: 6),
     .projectStatus(sessionId: "s1", seq: 7),
     .projectFile(sessionId: "s1", path: "src/a.ts", base: .head, seq: 8),
@@ -613,7 +613,17 @@ enum ContractSamples {
     .terminalClose(id: "T"),
     .terminalKill(id: "T"),
     .connections,
+    .localDir(path: "~/code", seq: 31),
+    .providers,
+    .providerAction(action: .save(provider: ContractSamples.provider, key: "sk-1")),
+    .providerProbe(id: "p1", probe: .models(provider: ContractSamples.provider, key: "sk-1")),
   ]
+
+  /// A source carrying a field this build does not know, which every rewrite must keep
+  static let provider = ProviderEntry(raw: [
+    "id": "gw", "name": "Gateway", "preset": "custom", "format": "openai-chat", "baseUrl": "https://gw.example/v1", "fullUrl": false,
+    "enabled": true, "models": [.object(ProviderModelEntry(typed: "gpt-x").raw)], "headers": ["X-Team": "a"],
+  ])
 
   static let edit = EditTurnRequest(
     sessionId: "s1", turnIndex: 0, turnCount: 2, originalText: "fail", turnId: "u1", text: "hello again", retainedAttachments: [0],
@@ -662,7 +672,7 @@ enum ContractSamples {
     #"{"type":"accountActions","actions":[{"agent":"claude","via":"login","status":"pending"}]}"#,
     #"{"type":"hidden","hidden":{"claude":{"effort":["low"]}}}"#,
     #"{"type":"settings","settings":\#(settings),"locale":"zh-CN"}"#,
-    #"{"type":"controls","agent":"claude","controls":[{"id":"model","name":"Model","category":"model","options":[{"id":"opus","name":"Opus"}],"value":"opus"}],"shapes":{"opus":[{"id":"effort","name":"Effort","options":[{"id":"high","name":"High"}],"value":"high"}]},"commands":[{"name":"review","description":"Review the diff","input":{"hint":"path"}}]}"#,
+    #"{"type":"controls","agent":"claude","controls":[{"id":"model","name":"Model","category":"model","options":[{"id":"opus","name":"Opus"}],"value":"opus"}],"shapes":{"opus":[{"id":"effort","name":"Effort","options":[{"id":"high","name":"High"}],"value":"high"}]},"commands":[{"name":"review","description":"Review the diff","input":{"hint":"path"}}],"cwd":"ssh://gen1/w"}"#,
     #"{"type":"sessionHits","seq":3,"hits":[{"id":"s1","snippet":"… the zebracorn …"}]}"#,
     #"{"type":"subagent","sessionId":"s1","subagentId":"n1","rev":3,"running":true,"turns":[{"role":"user","text":"look"},{"role":"agent","blocks":[{"type":"text","markdown":"found it"}]}]}"#,
     #"{"type":"files","seq":5,"files":[{"uri":"file:///w/src/app.ts","path":"src/app.ts"}]}"#,
@@ -679,5 +689,8 @@ enum ContractSamples {
     #"{"type":"deleteSessionResult","requestId":"d1","undo":false,"error":"busy"}"#,
     #"{"type":"appearance","appearance":{"density":"airy","motion":"none"}}"#,
     #"{"type":"connections","connections":[{"alias":"gen1","disabled":false,"state":"error","error":{"message":"denied"}}]}"#,
+    #"{"type":"localDir","seq":31,"path":"/Users/me/code","parent":"/Users/me","entries":[{"name":"acpira","dir":true,"git":true}],"error":"slow"}"#,
+    #"{"type":"providers","view":{"providers":[{"id":"gw","name":"Gateway","preset":"custom","format":"openai-chat","baseUrl":"https://gw.example/v1","fullUrl":false,"enabled":true,"hasKey":true,"models":[],"headers":{"X-Team":"a"}}],"families":["generic"]},"error":"locked"}"#,
+    #"{"type":"providerProbed","id":"p1","outcome":{"kind":"failed","error":"401"}}"#,
   ]
 }

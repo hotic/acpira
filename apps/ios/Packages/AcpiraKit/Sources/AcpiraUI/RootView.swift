@@ -382,7 +382,7 @@ public struct RootView: View {
       let folder = cwd ?? model.projects.first ?? ""
       let start = agent ?? model.summaries.max { $0.updatedAt < $1.updatedAt }?.agent
         ?? launchable(model.agents).first { $0.available != false }?.id ?? ""
-      NewSessionScreen(agent: start, cwd: folder, controls: model.controls(for: start))
+      NewSessionScreen(agent: start, cwd: folder, controls: model.controls(for: start, cwd: folder))
     case .changes(let id):
       ChangesScreen(sessionId: id)
     case let .file(id, path, line):

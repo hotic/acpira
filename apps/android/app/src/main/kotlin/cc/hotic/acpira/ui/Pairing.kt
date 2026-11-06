@@ -167,9 +167,10 @@ fun PairPathTag(path: PathKind) {
 
 /** The one primary action: a solid capsule, white in dark and black in light, like the composer's send */
 @Composable
-fun PrimaryPill(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun PrimaryPill(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
   Button(
     onClick = onClick,
+    enabled = enabled,
     colors = ButtonDefaults.buttonColors(containerColor = Palette.btn1Bg, contentColor = Palette.btn1Fg),
     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = Metrics.page + Metrics.s2),
     modifier = modifier.heightIn(min = Metrics.barCtl),

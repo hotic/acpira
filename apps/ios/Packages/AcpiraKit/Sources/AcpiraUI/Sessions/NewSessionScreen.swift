@@ -105,19 +105,22 @@ struct NewSessionScreen: View {
     // The agent's models as the engine knows them (its probe or its newest session), so the model chip is there
     // before the first prompt; they fill the draft once they arrive unless something was picked meanwhile. Asked
     // again on every new wire: an answer the lost one never brought left the page without a model chip for good
-    .task(id: ControlsAsk(agent: draft.agent, wire: ObjectIdentifier(model))) { model.loadControls(draft.agent) }
+    .task(id: ControlsAsk(agent: draft.agent, cwd: draft.cwd, wire: ObjectIdentifier(model))) {
+      model.loadControls(draft.agent, cwd: draft.cwd)
+    }
     // The ring's other agents too, so a switch finds their models in hand rather than dropping the chip meanwhile
-    .task(id: RingAsk(agents: launchable(model.agents).map(\.id), wire: ObjectIdentifier(model))) {
-      model.prefetchControls(launchable(model.agents).map(\.id))
+    .task(id: RingAsk(agents: launchable(model.agents).map(\.id), cwd: draft.cwd, wire: ObjectIdentifier(model))) {
+      model.prefetchControls(launchable(model.agents).map(\.id), cwd: draft.cwd)
     }
     // The agent's slash commands as its newest session advertised them, so `/` opens the menu before the first prompt
     // has started the CLI (the session's own list replaces them once it runs)
-    .onChange(of: model.commands(for: draft.agent), initial: true) { _, commands in draft.commands = commands }
-    .onChange(of: model.agentControls[draft.agent]) { _, _ in
-      model.probeUnknownControls(draft.agent)
-      guard picks[draft.agent] == nil else { return }
-      let known = model.controls(for: draft.agent)
-      if known != draft.controls { draft.controls = known }
+    .onChange(of: model.commands(for: draft.agent, cwd: draft.cwd), initial: true) { _, commands in draft.commands = commands }
+    .onChange(of: model.knownControls(draft.agent, cwd: draft.cwd)) { _, _ in followKnown() }
+    // Another folder may mean another machine (an SSH host's engine runs the agent with its own models): picks made
+    // from one machine's list do not carry over to the other's
+    .onChange(of: draft.cwd) { old, new in
+      if hostControlsKey(draft.agent, old) != nil || hostControlsKey(draft.agent, new) != nil { picks = [:] }
+      followKnown()
     }
     // The composer's liquid pickers, drawn over the whole screen so every piece takes taps
     .gooLayer()
@@ -142,22 +145,32 @@ struct NewSessionScreen: View {
   /// The page's coordinate space, for the hero and the composer to meet in
   nonisolated private static let page = "new.page"
 
-  /// What the controls are asked for: the agent, on this wire's app model (every wire brings a new one)
+  /// What the controls are asked for: the agent and folder, on this wire's app model (every wire brings a new one)
   private struct ControlsAsk: Equatable {
     var agent: AgentId
+    var cwd: String
     var wire: ObjectIdentifier
   }
 
-  /// The agents the ring offers, on this wire's app model
+  /// The agents the ring offers in the folder, on this wire's app model
   private struct RingAsk: Equatable {
     var agents: [AgentId]
+    var cwd: String
     var wire: ObjectIdentifier
+  }
+
+  /// The engine's answer for the agent and folder came or changed: it fills the draft unless something was picked
+  private func followKnown() {
+    model.probeUnknownControls(draft.agent, cwd: draft.cwd)
+    guard picks[draft.agent] == nil else { return }
+    let known = model.controls(for: draft.agent, cwd: draft.cwd)
+    if known != draft.controls { draft.controls = known }
   }
 
   /// Another agent: its own controls (models and modes differ per CLI)
   private func pickAgent(_ id: AgentId) {
     draft.agent = id
-    draft.controls = picks[id] ?? model.controls(for: id)
+    draft.controls = picks[id] ?? model.controls(for: id, cwd: draft.cwd)
   }
 
   private func setConfig(_ control: String, _ value: String) {
@@ -165,7 +178,7 @@ struct NewSessionScreen: View {
     // No session answers set_config_option here, so a model pick brings that model's own parameters from the
     // remembered shapes (TurnEdit.swift): a model without Fast loses the previous model's Fast, as on the desktop
     draft.controls = editTurnConfig(draft.controls, live: draft.controls, id: control, value: value,
-                                    shapes: model.shapes(for: draft.agent))
+                                    shapes: model.shapes(for: draft.agent, cwd: draft.cwd))
     picks[draft.agent] = draft.controls
   }
 
@@ -216,7 +229,7 @@ struct NewSessionHero: View {
           .id(landing ?? agent.id)
           .transition(.identity)
         folderButton
-          .modifier(AddProjectAlert(isPresented: $adding, onAdd: onAdd))
+          .modifier(AddProjectPicker(isPresented: $adding, onAdd: onAdd))
       }
       // The name and the folder step back while the ring is out and rise back from under the drop once the picked
       // mark has landed, or once the bubbles are home

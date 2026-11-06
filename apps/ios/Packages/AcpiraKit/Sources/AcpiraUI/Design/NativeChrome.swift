@@ -274,7 +274,8 @@ struct ProjectPopover: View {
   }
 }
 
-/// The add-folder alert the project menu raises: a path on the engine's computer
+/// A path on the engine's computer typed into an alert: the folder picker's typed entry, and the whole of Add on an
+/// engine that does not list its folders (AddProjectPicker)
 struct AddProjectAlert: ViewModifier {
   @Binding var isPresented: Bool
   var onAdd: (String) -> Void

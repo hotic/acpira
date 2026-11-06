@@ -35,7 +35,7 @@ enum Prefs {
 /// at the left edge, where the system's own pages centre it beside back
 struct SettingsSheet: View {
   @Environment(\.dismiss) private var dismiss
-  /// `-settingsPage agents | agent:ID | models:ID | developer` opens a page for screenshots
+  /// `-settingsPage agents | agent:ID | models:ID | providers | developer` opens a page for screenshots
   @State private var path = SettingsRoute.launchPath(UserDefaults.standard.string(forKey: "settingsPage"))
   var body: some View {
     NavigationStack(path: $path) {
@@ -118,6 +118,7 @@ struct SettingsScreen: View {
       switch route {
       case .agent(let id): AgentSettingsPage(id: id)
       case .models(let id): ModelsSettingsPage(id: id)
+      case .providers: ProvidersPage()
       case .developer: DeveloperSettingsPage()
       }
     }

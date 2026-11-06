@@ -25,6 +25,17 @@ class ContractTest {
     }
   }
 
+  @Test fun everyProviderKindExistsInProvidersTs() {
+    val providers = source("packages/shared/providers.ts")
+    for (kind in ProviderAction.kinds + ProviderProbe.kinds + ProbeOutcome.kinds) {
+      assertTrue(providers.contains("kind: '$kind'"), "providers.ts has no kind '$kind'")
+    }
+    assertTrue(source("packages/shared/transcript.ts").contains("op: 'addProject'"), "transcript.ts has no addProject op")
+    // The helloOk features the add-project picker and the model sources pages wait for
+    val sidecar = source("packages/shared/sidecar.ts")
+    for (feature in listOf("localDir", "providers")) assertTrue(sidecar.contains("'$feature'"), "sidecar.ts names no feature '$feature'")
+  }
+
   @Test fun everyBlockTypeExistsInTranscriptTs() {
     val transcript = source("packages/shared/transcript.ts")
     for (type in AgentBlock.S.types) assertTrue(transcript.contains("type: '$type'"), "transcript.ts has no block '$type'")

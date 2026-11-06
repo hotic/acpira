@@ -30,7 +30,7 @@
 - `observeSubagent` is answered only once the view shows the parent session, never later for an early observe, so the inspector observes once the parent's view is here. The engine keeps one observed child per view, ignores an unobserve naming another, and drops it with its session (a return observes again); `SubagentFeed` ends the previous child first and drops a push whose `rev` is not newer.
 - New-session controls (`loadControls`) are asked for every agent up front and again on every new wire (a lost wire's answer never comes); an empty answer gets one probe per wire; picks are kept per agent for the draft and never replaced by a later answer, including after switching away and back. No session answers `set_config_option` there, so a model pick reshapes the draft from the answer's `shapes` (`editTurnConfig`); writing only the model value kept the previous model's Fast. An unknown model drops the previous model's reasoning / model parameters until its own shape is known, rather than offering an unverified effort. The first prompt's picks replay after its model switch even when they equal the startup values: the switch may reset them. The same answer's `commands` (the agent's newest session's) give the draft its `/` menu, since the CLI only starts with the first prompt.
 - Turn edits use `openTurnControls` / `editTurnConfig`, never `setConfig`, and post `editTurn`.
-- A paired phone's settings writes pass the gateway only for keys in `acpira_shared::devices::DEVICE_SETTINGS`; others come back as a denial the phone does not show.
+- A paired phone's writes pass the gateway only where `devices::device_allowed` lets them (settings: `DEVICE_SETTINGS`); others come back as a denial the phone ignores. Folder picker / model sources also need helloOk.features `localDir` / `providers` (else typed path, disabled row).
 - Chats: a session whose folder sits directly in init's `chats` (host-architecture.md). A draft with no folder, or started from a chat, posts `chat: true`; only a project shell's engine honours it, others start the session in their default folder.
 - Terminal: one engine terminal per project (`phone:<cwd>`), as the desktop's `terminals.ts` (`TerminalSession`).
 - A Markdown preview link tries the file's folder first, then the path as written (agents name project-root paths).
@@ -59,7 +59,6 @@
 - Two sheets cannot share a presenter: the add-computer sheet is raised by settings while settings are up, else by the root.
 - `PasteButton`'s label follows `CFBundleLocalizations` (`Acpira-Info.plist`), not the in-app language. Elsewhere the pasteboard is only asked `hasImages`: reading raises the paste prompt.
 - `DataScannerViewController` is unsupported on the simulator. Open: does it read light-on-dark codes on a device (Vision's still request does)?
-- The `acpira` URL scheme lives in `Acpira-Info.plist`; `NSPhotoLibraryAddUsageDescription` (ShareLink's Save Image) in the app target.
 
 ## Commands
 
