@@ -353,6 +353,30 @@ final class AppModel {
     if let section, let at = sections.firstIndex(where: { $0.id == section }) { sections[at].projects.append(cwd) }
   }
 
+  /// A dragged folder dropped in the list (SessionList.tsx `placeProject`): filed in `section` before `before` (at its
+  /// end without one), or out of any section and moved before `before` among the rest (to the end of the order without
+  /// one). The engine reorders registered folders only, so a folder listed from its sessions alone is registered first
+  func placeProject(_ cwd: String, section: String?, before: String?) {
+    if live {
+      if let section {
+        post(.categoryOp(op: .setProjectSection(cwd: cwd, section: section, before: before)))
+        return
+      }
+      if !projectOrder.contains(cwd) { post(.categoryOp(op: .addProject(cwd: cwd))) }
+      if sections.contains(where: { $0.projects.contains(cwd) }) { post(.categoryOp(op: .setProjectSection(cwd: cwd))) }
+      post(.categoryOp(op: .reorderProject(cwd: cwd, before: before)))
+      return
+    }
+    for i in sections.indices { sections[i].projects.removeAll { $0 == cwd } }
+    if let section, let at = sections.firstIndex(where: { $0.id == section }) {
+      let to = before.flatMap { sections[at].projects.firstIndex(of: $0) } ?? sections[at].projects.endIndex
+      sections[at].projects.insert(cwd, at: to)
+      return
+    }
+    projectOrder.removeAll { $0 == cwd }
+    projectOrder.insert(cwd, at: before.flatMap { projectOrder.firstIndex(of: $0) } ?? projectOrder.endIndex)
+  }
+
   /// The desktop project menu's "Copy path": the folder as the engine names it (`ssh://alias/path` on a host)
   func copyPath(_ cwd: String) {
     UIPasteboardBridge.copy(cwd)

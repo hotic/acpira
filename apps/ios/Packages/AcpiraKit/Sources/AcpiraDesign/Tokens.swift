@@ -407,6 +407,8 @@ public enum Metrics {
   public static let rowDot: CGFloat = 8
   /// The agent marks of the sessions an "N more" row still hides (Tailwind size-3 on the desktop, scaled as `icon`)
   public static let moreMark: CGFloat = 14
+  /// The widest a dragged list row's card gets before its title truncates
+  public static let dragPreview: CGFloat = 260
   /// A folder on an SSH host (RemoteFolderIcon.tsx at the phone's `icon`): the globe's round cut out of the folder's
   /// corner, the globe in it, and how far the cut hangs past the folder's box
   public static let remoteBadge: CGFloat = 13

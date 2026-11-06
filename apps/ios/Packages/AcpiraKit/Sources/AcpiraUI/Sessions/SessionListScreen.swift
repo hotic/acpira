@@ -41,6 +41,9 @@ struct SessionListScreen: View {
   @State private var moreShown: [String: Int] = [:]
   /// The view menu's "archived": the list shows the archived sessions, and only those
   @State private var archivedOnly = false
+  /// The row a drag lifted, and where it would land now (ListDrag.swift)
+  @State private var held: ListDragItem?
+  @State private var over: ListDropTarget?
   @Environment(\.now) private var now
   /// In a regular width's sidebar: a pick replaces the chat beside the list rather than pushing over it
   @Environment(\.listInSidebar) private var inSidebar
@@ -162,25 +165,31 @@ struct SessionListScreen: View {
     let listed = model.listedProjects
     let runs = model.sections.map { SectionRun(section: $0, projects: $0.projects.filter(listed.contains)) }.filter { !$0.projects.isEmpty }
     if runs.isEmpty {
-      ForEach(listed, id: \.self) { projectGroup($0, pinsInProject: pinsInProject, projects: projects) }
+      ForEach(listed, id: \.self) { projectGroup($0, section: nil, run: listed, pinsInProject: pinsInProject, projects: projects) }
     } else {
       let filed = Set(runs.flatMap(\.projects))
       let rest = listed.filter { !filed.contains($0) }
       ForEach(runs) { run in
+        // A project dropped on a section's caption joins the end of that section
         Caption(text: run.section.name.isEmpty ? t("session.section.untitled") : run.section.name)
-        ForEach(run.projects, id: \.self) { projectGroup($0, pinsInProject: pinsInProject, projects: projects) }
+          .modifier(captionZone(section: run.section.id))
+        ForEach(run.projects, id: \.self) {
+          projectGroup($0, section: run.section.id, run: run.projects, pinsInProject: pinsInProject, projects: projects)
+        }
       }
       if !rest.isEmpty {
-        Caption(text: t("session.group.projects"))
-        ForEach(rest, id: \.self) { projectGroup($0, pinsInProject: pinsInProject, projects: projects) }
+        Caption(text: t("session.group.projects")).modifier(captionZone(section: nil))
+        ForEach(rest, id: \.self) { projectGroup($0, section: nil, run: rest, pinsInProject: pinsInProject, projects: projects) }
       }
     }
   }
 
   /// A project in the by-project view: its header, then, open, its pins when they sit in their project (ending at the
-  /// pin rule) and its other sessions, the latest few only until "N more" is tapped
+  /// pin rule) and its other sessions, the latest few only until "N more" is tapped. `run` is the projects listed with
+  /// it in `section` (nil: those in none), where a dragged project lands. The header drags; every row of the group takes
+  /// a dragged session into the project and a dragged project after it
   @ViewBuilder
-  private func projectGroup(_ cwd: String, pinsInProject: Bool, projects: [String]) -> some View {
+  private func projectGroup(_ cwd: String, section: String?, run: [String], pinsInProject: Bool, projects: [String]) -> some View {
     let all = listed.filter { $0.cwd == cwd }
     let pins = pinsInProject ? all.filter { $0.pinned == true }.sorted { $0.updatedAt > $1.updatedAt } : []
     let sessions = all.filter { $0.pinned != true }.sorted { $0.updatedAt > $1.updatedAt }
@@ -193,6 +202,13 @@ struct SessionListScreen: View {
     let rest = page.rest
     // The "N more" row stays once paging began, reading "show less" with everything out.
     let paged = open && page.canFold
+    // A project landing after this one draws its line under the group's last row, not between the header and its rows
+    let insert = insertEdge(cwd, section: section, run: run)
+    let lastRow = open ? paged ? nil : (rows.last ?? pins.last)?.id : nil
+    let tail = insert == .bottom ? VerticalEdge.bottom : nil
+    let zone: (Bool) -> ListDropZone = { header in ListDropZone(held: held, over: $over, perform: drop) { item, y, height in
+      dropTarget(item, over: cwd, section: section, run: run, upper: header && y < height / 2)
+    } }
     // A group rather than a stack: the lazy list then builds a project's rows as they scroll in, not all of them on
     // any change (a project of hundreds hitched on every tap)
     Group {
@@ -204,22 +220,35 @@ struct SessionListScreen: View {
                     onNew: { show(.new(agent: nil, cwd: cwd)) },
                     onSection: { section in withAnimation(Motion.ease) { model.setProjectSection(cwd, section) } },
                     onCopyPath: { model.copyPath(cwd) })
+      .listDrag(filing ? .project(cwd) : nil, onStart: { held = $0 }) {
+        ListDragPreview(title: projectName(cwd)) {
+          if model.host(of: cwd) != nil { RemoteFolderGlyph(open: false) } else { Icon(.folder) }
+        }
+      }
+      .modifier(zone(true))
+      .dropMarks(hot: over == .project(cwd), insert: insert == .top || lastRow == nil && !paged ? insert : nil)
       if open {
         // Inside its project a row is one line, the mark naming the agent; no caption says when, so every row keeps
         // its time
         ForEach(pins, id: \.id) { s in
           row(s, place: nil, time: sessionTime(s.updatedAt, now: now), divider: false, nested: true, projects: projects)
+            .modifier(zone(false))
+            .dropMarks(hot: false, insert: s.id == lastRow ? tail : nil)
         }
         if !pins.isEmpty && (!rows.isEmpty || paged) { PinRule() }
       }
       ForEach(rows, id: \.id) { s in
         row(s, place: nil, time: sessionTime(s.updatedAt, now: now), divider: false, nested: true, projects: projects)
+          .modifier(zone(false))
+          .dropMarks(hot: false, insert: s.id == lastRow ? tail : nil)
       }
       if paged {
         MoreRow(rest: rest, nameOf: { model.agent($0).name }) {
           if closeSwipe() { return }
           withAnimation(Motion.ease) { moreShown[cwd] = rest.isEmpty ? nil : extra + Self.morePage }
         }
+        .modifier(zone(false))
+        .dropMarks(hot: false, insert: tail)
       }
     }
   }
@@ -294,6 +323,57 @@ struct SessionListScreen: View {
     }
     // Deleted at once, as on the desktop: the toast's undo brings it back
     .modifier(SwipeToDelete(id: s.id, open: $swiped) { withAnimation(Motion.ease) { model.delete(s.id) } })
+    // By project a session drags onto another project; pinned ones stay put, as on the desktop (sessionTree.ts draggable)
+    .listDrag(filing && s.pinned != true && s.external != true ? .session(s.id) : nil, onStart: { held = $0 }) {
+      ListDragPreview(title: s.title) { VendorMark(brand: s.agent, name: model.agent(s.agent).name, size: Metrics.rowMark, fit: true) }
+    }
+  }
+
+  /// The by-project view, where rows drag (the other views have no project to drop on)
+  private var filing: Bool { view == .project && searchTerms(query).isEmpty && !archivedOnly }
+
+  /// Where the held item would land over project `cwd` of `run` in `section`: a session moves into it (unless it is
+  /// there already); a project goes before it over the header's upper half, after it anywhere lower in its group
+  private func dropTarget(_ item: ListDragItem, over cwd: String, section: String?, run: [String], upper: Bool) -> ListDropTarget? {
+    switch item {
+    case .session(let id):
+      guard let s = model.summaries.first(where: { $0.id == id }), s.cwd != cwd else { return nil }
+      return .project(cwd)
+    case .project(let moving):
+      guard moving != cwd else { return nil }
+      if upper { return .slot(section: section, before: cwd) }
+      let others = run.filter { $0 != moving }
+      return .slot(section: section, before: others.firstIndex(of: cwd).flatMap { others[safe: $0 + 1] })
+    }
+  }
+
+  /// A section caption's zone: a project dropped there goes to the end of that section (nil: the projects in none)
+  private func captionZone(section: String?) -> ListDropZone {
+    ListDropZone(held: held, over: $over, perform: drop) { item, _, _ in
+      guard case .project = item else { return nil }
+      return .slot(section: section, before: nil)
+    }
+  }
+
+  /// The edge of project `cwd`'s group a held project would land against: above it when it would go before it, below
+  /// it when it would end the run
+  private func insertEdge(_ cwd: String, section: String?, run: [String]) -> VerticalEdge? {
+    guard case let .slot(at, before)? = over, at == section, case let .project(moving)? = held else { return nil }
+    if before == cwd { return .top }
+    return before == nil && run.last(where: { $0 != moving }) == cwd ? .bottom : nil
+  }
+
+  /// A drop that checked out: the session moves (its toast says where), the project takes its place
+  private func drop(_ item: ListDragItem, at: ListDropTarget) {
+    held = nil
+    switch (item, at) {
+    case let (.session(id), .project(cwd)):
+      model.move(id, to: cwd)
+    case let (.project(cwd), .slot(section, before)):
+      withAnimation(Motion.ease) { model.placeProject(cwd, section: section, before: before) }
+    default:
+      break
+    }
   }
 
   /// The sessions the list draws from: archived ones only while the view menu asks for them
