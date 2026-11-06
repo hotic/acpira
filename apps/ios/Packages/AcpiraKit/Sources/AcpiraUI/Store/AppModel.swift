@@ -70,8 +70,12 @@ final class AppModel {
   /// Each agent's slash commands from the same answer (its newest session's): the new session page has no session to
   /// advertise them, the desktop starts the CLI with its page and the phone only with the first prompt
   var agentCommands: [AgentId: [SlashCommand]] = [:]
-  /// Agents whose empty `controls` answer was followed by a fresh probe on this wire, so it is asked once
-  var probedControls: Set<AgentId> = []
+  /// The engine's `controls` answers for a new session in a folder on an SSH host, by `hostControlsKey`: there the agent
+  /// may start in the host's engine, with the host CLI's own config and models, so the agent-wide lists above do not fit
+  var hostControls: [String: HostControls] = [:]
+  /// Agents (or `hostControlsKey`s) whose empty `controls` answer was followed by a fresh probe on this wire, so it is
+  /// asked once
+  var probedControls: Set<String> = []
   var summaries: [SessionSummary]
   /// The session list exactly as the engine last sent it, the base its next `sessionsPatch` applies to (`summaries`
   /// carries local pending feedback on top)
@@ -105,6 +109,15 @@ final class AppModel {
   /// The SSH hosts set up on the computer (HostMsg `connections`): each host folder's state and run mode. Empty until
   /// the engine answers, and for a gateway that keeps the list from devices; a host folder then shows its alias only
   var connections: [ConnectionView] = []
+  /// helloOk.features of this wire's engine: additions it serves beyond the protocol version (`localDir`: the folder
+  /// browser, `providers`: the built-in agent's model sources). Empty in the demo and from older engines
+  var engineFeatures: Set<String> = []
+  /// The built-in agent's model sources as the engine last sent them (AppModel+Providers.swift), nil until asked
+  var providersView: ProvidersView?
+  /// Why the last change to the sources failed, the engine's own words
+  var providersError: String?
+  /// Source changes in order, one at a time: the engine's answers carry no request id
+  var providerWrites = ProviderWrites()
   /// The history search's content hits, for the query they answered
   var hits: SessionHits?
   /// Projects folded open in the by-project view
@@ -157,6 +170,10 @@ final class AppModel {
   /// Reads waiting for the engine's answer, by the seq it echoes (AppModel+Files.swift)
   @ObservationIgnored var asking: [Int: CheckedContinuation<HostMsg?, Never>] = [:]
   @ObservationIgnored var askSeq = 0
+  /// Model-source probes waiting for `providerProbed`, by id; source writes waiting for their settling answer, by write id
+  @ObservationIgnored var probing: [String: CheckedContinuation<ProbeOutcome?, Never>] = [:]
+  @ObservationIgnored var probeSeq = 0
+  @ObservationIgnored var writeWaits: [Int: CheckedContinuation<String?, Never>] = [:]
   /// The engine turned this app down for another protocol version; the close that follows says nothing more
   @ObservationIgnored var incompatible = false
   /// The last history search sent to the engine: its reply echoes the seq
@@ -401,7 +418,14 @@ final class AppModel {
   /// that agent's or the showcase's. Only sessions opened on the phone are kept, so without the engine's answer a new
   /// session showed no model chip until its first prompt had made it. Protocol modes come with a session only, so the
   /// engine's answer has none
-  func controls(for agent: AgentId) -> SessionControls {
+  func controls(for agent: AgentId, cwd: String = "") -> SessionControls {
+    // A host folder: a kept session there, else the engine's answer for that folder, never another machine's list
+    if let key = hostControlsKey(agent, cwd) {
+      let kept = summaries.filter { $0.agent == agent && $0.cwd == cwd }.max { $0.updatedAt < $1.updatedAt }
+        .flatMap { views[$0.id]?.controls }
+      if let kept, !kept.options.isEmpty { return kept }
+      return SessionControls(options: hostControls[key]?.options ?? [])
+    }
     let latest = summaries.filter { $0.agent == agent }.max { $0.updatedAt < $1.updatedAt }
     if let kept = latest.flatMap({ views[$0.id]?.controls }), !kept.options.isEmpty { return kept }
     if let options = agentControls[agent], !options.isEmpty { return SessionControls(options: options) }
@@ -413,7 +437,8 @@ final class AppModel {
 
   /// The slash commands a new session of `agent` offers before it runs: the engine's answer, else a kept view's of the
   /// agent (the demo's fixtures among them)
-  func commands(for agent: AgentId) -> [SlashCommand] {
+  func commands(for agent: AgentId, cwd: String = "") -> [SlashCommand] {
+    if let key = hostControlsKey(agent, cwd) { return hostControls[key]?.commands ?? [] }
     if let known = agentCommands[agent], !known.isEmpty { return known }
     let latest = summaries.filter { $0.agent == agent }.sorted { $0.updatedAt > $1.updatedAt }
     return latest.lazy.compactMap { self.views[$0.id]?.commands }.first { !$0.isEmpty }
@@ -422,8 +447,9 @@ final class AppModel {
 
   /// The per-model parameters a model pick on the new session page reshapes with: the engine's answer, else those a
   /// kept view of the agent carries
-  func shapes(for agent: AgentId) -> ModelShapes? {
-    agentShapes[agent] ?? views.values.first { $0.agent == agent && $0.modelShapes != nil }?.modelShapes
+  func shapes(for agent: AgentId, cwd: String = "") -> ModelShapes? {
+    if let key = hostControlsKey(agent, cwd) { return hostControls[key]?.shapes }
+    return agentShapes[agent] ?? views.values.first { $0.agent == agent && $0.modelShapes != nil }?.modelShapes
   }
 
   /// Starts a session with its first prompt and returns its id; nil with an engine, which pushes the session it made

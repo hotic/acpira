@@ -61,9 +61,9 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
   var agent by rememberSaveable {
     mutableStateOf(screen.agent ?: model.summaries.maxByOrNull { it.updatedAt }?.agent ?: agents.firstOrNull()?.id ?: model.settings.defaultAgent)
   }
-  // The latest project unless asked otherwise; a chat when the computer has none
-  val projects = remember(model.summaries, model.projectOrder) {
-    (model.projectOrder + model.summaries.sortedByDescending { it.updatedAt }.map { it.cwd }).filter { it.isNotEmpty() && !model.isChat(it) }.distinct()
+  // The latest project unless asked otherwise; a chat when the computer has none. Folders added by hand lead
+  val projects = remember(model.summaries, model.projectOrder, model.addedProjects) {
+    (model.addedProjects + model.projectOrder + model.summaries.sortedByDescending { it.updatedAt }.map { it.cwd }).filter { it.isNotEmpty() && !model.isChat(it) }.distinct()
   }
   var cwd by rememberSaveable { mutableStateOf(screen.cwd ?: projects.firstOrNull()) }
   var draft by rememberSaveable { mutableStateOf("") }
@@ -84,10 +84,13 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
   }
   val dim by animateFloatAsState(if (ring) 1f else 0f, if (model.motion) tween(HERO_AWAY_MS) else snap(), label = "ringDim")
   // The agent's new-session controls (asked again on every wire, whose answer a lost one never brings), and this page's
-  // picks over them; a pick is never replaced by a later answer
-  LaunchedEffect(agent, model.connection) { model.loadControls(agent) }
-  var picks by remember(agent) { mutableStateOf<List<ConfigControl>?>(null) }
-  val options = picks ?: model.agentControls[agent].orEmpty()
+  // picks over them; a pick is never replaced by a later answer. A folder on an SSH host may mean the host's engine and
+  // its CLI's models, so picks stay with the machine they were made from
+  LaunchedEffect(agent, cwd, model.connection) { model.loadControls(agent, cwd) }
+  var picks by remember(agent, cwd?.let(::remoteHost)) { mutableStateOf<List<ConfigControl>?>(null) }
+  // The folder menu's "Add folder" is open
+  var adding by remember { mutableStateOf(false) }
+  val options = picks ?: model.newSessionControls(agent, cwd)
 
   Box(Modifier.fillMaxSize()) {
   Scaffold(
@@ -193,6 +196,7 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
           name = model::placeName,
           onDismiss = { pickFolder = false },
           onPick = { cwd = it; pickFolder = false },
+          onAdd = { pickFolder = false; adding = true },
         )
       }
     }
@@ -200,6 +204,8 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
   }
   // The composer's open picker, over everything (the composer included), so no piece hides under the card
   GooLayer(goo, model.motion)
+  // Add folder: the browser over the whole page; the added folder becomes this draft's
+  AddProject(model, adding, onClose = { adding = false }, onAdded = { cwd = it })
   }
 }
 
@@ -216,6 +222,7 @@ private fun FolderMenu(
   name: (String) -> String,
   onDismiss: () -> Unit,
   onPick: (String?) -> Unit,
+  onAdd: () -> Unit,
 ) {
   // null: the top level; "" this computer's projects; a host alias: that host's
   var level by remember { mutableStateOf<String?>(null) }
@@ -243,6 +250,12 @@ private fun FolderMenu(
             icon = { MenuGlyph("chevronRight") },
           )
         }
+        // After the folders, as the iOS menu ends: a folder of the computer picked by hand
+        AppMenuGap()
+        AppMenuItem(
+          t("mobile.projects.add"), onClick = { onAdd(); level = null }, checked = false,
+          icon = { MenuGlyph("folderPlus") }, modifier = Modifier.testTag("folder.add"),
+        )
       }
       else -> {
         AppMenuBack(if (at.isEmpty()) t("mobile.projects.local") else at, onClick = { level = null })

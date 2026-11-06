@@ -4,13 +4,15 @@ import SwiftUI
 
 // The engine's settings the phone offers (General.tsx, PluginsPage.tsx, AgentPage.tsx), as system form rows: the
 // agents (switches, order, the default), how sessions run (steering, compaction, account switching), and per agent the
-// Plan-mode approval and which models its menus show. Model sources, keys, MCP and the rest stay on the computer:
-// typing a provider key on the phone widens what a lost phone exposes.
+// Plan-mode approval and which models its menus show, and the built-in agent's model sources (ProvidersSettings.swift).
+// MCP, the proxy and the rest stay on the computer.
 
 /// The pages the settings push
 enum SettingsRoute: Hashable {
   case agent(AgentId)
   case models(AgentId)
+  /// The built-in agent's model sources
+  case providers
   case developer
 
   /// The pages down to a launch argument's page
@@ -20,6 +22,7 @@ enum SettingsRoute: Hashable {
     let routes: [SettingsRoute] = switch (parts.first, parts.count > 1 ? parts[1] : nil) {
     case ("agent", let id?): [.agent(id)]
     case ("models", let id?): [.agent(id), .models(id)]
+    case ("providers", _): [.agent(AppModel.builtinAgent), .providers]
     case ("developer", _): [.developer]
     default: []
     }
@@ -166,6 +169,21 @@ struct AgentSettingsPage: View {
         Text(web: t("settings.agent.permissions"))
       } footer: {
         Text(web: t("settings.planAutoApprove.desc", ["agent": agent.name]))
+      }
+      // The built-in agent calls models from the sources set up here; a computer whose engine predates editing them from
+      // a device names the update instead
+      if id == AppModel.builtinAgent, model.live {
+        Section {
+          NavigationLink(value: SettingsRoute.providers) {
+            LabeledContent(t("settings.providers")) {
+              if let view = model.providersView { Text(verbatim: "\(view.providers.count)") }
+            }
+          }
+          .disabled(!model.editsProviders)
+        } footer: {
+          if !model.editsProviders { Text(web: t("mobile.outdated")) }
+        }
+        .onAppear { model.loadProviders() }
       }
       Section {
         NavigationLink(value: SettingsRoute.models(id)) {

@@ -46,8 +46,8 @@ extension AppModel {
 
   private func receive(_ event: EngineEvent) {
     switch event {
-    case .connected:
-      break
+    case .connected(let ok):
+      engineFeatures = Set(ok.features ?? [])
     case .host(let message):
       receive(message)
     case .platform(.toast(let level, let text, _)):
@@ -121,7 +121,11 @@ extension AppModel {
       accounts = list
     case .settings(let next, _):
       settings = next
-    case let .controls(agent, controls, shapes, commands):
+    case let .controls(agent, controls, shapes, commands, cwd):
+      if let cwd, let key = hostControlsKey(agent, cwd) {
+        hostControls[key] = HostControls(options: controls, shapes: shapes, commands: commands)
+        break
+      }
       agentControls[agent] = controls
       if let shapes { agentShapes[agent] = shapes }
       agentCommands[agent] = commands
@@ -131,8 +135,13 @@ extension AppModel {
       // A reply to an older query is dropped rather than mixed in
       guard seq == searchSeq else { break }
       hits = SessionHits(query: searchQuery, snippets: Dictionary(list.map { ($0.id, $0.snippet) }, uniquingKeysWith: { a, _ in a }), summaries: list.compactMap(\.summary))
-    case let .projectFile(seq, _, _, _), let .sessionChanges(seq, _), let .diffSource(seq, _), let .sessionMarkdown(seq, _, _):
+    case let .projectFile(seq, _, _, _), let .sessionChanges(seq, _), let .diffSource(seq, _), let .sessionMarkdown(seq, _, _),
+         let .localDir(seq, _, _, _, _):
       answer(seq, message)
+    case let .providers(view, error):
+      receiveProviders(view, error: error)
+    case let .providerProbed(id, outcome):
+      probing.removeValue(forKey: id)?.resume(returning: outcome)
     case .session, .sessionPatch, .noSession:
       present(message)
     case .terminalOutput, .terminalState:
@@ -224,6 +233,7 @@ extension AppModel {
     settings = previous.settings
     agentControls = previous.agentControls
     agentShapes = previous.agentShapes
+    hostControls = previous.hostControls
     summaries = previous.summaries
     views = previous.views
     // Least recently shown first: what the wire before still carried itself, then its own feed's order

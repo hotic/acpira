@@ -633,8 +633,9 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   case searchFiles(query: String, seq: Int)
   /// Write a setting (settings.ts SettingKey); the engine sanitizes the value
   case setSetting(key: String, value: JSONValue)
-  /// An agent's model controls, answered with `controls`; fresh: re-read them from a throwaway process
-  case controls(agent: AgentId, fresh: Bool? = nil)
+  /// An agent's model controls, answered with `controls`; fresh: re-read them from a throwaway process; cwd: the folder a
+  /// new session would start in (on an SSH host the agent may run in the host's engine, with that CLI's models)
+  case controls(agent: AgentId, fresh: Bool? = nil, cwd: String? = nil)
   /// The session's project, each answered by the push of the same name echoing seq: a folder (`dir` relative, "" for
   /// the project itself), its git marks, a file with its hunks against `base` (none: no hunks), the files the session's
   /// edits left changed
@@ -662,6 +663,14 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   case terminalKill(id: String)
   /// The SSH hosts' state, answered with a `connections` push and pushed again on every change
   case connections
+  /// A folder of the engine's computer for the add-project picker (nil: the user's home), answered with `localDir`
+  /// echoing seq; only where helloOk.features has `localDir`
+  case localDir(path: String? = nil, seq: Int)
+  /// The built-in agent's model sources, answered with `providers` (also after every providerAction); a change to them;
+  /// a probe answered with `providerProbed` echoing id. Only where helloOk.features has `providers`
+  case providers
+  case providerAction(action: ProviderAction)
+  case providerProbe(id: String, probe: ProviderProbe)
   /// A type this build does not know (decoding only)
   case unknown(String)
 
@@ -674,7 +683,8 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     "unlockCredentials", "login", "reconnect", "retryTurn", "editTurn", "observeSubagent", "unobserveSubagent",
     "cancelSubagent", "stopAsyncTask", "goal", "searchFiles", "setSetting", "controls", "projectDir", "projectStatus",
     "projectFile", "sessionChanges", "diffSource", "imageBlob", "openPlan", "terminalOpen", "terminalInput",
-    "terminalResize", "terminalAck", "terminalClose", "terminalKill", "connections",
+    "terminalResize", "terminalAck", "terminalClose", "terminalKill", "connections", "localDir", "providers", "providerAction",
+    "providerProbe",
   ]
 
   /// The wire `type`
@@ -701,6 +711,10 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case .setSessionUnread: "setSessionUnread"
     case .markAllRead: "markAllRead"
     case .connections: "connections"
+    case .localDir: "localDir"
+    case .providers: "providers"
+    case .providerAction: "providerAction"
+    case .providerProbe: "providerProbe"
     case .searchSessions: "searchSessions"
     case .forkSession: "forkSession"
     case .selectAccount: "selectAccount"
@@ -751,7 +765,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case type, patches, listPatches, sessionId, text, attachments, steer, blockId, optionId, answers, images, skip, planId, model, id, configId
     case value, agent, category, cwd, chat, title, pinned, archived, unread, query, seq, turnIndex, retainedAttachments, clientId
     case file, via, methodId, requestId, edit, subagentId, taskId, action, objective, key, fresh, dir, path, base
-    case toolCallId, nth, cols, rows, data, binary, chars, format, shown
+    case toolCallId, nth, cols, rows, data, binary, chars, format, shown, probe
   }
 
   public init(from decoder: Decoder) throws {
@@ -790,6 +804,10 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case "setSessionUnread": self = .setSessionUnread(id: try str(.id), unread: try c.decode(Bool.self, forKey: .unread))
     case "markAllRead": self = .markAllRead
     case "connections": self = .connections
+    case "localDir": self = .localDir(path: try opt(.path), seq: try int(.seq))
+    case "providers": self = .providers
+    case "providerAction": self = .providerAction(action: try c.decode(ProviderAction.self, forKey: .action))
+    case "providerProbe": self = .providerProbe(id: try str(.id), probe: try c.decode(ProviderProbe.self, forKey: .probe))
     case "searchSessions": self = .searchSessions(query: try str(.query), seq: try c.decode(Int.self, forKey: .seq))
     case "forkSession":
       self = .forkSession(sessionId: try str(.sessionId), turnIndex: try c.decode(Int.self, forKey: .turnIndex), agent: try opt(.agent))
@@ -824,7 +842,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
       self = .goal(sessionId: try str(.sessionId), action: try c.decode(GoalAction.self, forKey: .action), objective: try opt(.objective))
     case "searchFiles": self = .searchFiles(query: try str(.query), seq: try int(.seq))
     case "setSetting": self = .setSetting(key: try str(.key), value: try c.decode(JSONValue.self, forKey: .value))
-    case "controls": self = .controls(agent: try str(.agent), fresh: try c.decodeIfPresent(Bool.self, forKey: .fresh))
+    case "controls": self = .controls(agent: try str(.agent), fresh: try c.decodeIfPresent(Bool.self, forKey: .fresh), cwd: try opt(.cwd))
     case "projectDir": self = .projectDir(sessionId: try str(.sessionId), dir: try str(.dir), seq: try int(.seq))
     case "projectStatus": self = .projectStatus(sessionId: try str(.sessionId), seq: try int(.seq))
     case "projectFile":
@@ -982,9 +1000,10 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case let .setSetting(key, value):
       try c.encode(key, forKey: .key)
       try c.encode(value, forKey: .value)
-    case let .controls(agent, fresh):
+    case let .controls(agent, fresh, cwd):
       try c.encode(agent, forKey: .agent)
       try c.encodeIfPresent(fresh, forKey: .fresh)
+      try c.encodeIfPresent(cwd, forKey: .cwd)
     case let .projectDir(sessionId, dir, seq):
       try c.encode(sessionId, forKey: .sessionId)
       try c.encode(dir, forKey: .dir)
@@ -1027,7 +1046,15 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case let .terminalAck(id, chars):
       try c.encode(id, forKey: .id)
       try c.encode(chars, forKey: .chars)
-    case .resync, .resyncSessions, .markAllRead, .connections, .unknown:
+    case let .localDir(path, seq):
+      try c.encodeIfPresent(path, forKey: .path)
+      try c.encode(seq, forKey: .seq)
+    case .providerAction(let action):
+      try c.encode(action, forKey: .action)
+    case let .providerProbe(id, probe):
+      try c.encode(id, forKey: .id)
+      try c.encode(probe, forKey: .probe)
+    case .resync, .resyncSessions, .markAllRead, .connections, .providers, .unknown:
       break
     }
   }
@@ -1057,8 +1084,9 @@ public enum HostMsg: Codable, Hashable, Sendable {
   /// The settings view and the resolved locale (a language change swaps both at once)
   case settings(settings: SettingsView, locale: String)
   /// An agent's model controls, answering the settings page's `controls` request; shapes: its remembered per-model ones;
-  /// commands: the slash commands its newest session advertised, the new session page's `/` menu before a session runs
-  case controls(agent: AgentId, controls: [ConfigControl], shapes: ModelShapes? = nil, commands: [SlashCommand] = [])
+  /// commands: the slash commands its newest session advertised, the new session page's `/` menu before a session runs;
+  /// cwd: the request's, echoed (the answer is for a new session in that folder)
+  case controls(agent: AgentId, controls: [ConfigControl], shapes: ModelShapes? = nil, commands: [SlashCommand] = [], cwd: String? = nil)
   /// The answer to searchSessions with the same seq; a lower seq is stale
   case sessionHits(seq: Int, hits: [SessionHit])
   /// One observed subagent's transcript, pushed to the viewer that asked for it; rev grows with every change
@@ -1093,6 +1121,12 @@ public enum HostMsg: Codable, Hashable, Sendable {
   case appearance(appearance: Appearance)
   /// The SSH hosts, after `connections` was asked and on every change since
   case connections(connections: [ConnectionView])
+  /// The answer to localDir: the folder's normalized path, its parent (nil at a root) and the folders in it
+  case localDir(seq: Int, path: String, parent: String? = nil, entries: [RemoteDirEntry], error: String? = nil)
+  /// The model sources, answering `providers` and every providerAction; error: why that action failed
+  case providers(view: ProvidersView, error: String? = nil)
+  /// The answer to the providerProbe with the same id
+  case providerProbed(id: String, outcome: ProbeOutcome)
   /// A push this build does not mirror; carries the type for diagnostics
   case unknown(String)
 
@@ -1101,7 +1135,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
     "init", "agents", "sessions", "categories", "noSession", "session", "sessionPatch", "sessionsPatch", "accounts", "accountActions",
     "hidden", "settings", "controls", "sessionHits", "subagent", "files", "diffSource", "imageBlob", "sessionMarkdown",
     "projectDir", "projectStatus", "projectFile", "sessionChanges", "terminalOutput", "terminalState", "editTurnResult",
-    "deleteSessionResult", "appearance", "connections",
+    "deleteSessionResult", "appearance", "connections", "localDir", "providers", "providerProbed",
   ]
 
   /// The wire `type`
@@ -1136,15 +1170,18 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case .deleteSessionResult: "deleteSessionResult"
     case .appearance: "appearance"
     case .connections: "connections"
+    case .localDir: "localDir"
+    case .providers: "providers"
+    case .providerProbed: "providerProbed"
     case .unknown(let t): t
     }
   }
 
   private enum Keys: String, CodingKey {
     case type, state, agents, sessions, categories, session, patch, accounts, actions, hidden, settings, locale, agent
-    case controls, shapes, commands, seq, hits
+    case controls, shapes, commands, cwd, seq, hits
     case sessionId, subagentId, rev, running, turns, files, source, blob, markdown, error, entries, root, marks, text
-    case hunks, id, data, title, cols, rows, replay, exit, requestId, undo, appearance, connections
+    case hunks, id, data, title, cols, rows, replay, exit, requestId, undo, appearance, connections, path, parent, view, outcome
   }
 
   public init(from decoder: Decoder) throws {
@@ -1169,7 +1206,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case "controls":
       self = .controls(agent: try c.decode(String.self, forKey: .agent), controls: try c.decode([ConfigControl].self, forKey: .controls),
                        shapes: try c.decodeIfPresent(ModelShapes.self, forKey: .shapes),
-                       commands: try c.decodeIfPresent([SlashCommand].self, forKey: .commands) ?? [])
+                       commands: try c.decodeIfPresent([SlashCommand].self, forKey: .commands) ?? [], cwd: try opt(.cwd))
     case "sessionHits": self = .sessionHits(seq: try c.decode(Int.self, forKey: .seq), hits: try c.decode([SessionHit].self, forKey: .hits))
     case "subagent":
       self = .subagent(sessionId: try str(.sessionId), subagentId: try str(.subagentId), rev: try int(.rev),
@@ -1196,6 +1233,11 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case "deleteSessionResult": self = .deleteSessionResult(requestId: try str(.requestId), undo: try c.decode(Bool.self, forKey: .undo), error: try opt(.error))
     case "appearance": self = .appearance(appearance: try c.decode(Appearance.self, forKey: .appearance))
     case "connections": self = .connections(connections: try c.decode([ConnectionView].self, forKey: .connections))
+    case "localDir":
+      self = .localDir(seq: try int(.seq), path: try str(.path), parent: try opt(.parent),
+                       entries: try c.decode([RemoteDirEntry].self, forKey: .entries), error: try opt(.error))
+    case "providers": self = .providers(view: try c.decode(ProvidersView.self, forKey: .view), error: try opt(.error))
+    case "providerProbed": self = .providerProbed(id: try str(.id), outcome: try c.decode(ProbeOutcome.self, forKey: .outcome))
     case let type: self = .unknown(type)
     }
   }
@@ -1217,11 +1259,12 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case let .settings(settings, locale):
       try c.encode(settings, forKey: .settings)
       try c.encode(locale, forKey: .locale)
-    case let .controls(agent, controls, shapes, commands):
+    case let .controls(agent, controls, shapes, commands, cwd):
       try c.encode(agent, forKey: .agent)
       try c.encode(controls, forKey: .controls)
       try c.encodeIfPresent(shapes, forKey: .shapes)
       if !commands.isEmpty { try c.encode(commands, forKey: .commands) }
+      try c.encodeIfPresent(cwd, forKey: .cwd)
     case let .sessionHits(seq, hits):
       try c.encode(seq, forKey: .seq)
       try c.encode(hits, forKey: .hits)
@@ -1282,6 +1325,18 @@ public enum HostMsg: Codable, Hashable, Sendable {
       try c.encode(appearance, forKey: .appearance)
     case .connections(let connections):
       try c.encode(connections, forKey: .connections)
+    case let .localDir(seq, path, parent, entries, error):
+      try c.encode(seq, forKey: .seq)
+      try c.encode(path, forKey: .path)
+      try c.encodeIfPresent(parent, forKey: .parent)
+      try c.encode(entries, forKey: .entries)
+      try c.encodeIfPresent(error, forKey: .error)
+    case let .providers(view, error):
+      try c.encode(view, forKey: .view)
+      try c.encodeIfPresent(error, forKey: .error)
+    case let .providerProbed(id, outcome):
+      try c.encode(id, forKey: .id)
+      try c.encode(outcome, forKey: .outcome)
     case .noSession, .unknown:
       break
     }

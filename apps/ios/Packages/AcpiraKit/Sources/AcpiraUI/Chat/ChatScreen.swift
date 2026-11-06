@@ -156,7 +156,7 @@ struct ChatScreen: View {
       Button(t("mobile.cancel"), role: .cancel) {}
     }
     // As in the new session's folder menu, a typed folder joins the project list; the session moves into it
-    .modifier(AddProjectAlert(isPresented: $addingFolder) { folder in
+    .modifier(AddProjectPicker(isPresented: $addingFolder) { folder in
       model.addProject(folder)
       model.move(id, to: folder)
     })

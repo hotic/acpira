@@ -60,9 +60,10 @@ extension AppModel {
   }
 
   /// Asks for an agent's controls (the engine answers `controls` from its last session or a probe); the demo reads the
-  /// fixture sessions'
-  func loadControls(_ agent: AgentId, fresh: Bool = false) {
-    if post(.controls(agent: agent, fresh: fresh ? true : nil)) { return }
+  /// fixture sessions'. A folder on an SSH host goes with the ask: the engine answers for where a session there starts
+  func loadControls(_ agent: AgentId, fresh: Bool = false, cwd: String = "") {
+    let host = hostControlsKey(agent, cwd) == nil ? nil : cwd
+    if post(.controls(agent: agent, fresh: fresh ? true : nil, cwd: host)) { return }
     if agentControls[agent] == nil {
       agentControls[agent] = views.values.first { $0.agent == agent && !$0.controls.options.isEmpty }?.controls.options ?? []
     }
@@ -70,17 +71,37 @@ extension AppModel {
 
   /// Asks for every agent not answered yet, so a switch on the new session page finds the agent's models at once
   /// instead of dropping the model chip for the round trip (hundreds of milliseconds over a paired link)
-  func prefetchControls(_ agents: [AgentId]) {
-    for agent in agents where agentControls[agent] == nil { loadControls(agent) }
+  func prefetchControls(_ agents: [AgentId], cwd: String = "") {
+    for agent in agents where knownControls(agent, cwd: cwd) == nil { loadControls(agent, cwd: cwd) }
+  }
+
+  /// The engine's last answer for a new session of `agent` in `cwd`, nil before one came
+  func knownControls(_ agent: AgentId, cwd: String = "") -> [ConfigControl]? {
+    guard let key = hostControlsKey(agent, cwd) else { return agentControls[agent] }
+    return hostControls[key]?.options
   }
 
   /// An agent the engine knows no models for yet (never run on that computer, no probe) gets one fresh probe on this
   /// wire: the desktop starts the CLI with the page and shows its models, the phone only starts it with the first prompt
-  func probeUnknownControls(_ agent: AgentId) {
-    guard link != nil, agentControls[agent]?.isEmpty == true, !probedControls.contains(agent) else { return }
-    probedControls.insert(agent)
-    loadControls(agent, fresh: true)
+  func probeUnknownControls(_ agent: AgentId, cwd: String = "") {
+    let key = hostControlsKey(agent, cwd) ?? agent
+    guard link != nil, knownControls(agent, cwd: cwd)?.isEmpty == true, !probedControls.contains(key) else { return }
+    probedControls.insert(key)
+    loadControls(agent, fresh: true, cwd: cwd)
   }
+}
+
+/// The engine's `controls` answer for a new session in a folder on an SSH host
+struct HostControls: Equatable {
+  var options: [ConfigControl]
+  var shapes: ModelShapes?
+  var commands: [SlashCommand]
+}
+
+/// Where `hostControls` keeps an agent's answer for a folder on an SSH host (`ssh://<alias>/<path>`); nil for any other
+/// folder, whose new sessions start on the computer with its agent-wide lists
+func hostControlsKey(_ agent: AgentId, _ cwd: String) -> String? {
+  cwd.hasPrefix("ssh://") ? "\(cwd)\n\(agent)" : nil
 }
 
 /// agentOrder.ts arrangeAgents: the saved order first, the rest in registry order after them, external entries last;

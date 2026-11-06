@@ -125,7 +125,7 @@ struct SessionListScreen: View {
       Button(t("mobile.save")) { if let s = renaming { model.rename(s.id, to: newTitle) } }
     }
     // The move menu's "Add folder", as in the new session's folder menu: the folder joins the list, the session moves in
-    .modifier(AddProjectAlert(isPresented: Binding(get: { movingTo != nil }, set: { if !$0 { movingTo = nil } })) { folder in
+    .modifier(AddProjectPicker(isPresented: Binding(get: { movingTo != nil }, set: { if !$0 { movingTo = nil } })) { folder in
       guard let s = movingTo else { return }
       model.addProject(folder)
       model.move(s.id, to: folder)

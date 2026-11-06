@@ -103,13 +103,23 @@ sealed interface HostMsg {
   data class Patch(val patch: SessionPatch) : HostMsg
   data class Accounts(val accounts: List<AccountInfo>) : HostMsg
   data class Settings(val settings: SettingsView, val locale: String) : HostMsg
-  data class Controls(val agent: AgentId, val controls: List<ConfigControl>, val commands: List<SlashCommand>) : HostMsg
+  /** `cwd`: the request's, echoed (the answer is for a new session in that folder) */
+  data class Controls(val agent: AgentId, val controls: List<ConfigControl>, val commands: List<SlashCommand>, val cwd: String? = null) : HostMsg
   data class EditTurnResult(val requestId: String, val error: String?) : HostMsg
+  /** A folder of the engine's computer for the add-project picker (helloOk.features 'localDir'); `parent` absent at a root */
+  data class LocalDir(val seq: Int, val path: String, val parent: String?, val entries: List<DirEntry>, val error: String?) : HostMsg
+  /** The model sources (helloOk.features 'providers'), also the answer to every providerAction; `error`: that action failed */
+  data class Providers(val view: ProvidersView, val error: String?) : HostMsg
+  /** The answer to the providerProbe with this id */
+  data class ProviderProbed(val id: String, val outcome: ProbeOutcome) : HostMsg
   data class Unknown(val type: String) : HostMsg
 
   companion object {
     /** The `type` literals this build reads */
-    val types = listOf("init", "agents", "sessions", "categories", "noSession", "session", "sessionPatch", "accounts", "settings", "controls", "editTurnResult")
+    val types = listOf(
+      "init", "agents", "sessions", "categories", "noSession", "session", "sessionPatch", "accounts", "settings", "controls", "editTurnResult",
+      "localDir", "providers", "providerProbed",
+    )
 
     fun decode(json: Json, obj: JsonObject): HostMsg {
       val type = obj.string("type") ?: return Unknown("")
@@ -129,8 +139,18 @@ sealed interface HostMsg {
           obj.string("agent") ?: "",
           field("controls", kotlinx.serialization.builtins.ListSerializer(ConfigControl.serializer())),
           obj["commands"]?.let { json.decodeFromJsonElement(kotlinx.serialization.builtins.ListSerializer(SlashCommand.serializer()), it) }.orEmpty(),
+          obj.string("cwd"),
         )
         "editTurnResult" -> EditTurnResult(obj.string("requestId") ?: "", obj.string("error"))
+        "localDir" -> LocalDir(
+          obj.int("seq") ?: 0,
+          obj.string("path") ?: "",
+          obj.string("parent"),
+          obj["entries"]?.let { json.decodeFromJsonElement(kotlinx.serialization.builtins.ListSerializer(DirEntry.serializer()), it) }.orEmpty(),
+          obj.string("error"),
+        )
+        "providers" -> Providers(ProvidersView.decode(obj["view"]), obj.string("error"))
+        "providerProbed" -> ProviderProbed(obj.string("id") ?: "", ProbeOutcome.decode(obj["outcome"]))
         else -> Unknown(type)
       }
     }
@@ -178,7 +198,8 @@ sealed interface WebviewMsg {
   data class ArchiveSession(val id: String, val archived: Boolean) : WebviewMsg
   data class Dequeue(val sessionId: String, val id: String) : WebviewMsg
   data class SendQueued(val sessionId: String, val id: String) : WebviewMsg
-  data class Controls(val agent: AgentId, val fresh: Boolean? = null) : WebviewMsg
+  /** `cwd`: the folder a new session would start in; on an SSH host the agent may run in the host's engine, with its models */
+  data class Controls(val agent: AgentId, val fresh: Boolean? = null, val cwd: String? = null) : WebviewMsg
   data class Retry(val sessionId: String?) : WebviewMsg
   /** The failed last turn and its prompt go, the prompt runs again (`retry` restarts the session instead) */
   data class RetryTurn(val sessionId: String?) : WebviewMsg
@@ -187,6 +208,15 @@ sealed interface WebviewMsg {
   data class Reconnect(val sessionId: String?) : WebviewMsg
   /** One engine setting by its SettingsView key; the engine answers with `settings` to every window */
   data class SetSetting(val key: String, val value: JsonElement) : WebviewMsg
+  /** A folder of the engine's computer (`path` absent: the user's home, a leading `~` expands), answered with localDir */
+  data class LocalDir(val path: String?, val seq: Int) : WebviewMsg
+  /** The project list's addProject op (categoryOp): a folder registered at the end of the user's order */
+  data class AddProject(val cwd: String) : WebviewMsg
+  /** The built-in agent's model sources, answered with providers */
+  data object Providers : WebviewMsg
+  data class ProviderAction(val action: cc.hotic.acpira.model.ProviderAction) : WebviewMsg
+  /** Answered by providerProbed with the same id */
+  data class ProviderProbe(val id: String, val probe: cc.hotic.acpira.model.ProviderProbe) : WebviewMsg
 
   /** The wire `type` */
   val type: String
@@ -214,6 +244,11 @@ sealed interface WebviewMsg {
       is ForkSession -> "forkSession"
       is Reconnect -> "reconnect"
       is SetSetting -> "setSetting"
+      is LocalDir -> "localDir"
+      is AddProject -> "categoryOp"
+      Providers -> "providers"
+      is ProviderAction -> "providerAction"
+      is ProviderProbe -> "providerProbe"
     }
 
   /** The id the engine dedupes this action by; null for actions that carry none */
@@ -259,12 +294,18 @@ sealed interface WebviewMsg {
       is ArchiveSession -> { put("id", m.id); put("archived", m.archived) }
       is Dequeue -> { put("sessionId", m.sessionId); put("id", m.id) }
       is SendQueued -> { put("sessionId", m.sessionId); put("id", m.id) }
-      is Controls -> { put("agent", m.agent); m.fresh?.let { put("fresh", it) } }
+      is Controls -> { put("agent", m.agent); m.fresh?.let { put("fresh", it) }; opt("cwd", m.cwd) }
       is Retry -> opt("sessionId", m.sessionId)
       is RetryTurn -> opt("sessionId", m.sessionId)
       is ForkSession -> { put("sessionId", m.sessionId); put("turnIndex", m.turnIndex); opt("agent", m.agent) }
       is Reconnect -> opt("sessionId", m.sessionId)
       is SetSetting -> { put("key", m.key); put("value", m.value) }
+      is LocalDir -> { opt("path", m.path); put("seq", m.seq) }
+      // categoryOp carries the op's fields flat (protocol.ts `{ type: 'categoryOp' } & CategoryOp`)
+      is AddProject -> { put("op", "addProject"); put("cwd", m.cwd) }
+      Providers -> {}
+      is ProviderAction -> put("action", m.action.toJson())
+      is ProviderProbe -> { put("id", m.id); put("probe", m.probe.toJson()) }
     }
   }
 
@@ -273,7 +314,8 @@ sealed interface WebviewMsg {
     val types = listOf(
       "ready", "resync", "send", "stop", "permission", "answer", "setMode", "setConfig", "selectSession", "deselectSession",
       "newSession", "renameSession", "deleteSession", "pinSession", "archiveSession", "dequeue", "sendQueued", "controls",
-      "retry", "retryTurn", "forkSession", "reconnect", "setSetting",
+      "retry", "retryTurn", "forkSession", "reconnect", "setSetting", "localDir", "categoryOp", "providers", "providerAction",
+      "providerProbe",
     )
   }
 }

@@ -90,6 +90,9 @@ private fun Stack(model: AppModel, pairing: cc.hotic.acpira.store.PairingModel?)
           is Screen.AgentSettings -> AgentSettingsScreen(model, screen.id)
           is Screen.ModelSettings -> ModelsSettingsScreen(model, screen.id)
           Screen.Developer -> DeveloperSettingsScreen(model)
+          Screen.Providers -> ProvidersScreen(model)
+          is Screen.ProviderForm -> ProviderFormScreen(model, screen.id, screen.error)
+          is Screen.AddModels -> AddModelsScreen(model, screen.id)
         }
       }
     }
@@ -166,4 +169,7 @@ private fun key(screen: Screen): String = when (screen) {
   is Screen.AgentSettings -> "agent:${screen.id}"
   is Screen.ModelSettings -> "models:${screen.id}"
   Screen.Developer -> "developer"
+  Screen.Providers -> "providers"
+  is Screen.ProviderForm -> "provider:${screen.id}"
+  is Screen.AddModels -> "addModels:${screen.id}"
 }

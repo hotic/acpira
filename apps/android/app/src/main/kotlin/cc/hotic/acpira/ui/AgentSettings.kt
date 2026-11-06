@@ -81,8 +81,9 @@ import kotlin.math.roundToInt
 
 // apps/ios Settings/EngineSettings.swift: the engine's settings the phone offers (General.tsx, PluginsPage.tsx,
 // AgentPage.tsx) as form rows: the agents (switches, order, the default), how sessions run (steering, compaction,
-// account switching), and per agent the Plan-mode approval and which models its menus show. Model sources, keys, MCP
-// and the rest stay on the computer: typing a provider key on the phone widens what a lost phone exposes.
+// account switching), and per agent the Plan-mode approval and which models its menus show; the built-in agent's page
+// also leads to its model sources (Providers.kt), where a key typed goes to the computer once and never comes back. MCP
+// and the rest stay on the computer.
 
 /** The settings' hidden models (agent → control id → family keys), for the composers' model menus */
 val LocalHiddenModels = compositionLocalOf<Map<String, Map<String, List<String>>>> { emptyMap() }
@@ -266,6 +267,7 @@ fun AgentSettingsScreen(model: AppModel, id: String) {
     FormSection(t("settings.agent.permissions"), footer = t("settings.planAutoApprove.desc", "agent" to agent.name)) {
       SwitchRow(t("settings.planAutoApprove"), id in settings.planAutoApprove, tag = "agent.planAutoApprove") { model.setPlanAutoApprove(id, it) }
     }
+    if (id == AppModel.BUILTIN_AGENT) ProvidersRow(model)
     FormSection(null, footer = t("settings.models.desc")) {
       val catalogs = ModelSettings.catalogs(model.agentControls[id])
       val count = catalogs?.takeIf { it.isNotEmpty() }?.let { ModelSettings.count(it, settings.hiddenOptions[id].orEmpty()) }
@@ -341,15 +343,15 @@ fun ModelsSettingsScreen(model: AppModel, id: String) {
 
 /** A quiet line in a card: loading, nothing found */
 @Composable
-private fun Note(text: String) {
+internal fun Note(text: String) {
   Box(Modifier.fillMaxWidth().heightIn(min = Metrics.formRowHeight).padding(horizontal = Metrics.pad, vertical = Metrics.s2), contentAlignment = Alignment.CenterStart) {
     Text(text, color = Palette.fg3, fontSize = Type.text1)
   }
 }
 
-/** The models page's search, under the bar as the system's searchable field sits */
+/** A page's search (the models page's, the add-model page's), under the bar as the system's searchable field sits */
 @Composable
-private fun SearchField(query: String, onQuery: (String) -> Unit) {
+internal fun SearchField(query: String, placeholder: String = t("settings.models.search"), tag: String = "models.search", onQuery: (String) -> Unit) {
   Row(
     verticalAlignment = Alignment.CenterVertically,
     modifier = Modifier.padding(horizontal = Metrics.pad).padding(bottom = Metrics.s2).fillMaxWidth().height(Metrics.ctl)
@@ -358,12 +360,12 @@ private fun SearchField(query: String, onQuery: (String) -> Unit) {
     Lucide("search", Palette.fg3, size = Metrics.icon)
     Spacer(Modifier.width(Metrics.s2))
     Box(Modifier.weight(1f)) {
-      if (query.isEmpty()) Text(t("settings.models.search"), color = Palette.fg3, fontSize = Type.text1, maxLines = 1)
+      if (query.isEmpty()) Text(placeholder, color = Palette.fg3, fontSize = Type.text1, maxLines = 1)
       BasicTextField(
         value = query, onValueChange = onQuery, singleLine = true,
         textStyle = TextStyle(color = Palette.fg1, fontSize = Type.text1),
         cursorBrush = SolidColor(Palette.fg1),
-        modifier = Modifier.fillMaxWidth().testTag("models.search"),
+        modifier = Modifier.fillMaxWidth().testTag(tag),
       )
     }
     if (query.isNotEmpty()) {
