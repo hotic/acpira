@@ -406,7 +406,9 @@ struct PermissionCard: View {
       if flat {
         FlowLayout(spacing: Metrics.gap) {
           ForEach(options) { o in
-            Button(web: o.label) { onChoose(o.id) }.modifier(CardButton(primary: false))
+            Button(web: o.label) { onChoose(o.id) }
+              .modifier(CardButton(primary: false, fixed: false))
+              .fixedSize(horizontal: false, vertical: true)
           }
         }
       } else {
@@ -429,14 +431,17 @@ struct PermissionCard: View {
             .fixedSize()
           }
           Spacer(minLength: more.isEmpty ? 0 : Metrics.gap)
-          HStack(spacing: Metrics.gap) {
+          // Keep short choices side by side; external labels wrap whole buttons without hiding permission text.
+          FlowLayout(spacing: Metrics.gap, alignment: .trailing) {
             if let reject {
               Button(web: reject.label) { onChoose(reject.id) }
-                .modifier(CardButton(primary: block.defaultToNo == true))
+                .modifier(CardButton(primary: block.defaultToNo == true, fixed: false))
+                .fixedSize(horizontal: false, vertical: true)
             }
             if let allow {
               Button(web: allow.label) { onChoose(allow.id) }
-                .modifier(CardButton(primary: block.defaultToNo != true))
+                .modifier(CardButton(primary: block.defaultToNo != true, fixed: false))
+                .fixedSize(horizontal: false, vertical: true)
             }
           }
         }

@@ -280,10 +280,10 @@ private struct Head: View {
   }
 }
 
-/// The task in the handoff row, the first to give up its width (subagents.css `flex-shrink: 1000`). Squeezed below an
-/// ellipsis and a character, a text under the line renderer is laid out untruncated and drew its whole line over the
-/// status and clock; it leaves instead, as the web label's overflow-hidden hides it
-private struct SqueezedTitle: View {
+/// The task in a handoff or return row, the first to give up its width (subagents.css `flex-shrink: 1000`). Squeezed
+/// below an ellipsis and a character, a text under the line renderer is laid out untruncated and drew its whole line
+/// over the status and clock; it leaves instead, as the web label's overflow-hidden hides it
+struct SqueezedTitle: View {
   let title: String
   @State private var room = true
 

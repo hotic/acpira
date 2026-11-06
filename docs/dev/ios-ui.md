@@ -34,7 +34,7 @@ SwiftUI, Liquid Glass, WebKit and text-layout traps of `apps/ios/Packages/Acpira
 - A regex literal compiles on each evaluation: hot-path patterns are static constants.
 - `ViewThatFits` with two `ForEach` children keyed by offset crashes on a device (`SizeFittingState` precondition), not in `ImageRenderer` or `swift test`: one `ForEach` with unique ids (`CardActions`).
 - A public type named `Observation` in an imported module shadows the module inside `@Observable` and `AppModel` loses conformance (hence `ObservationState`).
-- A `Row`'s trailing slot is `fixedSize`: long trailing text pushes the whole turn off screen.
+- A `Row`'s trailing slot and `RowLabel` are `fixedSize`: use them only for bounded metadata and short verbs. Arbitrary notice titles (a hook's full command), command receipts, persona names and URL hosts need shrinkable or wrapping text in the content slot, or every paragraph in the hosted turn takes their width. Permission labels are external text too: their buttons must accept the proposed width, including in `FlowLayout`.
 - A compact-adapted popover sizes from its content's unwrapped ideal size: wrapping cards need a set width; a card wider than the screen is clipped at both edges (`Metrics.popWide`).
 - A `systemImage` SF Symbols lacks draws nothing and logs nothing.
 - System `Menu` labels become native actions: `lineLimit` and the label's frame do not apply. Compact path subtitles first; `.menuOrder(.fixed)` keeps an upward-opening menu's order.

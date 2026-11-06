@@ -552,7 +552,8 @@ struct NoticeRow: View {
         withAnimation(foldAnimation(opening: !open, motion: motion)) { fold.wrappedValue = !open }
       } label: {
         Row(tone: .action) { glyph(error) } content: {
-          RowLabel(block.title).lineLimit(1)
+          // Hook titles can contain a whole command. RowLabel's fixed width would widen the entire hosted turn.
+          Text(web: block.title).lineLimit(1).truncationMode(.middle)
         }
       }
       .buttonStyle(RowButtonStyle())
@@ -682,7 +683,8 @@ struct OutcomeRow: View {
         Row {
           if warn { LeadIcon(.triangleAlert) }
         } content: {
-          RowLabel(outcome)
+          // Command receipts include arbitrary model and option names, not just a short status verb.
+          Text(web: outcome).fixedSize(horizontal: false, vertical: true)
           if turn.stop == .error, let message = turn.error?.message { RowTarget(message, ink: Palette.fg3) }
         }
         ForEach(scope.absorbed, id: \.id) { notice in

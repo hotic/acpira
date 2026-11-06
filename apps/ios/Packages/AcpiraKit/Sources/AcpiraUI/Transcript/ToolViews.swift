@@ -411,8 +411,8 @@ struct ResultList: View {
           let hit = splitHit(item)
           Row(tone: .action, dense: true) { LeadIcon(icon) } content: {
             RowTarget(hit.main, mono: kind != .fetch, ink: Palette.fg2)
-          } trailing: {
-            if let aside = hit.aside { Text(web: aside) }
+            // A URL's host is arbitrary text, not fixed-width row metadata.
+            if let aside = hit.aside { Aside(aside) }
           }
         }
       }

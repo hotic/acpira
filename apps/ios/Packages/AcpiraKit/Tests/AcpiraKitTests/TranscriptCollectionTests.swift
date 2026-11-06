@@ -141,6 +141,49 @@ import UIKit
     }
   }
 
+  @Test(arguments: [320.0, 402.0, 471.0, 768.0])
+  func hookNoticeKeepsTheReplyWithinTheHostedRow(width: Double) async throws {
+    let control = TranscriptControl()
+    let path = "reports/performance/rollback/GameCore-1664000000000-72-before-relic-signature.jar"
+    let markdown = "- 已部署但没重启，所以玩家现在跑的还是旧代码，下次重启才生效。旧 jar 备份为 `\(path)`。\n- **提交：** 代码还没提交。\n\n**换层存档卡顿：没修。** 后面的段落也必须保持在对话栏内，不能跟着长路径一起撑宽。"
+    let notice = try JSONDecoder().decode(NoticeBlock.self, from: Data(#"""
+      {"id":"hooks:layout","severity":"warning",
+       "title":"工作区钩子失败：python3 .agents/hooks/check_workspace_after_turn.py --check-changed-files --include-build-output",
+       "details":"检查未通过，请先运行项目检查。"}
+      """#.utf8))
+    let turn = AgentTurn(blocks: [.text(TextBlock(markdown: markdown)), .notice(notice)])
+    let items = [ThreadItem(id: "a1", kind: .agent(turn, index: 1, scope: "layout:1", running: false, last: true,
+                                                 settings: nil, retry: false, subagents: []), exchange: 0)]
+    let host = UIHostingController(rootView: TranscriptCollection(items: items, safe: .zero, control: control,
+      running: false, motion: false) { _ in })
+    host.safeAreaRegions = []
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 874))
+    window.rootViewController = host
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    host.view.layoutIfNeeded()
+    try await Task.sleep(for: .milliseconds(200))
+    let view = try #require(control.view)
+    view.layoutIfNeeded()
+    #expect(view.contentSize.width <= width + 0.5)
+    let measured = UIHostingController(rootView: ThreadItemView(item: items[0]))
+      .sizeThatFits(in: CGSize(width: width, height: UIView.layoutFittingExpandedSize.height))
+    #expect(measured.width <= width + 0.5)
+    let cell = try #require(view.cellForItem(at: IndexPath(item: 0, section: 0)))
+    let surfaces = selectionViews(in: cell)
+    #expect(!surfaces.isEmpty)
+    for surface in surfaces {
+      let frame = surface.convert(surface.bounds, to: cell)
+      #expect(frame.minX >= 0)
+      #expect(frame.maxX <= cell.bounds.width)
+    }
+  }
+
+  private func selectionViews(in view: UIView) -> [SelectionTextView] {
+    if let text = view as? SelectionTextView { return [text] }
+    return view.subviews.flatMap { selectionViews(in: $0) }
+  }
+
   private final class SingleRow: NSObject, UICollectionViewDataSource {
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int { 1 }
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
