@@ -358,6 +358,9 @@ export type HostMsg =
   | { type: 'connections'; connections: ConnectionView[] }
   | { type: 'sshHosts'; hosts: SshHost[]; error?: string }
   | { type: 'remoteDir'; seq: number; alias: string; path: string; entries: RemoteDirEntry[]; error?: string }
+  // A folder of the engine's own computer for a paired device's add-project picker, echoing its request's seq: the
+  // normalized path, its parent (absent at a root) and the folders in it (folders only, dot-folders left out)
+  | { type: 'localDir'; seq: number; path: string; parent?: string; entries: RemoteDirEntry[]; error?: string }
   // Paired devices (helloOk.features has 'remoteAccess'): the view on every change once asked for
   | { type: 'remoteAccess'; view: RemoteAccessView }
   // The tool panel's terminal tabs (rust/crates/acpira-host/src/terminal.rs): output as it comes, and the state. Answering
@@ -474,6 +477,9 @@ export type WebviewMsg =
   | { type: 'connectionOp'; op: ConnectionOp }
   | { type: 'sshHosts' }
   | { type: 'remoteDir'; alias: string; path?: string; seq: number }
+  // A folder of the engine's own computer for a paired device's add-project picker (`path` absent: the user's home, a
+  // leading `~` expands to it), answered with localDir. The desktop picks a project with pickFolder instead
+  | { type: 'localDir'; path?: string; seq: number }
   // Paired devices (helloOk.features has 'remoteAccess'): the view (then pushed on every change), and a change
   | { type: 'remoteAccess' }
   | { type: 'remoteAccessOp'; op: RemoteAccessOp }

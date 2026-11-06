@@ -7,6 +7,7 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Instant;
 
 use acpira_shared::protocol::{ProjectChange, ProjectEntry, ProjectHunk};
+use acpira_shared::remote::RemoteDirEntry;
 use similar::{Algorithm, DiffTag, capture_diff_slices_deadline};
 
 use crate::acp::transcript::diff::{DIFF_BUDGET, source_lines};
@@ -101,6 +102,48 @@ pub async fn list_dir(root: &Path, rel: &str) -> Result<Vec<ProjectEntry>, Proje
   }
   entries.sort_by(|a, b| b.dir.cmp(&a.dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
   Ok(entries)
+}
+
+/// A folder of this computer for a paired device's add-project picker: its normalized path, its parent (None at a
+/// root) and the folders in it by name without case, each marked when it holds `.git`. Folders only, dot-folders left
+/// out: the picker chooses a project, it does not browse files. `path` None is the user's home; `~` leads expand to it
+pub async fn local_folders(path: Option<&str>) -> Result<(String, Option<String>, Vec<RemoteDirEntry>), String> {
+  let home = crate::store::data_dir::home_dir();
+  let dir = match path.map(str::trim) {
+    None | Some("") => home,
+    Some("~") => home,
+    Some(p) => match p.strip_prefix("~/").or_else(|| p.strip_prefix("~\\")) {
+      Some(rest) => home.join(rest),
+      None if Path::new(p).is_absolute() => PathBuf::from(p),
+      None => return Err(format!("{p} is not an absolute path")),
+    },
+  };
+  let dir = crate::store::data_dir::normalize(&dir);
+  let mut read = tokio::fs::read_dir(&dir).await.map_err(|e| format!("{}: {e}", dir.display()))?;
+  let mut entries = vec![];
+  while let Some(entry) = read.next_entry().await.map_err(|e| e.to_string())? {
+    let name = entry.file_name().to_string_lossy().into_owned();
+    if name.starts_with('.') || HIDDEN.contains(&name.as_str()) {
+      continue;
+    }
+    // A symlink counts as what it points at
+    let is_dir = match entry.file_type().await {
+      Ok(t) if t.is_symlink() => tokio::fs::metadata(entry.path()).await.is_ok_and(|m| m.is_dir()),
+      Ok(t) => t.is_dir(),
+      Err(_) => false,
+    };
+    if !is_dir {
+      continue;
+    }
+    let git = tokio::fs::symlink_metadata(entry.path().join(".git")).await.is_ok();
+    entries.push(RemoteDirEntry { name, dir: true, git });
+    if entries.len() >= MAX_ENTRIES {
+      break;
+    }
+  }
+  entries.sort_by_key(|e| e.name.to_lowercase());
+  let parent = dir.parent().map(|p| p.to_string_lossy().into_owned());
+  Ok((dir.to_string_lossy().into_owned(), parent, entries))
 }
 
 /// The project's git marks by path relative to `root`; empty outside a work tree. Paths come from the work tree's top
@@ -248,6 +291,23 @@ pub async fn session_changes(root: &Path, bases: Vec<(String, Option<String>)>) 
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[tokio::test]
+  async fn local_folders_lists_visible_folders_only_and_marks_work_trees() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("beta/.git")).unwrap();
+    std::fs::create_dir(root.join("Alpha")).unwrap();
+    std::fs::create_dir(root.join(".hidden")).unwrap();
+    std::fs::write(root.join("file.txt"), "x").unwrap();
+    let (path, parent, entries) = local_folders(Some(&root.to_string_lossy())).await.unwrap();
+    assert_eq!(path, crate::store::data_dir::normalize(root).to_string_lossy());
+    assert_eq!(parent.as_deref(), root.parent().map(|p| p.to_string_lossy()).as_deref());
+    let names: Vec<_> = entries.iter().map(|e| (e.name.as_str(), e.git)).collect();
+    assert_eq!(names, [("Alpha", false), ("beta", true)]);
+    assert!(local_folders(Some("relative/path")).await.is_err());
+    assert!(local_folders(Some(&root.join("missing").to_string_lossy())).await.is_err());
+  }
 
   #[test]
   fn hunks_place_added_and_removed_lines() {

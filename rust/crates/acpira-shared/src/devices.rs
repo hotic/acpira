@@ -5,6 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::WebviewMsg;
+use crate::providers::ProviderAction;
 
 /// The settings a paired device may write: how new sessions start and run, which agents are offered and in what order,
 /// and which models their menus list. They steer sessions the device already drives; keys, model sources, MCP, the
@@ -24,8 +25,9 @@ pub const DEVICE_SETTINGS: &[&str] = &[
 /// Whether a paired device may send this message. A device has one permission, control: it drives sessions the way the
 /// user would at the computer (an agent it starts can run any command anyway). What stays on the computer is what
 /// changes the machine rather than a session (settings outside `DEVICE_SETTINGS`, accounts, installs, plugins, storage,
-/// SSH hosts), what puts something on the computer's screen (every `open…`, exports), and reads of arbitrary local
-/// paths. Device terminals use the same control grant; the gateway isolates their ids by authenticated device, and
+/// SSH hosts; the built-in agent's model sources are the exception, so a model can be added from the phone), what puts
+/// something on the computer's screen (every `open…`, exports), and reads of arbitrary local files (folder names for
+/// the add-project picker are allowed). Device terminals use the same control grant; the gateway isolates their ids by authenticated device, and
 /// their working directory is not a filesystem sandbox. Exhaustive on purpose: a new message needs a decision here.
 pub fn device_allowed(m: &WebviewMsg) -> bool {
   use WebviewMsg as W;
@@ -89,6 +91,15 @@ pub fn device_allowed(m: &WebviewMsg) -> bool {
     | W::Controls { .. }
     | W::Inventory { .. }
     | W::RefreshQuota { .. } => true,
+    // The add-project picker: folder names of the computer, no files and no contents. A device can already start an
+    // agent or a terminal in any folder, so the names add nothing it could not reach
+    W::LocalDir { .. } => true,
+    // The built-in agent's model sources: the view never carries a key (only whether one is stored), probes ask an
+    // endpoint for its models or a one-line test, and a device may add, edit or remove a source and its models. A key
+    // typed on the device goes to the computer's secret store once and never comes back. The agent-wide switches
+    // (approval, raw mode, search, compaction, side-job model) stay on the computer
+    W::Providers | W::ProviderProbe { .. } => true,
+    W::ProviderAction { action } => matches!(action, ProviderAction::Save { .. } | ProviderAction::Delete { .. }),
     // The SSH hosts' state, read only: the list draws each host folder's alias and status from it, and a new session in
     // a host folder picks its agent by the host's run mode. Adding, changing and browsing hosts stay on the computer
     W::Connections => true,
@@ -131,9 +142,6 @@ pub fn device_allowed(m: &WebviewMsg) -> bool {
     | W::PluginCard { .. }
     | W::PluginBackdrop { .. }
     | W::PluginCall { .. }
-    | W::Providers
-    | W::ProviderAction { .. }
-    | W::ProviderProbe { .. }
     | W::ConnectionOp { .. }
     | W::SshHosts
     | W::RemoteDir { .. }
@@ -424,5 +432,20 @@ mod tests {
     ] {
       assert!(!allowed(message.clone()), "{message}");
     }
+  }
+
+  #[test]
+  fn paired_devices_can_add_projects_and_models_but_not_agent_wide_switches() {
+    assert!(allowed(json!({ "type": "localDir", "seq": 1 })));
+    assert!(allowed(json!({ "type": "localDir", "path": "~/code", "seq": 2 })));
+    assert!(allowed(json!({ "type": "providers" })));
+    assert!(allowed(json!({ "type": "providerProbe", "id": "p", "probe": { "kind": "local" } })));
+    let source = json!({ "id": "", "name": "Gateway", "preset": "custom", "format": "openai-chat", "baseUrl": "https://x/v1",
+      "fullUrl": false, "enabled": true, "models": [] });
+    assert!(allowed(json!({ "type": "providerAction", "action": { "kind": "save", "provider": source, "key": "sk" } })));
+    assert!(allowed(json!({ "type": "providerAction", "action": { "kind": "delete", "id": "gateway" } })));
+    assert!(!allowed(json!({ "type": "providerAction", "action": { "kind": "approval", "level": "full" } })));
+    assert!(!allowed(json!({ "type": "providerAction", "action": { "kind": "rawSystemPrompt", "text": "x" } })));
+    assert!(!allowed(json!({ "type": "remoteDir", "alias": "h", "seq": 1 })));
   }
 }
