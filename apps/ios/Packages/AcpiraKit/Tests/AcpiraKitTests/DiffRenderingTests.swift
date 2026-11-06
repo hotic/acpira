@@ -74,7 +74,8 @@ import UIKit
     var lines = short ? Array(largeDiff.prefix(4)) : largeDiff
     // A wide tail must become horizontally reachable even when it was not in the initial lazy viewport.
     lines[lines.count - 1].text += String(repeating: " wide", count: 60)
-    let sheet = CodeSheet(title: "notes.txt", copy: diffCopyText(lines, nil), copyLabel: "Copy", wrapInScrollView: false) {
+    let sheet = CodeSheet(title: "notes.txt", copy: diffCopyText(lines, nil), copyLabel: "Copy",
+                          wrapInScrollView: false, edgeToEdge: true) {
       DiffBlockView(lines: lines, title: "notes.txt")
     }
     let host = UIHostingController(rootView: sheet)
@@ -93,9 +94,9 @@ import UIKit
     #expect(scrolls.count == 1)
     let scroll = try #require(scrolls.first)
     #expect(scroll.bounds.height > 0 && scroll.bounds.height < window.bounds.height)
-    if short {
-      #expect(scroll.bounds.height < window.bounds.height / 2)
-    } else {
+    // Short diffs keep the same full-height reading surface instead of shrinking into a card.
+    #expect(scroll.bounds.height > window.bounds.height / 2)
+    if !short {
       #expect(scroll.contentSize.height > scroll.bounds.height * 10)
       // The tail is reachable in the same viewport, rather than trapped under an outer scroller.
       scroll.setContentOffset(CGPoint(x: 0, y: scroll.contentSize.height - scroll.bounds.height), animated: false)
