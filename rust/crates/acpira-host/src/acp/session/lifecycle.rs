@@ -65,10 +65,31 @@ impl AcpSession {
   /// cwd (`shared_config::mcp`, filtered by the process's `mcpCapabilities`) plus Acpira's own server (`host_mcp.rs`);
   /// Claude sessions also ask for summarized thinking (see `claude_thinking`), the raw workflow progress frames
   /// (`claude_workflow`) and, while Ultra is the effort, ultracode (`claude_ultracode`)
+  /// The project's other folders as `additionalDirectories`, to an agent that advertises them. Read at every new, load and
+  /// resume, so an edited project reaches a session the next time it opens (ACP takes a new list while `cwd` stays).
+  /// Local folders only: a folder on an SSH host goes out as its host path, which a project's local folders are not
+  pub(crate) fn with_other_folders(&self, proc: &AgentProcess, req: &mut Value) {
+    if self.remote_folder().is_some() || !crate::json::truthy(proc.caps().get("sessionCapabilities").and_then(|s| s.get("additionalDirectories"))) {
+      return;
+    }
+    let dirs: Vec<String> = self
+      .deps
+      .policy
+      .other_folders(&self.cwd)
+      .into_iter()
+      .filter(|d| !acpira_shared::remote::is_remote_folder(d) && std::path::Path::new(d).is_dir())
+      .collect();
+    if !dirs.is_empty() {
+      self.log(&format!("additionalDirectories: {}", dirs.join(", ")));
+      req["additionalDirectories"] = json!(dirs);
+    }
+  }
+
   pub(crate) async fn session_request(&self, proc: &AgentProcess, acp_id: Option<&str>) -> Value {
     let caps = runtime_info_of(&proc.init).mcp;
     // A folder on an SSH host: the host's path and prompt files first, since its project MCP file is read there too
     let mut req = self.with_remote(json!({ "cwd": self.cwd })).await;
+    self.with_other_folders(proc, &mut req);
     let mut servers = match &self.deps.shared_mcp {
       Some(provider) => {
         // A folder on an SSH host has no project MCP file here: the user's own servers, then the host's project ones

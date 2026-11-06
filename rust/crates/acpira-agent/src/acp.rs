@@ -150,12 +150,18 @@ pub const SKILLS_META: &str = "acpira/skillLayers";
 /// carries Read-only (`modes::READ_ONLY`), the mode the engine picks for a consult
 pub const SUMMONED_META: &str = "acpira/summoned";
 
-/// The plugin folders a session request carries
+/// The request's ACP `additionalDirectories`: absolute paths only
+fn extra_of(params: &Value) -> Vec<PathBuf> {
+  let dirs = params.get("additionalDirectories").and_then(Value::as_array);
+  dirs.into_iter().flatten().filter_map(Value::as_str).map(PathBuf::from).filter(|p| p.is_absolute()).collect()
+}
+
 /// Whether the request opens a summoned agent's session (`SUMMONED_META`)
 fn summoned_of(params: &Value) -> bool {
   params.get("_meta").and_then(|m| m.get(SUMMONED_META)).and_then(Value::as_bool) == Some(true)
 }
 
+/// The plugin folders a session request carries
 fn layers_of(params: &Value) -> Layers {
   let list = |meta: &str| {
     let key = format!("/_meta/{}", meta.replace('/', "~1"));
@@ -343,7 +349,8 @@ impl Server {
       "agentCapabilities": {
         "loadSession": true,
         "promptCapabilities": { "image": true, "embeddedContext": true },
-        "sessionCapabilities": { "list": {}, "resume": {} },
+        // Further project folders are named in a new session's environment section (`prompt::environment`)
+        "sessionCapabilities": { "list": {}, "resume": {}, "additionalDirectories": {} },
         // stdio is always spoken; the legacy SSE transport is not (`mcp/mod.rs`)
         "mcpCapabilities": { "http": true, "sse": false },
       },
@@ -450,7 +457,7 @@ impl Server {
     let remote = crate::remote::Remote::of(params);
     let layers = layers_of(params);
     let scratch = self.scratch_of(std::path::Path::new(cwd), &id, remote.is_some(), &config);
-    let places = self.places_of(std::path::Path::new(cwd), remote.as_deref(), layers.clone()).with_scratch(scratch.path());
+    let places = self.places_of(std::path::Path::new(cwd), remote.as_deref(), layers.clone()).with_scratch(scratch.path()).with_extra(extra_of(params));
     let prompts = Arc::new(crate::prompt::Library::load(&places));
     state.prompt = crate::prompt::compose(&places, &prompts, state.model.as_deref().and_then(|p| config.find(p)));
     state.effort = default_effort(&config, &catalog, state.model.as_deref());

@@ -108,6 +108,8 @@ pub struct Places {
   pub profile: Option<Arc<crate::profile::Profile>>,
   /// The session's scratch folder (`scratch.rs`), named in the environment section
   pub scratch: Option<PathBuf>,
+  /// The project's other folders (ACP `additionalDirectories`), named in the environment section
+  pub extra: Vec<PathBuf>,
 }
 
 /// A session folder's prompt files as its SSH host read them (`gather`, run there by the engine's helper at session
@@ -159,17 +161,23 @@ impl HostFiles {
 
 impl Places {
   pub fn new(cwd: &Path, home: Option<&Path>) -> Places {
-    Places { cwd: cwd.to_path_buf(), home: home.map(Path::to_path_buf), data: None, root: project_root(cwd, home), host: None, layers: vec![], skill_layers: vec![], profile: None, scratch: None }
+    Places { cwd: cwd.to_path_buf(), home: home.map(Path::to_path_buf), data: None, root: project_root(cwd, home), host: None, layers: vec![], skill_layers: vec![], profile: None, scratch: None, extra: vec![] }
   }
 
   /// A folder on an SSH host, read from what the host sent
   pub fn on_host(cwd: &Path, files: Arc<HostFiles>) -> Places {
-    Places { cwd: cwd.to_path_buf(), home: files.home.clone(), data: None, root: files.root.clone(), host: Some(files), layers: vec![], skill_layers: vec![], profile: None, scratch: None }
+    Places { cwd: cwd.to_path_buf(), home: files.home.clone(), data: None, root: files.root.clone(), host: Some(files), layers: vec![], skill_layers: vec![], profile: None, scratch: None, extra: vec![] }
   }
 
   /// With Acpira's data home, whose `prompts/` is the user's override folder
   pub fn with_data(mut self, data: Option<&Path>) -> Places {
     self.data = data.map(Path::to_path_buf);
+    self
+  }
+
+  /// With the project's other folders
+  pub fn with_extra(mut self, extra: Vec<PathBuf>) -> Places {
+    self.extra = extra;
     self
   }
 
@@ -415,6 +423,10 @@ fn environment(places: &Places) -> String {
       None => "no".to_owned(),
     },
   );
+  if !places.extra.is_empty() {
+    let list: Vec<String> = places.extra.iter().map(|p| p.display().to_string()).collect();
+    text.push_str(&format!("- Also part of this project: {}; reach them by absolute path\n", list.join(", ")));
+  }
   if let Some(s) = &places.scratch {
     text.push_str(&format!(
       "- Scratch folder: {}; TMPDIR, TEMP and TMP point at it. It is git-ignored and deleted with the session: put temp files and throwaway scripts there, not in /tmp or elsewhere in the project\n",
@@ -439,6 +451,16 @@ mod tests {
 
   fn composed(pl: &Places, target: Option<(&Provider, &ProviderModel)>) -> Composed {
     compose(pl, &Library::load(pl), target)
+  }
+
+  #[test]
+  fn the_environment_names_the_projects_other_folders_only_when_there_are_some() {
+    let dir = tempfile::tempdir().unwrap();
+    let pl = places(dir.path());
+    assert!(!environment(&pl).contains("Also part of this project"));
+    let web = dir.path().join("web");
+    let text = environment(&pl.with_extra(vec![web.clone()]));
+    assert!(text.contains(&format!("- Also part of this project: {}; reach them by absolute path", web.display())));
   }
 
   #[test]

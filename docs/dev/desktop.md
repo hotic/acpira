@@ -10,6 +10,7 @@
 ## Contracts
 
 - One `SidecarClient` per app on the machine engine the IDE windows share (`host-architecture.md`, Machine engine; Windows: its own `shell: 'desktop'` pipe); quitting only disconnects. Hello sends `env.projects: true`, no `cwd` and no `searchFiles` capability (the engine walks the project).
+- A project of several folders (`SessionCategories.projectMeta`, edited by `editProject`) stays keyed by its primary folder, which is the sessions' ACP `cwd`; each session gets the project's other folders as `additionalDirectories` on every new / load / resume, read from the list then, so an edit reaches a session when it next opens. A folder belongs to one project; the list groups sessions by `projectOf`, not by their own `cwd`. SSH projects keep one folder. The built-in agent names the folders only in a new session's prompt.
 - Page origin `acpira-app://localhost/` (custom scheme: secure context, no back entry); every response `no-store` so a reload takes a new bundle; blobs never fall back to a `.zst` sibling.
 - `src/init.js` (top frame only) sends one `invoke('acpira_post')` at a time carrying everything posted meanwhile, because separate invokes may overtake each other; down, `Channel` messages carry an index the page reorders by.
 - Window state lives in `sessionStorage`; only `sessionListView` also goes to `localStorage`, namespaced per profile since WKWebView ignores `data_directory` there.

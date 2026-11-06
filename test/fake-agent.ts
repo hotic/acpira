@@ -118,7 +118,9 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // nothing to do once the goal is no longer active, and for an objective starting with "slow" takes 1 s and a stop, which
 // pauses the goal; FAKE_GOAL_FAIL_ROUND=n fails the n-th continuation once, before any output
 // FAKE_SLOW_STEP_MS → the pause between the 50 chunks of a "slow" turn (default 40 ms, so 2 s in all)
-// FAKE_META_LOG → append `{ method, meta, cwd }` (the request's `_meta` and cwd) for every session/new, resume and load
+// FAKE_META_LOG → append `{ method, meta, cwd, dirs }` (the request's `_meta`, cwd and additionalDirectories) for every
+// session/new, resume and load
+// FAKE_EXTRA_DIRS → advertise sessionCapabilities.additionalDirectories
 // FAKE_REBUILD → claude-agent-acp 0.87.0's getOrCreateSession: a resume of a live session whose
 // `_meta.claudeCode.options.settings` changed recreates it (a session/new starts there too), which resets model / effort / Fast to the defaults and keeps
 // the live mode; the response carries modes and configOptions. A recreate of a session that never got a prompt fails with
@@ -191,8 +193,8 @@ function saveSession(id: string, prompts = readSession(id)?.prompts ?? [], cwd =
 // symlinked project path land in the store under the resolved path
 const canonicalCwd = (cwd: string) => { try { return realpathSync(cwd); } catch { return cwd; } };
 // FAKE_MCP_TRACE: one line per session/new, resume and load with the mcpServers the client handed over
-function logMeta(method: string, meta: unknown, cwd?: string) {
-  if (process.env.FAKE_META_LOG) appendFileSync(process.env.FAKE_META_LOG, `${JSON.stringify({ method, meta: meta ?? null, cwd })}\n`);
+function logMeta(method: string, meta: unknown, cwd?: string, dirs?: string[]) {
+  if (process.env.FAKE_META_LOG) appendFileSync(process.env.FAKE_META_LOG, `${JSON.stringify({ method, meta: meta ?? null, cwd, ...(dirs ? { dirs } : {}) })}\n`);
 }
 // FAKE_REBUILD: the settings each live session was built with, the part of the adapter's fingerprint the host changes
 const builtWith = new Map<string, string>();
@@ -281,7 +283,7 @@ const app = acp.agent({ name: 'fake-agent' })
       agentInfo: { name: 'fake', version: process.env.FAKE_AGENT_VERSION ?? '0.0.0' },
       agentCapabilities: {
         loadSession: true,
-        sessionCapabilities: process.env.FAKE_LOAD_ONLY ? {} : { resume: {}, ...(process.env.FAKE_CLOSE_LOG ? { close: {} } : {}), ...(sessionDir ? { list: {} } : {}) },
+        sessionCapabilities: process.env.FAKE_LOAD_ONLY ? {} : { resume: {}, ...(process.env.FAKE_CLOSE_LOG ? { close: {} } : {}), ...(sessionDir ? { list: {} } : {}), ...(process.env.FAKE_EXTRA_DIRS ? { additionalDirectories: {} } : {}) },
         promptCapabilities: process.env.FAKE_PROMPT_CAPS === 'strict' ? { embeddedContext: false, image: false } : { embeddedContext: true },
         // FAKE_MCP_TRACE: http but not sse, so a test sees the client filter client-provided servers by transport
         ...(process.env.FAKE_MCP_TRACE ? { mcpCapabilities: { http: true, sse: false } } : {}),
@@ -345,7 +347,7 @@ const app = acp.agent({ name: 'fake-agent' })
         }
       })();
     }
-    logMeta('new', params._meta, params.cwd);
+    logMeta('new', params._meta, params.cwd, params.additionalDirectories);
     builtWith.set(sessionId, settingsOf(params._meta));
     // Like the recreate below, a new claude-agent-acp session starts on the adapter's defaults
     if (process.env.FAKE_REBUILD) Object.assign(config, { model: 'm1', effort: 'high', fast: 'false' });
@@ -375,7 +377,7 @@ const app = acp.agent({ name: 'fake-agent' })
   })
   .onRequest(acp.methods.agent.session.resume, ({ params }) => {
     logMcp('resume', (params as { mcpServers?: unknown }).mcpServers);
-    logMeta('resume', params._meta, params.cwd);
+    logMeta('resume', params._meta, params.cwd, params.additionalDirectories);
     if (process.env.FAKE_REBUILD && builtWith.has(params.sessionId)) {
       const settings = settingsOf(params._meta);
       if (!sessions.has(params.sessionId) || builtWith.get(params.sessionId) !== settings) {
@@ -443,7 +445,7 @@ const app = acp.agent({ name: 'fake-agent' })
   })
   .onRequest(acp.methods.agent.session.load, async ({ params, client }) => {
     logMcp('load', params.mcpServers);
-    logMeta('load', params._meta, params.cwd);
+    logMeta('load', params._meta, params.cwd, params.additionalDirectories);
     rejectMcp(params.mcpServers);
     if (!sessionDir) throw acp.RequestError.methodNotFound(acp.methods.agent.session.load);
     const restored = restoreSession(params.sessionId, params.cwd);

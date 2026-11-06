@@ -156,6 +156,19 @@ describe('sidecar session contract', () => {
     const externalPlan = join(at.home, 'plan.plan.md');
     writeFileSync(externalPlan, '# Plan\n');
     expect((await ask('projectFile', { path: externalPlan })).text).toBe('# Plan\n');
+    // A file in another folder of the session's project is diffed against that folder's own HEAD
+    const web = join(at.home, 'web');
+    const gitWeb = (...args: string[]) => execFileSync('git', ['-C', web, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { stdio: 'ignore' });
+    mkdirSync(web);
+    writeFileSync(join(web, 'b.ts'), 'a\n');
+    gitWeb('init', '-q');
+    gitWeb('add', '.');
+    gitWeb('commit', '-qm', 'base');
+    writeFileSync(join(web, 'b.ts'), 'A\n');
+    expect((await ask('projectFile', { path: join(web, 'b.ts'), base: 'head' })).hunks ?? []).toEqual([]);
+    s.view('V', { type: 'categoryOp', op: 'editProject', cwd: at.cwd, primary: at.cwd, extra: [web] });
+    await s.hostMsg('V', 'categories', m => !!m.categories.projectMeta?.[at.cwd]);
+    expect((await ask('projectFile', { path: join(web, 'b.ts'), base: 'head' })).hunks).toEqual([{ at: 1, add: 1, del: ['a'] }]);
     s.view('V', { type: 'send', sessionId: id, text: 'tool' });
     const asked = await s.hostMsg('V', 'session', m => blocks(m.session).some(b => b.type === 'permission'));
     const card = blocks(asked.session).find(b => b.type === 'permission');

@@ -724,6 +724,15 @@ export interface SessionCategories {
   removedProjects?: string[];
   // Project shells' sections, in list order (absent until the first one is made)
   sections?: SessionSection[];
+  // What a project holds beyond its folder, keyed by that (primary) folder: a name of its own and further folders, which
+  // agents get as ACP `additionalDirectories`. A project without either has no entry
+  projectMeta?: Record<string, ProjectMeta>;
+}
+
+// A project's own name and its folders besides the primary one (absolute, in the order the user listed them)
+export interface ProjectMeta {
+  name?: string;
+  extra?: string[];
 }
 
 // One edit of the category list, applied by the host to what is on disk so concurrent windows compose.
@@ -741,6 +750,9 @@ export type CategoryOp =
   // only while `projects` is absent
   | { op: 'addProject'; cwd: string }
   | { op: 'removeProject'; cwd: string }
+  // Project shells: a project's name (blank: its folder's), primary folder (taking over its place, section and
+  // categories) and further folders; a folder that was a project of its own, or another project's, joins this one
+  | { op: 'editProject'; cwd: string; primary: string; name?: string; extra: string[] }
   | { op: 'reorderProject'; cwd: string; before?: string }
   | { op: 'seedProjects'; cwds: string[] }
   // Sections (project shells): the page picks a new one's id, so it can start renaming it at once; `project` files that

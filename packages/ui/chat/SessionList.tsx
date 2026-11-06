@@ -26,7 +26,7 @@ import { RowContextMenu, SessionContextMenu, Submenu, type MoveProject, type Ses
 import { setWebviewState, webviewState } from '../vscodeApi';
 import { markParts, matchesTitle, searchTerms } from './sessionSearch';
 import { NAV_LEAD, NAV_ROW, NavEmpty, NavHint, NavSearch } from './NavRows';
-import { buildSessionTree, categoryOf, draggable, dropAction, isChatFolder, offList, projectSessions, type CategoryNode, type MoveTarget, type ProjectNode, type SessionTree } from './sessionTree';
+import { buildSessionTree, categoryOf, draggable, dropAction, isChatFolder, offList, projectOf as projectOfMeta, projectSessions, type CategoryNode, type MoveTarget, type ProjectNode, type SessionTree } from './sessionTree';
 import { clearFilters, filterCount, groupSessions, passes, readView, sortSessions, VIEW_KEY, type FlatGroup, type ListView, type TimeBucket } from './sessionView';
 import { ViewMenu } from './ViewMenu';
 import { clockRoot, rowDone, rowState } from './styleClock';
@@ -232,6 +232,8 @@ export interface SessionListProps {
   // Desktop, once the engine answered for SSH hosts: the same menu's "remote folder" entries, a folder on that host
   // (the remote folder picker), or a new host (no alias: Settings → Connections)
   onAddRemote?: (alias?: string) => void;
+  // Desktop: a project header's "edit project", its name and folders (ProjectDialog)
+  onEditProject?: (cwd: string) => void;
   // A project header's menu: show the folder in the OS file manager, copy its path
   onRevealPath?: (path: string) => void;
   onCopyPath?: (path: string) => void;
@@ -316,7 +318,7 @@ function perKey<T>(compute: (key: string) => T): (key: string) => T {
 // (FlipRows). The desktop app (DesktopContext) lists its registered projects in their own order without categories, each
 // open project its latest sessions with the rest behind one row.
 // Deletion applies immediately, undo lives on the Toast at the shell's bottom
-export const SessionList = memo(function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, activeAgent, nativeSessions, onListNative, onImportNative, onSelect, onRename, onDelete, onPin, onArchive, onUnread, onMove, onExport, onCopy, onSearch, categories: categoryState, onFile, onCategoryOp, onNewInCategory, nav, onNew, onNewIn, onAddProject, onAddRemote, onRevealPath, onCopyPath, fresh, onMarkAllRead, chats, onNewChat }: SessionListProps) {
+export const SessionList = memo(function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, activeAgent, nativeSessions, onListNative, onImportNative, onSelect, onRename, onDelete, onPin, onArchive, onUnread, onMove, onExport, onCopy, onSearch, categories: categoryState, onFile, onCategoryOp, onNewInCategory, nav, onNew, onNewIn, onAddProject, onAddRemote, onEditProject, onRevealPath, onCopyPath, fresh, onMarkAllRead, chats, onNewChat }: SessionListProps) {
   const locale = useLocale();
   const desktop = useDesktop();
   // The SSH hosts the add menu offers folders on; undefined until the engine answered for them
@@ -406,7 +408,11 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   const removed = desktop ? categoryState?.removedProjects : undefined;
   const filtering = !!q || filters > 0;
   // Pins and flat views follow the same project visibility as the project tree.
-  const listed = desktop ? projectSessions(searched, { registered, removed, filtering, expand: !!q }) : searched;
+  // Desktop: a project of several folders (SessionCategories.projectMeta) lists the sessions of each, under its own name
+  const meta = desktop ? categoryState?.projectMeta : undefined;
+  const projectOf = useCallback((cwd: string) => projectOfMeta(meta, cwd), [meta]);
+  const nameOfProject = (cwd: string) => meta?.[cwd]?.name || projectName(cwd);
+  const listed = desktop ? projectSessions(searched, { registered, removed, filtering, expand: !!q, projectOf }) : searched;
   const at = new Date();
   const shown = sortSessions(listed.filter(s => inScope(s) && passes(s, view, at)
     && (!q || matchesTitle(s.title, nameOf(s.agent), terms) || !!snippets?.has(s.id))), view.order, locale);
@@ -429,7 +435,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   const isChat = (cwd: string) => desktop && isChatFolder(chats, cwd);
   const tree = buildSessionTree({
     shown, categories, collapsedProjects: filing ? categoryState?.collapsedProjects ?? [] : [],
-    workspace, grouped, filtering, expand: !!q, registered, removed, pinInProject, isChat,
+    workspace, grouped, filtering, expand: !!q, registered, removed, pinInProject, isChat, projectOf,
   });
   const pinnedHere = (s: SessionSummary) => !!s.pinned && pinInProject;
   // Every project the list knows (the sessions' folders, the categories' own and the registered ones, not those off the
@@ -437,16 +443,16 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   // not the filtered view, so a search does not hide one. Kept while equal: every push brings a new session list
   const projects = useReused(useMemo<MoveProject[]>(() => {
     const latest = new Map<string, string>();
-    for (const s of sessions) if (s.cwd && (latest.get(s.cwd) ?? '') < s.updatedAt) latest.set(s.cwd, s.updatedAt);
+    for (const s of sessions) { const cwd = projectOf(s.cwd); if (cwd && (latest.get(cwd) ?? '') < s.updatedAt) latest.set(cwd, s.updatedAt); }
     for (const c of categoryState?.categories ?? []) if (c.cwd && !latest.has(c.cwd)) latest.set(c.cwd, '');
     for (const cwd of registered ?? []) if (!latest.has(cwd)) latest.set(cwd, '');
     const cwds = [...latest.keys()].filter(c => !offList(c, registered, removed) && !(desktop && isChatFolder(chats, c))).sort((a, b) => Number(b === workspace) - Number(a === workspace) || latest.get(b)!.localeCompare(latest.get(a)!));
     // A project on an SSH host carries the host's name; a local one carries nothing (its full path is the row's tooltip)
     return cwds.map(cwd => {
       const alias = parseRemoteFolder(cwd)?.alias;
-      return { cwd, name: projectName(cwd), current: cwd === workspace, ...(alias ? { hint: alias } : {}) };
+      return { cwd, name: meta?.[cwd]?.name || projectName(cwd), current: cwd === workspace, ...(alias ? { hint: alias } : {}) };
     });
-  }, [sessions, categoryState, registered, removed, workspace, desktop, chats]));
+  }, [sessions, categoryState, registered, removed, workspace, desktop, chats, projectOf, meta]));
   // A row's slices of the menus' lists, one array per project, so a row gets the same one on every render
   const projectsBesides = useMemo(() => perKey(cwd => projects.filter(p => p.cwd !== cwd)), [projects]);
   const categoriesIn = useMemo(() => perKey(cwd => categories.filter(c => c.cwd === cwd)), [categories]);
@@ -581,7 +587,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
     e.preventDefault();
     const at = over.current;
     const zone = heldSession && at && at.kind !== 'gap' && at.kind !== 'slot' ? { cwd: at.cwd, ...(at.kind === 'category' ? { category: at.id } : {}) } : undefined;
-    const action = heldSession && zone ? dropAction(heldSession, zone, categories) : undefined;
+    const action = heldSession && zone ? dropAction(heldSession, zone, categories, projectOf) : undefined;
     if (action?.kind === 'file') onFile?.(heldSession!.id, action.category);
     if (action?.kind === 'move') onMove?.(heldSession!.id, action.to);
     if (held.kind === 'category' && at?.kind === 'gap') onCategoryOp?.({ op: 'reorder', id: held.id, ...(at.before ? { before: at.before } : {}) });
@@ -633,7 +639,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
       // Grouped, a row's project is its group, so only pinned rows (which sit above every group) name theirs. The desktop
       // app names none: the title gets the room, the tooltip still names it
       // Grouped by date or channel the rows leave their project's group, so they name it unless it is the window's own
-      project={isChat(s.cwd) ? (flat ? t('session.group.chats') : undefined) : flat ? (desktop || !here(s) ? projectName(s.cwd) : undefined) : desktop || here(s) || (grouped && (!s.pinned || pinnedHere(s))) ? undefined : projectName(s.cwd)}
+      project={isChat(s.cwd) ? (flat ? t('session.group.chats') : undefined) : flat ? (desktop || !here(s) ? nameOfProject(projectOf(s.cwd)) : undefined) : desktop || here(s) || (grouped && (!s.pinned || pinnedHere(s))) ? undefined : nameOfProject(projectOf(s.cwd))}
       model={view.model ? s.model?.name : undefined}
       // Desktop: a project's sessions sit a step in, their agent mark under the project name, so the group reads as a level
       nudge={desktop && (!s.pinned || pinnedHere(s)) && !flat && !isChat(s.cwd)}
@@ -726,7 +732,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   };
   const renderBody = (p: ProjectNode) => {
     // A filed session of this project being dragged needs somewhere to land even when nothing is loose
-    const strip = !p.loose.length && !!heldSession && heldSession.cwd === p.cwd && !!categoryOf(heldSession, categories);
+    const strip = !p.loose.length && !!heldSession && projectOf(heldSession.cwd) === p.cwd && !!categoryOf(heldSession, categories, projectOf);
     return <>
       {/* Pinned first, outside the "more" cut (pinned rows never drag). They share one keyed list with the loose rows:
           under separate parents a row pinned or unpinned in place was remounted, and the new element, painted unhovered
@@ -752,6 +758,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   // found by a search)
   const projectMenu = (cwd: string): ReactNode => {
     const items = [
+      onEditProject && desktop && filing && <DropdownMenu.Item key="edit" onClick={() => onEditProject(cwd)}><OptionContent icon={<Pencil strokeWidth={1.5} />}>{t('session.project.edit')}</OptionContent></DropdownMenu.Item>,
       filing && !desktop && <DropdownMenu.Item key="category" onClick={() => createCategory(cwd)}><OptionContent icon={<CategoryAddIcon />}>{t('session.category.new')}</OptionContent></DropdownMenu.Item>,
       onRevealPath && <DropdownMenu.Item key="reveal" onClick={() => onRevealPath(cwd)}><OptionContent icon={<FolderOpen strokeWidth={1.5} />}>{revealLabel()}</OptionContent></DropdownMenu.Item>,
       onCopyPath && <DropdownMenu.Item key="copy" title={cwd} onClick={() => onCopyPath(cwd)}><OptionContent icon={<Copy strokeWidth={1.5} />}>{t('session.project.copyPath')}</OptionContent></DropdownMenu.Item>,
@@ -788,11 +795,11 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
     // group is framed (`data-group`); a held project's insert line sits on its edge
     return (
       // Desktop: folded projects stack at the row pitch like a tree; only an open project's sessions leave room after them
-      <div key={p.cwd} role="group" aria-label={projectName(p.cwd)} data-drop={`loose:${p.cwd}`} data-group={p.cwd} data-project={desktop ? p.cwd : undefined}
+      <div key={p.cwd} role="group" aria-label={nameOfProject(p.cwd)} data-drop={`loose:${p.cwd}`} data-group={p.cwd} data-project={desktop ? p.cwd : undefined}
         className={cn('relative flex flex-col rounded-lg', FRAME, LINE, i > 0 && (!desktop || list[i - 1]?.open) && 'mt-2')}>
         <GroupHeader
           project
-          name={projectName(p.cwd)}
+          name={nameOfProject(p.cwd)}
           title={p.cwd}
           folder={p.cwd}
           // Desktop: the sheet's header names the current project, and a project row carries no count

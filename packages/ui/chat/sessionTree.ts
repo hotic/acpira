@@ -1,4 +1,4 @@
-import type { SessionCategory, SessionSummary } from '@acpira/shared/transcript';
+import type { ProjectMeta, SessionCategory, SessionSummary } from '@acpira/shared/transcript';
 import { isRemoteFolder } from '@acpira/shared/remote';
 
 // The session list as a tree: pinned sessions on top, then one node per project (the session's cwd), each holding its
@@ -58,6 +58,17 @@ export interface TreeInput {
   pinInProject?: boolean;
   // Grouped: whether a folder is a chat's (`isChatFolder`); those sessions leave the project groups for `chats`
   isChat?: (cwd: string) => boolean;
+  // The project a session's folder belongs to (`projectOf` over SessionCategories.projectMeta): a project of several
+  // folders groups the sessions of each. Absent: every folder is its own project
+  projectOf?: (cwd: string) => string;
+}
+
+// The project a folder belongs to: the one whose primary folder it is or that lists it as a further folder; else the
+// folder stands for itself (mirrors SessionCategories::project_of in the engine)
+export function projectOf(meta: Record<string, ProjectMeta> | undefined, folder: string): string {
+  if (!meta || meta[folder]) return folder;
+  for (const [key, m] of Object.entries(meta)) if (m.extra?.includes(folder)) return key;
+  return folder;
 }
 
 // A chat's folder: directly inside `root` (InitState.chats), in either separator
@@ -75,19 +86,22 @@ export function offList(cwd: string, registered?: string[], removed?: string[]):
 
 // Apply project visibility before pinning or grouping. A view filter may reveal removed folders, but only a search
 // reveals host folders that were never added.
-export function projectSessions(shown: SessionSummary[], { registered, removed, filtering, expand = filtering }: Pick<TreeInput, 'registered' | 'removed' | 'filtering' | 'expand'>): SessionSummary[] {
+export function projectSessions(shown: SessionSummary[], { registered, removed, filtering, expand = filtering, projectOf = same }: Pick<TreeInput, 'registered' | 'removed' | 'filtering' | 'expand' | 'projectOf'>): SessionSummary[] {
   if (filtering && expand) return shown;
-  return shown.filter(s => !offList(s.cwd, registered, filtering ? undefined : removed));
+  return shown.filter(s => !offList(projectOf(s.cwd), registered, filtering ? undefined : removed));
 }
 
 // The category a session is filed under, if that category still exists and belongs to the session's project
-export function categoryOf(s: SessionSummary, categories: SessionCategory[]): SessionCategory | undefined {
+const same = (cwd: string) => cwd;
+
+export function categoryOf(s: SessionSummary, categories: SessionCategory[], projectOf: (cwd: string) => string = same): SessionCategory | undefined {
   if (!s.category || s.pinned) return undefined;
-  return categories.find(c => c.id === s.category && c.cwd === s.cwd);
+  const project = projectOf(s.cwd);
+  return categories.find(c => c.id === s.category && c.cwd === project);
 }
 
-export function buildSessionTree({ shown, categories, collapsedProjects, workspace, grouped, filtering, registered, removed, pinInProject, isChat, expand = filtering }: TreeInput): SessionTree {
-  const listed = grouped ? projectSessions(shown, { registered, removed, filtering, expand }) : shown;
+export function buildSessionTree({ shown, categories, collapsedProjects, workspace, grouped, filtering, registered, removed, pinInProject, isChat, expand = filtering, projectOf = same }: TreeInput): SessionTree {
+  const listed = grouped ? projectSessions(shown, { registered, removed, filtering, expand, projectOf }) : shown;
   // Pinning into projects only means something when there are project groups to pin into
   const inProject = grouped && !!pinInProject;
   const pinned = inProject ? [] : listed.filter(s => s.pinned);
@@ -99,7 +113,7 @@ export function buildSessionTree({ shown, categories, collapsedProjects, workspa
     const pins: SessionSummary[] = [];
     for (const s of sessions) {
       if (s.pinned) { pins.push(s); continue; }
-      const c = categoryOf(s, own);
+      const c = categoryOf(s, own, projectOf);
       if (c) filed.get(c.id)!.push(s);
       else loose.push(s);
     }
@@ -126,7 +140,7 @@ export function buildSessionTree({ shown, categories, collapsedProjects, workspa
   const chat = (s: SessionSummary) => !!isChat?.(s.cwd);
   const chats = [...rest.filter(s => s.pinned && chat(s)), ...rest.filter(s => !s.pinned && chat(s))];
   const byProject = new Map<string, SessionSummary[]>();
-  for (const s of rest) if (!chat(s)) byProject.set(s.cwd, [...byProject.get(s.cwd) ?? [], s]);
+  for (const s of rest) if (!chat(s)) { const key = projectOf(s.cwd); byProject.set(key, [...byProject.get(key) ?? [], s]); }
   // A project with categories but no session in view still shows (so its categories can be reached), unless filtering
   if (!filtering) for (const c of categories) if (!byProject.has(c.cwd) && !offList(c.cwd, registered)) byProject.set(c.cwd, []);
   if (!filtering) for (const cwd of registered ?? []) if (!byProject.has(cwd)) byProject.set(cwd, []);
@@ -151,10 +165,11 @@ export type DropAction =
   | { kind: 'file'; category: string | null }
   | { kind: 'move'; to: MoveTarget };
 
-export function dropAction(s: SessionSummary, target: MoveTarget, categories: SessionCategory[]): DropAction | undefined {
-  if (s.cwd !== target.cwd) return { kind: 'move', to: target };
-  if (target.category) return target.category === categoryOf(s, categories)?.id ? undefined : { kind: 'file', category: target.category };
-  return categoryOf(s, categories) ? { kind: 'file', category: null } : undefined;
+export function dropAction(s: SessionSummary, target: MoveTarget, categories: SessionCategory[], projectOf: (cwd: string) => string = same): DropAction | undefined {
+  // Within a project of several folders a session stays in its own folder: filing it never moves it
+  if (projectOf(s.cwd) !== target.cwd) return { kind: 'move', to: target };
+  if (target.category) return target.category === categoryOf(s, categories, projectOf)?.id ? undefined : { kind: 'file', category: target.category };
+  return categoryOf(s, categories, projectOf) ? { kind: 'file', category: null } : undefined;
 }
 
 export function draggable(s: SessionSummary): boolean {
