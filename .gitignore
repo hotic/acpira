@@ -31,8 +31,8 @@ docs/*
 !docs/roadmap.md
 !docs/releasing.md
 
-# Local agent skills
-.agents/skills/
+# Local agent skills and workspace hooks
+.agents/
 
 # Lab playground (local only): pages, the shared kit (lab/kit) and its Vite config
 lab/
