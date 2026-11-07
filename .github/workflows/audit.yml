@@ -1,0 +1,41 @@
+name: Dependency audit
+
+# Checks the Node and Rust lockfiles against the npm and RustSec advisory databases on every push, pull request and
+# daily schedule (a newly published CVE breaks no lockfile on its own). Neither tool builds code or installs packages.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Audit npm lockfile
+        run: pnpm audit
+      - name: Install cargo-audit
+        run: |
+          curl -fsSL https://github.com/rustsec/rustsec/releases/download/cargo-audit%2Fv0.22.2/cargo-audit-x86_64-unknown-linux-gnu-v0.22.2.tgz \
+            | tar -xz -C /usr/local/bin --strip-components=1 cargo-audit-x86_64-unknown-linux-gnu/cargo-audit
+      - name: Audit Rust lockfiles
+        run: |
+          cargo-audit audit --file rust/Cargo.lock
+          cargo-audit audit --file apps/desktop/Cargo.lock
