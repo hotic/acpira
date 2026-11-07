@@ -64,7 +64,8 @@ sleep 1
 ui type "ping from android"
 ui tap composer.send
 ui wait chat.thread 30
-ui wait "ping from android" 15
+# The keyboard capitalises the first word: wait on the rest
+ui wait "from android" 15
 ui wait "hello world" 30
 
 step "a tool turn: approve, it runs"
