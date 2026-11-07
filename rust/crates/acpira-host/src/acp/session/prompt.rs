@@ -13,7 +13,7 @@ use acpira_shared::turn_settings::capture_turn_settings;
 use crate::acp::session::attachments::{PreparedPrompt, prepare_prompt, prompt_caps_of};
 use crate::acp::session::compaction::{CompactionCompletion, is_compact_command};
 use crate::acp::session::edit::{Handoff, HistoryContext, history_context};
-use crate::acp::session::errors::{is_auth, is_session_gone, turn_error_of};
+use crate::acp::session::errors::{error_text, is_auth, is_session_gone, turn_error_of};
 use crate::acp::session::failure::{failure_of, failure_turn_error};
 use crate::acp::session::turn_usage::turn_usage_of;
 use crate::acp::session::{AcpSession, Core, num};
@@ -703,6 +703,10 @@ impl AcpSession {
     self.settle(&mut c, TurnStop::Cancelled, Some(turn_error));
     if is_auth(&err) || failure.as_ref().is_some_and(|f| f.actions.contains(&FailureAction::Login)) {
       c.status = SessionStatus::AuthRequired;
+      // The sign-in notice replaces the error card: it keeps the provider's reason behind "Copy details"
+      if c.error.is_none() {
+        c.error = Some(error_text(&err));
+      }
     } else if is_session_gone(&err) || !c.proc.as_ref().is_some_and(|p| p.alive()) {
       // Resending over this connection can only fail the same way: the error Notice's Retry reconnects
       c.status = SessionStatus::Error;

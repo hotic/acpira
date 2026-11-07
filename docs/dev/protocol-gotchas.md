@@ -13,7 +13,7 @@ Cross-agent ACP behaviour the host depends on, and the host invariants built aro
 - Tool call ids are unique per agent session only (a rebuilt peer reuses them, e.g. the built-in agent's `call-N`): an id naming a settled row of an earlier turn opens a new row (`settled_before`, `annotate_root`).
 - Edit controls prefer the learned per-model shape (`modelShapes`) over the live view, which can pair a model with another's parameters mid-switch. `applyEditSettings` is strict about model and mode; a dependent value the new model lacks yields to the agent's (Devin: SWE-2 has no `speed`).
 - `retry_turn` uses the current controls and never resends a message the peer acted on (an attempt with output gets a hidden continue): resending made Claude start over on top of its partial work.
-- A failed `session/prompt` leaves the session `ready`, except `-32000` → `auth_required` and a gone native session or dead process → `error`. A second Retry of the same turn reconnects first (Grok keeps answering `-32603` on a broken session).
+- A failed `session/prompt` leaves the session `ready`, except an auth failure (`is_auth`) → `auth_required` and a gone native session or dead process → `error`. A second Retry of the same turn reconnects first (Grok keeps answering `-32603` on a broken session).
 
 ## Model identity
 

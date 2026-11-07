@@ -12,7 +12,7 @@ use acpira_shared::transcript::*;
 
 use crate::acp::agents::lock_holder;
 use crate::acp::agents::model_sources::read_model_facts;
-use crate::acp::session::errors::{AccountAuthError, RestoreFailure, classify_restore_error, error_text, is_auth};
+use crate::acp::session::errors::{AccountAuthError, RestoreFailure, classify_restore_error, error_text, is_api_key_method, is_auth};
 use crate::acp::session::handlers::SessionHandlers;
 use crate::acp::session::queue::{PeerTurn, PromptQueue};
 use crate::acp::session::{AcpSession, Core, StartOutcome};
@@ -316,7 +316,7 @@ impl AcpSession {
       let mut c = self.core.lock();
       c.tree.reindex();
       c.auth_methods = proc.init.get("authMethods").and_then(Value::as_array).map(|methods| {
-        methods
+        let mut methods = methods
           .iter()
           .map(|m| AuthMethodInfo {
             id: m.get("id").and_then(Value::as_str).unwrap_or("").to_owned(),
@@ -334,7 +334,11 @@ impl AcpSession {
                 .map(|e| e.iter().filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_owned()))).collect()),
             }),
           })
-          .collect()
+          .collect::<Vec<_>>();
+        // Signing in leads, an API key comes last: the notice's first method is its main button and `authenticate`'s
+        // default, and Grok 1.0.62 lists `xai.api_key` (which only reads an env var) before `grok.com`
+        methods.sort_by_key(is_api_key_method);
+        methods
       });
       c.proc = Some(proc);
     }
