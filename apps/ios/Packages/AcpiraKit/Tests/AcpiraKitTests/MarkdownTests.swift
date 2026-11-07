@@ -37,6 +37,17 @@ struct MarkdownTests {
     #expect(doc[6] == .code(lang: "ts", text: "const x = 1"))
   }
 
+  /// `<br>` is a line break, and a paragraph of nothing but breaks adds no block: a model stuck on the tag filled one
+  /// reply with thousands of them, which the stream must also drop
+  @Test func htmlBreaks() {
+    #expect(Markdown.parse("a<br>b<BR/>c <br />\nd") == [.paragraph([.text("a"), .lineBreak, .text("b"), .lineBreak, .text("c "), .lineBreak, .text("d")])])
+    let runaway = "完成。\n\n" + Array(repeating: "<br>", count: 500).joined(separator: "\n\n") + "\n\n<b>不是换行</b>"
+    #expect(Markdown.parse(runaway) == [.paragraph([.text("完成。")]), .paragraph([.text("<b>不是换行</b>")])])
+    var stream = MarkdownStream()
+    _ = stream.parse(String(runaway.prefix(400)))
+    #expect(stream.parse(runaway) == Markdown.parse(runaway))
+  }
+
   @Test func streamingSafety() {
     // An unclosed fence runs to the end; unclosed delimiters stay literal
     #expect(Markdown.parse("```\nlet a") == [.code(lang: nil, text: "let a")])

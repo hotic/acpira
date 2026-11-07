@@ -1,6 +1,7 @@
 package cc.hotic.acpira.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.text.withAnnotation
@@ -45,6 +46,7 @@ import androidx.compose.ui.text.withStyle
 import cc.hotic.acpira.design.Metrics
 import cc.hotic.acpira.design.Palette
 import cc.hotic.acpira.design.Type
+import cc.hotic.acpira.i18n.t
 
 // The agent's Markdown as the phone draws it: the block structure of chat/Markdown.tsx (paragraphs, headings, lists,
 // quotes, fenced code, rules, tables as plain rows) with inline code, emphasis, strikes and links. A first cut of the
@@ -67,6 +69,14 @@ private val orderedRe = Regex("""^\s*(\d+)[.)]\s+(.*)$""")
 private val fenceRe = Regex("""^\s*(```|~~~)\s*([\w+-]*)""")
 private val ruleRe = Regex("""^\s*([-*_])(\s*\1){2,}\s*$""")
 private val tableSepRe = Regex("""^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$""")
+// `<br>`, `<br/>`, `<br />`: the one HTML tag agents write in prose, a line break in the webview
+private val brRe = Regex("""<br\s*/?>\n?""", RegexOption.IGNORE_CASE)
+
+/**
+ * How many blocks, or items of one list, [Prose] draws before it asks for more. A model looping until its output limit
+ * wrote tens of thousands of paragraphs into one reply, and drawing them all froze the app
+ */
+private const val PROSE_PAGE = 200
 
 /** Splits Markdown into blocks; a streaming document's open fence reads as code up to its end */
 fun parseMarkdown(source: String): List<MdBlock> {
@@ -74,7 +84,9 @@ fun parseMarkdown(source: String): List<MdBlock> {
   val out = ArrayList<MdBlock>()
   val para = StringBuilder()
   fun flush() {
-    if (para.isNotBlank()) out += MdBlock.Paragraph(para.toString().trim())
+    // A paragraph of nothing but `<br>` tags adds no block
+    val text = para.toString().replace(brRe, "\n").trim()
+    if (text.isNotEmpty()) out += MdBlock.Paragraph(text)
     para.clear()
   }
   var i = 0
@@ -206,7 +218,8 @@ fun Prose(markdown: String, modifier: Modifier = Modifier, color: Color = Palett
   fun inline(s: String) = inlineMarkdown(s, codeBg, codeFg, link)
   SelectionContainer(modifier) {
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
-      for (block in blocks) {
+      var shown by remember(markdown) { mutableStateOf(PROSE_PAGE) }
+      for (block in blocks.take(shown)) {
         when (block) {
           is MdBlock.Paragraph -> ProseText(inline(block.text), color = color, fontSize = Type.body, lineHeight = Type.bodyLine)
           is MdBlock.Heading -> ProseText(
@@ -214,7 +227,8 @@ fun Prose(markdown: String, modifier: Modifier = Modifier, color: Color = Palett
             fontSize = if (block.level <= 2) Type.barTitle else Type.body, lineHeight = if (block.level <= 2) Type.bodyLine * 1.15f else Type.bodyLine,
           )
           is MdBlock.ListItems -> Column(verticalArrangement = Arrangement.spacedBy(Metrics.s1)) {
-            block.items.forEachIndexed { k, item ->
+            var items by remember(block) { mutableStateOf(PROSE_PAGE) }
+            block.items.take(items).forEachIndexed { k, item ->
               Row {
                 Text(
                   if (block.ordered) "${block.start + k}." else "•", color = Palette.fg2, fontSize = Type.body, lineHeight = Type.bodyLine,
@@ -222,6 +236,9 @@ fun Prose(markdown: String, modifier: Modifier = Modifier, color: Color = Palett
                 )
                 ProseText(inline(item), color = color, fontSize = Type.body, lineHeight = Type.bodyLine)
               }
+            }
+            if (block.items.size > items) {
+              ProseMore(block.items.size - items, Modifier.padding(start = Metrics.lead)) { items += PROSE_PAGE }
             }
           }
           is MdBlock.Quote -> Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
@@ -244,8 +261,18 @@ fun Prose(markdown: String, modifier: Modifier = Modifier, color: Color = Palett
           MdBlock.Rule -> Box(Modifier.fillMaxWidth().height(Metrics.hairline).background(Palette.line))
         }
       }
+      if (blocks.size > shown) ProseMore(blocks.size - shown) { shown += PROSE_PAGE }
     }
   }
+}
+
+/** The "N more" line under a capped stack; each tap draws another page */
+@Composable
+private fun ProseMore(rest: Int, modifier: Modifier = Modifier, onClick: () -> Unit) {
+  Text(
+    t("session.showMore", "n" to rest), color = Palette.fg3, fontSize = Type.text2,
+    modifier = modifier.clickable(onClick = onClick),
+  )
 }
 
 private const val CODE_TAG = "code"
