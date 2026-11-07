@@ -109,7 +109,8 @@ impl Service {
     {
       let _ = a;
       let plist = super::launch_agent::plist_path(&label, &self.user_home);
-      let text = super::launch_agent::plist(&label, &program.exe, &self.root);
+      let launcher = crate::machine_engine::launcher::ensure(&self.root, &program.exe);
+      let text = super::launch_agent::plist(&label, launcher.as_deref(), &program.exe, &self.root);
       return tokio::fs::read_to_string(&plist).await.is_ok_and(|t| t == text) && super::launch_agent::loaded(&label).await;
     }
     #[cfg(target_os = "linux")]
@@ -140,7 +141,9 @@ impl Service {
     #[cfg(target_os = "macos")]
     {
       let _ = (log, a);
-      return super::launch_agent::install(&label, &self.user_home, &super::launch_agent::plist(&label, &program.exe, &self.root)).await;
+      let launcher = crate::machine_engine::launcher::ensure(&self.root, &program.exe);
+      return super::launch_agent::install(&label, &self.user_home, &super::launch_agent::plist(&label, launcher.as_deref(), &program.exe, &self.root))
+        .await;
     }
     #[cfg(target_os = "linux")]
     {

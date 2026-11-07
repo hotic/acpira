@@ -96,3 +96,25 @@ async fn a_newer_engine_is_left_running() {
   assert_eq!(reached["version"], "999.0.0");
   assert!(drains.lock().unwrap().is_empty());
 }
+
+/// The macOS launcher (machine_engine/launcher.rs) exits as its child did, and a stop signal reaches the child, so
+/// launchd and a drain see the engine end through it
+#[test]
+fn the_launcher_passes_exit_codes_and_stop_signals_through() {
+  use std::process::Command;
+  let bin = env!("CARGO_BIN_EXE_acpira");
+  let code = Command::new(bin).args(["launch", "/bin/sh", "-c", "exit 3"]).status().unwrap();
+  assert_eq!(code.code(), Some(3));
+  let dir = tempfile::tempdir().unwrap();
+  let ready = dir.path().join("ready");
+  let script = format!("trap 'exit 7' TERM; touch '{}'; while :; do sleep 0.05; done", ready.display());
+  let mut launcher = Command::new(bin).args(["launch", "/bin/sh", "-c", &script]).spawn().unwrap();
+  let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+  while !ready.exists() {
+    assert!(std::time::Instant::now() < deadline, "the child never started");
+    std::thread::sleep(std::time::Duration::from_millis(20));
+  }
+  // SAFETY: a signal to the launcher this test started
+  unsafe { libc::kill(launcher.id() as libc::pid_t, libc::SIGTERM) };
+  assert_eq!(launcher.wait().unwrap().code(), Some(7));
+}

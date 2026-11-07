@@ -215,6 +215,10 @@ pub fn prune(home: &Path, keep: &[PathBuf]) {
     let modified = e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
     // A copy still landing or one that failed half way (`.<name>.<random>`): debris once older than a minute, whatever
     // its marker says (the one landing has not taken it yet)
+    // The launcher is never pruned (launcher.rs)
+    if e.file_name() == super::launcher::DIR {
+      continue;
+    }
     if e.file_name().to_string_lossy().starts_with('.') {
       if modified.elapsed().is_ok_and(|age| age.as_secs() > 60) {
         let _ = std::fs::remove_dir_all(e.path());

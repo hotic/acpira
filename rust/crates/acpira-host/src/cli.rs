@@ -26,6 +26,8 @@
 //!                                                the pages as JSON on stdout), so a parser panic ends only that child
 //!   acpira remote --stdio                       the helper an SSH host runs for another machine's engine (frames over stdio,
 //!                                                docs/dev/remote.md); ends on stdin EOF or a missed heartbeat
+//!   acpira launch PROGRAM [ARGS…]                runs PROGRAM as its child, hands it the stop signals, exits as it did:
+//!                                                the macOS engine's fixed parent (machine_engine/launcher.rs)
 //!   acpira engine [--home DIR] [--no-dev-takeover]
 //!                                                the machine's one engine: started, or taken over from an older build,
 //!                                                then `{"socket","version","pid"}` on stdout (machine_engine/ensure.rs)
@@ -85,6 +87,10 @@ pub fn is_engine_command(first: Option<&str>) -> bool {
 
 /// Runs the command line `args` (without the program name) to its end; the exit code
 pub fn run(args: Vec<String>) -> i32 {
+  // First: the launcher is an old build that only ever waits for its child
+  if args.first().map(String::as_str) == Some(crate::machine_engine::launcher::COMMAND) {
+    return crate::machine_engine::launcher::run(&args[1..]);
+  }
   // A process running from a landed engine copy keeps it from being pruned (machine_engine/stage.rs)
   crate::machine_engine::stage::hold_in_use();
   if args.first().map(String::as_str) == Some("--version") {

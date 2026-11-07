@@ -219,14 +219,15 @@ impl Started {
   /// previous process of the same build was still ending started nothing
   async fn ended(&mut self) -> bool {
     match &mut self.how {
-      How::Child(Detached(c)) => c.as_mut().is_none_or(|c| c.try_wait().ok().flatten().is_some()),
+      How::Child(Detached(c)) => c.as_mut().is_none_or(Spawned::exited),
       How::Job(label) => !crate::devices::launch_agent::running(label).await,
     }
   }
 }
 
 /// `exe serve --socket` detached from this process: in the user's macOS GUI session when this runs over SSH and one is
-/// there (the login keychain is unlocked only there), else in a session of its own. Output goes to `run/engine.log`
+/// there (the login keychain is unlocked only there), else in a session of its own. On macOS either way under the
+/// launcher (launcher.rs). Output goes to `run/engine.log`
 async fn start(exe: &Path, socket: &Path, home: &Path, serve_args: &[String]) -> Result<Started> {
   let log = log_path(home);
   if let Some(dir) = log.parent() {
@@ -247,16 +248,52 @@ async fn start(exe: &Path, socket: &Path, home: &Path, serve_args: &[String]) ->
   Ok(Started { how: How::Child(Detached(Some(child))), _pinned: pinned })
 }
 
+/// A process this one started
+enum Spawned {
+  #[cfg_attr(not(unix), allow(dead_code, reason = "Windows has no detached start yet (`spawn_detached`)"))]
+  Child(std::process::Child),
+  /// Started without `std::process` (launcher::spawn_disclaimed)
+  #[cfg(target_os = "macos")]
+  Pid(libc::pid_t),
+}
+
+impl Spawned {
+  fn exited(&mut self) -> bool {
+    match self {
+      Spawned::Child(c) => c.try_wait().ok().flatten().is_some(),
+      // 0: still running; the pid once reaped, or -1 when there is nothing left to reap
+      #[cfg(target_os = "macos")]
+      // SAFETY: waitpid on this process's own child, writing into a local
+      Spawned::Pid(pid) => unsafe {
+        let mut status = 0;
+        libc::waitpid(*pid, &mut status, libc::WNOHANG) != 0
+      },
+    }
+  }
+
+  fn wait(self) {
+    match self {
+      Spawned::Child(mut c) => {
+        let _ = c.wait();
+      }
+      #[cfg(target_os = "macos")]
+      // SAFETY: as in `exited`; an already reaped pid answers ECHILD at once
+      Spawned::Pid(pid) => unsafe {
+        let mut status = 0;
+        libc::waitpid(pid, &mut status, 0);
+      },
+    }
+  }
+}
+
 /// A started engine outlives this process; a long-lived caller (the SSH helper) must not keep it as a zombie once it
 /// ends, so whatever has not been reaped by then is waited for on a thread of its own
-struct Detached(Option<std::process::Child>);
+struct Detached(Option<Spawned>);
 
 impl Drop for Detached {
   fn drop(&mut self) {
-    if let Some(mut child) = self.0.take() {
-      std::thread::spawn(move || {
-        let _ = child.wait();
-      });
+    if let Some(child) = self.0.take() {
+      std::thread::spawn(move || child.wait());
     }
   }
 }
@@ -269,8 +306,20 @@ fn append(log: &Path, line: &str) {
 }
 
 #[cfg(unix)]
-fn spawn_detached(exe: &Path, socket: &Path, home: &Path, serve_args: &[String], log: &Path) -> Result<std::process::Child> {
+fn spawn_detached(exe: &Path, socket: &Path, home: &Path, serve_args: &[String], log: &Path) -> Result<Spawned> {
   use std::os::unix::process::CommandExt;
+  // Not the window's workspace: the engine serves every window, and nothing in it reads its own working directory
+  let cwd = crate::store::data_dir::home_dir();
+  #[cfg(target_os = "macos")]
+  if let Some(program) = super::launcher::ensure(home, exe) {
+    let mut args: Vec<std::ffi::OsString> = vec![super::launcher::COMMAND.into(), exe.into(), "serve".into(), "--socket".into()];
+    args.extend([socket.into(), "--home".into(), home.into()]);
+    args.extend(serve_args.iter().map(Into::into));
+    match super::launcher::spawn_disclaimed(&program, &args, &cwd, log) {
+      Ok(pid) => return Ok(Spawned::Pid(pid)),
+      Err(e) => append(log, &format!("starting under {} failed, starting the engine itself: {e}", program.display())),
+    }
+  }
   let out = std::fs::OpenOptions::new().create(true).append(true).open(log)?;
   let err = out.try_clone()?;
   let mut cmd = std::process::Command::new(exe);
@@ -281,8 +330,7 @@ fn spawn_detached(exe: &Path, socket: &Path, home: &Path, serve_args: &[String],
     .arg("--home")
     .arg(home)
     .args(serve_args)
-    // Not the window's workspace: the engine serves every window, and nothing in it reads its own working directory
-    .current_dir(crate::store::data_dir::home_dir())
+    .current_dir(cwd)
     .stdin(std::process::Stdio::null())
     .stdout(out)
     .stderr(err);
@@ -293,11 +341,11 @@ fn spawn_detached(exe: &Path, socket: &Path, home: &Path, serve_args: &[String],
       Ok(())
     });
   }
-  Ok(cmd.spawn()?)
+  Ok(Spawned::Child(cmd.spawn()?))
 }
 
 #[cfg(not(unix))]
-fn spawn_detached(_exe: &Path, _socket: &Path, _home: &Path, _serve_args: &[String], _log: &Path) -> Result<std::process::Child> {
+fn spawn_detached(_exe: &Path, _socket: &Path, _home: &Path, _serve_args: &[String], _log: &Path) -> Result<Spawned> {
   bail!("the machine engine has no endpoint on this platform yet")
 }
 
