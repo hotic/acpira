@@ -36,7 +36,7 @@ export function revisedPlanEnd(turn: AgentTurn): boolean {
 // Errors/cancellation always win; actual prose and tool results stand on their own.
 export function turnOutcome(turn: AgentTurn, locale: Locale): string | undefined {
   const t = (key: Parameters<typeof translate>[1], params?: Parameters<typeof translate>[2]) => translate(locale, key, params);
-  if (turn.observation === 'unknown') return t('chatgpt.unknownTurn');
+  if (turn.observation === 'unknown') return t('observation.unknownTurn');
   switch (turn.stop) {
     case 'error': return t('turns.stop.error');
     case 'refusal': return t('turns.stop.refusal');

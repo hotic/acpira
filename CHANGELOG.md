@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- The ChatGPT conversation mirror is gone: the Connect ChatGPT Session command, the ChatGPT entry in Settings → Connections, the `acpira bridge` CLI and the ChatGPT channel in session lists. Mirrors already written under `~/.acpira/bridges/chatgpt` are no longer listed and stay on disk untouched.
+
 ### Planned
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.

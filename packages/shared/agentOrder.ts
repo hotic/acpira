@@ -7,19 +7,19 @@ export interface AgentPrefs {
 }
 
 // Listed ids first in their saved order, the rest (new built-ins, fresh custom agents) keep registry order after them.
-// External entries stay last. Disabled agents are flagged, never dropped: history, settings and running sessions still need them
+// Disabled agents are flagged, never dropped: history, settings and running sessions still need them
 export function arrangeAgents<A extends AgentInfo>(list: A[], prefs: AgentPrefs): A[] {
   const rank = new Map(prefs.order.map((id, i) => [id, i]));
   const off = new Set(prefs.disabled);
-  const key = (a: A, i: number) => [a.external ? 1 : 0, rank.get(a.id) ?? prefs.order.length, i] as const;
+  const key = (a: A, i: number) => [rank.get(a.id) ?? prefs.order.length, i] as const;
   return list
-    .map((a, i) => ({ a: off.has(a.id) && !a.external ? { ...a, disabled: true } : a, k: key(a, i) }))
-    .sort((x, y) => x.k[0] - y.k[0] || x.k[1] - y.k[1] || x.k[2] - y.k[2])
+    .map((a, i) => ({ a: off.has(a.id) ? { ...a, disabled: true } : a, k: key(a, i) }))
+    .sort((x, y) => x.k[0] - y.k[0] || x.k[1] - y.k[1])
     .map(x => x.a);
 }
 
 // Agents a new-session entry point offers (the plus menu, the default agent picker)
-export const launchable = (agents: AgentInfo[]) => agents.filter(a => !a.external && !a.disabled);
+export const launchable = (agents: AgentInfo[]) => agents.filter(a => !a.disabled);
 
 // The configured default unless it was switched off or its CLI is missing; then the first enabled installed agent
 // (the built-in one leads the registry, so a fresh install lands there). A missing default with nothing installed to

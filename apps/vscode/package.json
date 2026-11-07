@@ -105,11 +105,6 @@
         "category": "Acpira"
       },
       {
-        "command": "acpira.connectChatgpt",
-        "title": "%acpira.cmd.connectChatgpt%",
-        "category": "Acpira"
-      },
-      {
         "command": "acpira.safeMode",
         "title": "%acpira.cmd.safeMode%",
         "category": "Acpira"

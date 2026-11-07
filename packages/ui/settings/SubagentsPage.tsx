@@ -60,7 +60,6 @@ export function SubagentsPage({ page, onPage, onReplace, settings, agents, contr
   const toList = () => onReplace({ kind: 'subagents' });
   // A persona just added: its page opens once the stored list brings it back, and is not closed while it is on its way
   const [adding, setAdding] = useState<string>();
-  const usable = agents.filter(a => !a.external);
   const save = (next: SubagentPersona[]) => (on.saveSubagents ? on.saveSubagents(list, next) : on.setSetting('subagents', next));
   const current = list.find(p => p.id === open);
   // A persona deleted (or renamed into another id) elsewhere closes its page
@@ -78,7 +77,7 @@ export function SubagentsPage({ page, onPage, onReplace, settings, agents, contr
   const full = list.length >= PERSONA_MAX;
   const add = () => {
     // Unknown availability (the engine's first probe still running) counts as available, as on every other page
-    const agent = usable.find(a => a.available !== false)?.id ?? usable[0]?.id;
+    const agent = agents.find(a => a.available !== false)?.id ?? agents[0]?.id;
     if (!agent || full) return;
     // The id comes from the name the way the host derives it, so the page knows what to open when the list comes back
     const next = sanitizePersonas([...list, { name: uniqueName(t('subagents.page.newName'), list), agent, mode: 'inherit', when: '', enabled: true }]);
@@ -114,7 +113,7 @@ export function SubagentsPage({ page, onPage, onReplace, settings, agents, contr
             onChange={enabled => saveGroups(groups.map(x => (x.id === g.id ? { ...x, enabled } : x)))} />} />
       ))}
     </Section>
-    {current && <PersonaDialog persona={current} agents={usable} controls={controls[current.agent]} shapes={shapes?.[current.agent]} onClose={close}
+    {current && <PersonaDialog persona={current} agents={agents} controls={controls[current.agent]} shapes={shapes?.[current.agent]} onClose={close}
       onChange={patch => update(current.id, patch)} onDelete={() => { toList(); save(list.filter(p => p.id !== current.id)); }} />}
     {group.current && (() => {
       const g = group.current;

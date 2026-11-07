@@ -176,7 +176,7 @@ pub fn scan(input: &ScanInput) -> Scan {
   let mut t = Tally::default();
   let mut usage: HashMap<String, SessionUsage> = HashMap::new();
   let mut residue = vec![];
-  let listed: HashSet<&str> = input.sessions.iter().filter(|s| s.external.is_none()).map(|s| s.id.as_str()).collect();
+  let listed: HashSet<&str> = input.sessions.iter().map(|s| s.id.as_str()).collect();
 
   // Sessions: records, their blob folders, unreadable records, unreferenced attachments
   let sessions_dir = &input.sessions_dir;

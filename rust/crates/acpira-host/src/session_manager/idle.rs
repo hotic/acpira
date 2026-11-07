@@ -140,9 +140,6 @@ impl SessionManager {
         h.abort();
       }
     }
-    if let Some(c) = &self.deps.chatgpt {
-      c.dispose().await;
-    }
     // Agent processes are ended before the host returns (it exits right after): each session closes and kills its process, the pool
     // kills its idle ones, all at once; whatever has not exited within DISPOSE_GRACE is SIGKILLed so nothing outlives the host
     let live: Vec<Arc<AcpSession>> = self.state.lock().live.drain().map(|(_, s)| s).collect();

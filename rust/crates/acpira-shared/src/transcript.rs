@@ -23,8 +23,6 @@ pub struct AgentInfo {
   pub id: AgentId,
   pub name: String,
   #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub external: Option<bool>,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
   pub accounts: Option<bool>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub credentials_locked: Option<bool>,
@@ -1482,8 +1480,6 @@ pub enum SummaryState {
 #[serde(rename_all = "camelCase")]
 pub struct SessionSummary {
   pub id: String,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub external: Option<bool>,
   #[serde(default)]
   pub title: String,
   #[serde(default)]
@@ -1727,28 +1723,6 @@ pub struct QueuedPrompt {
   pub sending: Option<bool>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExternalState {
-  Unbound,
-  Receiving,
-  Idle,
-  Stale,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExternalSessionInfo {
-  pub source: String,
-  pub source_key: String,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub connection_prompt: Option<String>,
-  pub state: ExternalState,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub active_turn_id: Option<String>,
-  pub last_event_at: String,
-}
-
 /// Public account metadata of the SSH engine owning a session; credentials stay on that host.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1766,8 +1740,6 @@ pub struct SessionView {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   // Keep the large agent metadata out of every local session view's inline layout.
   pub remote_auth: Option<Box<RemoteAuth>>,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub external: Option<ExternalSessionInfo>,
   pub agent: AgentId,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub account_id: Option<String>,

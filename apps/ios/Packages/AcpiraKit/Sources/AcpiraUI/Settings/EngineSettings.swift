@@ -36,7 +36,7 @@ struct EngineSettingsSections: View {
 
   var body: some View {
     if let settings = model.settings {
-      let agents = model.settingsAgents
+      let agents = model.agents
       // Under the agents' header, its own card above the list: a row without a mark among the marked ones would break
       // their column
       Section {
@@ -150,7 +150,7 @@ struct AgentSettingsPage: View {
   var body: some View {
     let agent = model.agent(id)
     let settings = model.settings ?? .defaults
-    let enabled = model.settingsAgents.filter { $0.disabled != true }
+    let enabled = model.agents.filter { $0.disabled != true }
     Form {
       Section {
         Toggle(isOn: Binding(get: { agent.disabled != true }, set: { model.setAgentEnabled(id, $0) })) {

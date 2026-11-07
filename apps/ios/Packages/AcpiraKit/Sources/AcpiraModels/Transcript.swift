@@ -132,7 +132,6 @@ public struct LocalAccountInfo: Codable, Hashable, Sendable {
 public struct AgentInfo: Codable, Hashable, Sendable, Identifiable {
   public var id: AgentId
   public var name: String
-  public var external: Bool?
   public var accounts: Bool?
   public var credentialsLocked: Bool?
   public var localAccount: LocalAccountInfo?
@@ -826,7 +825,6 @@ public struct SessionSummary: Codable, Hashable, Sendable, Identifiable {
     public var name: String
   }
   public var id: String
-  public var external: Bool?
   public var title: String
   public var agent: AgentId
   public var accountId: String?
@@ -875,21 +873,6 @@ public struct AuthMethodInfo: Codable, Hashable, Sendable, Identifiable {
   public var name: String
   public var description: String?
   public var terminal: Terminal?
-}
-
-/// A conversation driven from outside (the ChatGPT bridge) rather than by an agent process
-public struct ExternalSessionInfo: Codable, Hashable, Sendable {
-  public enum State: String, TolerantEnum, CaseIterable {
-    case unbound, receiving, idle, stale, unknown
-    public static var unknownCase: Self { .unknown }
-  }
-  /// `chatgpt`
-  public var source: String
-  public var sourceKey: String
-  public var connectionPrompt: String?
-  public var state: State
-  public var activeTurnId: String?
-  public var lastEventAt: String
 }
 
 /// A fork whose copied turns are still in its transcript: the source session, the last copied turn's index, and the
@@ -1069,7 +1052,6 @@ public struct RemoteAuth: Codable, Hashable, Sendable {
 public struct SessionView: Codable, Hashable, Sendable, Identifiable {
   public var id: String
   public var remoteAuth: RemoteAuth?
-  public var external: ExternalSessionInfo?
   public var agent: AgentId
   public var accountId: String?
   public var title: String
@@ -1105,7 +1087,6 @@ public struct SessionView: Codable, Hashable, Sendable, Identifiable {
     let c = try decoder.container(keyedBy: CodingKeys.self)
     id = try c.decode(String.self, forKey: .id)
     remoteAuth = try c.decodeIfPresent(RemoteAuth.self, forKey: .remoteAuth)
-    external = try c.decodeIfPresent(ExternalSessionInfo.self, forKey: .external)
     agent = try c.decode(String.self, forKey: .agent)
     accountId = try c.decodeIfPresent(String.self, forKey: .accountId)
     title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""

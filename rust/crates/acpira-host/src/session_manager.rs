@@ -28,7 +28,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use anyhow::Result;
 use serde_json::Value;
 
 use acpira_shared::agent_order::AgentPrefs;
@@ -47,9 +46,7 @@ use crate::acp::session::errors::error_text;
 use crate::acp::session::{AcpSession, CompactionPolicy, StartOutcome};
 use crate::acp::transport::rpc::BoxFuture;
 use crate::bus::{Bus, BusPeer};
-use crate::external::chatgpt_store::ChatGptBridgeStore;
 use crate::i18n::{t, tp};
-use crate::store::record::SessionRecord;
 use crate::store::session_lease::SessionLeases;
 use crate::store::session_search::SessionSearch;
 use crate::store::transcript_store::{LogFn, RecordLoadError, SessionPrefs, TranscriptStore, UnreadOp};
@@ -131,82 +128,8 @@ pub type AttentionFn = Arc<dyn Fn(Attention) + Send + Sync>;
 /// How long a finished turn must stay settled before it is announced: a queued follow-up starts well within it
 const ATTENTION_SETTLE: Duration = Duration::from_millis(1500);
 
-/// A session's content at one moment (`SessionManager::snapshot`): its record, or a ChatGPT mirror's view
-pub enum SessionSnapshot {
-  Record(SessionRecord),
-  Mirror(SessionView),
-}
-
-impl SessionSnapshot {
-  pub fn title(&self) -> &str {
-    match self {
-      Self::Record(r) => &r.title,
-      Self::Mirror(v) => &v.title,
-    }
-  }
-  pub fn agent(&self) -> &AgentId {
-    match self {
-      Self::Record(r) => &r.agent,
-      Self::Mirror(v) => &v.agent,
-    }
-  }
-  pub fn cwd(&self) -> &str {
-    match self {
-      Self::Record(r) => &r.cwd,
-      Self::Mirror(v) => &v.cwd,
-    }
-  }
-  pub fn turns(&self) -> &[Turn] {
-    match self {
-      Self::Record(r) => &r.turns,
-      Self::Mirror(v) => &v.turns,
-    }
-  }
-  /// The JSON export: the record as stored, or the mirror's view
-  pub fn json(&self) -> Result<String> {
-    Ok(match self {
-      Self::Record(r) => serde_json::to_string_pretty(r)?,
-      Self::Mirror(v) => serde_json::to_string_pretty(v)?,
-    })
-  }
-  /// A record for readers that take one (session_digest); a mirror keeps its view fields
-  pub fn into_record(self) -> SessionRecord {
-    match self {
-      Self::Record(r) => r,
-      Self::Mirror(v) => SessionRecord {
-        id: v.id,
-        agent: v.agent,
-        account_id: v.account_id,
-        acp_session_id: None,
-        cwd: v.cwd,
-        title: v.title,
-        created_at: v.created_at,
-        updated_at: v.updated_at,
-        turns: v.turns,
-        controls: v.controls,
-        usage: v.usage,
-        commands: v.commands,
-        pinned: None,
-        archived: None,
-        category: None,
-        renamed: false,
-        history_pending: false,
-        forked_from: None,
-        import_pending: false,
-        imported_from: None,
-        subagents: None,
-        goal: v.goal,
-        copy_of: None,
-        client_ids: Vec::new(),
-        plugin_menus: Default::default(),
-      },
-    }
-  }
-}
-
 pub struct ManagerDeps {
   pub store: Arc<TranscriptStore>,
-  pub chatgpt: Option<Arc<ChatGptBridgeStore>>,
   pub log: LogFn,
   pub cwd: Arc<dyn Fn() -> String + Send + Sync>,
   /// The shell has no single workspace and lists sessions by project folder (`ShellEnv.projects`): see `folder_for`
@@ -563,27 +486,6 @@ impl SessionManager {
         }
       }));
     }
-    if let Some(c) = &mgr.deps.chatgpt {
-      let me = mgr.me.clone();
-      c.subscribe(Arc::new(move |ids| {
-        let Some(m) = me.upgrade() else { return };
-        m.emit_sessions();
-        for id in ids {
-          match m.deps.chatgpt.as_ref().and_then(|c| c.view(&id)) {
-            Some(view) => {
-              let raw = RawJson::new(&view);
-              for v in m.viewers_on(&id, None) {
-                v.emit(HostMsg::Session { session: raw.clone(), running: view.running, parts: None });
-              }
-            }
-            None => {
-              let m2 = m.clone();
-              tokio::spawn(async move { m2.rehome(&id).await });
-            }
-          }
-        }
-      }));
-    }
     // A plugin's `prompt` hook sends a prompt to another agent: a new session for it, here. The plugins' commands
     // changed: every open session's menu shows them
     if let Some(rt) = &mgr.deps.plugin_runtime {
@@ -669,11 +571,6 @@ impl SessionManager {
   }
 
   pub async fn init(self: &Arc<Self>) {
-    if let Some(c) = &self.deps.chatgpt
-      && let Err(e) = c.init(true).await
-    {
-      self.log(&format!("ChatGPT mirror init: {e}"));
-    }
     // Whatever a crashed host left in the trash had its undo window closed with it
     self.deps.store.sweep_trash(TRASH_TTL).await;
     let index = self.deps.store.load_index().await.unwrap_or_default();

@@ -1,4 +1,3 @@
-import type { ChatGptIntegrationStatus } from '@acpira/shared/chatgptIntegration';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { AccountInfo, AgentId, AgentInfo, ConfigControl } from '@acpira/shared/transcript';
@@ -42,13 +41,10 @@ import { Page, PageHeader } from './controls';
 
 // Every action the settings page sends to the host; the LAB implements these with a fake host, the real page with postMessage
 export interface SettingsHandlers {
-  refreshChatgpt?: () => void;
-  connectChatgpt?: () => void;
-  openChatgpt?: (id: string) => void;
   setSetting: <K extends SettingKey>(key: K, value: SettingsView[K]) => void;
   // The one appearance axis the page exposes (motion); the rest stay LAB design decisions
   setAppearance: <K extends AxisKey>(axis: K, value: Appearance[K]) => void;
-  openPath: (path: string) => void;
+  openPath: (path: string, reveal?: boolean) => void;
   refreshInventory: (agent: AgentId) => void;
   // The refresh button on an agent page: re-reads the inventory and the option lists, the latter from a throwaway probe process
   refreshAgent: (agent: AgentId) => void;
@@ -103,7 +99,6 @@ export interface SettingsShellProps {
   // Every agent's latest in-app install (host-owned)
   installs?: AgentInstallProgress[];
   inventories: Partial<Record<AgentId, AgentInventory>>;
-  chatgptStatus?: ChatGptIntegrationStatus;
   // The Shared tab's last view; undefined until the page asked for it
   shared?: SharedState;
   // The built-in agent's model sources; undefined until its page asked for them
@@ -138,10 +133,10 @@ export function SettingsShell(p: SettingsShellProps) {
   const agent = page.kind === 'agent' ? p.agents.find(a => a.id === page.id) : undefined;
   // Ids the rail does not show (a custom agent missing from agents.json for now) keep their saved order / off state
   const unlisted = (id: AgentId) => !p.agents.some(a => a.id === id);
-  // An agent's dialog sits on the Models page and ChatGPT's on Connections: the page behind keeps its title and action
+  // An agent's dialog sits on the Models page: the page behind keeps its title and action
   const title = page.kind === 'agent' || page.kind === 'models' ? t('settings.nav.models') : page.kind === 'plugins' ? t('settings.nav.plugins') : page.kind === 'appearance' ? t('settings.appearance.title')
     : page.kind === 'shared' ? t('settings.shared.title') : page.kind === 'subagents' ? t('settings.nav.subagents')
-    : page.kind === 'storage' ? t('storage.title') : page.kind === 'connections' || page.kind === 'chatgpt' ? t('settings.nav.connections')
+    : page.kind === 'storage' ? t('storage.title') : page.kind === 'connections' ? t('settings.nav.connections')
     : page.kind === 'about' ? t('settings.nav.about') : t('settings.general.title');
   const busy = !!agent && !!p.refreshing?.has(agent.id);
   // Header refresh clicks on the Storage tab: the only thing that replays its bar's fill
@@ -155,13 +150,12 @@ export function SettingsShell(p: SettingsShellProps) {
   const desktop = !!p.desktop;
   // The desktop updater's state for About (HostMsg updateState, kept in packages/ui/desktop.ts)
   const update = useUpdateState();
-  // SSH hosts are offered once the engine answered for them (remote/api.ts); ChatGPT lives on the same page
+  // SSH hosts are offered once the engine answered for them (remote/api.ts)
   const remote = useConnections() !== undefined;
   // Remote access (paired devices) once the engine answered for it (remote/access.ts); it heads the same page
   const access = useRemoteAccess();
-  const chatgpt = p.agents.some(a => a.id === 'chatgpt' && a.external);
   // The agents on, for the dialog's switch: the last one cannot be switched off
-  const enabledAgents = p.agents.filter(a => !a.external && !a.disabled);
+  const enabledAgents = p.agents.filter(a => !a.disabled);
   // Desktop: the rail takes the chat column's width (the same stored value, clamped as Shell clamps it), so the sheet does not
   // jump sideways when the page switches
   const [columnWidth] = usePreferredPaneWidth('sessionPaneW');
@@ -171,7 +165,7 @@ export function SettingsShell(p: SettingsShellProps) {
   const trail = usePageTrail(page, p.onPage, p.onBack);
   // The rail's search over the pages this shell shows (About lives in the desktop rail only)
   const searchPages: SearchPage[] = ['general', 'appearance', 'models', 'subagents', 'plugins', 'shared',
-    ...(remote || chatgpt || access ? ['connections' as const] : []), 'storage', ...(desktop ? ['about' as const] : [])];
+    ...(remote || access ? ['connections' as const] : []), 'storage', ...(desktop ? ['about' as const] : [])];
   const index = useMemo(() => searchIndex(p.agents, searchPages, desktop), [p.agents, searchPages.join(), desktop, p.locale]);
   const search = useRef<HTMLInputElement>(null);
   // Desktop: ⌘[ / ⌘] (Ctrl elsewhere) step through the trail as the title row's buttons do; back past the first page is the chat.
@@ -214,11 +208,11 @@ export function SettingsShell(p: SettingsShellProps) {
             data-column={desktop || undefined}
           >
             <div className="flex min-h-0 flex-1">
-              <PageRail page={p.page} onPage={trail.go} onBack={p.onBack} desktop={desktop} width={desktop ? railWidth : undefined} opening={opening} connections={remote || chatgpt || !!access} index={index} searchRef={search}
+              <PageRail page={p.page} onPage={trail.go} onBack={p.onBack} desktop={desktop} width={desktop ? railWidth : undefined} opening={opening} connections={remote || !!access} index={index} searchRef={search}
                 marks={{ models: agentUpdates(p.agents), about: appUpdatePending(update) }} />
               {/* No header on this sheet: its top strip is the title bar all the same (the desktop shell reads data-drag-top) */}
               <div data-sheet={desktop || undefined} data-drag-top={desktop || undefined} className="relative flex min-w-0 flex-1 flex-col">
-              <main key={page.kind === 'agent' ? 'models' : page.kind === 'chatgpt' ? 'connections' : page.kind} className="min-h-0 min-w-0 flex-1 overflow-y-auto scroll-stable">
+              <main key={page.kind === 'agent' ? 'models' : page.kind} className="min-h-0 min-w-0 flex-1 overflow-y-auto scroll-stable">
                 <Page>
                   <PageHeader title={title} action={action} />
                   {page.kind === 'general' && <General settings={p.settings} agents={p.agents} on={p.on} onTour={desktop ? undefined : p.onTour} />}
@@ -237,9 +231,8 @@ export function SettingsShell(p: SettingsShellProps) {
                     openExternal: p.on.openExternal,
                   }} onTour={p.onTour} />}
                   {page.kind === 'storage' && <StoragePage state={p.storage} agents={p.agents} env={p.env} on={p.on} refresh={storageRefresh} />}
-                  {(page.kind === 'connections' || page.kind === 'chatgpt') && access && <RemoteAccessSection view={access} />}
-                  {(page.kind === 'connections' || page.kind === 'chatgpt') && <ConnectionsPage env={p.env} projects={p.projects} on={p.on} remote={remote}
-                    chatgpt={chatgpt ? { status: p.chatgptStatus, open: page.kind === 'chatgpt', onOpen: () => trail.go({ kind: 'chatgpt' }), onClose: () => trail.replace({ kind: 'connections' }) } : undefined} />}
+                  {page.kind === 'connections' && access && <RemoteAccessSection view={access} />}
+                  {page.kind === 'connections' && <ConnectionsPage env={p.env} projects={p.projects} on={p.on} remote={remote} />}
                   {page.kind === 'subagents' && <SubagentsPage page={page} onPage={trail.go} onReplace={trail.replace} settings={p.settings} agents={p.agents} controls={p.controls} shapes={p.modelShapes} on={p.on} />}
                   {agent && (
                     <AgentDialog

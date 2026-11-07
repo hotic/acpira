@@ -181,7 +181,6 @@ pub fn on_event(h: &AppHandle, id: &str) {
     Command::NewWindow => {
       a.open(Some(Initial::MostRecent), ChatWindowOpen::default());
     }
-    Command::ConnectChatgpt => a.connect_chatgpt(),
     Command::CheckUpdates => {
       a.check_updates(false);
       a.command("about");

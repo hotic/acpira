@@ -166,11 +166,6 @@ fn show_without_focus(window: &tauri::WebviewWindow, back: bool) {
   });
 }
 
-/// Main thread only
-pub fn clipboard_write(text: &str) {
-  gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD).set_text(text);
-}
-
 /// A GIF on the clipboard: its URI as file managers offer a copied file (GNOME's own list too), plus its bytes as
 /// image/gif. GTK hands each out on request while the app owns the clipboard. Main thread only
 pub fn clipboard_write_gif(path: &std::path::Path, data: &[u8]) -> Result<(), String> {

@@ -35,9 +35,6 @@ impl SessionManager {
       return Ok(());
     }
     let hold = self.hold_record(id).await?;
-    if let Some(c) = self.deps.chatgpt.as_ref().filter(|c| c.owns(id)) {
-      return c.rename(id, title).await;
-    }
     let t = clip(title.trim(), RENAME_MAX);
     if t.is_empty() {
       return Ok(());
@@ -64,9 +61,6 @@ impl SessionManager {
       return Ok(());
     }
     let hold = self.hold_record(id).await?;
-    if let Some(c) = self.deps.chatgpt.as_ref().filter(|c| c.owns(id)) {
-      return c.pin(id, pinned).await;
-    }
     if let Some(live) = self.live(id) {
       live.set_pinned(pinned);
       return self.save_now(live, hold).await;
@@ -80,10 +74,9 @@ impl SessionManager {
     .await
   }
 
-  /// Archive `id` (left out of the list, kept on disk) or bring it back; pin and category stay for its return. ChatGPT
-  /// mirrors have no archive here
+  /// Archive `id` (left out of the list, kept on disk) or bring it back; pin and category stay for its return
   pub async fn archive_session(&self, id: &str, archived: bool) -> Result<()> {
-    if !is_session_id(id) || self.deps.chatgpt.as_ref().is_some_and(|c| c.owns(id)) {
+    if !is_session_id(id) {
       return Ok(());
     }
     let hold = self.hold_record(id).await?;
@@ -94,10 +87,9 @@ impl SessionManager {
     self.patch_record(id, |r| r.archived = archived.then_some(true)).await
   }
 
-  /// File `id` under `category` (or take it out). A category of another project, or one gone meanwhile, is ignored.
-  /// ChatGPT mirrors have no categories
+  /// File `id` under `category` (or take it out). A category of another project, or one gone meanwhile, is ignored
   pub async fn set_session_category(&self, id: &str, category: Option<String>) -> Result<()> {
-    if !is_session_id(id) || self.deps.chatgpt.as_ref().is_some_and(|c| c.owns(id)) {
+    if !is_session_id(id) {
       return Ok(());
     }
     let hold = self.hold_record(id).await?;
@@ -166,12 +158,6 @@ impl SessionManager {
     let undo = self.state.lock().trash.contains_key(id);
     if repeated || undo {
       return Ok(undo);
-    }
-    if let Some(c) = self.deps.chatgpt.clone().filter(|c| c.owns(id)) {
-      let _hold = self.hold_record(id).await?;
-      c.delete(id).await?;
-      self.plugin_event("session.deleted", || serde_json::json!({ "session": id }));
-      return Ok(true);
     }
     let snapshot = self.sessions().into_iter().find(|s| s.id == id)
       .or_else(|| self.live(id).or_else(|| self.mirror_of(id)).map(|s| s.summary()));
@@ -338,9 +324,6 @@ impl SessionManager {
       return Ok(());
     }
     let hold = self.hold_record(id).await?;
-    if self.deps.chatgpt.as_ref().is_some_and(|c| c.owns(id)) {
-      return Err(anyhow!(t("chatgpt.projectBound")));
-    }
     let cwd = match to {
       // The agent is spawned in the folder from the next open on, so a project whose folder is gone cannot take it
       Some(dir) => self.check_folder(&dir, "host.moveFolderMissing").await?,
@@ -391,7 +374,7 @@ impl SessionManager {
       .await
   }
 
-  /// The working directory of a session a viewer shows: live, a mirror of another engine's session, a ChatGPT mirror,
+  /// The working directory of a session a viewer shows: live, a mirror of another engine's session,
   /// else whatever the index recorded (a session not opened here yet)
   pub fn session_cwd(&self, id: &str) -> Option<String> {
     if let Some(cwd) = self.host_cwd(id) {
@@ -402,9 +385,6 @@ impl SessionManager {
       if let Some(s) = st.live.get(id).or_else(|| st.mirrors.get(id)) {
         return Some(s.cwd.clone());
       }
-    }
-    if let Some(v) = self.deps.chatgpt.as_ref().and_then(|c| c.view(id)) {
-      return Some(v.cwd);
     }
     let indexed = self.state.lock().index.iter().find(|s| s.id == id).map(|s| s.cwd.clone()).filter(|c| !c.is_empty());
     indexed.or_else(|| self.sessions().into_iter().find(|s| s.id == id).map(|s| s.cwd).filter(|c| !c.is_empty()))
@@ -487,9 +467,6 @@ impl SessionManager {
       return Ok(());
     }
     let _op = self.session_op(id).await;
-    if let Some(c) = self.deps.chatgpt.as_ref().filter(|c| c.owns(id)) {
-      return c.restore(id).await;
-    }
     if !self.state.lock().trash.contains_key(id) {
       return Ok(());
     }

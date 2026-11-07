@@ -80,7 +80,7 @@ const FOLD_KEY: Record<ToolCallBlock['status'], MsgKey> = {
 };
 
 export function toolVerb(block: ToolCallBlock, status = block.status): string {
-  if (block.observation === 'unknown') return t('chatgpt.unknownTool');
+  if (block.observation === 'unknown') return t('observation.unknownTool');
   // Stored verbs use the host locale at creation time; render from semantic kind, or from verbKey when the verb came from the tool's identity
   // An MCP call names its server ("Call blockbench"), its target is the tool's title
   const verb = block.mcpServer && !block.verbKey ? t('verb.mcp', { server: block.mcpServer })
@@ -135,7 +135,7 @@ export interface FoldActivity {
 }
 
 export function foldActivity(turn: AgentTurn): FoldActivity {
-  if (turn.observation === 'unknown') return { kind: 'other', label: t('chatgpt.unknownTurn') };
+  if (turn.observation === 'unknown') return { kind: 'other', label: t('observation.unknownTurn') };
   if (turn.blocks.some(b => b.type === 'permission')) return { kind: 'other', label: t('host.awaitingApproval') };
   if (turn.blocks.some(b => b.type === 'question' && !b.outcome)) return { kind: 'other', label: t('host.awaitingAnswers') };
   // Concurrent calls can finish out of order; a newer completed call must not hide an active one.

@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 use tauri::{AppHandle, WebviewUrl};
 
 use crate::browser::BrowserPanelWindow;
-use crate::chat_window::{ChatWindow, Watch, page_url};
+use crate::chat_window::{ChatWindow, page_url};
 
 mod actions;
 mod context;
@@ -170,7 +170,6 @@ fn migrate_electron_profile(paths: &Paths, log: &dyn Fn(&str)) {
 pub struct ChatWindowOpen {
   pub place: Option<Placement>,
   pub maximized: bool,
-  pub watch: Option<Watch>,
 }
 
 pub struct App {

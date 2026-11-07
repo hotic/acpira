@@ -9,7 +9,7 @@ public enum Fixtures {
   /// carries one deliberately unknown block type
   public static let sessionNames = ["showcase", "running", "streaming", "question", "queued", "stopped", "empty", "diagrams", "media",
                                     "plan", "notices", "records", "context", "failure", "login", "readonly", "closed",
-                                    "error", "connecting", "chatgpt", "goal", "subagents", "builtin", "fusion"]
+                                    "error", "connecting", "goal", "subagents", "builtin", "fusion"]
 
   /// Raw JSON of `synthetic/<name>.json`
   public static func data(_ name: String) -> Data? {

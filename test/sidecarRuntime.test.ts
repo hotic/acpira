@@ -61,7 +61,6 @@ describe('sidecar runtime', () => {
   }
 
   const toasts = (s: Shell) => s.requests.map(r => r.request).filter((r): r is Extract<PlatformRequest, { method: 'toast' }> => r.method === 'toast');
-  const bridge = (home: string, args: string[]) => execFileSync(SIDECAR, ['bridge', ...args, '--home', home], { encoding: 'utf8' });
 
   // The agent's open_browser call (`acpira mcp` → relay hub → openBrowser platform RPC): offered only to a shell that can, refused
   // before the shell is asked when nothing serves the page, and answered with the address the shell's side loaded
@@ -107,47 +106,6 @@ describe('sidecar runtime', () => {
     expect(text).toContain('show_image');
     expect(text).not.toContain('open_browser');
   }, 30_000);
-
-  it('shows ChatGPT as an external conversation and forwards live events without spawning another agent', async () => {
-    const { s, home, cwd, init, posted, logs } = await setup();
-    const nativeId = init.state.active!.id;
-    await s.hostMsg('V', 'session', m => m.session.id === nativeId && m.session.status === 'ready');
-    const opened = JSON.parse(bridge(home, ['open', '--key', 'runtime-test-source', '--cwd', cwd, '--title', 'ChatGPT runtime test'])) as { sessionId: string };
-    const mirror = opened.sessionId;
-    // A window focus reconciles the index, which is where the mirror written by the CLI shows up
-    s.send({ type: 'platformEvent', event: { type: 'windowFocus' } });
-    await s.hostMsg('V', 'sessions', m => m.sessions.some(x => x.id === mirror));
-    const spawnsBefore = logs().filter(l => l.includes('spawn ')).length;
-    s.view('V', { type: 'selectSession', id: mirror });
-    const shown = await s.hostMsg('V', 'session', m => m.session.id === mirror);
-    expect(shown.session).toMatchObject({ id: mirror, agent: 'chatgpt', status: 'readonly' });
-    expect(init.state.agents.some(a => a.id === 'chatgpt') || posted().some(m => m.type === 'agents' && m.agents.some(a => a.id === 'chatgpt' && a.external))).toBe(true);
-    bridge(home, ['prompt', '--session', mirror, '--turn', 'test-turn', '--text', 'Visible test prompt']);
-    bridge(home, ['message', '--session', mirror, '--turn', 'test-turn', '--message', 'm', '--text', 'Visible test progress']);
-    s.send({ type: 'platformEvent', event: { type: 'windowFocus' } });
-    await s.hostMsg('V', 'session', m => m.session.id === mirror && m.session.turns.length === 2);
-    s.view('V', { type: 'send', sessionId: mirror, text: 'must not be sent to an ACP' });
-    await until(() => toasts(s).some(t => t.level === 'error' && t.text.includes('ChatGPT')));
-    s.view('V', { type: 'renameSession', id: mirror, title: 'Renamed mirror' });
-    s.view('V', { type: 'pinSession', id: mirror, pinned: true });
-    await s.hostMsg('V', 'sessions', m => m.sessions.some(x => x.id === mirror && x.title === 'Renamed mirror' && x.pinned && x.external));
-    s.view('V', { type: 'selectSession', id: nativeId });
-    const back = await s.hostMsg('V', 'session', m => m.session.id === nativeId && posted().filter(x => x.type === 'session').length > 0);
-    expect(back.session.agent).toBe('fake');
-    expect(logs().filter(l => l.includes('spawn ')).length).toBe(spawnsBefore);
-  });
-
-  it('reports project mirror receipts separately from unverifiable cloud pairing', async () => {
-    const { s, home, cwd } = await setup();
-    const { sessionId } = JSON.parse(bridge(home, ['open', '--key', 'status-fixture', '--cwd', cwd, '--title', 'Status'])) as { sessionId: string };
-    bridge(home, ['prompt', '--session', sessionId, '--turn', 't', '--text', 'Status fixture']);
-    s.view('V', { type: 'chatgptStatus' });
-    const result = await s.hostMsg('V', 'chatgptStatus');
-    expect(result).toMatchObject({ type: 'chatgptStatus', status: {
-      desktopCommander: { pairing: 'unknown' },
-      project: { mirrors: 1, observedMirrors: 1, latestSessionId: sessionId },
-    } });
-  });
 
   it('answers ready with the full init state built from the hello snapshot', async () => {
     const { init, cwd, home, sessionsDir } = await setup();

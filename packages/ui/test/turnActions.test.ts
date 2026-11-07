@@ -174,7 +174,6 @@ describe('forkTargets', () => {
     { id: 'codex', name: 'Codex', available: false },
     { id: 'devin', name: 'Devin' },
     { id: 'kimi', name: 'Kimi', disabled: true },
-    { id: 'chatgpt', name: 'ChatGPT', external: true },
   ];
 
   it('puts the session agent first and keeps the plus menu order after it', () => {
@@ -185,7 +184,7 @@ describe('forkTargets', () => {
     expect(forkTargets(agents, 'claude').find(a => a.id === 'codex')?.available).toBe(false);
   });
 
-  it('still offers a switched-off session agent first, but no other switched-off or external agent', () => {
+  it('still offers a switched-off session agent first, but no other switched-off agent', () => {
     expect(forkTargets(agents, 'kimi').map(a => a.id)).toEqual(['kimi', 'claude', 'codex', 'devin']);
   });
 });

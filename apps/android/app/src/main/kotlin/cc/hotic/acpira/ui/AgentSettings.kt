@@ -76,7 +76,6 @@ import cc.hotic.acpira.store.setHidden
 import cc.hotic.acpira.store.setPlanAutoApprove
 import cc.hotic.acpira.store.setSteerQueued
 import cc.hotic.acpira.store.moveAgent
-import cc.hotic.acpira.store.settingsAgents
 import kotlin.math.roundToInt
 
 // apps/ios Settings/EngineSettings.swift: the engine's settings the phone offers (General.tsx, PluginsPage.tsx,
@@ -91,7 +90,7 @@ val LocalHiddenModels = compositionLocalOf<Map<String, Map<String, List<String>>
 /** The agents' header: the default agent's card, then every agent, a tap opening its page and a long press dragging it */
 @Composable
 internal fun AgentsSections(model: AppModel) {
-  val agents = model.settingsAgents
+  val agents = model.agents
   // Switched-off agents are not offered; a default that was switched off reads as the agent new sessions fall back to
   FormSection(t("mobile.settings.agents")) {
     PickRow(
@@ -143,12 +142,12 @@ private fun ColumnScope.AgentList(model: AppModel, agents: List<AgentInfo>) {
               },
               onDrag = { change, delta ->
                 change.consume()
-                val list = model.settingsAgents
+                val list = model.agents
                 val at = list.indexOfFirst { it.id == a.id }
                 offset = (offset + delta.y).coerceIn(-at * rowPx, (list.size - 1 - at) * rowPx)
               },
               onDragEnd = {
-                val list = model.settingsAgents
+                val list = model.agents
                 val at = list.indexOfFirst { it.id == a.id }
                 if (at >= 0) model.moveAgent(at, (at + (offset / rowPx).roundToInt()).coerceIn(list.indices))
                 dragging = null
@@ -255,7 +254,7 @@ internal fun FormPage(model: AppModel, title: String, actions: @Composable () ->
 fun AgentSettingsScreen(model: AppModel, id: String) {
   val agent = model.agent(id)
   val settings = model.settings
-  val enabled = model.settingsAgents.filter { it.disabled != true }
+  val enabled = model.agents.filter { it.disabled != true }
   LaunchedEffect(id) { model.loadControls(id) }
   FormPage(model, agent.name) {
     FormCard {

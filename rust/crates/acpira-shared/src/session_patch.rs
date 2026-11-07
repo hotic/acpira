@@ -179,7 +179,7 @@ pub enum Delivery {
 /// (`forget` then makes the next one whole)
 #[derive(Default)]
 pub struct SentViews {
-  /// The view on screen; None after anything without parts replaced it (a ChatGPT mirror, a page that does not patch)
+  /// The view on screen; None after anything without parts replaced it (a page that does not patch)
   current: Option<ViewParts>,
   /// Least recently sent first, with each encoding's size
   kept: Vec<(ViewParts, usize)>,

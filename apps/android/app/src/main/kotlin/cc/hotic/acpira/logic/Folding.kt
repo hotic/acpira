@@ -200,7 +200,7 @@ fun namesLabel(names: List<String>): String {
 
 /** toolVerb: 已读取 / 正在运行 / 运行失败 …, rendered from the semantic kind */
 fun toolVerb(block: ToolCallBlock): String {
-  if (block.observation == "unknown") return t("chatgpt.unknownTool")
+  if (block.observation == "unknown") return t("observation.unknownTool")
   val key = when (block.status) {
     ToolStatus.pending -> "fold.queued"
     ToolStatus.in_progress -> "fold.pending"
@@ -282,7 +282,7 @@ fun commandDuration(ms: Double, whole: Boolean = false): String {
 
 /** turnOutcome: a line for a short stop, or for a normal end with nothing to show */
 fun turnOutcome(turn: AgentTurn): String? {
-  if (turn.observation == "unknown") return t("chatgpt.unknownTurn")
+  if (turn.observation == "unknown") return t("observation.unknownTurn")
   return when (turn.stop) {
     TurnStop.error -> t("turns.stop.error")
     TurnStop.refusal -> t("turns.stop.refusal")

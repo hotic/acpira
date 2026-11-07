@@ -375,10 +375,6 @@ impl BridgeCore {
         }
         manager.sessions_in_order(&self.viewer);
       }
-      W::ChatgptStatus => {
-        let status = manager.chatgpt_status(manager.folder_for(Some(&self.viewer), None)).await;
-        self.post_now(HostMsg::ChatgptStatus { status });
-      }
       W::OpenInEditor { session_id } => platform.open_in_editor(session_id.or_else(|| self.viewer.active_id())),
       W::OpenFile { session_id, path, line, reveal } => {
         // Tool references are relative to the session they came from; a view showing another session ignores them

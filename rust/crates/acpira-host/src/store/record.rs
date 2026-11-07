@@ -117,7 +117,6 @@ impl SessionRecord {
   pub fn summary(&self) -> SessionSummary {
     SessionSummary {
       id: self.id.clone(),
-      external: None,
       title: self.title.clone(),
       agent: self.agent.clone(),
       account_id: self.account_id.clone(),

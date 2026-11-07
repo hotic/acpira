@@ -156,7 +156,7 @@ impl App {
       }
     };
     self.prepare(&window);
-    let w = Arc::new(ChatWindow::new(window.clone(), initial, how.watch));
+    let w = Arc::new(ChatWindow::new(window.clone(), initial));
     self.windows.lock().push(w.clone());
     {
       let mut last = self.last_focused.lock();
@@ -343,7 +343,7 @@ impl App {
         }
       })
       .collect();
-    ChatWindowOpen { place: e.bounds.map(|b| placeable(b, &areas)), maximized: e.maximized, watch: None }
+    ChatWindowOpen { place: e.bounds.map(|b| placeable(b, &areas)), maximized: e.maximized }
   }
 
   pub(super) fn place_of_last(&self) -> ChatWindowOpen {

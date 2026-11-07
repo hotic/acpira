@@ -2,10 +2,10 @@ import AcpiraDesign
 import AcpiraModels
 import SwiftUI
 
-// chat/Notice.tsx (Notice, ConnectingNotice) and chat/ExternalSessionNotice.tsx: what the session itself is doing when
-// it is not ready. Signing in and unlocking the credential store happen on the computer the engine runs on (a
-// terminal there, the keychain's password), so the phone says so and offers only what the engine can do by itself:
-// a sign-in method that needs no terminal, a restart, taking the session over, or a fresh session.
+// chat/Notice.tsx (Notice, ConnectingNotice): what the session itself is doing when it is not ready. Signing in and
+// unlocking the credential store happen on the computer the engine runs on (a terminal there, the keychain's
+// password), so the phone says so and offers only what the engine can do by itself: a sign-in method that needs no
+// terminal, a restart, taking the session over, or a fresh session.
 
 extension EnvironmentValues {
   /// The agent the open chat runs (name for the notices, the account layer and keychain state)
@@ -158,56 +158,6 @@ struct SessionNotice: View {
   }
 }
 
-/// A conversation driven from ChatGPT through the bridge: a receiver, not a disabled agent connection, so no sign-in,
-/// model, send or stop. The connection instructions are copied to paste into ChatGPT
-struct ExternalSessionNotice: View {
-  let info: ExternalSessionInfo
-  @State private var copied = false
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: Metrics.gap) {
-      HStack(alignment: .firstTextBaseline, spacing: Metrics.gap) {
-        Text(web: "ChatGPT \(t("chatgpt.mirror"))")
-          .textStyle(TypeScale.text2, weight: .semibold)
-          .foregroundStyle(Palette.fgStrong)
-          .frame(maxWidth: .infinity, alignment: .leading)
-        Text(web: t("chatgpt.\(info.state.rawValue)"))
-          .textStyle(TypeScale.text3)
-          .foregroundStyle(Palette.popFg2)
-          .multilineTextAlignment(.trailing)
-      }
-      Text(web: t("chatgpt.boundary"))
-        .textStyle(TypeScale.text3)
-        .foregroundStyle(Palette.popFg2)
-        .fixedSize(horizontal: false, vertical: true)
-      if let prompt = info.connectionPrompt {
-        HStack(spacing: Metrics.gap) {
-          Text(web: info.state == .unbound ? t("chatgpt.noEvent") : "\(t("chatgpt.lastEvent")) \(eventTime(info.lastEventAt))")
-            .textStyle(TypeScale.text3)
-            .foregroundStyle(Palette.popFg3)
-            .frame(maxWidth: .infinity, alignment: .leading)
-          Button(web: t(copied ? "chatgpt.copyDone" : "chatgpt.copy")) {
-            UIPasteboardBridge.copy(prompt)
-            copied = true
-          }
-          .modifier(CardButton(primary: false))
-        }
-      }
-    }
-    .padding(Metrics.pad)
-    .modifier(CardSurface())
-    .accessibilityAddTraits(.updatesFrequently)
-    .onChange(of: info.sourceKey) { copied = false }
-  }
-
-  /// The event's local time of day (toLocaleTimeString)
-  private func eventTime(_ iso: String) -> String {
-    let parsed = (try? Date(iso, strategy: .iso8601.year().month().day().time(includingFractionalSeconds: true)))
-      ?? (try? Date(iso, strategy: .iso8601))
-    return parsed?.formatted(date: .omitted, time: .standard) ?? iso
-  }
-}
-
 /// What floats over the thread's lower edge rather than taking a dock slot, so neither shrinks the thread or pushes
 /// its history up: the docked to-do card
 struct ThreadDock: View {
@@ -215,7 +165,7 @@ struct ThreadDock: View {
   // Values rather than the session: a streamed chunk leaves them equal and the card is not rebuilt with it
   var body: some View {
     PlanDock(entries: dockPlan(session.turns, running: session.running), running: session.running,
-             goal: session.external == nil ? session.goal : nil, goalActions: session.goalActions)
+             goal: session.goal, goalActions: session.goalActions)
   }
 }
 

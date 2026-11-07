@@ -72,4 +72,4 @@ One pnpm workspace: each package declares its own dependencies (versions in the 
 | `apps/android/` | `docs/dev/android.md` |
 | Windows compatibility boundaries and regression checks | `docs/dev/windows-compatibility.md` |
 
-Public docs: `docs/context-api.md` (the `acpira.context` contract other extensions call), `docs/chatgpt-bridge.md`, `docs/releasing.md`, `docs/roadmap.md`, `docs/harness-evaluations.md`. The rest of `docs/` is local only and may be absent (`HANDOFF.md`, `TASKS.md`, plans and scratch notes).
+Public docs: `docs/context-api.md` (the `acpira.context` contract other extensions call), `docs/releasing.md`, `docs/roadmap.md`, `docs/harness-evaluations.md`. The rest of `docs/` is local only and may be absent (`HANDOFF.md`, `TASKS.md`, plans and scratch notes).

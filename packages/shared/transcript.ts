@@ -11,8 +11,6 @@ export type AgentId = string;
 export interface AgentInfo {
   id: AgentId;
   name: string;
-  // An externally driven conversation, not an ACP executable.
-  external?: boolean;
   // Goes through the account layer (multiple logins can be stored and switched); agents without it rely on their own CLI's login
   accounts?: boolean;
   // The store holding the CLI's logins (the macOS keychain) is locked for this host's session, e.g. a remote workspace over SSH:
@@ -659,7 +657,6 @@ export type Turn = UserTurn | AgentTurn;
 
 export interface SessionSummary {
   id: string;
-  external?: boolean;
   title: string;
   agent: AgentId;
   accountId?: string;
@@ -794,16 +791,6 @@ export interface QueuedPrompt {
   sending?: boolean;
 }
 
-// Everything a session looks like to the webview: the host pushes the whole thing on every change (the transcript is small, not worth diffing)
-export interface ExternalSessionInfo {
-  source: 'chatgpt';
-  sourceKey: string;
-  connectionPrompt?: string;
-  state: 'unbound' | 'receiving' | 'idle' | 'stale';
-  activeTurnId?: string;
-  lastEventAt: string;
-}
-
 export interface ForkOrigin {
   sessionId: string;
   turnIndex: number;
@@ -817,10 +804,10 @@ export interface RemoteAuth {
   action?: AccountAction;
 }
 
+// Everything a session looks like to the webview: the host pushes the whole thing on every change (the transcript is small, not worth diffing)
 export interface SessionView {
   id: string;
   remoteAuth?: RemoteAuth;
-  external?: ExternalSessionInfo;
   agent: AgentId;
   // Bound account (only agents on the account layer have one); a session uses a single account from start to finish
   accountId?: string;

@@ -38,7 +38,7 @@ func lastTypedPrompt(_ turns: [Turn]) -> Int? {
 
 /// Shell.tsx setGoal: a prompt can become the goal only where the agent takes `set` and no goal is set yet
 func canSetGoal(_ session: SessionView) -> Bool {
-  session.external == nil && session.goal == nil && session.goalActions?.contains(.set) == true
+  session.goal == nil && session.goalActions?.contains(.set) == true
 }
 
 func goalStatusLabel(_ status: GoalStatus) -> String {

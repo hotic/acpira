@@ -71,7 +71,7 @@ func threadItems(_ session: SessionView, preOpen: Set<PreOpen> = []) -> [ThreadI
     }
     if out.count > start { out[out.count - 1].bottom = next }
   }
-  if let queued = session.queued, !queued.isEmpty, session.external == nil {
+  if let queued = session.queued, !queued.isEmpty {
     out.append(ThreadItem(id: "q", kind: .queue(queued, steer: session.canSteer == true && session.running),
                           exchange: groups.last?.id ?? 0))
   }

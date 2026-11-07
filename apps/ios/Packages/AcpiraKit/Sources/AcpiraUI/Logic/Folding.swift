@@ -324,7 +324,7 @@ public func namesLabel(_ names: [String]) -> String {
 
 /// toolVerb: 已读取 / 正在运行 / 运行失败 …, rendered from the semantic kind
 public func toolVerb(_ block: ToolCallBlock) -> String {
-  if block.observation == .unknown { return t("chatgpt.unknownTool") }
+  if block.observation == .unknown { return t("observation.unknownTool") }
   let key = switch block.status {
   case .pending: "fold.queued"
   case .in_progress: "fold.pending"
@@ -378,7 +378,7 @@ public func commandDuration(ms: Double, whole: Bool = false) -> String {
 /// turnOutcome: a line for a short stop, or for a normal end with nothing to show (a slash command's receipt names
 /// the setting changes it reported); a turn whose observation was lost says so first
 public func turnOutcome(_ turn: AgentTurn) -> String? {
-  if turn.observation == .unknown { return t("chatgpt.unknownTurn") }
+  if turn.observation == .unknown { return t("observation.unknownTurn") }
   switch turn.stop {
   case .error: return t("turns.stop.error")
   case .refusal: return t("turns.stop.refusal")

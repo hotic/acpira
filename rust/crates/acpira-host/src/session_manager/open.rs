@@ -1,13 +1,10 @@
-//! Opening sessions: a new one for a viewer (or the empty one it already has), the ChatGPT mirror, selecting a
-//! listed session and loading its record into a live agent
+//! Opening sessions: a new one for a viewer (or the empty one it already has), selecting a listed session and
+//! loading its record into a live agent
 
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 
-use acpira_shared::chatgpt_integration::{ChatGptIntegrationStatus, ProjectMirrors};
-use acpira_shared::protocol::{HostMsg, RawJson};
-use acpira_shared::settings::in_workspace;
 use acpira_shared::transcript::*;
 use acpira_shared::turn_settings::capture_turn_settings;
 
@@ -15,12 +12,9 @@ use super::leases::LeaseHold;
 use super::{SessionManager, Viewer};
 use crate::acp::session::AcpSession;
 use crate::acp::transport::rpc::BoxFuture;
-use crate::external::chatgpt_events::CHATGPT_ID;
-use crate::external::desktop_commander::desktop_commander_status;
 use crate::i18n::{t, tp};
 use crate::store::session_lease::Claim;
 use crate::store::transcript_store::is_session_id;
-use crate::util::{now_iso, random_uuid};
 
 fn keep_empty(cur: &AcpSession, agent: &str, account: Option<&str>, cwd: &str) -> bool {
   if cur.agent != agent || cur.account_id().as_deref() != account || cur.cwd != cwd {
@@ -134,13 +128,6 @@ impl SessionManager {
         return Err(anyhow!(t("host.noProject")));
       };
       let id = agent.unwrap_or_else(|| me.default_agent());
-      if id == CHATGPT_ID {
-        let view = me.connect_chatgpt(None, "ChatGPT", &cwd).await?;
-        me.drop_empty_current(&v).await;
-        me.set_active(&v, Some(view.id.clone()));
-        v.emit(HostMsg::Session { session: RawJson::new(&view), running: view.running, parts: None });
-        return Ok(());
-      }
       let acc = if me.deps.accounts.as_ref().is_some_and(|a| a.supports(&id)) { account.or_else(|| me.default_account(&id)) } else { None };
       // "New session in this category": filed on the session itself before anything awaits, so a switch made while it
       // spawns can never move the filing onto whichever session the viewer shows by then
@@ -183,39 +170,6 @@ impl SessionManager {
     })
   }
 
-  /// `folder`: the project the view means (`folder_for`); a project shell without one counts no mirrors
-  pub async fn chatgpt_status(&self, folder: Option<String>) -> ChatGptIntegrationStatus {
-    if let Some(c) = &self.deps.chatgpt {
-      c.refresh().await;
-    }
-    let raw_cwd = folder.unwrap_or_default();
-    let cwd = tokio::fs::canonicalize(&raw_cwd).await.map(|p| p.to_string_lossy().into_owned()).unwrap_or(raw_cwd);
-    let views: Vec<SessionView> = self
-      .deps
-      .chatgpt
-      .as_ref()
-      .map(|c| c.summaries().into_iter().filter(|s| in_workspace(&s.cwd, &cwd)).filter_map(|s| c.view(&s.id)).collect())
-      .unwrap_or_default();
-    let observed: Vec<&SessionView> = views.iter().filter(|v| !v.turns.is_empty()).collect();
-    let latest = observed.first().copied().or(views.first());
-    ChatGptIntegrationStatus {
-      checked_at: now_iso(),
-      bridge_available: self.deps.chatgpt.as_ref().is_some_and(|c| c.available()),
-      desktop_commander: desktop_commander_status().await,
-      project: ProjectMirrors {
-        mirrors: views.len() as u64,
-        observed_mirrors: observed.len() as u64,
-        latest_session_id: latest.map(|v| v.id.clone()),
-        last_event_at: observed.first().and_then(|v| v.external.as_ref()).map(|e| e.last_event_at.clone()),
-      },
-    }
-  }
-
-  pub async fn connect_chatgpt(&self, source_key: Option<String>, title: &str, cwd: &str) -> Result<SessionView> {
-    let c = self.deps.chatgpt.as_ref().ok_or_else(|| anyhow!("ChatGPT bridge is unavailable in this host"))?;
-    c.open(&source_key.unwrap_or_else(random_uuid), cwd, title).await
-  }
-
   /// A viewer's session that hasn't said a word yet is replaced directly, never left as an empty entry
   pub(super) async fn drop_empty_current(&self, v: &Viewer) {
     let Some(cur) = self.current(v) else { return };
@@ -235,18 +189,6 @@ impl SessionManager {
     let id = id.to_owned();
     Box::pin(async move {
       if !is_session_id(&id) {
-        return;
-      }
-      if let Some(c) = me.deps.chatgpt.clone().filter(|c| c.owns(&id)) {
-        c.refresh().await;
-        let Some(view) = c.view(&id) else {
-          let reason = t("host.recordMirrorMissingReason");
-          (me.deps.toast)("error", &me.record_failure_message(&id, "SESSION_MIRROR_MISSING", &reason));
-          return;
-        };
-        me.set_active(&v, Some(id.clone()));
-        v.emit(HostMsg::Session { session: RawJson::new(&view), running: view.running, parts: None });
-        me.emit_sessions();
         return;
       }
       // A host's own session (`hosts.rs`): its view comes from the host's engine, a page's pick or a restored one alike

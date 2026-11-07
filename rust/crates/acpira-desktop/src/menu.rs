@@ -18,7 +18,6 @@ pub enum Command {
   ToolPanel,
   /// View › Layout, by its DESKTOP_LAYOUTS value
   Layout(&'static str),
-  ConnectChatgpt,
   ShowLog,
   /// Help › Safe Mode: unload every plugin, or load them again
   SafeMode,
@@ -63,7 +62,7 @@ impl Command {
   }
 }
 
-const ALL: [Command; 22] = [
+const ALL: [Command; 21] = [
   Command::NewSession,
   Command::NewWindow,
   Command::OpenFolder,
@@ -71,7 +70,6 @@ const ALL: [Command; 22] = [
   Command::Settings,
   Command::Browser,
   Command::ToolPanel,
-  Command::ConnectChatgpt,
   Command::ShowLog,
   Command::SafeMode,
   Command::Help,
@@ -167,8 +165,6 @@ pub fn build_menu(t: Translate, app: &str, layout: &str, mac: bool, update: Opti
     item(Command::NewSession, "session.new", Some("CmdOrCtrl+N")),
     item(Command::NewWindow, "desktop.menu.newWindow", Some("CmdOrCtrl+Shift+N")),
     item(Command::OpenFolder, "desktop.empty.open", Some("CmdOrCtrl+O")),
-    sep(),
-    item(Command::ConnectChatgpt, "desktop.menu.connectChatgpt", None),
     sep(),
     stock(Stock::CloseWindow, "desktop.menu.closeWindow"),
   ];

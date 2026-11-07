@@ -12,7 +12,6 @@
 //!   acpira gateway pair | devices | status | revoke ID | stop | try LINK | push-check TEAM [--home DIR]
 //!                                                the paired devices' gateway, over its control channel
 //!   acpira --ws [PORT] [--token T] [--home DIR]  the browser harness, one sidecar per WebSocket, data in ~/.acpira/harness
-//!   acpira bridge <action> ...                   the ChatGPT event-mirror CLI
 //!   acpira agents [--json]                       the built-in agents, where each CLI was found and how it is initialized
 //!   acpira model-catalog [--out FILE]            fetch models.dev, print (or write) the trimmed model catalogue
 //!   acpira mcp                                   the MCP server handed to agents (show_image), over stdio
@@ -39,7 +38,6 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
 use crate::agents_cli;
-use crate::external::chatgpt_cli;
 use crate::model_catalog;
 use crate::sidecar::server::{Engine, ServerOpts};
 use crate::sidecar::ws::{HarnessOpts, start_harness};
@@ -72,7 +70,6 @@ pub fn is_engine_command(first: Option<&str>) -> bool {
         | "mcp-host"
         | "remote"
         | "install-agent"
-        | "bridge"
         | "agents"
         | "model-catalog"
         | "handoff-pack"
@@ -124,9 +121,6 @@ pub fn run(args: Vec<String>) -> i32 {
     }
   };
   let code = rt.block_on(async move {
-    if args.first().map(String::as_str) == Some("bridge") {
-      return chatgpt_cli::run(&args[1..]).await;
-    }
     if args.first().map(String::as_str) == Some("agents") {
       return agents_cli::run(&args[1..]).await;
     }
@@ -766,7 +760,7 @@ mod dispatch_tests {
     assert!(!is_engine_command(None));
     assert!(!is_engine_command(Some("acpira://session/abc")));
     assert!(!is_engine_command(Some("--home")));
-    for c in ["stdio", "serve", "agent", "mcp-host", "bridge", "--version"] {
+    for c in ["stdio", "serve", "agent", "mcp-host", "--version"] {
       assert!(is_engine_command(Some(c)), "{c}");
     }
   }

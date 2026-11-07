@@ -6,7 +6,7 @@ import SwiftUI
 // QuotaBars.tsx).
 
 /// True when the agent has something for the account menu: stored logins (Devin) or the CLI's own account (Grok, Kimi)
-func hasAccountMenu(_ agent: AgentInfo) -> Bool { agent.external != true && (agent.accounts == true || agent.localAccount != nil) }
+func hasAccountMenu(_ agent: AgentInfo) -> Bool { agent.accounts == true || agent.localAccount != nil }
 
 // MARK: - Quota
 

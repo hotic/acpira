@@ -24,7 +24,6 @@ impl AcpSession {
     let c = self.core.lock();
     SessionSummary {
       id: self.id.clone(),
-      external: None,
       title: Self::title_of(&c),
       agent: self.agent.clone(),
       account_id: c.account_id.clone(),

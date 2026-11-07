@@ -115,16 +115,13 @@ impl SessionManager {
       }
     }
     merged.retain(|s| !trash.contains(&s.id));
-    if let Some(c) = &self.deps.chatgpt {
-      merged.extend(c.summaries());
-    }
     let hosted = self.host_summaries(&merged);
     merged.extend(hosted);
     sort_index(&mut merged);
     merged
   }
 
-  /// The serialized view of a session (live, or a ChatGPT mirror)
+  /// The serialized view of a session
   pub fn view_of(&self, id: Option<&str>) -> Option<(RawJson, bool)> {
     let id = id?;
     if let Some(HostMsg::Session { session, running, .. }) = self.host_msg(id) {
@@ -135,11 +132,7 @@ impl SessionManager {
     {
       return Some((session, running));
     }
-    if let Some(s) = self.live(id).or_else(|| self.mirror_of(id)) {
-      return Some(s.view_json());
-    }
-    let view = self.deps.chatgpt.as_ref()?.view(id)?;
-    Some((RawJson::new(&view), view.running))
+    self.live(id).or_else(|| self.mirror_of(id)).map(|s| s.view_json())
   }
 
   /// The session push for one viewer, as `emit_session` would send it
@@ -153,15 +146,11 @@ impl SessionManager {
     {
       return Some(m);
     }
-    if let Some(s) = self.live(id).or_else(|| self.mirror_of(id)) {
-      return Some(s.view_msg());
-    }
-    let (session, running) = self.view_of(Some(id))?;
-    Some(HostMsg::Session { session, running, parts: None })
+    self.live(id).or_else(|| self.mirror_of(id)).map(|s| s.view_msg())
   }
 
   pub(super) fn has_view(&self, id: &str) -> bool {
-    self.host_msg(id).is_some() || self.live(id).is_some() || self.mirror_of(id).is_some() || self.deps.chatgpt.as_ref().is_some_and(|c| c.view(id).is_some())
+    self.host_msg(id).is_some() || self.live(id).is_some() || self.mirror_of(id).is_some()
   }
 
   /// The newest session in the scope of a viewer's window (`shell`; None: the engine-wide one), `except` aside

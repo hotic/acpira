@@ -11,7 +11,6 @@ use acpira_shared::transcript::*;
 use super::{SessionManager, Viewer, is_forwarded, lower_first, session_id_of};
 use crate::acp::session::AcpSession;
 use crate::acp::session::errors::error_text;
-use crate::external::chatgpt_events::CHATGPT_ID;
 use crate::i18n::{t, tp};
 use crate::store::transcript_store::{UnreadOp, is_session_id};
 
@@ -81,8 +80,7 @@ impl SessionManager {
   }
 
   /// The whole files behind a diff a page was sent without them: the open session (or the read-only copy shown for it)
-  /// holds them. A ChatGPT mirror's view carries its sources whole and never asks
-  /// A source the Storage tab slimmed away (`omitted` in the record) has no texts left: none is sent, so the page copies
+  /// holds them. A source the Storage tab slimmed away (`omitted` in the record) has no texts left: none is sent, so the page copies
   /// what it shows
   /// A source whose texts the record keeps as blobs (`store::diff_texts`) is read back from them
   pub async fn diff_source(&self, session_id: &str, tool_call_id: &str, nth: usize, subagent: Option<&str>) -> Option<DiffSource> {
@@ -138,14 +136,7 @@ impl SessionManager {
   }
 
   pub fn plan_document(&self, session_id: &str, plan_id: &str) -> Option<PlanDocumentBlock> {
-    if let Some(s) = self.live(session_id) {
-      return s.plan_document(plan_id);
-    }
-    let view = self.deps.chatgpt.as_ref()?.view(session_id)?;
-    view.turns.iter().filter_map(Turn::as_agent).flat_map(|t| t.blocks.iter()).find_map(|b| match b {
-      AgentBlock::PlanDocument(p) if p.id == plan_id => Some(p.clone()),
-      _ => None,
-    })
+    self.live(session_id)?.plan_document(plan_id)
   }
 
   pub async fn handle_for(self: &Arc<Self>, v: &Arc<Viewer>, m: WebviewMsg) {
@@ -182,12 +173,6 @@ impl SessionManager {
   pub(super) async fn dispatch(self: &Arc<Self>, v: &Arc<Viewer>, m: WebviewMsg) -> Result<()> {
     use WebviewMsg as W;
     let target_id = session_id_of(&m).or_else(|| v.active_id());
-    if let Some(tid) = &target_id
-      && self.deps.chatgpt.as_ref().is_some_and(|c| c.owns(tid))
-      && is_execution(&m)
-    {
-      return Err(anyhow!(t("chatgpt.externalOnly")));
-    }
     // Shown here read-only while another engine owns it and pushes its view: the action runs there
     if let Some(tid) = &target_id
       && is_forwarded(&m)
@@ -208,7 +193,6 @@ impl SessionManager {
     }
     let valid = |id: &str| is_session_id(id);
     match m {
-      W::ConnectChatgpt => self.new_session_for(v, Some(CHATGPT_ID.into()), None, None, None).await?,
       W::Send { session_id, text, attachments, steer, client_id } => {
         if let Some(s) = self.target(v, session_id.as_deref())
           && s.claim_client_id(client_id.as_deref())

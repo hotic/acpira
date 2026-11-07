@@ -107,7 +107,6 @@ data class LocalAccountInfo(val label: String, val detail: String? = null, val s
 data class AgentInfo(
   val id: AgentId,
   val name: String,
-  val external: Boolean? = null,
   val accounts: Boolean? = null,
   val credentialsLocked: Boolean? = null,
   val localAccount: LocalAccountInfo? = null,
@@ -584,7 +583,6 @@ sealed interface Turn {
 @Serializable
 data class SessionSummary(
   val id: String,
-  val external: Boolean? = null,
   val title: String = "",
   val agent: AgentId = "",
   val accountId: String? = null,

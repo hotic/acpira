@@ -71,7 +71,7 @@ struct ChatScreen: View {
     let held = heldPrompt(session, outgoing: sent)
     let bindings = draftMemo("\(memoKey):\(ObjectIdentifier(draft).hashValue)") { DraftBindings(draft) }
     return Thread(session: held)
-      .modifier(StartingTitle(active: held.status == .starting && !held.running && held.external == nil,
+      .modifier(StartingTitle(active: held.status == .starting && !held.running,
                               agent: held.agent, aside: picking))
       .environment(\.liveStage, heldStage(session, outgoing: sent, agent: agent.name))
       // An inset reserves scroll clearance without clipping the transcript at the composer's rectangular top edge.

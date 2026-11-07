@@ -8,7 +8,6 @@ pub mod bridge_core;
 pub mod bus;
 pub mod cli;
 pub mod devices;
-pub mod external;
 pub mod file_rank;
 pub mod handoff;
 pub mod hooks;

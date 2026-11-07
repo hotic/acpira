@@ -19,9 +19,6 @@ use tauri::WebviewWindow;
 use crate::browser::BrowserRelay;
 use crate::page::Transport;
 
-/// Watches a window's session views (Connect ChatGPT copies the mirror's connection prompt once it shows); true when done
-pub type Watch = Box<dyn FnMut(&HostMessage) -> bool + Send>;
-
 pub struct ChatWindow {
   pub view_id: String,
   pub label: String,
@@ -38,7 +35,6 @@ pub struct ChatWindow {
   listed: Mutex<HashSet<String>>,
   /// The listed sessions that waited on the user at the last list push
   waiting: Mutex<HashSet<String>>,
-  watch: Mutex<Option<Watch>>,
   /// The tool panel's browser tabs by tab id; their pages are frames of this window's page, so a reload ends them all
   tabs: Mutex<HashMap<String, Arc<BrowserRelay>>>,
   /// Maximized as the page's caption last heard (App::window_resized)
@@ -51,7 +47,7 @@ pub fn page_url(host: &str) -> tauri::Url {
 }
 
 impl ChatWindow {
-  pub fn new(window: WebviewWindow, initial: Option<Initial>, watch: Option<Watch>) -> ChatWindow {
+  pub fn new(window: WebviewWindow, initial: Option<Initial>) -> ChatWindow {
     ChatWindow {
       view_id: uuid::Uuid::new_v4().to_string(),
       label: window.label().to_owned(),
@@ -65,7 +61,6 @@ impl ChatWindow {
       shown: Mutex::new(None),
       listed: Mutex::new(HashSet::new()),
       waiting: Mutex::new(HashSet::new()),
-      watch: Mutex::new(watch),
       tabs: Mutex::new(HashMap::new()),
     }
   }
@@ -302,14 +297,6 @@ impl ShellView for ChatWindow {
     }
     if m.kind == "noSession" {
       *self.shown.lock() = None;
-    }
-    {
-      let mut watch = self.watch.lock();
-      if let Some(w) = watch.as_mut()
-        && w(&m)
-      {
-        *watch = None;
-      }
     }
     let init = m.kind == "init";
     self.transport.send(m.raw.get().to_owned());

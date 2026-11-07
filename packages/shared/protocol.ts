@@ -1,4 +1,3 @@
-import type { ChatGptIntegrationStatus } from './chatgptIntegration';
 import type { ContextContent, ContextRaw, ContextReport } from './context';
 import type { RemoteAccessOp, RemoteAccessView } from './devices';
 import type { ConnectionOp, ConnectionView, RemoteDirEntry, SshHost } from './remote';
@@ -275,7 +274,6 @@ export type HostMsg =
   // The shell brings a session up in this page (a session link opened from outside, a notification's Open button): the page
   // selects it and leaves the settings page if it is there. Never sent by the sidecar
   | { type: 'showSession'; id: string }
-  | { type: 'chatgptStatus'; status: ChatGptIntegrationStatus }
   | { type: 'editTurnResult'; requestId: string; error?: string }
   // Completion belongs to this delete request; only the engine holding its undo may offer Restore.
   | { type: 'deleteSessionResult'; requestId: string; undo: boolean; error?: string }
@@ -415,8 +413,6 @@ export interface AgentInstallProgress {
 // clientId (send, stop, permission, answer, steerQueued): set by a paired device, which resends with the same id after a
 // lost link; the engine running the session runs each id once
 export type WebviewMsg =
-  | { type: 'chatgptStatus' }
-  | { type: 'connectChatgpt' }
   | { type: 'editTurn'; requestId: string; edit: EditTurnRequest }
   // patches: the page applies sessionPatch messages; without it every push is the whole view
   | { type: 'ready'; patches?: boolean; listPatches?: boolean }

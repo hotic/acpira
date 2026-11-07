@@ -647,13 +647,13 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
       dragging={held?.kind === 'session' && held.id === s.id}
       actions={rowActions}
       drag={filing && draggable(s) && (grouped || here(s)) && editing !== s.id}
-      moveHere={!!onMove && !!workspace && !desktop && !s.external && !here(s)}
-      moveTo={!!onMove && !s.external}
+      moveHere={!!onMove && !!workspace && !desktop && !here(s)}
+      moveTo={!!onMove}
       exportable={!!onExport}
       copyable={!!onCopy}
-      archivable={!!onArchive && !s.external}
+      archivable={!!onArchive}
       markable={!!onUnread}
-      fileable={filing && !desktop && !s.external}
+      fileable={filing && !desktop}
       projects={projectsBesides(s.cwd)}
       categories={categoriesIn(s.cwd)}
     />
@@ -1508,10 +1508,10 @@ interface ItemProps {
   projects?: MoveProject[];
   exportable?: boolean;
   copyable?: boolean;
-  // The menu's "archive" (never a ChatGPT mirror) and "mark as unread / read"
+  // The menu's "archive" and "mark as unread / read"
   archivable?: boolean;
   markable?: boolean;
-  // Native drag: the row may be filed by dragging (not pinned, not a ChatGPT mirror)
+  // Native drag: the row may be filed by dragging (not pinned)
   drag?: boolean;
   dragging?: boolean;
   // The "move to category" submenu over `categories` (the session's own project's) and "new category…"
