@@ -34,7 +34,7 @@ jobs:
       - name: Install cargo-audit
         run: |
           curl -fsSL https://github.com/rustsec/rustsec/releases/download/cargo-audit%2Fv0.22.2/cargo-audit-x86_64-unknown-linux-gnu-v0.22.2.tgz \
-            | tar -xz -C /usr/local/bin --strip-components=1 cargo-audit-x86_64-unknown-linux-gnu/cargo-audit
+            | tar -xz -C /usr/local/bin --strip-components=1 cargo-audit-x86_64-unknown-linux-gnu-v0.22.2/cargo-audit
       - name: Audit Rust lockfiles
         run: |
           cargo-audit audit --file rust/Cargo.lock
