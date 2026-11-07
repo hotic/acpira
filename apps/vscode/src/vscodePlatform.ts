@@ -119,13 +119,18 @@ async function openFile(path: string, line?: number): Promise<void> {
   });
 }
 
-// A notification; with `open` it carries a button that opens that file when clicked (dismissing it opens nothing)
+// A notification; with `open` it carries a button that opens that file when clicked, and with `open.reveal` a second one
+// that shows it in the OS file manager (dismissing it opens nothing)
 function showToast(r: Extract<PlatformRequest, { method: 'toast' }>): void {
   const show = r.level === 'error' ? vscode.window.showErrorMessage : vscode.window.showInformationMessage;
   if (!r.open) { void show(r.text); return; }
-  const { label, path } = r.open;
-  void show(r.text, label).then(choice => {
-    if (choice === label) openFile(path).catch((e: unknown) => void vscode.window.showErrorMessage(String(e)));
+  const { label, path, reveal } = r.open;
+  void show(r.text, ...(reveal ? [label, reveal] : [label])).then(choice => {
+    const done = choice === label ? openFile(path)
+      // `reveal` guard: a dismissed toast resolves undefined, which an absent `reveal` would equal
+      : reveal && choice === reveal ? vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(path))
+      : undefined;
+    done?.then(undefined, (e: unknown) => void vscode.window.showErrorMessage(String(e)));
   });
 }
 

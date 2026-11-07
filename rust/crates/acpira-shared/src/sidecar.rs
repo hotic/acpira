@@ -112,6 +112,9 @@ pub enum BrowserReuse {
 pub struct ToastOpen {
   pub label: String,
   pub path: String,
+  /// The label of a second button that shows the file in the OS file manager (already localized); none, no button
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub reveal: Option<String>,
 }
 
 impl PlatformRequest {

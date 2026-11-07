@@ -745,12 +745,14 @@ impl BridgeCore {
         };
         self.post_now(HostMsg::SessionMarkdown { seq, markdown, error });
       }
-      // The file is not opened on its own: the toast names it and offers an Open button. A repeated export of an unchanged
-      // transcript names the same file (SessionManager::export_session)
+      // The file is not opened on its own: the toast names it and offers Open and a reveal in the OS file manager. A
+      // repeated export of an unchanged transcript names the same file (SessionManager::export_session)
       W::ExportSession { id, format } => match manager.export_session(&id, format).await {
         Ok(path) => {
           let p = path.to_string_lossy().into_owned();
-          let open = ToastOpen { label: t("host.exportOpen"), path: p.clone() };
+          // One wording on every OS: the page shows both as icons, the label is their tooltip
+          let reveal = t("session.project.revealFolder");
+          let open = ToastOpen { label: t("host.exportOpen"), path: p.clone(), reveal: Some(reveal) };
           platform.toast_with("info", &tp("host.exported", &[("path", &p)]), Some(open));
         }
         Err(e) => platform.toast("error", &e.to_string()),
@@ -781,9 +783,10 @@ impl BridgeCore {
       W::OpenAgentConfig => {
         platform.open_resolved_file(&self.settings.agent_config_path().to_string_lossy(), None).await?;
       }
-      W::OpenPath { path } => {
-        // A path from the inventory lists: files open in the editor, directories reveal in the OS file manager
-        let dir = tokio::fs::metadata(&path).await.is_ok_and(|m| m.is_dir());
+      W::OpenPath { path, reveal } => {
+        // A path from the inventory lists: files open in the editor, directories (or anything asked to) reveal in the OS
+        // file manager
+        let dir = reveal || tokio::fs::metadata(&path).await.is_ok_and(|m| m.is_dir());
         let r = if dir { platform.reveal_in_os(&path).await } else { platform.open_resolved_file(&path, None).await };
         if let Err(e) = r {
           platform.log(&format!("settings openPath failed: {e}"));

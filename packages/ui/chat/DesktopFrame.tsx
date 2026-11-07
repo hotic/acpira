@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, ArrowRight, Check, ChevronRight, CircleAlert, Columns3, Copy, FolderOpen, FolderPlus, Info, Languages, LifeBuoy, Menu, MessageSquare, Minus, Palette, PanelLeft, PanelRight, Settings, Settings2, Square, SunMoon, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, ChevronRight, CircleAlert, Columns3, Copy, ExternalLink, FolderOpen, FolderPlus, Info, Languages, LifeBuoy, Menu, MessageSquare, Minus, Palette, PanelLeft, PanelRight, RotateCw, Settings, Settings2, Square, SunMoon, X } from 'lucide-react';
 import { DESKTOP_LAYOUTS, PANEL_SCOPES, THEMES, type DesktopLayout, type PanelScope, type ThemeSetting } from '@acpira/shared/settings';
 import { LANGUAGES, type Language } from '@acpira/shared/i18n/core';
 import { t, useLocale } from '../i18n';
@@ -22,27 +22,35 @@ const HELP_URL = 'https://github.com/hotic/acpira/issues';
 // An error stays up longer than a notice: it is often the only word that a login or an install did not start
 const ERROR_TOAST_TTL = 15_000;
 
-// The shell's toasts (packages/ui/desktop.ts) in the stack of whichever page is up; `open` opens the file a toast names, a
-// toast's own `action` posts its command back to the shell (restart to update)
-export function ShellToastItems({ open }: { open?: (path: string) => void }) {
+// The shell's toasts (packages/ui/desktop.ts) in the stack of whichever page is up; `open` opens the file a toast names (or,
+// with `reveal`, shows it in the OS file manager), a toast's own `action` posts its command back to the shell (restart to update)
+type OpenPath = (path: string, reveal?: boolean) => void;
+export function ShellToastItems({ open }: { open?: OpenPath }) {
   const toasts = useShellToasts();
   return <>{toasts.map(s => {
     const file = s.open;
     const command = s.action;
-    const action = command
-      ? { label: command.label, onClick: () => { postUpdate({ type: command.command }); dropShellToast(s.key); } }
-      : file && open ? { label: file.label, onClick: () => { open(file.path); dropShellToast(s.key); } } : undefined;
+    const act = (label: string, run: () => void, icon?: ReactNode) => ({ label, icon, onClick: () => { run(); dropShellToast(s.key); } });
+    // Every follow-up is an icon, its label the tooltip
+    const actions = command
+      ? [act(command.label, () => postUpdate({ type: command.command }), <RotateCw strokeWidth={1.5} />)]
+      : file && open
+        ? [
+            act(file.label, () => open(file.path), <ExternalLink strokeWidth={1.5} />),
+            ...(file.reveal ? [act(file.reveal, () => open(file.path, true), <FolderOpen strokeWidth={1.5} />)] : []),
+          ]
+        : undefined;
     return (
       <Toast key={s.key} text={s.text} ttl={s.level === 'error' || command ? ERROR_TOAST_TTL : undefined}
         icon={s.level === 'error' ? <CircleAlert className="size-icon shrink-0 text-danger" strokeWidth={1.5} /> : <Info className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} />}
-        action={action}
+        actions={actions}
         onClose={() => dropShellToast(s.key)} />
     );
   })}</>;
 }
 
 // The settings page's stack for them, over the foot of its sheet (the chat keeps them in its own stack above the composer)
-export function ShellToasts({ open }: { open?: (path: string) => void }) {
+export function ShellToasts({ open }: { open?: OpenPath }) {
   const toasts = useShellToasts();
   if (!toasts.length) return null;
   return (
