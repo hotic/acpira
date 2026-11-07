@@ -88,6 +88,7 @@ fn of(s: &Since) -> Option<Known> {
   let own = first.saturating_sub(s.before_first);
   Some(Known {
     parts: vec![(ContextCategory::Agent, own)],
+    items: vec![],
     chat: last.saturating_sub(own),
     summary: s.summary.clone(),
     cached: s.last_cached,

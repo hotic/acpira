@@ -45,6 +45,7 @@ function holds(page: SearchPage, desktop: boolean): MsgKey[] {
       'settings.compactAt', 'settings.group.run', 'settings.accountSwitch', 'settings.agentCpuCap', 'settings.proxy',
       'settings.notifications.title', 'settings.notifySound', 'settings.notifySystem'];
     case 'appearance': return ['settings.group.ui', desktop ? 'settings.desktopLayout' : 'settings.sessionListPosition', 'settings.theme', 'settings.motion',
+      'settings.autoExpand', 'settings.reportLink', 'settings.diffMarkers', 'settings.panels', 'settings.plugins.files', 'settings.plugins.terminal', 'settings.plugins.browser',
       ...(desktop ? ['settings.panelScope' as const] : []), 'settings.text.title', 'settings.uiFontSize', 'settings.codeFontSize', 'settings.fontSmoothing'];
     case 'subagents': return ['subagents.page.list', 'subagents.groups.list'];
     case 'shared': return ['settings.shared.tab.skills', 'settings.shared.tab.mcp', 'settings.shared.tab.prompts'];

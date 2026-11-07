@@ -62,8 +62,10 @@ pub async fn authenticated(def: &AgentDef, binary: &str, cwd: &str, account_env:
   Ok(serde_json::from_slice::<Value>(&output).ok().and_then(|v| status_of(&v)))
 }
 
+/// A probe's process group, killed when dropped unless the probe was reaped (cleared): a timed-out wrapper's native
+/// child goes with it
 #[cfg(unix)]
-struct ProbeGroup(Option<u32>);
+pub(crate) struct ProbeGroup(pub(crate) Option<u32>);
 
 #[cfg(unix)]
 impl Drop for ProbeGroup {

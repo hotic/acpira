@@ -23,6 +23,8 @@
 //!   had been told up to there (`announced`, `mcp_note`, `sidekick_told`)
 //! - `goal` — the session's goal after a change (`goal.rs`), `null` once cleared; the last one is the goal. Like the
 //!   controls it describes the session, so a rewind keeps it
+//! - `call` — a model tool call's `id` and the `row` (`toolCallId`) the client shows it in, written as the row is
+//!   settled: the context report points at a call's row by it
 //!
 //! A line cut short by a crash is skipped when the file is read back.
 //!
@@ -410,6 +412,8 @@ pub struct Loaded {
   pub logged: usize,
   /// The latest `goal` event's goal
   pub goal: Option<crate::goal::Goal>,
+  /// The `call` events: each model tool call's id and its row's, in order
+  pub rows: Vec<(String, String)>,
 }
 
 /// Every item the log holds, as first written (a prune does not touch them), and every chunk it recorded, the latest
@@ -516,6 +520,11 @@ pub fn load(path: &Path, only_summary: bool) -> std::io::Result<Loaded> {
       }
       Some("prompt") => out.prompt = Some(ev),
       Some("goal") => out.goal = ev.get("goal").filter(|g| !g.is_null()).and_then(|g| serde_json::from_value(g.clone()).ok()),
+      Some("call") => {
+        if let (Some(id), Some(row)) = (ev.get("id").and_then(Value::as_str), ev.get("row").and_then(Value::as_str)) {
+          out.rows.push((id.to_owned(), row.to_owned()));
+        }
+      }
       _ => {}
     }
   }

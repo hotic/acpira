@@ -149,6 +149,11 @@ pub(super) async fn run_tools(
         (announce(), todo)
       }
     };
+    // The row the call settled in, for the context report to point at (`store.rs` `call`)
+    if !acp.is_empty() {
+      session.store.append(json!({ "type": "call", "id": call.id, "row": acp }));
+      session.state.lock().rows.push((call.id.clone(), acp.clone()));
+    }
     // The plugins may change the arguments, refuse the call or answer it themselves
     let mut preset = None;
     let args = match (&name, args) {

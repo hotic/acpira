@@ -5,7 +5,7 @@ import { useDesktop } from '../desktop';
 import { Field, NumberField, Section, Select, Switch } from './controls';
 import type { SettingsHandlers } from './SettingsShell';
 
-// Motion (an accessibility preference) and auto-expand are the appearance axes surfaced as user settings, plain on / off
+// Motion (an accessibility preference), auto-expand and the report's link to the chat are the appearance axes surfaced as user settings, plain on / off
 // switches; the other axes stay LAB design decisions
 // Appearance: how the panels render (scheme, motion, diff markers), the tool panel's modules, then the type sizes. Every edit previews in place, this shell included
 export function AppearancePage({ settings, appearance, on }: { settings: SettingsView; appearance: Appearance; on: SettingsHandlers }) {
@@ -34,6 +34,9 @@ export function AppearancePage({ settings, appearance, on }: { settings: Setting
         </Field>
         <Field label={t('settings.autoExpand')} desc={t('settings.autoExpand.desc')}>
           <Switch checked={appearance.autoExpand !== 'off'} onChange={v => on.setAppearance('autoExpand', v ? 'on' : 'off')} label={t('settings.autoExpand')} />
+        </Field>
+        <Field label={t('settings.reportLink')} desc={t('settings.reportLink.desc')}>
+          <Switch checked={appearance.reportLink !== 'off'} onChange={v => on.setAppearance('reportLink', v ? 'on' : 'off')} label={t('settings.reportLink')} />
         </Field>
         <Field label={t('settings.diffMarkers')}>
           <Select options={DIFF_MARKERS.map(v => ({ value: v, label: t(`settings.diffMarkers.${v}` as const) }))} value={settings.diffMarkers} onChange={v => on.setSetting('diffMarkers', v)} label={t('settings.diffMarkers')} />

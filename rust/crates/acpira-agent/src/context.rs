@@ -153,11 +153,15 @@ impl Snapshot {
     self.input + self.output
   }
 
-  /// The split; nodes only when `detail` (the report tab's tree)
-  pub fn report(&self, size: u64, detail: bool) -> ContextReport {
+  /// The split; nodes only when `detail` (the report tab's tree). `rows`: the session's model call ids beside their
+  /// rows (`SessionState::rows`), so each call names its row in the transcript
+  pub fn report(&self, size: u64, detail: bool, rows: &[(String, String)]) -> ContextReport {
     let mut cats = self.build();
     self.scale(&mut cats);
     self.mark_cached(&mut cats);
+    if detail {
+      link_rows(&mut cats, rows);
+    }
     let categories = cats
       .into_iter()
       .filter(|c| !c.nodes.is_empty())
@@ -391,6 +395,7 @@ impl Snapshot {
         Some(Item::Assistant { tool_calls, .. }) => tool_calls.get(c.call).and_then(|tc| call_title(&tc.arguments)),
         _ => None,
       });
+      leaf.model_call = Some(c.id);
       leaf.name = Some(c.name);
       g.children.push(leaf);
     }
@@ -749,11 +754,14 @@ struct Node {
   src: Option<Src>,
   children: Vec<Node>,
   group: bool,
+  /// A call's id as the model gave it, and the transcript row it was shown in (`link_rows`)
+  model_call: Option<String>,
+  row: Option<String>,
 }
 
 impl Node {
   fn leaf(id: &str, kind: ContextNodeKind, est: u64, pos: Pos, src: Option<Src>) -> Node {
-    Node { id: id.to_owned(), kind, name: None, title: None, index: None, tool_kind: None, pos, inp: est, out: 0, tokens: 0, cached: None, src, children: vec![], group: false }
+    Node { id: id.to_owned(), kind, name: None, title: None, index: None, tool_kind: None, pos, inp: est, out: 0, tokens: 0, cached: None, src, children: vec![], group: false, model_call: None, row: None }
   }
 
   fn group(id: &str, kind: ContextNodeKind, pos: Pos) -> Node {
@@ -793,7 +801,38 @@ impl Node {
       tokens,
       cached: (cached > 0).then_some(cached),
       children,
+      call: self.row,
     }
+  }
+}
+
+/// Each call in the report names its transcript row. A model may give the same id to calls in different rounds, so
+/// the ids are matched in order, and a compaction having dropped the oldest calls, a repeated id's visible calls take
+/// its latest rows; a call whose row is not settled yet (the reply being run) gets none
+fn link_rows(cats: &mut [Cat], rows: &[(String, String)]) {
+  let mut calls: Vec<&mut Node> = vec![];
+  for c in cats.iter_mut() {
+    for n in c.nodes.iter_mut() {
+      n.leaves(&mut calls);
+    }
+  }
+  calls.retain(|n| n.model_call.is_some());
+  let mut by_id: HashMap<&str, Vec<&str>> = HashMap::new();
+  for (id, row) in rows {
+    by_id.entry(id.as_str()).or_default().push(row.as_str());
+  }
+  let mut seen: HashMap<String, usize> = HashMap::new();
+  let mut wanted: HashMap<String, usize> = HashMap::new();
+  for n in &calls {
+    *wanted.entry(n.model_call.clone().unwrap_or_default()).or_default() += 1;
+  }
+  for n in calls {
+    let id = n.model_call.clone().unwrap_or_default();
+    let list = by_id.get(id.as_str()).map(Vec::as_slice).unwrap_or_default();
+    let k = seen.entry(id.clone()).or_default();
+    let skip = list.len().saturating_sub(wanted.get(&id).copied().unwrap_or(0));
+    n.row = list.get(skip + *k).map(|r| (*r).to_owned());
+    *k += 1;
   }
 }
 
@@ -816,7 +855,8 @@ pub async fn report_of(server: &Server, params: &Value) -> Result<Value, RpcErro
     None => crate::turn::opened_context(server, &session).await,
   };
   let Some(snap) = snap else { return Ok(json!({})) };
-  let report = snap.report(size.unwrap_or(0), detail);
+  let rows = session.state.lock().rows.clone();
+  let report = snap.report(size.unwrap_or(0), detail, &rows);
   Ok(json!({ "report": report }))
 }
 
@@ -884,6 +924,39 @@ mod tests {
   }
 
 
+  #[test]
+  fn calls_name_their_rows() {
+    // The model gave "a" to calls in two rounds, and the last reply's call has no row yet (it is being run)
+    let st = SessionState {
+      items: vec![
+        user("go"),
+        assistant("", "", &[("a", "read", "{}")]),
+        result("a", "x"),
+        assistant("", "", &[("a", "read", "{}"), ("b", "read", "{}")]),
+        result("a", "y"),
+        result("b", "z"),
+        assistant("", "", &[("c", "read", "{}")]),
+      ],
+      ..Default::default()
+    };
+    let snap = Snapshot::estimate("sys".into(), vec![], Setting { system: "sys", sections: &[], mcp: &[] }, 1_000, &st);
+    // An older "a" went into a compaction before these: the visible ones take the latest rows
+    let rows = [("a", "call-1"), ("a", "call-4"), ("a", "call-5"), ("b", "call-6")].map(|(i, r)| (i.to_owned(), r.to_owned()));
+    fn calls(n: &ContextNode, out: &mut Vec<Option<String>>) {
+      if n.kind == ContextNodeKind::Call {
+        out.push(n.call.clone());
+      }
+      n.children.iter().flatten().for_each(|c| calls(c, out));
+    }
+    let mut got = vec![];
+    for c in snap.report(1_000, true, &rows).categories {
+      c.nodes.iter().flatten().for_each(|n| calls(n, &mut got));
+    }
+    assert_eq!(got, vec![Some("call-4".into()), Some("call-5".into()), Some("call-6".into()), None]);
+    // Without detail there are no nodes to name
+    assert!(snap.report(1_000, false, &rows).categories.iter().all(|c| c.nodes.is_none()));
+  }
+
   fn wire(format: ApiFormat) -> Wire {
     Wire { format, url: "https://api.example/v1/messages?key=secret".into(), family: crate::llm::family::GENERIC }
   }
@@ -945,7 +1018,7 @@ mod tests {
     let st = SessionState::default();
     let usage = llm::Usage { input: 9_000, output: 700, cache_read: 1_000, ..Default::default() };
     let snap = snapshot(ApiFormat::Anthropic, usage, &st);
-    let r = snap.report(200_000, true);
+    let r = snap.report(200_000, true, &[]);
     assert_eq!(r.used, 9_700);
     assert_eq!(r.categories.iter().map(|c| c.tokens).sum::<u64>(), 9_700);
     assert_eq!(all(&r).iter().map(|n| n.tokens).sum::<u64>(), 9_700);
@@ -968,14 +1041,14 @@ mod tests {
     let mcp = r.categories.iter().find(|c| c.id == ContextCategory::Mcp).unwrap();
     assert_eq!(mcp.nodes.as_ref().unwrap()[0].name.as_deref(), Some("context7"));
     // The card's summary carries no nodes
-    assert!(snap.report(200_000, false).categories.iter().all(|c| c.nodes.is_none()));
+    assert!(snap.report(200_000, false, &[]).categories.iter().all(|c| c.nodes.is_none()));
   }
 
   #[test]
   fn leaves_open_what_was_sent() {
     let st = SessionState::default();
     let snap = snapshot(ApiFormat::Anthropic, llm::Usage { input: 5_000, output: 10, ..Default::default() }, &st);
-    let rev = snap.report(1, false).rev;
+    let rev = snap.report(1, false, &[]).rev;
     let Some(ContextContent::Text { text, .. }) = snap.content(&rev, "doc:0") else { panic!() };
     // A heading inside AGENTS.md stays in its section
     assert!(text.contains("## Rules") && text.contains("be terse"), "{text}");
@@ -1021,7 +1094,7 @@ mod tests {
     let items = vec![user("<summary>earlier work</summary>"), assistant("", "", &[("c9", "bash", "{\"command\":\"ls\"}")]), result("c9", "a b"), user("next")];
     let st = SessionState { items, ..st };
     let snap = Snapshot::estimate("sys".into(), vec![], Setting { system: "other", sections: &[], mcp: &[] }, 3_000, &st);
-    let r = snap.report(10_000, true);
+    let r = snap.report(10_000, true, &[]);
     assert!(r.estimated);
     assert_eq!(r.used, 3_000);
     let chat = r.categories.iter().find(|c| c.id == ContextCategory::Chat).unwrap().nodes.clone().unwrap();
@@ -1041,7 +1114,7 @@ mod tests {
     let items = vec![user("go"), assistant("", "", &[("c1", "read", "{}")]), result("c1", "x"), user("<goal>\nbudget spent\n</goal>")];
     let st = SessionState { items, ..Default::default() };
     let snap = Snapshot::estimate(String::new(), vec![], Setting { system: "", sections: &[], mcp: &[] }, 100, &st);
-    let r = snap.report(1_000, true);
+    let r = snap.report(1_000, true, &[]);
     let chat = r.categories.iter().find(|c| c.id == ContextCategory::Chat).unwrap().nodes.clone().unwrap();
     assert_eq!(chat.len(), 1);
     let kids: Vec<&str> = chat[0].children.as_ref().unwrap().iter().map(|n| n.id.as_str()).collect();

@@ -230,9 +230,24 @@
 
   /* Narrative text (and a steered prompt's card) separates consecutive action groups without loosening tool rows.
      Use one leading margin per boundary, including adjacent prose blocks. */
+  /* A tool's row sits in a box-less `[data-calls]` wrapper (ToolCall / ToolGroup), which takes no margin: its row does */
   .process-content > :is(.acp-prose, .steered-message):not(:first-child),
-  .process-content > :is(.acp-prose, .steered-message) + * {
+  .process-content > :is(.acp-prose, .steered-message) + :not([data-calls]),
+  .process-content > :is(.acp-prose, .steered-message) + [data-calls] > * {
     margin-block-start: calc(var(--process-prose-gap) - var(--process-row-gap));
+  }
+
+  /* The context report pointing at calls (chat/reportLink.ts): their rows lit on a band, the rest of the thread dimmed.
+     The dim is important, so a box's own opacity utility (a fold's head holds opacity-100) cannot keep it lit.
+     `data-ctx-fade` keeps the transition on an element let go, so it fades back too */
+  :is([data-ctx-dim], [data-ctx-lit], [data-ctx-fade]) {
+    transition: opacity var(--dur-open), background-color var(--dur-open), box-shadow var(--dur-open);
+  }
+  [data-ctx-dim] { opacity: .35 !important; }
+  [data-ctx-lit] {
+    border-radius: var(--r-md);
+    background-color: var(--hover);
+    box-shadow: 0 0 0 var(--spacing-hit) var(--hover);
   }
 
   /* Model panel's lead / sidekick switch (chat/SidekickPair.tsx). The side being edited grows and spells out its model;

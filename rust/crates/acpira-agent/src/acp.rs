@@ -59,6 +59,9 @@ pub struct SessionState {
   /// (model call id, result) of a call whose change already landed while the command it carries still runs
   /// (`then_run`): what the model is told if the turn ends before the call's result is in
   pub landed: Vec<(String, String)>,
+  /// Each model tool call's id beside the id of the row the client shows for it, in the order the rows opened (the
+  /// log's `call` events): the context report names a call's row by it (`context.rs`)
+  pub rows: Vec<(String, String)>,
   /// The running turn's cancel signal
   pub turn: Option<Cancel>,
   /// How much runs without a card (the `approval` select), read before each tool runs
@@ -391,6 +394,7 @@ impl Server {
     st.carry = loaded.carry;
     st.chunks = loaded.chunks;
     st.folded = loaded.folded;
+    st.rows = loaded.rows;
     st.reported = loaded.updates.iter().rev().find(|u| u["sessionUpdate"] == "usage_update").and_then(|u| Some((u["used"].as_u64()?, u["size"].as_u64()?)));
     // What the model was told lives in the cut messages: the next turn tells it again where it differs
     let told = |k: &str| mark.get(k).and_then(Value::as_str).map(str::to_owned);
@@ -554,6 +558,7 @@ impl Server {
       carry: loaded.carry.clone(),
       chunks: loaded.chunks.clone(),
       folded: loaded.folded,
+      rows: loaded.rows.clone(),
       // The replay ends on this context; a window edited since is pushed by the next `push_controls`
       reported: loaded.updates.iter().rev().find(|u| u["sessionUpdate"] == "usage_update").and_then(|u| Some((u["used"].as_u64()?, u["size"].as_u64()?))),
       ..Default::default()

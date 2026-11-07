@@ -100,7 +100,7 @@ impl SessionManager {
       return s.context_report(detail).await;
     }
     let record = self.deps.store.load_detailed(session_id).await.ok()?;
-    let known = record_known(&record).await;
+    let known = record_known(self.registry(), &record).await;
     crate::acp::session::context_estimate::report_with(&record.turns, record.usage.as_ref(), detail, known.as_ref())
   }
 
@@ -109,7 +109,10 @@ impl SessionManager {
       return s.context_item(rev, id).await;
     }
     let record = self.deps.store.load_detailed(session_id).await.ok()?;
-    let known = if id.starts_with("summary") { record_known(&record).await } else { None };
+    let known = if id.starts_with("summary") || id.starts_with(crate::acp::session::context_estimate::DOC_PREFIX) { record_known(self.registry(), &record).await } else { None };
+    if let Some(doc) = crate::acp::session::context_estimate::doc_content(known.as_ref(), id).await {
+      return Some(doc);
+    }
     crate::acp::session::context_estimate::content(&record.turns, record.usage.as_ref(), rev, id, known.as_ref())
   }
 
@@ -485,9 +488,12 @@ impl SessionManager {
 }
 
 /// A closed Claude session's split from Claude's own log (other agents have nothing to read without their process)
-async fn record_known(record: &crate::store::record::SessionRecord) -> Option<crate::acp::session::context_estimate::Known> {
+async fn record_known(
+  registry: std::sync::Arc<crate::acp::agents::registry::AgentRegistry>,
+  record: &crate::store::record::SessionRecord,
+) -> Option<crate::acp::session::context_estimate::Known> {
   if record.agent.as_str() != "claude" {
     return None;
   }
-  crate::acp::session::context::claude_known(None, record.cwd.clone(), record.acp_session_id.clone()?).await
+  crate::acp::session::context::claude_known(registry, record.agent.clone(), record.cwd.clone(), record.acp_session_id.clone()?).await
 }

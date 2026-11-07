@@ -40,11 +40,12 @@ export { OpenToolFileContext } from './fileLinks';
 // Bodies (diff / list) are not indented — they align with the row's left edge, like Codex; a command card is indented to the label
 // column and hangs from the row icon on a connected rail
 // Memoized on the block reference: a live turn re-renders on every chunk, and only the tool that changed should pay for it.
-// The rows enter once per tool id: the branch below changes shape as the call progresses, and a remount must not replay it
+// The rows enter once per tool id: the branch below changes shape as the call progresses, and a remount must not replay it.
+// The id rides on a box-less wrapper for the context report to find the row by (chat/reportLink.ts)
 export const ToolCall = memo(function ToolCall({ block, grouped = false, continuing = false }: { block: ToolCallBlock; grouped?: boolean; continuing?: boolean }) {
   // memo keeps a row from rendering again; the locale context still reaches it after a language change
   useLocale();
-  return <EntranceOnce id={`${block.id}:tool`}><ToolCallRows block={block} grouped={grouped} continuing={continuing} /></EntranceOnce>;
+  return <div data-calls={block.id} className="contents"><EntranceOnce id={`${block.id}:tool`}><ToolCallRows block={block} grouped={grouped} continuing={continuing} /></EntranceOnce></div>;
 });
 
 function ToolCallRows({ block, grouped, continuing }: { block: ToolCallBlock; grouped: boolean; continuing: boolean }) {

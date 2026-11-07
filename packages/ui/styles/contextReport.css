@@ -5,7 +5,7 @@
   --report-gap: 24px;
   /* The panel's own surface (skin.css --panel-bg), so the sticky head is no block of another colour on it */
   --report-surface: var(--panel-bg, var(--canvas, var(--bg-0)));
-  --report-map-h: clamp(200px, 64cqw, 420px);
+  --report-map-h: clamp(160px, 36cqw, 280px);
   /* The tree's figure columns: tokens, then the share of the used figure */
   --report-figure-w: 7ch;
   --report-share-w: 4ch;
@@ -25,13 +25,35 @@
   .ctx-tree {
     --row: var(--row-dense);
     --branch-line: 1.5px;
-    --branch-elbow: calc(var(--lead) / 2 + 2px);
+    --branch-elbow: calc(var(--lead) / 2 - 2px);
   }
   .ctx-tree ul {
     --stem-reach: max(0px, calc((var(--row) - var(--icon)) / 2 - var(--branch-line)));
     --stem-fade: min(var(--rail-fade), calc((var(--row) / 2 + var(--stem-reach)) * .4));
     margin-left: calc(var(--ctx-inset) + var(--lead) / 2 - var(--branch-line) / 2);
   }
+  /* Below the top level a row keeps no inset of its own, so each level steps only half a lead and the elbow and a
+     leaf's content three levels down keeps most of the panel's width; the band still reaches a little left of the mark */
+  .ctx-tree ul ul { margin-left: calc(var(--lead) / 2 - var(--branch-line) / 2); }
+  /* A part's box keeps its margins inside its item: collapsed through the item they would leave a gap in the trunk,
+     which runs to the item's bottom while the next elbow starts at the next item's top */
+  .ctx-tree li { display: flow-root; }
+  /* Input / Output: their elbow runs on through the lead slot into a small dot, one stroke like the subagent graph's
+     branches, so no icon sits beside the line. Hollow for what went in, filled for what came back; the dot rides the
+     elbow's own line (its bottom border), half a stroke above the row's middle */
+  .ctx-tree { --part-dot: 6px; }
+  .ctx-tree ul > li:is([data-part="in"], [data-part="out"])::after {
+    width: calc(var(--pl) + var(--lead) / 2 - var(--part-dot) / 2 + var(--branch-line) / 2);
+    mask-image: linear-gradient(to bottom, transparent, #000 var(--elbow-fade));
+  }
+  .ctx-part-dot {
+    width: var(--part-dot); height: var(--part-dot); border-radius: 50%;
+    border: var(--branch-line) solid var(--branch-color);
+    translate: 0 calc(var(--branch-line) / -2);
+  }
+  .ctx-part-dot[data-dir="out"] { background: var(--branch-color); }
+  .ctx-tree ul .ctx-band { padding-left: 0; }
+  .ctx-tree ul .ctx-band::before { left: calc(var(--ctx-inset) * -.75); }
   /* A bare block (no row of its own) takes the elbow into its first line, ending at its edge */
   .ctx-tree ul > li[data-bare]::after { width: calc(var(--pl) - 2px); }
   /* The branch under the zoomed row stands out a step, the map's only "you are here" */
@@ -78,6 +100,15 @@
     background: color-mix(in srgb, var(--tone) 44%, var(--bg-1));
   }
   :is(.ctx-tile, .ctx-mark)[data-cat="agent"] { --tone: var(--context-agent); }
+  /* The conversation's tiles by what they hold: its one warm tone stepped in lightness (picked in the LAB over a hue per
+     kind, which would take the other categories' hues) */
+  :is(.ctx-tile, .ctx-mark)[data-shade="message"] { --tone: oklch(from var(--context-chat) calc(l + .07) calc(c * .5) h); }
+  :is(.ctx-tile, .ctx-mark)[data-shade="thinking"] { --tone: oklch(from var(--context-chat) calc(l - .16) calc(c * .8) h); }
+  :is(.ctx-tile, .ctx-mark)[data-shade="reply"] { --tone: oklch(from var(--context-chat) calc(l + .03) c h); }
+  :is(.ctx-tile, .ctx-mark)[data-shade="run"] { --tone: oklch(from var(--context-chat) calc(l - .08) calc(c * 1.4) h); }
+  :is(.ctx-tile, .ctx-mark)[data-shade="read"] { --tone: oklch(from var(--context-chat) calc(l + .12) calc(c * .7) h); }
+  :is(.ctx-tile, .ctx-mark)[data-shade="edit"] { --tone: oklch(from var(--context-chat) calc(l - .01) calc(c * 1.8) h); }
+  :is(.ctx-tile, .ctx-mark)[data-shade="other"] { --tone: oklch(from var(--context-chat) calc(l - .12) calc(c * .35) h); }
   :is(.ctx-tile, .ctx-mark)[data-cat="system"] { --tone: var(--context-system); }
   :is(.ctx-tile, .ctx-mark)[data-cat="tools"] { --tone: var(--context-tools); }
   :is(.ctx-tile, .ctx-mark)[data-cat="docs"] { --tone: var(--context-docs); }

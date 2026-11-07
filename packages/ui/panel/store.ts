@@ -96,6 +96,8 @@ export interface PanelState {
   explorerHidden: boolean;
   explorerW?: number;
   chatW?: number;
+  // Bumped by each View report: the dock widens the panel to read the report (not saved, a counter so every ask counts)
+  widen?: number;
 }
 
 const KEY = 'toolPanel';
@@ -538,13 +540,14 @@ export const panel = {
     update({ open: true, tabs, tab: tab.id });
     return tab.id;
   },
-  // The context tab: the one this slot has takes the selection, else a new one at the end
+  // The context tab: the one this slot has takes the selection, else a new one at the end; the panel widens to read it
   openContext(): string {
     const s = current();
+    const widen = (s.widen ?? 0) + 1;
     const same = s.tabs.find(t => t.kind === 'context');
-    if (same) { update({ open: true, tab: same.id }); return same.id; }
+    if (same) { update({ open: true, tab: same.id, widen }); return same.id; }
     const tab: PanelTab = { id: nextId('context'), kind: 'context' };
-    update({ open: true, tabs: [...s.tabs, tab], tab: tab.id });
+    update({ open: true, tabs: [...s.tabs, tab], tab: tab.id, widen });
     return tab.id;
   },
   // The plugins' pieces in effect changed: tabs of pieces gone close everywhere, the rest keep their piece's title
