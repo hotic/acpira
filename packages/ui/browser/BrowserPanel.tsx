@@ -320,7 +320,7 @@ export function BrowserPanel() {
         <ShellLayerContext.Provider value={root}>
           {/* A tab of the desktop tool panel lies on the window canvas like the Files tab, and a page shown is a sheet on it
               (desktop.css [data-sheet]); a window or an editor tab of its own keeps the plain surface */}
-          <div ref={root} className={cn('acp-shell relative flex h-full min-h-0 w-full flex-col overflow-hidden', !IN_PANEL && 'bg-bg-0')} data-theme={theme} data-surface-host="editor"
+          <div ref={root} className={cn('acp-shell relative flex h-full min-h-0 w-full flex-col overflow-clip', !IN_PANEL && 'bg-bg-0')} data-theme={theme} data-surface-host="editor"
             data-desktop={IN_PANEL || undefined} data-browser-panel="" {...appearanceDataAttrs(appearance)} {...lookAttrs(shellLook)}>
             <div className={cn('flex shrink-0 items-center gap-1 px-pad py-gap-half', !IN_PANEL && 'border-b border-line')}>
               <IconButton size="sm" className={TOOL} title={t('browser.back')} aria-label={t('browser.back')} disabled={!pickable} onClick={() => toPicker({ type: 'history', go: -1 })}><ArrowLeft strokeWidth={1.5} /></IconButton>

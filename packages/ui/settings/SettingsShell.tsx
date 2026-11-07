@@ -195,7 +195,7 @@ export function SettingsShell(p: SettingsShellProps) {
         <ShellLayerContext.Provider value={root}>
           <div
             ref={root}
-            className="acp-shell acp-settings @container/settings-shell relative flex h-full min-h-0 w-full flex-col overflow-hidden"
+            className="acp-shell acp-settings @container/settings-shell relative flex h-full min-h-0 w-full flex-col overflow-clip"
             data-theme={p.theme}
             data-surface-host={p.host}
             data-agent={agent?.id ?? p.settings.defaultAgent}
