@@ -231,6 +231,8 @@
   --session-host-w: 14ch;
   /* The session list's unread dot, a pixel larger than the other state dots so it holds its own beside the 10 px ring */
   --unread-dot: 7px;
+  /* A status dot (settings rows, account rows, connection state): on the root, as chat surfaces use it too */
+  --dot: 6px;
 
   /* Max lines shown in a terminal block's output area; beyond that it scrolls inside the block */
   --term-lines: 12;
@@ -418,7 +420,6 @@
   --stack-gap: 3px;
   /* Every control of a row's right column (select, number, text box) shares this width */
   --ctl-w: 176px;
-  --dot: 6px;
   /* Dialogs: the regular and the wide (tabbed, review list) width, and a tabbed dialog's fixed height */
   --dialog-w: 520px;
   --dialog-w-wide: 640px;

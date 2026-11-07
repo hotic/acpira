@@ -1,5 +1,5 @@
 import { memo, useState, type ReactElement, type ReactNode } from 'react';
-import { Ellipsis, History, LockKeyhole, PanelLeft, PanelRight, Plus, Settings2, UserRound } from 'lucide-react';
+import { Ellipsis, History, LockKeyhole, LogIn, PanelLeft, PanelRight, Plus, Settings2, UserRound } from 'lucide-react';
 import type { AccountInfo, AgentInfo, SessionCategories, SessionSummary } from '@acpira/shared/transcript';
 import type { NativeSessionsState } from '@acpira/shared/protocol';
 import type { SessionScope } from '@acpira/shared/settings';
@@ -11,7 +11,8 @@ import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
 import { quotaSummary } from '../ui/QuotaBars';
 import { AgentMark } from './AgentMark';
-import { AccountPanel, hasAccountMenu } from './AccountPanel';
+import { planName } from '../ui/AccountLabel';
+import { AccountPanel, hasAccountMenu, localLoginNeeded, localStateText } from './AccountPanel';
 import { SessionList, projectName } from './SessionList';
 import { shortcutLabel, useDesktop } from '../desktop';
 import { cn } from '../ui/cn';
@@ -109,14 +110,16 @@ export const Header = memo(function Header({ title, sessions, categories, agent,
         <Submenu key="account" icon={<UserRound strokeWidth={1.5} />} label={t('common.account')} value={local ? (known ? local.label : undefined) : account?.label}>
           {local
             ? [<DropdownMenu.Item key="local" disabled>
-              <OptionContent icon={<UserRound strokeWidth={1.5} />} description={known ? local.detail : t(`quota.status.${local.status}`)} checked={known}>
-                {known ? local.label : t(local.status === 'login_required' ? 'composer.notLoggedIn' : 'quota.officialAccount')}
+              <OptionContent icon={<UserRound strokeWidth={1.5} />} description={known && local.detail ? planName(local.detail) : undefined} checked={known}>
+                {known ? local.label : localStateText(local)}
               </OptionContent>
-            </DropdownMenu.Item>]
+            </DropdownMenu.Item>,
+            // The CLI's own sign-in, as in the account panel: the disabled row above only names the state
+            ...localLoginNeeded(local) ? [item('login', <LogIn strokeWidth={1.5} />, t('notice.goLogin'), () => on.addAccount(agent.id, 'login'))] : []]
             : [
               ...mine.map(a => (
                 <DropdownMenu.Item key={a.id} onClick={() => on.selectAccount(a.id)}>
-                  <OptionContent icon={<UserRound strokeWidth={1.5} />} description={a.detail} checked={a.id === accountId} checkSlot>{a.label}</OptionContent>
+                  <OptionContent icon={<UserRound strokeWidth={1.5} />} description={a.detail && planName(a.detail)} checked={a.id === accountId} checkSlot>{a.label}</OptionContent>
                 </DropdownMenu.Item>
               )),
               ...mine.length ? [] : [<DropdownMenu.Item key="none" disabled><OptionContent>{t('settings.agent.accounts.none')}</OptionContent></DropdownMenu.Item>],

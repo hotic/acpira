@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Ban, Check, ChevronDown, ChevronUp, CircleAlert, Copy, Download, Eye, EyeOff, LoaderCircle, LockKeyhole, Plus, RefreshCw, Settings2, SquareTerminal, WandSparkles, X } from 'lucide-react';
+import { Ban, Check, ChevronDown, ChevronUp, CircleAlert, Copy, Download, Eye, EyeOff, LoaderCircle, LockKeyhole, LogIn, Plus, RefreshCw, Settings2, SquareTerminal, WandSparkles, X } from 'lucide-react';
 import type { AccountInfo, AgentInfo, ConfigControl } from '@acpira/shared/transcript';
 import type { AgentInstallProgress } from '@acpira/shared/protocol';
 import type { AgentHealthStage, AgentInventory, InventoryFile, InventoryMcp, InventoryScope, InventorySkill } from '@acpira/shared/inventory';
@@ -19,6 +19,7 @@ import { Collapsible } from '../ui/Collapsible';
 import { useScrollFade } from '../ui/useScrollFade';
 import { t } from '../i18n';
 import { AgentMark } from '../chat/AgentMark';
+import { localLoginNeeded } from '../chat/AccountPanel';
 import { remoteOffered } from '../remote/api';
 import { ModelMark } from '../chat/ModelMark';
 import {
@@ -150,7 +151,7 @@ export function AgentSettings({ agent, accounts, install, inventory, controls, p
   switch (tab) {
     case 'overview': return <>
       {agent.install && agent.available === false && <InstallSection agent={agent} install={install} env={env} on={on} />}
-      <AgentFacts agent={agent} inventory={inventory} env={env} />
+      <AgentFacts agent={agent} inventory={inventory} env={env} on={on} />
       {agent.install && agent.available !== false && <InstallSection agent={agent} install={install} env={env} on={on} />}
       {PLAN_AUTO_APPROVE_AGENTS.includes(agent.id) && <PermissionsSection agent={agent} settings={settings} on={on} />}
       <SshHostSection agent={agent} settings={settings} on={on} />
@@ -171,7 +172,9 @@ export function AgentSettings({ agent, accounts, install, inventory, controls, p
 
 function AccountsTab({ agent, accounts, on }: { agent: AgentInfo; accounts: AccountInfo[]; on: SettingsHandlers }) {
   return <>
-    {agent.localAccount && <Section title={t('quota.officialAccount')} desc={t('quota.local.desc')}>
+    {/* The sign-in stands where the accounts section keeps "Add account": the section's one action, at its title's end */}
+    {agent.localAccount && <Section title={t('quota.officialAccount')} desc={t('quota.local.desc')}
+      action={localLoginNeeded(agent.localAccount) && <SectionAction icon={<LogIn />} onClick={() => on.addAccount(agent.id)}>{t('notice.goLogin')}</SectionAction>}>
       <ItemRow title={<AccountLabel label={agent.localAccount.label} detail={agent.localAccount.detail} />}
         extra={<LocalAccountQuota account={agent.localAccount} />} />
     </Section>}
@@ -421,7 +424,7 @@ const HEALTH_LABEL: Record<AgentHealthStage, MsgKey> = {
   auth_required: 'settings.health.authRequired',
 };
 
-function AgentFacts({ agent, inventory: live, env }: { agent: AgentInfo; inventory?: AgentInventory; env: SettingsEnv }) {
+function AgentFacts({ agent, inventory: live, env, on }: { agent: AgentInfo; inventory?: AgentInventory; env: SettingsEnv; on: SettingsHandlers }) {
   // A rescan (the executable appeared or vanished, e.g. an install finished) keeps the last settled rows on screen, only the
   // executable shimmering, until the reply replaces them in one step. Dropping them collapsed the card to the probe's two
   // rows and grew it back half a second later, moving the install section under the reader (reported 2026-10-14)
@@ -447,7 +450,11 @@ function AgentFacts({ agent, inventory: live, env }: { agent: AgentInfo; invento
       : `${engine.version ? t('settings.agent.version', { name: engine.name, version: engine.version }) : engine.name}${sep}${engine.nativeMissing ? t('settings.fact.nativeMissing', { package: engine.nativeMissing }) : t('settings.fact.bundled')}`
     : undefined;
   return (
-    <Section title={t('settings.agent.runtime')} desc={t('settings.agent.runtime.desc')}>
+    // A status of "sign-in required" carries the sign-in where the engine can start one without a session: the account
+    // layer's import / terminal login, or the official account's CLI login. Other agents sign in from the chat's notice,
+    // with the methods their ACP handshake offers (Antigravity has no login command to run here)
+    <Section title={t('settings.agent.runtime')} desc={t('settings.agent.runtime.desc')}
+      action={health?.stage === 'auth_required' && (agent.accounts || agent.localAccount) && <SectionAction icon={<LogIn />} onClick={() => on.addAccount(agent.id)}>{t('notice.goLogin')}</SectionAction>}>
       <FactRow label={t('settings.fact.binary')}>
         {live === undefined
           ? <Shimmer className="font-sans">{t('settings.agent.probing')}</Shimmer>

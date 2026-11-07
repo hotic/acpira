@@ -10,6 +10,7 @@ import { Row, RowEntranceContext } from '../ui/Row';
 import { Orb } from '../effects/Orb';
 import { CopyDetail, DOCK_BUTTON, DOCK_LEAD } from './Alert';
 import { t, tOr } from '../i18n';
+import { planName } from '../ui/AccountLabel';
 
 export interface NoticeProps {
   status: SessionStatus;
@@ -133,7 +134,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
     const terminalWay: Way = { key: 'terminal', label: t('notice.terminalLogin'), icon: rowIcon(SquareTerminal), run: () => onAddAccount('login') };
     primary = noLocal ? terminalWay : importWay;
     groups = [
-      (accounts ?? []).filter(a => a.id !== accountId).map(a => ({ key: `account:${a.id}`, label: a.label, icon: rowIcon(UserRound), hint: a.detail, title: a.detail, run: () => onSelectAccount(a.id) })),
+      (accounts ?? []).filter(a => a.id !== accountId).map(a => ({ key: `account:${a.id}`, label: a.label, icon: rowIcon(UserRound), hint: a.detail && planName(a.detail), title: a.detail, run: () => onSelectAccount(a.id) })),
       [noLocal ? importWay : terminalWay],
       (authMethods ?? []).map(m => ({ key: `method:${m.id}`, label: methodName(m), icon: rowIcon(KeyRound), hint: t('notice.onceTag'), title: m.description ?? methodName(m), run: () => onLogin(m.id) })),
       runHere,
