@@ -1069,7 +1069,7 @@ export function Shell(p: ShellProps) {
       <DiffSourceContext.Provider value={fetchDiffSource}>
         <div
           ref={root}
-          className={cn('acp-shell relative flex h-full min-h-0 w-full overflow-hidden', wide && 'acp-wide')}
+          className={cn('acp-shell relative flex h-full min-h-0 w-full overflow-clip', wide && 'acp-wide')}
           data-theme={p.theme}
           data-surface-host={p.host}
           data-agent={p.agent.id}

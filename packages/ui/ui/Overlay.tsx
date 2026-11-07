@@ -6,8 +6,12 @@ export type OverlayWidth = 'sm' | 'md' | 'lg' | 'xl';
 export const overlayWidth = { sm: 'w-pop-sm', md: 'w-pop-md', lg: 'w-pop-lg', xl: 'w-pop-xl' };
 // Popups never outgrow the space their anchor side has: --available-height is written by the positioner's
 // size middleware (seeded to 100vh before the first pass, so the var is always resolvable). The flex column
-// lets the inner scroll region shrink and scroll instead of being clipped by the shell's overflow:hidden.
-export const popupClass = 'popup-surface group/popup flex max-h-(--available-height) flex-col overflow-hidden rounded-lg border p-1 shadow-pop outline-none';
+// lets the inner scroll region shrink and scroll instead of being clipped by the shell.
+// Popup and shell roots clip with overflow:clip, not hidden: a hidden box still scrolls programmatically, and Base UI's
+// list navigation calls scrollIntoView on the highlighted row. Clearing a combobox query regrows the list for a frame
+// before the positioner moves the popup back, so that call scrolled the shell root (and the whole window) a few pixels
+// and the next layout snapped it back.
+export const popupClass = 'popup-surface group/popup flex max-h-(--available-height) flex-col overflow-clip rounded-lg border p-1 shadow-pop outline-none';
 
 // Count actual open lifetimes, including a controlled root or an unmounted trigger.
 // Request callbacks may be cancelled and must never change the composer's count.
