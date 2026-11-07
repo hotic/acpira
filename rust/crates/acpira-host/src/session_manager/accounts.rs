@@ -48,6 +48,12 @@ impl SessionManager {
 
   pub async fn add_account(&self, v: &Viewer, agent: &str, via: AddAccountVia) -> Result<()> {
     let Some(accounts) = self.deps.accounts.clone() else { return Ok(()) };
+    // An agent off the account layer keeps the login in its own CLI (Grok, Kimi): signing in is that CLI's login
+    // command. An import (nothing stored to import from) or an agent without such a command still fails below with
+    // the account layer's reason, which the view shows
+    if !accounts.supports(agent) && via != AddAccountVia::Import && self.cli_login(agent).await {
+      return Ok(());
+    }
     if self.state.lock().account_actions.iter().any(|a| a.agent == agent && a.status == AccountActionStatus::Pending) {
       return Ok(());
     }
@@ -147,6 +153,21 @@ impl SessionManager {
       (self.deps.toast)("info", &tp("host.loginThenRetry", &[("agent", &def.name)]));
     }
     Ok(())
+  }
+
+  /// The CLI's own login (`AgentDef::login`) in a terminal, for an agent whose credentials Acpira does not store;
+  /// false when the registry names no such command.
+  /// Nothing to wait for: the local account is re-read on the next quota refresh, and a session stopped on sign-in
+  /// retries from its notice
+  async fn cli_login(&self, agent: &str) -> bool {
+    let registry = self.registry();
+    let Ok(def) = registry.get(agent).cloned() else { return false };
+    let Some(login) = &def.login else { return false };
+    let bin = if login.command == def.command { registry.resolve_binary(agent).await } else { None };
+    let title = tp("host.loginTerminalTitle", &[("agent", &def.name)]);
+    (self.deps.run_in_terminal)(title, bin.unwrap_or_else(|| login.command.clone()), login.args.clone(), None);
+    (self.deps.toast)("info", &tp("host.loginInTerminal", &[("agent", &def.name)]));
+    true
   }
 
   /// Run the registry's install line in the background on this engine's machine (`installer`): progress and log go to

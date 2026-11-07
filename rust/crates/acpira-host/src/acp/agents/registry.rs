@@ -247,7 +247,8 @@ pub fn builtin_agents() -> Vec<AgentDef> {
       )
     },
     AgentDef {
-      login: login("kimi", &[]),
+      // Kimi Code 2.2.0 `kimi login` runs the device-code flow its ACP terminal-auth method names
+      login: login("kimi", &["login"]),
       install: install(
         "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
         "irm https://code.kimi.com/kimi-code/install.ps1 | iex",

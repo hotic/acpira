@@ -300,14 +300,14 @@ struct AddProjectAlert: ViewModifier {
   }
 }
 
-/// The accounts as a system sheet: a form under an inline title, the system's close button and "+" in its bar, on
-/// the sheet's own glass. A row is one stored login (identity, check, quota bars); a swipe removes it
+/// The accounts as a system sheet: a form under an inline title, the system's close button in its bar, on the sheet's
+/// own glass. A row is one stored login (identity, check, quota bars); a swipe removes it. No "+": adding a login is
+/// an import or a terminal sign-in on the engine's machine, which a phone cannot drive
 struct NativeAccountSheet: View {
   let agent: AgentInfo
   let accounts: [AccountInfo]
   var accountId: String?
   var onSelect: (String) -> Void
-  var onAdd: () -> Void
   var onRemove: (String) -> Void = { _ in }
   @Environment(\.dismiss) private var dismiss
 
@@ -362,12 +362,6 @@ struct NativeAccountSheet: View {
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
           CloseButton { dismiss() }
-        }
-        if agent.localAccount == nil {
-          ToolbarItem(placement: .primaryAction) {
-            Button(action: onAdd) { Image(systemName: "plus") }
-              .accessibilityLabel(Text(web: t("composer.addAccount")))
-          }
         }
       }
     }

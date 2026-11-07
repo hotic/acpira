@@ -969,12 +969,6 @@ final class AppModel {
   /// An agent's accounts came into view: the engine refreshes their quotas
   func refreshQuota(_ agent: AgentId) { post(.refreshQuota(agent: agent)) }
 
-  /// Adds the login the agent's CLI holds on the computer; a new login needs its terminal, which is on the computer
-  func addAccount(_ agent: AgentId) {
-    if post(.addAccount(agent: agent, via: .import)) { return }
-    show(t("mobile.engineNeeded"), icon: .unplug)
-  }
-
   func removeAccount(_ account: String) {
     if post(.removeAccount(id: account)) { return }
     accounts.removeAll { $0.id == account }

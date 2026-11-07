@@ -142,7 +142,6 @@ struct ChatScreen: View {
     .sheet(isPresented: $accountOpen) {
       NativeAccountSheet(agent: agent, accounts: model.accounts.filter { $0.agent == agent.id }, accountId: session.accountId,
                          onSelect: { model.selectAccount(id, $0) },
-                         onAdd: { model.addAccount(agent.id) },
                          onRemove: { model.removeAccount($0) })
         // The quotas are fetched when an account list comes into view, as on the desktop
         .onAppear { model.refreshQuota(agent.id) }
