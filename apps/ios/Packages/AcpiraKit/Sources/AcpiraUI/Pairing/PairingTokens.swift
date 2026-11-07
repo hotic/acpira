@@ -13,7 +13,7 @@ nonisolated extension Metrics {
   /// A code box's border
   static let pairCodeLine: CGFloat = 1.5
   /// The frame's sentence keeps two lines, so a phase with a longer one moves nothing under it
-  static var pairLineSlot: CGFloat { 2 * TypeScale.body.lineHeight }
+  static var pairLineSlot: CGFloat { 2 * TypeScale.pairLine.lineHeight }
   /// The camera card, its viewfinder and the finder's corners
   static let pairScanCard: CGFloat = 340
   static let pairFinder: CGFloat = 176
@@ -51,6 +51,9 @@ nonisolated extension Metrics {
 nonisolated extension TypeScale {
   /// The computer's name under the glyph
   static let pairName = TextStyle(size: Tokens.uiFont + 6, lineHeight: Tokens.uiFont + 12)
+  /// The frame's sentence: body size on a looser line, since a two-line CJK sentence at body's leading reads cramped
+  /// (Android Type.body / bodyLine)
+  static let pairLine = TextStyle(size: TypeScale.body.size, lineHeight: Tokens.uiFont + 10)
   /// A digit in a code box
   static let pairDigit = TextStyle(size: Tokens.uiFont + 12, lineHeight: Tokens.uiFont + 18)
 }

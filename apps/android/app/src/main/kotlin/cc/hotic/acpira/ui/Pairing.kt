@@ -128,8 +128,9 @@ fun PairHero(
         }
       }
     }
-    // The action's slot stays when there is none, so a phase without one moves nothing
-    Box(Modifier.padding(top = Metrics.s2).heightIn(min = Metrics.barCtl), contentAlignment = Alignment.Center) {
+    // The action's slot stays when there is none, so a phase without one moves nothing; it sits as far below the
+    // sentence as the glyph sits above it
+    Box(Modifier.padding(top = Metrics.page).heightIn(min = Metrics.barCtl), contentAlignment = Alignment.Center) {
       if (action != null) PrimaryPill(action, onAction, Modifier.testTag("pair.action"))
     }
     if (secondary != null) {
