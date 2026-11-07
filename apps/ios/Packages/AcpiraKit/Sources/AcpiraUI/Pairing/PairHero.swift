@@ -62,8 +62,8 @@ struct PairHero: View {
         // Centred on the first line: a spinner has no baseline of its own
         HStack(alignment: .center, spacing: Metrics.s2) {
           if ring == .spin { ProgressView().controlSize(.small) }
-          Text(web: line, size: TypeScale.body.size)
-            .textStyle(TypeScale.body)
+          Text(web: line, size: TypeScale.pairLine.size)
+            .textStyle(TypeScale.pairLine)
             .foregroundStyle(lineInk)
             .multilineTextAlignment(.center)
         }
@@ -79,7 +79,8 @@ struct PairHero: View {
         .opacity(action == nil ? 0 : 1)
         .disabled(action == nil)
         .accessibilityHidden(action == nil)
-        .padding(.top, Metrics.s2)
+        // As far below the sentence as the glyph sits above it, so the sentence reads centred between the two
+        .padding(.top, Metrics.page)
       // Under the action, so the glyph and everything above stay where they were
       if let secondary {
         Button(action: onSecondary) { Text(web: secondary, size: TypeScale.body.size, paragraph: false) }
