@@ -59,6 +59,7 @@ Rules for primitives, tokens, menus, overlays, the composer, transcript rows and
 
 ## Settings
 
+- Every settings card surface (page card, dialog block, `blockList`, tab strip, a review list) takes `cardFill` from `settings/controls.tsx`, never `bg-chip` (inputs and chips) or a fixed `bg-bg-1`. A card sits one notch above its ground: the dialog sheet (`data-settings-dialog`) re-points `--settings-card` above its own `bg-1` (tokens.css).
 - A row fills on hover only when a click anywhere on it acts (`rowHover`). In a dialog rules run edge to edge (`rowRules`); on a page's card they stop at the text and control edges and the hover fill is an inset band (`--rule-out`, `--hover-out`).
 - Copy: a second line is one short clause, no closing stop, one line at the narrow settings width in every locale; facts the head states are not repeated on rows; sibling heads all carry a second line or none. A select shows an icon only for an identity (agent, model vendor).
 - The settings `Select` list is portaled to the shell root and cannot inherit, so it is painted in the field's material (`fieldTone`). The `SettingsDialog` scrim carries `acp-settings` so settings measures hold outside the settings shell.

@@ -452,6 +452,12 @@
   --hover-y: 3px;
   --hover-r: var(--r-md);
 }
+/* A dialog is a bg-1 sheet, the page card's own fill: its cards keep the page's relation to their ground instead, one
+   notch (fg 3%, as bg-1 sits on bg-0) above the sheet with the same edge. Declared on the sheet so --bg-1 resolves to
+   the shell's palette there */
+.acp-settings [data-settings-dialog] {
+  --settings-card: color-mix(in srgb, var(--bg-1), var(--fg-1) 3%);
+}
 /* The sidebar's narrow column: a smaller page title */
 .acp-settings[data-surface-host="sidebar"] {
   --text-page: calc(var(--ui-font-size) + 4px);

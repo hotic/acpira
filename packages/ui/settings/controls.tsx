@@ -85,12 +85,13 @@ export function SectionDescription({ children }: { children: ReactNode }) {
 
 // Titled subgroups own one surface. Their lists inherit it and use separators instead of nested cards.
 const InsetGroupContext = createContext(false);
-// Inside a SettingsDialog every card becomes a filled block (bg-chip, rounded, no border), like the tab strip and the
-// search box above it: bordered cards in a dialog read as boxes stacked on boxes. Its inner padding is the search box's,
-// so the search glass, the rows' icons and their titles share one line
+// Inside a SettingsDialog every card becomes a block (rounded, its head inside), drawn like a page card: the card fill
+// and edge, which the dialog sheet re-points one notch above itself (tokens.css). Its inner padding and edge are the
+// search box's, so the search glass, the rows' icons and their titles share one line
 const DialogContext = createContext(false);
-export const useInDialog = () => useContext(DialogContext);
-const block = 'flex flex-col overflow-hidden rounded-lg bg-chip px-3';
+// The one card surface, on a page and in a dialog alike: every card, block, list block and tab strip takes it
+export const cardFill = 'border border-(--settings-card-line) bg-(--settings-card)';
+const block = `flex flex-col overflow-hidden rounded-lg px-3 ${cardFill}`;
 
 // The rules between rows take their colour and reach from tokens (`--rule-color`, `--rule-out`): inside a dialog's
 // blocks they run from edge to edge, like a clickable row's hover fill (`rowHover`), so a hovered row is a closed cell;
@@ -122,7 +123,7 @@ const second = 'text-3 text-fg-3';
 function Surface({ className, children }: { className?: string; children: ReactNode }) {
   if (useContext(DialogContext)) return <section className={cn(block, className)}>{children}</section>;
   // A page's card barely lifts off the page, its edge near invisible (`--settings-card`, tokens.css)
-  return <Card className={cn('acp-section-panel flex flex-col overflow-hidden border-(--settings-card-line) bg-(--settings-card) px-pad shadow-none', className)}>{children}</Card>;
+  return <Card className={cn('acp-section-panel flex flex-col overflow-hidden px-pad shadow-none', cardFill, className)}>{children}</Card>;
 }
 
 export function Section({ title, desc, count, status, action, cards, children }: SectionProps) {
@@ -235,16 +236,15 @@ export function Tabs<V extends string>({ items, value, onChange, label }: {
     onChange(next.value);
     (e.currentTarget.parentElement?.children[items.indexOf(next)] as HTMLElement | undefined)?.focus();
   };
-  // On a page the strip takes the cards' fill; in a dialog it keeps the blocks' chip
-  const dialog = useInDialog();
+  // The strip takes the cards' fill, on a page and in a dialog
   return (
-    <div role="tablist" aria-label={label} className={cn('flex h-ctl shrink-0 [scrollbar-width:none] items-center gap-0.5 overflow-x-auto rounded-lg p-0.5', dialog ? 'bg-chip' : 'bg-(--settings-card)')}>
+    <div role="tablist" aria-label={label} className="flex h-ctl shrink-0 [scrollbar-width:none] items-center gap-0.5 overflow-x-auto rounded-lg bg-(--settings-card) p-0.5">
       {items.map((it, i) => {
         const on = it.value === value;
         return (
           <button key={it.value} type="button" role="tab" aria-selected={on} tabIndex={on ? 0 : -1} onClick={() => onChange(it.value)} onKeyDown={e => move(e, i)}
             className={cn('flex h-full min-w-max flex-1 items-center justify-center gap-1.5 rounded-md px-2 text-2 whitespace-nowrap outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg-2',
-              on ? cn(dialog ? 'bg-active' : 'bg-hover', 'text-fg-1') : 'text-fg-2 hover:text-fg-1')}>
+              on ? 'bg-hover text-fg-1' : 'text-fg-2 hover:text-fg-1')}>
             {it.label}
             {it.count !== undefined && <span className="text-fg-3 tabular-nums">{it.count}</span>}
           </button>
@@ -315,7 +315,7 @@ export function SettingsDialog({ title, sub, icon, control, wide, tall, pinTop, 
           settings shell, such as the remote folder picker from the session column */}
       <Dialog.Popup onClick={scrim} className={cn('acp-settings absolute inset-0 z-30 flex justify-center bg-scrim p-pad', pinned ? 'items-start' : 'items-center')}>
         <div ref={card} style={pinned ? { marginTop: top, maxHeight: `calc(100% - ${top}px)` } : undefined}
-          className={cn('flex max-h-full max-w-full flex-col overflow-hidden rounded-lg border border-line bg-bg-1 shadow-pop', wide ? 'w-(--dialog-w-wide)' : 'w-(--dialog-w)', tall && 'h-(--dialog-h)')}>
+          data-settings-dialog className={cn('flex max-h-full max-w-full flex-col overflow-hidden rounded-lg border border-line bg-bg-1 shadow-pop', wide ? 'w-(--dialog-w-wide)' : 'w-(--dialog-w)', tall && 'h-(--dialog-h)')}>
           <header className="flex shrink-0 items-center gap-gap border-b border-line py-gap pr-gap pl-pad">
             {icon && <span className="flex size-lead shrink-0 items-center justify-center text-fg-2 [&>svg]:size-lead [&>svg]:stroke-[1.5]">{icon}</span>}
             <span className="flex min-w-0 flex-1 items-baseline gap-2">
@@ -560,7 +560,7 @@ export function Meta({ children, title }: { children: ReactNode; title?: string 
 // A Command list (the add-model and add-host pickers) drawn as a dialog block: the list is the block and its items are
 // setting rows, the highlight running from edge to edge. Its rules stay inside the list: one past its sides would make
 // the scrolling list scroll sideways
-export const blockList = 'rounded-lg bg-chip [&>*+*]:relative [&>*+*]:after:pointer-events-none [&>*+*]:after:absolute [&>*+*]:after:top-0 [&>*+*]:after:inset-x-0 [&>*+*]:after:h-px [&>*+*]:after:bg-line';
+export const blockList = `rounded-lg ${cardFill} [&>*+*]:relative [&>*+*]:after:pointer-events-none [&>*+*]:after:absolute [&>*+*]:after:top-0 [&>*+*]:after:inset-x-0 [&>*+*]:after:h-px [&>*+*]:after:bg-line`;
 export const blockItem = 'min-h-(--setting-row-detail) gap-gap rounded-none px-3 py-(--setting-row-pad)';
 export function PickContent({ lead, title, desc, checked }: { lead?: ReactNode; title: ReactNode; desc?: ReactNode; checked?: boolean }) {
   return <>
