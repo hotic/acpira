@@ -7,13 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Planned
+
+- An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
+
+## [2.0.10] - 2026-11-08
+
+### Added
+
+- **Factory Droid and Hermes Agent are built-in agents.** Droid runs as `droid exec --output-format acp`, and the copy bundled with the Factory desktop app is found too. Hermes runs as `hermes acp`, and its model list shows as an ordinary model picker. Both get their marks, mode icons, sign-in methods and shared-config reach. Droid's Spec mode counts as read-only and Auto (High) as full access.
+- **Account menus and settings offer the CLI's own sign-in.** When a CLI's login is missing or expired, the account panel, the narrow window's account menu and the agent's settings offer a sign-in. Adding an account for an agent outside the account layer runs its login command in a terminal, such as `kimi login`. A locked keychain turns the account header's action into Unlock.
+- **The context report links to the transcript.** Hovering or picking a call in the report lights its row in the thread and dims the rest, with a switch in Appearance. Claude Code sessions show Claude Code's own split of system prompt, tools, MCP, memory files and skills, read without a model call. Conversation parts are shaded by what they hold, with a key under the map.
+- **A paired phone can download any project file.** Files up to the link's blob limit download to the phone and resume after a dropped link. On iOS, videos and pictures open in Quick Look, and video cards show their download progress.
+- The export toast can show the exported file in Finder, Explorer or the Linux file manager.
+- An update dot on the app menu leads into Settings, which opens straight on the page that has the update.
+
+### Changed
+
+- Account rows share one layout: a state dot with its reason as the tooltip, the identity with its plan as a tag, and quota bars under it. The phone's account sheet no longer offers "+", since adding a login needs the computer's terminal.
+- Every settings card, including cards inside dialogs, uses the same fill.
+- The phone's pairing sentence sits centred between its glyph and its action.
+- The Linux desktop packages (deb, rpm and AppImage) remain a preview. GNOME and Plasma on Wayland, NVIDIA drivers, input methods and fractional scaling are not checked yet.
+
+### Fixed
+
+- On macOS, Screen Recording and other privacy grants are no longer asked again after each update. Every engine start runs through one fixed `Acpira Engine` launcher under `~/.acpira/engine/launcher`, so macOS keeps the grants.
+- Paired phones connect while Clash, sing-box or Surge route traffic through a TUN on macOS or Windows. The gateway binds the physical interface and resolves names over DNS over TLS, and it restarts on a fresh endpoint when the network changes under it.
+- A prompt that fails with rejected credentials asks for a sign-in, whatever error code the provider uses, such as Grok's 401 answer. Sign-in methods are offered before API-key ones.
+- Workspace hooks find node, python and Homebrew tools when the engine was started from the Dock or at login.
+- A reply flooded with `<br>` tags no longer freezes or kills the phone app. Long replies draw a page of blocks at a time, with a "more" line for the rest.
+- Code highlighting on iOS retries a line that ran past the highlighter's time limit instead of keeping it in one colour.
+- A chat following its newest output no longer jitters by a pixel in the desktop app and other WebKit views.
+- Typing in a menu's search box no longer nudges the whole window.
+
 ### Removed
 
 - The ChatGPT conversation mirror is gone: the Connect ChatGPT Session command, the ChatGPT entry in Settings → Connections, the `acpira bridge` CLI and the ChatGPT channel in session lists. Mirrors already written under `~/.acpira/bridges/chatgpt` are no longer listed and stay on disk untouched.
 
-### Planned
+### Security
 
-- An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
+- Dependencies flagged by the npm and RustSec advisory databases are patched, including KaTeX 0.19.1. Every push and a daily schedule now audit the Node and Rust lockfiles.
 
 ## [2.0.9] - 2026-11-06
 
