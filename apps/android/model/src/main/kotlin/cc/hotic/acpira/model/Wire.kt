@@ -2,17 +2,20 @@ package cc.hotic.acpira.model
 
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.descriptors.PrimitiveKind
 import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonEncoder
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -81,6 +84,26 @@ abstract class TaggedSerializer<T : Any>(serialName: String, private val tag: St
   }
 }
 
+/** A list whose unreadable elements are dropped instead of failing the value around it; anything but an array reads as empty */
+open class TolerantListSerializer<T>(private val element: KSerializer<T>) : KSerializer<List<T>> {
+  private val strict = ListSerializer(element)
+  override val descriptor: SerialDescriptor = strict.descriptor
+  override fun deserialize(decoder: Decoder): List<T> {
+    val input = decoder as? JsonDecoder ?: return strict.deserialize(decoder)
+    val array = input.decodeJsonElement() as? JsonArray ?: return emptyList()
+    return array.mapNotNull { item ->
+      try {
+        input.json.decodeFromJsonElement(element, item)
+      } catch (_: SerializationException) {
+        null
+      } catch (_: IllegalArgumentException) {
+        null
+      }
+    }
+  }
+  override fun serialize(encoder: Encoder, value: List<T>) = strict.serialize(encoder, value)
+}
+
 /** [obj] with [tag] set first, the way the TypeScript side writes a tagged value */
 fun tagged(tag: String, value: String, obj: JsonElement): JsonObject =
   JsonObject(linkedMapOf<String, JsonElement>(tag to JsonPrimitive(value)) + obj.jsonObject.filterKeys { it != tag })
@@ -90,6 +113,12 @@ fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.tak
 
 /** An int field of a raw object, or null */
 fun JsonObject.int(key: String): Int? = (this[key] as? JsonPrimitive)?.contentOrNull?.toIntOrNull()
+
+/** A boolean field of a raw object, or null */
+fun JsonObject.bool(key: String): Boolean? = (this[key] as? JsonPrimitive)?.booleanOrNull
+
+/** A number field of a raw object, or null */
+fun JsonObject.double(key: String): Double? = (this[key] as? JsonPrimitive)?.takeIf { !it.isString }?.contentOrNull?.toDoubleOrNull()
 
 /** A primitive's text whatever its kind, for logs */
 fun JsonElement.preview(limit: Int = 120): String = toString().take(limit)

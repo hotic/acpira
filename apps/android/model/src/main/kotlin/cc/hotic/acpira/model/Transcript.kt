@@ -2,6 +2,7 @@
 
 package cc.hotic.acpira.model
 
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -79,6 +80,12 @@ enum class GoalStatus { active, paused, blocked, limited, complete, unknown;
   object S : TolerantEnumSerializer<GoalStatus>("GoalStatus", entries, unknown)
 }
 
+/** A goal control the agent advertises at initialize; `set` is also what `/goal <objective>` does */
+@Serializable(with = GoalAction.S::class)
+enum class GoalAction { set, pause, resume, clear, unknown;
+  object S : TolerantEnumSerializer<GoalAction>("GoalAction", entries, unknown)
+}
+
 @Serializable(with = GoalEvent.S::class)
 enum class GoalEvent { set, paused, resumed, blocked, limited, complete, cleared, unknown;
   object S : TolerantEnumSerializer<GoalEvent>("GoalEvent", entries, unknown)
@@ -88,6 +95,33 @@ enum class GoalEvent { set, paused, resumed, blocked, limited, complete, cleared
 enum class SubagentState { running, completed, failed, cancelled, disconnected, unknown;
   object S : TolerantEnumSerializer<SubagentState>("SubagentState", entries, unknown)
 }
+
+/**
+ * What Acpira observes of a child: `session` its own updates under its own session id, `nested` its tool calls on the
+ * parent session with a parent link, `receipt` only the delegation call and its result
+ */
+@Serializable(with = SubagentVisibility.S::class)
+enum class SubagentVisibility { session, nested, receipt, unknown;
+  object S : TolerantEnumSerializer<SubagentVisibility>("SubagentVisibility", entries, unknown)
+}
+
+/** A summoned child's access: `bypass` works without approvals; `inherit` (a persona setting only) takes the caller's */
+@Serializable(with = RelayMode.S::class)
+enum class RelayMode { consult, work, bypass, inherit, unknown;
+  object S : TolerantEnumSerializer<RelayMode>("RelayMode", entries, unknown)
+}
+
+/** Why an account shows no quota bars: the last read failed and the next one waits */
+@Serializable(with = AccountQuotaIssue.S::class)
+enum class AccountQuotaIssue { rate_limited, expired, unavailable, unknown;
+  object S : TolerantEnumSerializer<AccountQuotaIssue>("AccountQuotaIssue", entries, unknown)
+}
+
+/** Agent → option id → the option values hidden from its pickers (settings.ts HiddenMap) */
+typealias HiddenMap = Map<AgentId, Map<String, List<String>>>
+
+/** A model option id → the dependent controls (effort, Fast …) that model came with (modelShapes.ts) */
+typealias ModelShapes = Map<String, List<ConfigControl>>
 
 // Agents and accounts
 
@@ -131,6 +165,8 @@ data class AccountInfo(
   val addedAt: String? = null,
   val lastUsedAt: String? = null,
   val quota: AccountQuota? = null,
+  /** Absent while `quota` is set */
+  val quotaIssue: AccountQuotaIssue? = null,
 )
 
 // Controls
@@ -189,7 +225,14 @@ data class DiffLine(val kind: Kind = Kind.ctx, val text: String = "", val oldLin
   }
 }
 
-/** What a diff was taken from; a page view carries the path only (`omitted`) */
+/** The whole files behind a diff, as the `diffSource` push answers with them */
+@Serializable
+data class FullDiffSource(val path: String, val oldText: String = "", val newText: String = "")
+
+/**
+ * What a diff was taken from; a page view carries the path only (`omitted`), and the page asks for the texts when it
+ * needs them (WebviewMsg `diffSource`)
+ */
 @Serializable
 data class DiffSource(val path: String, val oldText: String? = null, val newText: String? = null, val omitted: Boolean? = null)
 
@@ -224,7 +267,10 @@ sealed interface ToolContent {
 @Serializable
 data class DiffStat(val add: Int = 0, val del: Int = 0)
 
-/** Background work the adapter reports apart from the prompt lifecycle */
+/**
+ * An AIR async task: background work the adapter reports apart from the prompt lifecycle. state: running | paused |
+ * completed | failed | stopped, the last three final
+ */
 @Serializable
 data class AsyncTaskInfo(
   val id: String,
@@ -233,7 +279,16 @@ data class AsyncTaskInfo(
   val name: String? = null,
   val description: String? = null,
   val summary: String? = null,
-)
+  val taskType: String? = null,
+  val lastToolName: String? = null,
+  val outputFilePath: String? = null,
+  val usage: Usage? = null,
+  /** A stop the engine asked for that the adapter's own state has not confirmed yet */
+  val stopRequested: Boolean? = null,
+) {
+  @Serializable
+  data class Usage(val totalTokens: Int? = null, val toolUses: Int? = null, val durationMs: Double? = null)
+}
 
 @Serializable
 data class ToolLocation(val path: String, val line: Int? = null)
@@ -339,6 +394,10 @@ data class QuestionBlock(
   val outcome: QuestionOutcome? = null,
   /** By question id: a string, or a list of option ids */
   val answers: Map<String, JsonElement>? = null,
+  /** The agent takes images with the answers (the built-in agent) */
+  val images: Boolean? = null,
+  /** Images sent with the answers, by question id */
+  val answerImages: Map<String, List<ImageRef>>? = null,
 ) : AgentBlock
 
 @Serializable
@@ -455,11 +514,16 @@ val AgentBlock.blockId: String?
 
 // Turns
 
+/** Where a shared text came from (another tool's selection, a picked web page) */
+@Serializable
+data class TextContext(val sourceId: String = "", val sourceName: String = "", val uri: String? = null, val comment: String? = null)
+
 /** An attachment as a sent turn keeps it, tagged by `kind` */
 @Serializable(with = Attachment.S::class)
 sealed interface Attachment {
   @Serializable data class Image(val blob: String? = null, val mimeType: String = "", val name: String? = null) : Attachment
-  @Serializable data class Text(val blob: String? = null, val name: String = "") : Attachment
+  /** context: where a shared text came from (absent on dropped text) */
+  @Serializable data class Text(val blob: String? = null, val name: String = "", val context: TextContext? = null) : Attachment
   @Serializable data class File(val uri: String = "", val name: String = "") : Attachment
   @Serializable data class Selection(val uri: String = "", val name: String = "", val startLine: Int = 0, val endLine: Int = 0, val blob: String? = null) : Attachment
   @Serializable data class Quote(val text: String = "", val comment: String? = null) : Attachment
@@ -597,6 +661,8 @@ data class SessionSummary(
   /** Only beside `background`: a turn ended there that nobody has looked at yet */
   val unread: Boolean? = null,
   val model: Model? = null,
+  /** Only beside `background`: when a pending scheduled wake-up resumes the session (epoch ms) */
+  val wakeAt: Double? = null,
 ) {
   /** The model a session last ran: the wire id is its identity, the name its label */
   @Serializable
@@ -609,8 +675,15 @@ data class Usage(val used: Int = 0, val size: Int = 0, val cost: Double? = null,
 @Serializable
 data class QueuedPrompt(val id: String, val text: String = "", val attachments: List<Attachment>? = null, val sending: Boolean? = null)
 
+/**
+ * A way to sign in (`login` methodId). `terminal`: the engine runs the agent binary with these args / env in a terminal
+ * on its machine instead of calling `authenticate`
+ */
 @Serializable
-data class AuthMethodInfo(val id: String, val name: String = "", val description: String? = null)
+data class AuthMethodInfo(val id: String, val name: String = "", val description: String? = null, val terminal: Terminal? = null) {
+  @Serializable
+  data class Terminal(val args: List<String> = emptyList(), val env: Map<String, String>? = null)
+}
 
 @Serializable
 data class SessionGoal(
@@ -623,20 +696,101 @@ data class SessionGoal(
   val updatedAt: Double? = null,
 )
 
-/** One delegated child node (subagents.ts SubagentSummary), the fields the phone draws */
+/**
+ * A child Acpira itself runs in another CLI (a summoned persona, whose name is the node's `role`); every round of one
+ * conversation with the same native session is a node of its own
+ */
+@Serializable
+data class SubagentHarness(
+  val agent: AgentId = "",
+  val persona: String? = null,
+  val mode: RelayMode = RelayMode.unknown,
+  val thread: String = "",
+  val round: Int = 0,
+  /** The child CLI's own session id */
+  val sessionId: String? = null,
+  /** The reasoning effort the child session really runs; absent: none reported */
+  val effort: String? = null,
+  /** The group the round was summoned through */
+  val group: String? = null,
+)
+
+/** A sidekick round's tool rows: a step this build cannot read is dropped, the node itself stays */
+object ToolStepsSerializer : KSerializer<List<ToolCallBlock>> by TolerantListSerializer(ToolCallBlock.serializer())
+
+/**
+ * One delegated child node (subagents.ts SubagentSummary), whatever the wire dialect; its transcript comes with the
+ * `subagent` push once observed
+ */
 @Serializable
 data class SubagentSummary(
+  /** Acpira's own stable id, never a peer id */
   val id: String,
+  /** Another summary's id; absent: a child of the root session */
   val parentId: String? = null,
+  /** The root agent turn (index in SessionView.turns) during which it was announced */
   val turnIndex: Int = 0,
   val title: String? = null,
+  /** The delegated task text */
   val task: String? = null,
+  /** The agent's profile / subagent type; absent when not structured */
   val role: String? = null,
   val state: SubagentState = SubagentState.unknown,
+  /** The latest activity label, kept engine-side */
   val activity: String? = null,
   val toolCount: Int = 0,
+  /** The final result text the parent received (for `session` visibility the child's own last text) */
   val result: String? = null,
-)
+  val visibility: SubagentVisibility = SubagentVisibility.unknown,
+  val stateSource: StateSource = StateSource.unknown,
+  val controls: Controls = Controls(),
+  val cancelRequested: Boolean? = null,
+  /** The agent said the child runs detached */
+  val background: Boolean? = null,
+  val announcedAt: Double = 0.0,
+  val endedAt: Double? = null,
+  /** Only when reported */
+  val model: String? = null,
+  /** Only when a usage update was attributed to this child */
+  val usage: Usage? = null,
+  val peer: Peer = Peer(),
+  /** A receipt node whose transcript has content of its own (a Claude workflow agent's sidechain log) */
+  val hasProcess: Boolean? = null,
+  /** The child's pending permission cards and open question, mirrored so the root view can show them */
+  val permissions: List<PermissionBlock>? = null,
+  val question: QuestionBlock? = null,
+  /** Set when Acpira itself runs the child in another CLI */
+  val harness: SubagentHarness? = null,
+  /** A sidekick round's latest foreground tool rows, without their output (the relay's window) */
+  @Serializable(with = ToolStepsSerializer::class) val steps: List<ToolCallBlock>? = null,
+) {
+  /** local: Acpira synthesized the state (disconnected on connection end, the parent prompt returned first) */
+  @Serializable(with = StateSource.S::class)
+  enum class StateSource { agent, local, unknown;
+    object S : TolerantEnumSerializer<StateSource>("SubagentStateSource", entries, unknown)
+  }
+
+  /** cancel: only when the agent said this child can be cancelled */
+  @Serializable
+  data class Controls(val cancel: Boolean = false)
+
+  @Serializable
+  data class Usage(val used: Int = 0, val size: Int = 0)
+
+  /** The agent's own identifiers, for diagnostics and replay; sidechainId: a Claude workflow agent's own agentId */
+  @Serializable
+  data class Peer(val sessionId: String? = null, val agentId: String? = null, val toolCallId: String? = null, val sidechainId: String? = null)
+}
+
+/**
+ * One child's transcript as the `subagent` push carries it; `rev` grows with every change, so an older push never
+ * replaces a newer one
+ */
+data class SubagentTranscript(val rev: Int, val running: Boolean, val turns: List<Turn>)
+
+/** Account metadata from the SSH engine owning this session; credentials never cross the peer wire */
+@Serializable
+data class RemoteAuth(val agent: AgentInfo, val accounts: List<AccountInfo> = emptyList(), val action: AccountAction? = null)
 
 @Serializable
 data class ForkOrigin(val sessionId: String, val turnIndex: Int = 0, val agent: AgentId? = null)
@@ -665,4 +819,10 @@ data class SessionView(
   val forkedFrom: ForkOrigin? = null,
   val createdAt: String = "",
   val updatedAt: String = "",
+  /** Account metadata of the SSH engine owning this session */
+  val remoteAuth: RemoteAuth? = null,
+  /** The agent's remembered per-model parameters, for switching the model of an edited prompt */
+  val modelShapes: ModelShapes? = null,
+  /** The goal controls the running agent advertises; absent without goal support (or no process yet) */
+  val goalActions: List<GoalAction>? = null,
 )
