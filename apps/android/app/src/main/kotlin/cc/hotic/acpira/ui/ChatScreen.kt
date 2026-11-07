@@ -2,6 +2,9 @@ package cc.hotic.acpira.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import cc.hotic.acpira.design.readableWidth
+import cc.hotic.acpira.design.readablePadding
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyColumn
@@ -96,9 +99,7 @@ fun ChatScreen(model: AppModel, id: String) {
           )
         },
         navigationIcon = {
-          IconButton(onClick = { model.pop() }, modifier = Modifier.testTag("chat.back")) {
-            Lucide("arrowLeft", Palette.fg1, size = Metrics.iconCtl, contentDescription = t("common.back"))
-          }
+          LeadButton("chat.back") { model.pop() }
         },
         actions = {
           IconButton(onClick = { model.push(Screen.New(agent = agent, cwd = view?.cwd?.takeUnless { model.isChat(it) })) }, modifier = Modifier.testTag("chat.new")) {
@@ -129,6 +130,8 @@ fun ChatScreen(model: AppModel, id: String) {
       )
     },
     bottomBar = {
+      // The composer holds to the reading column in a wide window, as the thread above it does
+      Box(Modifier.readableWidth()) {
       Composer(
         text = draft,
         onText = { draft = it },
@@ -153,17 +156,19 @@ fun ChatScreen(model: AppModel, id: String) {
         onSetConfig = { config, value -> model.setConfig(id, config, value) },
         onToast = model::showToast,
       )
+      }
     },
   ) { padding ->
     if (view == null) {
       Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Palette.fg3) }
       return@Scaffold
     }
-    Box(Modifier.fillMaxSize()) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
     LazyColumn(
       state = thread,
       modifier = Modifier.fillMaxSize().gooRecede(goo, model.motion).testTag("chat.thread"),
-      contentPadding = PaddingValues(top = padding.calculateTopPadding() + Metrics.s2, bottom = padding.calculateBottomPadding() + Metrics.pad),
+      // The list stays full width so a drag beside the reading column still scrolls it
+      contentPadding = readablePadding(maxWidth, top = padding.calculateTopPadding() + Metrics.s2, bottom = padding.calculateBottomPadding() + Metrics.pad),
       verticalArrangement = Arrangement.spacedBy(Metrics.msgGap),
     ) {
       items.forEachIndexed { e, exchange ->

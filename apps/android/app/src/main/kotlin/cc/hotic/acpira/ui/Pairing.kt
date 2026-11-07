@@ -1,5 +1,6 @@
 package cc.hotic.acpira.ui
 
+import cc.hotic.acpira.design.readableWidth
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -327,7 +328,7 @@ fun ComputerScreen(model: AppModel, pairing: PairingModel, id: String) {
     if (computer == null) return@Scaffold
     Column(
       // The page runs under the gesture bar; only the content keeps clear of it, so it never ends in a hard cut above the bar
-      Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()).verticalScroll(rememberScrollState()).padding(horizontal = Metrics.pad).navigationBarsPadding().padding(bottom = Metrics.pad),
+      Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()).verticalScroll(rememberScrollState()).readableWidth().padding(horizontal = Metrics.pad).navigationBarsPadding().padding(bottom = Metrics.pad),
       verticalArrangement = Arrangement.spacedBy(Metrics.s6),
     ) {
       FormCard {

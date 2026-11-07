@@ -8,6 +8,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import cc.hotic.acpira.design.readableWidth
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -99,14 +100,14 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
       TopAppBar(
         title = { Text(t("session.new"), fontSize = Type.text1, fontWeight = FontWeight.SemiBold) },
         navigationIcon = {
-          IconButton(onClick = { model.pop() }, modifier = Modifier.testTag("new.back")) {
-            Lucide("arrowLeft", Palette.fg1, size = Metrics.iconCtl, contentDescription = t("common.back"))
-          }
+          LeadButton("new.back") { model.pop() }
         },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = Palette.bg0),
       )
     },
     bottomBar = {
+      // The composer holds to the reading column in a wide window
+      Box(Modifier.readableWidth()) {
       Composer(
         text = draft,
         onText = { draft = it },
@@ -132,6 +133,7 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
         onSetConfig = { id, value -> picks = options.map { if (it.id == id) it.copy(value = value) else it } },
         onToast = model::showToast,
       )
+      }
     },
   ) { padding ->
     Box(Modifier.fillMaxSize()) {
