@@ -157,6 +157,36 @@ pub fn agent_ext(id: &str) -> Option<&'static AgentExt> {
       steer: false,
       shared: Shared { global_rules: Some(("~/.pi/agent/AGENTS.md", Link)), skill_links: None, own_skills: &["~/.pi/agent/skills", ".pi/skills"], mcp: false },
     },
+    // Factory's docs (droid 1.6.0): skills from ~/.factory/skills, ~/.agents/skills and the project's .factory/skills /
+    // .agents/skills; instruction files at each level and in ~/.factory/ and ~/.agents/, so the shared prompt needs no link
+    "droid" => &AgentExt {
+      config: &["~/.factory/settings.json"],
+      mcp: &[("~/.factory/mcp.json", Json), (".factory/mcp.json", Json)],
+      skills: &["~/.factory/skills", "~/.agents/skills", ".factory/skills", ".agents/skills"],
+      rules: &[("AGENTS.md", false), ("CLAUDE.md", false), (".factory/AGENTS.md", false), ("~/.factory/AGENTS.md", false), ("~/.agents/AGENTS.md", false)],
+      steer: false,
+      shared: Shared { global_rules: None, skill_links: None, own_skills: &["~/.factory/skills", ".factory/skills"], mcp: true },
+    },
+    // hermes-agent 0.22.5 source (`agent/skill_utils.py`, `agent/prompt_builder.py`): user skills only under ~/.hermes/skills
+    // (nested by category), project .hermes/skills and .agents/skills only once `hermes skills trust` lists the project
+    // (config.yaml `skills.trusted_project_dirs`); the global file is SOUL.md, an identity, so the shared prompt has no place.
+    // Its MCP servers live in config.yaml (YAML, not read here)
+    "hermes" => &AgentExt {
+      config: &["~/.hermes/config.yaml"],
+      mcp: &[],
+      skills: &["~/.hermes/skills", ".hermes/skills", ".agents/skills"],
+      rules: &[
+        ("AGENTS.md", false),
+        ("AGENTS.override.md", false),
+        ("CLAUDE.md", false),
+        (".hermes.md", false),
+        ("HERMES.md", false),
+        (".cursorrules", false),
+        ("~/.hermes/SOUL.md", false),
+      ],
+      steer: false,
+      shared: Shared { global_rules: None, skill_links: Some(("~/.hermes/skills", ".hermes/skills")), own_skills: &["~/.hermes/skills", ".hermes/skills"], mcp: true },
+    },
     _ => return None,
   })
 }

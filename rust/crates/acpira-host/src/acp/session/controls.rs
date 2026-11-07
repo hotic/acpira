@@ -30,8 +30,8 @@ fn modes_mirror_reasoning(controls: &SessionControls) -> bool {
   !controls.modes.is_empty() && controls.options.iter().any(|c| is_reasoning_control(c) && ids(&c.options) == ids(&controls.modes))
 }
 
-/// Whether mode `id` grants full access: a known bypass mode id (`bypassPermissions`, `agent-full-access`, `bypass`,
-/// `yolo`) or one the agent marks `full_access` (in `modes` or the mode select)
+/// Whether mode `id` grants full access: a known bypass mode id (`relay::BYPASS_MODES`) or one the agent marks
+/// `full_access` (in `modes` or the mode select)
 pub(crate) fn is_full_access(controls: &SessionControls, id: &str) -> bool {
   let select = controls.mode_config_id.as_deref().and_then(|cid| controls.options.iter().find(|o| o.id == cid)).map(|o| o.options.as_slice()).unwrap_or(&[]);
   crate::acp::session::relay::BYPASS_MODES.contains(&id) || controls.modes.iter().chain(select).any(|m| m.id == id && m.kind.as_deref() == Some("full_access"))

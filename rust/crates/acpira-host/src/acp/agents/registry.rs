@@ -295,6 +295,39 @@ pub fn builtin_agents() -> Vec<AgentDef> {
       ignore_modes: true,
       ..base("pi", "Pi", "pi-acp", &[], &["~/.local/bin/pi-acp", "/opt/homebrew/bin/pi-acp", "/usr/local/bin/pi-acp"])
     },
+    AgentDef {
+      // No login subcommand: the interactive `droid` signs in on first run (ACP also offers a device-pairing method)
+      login: login("droid", &[]),
+      install: install(
+        "curl -fsSL https://app.factory.ai/cli | sh",
+        "irm https://app.factory.ai/cli/windows | iex",
+        "https://docs.factory.com/ide-integrations",
+      ),
+      // `--output-format acp` as Factory's docs give it; the ACP Registry's `acp-daemon` variant lingers after its parent
+      // exits (droid 1.6.0). The Factory desktop app bundles its own copy
+      ..base(
+        "droid",
+        "Droid",
+        "droid",
+        &["exec", "--output-format", "acp"],
+        &[
+          "~/.local/bin/droid",
+          "/opt/homebrew/bin/droid",
+          "/usr/local/bin/droid",
+          "/Applications/Factory.app/Contents/Resources/bin/droid",
+        ],
+      )
+    },
+    AgentDef {
+      // Provider and model setup; ACP also offers it as a terminal auth method (`hermes acp --setup`)
+      login: login("hermes", &["model"]),
+      install: install(
+        "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash",
+        "iex (irm https://hermes-agent.nousresearch.com/install.ps1)",
+        "https://hermes-agent.nousresearch.com/docs/user-guide/features/acp",
+      ),
+      ..base("hermes", "Hermes Agent", "hermes", &["acp"], &["~/.local/bin/hermes", "/opt/homebrew/bin/hermes", "/usr/local/bin/hermes"])
+    },
   ]
 }
 
@@ -683,11 +716,17 @@ pub fn search_paths(command: &str, candidates: &[String], os: Os, env: &dyn Env)
   let mut dirs: Vec<String> = path.split(sep).filter(|d| !d.is_empty()).map(str::to_owned).collect();
   if os == Os::Posix {
     dirs.extend(FALLBACK_DIRS.iter().map(|d| expand_home(d)));
-  } else if command.eq_ignore_ascii_case("devin") {
-    // Devin's Windows installer updates User PATH and its child shell, not the running IDE's environment.
-    // Probe its official install directory directly so a refresh finds a new install without restarting the IDE.
-    if let Some(local) = env.get("LOCALAPPDATA").filter(|d| !d.is_empty()) {
-      dirs.push(std::path::Path::new(&local).join("devin").join("cli").join("bin").to_string_lossy().into_owned());
+  } else {
+    // Windows installers update User PATH and their child shell, not the running IDE's environment. Probe the official
+    // install directory directly so a refresh finds a new install without restarting the IDE (Devin 3000.11.3; Hermes's
+    // directory is the one its install docs give, unverified on Windows)
+    let sub: &[&str] = match command.to_ascii_lowercase().as_str() {
+      "devin" => &["devin", "cli", "bin"],
+      "hermes" => &["hermes", "bin"],
+      _ => &[],
+    };
+    if let Some(local) = env.get("LOCALAPPDATA").filter(|d| !d.is_empty() && !sub.is_empty()) {
+      dirs.push(sub.iter().fold(std::path::PathBuf::from(&local), |p, s| p.join(s)).to_string_lossy().into_owned());
     }
   }
   out.extend(dirs.iter().map(|d| std::path::Path::new(d).join(command).to_string_lossy().into_owned()));

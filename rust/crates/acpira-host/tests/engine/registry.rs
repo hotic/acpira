@@ -174,6 +174,10 @@ async fn windows_finds_devin_installed_after_startup_without_a_path_change() {
     Some(exe.to_string_lossy().to_lowercase()),
   );
   assert!(search_dirs("devin", &[], Os::Windows, &e).contains(&bin.to_string_lossy().into_owned()));
+  // Hermes's installer has its own directory under the same root
+  let hermes = local.join("hermes").join("bin").to_string_lossy().into_owned();
+  assert!(search_dirs("hermes", &[], Os::Windows, &e).contains(&hermes));
+  assert!(!search_dirs("droid", &[], Os::Windows, &e).contains(&hermes));
 }
 
 #[tokio::test]
@@ -265,7 +269,7 @@ async fn an_agent_missing_a_required_helper_is_unavailable_and_says_what_is_miss
 #[test]
 fn opencode_dsh_and_pi_are_built_in_and_a_custom_entry_overrides_its_builtin() {
   let ids: Vec<String> = AgentRegistry::new(&json!({})).list().into_iter().map(|a| a.id).collect();
-  for id in ["grok", "devin", "kimi", "codex", "claude", "opencode", "dsh", "antigravity", "pi"] {
+  for id in ["grok", "devin", "kimi", "codex", "claude", "opencode", "dsh", "antigravity", "pi", "droid", "hermes"] {
     assert!(ids.contains(&id.to_owned()), "{id}");
   }
   let r = AgentRegistry::new(&json!({ "opencode": { "name": "OC Fork", "command": "/x/oc-fork" } }));

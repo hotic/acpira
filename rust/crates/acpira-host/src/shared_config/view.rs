@@ -365,8 +365,11 @@ pub fn build(places: &Places, agents: &[String], caps: &dyn Fn(&str) -> Option<M
             reach.push(Reach { agent: id.into(), state: w.state(), path: Some(wire_path(&w.at)) });
           }
         }
+        // No file of its own to wire: an agent that reads the shared prompt itself (Droid) reaches it natively
         None if ext.shared.global_rules.is_none() && text.is_some() => {
-          reach.push(Reach { agent: id.into(), state: ReachState::Unsupported, path: None });
+          let native = ext.rules.iter().any(|(p, _)| *p == "~/.agents/AGENTS.md");
+          let state = if native { ReachState::Native } else { ReachState::Unsupported };
+          reach.push(Reach { agent: id.into(), state, path: None });
         }
         None => {}
       }

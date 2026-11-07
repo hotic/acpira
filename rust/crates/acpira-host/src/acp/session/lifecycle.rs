@@ -407,7 +407,7 @@ impl AcpSession {
             "load" if has_load => "session/load",
             _ => continue,
           };
-          if method == "session/load" {
+          if method == "session/load" || (method == "session/resume" && self.vendor.replays_on_resume()) {
             let mut c = self.core.lock();
             c.replaying = !c.state.turns.is_empty();
           }

@@ -13,6 +13,7 @@ use tokio::sync::watch;
 use crate::acp::agents::launch;
 use crate::acp::agents::registry::AgentDef;
 use crate::acp::transport::cancel::Cancel;
+use crate::acp::transport::legacy_models::LegacyModels;
 use crate::acp::transport::rpc::{BoxFuture, Connection, Inbound, RpcError};
 use crate::acp::vendors::grok::{GROK_ASK_QUESTION, GROK_EXIT_PLAN};
 use crate::acp::vendors::{Vendor, claude_auth, claude_workflow};
@@ -129,6 +130,13 @@ pub struct AgentProcess {
   box_: HandlerBox,
   life: watch::Receiver<Life>,
   killed: parking_lot::Mutex<bool>,
+  /// The unstable `models` field shown as a model select (`legacy_models.rs`)
+  legacy: LegacyModels,
+}
+
+/// A session start's requested sessionId, kept for `LegacyModels::adopt` without cloning every request's params
+fn start_sid(method: &str, params: &Value) -> Option<String> {
+  LegacyModels::starts(method).then(|| params.get("sessionId").and_then(Value::as_str).map(str::to_owned)).flatten()
 }
 
 impl AgentProcess {
@@ -141,11 +149,21 @@ impl AgentProcess {
   }
 
   pub async fn request(&self, method: &str, params: Value) -> Result<Value, RpcError> {
-    self.conn.request(method, params).await
+    if let Some((sid, model)) = self.legacy.intercept(method, &params) {
+      self.conn.request("session/set_model", json!({ "sessionId": sid, "modelId": model })).await?;
+      return Ok(self.legacy.picked(&sid, &model));
+    }
+    let requested = start_sid(method, &params);
+    let mut r = self.conn.request(method, params).await?;
+    self.legacy.adopt(method, requested.as_deref(), &mut r);
+    Ok(r)
   }
 
   pub async fn request_ordered(&self, method: &str, params: Value) -> Result<(Value, crate::acp::transport::rpc::Handoff), RpcError> {
-    self.conn.request_ordered(method, params).await
+    let requested = start_sid(method, &params);
+    let (mut r, handoff) = self.conn.request_ordered(method, params).await?;
+    self.legacy.adopt(method, requested.as_deref(), &mut r);
+    Ok((r, handoff))
   }
 
   pub fn notify(&self, method: &str, params: Value) {
@@ -302,6 +320,7 @@ impl AgentProcess {
         box_,
         life: life_rx,
         killed: parking_lot::Mutex::new(false),
+        legacy: LegacyModels::default(),
       })),
       Err(e) => {
         // A CLI that answered initialize with an error is still running: never leave it behind as an orphan

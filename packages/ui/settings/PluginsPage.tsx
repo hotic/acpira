@@ -28,6 +28,7 @@ import { PLUGIN_KIND_LABEL } from './search';
 // The vendors of the agents Acpira knows by id; any other agent is described as an ACP agent
 const VENDOR: Partial<Record<AgentId, string>> = {
   claude: 'Anthropic', codex: 'OpenAI', grok: 'xAI', devin: 'Cognition', kimi: 'Moonshot AI', antigravity: 'Google', dsh: 'DeepSeek',
+  droid: 'Factory', hermes: 'Nous Research',
 };
 
 export interface ModelsPageProps {

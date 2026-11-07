@@ -162,6 +162,8 @@ The **Acpira** agent is built in and needs only a model endpoint and its key; se
 - [DSH](https://deepseekdocs.com/en/docs/guides/acp-automation-server): `dsh` (`npm install -g @deepseek-ai/dsh`)
 - [Pi](https://github.com/svkozak/pi-acp): `pi` and `pi-acp` (`npm install -g @earendil-works/pi-coding-agent pi-acp`)
 - [Antigravity](https://antigravity.google/docs/ide/extensions): installed from its settings page as a checksum-verified native download. It has its own Google sign-in, separate from the `agy` CLI.
+- [Droid](https://factory.ai/product/cli): `droid` (`droid exec --output-format acp`). The copy inside the Factory desktop app is found too.
+- [Hermes Agent](https://hermes-agent.nousresearch.com): `hermes` (`hermes acp`)
 - Any other ACP-compatible command, added in `~/.acpira/agents.json`
 
 An agent without a CLI is greyed out in the menus. Its settings page installs it in the background with a streamed log, or shows the vendor's install command to copy or run in a terminal. Acpira notices a newly installed CLI on its own. If your network needs a proxy, set **Network proxy** in General settings. It applies to agents, their model requests, sign-ins, and installs.

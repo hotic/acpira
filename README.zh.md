@@ -162,6 +162,8 @@ Acpira 通过 [ACP](https://agentclientprotocol.com) 连接 Agent CLI，把模�
 - [DSH](https://deepseekdocs.com/en/docs/guides/acp-automation-server)：`dsh`（`npm install -g @deepseek-ai/dsh`）
 - [Pi](https://github.com/svkozak/pi-acp)：`pi` 与 `pi-acp`（`npm install -g @earendil-works/pi-coding-agent pi-acp`）
 - [Antigravity](https://antigravity.google/docs/ide/extensions)：在它的设置页安装，下载的原生包会经过校验和核对。它使用独立的 Google 登录，与 `agy` CLI 的登录互不相通。
+- [Droid](https://factory.ai/product/cli)：`droid`（`droid exec --output-format acp`），Factory 桌面版里自带的那份也能找到
+- [Hermes Agent](https://hermes-agent.nousresearch.com)：`hermes`（`hermes acp`）
 - 其他任何兼容 ACP 的命令，在 `~/.acpira/agents.json` 中添加
 
 未安装 CLI 的 Agent 在菜单中显示为灰色；它的设置页可在后台直接安装并实时显示日志，也给出官方安装命令，可复制或在终端中运行。新装好的 CLI 会被自动识别。网络需要代理时，在常规设置中设置「网络代理」，Agent 及其模型请求、登录和安装都会走这个代理。
