@@ -804,7 +804,7 @@ document.addEventListener('securitypolicyviolation', () => { seen.blocked = true
       }, 120_000).catch(e => fail(`${e.message}: ${JSON.stringify(state)}`));
       if (state.version !== release.version) fail(`staged ${state.version}, expected ${release.version}`);
       if (/did not apply/.test(appLog)) fail('the delta did not apply; the full package was taken');
-      const restart = `[...document.querySelectorAll('[role="status"] button')].find(b => b.textContent.trim() === 'Restart')`;
+      const restart = `[...document.querySelectorAll('[role="status"] button')].find(b => b.getAttribute('aria-label') === 'Restart')`;
       await page.waitFor('the restart toast', `document.body.innerText.includes('Acpira ${release.version} is ready to install') && !!(${restart})`);
       if (shotDir) await page.shot(join(shotDir, 'update-ready.png'));
       const logBefore = existsSync(desktopLog) ? readFileSync(desktopLog, 'utf8').length : 0;

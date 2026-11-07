@@ -70,6 +70,9 @@ export type WindowControl = 'minimize' | 'maximize' | 'close';
 
 // What a shell toast's button posts back (HostMsg toast `action`)
 export type ToastCommand = 'updateInstall';
+// A toast's file: the Open button's label and path, and the label of a second button that shows it in the OS file manager
+// (labels already localized by the engine)
+export interface ToastOpen { label: string; path: string; reveal?: string }
 
 // An agent CLI the shell found on PATH before the engine first ran (the first-run intro's row): its registry id and name
 export interface DetectedAgent { id: string; name: string }
@@ -240,7 +243,7 @@ export type HostMsg =
   // The desktop shell's toast (the engine's `toast` platform request), shown in the page's own toast stack; `open` adds a
   // button that opens that file (label already localized), `action` one that posts that shell command back. Never sent by
   // the sidecar
-  | { type: 'toast'; level: 'info' | 'error'; text: string; open?: { label: string; path: string }; action?: { label: string; command: ToastCommand } }
+  | { type: 'toast'; level: 'info' | 'error'; text: string; open?: ToastOpen; action?: { label: string; command: ToastCommand } }
   // The desktop shell's updater: its state, sent to each page on init and on every change. Never sent by the sidecar
   | { type: 'updateState'; state: UpdateState }
   // The desktop shell's menu bar: the page runs the command as its own shortcut would. Never sent by the sidecar
@@ -598,7 +601,8 @@ export type WebviewMsg =
   | { type: 'openAgentConfig' }
   // An appearance axis the page exposes (motion, autoExpand); host maps it onto acpira.appearance.<axis> and re-pushes the Appearance
   | { type: 'setAppearance'; axis: AxisKey; value: string }
-  | { type: 'openPath'; path: string }
+  // `reveal` shows a file in the OS file manager instead of opening it
+  | { type: 'openPath'; path: string; reveal?: boolean }
   // Tool references resolve relative to the originating session and retain their line; `reveal` shows the file in the OS file manager
   | { type: 'openFile'; sessionId: string; path: string; line?: number; reveal?: boolean }
   // A session blob (agent-produced image, parked attachment) by store name; the host resolves it under the session's blob dir

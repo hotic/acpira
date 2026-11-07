@@ -545,8 +545,8 @@ export function App() {
     cancelSubagent: (sessionId, subagentId) => post({ type: 'cancelSubagent', sessionId, subagentId }),
     stopAsyncTask: (sessionId, taskId) => post({ type: 'stopAsyncTask', sessionId, taskId }),
     goal: (sessionId, action, objective) => post({ type: 'goal', sessionId, action, ...(objective !== undefined ? { objective } : {}) }),
-    // A directory's openPath reveals it in the OS file manager (every shell has revealInOS)
-    revealPath: path => post({ type: 'openPath', path }),
+    // A directory's openPath reveals it in the OS file manager (every shell has revealInOS); `reveal` does so for a file too
+    revealPath: (path, reveal) => post({ type: 'openPath', path, ...(reveal ? { reveal } : {}) }),
     openExternal: url => post({ type: 'openExternal', url }),
     pickFolder: desktop ? () => new Promise<string | undefined>(resolve => {
       folderPick.current?.(undefined);
@@ -567,7 +567,7 @@ export function App() {
     saveSubagents: (base, personas) => post({ type: 'setSetting', key: 'subagents', value: { base, personas } }),
     saveSubagentGroups: (base, groups) => post({ type: 'setSetting', key: 'subagents', value: { baseGroups: base, groups } }),
     setAppearance: (axis, value) => post({ type: 'setAppearance', axis, value }),
-    openPath: path => post({ type: 'openPath', path }),
+    openPath: (path, reveal) => post({ type: 'openPath', path, ...(reveal ? { reveal } : {}) }),
     // Drop the cached copy first so the page shows the scanning shimmer until the reply lands
     refreshInventory: agent => { setInventories(inv => { const { [agent]: _drop, ...rest } = inv; return rest; }); post({ type: 'inventory', agent }); },
     // The refresh button keeps the cached page visible: the file scan answers first, the probe process (a cold CLI start) replaces

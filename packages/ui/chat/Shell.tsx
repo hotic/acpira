@@ -1,6 +1,6 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type RefObject } from 'react';
 import { flushSync } from 'react-dom';
-import { Check, CircleAlert, Network, Paperclip, Settings2, X } from 'lucide-react';
+import { Archive, Check, CircleAlert, FolderInput, Network, Paperclip, Settings2, X } from 'lucide-react';
 import type { AccountInfo, AgentId, AgentInfo, ForkOrigin, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, GoalAction, ImageDraft, NativeSessionInfo, PermissionBlock, PlanDocumentBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionGoal, SessionStatus, SessionSummary, SlashCommand, Turn, Usage, UserTurn } from '@acpira/shared/transcript';
 import type { SubagentSummary } from '@acpira/shared/subagents';
 import type { ModelShapes } from '@acpira/shared/modelShapes';
@@ -186,7 +186,7 @@ export interface ShellHandlers {
   // The desktop app: the system folder dialog (the folder picked, undefined when dismissed), a folder shown in the OS file
   // manager, a web page opened in the browser
   pickFolder?: () => Promise<string | undefined>;
-  revealPath?: (path: string) => void;
+  revealPath?: (path: string, reveal?: boolean) => void;
   openExternal?: (url: string) => void;
 }
 
@@ -585,13 +585,13 @@ export function Shell(p: ShellProps) {
       on.archiveSession!(id, archived);
       if (!archived) { dropToast(`a${id}`); return; }
       const title = p.sessions.find(s => s.id === id)?.title || t('session.fallbackTitle');
-      pushToast({ key: `a${id}`, text: t('session.archived', { title }), undo: () => { on.archiveSession!(id, false); dropToast(`a${id}`); } });
+      pushToast({ key: `a${id}`, text: t('session.archived', { title }), icon: <Archive className="text-fg-3" strokeWidth={1.5} />, undo: () => { on.archiveSession!(id, false); dropToast(`a${id}`); } });
     }),
     // A moved session leaves a "this project" list at once (or changes group under "all"); the toast says where it went
     moveSession: on.moveSession && ((id, to) => {
       const title = p.sessions.find(s => s.id === id)?.title ?? t('session.fallbackTitle');
       on.moveSession!(id, to);
-      pushToast({ key: `m${id}`, text: to && to.cwd !== p.workspace ? t('session.movedTo', { title, project: projectName(to.cwd) }) : t('session.moved', { title }) });
+      pushToast({ key: `m${id}`, text: to && to.cwd !== p.workspace ? t('session.movedTo', { title, project: projectName(to.cwd) }) : t('session.moved', { title }), icon: <FolderInput className="text-fg-3" strokeWidth={1.5} /> });
     }),
   }), [on, canUnlock, p.sessions, p.activeSessionId, p.cwd, pushToast, dropToast, copied]);
   const blobUrl = useMemo(() => (p.blobBase && p.activeSessionId ? (blob: string) => `${p.blobBase}/${p.activeSessionId}/${blob}` : undefined), [p.blobBase, p.activeSessionId]);

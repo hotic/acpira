@@ -109,7 +109,9 @@ struct ContractTests {
     try checkStruct(payload.sidecar, TS.inline(try need(ok.first { $0.name == "sidecar" }).type))
     let toast = try need(TS.members(try need(TS.alias(sidecar, "PlatformRequest")), tag: "method")["toast"])
     let open = PlatformRequest.ToastOpen(label: "Open", path: "/w/a.md")
-    try checkStruct(open, TS.inline(try need(toast.first { $0.name == "open" }).type))
+    // `open` names protocol.ts's ToastOpen; `reveal` (show in the OS file manager) has no phone counterpart
+    #expect(try need(toast.first { $0.name == "open" }).type == "ToastOpen")
+    try checkStruct(open, try need(TS.interface(try Self.source("protocol.ts"), "ToastOpen")), leftOut: ["reveal"])
   }
 
   @Test(.enabled(if: readable))

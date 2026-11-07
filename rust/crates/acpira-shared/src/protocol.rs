@@ -1117,6 +1117,9 @@ pub enum WebviewMsg {
   OpenAgentConfig,
   OpenPath {
     path: String,
+    /// Show the path in the OS file manager even when it is a file (the export toast's second button)
+    #[serde(default)]
+    reveal: bool,
   },
   OpenFile {
     session_id: String,
