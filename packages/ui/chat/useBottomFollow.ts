@@ -54,6 +54,21 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
     untouched.current = true;
     holding.current = -Infinity;
     holdingDown.current = false;
+    // WebKit scrolls in whole CSS pixels while content heights are fractional. Held at the bottom, every fractional
+    // change above the tail (a history slice prepending on a session switch, an image landing) moved the tail by that
+    // fraction, which a 2x screen showed as a one-pixel jolt up and back. A sub-pixel pad above the content puts the
+    // content's end on a whole pixel, so the pinned tail lands on the same pixel whatever the history adds up to
+    let lead = 0;
+    const align = () => {
+      const body = content.current;
+      if (!body || !scrollerUsable(el)) return;
+      const end = body.getBoundingClientRect().bottom - el.getBoundingClientRect().top - el.clientTop + el.scrollTop - lead;
+      const frac = end - Math.floor(end);
+      const next = frac < 0.01 || frac > 0.99 ? 0 : Math.round((1 - frac) * 100) / 100;
+      if (next === lead) return;
+      lead = next;
+      el.style.paddingTop = next ? `${next}px` : '';
+    };
     const pin = () => {
       if (!scrollerUsable(el) || !pinned.current) return;
       const maxTop = el.scrollHeight - el.clientHeight;
@@ -70,6 +85,7 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
       if (had) pin();
     };
     syncBox();
+    align();
     pin();
     // A hidden sidebar collapses the scroller to no box and fires a scroll that looks like "left the bottom".
     let lastTop = el.scrollTop;
@@ -132,6 +148,7 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
     // an opened fold that now overflows below shows the bottom fade (and is not yanked to the bottom by the next
     // streamed chunk), and closing it back into the viewport restores the follow.
     const grew = () => {
+      align();
       if (untouched.current) {
         pin();
         return;
@@ -161,6 +178,7 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
     const body = new ResizeObserver(grew);
     if (content.current) body.observe(content.current, { box: 'border-box' });
     return () => {
+      el.style.paddingTop = '';
       box.disconnect();
       body.disconnect();
       el.removeEventListener('scroll', onScroll);
