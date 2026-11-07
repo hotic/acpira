@@ -5,4 +5,4 @@ local.properties
 *.iml
 .idea/
 captures/
-net/
+/net/
