@@ -26,9 +26,21 @@ pub fn peer_label(version: &str) -> String {
   format!("com.hotic.acpira.peer.{clean}")
 }
 
+/// What a job runs: `exe` itself, or the launcher starting it (machine_engine/launcher.rs), which keeps the engine's
+/// privacy grants under one program whatever build it runs
+fn program(launcher: Option<&Path>, exe: &Path) -> String {
+  let mut parts = vec![];
+  if let Some(l) = launcher {
+    parts.push(xml(&l.to_string_lossy()));
+    parts.push(crate::machine_engine::launcher::COMMAND.to_owned());
+  }
+  parts.push(xml(&exe.to_string_lossy()));
+  parts.iter().map(|p| format!("<string>{p}</string>")).collect::<Vec<_>>().join("\n    ")
+}
+
 /// The LaunchAgent plist for a peer engine on macOS: runs in the user's `Aqua` login session (`gui/<uid>`), where the
 /// login keychain is unlocked, without `KeepAlive` so the engine still exits on its idle grace (`cli.rs`)
-pub fn peer_plist(label: &str, exe: &Path, socket: &Path, home: &Path, log: &Path) -> String {
+pub fn peer_plist(label: &str, launcher: Option<&Path>, exe: &Path, socket: &Path, home: &Path, log: &Path) -> String {
   format!(
     r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -40,7 +52,7 @@ pub fn peer_plist(label: &str, exe: &Path, socket: &Path, home: &Path, log: &Pat
   <string>Aqua</string>
   <key>ProgramArguments</key>
   <array>
-    <string>{exe}</string>
+    {program}
     <string>serve</string>
     <string>--socket</string>
     <string>{socket}</string>
@@ -57,7 +69,7 @@ pub fn peer_plist(label: &str, exe: &Path, socket: &Path, home: &Path, log: &Pat
 </plist>
 "#,
     label = xml(label),
-    exe = xml(&exe.to_string_lossy()),
+    program = program(launcher, exe),
     socket = xml(&socket.to_string_lossy()),
     home = xml(&home.to_string_lossy()),
     log = xml(&log.to_string_lossy()),
@@ -166,7 +178,8 @@ async fn start_serve(label: &str, stem: &str, exe: &Path, socket: &Path, home: &
   let run = home.join("run");
   let plist_path = run.join(format!("{stem}.plist"));
   let lock_path = run.join(format!("{stem}.plist.lock"));
-  let text = peer_plist(label, exe, socket, home, log);
+  let launcher = crate::machine_engine::launcher::ensure(home, exe);
+  let text = peer_plist(label, launcher.as_deref(), exe, socket, home, log);
   crate::store::file_lock::with_file_lock(&lock_path, || async {
     let same = tokio::fs::read_to_string(&plist_path).await.is_ok_and(|t| t == text);
     if !same {
@@ -187,7 +200,7 @@ async fn start_serve(label: &str, stem: &str, exe: &Path, socket: &Path, home: &
 /// The LaunchAgent: started at login, restarted when it crashes or exits with an error (not after an idle exit, a
 /// handover to a newer build or `serve` finding the engine running already). `serve` moves into its landed copy at once
 /// (`cli::run`) and writes its log itself; launchd's capture covers what comes before
-pub fn plist(label: &str, exe: &Path, root: &Path) -> String {
+pub fn plist(label: &str, launcher: Option<&Path>, exe: &Path, root: &Path) -> String {
   let log = super::service::log_path(root);
   let args: String = super::service::args(root).iter().map(|a| format!("\n    <string>{}</string>", xml(a))).collect();
   format!(
@@ -199,7 +212,7 @@ pub fn plist(label: &str, exe: &Path, root: &Path) -> String {
   <string>{label}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>{exe}</string>{args}
+    {program}{args}
   </array>
   <key>RunAtLoad</key>
   <true/>
@@ -218,7 +231,7 @@ pub fn plist(label: &str, exe: &Path, root: &Path) -> String {
 </plist>
 "#,
     label = xml(label),
-    exe = xml(&exe.to_string_lossy()),
+    program = program(launcher, exe),
     log = xml(&log.to_string_lossy()),
   )
 }
@@ -341,14 +354,17 @@ mod tests {
     let home = Path::new("/Users/u");
     assert_eq!(label(Path::new("/Users/u/.acpira"), home), "com.hotic.acpira.gateway");
     assert!(label(Path::new("/Users/u/.acpira/harness"), home).starts_with("com.hotic.acpira.gateway."));
-    let p = plist("l", Path::new("/a&b/acpira"), Path::new("/r"));
+    let p = plist("l", None, Path::new("/a&b/acpira"), Path::new("/r"));
     assert!(p.contains("<string>/a&amp;b/acpira</string>\n    <string>serve</string>"), "{p}");
     // The log path is joined natively, so Windows (where this file's text is also tested) puts backslashes in it
     let log = super::super::service::log_path(Path::new("/r"));
     assert!(p.contains("<string>--service</string>") && p.contains(&format!("<string>{}</string>", log.display())), "{p}");
     assert_eq!(peer_label("2.0.5"), "com.hotic.acpira.peer.2.0.5");
-    let peer = peer_plist("com.hotic.acpira.peer.2.0.5", Path::new("/a'b/acpira"), Path::new("/r/peer.sock"), Path::new("/r"), Path::new("/r/peer.log"));
+    let peer = peer_plist("com.hotic.acpira.peer.2.0.5", None, Path::new("/a'b/acpira"), Path::new("/r/peer.sock"), Path::new("/r"), Path::new("/r/peer.log"));
     assert!(peer.contains("<string>Aqua</string>") && peer.contains("/a&apos;b/acpira") && !peer.contains("KeepAlive"));
+    // Under the launcher, the engine is its first argument
+    let launched = plist("l", Some(Path::new("/r/engine/launcher/Acpira Engine")), Path::new("/s/acpira"), Path::new("/r"));
+    assert!(launched.contains("<string>/r/engine/launcher/Acpira Engine</string>\n    <string>launch</string>\n    <string>/s/acpira</string>\n    <string>serve</string>"), "{launched}");
     assert!(!is_default_user_home(Path::new("/tmp/not-real-user-home/.acpira")));
   }
 }

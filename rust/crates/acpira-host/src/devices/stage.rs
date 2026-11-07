@@ -1,7 +1,8 @@
 //! The engine binary remote access's login service starts: a copy at one path, `<home>/devices/service/acpira`, since an
 //! extension upgrade deletes the folder an engine runs from, and macOS and Windows remember a program by its path
 //! (privacy grants, Login Items, firewall rules). On macOS and Linux the engine started from it moves into its landed copy
-//! at once (`cli::run`), so this copy may be replaced or removed under it; Windows runs from it, so a copy in use is
+//! at once (`cli::run`), so this copy may be replaced or removed under it (on macOS the launcher above both keeps the
+//! privacy grants, machine_engine/launcher.rs); Windows runs from it, so a copy in use is
 //! moved aside first. `gateway.json` records the build it was made from (`engine`, `engineBuilt`), as it did for the
 //! copies of builds up to 2.0.6 (`devices/bin/`, removed once a newer engine installs this one), which those builds still
 //! read to leave a newer install alone.
