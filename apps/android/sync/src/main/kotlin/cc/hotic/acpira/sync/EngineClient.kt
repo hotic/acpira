@@ -173,7 +173,7 @@ class EngineClient(
           _events.send(EngineEvent.Platform(request))
         }
       }
-      is SidecarMsg.Unknown -> {}
+      SidecarMsg.ShutdownOk, is SidecarMsg.Unknown -> {}
     }
   }
 

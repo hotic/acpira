@@ -30,8 +30,6 @@ fun childPath(path: String, name: String): String {
 /** A path's last part, for a title; a root (`/`, `C:\`) names itself */
 fun folderName(path: String): String = path.trimEnd('/', '\\').split('/', '\\').lastOrNull { it.isNotEmpty() } ?: path
 
-private fun JsonObject.bool(key: String): Boolean? = (this[key] as? JsonPrimitive)?.booleanOrNull
-
 private fun JsonObject.with(key: String, value: JsonElement): JsonObject = JsonObject(this + (key to value))
 
 /** One model of a source (providers.ts ProviderModel), raw */
