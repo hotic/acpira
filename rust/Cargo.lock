@@ -146,6 +146,7 @@ dependencies = [
  "flate2",
  "iroh",
  "n0-future",
+ "netwatch",
  "parking_lot",
  "ring",
  "serde",
@@ -153,6 +154,7 @@ dependencies = [
  "spake2",
  "tempfile",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4143,8 +4145,6 @@ dependencies = [
 [[package]]
 name = "simple-dns"
 version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b6f884fa9a8d48101774bfbd3aeb81e968dd22cffd19a372da69f183db22c1a"
 dependencies = [
  "bitflags 2.13.2",
 ]

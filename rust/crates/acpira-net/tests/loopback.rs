@@ -73,7 +73,7 @@ fn serve_pairing(computer: acpira_net::Endpoint, window: Window, trusted: Truste
 }
 
 async fn ep(alpns: Vec<Vec<u8>>) -> acpira_net::Endpoint {
-  endpoint::bind(Options { secret: SecretKey::generate(), relays: Relays::Off, alpns, bind: Some("127.0.0.1:0".parse().unwrap()) }).await.unwrap()
+  endpoint::bind(Options { secret: SecretKey::generate(), relays: Relays::Off, alpns, bind: Some("127.0.0.1:0".parse().unwrap()), bypass: None }).await.unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread")]

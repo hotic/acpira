@@ -242,6 +242,8 @@ pub async fn start_node(secret: Vec<u8>, relays: RelayChoice) -> Result<Arc<Node
 #[derive(uniffi::Object)]
 pub struct Node {
   ep: Endpoint,
+  /// Relays are on: without them there is no home relay to be down
+  relays_on: bool,
 }
 
 impl Node {
@@ -249,7 +251,7 @@ impl Node {
   pub async fn start_bound(secret: [u8; 32], relays: RelayChoice, bind: Option<SocketAddr>) -> Result<Arc<Node>, NodeFailure> {
     let relays: Relays = relays.into();
     let watched = relays != Relays::Off;
-    let o = Options { secret: SecretKey::from_bytes(&secret), relays, alpns: vec![], bind };
+    let o = Options { secret: SecretKey::from_bytes(&secret), relays, alpns: vec![], bind, bypass: None };
     let ep = on_runtime(async move {
       let ep = endpoint::bind(o).await?;
       // A home relay that stays down after a network change gets iroh to look again (ends with the endpoint)
@@ -261,7 +263,7 @@ impl Node {
     .await
     .map_err(|message| NodeFailure::Other { message })?
     .map_err(|e| NodeFailure::Other { message: format!("{e:#}") })?;
-    Ok(Arc::new(Node { ep }))
+    Ok(Arc::new(Node { ep, relays_on: watched }))
   }
 }
 
@@ -274,7 +276,7 @@ impl Node {
 
   /// Whether the home relay is connected (true with relays off): false while online means no relay is reachable
   pub fn relay_connected(&self) -> bool {
-    endpoint::relay_connected(&self.ep)
+    endpoint::relay_connected(&self.ep, self.relays_on)
   }
 
   /// The system saw the network change (NWPathMonitor): re-probe interfaces and paths now instead of on iroh's timer

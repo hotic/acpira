@@ -10,6 +10,7 @@ pub mod link;
 pub mod pair;
 pub mod path;
 pub mod ticket;
+pub mod tun;
 
 pub use iroh;
 pub use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl, SecretKey};

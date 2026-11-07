@@ -1,6 +1,6 @@
 # Host architecture
 
-What a change to the engine (`rust/`) or its shells cannot learn quickly from the code: the contracts between the sidecar, the shells and other engines, the sync model, and the external behaviour the engine works around. Agent registry, launching, installs, cross-harness subagents, the handoff pack and shared config: `host-agents.md`. The TypeScript under `apps/vscode/src` is the VS Code shell only.
+What a change to the engine (`rust/`) or its shells cannot learn quickly from the code. Agent registry, launching, installs, cross-harness subagents, the handoff pack and shared config: `host-agents.md`.
 
 ## Engine and composition root
 
@@ -9,7 +9,7 @@ What a change to the engine (`rust/`) or its shells cannot learn quickly from th
   - Trap: `request_ordered` (session/new, resume, load) waits for the caller's `Handoff` drop instead, because pi-acp re-sends its startup banner right after session/new and it must meet the recorded banner.
 - Each session is one short-held mutex; prompts, cards and platform RPCs wait with it released. `SessionManager` never holds its lock across a session lock or an await.
 - Records, index, prefs, blobs, locks and accounts stay byte-compatible with what the former TypeScript engine wrote.
-- Panics abort in release builds and end every session in the engine, so run-time code never panics on outside input (`[workspace.lints]` denies `unwrap_used`, `string_slice` and kin; literal regexes go through `acpira_shared::re::compile`).
+- Panics abort in release builds and end every session in the engine, so run-time code never panics on outside input (`[workspace.lints]`; literal regexes go through `acpira_shared::re::compile`).
 
 ## Sidecar protocol and shells
 
@@ -93,14 +93,15 @@ What a change to the engine (`rust/`) or its shells cannot learn quickly from th
 
 ## Remote access gateway
 
-- The gateway (`acpira-gateway`, a library) runs inside the machine's engine (`devices/host.rs`; Windows: the logon task's `serve --service`). Whoever binds the control channel serves the data root: a draining engine gives it up with its endpoint; a standalone gateway of ≤ 2.0.6 (status without `enginePid`) is stopped first. A hosting engine never idles out.
+- The gateway (`acpira-gateway`, a library) runs inside the machine's engine (`devices/host.rs`; Windows: the logon task's `serve --service`). Whoever binds the control channel serves the data root: a draining engine gives it up with its endpoint; an older standalone one is stopped first. A hosting engine never idles out.
 - Login service (`devices/service.rs`; labels kept so older builds read the switch) starts `serve --service` from `devices/service/acpira`, on Unix exec'd into the landed copy. With the socket taken it drains an older build (pre-merge ones never host), or exits 0 once status shows its `enginePid`, else fails (retried). Install / uninstall never end a running engine. A successor after a handover is unsupervised until next login (chosen).
   - macOS 27.0: `bootout` returns while the job is still listed; a `bootstrap` then (or of a disabled job) fails with `5: Input/output error`: wait for `launchctl print` to fail; a 5 with the label loaded is success.
 - macOS grants match the code signature (Developer ID + the bundle's identifier, `sign-mac.mjs`; ad hoc loses them each install). A launchd-started engine is its own responsible process and needs its own grants (removable volumes, app management).
 - Start contract: opening the desktop card starts remote access; only the settings switch turns it off. The control channel answers before the relay is up, and a start returns once it answers, so a page never reads a starting gateway as stopped.
 - Trust: a device's grant drives sessions and full shells under the computer's OS account, so pairing trusts it with command execution. Allow-list: `devices::device_allowed`, `DEVICE_SETTINGS`. Terminal ids are prefixed with the authenticated EndpointId; client-provided names grant nothing.
 - Push: the APNs key is the user's own file under `<ACPIRA_HOME>/apns/`, never in the repository. Unverified: KDE idle time units (`presence.rs`); whether GNOME's automatic suspend honours an `idle` inhibitor alone (`awake.rs`).
-- Device addresses drop virtual adapters by name (`virtual_ips`), else WSL, VM bridges or a proxy TUN (Clash Verge `Meta`) crowd out the Wi-Fi one. A Windows Bonjour entry outlives a killed gateway: `<name>(1)` on a dead port.
+- Device addresses drop virtual adapters by name (`virtual_ips`), else WSL, VM bridges or a proxy TUN crowd out the Wi-Fi one. A Windows Bonjour entry outlives a killed gateway: `<name>(1)` on a dead port.
+- Proxy TUN (`acpira_net::tun`; VPNs left alone): a macOS / Windows gateway binds IPv4 past it on the physical interface and resolves over DoT, as its DNS gives fake addresses. Bound sockets never follow the network: a changed detection restarts the gateway. Not on Linux (why there).
 - Windows Firewall (`firewall.rs`): a missed first-listen prompt leaves block rules that beat allow rules; its default answer covers private networks, a new Wi-Fi is public. Only the relay gets in then. `allowLan` fixes it through UAC. Unverified on Windows (UAC focus too).
 
 ## Host probes

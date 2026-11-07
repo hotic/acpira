@@ -200,7 +200,7 @@ fn a_phone_pairs_drives_a_session_and_is_revoked() {
 
     // Pairing from the link the settings page would show
     let ticket = PairTicket::decode(&g.open_pairing().link).unwrap();
-    let phone = endpoint::bind(Options { secret: SecretKey::generate(), relays: Relays::Off, alpns: vec![], bind: Some("127.0.0.1:0".parse().unwrap()) }).await.unwrap();
+    let phone = endpoint::bind(Options { secret: SecretKey::generate(), relays: Relays::Off, alpns: vec![], bind: Some("127.0.0.1:0".parse().unwrap()), bypass: None }).await.unwrap();
     let r = pair::pair_with(&phone, &ticket, "Spark 的 iPhone", DeviceKind::Phone, "1.0", Duration::from_secs(10)).await.unwrap();
     assert!(matches!(&r, PairReply::Paired { .. }), "{r:?}");
     let st = g.status();
@@ -297,7 +297,7 @@ fn a_phone_pairs_drives_a_session_and_is_revoked() {
 
       // A second key with the same display name and terminal id gets a different shell, and cannot address the first's
       // engine id by passing its prefix back as a client id.
-      let other = endpoint::bind(Options { secret: SecretKey::generate(), relays: Relays::Off, alpns: vec![], bind: Some("127.0.0.1:0".parse().unwrap()) }).await.unwrap();
+      let other = endpoint::bind(Options { secret: SecretKey::generate(), relays: Relays::Off, alpns: vec![], bind: Some("127.0.0.1:0".parse().unwrap()), bypass: None }).await.unwrap();
       let ticket2 = PairTicket::decode(&g.open_pairing().link).unwrap();
       let paired = pair::pair_with(&other, &ticket2, "Spark 的 iPhone", DeviceKind::Phone, "1.0", Duration::from_secs(10)).await.unwrap();
       assert!(matches!(paired, PairReply::Paired { .. }));
@@ -407,6 +407,7 @@ printf '\037'
       relays: Relays::Off,
       alpns: vec![],
       bind: Some("127.0.0.1:0".parse().unwrap()),
+      bypass: None,
     })
     .await
     .unwrap();
@@ -767,7 +768,7 @@ fn a_phone_on_the_network_pairs_with_the_code() {
 
     // Where the Bonjour TXT record would have said the computer is
     let at = acpira_net::EndpointAddr::from_parts(g.endpoint().id(), g.endpoint().bound_sockets().into_iter().map(acpira_net::iroh::TransportAddr::Ip));
-    let phone = endpoint::bind(Options { secret: SecretKey::generate(), relays: Relays::Off, alpns: vec![], bind: Some("127.0.0.1:0".parse().unwrap()) }).await.unwrap();
+    let phone = endpoint::bind(Options { secret: SecretKey::generate(), relays: Relays::Off, alpns: vec![], bind: Some("127.0.0.1:0".parse().unwrap()), bypass: None }).await.unwrap();
     let r = pair::pair_with_code(&phone, at, &p.code, "Spark 的 iPhone", DeviceKind::Phone, "1.0", Duration::from_secs(10)).await.unwrap();
     assert!(matches!(&r, PairReply::Paired { .. }), "{r:?}");
     let st = g.status();

@@ -12,6 +12,13 @@ use tokio::sync::mpsc;
 use crate::control::{self, Lifecycle};
 use crate::gateway::{Gateway, Opts};
 
+/// How often the gateway checks that its proxy TUN bypass still fits the network and its home relay is up
+const RECHECK: Duration = Duration::from_secs(10);
+
+/// How long the home relay may stay down, with no device connected, before the gateway starts over: past the first
+/// few nudges `endpoint::watch_relay` gives iroh
+const RELAY_RESTART: Duration = Duration::from_secs(5 * 60);
+
 pub struct Hosted {
   pub gateway: Arc<Gateway>,
   tasks: Vec<tokio::task::JoinHandle<()>>,
@@ -24,7 +31,38 @@ impl Hosted {
     let log = opts.log.clone();
     let g = Gateway::start(opts).await?;
     // Answered at once: the engines read a gateway that does not answer as not running, and a relay can take seconds
-    let mut tasks = vec![tokio::spawn(control::serve(g.clone(), control, on))];
+    let mut tasks = vec![tokio::spawn(control::serve(g.clone(), control, on.clone()))];
+    tasks.push(tokio::spawn({
+      let (g, log) = (g.clone(), log.clone());
+      async move {
+        let mut moved = false;
+        let mut relay_down: Option<std::time::Instant> = None;
+        loop {
+          tokio::time::sleep(RECHECK).await;
+          // The sockets stay on the addresses they were bound to: once a proxy TUN comes or goes, or the physical
+          // interface moves (another network, a new lease), the gateway starts over on the new ones. A change counts
+          // once two looks in a row see it, so a network switch in progress does not restart it twice
+          let now = g.bypass_moved().await;
+          if now && moved {
+            log("the network changed under the proxy TUN bypass: restarting the gateway");
+            let _ = on.send(Lifecycle::Restart);
+            return;
+          }
+          moved = now;
+          // A home relay that telling iroh the network changed (`endpoint::watch_relay`) does not bring back: a fresh
+          // endpoint does. Seen on Windows, where the relay stayed down for hours and no device got in, the LAN
+          // included (a device behind a blocking firewall only gets in through a hole the relay helps punch), until
+          // a reboot. Never while a device is connected: its direct path works without the relay
+          if g.relay_up() || g.anyone_online() {
+            relay_down = None;
+          } else if relay_down.get_or_insert_with(std::time::Instant::now).elapsed() >= RELAY_RESTART {
+            log("the home relay stayed down and no device is connected: restarting the gateway on a fresh endpoint");
+            let _ = on.send(Lifecycle::Restart);
+            return;
+          }
+        }
+      }
+    }));
     tasks.push(tokio::spawn({
       let g = g.clone();
       async move {

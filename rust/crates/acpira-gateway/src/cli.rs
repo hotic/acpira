@@ -167,7 +167,7 @@ async fn try_cmd(args: &[String]) -> Result<()> {
   let dir = Paths::new(&home).dir;
   let me = identity::load_or_create(&dir.join("client.key"))?;
   let t0 = Instant::now();
-  let ep = endpoint::bind(Options { secret: me, relays: Relays::N0, alpns: vec![], bind: None }).await?;
+  let ep = endpoint::bind(Options { secret: me, relays: Relays::N0, alpns: vec![], bind: None, bypass: None }).await?;
   let known = dir.join("computers.json");
   let mut computers: Vec<Value> = acpira_desktop::json_file::read_json(&known).and_then(|v| v.as_array().cloned()).unwrap_or_default();
   let id = ticket.id.to_string();
