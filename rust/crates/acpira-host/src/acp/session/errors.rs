@@ -5,7 +5,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde_json::Value;
 
-use acpira_shared::transcript::{PermissionKind, TurnError};
+use acpira_shared::transcript::{AuthMethodInfo, PermissionKind, TurnError};
 
 use crate::acp::transport::rpc::RpcError;
 use crate::i18n::t;
@@ -28,6 +28,15 @@ pub fn rpc_of(e: &anyhow::Error) -> Option<&RpcError> {
 
 static AUTH_RE: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)auth"));
 static AUTH_WHY: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)required|login|unauthor"));
+/// A provider that rejected the credentials, as a CLI reports it under another code than ACP's `-32000` (Grok 1.0.62
+/// answers a 401 with `-32603` and `Unauthorized (401) … Invalid or expired credentials` in `data`; Codex relays the
+/// provider's `401 Unauthorized`). Narrower than `AUTH_RE` + `AUTH_WHY`: an RPC error is often a model's or tool's text
+static CREDENTIALS_REJECTED: LazyLock<Regex> = LazyLock::new(|| {
+  acpira_shared::re::compile(
+    r"(?i)\bunauthori[sz]ed\b|\bnot (?:logged|signed) in\b|\b(?:login|sign[- ]?in|authentication) required\b|\b(?:invalid|expired|missing)\b[^.\n]{0,24}\b(?:credentials?|api[ _-]?key|access token)\b",
+  )
+});
+static API_KEY_METHOD: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)api[._-]?key"));
 static AUTH_WORDS: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)auth|credential|login|logged|unauthor"));
 static GLOG: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"^([IWEFD])\d{4} \d{2}:\d{2}:\d{2}\.\d+\s+\d+\s+[\w.-]+:\d+\]"));
 /// A sign-in link printed while the browser opens (antigravity-acp `Open the following link to authenticate …: <url>`)
@@ -72,7 +81,7 @@ pub fn is_auth(e: &anyhow::Error) -> bool {
     return true;
   }
   if let Some(r) = rpc_of(e) {
-    return r.code == -32000;
+    return r.code == -32000 || CREDENTIALS_REJECTED.is_match(&error_text(e));
   }
   let m = e.to_string();
   AUTH_RE.is_match(&m) && AUTH_WHY.is_match(&m)
@@ -95,6 +104,11 @@ pub fn error_text(e: &anyhow::Error) -> String {
     Some(d) if !text.contains(&d) => format!("{text}: {d}"),
     _ => text,
   }
+}
+
+/// A sign-in method that only reads a key from the environment or config (`xai.api_key`, `api-key`, `gemini-api-key`)
+pub fn is_api_key_method(m: &AuthMethodInfo) -> bool {
+  API_KEY_METHOD.is_match(&m.id)
 }
 
 /// What a failed session/prompt leaves on the turn
@@ -275,6 +289,20 @@ mod tests {
       auto_allow(&[o("turn", "allow_once"), o("strict", "allow_once"), o("session", "allow_always"), o("no", "reject_once")]).as_deref(),
       Some("session")
     );
+  }
+
+  #[test]
+  fn rejected_credentials_need_a_login_whatever_the_code() {
+    // Grok 1.0.62 with no login: the provider's 401 arrives as an SDK internal error
+    let grok = "Unauthorized (401) from https://cli-chat-proxy.grok.com/v1/responses: Invalid or expired credentials (auth_kind=none, x_xai_token_auth=xai-grok-cli, upstream=Unauthenticated, reason=no auth context)";
+    assert!(is_auth(&rpc("Internal error", Some(json!({ "details": grok })))));
+    assert!(is_auth(&rpc("stream error: unexpected status 401 Unauthorized", None)));
+    assert!(is_auth(&rpc("Invalid API key provided", None)));
+    assert!(is_auth(&anyhow::Error::new(RpcError { code: -32000, message: "Authentication required".into(), data: None })));
+    // Model, tool and request failures that merely mention auth stay plain errors
+    assert!(!is_auth(&rpc("Internal error", Some(json!({ "details": "429 Too Many Requests" })))));
+    assert!(!is_auth(&rpc("Invalid JSON: unexpected token in authorization header parser", None)));
+    assert!(!is_auth(&rpc("tool failed: OAuth flow for MCP server x timed out", None)));
   }
 
   #[test]
