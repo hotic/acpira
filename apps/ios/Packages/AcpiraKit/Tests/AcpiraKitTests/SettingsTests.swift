@@ -84,7 +84,7 @@ import Testing
 
   @Test func agentsSwitchOffAndReorderLikeTheDesktop() throws {
     let m = model()
-    let ids = m.settingsAgents.map(\.id)
+    let ids = m.agents.map(\.id)
     try #require(ids.count >= 2)
     m.setAgentEnabled(ids[0], false)
     #expect(m.settings?.disabledAgents == [ids[0]])
@@ -98,14 +98,14 @@ import Testing
     #expect(m.settings?.disabledAgents == [])
     m.moveAgents(from: IndexSet(integer: 0), to: ids.count)
     #expect(m.settings?.agentOrder == Array(ids.dropFirst()) + [ids[0]])
-    #expect(m.settingsAgents.map(\.id).last == ids[0])
+    #expect(m.agents.map(\.id).last == ids[0])
   }
 
   @Test func theLastAgentOnStaysOn() {
     let m = model()
-    let ids = m.settingsAgents.map(\.id)
+    let ids = m.agents.map(\.id)
     for id in ids { m.setAgentEnabled(id, false) }
-    #expect(m.settingsAgents.filter { $0.disabled != true }.map(\.id) == [ids.last])
+    #expect(m.agents.filter { $0.disabled != true }.map(\.id) == [ids.last])
   }
 
   @Test func hiddenModelsDropEmptyEntries() {

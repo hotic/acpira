@@ -581,18 +581,6 @@ fn pasteboard() -> Option<*mut AnyObject> {
 const PASTEBOARD_STRING: &str = "public.utf8-plain-text";
 
 /// Main thread only
-pub fn clipboard_write(text: &str) {
-  let Some(pb) = pasteboard() else { return };
-  // SAFETY: documented NSPasteboard messages on the non-nil general pasteboard, with NSStrings that outlive the calls
-  unsafe {
-    let _: isize = msg_send![pb, clearContents];
-    let s = NSString::from_str(text);
-    let ty = NSString::from_str(PASTEBOARD_STRING);
-    let _: Bool = msg_send![pb, setString: &*s, forType: &*ty];
-  }
-}
-
-/// Main thread only
 pub fn clipboard_read() -> String {
   let Some(pb) = pasteboard() else { return String::new() };
   // SAFETY: a documented NSPasteboard message on the non-nil general pasteboard; ns_string checks the answer for nil

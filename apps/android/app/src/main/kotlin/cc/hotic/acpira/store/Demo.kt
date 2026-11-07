@@ -26,7 +26,7 @@ object Fixtures {
   /** Fixture names that hold a SessionView (AcpiraFixtures Fixtures.sessionNames) */
   val sessionNames = listOf(
     "showcase", "running", "streaming", "question", "queued", "stopped", "empty", "diagrams", "media", "plan", "notices",
-    "records", "context", "failure", "login", "readonly", "closed", "error", "connecting", "chatgpt", "goal", "subagents",
+    "records", "context", "failure", "login", "readonly", "closed", "error", "connecting", "goal", "subagents",
     "builtin",
   )
 

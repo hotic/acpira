@@ -1,7 +1,7 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type RefObject } from 'react';
 import { flushSync } from 'react-dom';
 import { Check, CircleAlert, Network, Paperclip, Settings2, X } from 'lucide-react';
-import type { ExternalSessionInfo, AccountInfo, AgentId, AgentInfo, ForkOrigin, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, GoalAction, ImageDraft, NativeSessionInfo, PermissionBlock, PlanDocumentBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionGoal, SessionStatus, SessionSummary, SlashCommand, Turn, Usage, UserTurn } from '@acpira/shared/transcript';
+import type { AccountInfo, AgentId, AgentInfo, ForkOrigin, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, GoalAction, ImageDraft, NativeSessionInfo, PermissionBlock, PlanDocumentBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionGoal, SessionStatus, SessionSummary, SlashCommand, Turn, Usage, UserTurn } from '@acpira/shared/transcript';
 import type { SubagentSummary } from '@acpira/shared/subagents';
 import type { ModelShapes } from '@acpira/shared/modelShapes';
 import type { HiddenMap, SessionScope } from '@acpira/shared/settings';
@@ -31,7 +31,6 @@ import { QuoteToolbar } from './QuoteToolbar';
 import { Composer, type ComposerProps } from './Composer';
 import type { MentionPersona } from './Mention';
 import { ConnectingNotice, Notice } from './Notice';
-import { ExternalSessionNotice } from './ExternalSessionNotice';
 import { Toast } from '../ui/Toast';
 import { writeClipboardLater } from '../ui/useCopied';
 import { sessionLink } from '@acpira/shared/sessionLinks';
@@ -209,7 +208,6 @@ export interface ShellProps {
   hidden?: HiddenMap;
   title: string;
   status: SessionStatus;
-  external?: ExternalSessionInfo;
   error?: string;
   canTakeOver?: boolean;
   authMethods?: AuthMethodInfo[];
@@ -306,7 +304,7 @@ export function Shell(p: ShellProps) {
   const filesOn = p.look?.panelFiles !== false;
   const anyPanelModule = filesOn || p.look?.panelTerminal !== false || p.look?.panelBrowser !== false;
   const filesLayout = desktop && filesOn && p.look?.desktopLayout === 'files';
-  const files = filesLayout && canDock && canFiles && !p.noProject && !p.external && !!p.cwd && !!p.activeSessionId;
+  const files = filesLayout && canDock && canFiles && !p.noProject && !!p.cwd && !!p.activeSessionId;
   // Desktop: the column folded away by its title row's button (kept across reloads); `columnMoving` lets its width ease
   // only while it folds, never under the drag that resizes it. The files layout docks it at the right edge, where the
   // settings rail never stands, so coming back from settings it starts folded
@@ -498,7 +496,7 @@ export function Shell(p: ShellProps) {
   // Files layout: the title row's toggle folds the explorer, the pinned one at the top-right corner (⌥⌘B) the session column
   const explorerHidden = usePanelValue(s => s.explorerHidden);
   // Conversation layout: the tool panel docked open beside the chat (ToolPanelDock's own condition, wide window)
-  const panelDocked = usePanelValue(s => s.open && (s.files || s.terminal || s.browser)) && desktop && canDock && !files && !p.noProject && !p.external && !p.sample && !!p.cwd && !!p.activeSessionId;
+  const panelDocked = usePanelValue(s => s.open && (s.files || s.terminal || s.browser)) && desktop && canDock && !files && !p.noProject && !p.sample && !!p.cwd && !!p.activeSessionId;
   const toggleSessions = useCallback(() => hideColumn(!columnHidden), [hideColumn, columnHidden]);
   const [inspect, setInspect] = useState<{ id: string }>();
   const [graphOpen, setGraphOpen] = useState(false);
@@ -600,7 +598,7 @@ export function Shell(p: ShellProps) {
   const openBlob = useMemo(() => p.activeSessionId && on.openBlob ? (name: string) => on.openBlob!(p.activeSessionId!, name) : undefined, [p.activeSessionId, on.openBlob]);
   // A widget's acpira.sendPrompt in the main thread: a message like one typed in the composer, queued behind a running turn.
   // Only where the composer could send it too (not an imported session, a sample or a session that is not up)
-  const canSend = !p.external && !p.sample && !!p.activeSessionId && (p.status === 'ready' || p.status === 'starting');
+  const canSend = !p.sample && !!p.activeSessionId && (p.status === 'ready' || p.status === 'starting');
   const widgetPrompt = useMemo(() => canSend ? (text: string) => on.send(text, []) : undefined, [canSend, on.send]);
   // Files rows show from their paths. Each mount asks the host again (a stat while the file is unchanged), so a file
   // rewritten and shown again is never the old one; an image is decoded before it replaces its placeholder
@@ -649,7 +647,7 @@ export function Shell(p: ShellProps) {
   // The desktop app's project shell. "New session" opens the start page in a project (the one on screen by default)
   // with the agent last used; a folder picked in the dialog or dropped on the column joins the projects and opens there.
   // The start page shows while the session on screen has not said a word
-  const startPage = desktop && !p.noProject && !p.external && !!p.activeSessionId && !p.turns.length && !p.queued?.length;
+  const startPage = desktop && !p.noProject && !!p.activeSessionId && !p.turns.length && !p.queued?.length;
   const currentAgent = launchable(p.agents).some(x => x.id === p.agent.id && x.available !== false) ? p.agent.id : undefined;
   // A session in a folder on an SSH host, of an agent that runs in the host's engine but could run here (the host lacks
   // its CLI or its login, or cannot reach the vendor): its notice offers to run it on this machine instead
@@ -894,7 +892,7 @@ export function Shell(p: ShellProps) {
   plansRef.current = plans;
   // Desktop: a file of the session's project (or a plan document) opens in the tool panel (panel/ToolPanel.tsx) when the
   // built-in Files module is enabled, anything else in the editor
-  const panelRoot = desktop && anyPanelModule && !p.noProject && !p.external && !p.sample ? p.cwd : undefined;
+  const panelRoot = desktop && anyPanelModule && !p.noProject && !p.sample ? p.cwd : undefined;
   const filePanelRoot = filesOn ? panelRoot : undefined;
   useEffect(() => {
     if (filePanelRoot && plans.length) panel.syncPlans(filePanelRoot, plans);
@@ -1018,14 +1016,14 @@ export function Shell(p: ShellProps) {
   const goalAction = useMemo(() => p.activeSessionId && on.goal
     ? (action: GoalAction) => on.goal!(p.activeSessionId!, action) : undefined, [p.activeSessionId, on.goal]);
   // "Set as goal" under the last prompt: only where the agent takes `set` and no goal is running yet
-  const setGoal = useMemo(() => p.activeSessionId && on.goal && !p.external && !p.goal && p.goalActions?.includes('set')
-    ? (objective: string) => on.goal!(p.activeSessionId!, 'set', objective) : undefined, [p.activeSessionId, on.goal, p.external, p.goal, p.goalActions]);
+  const setGoal = useMemo(() => p.activeSessionId && on.goal && !p.goal && p.goalActions?.includes('set')
+    ? (objective: string) => on.goal!(p.activeSessionId!, 'set', objective) : undefined, [p.activeSessionId, on.goal, p.goal, p.goalActions]);
   // The capability arrives with the agent process, so a stored session reopening shows no button until the CLI is up.
   // Remember per agent whether its last ready session offered `set`, and hold the button's room while one starts
   useEffect(() => {
     if (p.status === 'ready') goalSetByAgent.set(p.agent.id, !!p.goalActions?.includes('set'));
   }, [p.status, p.agent.id, p.goalActions]);
-  const goalRoom = !setGoal && p.status === 'starting' && !!on.goal && !p.external && !p.goal && goalSetByAgent.get(p.agent.id) === true;
+  const goalRoom = !setGoal && p.status === 'starting' && !!on.goal && !p.goal && goalSetByAgent.get(p.agent.id) === true;
   const stopAsyncTask = useMemo(() => p.activeSessionId && on.stopAsyncTask
     ? (taskId: string) => on.stopAsyncTask!(p.activeSessionId!, taskId) : undefined, [p.activeSessionId, on.stopAsyncTask]);
   // Diff sources of the session on screen; the inspector's diffs are looked up in the inspected subagent's transcript,
@@ -1047,13 +1045,12 @@ export function Shell(p: ShellProps) {
   const onPermission = useCallback((blockId: string, optionId: string) => {
     if (p.activeSessionId) on.permission(p.activeSessionId, blockId, optionId);
   }, [p.activeSessionId, on.permission]);
-  // Per-turn actions (copy / fork / stats): memoized like the other contexts so a stream push does not re-render consumers;
-  // external conversations have no ACP transcript to fork
+  // Per-turn actions (copy / fork / stats): memoized like the other contexts so a stream push does not re-render consumers
   const turnActions = useMemo(() => p.activeSessionId ? {
     sessionId: p.activeSessionId, controls: p.controls, agents: p.agents, agentId: p.agent.id,
-    fork: on.forkSession && !p.external
+    fork: on.forkSession
       ? (turnIndex: number, agent: AgentId) => on.forkSession!(p.activeSessionId!, turnIndex, agent === p.agent.id ? undefined : agent) : undefined,
-  } : undefined, [p.activeSessionId, p.controls, p.agents, p.agent.id, on.forkSession, p.external]);
+  } : undefined, [p.activeSessionId, p.controls, p.agents, p.agent.id, on.forkSession]);
 
   return (
     <DesktopContext.Provider value={desktop}>
@@ -1206,7 +1203,7 @@ export function Shell(p: ShellProps) {
               {/* The overlay inspector replaces this block visually; it stays mounted (scroll + draft survive) but inert */}
               <div inert={overlayInspect || undefined} aria-hidden={overlayInspect || undefined} className={cn('flex min-h-0 flex-1 flex-col', desktop && p.noProject && 'hidden')}>
                 <div className="relative flex min-h-0 flex-1 flex-col">
-                  {!p.external && <QuoteToolbar root={threadContent} />}
+                  <QuoteToolbar root={threadContent} />
                   <PlanDocumentContext.Provider value={planDoc}>
                     <HistoryContext.Provider value={history}>
                     <HistoryComposerContext.Provider value={history?.editing !== undefined ? composerProps : undefined}>
@@ -1216,7 +1213,7 @@ export function Shell(p: ShellProps) {
                           <SidekickModelsContext.Provider value={sidekickModels}>
                           <Thread key={p.activeSessionId} session={p.activeSessionId} fontSizes={p.look && `${p.look.uiFontSize}/${p.look.codeFontSize}`} turns={held.turns} running={held.running} wide={wide} replayKey={p.replayKey} catchingUp={p.catchingUp} blobUrl={blobUrl} contentRef={contentRef} commands={p.commands} summons={summons}
                             onSetGoal={setGoal} goalRoom={goalRoom} subagents={p.subagents} onInspect={onInspect} onFailureAction={failureAction}
-                            forkedFrom={p.external ? undefined : p.forkedFrom} agents={p.agents} agentId={p.agent.id}
+                            forkedFrom={p.forkedFrom} agents={p.agents} agentId={p.agent.id}
                             onPermission={onPermission} />
                           </SidekickModelsContext.Provider>
                         </TurnActionsContext.Provider>
@@ -1230,19 +1227,19 @@ export function Shell(p: ShellProps) {
                     className={cn('pointer-events-none absolute inset-x-0 bottom-0 z-10', wide && a.composer === 'island' && 'mx-auto w-full max-w-[calc(var(--content-w)+2*var(--page))]')}
                   >
                     {/* A held prompt already owns a Working row; the floating startup row would duplicate and overlap it. */}
-                    {!p.external && !held.running && <ConnectingNotice status={p.status} agent={p.agent} />}
+                    {!held.running && <ConnectingNotice status={p.status} agent={p.agent} />}
                     <div ref={planDock}>
                       {/* Plugin pieces on the dock's top edge (plugins/ComposerAbove.tsx): over the plan card when there
                           is one, else over the question, the queue or the composer, never on top of their controls. Inside
                           the measured dock, so the transcript's clearance keeps the last reply's actions clear of them */}
-                      {!p.external && <ComposerAbove running={p.running} waiting={waitingOnUser} />}
+                      <ComposerAbove running={p.running} waiting={waitingOnUser} />
                       {/* The session goal heads the floating to-do card, so the dock keeps one silhouette */}
                       <PlanBar key={`plan:${p.activeSessionId}`} turns={p.turns} running={p.running}
-                        goal={p.external ? undefined : p.goal} goalActions={p.goalActions} onGoalAction={goalAction} />
+                        goal={p.goal} goalActions={p.goalActions} onGoalAction={goalAction} />
                     </div>
                   </div>
                   {/* Plugin rails in the margin beside the conversation column, only while it has room (plugins/Pieces.tsx) */}
-                  {!p.external && <SessionRail />}
+                  <SessionRail />
                   {(toasts.length > 0 || shellToasts.length > 0) && (
                     <div ref={toastRef} className="pointer-events-none absolute inset-x-0 bottom-[calc(var(--gap)+var(--thread-dock-height,0px))] z-10 flex flex-col items-center gap-1 px-page">
                       {toasts.map(t => <Toast key={t.key} text={t.text} icon={t.icon} ttl={t.ttl} onUndo={t.undo} onClose={() => dropToast(t.key)} />)}
@@ -1266,7 +1263,7 @@ export function Shell(p: ShellProps) {
                       onNewSession={() => on.newSession(p.agent.id)}
                     />
                   )}
-                  {p.external ? <ExternalSessionNotice info={p.external} /> : <Notice
+                  <Notice
                     status={p.status} error={p.error} agent={p.agent} authMethods={p.authMethods}
                     accounts={p.accounts?.filter(x => x.agent === p.agent.id)} accountId={p.accountId}
                     accountAction={p.accountAction}
@@ -1275,7 +1272,7 @@ export function Shell(p: ShellProps) {
                     onUnlock={canUnlock && on.unlockCredentials ? () => on.unlockCredentials?.(p.agent.id) : undefined}
                     onTakeOver={p.canTakeOver ? on.takeOver : undefined}
                     onRunHere={runHere}
-                  />}
+                  />
                   {held.queued?.length && p.activeSessionId
                     ? <Queue key={`queue:${p.activeSessionId}`} items={held.queued} composer={composerProps} blobUrl={blobUrl}
                         on={on.dequeue && on.editQueued ? {
@@ -1288,14 +1285,14 @@ export function Shell(p: ShellProps) {
                   {/* Sibling keys include the component role; duplicate session-only keys leave stale queue rows after reconciliation. */}
                   {/* The sidekick is the lead's own second hand: the model chip lights its half while it works, and only
                       summoned helpers count towards the graph's entry */}
-                  {!p.external && <Composer resetKey={p.activeSessionId} {...composerProps} draftKey={p.activeSessionId} sessionId={p.activeSessionId} main shareSelection={p.shareEditorSelection}
+                  <Composer resetKey={p.activeSessionId} {...composerProps} draftKey={p.activeSessionId} sessionId={p.activeSessionId} main shareSelection={p.shareEditorSelection}
                     sidekickLive={sidekickLive} promptHistory={recalledPrompts}
                     toolbarStart={helpers > 0 && <Chip narrow="icon" caret={false} className="shrink-0" icon={<Network strokeWidth={1.5} />}
                       aria-label={`${t('subagents.graph')} · ${t('subagents.entry', { n: helpers })}`}
                       title={`${t('subagents.graph')} · ${t('subagents.entry', { n: helpers })}`}
                       aria-haspopup="dialog" aria-expanded={graphOpen} onClick={() => setGraphOpen(true)}>
                       {t('subagents.entry', { n: helpers })}
-                    </Chip>} />}
+                    </Chip>} />
                 </DockStack>
               </div>
             </div>

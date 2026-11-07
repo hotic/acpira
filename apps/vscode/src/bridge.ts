@@ -21,7 +21,7 @@ export interface WebviewBridgeOpts {
   setting: (key: string) => unknown;
   // The clickable session-link base the page copies (`vscode://hotic.acpira/session/`); pages without one copy `acpira://session/`
   sessionLinkBase?: string;
-  // Every session the view shows (init, then each push), for tab titles and one-shot watchers
+  // Every session the view shows (init, then each push), for tab titles
   onSession?: (session: SessionView) => void;
   // The page has its init state; shell-originated state (the editor selection, the last copy) is replayed from here
   onPageReady?: (bridge: WebviewBridge) => void;

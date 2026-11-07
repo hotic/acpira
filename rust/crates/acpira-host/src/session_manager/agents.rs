@@ -17,7 +17,6 @@ use crate::acp::agents::probe_controls::probe_agent_controls;
 use crate::acp::agents::registry::AgentRegistry;
 use crate::acp::session::AcpSession;
 use crate::acp::transport::rpc::BoxFuture;
-use crate::external::chatgpt_events::CHATGPT_ID;
 use crate::util::now_iso;
 
 impl SessionManager {
@@ -37,7 +36,7 @@ impl SessionManager {
     if !disabled && own.available != Some(false) {
       return preferred;
     }
-    let open: Vec<&AgentInfo> = agents.iter().filter(|a| a.external != Some(true) && a.disabled != Some(true)).collect();
+    let open: Vec<&AgentInfo> = agents.iter().filter(|a| a.disabled != Some(true)).collect();
     let installed = open.iter().find(|a| a.available != Some(false));
     installed.or(if disabled { open.first() } else { None }).map(|a| a.id.clone()).unwrap_or(preferred)
   }
@@ -95,9 +94,6 @@ impl SessionManager {
   }
 
   pub(super) fn warm(&self, agent: &str, account: Option<String>) {
-    if agent == CHATGPT_ID {
-      return;
-    }
     let Some(cwd) = self.folder_for(None, None) else { return };
     // A session in a folder on an SSH host starts its agent in this machine's home (`AcpSession::process_cwd`)
     let cwd = crate::workspace::process_folder(cwd);
@@ -230,10 +226,9 @@ impl SessionManager {
 
   pub fn agents(&self) -> Vec<AgentInfo> {
     let registry = self.registry();
-    let mut all: Vec<AgentInfo> = registry
+    let all: Vec<AgentInfo> = registry
       .list()
       .into_iter()
-      .filter(|a| self.deps.chatgpt.is_none() || a.id != CHATGPT_ID)
       .map(|mut a| {
         if let Some(m) = self.deps.accounts.as_ref().filter(|m| m.supports(&a.id)) {
           a.accounts = Some(true);
@@ -244,15 +239,6 @@ impl SessionManager {
         a
       })
       .collect();
-    if self.deps.chatgpt.is_some() {
-      all.push(AgentInfo {
-        id: CHATGPT_ID.into(),
-        name: "ChatGPT".into(),
-        external: Some(true),
-        available: Some(true),
-        ..Default::default()
-      });
-    }
     arrange_agents(all, &(self.deps.agent_prefs)())
   }
 
@@ -349,9 +335,6 @@ impl SessionManager {
 
   /// The settings page's refresh button: a throwaway spawn reads the CLI's current configOptions
   pub async fn probe_controls(self: &Arc<Self>, agent: &str) -> Vec<ConfigControl> {
-    if agent == CHATGPT_ID {
-      return self.known_controls(agent).await;
-    }
     self.pool.invalidate(Some(agent));
     let registry = self.registry();
     let Ok(def) = registry.get(agent).cloned() else { return self.known_controls(agent).await };

@@ -155,10 +155,9 @@ describe('session tree', () => {
     expect(buildSessionTree({ ...base, shown, grouped: false, isChat }).chats).toEqual([]);
   });
 
-  it('drags only unpinned local sessions', () => {
+  it('drags only unpinned sessions', () => {
     expect(draggable(s('a'))).toBe(true);
     expect(draggable(s('a', { pinned: true }))).toBe(false);
-    expect(draggable(s('a', { external: true }))).toBe(false);
   });
 
   it('files a dropped session within its own project and moves it into another', () => {

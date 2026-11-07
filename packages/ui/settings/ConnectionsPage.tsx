@@ -1,27 +1,24 @@
 import { useEffect, useState } from 'react';
-import { ArrowUpRight, Link2, Plus, Server, Unplug, X } from 'lucide-react';
+import { Link2, Plus, Server, Unplug, X } from 'lucide-react';
 import type { MsgKey } from '@acpira/shared/i18n/core';
-import type { ChatGptIntegrationStatus } from '@acpira/shared/chatgptIntegration';
 import { isAlias, parseRemoteFolder, type ConnectionState, type ConnectionView, type SshHost } from '@acpira/shared/remote';
 import { cn } from '../ui/cn';
 import { Button, IconButton } from '../ui/Button';
 import { Command } from '../ui/Command';
 import { StableText } from '../ui/StableText';
 import { t } from '../i18n';
-import { AgentMark } from '../chat/AgentMark';
 import { CONNECTION_STATE_NAME as STATE_NAME, connectionOp, listSshHosts, remoteProjectOp, useConnections, type SshHostList } from '../remote/api';
 import { RemoteFolderDialog } from '../remote/RemoteFolderDialog';
 import { ConnectStatus, failureReason, hasConnectStatus, reconnect } from '../remote/ConnectStatus';
 import { Collapsible } from '../ui/Collapsible';
 import { usePresence } from '../ui/usePresence';
 import {
-  blockItem, blockList, DangerAction, DialogBody, Dot, FactRow, FooterNote, Group, ItemRow, Note, PickContent, Section, SectionAction,
-  SectionDescription, SettingsDialog, Status, shortPath, useSettingRow,
+  blockItem, blockList, DangerAction, DialogBody, Dot, FooterNote, Group, ItemRow, Note, PickContent, Section, SectionAction,
+  SettingsDialog, Status, shortPath, useSettingRow,
 } from './controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 
-// Settings → Connections: the SSH hosts remote folders live on (docs/dev/remote.md), and the external session sources
-// (ChatGPT). A list of hosts, each opening a dialog (connection progress, its projects, removal); adding is
+// Settings → Connections: the SSH hosts remote folders live on (docs/dev/remote.md). A list of hosts, each opening a dialog (connection progress, its projects, removal); adding is
 // one step in a dialog listing ~/.ssh/config. Both dialogs are wide and about as tall, so a pick in the add dialog
 // turns it into the host's nearly in place. On the host's page every block that comes and goes folds in or out and the
 // dialog keeps its top edge, so the page grows and shrinks smoothly downward. Every edit goes to the engine, which
@@ -33,15 +30,7 @@ const STATES: ConnectionState[] = ['off', 'connecting', 'connected', 'error'];
 // brings (the engine refused the alias and said so in a toast) closes its dialog after this long
 const ADD_WAIT_MS = 5000;
 
-// ChatGPT, when it is set up: its status and its dialog, which is a page of the trail (`{ kind: 'chatgpt' }`)
-export interface ChatGptEntry {
-  status?: ChatGptIntegrationStatus;
-  open: boolean;
-  onOpen: () => void;
-  onClose: () => void;
-}
-
-export function ConnectionsPage({ env, projects, on, remote = true, chatgpt }: { env: SettingsEnv; projects?: string[]; on: SettingsHandlers; remote?: boolean; chatgpt?: ChatGptEntry }) {
+export function ConnectionsPage({ env, projects, on, remote = true }: { env: SettingsEnv; projects?: string[]; on: SettingsHandlers; remote?: boolean }) {
   const list = useConnections() ?? [];
   const [open, setOpen] = useState<string>();
   const [added, setAdded] = useState<string>();
@@ -72,20 +61,14 @@ export function ConnectionsPage({ env, projects, on, remote = true, chatgpt }: {
           trailing={<StateLine state={c.state} />} />
       ))}
     </Section>}
-    {chatgpt && <Section title={t('connections.external')} count={1} desc={t('connections.externalDesc')}>
-      <ItemRow lead={<AgentMark id="chatgpt" name="ChatGPT" />} title="ChatGPT" desc={t('chatgpt.via')} onEdit={chatgpt.onOpen} editLabel="ChatGPT"
-        trailing={<ChatGptState status={chatgpt.status} />} />
-    </Section>}
     {picking && <AddHostDialog taken={list.map(c => c.alias)} onAdd={add} onClose={() => setPicking(false)} />}
     {current && <HostDialog view={current} env={env} projects={projects} on={on} fresh={added === open} onClose={() => setOpen(undefined)} />}
-    {chatgpt?.open && <ChatGptDialog status={chatgpt.status} on={on} onClose={chatgpt.onClose} />}
   </>;
 }
 
-// Every word a state on this page can show (SSH hosts, paired devices, ChatGPT). Each row's state reserves the widest and
+// Every word a state on this page can show (SSH hosts, paired devices). Each row's state reserves the widest and
 // sits at the end of it, so its last character lines up with the head actions' ("+ 添加主机") and a change moves nothing
-const STATE_WORDS: readonly MsgKey[] = [...STATES.map(s => STATE_NAME[s]), 'devices.state.online', 'devices.state.offline',
-  'chatgpt.checking', 'chatgpt.ready', 'chatgpt.notReady'];
+const STATE_WORDS: readonly MsgKey[] = [...STATES.map(s => STATE_NAME[s]), 'devices.state.online', 'devices.state.offline'];
 
 /** A row's state at its right edge: a dot and its word, ending on the row's text edge (only the dot when narrow) */
 export function StateCell({ ok, warn, word }: { ok: boolean; warn?: boolean; word: MsgKey }) {
@@ -216,48 +199,6 @@ function HostDialog({ view, env, projects, on, fresh, onClose }: { view: Connect
       </DialogBody>
       {picking && <RemoteFolderDialog alias={alias} onClose={() => setPicking(false)}
         onAdd={folder => { setPicking(false); remoteProjectOp('addProject', folder); }} />}
-    </SettingsDialog>
-  );
-}
-
-// ChatGPT's row state: ready once the local receiver answers and the component runs, otherwise not connected yet
-function ChatGptState({ status }: { status?: ChatGptIntegrationStatus }) {
-  if (!status) return <StateCell ok={false} word="chatgpt.checking" />;
-  const ready = status.bridgeAvailable && status.desktopCommander?.process === 'detected';
-  return <StateCell ok={ready} warn={!ready} word={ready ? 'chatgpt.ready' : 'chatgpt.notReady'} />;
-}
-
-// ChatGPT as an external session source: Desktop Commander (the remote tool ChatGPT reaches this computer through) and
-// the project's session binding. External session setup has no model selector or independent agent login
-function ChatGptDialog({ status, on, onClose }: { status?: ChatGptIntegrationStatus; on: SettingsHandlers; onClose: () => void }) {
-  const dc = status?.desktopCommander;
-  const project = status?.project;
-  return (
-    <SettingsDialog wide icon={<AgentMark id="chatgpt" name="ChatGPT" />} title="ChatGPT" sub={t('chatgpt.kind')} onClose={onClose}
-      footer={<>
-        <FooterNote>{status && `${t('chatgpt.checkedAt')} ${new Date(status.checkedAt).toLocaleTimeString()}`}</FooterNote>
-        <SectionAction onClick={() => on.refreshChatgpt?.()}>{t('common.refresh')}</SectionAction>
-        <Button variant="primary" onClick={onClose}>{t('common.done')}</Button>
-      </>}>
-      <DialogBody>
-        <div data-chatgpt-settings className="flex flex-col gap-gap">
-          <Section title="Desktop Commander" desc={t('chatgpt.transportDesc')}
-            action={<SectionAction icon={<ArrowUpRight />} onClick={() => on.openExternal('https://mcp.desktopcommander.app')}>{t('chatgpt.dashboard')}</SectionAction>}>
-            <FactRow label={t('chatgpt.installation')}>{t(dc ? `chatgpt.install.${dc.installation}` : 'chatgpt.checking')}</FactRow>
-            <FactRow label={t('chatgpt.process')}>{t(dc ? `chatgpt.process.${dc.process}` : 'chatgpt.checking')}</FactRow>
-            <FactRow label={t('chatgpt.pairing')} title={t('chatgpt.pairingHint')}>{t('chatgpt.pairingUnknown')}</FactRow>
-            <ItemRow title={t('chatgpt.setupGuide')} onOpen={() => on.openExternal('https://github.com/desktop-commander/remote-desktop-commander/blob/main/docs/SETUP.md')} />
-          </Section>
-          <Section title={t('chatgpt.projectBinding')} desc={t('chatgpt.projectBindingHint')}
-            action={<SectionAction icon={<Plus />} disabled={!status?.bridgeAvailable || !on.connectChatgpt} onClick={() => on.connectChatgpt?.()}>{t('chatgpt.createBinding')}</SectionAction>}>
-            <FactRow label={t('chatgpt.receiver')}>{t(status ? status.bridgeAvailable ? 'chatgpt.receiverReady' : 'chatgpt.receiverMissing' : 'chatgpt.checking')}</FactRow>
-            <FactRow label={t('chatgpt.boundSessions')}>{project ? project.observedMirrors : '—'}</FactRow>
-            <FactRow label={t('chatgpt.lastEvent')}>{project?.lastEventAt ? new Date(project.lastEventAt).toLocaleString() : t('chatgpt.noEvent')}</FactRow>
-            {project?.latestSessionId && <ItemRow title={t('chatgpt.openMirror')} desc={t('chatgpt.hasSession')} onOpen={() => { on.openChatgpt?.(project.latestSessionId!); }} />}
-          </Section>
-          <SectionDescription>{t('chatgpt.sourceBoundary')}</SectionDescription>
-        </div>
-      </DialogBody>
     </SettingsDialog>
   );
 }

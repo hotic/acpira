@@ -108,9 +108,9 @@ struct TurnEdit: Equatable {
 }
 
 /// Prompts can be rewritten while the session is idle and usable: not running, not starting a held-back prompt
-/// (heldPrompt.ts: a queued head while nothing runs reads as sent), and not a ChatGPT mirror
+/// (heldPrompt.ts: a queued head while nothing runs reads as sent)
 func canEditPrompts(_ session: SessionView) -> Bool {
-  session.external == nil && !session.running && (session.status == .ready || session.status == .starting)
+  !session.running && (session.status == .ready || session.status == .starting)
     && (session.queued ?? []).isEmpty
 }
 

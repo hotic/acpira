@@ -10,7 +10,6 @@ mod acp_session;
 mod agent_process;
 mod bridge;
 mod builtin_agent;
-mod chatgpt;
 mod compaction;
 mod failures;
 mod golden;

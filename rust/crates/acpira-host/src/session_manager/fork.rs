@@ -103,9 +103,6 @@ impl SessionManager {
     if !is_session_id(source_id) {
       return Ok(());
     }
-    if self.deps.chatgpt.as_ref().is_some_and(|c| c.owns(source_id)) {
-      return Err(anyhow!(t("chatgpt.externalOnly")));
-    }
     let live = self.live(source_id);
     let source = match &live {
       Some(l) => l.to_record(),
@@ -124,7 +121,7 @@ impl SessionManager {
     // Another agent only when it is one this engine can launch; naming the source's own agent is a plain fork
     let target = agent.filter(|a| a != &source.agent);
     if let Some(id) = &target
-      && !self.agents().iter().any(|a| &a.id == id && a.external != Some(true))
+      && !self.agents().iter().any(|a| &a.id == id)
     {
       return Err(anyhow!(tp("host.forkAgentUnknown", &[("agent", id)])));
     }

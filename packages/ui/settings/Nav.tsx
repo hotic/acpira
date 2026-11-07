@@ -10,19 +10,19 @@ import { scrollToAnchor, searchHits, type SearchEntry } from './search';
 import { t } from '../i18n';
 
 // Orchestration carries the persona or group opened from its lists, and an agent's page is the Models page with that
-// agent's dialog open (ChatGPT's the Connections page with its dialog), so an opened dialog is a step of its own in the
+// agent's dialog open, so an opened dialog is a step of its own in the
 // back / forward trail and the chat can open the settings straight at one. Plugins carries its open filter, so the
 // rail's search can land on one
 export type SettingsPage = { kind: 'general' } | { kind: 'appearance' } | { kind: 'models' } | { kind: 'plugins'; tab?: string } | { kind: 'shared' } | { kind: 'connections' }
   | { kind: 'subagents'; persona?: string; group?: string } | { kind: 'storage' } | { kind: 'about' }
-  | { kind: 'agent'; id: AgentInfo['id']; tab?: 'models' | 'sources' } | { kind: 'chatgpt' };
+  | { kind: 'agent'; id: AgentInfo['id']; tab?: 'models' | 'sources' };
 
 // Two pages are the same place (a click on the page already shown adds nothing to the trail)
 export const samePage = (a: SettingsPage, b: SettingsPage) => JSON.stringify(a) === JSON.stringify(b);
 
 type RailId = 'general' | 'appearance' | 'models' | 'plugins' | 'subagents' | 'shared' | 'connections' | 'storage' | 'about';
-// The rail entry a page lights: an agent's dialog sits on the Models page, ChatGPT's on Connections
-export const railOf = (p: SettingsPage): RailId => (p.kind === 'agent' ? 'models' : p.kind === 'chatgpt' ? 'connections' : p.kind);
+// The rail entry a page lights: an agent's dialog sits on the Models page
+export const railOf = (p: SettingsPage): RailId => (p.kind === 'agent' ? 'models' : p.kind);
 
 export interface PageRailProps {
   page: SettingsPage;
@@ -34,7 +34,7 @@ export interface PageRailProps {
   width?: string;
   // Desktop: the chat's column was folded, so the rail opens from nothing as the page appears
   opening?: boolean;
-  // The Connections entry shows: SSH hosts are offered (the engine answered for them, remote/api.ts) or ChatGPT is set up
+  // The Connections entry shows: SSH hosts are offered (the engine answered for them, remote/api.ts) or remote access is
   connections?: boolean;
   // What the rail's search finds (settings/search.tsx); without it the rail has no search
   index?: SearchEntry[];

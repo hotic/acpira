@@ -13,7 +13,6 @@ Windows boundaries the code works around, their checks, and what lacks native ac
 - `canonicalize` yields `\\?\` paths and expands 8.3 names that Node keeps, breaking Pi trust and Node module resolution: `platform::paths::canonical_for_cli` converts for external CLIs and Node; real file access keeps the original path.
 - Agents run in a kill-on-close Job Object at below-normal priority under a CPU cap (`agentCpuCap`), since parallel runs under Defender starve the desktop in kernel time.
 - Session lock takeover only targets a verified direct child of another sidecar (`lock_holder.rs`).
-- ChatGPT bridge commands drain output after exit, since a helper can hold the pipe open.
 - Remote / WSL: the backend OS decides command syntax; `agents.json` keeps local Windows and remote Linux config apart.
 - Release sidecars: MSVC target, static CRT (`scripts/release/sidecar-targets.mjs`).
 - Remote access: the logon task runs the GUI-subsystem engine (`serve --service --log`, the exe's own output redirected) so no console opens; owner-only control pipe and DACLs (`host-architecture.md`, Remote access gateway). Unverified on Windows: `/Create /F` over a running instance, `SetStdHandle` redirection.
@@ -27,8 +26,7 @@ Windows boundaries the code works around, their checks, and what lacks native ac
 ## Open gaps
 
 - CMD `%*` forwarding shims truncate an argument with embedded quotes followed by `& % ! ^`. Global double escaping would break batch files reading `%~1`; a fix must tell forwarding shims apart. Built-in login arguments do not hit it.
-- Some native Rust engine tests and POSIX-only `pnpm test` cases (file modes, `fileLock`, `acpira serve` socket, bridge CLI) fail on Windows.
+- Some native Rust engine tests and POSIX-only `pnpm test` cases (file modes, `fileLock`, `acpira serve` socket) fail on Windows.
 - Unverified: real OAuth per vendor, terminal TTY, IDE buttons and browser callbacks, native arm64, each vendor's stdio MCP launch, shared drives, redirected Known Folders, antivirus / enterprise policy, PowerShell or WSL interop disabled.
 - Unverified for remote access: firewall prompt, `DnsServiceRegister` seen from an iPhone, Modern Standby.
-- Desktop Commander detection reports `unknown`; an executable's presence is not shown as connected.
 - Claude may use a user-level `ANTHROPIC_API_KEY`, so "not signed in" does not mean the CLI lacks credentials (`agent-quirks-claude.md`).

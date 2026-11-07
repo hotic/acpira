@@ -1,4 +1,3 @@
-import type { ChatGptIntegrationStatus } from '@acpira/shared/chatgptIntegration';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountAction, AgentInstallProgress, DetectedAgent, EditTurnRequest, FileHit, HostMsg, InitState, NativeSessionsState, SessionHit, WebviewMsg } from '@acpira/shared/protocol';
 import type { AccountInfo, AgentId, AgentInfo, ConfigControl, FullDiffSource, SessionCategories, SessionControls, SessionSummary, SessionView, Turn } from '@acpira/shared/transcript';
@@ -204,7 +203,6 @@ export function App() {
   });
   const [detected, setDetected] = useState<DetectedAgent[]>();
   const [firstRunError, setFirstRunError] = useState<string>();
-  const [chatgptStatus, setChatgptStatus] = useState<ChatGptIntegrationStatus>();
   const [inventories, setInventories] = useState<Partial<Record<AgentId, AgentInventory>>>({});
   const [shared, setShared] = useState<SharedState>();
   const [providers, setProviders] = useState<ProvidersState>();
@@ -389,7 +387,6 @@ export function App() {
           break;
         // A reply for an agent the popover has since moved away from is dropped; the effect re-requested the new one already
         case 'nativeSessions': setNativeSessions(cur => cur?.agent === m.agent ? { agent: m.agent, sessions: m.sessions, error: m.error, loading: false } : cur); break;
-        case 'chatgptStatus': setChatgptStatus(m.status); break;
         case 'files': fileRequests.settle(m.seq, m.files); break;
         case 'sessionHits': sessionRequests.settle(m.seq, m.hits); break;
         case 'diffSource': diffRequests.settle(m.seq, m.source); break;
@@ -470,14 +467,6 @@ export function App() {
     }
   }, [view, page, controls, personaAgents]);
 
-  useEffect(() => {
-    if (view !== 'settings' || page.kind !== 'chatgpt') return;
-    const refresh = () => { if (!document.hidden) post({ type: 'chatgptStatus' }); };
-    refresh();
-    const timer = setInterval(refresh, 10_000);
-    document.addEventListener('visibilitychange', refresh);
-    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', refresh); };
-  }, [view, page.kind]);
 
   // "Run it on this computer" from a session in a folder on an SSH host: the agent joins `sshLocalAgents`, then a new
   // session starts in the same folder once the engine's settings say so, since it routes new sessions by that setting
@@ -567,9 +556,6 @@ export function App() {
   }), []);
 
   const settingsOn = useMemo<SettingsHandlers>(() => ({
-    refreshChatgpt: () => post({ type: 'chatgptStatus' }),
-    connectChatgpt: () => { post({ type: 'connectChatgpt' }); setView('chat'); },
-    openChatgpt: id => { post({ type: 'selectSession', id }); setView('chat'); },
     setSetting: (key, value) => {
       if (key === 'panelScope') panel.setScope(value as PanelScope);
       if (key === 'panelFiles') panel.setModules({ files: value as boolean });
@@ -693,7 +679,6 @@ export function App() {
         agents={agents}
         accounts={accounts}
         installs={agentInstalls}
-        chatgptStatus={chatgptStatus}
         inventories={inventories}
         shared={shared}
         providers={providers}
@@ -733,7 +718,6 @@ export function App() {
       hidden={hidden}
       title={session?.title ?? t('session.untitled')}
       status={session?.status ?? 'starting'}
-      external={session?.external}
       error={session?.error}
       canTakeOver={session?.canTakeOver}
       authMethods={session?.authMethods}

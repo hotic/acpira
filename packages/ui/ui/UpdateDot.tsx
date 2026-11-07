@@ -9,7 +9,7 @@ export function UpdateDot({ className }: { className?: string }) {
 }
 
 // An agent in use (not off, not another extension's) whose adapter is older than the version Acpira pins (AgentInfo.update)
-export const agentUpdates = (agents: AgentInfo[]) => agents.some(a => a.update && !a.disabled && !a.external);
+export const agentUpdates = (agents: AgentInfo[]) => agents.some(a => a.update && !a.disabled);
 
 // The desktop app has a newer version to download or one waiting for a restart
 export const appUpdatePending = (s: UpdateState | undefined) => s?.phase === 'available' || s?.phase === 'ready';

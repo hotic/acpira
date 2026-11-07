@@ -24,7 +24,6 @@ use crate::accounts::switch::SwitchStrategy;
 use crate::acp::agents::registry::{AgentRegistry, SELF_AGENT_ID};
 use crate::acp::session::CompactionPolicy;
 use crate::bridge_core::{BridgeCore, Post};
-use crate::external::chatgpt_store::ChatGptBridgeStore;
 use crate::i18n::{set_host_locale, set_wire_locale, tp};
 use acpira_shared::devices::{PushKind, PushNote};
 use crate::session_manager::{Attention, AttentionKind, ManagerDeps, SessionManager, ViewerShell};
@@ -59,7 +58,7 @@ pub struct HostRuntime {
 }
 
 impl HostRuntime {
-  /// `root`: ACPIRA_HOME / ~/.acpira; `bridge_exe`: the executable the ChatGPT connection prompt names
+  /// `root`: ACPIRA_HOME / ~/.acpira; `bridge_exe`: this binary, which the built-in agent and the MCP server handed to agents run as
   pub async fn create(platform: Arc<SidecarPlatform>, root: PathBuf, bridge_exe: Option<String>) -> Result<Arc<HostRuntime>> {
     // Shared settings first: everything below reads settings through the platform
     platform.use_shared(Arc::new(crate::store::shared_settings::SharedSettings::open(&root))).await;
@@ -180,7 +179,6 @@ impl HostRuntime {
         None => m,
       }
     });
-    let chatgpt = ChatGptBridgeStore::new(root.join("bridges").join("chatgpt"), log.clone(), bridge_exe);
 
     let local_env_slot = mgr_slot.clone();
     let local_accounts = LocalAccounts::new(Arc::new(move |agent: &str| {
@@ -220,7 +218,6 @@ impl HostRuntime {
       registry,
       ManagerDeps {
         store,
-        chatgpt: Some(chatgpt),
         log: log.clone(),
         cwd: Arc::new(move || cwd_p.cwd()),
         projects: Arc::new(move || projects_p.projects()),

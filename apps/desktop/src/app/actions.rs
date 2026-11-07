@@ -1,5 +1,5 @@
-//! Menu and page actions: the page-drawn menu, the log, safe mode, page commands, the ChatGPT mirror, menu and
-//! theme refreshes, and quitting
+//! Menu and page actions: the page-drawn menu, the log, safe mode, page commands, menu and theme refreshes, and
+//! quitting
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -10,8 +10,7 @@ use acpira_desktop::platform::system;
 use acpira_desktop::wire::Initial;
 use serde_json::{Value, json};
 
-use super::{App, ChatWindowOpen, app, log};
-use crate::chat_window::Watch;
+use super::{App, app, log};
 
 impl App {
   /// The menu the pages draw changed (menu.rs install, Windows)
@@ -64,31 +63,6 @@ impl App {
     let Some(w) = self.focused_window().or_else(|| self.open(Some(Initial::MostRecent), self.place_of_last())) else { return };
     w.reveal();
     w.post(json!({ "type": "shellCommand", "command": c }));
-  }
-
-  /// A new window bound to a fresh ChatGPT mirror; its connection prompt goes to the clipboard once the window shows it
-  pub fn connect_chatgpt(self: &Arc<Self>) {
-    let watch: Watch = Box::new(|m| {
-      if !matches!(m.kind.as_str(), "session" | "init") {
-        return false;
-      }
-      let Ok(v) = serde_json::from_str::<Value>(m.raw.get()) else { return false };
-      let s = if m.kind == "session" { &v["session"] } else { &v["state"]["active"] };
-      let Some(prompt) = s["external"]["connectionPrompt"].as_str().map(str::to_owned) else { return false };
-      let a = app();
-      let h = a.handle.clone();
-      let _ = h.run_on_main_thread(move || {
-        crate::os::clipboard_write(&prompt);
-        let a = app();
-        if let Some(w) = a.focused_window() {
-          w.post(json!({ "type": "toast", "level": "info", "text": a.t("chatgpt.copied", &[]) }));
-        }
-      });
-      true
-    });
-    let Some(w) = self.open(None, ChatWindowOpen { watch: Some(watch), ..Default::default() }) else { return };
-    let Ok(msg) = serde_json::value::RawValue::from_string(r#"{"type":"connectChatgpt"}"#.into()) else { return };
-    self.client().send(&w.view_id, msg);
   }
 
   pub fn refresh_menu(&self) {

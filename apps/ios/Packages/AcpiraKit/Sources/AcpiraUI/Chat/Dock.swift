@@ -41,33 +41,30 @@ struct Dock: View {
                   onCompact: session.commands.contains { $0.name == "compact" } ? actions.compact : nil,
                   onNewSession: actions.newSession)
       }
-      if let external = session.external { ExternalSessionNotice(info: external) } else { SessionNotice(session: session) }
+      SessionNotice(session: session)
       // Queued prompts are faint bubbles at the end of the thread (ThreadContent.queue)
-      // A ChatGPT mirror is a receiver: nothing to send or stop. While a plan waits, a send revises it. While a sent
-      // prompt is being rewritten, the same composer (so focus holds) edits it: its pickers act on the edit's own
-      // selections and send rewrites the turn
-      if session.external == nil {
-        if let editing { EditingBar(original: editing.original, onCancel: actions.cancelEdit) }
-        let placeholder = editing == nil && pendingPlanReview(session.turns).flatMap(reviseOption) != nil
-          ? t("composer.placeholder.revisePlan") : nil
-        Composer(session: editing.map { editingView(session, $0) } ?? session, text: $draft, staged: $staged,
-                 onSend: editing == nil ? actions.send : actions.sendEdit, onStop: actions.stop,
-                 onSetMode: editing == nil ? actions.setMode : { edit.wrappedValue?.controls.modeId = $0 },
-                 onSetConfig: editing == nil ? actions.setConfig : { id, value in
-                   guard let now = edit.wrappedValue else { return }
-                   edit.wrappedValue?.controls = editTurnConfig(now.controls, live: session.controls, id: id, value: value,
-                                                                shapes: session.modelShapes)
-                 },
-                 placeholder: placeholder,
-                 focusKey: editing?.turnIndex)
-        // Under the stand-in while the chat comes from the list or goes back to it
-        .opacity(handoff?.hidden == session.id ? 0 : 1)
-        #if os(iOS)
-        .background {
-          BarHandoffProbe(session: session, placeholder: placeholder)
-        }
-        #endif
+      // While a plan waits, a send revises it. While a sent prompt is being rewritten, the same composer (so focus
+      // holds) edits it: its pickers act on the edit's own selections and send rewrites the turn
+      if let editing { EditingBar(original: editing.original, onCancel: actions.cancelEdit) }
+      let placeholder = editing == nil && pendingPlanReview(session.turns).flatMap(reviseOption) != nil
+        ? t("composer.placeholder.revisePlan") : nil
+      Composer(session: editing.map { editingView(session, $0) } ?? session, text: $draft, staged: $staged,
+               onSend: editing == nil ? actions.send : actions.sendEdit, onStop: actions.stop,
+               onSetMode: editing == nil ? actions.setMode : { edit.wrappedValue?.controls.modeId = $0 },
+               onSetConfig: editing == nil ? actions.setConfig : { id, value in
+                 guard let now = edit.wrappedValue else { return }
+                 edit.wrappedValue?.controls = editTurnConfig(now.controls, live: session.controls, id: id, value: value,
+                                                              shapes: session.modelShapes)
+               },
+               placeholder: placeholder,
+               focusKey: editing?.turnIndex)
+      // Under the stand-in while the chat comes from the list or goes back to it
+      .opacity(handoff?.hidden == session.id ? 0 : 1)
+      #if os(iOS)
+      .background {
+        BarHandoffProbe(session: session, placeholder: placeholder)
       }
+      #endif
     }
     // The dock runs closer to the screen edges than the transcript (--page): a phone composer spans the width
     .padding(.horizontal, Metrics.pad)
@@ -287,7 +284,7 @@ struct PlanDock: View {
   /// `dockPlan` of the session's turns
   let entries: [PlanEntry]?
   let running: Bool
-  /// The session's goal; nil for a ChatGPT mirror, which has no goal of its own to steer
+  /// The session's goal
   let goal: SessionGoal?
   let goalActions: [GoalAction]?
   @Environment(\.sessionActions) private var actions

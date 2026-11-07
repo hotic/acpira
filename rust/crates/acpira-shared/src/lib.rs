@@ -7,7 +7,6 @@
 pub mod agent_order;
 pub mod appearance;
 pub mod attachments;
-pub mod chatgpt_integration;
 pub mod composer_controls;
 pub mod context;
 pub mod devices;

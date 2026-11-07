@@ -324,7 +324,7 @@ struct SessionListScreen: View {
     // Deleted at once, as on the desktop: the toast's undo brings it back
     .modifier(SwipeToDelete(id: s.id, open: $swiped) { withAnimation(Motion.ease) { model.delete(s.id) } })
     // By project a session drags onto another project; pinned ones stay put, as on the desktop (sessionTree.ts draggable)
-    .listDrag(filing && s.pinned != true && s.external != true ? .session(s.id) : nil, onStart: { held = $0 }) {
+    .listDrag(filing && s.pinned != true ? .session(s.id) : nil, onStart: { held = $0 }) {
       ListDragPreview(title: s.title) { VendorMark(brand: s.agent, name: model.agent(s.agent).name, size: Metrics.rowMark, fit: true) }
     }
   }

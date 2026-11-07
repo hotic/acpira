@@ -38,8 +38,7 @@ impl SessionLibrary for SessionManager {
         if query.is_empty() {
           return Err("Give a query to search inside a session; read_session reads it.".into());
         }
-        let snap = self.snapshot(&id).await.map_err(|e| e.to_string())?;
-        let record = snap.into_record();
+        let record = self.snapshot(&id).await.map_err(|e| e.to_string())?;
         if caller.is_self_session(&id) && !holds_unseen_turns(&record) {
           return Ok(SELF_READ.to_owned());
         }
@@ -79,9 +78,8 @@ impl SessionLibrary for SessionManager {
         return Err("Name the session: its link, its id, or the agent's own session id. search_sessions finds them.".into());
       }
       let id = resolve_ref(r, &sessions).ok_or_else(|| format!("No Acpira session is called {r:?}; search_sessions lists them."))?;
-      let snap = self.snapshot(&id).await.map_err(|e| e.to_string())?;
-      let agent_name = self.agent_name(snap.agent());
-      let record = snap.into_record();
+      let record = self.snapshot(&id).await.map_err(|e| e.to_string())?;
+      let agent_name = self.agent_name(&record.agent);
       if caller.is_self_session(&id) && !holds_unseen_turns(&record) {
         return Ok(SELF_READ.to_owned());
       }
@@ -135,7 +133,7 @@ impl SessionManager {
   }
 
   /// Sessions whose saved conversation contains every term of `query`. Records reach the disk within the save debounce,
-  /// so a reply still streaming is found a moment later; ChatGPT mirrors have no record here and match by title only
+  /// so a reply still streaming is found a moment later
   pub async fn search_sessions(&self, query: &str) -> Vec<SessionHit> {
     self.search.search(self.deps.store.dir().to_path_buf(), query).await
   }

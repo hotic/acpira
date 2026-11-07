@@ -122,7 +122,7 @@ impl SessionManager {
   async fn storage_details(self: &Arc<Self>, scan: Scan, detail: &[StorageDetail]) -> StorageView {
     let Scan { mut view, usage, residue } = scan;
     if detail.contains(&StorageDetail::Sessions) {
-      let index: Vec<_> = self.state.lock().index.iter().filter(|s| s.external.is_none()).cloned().collect();
+      let index: Vec<_> = self.state.lock().index.clone();
       let slim = detail.contains(&StorageDetail::Slim);
       let dir = self.deps.store.dir().to_path_buf();
       let ids: Vec<String> = index.iter().map(|s| s.id.clone()).collect();

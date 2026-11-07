@@ -14,8 +14,7 @@ import { hasTurnStats } from './turnOutcome';
 import { PluginActions } from '../plugins/MessageActions';
 
 // What the turn action row needs from the shell: the session it belongs to, the control list for resolving the model
-// name, and the fork action with the agents it can continue on — absent for external (ChatGPT) sessions and in hosts
-// that do not wire it (LAB)
+// name, and the fork action with the agents it can continue on — absent in hosts that do not wire it (LAB)
 export const TurnActionsContext = createContext<{
   sessionId: string; controls: SessionControls;
   fork?: (turnIndex: number, agent: AgentId) => void; agents?: AgentInfo[]; agentId?: AgentId;

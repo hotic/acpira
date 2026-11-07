@@ -6,22 +6,20 @@ import type { AgentInfo } from '../transcript';
 const list: AgentInfo[] = [
   { id: 'grok', name: 'Grok' },
   { id: 'devin', name: 'Devin' },
-  { id: 'chatgpt', name: 'ChatGPT', external: true },
   { id: 'kimi', name: 'Kimi', available: false },
   { id: 'pi', name: 'Pi' },
 ];
 const ids = (agents: AgentInfo[]) => agents.map(a => a.id);
 
 describe('agent order', () => {
-  it('puts saved ids first, keeps registry order for the rest and external entries last', () => {
-    expect(ids(arrangeAgents(list, { order: [], disabled: [] }))).toEqual(['grok', 'devin', 'kimi', 'pi', 'chatgpt']);
-    expect(ids(arrangeAgents(list, { order: ['pi', 'ghost', 'chatgpt', 'devin'], disabled: [] }))).toEqual(['pi', 'devin', 'grok', 'kimi', 'chatgpt']);
+  it('puts saved ids first and keeps registry order for the rest', () => {
+    expect(ids(arrangeAgents(list, { order: [], disabled: [] }))).toEqual(['grok', 'devin', 'kimi', 'pi']);
+    expect(ids(arrangeAgents(list, { order: ['pi', 'ghost', 'devin'], disabled: [] }))).toEqual(['pi', 'devin', 'grok', 'kimi']);
   });
 
-  it('flags disabled agents without dropping them; external entries cannot be disabled', () => {
-    const arranged = arrangeAgents(list, { order: [], disabled: ['devin', 'chatgpt'] });
+  it('flags disabled agents without dropping them', () => {
+    const arranged = arrangeAgents(list, { order: [], disabled: ['devin'] });
     expect(arranged.find(a => a.id === 'devin')?.disabled).toBe(true);
-    expect(arranged.find(a => a.id === 'chatgpt')?.disabled).toBeUndefined();
     expect(ids(launchable(arranged))).toEqual(['grok', 'kimi', 'pi']);
     expect(list.find(a => a.id === 'devin')?.disabled).toBeUndefined();
   });

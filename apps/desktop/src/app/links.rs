@@ -87,8 +87,7 @@ impl App {
     };
     let sessions = self.client().sessions_dir().map(PathBuf::from).unwrap_or_else(|| self.paths.data_home.join("sessions"));
     let known = self.windows().iter().any(|w| w.session_id().as_deref() == Some(id.as_str()))
-      || sessions.join(format!("{id}.json")).exists()
-      || self.paths.data_home.join("bridges/chatgpt").join(format!("{id}.json")).exists();
+      || sessions.join(format!("{id}.json")).exists();
     if known {
       self.show_session(&id);
       return;

@@ -131,7 +131,6 @@ impl Mgr {
       Arc::new(AgentRegistry::new(&opts.agents)),
       ManagerDeps {
         store: store.clone(),
-        chatgpt: None,
         log,
         cwd: Arc::new(move || cwd.lock().unwrap().clone()),
         projects: Arc::new(move || projects),

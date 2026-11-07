@@ -47,7 +47,7 @@ impl SessionManager {
   }
 
   /// The folder a view means when something needs one: a new session, warming, a probe, native sessions, @ search, the
-  /// settings page's project files, ChatGPT. An explicit folder wins; a shell with a workspace means its workspace (as it
+  /// settings page's project files. An explicit folder wins; a shell with a workspace means its workspace (as it
   /// always did); a project shell (`ManagerDeps.projects`) means the session the view shows, else the newest session's
   /// project folder (a chat's is its own), else its first registered project, else nothing: no session starts in the home
   /// directory on its own
@@ -175,7 +175,7 @@ impl SessionManager {
   /// learn it from their records in the background, so the list's mark flips to the model's vendor without each session
   /// being opened first. Reading every record's controls takes a while on a large store; the list shows meanwhile
   pub(super) fn backfill_models(&self) {
-    let ids: Vec<String> = self.state.lock().index.iter().filter(|s| s.model.is_none() && s.external.is_none()).map(|s| s.id.clone()).collect();
+    let ids: Vec<String> = self.state.lock().index.iter().filter(|s| s.model.is_none()).map(|s| s.id.clone()).collect();
     if ids.is_empty() {
       return;
     }
@@ -200,9 +200,6 @@ impl SessionManager {
     self.sync_categories().await;
     // Engines off the bus (Windows, older ones) change them too: picked up here as the rest of the list is
     self.reload_unread().await;
-    if let Some(c) = &self.deps.chatgpt {
-      c.refresh().await;
-    }
   }
 
   /// Categories another window edited reach this one's list

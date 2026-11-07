@@ -34,7 +34,7 @@ pub struct ServerOpts {
   pub log: Arc<dyn Fn(&str) + Send + Sync>,
   /// Browser harness: the connecting page must not supply executable command lines
   pub ignore_client_agents: bool,
-  /// The executable the ChatGPT connection prompt names (this binary)
+  /// This binary: the built-in agent and the MCP server handed to agents run as it
   pub bridge_exe: Option<String>,
 }
 

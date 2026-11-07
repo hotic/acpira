@@ -25,7 +25,7 @@ export interface AccountPanelProps {
 }
 
 // True when the agent has something for the account menu to show: stored logins (Devin) or the CLI's own official account (Grok, Kimi)
-export const hasAccountMenu = (agent: AgentInfo) => !agent.external && !!(agent.accounts || agent.localAccount);
+export const hasAccountMenu = (agent: AgentInfo) => !!(agent.accounts || agent.localAccount);
 
 // The account menu of the current session's agent; starting a session with another agent is the plus menu's job.
 // Stored logins: a bar on top (agent name · "＋": import the local login if never imported, otherwise sign in a new one in the terminal),

@@ -25,9 +25,6 @@ private fun AppModel.update(next: SettingsView, key: String, value: JsonElement)
 
 private fun ids(list: List<String>) = JsonArray(list.map(::JsonPrimitive))
 
-/** The agents the settings list and reorder: every one but the external entries (ChatGPT's bridge) */
-val AppModel.settingsAgents: List<AgentInfo> get() = agents.filter { it.external != true }
-
 /** agentOrder.ts pickDefaultAgent: the configured default unless it is off or its CLI is missing; then the first
  *  enabled installed agent */
 fun pickDefaultAgent(agents: List<AgentInfo>, preferred: AgentId): AgentId {
@@ -39,7 +36,7 @@ fun pickDefaultAgent(agents: List<AgentInfo>, preferred: AgentId): AgentId {
 
 /** Switches an agent on or off for new sessions; the last one on stays on (the desktop greys its switch out) */
 fun AppModel.setAgentEnabled(id: AgentId, on: Boolean) {
-  if (!on && settingsAgents.filter { it.disabled != true }.map { it.id } == listOf(id)) return
+  if (!on && agents.filter { it.disabled != true }.map { it.id } == listOf(id)) return
   val rest = settings.disabledAgents.filter { it != id }
   val next = if (on) rest else rest + id
   update(settings.copy(disabledAgents = next), "disabledAgents", ids(next))
@@ -48,7 +45,7 @@ fun AppModel.setAgentEnabled(id: AgentId, on: Boolean) {
 /** The listed agent at [from] moved to [to] (SettingsShell `onReorder`): ids the list does not show keep their place
  *  after them */
 fun AppModel.moveAgent(from: Int, to: Int) {
-  val list = settingsAgents.map { it.id }.toMutableList()
+  val list = agents.map { it.id }.toMutableList()
   if (from !in list.indices || to !in list.indices || from == to) return
   list.add(to, list.removeAt(from))
   val next = list + settings.agentOrder.filter { it !in list }
@@ -85,16 +82,15 @@ fun AppModel.refreshControls(agent: AgentId) {
   if (!post(WebviewMsg.Controls(agent, fresh = true))) loadControls(agent)
 }
 
-/** agentOrder.ts arrangeAgents: the saved order first, the rest in registry order after them, external entries last;
+/** agentOrder.ts arrangeAgents: the saved order first, the rest in registry order after them;
  *  switched-off agents are flagged, never dropped */
 fun arrangeAgents(list: List<AgentInfo>, settings: SettingsView): List<AgentInfo> {
   val rank = HashMap<String, Int>()
   settings.agentOrder.forEachIndexed { i, id -> rank.putIfAbsent(id, i) }
   val off = settings.disabledAgents.toSet()
   return list.mapIndexed { i, a ->
-    val flagged = if (a.external == true) a else a.copy(disabled = if (a.id in off) true else null)
-    Triple(flagged, rank[a.id] ?: settings.agentOrder.size, i)
-  }.sortedWith(compareBy({ if (it.first.external == true) 1 else 0 }, { it.second }, { it.third })).map { it.first }
+    Triple(a.copy(disabled = if (a.id in off) true else null), rank[a.id] ?: settings.agentOrder.size, i)
+  }.sortedWith(compareBy({ it.second }, { it.third })).map { it.first }
 }
 
 /** 0 first (settings.ts COMPACT_AT_MODEL: each session's own model window), then MIN_COMPACT_AT_TOKENS and up, the

@@ -160,7 +160,7 @@ export interface MoveTarget {
 // What dropping a session on a zone (a project's category, or its loose area / header when `category` is absent) does.
 // Within its own project it is filed (null takes it out of its category); onto another project it moves there, filed under
 // that project's category when dropped on one. Undefined: the drop changes nothing.
-// Pinned sessions are locked and ChatGPT mirrors are bound to their project, so neither is dragged at all
+// Pinned sessions are locked, so they are not dragged at all
 export type DropAction =
   | { kind: 'file'; category: string | null }
   | { kind: 'move'; to: MoveTarget };
@@ -173,5 +173,5 @@ export function dropAction(s: SessionSummary, target: MoveTarget, categories: Se
 }
 
 export function draggable(s: SessionSummary): boolean {
-  return !s.pinned && !s.external;
+  return !s.pinned;
 }

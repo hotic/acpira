@@ -121,30 +121,6 @@ fn open_clipboard() -> bool {
   false
 }
 
-pub fn clipboard_write(text: &str) {
-  let wide: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
-  if !open_clipboard() {
-    return;
-  }
-  // SAFETY: the clipboard is open; the memory handed to SetClipboardData belongs to the system once it succeeds
-  unsafe {
-    let _ = EmptyClipboard();
-    if let Ok(mem) = GlobalAlloc(GMEM_MOVEABLE, wide.len() * 2) {
-      let p = GlobalLock(mem) as *mut u16;
-      if p.is_null() {
-        let _ = GlobalFree(Some(mem));
-      } else {
-        std::ptr::copy_nonoverlapping(wide.as_ptr(), p, wide.len());
-        let _ = GlobalUnlock(mem);
-        if SetClipboardData(u32::from(CF_UNICODETEXT.0), Some(HANDLE(mem.0))).is_err() {
-          let _ = GlobalFree(Some(mem));
-        }
-      }
-    }
-    let _ = CloseClipboard();
-  }
-}
-
 /// A GIF on the clipboard as Explorer's Copy puts a file there: a file drop list (CF_HDROP), which chat apps and browsers
 /// paste as the animated image
 pub fn clipboard_write_gif(path: &std::path::Path, _data: &[u8]) -> Result<(), String> {

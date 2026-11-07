@@ -5,7 +5,6 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 use crate::appearance::Appearance;
-use crate::chatgpt_integration::ChatGptIntegrationStatus;
 use crate::i18n::Locale;
 use crate::inventory::AgentInventory;
 use crate::model_shapes::ModelShapes;
@@ -236,9 +235,6 @@ pub struct AgentInstallProgress {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum HostMsg {
-  ChatgptStatus {
-    status: ChatGptIntegrationStatus,
-  },
   EditTurnResult {
     request_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -573,7 +569,6 @@ impl HostMsg {
 
   pub fn type_name(&self) -> &'static str {
     match self {
-      HostMsg::ChatgptStatus { .. } => "chatgptStatus",
       HostMsg::EditTurnResult { .. } => "editTurnResult",
       HostMsg::DeleteSessionResult { .. } => "deleteSessionResult",
       HostMsg::Init { .. } => "init",
@@ -658,8 +653,6 @@ impl Serialize for RawJson {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum WebviewMsg {
-  ChatgptStatus,
-  ConnectChatgpt,
   EditTurn {
     request_id: String,
     edit: EditTurnRequest,

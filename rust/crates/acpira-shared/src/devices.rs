@@ -145,8 +145,6 @@ pub fn device_allowed(m: &WebviewMsg) -> bool {
     | W::ConnectionOp { .. }
     | W::SshHosts
     | W::RemoteDir { .. }
-    | W::ChatgptStatus
-    | W::ConnectChatgpt
     | W::ListNativeSessions { .. }
     | W::ImportNativeSession { .. }
     | W::RemoteAccess

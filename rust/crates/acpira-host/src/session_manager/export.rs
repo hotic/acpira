@@ -6,27 +6,21 @@ use acpira_shared::export_transcript::{ExportInput, ExportLabels, export_file_na
 use acpira_shared::protocol::ExportFormat;
 use acpira_shared::transcript::*;
 
-use super::{SessionManager, SessionSnapshot};
+use super::SessionManager;
+use crate::store::record::SessionRecord;
 use crate::i18n::t;
-use crate::store::transcript_store::RecordLoadError;
 use crate::util::{local_stamp, now_iso};
 
 impl SessionManager {
   /// Write the session as Markdown or JSON under exports/. Exporting a transcript that has not changed since the last export
   /// in the same format returns that file again (as long as it still exists) instead of writing a second copy
-  /// A session's content as export, copy and read_session see it: the live session first, else its record, else a ChatGPT
-  /// mirror. A record that cannot be read answers the same message the viewer would show
-  pub async fn snapshot(&self, id: &str) -> Result<SessionSnapshot> {
-    if let Some(c) = self.deps.chatgpt.as_ref().filter(|c| c.owns(id)) {
-      return c.view(id).map(SessionSnapshot::Mirror).ok_or_else(|| anyhow!(self.record_load_message(id, &RecordLoadError::Missing)));
-    }
+  /// A session's content as export, copy and read_session see it: the live session first, else its record. A record
+  /// that cannot be read answers the same message the viewer would show
+  pub async fn snapshot(&self, id: &str) -> Result<SessionRecord> {
     if let Some(l) = self.live(id) {
-      return Ok(SessionSnapshot::Record(l.to_record()));
+      return Ok(l.to_record());
     }
-    match self.deps.store.load_detailed(id).await {
-      Ok(record) => Ok(SessionSnapshot::Record(record)),
-      Err(error) => Err(anyhow!(self.record_load_message(id, &error))),
-    }
+    self.deps.store.load_detailed(id).await.map_err(|error| anyhow!(self.record_load_message(id, &error)))
   }
 
   pub(super) fn agent_name(&self, agent: &AgentId) -> String {
@@ -34,7 +28,7 @@ impl SessionManager {
   }
 
   /// The Markdown both "Export as Markdown" and "Copy as Markdown" produce, labels in the display language, blobs as paths
-  fn snapshot_markdown(&self, id: &str, snap: &SessionSnapshot, agent_name: &str) -> String {
+  fn snapshot_markdown(&self, id: &str, snap: &SessionRecord, agent_name: &str) -> String {
     let labels = ExportLabels {
       user: t("export.label.user"),
       agent: t("export.label.agent"),
@@ -53,19 +47,19 @@ impl SessionManager {
     let store = self.deps.store.clone();
     let sid = id.to_owned();
     export_markdown(
-      &ExportInput { title: snap.title(), agent_name, cwd: snap.cwd(), exported_at: &now_iso(), turns: snap.turns() },
+      &ExportInput { title: &snap.title, agent_name, cwd: &snap.cwd, exported_at: &now_iso(), turns: &snap.turns },
       &labels,
       &move |name| store.blob_path(&sid, name).map(|p| p.to_string_lossy().into_owned()),
     )
   }
 
   /// An export's content in `format`: the record as JSON, the Markdown, or the plain text of what was said
-  fn snapshot_content(&self, id: &str, snap: &SessionSnapshot, agent_name: &str, format: ExportFormat) -> Result<String> {
+  fn snapshot_content(&self, id: &str, snap: &SessionRecord, agent_name: &str, format: ExportFormat) -> Result<String> {
     Ok(match format {
-      ExportFormat::Json => snap.json()?,
+      ExportFormat::Json => serde_json::to_string_pretty(snap)?,
       ExportFormat::Markdown => self.snapshot_markdown(id, snap, agent_name),
       ExportFormat::Text => export_text(
-        &ExportInput { title: snap.title(), agent_name, cwd: snap.cwd(), exported_at: "", turns: snap.turns() },
+        &ExportInput { title: &snap.title, agent_name, cwd: &snap.cwd, exported_at: "", turns: &snap.turns },
         &t("export.label.user"),
       ),
     })
@@ -74,14 +68,14 @@ impl SessionManager {
   /// "Copy as Markdown", or a device's export: the content as text, nothing written
   pub async fn session_markdown(&self, id: &str, format: ExportFormat) -> Result<String> {
     let snap = self.snapshot(id).await?;
-    self.snapshot_content(id, &snap, &self.agent_name(snap.agent()), format)
+    self.snapshot_content(id, &snap, &self.agent_name(&snap.agent), format)
   }
 
   pub async fn export_session(&self, id: &str, format: ExportFormat) -> Result<std::path::PathBuf> {
     let mut exports = self.exports.lock().await;
     let snap = self.snapshot(id).await?;
-    let json = snap.json()?;
-    let agent_name = self.agent_name(snap.agent());
+    let json = serde_json::to_string_pretty(&snap)?;
+    let agent_name = self.agent_name(&snap.agent);
     // The fingerprint leaves out the export time stamped into the Markdown; the agent name and the label language are in it,
     // so a renamed agent or a switched display language still writes a fresh file
     let fingerprint = {
@@ -102,7 +96,7 @@ impl SessionManager {
       ExportFormat::Json => json,
       _ => self.snapshot_content(id, &snap, &agent_name, format)?,
     };
-    let path = self.deps.store.write_export(&export_file_name(snap.title(), format.extension(), &local_stamp()), &content).await?;
+    let path = self.deps.store.write_export(&export_file_name(&snap.title, format.extension(), &local_stamp()), &content).await?;
     exports.insert(key, (fingerprint, path.clone()));
     Ok(path)
   }

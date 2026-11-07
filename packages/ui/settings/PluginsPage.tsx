@@ -48,8 +48,7 @@ export interface ModelsPageProps {
   onUpdate: (id: AgentId) => void;
 }
 
-export function ModelsPage({ agents: all, inventories, onReorder, onDisabled, onOpen, onInventory, installs, onUpdate }: ModelsPageProps) {
-  const agents = all.filter(a => !a.external);
+export function ModelsPage({ agents, inventories, onReorder, onDisabled, onOpen, onInventory, installs, onUpdate }: ModelsPageProps) {
   const [query, setQuery] = useState('');
   // The versions on the tiles' feet: every agent not scanned yet, once per visit
   const asked = useRef(new Set<AgentId>());
@@ -60,7 +59,7 @@ export function ModelsPage({ agents: all, inventories, onReorder, onDisabled, on
   const match = (a: AgentInfo) => !q || a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q);
   return <>
     <SearchBox value={query} onChange={setQuery} label={t('settings.models.search')} />
-    <AgentTiles agents={all} inventories={inventories} filter={q ? match : undefined} onReorder={onReorder} onDisabled={onDisabled} onOpen={onOpen}
+    <AgentTiles agents={agents} inventories={inventories} filter={q ? match : undefined} onReorder={onReorder} onDisabled={onDisabled} onOpen={onOpen}
       installs={installs} onUpdate={onUpdate} />
   </>;
 }
@@ -120,7 +119,7 @@ function translateOf(el: HTMLElement): { x: number; y: number } {
 // snaps back. The last agent on cannot be turned off.
 // A dragged tile follows the pointer (an inline translate over its slot in the previewed order); the others slide into
 // their new slots, and on release the dragged one slides from under the pointer into its own
-function AgentTiles({ agents: all, inventories, filter, onReorder, onDisabled, onOpen, installs, onUpdate }: {
+function AgentTiles({ agents, inventories, filter, onReorder, onDisabled, onOpen, installs, onUpdate }: {
   agents: AgentInfo[];
   inventories: Partial<Record<AgentId, AgentInventory>>;
   installs?: AgentInstallProgress[];
@@ -131,11 +130,10 @@ function AgentTiles({ agents: all, inventories, filter, onReorder, onDisabled, o
   onDisabled: (ids: AgentId[]) => void;
   onOpen: (id: AgentId) => void;
 }) {
-  const agents = all.filter(a => !a.external);
   const ids = agents.map(a => a.id);
   const [pending, setPending] = useState<{ order?: AgentId[]; enabled?: Record<AgentId, boolean> }>({});
   // A fresh list from the host supersedes whatever was shown optimistically
-  useEffect(() => setPending({}), [all]);
+  useEffect(() => setPending({}), [agents]);
   const [drag, setDrag] = useState<{ id: AgentId; order: AgentId[] }>();
   // The tile that looks picked up: from the drag's start until it has slid into its slot after the release
   const [lifted, setLifted] = useState<AgentId>();

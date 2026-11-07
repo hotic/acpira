@@ -159,7 +159,7 @@ private let claudeOptions: [PermissionOption] = decode("""
     let records = try #require(agentTurns("records").first)
     let lost = try #require(records.blocks.first { $0.toolCall?.id == "t-lost" })
     #expect(observedBlock(lost).toolCall?.status == .cancelled)
-    #expect(toolVerb(observedBlock(lost).toolCall!) == t("chatgpt.unknownTool"))
+    #expect(toolVerb(observedBlock(lost).toolCall!) == t("observation.unknownTool"))
     let settled = try #require(records.blocks.first { $0.toolCall?.id == "t-q" })
     #expect(observedBlock(settled) == settled)
   }

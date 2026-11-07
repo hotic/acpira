@@ -24,13 +24,10 @@ extension AppModel {
     _ = post(.setSetting(key: name, value: json))
   }
 
-  /// The agents the settings list and reorder: every one but the external entries (ChatGPT's bridge)
-  var settingsAgents: [AgentInfo] { agents.filter { $0.external != true } }
-
   /// Switches an agent on or off for new sessions; the last one on stays on (the desktop greys its switch out)
   func setAgentEnabled(_ id: AgentId, _ on: Bool) {
     guard let settings else { return }
-    if !on && settingsAgents.filter({ $0.disabled != true }).map(\.id) == [id] { return }
+    if !on && agents.filter({ $0.disabled != true }).map(\.id) == [id] { return }
     let next = on ? settings.disabledAgents.filter { $0 != id } : settings.disabledAgents.filter { $0 != id } + [id]
     setSetting(\.disabledAgents, "disabledAgents", next)
   }
@@ -38,7 +35,7 @@ extension AppModel {
   /// The listed agents' new order (SettingsShell `onReorder`): ids the list does not show keep their place after them
   func moveAgents(from: IndexSet, to: Int) {
     guard let settings else { return }
-    var ids = settingsAgents.map(\.id)
+    var ids = agents.map(\.id)
     ids.move(fromOffsets: from, toOffset: to)
     setSetting(\.agentOrder, "agentOrder", ids + settings.agentOrder.filter { !ids.contains($0) })
   }
@@ -104,7 +101,7 @@ func hostControlsKey(_ agent: AgentId, _ cwd: String) -> String? {
   cwd.hasPrefix("ssh://") ? "\(cwd)\n\(agent)" : nil
 }
 
-/// agentOrder.ts arrangeAgents: the saved order first, the rest in registry order after them, external entries last;
+/// agentOrder.ts arrangeAgents: the saved order first, the rest in registry order after them;
 /// switched-off agents are flagged, never dropped
 func arrangeAgents(_ list: [AgentInfo], _ settings: SettingsView) -> [AgentInfo] {
   let rank = Dictionary(settings.agentOrder.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
@@ -112,8 +109,8 @@ func arrangeAgents(_ list: [AgentInfo], _ settings: SettingsView) -> [AgentInfo]
   return list.enumerated()
     .map { i, a -> (AgentInfo, [Int]) in
       var a = a
-      if a.external != true { a.disabled = off.contains(a.id) ? true : nil }
-      return (a, [a.external == true ? 1 : 0, rank[a.id] ?? settings.agentOrder.count, i])
+      a.disabled = off.contains(a.id) ? true : nil
+      return (a, [rank[a.id] ?? settings.agentOrder.count, i])
     }
     .sorted { $0.1.lexicographicallyPrecedes($1.1) }
     .map(\.0)

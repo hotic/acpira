@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 // Drag and drop in the by-project list, the desktop list's drags (SessionList.tsx) on the system's drag interaction: a
 // long press lifts the row into its menu, and moving the finger turns the lift into a drag (as in Files). A session drops
 // on another project (its header or its rows) to move there; a project drops above or below another project, or on a
-// section's caption, to take that place, in that section or out of one. Pinned and external sessions do not drag.
+// section's caption, to take that place, in that section or out of one. Pinned sessions do not drag.
 // The system decides between menu and drag: a finger that moves as the row lifts drags it, one that waits for the menu
 // and then slides towards it picks menu items instead (observed in the simulator, as in Files).
 //

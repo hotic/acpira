@@ -200,12 +200,12 @@ export async function activate(context: vscode.ExtensionContext) {
     addToChat({ type: 'addContext', source: p.source, items: p.items }, from);
   };
 
-  const bindEditor = (panel: vscode.WebviewPanel, sessionId?: string, watch?: (s: SessionView) => void): WebviewBridge => {
+  const bindEditor = (panel: vscode.WebviewPanel, sessionId?: string): WebviewBridge => {
     panel.iconPath = {
       light: vscode.Uri.joinPath(resources, 'media', 'icon-light.svg'),
       dark: vscode.Uri.joinPath(resources, 'media', 'icon.svg'),
     };
-    const b = attach(panel.webview, 'editor', () => panel.visible, sessionId, s => { panel.title = s.title; watch?.(s); });
+    const b = attach(panel.webview, 'editor', () => panel.visible, sessionId, s => { panel.title = s.title; });
     panels.set(b, panel);
     lastFocused = b;
     panel.onDidChangeViewState(e => { if (e.webviewPanel.active) lastFocused = b; });
@@ -220,9 +220,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // A new tab is a new conversation: without a session id (title bar / command palette) it opens on a fresh session; a webview passing its
   // id opens that one. The tab title follows the session it shows
-  function openEditor(sessionId?: unknown, watch?: (s: SessionView) => void, column: vscode.ViewColumn = vscode.ViewColumn.Active): WebviewBridge {
+  function openEditor(sessionId?: unknown, column: vscode.ViewColumn = vscode.ViewColumn.Active): WebviewBridge {
     const panel = vscode.window.createWebviewPanel(EDITOR_VIEW_TYPE, 'Acpira', column, { retainContextWhenHidden: true });
-    return bindEditor(panel, typeof sessionId === 'string' ? sessionId : undefined, watch);
+    return bindEditor(panel, typeof sessionId === 'string' ? sessionId : undefined);
   }
 
   // The column count, starting on the default: showQuickPick cannot preselect an item in single-select mode (`picked` is
@@ -255,7 +255,7 @@ export async function activate(context: vscode.ExtensionContext) {
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
       await vscode.commands.executeCommand('vscode.setEditorLayout', columnsLayout(n));
       // Created in order so the last tab ends up focused; ViewColumn i + 1 is the i-th group of the new layout
-      for (let i = 0; i < n; i++) openEditor(undefined, undefined, (i + 1) as vscode.ViewColumn);
+      for (let i = 0; i < n; i++) openEditor(undefined, (i + 1) as vscode.ViewColumn);
     } catch (e) {
       log.error(`open in editor columns failed: ${String(e)}`);
       void vscode.window.showErrorMessage(t('host.columnsFailed', { detail: e instanceof Error ? e.message : String(e) }));
@@ -474,7 +474,7 @@ export async function activate(context: vscode.ExtensionContext) {
         const id = sessionIdOfLink(`${uri.scheme}://${uri.authority}${uri.path}`);
         if (!id) { log.warn(`unhandled URI: ${uri.path}`); return; }
         const known = [...bridges].some(b => b.sessionId === id)
-          || existsSync(join(sessionsDir, `${id}.json`)) || existsSync(join(home, 'bridges', 'chatgpt', `${id}.json`));
+          || existsSync(join(sessionsDir, `${id}.json`));
         if (known) revealSession(id);
         else void vscode.window.showWarningMessage(t('sessionLink.notHere'));
       },
@@ -485,16 +485,6 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('acpira.newSession', () => withSidebar(b => b.send({ type: 'newSession' }))),
     vscode.commands.registerCommand('acpira.showLog', () => log.show()),
     vscode.commands.registerCommand('acpira.safeMode', () => switchSafeMode(!safeModeOn(home))),
-    // A new tab bound to a fresh ChatGPT mirror; its connection prompt goes to the clipboard as soon as the tab shows it
-    vscode.commands.registerCommand('acpira.connectChatgpt', () => {
-      let copied = false;
-      openEditor(undefined, s => {
-        const prompt = s.external?.connectionPrompt;
-        if (copied || !prompt) return;
-        copied = true;
-        void vscode.env.clipboard.writeText(prompt).then(() => vscode.window.showInformationMessage(t('chatgpt.copied')));
-      }).send({ type: 'connectChatgpt' });
-    }),
     vscode.commands.registerCommand('acpira.openInEditor', (sessionId?: unknown) => { openEditor(sessionId); }),
     vscode.commands.registerCommand('acpira.openInEditorColumns', () => openEditorColumns()),
     // Same tab, then moved into a fresh auxiliary window — each call makes another floating chat window
