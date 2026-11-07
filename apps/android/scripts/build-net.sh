@@ -22,7 +22,7 @@ api=29
 stale() {
   [ -f "$out/stamp" ] && [ -d "$out/jniLibs" ] && [ -f "$out/kotlin/uniffi/acpira_mobile/acpira_mobile.kt" ] || return 0
   for abi in "${abis[@]}"; do [ -f "$out/jniLibs/$abi/libacpira_mobile.so" ] || return 0; done
-  [ -n "$(find "$rust/crates/acpira-mobile" "$rust/crates/acpira-net" "$rust/crates/acpira-shared" \
+  [ -n "$(find "$rust/crates/acpira-mobile" "$rust/crates/acpira-net" "$rust/crates/acpira-shared" "$rust/patches" \
     "$rust/Cargo.toml" "$rust/Cargo.lock" "$0" "$android/scripts/uniffi.toml" -newer "$out/stamp" -type f \
     -not -path '*/i18n/*' -not -path '*/target/*' -print -quit)" ]
 }

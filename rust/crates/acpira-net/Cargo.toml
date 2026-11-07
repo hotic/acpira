@@ -19,12 +19,18 @@ base64.workspace = true
 flate2.workspace = true
 iroh.workspace = true
 n0-future.workspace = true
+# The interface table and default route iroh already reads (tun.rs), at the version iroh links
+netwatch = "0.19"
 parking_lot.workspace = true
 ring.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 spake2.workspace = true
 tokio.workspace = true
+
+# The IPv4 routing and address tables (tun.rs): netwatch names no default route interface there
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }
 
 [dev-dependencies]
 tempfile.workspace = true

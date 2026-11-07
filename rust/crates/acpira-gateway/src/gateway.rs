@@ -13,6 +13,7 @@ use acpira_net::link::{self, BlobRequest, Incoming, close};
 use acpira_net::pair::{self, PairReply, PairingWindow, Refusal};
 use acpira_shared::devices::{DeviceStatus, GatewayStatus, PairingStatus, PathKind};
 use acpira_net::ticket::PairTicket;
+use acpira_net::tun::{self, Bypass};
 use acpira_net::{Endpoint, identity};
 use anyhow::Result;
 use acpira_net::iroh::endpoint::Connection;
@@ -45,6 +46,8 @@ pub struct Gateway {
   name: parking_lot::Mutex<String>,
   relays: Relays,
   test_bind: bool,
+  /// The proxy TUN bypass detected at start (`acpira_net::tun`), what `bypass_moved` compares with
+  bypass: Option<Bypass>,
   devices: Devices,
   engine: Link,
   /// `gateway.json` `keepAwake`, read again on `reload`
@@ -79,7 +82,15 @@ impl Gateway {
       crate::store::private(&o.home.join("apns"));
     }
     let secret = identity::load_or_create(&paths.identity)?;
-    let ep = endpoint::bind(Options { secret, relays: relays.clone(), alpns: vec![ALPN_PAIR.to_vec(), ALPN_LINK.to_vec()], bind: o.bind }).await?;
+    // Tests bind loopback and never look for a proxy TUN
+    let bypass = if o.bind.is_none() { tun::detect().await } else { None };
+    let alpns = vec![ALPN_PAIR.to_vec(), ALPN_LINK.to_vec()];
+    let ep = endpoint::bind(Options { secret, relays: relays.clone(), alpns, bind: o.bind, bypass: bypass.clone() }).await?;
+    if let Some(b) = &bypass
+      && ep.bound_sockets().iter().any(|s| s.ip() == std::net::IpAddr::V4(b.v4))
+    {
+      (o.log)(&format!("a proxy TUN takes this computer's traffic: direct paths leave through {} ({})", b.interface, b.v4));
+    }
     let name = display_name(&cfg).into();
     let g = Arc::new(Gateway {
       devices: Devices::load(&paths.devices),
@@ -88,6 +99,7 @@ impl Gateway {
       name,
       relays,
       test_bind: o.bind.is_some(),
+      bypass,
       engine: o.engine,
       keep_awake: cfg.keep_awake.into(),
       awake_error: Default::default(),
@@ -113,6 +125,22 @@ impl Gateway {
 
   pub fn endpoint(&self) -> &Endpoint {
     &self.ep
+  }
+
+  /// Whether the home relay is connected (relays off: always)
+  pub fn relay_up(&self) -> bool {
+    endpoint::relay_connected(&self.ep, self.relays != Relays::Off)
+  }
+
+  /// Whether any paired device is connected now
+  pub fn anyone_online(&self) -> bool {
+    !self.live.lock().is_empty()
+  }
+
+  /// Whether the proxy TUN bypass this gateway bound with no longer fits the network: a TUN turned on or off, the
+  /// physical interface changed or got another address. Always false for a test bind
+  pub async fn bypass_moved(&self) -> bool {
+    !self.test_bind && tun::detect().await != self.bypass
   }
 
   pub fn keep_awake(&self) -> bool {
@@ -186,7 +214,7 @@ impl Gateway {
       version: VERSION.to_owned(),
       relays: self.relays.clone(),
       relay: relay.map(|u| u.to_string()),
-      relay_connected: endpoint::relay_connected(&self.ep),
+      relay_connected: endpoint::relay_connected(&self.ep, self.relays != Relays::Off),
       devices,
       pairing,
       awake_error: self.awake_error.lock().clone(),
@@ -441,7 +469,7 @@ async fn check_lan(g: Arc<Gateway>) {
 async fn relay_watch(g: Arc<Gateway>) {
   let mut last = None;
   loop {
-    let now = (endpoint::relay_connected(&g.ep), endpoint::reachable_at(&g.ep).0);
+    let now = (endpoint::relay_connected(&g.ep, g.relays != Relays::Off), endpoint::reachable_at(&g.ep).0);
     if last.as_ref() != Some(&now) {
       if g.relays != Relays::Off {
         let at = now.1.as_ref().map(ToString::to_string).unwrap_or_else(|| "none".into());

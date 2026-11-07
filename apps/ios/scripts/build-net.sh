@@ -21,7 +21,7 @@ targets=(aarch64-apple-ios aarch64-apple-ios-sim aarch64-apple-darwin)
 # reads none of them and other work edits them all day
 stale() {
   [ -f "$out/stamp" ] && [ -d "$out/AcpiraNetFFI.xcframework" ] && [ -f "$out/AcpiraNet/acpira_mobile.swift" ] || return 0
-  [ -n "$(find "$rust/crates/acpira-mobile" "$rust/crates/acpira-net" "$rust/crates/acpira-shared" \
+  [ -n "$(find "$rust/crates/acpira-mobile" "$rust/crates/acpira-net" "$rust/crates/acpira-shared" "$rust/patches" \
     "$rust/Cargo.toml" "$rust/Cargo.lock" "$0" -newer "$out/stamp" -type f \
     -not -path '*/i18n/*' -not -path '*/target/*' -print -quit)" ]
 }
@@ -52,6 +52,8 @@ mkdir -p "$ws/crates"
 for c in acpira-shared acpira-net acpira-mobile; do
   rsync -a --delete --exclude target "$rust/crates/$c/" "$ws/crates/$c/"
 done
+# The [patch.crates-io] sources rust/Cargo.toml names, at the same relative path
+rsync -a --delete --exclude target "$rust/patches/" "$ws/patches/"
 sed -E 's|^members = \[.*\]$|members = ["crates/acpira-shared", "crates/acpira-net", "crates/acpira-mobile"]|' "$rust/Cargo.toml" > "$ws/Cargo.toml"
 # acpira-mobile's tests reach the gateway and the engine, which the copy leaves out
 awk '/^\[/ { skip = ($0 == "[dev-dependencies]") } !skip' "$rust/crates/acpira-mobile/Cargo.toml" > "$ws/crates/acpira-mobile/Cargo.toml"

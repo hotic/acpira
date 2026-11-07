@@ -5,11 +5,12 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
-use iroh::endpoint::{Connection, presets};
+use iroh::endpoint::{BindOpts, Connection, presets};
 use iroh::{Endpoint, EndpointAddr, RelayMap, RelayMode, RelayUrl, SecretKey, Watcher};
 use n0_future::StreamExt;
 
 use crate::path::{self, PathKind};
+use crate::tun::{self, Bypass};
 
 /// Pairing: the only ALPN a stranger may use, and only while a pairing window is open
 pub const ALPN_PAIR: &[u8] = b"acpira/pair/1";
@@ -25,9 +26,43 @@ pub struct Options {
   pub alpns: Vec<Vec<u8>>,
   /// Bind IPv4 to this address only (tests: 127.0.0.1:0)
   pub bind: Option<SocketAddr>,
+  /// Past a proxy TUN (`tun::detect`, the gateway only): IPv4 binds on the physical interface and DNS goes over TLS
+  pub bypass: Option<Bypass>,
 }
 
+/// Binds the endpoint. A bypass that fails to bind (its address gone meanwhile) falls back to the default sockets, so
+/// the caller can tell which one holds from `Endpoint::bound_sockets`
 pub async fn bind(o: Options) -> Result<Endpoint> {
+  if let Some(by) = &o.bypass
+    && o.bind.is_none()
+  {
+    match bind_bypassing(&o, by).await {
+      Ok(ep) => return Ok(ep),
+      Err(e) => eprintln!("acpira-net: binding on {} failed ({e:#}), using the default sockets", by.interface),
+    }
+  }
+  let mut b = builder(&o)?;
+  if let Some(addr) = o.bind {
+    b = b.clear_ip_transports().bind_addr(addr).map_err(|e| anyhow!("bind {addr}: {e}"))?;
+  }
+  b.bind().await.map_err(|e| anyhow!("endpoint: {e}"))
+}
+
+/// The endpoint past a proxy TUN: the physical address takes the IPv4 default route from the wildcard socket, the
+/// Tailscale one serves only its own range, IPv6 keeps its wildcard socket
+async fn bind_bypassing(o: &Options, by: &Bypass) -> Result<Endpoint> {
+  let mut b = builder(o)?.dns_resolver(tun::resolver());
+  // Before the default one: iroh refuses any IPv4 bind after a user-defined default
+  if let Some(ts) = by.tailscale {
+    let opts = BindOpts::default().set_prefix_len(10).set_is_default_route(false).set_is_required(false);
+    b = b.bind_addr_with_opts((ts, 0), opts)?;
+  }
+  let b = b.bind_addr_with_opts((by.v4, 0), BindOpts::default().set_prefix_len(by.prefix).set_is_default_route(true))?;
+  Ok(b.bind().await?)
+}
+
+/// The builder with this endpoint's identity, relays and ALPNs, before any bind
+fn builder(o: &Options) -> Result<iroh::endpoint::Builder> {
   let b = match &o.relays {
     Relays::N0 => Endpoint::builder(presets::N0),
     Relays::Custom { urls, token } => {
@@ -40,11 +75,7 @@ pub async fn bind(o: Options) -> Result<Endpoint> {
     }
     Relays::Off => Endpoint::builder(presets::Minimal).relay_mode(RelayMode::Disabled),
   };
-  let mut b = b.secret_key(o.secret).alpns(o.alpns);
-  if let Some(addr) = o.bind {
-    b = b.clear_ip_transports().bind_addr(addr).map_err(|e| anyhow!("bind {addr}: {e}"))?;
-  }
-  b.bind().await.map_err(|e| anyhow!("endpoint: {e}"))
+  Ok(b.secret_key(o.secret.clone()).alpns(o.alpns.clone()))
 }
 
 /// Whether the endpoint reached its home relay within `within` (with relays off: at once)
@@ -130,10 +161,11 @@ pub fn on_path_change(conn: &Connection, f: impl Fn(PathKind) + Send + 'static) 
   })
 }
 
-/// Whether the home relay is connected right now (`Relays::Off`: true, there is none to lose)
-pub fn relay_connected(ep: &Endpoint) -> bool {
-  let list = ep.home_relay_status().get();
-  list.is_empty() || list.iter().any(|s| s.is_connected())
+/// Whether the home relay is connected right now (`relays_on` false: true, there is none to lose). With relays on, no
+/// home relay yet counts as down: an endpoint that cannot resolve or reach any relay (a proxy's fake-ip DNS) never
+/// picks one, and reading that as connected hid the outage and kept `RelayDog` from nudging
+pub fn relay_connected(ep: &Endpoint, relays_on: bool) -> bool {
+  !relays_on || ep.home_relay_status().get().iter().any(|s| s.is_connected())
 }
 
 /// When to nudge iroh about a home relay that stays down: a relay connection can die quietly across sleep or a network
@@ -169,12 +201,13 @@ impl RelayDog {
   }
 }
 
-/// Watch the home relay until the endpoint closes, nudging iroh when it stays down (`RelayDog`)
+/// Watch the home relay until the endpoint closes, nudging iroh when it stays down (`RelayDog`); only for an endpoint
+/// with relays on
 pub fn watch_relay(ep: Endpoint, first: Duration, log: impl Fn(&str) + Send + 'static) -> tokio::task::JoinHandle<()> {
   tokio::spawn(async move {
     let mut dog = RelayDog::new(first);
     while !ep.is_closed() {
-      if dog.tick(relay_connected(&ep), std::time::Instant::now()) {
+      if dog.tick(relay_connected(&ep, true), std::time::Instant::now()) {
         log("the home relay stayed down: telling iroh the network changed");
         ep.network_change().await;
       }

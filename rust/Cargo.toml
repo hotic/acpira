@@ -128,3 +128,10 @@ opt-level = "z"
 lto = "fat"
 codegen-units = 1
 panic = "unwind"
+
+# simple-dns 0.12 (iroh's DNS, through n0-dns-resolver) reads EDNS0's extended RCODE and version from the wrong bytes of
+# the OPT TTL (RFC 6891 6.1.3), so a proxy's fake-ip DNS reply (Clash TUN sets a Z bit) parses as BADVERS and iroh
+# resolves no relay or peer. patches/simple-dns is 0.12.0 with that fixed (src/dns/rdata/opt.rs); drop it once a release
+# iroh uses fixes it. apps/desktop/Cargo.toml patches the same
+[patch.crates-io]
+simple-dns = { path = "patches/simple-dns" }

@@ -80,3 +80,7 @@ unimplemented = "warn"
 dbg_macro = "warn"
 undocumented_unsafe_blocks = "warn"
 allow_attributes_without_reason = "warn"
+
+# The engine's DNS fix (rust/Cargo.toml [patch.crates-io], rust/patches/simple-dns)
+[patch.crates-io]
+simple-dns = { path = "../../rust/patches/simple-dns" }
