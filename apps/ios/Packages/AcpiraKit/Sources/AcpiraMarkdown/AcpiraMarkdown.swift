@@ -181,7 +181,7 @@ struct BlockParser {
     while i < lines.count {
       let line = lines[i]
       if BlockParser.isBlank(line) { i += 1; continue }
-      // Every branch below adds exactly one block
+      // Every branch below adds exactly one block; one that adds none takes its start back
       starts.append(i)
       if let f = BlockParser.fence(line) { out.append(fencedCode(f)); continue }
       if line.trimmingCharacters(in: .whitespaces).hasPrefix("$$") { out.append(math()); continue }
@@ -190,7 +190,11 @@ struct BlockParser {
       if line.drop(while: { $0 == " " }).hasPrefix(">") { out.append(quote()); continue }
       if BlockParser.listMarker(line) != nil { out.append(list()); continue }
       if i + 1 < lines.count, line.contains("|"), BlockParser.isTableDelimiter(lines[i + 1]) { out.append(table()); continue }
-      out.append(paragraph())
+      let block = paragraph()
+      // A paragraph of nothing but `<br>` tags adds no block: a model stuck repeating the tag until its output limit
+      // filled one reply with thousands of them, and each stood as a paragraph of its own
+      if case .paragraph(let inlines) = block, inlines.allSatisfy(Inline.isBlank) { starts.removeLast(); continue }
+      out.append(block)
     }
     return out
   }
@@ -331,6 +335,15 @@ enum Inline {
     }
     return out
   }
+
+  /// A break or whitespace: shows nothing on its own
+  static func isBlank(_ inline: MDInline) -> Bool {
+    switch inline {
+    case .lineBreak: true
+    case .text(let s): s.allSatisfy(\.isWhitespace)
+    default: false
+    }
+  }
 }
 
 struct InlineParser {
@@ -356,6 +369,8 @@ struct InlineParser {
       // Hard break: two trailing spaces; a soft break renders as a space
       if c == "\n" {
         if text.hasSuffix("  ") { text = String(text.dropLast(2)); flush(); out.append(.lineBreak) }
+        // A newline right after a break starts the next line without a leading space
+        else if text.isEmpty && out.last == .lineBreak {}
         else { text = String(text.reversed().drop { $0 == " " }.reversed()); text.append(" ") }
         i += 1
         while i < chars.count && chars[i] == " " { i += 1 }
@@ -364,6 +379,7 @@ struct InlineParser {
       if c == "`", let code = codeSpan() { flush(); out.append(.code(code)); continue }
       if c == "!", i + 1 < chars.count, chars[i + 1] == "[", let image = imageAt() { flush(); out.append(image); continue }
       if c == "[", let link = linkAt() { flush(); out.append(link); continue }
+      if c == "<", let width = htmlBreak() { flush(); out.append(.lineBreak); i += width; continue }
       if c == "<", let auto = autolink() { flush(); out.append(auto); continue }
       if (c == "h" || c == "w"), let bare = bareURL() { flush(); out.append(bare); continue }
       if c == "*" || c == "_" || c == "~" {
@@ -494,6 +510,19 @@ struct InlineParser {
     i += 1
     guard case .link(let url, let label)? = linkAt() else { i = start; return nil }
     return .image(url: url, alt: Markdown.plain(label))
+  }
+
+  /// The length of a `<br>`, `<br/>` or `<br />` tag at `i`, any case. The webview renders raw HTML in prose, and a
+  /// line break is the tag agents write there; other tags stay literal text
+  func htmlBreak() -> Int? {
+    guard i + 3 < chars.count, chars[i + 1] == "b" || chars[i + 1] == "B", chars[i + 2] == "r" || chars[i + 2] == "R" else {
+      return nil
+    }
+    var j = i + 3
+    while j < chars.count && chars[j] == " " { j += 1 }
+    if j < chars.count && chars[j] == "/" { j += 1 }
+    guard j < chars.count, chars[j] == ">" else { return nil }
+    return j + 1 - i
   }
 
   mutating func autolink() -> MDInline? {

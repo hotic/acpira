@@ -190,21 +190,48 @@ struct ProseStyle {
   }
 }
 
+/// How many blocks, or items of one list, a prose stack draws before it asks for more. A model looping until its output
+/// limit wrote tens of thousands of paragraphs into one reply, and the thread lays a whole turn out in one cell, so
+/// drawing them all froze the app or got it killed
+enum ProseCap {
+  static let page = 200
+}
+
+/// The "N more" line under a capped stack; each tap draws another page
+struct ProseMore: View {
+  let rest: Int
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      Text(web: t("session.showMore", ["n": String(rest)]), paragraph: false)
+        .textStyle(TypeScale.text2)
+        .foregroundStyle(Palette.fg3)
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+  }
+}
+
 struct ProseBlocks: View {
   let blocks: [MDBlock]
   let style: ProseStyle
   /// The streamed tail's fade: the last block's alone, earlier blocks have finished fading by construction
   var fade: StreamFade?
   @Environment(\.quoteProse) private var quote
+  @State private var shown = ProseCap.page
 
   var body: some View {
     VStack(alignment: .leading, spacing: Metrics.gap) {
-      ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
+      ForEach(Array(blocks.prefix(shown).enumerated()), id: \.offset) { index, block in
         ProseBlock(block: block, style: style, first: index == 0, fade: index == blocks.count - 1 ? fade : nil)
           #if !canImport(UIKit)
           .environment(\.quoteProse, nil)
           #endif
           .quoteMenu(block, quote)
+      }
+      if blocks.count > shown {
+        ProseMore(rest: blocks.count - shown) { shown += ProseCap.page }
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
@@ -265,11 +292,12 @@ struct ProseList: View {
   let style: ProseStyle
   /// The streamed tail's fade, for the last block of the last item
   var fade: StreamFade?
+  @State private var shown = ProseCap.page
 
   var body: some View {
     // li + li: margin-top 2px
     VStack(alignment: .leading, spacing: Metrics.s0_5) {
-      ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+      ForEach(Array(items.prefix(shown).enumerated()), id: \.offset) { index, item in
         HStack(alignment: .firstTextBaseline, spacing: 0) {
           marker(index)
             .frame(width: style.listIndent, alignment: .trailing)
@@ -283,6 +311,10 @@ struct ProseList: View {
         }
         // streamdown's li carries py-1
         .padding(.vertical, Metrics.s1)
+      }
+      if items.count > shown {
+        ProseMore(rest: items.count - shown) { shown += ProseCap.page }
+          .padding(.leading, style.listIndent)
       }
     }
   }
