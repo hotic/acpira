@@ -120,8 +120,14 @@ async fn a_device_pairs_once_then_talks_over_the_link() {
                 });
               }
               Ok(Incoming::Blob(req, send)) => {
-                let data = if req.name == "a.png" { Ok(vec![42u8; 200_000]) } else { Err("no such blob".to_owned()) };
-                link::send_blob(send, data).await.unwrap();
+                let data = match req.name.as_str() {
+                  "a.png" => Ok(vec![42u8; 200_000]),
+                  "v.mp4" | "old.mp4" => Ok(video()),
+                  _ => Err("no such blob".to_owned()),
+                };
+                // `old.mp4` answers as a gateway from before ranges: the whole blob, whatever the offset
+                let offset = if req.name == "old.mp4" { None } else { req.offset };
+                link::send_blob(send, data, offset).await.unwrap();
               }
               Err(_) => return,
             }
@@ -168,11 +174,33 @@ async fn a_device_pairs_once_then_talks_over_the_link() {
   let (_, pong) = rx.next().await.unwrap().unwrap();
   assert_eq!(serde_json::from_slice::<Control>(&pong).unwrap(), Control::Pong { n: 7 });
 
-  let blob = link::fetch_blob(&conn, &BlobRequest { session_id: "s".into(), name: "a.png".into() }, Duration::from_secs(5)).await.unwrap();
+  let blob = link::fetch_blob(&conn, &BlobRequest { session_id: "s".into(), name: "a.png".into(), offset: None }, Duration::from_secs(5)).await.unwrap();
   assert_eq!(blob.len(), 200_000);
-  let missing = link::fetch_blob(&conn, &BlobRequest { session_id: "s".into(), name: "b.png".into() }, Duration::from_secs(5)).await;
+  let missing = link::fetch_blob(&conn, &BlobRequest { session_id: "s".into(), name: "b.png".into(), offset: None }, Duration::from_secs(5)).await;
   assert_eq!(missing.unwrap_err().to_string(), "no such blob");
   assert_eq!(endpoint::selected_path(&conn).map(|(k, _)| k), Some(PathKind::Lan));
+
+  // A download into a file: whole, then resumed after a partial copy, then from a gateway that ignores the offset
+  let dir = tempfile::tempdir().unwrap();
+  let whole = dir.path().join("whole");
+  let mut seen = vec![];
+  let total = link::fetch_blob_to(&conn, "s", "v.mp4", &whole, Duration::from_secs(5), |have, total| seen.push((have, total))).await.unwrap();
+  assert_eq!(total, video().len() as u64);
+  assert_eq!(std::fs::read(&whole).unwrap(), video());
+  assert_eq!(seen.first(), Some(&(0, total)));
+  assert_eq!(seen.last(), Some(&(total, total)));
+  let resumed = dir.path().join("resumed");
+  std::fs::write(&resumed, &video()[..70_000]).unwrap();
+  let mut first = None;
+  link::fetch_blob_to(&conn, "s", "v.mp4", &resumed, Duration::from_secs(5), |have, _| _ = first.get_or_insert(have)).await.unwrap();
+  assert_eq!(first, Some(70_000));
+  assert_eq!(std::fs::read(&resumed).unwrap(), video());
+  let old = dir.path().join("old");
+  std::fs::write(&old, &video()[..70_000]).unwrap();
+  link::fetch_blob_to(&conn, "s", "old.mp4", &old, Duration::from_secs(5), |_, _| {}).await.unwrap();
+  assert_eq!(std::fs::read(&old).unwrap(), video());
+  let gone = link::fetch_blob_to(&conn, "s", "gone.mp4", &dir.path().join("gone"), Duration::from_secs(5), |_, _| {}).await;
+  assert_eq!(gone.unwrap_err().to_string(), "no such blob");
 
   server.abort();
   phone.close().await;
@@ -236,4 +264,9 @@ async fn a_computer_that_does_not_know_the_code_is_refused_by_the_device() {
   server.abort();
   phone.close().await;
   impostor.close().await;
+}
+
+/// A blob whose bytes tell their position, so a resumed download that joined the wrong place shows
+fn video() -> Vec<u8> {
+  (0..300_000u32).map(|i| (i % 251) as u8).collect()
 }

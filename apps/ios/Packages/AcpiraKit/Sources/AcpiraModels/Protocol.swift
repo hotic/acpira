@@ -649,6 +649,9 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   /// Stage a file path into the session's blob store, answered with `imageBlob` echoing seq. `shown`: a file the
   /// session's transcript names, the only form a paired device may send (the engine checks it)
   case imageBlob(sessionId: String, path: String, seq: Int, shown: Bool = false)
+  /// Stage any file of the session's project (or an absolute path), whatever its type, for the phone to download and
+  /// open; answered with `stagedFile` echoing seq
+  case stageFile(sessionId: String, path: String, seq: Int)
   /// Open a plan document; the engine passes it on as the openPlanDocument platform request
   case openPlan(sessionId: String, planId: String)
   /// The engine's terminals (terminal.rs): open terminal `id` (a login shell in `cwd`) or view it again; keys and
@@ -682,7 +685,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     "steerQueued", "editQueued", "categoryOp", "moveSession", "sessionMarkdown", "addAccount", "removeAccount",
     "unlockCredentials", "login", "reconnect", "retryTurn", "editTurn", "observeSubagent", "unobserveSubagent",
     "cancelSubagent", "stopAsyncTask", "goal", "searchFiles", "setSetting", "controls", "projectDir", "projectStatus",
-    "projectFile", "sessionChanges", "diffSource", "imageBlob", "openPlan", "terminalOpen", "terminalInput",
+    "projectFile", "sessionChanges", "diffSource", "imageBlob", "stageFile", "openPlan", "terminalOpen", "terminalInput",
     "terminalResize", "terminalAck", "terminalClose", "terminalKill", "connections", "localDir", "providers", "providerAction",
     "providerProbe",
   ]
@@ -750,6 +753,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case .sessionChanges: "sessionChanges"
     case .diffSource: "diffSource"
     case .imageBlob: "imageBlob"
+    case .stageFile: "stageFile"
     case .openPlan: "openPlan"
     case .terminalOpen: "terminalOpen"
     case .terminalInput: "terminalInput"
@@ -855,6 +859,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case "imageBlob":
       self = .imageBlob(sessionId: try str(.sessionId), path: try str(.path), seq: try int(.seq),
                         shown: try c.decodeIfPresent(Bool.self, forKey: .shown) ?? false)
+    case "stageFile": self = .stageFile(sessionId: try str(.sessionId), path: try str(.path), seq: try int(.seq))
     case "openPlan": self = .openPlan(sessionId: try str(.sessionId), planId: try str(.planId))
     case "terminalOpen":
       self = .terminalOpen(id: try str(.id), cwd: try opt(.cwd), cols: try c.decodeIfPresent(Int.self, forKey: .cols),
@@ -1027,6 +1032,10 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
       try c.encode(path, forKey: .path)
       try c.encode(seq, forKey: .seq)
       if shown { try c.encode(true, forKey: .shown) }
+    case let .stageFile(sessionId, path, seq):
+      try c.encode(sessionId, forKey: .sessionId)
+      try c.encode(path, forKey: .path)
+      try c.encode(seq, forKey: .seq)
     case let .openPlan(sessionId, planId):
       try c.encode(sessionId, forKey: .sessionId)
       try c.encode(planId, forKey: .planId)
@@ -1097,6 +1106,8 @@ public enum HostMsg: Codable, Hashable, Sendable {
   case diffSource(seq: Int, source: FullDiffSource? = nil)
   /// The answer to imageBlob: the session blob name for the image file, absent when unreadable
   case imageBlob(seq: Int, blob: String? = nil)
+  /// The answer to stageFile: the staged file's session blob name and size in bytes, or why not
+  case stagedFile(seq: Int, blob: String? = nil, size: Int? = nil, error: ProjectError? = nil)
   /// The answer to sessionMarkdown: the session as Markdown, or why it could not be read
   case sessionMarkdown(seq: Int, markdown: String? = nil, error: String? = nil)
   /// The answers to the project reads, each echoing its request's seq. projectStatus: the project folder and the git
@@ -1133,7 +1144,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
   /// The `type` literals this build mirrors
   public static let types = [
     "init", "agents", "sessions", "categories", "noSession", "session", "sessionPatch", "sessionsPatch", "accounts", "accountActions",
-    "hidden", "settings", "controls", "sessionHits", "subagent", "files", "diffSource", "imageBlob", "sessionMarkdown",
+    "hidden", "settings", "controls", "sessionHits", "subagent", "files", "diffSource", "imageBlob", "stagedFile", "sessionMarkdown",
     "projectDir", "projectStatus", "projectFile", "sessionChanges", "terminalOutput", "terminalState", "editTurnResult",
     "deleteSessionResult", "appearance", "connections", "localDir", "providers", "providerProbed",
   ]
@@ -1159,6 +1170,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case .files: "files"
     case .diffSource: "diffSource"
     case .imageBlob: "imageBlob"
+    case .stagedFile: "stagedFile"
     case .sessionMarkdown: "sessionMarkdown"
     case .projectDir: "projectDir"
     case .projectStatus: "projectStatus"
@@ -1180,7 +1192,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
   private enum Keys: String, CodingKey {
     case type, state, agents, sessions, categories, session, patch, accounts, actions, hidden, settings, locale, agent
     case controls, shapes, commands, cwd, seq, hits
-    case sessionId, subagentId, rev, running, turns, files, source, blob, markdown, error, entries, root, marks, text
+    case sessionId, subagentId, rev, running, turns, files, source, blob, size, markdown, error, entries, root, marks, text
     case hunks, id, data, title, cols, rows, replay, exit, requestId, undo, appearance, connections, path, parent, view, outcome
   }
 
@@ -1214,6 +1226,9 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case "files": self = .files(seq: try int(.seq), files: try c.decode([FileHit].self, forKey: .files))
     case "diffSource": self = .diffSource(seq: try int(.seq), source: try c.decodeIfPresent(FullDiffSource.self, forKey: .source))
     case "imageBlob": self = .imageBlob(seq: try int(.seq), blob: try opt(.blob))
+    case "stagedFile":
+      self = .stagedFile(seq: try int(.seq), blob: try opt(.blob), size: try c.decodeIfPresent(Int.self, forKey: .size),
+                         error: try c.decodeIfPresent(ProjectError.self, forKey: .error))
     case "sessionMarkdown": self = .sessionMarkdown(seq: try int(.seq), markdown: try opt(.markdown), error: try opt(.error))
     case "projectDir":
       self = .projectDir(seq: try int(.seq), entries: try c.decode([ProjectEntry].self, forKey: .entries),
@@ -1283,6 +1298,11 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case let .imageBlob(seq, blob):
       try c.encode(seq, forKey: .seq)
       try c.encodeIfPresent(blob, forKey: .blob)
+    case let .stagedFile(seq, blob, size, error):
+      try c.encode(seq, forKey: .seq)
+      try c.encodeIfPresent(blob, forKey: .blob)
+      try c.encodeIfPresent(size, forKey: .size)
+      try c.encodeIfPresent(error, forKey: .error)
     case let .sessionMarkdown(seq, markdown, error):
       try c.encode(seq, forKey: .seq)
       try c.encodeIfPresent(markdown, forKey: .markdown)

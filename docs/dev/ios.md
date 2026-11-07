@@ -52,7 +52,7 @@
 - A lost wire is redialed by `PairingModel`; the offline page shows only once dials run out. A removal or another protocol version is never redialed.
 - A network change probes every wire with the relay's deadline; a wire that brought anything in meanwhile counts as alive (the pong queues behind earlier gateway traffic). A network gone entirely ends wires only once it stays away, since QUIC outlives a short gap.
 - A presence probe never dials the followed computer while it is dialed or connected: the gateway keeps one connection per device, so a second one replaced the app's wire.
-- Blobs: a paired wire fetches over its own link (`PairedBlobs`), the computer's blob route is loopback only. The gateway refuses `imageBlob` from devices, so a paired loader stages nothing (`canStage`). A sent photo is aliased under the blob name the engine will store (`MediaLoader.adopt` mirrors `transcript_store.rs` `blob_name` / `ext_of_mime`), or the thumbnail falls back to its placeholder. A blob name always holds a dot, base64 never does.
+- Blobs: a paired wire fetches over its own link (`PairedBlobs`), the computer's blob route is loopback only. A device stages only a path the session shows (`imageBlob` with `shown`) or a project file (`stageFile`). Videos and downloads stream into `<blob>.partial`, resuming from its length (`offset`; old gateways send all): only a stall ends one, as a whole-file deadline failed big videos on a relay. A sent photo is aliased under the blob name the engine will store (`MediaLoader.adopt` mirrors `transcript_store.rs` `blob_name` / `ext_of_mime`), or the thumbnail falls back to its placeholder. A blob name always holds a dot, base64 never does.
 - Notifications (`Pairing/PushCenter.swift`; gateway side in host-architecture.md): every wire sends `registerPush`, nil while notifications are off, nothing while permission or token is still pending (a nil would stop them). The APNs environment comes from the embedded provisioning profile; TestFlight and App Store builds carry none and use production. The team reaches the app as `AcpiraTeamID` in the Info.plist.
 - First run (`Welcome/WelcomeFlow.swift`): only for a bare launch that finds no computer paired, once (`Prefs.welcomed`, also set when a computer is found); its pairing step is `PairSheet(inline:)`, so the add sheet stays down meanwhile (`PairingModel.onboarding`). Notification permission is asked in its own step, so a wire asks only on installs that never saw the flow. Until a computer's lists are in, a regular width shows the connect page full-window, not the split.
 - A scanned code is redrawn from Vision's descriptor: CoreImage's encoder picks another mask than the gateway's `qrcode`. The paired moment is the pair reply, not the wire; `PairingTokens.swift` mirrors `devices.css` / `DevicesCard.tsx` timings.
@@ -65,7 +65,7 @@
 - `scripts/check.sh [simulator]` is the done check: `swift test` on macOS, the `AcpiraKit` scheme on the simulator, then the app's tests. Derived data under `apps/ios/build/`.
 - `engine.sh [port]` serves `acpira --ws` on a throwaway home with only the fake agent enabled and prints `-engine PORT:TOKEN`; `gateway.sh` is the paired equivalent. The fake agent keeps no sessions, so one made by another connection reopens read-only: start live sessions from the app (`-start`).
 - Launch arguments, including every `-popup` name, are parsed by `LaunchOptions` in `AcpiraUI/RootView.swift`; popup names are matched where each popup opens (grep `popup`). Debug-only `menu:X,Y` uses UIKit's private `_presentMenuAtLocation:`.
-- `simctl` takes no taps and the repo has no UI-test target. A scratch UI-test bundle can drive the app by bundle id, but XCTest waits for idle before every event (hiding mid-animation taps, stalling a streaming chat): take frame timings from the app itself.
+- `simctl` takes no taps and the repo has no UI-test target. A scratch UI-test bundle can drive the app by bundle id, but XCTest waits for idle before every event (no mid-animation taps, a streaming chat stalls): take frame timings from the app itself.
 - Scripts default `DEVELOPER_DIR` to Xcode: the Command Line Tools have no iOS SDK.
 - CI (`.github/workflows/ios.yml`, `xcode-27` image) runs `check.sh` with `ACPIRA_NET=0`. Signing and TestFlight stay local, so CI holds no signing secrets.
 
@@ -76,9 +76,9 @@
 - Regular width (`RootView.shell`): `NavigationSplitView`, one `AppModel.path` for both shells, its first route the detail column's root and the rest pushed over it, so a resize across the line keeps the page. Sidebar picks replace the root (`listInSidebar`). The sidebar stands open only where the detail keeps `contentW`, else `.prominentDetail`: `.detailOnly` under `.balanced` is overridden by the split view itself, and a visibility set in its first layout is dropped.
 - iPadOS 27 opens the app as a 516 pt compact window whatever it asks; with SpringBoard's `SBMedusaMultitaskingEnabled` and `SBChamoisWindowingEnabled` false (`simctl spawn … defaults write com.apple.springboard`, then reboot) apps run full screen. SpringBoard keeps a window size until reboot.
 - With a hardware keyboard attached the software keyboard is minimised; `defaults write com.apple.keyboard.preferences AutomaticMinimizationEnabled -bool false` via `simctl spawn` brings it back.
-- `simctl recordVideo` right after a boot can stall for seconds: record again before calling it a bug.
+- `simctl recordVideo` right after a boot can stall: record again before calling it a bug.
 - Frame timing: Instruments' hitch template refuses the simulator; Time Profiler and its potential-hangs table work. Debug builds take `-frameprobe` (`FrameProbe`), timed between two Darwin notifications. Time with Swift optimisation on: a plain Debug build runs several times slower.
-- The first accessibility client to attach after launch (an automation tool's first call) costs the app a 100+ ms frame once: warm it up before timing.
+- The first accessibility client to attach after launch costs the app one long frame: warm it up before timing.
 - A build with the paired-remote module keeps the phone's list on the connect page until a computer is paired, demo launch or not; list scenarios need a build without it (`ACPIRA_NET=0`).
 
 ## Platform behaviour
@@ -86,14 +86,13 @@
 Observed with Xcode 27 and the iOS 27 simulator.
 
 - A package test target referenced from the project's scheme is not run (`-only-testing` fails, the package scheme is "not configured for the test action"); `xcodebuild -scheme AcpiraKit test` from the package directory works.
-- Opening the project in Xcode leaves `project.pbxproj` and the shared scheme byte-identical: a diff there comes from an edit.
 - SwiftTerm 1.99.1: the iOS view draws its ground from the layer colour `nativeBackgroundColor` sets; also setting `backgroundColor` clears it and the ground draws black.
 - iPhone Duo puts every bar on the side in every pose; `verticalBarEdge` is read by selector so SDKs before 27.1 still build.
 
 Harness wire (`acpira --ws`, `sidecar/ws.rs`):
 
 - URLSessionWebSocketTask sends no `Origin`; the engine drops a handshake without a loopback origin of its own port, and a wrong token looks the same (connection lost, no HTTP answer).
-- URLSessionWebSocketTask caps a message at 1 MiB by default (Apple docs, unmeasured), below a long `init`; the transport raises it to the engine's cap.
+- URLSessionWebSocketTask's default message cap (1 MiB, Apple docs) is below a long `init`; the transport raises it to the engine's cap.
 - Every connection is its own attached engine on the shared home: hello's agent settings are ignored (`agents.json` decides).
 - The phone attaches `{empty: true}`, which never opens or starts a session; `{mostRecent}` on an empty home starts one.
 - A hello on another protocol version is rejected with the engine's version, so the app names the older side to update.

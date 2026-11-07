@@ -455,4 +455,34 @@ struct VideoCacheTests {
     #expect(VideoCache.isBlobName("ba7816bf8f01cfea.mp4"))
     #expect(!VideoCache.isBlobName("ScreenRecording_11-01-2026 12-02-08_1.mp4"))
   }
+
+  /// A download that stops keeps what came over; the next tap resumes after it, and the card's progress clears either way
+  @MainActor @Test func aStoppedDownloadResumes() async throws {
+    let name = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(16)) + ".mp4"
+    let bytes = Data((0..<1000).map { UInt8($0 % 251) })
+    let starts = Mutex<[Int]>([])
+    let loader = MediaLoader(fetch: { _, _ in throw MediaLoader.Failure.noSource }, download: { _, _, to, progress in
+      let held = (try? Data(contentsOf: to)) ?? Data()
+      starts.withLock { $0.append(held.count) }
+      if held.isEmpty {
+        try bytes.prefix(400).write(to: to)
+        progress(400, 1000)
+        throw URLError(.timedOut)
+      }
+      let file = try FileHandle(forWritingTo: to)
+      try file.seekToEnd()
+      try file.write(contentsOf: bytes.dropFirst(held.count))
+      try file.close()
+      progress(1000, 1000)
+      return 1000
+    })
+    let source = VideoSource.blob(session: "s", name: name)
+    await #expect(throws: VideoCache.Failure.interrupted) { try await VideoCache.shared.file(source, loader: loader) }
+    #expect(VideoCache.shared.transfers[source] == nil)
+    let url = try await VideoCache.shared.file(source, loader: loader)
+    defer { try? FileManager.default.removeItem(at: url) }
+    #expect(try Data(contentsOf: url) == bytes)
+    #expect(starts.withLock { $0 } == [0, 400])
+    #expect(VideoCache.shared.transfers[source] == nil)
+  }
 }

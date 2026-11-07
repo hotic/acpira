@@ -135,6 +135,10 @@ final class MediaLoader {
   /// Stages a file on the engine's machine into the session's blob store, answering its blob name (nil: unreadable)
   typealias Stage = @Sendable (_ session: String, _ path: String) async -> String?
   typealias WebFetch = @Sendable (URL) async throws -> Data
+  /// Writes a session blob into a file, resuming after what the file holds, reporting the bytes held and the total;
+  /// answers the blob's size (`PairedBlobs.download`)
+  typealias Download = @Sendable (_ session: String, _ name: String, _ to: URL,
+                                  _ progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> Int64
 
   nonisolated enum Failure: Error { case notStaged, undecodable, noSource }
 
@@ -148,6 +152,7 @@ final class MediaLoader {
   private let fetch: BlobFetch
   private let stage: Stage?
   private let web: WebFetch
+  private let download: Download?
   private let cache: MediaCache<MediaSource, DecodedImage>
   /// The blob each file source was last staged as: its image shows at once while the engine checks the file again
   private var stagedAs: [MediaSource: MediaSource] = [:]
@@ -155,10 +160,11 @@ final class MediaLoader {
   /// Whether files on the engine's machine can be staged at all; nil `stage` fails them at once
   var canStage: Bool { stage != nil }
 
-  init(fetch: @escaping BlobFetch, stage: Stage? = nil, web: WebFetch? = nil, budget: Int = MediaLoader.budget,
-              limit: Int = MediaLoader.limit) {
+  init(fetch: @escaping BlobFetch, stage: Stage? = nil, web: WebFetch? = nil, download: Download? = nil,
+       budget: Int = MediaLoader.budget, limit: Int = MediaLoader.limit) {
     self.fetch = fetch
     self.stage = stage
+    self.download = download
     self.web = web ?? { url in
       let (data, response) = try await URLSession.shared.data(from: url)
       if let http = response as? HTTPURLResponse, http.statusCode != 200 { throw HTTPBlobs.Failure.status(http.statusCode) }
@@ -241,9 +247,14 @@ final class MediaLoader {
     return await stage(session, uri)
   }
 
-  /// Video is fetched only after a tap and written to a view-owned temporary file, never decoded into the image cache.
-  func video(session: String, blob: String) async throws -> Data {
-    try await fetch(session, blob)
+  /// A video or a downloaded file, fetched only after a tap into `to` (never decoded into the image cache): streamed
+  /// and resumable over a paired link, else fetched whole. Answers the blob's size
+  func download(session: String, blob: String, to: URL, progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> Int64 {
+    if let download { return try await download(session, blob, to, progress) }
+    let bytes = try await fetch(session, blob)
+    try bytes.write(to: to, options: .atomic)
+    progress(Int64(bytes.count), Int64(bytes.count))
+    return Int64(bytes.count)
   }
 
   /// A stored blob's text (a widget's page), read fresh each time: pages are small and not decoded images

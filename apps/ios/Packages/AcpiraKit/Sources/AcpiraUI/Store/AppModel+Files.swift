@@ -53,6 +53,17 @@ extension AppModel {
     }
   }
 
+  /// A file staged on the computer for the phone to download, whatever its type (`FileDownload`)
+  func stageFile(_ sessionId: String, path: String) async -> StagedFile {
+    guard live else { return .failed(.message(t("mobile.engineNeeded"))) }
+    switch await ask({ .stageFile(sessionId: sessionId, path: path, seq: $0) }) {
+    case let .stagedFile(_, blob?, size, _)?: return .staged(blob: blob, size: size ?? 0)
+    case let .stagedFile(_, _, _, error?)?: return .failed(error)
+    // No answer: an engine from before stageFile (its gateway drops the request) or a lost wire
+    default: return .failed(.message(t("mobile.engineNeeded")))
+    }
+  }
+
   /// A diff's whole files (CodeBlock.tsx readSource); a subagent's diffs name it
   func diffSource(_ sessionId: String, _ at: DiffLocation, subagentId: String? = nil) async -> FullDiffSource? {
     guard live else { return nil }

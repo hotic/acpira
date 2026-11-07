@@ -31,11 +31,37 @@ nonisolated enum VideoSource: Hashable, Sendable {
   }
 }
 
-/// Downloaded and sent videos on disk by blob name, and their first frames in memory. Blob names are content hashes,
-/// so one file serves every session holding the same bytes. The OS may purge the folder; a miss downloads again
-@MainActor
+/// Downloaded and sent videos on disk by blob name (and files opened from the file page, `FileDownload`), and their
+/// first frames in memory. Blob names are content hashes, so one file serves every session holding the same bytes. The
+/// OS may purge the folder; a miss downloads again. A download goes to `<name>.partial` first, so one that stopped
+/// resumes where it was on the next tap
+@MainActor @Observable
 final class VideoCache {
   static let shared = VideoCache()
+
+  /// How far a download is: bytes on the phone and the file's size (0 until the computer said)
+  struct Transfer: Equatable {
+    var have: Int64 = 0
+    var total: Int64 = 0
+    /// 0...1, nil while the size is unknown
+    var fraction: Double? { total > 0 ? min(1, Double(have) / Double(total)) : nil }
+  }
+
+  /// Why a file did not arrive, as the cards word it
+  enum Failure: Error {
+    /// The computer could not read the file: gone, unreadable, or over what the link carries
+    case unreadable
+    /// The transfer stopped (a stall, a lost link); the next try resumes
+    case interrupted
+  }
+
+  /// The line a card shows for a failed open
+  static func message(_ error: any Error) -> String {
+    switch error {
+    case Failure.unreadable, MediaLoader.Failure.notStaged: t("mobile.download.unreadable")
+    default: t("mobile.download.interrupted")
+    }
+  }
 
   /// Kept videos together; the oldest go first past it
   nonisolated static let budget = 512 << 20
@@ -44,8 +70,11 @@ final class VideoCache {
     FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("videos", isDirectory: true)
   }
 
-  private var posters: [VideoSource: CGImage] = [:]
-  private var files: [VideoSource: Task<URL, Error>] = [:]
+  @ObservationIgnored private var posters: [VideoSource: CGImage] = [:]
+  @ObservationIgnored private var files: [VideoSource: Task<URL, Error>] = [:]
+  /// Downloads under way, by source: the cards draw their progress from it, so a card scrolled away and back still shows
+  /// a download it started
+  private(set) var transfers: [VideoSource: Transfer] = [:]
 
   /// transcript_store.rs `blob_name`: 16 hex digits of the bytes' SHA-256, then the extension
   nonisolated static func isBlobName(_ name: String) -> Bool {
@@ -78,32 +107,52 @@ final class VideoCache {
   func file(_ source: VideoSource, loader: MediaLoader) async throws -> URL {
     if case .local(let url) = source { return url }
     if let task = files[source] { return try await task.value }
+    transfers[source] = Transfer()
     let task = Task<URL, Error> {
       let session: String, name: String
       switch source {
       case .local(let url): return url
       case .blob(let s, let n): (session, name) = (s, n)
       case .staged(let s, let path):
-        guard let n = await loader.blobName(session: s, blob: nil, uri: path) else { throw MediaLoader.Failure.notStaged }
+        guard let n = await loader.blobName(session: s, blob: nil, uri: path) else { throw Failure.unreadable }
         (session, name) = (s, n)
       }
       let target = Self.folder.appendingPathComponent(name)
       if FileManager.default.fileExists(atPath: target.path) { return target }
-      let bytes = try await loader.video(session: session, blob: name)
+      let partial = Self.folder.appendingPathComponent(name + ".partial")
+      try FileManager.default.createDirectory(at: Self.folder, withIntermediateDirectories: true)
+      do {
+        _ = try await loader.download(session: session, blob: name, to: partial) { have, total in
+          Task { @MainActor in VideoCache.shared.progressed(source, have: have, total: total) }
+        }
+      } catch let error as MediaLoader.Failure {
+        throw error
+      } catch {
+        // A blob the computer no longer holds or will not send cannot come by trying again
+        let text = String(describing: error)
+        throw text.contains("no such blob") || text.contains("too large") ? Failure.unreadable : Failure.interrupted
+      }
       try await Task.detached(priority: .utility) {
-        try FileManager.default.createDirectory(at: Self.folder, withIntermediateDirectories: true)
-        try bytes.write(to: target, options: .atomic)
+        try? FileManager.default.removeItem(at: target)
+        try FileManager.default.moveItem(at: partial, to: target)
         Self.prune()
       }.value
       return target
     }
     files[source] = task
+    defer { transfers[source] = nil }
     do {
       return try await task.value
     } catch {
       files[source] = nil
       throw error
     }
+  }
+
+  /// A download's progress, kept only while it is under way (a late report after its end is dropped)
+  private func progressed(_ source: VideoSource, have: Int64, total: Int64) {
+    guard let now = transfers[source] else { return }
+    transfers[source] = Transfer(have: max(now.have, have), total: total)
   }
 
   /// A poster already at hand, drawn without waiting
@@ -168,7 +217,8 @@ struct VideoAttachmentTile: View {
 
   var body: some View {
     let shape = RoundedRectangle(cornerRadius: Metrics.rSm)
-    let busy = opening || progress != nil
+    let transfer = VideoCache.shared.transfers[source]
+    let busy = opening || progress != nil || transfer != nil
     Button(action: open) {
       ZStack {
         shape.fill(Palette.chip)
@@ -182,7 +232,7 @@ struct VideoAttachmentTile: View {
           .frame(width: WebMetrics.ctlSm, height: WebMetrics.ctlSm)
           .background(Circle().fill(Palette.scrim))
         } else if busy {
-          ProgressView().controlSize(.small)
+          DownloadRing(fraction: transfer?.fraction, side: Metrics.icon)
         } else {
           Icon(.fileVideo, size: Metrics.icon).foregroundStyle(Palette.fg3)
         }
@@ -207,11 +257,11 @@ struct VideoAttachmentTile: View {
     opening = true
     Task {
       defer { opening = false }
-      guard let url = try? await VideoCache.shared.file(source, loader: media.loader) else {
-        actions.toast(t("panel.error.media"), .fileVideo)
-        return
+      do {
+        onOpen(try await VideoCache.shared.file(source, loader: media.loader))
+      } catch {
+        actions.toast(VideoCache.message(error), .fileVideo)
       }
-      onOpen(url)
     }
   }
 }

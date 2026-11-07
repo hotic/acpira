@@ -7,13 +7,15 @@ import SwiftUI
 /// file once into the attached videos' cache (VideoCache) and plays it in Quick Look, as an attached video does. Once
 /// the file is on the phone the card shows its first frame. Not an inline player: the thread's cells are
 /// `UIHostingConfiguration`, which cannot host the view controller behind SwiftUI's `VideoPlayer` and drew its
-/// unsupported-view placeholder instead
+/// unsupported-view placeholder instead. While the file comes over, the card shows how far it is; a download that
+/// stopped says so and resumes on the next tap
 struct AgentVideoView: View {
   let video: ImageRef
   @Environment(\.media) private var media
   @Environment(\.displayScale) private var scale
   @State private var opening = false
-  @State private var failed = false
+  /// Why the last open failed, as the card words it
+  @State private var failure: String?
   @State private var poster: CGImage?
   @State private var preview: URL?
 
@@ -31,22 +33,25 @@ struct AgentVideoView: View {
   private var posterPixels: CGFloat { Metrics.agentImage * 2 * scale }
 
   var body: some View {
+    let transfer = source.flatMap { VideoCache.shared.transfers[$0] }
+    let busy = opening || transfer != nil
     Button(action: open) {
       ZStack {
         if let poster {
           Image(decorative: poster, scale: 1).resizable().scaledToFit()
           // The play mark on its own disc reads on any frame (VideoAttachmentTile)
           Group {
-            if opening { ProgressView().controlSize(.small).tint(Color.white) }
+            if busy { ProgressView().controlSize(.small).tint(Color.white) }
             else { Icon(.play, size: WebMetrics.icon).foregroundStyle(Color.white) }
           }
           .frame(width: WebMetrics.ctlSm, height: WebMetrics.ctlSm)
           .background(Circle().fill(Palette.scrim))
         } else {
           VStack(spacing: Metrics.gap) {
-            if opening { ProgressView() } else { Icon(.play, size: Metrics.iconCtl) }
-            Text(web: failed ? t("panel.error.media") : name)
+            if busy { DownloadRing(fraction: transfer?.fraction) } else { Icon(.play, size: Metrics.iconCtl) }
+            Text(web: transfer.flatMap(downloadLine) ?? failure ?? name)
               .textStyle(WebType.text3)
+              .monospacedDigit()
               .lineLimit(2)
           }
           .foregroundStyle(Palette.fg3)
@@ -56,7 +61,7 @@ struct AgentVideoView: View {
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
-    .disabled(opening)
+    .disabled(busy)
     .frame(height: Metrics.agentImage)
     .frame(maxWidth: .infinity)
     .background(Palette.chip)
@@ -73,16 +78,18 @@ struct AgentVideoView: View {
   }
 
   private func open() {
-    guard let source else { failed = true; return }
+    guard let source else { failure = t("mobile.download.unreadable"); return }
     opening = true
-    failed = false
+    failure = nil
     Task {
       defer { opening = false }
       do {
-        preview = try await VideoCache.shared.file(source, loader: media.loader)
+        let file = try await VideoCache.shared.file(source, loader: media.loader)
+        // Quick Look titles the player with the recording's own name, not its blob's
+        preview = video.uri == nil ? file : FileDownload.named(file, as: name)
         if poster == nil { poster = try? await VideoCache.shared.poster(source, loader: media.loader, pixels: posterPixels) }
       } catch {
-        failed = true
+        failure = VideoCache.message(error)
       }
     }
   }
