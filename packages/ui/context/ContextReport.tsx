@@ -3,10 +3,13 @@ import {
   BookOpen, Brain, FilePen, FileText, Globe, History, MessageSquare, MessageSquareText, Pencil, Plug, Search, Tag, Terminal, Trash2, Wrench, type LucideIcon,
 } from 'lucide-react';
 import type { ContextNode, ContextReport } from '@acpira/shared/context';
+import { useAppearance } from '../appearance';
 import { t, useLocale } from '../i18n';
 import { ChipTag } from '../ui/Button';
 import { Row } from '../ui/Row';
 import { cn } from '../ui/cn';
+import { SHADES, shadeLabel, shadeOf } from './categories';
+import { setReportLink } from './link';
 import { Parts } from './Parts';
 import { buildTree, leafCount, ROOT_ID, share, type TNode, type TreePaths } from './tree';
 import { fitLabel, lay, MORE_SUFFIX, type Box, type Item, type Measure } from './treemap';
@@ -81,12 +84,22 @@ export interface ContextReportProps {
   onOpenFile?: (path: string) => void;
   // At the end of the figure line: the tab's own controls
   actions?: ReactNode;
+  // The tab is on screen: only then does a hover or pick light rows in the transcript
+  shown?: boolean;
 }
 
-export function ContextReportView({ report: r, sessionId, compactAt, paths, onOpenFile, actions }: ContextReportProps) {
+export function ContextReportView({ report: r, sessionId, compactAt, paths, onOpenFile, actions, shown = true }: ContextReportProps) {
   const locale = useLocale();
   const fmt = useMemo(() => new Intl.NumberFormat(locale).format, [locale]);
   const { root, index, pathOf } = useMemo(() => buildTree(r, paths), [r, paths, locale]);
+  // The shades the conversation's tiles show, in the legend's fixed order; one shade alone needs no key
+  const shades = useMemo(() => {
+    const seen = new Set<string | undefined>();
+    const walk = (n: TNode) => { if (n.children) n.children.forEach(walk); else seen.add(shadeOf(n.node)); };
+    root.children!.filter(c => c.cat === 'chat').forEach(walk);
+    const on = SHADES.filter(s => seen.has(s));
+    return on.length > 1 ? on : [];
+  }, [root]);
   const sticky = useRef<HTMLDivElement>(null);
   const treeBox = useRef<HTMLElement>(null);
   const mapBox = useRef<HTMLDivElement>(null);
@@ -158,6 +171,29 @@ export function ContextReportView({ report: r, sessionId, compactAt, paths, onOp
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
   });
+
+  // The transcript lights the calls under the hovered node, else under the picked leaf (context/link.ts, chat/reportLink.ts).
+  // Not for the whole report or a category: they hold most of the conversation, and lighting all of it says nothing
+  const linked = useAppearance().reportLink !== 'off' && shown;
+  const callsUnder = (id: string | undefined): string[] => {
+    if (!id || pathOf(id).length < 3) return [];
+    const out: string[] = [];
+    const walk = (n: TNode) => { if (n.children) n.children.forEach(walk); else if (n.node?.call) out.push(n.node.call); };
+    const n = index.get(id);
+    if (n) walk(n);
+    return out;
+  };
+  const hoverCalls = useMemo(() => callsUnder(over), [over, index]);
+  const pickCalls = useMemo(() => callsUnder(leafNow), [leafNow, index]);
+  // Each pick brings its row into view once, right away when the pointer is still on the picked row
+  const picks = useRef(0);
+  const pick = useMemo(() => ++picks.current, [leafNow]);
+  useEffect(() => {
+    const calls = hoverCalls.length ? hoverCalls : pickCalls;
+    const reveal = hoverCalls.length && over !== leafNow ? undefined : pick;
+    setReportLink(linked && calls.length ? { session: sessionId, calls, reveal } : null);
+  }, [linked, sessionId, hoverCalls, pickCalls, pick, over, leafNow]);
+  useEffect(() => () => setReportLink(null), []);
 
   // Bring the zoomed row (or an open leaf's row) into view under the sticky map
   useEffect(() => {
@@ -246,13 +282,6 @@ export function ContextReportView({ report: r, sessionId, compactAt, paths, onOp
 
   // One dense row of the tree: a category's tint or the node's icon, the label and target, the figures in fixed columns
   const litUnder = (id: string) => !!over && pathOf(over).includes(id);
-  const cached = r.cached !== undefined && !r.estimated;
-  const cacheWord = (n: TNode) => {
-    if (!cached) return undefined;
-    if (n.cached >= n.tokens) return t('context.cached');
-    if (n.cached <= 0) return t('context.uncached');
-    return t('context.fresh', { n: fmt(n.tokens - n.cached) });
-  };
   const branch = (n: TNode): ReactNode => {
     const isOpen = open.has(n.id);
     // A sum the agent did not split has nothing to show under its row; a click only marks it on the map
@@ -285,7 +314,7 @@ export function ContextReportView({ report: r, sessionId, compactAt, paths, onOp
           <ul data-focus={n.id === focusNow || undefined}>
             {n.children
               ? kids.map(branch)
-              : <Parts node={n} sessionId={sessionId} rev={r.rev} cache={cacheWord(n)} file={n.file} onOpenFile={onOpenFile} />}
+              : <Parts node={n} sessionId={sessionId} rev={r.rev} file={n.file} onOpenFile={onOpenFile} />}
           </ul>
         )}
       </li>
@@ -316,6 +345,13 @@ export function ContextReportView({ report: r, sessionId, compactAt, paths, onOp
             <span className="absolute inset-y-0 left-0 bg-fg-2" style={{ width: `${Math.min(1, r.used / r.size) * 100}%` }} />
             {compactAt !== undefined && compactAt < r.size && <span className="absolute inset-y-0 w-0.5 bg-fg-1" style={{ left: `${(compactAt / r.size) * 100}%` }} />}
           </div>
+          {shades.length > 0 && (
+            <div data-shade-key className="flex flex-wrap gap-x-3 gap-y-1 text-3 text-fg-3">
+              {shades.map(s => (
+                <span key={s} className="flex items-center gap-1.5"><span aria-hidden className="ctx-mark" data-cat="chat" data-shade={s} />{shadeLabel(s)}</span>
+              ))}
+            </div>
+          )}
         </div>
         <div ref={mapBox} data-map className="ctx-map relative h-(--report-map-h) overflow-hidden" data-zoom={leaving ? '' : undefined} onMouseLeave={() => setOver(undefined)}>
           {leaving && layer(leaving.from, oldLayer, true)}
@@ -356,7 +392,7 @@ function Tile({ it, title, figure, measure, lit, marked, onEnter, onLeave, onCli
   // Anything thinner than a few pixels is left as gap; the tree still names it
   if (Math.min(w, h) < 6) return null;
   const attrs = {
-    onMouseEnter: onEnter, onMouseLeave: onLeave, onClick, title, 'data-node': n.id, 'data-cat': n.cat,
+    onMouseEnter: onEnter, onMouseLeave: onLeave, onClick, title, 'data-node': n.id, 'data-cat': n.cat, 'data-shade': n.cat === 'chat' ? shadeOf(n.node) : undefined,
     'data-more': n.more ? '' : undefined, 'data-lit': lit || undefined, 'data-marked': marked || undefined,
     className: 'ctx-tile', style: { left: b.x, top: b.y, width: w, height: h } as CSSProperties,
   };

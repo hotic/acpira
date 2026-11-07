@@ -253,7 +253,7 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   }), [onFailureAction, last, running, turn.error?.failureId, absorbed]);
   // A settled turn mounts fold bodies on first open; a live one keeps them mounted (its finished items narrow this again,
   // `ProcessBlocks`) so streamed content stays in step while closed
-  return <LazyPanelContext.Provider value={!running}><EntranceScopeContext.Provider value={entrance}><RowEntranceContext.Provider value={running}><NoticeActionContext.Provider value={noticeActions}><WorkflowProgressContext.Provider value={workflows}><DelegationContext.Provider value={delegations}><div data-part="agent-message" className={cn('group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]', joined && '-mt-msg-join')}>
+  return <LazyPanelContext.Provider value={!running}><EntranceScopeContext.Provider value={entrance}><RowEntranceContext.Provider value={running}><NoticeActionContext.Provider value={noticeActions}><WorkflowProgressContext.Provider value={workflows}><DelegationContext.Provider value={delegations}><div data-part="agent-message" data-turn={turnIndex} className={cn('group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]', joined && '-mt-msg-join')}>
     {sections.map((section, i) => {
       const lastSection = i === sections.length - 1;
       // Only the continuation owns live activity and the turn outcome. Earlier
@@ -697,7 +697,7 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
       'group flex min-w-0 flex-col transition-[margin-bottom] duration-(--dur-open) ease-out',
       // The root is the reply stack's flex item; an inner margin cannot cancel its sibling gap.
       retired && blocks.length === 0 && '-mb-gap [transition-delay:var(--dur-open)]',
-    )} data-open={open || undefined}>
+    )} data-open={open || undefined} data-process-fold>
       {mounted.current && (
         // The clip reserves the head's hit area like the panel below; a flex column stretches the button to the full row
         <div inert={retired} className={cn('-mx-hit grid transition-[grid-template-rows,opacity] duration-(--dur-open) ease-out',

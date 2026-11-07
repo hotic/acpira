@@ -9,7 +9,8 @@ use serde_json::{Value, json};
 
 use acpira_shared::context::{ContextContent, ContextRaw, ContextReport};
 
-use crate::acp::session::{AcpSession, context_claude, context_estimate};
+use crate::acp::agents::registry::AgentRegistry;
+use crate::acp::session::{AcpSession, context_claude, context_claude_sdk, context_estimate};
 use crate::acp::transport::process::AgentProcess;
 
 const REPORT: &str = "_acpira/context";
@@ -46,12 +47,11 @@ impl AcpSession {
   }
 
   /// The category sums an agent reports of its own, read when the report is asked for: Grok's session info, Claude's
-  /// own session log
+  /// own session log and Claude Code's split of it
   async fn reported_split(&self) -> Option<context_estimate::Known> {
     if self.vendor == crate::acp::vendors::Vendor::Claude {
       let sid = self.core.lock().acp_session_id.clone()?;
-      let env = self.def().env.as_ref().and_then(|e| e.get(crate::acp::vendors::claude_workflow_log::CONFIG_DIR_ENV).cloned());
-      return claude_known(env, self.cwd.clone(), sid).await;
+      return claude_known(self.deps.registry.clone(), self.agent.clone(), self.cwd.clone(), sid).await;
     }
     if self.vendor.usage_poll() != Some(crate::acp::vendors::UsagePoll::Grok) {
       return None;
@@ -68,7 +68,10 @@ impl AcpSession {
   /// One leaf's content in the report `rev` describes
   pub async fn context_item(&self, rev: &str, id: &str) -> Option<ContextContent> {
     if rev.starts_with(context_estimate::REV_PREFIX) {
-      let known = if id.starts_with("summary") { self.reported_split().await } else { None };
+      let known = if id.starts_with("summary") || id.starts_with(context_estimate::DOC_PREFIX) { self.reported_split().await } else { None };
+      if let Some(doc) = context_estimate::doc_content(known.as_ref(), id).await {
+        return Some(doc);
+      }
       let c = self.core.lock();
       return context_estimate::content(&c.state.turns, c.state.usage.as_ref(), rev, id, known.as_ref());
     }
@@ -85,9 +88,29 @@ impl AcpSession {
   }
 }
 
-/// Claude's split from its own session log (`context_claude.rs`), read off the async runtime
-pub async fn claude_known(config_env: Option<String>, cwd: String, session_id: String) -> Option<context_estimate::Known> {
-  tokio::task::spawn_blocking(move || context_claude::known(&context_claude::log_path(config_env, &cwd, &session_id)?)).await.ok()?
+/// Claude's split: its own session log (`context_claude.rs`, read off the async runtime), the agent's own part split
+/// as Claude Code splits it (`context_claude_sdk.rs`) when node and the adapter's SDK are found
+pub async fn claude_known(registry: Arc<AgentRegistry>, agent: String, cwd: String, session_id: String) -> Option<context_estimate::Known> {
+  let def = registry.try_get(&agent).cloned().unwrap_or_default();
+  let config_env = def.env.as_ref().and_then(|e| e.get(crate::acp::vendors::claude_workflow_log::CONFIG_DIR_ENV).cloned());
+  let (dir, sid) = (cwd.clone(), session_id.clone());
+  let (path, log) = tokio::task::spawn_blocking(move || {
+    let path = context_claude::log_path(config_env, &dir, &sid)?;
+    let log = context_claude::known(&path)?;
+    Some((path, log))
+  })
+  .await
+  .ok()??;
+  let launch = move || -> context_claude_sdk::LaunchFuture {
+    Box::pin(async move {
+      use crate::acp::agents::{adapter_info, launch::ProcessEnv, registry::resolve_command};
+      let binary = registry.resolve_binary(&agent).await?;
+      let sdk = adapter_info::engine_dir(&binary, &def).await?;
+      let node = resolve_command("node", &[], crate::platform::command::Os::current(), &ProcessEnv).await?;
+      Some(context_claude_sdk::Launch { node, sdk, env: def.env.clone().unwrap_or_default(), cwd, session_id })
+    })
+  };
+  Some(context_claude_sdk::refine(path, log, launch).await)
 }
 
 #[cfg(test)]

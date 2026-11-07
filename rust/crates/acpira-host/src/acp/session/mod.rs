@@ -12,6 +12,7 @@ pub mod attachments;
 pub mod compaction;
 pub mod context;
 pub mod context_claude;
+pub mod context_claude_sdk;
 pub mod context_estimate;
 pub mod controls;
 pub mod edit;

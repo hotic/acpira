@@ -8,9 +8,7 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case arrowDown
   case arrowDownWideNarrow
   case arrowLeft
-  case arrowLeftFromLine
   case arrowRight
-  case arrowRightToLine
   case arrowUp
   case arrowUpRight
   case asterisk
@@ -199,9 +197,7 @@ extension LucideIcon {
     case .arrowDown: [.path("M12 5v14"), .path("m19 12-7 7-7-7")]
     case .arrowDownWideNarrow: [.path("m3 16 4 4 4-4"), .path("M7 20V4"), .path("M11 4h10"), .path("M11 8h7"), .path("M11 12h4")]
     case .arrowLeft: [.path("m12 19-7-7 7-7"), .path("M19 12H5")]
-    case .arrowLeftFromLine: [.path("m9 6-6 6 6 6"), .path("M3 12h14"), .path("M21 19V5")]
     case .arrowRight: [.path("M5 12h14"), .path("m12 5 7 7-7 7")]
-    case .arrowRightToLine: [.path("M17 12H3"), .path("m11 18 6-6-6-6"), .path("M21 5v14")]
     case .arrowUp: [.path("m5 12 7-7 7 7"), .path("M12 19V5")]
     case .arrowUpRight: [.path("M7 7h10v10"), .path("M7 17 17 7")]
     case .asterisk: [.path("M12 6v12"), .path("M17.196 9 6.804 15"), .path("m6.804 9 10.392 6")]

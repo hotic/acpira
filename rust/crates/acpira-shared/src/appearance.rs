@@ -3,7 +3,7 @@
 use serde_json::{Map, Value};
 
 /// (axis key, allowed values in option order); the order is the digit order of the combo code
-pub const AXES: [(&str, &[&str]); 16] = [
+pub const AXES: [(&str, &[&str]); 17] = [
   ("density", &["cozy", "compact", "airy"]),
   ("radius", &["12", "8", "16"]),
   ("surface", &["hairline", "tonal", "stroke"]),
@@ -20,10 +20,11 @@ pub const AXES: [(&str, &[&str]); 16] = [
   ("motion", &["on", "none"]),
   ("fold", &["codex", "cursor"]),
   ("autoExpand", &["on", "off"]),
+  ("reportLink", &["on", "off"]),
 ];
 
-/// Baseline combo code 2011102003021001 decoded
-const BASE: &str = "2011102003021001";
+/// Baseline combo code 20111020030210010 decoded
+const BASE: &str = "20111020030210010";
 
 pub type Appearance = Map<String, Value>;
 
@@ -61,5 +62,6 @@ mod tests {
     assert_eq!(a["accent"], "agent");
     assert_eq!(a["fold"], "codex");
     assert_eq!(a["autoExpand"], "off");
+    assert_eq!(a["reportLink"], "on");
   }
 }

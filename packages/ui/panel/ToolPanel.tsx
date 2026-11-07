@@ -156,6 +156,24 @@ export const ToolPanelDock = memo(function ToolPanelDock(p: ToolPanelDockProps) 
       setMoving(m => m + 1);
     }
   }
+  // View report: the panel eases out to most of the room it shares with the chat, unless it is that wide already. Before
+  // paint, so a panel opening by the same click eases straight to the wider width
+  const widenSeen = useRef(s.widen);
+  useLayoutEffect(() => {
+    if (s.widen === widenSeen.current) return;
+    widenSeen.current = s.widen;
+    if (p.narrow || !shown) return;
+    const b = bounds();
+    const now = clamp(s.width ?? b.initial, b.min, b.max);
+    // The most the panel may take plus what the chat keeps is the room they share; the report takes most of it, so the
+    // parts it opens below the map read without scrolling
+    const mainMin = Number.parseFloat(getComputedStyle(aside.current ?? document.documentElement).getPropertyValue('--tool-main-min')) || 0;
+    const target = clamp(Math.round((b.max + mainMin) * 0.6), b.min, b.max);
+    if (target <= now) return;
+    aside.current?.style.setProperty('--tool-panel-open', `${target}px`);
+    setMoving(m => m + 1);
+    panel.setWidth(target);
+  }, [s.widen, s.width, shown, p.narrow, bounds]);
   useEffect(() => {
     if (!moving) return;
     const timer = setTimeout(() => setMoving(0), MOVE_MS);

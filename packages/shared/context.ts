@@ -44,6 +44,8 @@ export interface ContextNode {
   // Of `tokens`, what the provider served from its prompt cache
   cached?: number;
   children?: ContextNode[];
+  // A call's row in the transcript (its toolCallId), so the report can point at it
+  call?: string;
 }
 
 export interface ContextCategorySplit {

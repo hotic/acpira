@@ -52,14 +52,15 @@ export const ToolGroup = memo(function ToolGroup({ kind, blocks, continuing = fa
       ? reads!.entries.map(entry => <EntranceOnce key={entry.key} id={`${itemEntrance(entry.blocks[0]!.id)}:${entry.key}`}><SessionReadEntry entry={entry} /></EntranceOnce>)
       : editEntries(blocks).map(entry => <EntranceOnce key={entry.key} id={itemEntrance(entry.blocks[0]!.id)}><EditEntry blocks={entry.blocks} /></EntranceOnce>)}
   </div>;
-  // Entries follow the head directly, so the head and its first entry keep the entries' own rhythm
+  // Entries follow the head directly, so the head and its first entry keep the entries' own rhythm. Its calls' ids ride on a
+  // box-less wrapper, so the context report lights the group for any of them (chat/reportLink.ts)
   return (
-    <Disclosure className="action-details" bodyClassName="pt-0" tone="action" lead={lead} trailing={stat && <DiffStat {...stat} />}
+    <div data-calls={blocks.map(b => b.id).join(' ')} className="contents"><Disclosure className="action-details" bodyClassName="pt-0" tone="action" lead={lead} trailing={stat && <DiffStat {...stat} />}
       indent={kind === 'wait'} rail={kind === 'wait' ? 'body' : 'rows'} open={fold?.open} onToggle={fold?.onToggle} body={body}>
       <ToolLabel block={current} continuing={continuing} />
       {kind === 'wait' && current.target && <RowTarget mono>{current.target}</RowTarget>}
       {turns > 0 ? <TurnsTarget title={names[0]!} n={turns} /> : names.length > 0 && <RowTarget mono={kind !== 'session'}>{namesLabel(names)}</RowTarget>}
-    </Disclosure>
+    </Disclosure></div>
   );
 }, (a, b) => a.kind === b.kind && a.continuing === b.continuing && a.blocks.length === b.blocks.length && a.blocks.every((block, i) => block === b.blocks[i]));
 

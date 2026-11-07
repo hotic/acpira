@@ -80,6 +80,7 @@ import { breadcrumb, nodesByTurn, subagentTitle } from './subagents/subagentStat
 import { ComposerAbove } from '../plugins/ComposerAbove';
 import { backdropsShown, useSkin } from '../plugins/skin';
 import { useSessionOutline } from '../plugins/outline';
+import { useReportLink } from './reportLink';
 import { SessionRail, SlotPieces } from '../plugins/Pieces';
 
 // What `fileStager` last read, by session and path (null: unreadable), kept for the page's life: a session switched
@@ -1496,7 +1497,8 @@ const goalSetByAgent = new Map<AgentId, boolean>();
 const Thread = memo(function Thread({ session, fontSizes, turns, running, wide, replayKey, catchingUp, blobUrl, contentRef, commands, summons, subagents, forkedFrom, agents, agentId, onInspect, onPermission, onFailureAction, onSetGoal, goalRoom }: ThreadProps) {
   const locale = useLocale();
   // Exchanges out of sight skip style, layout and paint once laid out at their real size (chat/exchangeSkip.ts)
-  const exchangeRef = useExchangeSkip(useAppearance(), locale, fontSizes);
+  const appearance = useAppearance();
+  const exchangeRef = useExchangeSkip(appearance, locale, fontSizes);
   const ref = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const bodyRef = useMergedRefs(contentRef, body);
@@ -1548,6 +1550,8 @@ const Thread = memo(function Thread({ session, fontSizes, turns, running, wide, 
   const window = useExchangeWindow(exchangeSlots.length, ref, follow, opening);
   const starts = exchangeSlots.map(e => e.key);
   useSessionOutline(ref, session, turns, starts, running, { mount: turn => window.showFrom(starts.indexOf(turn)), release: () => follow.release() });
+  // The context report's hover or pick lights its calls' rows here and dims the rest (chat/reportLink.ts)
+  useReportLink(ref, body, { session, enabled: appearance.reportLink !== 'off', turns, starts, showFrom: window.showFrom, release: () => follow.release() });
   // The prompt "Set as goal" hangs under: the last one the user typed, unless it was a slash command
   const goalPrompt = onSetGoal || goalRoom ? lastTypedPrompt(turns) : undefined;
   // The fork boundary follows the exchange that holds the last copied turn, as a row of its own: inside that exchange it

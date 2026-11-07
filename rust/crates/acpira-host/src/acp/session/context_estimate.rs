@@ -4,8 +4,8 @@
 //! instruction files, a compaction summary), which only the agent could split, so it stays one `rest` part. Marked
 //! estimated: the transcript is what the user saw, not what the agent sent (it may have cut tool output, or dropped
 //! earlier reasoning). An agent that reports its own category sums (Grok's session info, `grok_known`; Claude's own
-//! log, `context_claude.rs`) gets those instead of one `agent` part worked out from the figure, with the turns scaled
-//! into the conversation it reports.
+//! log, `context_claude.rs`, split further by Claude Code itself, `context_claude_sdk.rs`) gets those instead of one
+//! `agent` part worked out from the figure, with the turns scaled into the conversation it reports.
 
 use acpira_shared::context::{ContextCategory, ContextCategorySplit, ContextContent, ContextNode, ContextNodeKind, ContextReport};
 use acpira_shared::transcript::{AgentBlock, CompactionStatus, ToolCallBlock, ToolContent, ToolStatus, Turn, Usage};
@@ -19,6 +19,8 @@ const CONTENT_MAX: usize = 64 * 1024;
 const TITLE_MAX: usize = 80;
 const REST_ID: &str = "rest";
 const SUMMARY_ID: &str = "summary";
+/// A memory file's id among `Known::items`: its content is the file as it is now
+pub const DOC_PREFIX: &str = "doc:";
 
 /// A leaf of a turn and the transcript it stands for
 enum Leaf<'a> {
@@ -79,16 +81,17 @@ impl Leaf<'_> {
   }
 
   fn node(&self, id: String, tokens: u64) -> ContextNode {
-    let (kind, name, title, tool_kind) = match self {
-      Leaf::Message(_) => (ContextNodeKind::Message, None, None, None),
-      Leaf::Thinking(_) => (ContextNodeKind::Thinking, None, None, None),
-      Leaf::Reply(_) => (ContextNodeKind::Reply, None, None, None),
+    let (kind, name, title, tool_kind, call) = match self {
+      Leaf::Message(_) => (ContextNodeKind::Message, None, None, None, None),
+      Leaf::Thinking(_) => (ContextNodeKind::Thinking, None, None, None, None),
+      Leaf::Reply(_) => (ContextNodeKind::Reply, None, None, None, None),
+      // The call's own block, so its row is named by the id the transcript keys it by
       Leaf::Call(x) => {
         let kind = serde_json::to_value(x.kind).ok().and_then(|v| v.as_str().map(str::to_owned));
-        (ContextNodeKind::Call, Some(x.mcp_server.clone().unwrap_or_else(|| x.verb.clone())), x.target.clone(), kind)
+        (ContextNodeKind::Call, Some(x.mcp_server.clone().unwrap_or_else(|| x.verb.clone())), x.target.clone(), kind, Some(x.id.clone()))
       }
     };
-    ContextNode { id, kind, name, title, index: None, tool_kind, tokens, cached: None, children: None }
+    ContextNode { id, kind, name, title, index: None, tool_kind, tokens, cached: None, children: None, call }
   }
 
   fn content(&self) -> ContextContent {
@@ -228,6 +231,9 @@ fn num(n: f64) -> u64 {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Known {
   pub parts: Vec<(ContextCategory, u64)>,
+  /// What a part is made of, as far as the agent names it (Claude's memory files, skills, MCP tools): scaled with
+  /// the part, the rest of the part an unsplit node beside them
+  pub items: Vec<(ContextCategory, Vec<ContextNode>)>,
   pub chat: u64,
   /// The text a compaction left in place of the turns before it, the first part of the conversation
   pub summary: Option<String>,
@@ -265,7 +271,7 @@ pub fn grok_known(v: &Value) -> Option<Known> {
   if parts.is_empty() && chat == 0 {
     return None;
   }
-  Some(Known { parts, chat, summary: None, cached: None })
+  Some(Known { parts, items: vec![], chat, summary: None, cached: None })
 }
 
 /// The estimated split of the figure the agent reported; none without one
@@ -305,7 +311,7 @@ pub fn report_with(turns: &[Turn], usage: Option<&Usage>, detail: bool, known: O
   if summary.is_some() {
     let tokens = scale(summary_raw);
     chat += tokens;
-    chat_nodes.push(ContextNode { id: SUMMARY_ID.to_owned(), kind: ContextNodeKind::Summary, name: None, title: None, index: None, tool_kind: None, tokens, cached: None, children: None });
+    chat_nodes.push(ContextNode { id: SUMMARY_ID.to_owned(), kind: ContextNodeKind::Summary, name: None, title: None, index: None, tool_kind: None, tokens, cached: None, children: None, call: None });
   }
   for (g, sizes) in groups.iter().zip(&raw) {
     let children: Vec<ContextNode> = g.leaves.iter().zip(sizes).map(|((id, leaf), n)| leaf.node(id.clone(), scale(*n))).collect();
@@ -321,16 +327,24 @@ pub fn report_with(turns: &[Turn], usage: Option<&Usage>, detail: bool, known: O
       tokens,
       cached: None,
       children: Some(children),
+      call: None,
     });
   }
   let mut categories = vec![];
-  let unsplit = |cat: ContextCategory, tokens: u64| {
-    let id = if cat == ContextCategory::Agent { REST_ID.to_owned() } else { format!("{REST_ID}:{}", cat_key(cat)) };
-    let node = ContextNode { id, kind: ContextNodeKind::Rest, name: None, title: None, index: None, tool_kind: None, tokens, cached: None, children: None };
-    ContextCategorySplit { id: cat, tokens, cached: None, nodes: detail.then(|| vec![node]) }
-  };
+  let unsplit = |cat: ContextCategory, tokens: u64| ContextCategorySplit { id: cat, tokens, cached: None, nodes: detail.then(|| vec![rest_node(cat, tokens)]) };
   for (cat, tokens) in &parts {
-    categories.push(unsplit(*cat, *tokens));
+    let items = known.and_then(|k| k.items.iter().find(|i| i.0 == *cat)).filter(|_| detail);
+    match items {
+      Some((_, nodes)) => {
+        let mut nodes: Vec<ContextNode> = nodes.iter().map(|n| scaled(n, &fit)).filter(|n| n.tokens > 0).collect();
+        let named: u64 = nodes.iter().map(|n| n.tokens).sum();
+        if *tokens > named {
+          nodes.push(rest_node(*cat, tokens - named));
+        }
+        categories.push(ContextCategorySplit { id: *cat, tokens: (*tokens).max(named), cached: None, nodes: Some(nodes) });
+      }
+      None => categories.push(unsplit(*cat, *tokens)),
+    }
   }
   // What the parts leave of the figure: the agent's own, or with its sums, rounding and a conversation it reported
   // that the transcript has none of
@@ -340,8 +354,11 @@ pub fn report_with(turns: &[Turn], usage: Option<&Usage>, detail: bool, known: O
     match categories.iter_mut().find(|c| c.id == cat) {
       Some(c) => {
         c.tokens += rest;
-        if let Some(n) = c.nodes.as_mut().and_then(|ns| ns.first_mut()) {
-          n.tokens += rest;
+        if let Some(ns) = c.nodes.as_mut() {
+          match ns.iter_mut().find(|n| n.kind == ContextNodeKind::Rest) {
+            Some(n) => n.tokens += rest,
+            None => ns.push(rest_node(cat, rest)),
+          }
         }
       }
       None => categories.insert(0, unsplit(cat, rest)),
@@ -354,6 +371,28 @@ pub fn report_with(turns: &[Turn], usage: Option<&Usage>, detail: bool, known: O
   let at = turns.iter().rev().filter_map(Turn::as_agent).find_map(|a| a.ended_at.or(a.started_at)).and_then(|t| u64::try_from(t).ok());
   let cached = known.and_then(|k| k.cached).map(|c| c.min(used));
   Some(ContextReport { used, size, estimated: true, cached, at, rev: rev_of(turns, used), categories })
+}
+
+/// A category's part the agent did not split, or the remainder beside what it named
+fn rest_node(cat: ContextCategory, tokens: u64) -> ContextNode {
+  let id = if cat == ContextCategory::Agent { REST_ID.to_owned() } else { format!("{REST_ID}:{}", cat_key(cat)) };
+  ContextNode { id, kind: ContextNodeKind::Rest, name: None, title: None, index: None, tool_kind: None, tokens, cached: None, children: None, call: None }
+}
+
+/// An item scaled into the figure as its part is; a group is the sum of its scaled children
+fn scaled(n: &ContextNode, fit: &dyn Fn(u64) -> u64) -> ContextNode {
+  let children: Option<Vec<ContextNode>> = n.children.as_ref().map(|cs| cs.iter().map(|c| scaled(c, fit)).collect());
+  let tokens = children.as_ref().map_or_else(|| fit(n.tokens), |cs| cs.iter().map(|c| c.tokens).sum());
+  ContextNode { tokens, children, ..n.clone() }
+}
+
+/// A memory file the agent named among its items, read as it is now
+pub async fn doc_content(known: Option<&Known>, id: &str) -> Option<ContextContent> {
+  if !id.starts_with(DOC_PREFIX) {
+    return None;
+  }
+  let node = known?.items.iter().flat_map(|(_, ns)| ns).find(|n| n.id == id && n.kind == ContextNodeKind::Doc)?;
+  tokio::fs::read_to_string(node.name.as_deref()?).await.ok().map(cut)
 }
 
 /// What a leaf of the report `rev` names stands for; none once the transcript moved on, or for a group

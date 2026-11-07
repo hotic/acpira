@@ -62,6 +62,9 @@ pub struct ContextNode {
   pub cached: Option<u64>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub children: Option<Vec<ContextNode>>,
+  /// A call's row in the transcript (its `toolCallId`), so the client can point from the report to it
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub call: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

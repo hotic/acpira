@@ -101,13 +101,15 @@ export function ContextTab({ sessionId, root, running, shown, info }: {
     </IconButton>}
   </>;
   return (
-    <div data-context-tab data-report-scroll className="scroll-thin absolute inset-0 overflow-y-auto [scrollbar-gutter:stable]">
+    // scroll-stable, not a bare scrollbar-gutter: WebKit reserves its wider native gutter until the box overflows, so the
+    // short report and the long raw request would sit at different widths and the {} toggle would jump sideways
+    <div data-context-tab data-report-scroll className="scroll-thin scroll-stable absolute inset-0">
       <div data-context-report className="flex min-h-full flex-col px-pad pb-(--report-gap) tabular-nums">
         {raw
           ? <RawView raw={raw.raw} error={raw.error} text={rawText} onClose={() => setRaw(undefined)} />
           : report
             ? <ContextReportView key={sessionId} report={report} sessionId={sessionId} compactAt={info.compactAt} paths={paths}
-              onOpenFile={remote ? undefined : openFile} actions={actions} />
+              onOpenFile={remote ? undefined : openFile} actions={actions} shown={shown} />
             : report === null && <div className="m-auto text-2 text-fg-3">{t('context.empty')}</div>}
       </div>
     </div>
@@ -117,8 +119,9 @@ export function ContextTab({ sessionId, root, running, shown, info }: {
 // The last request exactly as it went out, in the provider's wire format (images, signatures and keys left out by the
 // agent, acpira-agent context.rs `raw`)
 function RawView({ raw, error, text, onClose }: { raw?: ContextRaw; error?: string; text?: string; onClose: () => void }) {
+  // Same height as the report's figure row (no h-ctl), so the {} toggle stays put between the two views
   const head = (
-    <div className="flex h-ctl shrink-0 items-center gap-2 text-3">
+    <div className="flex shrink-0 items-center gap-2 text-3">
       <span className="text-2 font-medium text-fg-1">{t('context.raw')}</span>
       {raw && <span className="min-w-0 truncate font-mono text-mono text-fg-3">{[raw.format, raw.url].filter(Boolean).join(' ')}</span>}
       <span className="flex-1" />

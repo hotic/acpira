@@ -162,6 +162,13 @@ pub async fn installed_version(binary: &str, package: &str) -> Option<String> {
   read_package(&root, package).await.flatten()
 }
 
+/// The installed engine package's directory (the Agent SDK claude-agent-acp runs on), found as `read_adapter_info` does
+pub async fn engine_dir(binary: &str, def: &AgentDef) -> Option<PathBuf> {
+  let spec = def.adapter.as_ref()?;
+  let root = adapter_root(binary, &spec.package).await?;
+  find_engine(&root, &spec.engine.as_ref()?.package).await.map(|(dir, _)| dir)
+}
+
 pub async fn read_adapter_info(binary: &str, def: &AgentDef) -> Option<AdapterInfo> {
   let spec = def.adapter.as_ref()?;
   let mut out = AdapterInfo::default();
