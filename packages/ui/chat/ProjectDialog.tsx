@@ -72,12 +72,15 @@ export function ProjectDialog({ cwd, meta, home, onPickFolder, onSave, onRemove,
                   <Folder className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} />
                   <span className="max-w-1/2 shrink-0 truncate text-fg-1">{projectName(path)}</span>
                   <span className="min-w-0 flex-1 truncate text-3 text-fg-3" title={path}>{shortPath(path, env)}</span>
-                  {/* The first folder is the primary one by its place; the others offer to take it */}
+                  {/* The first folder is the primary one by its place; the others offer to take it. Both actions keep a
+                      --ctl-sm hit area but inset their hover fill by --icon-fill-inset, so it clears the separator above */}
                   {f !== primary && <button type="button" onClick={() => makePrimary(f)}
-                    className={cn('h-ctl-sm shrink-0 rounded-md px-2 text-3 transition-colors hover:bg-hover hover:text-fg-1', reveal)}>{t('session.project.makePrimary')}</button>}
+                    className={cn('group/primary flex h-ctl-sm shrink-0 py-(--icon-fill-inset) text-3 hover:text-fg-1', reveal)}>
+                    <span className="flex items-center rounded-md px-2 transition-colors group-hover/primary:bg-hover group-focus-visible/primary:bg-hover">{t('session.project.makePrimary')}</span>
+                  </button>}
                   {/* The last folder stays: a project needs one to run in */}
                   <IconButton size="sm" disabled={folders.length < 2} title={t('common.remove')} aria-label={t('common.remove')} onClick={() => remove(f)}
-                    className={cn(reveal, 'shrink-0 disabled:invisible')}><X strokeWidth={1.5} /></IconButton>
+                    className={cn(reveal, 'shrink-0 bg-clip-content p-(--icon-fill-inset) disabled:invisible')}><X strokeWidth={1.5} /></IconButton>
                 </div>
               </Collapsible.Section>;
             })}

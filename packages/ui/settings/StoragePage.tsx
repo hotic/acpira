@@ -13,7 +13,7 @@ import { Shimmer } from '../ui/Shimmer';
 import { Toast } from '../ui/Toast';
 import { cn } from '../ui/cn';
 import { getLocale, t } from '../i18n';
-import { Count, DialogBody, FooterNote, Group, ItemRow, Meta, Note, rowHover, rowRules, Section, SectionAction, SectionDescription, Segmented, SettingsDialog, shortPath } from './controls';
+import { cardFill, Count, DialogBody, FooterNote, Group, ItemRow, Meta, Note, rowHover, rowRules, Section, SectionAction, SectionDescription, Segmented, SettingsDialog, shortPath } from './controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 
 // Settings → Storage: what the data directory holds by owner, drawn as one bar, and the cleanups that are reviewed
@@ -136,7 +136,7 @@ function PickRow({ on, disabled, title, meta, size, onToggle, nested }: {
 function ReviewList({ children, empty, loading }: { children: ReactNode; empty: string; loading: boolean }) {
   const hasRows = Array.isArray(children) ? children.length > 0 : !!children;
   return (
-    <div className="scroll-thin h-(--storage-list) shrink-0 overflow-x-hidden overflow-y-auto overscroll-contain rounded-lg bg-chip px-3">
+    <div className={cn('scroll-thin h-(--storage-list) shrink-0 overflow-x-hidden overflow-y-auto overscroll-contain rounded-lg px-3', cardFill)}>
       {loading ? <Group embedded><Note shimmer>{t('storage.scanning')}</Note></Group> : hasRows ? <Group embedded>{children}</Group> : <Group embedded><Note>{empty}</Note></Group>}
     </div>
   );
