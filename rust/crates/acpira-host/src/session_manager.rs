@@ -705,6 +705,7 @@ fn session_id_of(m: &WebviewMsg) -> Option<String> {
     | W::OpenFile { session_id, .. }
     | W::OpenBlob { session_id, .. }
     | W::ImageBlob { session_id, .. }
+    | W::StageFile { session_id, .. }
     | W::ImportNativeSession { session_id, .. } => Some(session_id.clone()),
     _ => None,
   }

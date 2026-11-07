@@ -32,7 +32,9 @@ final class EngineLink {
   /// reach) or the development engine's HTTP route, files on the computer staged with imageBlob first. A paired wire
   /// stages only files the session shows (`shown`; the gateway refuses any other path, the engine checks the transcript
   /// names it), so a file row the session does not show stays plain there
-  lazy var media = MediaLoader(fetch: blobFetch, stage: stager)
+  lazy var media = MediaLoader(fetch: blobFetch, stage: stager, download: pairedBlobs.map { wire in
+    { @Sendable session, name, to, progress in try await wire.download(session: session, name: name, to: to, progress: progress) }
+  })
 
   private var stager: MediaLoader.Stage {
     { [weak self] session, path in await self?.stage(session, path) }

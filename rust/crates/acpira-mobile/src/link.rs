@@ -25,6 +25,15 @@ const READ_AHEAD: usize = 256;
 /// How long a closed envelope stream waits for the connection's close to say why
 const CLOSE_GRACE: Duration = Duration::from_secs(2);
 
+/// Hears a download's progress (`Link::fetch_blob_to`): the bytes on the device and the blob's size
+#[uniffi::export(with_foreign)]
+pub trait BlobProgress: Send + Sync {
+  fn progress(&self, have: u64, total: u64);
+}
+
+/// How far a download moves between two progress calls into Swift, past the first and before the last
+const PROGRESS_STEP: u64 = 256 << 10;
+
 /// Where a device's notifications go (acpira-shared `devices::PushTarget`)
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct PushRegistration {
@@ -223,8 +232,31 @@ impl Link {
   /// One blob of a session (an image its transcript shows), within the deadline
   pub async fn fetch_blob(&self, session_id: String, name: String, within_ms: u64) -> Result<Vec<u8>, LinkFailure> {
     let conn = self.conn.clone();
-    let req = BlobRequest { session_id, name };
+    let req = BlobRequest { session_id, name, offset: None };
     let got = on_runtime(async move { link::fetch_blob(&conn, &req, ms(within_ms)).await }).await.map_err(|message| LinkFailure::Other { message })?;
+    got.map_err(|e| match self.end.get() {
+      Some(Some(f)) => f.clone(),
+      _ => LinkFailure::Other { message: format!("{e:#}") },
+    })
+  }
+
+  /// One blob of a session downloaded into the file at `path` (a video, a file opened from the phone), resuming after
+  /// what the file already holds; answers the blob's size. Ends only after `idle_ms` without a byte, never on the
+  /// whole file's time, and leaves the partial file for the next call
+  pub async fn fetch_blob_to(&self, session_id: String, name: String, path: String, idle_ms: u64, progress: Arc<dyn BlobProgress>) -> Result<u64, LinkFailure> {
+    let conn = self.conn.clone();
+    let got = on_runtime(async move {
+      let mut told = None::<u64>;
+      link::fetch_blob_to(&conn, &session_id, &name, std::path::Path::new(&path), ms(idle_ms), |have, total| {
+        if told.is_none_or(|t| have >= t + PROGRESS_STEP || have == total) {
+          told = Some(have);
+          progress.progress(have, total);
+        }
+      })
+      .await
+    })
+    .await
+    .map_err(|message| LinkFailure::Other { message })?;
     got.map_err(|e| match self.end.get() {
       Some(Some(f)) => f.clone(),
       _ => LinkFailure::Other { message: format!("{e:#}") },

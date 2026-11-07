@@ -257,10 +257,10 @@ fn a_phone_pairs_drives_a_session_and_is_revoked() {
     let blob_dir = sessions_dir.join(&id);
     std::fs::create_dir_all(&blob_dir).unwrap();
     std::fs::write(blob_dir.join("shot.png"), vec![7u8; 5000]).unwrap();
-    let got = link::fetch_blob(&conn, &BlobRequest { session_id: id.clone(), name: "shot.png".into() }, Duration::from_secs(5)).await.unwrap();
+    let got = link::fetch_blob(&conn, &BlobRequest { session_id: id.clone(), name: "shot.png".into(), offset: None }, Duration::from_secs(5)).await.unwrap();
     assert_eq!(got.len(), 5000);
     for (sid, name) in [(id.as_str(), "../../agents.json"), ("..", "settings.json"), (id.as_str(), ".hidden")] {
-      let r = link::fetch_blob(&conn, &BlobRequest { session_id: sid.into(), name: name.into() }, Duration::from_secs(5)).await;
+      let r = link::fetch_blob(&conn, &BlobRequest { session_id: sid.into(), name: name.into(), offset: None }, Duration::from_secs(5)).await;
       assert!(r.is_err(), "{sid}/{name}");
     }
 

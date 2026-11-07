@@ -82,7 +82,8 @@ struct DiffCounts: View {
 @MainActor private var previewMarkdown = true
 
 /// One project file, read-only, its changes marked; opens at `line` or else at the first change. A Markdown file
-/// opens rendered unless a link named its line, with a bar toggle back to the marked source
+/// opens rendered unless a link named its line, with a bar toggle back to the marked source. A video or a picture, and
+/// a file that is binary or over the text limit, offers its download instead (`FileDownload`)
 struct FileScreen: View {
   let sessionId: String
   let path: String
@@ -106,6 +107,10 @@ struct FileScreen: View {
   var body: some View {
     Group {
       switch content {
+      case _ where FileDownload.opensDirectly(path):
+        FileDownload(sessionId: sessionId, path: path)
+      case .failed(let error)? where error == .binary || error == .tooLarge:
+        FileDownload(sessionId: sessionId, path: path, reason: message(error))
       case .lines(let lines)? where preview:
         markdownPreview(lines)
       case .lines(let lines)?:
@@ -120,7 +125,10 @@ struct FileScreen: View {
     .background(Palette.bg0)
     .navigationTitle(fileName(path))
     .navigationBarTitleDisplayModeInline()
-    .task { content = await model.file(sessionId, path: path) }
+    .task {
+      guard !FileDownload.opensDirectly(path) else { return }
+      content = await model.file(sessionId, path: path)
+    }
     .toolbar {
       if isMarkdownPath(path), case .lines? = content {
         ToolbarItem(placement: .primaryAction) {

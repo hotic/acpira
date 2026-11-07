@@ -419,7 +419,7 @@ async fn serve_device(g: Arc<Gateway>, conn: Connection, device: Device) {
         let dir = sessions_dir.lock().clone();
         tokio::spawn(async move {
           let data = read_blob(dir.as_deref(), &req).await;
-          let _ = link::send_blob(send, data).await;
+          let _ = link::send_blob(send, data, req.offset).await;
         });
       }
       Err(_) => break,

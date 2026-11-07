@@ -340,6 +340,8 @@ export type HostMsg =
   | { type: 'diffSource'; seq: number; source?: FullDiffSource }
   // Reply to imageBlob: the session blob name for an image file path, absent when unreadable
   | { type: 'imageBlob'; seq: number; blob?: string }
+  // Reply to stageFile: the staged file's session blob name and size, or why not (`outside`, `missing`, `tooLarge`, …)
+  | { type: 'stagedFile'; seq: number; blob?: string; size?: number; error?: ProjectError | string }
   // Reply to sessionMarkdown: the session as Markdown, or why it could not be read
   | { type: 'sessionMarkdown'; seq: number; markdown?: string; error?: string }
   // Replies to the desktop tool panel's reads, each echoing its request's seq
@@ -500,6 +502,9 @@ export type WebviewMsg =
   // shown: a file the session's transcript names (a row's image, video or widget, a Markdown image), staged only when it
   // does; the only form a paired device may send. Without it any path, the computer's own pages only
   | { type: 'imageBlob'; sessionId: string; path: string; seq: number; shown?: boolean }
+  // Stage any file of the session's project (or an absolute path), whatever its type, for a paired device to download and
+  // open; answered with `stagedFile` echoing seq
+  | { type: 'stageFile'; sessionId: string; path: string; seq: number }
   | { type: 'permission'; sessionId: string; blockId: string; optionId: string; clientId?: string }
   // The question card was closed: `answers` holds the answered questions only (option ids / free text); skip tells the agent to go on with what it has
   // `images`: image drafts by question id, for a card that takes them (QuestionBlock.images)

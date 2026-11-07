@@ -413,11 +413,29 @@ impl SessionManager {
     } else {
       return None;
     };
+    self.stage_with(session_id, ws, path, &ext, max).await
+  }
+
+  /// Any file for a device to download and open (`stageFile`), whatever its type, up to `MAX_STAGED_FILE_BYTES`: its
+  /// blob name and size, or why not (`missing`, `tooLarge`)
+  pub async fn stage_any_file(&self, session_id: &str, ws: &crate::workspace::Workspace, path: &std::path::Path) -> Result<(String, u64), crate::project_files::ProjectError> {
+    use crate::project_files::ProjectError;
+    let (size, _) = ws.file_stamp(path).await.ok_or(ProjectError::Missing)?;
+    if size > crate::limits::MAX_STAGED_FILE_BYTES {
+      return Err(ProjectError::TooLarge);
+    }
+    let ext = acpira_shared::attachments::ext_of_name(&path.to_string_lossy());
+    let blob = self.stage_with(session_id, ws, path, &ext, crate::limits::MAX_STAGED_FILE_BYTES).await.ok_or(ProjectError::Missing)?;
+    Ok((blob, size))
+  }
+
+  /// One staging of a path at a time, so two pages showing the same file read it once
+  async fn stage_with(&self, session_id: &str, ws: &crate::workspace::Workspace, path: &std::path::Path, ext: &str, max: u64) -> Option<String> {
     let key = (session_id.to_owned(), path.to_path_buf());
     let turn = self.staging.lock().entry(key.clone()).or_default().clone();
     let blob = {
       let _one = turn.lock().await;
-      self.stage_file_now(&key, ws, &ext, max).await
+      self.stage_file_now(&key, ws, ext, max).await
     };
     // The last one out drops the lock (the map's and this one are all that hold it then)
     let mut staging = self.staging.lock();

@@ -113,6 +113,20 @@ public final class RemoteConnection: PairedConnection, PairedBlobs {
     }
   }
 
+  public func download(session: String, name: String, to: URL, progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> Int64 {
+    do {
+      let total = try await link.fetchBlobTo(sessionId: session, name: name, path: to.path, idleMs: Self.downloadIdleMs,
+                                             progress: DownloadProgress(progress))
+      return Int64(total)
+    } catch {
+      throw ConnectionError(error)
+    }
+  }
+
+  /// How long a download may go without a byte before it stops (and resumes on the next try): a relay path can stall
+  /// for seconds while the link itself is fine
+  static let downloadIdleMs: UInt64 = 20_000
+
   /// A round trip through the gateway within the deadline; no answer is `.offline`
   public func probe(withinMs: UInt64) async throws -> Duration {
     do {
@@ -232,4 +246,11 @@ extension PairingError {
     default: self = .other(String(describing: error))
     }
   }
+}
+
+/// Passes acpira-mobile's download progress on to a closure
+private final class DownloadProgress: BlobProgress {
+  let report: @Sendable (Int64, Int64) -> Void
+  init(_ report: @escaping @Sendable (Int64, Int64) -> Void) { self.report = report }
+  func progress(have: UInt64, total: UInt64) { report(Int64(have), Int64(total)) }
 }

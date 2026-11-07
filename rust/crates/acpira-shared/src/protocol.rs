@@ -430,6 +430,17 @@ pub enum HostMsg {
     #[serde(skip_serializing_if = "Option::is_none")]
     blob: Option<String>,
   },
+  /// Reply to stageFile: the session blob name and size of the staged file, or `error` (`noProject`, `outside`,
+  /// `missing`, `tooLarge`, or the system's message)
+  StagedFile {
+    seq: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    blob: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+  },
   /// Reply to sessionMarkdown: the session as Markdown, or why it could not be read
   SessionMarkdown {
     seq: i64,
@@ -604,6 +615,7 @@ impl HostMsg {
       HostMsg::SessionHits { .. } => "sessionHits",
       HostMsg::DiffSource { .. } => "diffSource",
       HostMsg::ImageBlob { .. } => "imageBlob",
+      HostMsg::StagedFile { .. } => "stagedFile",
       HostMsg::SessionMarkdown { .. } => "sessionMarkdown",
       HostMsg::ProjectDir { .. } => "projectDir",
       HostMsg::ProjectStatus { .. } => "projectStatus",
@@ -716,6 +728,14 @@ pub enum WebviewMsg {
     /// session names that path, so a paired device may ask for it (`devices.rs`); without it any path, computer only
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     shown: bool,
+  },
+  /// Stage any file of the session's project (or an absolute path) into its blob store, whatever its type, for a device
+  /// to download and open; answered with `stagedFile` echoing `seq`
+  StageFile {
+    session_id: String,
+    path: String,
+    #[serde(deserialize_with = "crate::num::lenient_i64")]
+    seq: i64,
   },
   /// SSH hosts: the current list (pushed on every change after), an edit of one host, the ~/.ssh/config hosts, a
   /// folder of a host (`path` absent: its home)

@@ -149,6 +149,19 @@ describe('sidecar runtime', () => {
     expect(opened().length).toBe(3);
   });
 
+  it('stages any project file for a device to download, and says why it cannot', async () => {
+    const { s, init, cwd, sessionsDir } = await setup();
+    const id = init.state.active!.id;
+    const bytes = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 1, 2, 3]);
+    writeFileSync(join(cwd, 'bundle.zip'), bytes);
+    s.view('V', { type: 'stageFile', sessionId: id, path: 'bundle.zip', seq: 51 });
+    const staged = await s.hostMsg('V', 'stagedFile', m => m.seq === 51);
+    expect(staged).toMatchObject({ size: bytes.length, blob: expect.stringMatching(/\.zip$/) });
+    expect(readFileSync(join(sessionsDir, id, staged.blob!))).toEqual(bytes);
+    s.view('V', { type: 'stageFile', sessionId: id, path: 'gone.mp4', seq: 52 });
+    expect(await s.hostMsg('V', 'stagedFile', m => m.seq === 52)).toEqual({ type: 'stagedFile', seq: 52, error: 'missing' });
+  });
+
   it('localizes missing file links before asking the shell to open or reveal them', async () => {
     const { s, init, cwd, shared, posted, requests } = await setup();
     shared({ language: 'zh-CN' });

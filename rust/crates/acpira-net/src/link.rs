@@ -85,13 +85,21 @@ pub enum Incoming {
 pub struct BlobRequest {
   pub session_id: String,
   pub name: String,
+  /// Where to start: a download resuming its partial copy. A gateway that predates it sends the whole blob, and its
+  /// header then carries no `total`
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub offset: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BlobHeader {
+  /// The bytes that follow
   #[serde(default, skip_serializing_if = "Option::is_none")]
   size: Option<u64>,
+  /// The whole blob's size, set when the answer starts at the request's `offset`
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  total: Option<u64>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   error: Option<String>,
 }
@@ -114,17 +122,18 @@ pub async fn accept(conn: &Connection) -> Result<Incoming> {
   }
 }
 
-/// Gateway side: answer a blob request with its bytes, or why not
-pub async fn send_blob(send: SendStream, data: std::result::Result<Vec<u8>, String>) -> Result<()> {
+/// Gateway side: answer a blob request with its bytes from `offset` on (the whole blob without one), or why not
+pub async fn send_blob(send: SendStream, data: std::result::Result<Vec<u8>, String>, offset: Option<u64>) -> Result<()> {
   let mut tx = FrameWriter::start(send, Codec::Plain).await?;
+  let from = |d: &[u8]| offset.map_or(0, |o| usize::try_from(o).unwrap_or(usize::MAX).min(d.len()));
   let header = match &data {
-    Ok(d) => BlobHeader { size: Some(d.len() as u64), error: None },
-    Err(e) => BlobHeader { size: None, error: Some(e.clone()) },
+    Ok(d) => BlobHeader { size: Some((d.len() - from(d)) as u64), total: offset.map(|_| d.len() as u64), error: None },
+    Err(e) => BlobHeader { size: None, total: None, error: Some(e.clone()) },
   };
   tx.send(FrameKind::Control, &serde_json::to_vec(&header)?).await?;
   let mut send = tx.into_inner();
   if let Ok(d) = data {
-    send.write_all(&d).await?;
+    send.write_all(&d[from(&d)..]).await?;
   }
   send.finish()?;
   Ok(())
@@ -159,6 +168,77 @@ pub async fn fetch_blob(conn: &Connection, req: &BlobRequest, within: Duration) 
   })
   .await
   .map_err(|_| anyhow!("blob timed out"))?
+}
+
+/// Device side: download one blob into the file at `path`, resuming after the bytes it already holds, and answer the
+/// blob's size. Unlike `fetch_blob` there is no deadline for the whole file, which a large video on a slow path could
+/// never meet: only `idle` without a byte ends it, and the partial file stays for the next try. `progress` hears the
+/// bytes held and the total as they grow
+pub async fn fetch_blob_to(
+  conn: &Connection,
+  session_id: &str,
+  name: &str,
+  path: &std::path::Path,
+  idle: Duration,
+  mut progress: impl FnMut(u64, u64),
+) -> Result<u64> {
+  use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+  let mut file = tokio::fs::OpenOptions::new().create(true).truncate(false).write(true).open(path).await.context("open the download")?;
+  let mut have = file.metadata().await?.len();
+  let req = BlobRequest { session_id: session_id.to_owned(), name: name.to_owned(), offset: Some(have) };
+  let quiet = |what: &'static str| move |_| anyhow!("blob stalled ({what})");
+  let (mut send, recv) = tokio::time::timeout(idle, conn.open_bi()).await.map_err(quiet("open"))??;
+  send.write_all(&[STREAM_BLOB]).await?;
+  let mut tx = FrameWriter::start(send, Codec::Plain).await?;
+  tx.send(FrameKind::Control, &serde_json::to_vec(&req)?).await?;
+  tx.into_inner().finish()?;
+  let mut rx = tokio::time::timeout(idle, FrameReader::start(recv)).await.map_err(quiet("header"))??;
+  let (_, head) = tokio::time::timeout(idle, rx.next()).await.map_err(quiet("header"))??.ok_or_else(|| anyhow!("no answer"))?;
+  let head: BlobHeader = serde_json::from_slice(&head)?;
+  if let Some(e) = head.error {
+    bail!("{e}");
+  }
+  let size = head.size.unwrap_or(0);
+  let total = match head.total {
+    Some(total) => total,
+    // An older gateway sent the whole blob: start the file over
+    None => {
+      have = 0;
+      size
+    }
+  };
+  if total > MAX_BLOB || have + size != total {
+    bail!("blob of {total} bytes from {have}");
+  }
+  file.set_len(have).await?;
+  file.seek(std::io::SeekFrom::Start(have)).await?;
+  progress(have, total);
+  // Bytes the frame reader already pulled past the header (as in `fetch_blob`)
+  let first = rx.take_buffered();
+  let mut left = size;
+  if !first.is_empty() {
+    let n = (first.len() as u64).min(left);
+    file.write_all(&first[..n as usize]).await?;
+    have += n;
+    left -= n;
+    progress(have, total);
+  }
+  let recv = rx.get_mut();
+  let mut buf = vec![0u8; 64 << 10];
+  while left > 0 {
+    let want = buf.len().min(usize::try_from(left).unwrap_or(usize::MAX));
+    let n = tokio::time::timeout(idle, AsyncReadExt::read(recv, &mut buf[..want])).await.map_err(quiet("body"))??;
+    if n == 0 {
+      bail!("blob cut short");
+    }
+    file.write_all(&buf[..n]).await?;
+    have += n as u64;
+    left -= n as u64;
+    progress(have, total);
+  }
+  file.flush().await?;
+  file.sync_all().await?;
+  Ok(total)
 }
 
 /// Encode a control frame

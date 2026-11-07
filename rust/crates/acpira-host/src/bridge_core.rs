@@ -492,24 +492,28 @@ impl BridgeCore {
               return None;
             }
             let cwd = cwd?;
-            let named = if crate::platform::file_url::is_file_url(&path) { file_url_to_path(&path)? } else { path.clone() };
-            // On an SSH host: the host's own path (the Claude stand-in moved back, a relative one read against the host
-            // folder, `/` joins even on a Windows engine); `~` would name this machine's home, so it is refused
-            let resolved = match acpira_shared::remote::parse_remote_folder(&cwd) {
-              Some(f) => {
-                if named == "~" || named.starts_with("~/") {
-                  return None;
-                }
-                let stand = crate::acp::vendors::claude_remote::Stand::new(&f.alias, &f.path, &core.manager.data_root());
-                std::path::PathBuf::from(normalize_remote_path(&stand.host_path(&named))?)
-              }
-              None => normalize(&resolve_open_path(&cwd, &named)),
-            };
+            let resolved = core.staged_path(&cwd, &path)?;
             let ws = core.workspace(Some(cwd)).await.ok()?;
             core.manager.stage_file(&session_id, &ws, &resolved).await
           }
           .await;
           core.post_now(HostMsg::ImageBlob { seq, blob });
+        });
+      }
+      W::StageFile { session_id, path, seq } => {
+        let (core, cwd) = (self.clone(), manager.session_cwd(&session_id));
+        spawn_on(self.wire, async move {
+          let staged = async {
+            let ws = core.workspace(cwd.clone()).await?;
+            let resolved = cwd.as_deref().and_then(|c| core.staged_path(c, &path)).ok_or(project_files::ProjectError::Outside)?;
+            core.manager.stage_any_file(&session_id, &ws, &resolved).await
+          }
+          .await;
+          let msg = match staged {
+            Ok((blob, size)) => HostMsg::StagedFile { seq, blob: Some(blob), size: Some(size), error: None },
+            Err(e) => HostMsg::StagedFile { seq, blob: None, size: None, error: Some(e.code()) },
+          };
+          core.post_now(msg);
         });
       }
       // The desktop tool panel's reads (project_files.rs). Each is always answered, and runs on its own task: a git
@@ -934,6 +938,23 @@ impl BridgeCore {
   }
 
   /// A session folder's files (`workspace.rs`); "noProject" without one
+  /// The file a staging request names, read against the session's folder: a file URL or a path, `~` for this machine's
+  /// home. On an SSH host the host's own path (the Claude stand-in moved back, a relative one read against the host
+  /// folder, `/` joins even on a Windows engine); `~` would name this machine's home there, so it is refused
+  fn staged_path(&self, cwd: &str, path: &str) -> Option<std::path::PathBuf> {
+    let named = if crate::platform::file_url::is_file_url(path) { file_url_to_path(path)? } else { path.to_owned() };
+    match acpira_shared::remote::parse_remote_folder(cwd) {
+      Some(f) => {
+        if named == "~" || named.starts_with("~/") {
+          return None;
+        }
+        let stand = crate::acp::vendors::claude_remote::Stand::new(&f.alias, &f.path, &self.manager.data_root());
+        Some(std::path::PathBuf::from(normalize_remote_path(&stand.host_path(&named))?))
+      }
+      None => Some(normalize(&resolve_open_path(cwd, &named))),
+    }
+  }
+
   async fn workspace(&self, root: Option<String>) -> Result<crate::workspace::Workspace, project_files::ProjectError> {
     let root = root.ok_or_else(|| project_files::ProjectError::Other("noProject".into()))?;
     crate::workspace::Workspace::open(&root, Some(&self.connections)).await
