@@ -43,7 +43,9 @@ mkdir -p "$root/project" "$home/devices"
 printf '{"relays":{"mode":"off"}}\n' > "$home/devices/gateway.json"
 
 gateway() { env HOME="$root" ACPIRA_CATALOG_REFRESH=0 "$bin/acpira" gateway "$@" --home "$home"; }
-env HOME="$root" ACPIRA_CATALOG_REFRESH=0 "$bin/acpira" serve --socket "$home/run/engine.sock" --home "$home" --gateway --idle-grace 86400 \
+# No proxy-TUN bypass: its IPv4 socket on the physical address is out of reach of an Android emulator, which dials
+# the host through its loopback (10.0.2.2)
+env HOME="$root" ACPIRA_CATALOG_REFRESH=0 ACPIRA_NET_BYPASS=0 "$bin/acpira" serve --socket "$home/run/engine.sock" --home "$home" --gateway --idle-grace 86400 \
   2> "$root/gateway.log" &
 gw=$!
 until [ -S "$home/run/gateway.sock" ]; do

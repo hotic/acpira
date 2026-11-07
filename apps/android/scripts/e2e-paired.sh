@@ -38,7 +38,10 @@ for _ in $(seq 600); do
   kill -0 "$gateway" 2>/dev/null || { cat "$log" >&2; exit 1; }
   sleep 0.5
 done
-root="$(dirname "$(sed -n 's/^ACPIRA_TEST_GATEWAY=//p' "$log")")"
+link="$(sed -n 's/^ACPIRA_TEST_GATEWAY=//p' "$log")"
+# An empty link would make the root "." and every status call read the work tree
+[ -n "$link" ] || { cat "$log" >&2; echo "the gateway printed no link (its engine build may outlast the wait)" >&2; exit 1; }
+root="$(dirname "$link")"
 [ -d "$root" ] || { cat "$log" >&2; echo "the gateway printed no home" >&2; exit 1; }
 status() { env HOME="$root" "$repo/rust/target/debug/acpira" gateway status --json --home "$root/acpira"; }
 id="$(status | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"

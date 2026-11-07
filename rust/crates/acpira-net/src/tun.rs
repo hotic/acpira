@@ -41,8 +41,12 @@ pub struct Iface {
 }
 
 /// The bypass to use now, or none: no proxy TUN diverting traffic, no physical interface to bind, or neither macOS nor
-/// Windows
+/// Windows. `ACPIRA_NET_BYPASS=0` turns it off: a test gateway that an Android emulator dials through the host's
+/// loopback needs the wildcard IPv4 socket, which a bypass replaces with one on the physical address
 pub async fn detect() -> Option<Bypass> {
+  if std::env::var_os("ACPIRA_NET_BYPASS").is_some_and(|v| v == "0") {
+    return None;
+  }
   #[cfg(target_os = "macos")]
   {
     let (defaults, ifaces) = macos().await;
