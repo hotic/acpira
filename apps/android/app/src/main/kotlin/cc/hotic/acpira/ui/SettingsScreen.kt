@@ -1,5 +1,6 @@
 package cc.hotic.acpira.ui
 
+import cc.hotic.acpira.design.readableWidth
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -64,9 +65,7 @@ fun SettingsScreen(model: AppModel) {
       TopAppBar(
         title = { Text(t("session.settings"), fontSize = Type.barTitle, fontWeight = FontWeight.SemiBold) },
         navigationIcon = {
-          IconButton(onClick = { model.pop() }, modifier = Modifier.testTag("settings.back")) {
-            Lucide("arrowLeft", Palette.fg1, size = Metrics.iconCtl, contentDescription = t("common.back"))
-          }
+          LeadButton("settings.back") { model.pop() }
         },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = Palette.formPage),
       )
@@ -74,7 +73,7 @@ fun SettingsScreen(model: AppModel) {
   ) { padding ->
     Column(
       // The page runs under the gesture bar; only the content keeps clear of it, so it never ends in a hard cut above the bar
-      Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()).verticalScroll(rememberScrollState()).padding(horizontal = Metrics.pad).navigationBarsPadding().padding(bottom = Metrics.pad),
+      Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()).verticalScroll(rememberScrollState()).readableWidth().padding(horizontal = Metrics.pad).navigationBarsPadding().padding(bottom = Metrics.pad),
       verticalArrangement = Arrangement.spacedBy(Metrics.s6),
     ) {
       FormSection(t("settings.appearance.title")) {

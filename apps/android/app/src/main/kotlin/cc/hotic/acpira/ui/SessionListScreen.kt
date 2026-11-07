@@ -46,6 +46,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.SolidColor
@@ -115,7 +116,7 @@ fun SessionListScreen(model: AppModel) {
         colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Palette.bg0, scrolledContainerColor = Palette.bg0),
       )
     },
-    bottomBar = { if (!covered) ListBottomBar(query, { query = it }) { model.push(Screen.New()) } },
+    bottomBar = { if (!covered) ListBottomBar(query, { query = it }) { model.open(Screen.New()) } },
   ) { padding ->
     if (covered) {
       PairHeroList(pairing!!, Modifier.padding(padding))
@@ -134,7 +135,8 @@ fun SessionListScreen(model: AppModel) {
               agentName = model.agent(s.agent).name,
               place = model.placeName(s.cwd),
               time = if (group.dated) null else sessionTime(s.updatedAt, now),
-              onSelect = { model.push(Screen.Chat(s.id)) },
+              active = model.listInSidebar && model.path.firstOrNull() == Screen.Chat(s.id),
+              onSelect = { model.open(Screen.Chat(s.id)) },
               onPin = { model.togglePin(s.id) },
               onDelete = { model.delete(s.id) },
             )
@@ -202,6 +204,8 @@ private fun SessionRow(
   agentName: String,
   place: String?,
   time: String?,
+  /** The chat open beside the sidebar */
+  active: Boolean = false,
   onSelect: () -> Unit,
   onPin: () -> Unit,
   onDelete: () -> Unit,
@@ -214,6 +218,7 @@ private fun SessionRow(
       modifier = Modifier
         .fillMaxWidth()
         .heightIn(min = Metrics.sessionRow)
+        .background(if (active) Palette.active else Color.Transparent)
         .combinedClickable(onClick = onSelect, onLongClick = { menu = true })
         .padding(horizontal = Metrics.pad)
         .testTag("session:${session.id}"),

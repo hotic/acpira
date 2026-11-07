@@ -1,5 +1,6 @@
 package cc.hotic.acpira.ui
 
+import cc.hotic.acpira.design.readableWidth
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -240,7 +241,7 @@ internal fun FormPage(model: AppModel, title: String, actions: @Composable () ->
     Column(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
       top()
       Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = Metrics.pad).navigationBarsPadding().imePadding()
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).readableWidth().padding(horizontal = Metrics.pad).navigationBarsPadding().imePadding()
           .padding(bottom = Metrics.pad),
         verticalArrangement = Arrangement.spacedBy(Metrics.s6),
         content = content,

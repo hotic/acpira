@@ -237,6 +237,21 @@ class AppModel(
     if (screen is Screen.Chat) select(screen.id)
   }
 
+  /**
+   * The session list stands in a sidebar beside the detail column (a wide window, ui/Root.kt): a pick there replaces
+   * the page beside it instead of pushing over the list (apps/ios RootView `listInSidebar`)
+   */
+  var listInSidebar by mutableStateOf(false)
+
+  /** A pick from the list: pushed over it on a phone, the detail column's new root beside the sidebar */
+  fun open(screen: Screen) {
+    if (!listInSidebar) return push(screen)
+    val left = path.lastOrNull { it is Screen.Chat } as Screen.Chat?
+    path.clear()
+    if (left != null && left != screen) post(WebviewMsg.DeselectSession(left.id))
+    push(screen)
+  }
+
   /** The top screen goes; a chat left for the list stops counting as watched */
   fun pop() {
     val top = path.removeLastOrNull() ?: return

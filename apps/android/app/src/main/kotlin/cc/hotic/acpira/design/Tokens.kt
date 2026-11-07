@@ -197,7 +197,16 @@ object Metrics {
   val ringMark = 22.dp
   val ringRadiusMin = 96.dp
   val ringPitch = 104.dp
+  /** The reading column: transcripts, composers and forms hold to it, centred in whatever is wider */
   val contentW = 720.dp
+  /** The session list's column beside the detail in a wide window (apps/ios Metrics.sidebarW) */
+  val sidebarW = 320.dp
+  /**
+   * A window at least this wide and tall splits into the list and the page beside it (Material's medium width and
+   * height): a phone held sideways is wide but short, so it keeps the stack with the reading column centred
+   */
+  val splitMinW = 600.dp
+  val splitMinH = 480.dp
   /** A settings row's online dot */
   val rowDot = 8.dp
   // Pairing (apps/ios Pairing/PairingTokens.swift)
