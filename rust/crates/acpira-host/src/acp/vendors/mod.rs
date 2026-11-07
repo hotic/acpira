@@ -15,6 +15,7 @@ pub mod claude_workflow_log;
 pub mod claude_window;
 pub mod goal;
 pub mod grok;
+pub mod hermes;
 pub mod kimi_failure;
 pub mod logged_failure;
 pub mod pi_failure;
@@ -28,6 +29,7 @@ pub enum Vendor {
   Claude,
   Codex,
   Grok,
+  Hermes,
   Kimi,
   Pi,
   Other,
@@ -66,6 +68,7 @@ impl Vendor {
       "claude" => Vendor::Claude,
       "codex" => Vendor::Codex,
       "grok" => Vendor::Grok,
+      "hermes" => Vendor::Hermes,
       "kimi" => Vendor::Kimi,
       "pi" => Vendor::Pi,
       _ => Vendor::Other,
@@ -84,6 +87,18 @@ impl Vendor {
   /// The context snapshot arrives after the prompt response (Kimi): auto-compaction waits for it before deciding
   pub fn late_usage(self) -> bool {
     self == Vendor::Kimi
+  }
+
+  /// Tool titles carry the tool's name and a terminal result arrives as a Markdown list (`hermes::tidy_tool`); the
+  /// reply ends with the reasoning and the reply again (`hermes::reasoning_recap`)
+  pub fn hermes_output(self) -> bool {
+    self == Vendor::Hermes
+  }
+
+  /// session/resume streams the history back like session/load (hermes-agent 0.22.5 `_session_response_fields`), so a
+  /// resume over a local transcript is a replay too
+  pub fn replays_on_resume(self) -> bool {
+    self == Vendor::Hermes
   }
 
   /// The adapter's `usage_update.size` is corrected from the catalogue and confirmed after a clean turn (`claude_window`)

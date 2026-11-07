@@ -4,13 +4,13 @@ import type { SessionOption } from '@acpira/shared/transcript';
 import { t } from '../i18n';
 
 // ACP modes carry only id / name / description, so the glyph is inferred from keywords in id + name (Devin: code / smart / ask / plan / bypass;
-// Grok synthetic: default / plan / yolo; Kimi and custom agents fall through the same table). First match wins; unknown modes get a dashed circle
+// Grok synthetic: default / plan / yolo; Droid spec; Kimi and custom agents fall through the same table). First match wins; unknown modes get a dashed circle
 const RULES: [RegExp, LucideIcon][] = [
   // The built-in agent's Raw mode: the agent's tools unplugged, the model reached directly
   [/\braw\b/, Unplug],
   [/bypass|yolo|auto[\s-]?accept|full[\s-]?access|unsafe/, ShieldOff],
   [/debug/, Bug],
-  [/plan/, ListTodo],
+  [/plan|\bspec\b/, ListTodo],
   [/read[\s-]?only/, Eye],
   // Codex `workspace-write`: edits allowed inside the workspace only
   [/workspace/, FolderPen],
@@ -27,6 +27,14 @@ export function modeIcon(mode: SessionOption): LucideIcon {
   if (mode.kind === 'full_access') return ShieldOff;
   if (mode.kind === 'auto_review') return Sparkles;
   if (mode.id === 'auto_edit' || mode.id === 'acceptEdits') return Code;
+  return Object.hasOwn(BY_ID, mode.id) ? BY_ID[mode.id]! : byKeyword(mode);
+}
+
+// Ids the keywords misread: Droid's `normal` is named "Auto (Off)" (asks before edits), its `auto-high` approves everything;
+// Hermes's `dont_ask` auto-allows edits rather than asking
+const BY_ID: Record<string, LucideIcon> = { normal: InfinityIcon, 'auto-high': ShieldOff, dont_ask: Sparkles };
+
+function byKeyword(mode: SessionOption): LucideIcon {
   const key = `${mode.id} ${mode.name}`.toLowerCase();
   return RULES.find(([re]) => re.test(key))?.[1] ?? CircleDashed;
 }
@@ -45,6 +53,8 @@ const SHORT: Record<string, MsgKey> = {
   raw: 'composer.modeShort.raw',
   team: 'composer.modeShort.team',
   acceptEdits: 'composer.modeShort.autoEdit',
+  // Hermes
+  accept_edits: 'composer.modeShort.autoEdit',
   auto_edit: 'composer.modeShort.autoEdit',
   auto: 'composer.modeShort.auto',
   smart: 'composer.modeShort.smart',
@@ -52,6 +62,8 @@ const SHORT: Record<string, MsgKey> = {
   bypass: 'composer.modeShort.full',
   yolo: 'composer.modeShort.full',
   'agent-full-access': 'composer.modeShort.full',
+  // Droid's Auto (High)
+  'auto-high': 'composer.modeShort.full',
   'read-only': 'composer.modeShort.readOnly',
   'workspace-write': 'composer.modeShort.workspace',
   ask: 'composer.modeShort.ask',

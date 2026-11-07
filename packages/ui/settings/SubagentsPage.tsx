@@ -18,7 +18,7 @@ import type { SettingsHandlers } from './SettingsShell';
 
 // The read-only mode the relay finds on the CLIs whose modes are recorded (docs/acp-agents-compat.md; null = none);
 // any other CLI is tried at run time against acp/session/relay.rs READ_ONLY_MODES
-const READ_ONLY: Partial<Record<AgentId, string | null>> = { codex: 'read-only', claude: 'plan', opencode: 'plan', dsh: null };
+const READ_ONLY: Partial<Record<AgentId, string | null>> = { codex: 'read-only', claude: 'plan', opencode: 'plan', dsh: null, droid: 'spec', hermes: null };
 // The persona's default access: following the caller first (a new persona's default), then least to most; the i18n keys
 // are `subagents.page.<mode>` and `<mode>Desc`
 const MODES: RelayMode[] = ['inherit', 'consult', 'work', 'bypass'];

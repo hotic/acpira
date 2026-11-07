@@ -13,7 +13,7 @@ use crate::acp::transcript::normalize::{WAKEUP_VERBS, activity_of, apply_async_t
 use crate::acp::transcript::plans::{capture_plan, plan_documents};
 use crate::acp::transcript::subagent_tree::{Route, RouteCtx};
 use crate::acp::transport::wire::{ExtensionUpdate, extension_of};
-use crate::acp::vendors::{claude_autonomous, claude_wakeup, claude_window, goal, steering};
+use crate::acp::vendors::{claude_autonomous, claude_wakeup, claude_window, goal, hermes, steering};
 use crate::util::now_ms;
 
 const RUNNING_KINDS: [&str; 6] =
@@ -171,6 +171,18 @@ impl AcpSession {
       c.usage.reported_window = Some(size);
       if let Some(w) = claude_window::correct(c.account_id.as_deref(), &c.state.controls, size, &crate::model_catalog::current()) {
         u["size"] = w.into();
+      }
+    }
+    if self.vendor.hermes_output() {
+      if matches!(kind.as_str(), "tool_call" | "tool_call_update") {
+        hermes::tidy_tool(&mut u);
+      }
+      if kind == "agent_message_chunk"
+        && let Some(text) = u.get("content").filter(|x| x.get("type").and_then(Value::as_str) == Some("text")).and_then(|x| x.get("text")).and_then(Value::as_str)
+        && hermes::reasoning_recap(text, current_reply(&c.state.turns))
+      {
+        self.log("reasoning projection ignored");
+        return;
       }
     }
     if kind == "agent_message_chunk"
@@ -345,6 +357,12 @@ impl AcpSession {
 }
 
 /// The newest text the host sent the agent: the last steer into the current agent turn, else the prompt that opened it
+/// The running agent turn's last text block: the final reply, after any interim text that went before its tools
+fn current_reply(turns: &[Turn]) -> &str {
+  let Some(Turn::Agent(a)) = turns.last() else { return "" };
+  a.blocks.iter().rev().find_map(|b| if let AgentBlock::Text(t) = b { Some(t.markdown.as_str()) } else { None }).unwrap_or("")
+}
+
 fn last_sent_text(turns: &[Turn]) -> Option<&str> {
   for t in turns.iter().rev() {
     match t {

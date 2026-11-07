@@ -48,6 +48,8 @@ Regression check (2026-09-23, initialize only, vs. without `auth.terminal`): gro
 | OpenCode | `opencode` 1.18.15 (Homebrew); 1.18.35 (npm, Windows) handshakes the same | built in (`opencode acp`), `agentInfo` `OpenCode 1.18.15` | same |
 | DeepSeek Harness | `dsh` 0.1.5-rc.2 (`@deepseek-ai/dsh`) | `dsh --profile acp`, `agentInfo` `deepseek-harness-acp 0.0.1` (the ACP package version, not the CLI's) | same |
 | Pi | `pi` 0.86.0 (`@earendil-works/pi-coding-agent`) | `pi-acp` 0.0.33 (svkozak/pi-acp; spawns `pi --mode rpc`) | same |
+| Droid | `droid` 1.6.0 (bundled with the Factory desktop app 1.6.0) | built in (`droid exec --output-format acp`) | same |
+| Hermes Agent | `hermes-agent` 0.22.5 (git install, Python 3.14) | built in (`hermes acp`) | same |
 
 Source checkouts consulted: `deepseek-ai/deepseek-harness` `packages/acp/acp` @ 0.1.6-alpha.2, `svkozak/pi-acp` @ 0.0.33 (`src/acp/agent.ts`, `translate/bash.ts`, `session-store.ts`).
 
@@ -196,6 +198,41 @@ Google's official ACP server (`agy_acp_server`, ACP Registry id `antigravity-acp
 | skills | `<home>/config/skills`, `<home>/antigravity-cli/skills`, `<cwd>/.gemini/skills`, `<cwd>/.agents/skills` — not `~/.agents/skills`, so the Shared tab links global skills into `~/.gemini/config/skills` | source |
 | rules | `GEMINI.md`, `AGENTS.md` and `.agents/rules/*.md` hierarchically up to the repo root; the global customization root is `<home>/config/` (`rules/` or a standalone `AGENTS.md` / `GEMINI.md`), where the Shared tab links `~/.agents/AGENTS.md` | source |
 | MCP | `<home>/config/mcp_config.json` merged with session/new `mcpServers` | source |
+
+## Factory Droid and Hermes Agent (droid 1.6.0, hermes-agent 0.22.5)
+
+Both speak ACP natively. Droid runs as `droid exec --output-format acp`, the command Factory's docs give. The ACP Registry entry uses `acp-daemon` instead, which left its process running for a while after the parent exited, so the built-in entry does not use it. The Factory desktop app bundles a `droid` (`/Applications/Factory.app/Contents/Resources/bin/droid`), which is one of the candidates. Hermes runs as `hermes acp`, from the launcher its installer writes to `~/.local/bin`. Rows marked verified come from `pnpm probe` and real turns through `scripts/probe/agent-host.ts` and `restore-host.ts`.
+
+| Fact | Droid | Hermes Agent | Grade |
+|---|---|---|---|
+| `agentInfo` | `@factory/cli` 1.6.0, title "Factory Droid" | `hermes-agent` 0.22.5 | verified |
+| `loadSession` / `sessionCapabilities` | true / `list resume close fork`; `auth.logout` | true / `list resume fork` | verified |
+| `promptCapabilities` | image + embeddedContext | image only | verified |
+| client MCP servers | `mcpCapabilities` `http`, `sse`; launches a stdio server from `session/new` (`initialize`, `tools/list`) | no `mcpCapabilities`; launches a stdio server the same way | verified |
+| `authMethods` | `device-pairing` (a pairing code in the browser), `factory-api-key` (`FACTORY_API_KEY`); none `type: terminal` | `custom` (the credentials already configured), `hermes-setup` (`type: terminal`, args `--setup`) | verified (shape); the flows are unverified |
+| modes | `normal` "Auto (Off)" (asks before edits), `spec` (read only), `auto-low`, `auto-medium`, `auto-high` (approves everything), mirrored by an `autonomy_level` select (`category: mode`); the current mode comes from the user's settings | `default`, `accept_edits`, `dont_ask` | verified |
+| model controls | `model` select (Factory-routed models), `reasoning_effort` (`thought_level`) | no configOptions; the legacy `models` field only, ids `custom:<provider>:<model>` with "Provider: <name>" as the description; `transport/legacy_models.rs` presents it as a model select switched through `session/set_model` | verified |
+| `available_commands_update` | after the response: the discovered skills (`~/.agents/skills` among them) and built-ins | after the response: `/help /model /tools /context /reset /compress /steer /queue /usage /status /version /title /undo /retry` | verified |
+| `session/new` extras | none | `_meta.hermes.sessionProvenance` (root / parent ids, compression depth) | verified |
+| teardown | exits when stdin closes; no orphan | exits on SIGTERM; no orphan | verified |
+| skills | `~/.factory/skills`, `~/.agents/skills`, `.factory/skills`, `.agents/skills` | user: `~/.hermes/skills` only, nested by category. Project `.hermes/skills` and `.agents/skills` load only once `hermes skills trust` lists the project (`config.yaml` `skills.trusted_project_dirs`). The Shared tab still counts the project scope as native | source |
+| rules | `AGENTS.md` / `CLAUDE.md` from the cwd up to the git root, also in `.factory/` and `.agents/`; global `~/.factory/` and `~/.agents/`, so the shared prompt needs no link | `AGENTS.override.md` / `AGENTS.md`, `CLAUDE.md`, `.hermes.md` / `HERMES.md`, `.cursorrules`; the global `~/.hermes/SOUL.md` is an identity, so the shared prompt has no place there | source |
+| own MCP config | `~/.factory/mcp.json`, `.factory/mcp.json` (`mcpServers`) | `config.yaml` `mcp_servers` (YAML, not read by the inventory) | source |
+| permission options | `proceed_once` (allow_once), `proceed_always` (allow_always), `cancel` (reject_once) | `allow_once` and a deny only | verified |
+| plan review | `spec` ends with a permission request whose `plan_document` the card links; rejecting it settles the turn | none | verified |
+| usage | `usage_update` with a 250000 window | `usage_update` with input / output / cached read | verified |
+| images | `image` content is accepted, but its Read tool hands the model the text `[Image: image/png]` only | the vision tool gets no image bytes, so answers about the picture are guesses | verified |
+| reply shape | plain message chunks | with `display.show_reasoning` (default) one extra chunk repeats the last reasoning in a `💭` fence plus the whole reply; tool titles are `<tool>: <preview>`, terminal results a Markdown list. `vendors/hermes.rs` drops the repeat and tidies the rows | verified |
+| restore | `session/resume` keeps the history; no replay, no duplicates | `session/resume` replays the history like `session/load` (the engine treats it as a replay); resuming an unknown id silently starts a fresh session | verified |
+| `session/list` | lists its sessions; import replays them | always empty: sessions with messages are stored with `source = 'local'` (`created_source = 'acp'`), while the ACP catalog filters on `source = 'acp'` (`acp_adapter/catalog.py`), which holds only empty shells. Native import has nothing to offer; the engine's own records are unaffected | verified, Hermes bug |
+
+Open:
+
+- Droid `device-pairing` and Hermes `custom` on a signed-out machine.
+- How a consult round behaves in Droid's `spec` mode.
+- Whether Hermes's `accept_edits` / `dont_ask` skip its permission requests.
+- Hermes `/steer` as a stand-in for `_session/steering`, which Hermes does not advertise.
+- Windows: Hermes's `%LOCALAPPDATA%\hermes\bin` comes from its install docs, and neither CLI has run on Windows.
 
 ## Open items (not yet verified)
 

@@ -5,7 +5,8 @@ import type { SessionView } from '@acpira/shared/transcript';
 import { Host, type View } from '../lib/host';
 
 // Host-path restore/import round trip for any registered agent (real CLI, real model — a couple of tiny prompts):
-//   pnpm exec tsx scripts/probe/restore-host.ts <agent> [--keep]
+//   pnpm exec tsx scripts/probe/restore-host.ts <agent> [--keep] [--model ID]
+// --model ID: pick that model (the session's model control) before each prompt, to keep the run cheap
 // Each "host" is a Rust sidecar (scripts/lib/host.ts) over its own data dir; the CLI's own store is shared.
 // (a) host1 on store S: new session, "pong" prompt, dispose.
 // (b) host2 on the same store S: open the record — same acpSessionId, no replayed/duplicated turns, no re-sent prompt —
@@ -14,6 +15,16 @@ import { Host, type View } from '../lib/host';
 //     re-listing marks it localId. PASS/FAIL per check; exits 1 when any check failed.
 const [agentId = 'codex', ...flags] = process.argv.slice(2);
 const keep = flags.includes('--keep');
+const modelAt = flags.indexOf('--model');
+const model = modelAt >= 0 ? flags[modelAt + 1] : undefined;
+async function pickModel(m: View) {
+  const ctl = model ? m.active()?.controls.options.find(o => o.category === 'model') : undefined;
+  if (!model || !ctl || ctl.value === model) return;
+  await m.handle({ type: 'setConfig', configId: ctl.id, value: model });
+  const t0 = Date.now();
+  while (m.active()?.controls.options.find(o => o.id === ctl.id)?.value !== model && Date.now() - t0 < 30_000) await new Promise(r => setTimeout(r, 50));
+  console.log('model:', m.active()?.controls.options.find(o => o.id === ctl.id)?.value);
+}
 const project = mkdtempSync(join(tmpdir(), `acpira-${agentId}-restore-project-`));
 const storeA = mkdtempSync(join(tmpdir(), `acpira-${agentId}-restore-a-`));
 const storeB = mkdtempSync(join(tmpdir(), `acpira-${agentId}-restore-b-`));
@@ -43,6 +54,7 @@ try {
   check('m1 session ready', v.status === 'ready', `${v.status}${v.error ? `: ${v.error}` : ''}`);
   if (v.status !== 'ready') throw new Error('m1 not ready');
   const localId = m1.activeId!;
+  await pickModel(m1);
   await m1.handle({ type: 'send', text: 'Reply with exactly the word pong.' });
   await until(() => !m1.active()!.running && m1.active()!.turns.length >= 2, 120_000, 'first reply');
   v = m1.active()!;
@@ -67,6 +79,7 @@ try {
   check('restored session ready', rv.status === 'ready', `${rv.status}${rv.error ? `: ${rv.error}` : ''}`);
   check('same acpSessionId after restore', m2.sessions().find(s => s.id === localId)?.acpSessionId === acpSessionId, m2.sessions().find(s => s.id === localId)?.acpSessionId);
   check('no turns duplicated or re-sent on restore', rv.turns.length === turnsAfter, `${rv.turns.length} vs ${turnsAfter}`);
+  await pickModel(m2);
   await m2.handle({ type: 'send', text: 'What single word did you reply in your first answer? Reply with only that word.' });
   await until(() => !m2.active()!.running && m2.active()!.turns.length === turnsAfter + 2, 120_000, 'restore follow-up');
   check('restored session still knows pong', /pong/i.test(text(m2.active()!)), text(m2.active()!).slice(0, 60));

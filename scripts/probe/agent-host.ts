@@ -7,7 +7,7 @@ import { Host } from '../lib/host';
 import { builtinAgent } from '../lib/sidecarBin';
 
 // Generic host-path smoke for any registered agent (real CLI, real model):
-//   pnpm exec tsx scripts/probe/agent-host.ts <agent> [--attach] [--shell] [--write] [--plan] [--image] [--background] [--failure] [--env KEY=VALUE]... [--raw]
+//   pnpm exec tsx scripts/probe/agent-host.ts <agent> [--model ID] [--attach] [--shell] [--write] [--plan] [--image] [--background] [--failure] [--env KEY=VALUE]... [--raw]
 // new session → controls / commands / no ghost turn → "pong" prompt → optionally a dropped text attachment (--attach: goes as an
 // embedded resource or a marked-up text block depending on promptCapabilities.embeddedContext) → optionally a shell command
 // (--shell: the tool row must carry the command and its output, permission cards are answered like a click).
@@ -17,6 +17,7 @@ import { builtinAgent } from '../lib/sidecarBin';
 //   --background asks for a backgrounded `sleep` → the tool row keeps running past end_turn, settles completed; a second
 //                long task is stopped through _session/async_task/stop and the sleep process is gone afterwards
 //   --failure    expects the first prompt to fail: asserts the structured AIR sessionFailure view instead of pong
+//   --model ID   switch the session's model control to ID first (a cheap model keeps the run's cost down)
 //   --env K=V    repeatable: extra env for the agent process (e.g. ANTHROPIC_BASE_URL=http://127.0.0.1:9)
 //   --raw        dump the last agent turn's blocks as JSON after each scenario
 //   --home DIR   use DIR as the data root instead of a fresh temp one (the built-in agent reads providers.json there)
@@ -30,6 +31,8 @@ const image = flags.includes('--image');
 const background = flags.includes('--background');
 const failure = flags.includes('--failure');
 const raw = flags.includes('--raw');
+const modelAt = flags.indexOf('--model');
+const model = modelAt >= 0 ? flags[modelAt + 1] : undefined;
 const env: Record<string, string> = {};
 for (let i = 0; i < flags.length; i++) {
   if (flags[i] !== '--env') continue;
@@ -94,6 +97,14 @@ try {
   check('session ready', v.status === 'ready', v.error);
   check('no ghost turn after start', v.turns.length === 0, `${v.turns.length} turns`);
   if (v.status !== 'ready') throw new Error('not ready');
+  if (model) {
+    const ctl = v.controls.options.find(o => o.category === 'model');
+    if (!ctl) throw new Error('no model control to set');
+    await m.handle({ type: 'setConfig', configId: ctl.id, value: model });
+    await until(() => m.active()!.controls.options.find(o => o.id === ctl.id)?.value === model, 30_000, `model → ${model}`);
+    v = m.active()!;
+    check(`model set to ${model}`, true);
+  }
 
   await m.handle({ type: 'send', text: 'Reply with exactly the word pong and nothing else.' });
   v = m.active()!;
@@ -159,7 +170,7 @@ try {
     // Codex read-only only gates files OUTSIDE its writable roots — and its workspaceWrite policy keeps $TMPDIR
     // and /tmp writable — so its note.txt lands in $HOME, outside both. Claude's default asks either way and
     // writes inside the project.
-    const want = agentId === 'claude' ? 'default' : agentId === 'codex' ? 'read-only' : undefined;
+    const want = ({ claude: 'default', codex: 'read-only', droid: 'normal', hermes: 'default' } as Record<string, string>)[agentId];
     if (want && v.controls.modes.some(x => x.id === want)) {
       await m.handle({ type: 'setMode', id: want });
       console.log('mode set to', m.active()!.controls.modeId);
@@ -195,10 +206,12 @@ try {
 
   if (plan) {
     // Claude's and the built-in agent's plan mode is a mode; Codex exposes planning as the collaboration_mode config option
-    if ((agentId === 'claude' || agentId === 'acpira') && v.controls.modes.some(x => x.id === 'plan')) {
-      await m.handle({ type: 'setMode', id: 'plan' });
+    // Droid's planning mode is `spec`
+    const planMode = agentId === 'droid' ? 'spec' : 'plan';
+    if ((agentId === 'claude' || agentId === 'acpira' || agentId === 'droid') && v.controls.modes.some(x => x.id === planMode)) {
+      await m.handle({ type: 'setMode', id: planMode });
       // The view follows the agent's answer, which can land after handle() returns
-      await until(() => m.active()!.controls.modeId === 'plan', 15_000, 'mode → plan');
+      await until(() => m.active()!.controls.modeId === planMode, 15_000, `mode → ${planMode}`);
       console.log('mode set to', m.active()!.controls.modeId);
     }
     if (agentId === 'codex' && v.controls.options.some(o => o.id === 'collaboration_mode')) {
