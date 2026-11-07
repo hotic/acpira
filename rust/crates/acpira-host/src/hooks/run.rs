@@ -133,6 +133,11 @@ async fn output_in(hook: &Hook, dir: &Path, root: &Path, payload: &Value, env: &
     .env("ACPIRA_PROJECT_DIR", root)
     // Scripts written for Claude Code find the project the same way
     .env("CLAUDE_PROJECT_DIR", root);
+  // Same PATH the agents run with: an engine started from the Dock or launchd inherits a bare PATH without node,
+  // python or anything Homebrew / a version manager installed
+  if let Some(path) = crate::acp::agents::login_path::merged() {
+    cmd.env("PATH", path);
+  }
   for (k, v) in env {
     cmd.env(k, v);
   }
