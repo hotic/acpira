@@ -277,7 +277,11 @@ export function AppMenu({ onOpenSettings, onOpenExternal, quick, agentUpdate }: 
   const row = devicesShown(useRemoteAccess());
   // Something new to install, an agent's adapter or Acpira itself: a breathing dot in the gear's top right corner, which the
   // round glyph leaves empty
-  const mark = (agentUpdate || appUpdatePending(useUpdateState())) && (
+  const appUpdate = appUpdatePending(useUpdateState());
+  // The trail goes on inside the menu: the Settings item carries the dot too and opens straight on the page whose rail
+  // entry is marked (About for Acpira itself, Models for an agent's adapter), so the dot leads somewhere each step
+  const updatePage: SettingsPage | undefined = appUpdate ? { kind: 'about' } : agentUpdate ? { kind: 'models' } : undefined;
+  const mark = updatePage && (
     // Placed by a wrapper: the dot's halo (motion.css .unread-halo) makes the dot itself position: relative
     <span className="absolute -top-1 -right-1 flex"><UpdateDot /></span>
   );
@@ -291,9 +295,10 @@ export function AppMenu({ onOpenSettings, onOpenExternal, quick, agentUpdate }: 
         </button>} />
         {/* No collision padding: the gear sits closer to the window's edge than the shell's pad, which shifted the menu off it */}
         <DropdownMenu.Portal><DropdownMenu.Positioner side="top" align="start" width="md" collisionPadding={0}><DropdownMenu.Popup>
-          <DropdownMenu.Item onClick={() => onOpenSettings()}>
+          <DropdownMenu.Item onClick={() => onOpenSettings(updatePage)}>
             <OptionContent icon={<Settings2 strokeWidth={1.5} />}>{t('session.settings')}</OptionContent>
-            <span className="shrink-0 text-3 text-fg-3">{shortcutLabel(',')}</span>
+            {/* The dot takes the shortcut's place: one mark at the row's end */}
+            {updatePage ? <UpdateDot /> : <span className="shrink-0 text-3 text-fg-3">{shortcutLabel(',')}</span>}
           </DropdownMenu.Item>
           <DropdownMenu.Item onClick={() => onOpenSettings({ kind: 'appearance' })}>
             <OptionContent icon={<Palette strokeWidth={1.5} />}>{t('settings.nav.appearance')}</OptionContent>
