@@ -194,6 +194,7 @@ jobs:
           appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
           NODE
       - run: pnpm install --frozen-lockfile
+      - run: pnpm audit
       - uses: actions/download-artifact@v8
         with:
           pattern: sidecar-*
