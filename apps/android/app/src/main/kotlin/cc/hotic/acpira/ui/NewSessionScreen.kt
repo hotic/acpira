@@ -59,14 +59,19 @@ import cc.hotic.acpira.store.Screen
 fun NewSessionScreen(model: AppModel, screen: Screen.New) {
   val agents = model.startable
   // As the iOS app picks it (RootView destination): the asked agent, else the newest session's, else the first that can start
-  var agent by rememberSaveable {
-    mutableStateOf(screen.agent ?: model.summaries.maxByOrNull { it.updatedAt }?.agent ?: agents.firstOrNull()?.id ?: model.settings.defaultAgent)
-  }
+  // Until the user picks one the default follows the engine: the split's detail column opens this page before init
+  // brings the agents and sessions, and the built-in fallback it had then cannot start anything
+  var pickedAgent by rememberSaveable { mutableStateOf<String?>(null) }
+  // The newest session's agent only while it can still start (it may have been switched off since)
+  val agent = pickedAgent
+    ?: screen.agent ?: model.summaries.filter { s -> agents.any { it.id == s.agent } }.maxByOrNull { it.updatedAt }?.agent
+    ?: agents.firstOrNull()?.id ?: model.settings.defaultAgent
   // The latest project unless asked otherwise; a chat when the computer has none. Folders added by hand lead
   val projects = remember(model.summaries, model.projectOrder, model.addedProjects) {
     (model.addedProjects + model.projectOrder + model.summaries.sortedByDescending { it.updatedAt }.map { it.cwd }).filter { it.isNotEmpty() && !model.isChat(it) }.distinct()
   }
-  var cwd by rememberSaveable { mutableStateOf(screen.cwd ?: projects.firstOrNull()) }
+  var pickedCwd by rememberSaveable { mutableStateOf<String?>(null) }
+  val cwd = pickedCwd ?: screen.cwd ?: projects.firstOrNull()
   var draft by rememberSaveable { mutableStateOf("") }
   var staged by remember { mutableStateOf<List<Staged>>(emptyList()) }
   val goo = remember { Goo() }
@@ -155,7 +160,7 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
         open = ring,
         motion = model.motion,
         onOpen = { ring = it },
-        onSelect = { agent = it },
+        onSelect = { pickedAgent = it },
         landing = landing,
         onLanding = { landing = it },
         modifier = Modifier.padding(bottom = Metrics.s3),
@@ -197,7 +202,7 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
           projects = projects,
           name = model::placeName,
           onDismiss = { pickFolder = false },
-          onPick = { cwd = it; pickFolder = false },
+          onPick = { pickedCwd = it; pickFolder = false },
           onAdd = { pickFolder = false; adding = true },
         )
       }
@@ -207,7 +212,7 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
   // The composer's open picker, over everything (the composer included), so no piece hides under the card
   GooLayer(goo, model.motion)
   // Add folder: the browser over the whole page; the added folder becomes this draft's
-  AddProject(model, adding, onClose = { adding = false }, onAdded = { cwd = it })
+  AddProject(model, adding, onClose = { adding = false }, onAdded = { pickedCwd = it })
   }
 }
 
