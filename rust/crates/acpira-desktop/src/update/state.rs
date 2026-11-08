@@ -295,6 +295,17 @@ impl Updater {
     }
     let dir = stage::staging_dir(&installed, &self.env.cache, &version);
     self.prune(&version);
+    // An earlier update to this version left the bundle it replaced here, and an engine's launcher still runs from it
+    // (apply): set it aside under a name prune knows, instead of building over it
+    if in_use(&dir) {
+      let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+      let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+      let aside = match name.strip_suffix(".staging") {
+        Some(stem) => dir.with_file_name(format!("{stem}-{stamp}.staging")),
+        None => dir.with_file_name(format!("{name}-{stamp}")),
+      };
+      std::fs::rename(&dir, &aside).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     if !dir.starts_with(&self.env.cache) {
       swap::hide(&dir);
@@ -372,7 +383,7 @@ impl Updater {
   fn prune(&self, keep: &str) {
     if let Ok(entries) = std::fs::read_dir(&self.env.cache) {
       for e in entries.flatten() {
-        if e.file_name().to_str() != Some(keep) {
+        if e.file_name().to_str() != Some(keep) && !in_use(&e.path()) {
           let _ = remove_any(&e.path());
         }
       }
@@ -383,15 +394,15 @@ impl Updater {
       let own = format!(".Acpira-{keep}.staging");
       for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
-        if name.starts_with(".Acpira-") && name.ends_with(".staging") && name != own {
+        if name.starts_with(".Acpira-") && name.ends_with(".staging") && name != own && !in_use(&e.path()) {
           let _ = remove_any(&e.path());
         }
       }
     }
   }
 
-  /// Puts the staged bundle in the installed one's place (at quit, or before a restart) and deletes the old one; a
-  /// running exe is only moved aside, and deleted on a later start. Returns the version now installed
+  /// Puts the staged bundle in the installed one's place (at quit, or before a restart) and deletes the old one, unless
+  /// a process still runs from it; a running exe is only moved aside, and deleted on a later start. Returns the version now installed
   pub fn apply(&self) -> Result<String, String> {
     let staged = self.staged.lock().take().ok_or("no update is ready")?;
     let installed = self.env.installed.clone().ok_or("not running from an app bundle")?;
@@ -411,8 +422,12 @@ impl Updater {
       });
       return Err(msg);
     }
-    // The old bundle now sits where the new one was assembled (an exe's tree is left empty)
-    let _ = remove_any(&staged.dir);
+    // The old bundle now sits where the new one was assembled (an exe's tree is left empty). A launcher running from it
+    // keeps the engine's privacy grants only while the bundle exists (acpira-host machine_engine/launcher.rs): then it
+    // stays, and a later prune deletes it
+    if !in_use(&staged.dir) {
+      let _ = remove_any(&staged.dir);
+    }
     self.log(&format!("installed {}", staged.version));
     Ok(staged.version)
   }
@@ -425,6 +440,34 @@ fn remove_any(p: &std::path::Path) -> Result<(), String> {
     Err(_) => Ok(()),
   }
   .map_err(|e| format!("{}: {e}", p.display()))
+}
+
+/// Whether a process of this user runs an executable under `dir`. Asked by path of the running image, which follows
+/// renames: the launcher of an engine started from the old bundle is found after the swap moved it here
+#[cfg(target_os = "macos")]
+fn in_use(dir: &std::path::Path) -> bool {
+  use std::os::unix::ffi::OsStrExt;
+  let Ok(dir) = std::fs::canonicalize(dir) else { return false };
+  // SAFETY: a null buffer asks for the count only
+  let count = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) };
+  let Ok(count) = usize::try_from(count) else { return false };
+  // Room for processes started meanwhile
+  let mut pids: Vec<libc::pid_t> = vec![0; count + 64];
+  let bytes = libc::c_int::try_from(std::mem::size_of_val(pids.as_slice())).unwrap_or(libc::c_int::MAX);
+  // SAFETY: the buffer is `bytes` long
+  let got = unsafe { libc::proc_listallpids(pids.as_mut_ptr().cast(), bytes) };
+  let Ok(got) = usize::try_from(got) else { return false };
+  let mut path = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+  pids.iter().take(got).any(|&pid| {
+    // SAFETY: the buffer is as long as the size passed
+    let len = unsafe { libc::proc_pidpath(pid, path.as_mut_ptr().cast(), path.len() as u32) };
+    usize::try_from(len).is_ok_and(|len| len > 0 && std::path::Path::new(std::ffi::OsStr::from_bytes(&path[..len])).starts_with(&dir))
+  })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn in_use(_dir: &std::path::Path) -> bool {
+  false
 }
 
 #[cfg(test)]
@@ -714,5 +757,22 @@ mod tests {
     s.manual = Some(ManualReason::NotWritable);
     let v = serde_json::to_value(s).unwrap();
     assert_eq!((v["phase"].as_str(), v["done"].as_u64(), v["manual"].as_str()), (Some("downloading"), Some(5), Some("notWritable")));
+  }
+
+  #[cfg(target_os = "macos")]
+  #[test]
+  fn a_bundle_moved_aside_is_in_use_while_its_program_runs() {
+    let d = tempfile::tempdir().unwrap();
+    let (old, aside) = (d.path().join("Acpira.app"), d.path().join("staged"));
+    std::fs::create_dir_all(old.join("Contents/MacOS")).unwrap();
+    let exe = old.join("Contents/MacOS/acpira-engine");
+    std::fs::copy("/bin/sleep", &exe).unwrap();
+    let mut child = std::process::Command::new(&exe).arg("30").spawn().unwrap();
+    // The swap renames the running bundle away; its process is still found there
+    std::fs::rename(&old, &aside).unwrap();
+    assert!(in_use(&aside));
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(!in_use(&aside));
   }
 }

@@ -38,6 +38,28 @@ fn program(launcher: Option<&Path>, exe: &Path) -> String {
   parts.iter().map(|p| format!("<string>{p}</string>")).collect::<Vec<_>>().join("\n    ")
 }
 
+/// The login job's program: the service copy itself, under `supervise` when engines start under a launcher, which
+/// it then picks each time (machine_engine/launcher.rs)
+fn supervised(launcher: Option<&Path>, exe: &Path) -> String {
+  let mut parts = vec![format!("<string>{}</string>", xml(&exe.to_string_lossy()))];
+  if launcher.is_some() {
+    parts.push(format!("<string>{}</string>", crate::machine_engine::launcher::SUPERVISE));
+  }
+  parts.join("\n    ")
+}
+
+/// A job started from the desktop app's bundle names the app, so Login Items lists it under Acpira.app instead of a
+/// bare program
+fn associated(launcher: Option<&Path>) -> String {
+  if !launcher.is_some_and(crate::machine_engine::launcher::in_app) {
+    return String::new();
+  }
+  format!(
+    "\n  <key>AssociatedBundleIdentifiers</key>\n  <array>\n    <string>{}</string>\n  </array>",
+    crate::machine_engine::launcher::APP_ID
+  )
+}
+
 /// The LaunchAgent plist for a peer engine on macOS: runs in the user's `Aqua` login session (`gui/<uid>`), where the
 /// login keychain is unlocked, without `KeepAlive` so the engine still exits on its idle grace (`cli.rs`)
 pub fn peer_plist(label: &str, launcher: Option<&Path>, exe: &Path, socket: &Path, home: &Path, log: &Path) -> String {
@@ -47,7 +69,7 @@ pub fn peer_plist(label: &str, launcher: Option<&Path>, exe: &Path, socket: &Pat
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>{label}</string>
+  <string>{label}</string>{associated}
   <key>LimitLoadToSessionType</key>
   <string>Aqua</string>
   <key>ProgramArguments</key>
@@ -70,6 +92,7 @@ pub fn peer_plist(label: &str, launcher: Option<&Path>, exe: &Path, socket: &Pat
 "#,
     label = xml(label),
     program = program(launcher, exe),
+    associated = associated(launcher),
     socket = xml(&socket.to_string_lossy()),
     home = xml(&home.to_string_lossy()),
     log = xml(&log.to_string_lossy()),
@@ -209,7 +232,7 @@ pub fn plist(label: &str, launcher: Option<&Path>, exe: &Path, root: &Path) -> S
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>{label}</string>
+  <string>{label}</string>{associated}
   <key>ProgramArguments</key>
   <array>
     {program}{args}
@@ -231,7 +254,8 @@ pub fn plist(label: &str, launcher: Option<&Path>, exe: &Path, root: &Path) -> S
 </plist>
 "#,
     label = xml(label),
-    program = program(launcher, exe),
+    program = supervised(launcher, exe),
+    associated = associated(launcher),
     log = xml(&log.to_string_lossy()),
   )
 }
@@ -362,9 +386,13 @@ mod tests {
     assert_eq!(peer_label("2.0.5"), "com.hotic.acpira.peer.2.0.5");
     let peer = peer_plist("com.hotic.acpira.peer.2.0.5", None, Path::new("/a'b/acpira"), Path::new("/r/peer.sock"), Path::new("/r"), Path::new("/r/peer.log"));
     assert!(peer.contains("<string>Aqua</string>") && peer.contains("/a&apos;b/acpira") && !peer.contains("KeepAlive"));
-    // Under the launcher, the engine is its first argument
+    // With engines under a launcher, the job runs the service copy under `supervise`, which picks the launcher
     let launched = plist("l", Some(Path::new("/r/engine/launcher/Acpira Engine")), Path::new("/s/acpira"), Path::new("/r"));
-    assert!(launched.contains("<string>/r/engine/launcher/Acpira Engine</string>\n    <string>launch</string>\n    <string>/s/acpira</string>\n    <string>serve</string>"), "{launched}");
+    assert!(launched.contains("<string>/s/acpira</string>\n    <string>supervise</string>\n    <string>serve</string>"), "{launched}");
+    assert!(!launched.contains("AssociatedBundleIdentifiers"), "{launched}");
+    // Started from the desktop app's bundle, the job names the app
+    let from_app = plist("l", Some(Path::new("/Applications/Acpira.app/Contents/MacOS/acpira-engine")), Path::new("/s/acpira"), Path::new("/r"));
+    assert!(from_app.contains("<key>AssociatedBundleIdentifiers</key>\n  <array>\n    <string>cc.hotic.acpira.desktop</string>"), "{from_app}");
     assert!(!is_default_user_home(Path::new("/tmp/not-real-user-home/.acpira")));
   }
 }

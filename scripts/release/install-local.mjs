@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, globSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, globSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hostPlatform, targetFor } from './sidecar-targets.mjs';
 
@@ -54,7 +54,9 @@ if (doDesktop && process.platform === 'darwin') {
     failed = true;
   } else {
     console.log(`${built}: built ${age(built)} ago`);
-    const running = () => spawnSync('pgrep', ['-f', `${dest}/Contents/MacOS/`]).status === 0;
+    // The window only: the machine's engine may run under the bundle's acpira-engine (machine_engine/launcher.rs) and
+    // outlives it
+    const running = () => spawnSync('pgrep', ['-f', `^${dest}/Contents/MacOS/Acpira( |$)`]).status === 0;
     if (running()) {
       console.log('Acpira is running: asking it to quit');
       spawnSync('osascript', ['-e', 'tell application id "cc.hotic.acpira.desktop" to quit']);
@@ -73,7 +75,23 @@ if (doDesktop && process.platform === 'darwin') {
         rmSync(next, { recursive: true, force: true });
         failed = true;
       } else {
-        rmSync(dest, { recursive: true, force: true });
+        // The old bundle is moved aside, not deleted: an engine launched from it keeps its privacy grants only while
+        // the bundle exists. Earlier ones go once nothing runs from them (the desktop updater prunes the same names)
+        const parent = dirname(dest);
+        const inUse = dir => {
+          const exes = ['Acpira', 'acpira-engine'].map(exe => join(dir, 'Acpira.app', 'Contents', 'MacOS', exe)).filter(existsSync);
+          // lsof without a file lists every process
+          return exes.length > 0 && spawnSync('lsof', ['-t', ...exes], { encoding: 'utf8' }).stdout.trim() !== '';
+        };
+        for (const name of readdirSync(parent)) {
+          const dir = join(parent, name);
+          if (name.startsWith('.Acpira-local-') && name.endsWith('.staging') && !inUse(dir)) rmSync(dir, { recursive: true, force: true });
+        }
+        if (existsSync(dest)) {
+          const aside = join(parent, `.Acpira-local-${Date.now()}.staging`);
+          mkdirSync(aside);
+          renameSync(dest, join(aside, 'Acpira.app'));
+        }
         renameSync(next, dest);
         console.log(`installed ${dest}`);
       }

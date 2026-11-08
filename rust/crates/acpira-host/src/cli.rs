@@ -81,6 +81,8 @@ pub fn is_engine_command(first: Option<&str>) -> bool {
         | "safe-mode"
         | "engine"
         | "gateway"
+        | "launch"
+        | "supervise"
     )
   )
 }
@@ -90,6 +92,10 @@ pub fn run(args: Vec<String>) -> i32 {
   // First: the launcher is an old build that only ever waits for its child
   if args.first().map(String::as_str) == Some(crate::machine_engine::launcher::COMMAND) {
     return crate::machine_engine::launcher::run(&args[1..]);
+  }
+  // Remote access's login job: picks the launcher, then waits like it
+  if args.first().map(String::as_str) == Some(crate::machine_engine::launcher::SUPERVISE) {
+    return crate::machine_engine::launcher::supervise(&args[1..]);
   }
   // A process running from a landed engine copy keeps it from being pruned (machine_engine/stage.rs)
   crate::machine_engine::stage::hold_in_use();

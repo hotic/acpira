@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **On macOS, Acpira holds privacy grants as one app.** With the desktop app installed in Applications, the engine, remote access and every command an agent runs are charged to Acpira.app. App Management, Screen Recording and the other lists show Acpira once, and updates keep the grants. The switch happens when the engine next starts, such as after this update. Without the desktop app, the engine stays under the `Acpira Engine` launcher, which now shows the Acpira icon. A grant given only to `Acpira Engine` is asked once more for Acpira.app. Leftover rows from earlier versions (`acpira`, `acpira-gateway`, `Acpira Engine`) are no longer used and can be removed with "−" in System Settings.
+- Replacing the desktop app, by its own update or a local install, no longer drops the grants of an engine still running from the old copy. The old copy is moved aside and deleted once nothing runs from it.
+- Remote access still starts at login after the desktop app is moved or deleted.
+
 ### Planned
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
