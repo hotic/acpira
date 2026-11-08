@@ -277,3 +277,66 @@ export class Cmp {
   /** A plan dot's ring */
   static readonly planRing: number = 1.5;
 }
+
+/** Paired remote access's screens (apps/ios Pairing/PairingTokens.swift, apps/android design/Tokens.kt pair*) */
+export class PairMetrics {
+  /** The connect frame's glyph and the slot it keeps */
+  static readonly glyph: number = 52;
+  static readonly glyphBox: number = 64;
+  /** The glyph centre's place down the page (a share of its height): a phase that adds a line keeps it there */
+  static readonly heroRise: number = 0.42;
+  /** The frame's sentence keeps two lines, so a phase with a longer one moves nothing under it */
+  static readonly lineSlot: number = 52;
+  /** The path's tag in the sentence's place (ui/Button ChipTag) */
+  static readonly pathX: number = 6;
+  static readonly pathH: number = 22;
+  static readonly rXs: number = 3;
+  /** The paired check on the glyph: its disc, the tick, the page ring around it, and how far it hangs past the corner */
+  static readonly check: number = 22;
+  static readonly checkIcon: number = 13;
+  static readonly checkRing: number = 3;
+  static readonly checkX: number = 9;
+  static readonly checkY: number = 5;
+  /** A digit's box on the code page, the gap between the groups of three, its border, the caret */
+  static readonly codeBox: number = 48;
+  static readonly codeBoxH: number = 60;
+  static readonly codeSplit: number = 20;
+  static readonly codeLine: number = 1.5;
+  static readonly caret: number = 2;
+  static readonly caretH: number = 30;
+  /** The code page's status line keeps two lines */
+  static readonly statusSlot: number = 40;
+  /** The camera card, its viewfinder and the finder's corners */
+  static readonly scanCard: number = 340;
+  static readonly finder: number = 176;
+  static readonly finderCorner: number = 30;
+  static readonly finderStroke: number = 4;
+  /** A form row's height, a section's header room and the inset grouped rows keep from the page's edges */
+  static readonly formRow: number = 52;
+  static readonly sectionGap: number = 28;
+  /** The online dot on a computer's glyph, and the row fill cut around it */
+  static readonly dot: number = 8;
+  static readonly dotCut: number = 2;
+  /** The paired moment holds this long before the sheet goes (DevicesCard.tsx HOLD_MS); a later wire's path this long */
+  static readonly holdMs: number = 2400;
+  static readonly doneMs: number = 600;
+  /** How long a pasted text that is no pairing link says so */
+  static readonly noticeMs: number = 2400;
+  /** A line swapping in place (devices.css `.dv-swap`), the check landing from this scale, a disabled action's ink */
+  static readonly swapMs: number = 260;
+  static readonly checkFrom: number = 0.35;
+  static readonly disabled: number = 0.4;
+  /** The code box caret's half period */
+  static readonly blinkMs: number = 500;
+}
+
+export class PairType {
+  /** The computer's name under the glyph */
+  static readonly nameSize: number = 22;
+  static readonly nameLine: number = 28;
+  /** The frame's sentence, on a looser line than body */
+  static readonly line: number = 17;
+  static readonly lineLine: number = 26;
+  /** A digit in a code box */
+  static readonly digit: number = 28;
+}

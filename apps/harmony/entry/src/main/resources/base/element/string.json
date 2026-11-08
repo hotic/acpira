@@ -7,6 +7,10 @@
     {
       "name": "ability_desc",
       "value": "Acpira"
+    },
+    {
+      "name": "camera_reason",
+      "value": "Scan a computer's pairing code"
     }
   ]
 }

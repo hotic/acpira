@@ -191,6 +191,14 @@
     {
       "name": "focus",
       "value": "#FF0078D4"
+    },
+    {
+      "name": "pair_finder_dim",
+      "value": "#38000000"
+    },
+    {
+      "name": "pair_check_ink",
+      "value": "#FFFFFFFF"
     }
   ]
 }

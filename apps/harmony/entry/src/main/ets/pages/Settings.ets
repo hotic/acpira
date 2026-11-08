@@ -9,6 +9,7 @@ import { AgentMark, Lucide } from '../components/Glyphs';
 import { Lead, LeadButton } from '../components/ChatBar';
 import { MenuCard, MenuRow, menuOptions } from '../components/Menu';
 import { confirmDestructive, openTextPrompt, PromptArgs } from '../components/Dialogs';
+import { PairedComputer } from '../remote/Stores';
 
 // Settings (apps/ios Settings/SettingsScreen.swift and EngineSettings.swift, apps/android ui/SettingsScreen.kt and
 // AgentSettings.kt): grouped sections on the form page. The look of the app (theme, language, motion), the agents (the
@@ -21,6 +22,8 @@ export class SettingsRoutes {
   agent: (id: string) => void = () => {};
   developer: () => void = () => {};
   coming: (title: string) => void = () => {};
+  /** A paired computer's page (pages/Pairing.ets ComputerPage) */
+  computer: (id: string) => void = () => {};
 }
 
 /** One choice of a pick row: its value and the name it reads as */
@@ -386,28 +389,52 @@ export struct SettingsPage {
           })
         }
       }
-      // The engine followed: one fact, the state with its dot, then where it is; what it means goes in the footnote
-      FormSection({ title: t('mobile.engine'), footer: this.model.live ? '' : t('mobile.engine.desc') }) {
-        ValueRow({
-          label: t('mobile.engine.status'), tag: 'settings.engine',
-          value: t(this.model.connection === Connection.Live ? 'connections.state.connected' :
-            this.model.connection === Connection.Connecting ? 'connections.state.connecting' : 'connections.state.off'),
-          dot: this.model.connection === Connection.Live ? $r('app.color.ok') : $r('app.color.fg3')
-        })
-        rowRule(false)
-        ValueRow({
-          label: t('connections.address'), tag: 'settings.engine.address',
-          value: this.model.engineAddress.length > 0 ? this.model.engineAddress : t('mobile.pair.none'),
-          chevron: true, onTap: () => this.editEngine()
-        })
-        if (this.model.engineAddress.length > 0) {
+      // Paired remote access in place of the engine by address: every computer with how it is reached, then add one
+      if (this.model.pairing !== undefined && this.model.engineAddress.length === 0) {
+        FormSection({ title: t('mobile.pair.computers'), footer: t('mobile.pair.computers.desc') }) {
+          ForEach(this.model.pairing.computers, (c: PairedComputer) => {
+            ValueRow({
+              label: c.name, value: this.model.pairing?.status(c) ?? '', chevron: true, tag: `settings.computer:${c.id}`,
+              dot: this.model.pairing?.online(c) === true ? $r('app.color.ok') : undefined,
+              onTap: () => this.routes.computer(c.id)
+            })
+            rowRule(false)
+          }, (c: PairedComputer) => `${c.id}:${c.name}`)
+          ValueRow({
+            label: t('mobile.pair.add'), chevron: true, tag: 'settings.computers.add', onTap: () => {
+              if (this.model.pairing !== undefined) {
+                this.model.pairing.addOpen = true;
+              }
+            }
+          })
+          rowRule(false)
+          // An engine by address instead (the development engine): it takes over from the computers
+          ValueRow({ label: t('connections.address'), chevron: true, tag: 'settings.engine.address', onTap: () => this.editEngine() })
+        }
+      } else {
+        // The engine followed: one fact, the state with its dot, then where it is; what it means goes in the footnote
+        FormSection({ title: t('mobile.engine'), footer: this.model.live ? '' : t('mobile.engine.desc') }) {
+          ValueRow({
+            label: t('mobile.engine.status'), tag: 'settings.engine',
+            value: t(this.model.connection === Connection.Live ? 'connections.state.connected' :
+              this.model.connection === Connection.Connecting ? 'connections.state.connecting' : 'connections.state.off'),
+            dot: this.model.connection === Connection.Live ? $r('app.color.ok') : $r('app.color.fg3')
+          })
           rowRule(false)
           ValueRow({
-            label: t('mobile.pair.remove'), danger: true, tag: 'settings.engine.remove',
-            onTap: () => confirmDestructive(this.getUIContext(),
-              t('mobile.pair.remove.confirm', new Map<string, string>([['name', this.model.engineAddress]])),
-              t('common.delete'), () => this.model.forgetEngine())
+            label: t('connections.address'), tag: 'settings.engine.address',
+            value: this.model.engineAddress.length > 0 ? this.model.engineAddress : t('mobile.pair.none'),
+            chevron: true, onTap: () => this.editEngine()
           })
+          if (this.model.engineAddress.length > 0) {
+            rowRule(false)
+            ValueRow({
+              label: t('mobile.pair.remove'), danger: true, tag: 'settings.engine.remove',
+              onTap: () => confirmDestructive(this.getUIContext(),
+                t('mobile.pair.remove.confirm', new Map<string, string>([['name', this.model.engineAddress]])),
+                t('common.delete'), () => this.model.forgetEngine())
+            })
+          }
         }
       }
       // Notices about the engine's sessions; the demo has none

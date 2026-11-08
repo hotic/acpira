@@ -5,6 +5,7 @@
     "pages/PreviewShell",
     "pages/PreviewForms",
     "pages/PreviewSplit",
-    "pages/PreviewComposer"
+    "pages/PreviewComposer",
+    "pages/PreviewPair"
   ]
 }

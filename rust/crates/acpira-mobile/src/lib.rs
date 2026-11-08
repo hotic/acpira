@@ -22,7 +22,7 @@ use acpira_net::{Endpoint, EndpointAddr, EndpointId, RelayUrl, SecretKey};
 
 mod link;
 
-pub use link::{Link, LinkEvent};
+pub use link::{BlobProgress, Link, LinkEvent};
 
 uniffi::setup_scaffolding!();
 

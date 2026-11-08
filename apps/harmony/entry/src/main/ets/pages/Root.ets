@@ -8,6 +8,8 @@ import { AgentSettingsPage, ComingPage, DeveloperPage, SettingsPage, SettingsRou
 import { WelcomeFlow } from './Welcome';
 import { ChatBarActions, Lead } from '../components/ChatBar';
 import { ToastLayer } from '../components/Chrome';
+import { ComputerPage, ComputersPage, covers, PairConnect } from './Pairing';
+import { PairSheet } from './PairSheet';
 
 // The app's frame (apps/ios RootView.swift, apps/android ui/Root.kt): the list, and the chat, a new session or settings pushed
 // over it on a phone. A window at least splitMinW wide (tablets, foldables open, 2in1) keeps the list as a sidebar
@@ -141,6 +143,7 @@ export struct Root {
     r.agent = (id: string) => this.push('agent', id);
     r.developer = () => this.push('developer', '');
     r.coming = (title: string) => this.push('coming', title);
+    r.computer = (id: string) => this.push('computer', id);
     return r;
   }
 
@@ -195,12 +198,41 @@ export struct Root {
       }
       .hideTitleBar(true)
       .backgroundColor($r('app.color.form_page'))
+    } else if (name === 'computers' && this.model.pairing !== undefined) {
+      NavDestination() {
+        ComputersPage({
+          pairing: this.model.pairing,
+          onBack: () => this.stack.pop(),
+          onOpen: (id: string) => this.push('computer', id)
+        })
+      }
+      .hideTitleBar(true)
+      .backgroundColor($r('app.color.form_page'))
+    } else if (name === 'computer' && this.model.pairing !== undefined) {
+      NavDestination() {
+        ComputerPage({ pairing: this.model.pairing, computerId: (param as Route).id, onBack: () => this.stack.pop() })
+      }
+      .hideTitleBar(true)
+      .backgroundColor($r('app.color.form_page'))
     } else if (name === 'coming') {
       NavDestination() {
         ComingPage({ title: t((param as Route).id), onBack: () => this.stack.pop() })
       }
       .hideTitleBar(true)
       .backgroundColor($r('app.color.bg0'))
+    }
+  }
+
+  @Builder
+  pairSheet() {
+    if (this.model.pairing !== undefined) {
+      PairSheet({
+        pairing: this.model.pairing, onClose: () => {
+          if (this.model.pairing !== undefined) {
+            this.model.pairing.addOpen = false;
+          }
+        }
+      })
     }
   }
 
@@ -216,17 +248,23 @@ export struct Root {
       // A language pick rebuilds every page in the new table (apps/ios the root's `.id(locale)`)
       ForEach([this.model.language], (language: string) => {
         Navigation(this.stack) {
-          SessionList({
-            model: this.model,
-            sidebar: this.wide,
-            openId: this.wide ? this.model.openId : undefined,
-            onOpen: (id: string) => this.open(id),
-            onNew: (cwd: string | undefined) => this.newSession(undefined, cwd),
-            onSettings: () => this.push('settings', ''),
-            onHide: () => {
-              this.hidden = true;
-            }
-          })
+          // A paired computer's lists not in yet, or its wire failed: the connect frame in the list's place
+          if (this.model.paired && this.model.pairing !== undefined && covers(this.model.pairing, this.model)) {
+            PairConnect({ pairing: this.model.pairing, onComputers: () => this.push('computers', '') })
+          } else {
+            SessionList({
+              model: this.model,
+              sidebar: this.wide,
+              openId: this.wide ? this.model.openId : undefined,
+              onOpen: (id: string) => this.open(id),
+              onNew: (cwd: string | undefined) => this.newSession(undefined, cwd),
+              onSettings: () => this.push('settings', ''),
+              onComputers: () => this.push('computers', ''),
+              onHide: () => {
+                this.hidden = true;
+              }
+            })
+          }
         }
         .mode(NavigationMode.Auto)
         .navBarWidth(Metrics.sidebarW)
@@ -246,6 +284,21 @@ export struct Root {
         })
       }, (language: string) => language)
       ToastLayer({ model: this.model })
+      // Adding a computer, from the connect frame, the computers page, settings or a pairing link; the first run pairs
+      // in place instead
+      Column()
+        .width(0)
+        .height(0)
+        .bindSheet(this.model.pairing !== undefined && this.model.pairing.addOpen && !this.welcoming, this.pairSheet(), {
+          height: SheetSize.LARGE,
+          dragBar: false,
+          showClose: false,
+          onDisappear: () => {
+            if (this.model.pairing !== undefined) {
+              this.model.pairing.addOpen = false;
+            }
+          }
+        })
       if (this.welcoming) {
         WelcomeFlow({
           model: this.model, onDone: () => {

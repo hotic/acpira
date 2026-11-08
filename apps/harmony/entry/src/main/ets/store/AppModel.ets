@@ -2,7 +2,7 @@ import {
   AgentInfo, applySessionPatch, applySessionsPatch, HostMsg, SessionPatchMsg, SessionsPatchMsg, SessionSummary,
   SessionView, Turn
 } from '../wire/Wire';
-import { EngineClient, WebviewMsg } from '../wire/EngineClient';
+import { EngineClient, EngineTransport, WebviewMsg } from '../wire/EngineClient';
 import { demoAgents, demoNow, demoSessions, demoView } from './Demo';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
 import { defaultSettings, InitState, ListHostMsg, SessionCategories, SettingsView } from '../wire/Wire';
@@ -21,6 +21,11 @@ import { MentionPersona } from '../logic/SlashCommands';
 import { ComposerDraft, FileSearch, Goo } from './Composing';
 import { fixtureView } from './Demo';
 import { util } from '@kit.ArkTS';
+
+import { PairingModel } from './PairingModel';
+import { PairingService } from '../remote/PairingService';
+import { PairedTransport } from '../remote/PairedTransport';
+import { PairedComputer } from '../remote/Stores';
 
 // The app's state (apps/ios Store/AppModel.swift, apps/android store/AppModel.kt): the engine's list and the chat on
 // screen, kept from the wire's pushes. Without an engine the demo fills it, as the other apps' fixtures do.
@@ -102,7 +107,101 @@ export class AppModel implements ListHost {
   }
 
   get live(): boolean {
-    return this.connection === Connection.Live || this.connection === Connection.Connecting;
+    // A paired computer's lists stay live between its wires: the pairing model dials again
+    return this.computer !== undefined || this.connection === Connection.Live || this.connection === Connection.Connecting;
+  }
+
+  /** Paired remote access: the computer whose engine the lists come from (its EndpointId) */
+  @Trace computer: string | undefined = undefined;
+  /** The current wire's init arrived: until then the pairing pages cover the list */
+  @Trace synced: boolean = false;
+  /** The paired computers, when the app follows them instead of an engine by address (or the demo) */
+  @Trace pairing: PairingModel | undefined = undefined;
+
+  /**
+   * Turns paired remote access on when this build carries its library (scripts/build-net.sh): the followed computer is
+   * dialed, or with none paired yet the demo shows until one is. False without the library (the Previewer, a build
+   * without it) or a context
+   */
+  startPairing(): boolean {
+    if (this.pairing !== undefined) {
+      return true;
+    }
+    if (this.context === undefined || !PairingService.available()) {
+      return false;
+    }
+    this.pairWith(new PairingModel(new PairingService(this.context)));
+    return true;
+  }
+
+  /** Follows the paired computers: every wire the pairing model opens to the followed one feeds this model */
+  pairWith(pairing: PairingModel): void {
+    pairing.onConnection = (computer: PairedComputer, wire: PairedTransport) => {
+      this.connectPaired(computer.id, wire, this.systemLanguage);
+    };
+    pairing.onEmpty = () => {
+      // The last computer went: back to the demo, as before the first pairing
+      this.client?.stop();
+      this.client = undefined;
+      this.computer = undefined;
+      this.view = undefined;
+      this.openId = undefined;
+      this.demo();
+    };
+    this.pairing = pairing;
+    pairing.load();
+    if (pairing.computers.length === 0) {
+      this.demo();
+    }
+  }
+
+  /** The list follows a paired computer (as opposed to an engine by address or the demo) */
+  get paired(): boolean {
+    return this.pairing !== undefined && this.pairing.computers.length > 0;
+  }
+
+  /**
+   * Follows a paired computer's engine over `transport` (store/PairingModel.ets hands each new wire here). A wire to the
+   * computer already on screen keeps the screens and selects the open chat again; another computer starts empty
+   */
+  connectPaired(computer: string, transport: EngineTransport, language: string): void {
+    this.client?.stop();
+    const resumed = this.computer === computer;
+    if (!resumed) {
+      this.agents = [];
+      this.summaries = [];
+      this.view = undefined;
+      this.openId = undefined;
+      this.takeList([]);
+    }
+    this.computer = computer;
+    this.synced = false;
+    this.connection = Connection.Connecting;
+    const client: EngineClient = new EngineClient('', '', language, {
+      connected: () => {
+        if (this.client === client) {
+          this.connection = Connection.Live;
+        }
+      },
+      host: (message: HostMsg) => {
+        if (this.client === client) {
+          this.receive(message);
+        }
+      },
+      // The pairing model hears the end from the transport and dials again; the screens keep what they showed
+      closed: () => {
+        if (this.client === client) {
+          this.connection = Connection.Closed;
+        }
+      }
+    }, transport);
+    this.client = client;
+    client.post({ type: 'ready', patches: true, listPatches: true });
+    const open = this.openId;
+    if (resumed && open !== undefined) {
+      this.post({ type: 'selectSession', id: open });
+    }
+    client.start();
   }
 
   agentName(id: string): string {
@@ -199,6 +298,7 @@ export class AppModel implements ListHost {
         if (state === undefined) {
           return;
         }
+        this.synced = true;
         this.agents = state.agents;
         this.home = state.home;
         this.takeList(state.sessions);
@@ -360,6 +460,12 @@ export class AppModel implements ListHost {
     if (keep) {
       prefs.set(PrefKey.engine, `${address}:${token}`);
     }
+    // The engine by address takes over from paired computers (forgetEngine hands back to them)
+    if (this.pairing !== undefined) {
+      this.pairing.stop();
+      this.pairing = undefined;
+      this.computer = undefined;
+    }
     this.engineAddress = address;
     this.engineToken = token;
     this.connect(address, token, this.systemLanguage);
@@ -387,6 +493,8 @@ export class AppModel implements ListHost {
     this.view = undefined;
     this.openId = undefined;
     this.demo();
+    // Paired computers take over from the engine by address
+    this.startPairing();
   }
 
   /** Sends an action when an engine is followed; false for the demo, which then applies it itself */

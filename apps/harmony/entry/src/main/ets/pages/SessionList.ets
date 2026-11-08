@@ -11,6 +11,7 @@ import { StateMark } from '../components/StateMark';
 import { SessionMenu } from '../components/SessionMenu';
 import { MenuCaption, MenuCard, MenuGap, MenuRow, menuOptions, MenuBack } from '../components/Menu';
 import { connectionNote, ConnectionBanner, GlassButton } from '../components/Chrome';
+import { PairBar } from './Pairing';
 
 // The session list (apps/ios Sessions/SessionListScreen.swift, apps/android ui/SessionListScreen.kt): every session,
 // grouped as picked in the bar's filter menu. By time: the sessions pinned to the top, then day captions. By project:
@@ -61,6 +62,16 @@ export struct SessionList {
   @Event onNew: (cwd: string | undefined) => void = () => {};
   @Event onSettings: () => void = () => {};
   @Event onHide: () => void = () => {};
+  /** The paired computers page, from the bar's computer name */
+  @Event onComputers: () => void = () => {};
+
+  /** What the sidebar's foot names: the engine by address or the paired computer followed; the demo has none */
+  footName(): string | undefined {
+    if (this.model.paired) {
+      return this.model.pairing?.selected?.name;
+    }
+    return this.model.engineAddress.length > 0 ? this.model.engineAddress : undefined;
+  }
   @Local query: string = '';
   @Local archivedOnly: boolean = false;
   @Local viewMenu: boolean = false;
@@ -366,7 +377,10 @@ export struct SessionList {
   bar() {
     Stack() {
       // The sidebar shows no title, as iOS keeps it off there
-      if (!this.sidebar) {
+      if (!this.sidebar && this.model.paired) {
+        // A paired computer's name, which opens the computers page (apps/ios ComputerMenu)
+        PairBar({ title: this.model.pairing?.selected?.name ?? '', menu: true, onTitle: () => this.onComputers() })
+      } else if (!this.sidebar) {
         Text(t('mobile.home'))
           .fontSize(Type.barTitle)
           .fontWeight(FontWeight.Bold)
@@ -595,10 +609,10 @@ export struct SessionList {
     Row({ space: Metrics.gap }) {
       GlassButton({ icon: 'settings', tag: 'sidebar.settings', onTap: () => this.onSettings() })
       // The followed engine, as iOS shows the selected computer; the demo has none
-      if (this.model.engineAddress.length > 0) {
+      if (this.footName() !== undefined) {
         Row({ space: ListMetrics.s1_5 }) {
           Lucide({ name: 'laptop', tint: $r('app.color.fg2'), extent: Metrics.icon })
-          Text(this.model.engineAddress)
+          Text(this.footName())
             .fontSize(Type.text2)
             .fontColor($r('app.color.fg1'))
             .maxLines(1)
@@ -616,7 +630,7 @@ export struct SessionList {
         .borderRadius(Metrics.barCtl / 2)
         .backgroundColor($r('app.color.glass_bg'))
         .border({ width: Metrics.hairline, color: $r('app.color.glass_line') })
-        .onClick(() => this.onSettings())
+        .onClick(() => this.model.paired ? this.onComputers() : this.onSettings())
       }
     }
     .padding({ left: Metrics.pad, right: Metrics.pad, top: Metrics.s2, bottom: Metrics.s2 })
