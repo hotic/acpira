@@ -154,6 +154,8 @@ export struct ChatPage {
             onGoal: (action: string) => this.model.goal(action)
           })
             .padding({ left: Metrics.pad, right: Metrics.pad, bottom: Cmp.dockGap })
+            // A definite width under the cap: the card's own 100% resolves against this, not the whole Stack
+            .width('100%')
             .constraintSize({ maxWidth: Metrics.contentW + Metrics.pad * 2 })
         }
         .layoutWeight(1)
@@ -201,6 +203,8 @@ export struct ChatPage {
         .width('100%')
         .height('100%')
         .zIndex(3)
+        // The component's own wrapper node covers the page too: closed, it must let touches through like its Stack
+        .hitTestBehavior(this.model.goo.open !== undefined ? HitTestMode.Default : HitTestMode.None)
     }
     .backgroundColor($r('app.color.bg0'))
     .height('100%')

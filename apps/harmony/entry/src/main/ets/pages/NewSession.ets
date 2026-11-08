@@ -246,6 +246,8 @@ export struct NewSession {
           .width('100%')
           .height('100%')
           .zIndex(3)
+          // The component's own wrapper node covers the page too: closed, it must let touches through like its Stack
+          .hitTestBehavior(this.model.newGoo.open !== undefined ? HitTestMode.Default : HitTestMode.None)
       }
       // The page dims under an open ring; a tap on it folds the ring
       if (this.ring) {

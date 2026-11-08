@@ -33,6 +33,7 @@
 - The development engine checks the handshake's `Origin` is its own loopback port: the app dials `127.0.0.1` and an emulator needs that port forwarded to the engine (`hdc rport tcp:PORT tcp:PORT`, as `adb reverse`).
 - NetworkKit's `webSocket` sends an `Origin` of its own (scheme and host, no port) ahead of the one the app sets; the engine accepts the handshake when any `Origin` header matches (`sidecar/ws.rs`). `EngineClient` logs the wire under the hilog tag `AcpiraWire`.
 - ArkUI `ForEach` keeps a child whose key is unchanged, however its item changed: a nested `ForEach` (list sections) needs the outer key to carry the inner rows' keys, or rows keep stale summaries.
+- A custom component's `hitTestBehavior` set inside its `build()` covers only its root: the wrapper node the call site creates is hit-testable by default and, stacked over the page (`GooLayer` at `zIndex(3)`), swallows every touch under it (hilog "Touch test result is empty"). Set the mode at the call site too. The Previewer takes no input, so only an emulator shows it.
 - A `bindContextMenu` builder closes itself through `getUIContext().getContextMenuController().close()`; it has no `isShow` binding like `bindMenu`.
 - `EntryAbility` sets the keyboard to resize the page; the default lifts the whole page, bar included, off screen.
 - `scripts/build.sh` with `DEV_ENGINE=host:port:token` (and `DEV_PROMPT`) compiles a default engine in, since nothing passes launch parameters to the Previewer; `apps/ios/scripts/engine.sh` takes `TOKEN` to match.
