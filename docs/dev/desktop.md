@@ -37,7 +37,7 @@
 `packages/ui/panel/`.
 
 - `ToolPanel` stays mounted across sessions and `FileTree` is keyed by project root: a remount makes WebKit skip `content-visibility: auto` blocks for a frame.
-- The panel shrinks first via `flex-shrink: 1000` (a factor under one on the chat leaves the overflow unshared). Tree `sticky` must be the row's class: in the components layer it loses to `relative`.
+- The panel shrinks first via `flex-shrink: 1000` (a factor under one on the chat leaves the overflow unshared). So a squeezed panel absorbs every width change of a pane beside the chat: those splitters cap growth at what the chat can give (`capToChat`) and first keep the width the panel shows as its choice (`holdToolPanelWidth`), else the panel's far edge moves instead of the dragged one. Tree `sticky` must be the row's class: in the components layer it loses to `relative`.
 - Browser tabs are same-origin frames using `parent.__acpiraBrowserTab(tab)`. Without site isolation (`SiteIsolationEnabled` off) they share the chat's WebContent process and main thread (`display: none` stops frames, not timers), so a long-hidden tab drops its frame and keeps its relay.
 - `/file?path=` serves only types a page shows inert (`page.rs` `media_mime`), never HTML or SVG, whose scripts would run with the app's origin. It and video blobs answer `Range` (bounded 206): WKWebView's player reads an index at the file's end. With `preload="metadata"` WebKit paints no frame, so the viewer seeks just past zero.
 - macOS delivers `acpira://` links as `RunEvent::Opened`, held until windows are restored.
