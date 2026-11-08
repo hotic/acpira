@@ -68,6 +68,13 @@ pub fn harness_origin_allowed(origin: Option<&str>, port: u16) -> bool {
   (host == "127.0.0.1" || host == "localhost") && p == Some(port)
 }
 
+/// The handshake passes when any of its Origin headers is the harness's own: a browser sends exactly one, its page's,
+/// while HarmonyOS's WebSocket adds a port-less `Origin` of its own ahead of the one the app sets
+/// (docs/dev/harmony.md "Engine wire")
+fn origin_allowed(req: &Request, port: u16) -> bool {
+  req.headers_named("origin").any(|o| harness_origin_allowed(Some(o), port))
+}
+
 /// Listen on 127.0.0.1; every accepted /ws connection is handed to `on_wire`. Resolves to the bound port
 pub async fn start_harness(opts: HarnessOpts, on_wire: Arc<dyn Fn(WsWire) + Send + Sync>) -> std::io::Result<u16> {
   let listener = TcpListener::bind(("127.0.0.1", opts.port)).await?;
@@ -95,6 +102,11 @@ impl Request {
   fn header(&self, name: &str) -> Option<&str> {
     self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
   }
+  /// Every value of a header that may repeat
+  fn headers_named<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+    self.headers.iter().filter(move |(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+  }
+
 }
 
 async fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<(Request, Vec<u8>)>> {
@@ -144,7 +156,7 @@ async fn connection(
       return Ok(());
     }
     if let Some(token) = &opts.token
-      && (query_param(&req.path, "token") != Some(token.as_str()) || !harness_origin_allowed(req.header("origin"), port))
+      && (query_param(&req.path, "token") != Some(token.as_str()) || !origin_allowed(&req, port))
     {
       return Ok(());
     }
@@ -322,4 +334,20 @@ async fn ws_session(stream: TcpStream, initial: Vec<u8>, on_wire: Arc<dyn Fn(WsW
   drop(line_tx);
   drop(ctl_tx);
   let _ = writer.await;
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn request(origins: &[&str]) -> Request {
+    Request { path: "/ws".into(), headers: origins.iter().map(|o| ("Origin".to_owned(), (*o).to_owned())).collect() }
+  }
+
+  #[test]
+  fn a_second_origin_header_can_carry_the_port() {
+    assert!(origin_allowed(&request(&["http://127.0.0.1", "http://127.0.0.1:7378"]), 7378));
+    assert!(!origin_allowed(&request(&["http://127.0.0.1"]), 7378));
+    assert!(!origin_allowed(&request(&[]), 7378));
+  }
 }
