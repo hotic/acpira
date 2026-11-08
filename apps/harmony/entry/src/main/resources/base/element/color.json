@@ -147,6 +147,50 @@
     {
       "name": "glass_line",
       "value": "#14000000"
+    },
+    {
+      "name": "bar_hint",
+      "value": "#6B000000"
+    },
+    {
+      "name": "cmp_fg2",
+      "value": "#C9101010"
+    },
+    {
+      "name": "goo_backing",
+      "value": "#DBF8F8F8"
+    },
+    {
+      "name": "pop_fg2",
+      "value": "#FF424242"
+    },
+    {
+      "name": "pop_fg3",
+      "value": "#FF646464"
+    },
+    {
+      "name": "pop_hover",
+      "value": "#0F0D0D0D"
+    },
+    {
+      "name": "hover",
+      "value": "#0A000000"
+    },
+    {
+      "name": "fast",
+      "value": "#FFB7791F"
+    },
+    {
+      "name": "summon",
+      "value": "#FF8250DF"
+    },
+    {
+      "name": "card_bg",
+      "value": "#FFF1F1F1"
+    },
+    {
+      "name": "focus",
+      "value": "#FF005FB8"
     }
   ]
 }

@@ -2,6 +2,7 @@ import { webSocket } from '@kit.NetworkKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { HostMsg, SIDECAR_PROTOCOL_VERSION, SidecarMsg } from './Wire';
+import { Draft, EditTurnRequest, QuestionAnswer } from './Wire';
 
 // One wire to an engine (apps/android sync/EngineClient.kt, apps/ios AcpiraSync/EngineClient.swift): hello first,
 // attachView once helloOk lands, actions queued until then and wrapped in webviewMessage. The development engine
@@ -39,6 +40,18 @@ export interface WebviewMsg {
   before?: string;
   section?: string;
   fresh?: boolean;
+  // composer: send / queue / steer, the pickers, the @ search, edits, answers, fork and goal
+  attachments?: Draft[];
+  steer?: boolean;
+  configId?: string;
+  requestId?: string;
+  edit?: EditTurnRequest;
+  answers?: Record<string, QuestionAnswer>;
+  skip?: boolean;
+  turnIndex?: number;
+  action?: string;
+  objective?: string;
+  retainedAttachments?: number[];
 }
 
 interface ClientInfo {

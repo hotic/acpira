@@ -10,9 +10,26 @@ import { ListHost, SessionLists } from './SessionLists';
 import { PrefKey, prefs } from './Prefs';
 import { setLocale, t } from './L10n';
 import { projectName } from './SessionLogic';
+import {
+  AgentBlock, Attachment, ComposerHostMsg, ConfigControl, QuestionAnswer, QueuedPrompt, SessionControls, SlashCommand,
+  viewWithTurns
+} from '../wire/Wire';
+import {
+  canEditPrompts, draftsOf, editTurnConfig, editTurnRequest, openTurnControls, pendingPlanReview, TurnEdit
+} from '../logic/Composing';
+import { MentionPersona } from '../logic/SlashCommands';
+import { ComposerDraft, FileSearch, Goo } from './Composing';
+import { fixtureView } from './Demo';
+import { util } from '@kit.ArkTS';
 
 // The app's state (apps/ios Store/AppModel.swift, apps/android store/AppModel.kt): the engine's list and the chat on
 // screen, kept from the wire's pushes. Without an engine the demo fills it, as the other apps' fixtures do.
+
+/** The new-session page's attachments and picks for the session it starts */
+interface StartExtras {
+  attachments: Attachment[];
+  controls?: SessionControls;
+}
 
 export enum Connection {
   Demo,
@@ -113,24 +130,28 @@ export class AppModel implements ListHost {
     }
   }
 
-  send(text: string): void {
+  send(text: string, attachments: Attachment[] = []): void {
     const body = text.trim();
     const view = this.view;
-    if (body.length === 0 || view === undefined) {
+    if ((body.length === 0 && attachments.length === 0) || view === undefined) {
       return;
     }
     if (this.live) {
-      this.post({ type: 'send', sessionId: view.id, text: body });
+      const drafts = draftsOf(attachments);
+      this.post({
+        type: 'send', sessionId: view.id, text: body, attachments: drafts.length > 0 ? drafts : undefined,
+        steer: this.steering() ? true : undefined
+      });
       return;
     }
     // The demo answers in place
-    const user: Turn = { role: 'user', text: body };
+    const user: Turn = { role: 'user', text: body, attachments: attachments.length > 0 ? attachments : undefined };
     const agent: Turn = { role: 'agent', blocks: [{ type: 'text', markdown: 'Demo reply: the engine is not connected.' }] };
     this.stableTurns = view.turns.length;
-    this.view = {
-      id: view.id, agent: view.agent, title: view.title, cwd: view.cwd, status: view.status, running: false,
-      rev: (view.rev ?? 0) + 1, turns: view.turns.concat([user, agent])
-    };
+    const next = viewWithTurns(view, view.turns.concat([user, agent]));
+    next.running = false;
+    next.rev = (view.rev ?? 0) + 1;
+    this.view = next;
   }
 
   /** A new session in the newest session's folder; `text` goes as its first prompt */
@@ -225,8 +246,11 @@ export class AppModel implements ListHost {
           this.openId = view.id;
           this.stableTurns = 0;
           this.view = view;
-          if (prompt.length > 0) {
-            this.send(prompt);
+          const extras = this.awaitingExtras;
+          this.awaitingExtras = undefined;
+          this.applyPicks(view.id, extras?.controls, view.controls);
+          if (prompt.length > 0 || (extras?.attachments ?? []).length > 0) {
+            this.send(prompt, extras?.attachments ?? []);
           }
           return;
         }
@@ -255,6 +279,7 @@ export class AppModel implements ListHost {
         break;
       default:
         this.receiveList(message as Object as ListHostMsg);
+        this.receiveComposer(message as Object as ComposerHostMsg);
         break;
     }
   }
@@ -451,7 +476,9 @@ export class AppModel implements ListHost {
 
   /** A new session of `agent` in `cwd` (undefined: a chat); `text` goes as its first prompt */
   startIn(agent: string, cwd: string | undefined, text: string): void {
+    const extras = this.takeStartExtras();
     if (this.live) {
+      this.awaitingExtras = extras;
       this.awaiting = text.trim();
       this.openId = undefined;
       this.view = undefined;
@@ -466,8 +493,11 @@ export class AppModel implements ListHost {
     this.summaries = [s].concat(this.summaries);
     this.openId = id;
     this.stableTurns = 0;
-    this.view = { id: id, agent: agent, title: title, cwd: folder, status: 'ready', running: false, rev: 0, turns: [] };
-    this.send(text);
+    this.view = {
+      id: id, agent: agent, title: title, cwd: folder, status: 'ready', running: false, rev: 0, turns: [],
+      controls: extras?.controls ?? this.controlsFor(agent)
+    };
+    this.send(text, extras?.attachments ?? []);
   }
 
   // Engine settings (settings.ts SettingKey): shown at once, confirmed by the engine's `settings` push
@@ -622,6 +652,536 @@ export class AppModel implements ListHost {
     this.engineSummaries = list;
     this.engineListRev = 0;
     this.summaries = list;
+  }
+
+  // composer: the drafts, the @ search and the liquid picker, and what the composer and the dock do (apps/ios
+  // Store/AppModel.swift "Queue", "Short stops", "Controls", Store/AppModel+Turns.swift, Store/AppModel+Composer.swift).
+  // With an engine each posts its message; the demo plays the answer locally
+
+  private drafts: Map<string, ComposerDraft> = new Map<string, ComposerDraft>();
+  /** The `@` list's file search (`searchFiles` → `files`) */
+  readonly files: FileSearch = new FileSearch((query: string, seq: number) => {
+    if (!this.live) {
+      return false;
+    }
+    this.post({ type: 'searchFiles', query: query, seq: seq });
+    return true;
+  });
+  /** The liquid picker open over the composer */
+  readonly goo: Goo = new Goo();
+  /** The personas `@` summons (settings → Subagents); none until the engine's settings name some */
+  @Trace personas: MentionPersona[] = [];
+  /** The agent's hidden model families by control id (settings → Agents → Models) */
+  @Trace hiddenModels: Map<string, string[]> = new Map<string, string[]>();
+  /** Asked by "Continue in a new session": the root opens the new-session page */
+  @Trace newSessionAsked: number = 0;
+  private composerSeq: number = 0;
+  /** The new-session page's picker and draft (its composer works before any session exists) */
+  readonly newGoo: Goo = new Goo();
+  readonly newDraft: ComposerDraft = new ComposerDraft();
+  /** What a new session of an agent offers before it runs (`controls`), and the picks made on the new-session page */
+  @Trace agentControls: Map<string, ConfigControl[]> = new Map<string, ConfigControl[]>();
+  @Trace agentCommands: Map<string, SlashCommand[]> = new Map<string, SlashCommand[]>();
+  @Trace newPicks: Map<string, SessionControls> = new Map<string, SessionControls>();
+  private controlsAsked: Set<string> = new Set<string>();
+  /** The new-session page's attachments and picks, applied once the engine shows the session it made */
+  private startExtras: StartExtras | undefined = undefined;
+  private awaitingExtras: StartExtras | undefined = undefined;
+
+  /** The auto-compact threshold the context ring marks (settings), none with auto-compaction off */
+  get compactAt(): number | undefined {
+    return this.settings.autoCompact && this.settings.compactAtTokens > 0 ? this.settings.compactAtTokens : undefined;
+  }
+
+  /**
+   * The controls a new session of `agent` starts with (AppModel.controls(for:)): the page's picks, else the open chat's
+   * when it is that agent's, else the engine's answer, else (demo) the showcase fixture's
+   */
+  controlsFor(agent: string): SessionControls {
+    const picked = this.newPicks.get(agent);
+    if (picked !== undefined) {
+      return picked;
+    }
+    if (this.live && !this.controlsAsked.has(agent)) {
+      this.controlsAsked.add(agent);
+      this.post({ type: 'controls', agent: agent });
+    }
+    const view = this.view;
+    if (view !== undefined && view.agent === agent && view.controls !== undefined && view.controls.options.length > 0) {
+      return view.controls;
+    }
+    const options = this.agentControls.get(agent);
+    if (options !== undefined && options.length > 0) {
+      return { modes: [], options: options };
+    }
+    // The demo borrows the showcase fixture's controls for that fixture's agent only, never another agent's models
+    const demo = this.live ? undefined : fixtureView('showcase');
+    return (demo !== undefined && demo.agent === agent ? demo.controls : undefined) ?? { modes: [], options: [] };
+  }
+
+  commandsFor(agent: string): SlashCommand[] {
+    const view = this.view;
+    return this.agentCommands.get(agent) ?? (view !== undefined && view.agent === agent ? view.commands : undefined) ?? [];
+  }
+
+  setNewMode(agent: string, mode: string): void {
+    const c = this.controlsFor(agent);
+    const next = new Map<string, SessionControls>(this.newPicks);
+    next.set(agent, { modes: c.modes, modeId: mode, modeConfigId: c.modeConfigId, options: c.options });
+    this.newPicks = next;
+  }
+
+  setNewConfig(agent: string, id: string, value: string): void {
+    const next = new Map<string, SessionControls>(this.newPicks);
+    next.set(agent, editTurnConfig(this.controlsFor(agent), id, value));
+    this.newPicks = next;
+  }
+
+  /** The new-session page's send: its attachments ride with the first prompt and its picks are set on the session */
+  prepareStart(agent: string, staged: Attachment[]): void {
+    this.startExtras = { attachments: staged, controls: this.newPicks.get(agent) };
+  }
+
+  /** What startIn hands the session it made: the extras the page prepared, taken once */
+  private takeStartExtras(): StartExtras | undefined {
+    const extras = this.startExtras;
+    this.startExtras = undefined;
+    return extras;
+  }
+
+  /** The page's picks where they differ from what the engine started the session with (AppModel+Engine apply) */
+  private applyPicks(id: string, picked: SessionControls | undefined, made: SessionControls | undefined): void {
+    if (picked === undefined || made === undefined) {
+      return;
+    }
+    if (picked.modeId !== undefined && picked.modeId !== made.modeId && made.modes.some((m) => m.id === picked.modeId)) {
+      this.post({ type: 'setMode', sessionId: id, id: picked.modeId });
+    }
+    picked.options.forEach((o: ConfigControl) => {
+      const now = made.options.find((m: ConfigControl) => m.id === o.id);
+      if (o.value !== undefined && now !== undefined && now.value !== o.value) {
+        this.post({ type: 'setConfig', sessionId: id, configId: o.id, value: o.value });
+      }
+    });
+  }
+
+  /** The chat's draft, made on first use; a chat left behind keeps what was typed or staged */
+  draftFor(id: string): ComposerDraft {
+    const kept = this.drafts.get(id);
+    if (kept !== undefined) {
+      return kept;
+    }
+    const made = new ComposerDraft();
+    this.drafts.set(id, made);
+    return made;
+  }
+
+  /** A send while a turn runs joins it (Shell.tsx `steering`) */
+  steering(): boolean {
+    return this.settings.steerQueued && this.view?.canSteer === true && this.view?.running === true;
+  }
+
+  /**
+   * The composer's send: a rewrite while a sent prompt is being edited, a revision while a plan waits on its card, else
+   * a prompt (queued behind a running turn, joined to it with steering on)
+   */
+  composerSend(text: string, staged: Attachment[]): void {
+    const view = this.view;
+    if (view === undefined) {
+      return;
+    }
+    const draft = this.draftFor(view.id);
+    if (draft.edit !== undefined) {
+      this.sendEdit(text, staged);
+      return;
+    }
+    const body = text.trim();
+    const review = pendingPlanReview(view.turns);
+    const revise = review?.options?.find((o) => o.kind === 'reject_once' && !o.id.toLowerCase().includes('exit'));
+    if (body.length > 0 && review !== undefined && revise !== undefined && review.id !== undefined) {
+      // Revise answers the card, and the words go out as the next prompt after the rejection
+      this.permission(review.id, revise.id);
+    }
+    if (!this.live && view.running) {
+      const item: QueuedPrompt = { id: `q-${++this.composerSeq}`, text: body, attachments: staged.length > 0 ? staged : undefined };
+      const next = viewWithTurns(view, view.turns);
+      next.queued = (view.queued ?? []).concat([item]);
+      this.view = next;
+      return;
+    }
+    this.send(text, staged);
+  }
+
+  setMode(mode: string): void {
+    const view = this.view;
+    if (view === undefined) {
+      return;
+    }
+    const edit = this.draftFor(view.id).edit;
+    if (edit !== undefined) {
+      // The editing composer's pickers act on the edit's own selections
+      const controls: SessionControls = {
+        modes: edit.controls.modes, modeId: mode, modeConfigId: edit.controls.modeConfigId, options: edit.controls.options
+      };
+      this.draftFor(view.id).edit = this.withControls(edit, controls);
+      return;
+    }
+    if (this.live) {
+      this.post({ type: 'setMode', sessionId: view.id, id: mode });
+      return;
+    }
+    const controls = view.controls;
+    if (controls !== undefined) {
+      const next = viewWithTurns(view, view.turns);
+      next.controls = { modes: controls.modes, modeId: mode, modeConfigId: controls.modeConfigId, options: controls.options };
+      this.view = next;
+    }
+  }
+
+  setConfig(id: string, value: string): void {
+    const view = this.view;
+    if (view === undefined) {
+      return;
+    }
+    const edit = this.draftFor(view.id).edit;
+    if (edit !== undefined) {
+      this.draftFor(view.id).edit = this.withControls(edit, editTurnConfig(edit.controls, id, value));
+      return;
+    }
+    if (this.live) {
+      this.post({ type: 'setConfig', sessionId: view.id, configId: id, value: value });
+      return;
+    }
+    if (view.controls !== undefined) {
+      const next = viewWithTurns(view, view.turns);
+      next.controls = editTurnConfig(view.controls, id, value);
+      this.view = next;
+    }
+  }
+
+  private withControls(edit: TurnEdit, controls: SessionControls): TurnEdit {
+    const out: TurnEdit = {
+      turnIndex: edit.turnIndex, turnCount: edit.turnCount, original: edit.original, controls: controls,
+      keptText: edit.keptText, keptStaged: edit.keptStaged
+    };
+    return out;
+  }
+
+  // Queue
+
+  /** Send now: the running turn stops and the queued prompt goes at once; with steering on it joins the turn instead */
+  sendQueued(item: string): void {
+    const view = this.view;
+    if (view === undefined) {
+      return;
+    }
+    if (this.live) {
+      this.post({ type: this.steering() ? 'steerQueued' : 'sendQueued', sessionId: view.id, id: item });
+      return;
+    }
+    const prompt = this.takeQueued(item);
+    if (prompt === undefined) {
+      return;
+    }
+    const after = this.view as SessionView;
+    const stopped = viewWithTurns(after, after.turns);
+    stopped.running = false;
+    this.view = stopped;
+    this.send(prompt.text, prompt.attachments ?? []);
+  }
+
+  /** Edit: takes a prompt out of the queue into the composer (its stored attachments stay behind as links) */
+  editQueued(item: string): void {
+    const view = this.view;
+    const prompt = this.takeQueued(item);
+    if (view === undefined || prompt === undefined) {
+      return;
+    }
+    const draft = this.draftFor(view.id);
+    draft.text = prompt.text;
+    draft.staged = (prompt.attachments ?? []).filter((a: Attachment) => a.kind === 'file' || a.kind === 'quote');
+    draft.focusKey++;
+  }
+
+  removeQueued(item: string): void {
+    this.takeQueued(item);
+  }
+
+  private takeQueued(item: string): QueuedPrompt | undefined {
+    const view = this.view;
+    if (view === undefined) {
+      return undefined;
+    }
+    const prompt = (view.queued ?? []).find((q: QueuedPrompt) => q.id === item);
+    if (this.live) {
+      this.post({ type: 'dequeue', sessionId: view.id, id: item });
+      return prompt;
+    }
+    const next = viewWithTurns(view, view.turns);
+    const left = (view.queued ?? []).filter((q: QueuedPrompt) => q.id !== item);
+    next.queued = left.length > 0 ? left : undefined;
+    this.view = next;
+    return prompt;
+  }
+
+  // Prompt edits
+
+  /** Takes the sent prompt at `index` into the composer; what the composer held waits until the edit ends */
+  beginEdit(index: number): void {
+    const view = this.view;
+    const prompt = view?.turns[index];
+    if (view === undefined || prompt === undefined || prompt.role !== 'user' || prompt.auto === true || !canEditPrompts(view)) {
+      return;
+    }
+    const draft = this.draftFor(view.id);
+    const keptText = draft.edit?.keptText ?? draft.text;
+    const keptStaged = draft.edit?.keptStaged ?? draft.staged;
+    const live: SessionControls = view.controls ?? { modes: [], options: [] };
+    draft.edit = {
+      turnIndex: index, turnCount: view.turns.length, original: prompt, controls: openTurnControls(live, prompt.settings),
+      keptText: keptText, keptStaged: keptStaged
+    };
+    draft.text = prompt.text ?? '';
+    draft.staged = prompt.attachments ?? [];
+    draft.focusKey++;
+  }
+
+  /** The edit dropped: the composer gets back what it held */
+  cancelEdit(): void {
+    const view = this.view;
+    if (view === undefined) {
+      return;
+    }
+    const draft = this.draftFor(view.id);
+    const edit = draft.edit;
+    if (edit === undefined) {
+      return;
+    }
+    draft.edit = undefined;
+    draft.text = edit.keptText;
+    draft.staged = edit.keptStaged;
+  }
+
+  /** Send from the editing composer: the turn and everything after it give way to the rewrite (`editTurn`) */
+  private sendEdit(text: string, staged: Attachment[]): void {
+    const view = this.view;
+    if (view === undefined) {
+      return;
+    }
+    const draft = this.draftFor(view.id);
+    const edit = draft.edit;
+    if (edit === undefined) {
+      return;
+    }
+    draft.edit = undefined;
+    if (this.live) {
+      const request = util.generateRandomUUID();
+      draft.pending = { request: request, edit: edit, text: text, staged: staged };
+      this.post({ type: 'editTurn', requestId: request, edit: editTurnRequest(view.id, edit, text, staged) });
+      return;
+    }
+    const next = viewWithTurns(view, view.turns.slice(0, edit.turnIndex));
+    next.controls = edit.controls;
+    this.view = next;
+    this.send(text, staged);
+    // The composer clears itself after this returns, so the earlier draft comes back on the next pass
+    setTimeout(() => this.restoreKept(draft, edit), 0);
+  }
+
+  private restoreKept(draft: ComposerDraft, edit: TurnEdit): void {
+    if (draft.text.length === 0 && draft.staged.length === 0 && draft.edit === undefined) {
+      draft.text = edit.keptText;
+      draft.staged = edit.keptStaged;
+    }
+  }
+
+  // Short stops, compaction, questions, goal, fork
+
+  /** Retry: the failed turn goes, its prompt runs again (`retryTurn`) */
+  retry(): void {
+    const view = this.view;
+    if (view === undefined) {
+      return;
+    }
+    if (this.live) {
+      this.post({ type: 'retryTurn', sessionId: view.id });
+      return;
+    }
+    const turns = view.turns.slice();
+    if (turns.length < 2 || turns[turns.length - 1].role !== 'agent' || turns[turns.length - 2].role !== 'user') {
+      return;
+    }
+    turns.pop();
+    const prompt = turns.pop() as Turn;
+    this.view = viewWithTurns(view, turns);
+    this.send(prompt.text ?? '', prompt.attachments ?? []);
+  }
+
+  /** Continue after a limit: a follow-up asking the agent to carry on */
+  carryOn(): void {
+    this.send(t('alert.continueText'));
+  }
+
+  /** /compact (the ring's card, a context that no longer fits) */
+  compact(): void {
+    const view = this.view;
+    if (view === undefined) {
+      return;
+    }
+    if (this.live) {
+      this.post({ type: 'compact', sessionId: view.id });
+      return;
+    }
+    if (view.running) {
+      return;
+    }
+    const prompt: Turn = { role: 'user', text: '/compact', auto: true };
+    const done: Turn = { role: 'agent', stop: 'end_turn', blocks: [{ type: 'compaction', status: 'completed' }] };
+    const next = viewWithTurns(view, view.turns.concat([prompt, done]));
+    if (view.usage !== undefined) {
+      next.usage = { used: view.usage.used, size: view.usage.size, compactedFrom: view.usage.used };
+    }
+    this.view = next;
+  }
+
+  /** "Continue in a new session": the root opens the new-session page */
+  continueNew(): void {
+    this.newSessionAsked++;
+  }
+
+  /** A question answered or skipped: it closes, and its card leaves the dock */
+  answer(blockId: string, answers: Record<string, QuestionAnswer>, skipped: boolean): void {
+    const view = this.view;
+    if (view === undefined) {
+      return;
+    }
+    if (this.live) {
+      const none: Record<string, QuestionAnswer> = {};
+      this.post({
+        type: 'answer', sessionId: view.id, blockId: blockId, answers: skipped ? none : answers,
+        skip: skipped ? true : undefined
+      });
+      return;
+    }
+    this.view = viewWithTurns(view, view.turns.map((turn: Turn) => {
+      if (turn.role !== 'agent' || !(turn.blocks ?? []).some((b: AgentBlock) => b.id === blockId)) {
+        return turn;
+      }
+      const out: Turn = {
+        role: turn.role, id: turn.id, stop: turn.stop, startedAt: turn.startedAt, endedAt: turn.endedAt, error: turn.error,
+        blocks: (turn.blocks ?? []).map((b: AgentBlock) => {
+          if (b.id !== blockId) {
+            return b;
+          }
+          const settled: AgentBlock = {
+            type: b.type, id: b.id, message: b.message, questions: b.questions, outcome: skipped ? 'skipped' : 'answered'
+          };
+          return settled;
+        })
+      };
+      return out;
+    }));
+  }
+
+  /** A goal control (Goal.tsx): pause / resume / clear */
+  goal(action: string): void {
+    const view = this.view;
+    if (view === undefined) {
+      return;
+    }
+    if (this.live) {
+      this.post({ type: 'goal', sessionId: view.id, action: action });
+      return;
+    }
+    const goal = view.goal;
+    const next = viewWithTurns(view, view.turns);
+    if (action === 'clear' || goal === undefined) {
+      next.goal = undefined;
+    } else {
+      next.goal = {
+        objective: goal.objective, status: action === 'pause' ? 'paused' : 'active', iterations: goal.iterations,
+        tokenBudget: goal.tokenBudget, tokensUsed: goal.tokensUsed, timeUsedSeconds: goal.timeUsedSeconds
+      };
+    }
+    this.view = next;
+  }
+
+  /** Fork from a turn: a new session holding the transcript up to and including it, opened in place of this one */
+  fork(turnIndex: number): void {
+    const view = this.view;
+    if (view === undefined || turnIndex < 0 || turnIndex >= view.turns.length) {
+      return;
+    }
+    if (this.live) {
+      // The engine shows the fork it made: the chat opens on it (`session`, as a new session's)
+      this.awaiting = '';
+      this.openId = undefined;
+      this.view = undefined;
+      this.post({ type: 'forkSession', sessionId: view.id, turnIndex: turnIndex });
+      return;
+    }
+    const id = `demo-fork-${++this.composerSeq}`;
+    const title = t('session.forkTitle', new Map<string, string>([['title', view.title]]));
+    const fork = viewWithTurns(view, view.turns.slice(0, turnIndex + 1));
+    fork.id = id;
+    fork.title = title;
+    fork.running = false;
+    fork.queued = undefined;
+    const summary: SessionSummary = { id: id, title: title, agent: view.agent, cwd: view.cwd, updatedAt: new Date().toISOString() };
+    this.summaries = [summary].concat(this.summaries);
+    this.openId = id;
+    this.stableTurns = 0;
+    this.view = fork;
+    this.toast = t('mobile.forked');
+  }
+
+  /** Text quoted from the transcript waits in the chat's composer as an annotation (QuoteToolbar's "Add to chat") */
+  quote(text: string): void {
+    const view = this.view;
+    const trimmed = text.trim();
+    if (view === undefined || trimmed.length === 0) {
+      return;
+    }
+    const draft = this.draftFor(view.id);
+    const item: Attachment = { kind: 'quote', text: trimmed };
+    draft.staged = draft.staged.concat([item]);
+  }
+
+  /** The composer's replies: the `@` search's files and an edit's answer */
+  private receiveComposer(message: ComposerHostMsg): void {
+    if (message.type === 'files') {
+      this.files.receive(message.seq ?? -1, message.files ?? []);
+    } else if (message.type === 'editTurnResult') {
+      this.editAnswered(message.requestId ?? '', message.error);
+    } else if (message.type === 'controls' && message.agent !== undefined && message.cwd === undefined) {
+      const controls = new Map<string, ConfigControl[]>(this.agentControls);
+      controls.set(message.agent, message.controls ?? []);
+      this.agentControls = controls;
+      const commands = new Map<string, SlashCommand[]>(this.agentCommands);
+      commands.set(message.agent, message.commands ?? []);
+      this.agentCommands = commands;
+    }
+  }
+
+  /** A refusal names why and puts the rewrite back; an accepted edit gives the composer its earlier draft */
+  private editAnswered(request: string, error: string | undefined): void {
+    this.drafts.forEach((draft: ComposerDraft) => {
+      const pending = draft.pending;
+      if (pending === undefined || pending.request !== request) {
+        return;
+      }
+      draft.pending = undefined;
+      if (error === undefined) {
+        this.restoreKept(draft, pending.edit);
+        return;
+      }
+      this.toast = error;
+      if (draft.text.length === 0 && draft.staged.length === 0 && draft.edit === undefined) {
+        draft.edit = pending.edit;
+        draft.text = pending.text;
+        draft.staged = pending.staged;
+      }
+    });
   }
 }
 
