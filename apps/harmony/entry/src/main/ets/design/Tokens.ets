@@ -105,7 +105,8 @@ export class ListMetrics {
 
 export class MenuMetrics {
   static readonly row: number = 44;
-  static readonly minW: number = 220;
+  /** A definite width (UIMenu's): rows fill it at '100%', which an unsized card on device does not resolve */
+  static readonly w: number = 250;
   static readonly radius: number = 26;
   static readonly gap: number = 8;
   static readonly shadow: number = 24;
