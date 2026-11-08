@@ -610,7 +610,7 @@ private fun CodeFrame(title: String, copy: String, copyLabel: String, full: @Com
 /** The code sheet: one card whole, both ways scrollable, under a title naming it, with copy and close in its bar */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CodeSheet(title: String, copy: String, copyLabel: String, onDismiss: () -> Unit, content: @Composable () -> Unit) {
+internal fun CodeSheet(title: String, copy: String, copyLabel: String, onDismiss: () -> Unit, content: @Composable () -> Unit) {
   val state = rememberModalBottomSheetState(skipPartiallyExpanded = false)
   val context = LocalContext.current
   var copied by remember { mutableIntStateOf(0) }
