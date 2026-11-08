@@ -91,6 +91,8 @@ export struct Lucide {
   @Param name: string = 'square';
   @Param tint: ResourceColor = $r('app.color.fg1');
   @Param extent: number = Metrics.icon;
+  /** Stroke width on the 24 unit box: transcript rows draw 1.5, the fold marks 1.75 */
+  @Param weight: number = Metrics.stroke;
 
   build() {
     Stack() {
@@ -99,7 +101,7 @@ export struct Lucide {
           .commands(d)
           .fill(Color.Transparent)
           .stroke(this.tint)
-          .strokeWidth(Metrics.stroke * this.extent / Metrics.iconBox)
+          .strokeWidth(this.weight * this.extent / Metrics.iconBox)
           .strokeLineCap(LineCapStyle.Round)
           .strokeLineJoin(LineJoinStyle.Round)
           .antiAlias(true)

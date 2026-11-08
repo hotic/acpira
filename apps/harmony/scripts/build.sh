@@ -6,6 +6,8 @@
 #                launch parameters); DEV_PROMPT a first prompt it sends there once connected
 #   DEV_NEARBY   `ID@host:port[,host:port]` of a paired-remote gateway the add-computer sheet lists as nearby whatever
 #                mDNS finds (an emulator sees no Bonjour), for pairing by code
+#   PREVIEW_FIXTURE  a fixture pages/Preview shows alone at full height (the Previewer takes no input); PREVIEW_OPEN=1
+#                opens every fold there
 #   HVIGOR_HOME  a folder whose node_modules holds @ohos/hvigor and @ohos/hvigor-ohos-plugin (default ~/Library/OpenHarmony/hvigor)
 # Usage: apps/harmony/scripts/build.sh [hvigor task …]   (default: assembleHap)
 set -euo pipefail
@@ -37,6 +39,8 @@ lines.append('')
 lines.append(f"export const DEV_ENGINE: string = {json.dumps(os.environ.get('DEV_ENGINE', ''))};")
 lines.append(f"export const DEV_PROMPT: string = {json.dumps(os.environ.get('DEV_PROMPT', ''))};")
 lines.append(f"export const DEV_NEARBY: string = {json.dumps(os.environ.get('DEV_NEARBY', ''))};")
+lines.append(f"export const PREVIEW_FIXTURE: string = {json.dumps(os.environ.get('PREVIEW_FIXTURE', ''))};")
+lines.append(f"export const PREVIEW_OPEN: boolean = {'true' if os.environ.get('PREVIEW_OPEN') == '1' else 'false'};")
 open(out, 'w', encoding='utf-8').write('\n'.join(lines) + '\n')
 PY
 

@@ -12,6 +12,12 @@ import { AlertCard, EditingBar, PlanDock, QuestionCard, QueueBubble } from '../c
 import { attachBeans, Bean, modelBeans } from '../components/composer/Beans';
 import { GooLayer } from '../components/composer/GooLayer';
 import { ChatBar, ChatBarActions } from '../components/ChatBar';
+import { asView, SubagentSummary } from '../wire/Blocks';
+
+/** The view's controls as the plan card reads them */
+interface ViewControls {
+  controls?: Object;
+}
 
 // The chat (apps/ios Chat/ChatView.swift): the bar with back and the title, the thread in the reading column, the
 // dock under it (Chat/Dock.swift: question, alert, the prompt being edited, the composer), the to-do card floating over
@@ -106,6 +112,25 @@ export struct ChatPage {
     return this.model.goo.open !== undefined;
   }
 
+  // Transcript (transcript agent): what the turns read from the view beyond their own turn
+
+  /** The agent's advertised command names: the prompt bubbles tint them */
+  commandNames(): string[] {
+    const view = this.model.view;
+    return view === undefined ? [] : (view.commands ?? []).map((c: SlashCommand) => c.name);
+  }
+
+  subagents(): SubagentSummary[] {
+    const view = this.model.view;
+    return view === undefined ? [] : (asView(view).subagents ?? []);
+  }
+
+  /** The session's controls (the plan card's execution model), read loosely */
+  planControls(): Object | undefined {
+    const view = this.model.view;
+    return view === undefined ? undefined : (view as Object as ViewControls).controls;
+  }
+
   build() {
     Column() {
       // The bar and its "…" menu (components/ChatBar.ets)
@@ -184,17 +209,28 @@ export struct ChatPage {
 
   @Builder
   thread() {
-    List({ scroller: this.scroller, space: Metrics.msgGap }) {
+    // A chat opens at its end, as the other apps do
+    List({ scroller: this.scroller, space: Metrics.msgGap, initialIndex: Math.max(0, (this.model.view?.turns.length ?? 0) - 1) }) {
       ForEach(this.model.view?.turns ?? [], (turn: Turn, i: number) => {
         ListItem() {
           if (turn.role === 'user') {
-            UserBubble({ text: turn.text ?? '' })
+            UserBubble({ text: turn.text ?? '', turn: turn, commands: this.commandNames() })
               .bindContextMenu(this.promptMenu(i, turn), ResponseType.LongPress)
           } else {
             AgentMessage({
               turn: turn,
               running: (this.model.view?.running ?? false) && i === (this.model.view?.turns.length ?? 0) - 1,
-              onPermission: (blockId: string, optionId: string) => this.model.permission(blockId, optionId)
+              onPermission: (blockId: string, optionId: string) => this.model.permission(blockId, optionId),
+              index: i,
+              scope: this.model.view?.id ?? '',
+              subagents: this.subagents(),
+              controls: this.planControls(),
+              agent: this.model.view?.agent ?? '',
+              now: (): number => this.model.now(),
+              actions: true,
+              onFork: (turnIndex: number) => this.model.fork(turnIndex),
+              onBuild: (planId: string, optionId: string, configId: string, value: string) =>
+                this.model.buildPlan(planId, optionId, configId, value)
             })
               .bindContextMenu(this.replyMenu(i), ResponseType.LongPress)
           }

@@ -52,6 +52,15 @@ export interface WebviewMsg {
   action?: string;
   objective?: string;
   retainedAttachments?: number[];
+  // Transcript (transcript agent): a saved plan's Build with its execution model
+  planId?: string;
+  model?: PlanModelPick;
+}
+
+/** buildPlan's execution model (protocol.ts `model: { configId, value }`) */
+export interface PlanModelPick {
+  configId: string;
+  value: string;
 }
 
 interface ClientInfo {
