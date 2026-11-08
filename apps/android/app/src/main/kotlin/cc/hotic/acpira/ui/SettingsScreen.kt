@@ -181,19 +181,19 @@ private fun notifyState(context: android.content.Context, prefs: android.content
 fun DeveloperSettingsScreen(model: AppModel) {
   val context = LocalContext.current
   val prefs = remember { context.getSharedPreferences(PerfHud.PREFS, android.content.Context.MODE_PRIVATE) }
-  var fps by remember { mutableStateOf(prefs.getBoolean(PerfHud.FPS, false)) }
-  var hitches by remember { mutableStateOf(prefs.getBoolean(PerfHud.HITCHES, false)) }
+  var fps by remember { mutableStateOf(PerfHud.isOn(prefs, PerfHud.FPS)) }
+  var hitches by remember { mutableStateOf(PerfHud.isOn(prefs, PerfHud.HITCHES)) }
   // The overlay follows the stored switches itself
   FormPage(model, t("mobile.dev")) {
     FormSection(null, footer = t("mobile.dev.desc")) {
       SwitchRow(t("mobile.dev.fps"), fps, tag = "developer.fps") {
         fps = it
-        prefs.edit().putBoolean(PerfHud.FPS, it).apply()
+        PerfHud.set(prefs, PerfHud.FPS, it)
       }
       RowRule()
       SwitchRow(t("mobile.dev.hitches"), hitches, tag = "developer.hitches") {
         hitches = it
-        prefs.edit().putBoolean(PerfHud.HITCHES, it).apply()
+        PerfHud.set(prefs, PerfHud.HITCHES, it)
       }
     }
   }

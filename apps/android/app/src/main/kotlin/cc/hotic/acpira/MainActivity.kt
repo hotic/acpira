@@ -57,7 +57,7 @@ class MainActivity : ComponentActivity() {
     enableEdgeToEdge(first.theme)
     super.onCreate(savedInstanceState)
     // Settings → Developer's frame-rate and hitch overlay, in a window of its own above every screen and sheet
-    cc.hotic.acpira.design.PerfHud.install(this)
+    cc.hotic.acpira.design.PerfHud.install(this, options.hudFps, options.hudHitches)
     if (pairing != null) {
       // A computer paired before (on an earlier release, or with the permission later taken back): its LAN path needs
       // Android 17's local network grant; asked once here, the relay carries the wire meanwhile

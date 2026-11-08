@@ -229,6 +229,8 @@ object Metrics {
   val markClear = 1.5.dp
   /** The floating bar pieces' and the toast's shadows */
   val barShadow = 3.dp
+  /** Two floating pieces closer than this melt into one (apps/ios Metrics.gooMerge): the bar hand-over's neck */
+  val gooMerge = 10.dp
   val toastShadow = 6.dp
   val heroTile = 64.dp
   val heroBare = 38.dp

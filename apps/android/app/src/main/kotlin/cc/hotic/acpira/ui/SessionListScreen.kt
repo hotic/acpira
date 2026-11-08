@@ -1037,28 +1037,32 @@ private fun ListBottomBar(query: String, onQuery: (String) -> Unit, onNew: () ->
   Row(
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(Metrics.gap),
-    modifier = Modifier.readableWidth().navigationBarsPadding().imePadding().padding(horizontal = Metrics.pad, vertical = Metrics.s2),
+    // Handed over to a composer across a push or pop (ui/BarHandoff.kt)
+    modifier = Modifier.handoffList(empty = query.isEmpty()).readableWidth().navigationBarsPadding().imePadding().padding(horizontal = Metrics.pad, vertical = Metrics.s2),
   ) {
-    SearchPill(query, onQuery, Modifier.weight(1f))
+    SearchPill(query, onQuery, Modifier.weight(1f).handoffPiece(HandoffPart.Search), face = Modifier.handoffFace(HandoffPart.Search))
     FloatingActionButton(
       onClick = onNew,
       containerColor = Palette.bg1, contentColor = Palette.fg1, shape = CircleShape,
       elevation = FloatingActionButtonDefaults.elevation(defaultElevation = Metrics.barShadow),
-      modifier = Modifier.size(Metrics.barCtl).testTag("list.new"),
+      modifier = Modifier.size(Metrics.barCtl).handoffPiece(HandoffPart.New).testTag("list.new"),
     ) {
-      Lucide("squarePen", Palette.fg1, size = Metrics.iconCtl, contentDescription = t("session.new"))
+      Lucide("squarePen", Palette.fg1, Modifier.handoffFace(HandoffPart.New), size = Metrics.iconCtl, contentDescription = t("session.new"))
     }
   }
 }
 
-/** The list's search field: a capsule with the glass bar's lift, the engine searching the conversations too */
+/**
+ * The list's search field: a capsule with the glass bar's lift, the engine searching the conversations too. [face]
+ * goes on its contents (the phone bar's handoff fades them apart from the capsule)
+ */
 @Composable
-private fun SearchPill(query: String, onQuery: (String) -> Unit, modifier: Modifier = Modifier) {
+private fun SearchPill(query: String, onQuery: (String) -> Unit, modifier: Modifier = Modifier, face: Modifier = Modifier) {
   Surface(
     color = Palette.bg1, shape = RoundedCornerShape(percent = 50), shadowElevation = Metrics.barShadow,
     modifier = modifier.height(Metrics.barCtl),
   ) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = Metrics.pad)) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = face.padding(horizontal = Metrics.pad)) {
       Lucide("search", Palette.fg1, size = Metrics.iconCtl)
       Spacer(Modifier.width(Metrics.s2 + Metrics.s1))
       Box(Modifier.weight(1f)) {
