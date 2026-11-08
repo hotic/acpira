@@ -1,6 +1,6 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type RefObject } from 'react';
 import { flushSync } from 'react-dom';
-import { Archive, Check, CircleAlert, FolderInput, Network, Paperclip, Settings2, X } from 'lucide-react';
+import { Archive, Check, CircleAlert, Folder, Network, Paperclip, Settings2, X } from 'lucide-react';
 import type { AccountInfo, AgentId, AgentInfo, ForkOrigin, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, GoalAction, ImageDraft, NativeSessionInfo, PermissionBlock, PlanDocumentBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionGoal, SessionStatus, SessionSummary, SlashCommand, Turn, Usage, UserTurn } from '@acpira/shared/transcript';
 import type { SubagentSummary } from '@acpira/shared/subagents';
 import type { ModelShapes } from '@acpira/shared/modelShapes';
@@ -591,7 +591,7 @@ export function Shell(p: ShellProps) {
     moveSession: on.moveSession && ((id, to) => {
       const title = p.sessions.find(s => s.id === id)?.title ?? t('session.fallbackTitle');
       on.moveSession!(id, to);
-      pushToast({ key: `m${id}`, text: to && to.cwd !== p.workspace ? t('session.movedTo', { title, project: projectName(to.cwd) }) : t('session.moved', { title }), icon: <FolderInput className="text-fg-3" strokeWidth={1.5} /> });
+      pushToast({ key: `m${id}`, text: to && to.cwd !== p.workspace ? t('session.movedTo', { title, project: projectName(to.cwd) }) : t('session.moved', { title }), icon: <Folder className="text-fg-3" strokeWidth={1.5} /> });
     }),
   }), [on, canUnlock, p.sessions, p.activeSessionId, p.cwd, pushToast, dropToast, copied]);
   const blobUrl = useMemo(() => (p.blobBase && p.activeSessionId ? (blob: string) => `${p.blobBase}/${p.activeSessionId}/${blob}` : undefined), [p.blobBase, p.activeSessionId]);
