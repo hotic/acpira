@@ -73,6 +73,18 @@ import cc.hotic.acpira.store.selectAccount
 import cc.hotic.acpira.store.sendEdit
 import cc.hotic.acpira.store.sendQueued
 import cc.hotic.acpira.store.takeQueued
+import cc.hotic.acpira.store.openTerminal
+import cc.hotic.acpira.logic.countsLabel
+import cc.hotic.acpira.logic.isSidekick
+import cc.hotic.acpira.logic.linkOnly
+import cc.hotic.acpira.logic.nodesByTurn
+import cc.hotic.acpira.logic.shownReports
+import cc.hotic.acpira.ui.subagents.LocalAgentNames
+import cc.hotic.acpira.ui.subagents.LocalAllSubagents
+import cc.hotic.acpira.ui.subagents.LocalInspectSubagent
+import cc.hotic.acpira.ui.subagents.LocalSidekickModels
+import cc.hotic.acpira.ui.subagents.SidekickModels
+import cc.hotic.acpira.ui.subagents.SubagentReturns
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -144,6 +156,14 @@ fun ChatScreen(model: AppModel, id: String) {
   // Selected reply text quotes into this chat's composer; `@` offers the personas and the engine's file search
   val quote = remember(id, model) { { text: String -> model.quote(id, text) } }
   val personas = remember(model.settings, model.agents) { model.personas }
+  // Each child reaches only the turn that announced it; the sidekick's rounds are the lead's own relay, not subagents:
+  // they neither offer the graph nor count in it (ChatScreen.swift helpers)
+  val nodes = remember(held?.subagents) { nodesByTurn(held?.subagents.orEmpty()) }
+  val allNodes = remember(held?.subagents) { held?.subagents.orEmpty().map { it.linkOnly } }
+  val helpers = remember(view?.subagents) { view?.subagents.orEmpty().filter { !isSidekick(it) } }
+  val context = androidx.compose.ui.platform.LocalContext.current
+  val sidekickModels = remember(held?.controls) { held?.controls?.let { SidekickModels.of(context, it) } ?: SidekickModels() }
+  val inspect = remember(id, model) { { child: String -> model.push(Screen.Subagent(id, child)) } }
 
   // Follow the end while the reader is there: a new exchange or a growing last turn keeps it in view
   var following by remember { mutableStateOf(true) }
@@ -203,7 +223,17 @@ fun ChatScreen(model: AppModel, id: String) {
             Lucide("squarePen", Palette.fg1, size = Metrics.iconCtl, contentDescription = t("session.new"))
           }
           // The session's "…" menu, shared with the list's rows (ui/SessionMenu.kt)
-          ChatMenuButton(model, id)
+          ChatMenuButton(
+            model, id,
+            ChatEntries(
+              account = { model.openAccount(id) }.takeIf { hasAccountMenu(model.agent(agent)) },
+              changes = { model.push(Screen.Changes(id)) }.takeIf { !view?.cwd.isNullOrEmpty() },
+              subagents = { model.push(Screen.Subagents(id)) }.takeIf { helpers.isNotEmpty() },
+              subagentCounts = countsLabel(helpers),
+              terminal = { view?.cwd?.takeIf { it.isNotEmpty() }?.let { model.openTerminal(it) } ?: Unit },
+              settings = { model.push(Screen.Settings) },
+            ),
+          )
         },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = Palette.bg0, scrolledContainerColor = Palette.bg0),
       )
@@ -269,6 +299,11 @@ fun ChatScreen(model: AppModel, id: String) {
       LocalPlanContext provides PlanContext(held.controls, held.running, held.status == SessionStatus.ready),
       LocalLiveStage provides stage,
       LocalQuote provides quote,
+      // A subagent row pushes that child's inspector
+      LocalInspectSubagent provides inspect,
+      LocalAllSubagents provides allNodes,
+      LocalSidekickModels provides sidekickModels,
+      LocalAgentNames provides { a: String -> model.agent(a).name },
     ) {
     LazyColumn(
       state = thread,
@@ -286,6 +321,11 @@ fun ChatScreen(model: AppModel, id: String) {
                 onEdit = if (editable) ({ handlers.editPrompt(exchange.id) }) else null,
                 onGoal = if (exchange.id == goalPrompt) ({ handlers.goal(GoalAction.set, user.text.trim()) }) else null,
               )
+              // The subagent returns that woke this reply, in the relay handback's shape (ThreadItems.swift)
+              if (user.auto == true && user.autoReason == "subagents") {
+                val reports = remember(user.text) { shownReports(user.text, AppModel.BUILTIN_AGENT) }
+                if (reports.isNotEmpty()) SubagentReturns(reports)
+              }
             }
             for ((index, turn) in exchange.agents) {
               val last = e == items.size - 1 && index == exchange.agents.last().first
@@ -300,6 +340,7 @@ fun ChatScreen(model: AppModel, id: String) {
                 settings = exchange.user?.settings,
                 controls = held.controls,
                 actions = turnActions,
+                subagents = nodes[index].orEmpty(),
               )
             }
           }

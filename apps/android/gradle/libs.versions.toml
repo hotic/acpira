@@ -11,6 +11,7 @@ jna = "5.17.0"
 camerax = "1.5.1"
 zxing = "3.5.3"
 javascriptengine = "1.1.1"
+termlib = "0.3.14"
 
 [libraries]
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
@@ -36,6 +37,8 @@ zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 # Code colours: shiki in AndroidX's JavaScript sandbox (V8 from the WebView provider, no view), the counterpart of the
 # JavaScriptCore context the iOS app runs it in
 javascriptengine = { module = "androidx.javascriptengine:javascriptengine", version.ref = "javascriptengine" }
+# The terminal page's emulator: ConnectBot's libvterm under a Compose canvas (Apache-2.0), the counterpart of SwiftTerm
+termlib = { module = "org.connectbot:termlib", version.ref = "termlib" }
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
 
 [plugins]

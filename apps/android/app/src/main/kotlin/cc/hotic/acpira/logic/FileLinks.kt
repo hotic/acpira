@@ -1,18 +1,19 @@
 package cc.hotic.acpira.logic
 
-import android.content.Context
-import android.widget.Toast
 import java.net.URI
 import java.net.URLDecoder
+import java.net.URLEncoder
 
 // Ported from apps/ios Logic/FileLinks.swift (chat/fileLinks.ts parseFileLink) and Logic/SessionLinks.swift
 // (shared/sessionLinks.ts): the workspace paths agent Markdown names (a link's target, a code span), with an optional
 // line (`src/a.ts:12`, `#L12`, `file:///…`), and the links that name another session. Every link tapped in prose goes
-// through [openProseLink], which routes files to [openFileLink] and sessions to [openSessionLink].
+// through [openProseLink]: a file becomes the app's own `acpira-file:` link ([FileLinks.url]) and goes, like a session
+// link, to the screen's link handler (ui/Links.kt), which opens the file page of the chat it was tapped in.
 
 data class FileLink(val path: String, val line: Int? = null)
 
 object FileLinks {
+  const val SCHEME = "acpira-file"
   private val webTLD = setOf("com", "org", "net", "io", "edu", "gov", "cn", "co", "dev", "info", "xyz", "me", "ai")
 
   /** Compiled once: the prose asks about every link and code span each time a streamed paragraph is built */
@@ -31,9 +32,26 @@ object FileLinks {
   fun parse(text: String): FileLink? {
     val raw = text.trim()
     if (raw.isEmpty() || raw.any(Char::isWhitespace)) return null
+    decode(raw)?.let { return it }
     if (raw.startsWith("#") || Patterns.scheme.containsMatchIn(raw)) return null
     if (raw.lowercase().startsWith("file:")) return parseFileURL(raw)
     return pathAndLine(raw)
+  }
+
+  /** The app's own link for a file, as the prose sets it on a path (`acpira-file://open?path=…&line=…`) */
+  fun url(link: FileLink): String =
+    "$SCHEME://open?path=" + URLEncoder.encode(link.path, "UTF-8").replace("+", "%20") + (link.line?.let { "&line=$it" } ?: "")
+
+  /** The file an [url] link names; null for any other link */
+  fun decode(url: String): FileLink? {
+    if (!url.startsWith("$SCHEME:")) return null
+    val query = url.substringAfter('?', "")
+    val items = query.split('&').mapNotNull { part ->
+      val eq = part.indexOf('=')
+      if (eq <= 0) null else part.substring(0, eq) to runCatching { URLDecoder.decode(part.substring(eq + 1), "UTF-8") }.getOrNull()
+    }.toMap()
+    val path = items["path"]?.takeIf { it.isNotEmpty() } ?: return null
+    return FileLink(path, items["line"]?.toIntOrNull())
   }
 
   private fun parseFileURL(href: String): FileLink? {
@@ -74,71 +92,20 @@ object FileLinks {
   }
 }
 
-object SessionLinks {
-  private val schemed = Regex("""([A-Za-z][A-Za-z0-9+.\-]*)://(.*)""")
-  private val reserved = setOf("index", "prefs", "categories", "trash")
-
-  const val PREFIX = "acpira://session/"
-
-  /** A session id names files under the store root: ASCII letters, digits, `_` and `-` only */
-  fun isSessionId(id: String) =
-    id.isNotEmpty() && id !in reserved && id.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '_' || it == '-' }
-
-  /** Surrounding `<…>` or backticks are what models and chat clients wrap links in */
-  private fun unwrap(input: String): String {
-    val s = input.trim()
-    if (s.length >= 2 && ((s.startsWith("<") && s.endsWith(">")) || (s.startsWith("`") && s.endsWith("`")))) {
-      return s.substring(1, s.length - 1).trim()
-    }
-    return s
-  }
-
-  /** The session a link points at; query, fragment and one trailing slash are ignored, and bare ids are no links */
-  fun idOfLink(href: String): String? {
-    var s = unwrap(href)
-    val cut = s.indexOfFirst { it == '?' || it == '#' }
-    if (cut >= 0) s = s.substring(0, cut)
-    if (s.endsWith("/")) s = s.dropLast(1)
-    val m = schemed.matchEntire(s) ?: return null
-    val scheme = m.groupValues[1].lowercase()
-    val rest = m.groupValues[2]
-    val slash = rest.indexOf('/')
-    val authority = if (slash >= 0) rest.substring(0, slash) else rest
-    val path = if (slash >= 0) rest.substring(slash) else ""
-    if (scheme == "acpira" && authority.lowercase() == "session") {
-      val id = path.drop(1)
-      return if (isSessionId(id)) id else null
-    }
-    // `/session/` sits in the path, and "acpira" anywhere before it (scheme, authority or an earlier path segment)
-    val at = path.lastIndexOf("/session/")
-    if (at < 0) return null
-    val id = path.substring(at + "/session/".length)
-    val before = "$scheme://$authority${path.substring(0, at)}".lowercase()
-    return if (isSessionId(id) && before.contains("acpira")) id else null
-  }
-}
-
 /** The file a prose link or code span opens, unless it names a session (InlineText.swift fileTarget) */
 fun fileTarget(text: String): FileLink? = if (SessionLinks.idOfLink(text) != null) null else FileLinks.parse(text)
 
 /**
- * Opens a workspace file a reply named. The file screens are not built yet, so the path (and line) shows as a notice;
- * this is the one place they take over
+ * Opens a workspace file a reply named: as the app's own link through [openUrl], the screen's link handler
+ * (ui/Links.kt), which pushes the file page of the chat on screen (store/Links.kt)
  */
-fun openFileLink(context: Context, link: FileLink) {
-  Toast.makeText(context, link.line?.let { "${link.path}:$it" } ?: link.path, Toast.LENGTH_SHORT).show()
-}
+fun openFileLink(link: FileLink, openUrl: (String) -> Unit) = openUrl(FileLinks.url(link))
 
 /**
- * Opens another session a reply links to, and answers whether it did. The session hook takes over here; until then
- * no link is handled, and the caller opens it as an ordinary URL
+ * Every link tapped in prose: a workspace file, else the URL itself (chat/Link.tsx); [openUrl] is the screen's link
+ * handler (ui/Links.kt), which opens a session or file link in the app
  */
-@Suppress("UNUSED_PARAMETER")
-fun openSessionLink(context: Context, id: String): Boolean = false
-
-/** Every link tapped in prose: a session, a workspace file, else the URL itself (chat/Link.tsx) */
-fun openProseLink(context: Context, url: String, openUrl: (String) -> Unit) {
-  SessionLinks.idOfLink(url)?.let { if (openSessionLink(context, it)) return }
+fun openProseLink(url: String, openUrl: (String) -> Unit) {
   val file = fileTarget(url)
-  if (file != null) openFileLink(context, file) else openUrl(url)
+  if (file != null) openFileLink(file, openUrl) else openUrl(url)
 }

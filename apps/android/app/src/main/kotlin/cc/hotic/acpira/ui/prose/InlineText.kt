@@ -25,7 +25,6 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
@@ -203,12 +202,11 @@ fun InlineText(
   fade: StreamFade? = null,
   softWrap: Boolean = true,
 ) {
-  val context = LocalContext.current
   val uri = LocalUriHandler.current
   val open by rememberUpdatedState<(LinkTarget) -> Unit> { target ->
     when (target) {
-      is LinkTarget.File -> openFileLink(context, target.link)
-      is LinkTarget.Url -> openProseLink(context, target.url) { runCatching { uri.openUri(it) } }
+      is LinkTarget.File -> openFileLink(target.link) { runCatching { uri.openUri(it) } }
+      is LinkTarget.Url -> openProseLink(target.url) { runCatching { uri.openUri(it) } }
     }
   }
   val text = remember(inlines, style, inks, weight) { InlineBuilder(style, inks) { open(it) }.paragraph(inlines, weight) }
