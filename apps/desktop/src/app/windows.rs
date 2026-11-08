@@ -185,6 +185,8 @@ impl App {
     crate::win::hook_webview(window, log_arc());
     #[cfg(target_os = "linux")]
     crate::linux::hook_webview(window, log_arc());
+    #[cfg(target_os = "macos")]
+    crate::touch::install(window, log_arc());
     if self.background {
       crate::os::keep_rendering_in_background(window, log_arc());
     }
