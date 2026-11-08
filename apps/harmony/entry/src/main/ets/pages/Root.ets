@@ -42,6 +42,19 @@ export struct Root {
     this.welcoming = this.welcome;
   }
 
+  @Monitor('welcome')
+  onWelcome(): void {
+    this.welcoming = this.welcome;
+  }
+
+  /** "Continue in a new session" (the alert card): the new session page preset to this agent and project */
+  @Monitor('model.newSessionAsked')
+  onNewSessionAsked(): void {
+    const view = this.model.view;
+    const cwd = view === undefined || this.model.isChat(view.cwd) ? undefined : view.cwd;
+    this.newSession(view?.agent, cwd);
+  }
+
   /**
    * A session the model opened by itself (a first prompt's) comes up as the chat: over the list on a phone, in place of
    * the new session page the detail column of a wide window starts on
@@ -54,9 +67,30 @@ export struct Root {
     const names = this.stack.getAllPathName();
     if (names.length === 0) {
       this.stack.pushPath({ name: 'chat', param: this.route(this.wide) });
-    } else if (names[names.length - 1] === 'new') {
+    } else {
+      this.toStarted();
+    }
+  }
+
+  /**
+   * The new session page gives way to the chat of the session it started. On a phone it may sit over a chat: that page
+   * shows the new session then (the chat page follows the model's view), so two frames never share one view
+   */
+  toStarted(): void {
+    const names = this.stack.getAllPathName();
+    if (names.length === 0 || names[names.length - 1] !== 'new') {
+      return;
+    }
+    if (names.length > 1 && names[names.length - 2] === 'chat') {
+      this.stack.pop(false);
+    } else {
       this.stack.replacePath({ name: 'chat', param: this.topRoute() }, false);
     }
+  }
+
+  /** The connect frame covers the list: a paired-remote build with no computer, its lists not in yet, or its wire failed */
+  covering(): boolean {
+    return this.model.pairing !== undefined && covers(this.model.pairing, this.model);
   }
 
   route(root: boolean): Route {
@@ -91,7 +125,10 @@ export struct Root {
   }
 
   newSession(agent: string | undefined, cwd: string | undefined): void {
-    this.model.close();
+    // Beside the sidebar the page replaces the chat; on a phone it goes over it, and back finds the chat as it was
+    if (this.wide) {
+      this.model.close();
+    }
     const r = new Route();
     r.agent = agent;
     r.cwd = cwd;
@@ -171,15 +208,17 @@ export struct Root {
           },
           onStart: (agent: string, cwd: string | undefined, text: string) => {
             this.model.startIn(agent, cwd, text);
-            const names = this.stack.getAllPathName();
-            if (names.length > 0 && names[names.length - 1] === 'new') {
-              this.stack.replacePath({ name: 'chat', param: this.topRoute() }, false);
-            }
+            this.toStarted();
           }
         })
       }
       .hideTitleBar(true)
       .backgroundColor($r('app.color.bg0'))
+      // Beside the sidebar it may be the detail column's root, which never pops to an empty pane
+      .onBackPressed(() => {
+        this.back();
+        return true;
+      })
     } else if (name === 'settings') {
       NavDestination() {
         SettingsPage({ model: this.model, routes: this.settingsRoutes(), onBack: () => this.stack.pop() })
@@ -248,8 +287,8 @@ export struct Root {
       // A language pick rebuilds every page in the new table (apps/ios the root's `.id(locale)`)
       ForEach([this.model.language], (language: string) => {
         Navigation(this.stack) {
-          // A paired computer's lists not in yet, or its wire failed: the connect frame in the list's place
-          if (this.model.paired && this.model.pairing !== undefined && covers(this.model.pairing, this.model)) {
+          // No computer paired, its lists not in yet, or its wire failed: the connect frame in the list's place
+          if (this.covering() && this.model.pairing !== undefined) {
             PairConnect({ pairing: this.model.pairing, onComputers: () => this.push('computers', '') })
           } else {
             SessionList({
@@ -266,7 +305,8 @@ export struct Root {
             })
           }
         }
-        .mode(NavigationMode.Auto)
+        // The connect frame takes the whole window, never the sidebar's width (docs/dev/ios.md first run)
+        .mode(this.covering() ? NavigationMode.Stack : NavigationMode.Auto)
         .navBarWidth(Metrics.sidebarW)
         .minContentWidth(Metrics.splitMinW - Metrics.sidebarW)
         .hideNavBar(this.wide && this.hidden)
@@ -277,9 +317,23 @@ export struct Root {
         .backgroundColor($r('app.color.bg0'))
         .onNavigationModeChange((mode: NavigationMode) => {
           this.wide = mode === NavigationMode.Split;
-          // The detail column never stands empty beside the sidebar: its first page is a new session
-          if (this.wide && this.stack.size() === 0) {
-            this.stack.pushPath({ name: 'new', param: this.route(true) }, false);
+          if (this.wide) {
+            // The detail column never stands empty beside the sidebar: its first page is a new session, or the page a
+            // phone had pushed first, which then leads with the sidebar's button
+            if (this.stack.size() === 0) {
+              this.stack.pushPath({ name: 'new', param: this.route(true) }, false);
+            } else {
+              const first = this.stack.getParamByIndex(0) as Route | undefined;
+              if (first !== undefined) {
+                first.root = true;
+              }
+            }
+          } else {
+            // Folded to a phone: the detail column's bare new session gives way to the list
+            const names = this.stack.getAllPathName();
+            if (names.length === 1 && names[0] === 'new') {
+              this.stack.clear(false);
+            }
           }
         })
       }, (language: string) => language)
@@ -301,8 +355,12 @@ export struct Root {
         })
       if (this.welcoming) {
         WelcomeFlow({
-          model: this.model, onDone: () => {
+          model: this.model, link: this.model.pairing?.pendingLink ?? '', onDone: () => {
             this.welcoming = false;
+            // A pairing link the flow took leaves the add sheet asked for (RootView.swift endWelcome)
+            if (this.model.pairing !== undefined) {
+              this.model.pairing.addOpen = false;
+            }
           }
         })
           .transition(TransitionEffect.OPACITY.animation({ duration: this.model.motion ? ListMetrics.motionMs : 0 }))
