@@ -30,9 +30,12 @@ export function modeIcon(mode: SessionOption): LucideIcon {
   return Object.hasOwn(BY_ID, mode.id) ? BY_ID[mode.id]! : byKeyword(mode);
 }
 
-// Ids the keywords misread: Droid's `normal` is named "Auto (Off)" (asks before edits), its `auto-high` approves everything;
-// Hermes's `dont_ask` auto-allows edits rather than asking
-const BY_ID: Record<string, LucideIcon> = { normal: InfinityIcon, 'auto-high': ShieldOff, dont_ask: Sparkles };
+// Ids the keywords misread: Droid's `normal` is named "Auto (Off)" (asks before edits), its `auto-low` allows edits and its
+// `auto-high` approves everything; Hermes's `accept_edits` allows workspace edits only and `dont_ask` edits anywhere but
+// sensitive paths (`acp_adapter/modes.py`), so neither is full access
+const BY_ID: Record<string, LucideIcon> = {
+  normal: InfinityIcon, 'auto-low': Code, 'auto-high': ShieldOff, accept_edits: FolderPen, dont_ask: Code,
+};
 
 function byKeyword(mode: SessionOption): LucideIcon {
   const key = `${mode.id} ${mode.name}`.toLowerCase();
@@ -53,8 +56,9 @@ const SHORT: Record<string, MsgKey> = {
   raw: 'composer.modeShort.raw',
   team: 'composer.modeShort.team',
   acceptEdits: 'composer.modeShort.autoEdit',
-  // Hermes
-  accept_edits: 'composer.modeShort.autoEdit',
+  // Hermes: workspace edits only; `dont_ask` allows edits anywhere
+  accept_edits: 'composer.modeShort.workspace',
+  dont_ask: 'composer.modeShort.autoEdit',
   auto_edit: 'composer.modeShort.autoEdit',
   auto: 'composer.modeShort.auto',
   smart: 'composer.modeShort.smart',
@@ -62,7 +66,11 @@ const SHORT: Record<string, MsgKey> = {
   bypass: 'composer.modeShort.full',
   yolo: 'composer.modeShort.full',
   'agent-full-access': 'composer.modeShort.full',
-  // Droid's Auto (High)
+  // Droid's autonomy ladder: Auto (Off) asks, Spec plans read-only, Low allows edits, Medium also reversible commands, High all
+  normal: 'composer.access.ask',
+  spec: 'composer.modeShort.plan',
+  'auto-low': 'composer.modeShort.autoEdit',
+  'auto-medium': 'composer.modeShort.auto',
   'auto-high': 'composer.modeShort.full',
   'read-only': 'composer.modeShort.readOnly',
   'workspace-write': 'composer.modeShort.workspace',
