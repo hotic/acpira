@@ -491,7 +491,8 @@ export struct SettingsPage {
         }
         .id(`settings.agent:${a.id}`)
         .onClick(() => this.routes.agent(a.id))
-      }, (a: AgentInfo, i: number) => `${a.id}:${a.disabled === true}:${i}`)
+      // No index in the key: a move keeps every row, only the moved one changes place
+      }, (a: AgentInfo) => `${a.id}:${a.name}:${a.disabled === true}`)
         .onMove((from: number, to: number) => this.model.moveAgent(from, to))
     }
     .scrollBar(BarState.Off)

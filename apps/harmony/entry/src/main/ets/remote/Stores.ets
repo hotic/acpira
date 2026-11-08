@@ -149,7 +149,19 @@ export class IdentityStore {
       attrs.set(asset.Tag.SECRET, new util.TextEncoder().encodeInto(key));
       attrs.set(asset.Tag.ACCESSIBILITY, asset.Accessibility.DEVICE_FIRST_UNLOCKED);
       attrs.set(asset.Tag.SYNC_TYPE, asset.SyncType.THIS_DEVICE);
-      asset.addSync(attrs);
+      try {
+        asset.addSync(attrs);
+      } catch (e) {
+        if ((e as BusinessError).code !== asset.ErrorCode.DUPLICATED) {
+          throw e as Error;
+        }
+        // A stale entry (one load could not use) would be read again on every launch: the new key replaces it
+        const query: asset.AssetMap = new Map();
+        query.set(asset.Tag.ALIAS, alias());
+        const update: asset.AssetMap = new Map();
+        update.set(asset.Tag.SECRET, new util.TextEncoder().encodeInto(key));
+        asset.updateSync(query, update);
+      }
     } catch (e) {
       hilog.warn(DOMAIN, TAG, 'asset store refused the key (%{public}s): kept in preferences', `${e}`);
       this.store.saveFallbackKey(key);
