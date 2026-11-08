@@ -1,0 +1,112 @@
+{
+  "color": [
+    {
+      "name": "fg1",
+      "value": "#FF0D0D0D"
+    },
+    {
+      "name": "fg2",
+      "value": "#FF6C6C6C"
+    },
+    {
+      "name": "fg3",
+      "value": "#FF767676"
+    },
+    {
+      "name": "fg_strong",
+      "value": "#FF000000"
+    },
+    {
+      "name": "action_fg",
+      "value": "#FF707070"
+    },
+    {
+      "name": "bg0",
+      "value": "#FFF8F8F8"
+    },
+    {
+      "name": "bg1",
+      "value": "#FFFFFFFF"
+    },
+    {
+      "name": "bg2",
+      "value": "#FFF1F1F1"
+    },
+    {
+      "name": "bg_code",
+      "value": "#FFEFEFEF"
+    },
+    {
+      "name": "line",
+      "value": "#0F000000"
+    },
+    {
+      "name": "conversation_line",
+      "value": "#1A000000"
+    },
+    {
+      "name": "chip",
+      "value": "#FFF4F4F4"
+    },
+    {
+      "name": "bubble_bg",
+      "value": "#FFEBEBEB"
+    },
+    {
+      "name": "btn1_bg",
+      "value": "#FF151515"
+    },
+    {
+      "name": "btn1_fg",
+      "value": "#FFFFFFFF"
+    },
+    {
+      "name": "send_bg",
+      "value": "#0A000000"
+    },
+    {
+      "name": "send_ink",
+      "value": "#80000000"
+    },
+    {
+      "name": "line_strong",
+      "value": "#FFCECECE"
+    },
+    {
+      "name": "active",
+      "value": "#12000000"
+    },
+    {
+      "name": "scrim",
+      "value": "#73000000"
+    },
+    {
+      "name": "ok",
+      "value": "#FF2F7A5B"
+    },
+    {
+      "name": "warn",
+      "value": "#FF9A6700"
+    },
+    {
+      "name": "danger",
+      "value": "#FFCF222E"
+    },
+    {
+      "name": "brand",
+      "value": "#FFB7791F"
+    },
+    {
+      "name": "command",
+      "value": "#FF2F6FE0"
+    },
+    {
+      "name": "card",
+      "value": "#FFFFFFFF"
+    },
+    {
+      "name": "start_window_background",
+      "value": "#FFF8F8F8"
+    }
+  ]
+}

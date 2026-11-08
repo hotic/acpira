@@ -1,0 +1,8 @@
+/build/
+/entry/build/
+/.hvigor/
+/oh_modules/
+/entry/oh_modules/
+/local.properties
+/node_modules
+/entry/src/main/ets/generated/
