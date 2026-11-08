@@ -269,7 +269,12 @@ class AppModel(
   fun setAway(background: Boolean) {
     if (background == away) return
     away = background
-    if (background) holdClock() else if (connection == Connection.Live) onScreenChat()?.let { select(it) }
+    // In the background the chat on screen is no longer watched, so a turn ending there gets its unread mark (and
+    // its notice); back in front it is selected again (apps/ios AppModel `setAway` / `syncWatching`)
+    if (background) {
+      holdClock()
+      if (connection == Connection.Live) onScreenChat()?.let { post(WebviewMsg.DeselectSession(it)) }
+    } else if (connection == Connection.Live) onScreenChat()?.let { select(it) }
   }
 
   private fun holdClock() {
