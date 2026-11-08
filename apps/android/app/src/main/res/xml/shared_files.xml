@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- What FileProvider may hand out: the composer's camera shots (ui/Composer.kt), a session's export for the share
-     sheet (store/SessionLists.kt) -->
+     sheet (store/SessionLists.kt), a Lightbox picture being shared, and downloaded files opened in another app
+     (ui/Lightbox.kt, ui/MediaDownload.kt) -->
 <paths>
   <cache-path name="camera" path="camera/" />
   <cache-path name="exports" path="exports/" />
+  <cache-path name="share" path="share/" />
+  <cache-path name="open" path="open/" />
+  <cache-path name="videos" path="videos/" />
 </paths>

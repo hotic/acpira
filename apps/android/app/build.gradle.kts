@@ -23,6 +23,8 @@ val syncSharedAssets by tasks.registering(Sync::class) {
   from(ios.resolve("AcpiraUI/Resources/shiki")) { into("shiki") }
   from(ios.resolve("AcpiraUI/Resources/web")) { include("mermaid.min.js"); into("web") }
   from(ios.resolve("AcpiraFixtures/synthetic")) { into("fixtures") }
+  // Tailwind's browser build for HTML widgets (ui/WidgetView.kt)
+  from(ios.resolve("AcpiraUI/Resources/web")) { include("tailwind.js"); into("web") }
 }
 
 android {

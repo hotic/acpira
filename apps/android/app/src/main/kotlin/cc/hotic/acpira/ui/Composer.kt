@@ -206,7 +206,7 @@ fun Composer(
   val keyboard = LocalSoftwareKeyboardController.current
   val choices = rememberChoices(controls, LocalHiddenModels.current[agentMark].orEmpty(), onSetConfig)
   val modelBeans = modelBeans(choices, onSetMode, onSetConfig, goo)
-  val attach = attachBeans(staged, onStaged, goo, onToast)
+  val attach = attachBeans(staged, onStaged, goo, onToast, paste = rememberPasteReady())
   // The open chip's beans, for the screen's layer; a closing picker keeps the beans it goes home with
   val open = goo.open
   SideEffect {
@@ -290,8 +290,10 @@ fun Composer(
           verticalAlignment = Alignment.CenterVertically,
         ) {
           if (ring != null) ContextRing(ring, motion)
-          SendButton(running = running, filled = filled, motion = motion) {
-            if (running && !filled) onStop() else onSend()
+          // A staged video still compressing holds the draft back, and the button does not stop the turn meanwhile
+          val waiting = VideoJobs.pending(staged)
+          SendButton(running = running && !waiting, filled = filled && !waiting, motion = motion) {
+            if (!waiting) { if (running && !filled) onStop() else onSend() }
           }
         }
       }
@@ -476,14 +478,14 @@ private fun modelBeans(c: ModelChoices, onSetMode: (String) -> Unit, onSetConfig
 }
 
 /** Where an attach bean sends the reader: the photo picker, the camera, the file picker */
-private enum class AttachSource { Photos, Camera, Files }
+private enum class AttachSource { Photos, Camera, Files, Paste }
 
 /** The source a bean asked for, picked up by [AttachPickers] */
 private val pendingSource = mutableStateOf<AttachSource?>(null)
 
 /** Attach as a liquid chip: the photo, camera and file sources squeeze out of `+`, each named beside it */
 @Composable
-private fun attachBeans(staged: List<Staged>, onStaged: (List<Staged>) -> Unit, goo: Goo, onToast: (String) -> Unit): List<Bean> {
+private fun attachBeans(staged: List<Staged>, onStaged: (List<Staged>) -> Unit, goo: Goo, onToast: (String) -> Unit, paste: Boolean): List<Bean> {
   fun source(key: String, icon: String, label: String, s: AttachSource) = Bean(
     key, label, label,
     glyph = { Lucide(icon, Palette.fg1, size = Metrics.barIcon) },
@@ -493,6 +495,9 @@ private fun attachBeans(staged: List<Staged>, onStaged: (List<Staged>) -> Unit, 
     source("photos", "image", t("mobile.attach.photos"), AttachSource.Photos),
     source("camera", "camera", t("mobile.attach.camera"), AttachSource.Camera),
     source("files", "paperclip", t("mobile.attach.files"), AttachSource.Files),
+  ) + listOfNotNull(
+    // While the clipboard holds an image, `+` offers to paste it (Goo.swift sources)
+    if (paste) source("paste", "clipboardPaste", t("desktop.menu.paste"), AttachSource.Paste) else null,
   )
 }
 
@@ -510,8 +515,25 @@ private fun AttachPickers(goo: Goo, onStaged: (List<Staged>) -> Unit, staged: Li
     if (next.sumOf { draftBytes(it.draft) } > MESSAGE_BYTES) onToast(t("mobile.video.tooBig", "mb" to MESSAGE_BYTES / 4 * 3 / (1 shl 20)))
     else onStaged(next)
   }
+  // A picked video swaps its pending tile for the ready one, or drops it when its copy failed or is too large to go
+  val replace: (String, Staged?) -> Unit = { uri, ready ->
+    val at = current.indexOfFirst { (it.draft as? Draft.File)?.uri == uri }
+    if (at >= 0) {
+      val without = current.filterIndexed { j, _ -> j != at }
+      val next = if (ready == null) without else current.toMutableList().also { it[at] = ready }
+      if (ready != null && next.sumOf { draftBytes(it.draft) } > MESSAGE_BYTES) {
+        onToast(t("mobile.video.tooBig", "mb" to MESSAGE_BYTES / 4 * 3 / (1 shl 20)))
+        onStaged(without)
+      } else onStaged(next)
+    }
+  }
+  // Videos take their tile at once and fill it as they compress; photos arrive as they load (VideoAttach.swift)
   val photos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(MAX_PHOTOS)) { uris ->
-    scope.launch { add(uris.mapNotNull { stageImage(context, it) }) }
+    val (videos, images) = uris.partition { context.contentResolver.getType(it)?.startsWith("video/") == true }
+    val pending = ArrayList<Staged>()
+    for (v in videos) VideoJobs.start(context, v, stage = { pending += it }, replace = replace, failed = onToast)
+    if (pending.isNotEmpty()) onStaged(current + pending)
+    if (images.isNotEmpty()) scope.launch { add(images.mapNotNull { stageImage(context, it) }) }
   }
   var shot by remember { mutableStateOf<Uri?>(null) }
   val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
@@ -535,12 +557,14 @@ private fun AttachPickers(goo: Goo, onStaged: (List<Staged>) -> Unit, staged: Li
   val source by pendingSource
   LaunchedEffect(source) {
     when (source ?: return@LaunchedEffect) {
-      AttachSource.Photos -> photos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+      AttachSource.Photos -> photos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
       AttachSource.Camera -> {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) takePicture()
         else cameraGrant.launch(Manifest.permission.CAMERA)
       }
       AttachSource.Files -> files.launch(arrayOf("*/*"))
+      // The clipboard's image, staged as a picked photo is
+      AttachSource.Paste -> clipboardImage(context)?.let { uri -> scope.launch { stageImage(context, uri)?.let { add(listOf(it)) } } }
     }
     pendingSource.value = null
   }
@@ -583,6 +607,10 @@ private suspend fun stageFile(context: Context, uri: Uri): Staged? = withContext
 /** The staged attachments inside the card over the text: image thumbnails and file chips, each with its remove mark */
 @Composable
 private fun StagedStrip(staged: List<Staged>, onStaged: (List<Staged>) -> Unit, modifier: Modifier) {
+  val context = LocalContext.current
+  val media = LocalMedia.current
+  var playing by remember { mutableStateOf<Pair<File, String>?>(null) }
+  playing?.let { (file, name) -> VideoPlayer(file, name) { playing = null } }
   Row(
     modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(end = Metrics.s3),
     horizontalArrangement = Arrangement.spacedBy(Metrics.s2),
@@ -590,7 +618,19 @@ private fun StagedStrip(staged: List<Staged>, onStaged: (List<Staged>) -> Unit, 
     staged.forEachIndexed { i, s ->
       Box {
         val thumb = s.thumb
-        if (thumb != null) {
+        // A video is a tile like a photo's from the moment it is picked: while it compresses, the original's first frame
+        // waits under a spinner, one view throughout (Composer.swift staged strip)
+        val file = s.draft as? Draft.File
+        val progress = file?.let { VideoJobs.progress[it.uri] }
+        val video = file?.let {
+          if (progress != null) Uri.parse(it.uri).path?.let { path -> VideoSource.Local(File(path)) }
+          else VideoSource.of(context, it.uri, s.name, media.session, media.loader)
+        }
+        if (video != null) {
+          VideoAttachmentTile(video, s.name, side = Metrics.stagedTile, progress = progress, still = VideoJobs.stills[file.uri], corner = Metrics.rLg) {
+            playing = it to s.name
+          }
+        } else if (thumb != null) {
           Image(
             thumb, s.name, contentScale = ContentScale.Crop,
             modifier = Modifier.size(Metrics.stagedTile).clip(RoundedCornerShape(Metrics.rLg)).border(Metrics.hairline, Palette.line, RoundedCornerShape(Metrics.rLg)),
@@ -608,7 +648,10 @@ private fun StagedStrip(staged: List<Staged>, onStaged: (List<Staged>) -> Unit, 
         }
         Box(
           Modifier.align(Alignment.TopEnd).padding(Metrics.s1).size(Metrics.stagedRemove)
-            .background(Palette.scrim, CircleShape).clip(CircleShape).clickable { onStaged(staged.filterIndexed { j, _ -> j != i }) },
+            .background(Palette.scrim, CircleShape).clip(CircleShape).clickable {
+              (s.draft as? Draft.File)?.let { VideoJobs.cancel(it.uri) }
+              onStaged(staged.filterIndexed { j, _ -> j != i })
+            },
           contentAlignment = Alignment.Center,
         ) { Lucide("x", Palette.fgStrong, size = Metrics.chevron, contentDescription = t("common.remove")) }
       }

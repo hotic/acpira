@@ -162,8 +162,8 @@ private fun ToolRows(block: ToolCallBlock, grouped: Boolean) {
     // A skill load is one row naming the skill; only a failure opens to its message
     block.verbKey == "verb.skill" && !(block.status == ToolStatus.failed && visible.isNotEmpty()) ->
       AcpRow(tone = RowTone.action, icon = icon, trailing = trailing, content = label)
-    // Generated and shown images: the row (the phone shows no agent images in the process yet)
-    isImageResult(block) -> AcpRow(tone = RowTone.action, icon = icon, trailing = trailing, content = label)
+    // A process fold owns a separate, persistent media part; standalone tool rows keep their own result
+    isImageResult(block) -> ImageResultRow(block, grouped) { AcpRow(tone = RowTone.action, icon = icon, trailing = trailing, content = label) }
     files.isNotEmpty() && block.kind == ToolKind.search ->
       Disclosure(fold.open, fold::toggle, icon = icon, indent = false, rail = RailMode.rows, label = label, trailing = trailing) {
         CompositionLocalProvider(LocalRowEnterDelay provides RowMotion.rowEnterFile) { ResultList(files, block.kind) }
@@ -446,6 +446,8 @@ private fun CommandDisclosure(
       TaskMeta(block.asyncTask)
       if (block.kind == ToolKind.execute) {
         TerminalOutput(block, command)
+        // An image the command produced (screenshot tools) sits below its output (ToolCall.tsx ToolBody)
+        for (image in remember(block) { cc.hotic.acpira.store.toolImages(block) }) AgentImageView(image.blob, image.uri)
       } else {
         ToolOutput(items.filterIsInstance<ToolContent.Text>().joinToString("\n") { it.text })
       }
@@ -462,7 +464,8 @@ private fun ToolBody(block: ToolCallBlock, items: List<ToolContent>) {
         is ToolContent.Diff -> DiffBlockView(item.lines, block.target.orEmpty(), item.source)
         is ToolContent.ListItems -> ResultList(item.items, block.kind)
         is ToolContent.Text -> ToolOutput(item.text)
-        is ToolContent.Image, is ToolContent.Unknown -> {}
+        is ToolContent.Image -> if (!cc.hotic.acpira.store.isWidget(item.mimeType)) AgentImageView(item.blob, item.uri)
+        is ToolContent.Unknown -> {}
       }
     }
   }

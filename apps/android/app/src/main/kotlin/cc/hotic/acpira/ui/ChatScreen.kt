@@ -98,6 +98,8 @@ fun ChatScreen(model: AppModel, id: String) {
   // `edit` raise the account sheet or take the newest prompt in for editing
   LaunchedEffect(goo) {
     val popup = model.options.popup ?: return@LaunchedEffect
+    // The media layer opens its own popup
+    if (popup == "lightbox") return@LaunchedEffect
     if (model.motion) delay(POPUP_DELAY_MS)
     when (popup) {
       "account" -> return@LaunchedEffect model.openAccount(id)
@@ -171,6 +173,8 @@ fun ChatScreen(model: AppModel, id: String) {
   // The floating to-do card's height: the thread's end clears it
   var planDockH by remember { mutableIntStateOf(0) }
 
+  // The chat's images open in its Lightbox (ui/MediaViews.kt)
+  MediaLayer(id, model) {
   Box(Modifier.fillMaxSize()) {
   Scaffold(
     containerColor = Palette.bg0,
@@ -333,6 +337,7 @@ fun ChatScreen(model: AppModel, id: String) {
       onAppear = { model.refreshQuota(info.id) },
       onDismiss = { model.chat.accountSheet = null },
     )
+  }
   }
   }
 }

@@ -161,6 +161,7 @@ private fun Page(model: AppModel, pairing: cc.hotic.acpira.store.PairingModel?, 
     Screen.Providers -> ProvidersScreen(model)
     is Screen.ProviderForm -> ProviderFormScreen(model, screen.id, screen.error)
     is Screen.AddModels -> AddModelsScreen(model, screen.id)
+    is Screen.Download -> DownloadScreen(model, screen.sessionId, screen.path)
   }
 }
 
@@ -283,4 +284,5 @@ private fun key(screen: Screen): String = when (screen) {
   Screen.Providers -> "providers"
   is Screen.ProviderForm -> "provider:${screen.id}"
   is Screen.AddModels -> "addModels:${screen.id}"
+  is Screen.Download -> "download:${screen.sessionId}:${screen.path}"
 }

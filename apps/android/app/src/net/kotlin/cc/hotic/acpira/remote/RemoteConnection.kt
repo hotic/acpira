@@ -1,6 +1,7 @@
 package cc.hotic.acpira.remote
 
 import cc.hotic.acpira.sync.ConnectionError
+import cc.hotic.acpira.sync.PairedBlobs
 import cc.hotic.acpira.sync.PairedConnection
 import cc.hotic.acpira.sync.PairingError
 import cc.hotic.acpira.sync.PathKind
@@ -15,6 +16,7 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.launch
+import uniffi.acpira_mobile.BlobProgress
 import uniffi.acpira_mobile.Link
 import uniffi.acpira_mobile.LinkEvent
 import uniffi.acpira_mobile.LinkFailure
@@ -32,7 +34,7 @@ class RemoteConnection internal constructor(
   val computerId: String,
   private val scope: CoroutineScope,
   private val hooks: Hooks,
-) : PairedConnection {
+) : PairedConnection, PairedBlobs {
   /** The computer's name as it greeted this link */
   val computerName: String = link.welcome().name
 
@@ -110,6 +112,25 @@ class RemoteConnection internal constructor(
 
   override fun endReason(): ConnectionError? = failure
 
+  override suspend fun blob(session: String, name: String): ByteArray = try {
+    link.fetchBlob(session, name, BLOB_WITHIN_MS.toULong())
+  } catch (e: CancellationException) {
+    throw e
+  } catch (e: Exception) {
+    throw connectionError(e)
+  }
+
+  override suspend fun download(session: String, name: String, to: java.io.File, progress: (have: Long, total: Long) -> Unit): Long = try {
+    val heard = object : BlobProgress {
+      override fun progress(have: ULong, total: ULong) = progress(have.toLong(), total.toLong())
+    }
+    link.fetchBlobTo(session, name, to.path, DOWNLOAD_IDLE_MS.toULong(), heard).toLong()
+  } catch (e: CancellationException) {
+    throw e
+  } catch (e: Exception) {
+    throw connectionError(e)
+  }
+
   /** A round trip through the gateway within the deadline; no answer throws [ConnectionError.Offline] */
   suspend fun probe(withinMs: Long): Long = try {
     link.ping(withinMs.toULong()).toLong()
@@ -162,6 +183,13 @@ class RemoteConnection internal constructor(
 
   private companion object {
     val ENDED = Any()
+    /** A whole blob (an image the transcript shows) must arrive within this */
+    const val BLOB_WITHIN_MS = 30_000L
+    /**
+     * How long a download may go without a byte before it stops (and resumes on the next try): a relay path can stall
+     * for seconds while the link itself is fine
+     */
+    const val DOWNLOAD_IDLE_MS = 20_000L
     fun now() = System.nanoTime() / 1_000_000
   }
 }

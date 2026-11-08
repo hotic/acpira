@@ -138,11 +138,7 @@ fun UserBubble(
     verticalArrangement = Arrangement.spacedBy(Metrics.s2),
   ) {
     val attachments = turn.attachments.orEmpty()
-    if (attachments.isNotEmpty()) {
-      Row(horizontalArrangement = Arrangement.spacedBy(Metrics.s2), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-        for (a in attachments) AttachmentChip(a)
-      }
-    }
+    if (attachments.isNotEmpty()) TurnAttachments(attachments)
     if (turn.text.isNotBlank()) {
       val context = LocalContext.current
       val haptics = LocalHapticFeedback.current
@@ -186,36 +182,12 @@ fun UserBubble(
 
 /** A queued prompt's attachments, laid out as the sent prompt's above its bubble */
 @Composable
-internal fun BubbleAttachments(attachments: List<Attachment>) {
-  Row(horizontalArrangement = Arrangement.spacedBy(Metrics.s2), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-    for (a in attachments) AttachmentChip(a)
-  }
-}
+internal fun BubbleAttachments(attachments: List<Attachment>) = TurnAttachments(attachments)
 
 /** Puts [text] on the clipboard; true when the app should confirm it, as Android 13+ shows its own confirmation */
 internal fun copyText(context: Context, text: String): Boolean {
   context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText(t("common.copy"), text))
   return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
-}
-
-@Composable
-private fun AttachmentChip(a: Attachment) {
-  val (icon, label) = when (a) {
-    is Attachment.Image -> "image" to (a.name ?: "")
-    is Attachment.Text -> "fileText" to a.name
-    is Attachment.File -> "file" to a.name
-    is Attachment.Selection -> "fileCode" to "${a.name}:${a.startLine}"
-    is Attachment.Quote -> "messageSquareText" to a.text.take(QUOTE_CHIP)
-    is Attachment.Unknown -> "file" to a.kind
-  }
-  Row(
-    verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(Metrics.s1_5),
-    modifier = Modifier.background(Palette.chip, RoundedCornerShape(Metrics.rMd)).padding(horizontal = Metrics.gap, vertical = Metrics.s1_5),
-  ) {
-    Lucide(icon, Palette.fg2, size = Metrics.icon)
-    Text(label, color = Palette.fg2, fontSize = Type.text2, maxLines = 1, overflow = TextOverflow.Ellipsis)
-  }
 }
 
 /** One agent turn: the process fold, notices, the reply, permission cards, the outcome */
@@ -290,7 +262,7 @@ private fun CodexMessage(turn: AgentTurn, key: String, running: Boolean, now: ()
   CodexFold(turn, split.process, running, hasTools, key, now)
   for (n in split.notices) NoticeRow(n)
   for (reply in split.reply) {
-    if (reply.markdown.isNotBlank()) StreamProse(reply, Modifier.testTag("reply"))
+    if (reply.markdown.isNotBlank()) CompositionLocalProvider(LocalMarkdownImages provides reply.images) { StreamProse(reply, Modifier.testTag("reply")) }
   }
   // Later milestones (paused, met, cleared …) close the reply they followed
   for (goal in split.goals) GoalMilestone(goal)
@@ -581,6 +553,7 @@ private fun CodexFold(turn: AgentTurn, blocks: List<AgentBlock>, running: Boolea
   val foldable = parts.any { it is FoldPart.Items }
   Column(Modifier.fillMaxWidth()) {
     if (!retired) EntranceOnce("fold-head") { FoldHead(turn, running, open, foldable, now) { manual = !open } }
+    CompositionLocalProvider(LocalImageInFold provides false) {
     parts.forEachIndexed { i, part ->
       androidx.compose.runtime.key(part.id) {
         when (part) {
@@ -596,8 +569,13 @@ private fun CodexFold(turn: AgentTurn, blocks: List<AgentBlock>, running: Boolea
               ),
             )
           }
+          // One live result outside every reveal: only the process rows around it collapse
+          is FoldPart.Media -> Box(
+            Modifier.padding(top = Metrics.gap, bottom = if (!retired && i == parts.size - 1) Metrics.s1_5 else Metrics.s0),
+          ) { ImageResults(part.block) }
         }
       }
+    }
     }
   }
 }
@@ -644,6 +622,7 @@ private sealed interface FoldPart {
   val id: String
   data class Items(override val id: String, val items: List<ProcessItem>) : FoldPart
   data class Steer(override val id: String, val block: SteerBlock) : FoldPart
+  data class Media(override val id: String, val block: ToolCallBlock) : FoldPart
 }
 
 private fun processParts(items: List<ProcessItem>): List<FoldPart> {
@@ -661,13 +640,17 @@ private fun processParts(items: List<ProcessItem>): List<FoldPart> {
     } else {
       if (rows.isEmpty()) runId = item.id
       rows += item
+      val call = (item as? ProcessItem.Block)?.block as? ToolCallBlock
+      if (call != null && cc.hotic.acpira.store.isImageResult(call)) {
+        // The tool's row folds with the process, but its result keeps a stable identity and is never clipped
+        close()
+        out += FoldPart.Media("media:${item.id}", call)
+      }
     }
   }
   close()
   return out
 }
-
-private const val QUOTE_CHIP = 24
 
 /**
  * A permission request (Cards.swift PermissionCard): the request's title and command on a card, Allow once as the
