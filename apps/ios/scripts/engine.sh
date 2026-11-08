@@ -3,6 +3,7 @@
 # agent is the fake agent (test/fake-agent.ts), so nothing the app does spends a model call or reads a real login.
 # Prints the app's launch argument (`-engine PORT:TOKEN`) and serves until stopped; the home goes with it.
 # The simulator reaches the Mac's loopback; a device does not (that is the remote module's connection).
+# TOKEN pins the token (a client built with it, such as the HarmonyOS Previewer run); random otherwise.
 # Usage: apps/ios/scripts/engine.sh [port]
 set -euo pipefail
 
@@ -30,7 +31,7 @@ printf '{"fake":{"name":"Fake agent","command":"%s","args":["%s"]}}\n' "$(comman
 printf '{"defaultAgent":"fake","disabledAgents":%s}\n' "$disabled" > "$home/settings.json"
 mkdir -p "$root/project"
 
-token="$(openssl rand -hex 16)"
+token="${TOKEN:-$(openssl rand -hex 16)}"
 echo "engine on 127.0.0.1:$port, home $home, a project at $root/project" >&2
 echo "-engine $port:$token"
 # The harness serves its pages from the working directory; the app only needs /ws and /blobs
