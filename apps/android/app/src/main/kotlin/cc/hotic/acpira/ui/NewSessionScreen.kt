@@ -70,8 +70,11 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
   val projects = remember(model.summaries, model.projectOrder, model.addedProjects) {
     (model.addedProjects + model.projectOrder + model.summaries.sortedByDescending { it.updatedAt }.map { it.cwd }).filter { it.isNotEmpty() && !model.isChat(it) }.distinct()
   }
+  // Until a pick the folder follows the list; a blank folder asks for a chat (the list's "new chat", as apps/ios
+  // `.new(cwd: "")`), and a picked chat is null too, hence the separate flag
+  var picked by rememberSaveable { mutableStateOf(false) }
   var pickedCwd by rememberSaveable { mutableStateOf<String?>(null) }
-  val cwd = pickedCwd ?: screen.cwd ?: projects.firstOrNull()
+  val cwd = if (picked) pickedCwd else if (screen.cwd == "") null else screen.cwd ?: projects.firstOrNull()
   var draft by rememberSaveable { mutableStateOf("") }
   var staged by remember { mutableStateOf<List<Staged>>(emptyList()) }
   val goo = remember { Goo() }
@@ -202,7 +205,7 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
           projects = projects,
           name = model::placeName,
           onDismiss = { pickFolder = false },
-          onPick = { pickedCwd = it; pickFolder = false },
+          onPick = { pickedCwd = it; picked = true; pickFolder = false },
           onAdd = { pickFolder = false; adding = true },
         )
       }
@@ -212,7 +215,7 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
   // The composer's open picker, over everything (the composer included), so no piece hides under the card
   GooLayer(goo, model.motion)
   // Add folder: the browser over the whole page; the added folder becomes this draft's
-  AddProject(model, adding, onClose = { adding = false }, onAdded = { pickedCwd = it })
+  AddProject(model, adding, onClose = { adding = false }, onAdded = { pickedCwd = it; picked = true })
   }
 }
 

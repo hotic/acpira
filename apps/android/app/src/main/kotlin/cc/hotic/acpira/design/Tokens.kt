@@ -56,6 +56,8 @@ object Swatches {
   val hover = Swatch(white(0.05f), black(0.04f))
   val active = Swatch(white(0.08f), black(0.07f))
   val scrim = Swatch(black(0.72f), black(0.45f))
+  /** The system red of a swipe's Delete (UIKit's systemRed, as the iOS app's swipe action) */
+  val swipeDelete = Swatch(hex(0xff453a), hex(0xff3b30))
   val ok = Swatch(hex(0x439e7e), hex(0x2f7a5b))
   val warn = Swatch(hex(0xd29922), hex(0x9a6700))
   val danger = Swatch(hex(0xf85149), hex(0xcf222e))
@@ -108,6 +110,8 @@ object Palette {
   val sendInk @Composable @ReadOnlyComposable get() = of(Swatches.sendInk)
   val lineStrong @Composable @ReadOnlyComposable get() = of(Swatches.lineStrong)
   val active @Composable @ReadOnlyComposable get() = of(Swatches.active)
+  val hover @Composable @ReadOnlyComposable get() = of(Swatches.hover)
+  val swipeDelete @Composable @ReadOnlyComposable get() = of(Swatches.swipeDelete)
   val ok @Composable @ReadOnlyComposable get() = of(Swatches.ok)
   val warn @Composable @ReadOnlyComposable get() = of(Swatches.warn)
   val danger @Composable @ReadOnlyComposable get() = of(Swatches.danger)
@@ -176,6 +180,30 @@ object Metrics {
   val stateRing = 15.dp
   val stateDot = 9.dp
   val unreadDot = 7.dp
+  /** The state marks' unread dot, the background ring's orbiting dot and the dot inside it once a reply came in */
+  val stateUnread = 10.dp
+  val stateOrbit = 4.5.dp
+  val stateInner = 6.dp
+  // The session list (apps/ios Sessions/SessionListScreen.swift)
+  /** A one-line list row (a project's header, a session inside its project, "N more") */
+  val sheetRow = 52.dp
+  /** A session's row a step in from its project's folder */
+  val nest = 16.dp
+  /** How far a list row slides to bare Delete, the capsule and its margins included */
+  val swipeAction = 96.dp
+  /** A release faster than this (per second) decides a swipe by its direction alone (apps/ios Motion.swipeFlick) */
+  val swipeFlick = 300.dp
+  /** "N more"'s agent marks */
+  val moreMark = 14.dp
+  /** A dragged row's card under the finger: its widest */
+  val dragPreview = 260.dp
+  /** A host folder's alias at the header's end, and its connection dot */
+  val hostAlias = 120.dp
+  val hostDot = 7.dp
+  /** A host folder's globe badge, the globe in it and how far it hangs past the folder's box */
+  val remoteBadge = 13.dp
+  val remoteGlobe = 10.dp
+  val remoteOverhang = 5.dp
   /** The phone composer's thumb-sized controls */
   val mCtl = 36.dp
   /** The bar's floating controls (Material's minimum target) */

@@ -109,6 +109,15 @@ fun AppMenuBack(title: String, onClick: () -> Unit, modifier: Modifier = Modifie
   }
 }
 
+/** A titled section's caption (UIMenu's section title), over the rows it names */
+@Composable
+fun AppMenuCaption(title: String) {
+  Text(
+    title, color = Palette.fg3, fontSize = Type.text4, lineHeight = Type.text4Line, maxLines = 1, overflow = TextOverflow.Ellipsis,
+    modifier = Modifier.fillMaxWidth().padding(horizontal = Metrics.pad).padding(top = Metrics.s2, bottom = Metrics.s1),
+  )
+}
+
 /** The band between an [AppMenu]'s sections */
 @Composable
 fun AppMenuGap() {

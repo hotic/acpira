@@ -69,6 +69,8 @@ fun Root(model: AppModel, pairing: cc.hotic.acpira.store.PairingModel? = null) {
     LocalHiddenModels provides model.settings.hiddenOptions,
     // The transcript's folds, rails and entrances read the motion switch (the webview's motion axis)
     cc.hotic.acpira.design.LocalMotion provides model.motion,
+    // Session links in replies open their chat in the app (ui/Links.kt)
+    androidx.compose.ui.platform.LocalUriHandler provides rememberLinkHandler(model),
   ) { Stack(model, pairing) }
 }
 
@@ -102,10 +104,14 @@ private fun Stack(model: AppModel, pairing: cc.hotic.acpira.store.PairingModel?)
         shape = androidx.compose.foundation.shape.RoundedCornerShape(Metrics.rCardRound),
         shadowElevation = Metrics.toastShadow,
       ) {
-        Text(
-          toast.orEmpty(), color = Palette.btn1Fg, fontSize = Type.text3,
-          modifier = Modifier.padding(horizontal = Metrics.pad, vertical = Metrics.s2 + Metrics.s1),
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Text(
+            toast.orEmpty(), color = Palette.btn1Fg, fontSize = Type.text3,
+            modifier = Modifier.padding(horizontal = Metrics.pad, vertical = Metrics.s2 + Metrics.s1),
+          )
+          // Undo after a delete, an archive or a project taken off the list (store/SessionLists.kt)
+          ToastActionButton(model, toast)
+        }
       }
     }
     if (pairing != null) Welcome(model, pairing)

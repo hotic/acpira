@@ -124,6 +124,8 @@ class AppModel(
   var toast by mutableStateOf<String?>(null)
   /** The screens over the list, bottom first */
   val path = mutableStateListOf<Screen>()
+  /** The session list's state and the session actions (store/SessionLists.kt) */
+  val lists = SessionLists(this, context, scope)
   /** The demo's clock: the fixtures' now, running from launch */
   val now: () -> Instant
   /** The paired computer this model's wire leads to (null: the development engine or the demo) */
@@ -303,6 +305,7 @@ class AppModel(
     val view = views[sessionId]
     val users = view?.turns?.count { it is UserTurn } ?: 0
     outgoing[sessionId] = outgoing[sessionId].orEmpty() + Outgoing(body, users)
+    if (live && view != null && !view.running) lists.sending(view, body)
     if (post(WebviewMsg.Send(sessionId, body, attachments.takeIf { it.isNotEmpty() }))) return
     demoSend(sessionId, body)
   }
@@ -571,7 +574,8 @@ class AppModel(
         val s = message.state
         agents = s.agents
         settings = s.settings
-        summaries = s.sessions
+        summaries = lists.shown(s.sessions, fresh = resumed)
+        lists.init(s)
         chatRoot = s.chats
         home = s.home
         s.categories?.projects?.let { projectOrder = it }
@@ -583,8 +587,8 @@ class AppModel(
         if (options.start && path.none { it is Screen.Chat }) start(options.agent, null, options.prompt.orEmpty())
       }
       is HostMsg.Agents -> agents = message.agents
-      is HostMsg.Sessions -> summaries = message.sessions
-      is HostMsg.Categories -> message.categories.projects?.let { projectOrder = it }
+      is HostMsg.Sessions -> summaries = lists.shown(message.sessions)
+      is HostMsg.Categories -> { message.categories.projects?.let { projectOrder = it }; lists.follow(message.categories) }
       is HostMsg.Settings -> settings = message.settings
       is HostMsg.Controls -> {
         val key = hostControlsKey(message.agent, message.cwd)
@@ -594,7 +598,7 @@ class AppModel(
       is HostMsg.LocalDir -> folders.receive(message)
       is HostMsg.Providers -> sources.receive(message)
       is HostMsg.ProviderProbed -> sources.receive(message)
-      else -> {}
+      else -> lists.receive(message)
     }
   }
 
@@ -621,6 +625,7 @@ class AppModel(
           val left = sent.filter { it.usersBefore >= users }
           if (left.isEmpty()) outgoing.remove(view.id) else outgoing[view.id] = left
         }
+        lists.settle(view)
         awaiting?.let { (from, then) ->
           if (view.id != from) {
             awaiting = null
@@ -654,6 +659,7 @@ class AppModel(
     home = from.home
     projectOrder = from.projectOrder
     addedProjects = from.addedProjects
+    lists.resume(from.lists)
     path.addAll(from.path)
     replay = from.replay + (from.client?.unsent() ?: emptyList())
     clockHeld = from.clockHeld

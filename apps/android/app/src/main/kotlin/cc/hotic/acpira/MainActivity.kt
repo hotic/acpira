@@ -27,6 +27,7 @@ import cc.hotic.acpira.store.LaunchOptions
 import cc.hotic.acpira.store.PairLink
 import cc.hotic.acpira.store.PairingModel
 import cc.hotic.acpira.store.Wire
+import cc.hotic.acpira.store.openLink
 import cc.hotic.acpira.sync.ConnectionError
 import cc.hotic.acpira.sync.PairedComputer
 import cc.hotic.acpira.sync.PairedConnection
@@ -71,10 +72,10 @@ class MainActivity : ComponentActivity() {
         pairing.pinnedNearby = cc.hotic.acpira.sync.NearbyComputer(id = id, name = addr, addrs = listOf(addr))
       }
       pairing.load()
-      openLink(intent)
     }
     followAttention()
     openNotice(intent)
+    openLink(intent)
     setContent {
       val app = model ?: return@setContent
       // A theme pick restyles the bars too; a language pick rebuilds every screen in the new table (the model keeps
@@ -191,9 +192,19 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** `acpira://pair/…` opened from outside: the add-computer sheet confirms it */
+  /**
+   * `acpira://pair/…` opened from outside: the add-computer sheet confirms it. A session link opens its chat, on a paired
+   * build once the computer's lists are in (store/Links.kt)
+   */
   private fun openLink(intent: Intent?) {
     val link = intent?.dataString ?: return
+    if (cc.hotic.acpira.logic.SessionLinks.idOfLink(link) != null) {
+      lifecycleScope.launch {
+        val app = snapshotFlow { model?.takeIf { pairing == null || it.synced } }.first { it != null }
+        app?.openLink(link)
+      }
+      return
+    }
     pairing?.open(link)
   }
 
