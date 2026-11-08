@@ -113,6 +113,14 @@ struct SessionRow {
   }
 }
 
+/**
+ * A row's identity for ForEach: everything it draws, so a changed summary renders again. A group's key joins its rows'
+ * (a group whose key stays keeps the rows it was built with, however its summaries changed)
+ */
+function rowKey(s: SessionSummary): string {
+  return `${s.id}:${s.title}:${s.state ?? ''}:${s.unread === true}:${s.updatedAt}:${s.pinned === true}`;
+}
+
 @ComponentV2
 export struct SessionList {
   @Require @Param model: AppModel;
@@ -159,9 +167,9 @@ export struct SessionList {
                 }
                 .id(`session:${s.id}`)
                 .onClick(() => this.onOpen(s.id))
-              }, (s: SessionSummary) => `${s.id}:${s.title}:${s.state ?? ''}:${s.updatedAt}`)
+              }, (s: SessionSummary) => rowKey(s))
             }
-          }, (section: Section) => `${section.key}:${section.rows.length}`)
+          }, (section: Section) => `${section.key}:${section.rows.map((s: SessionSummary) => rowKey(s)).join('|')}`)
         }
         .id('list.sessions')
         .alignListItem(ListItemAlign.Center)

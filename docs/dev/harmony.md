@@ -1,0 +1,35 @@
+# HarmonyOS app
+
+`apps/harmony/` is a prototype of the phone app in ArkTS (Stage model, ArkUI state management V2), built headless against the public OpenHarmony SDK. It is one more engine client: the list, the chat (prompt bubbles, the folded process, the reply's Markdown, permission cards) and the composer, with the iOS app's tokens, dictionaries and synthetic fixtures. The iOS app is the reference for behaviour and look ([ios.md](ios.md)); the Android app ([android.md](android.md)) is the nearer port when a Compose idiom maps to ArkUI better than a SwiftUI one.
+
+## Toolchain
+
+- SDK: the public OpenHarmony SDK, one folder per API level holding `ets`, `js`, `native`, `previewer`, `toolchains` (the `L2-SDK-MAC-M1-PUBLIC` archive of a release on `repo.huaweicloud.com/openharmony/os/`, same sha256 as the openharmony-rs GitHub mirror). No Huawei account; DevEco Studio is not needed.
+- hvigor and its OHOS plugin come from the Huawei npm registry (`https://repo.harmonyos.com/npm/`, `@ohos/hvigor`, `@ohos/hvigor-ohos-plugin`, same version). `scripts/build.sh` links that install's `node_modules` into the project (`hvigorfile.ts` imports the plugin by name) and writes `local.properties`.
+- From the Mac, both hosts above can crawl at a few KB/s while the PC fetches them fast; a single slow connection is common, ranged parallel requests are not slowed.
+- The public SDK knows no `phone` device type (`ets/api/device-define`): `module.json5` says `default`.
+- ArkTS refuses constructor parameter properties, implicit return types on arrow callbacks and untyped object literals; `@Param` names must not shadow component attributes (`size`).
+
+## Previewer
+
+- `previewer/common/bin/Previewer` runs the app's `modules.abc` (unpacked from the HAP) without DevEco: `-j` the abc folder, `-arp` the build's `intermediates/res/default`, `-ljPath` its `loader.json`, `-url` the page, `-or`/`-cr` the resolution, `-sd` the density, `-cm` the colour mode, `-lws` a port. Frames stream on that port as WebSocket binary messages with a JPEG inside (from the first `FF D8 FF`). hvigor's `PreviewBuild` only works when DevEco drives it.
+- It runs no ability (state set up in `EntryAbility` is missing: pages initialise themselves), takes no want parameters and no input, has no `net.webSocket` module (the live wire needs an emulator or device), and rawfile reads come back empty, hence the dictionaries and fixtures compiled into `ets/generated/` by `scripts/build.sh`. `pages/Preview` opens chat fixtures directly for it.
+- `Path.commands` are px and a `Shape` viewport did not scale them: `components/Glyphs.ets` scales each path to the icon's px size. A path's `fill` given a colour resource stays black there; it takes the colour resolved from the resource manager.
+
+## Signing and running
+
+- `scripts/sign.sh` signs with the SDK's OpenHarmony test keys (`toolchains/lib/OpenHarmony.p12`, password `123456`): a profile template with this bundle name and fresh validity, signed by the matching profile key, then the HAP signed by the application release key. The keystore's release entry carries a self-signed certificate; the chain must start from the template's own certificate (issued by the Application CA) or sign-app fails with "Signature does not match".
+- A debug profile without a device list is refused at install ("device is unauthorized"), and the Oniro emulator has no UDID (`bm get --udid` fails): the script signs a release profile unless `UDID` is set.
+- That runs on an OpenHarmony emulator or a developer-mode board. A HarmonyOS NEXT phone needs certificates and a profile from AppGallery Connect (a Huawei developer account), and DevEco's emulator needs a Huawei login.
+- The Oniro emulator (`oniro_emulator.zip` from `eclipse-oniro4openharmony/device_board_oniro` releases) is x86_64 QEMU with `run.sh` / `run.bat`; its user network forwards HDC to `127.0.0.1:55555` (`hdc tconn`, through an SSH tunnel when QEMU runs on another machine). Accelerated on Linux KVM, very slow on Apple silicon.
+- On Windows, `run.sh` picks WHPX with an AVX2 CPU model, yet the guest's `foundation` still died of SIGILL and init rebooted; TCG (`-accel tcg,thread=multi -cpu max`) boots it. Under TCG the first launch after boot often trips a lifecycle timeout (the main thread waits on the render service for a VSync receiver; a `sysfreeze` log in `/data/log/faultlog/faultlogger/`); launching again works.
+- Driving it: `power-shell wakeup` / `setmode 602` (screen stays on) and a `uinput -T -m` swipe unlock (`aa start` refuses a locked screen); `uinput -T -c x y` taps in px; `uitest uiInput inputText x y text` types; `snapshot_display -f /data/local/tmp/x.jpeg` sometimes fails right after a wake, retry. Resolution comes from the QEMU `virtio-gpu` `xres`/`yres` plus the kernel's `video=` (density 1, so px = vp): 1280×800 shows the split.
+## Engine wire
+
+- Same contract as the other clients: hello, `attachView` (`initial: {empty: true}`), `ready` with `patches` and `listPatches`, `sessionPatch` / `sessionsPatch` applied as `sessionPatch.ts` and the sessions patch runs, `resync` / `resyncSessions` when one does not fit.
+- The development engine checks the handshake's `Origin` is its own loopback port: the app dials `127.0.0.1` and an emulator needs that port forwarded to the engine (`hdc rport tcp:PORT tcp:PORT`, as `adb reverse`).
+- NetworkKit's `webSocket` sends an `Origin` of its own (scheme and host, no port) ahead of the one the app sets; the engine accepts the handshake when any `Origin` header matches (`sidecar/ws.rs`). `EngineClient` logs the wire under the hilog tag `AcpiraWire`.
+- ArkUI `ForEach` keeps a child whose key is unchanged, however its item changed: a nested `ForEach` (list sections) needs the outer key to carry the inner rows' keys, or rows keep stale summaries.
+- `EntryAbility` sets the keyboard to resize the page; the default lifts the whole page, bar included, off screen.
+- `scripts/build.sh` with `DEV_ENGINE=host:port:token` (and `DEV_PROMPT`) compiles a default engine in, since nothing passes launch parameters to the Previewer; `apps/ios/scripts/engine.sh` takes `TOKEN` to match.
+- Turn rows key on the patch's `keep`: rows of kept turns keep their keys, so only the changed tail renders again.
