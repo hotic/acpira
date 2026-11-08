@@ -34,13 +34,14 @@
 
 ## Composer
 
-- Ported from the iOS `Chat/Composer.swift`, `Design/Goo.swift` and `Logic/ModelCatalog.swift` (Fusion and sidekick are not ported). The pickers' layer (`GooLayer`) sits over the whole Scaffold, the composer included: under the bar a card grown round a long prompt or attachments covered the lowest beans and took their taps. The layer handles the chip's own tap (one level back) itself.
+- Ported from the iOS `Chat/Composer.swift`, `Design/Goo.swift` and `Logic/ModelCatalog.swift`, Fusion and the built-in agent's sidekick included (`ui/SidekickBeans.kt`; the sidekick's beans are a second level, `Goo.deeper`). The pickers' layer (`GooLayer`) sits over the whole Scaffold, the composer included: under the bar a card grown round a long prompt or attachments covered the lowest beans and took their taps. The layer handles the chip's own tap (one level back) itself.
 - Model family keys are the TS ones verbatim (JSON-array strings from `models.ts`): the settings' `hiddenOptions` stores them and the desktop and iOS read the same lists, so `ModelCatalog.group` must not invent its own key format.
 - A new session's chips come from a `controls {agent}` request; the page's picks are applied with `setConfig` once `session/new` answers, before the first prompt.
 - The camera writes through the `FileProvider` (`res/xml/shared_files.xml`). Because the manifest declares `CAMERA` (for the pairing scan), `ACTION_IMAGE_CAPTURE` throws until that permission is granted, so it is asked first.
 - The field runs on `TextFieldState` (`ui/PromptField.kt`): the `/` and `@` lists need the caret, and a long paste is caught by its `InputTransformation`, which only sees user input, so a restored draft is never turned into an attachment. Drafts live in `ChatState` for the process only, as on iOS and in the webview.
 - The quote card and the expanded editor are their own windows (`Popup` / `Dialog`): each sets `testTagsAsResourceId` again and the dialog its own status-bar ink.
-- Launch extras `draft` and `popup` (`model`, `model.N`, `attach`, `quotes`) open a chat with text typed or a picker out, for screenshots against the demo.
+- A new session's sidekick pick takes its level select from the `controls` answer's `shapes` (`editTurnConfig`), since no session answers it; other picks there only set the value.
+- Launch extras `draft` and `popup` (`model`, `model.N`, `model.N.sidekick`, `attach`, `quotes`) open a chat with text typed or a picker out, for screenshots against the demo.
 
 ## Tool pages
 

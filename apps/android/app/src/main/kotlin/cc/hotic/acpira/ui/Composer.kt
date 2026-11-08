@@ -98,8 +98,10 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import cc.hotic.acpira.design.GooMotion
 import cc.hotic.acpira.design.IconStore
 import cc.hotic.acpira.design.Lucide
 import cc.hotic.acpira.design.Metrics
@@ -118,7 +120,10 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import kotlin.math.max
 import kotlin.math.min
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -139,15 +144,47 @@ class Goo {
   var beans by mutableStateOf<List<Bean>>(emptyList())
   /** The chip opened last, which a closing picker goes home into */
   var last by mutableStateOf("model")
+  /** The level of beans out instead of the chip's own ([SIDEKICK_LEVEL]), one more level to step back from */
+  var deeper by mutableStateOf<String?>(null)
+  /** The beans are tucked into the chip while they trade for another level's ([enter]) */
+  var held by mutableStateOf(false)
+  private var swap: Job? = null
 
   fun toggle(id: String) {
-    if (open == id) back() else { open = id; stage = 0 }
+    // Opening starts on the chip's own beans; closing leaves a deeper level as it is, so it shrinks home unchanged
+    if (open == id) back() else { open = id; stage = 0; deeper = null }
   }
 
-  /** One level back: an open panel into its bean, else the beans into the chip */
+  /** One level back: an open panel into its bean, a deeper level's beans for the chip's own, else the beans into the chip */
   fun back() {
-    if (stage > 0) stage = 0 else close()
+    when {
+      stage > 0 -> stage = 0
+      deeper != null -> enter(null)
+      else -> close()
+    }
   }
+
+  /**
+   * Trades the beans for another level's (`sidekick`, or null for the chip's own): they head home into the chip, the
+   * level changes while they are small there, and the new beans squeeze out. Without motion it swaps at once
+   */
+  fun enter(level: String?) {
+    stage = 0
+    val scope = scope
+    if (!motion || scope == null) { deeper = level; return }
+    held = true
+    swap?.cancel()
+    swap = scope.launch {
+      delay(GooMotion.levelSwapMs)
+      // Closed meanwhile (a tap outside): the level stays as it was, and the next open starts on the chip's own beans
+      if (open != null) deeper = level
+      held = false
+    }
+  }
+
+  /** Where [enter] runs its trade, and whether it animates; the composer binds them */
+  internal var scope: CoroutineScope? = null
+  internal var motion = true
 
   fun close() {
     open = null
@@ -167,6 +204,8 @@ class Bean(
   val rows: Int = 0,
   val panel: (@Composable () -> Unit)? = null,
   val tap: (() -> Unit)? = null,
+  /** A line under the value saying what the setting is (the sidekick's), wrapped to the room beside the bean */
+  val note: String? = null,
 )
 
 /**
@@ -200,6 +239,8 @@ fun Composer(
   modifier: Modifier = Modifier,
   /** The `/` commands, the `@` personas and file search (ui/Suggestions.kt) */
   assist: ComposerAssist = ComposerAssist(),
+  /** The built-in agent's sidekick is working a round: its colour breathes on the model chip */
+  sidekickLive: Boolean = false,
 ) {
   val context = LocalContext.current
   val filled = text.isNotBlank() || staged.isNotEmpty()
@@ -217,6 +258,9 @@ fun Composer(
   var stripHeight by remember { mutableIntStateOf(0) }
   val offersExpand = expanded && lines >= EXPAND_LINES
   val choices = rememberChoices(controls, LocalHiddenModels.current[agentMark].orEmpty(), onSetConfig)
+  // The sidekick level's trade runs on the composer's scope
+  val gooScope = rememberCoroutineScope()
+  SideEffect { goo.scope = gooScope; goo.motion = motion }
   val modelBeans = modelBeans(choices, onSetMode, onSetConfig, goo)
   val attach = attachBeans(staged, onStaged, goo, onToast, paste = rememberPasteReady()) + summonBeans(assist.personas, goo, tokens::summon)
   // The open chip's beans, for the screen's layer; a closing picker keeps the beans it goes home with
@@ -293,7 +337,7 @@ fun Composer(
           }
           if (modelBeans.isNotEmpty()) {
             Chip("model", goo, Modifier.testTag("composer.model")) {
-              ModelGlyph(goo, choices, agentMark, agentName)
+              ModelGlyph(goo, choices, agentMark, agentName, sidekickLive, motion)
             }
           }
         }
@@ -352,14 +396,25 @@ private fun AttachGlyph(goo: Goo, motion: Boolean) {
   else Lucide("plus", Palette.fg1, Modifier.rotate(turn), size = Metrics.barIcon, contentDescription = t("mobile.attach"))
 }
 
-/** The model's mark alone, large, with Fast as a bolt on its shoulder; × over the beans, ‹ over a panel */
+/**
+ * The model's mark alone, large, with Fast as a bolt on its shoulder and, while the sidekick works a round, a dot in its
+ * colour breathing on the mark's foot; × over the beans, ‹ over a panel or the sidekick's beans
+ */
 @Composable
-private fun ModelGlyph(goo: Goo, choices: ModelChoices, agentMark: String, agentName: String) {
+private fun ModelGlyph(goo: Goo, choices: ModelChoices, agentMark: String, agentName: String, sidekickLive: Boolean, motion: Boolean) {
   if (goo.open == "model") {
-    Lucide(if (goo.stage > 0) "chevronLeft" else "x", Palette.fg1, size = Metrics.gooBack, contentDescription = t(if (goo.stage > 0) "common.back" else "common.close"))
+    val inside = goo.stage > 0 || goo.deeper != null
+    Lucide(if (inside) "chevronLeft" else "x", Palette.fg1, size = Metrics.gooBack, contentDescription = t(if (inside) "common.back" else "common.close"))
     return
   }
+  val sidekick = if (sidekickLive) sidekickTint(choices) else null
   Box {
+    if (sidekick != null) {
+      SidekickPulse(sidekick, motion, Modifier.align(Alignment.BottomEnd).layout { m, c ->
+        val p = m.measure(c)
+        layout(p.width, p.height) { p.place(Metrics.s1.roundToPx(), Metrics.s1.roundToPx()) }
+      }.zIndex(1f).testTag("composer.sidekickLive"))
+    }
     val cur = choices.cur
     if (cur != null) VendorMark(cur.brand, cur.name, Palette.fg1, size = Metrics.barIcon, fit = true)
     else VendorMark(agentMark, agentName, Palette.fg1, size = Metrics.barIcon, fit = true)
@@ -374,7 +429,7 @@ private fun ModelGlyph(goo: Goo, choices: ModelChoices, agentMark: String, agent
 
 /** The Fast bolt, in --fast while Fast is on */
 @Composable
-private fun FastGlyph(on: Boolean, size: Dp) {
+internal fun FastGlyph(on: Boolean, size: Dp) {
   Lucide("zap", if (on) Palette.fast else Palette.fg1, size = size)
 }
 
@@ -388,7 +443,8 @@ private fun rememberChoices(controls: SessionControls, hidden: Map<String, List<
   val standard = t("composer.standard")
   return remember(controls, hidden, standard) {
     val brand = { o: SessionOption -> brandOf(context, o) }
-    val models = if (hidden.isEmpty()) emptySet() else ComposerControls.split(controls.options, brand).models.map { it.id }.toSet()
+    // The sidekick's list is thinned as the lead's is
+    val models = if (hidden.isEmpty()) emptySet() else ComposerControls.split(controls.options, brand).let { s -> s.models + s.sidekick }.map { it.id }.toSet()
     val shown = if (models.isEmpty()) controls else controls.copy(options = controls.options.map { c ->
       if (c.id in models) c.copy(options = ModelVisibility.visibleOptions(c.options, hidden[c.id], c.value)) else c
     })
@@ -397,15 +453,17 @@ private fun rememberChoices(controls: SessionControls, hidden: Map<String, List<
 }
 
 /** The vendor of an option: its wire id is the real identity ("asgard/kimi-k3"), the name only a label */
-private fun brandOf(context: Context, o: SessionOption): String? = IconStore.brandOf(context, o.id) ?: IconStore.brandOf(context, o.name)
+internal fun brandOf(context: Context, o: SessionOption): String? = IconStore.brandOf(context, o.id) ?: IconStore.brandOf(context, o.name)
 
 /**
- * The model chip's beans (Goo.swift LiquidControls): the model, the reasoning level, Fast, the working mode, the agent's
- * modes, the approval level, each with its value beside it. A pick folds the panel back into its bean
+ * The model chip's beans (Goo.swift LiquidControls): the model, a Fusion pair's lead, the reasoning level, Fast, the
+ * working mode, the agent's modes, the approval level, then the sidekick, each with its value beside it. A pick folds
+ * the panel back into its bean. While the sidekick's level is out ([Goo.deeper]) the beans are the sidekick's own
  */
 @Composable
 private fun modelBeans(c: ModelChoices, onSetMode: (String) -> Unit, onSetConfig: (String, String) -> Unit, goo: Goo): List<Bean> {
   val fold = { goo.stage = 0 }
+  if (goo.deeper == SIDEKICK_LEVEL && (c.fusion != null || c.sidekick != null)) return sidekickBeans(c, onSetConfig, fold)
   val out = mutableListOf<Bean>()
   val cur = c.cur
   if (c.hasModel && cur != null) {
@@ -424,6 +482,7 @@ private fun modelBeans(c: ModelChoices, onSetMode: (String) -> Unit, onSetConfig
       },
     )
   }
+  if (c.fusion != null) out += fusionModelBean(c, sidekick = false, fold)
   val effort = c.effort
   if (c.hasEffort && effort != null) {
     val levels = if (effort.levels.size > 1) effort.levels else emptyList()
@@ -502,6 +561,7 @@ private fun modelBeans(c: ModelChoices, onSetMode: (String) -> Unit, onSetConfig
       },
     )
   }
+  sidekickBean(c) { goo.enter(SIDEKICK_LEVEL) }?.let { out += it }
   return out
 }
 
@@ -777,7 +837,8 @@ private fun number(n: Int): String = java.text.NumberFormat.getIntegerInstance()
 fun GooLayer(goo: Goo, motion: Boolean) {
   val open = goo.open != null
   fun <T> spec() = if (motion) spring<T>(dampingRatio = GOO_DAMPING, stiffness = GOO_STIFFNESS) else snap()
-  val main by animateFloatAsState(if (open) 1f else 0f, spec(), label = "goo")
+  // Held beans go home into the chip while they trade for another level's
+  val main by animateFloatAsState(if (open && !goo.held) 1f else 0f, spec(), label = "goo")
   if (main <= GONE && !open) return
   val chip = goo.chips[goo.open ?: goo.last] ?: return
   var origin by remember { mutableStateOf(Offset.Zero) }
@@ -835,17 +896,20 @@ fun GooLayer(goo: Goo, motion: Boolean) {
         ) { bean.glyph() }
         // The value beside it, last out and first back
         val caption = ((t - CAPTION_FROM) / (1 - CAPTION_FROM)).coerceIn(0f, 1f) * (1 - (opened / CAPTION_OUT).coerceIn(0f, 1f))
-        Text(
-          bean.caption, color = Palette.fgStrong, fontSize = Type.text2, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
-          // A soft glow of the page's colour round the letters, so the value floats over whatever lies behind it with no
-          // patch of its own (iOS blurs a page-coloured plate until its edges are gone)
-          style = TextStyle(shadow = Shadow(Palette.bg0, blurRadius = with(density) { Metrics.s2.toPx() })),
-          modifier = Modifier.padding(start = Metrics.s2).widthIn(max = Metrics.gooAside).alpha(caption)
+        // A soft glow of the page's colour round the letters, so the value floats over whatever lies behind it with no
+        // patch of its own (iOS blurs a page-coloured plate until its edges are gone)
+        val glow = TextStyle(shadow = Shadow(Palette.bg0, blurRadius = with(density) { Metrics.s2.toPx() }))
+        Column(
+          Modifier.padding(start = Metrics.s2).widthIn(max = Metrics.gooAside).alpha(caption)
             .padding(horizontal = Metrics.s1)
             .clickable(enabled = beanLive, interactionSource = remember { MutableInteractionSource() }, indication = null) {
               if (bean.tap != null) bean.tap.invoke() else goo.stage = if (goo.stage == i + 1) 0 else i + 1
             },
-        )
+        ) {
+          Text(bean.caption, color = Palette.fgStrong, fontSize = Type.text2, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, style = glow)
+          // What the setting is, under its value (the sidekick's)
+          bean.note?.let { Text(it, color = Palette.fg2, fontSize = Type.text3, lineHeight = Type.text3Line, maxLines = 2, overflow = TextOverflow.Ellipsis, style = glow) }
+        }
       }
       // Its panel, grown out of the column's bottom-left corner
       val panel = bean.panel
@@ -914,12 +978,15 @@ internal fun GooRow(
   checked: Boolean,
   glyph: (@Composable () -> Unit)? = null,
   trailing: (@Composable () -> Unit)? = null,
+  /** A choice listed but not offered: dimmed, and a tap does nothing */
+  enabled: Boolean = true,
   action: () -> Unit,
 ) {
   Row(
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(Metrics.s2),
-    modifier = Modifier.fillMaxWidth().height(Metrics.gooRow).clickable(onClick = action).padding(horizontal = Metrics.gooPadX),
+    modifier = Modifier.fillMaxWidth().height(Metrics.gooRow).alpha(if (enabled) 1f else GooMotion.unavailable)
+      .clickable(enabled = enabled, onClick = action).padding(horizontal = Metrics.gooPadX),
   ) {
     glyph?.invoke()
     Text(

@@ -146,15 +146,22 @@ export function brandRules(): [string, string][] {
   return [...brandBlock.matchAll(/^\s{2}\[\/(.+)\/, '(\w+)'\],/gm)].map(m => [m[1]!, m[2]!]);
 }
 
+/** shared/models.ts `BRAND_COLOR`: a vendor's own colour by brand key, as six hex digits (also read by android-icons.ts) */
+export function brandColors(): Record<string, string> {
+  const models = readFileSync(join(root, 'packages/shared/models.ts'), 'utf8');
+  const colorAt = models.indexOf('const BRAND_COLOR');
+  const out: Record<string, string> = {};
+  for (const m of models.slice(colorAt, models.indexOf('\n};', colorAt)).matchAll(/(\w+): '#([0-9A-Fa-f]{6})'/g)) out[m[1]!] = m[2]!.toLowerCase();
+  return out;
+}
+
 export function iosMarksSwift(): string {
   const { paths, alias: aliases } = vendorMarks();
   const entries = Object.entries(paths).map(([key, list]) => `    ${JSON.stringify(key)}: [${list.map(p => JSON.stringify(p)).join(', ')}],`);
   const alias = Object.entries(aliases).map(([key, to]) => `    ${JSON.stringify(key)}: ${JSON.stringify(to)},`);
   const models = readFileSync(join(root, 'packages/shared/models.ts'), 'utf8');
   const brands = brandRules().map(([pattern, brand]) => `    (#"${pattern}"#, ${JSON.stringify(brand)}),`);
-  const colorAt = models.indexOf('const BRAND_COLOR');
-  const colors = [...models.slice(colorAt, models.indexOf('\n};', colorAt)).matchAll(/(\w+): '#([0-9A-Fa-f]{6})'/g)]
-    .map(m => `    ${JSON.stringify(m[1])}: 0x${m[2]!.toLowerCase()},`);
+  const colors = Object.entries(brandColors()).map(([brand, hex]) => `    ${JSON.stringify(brand)}: 0x${hex},`);
   const layerAt = models.indexOf('const BRAND_LAYERS');
   const layerBlock = models.slice(layerAt, models.indexOf('\n};', layerAt));
   const layers = [...layerBlock.matchAll(/^\s{2}(\w+): \[([\s\S]*?)^\s{2}\],/gm)].map(m => {

@@ -68,7 +68,30 @@ fun openTurnControls(live: SessionControls, settings: TurnSettings?, shapes: Mod
 fun editTurnConfig(editor: SessionControls, live: SessionControls, id: String, value: String, shapes: ModelShapes?): SessionControls {
   val next = editor.copy(options = editor.options.map { if (it.id == id) it.copy(value = value) else it })
   val control = live.options.firstOrNull { it.id == id } ?: return next
+  if (control.category == ComposerControls.sidekickCategory) return seatSidekickEffort(next, value, shapes)
   return if (isModelControl(control)) reshape(next, captureTurnSettings(next), live, shapes) else next
+}
+
+/**
+ * The built-in agent offers the sidekick's level select only once a sidekick is set, so a pick nothing answers (a new
+ * session's draft, the editor) takes it from the picked model's learned shape: its levels, the level held while still
+ * offered, else the one the model last ran at. None, or a model never seen, drops it. Its Fast goes either way: no
+ * learned shape says whether the new model has a fast tier, and the engine refuses a switch it does not offer
+ */
+private fun seatSidekickEffort(controls: SessionControls, sidekick: String, shapes: ModelShapes?): SessionControls {
+  val held = controls.options.firstOrNull { it.category == ComposerControls.sidekickEffortCategory }
+  val rest = controls.options.filter { it.category != ComposerControls.sidekickFastCategory && it.category != ComposerControls.sidekickEffortCategory }
+  val next = controls.copy(options = rest)
+  val model = controls.options.firstOrNull(::isModelControl)
+  if (sidekick == ComposerControls.noSidekick || model == null) return next
+  val scale = shapeFor(shapes, model, sidekick)?.firstOrNull { ComposerControls.isReasoning(it) }
+  if (scale == null || scale.options.size <= 1) return next
+  val effort = (held ?: ConfigControl(id = "sidekick_effort", name = "Sidekick effort", category = ComposerControls.sidekickEffortCategory)).copy(
+    options = scale.options,
+    value = held?.value?.takeIf { v -> scale.options.any { it.id == v } } ?: scale.value,
+  )
+  val at = rest.indexOfFirst { it.category == ComposerControls.sidekickCategory }.let { if (it < 0) rest.size else it + 1 }
+  return next.copy(options = rest.toMutableList().apply { add(at, effort) })
 }
 
 /**
