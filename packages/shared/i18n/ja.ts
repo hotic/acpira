@@ -1913,7 +1913,7 @@ export const ja = {
   'devices.sectionDesc': 'ペアリングしたデバイスからここのセッションを操作できます',
   'devices.soon.badge': '近日公開',
   'devices.soon.name': 'Acpira モバイル版',
-  'devices.soon.desc': 'このコンピュータのセッションを iPhone と iPad で確認・続行',
+  'devices.soon.desc': 'このコンピュータのセッションを iPhone、iPad、Android で確認・続行',
   'devices.allow': 'リモートアクセスを許可',
   'devices.allowDesc.off': 'ログイン時からバックグラウンドで動作',
   'devices.allowDesc.running': 'スマートフォンには「{name}」と表示',

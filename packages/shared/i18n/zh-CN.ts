@@ -1980,7 +1980,7 @@ export const zhCN = {
   'devices.sectionDesc': '在手机上查看和继续这台电脑的会话',
   'devices.soon.badge': '即将推出',
   'devices.soon.name': 'Acpira 移动版',
-  'devices.soon.desc': '在 iPhone 和 iPad 上查看和继续这台电脑的会话',
+  'devices.soon.desc': '在 iPhone、iPad 和 Android 设备上查看和继续这台电脑的会话',
   'devices.allow': '允许远程访问',
   'devices.allowDesc.off': '开启后随登录在后台运行',
   'devices.allowDesc.running': '手机上显示为「{name}」',
