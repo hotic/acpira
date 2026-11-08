@@ -82,7 +82,7 @@ fun ExpandedComposer(
           contentAlignment = Alignment.Center,
         ) { Lucide("minimize2", Palette.fg1, size = Metrics.iconCtl, contentDescription = t("mobile.composer.collapse")) }
       }
-      if (staged.isNotEmpty()) StagedStrip(staged, onStaged, Modifier.padding(start = Metrics.pad))
+      if (staged.isNotEmpty()) StagedStrip(staged, onStaged, Modifier.padding(start = Metrics.pad), onNavigate = onCollapse)
       PromptField(
         prompt,
         commands = assist.commands.map { it.name }, summons = assist.personas.map { it.name },

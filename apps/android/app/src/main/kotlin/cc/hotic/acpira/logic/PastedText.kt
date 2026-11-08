@@ -30,4 +30,13 @@ object PastedText {
     }
     return if (text.toByteArray(Charsets.UTF_8).size <= MAX_BYTES) Result.Attachment else Result.TooBig
   }
+
+  /**
+   * The text a text attachment carries itself: like a staged photo, a local text attachment holds base64 until the
+   * engine gives it a blob name (`<hash>.<ext>`, which base64 never holds). null: a stored blob, or nothing
+   */
+  fun inline(blob: String?): String? {
+    if (blob.isNullOrEmpty() || '.' in blob) return null
+    return runCatching { java.util.Base64.getMimeDecoder().decode(blob).toString(Charsets.UTF_8) }.getOrNull()
+  }
 }

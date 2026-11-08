@@ -215,6 +215,9 @@ class MediaLoader(
   /** A stored blob's text (a widget's page), read fresh each time: pages are small and not decoded images */
   suspend fun text(session: String, blob: String): String = fetch(session, blob).decodeToString()
 
+  /** A stored blob's bytes as they are, for an attachment going back into the composer (`editQueued`) */
+  suspend fun bytes(session: String, blob: String): ByteArray = fetch(session, blob)
+
   /** Every image a session shows, loaded before a launch-time Lightbox; failures are left to the views */
   suspend fun preload(view: SessionView) {
     for (source in sources(view)) runCatching { image(source) }

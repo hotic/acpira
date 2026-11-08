@@ -62,6 +62,7 @@ import cc.hotic.acpira.store.Screen
 import cc.hotic.acpira.store.beginEdit
 import cc.hotic.acpira.store.beginEditLast
 import cc.hotic.acpira.store.buildPlan
+import cc.hotic.acpira.store.compact
 import cc.hotic.acpira.store.editQueued
 import cc.hotic.acpira.store.failureAction
 import cc.hotic.acpira.store.stopTask
@@ -82,6 +83,9 @@ import cc.hotic.acpira.logic.isSidekick
 import cc.hotic.acpira.logic.linkOnly
 import cc.hotic.acpira.logic.nodesByTurn
 import cc.hotic.acpira.logic.shownReports
+import cc.hotic.acpira.ui.prose.LocalThreadTaps
+import cc.hotic.acpira.ui.prose.ThreadTaps
+import cc.hotic.acpira.ui.prose.threadTaps
 import cc.hotic.acpira.ui.subagents.LocalAgentNames
 import cc.hotic.acpira.ui.subagents.LocalAllSubagents
 import cc.hotic.acpira.ui.subagents.LocalInspectSubagent
@@ -163,6 +167,8 @@ fun ChatScreen(model: AppModel, id: String) {
   // Selected reply text quotes into this chat's composer; `@` offers the personas and the engine's file search
   val quote = remember(id, model) { { text: String -> model.quote(id, text) } }
   val personas = remember(model.settings, model.agents) { model.personas }
+  // The sent prompts paint the tokens the composer paints: the session's commands and the personas (PromptMarks.swift)
+  val marks = remember(view?.commands, personas) { PromptMarkNames(view?.commands.orEmpty().map { it.name }, personas.map { it.name }) }
   // Each child reaches only the turn that announced it; the sidekick's rounds are the lead's own relay, not subagents:
   // they neither offer the graph nor count in it (ChatScreen.swift helpers)
   val nodes = remember(held?.subagents) { nodesByTurn(held?.subagents.orEmpty()) }
@@ -208,6 +214,8 @@ fun ChatScreen(model: AppModel, id: String) {
     }
   }
   val scope = rememberCoroutineScope()
+  // A reply block or prompt handed to range selection drops it on a tap elsewhere in the thread
+  val threadTaps = remember(id) { ThreadTaps() }
   // The floating to-do card's height: the thread's end clears it
   var planDockH by remember { mutableIntStateOf(0) }
 
@@ -295,13 +303,24 @@ fun ChatScreen(model: AppModel, id: String) {
           onToast = model::showToast,
           assist = ComposerAssist(composing.commands, personas, model.fileSearch),
           sidekickLive = dockView.subagents.orEmpty().any { isSidekick(it) && it.state == SubagentState.running },
+          usageCard = UsageCardActions(
+            compactAt = model.compactAt,
+            canCompact = dockView.commands.any { it.name == "compact" },
+            onCompact = { model.compact(id) },
+          ),
+          syncing = model.syncing(id),
         )
       }
       }
     },
   ) { padding ->
     if (view == null || held == null) {
-      Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Palette.fg3) }
+      // The list arrives before the transcript, which can take a while over a paired link; there is no byte progress on
+      // the wire, so the spinner stays until the session itself arrives (ChatScreen.swift)
+      Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Metrics.s2, Alignment.CenterVertically), horizontalAlignment = Alignment.CenterHorizontally) {
+        CircularProgressIndicator(color = Palette.fg2)
+        Text(t("session.import.loading"), color = Palette.fg3, fontSize = Type.text2, modifier = Modifier.testTag("chat.loading"))
+      }
       return@Scaffold
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -318,10 +337,12 @@ fun ChatScreen(model: AppModel, id: String) {
       LocalAgentNames provides { a: String -> model.agent(a).name },
       LocalSessionSummaries provides model.summaries,
       LocalDiffSource provides diffSource,
+      LocalPromptMarks provides marks,
+      LocalThreadTaps provides threadTaps,
     ) {
     LazyColumn(
       state = thread,
-      modifier = Modifier.fillMaxSize().gooRecede(goo, model.motion).testTag("chat.thread"),
+      modifier = Modifier.fillMaxSize().gooRecede(goo, model.motion).threadTaps(threadTaps).testTag("chat.thread"),
       // The list stays full width so a drag beside the reading column still scrolls it
       contentPadding = readablePadding(maxWidth, top = padding.calculateTopPadding() + Metrics.s2, bottom = padding.calculateBottomPadding() + planDock + Metrics.pad),
       verticalArrangement = Arrangement.spacedBy(Metrics.msgGap),

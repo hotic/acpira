@@ -22,6 +22,11 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.foundation.text.contextmenu.builder.item
+import androidx.compose.foundation.text.contextmenu.modifier.appendTextContextMenuComponents
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.semantics
@@ -122,11 +127,20 @@ import cc.hotic.acpira.model.TurnStop
 // each agent turn as one process fold whose head carries the live activity or the finished time, the reply outside
 // it, permission cards after the reply, the outcome row last.
 
+/** The names whose tokens get pills in a sent prompt (PromptMarks.swift PromptMarkNames): the agent's commands and personas */
+data class PromptMarkNames(val commands: List<String> = emptyList(), val summons: List<String> = emptyList())
+
+/** Set along a chat's thread: the session's advertised commands and the summonable personas */
+val LocalPromptMarks = androidx.compose.runtime.staticCompositionLocalOf { PromptMarkNames() }
+
 /**
- * The prompt: a right-aligned bubble that always leaves `bubbleInset` free on its left; attachments ride above it. A
- * long press opens its menu (Cards.swift UserMessageCard) when [onToast] is given: Edit and resend ([onEdit], while the
- * session is idle), Copy, and Set as goal ([onGoal], on the newest typed prompt where the agent takes a goal)
+ * The prompt: a right-aligned bubble that always leaves `bubbleInset` free on its left; attachments ride above it. Its
+ * `/command` and `@persona` tokens are painted as the composer painted them (Cards.swift UserMessageCard markedPrompt).
+ * A long press opens its menu when [onToast] is given: Edit and resend ([onEdit], while the session is idle), Copy, Set
+ * as goal ([onGoal], on the newest typed prompt where the agent takes a goal) and Select text, which hands the bubble
+ * to the system's range selection with every word selected (history.selectText)
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun UserBubble(
   turn: UserTurn,
@@ -143,20 +157,41 @@ fun UserBubble(
   ) {
     val attachments = turn.attachments.orEmpty()
     if (attachments.isNotEmpty()) TurnAttachments(attachments)
-    if (turn.text.isNotBlank()) {
+    val shown = turn.text.trimEnd()
+    if (shown.isNotBlank()) {
       val context = LocalContext.current
       val haptics = LocalHapticFeedback.current
       var menu by remember { mutableStateOf(false) }
+      // The bubble handed to range selection (Select text) until its selection is dropped
+      var selecting by remember { mutableStateOf(false) }
+      // A recorded command keeps its pill even after the agent stops advertising it
+      val names = LocalPromptMarks.current.let { m -> m.copy(commands = m.commands + listOfNotNull(turn.command)) }
+      val bounds = remember { arrayOfNulls<androidx.compose.ui.geometry.Rect>(1) }
       Box {
         Box(
-          Modifier.background(Palette.bubbleBg, RoundedCornerShape(Metrics.rBubble))
-            .then(if (onToast == null) Modifier else Modifier.pointerInput(Unit) {
+          Modifier.onGloballyPositioned { bounds[0] = it.boundsInRoot() }
+            .background(Palette.bubbleBg, RoundedCornerShape(Metrics.rBubble))
+            .then(if (onToast == null || selecting) Modifier else Modifier.pointerInput(Unit) {
               detectTapGestures(onLongPress = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); menu = true })
             })
             .padding(horizontal = Metrics.pad + Metrics.s1, vertical = Metrics.gap)
             .testTag("bubble"),
         ) {
-          Text(turn.text, color = Palette.fg1, fontSize = Type.body, lineHeight = Type.bodyLine)
+          if (selecting) {
+            val state = androidx.compose.foundation.text.selection.rememberSelectionState()
+            // Every word selected, then back to the plain bubble once the reader drops the selection
+            cc.hotic.acpira.ui.prose.SelectAllWhile(true, state, { bounds[0] }) { selecting = false }
+            androidx.compose.foundation.text.selection.SelectionContainer(
+              state,
+              Modifier.appendTextContextMenuComponents {
+                // The prompt's own actions stay next to the selection's (Cards.swift promptActions)
+                onEdit?.let { edit -> item(BubbleEditKey, t("history.edit")) { state.clear(); close(); edit() } }
+                onGoal?.let { goal -> item(BubbleGoalKey, t("goal.setFromPrompt")) { state.clear(); close(); goal() } }
+              },
+            ) { MarkedPrompt(shown, names) }
+          } else {
+            MarkedPrompt(shown, names)
+          }
         }
         AppMenu(expanded = menu, onDismiss = { menu = false }) {
           onEdit?.let { edit ->
@@ -168,7 +203,7 @@ fun UserBubble(
             t("common.copy"),
             onClick = {
               menu = false
-              if (copyText(context, turn.text.trimEnd())) onToast?.invoke(t("code.copied"))
+              if (copyText(context, shown)) onToast?.invoke(t("code.copied"))
             },
             modifier = Modifier.testTag("bubble.copy"),
             icon = { MenuGlyph("copy") },
@@ -178,10 +213,41 @@ fun UserBubble(
               t("goal.setFromPrompt"), onClick = { menu = false; goal() }, modifier = Modifier.testTag("bubble.goal"), icon = { MenuGlyph("goal") },
             )
           }
+          AppMenuItem(
+            t("history.selectText"), onClick = { menu = false; selecting = true }, modifier = Modifier.testTag("bubble.select"), icon = { MenuGlyph("textSelect") },
+          )
         }
       }
     }
   }
+}
+
+private object BubbleEditKey
+private object BubbleGoalKey
+
+/**
+ * A sent prompt's text with its marks (Turns.tsx UserMessage): each `/command` and `@persona` in its colour over a
+ * tinted pill, drawn from the text's own line layout as the composer's field draws them
+ */
+@Composable
+private fun MarkedPrompt(text: String, names: PromptMarkNames) {
+  val command = Palette.command
+  val summon = Palette.summon
+  val marks = remember(text, names) { cc.hotic.acpira.logic.SlashCommands.promptMarks(names.commands, names.summons, text) }
+  val styled = remember(text, marks, command, summon) {
+    buildAnnotatedString {
+      append(text)
+      for (m in marks) addStyle(SpanStyle(color = if (m.summon) summon else command), m.start, (m.start + m.length).coerceAtMost(text.length))
+    }
+  }
+  var layout by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
+  Text(
+    styled, color = Palette.fg1, fontSize = Type.body, lineHeight = Type.bodyLine,
+    onTextLayout = { layout = it },
+    modifier = if (marks.isEmpty()) Modifier else Modifier.drawBehind {
+      pills(layout, text, names.commands, names.summons, 0, command, summon, Type.body)
+    },
+  )
 }
 
 /** A queued prompt's attachments, laid out as the sent prompt's above its bubble */

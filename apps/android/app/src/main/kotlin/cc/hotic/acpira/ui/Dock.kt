@@ -13,6 +13,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -389,6 +390,8 @@ fun QueueBubble(item: QueuedPrompt, steer: Boolean, onSend: () -> Unit, onEdit: 
   val sending = item.sending == true
   Box(Modifier.fillMaxWidth().padding(start = Metrics.bubbleInset, end = Metrics.pad), contentAlignment = Alignment.CenterEnd) {
     Box {
+      // The whole bubble is the menu's button, attachments included, so a prompt of attachments alone opens it too
+      // (Dock.swift: the bubble is the Menu's label); a cover over it takes the taps its tiles would take
       Box(Modifier.alpha(QUEUED_BUBBLE)) {
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(Metrics.s2)) {
           val shown = item.text.trim()
@@ -396,14 +399,16 @@ fun QueueBubble(item: QueuedPrompt, steer: Boolean, onSend: () -> Unit, onEdit: 
           if (shown.isNotEmpty()) {
             Box(
               Modifier.clip(RoundedCornerShape(Metrics.rBubble)).background(Palette.bubbleBg)
-                .clickable(enabled = !sending) { menu = true }
-                .padding(horizontal = Metrics.pad + Metrics.s1, vertical = Metrics.gap)
-                .testTag("queue.bubble"),
+                .padding(horizontal = Metrics.pad + Metrics.s1, vertical = Metrics.gap),
             ) {
               Text(shown, color = Palette.fgStrong, fontSize = Type.body, lineHeight = Type.bodyLine, maxLines = QUEUED_LINES, overflow = TextOverflow.Ellipsis)
             }
           }
         }
+        Box(
+          Modifier.matchParentSize().clickable(enabled = !sending, interactionSource = remember { MutableInteractionSource() }, indication = null) { menu = true }
+            .testTag("queue.bubble"),
+        )
       }
       AppMenu(expanded = menu, onDismiss = { menu = false }) {
         Text(

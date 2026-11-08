@@ -191,17 +191,19 @@ fun PromptField(
 
 /**
  * The pills behind the marks (PromptMarks.swift): bg-command/15 and bg-summon/15, one per line a token runs over, each
- * reaching past the name as far as the whitespace beside it allows (markReach). [scroll] is the field's own offset
+ * reaching past the name as far as the whitespace beside it allows (markReach). [scroll] is the field's own offset,
+ * [font] the text's size (the field's, or a sent prompt's)
  */
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.pills(
+internal fun androidx.compose.ui.graphics.drawscope.DrawScope.pills(
   layout: TextLayoutResult?, text: String, commands: List<String>, summons: List<String>, scroll: Int, command: Color, summon: Color,
+  font: androidx.compose.ui.unit.TextUnit = Type.field,
 ) {
   val l = layout ?: return
   if (l.layoutInput.text.length != text.length) return
   val marks = SlashCommands.promptMarks(commands, summons, text)
   if (marks.isEmpty()) return
   val overhang = Metrics.markOverhang.toPx()
-  val space = Type.field.toPx() * SPACE_SHARE
+  val space = font.toPx() * SPACE_SHARE
   val clear = Metrics.markClear.toPx()
   val pad = Metrics.s0_5.toPx()
   val radius = CornerRadius(Metrics.rSm.toPx())
@@ -220,7 +222,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.pills(
         val left = l.getBoundingBox(from).left
         val right = l.getBoundingBox(to - 1).right
         val mid = (l.getLineTop(ln) + l.getLineBottom(ln)) / 2 - scroll
-        val h = min(l.getLineBottom(ln) - l.getLineTop(ln), Type.field.toPx() * GLYPH_SHARE + pad * 2)
+        val h = min(l.getLineBottom(ln) - l.getLineTop(ln), font.toPx() * GLYPH_SHARE + pad * 2)
         drawRoundRect(ink, Offset(min(left, right) - reach, mid - h / 2), Size(abs(right - left) + reach * 2, h), radius)
       }
     }
