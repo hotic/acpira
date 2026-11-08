@@ -1,11 +1,16 @@
 import { webSocket } from '@kit.NetworkKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { HostMsg, SIDECAR_PROTOCOL_VERSION, SidecarMsg } from './Wire';
 
 // One wire to an engine (apps/android sync/EngineClient.kt, apps/ios AcpiraSync/EngineClient.swift): hello first,
 // attachView once helloOk lands, actions queued until then and wrapped in webviewMessage. The development engine
 // `acpira --ws` (apps/ios/scripts/engine.sh) takes the token in the query and drops a handshake whose Origin is not
-// its own loopback port (rust/crates/acpira-host/src/sidecar/ws.rs).
+// its own loopback port (rust/crates/acpira-host/src/sidecar/ws.rs). The wire's turns are logged under the
+// "AcpiraWire" tag (`hilog -T AcpiraWire`).
+
+const DOMAIN = 0xacb1;
+const TAG = 'AcpiraWire';
 
 /** Every WebviewMsg this app sends, in one shape: `type` says which fields carry it (protocol.ts WebviewMsg) */
 export interface WebviewMsg {
@@ -84,7 +89,10 @@ export class EngineClient {
   }
 
   start(): void {
-    this.ws.on('open', () => this.write(this.hello()));
+    this.ws.on('open', () => {
+      hilog.info(DOMAIN, TAG, 'open %{public}s', this.address);
+      this.write(this.hello());
+    });
     this.ws.on('message', (err: BusinessError, value: string | ArrayBuffer) => {
       if (typeof value !== 'string') {
         return;
@@ -96,12 +104,19 @@ export class EngineClient {
         }
       }
     });
-    this.ws.on('close', () => this.end(undefined));
-    this.ws.on('error', (err: BusinessError) => this.end(err.message));
+    this.ws.on('close', () => {
+      hilog.info(DOMAIN, TAG, 'close');
+      this.end(undefined);
+    });
+    this.ws.on('error', (err: BusinessError) => {
+      hilog.warn(DOMAIN, TAG, 'error %{public}d %{public}s', err.code, err.message);
+      this.end(err.message);
+    });
     const origin = `http://${this.address}`;
     const options: webSocket.WebSocketRequestOptions = { header: { 'Origin': origin } };
     this.ws.connect(`ws://${this.address}/ws?token=${this.token}`, options, (err: BusinessError) => {
       if (err) {
+        hilog.warn(DOMAIN, TAG, 'connect failed %{public}d %{public}s', err.code, err.message);
         this.end(err.message);
       }
     });
@@ -146,6 +161,7 @@ export class EngineClient {
     }
     switch (message.type) {
       case 'helloOk': {
+        hilog.info(DOMAIN, TAG, 'helloOk');
         if (this.attached) {
           return;
         }
@@ -162,6 +178,7 @@ export class EngineClient {
         break;
       }
       case 'helloReject':
+        hilog.warn(DOMAIN, TAG, 'helloReject %{public}s', message.reason ?? '');
         this.end(message.reason ?? 'The engine rejected this app');
         this.ws.close();
         break;

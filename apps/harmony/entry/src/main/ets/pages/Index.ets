@@ -34,11 +34,20 @@ struct Index {
     }
   }
 
-  /** A session the model opened by itself (a first prompt's) comes up as the chat */
+  /**
+   * A session the model opened by itself (a first prompt's) comes up as the chat: over the list on a phone, in place of
+   * the new session page the detail column of a wide window starts on
+   */
   @Monitor('model.openId')
   onOpened(): void {
-    if (this.model.openId !== undefined && this.stack.size() === 0) {
+    if (this.model.openId === undefined) {
+      return;
+    }
+    const names = this.stack.getAllPathName();
+    if (names.length === 0) {
       this.stack.pushPath({ name: 'chat' });
+    } else if (names[names.length - 1] === 'new') {
+      this.stack.replacePath({ name: 'chat' }, false);
     }
   }
 

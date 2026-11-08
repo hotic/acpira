@@ -4,7 +4,7 @@ A chat shell for VS Code / Cursor, IntelliJ and a desktop app that drives offici
 
 ## Working rules
 
-- Done means: `pnpm typecheck` and `pnpm test` pass, plus `pnpm build` when a bundle entry or the webview changed and `cargo test --workspace` + `cargo clippy --workspace --all-targets --all-features -- -D warnings` (in `rust/`) when the engine changed, and no orphaned `fake-agent` process remains. Kotlin changes also pass `cd apps/intellij && ./gradlew test`; Swift changes under `apps/ios/` pass `apps/ios/scripts/check.sh`; `apps/android/` changes pass `cd apps/android && ./gradlew :model:test :sync:test :app:assembleDebug`; `apps/desktop/` changes its clippy and `scripts/smoke.mjs`. Visual changes are checked in `pnpm harness` or the LAB when a browser is available; otherwise the summary says they were not.
+- Done means: `pnpm typecheck` and `pnpm test` pass, plus `pnpm build` when a bundle entry or the webview changed and `cargo test --workspace` + `cargo clippy --workspace --all-targets --all-features -- -D warnings` (in `rust/`) when the engine changed, and no orphaned `fake-agent` process remains. Kotlin changes also pass `cd apps/intellij && ./gradlew test`; Swift changes under `apps/ios/` pass `apps/ios/scripts/check.sh`; `apps/android/` changes pass `cd apps/android && ./gradlew :model:test :sync:test :app:assembleDebug`; `apps/harmony/` changes pass `apps/harmony/scripts/build.sh`; `apps/desktop/` changes its clippy and `scripts/smoke.mjs`. Visual changes are checked in `pnpm harness` or the LAB when a browser is available; otherwise the summary says they were not.
 - Keep going while the next step needs no decision. Stop and ask only when blocked on a decision, or before: deleting files this task did not create, force-pushing or rewriting history, deleting or rewriting data outside the repository (`~/.acpira`, the CLIs' own stores), or sending real prompts to a CLI (probe scripts, evals), since those spend model calls.
 - Read the area's doc from the table below before changing it; the recorded wire behaviour outranks the ACP spec and memory of it.
 - `docs/dev/` keeps knowledge the source cannot give back: external CLI wire behaviour with the version observed on, invariants and cross-file contracts, the non-obvious why, traps, open questions, where an area lives. A typical change adds nothing there; an entry earns its place only when the next change would go astray without it, and anything a look at the code settles stays out. Never restate code (constants, timings, control flow, field / flag lists, test lists) or describe how the UI looks; point at the source instead. One current entry per topic: when behaviour changes, edit or remove it in place. Terse bullets, no dates, change history, investigation stories, measurements, commit hashes, machine names or personal paths; git keeps the history. A file stays under 16 KB: one over it is pruned before anything is added. `docs/dev/` is published, so anything private or scratch goes in an untracked file under `docs/` (everything there outside the `.gitignore` whitelist stays local).
@@ -27,6 +27,7 @@ A chat shell for VS Code / Cursor, IntelliJ and a desktop app that drives offici
 - `apps/ios/scripts/check.sh [simulator]` / `shot.sh` — the iOS app's tests / a simulator screenshot (`docs/dev/ios.md`)
 - `apps/android/scripts/e2e.sh` / `e2e-paired.sh` — the Android app against a fake-agent engine on the emulator, directly / paired through a gateway (`docs/dev/android.md`)
 - `cd apps/desktop && node scripts/smoke.mjs` / `node scripts/package.mjs` — the desktop app end to end with the fake agent / its dmg (`docs/dev/desktop.md`)
+- `apps/harmony/scripts/build.sh` / `sign.sh` — the HarmonyOS prototype's HAP against the public OpenHarmony SDK / signed with its test keys (`docs/dev/harmony.md`)
 
 ## Hard rules
 
@@ -47,7 +48,7 @@ One pnpm workspace: each package declares its own dependencies (versions in the 
 
 - `rust/` the engine: `acpira-shared` contracts; `acpira-host` (`acp/` the ACP client: `transport/`, `agents/`, `session/`, `transcript/`, `vendors/`; plus `session_manager.rs`, `store/`, `accounts/`, `external/`, `sidecar/`); `acpira-agent` the built-in agent; binary `acpira`
 - `packages/`: `shared/` contracts and pure logic; `ui/` the React UI; `engine-client/` the VS Code shell's engine client; `picker/` the browser panel's element picker
-- `apps/vscode/` the extension; `apps/desktop/` the Tauri app (own Cargo workspace, window-free logic in `rust/crates/acpira-desktop`); `apps/intellij/` the IntelliJ plugin; `apps/ios/` the iOS app; `apps/android/` the Android app (Compose prototype)
+- `apps/vscode/` the extension; `apps/desktop/` the Tauri app (own Cargo workspace, window-free logic in `rust/crates/acpira-desktop`); `apps/intellij/` the IntelliJ plugin; `apps/ios/` the iOS app; `apps/android/` the Android app (Compose prototype); `apps/harmony/` the HarmonyOS app (ArkTS prototype)
 - `test/` cross-package contracts, `fake-agent.ts` and shared fixtures; `scripts/` probes, evals, release; `lab/` the LAB (local only)
 
 ## Read before changing
@@ -70,6 +71,7 @@ One pnpm workspace: each package declares its own dependencies (versions in the 
 | `apps/desktop/` | `docs/dev/desktop.md` |
 | `apps/ios/` | `docs/dev/ios.md`; SwiftUI traps and webview parity: `docs/dev/ios-ui.md` |
 | `apps/android/` | `docs/dev/android.md` |
+| `apps/harmony/` | `docs/dev/harmony.md` |
 | Windows compatibility boundaries and regression checks | `docs/dev/windows-compatibility.md` |
 
 Public docs: `docs/context-api.md` (the `acpira.context` contract other extensions call), `docs/releasing.md`, `docs/roadmap.md`, `docs/harness-evaluations.md`. The rest of `docs/` is local only and may be absent (`HANDOFF.md`, `TASKS.md`, plans and scratch notes).
