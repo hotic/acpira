@@ -40,6 +40,19 @@
         <category android:name="android.intent.category.BROWSABLE" />
         <data android:scheme="acpira" android:host="pair" />
       </intent-filter>
+      <!-- Session links (acpira://session/<id>, the desktop shell's vscode://hotic.acpira/session/<id>): the chat opens -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="acpira" android:host="session" />
+      </intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="vscode" android:host="hotic.acpira" android:pathPrefix="/session/" />
+      </intent-filter>
     </activity>
     <service
       android:name=".store.AttentionService"

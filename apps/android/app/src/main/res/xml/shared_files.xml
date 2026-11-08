@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- What FileProvider may hand out: the composer's camera shots (ui/Composer.kt) -->
+<!-- What FileProvider may hand out: the composer's camera shots (ui/Composer.kt), a session's export for the share
+     sheet (store/SessionLists.kt) -->
 <paths>
   <cache-path name="camera" path="camera/" />
+  <cache-path name="exports" path="exports/" />
 </paths>

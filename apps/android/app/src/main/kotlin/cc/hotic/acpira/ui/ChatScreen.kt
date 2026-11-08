@@ -105,26 +105,8 @@ fun ChatScreen(model: AppModel, id: String) {
           IconButton(onClick = { model.push(Screen.New(agent = agent, cwd = view?.cwd?.takeUnless { model.isChat(it) })) }, modifier = Modifier.testTag("chat.new")) {
             Lucide("squarePen", Palette.fg1, size = Metrics.iconCtl, contentDescription = t("session.new"))
           }
-          var menu by remember { mutableStateOf(false) }
-          Box {
-            IconButton(onClick = { menu = true }, modifier = Modifier.testTag("chat.more")) {
-              Lucide("ellipsis", Palette.fg1, size = Metrics.iconCtl, contentDescription = t("session.more"))
-            }
-            AppMenu(expanded = menu, onDismiss = { menu = false }) {
-              AppMenuItem(
-                t(if (summary?.pinned == true) "common.unpin" else "common.pin"),
-                onClick = { menu = false; model.togglePin(id) },
-                icon = { MenuGlyph(if (summary?.pinned == true) "pinOff" else "pin") },
-              )
-              AppMenuGap()
-              AppMenuItem(
-                t("common.delete"),
-                onClick = { menu = false; model.delete(id); model.pop() },
-                danger = true,
-                icon = { MenuGlyph("trash2", danger = true) },
-              )
-            }
-          }
+          // The session's "…" menu, shared with the list's rows (ui/SessionMenu.kt)
+          ChatMenuButton(model, id)
         },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = Palette.bg0, scrolledContainerColor = Palette.bg0),
       )
