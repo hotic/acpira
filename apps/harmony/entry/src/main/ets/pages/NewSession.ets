@@ -66,7 +66,7 @@ export struct NewSession {
     if (goo.last === 'attach') {
       return attachBeans(goo, false, [], () => {});
     }
-    const choices = new ModelChoices(model.controlsFor(agent), model.hiddenModels,
+    const choices = new ModelChoices(model.controlsFor(agent), model.hiddenFor(agent),
       (id: string, value: string) => model.setNewConfig(agent, id, value));
     return modelBeans(choices, goo, {
       setMode: (mode: string) => model.setNewMode(agent, mode),
@@ -216,7 +216,7 @@ export struct NewSession {
             draft: this.model.newDraft,
             placeholder: t('mobile.new.placeholder'),
             controls: this.model.controlsFor(this.agent()),
-            hidden: this.model.hiddenModels,
+            hidden: this.model.hiddenFor(this.agent()),
             commands: this.model.commandsFor(this.agent()),
             personas: this.model.personas,
             goo: this.model.newGoo,

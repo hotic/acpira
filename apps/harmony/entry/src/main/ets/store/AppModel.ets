@@ -15,9 +15,9 @@ import {
   viewWithTurns
 } from '../wire/Wire';
 import {
-  canEditPrompts, draftsOf, editTurnConfig, editTurnRequest, openTurnControls, pendingPlanReview, TurnEdit
+  canEditPrompts, draftsOf, editTurnConfig, editTurnRequest, isModelControl, openTurnControls, pendingPlanReview, TurnEdit
 } from '../logic/Composing';
-import { MentionPersona } from '../logic/SlashCommands';
+import { MentionPersona, personasOf } from '../logic/SlashCommands';
 import { ComposerDraft, FileSearch, Goo } from './Composing';
 import { fixtureView } from './Demo';
 import { util } from '@kit.ArkTS';
@@ -87,6 +87,7 @@ export class AppModel implements ListHost {
     this.home = '/Users/demo';
     this.demoClock = demoNow();
     this.listDemo();
+    this.forgetNewSessionState();
   }
 
   /** The time rows are dated against */
@@ -97,6 +98,8 @@ export class AppModel implements ListHost {
   /** Dials the development engine `acpira --ws` at `address` (`host:port`) with its token */
   connect(address: string, token: string, language: string): void {
     this.client?.stop();
+    // A lost wire's answer never comes: a new wire asks again
+    this.controlsAsked.clear();
     this.connection = Connection.Connecting;
     const client = new EngineClient(address, token, language, {
       connected: () => {
@@ -189,7 +192,9 @@ export class AppModel implements ListHost {
       this.openId = undefined;
       this.takeList([]);
       this.replay = [];
+      this.forgetNewSessionState();
     }
+    this.controlsAsked.clear();
     this.computer = computer;
     this.synced = false;
     this.connection = Connection.Connecting;
@@ -552,6 +557,9 @@ export class AppModel implements ListHost {
       this.pairing = undefined;
       this.computer = undefined;
     }
+    if (address !== this.engineAddress || token !== this.engineToken) {
+      this.forgetNewSessionState();
+    }
     this.engineAddress = address;
     this.engineToken = token;
     this.connect(address, token, this.systemLanguage);
@@ -709,7 +717,8 @@ export class AppModel implements ListHost {
     const next: SettingsView = {
       defaultAgent: s.defaultAgent, agentOrder: s.agentOrder, disabledAgents: s.disabledAgents, autoCompact: s.autoCompact,
       compactAtTokens: s.compactAtTokens, accountSwitch: s.accountSwitch, steerQueued: s.steerQueued,
-      planAutoApprove: s.planAutoApprove
+      planAutoApprove: s.planAutoApprove, hiddenOptions: s.hiddenOptions, subagents: s.subagents,
+      subagentGroups: s.subagentGroups
     };
     change(next);
     return next;
@@ -864,9 +873,19 @@ export class AppModel implements ListHost {
   /** The liquid picker open over the composer */
   readonly goo: Goo = new Goo();
   /** The personas `@` summons (settings → Subagents); none until the engine's settings name some */
-  @Trace personas: MentionPersona[] = [];
+  get personas(): MentionPersona[] {
+    return personasOf(this.settings, this.agents);
+  }
+
   /** The agent's hidden model families by control id (settings → Agents → Models) */
-  @Trace hiddenModels: Map<string, string[]> = new Map<string, string[]>();
+  hiddenFor(agent: string): Map<string, string[]> {
+    const out = new Map<string, string[]>();
+    const forAgent = this.settings.hiddenOptions?.[agent];
+    if (forAgent !== undefined) {
+      Object.keys(forAgent).forEach((id: string) => out.set(id, forAgent[id]));
+    }
+    return out;
+  }
   /** Asked by "Continue in a new session": the root opens the new-session page */
   @Trace newSessionAsked: number = 0;
   private composerSeq: number = 0;
@@ -951,12 +970,24 @@ export class AppModel implements ListHost {
     if (picked.modeId !== undefined && picked.modeId !== made.modeId && made.modes.some((m) => m.id === picked.modeId)) {
       this.post({ type: 'setMode', sessionId: id, id: picked.modeId });
     }
+    const modelChanged = picked.options.some((o: ConfigControl) =>
+      isModelControl(o) && o.value !== made.options.find((m: ConfigControl) => m.id === o.id)?.value);
     picked.options.forEach((o: ConfigControl) => {
       const now = made.options.find((m: ConfigControl) => m.id === o.id);
-      if (o.value !== undefined && now !== undefined && now.value !== o.value) {
+      // A model switch can reset an equal effort or bring a control absent at startup: after it every pick goes again,
+      // and the engine checks them against the new model
+      if (o.value !== undefined && (modelChanged || (now !== undefined && now.value !== o.value))) {
         this.post({ type: 'setConfig', sessionId: id, configId: o.id, value: o.value });
       }
     });
+  }
+
+  /** Another engine: what new sessions of its agents offer is asked again, and the picks made for the last one go */
+  private forgetNewSessionState(): void {
+    this.controlsAsked.clear();
+    this.agentControls = new Map<string, ConfigControl[]>();
+    this.agentCommands = new Map<string, SlashCommand[]>();
+    this.newPicks = new Map<string, SessionControls>();
   }
 
   /** The chat's draft, made on first use; a chat left behind keeps what was typed or staged */

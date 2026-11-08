@@ -67,7 +67,7 @@ export struct ChatPage {
       return attachBeans(goo, false, this.model.personas, (p: MentionPersona) => this.summon(p));
     }
     const model = this.model;
-    const choices = new ModelChoices(this.controls(), model.hiddenModels,
+    const choices = new ModelChoices(this.controls(), model.hiddenFor(model.view?.agent ?? ''),
       (id: string, value: string) => model.setConfig(id, value));
     return modelBeans(choices, goo, {
       setMode: (mode: string) => model.setMode(mode),
@@ -161,7 +161,7 @@ export struct ChatPage {
             placeholder: this.placeholder(),
             running: this.model.view.running,
             controls: this.controls(),
-            hidden: this.model.hiddenModels,
+            hidden: this.model.hiddenFor(this.model.view.agent),
             usage: this.model.view.usage,
             compactAt: this.model.compactAt,
             commands: this.model.view.commands ?? [],
