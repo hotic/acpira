@@ -10,6 +10,9 @@ import androidx.compose.runtime.setValue
 import cc.hotic.acpira.design.IconStore
 import cc.hotic.acpira.i18n.L10n
 import cc.hotic.acpira.i18n.t
+import cc.hotic.acpira.logic.Outgoing
+import cc.hotic.acpira.logic.left
+import cc.hotic.acpira.logic.shownAttachment
 import cc.hotic.acpira.model.AgentInfo
 import cc.hotic.acpira.model.AgentTurn
 import cc.hotic.acpira.model.ClientInfo
@@ -79,9 +82,6 @@ sealed interface Wire {
   class Paired(val computer: String, val transport: EngineTransport) : Wire
 }
 
-/** A prompt sent while the engine has not shown its copy yet: drawn at once, gone once the session has it */
-data class Outgoing(val text: String, val usersBefore: Int)
-
 /**
  * The app's state: the engine's lists and views (or the demo's) and the actions the screens post. Mirrors what
  * packages/ui/App.tsx does with the same messages, as apps/ios Store/AppModel.swift does; Compose state, read on the
@@ -105,7 +105,10 @@ class AppModel(
   var settings by mutableStateOf(SettingsView())
   /** The views the screens show, by session id */
   val views = mutableStateMapOf<String, SessionView>()
+  /** Prompts sent while the engine has not shown their copy yet (logic/Outgoing.kt): drawn at once, gone once it has */
   val outgoing = mutableStateMapOf<String, List<Outgoing>>()
+  /** Drafts, prompt edits and accounts (store/ChatState.kt) */
+  val chat = ChatState(context, wire is Wire.Demo)
   /** Where chats' folders live (InitState.chats): a session directly inside is a chat, not a project */
   var chatRoot by mutableStateOf<String?>(null)
   var home by mutableStateOf("")
@@ -302,11 +305,17 @@ class AppModel(
   fun send(sessionId: String, text: String, attachments: List<Draft> = emptyList()) {
     val body = text.trim()
     if (body.isEmpty() && attachments.isEmpty()) return
+    // While a plan waits on its card, the words revise it (store/ChatActions.kt)
+    if (revisePlan(sessionId, body)) return
     val view = views[sessionId]
-    val users = view?.turns?.count { it is UserTurn } ?: 0
-    outgoing[sessionId] = outgoing[sessionId].orEmpty() + Outgoing(body, users)
+    // With steering on, a send into a running turn joins it (Outgoing.steer); queued behind a turn without it, the
+    // engine's queue row already says where it is
+    val steer = steering(sessionId)
+    if (view != null && (!view.running || steer)) {
+      outgoing[sessionId] = outgoing[sessionId].orEmpty() + Outgoing.after(view, body, attachments.map(::shownAttachment), steer)
+    }
     if (live && view != null && !view.running) lists.sending(view, body)
-    if (post(WebviewMsg.Send(sessionId, body, attachments.takeIf { it.isNotEmpty() }))) return
+    if (post(WebviewMsg.Send(sessionId, body, attachments.takeIf { it.isNotEmpty() }, steer = if (steer) true else null))) return
     demoSend(sessionId, body)
   }
 
@@ -492,6 +501,11 @@ class AppModel(
 
   private fun demoSend(sessionId: String, text: String) {
     val view = views[sessionId] ?: return
+    // Behind a running turn the prompt queues; the turn's end sends it
+    if (view.running) {
+      views[sessionId] = view.copy(queued = view.queued.orEmpty() + cc.hotic.acpira.model.QueuedPrompt("q-${++demoSeq}", text))
+      return
+    }
     val started = now().toEpochMilli().toDouble()
     val reply = DemoReply.turn(text, view.cwd, started)
     views[sessionId] = view.copy(turns = view.turns + UserTurn(text = text), running = true)
@@ -511,6 +525,10 @@ class AppModel(
         update(sessionId) { v -> v.copy(turns = v.turns.dropLastWhile { it is AgentTurn && it.endedAt == null } + reply.copy(blocks = blocks.dropLast(1) + partial, endedAt = null, stop = null)) }
       }
       update(sessionId) { v -> v.copy(running = false, turns = v.turns.dropLastWhile { it is AgentTurn && it.endedAt == null } + reply.copy(endedAt = now().toEpochMilli().toDouble())) }
+      views[sessionId]?.queued?.firstOrNull()?.let { next ->
+        update(sessionId) { v -> v.copy(queued = v.queued?.drop(1)?.takeIf { it.isNotEmpty() }) }
+        demoSend(sessionId, next.text)
+      }
     }
   }
 
@@ -598,6 +616,8 @@ class AppModel(
       is HostMsg.LocalDir -> folders.receive(message)
       is HostMsg.Providers -> sources.receive(message)
       is HostMsg.ProviderProbed -> sources.receive(message)
+      is HostMsg.Accounts -> chat.accounts = message.accounts
+      is HostMsg.EditTurnResult -> editAnswered(message.requestId, message.error)
       else -> lists.receive(message)
     }
   }
@@ -621,8 +641,7 @@ class AppModel(
         if (clockHeld != null && !away && view.id == onScreenChat()) clockHeld = null
         // A prompt still on its way gives up its place once the session shows the engine's copy
         outgoing[view.id]?.let { sent ->
-          val users = view.turns.count { it is UserTurn }
-          val left = sent.filter { it.usersBefore >= users }
+          val left = sent.left(view)
           if (left.isEmpty()) outgoing.remove(view.id) else outgoing[view.id] = left
         }
         lists.settle(view)
@@ -655,6 +674,7 @@ class AppModel(
     // Least recently shown first: what the wire before still carried itself, then its own feed's order
     carried = (from.carried + from.feed.views.kept).distinct().filter { it in views }
     from.outgoing.forEach { (id, o) -> outgoing[id] = o }
+    chat.adopt(from.chat)
     chatRoot = from.chatRoot
     home = from.home
     projectOrder = from.projectOrder
@@ -697,6 +717,11 @@ class AppModel(
     is WebviewMsg.SendQueued -> action.sessionId
     is WebviewMsg.SetMode -> action.sessionId
     is WebviewMsg.SetConfig -> action.sessionId
+    is WebviewMsg.BuildPlan -> action.sessionId
+    is WebviewMsg.SteerQueued -> action.sessionId
+    is WebviewMsg.Dequeue -> action.sessionId
+    is WebviewMsg.Goal -> action.sessionId
+    is WebviewMsg.EditTurn -> action.edit.sessionId
     else -> null
   }
 

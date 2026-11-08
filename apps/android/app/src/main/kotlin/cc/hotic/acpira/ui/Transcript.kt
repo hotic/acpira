@@ -91,6 +91,8 @@ import cc.hotic.acpira.logic.ProcessItem
 import cc.hotic.acpira.logic.clockStart
 import cc.hotic.acpira.logic.elapsedLabel
 import cc.hotic.acpira.logic.groupProcess
+import cc.hotic.acpira.logic.PlanSection
+import cc.hotic.acpira.logic.splitPlanSections
 import cc.hotic.acpira.logic.liveActivity
 import cc.hotic.acpira.logic.splitCodexBlocks
 import cc.hotic.acpira.logic.toolVerb
@@ -118,10 +120,17 @@ import cc.hotic.acpira.model.TurnStop
 
 /**
  * The prompt: a right-aligned bubble that always leaves `bubbleInset` free on its left; attachments ride above it. A
- * long press opens its menu (Cards.swift UserMessageCard) when [onToast] is given: Copy for now
+ * long press opens its menu (Cards.swift UserMessageCard) when [onToast] is given: Edit and resend ([onEdit], while the
+ * session is idle), Copy, and Set as goal ([onGoal], on the newest typed prompt where the agent takes a goal)
  */
 @Composable
-fun UserBubble(turn: UserTurn, pending: Boolean = false, onToast: ((String) -> Unit)? = null) {
+fun UserBubble(
+  turn: UserTurn,
+  pending: Boolean = false,
+  onToast: ((String) -> Unit)? = null,
+  onEdit: (() -> Unit)? = null,
+  onGoal: (() -> Unit)? = null,
+) {
   if (turn.auto == true) return
   Column(
     Modifier.fillMaxWidth().padding(start = Metrics.bubbleInset, end = Metrics.pad).alpha(if (pending) 0.55f else 1f),
@@ -149,8 +158,12 @@ fun UserBubble(turn: UserTurn, pending: Boolean = false, onToast: ((String) -> U
         ) {
           Text(turn.text, color = Palette.fg1, fontSize = Type.body, lineHeight = Type.bodyLine)
         }
-        // Edit (`history.edit`, while idle) is pending: it needs the composer's edit mode
         AppMenu(expanded = menu, onDismiss = { menu = false }) {
+          onEdit?.let { edit ->
+            AppMenuItem(
+              t("history.edit"), onClick = { menu = false; edit() }, modifier = Modifier.testTag("bubble.edit"), icon = { MenuGlyph("pencil") },
+            )
+          }
           AppMenuItem(
             t("common.copy"),
             onClick = {
@@ -160,9 +173,22 @@ fun UserBubble(turn: UserTurn, pending: Boolean = false, onToast: ((String) -> U
             modifier = Modifier.testTag("bubble.copy"),
             icon = { MenuGlyph("copy") },
           )
+          onGoal?.let { goal ->
+            AppMenuItem(
+              t("goal.setFromPrompt"), onClick = { menu = false; goal() }, modifier = Modifier.testTag("bubble.goal"), icon = { MenuGlyph("goal") },
+            )
+          }
         }
       }
     }
+  }
+}
+
+/** A queued prompt's attachments, laid out as the sent prompt's above its bubble */
+@Composable
+internal fun BubbleAttachments(attachments: List<Attachment>) {
+  Row(horizontalArrangement = Arrangement.spacedBy(Metrics.s2), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+    for (a in attachments) AttachmentChip(a)
   }
 }
 
@@ -211,7 +237,6 @@ fun AgentMessage(
 ) {
   // A call whose observation was lost reads as settled before anything groups or draws it
   val split = remember(turn) { splitCodexBlocks(turn.blocks.map(::observedBlock)) }
-  val hasTools = remember(turn) { turn.blocks.any { it is ToolCallBlock } }
   // Content already there when the turn comes into view stays still: only what arrives afterwards enters. A new turn
   // is first composed with at most its first block, which keeps its entrance
   remember(key) { if (turn.blocks.size > 1) seedEntrances(turn, split.process, key) }
@@ -221,21 +246,74 @@ fun AgentMessage(
     LocalClock provides now,
   ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = Metrics.pad + Metrics.threadInset), verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
-      // Goal milestones before anything else open the turn above the fold
-      for (goal in split.goalsLead) GoalRow(goal)
-      CodexFold(turn, split.process, running, hasTools, key, now)
-      for (n in split.notices) NoticeRow(n)
-      for (reply in split.reply) {
-        if (reply.markdown.isNotBlank()) StreamProse(reply, Modifier.testTag("reply"))
+      // A saved plan cuts the turn: its card stands between the stretch before it and the continuation after it
+      // (AgentMessage.swift, planSections.ts)
+      val sections = remember(turn) { splitPlanSections(turn.blocks) }
+      val outcome = turnOutcome(turn) != null
+      val handlers = LocalChatHandlers.current
+      sections.forEachIndexed { i, section ->
+        androidx.compose.runtime.key(section.key) {
+          val lastSection = i == sections.size - 1
+          // A plan approval renders on its card. A stretch holding nothing else while the card waits has no working
+          // row to show: the fold head there would say "awaiting approval" under the card that already asks
+          val visible = section.blocks.any { it !is PermissionBlock || it.planId == null }
+          val planWait = section.blocks.any { it is PermissionBlock && it.planId != null }
+          if (visible || (lastSection && ((running && !planWait) || outcome))) {
+            val part = remember(turn, section) { sectionTurn(turn, section, lastSection, sections.size > 1) }
+            CodexMessage(part, if (sections.size > 1 && i > 0) "$key/${section.key}" else key, lastSection && running, now, onPermission)
+          }
+          section.plan?.let { plan ->
+            PlanDocumentCard(
+              plan,
+              permission = turn.blocks.firstOrNull { it is PermissionBlock && it.planId == plan.id } as PermissionBlock?,
+              onBuild = { option, model -> handlers?.buildPlan?.invoke(plan.id, option, model) },
+              onPermission = onPermission,
+            )
+          }
+        }
       }
-      // Later milestones (paused, met, cleared …) close the reply they followed
-      for (goal in split.goals) GoalRow(goal)
-      for (p in split.permissions.filter { it.planId == null }) PermissionCard(p) { onPermission(p.id, it) }
-      if (!running) turnOutcome(turn)?.let { OutcomeRow(turn, it) }
       if (showsTurnActions(turn, running)) TurnActions(turn, index, retry, settings, controls, actions)
     }
   }
 }
+
+/**
+ * One stretch of a turn as its own message (CodexMessage): goal milestones, the process fold, notices, the reply,
+ * permission cards (a plan's approval renders on the plan card) and the outcome row
+ */
+@Composable
+private fun CodexMessage(turn: AgentTurn, key: String, running: Boolean, now: () -> Long, onPermission: (blockId: String, optionId: String) -> Unit) {
+  val split = remember(turn) { splitCodexBlocks(turn.blocks.map(::observedBlock)) }
+  val hasTools = remember(turn) { turn.blocks.any { it is ToolCallBlock } }
+  // Goal milestones before anything else open the turn above the fold
+  for (goal in split.goalsLead) GoalMilestone(goal)
+  CodexFold(turn, split.process, running, hasTools, key, now)
+  for (n in split.notices) NoticeRow(n)
+  for (reply in split.reply) {
+    if (reply.markdown.isNotBlank()) StreamProse(reply, Modifier.testTag("reply"))
+  }
+  // Later milestones (paused, met, cleared …) close the reply they followed
+  for (goal in split.goals) GoalMilestone(goal)
+  for (p in split.permissions.filter { it.planId == null }) PermissionCard(p) { onPermission(p.id, it) }
+  if (!running) turnOutcome(turn)?.let { OutcomeRow(turn, it) }
+}
+
+/**
+ * A stretch as its own message: only the continuation owns the live activity and the turn's outcome, and with more than
+ * one stretch none has timing of its own (repeating the whole turn's duration would lie)
+ */
+private fun sectionTurn(turn: AgentTurn, section: PlanSection, last: Boolean, split: Boolean): AgentTurn {
+  var content = turn.copy(blocks = section.blocks)
+  if (!last) content = content.copy(stop = null, error = null, command = null)
+  if (split) content = content.copy(startedAt = null, respondedAt = null, endedAt = null)
+  return content
+}
+
+/**
+ * The stage holding the reply the thread draws for a held prompt (`heldStage`): its working row says it in place of
+ * "Working"
+ */
+val LocalLiveStage = androidx.compose.runtime.compositionLocalOf<String?> { null }
 
 /**
  * A call whose observation was lost must not pass for running work (ToolCall.tsx): it shows settled, so nothing
@@ -527,7 +605,9 @@ private fun CodexFold(turn: AgentTurn, blocks: List<AgentBlock>, running: Boolea
 /** The fold's head: the Orb (or hand, plan, question) and the activity while live; a tick, ✗ or warning and the time once done */
 @Composable
 private fun FoldHead(turn: AgentTurn, running: Boolean, open: Boolean, foldable: Boolean, now: () -> Long, onToggle: () -> Unit) {
-  val activity = liveActivity(turn)
+  // The stage takes the plain working label only; approvals, questions and retries keep their own
+  val stage = LocalLiveStage.current
+  val activity = liveActivity(turn).let { a -> if (stage != null && a.lead == LiveActivity.Lead.orb && turn.retry == null) a.copy(label = stage) else a }
   val outcome = turnOutcome(turn)
   val label = if (running) activity.label else outcome ?: t("turns.done")
   // A turn that rounds to 0s shows the bare Done label, as the live counter stays hidden for its first second
