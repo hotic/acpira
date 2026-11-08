@@ -1947,7 +1947,7 @@ export const ru = {
   'devices.sectionDesc': 'Связанные устройства могут управлять здешними сеансами',
   'devices.soon.badge': 'Скоро',
   'devices.soon.name': 'Acpira для мобильных',
-  'devices.soon.desc': 'Просмотр и продолжение сеансов этого компьютера на iPhone и iPad',
+  'devices.soon.desc': 'Просмотр и продолжение сеансов этого компьютера на iPhone, iPad и Android',
   'devices.allow': 'Разрешить удалённый доступ',
   'devices.allowDesc.off': 'Работает в фоне с момента входа',
   'devices.allowDesc.running': 'На телефоне видно как «{name}»',

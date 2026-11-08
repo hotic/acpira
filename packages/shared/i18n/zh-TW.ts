@@ -1942,7 +1942,7 @@ export const zhTW = {
   'devices.sectionDesc': '配對的裝置可以操作這裡的工作階段',
   'devices.soon.badge': '即將推出',
   'devices.soon.name': 'Acpira 行動版',
-  'devices.soon.desc': '在 iPhone 和 iPad 上檢視並繼續這台電腦的工作階段',
+  'devices.soon.desc': '在 iPhone、iPad 和 Android 裝置上檢視並繼續這台電腦的工作階段',
   'devices.allow': '允許遠端存取',
   'devices.allowDesc.off': '隨登入在背景執行',
   'devices.allowDesc.running': '手機上顯示為「{name}」',
