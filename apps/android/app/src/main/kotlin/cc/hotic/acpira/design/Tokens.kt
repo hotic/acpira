@@ -304,6 +304,17 @@ object Type {
  * page (upright or on its side) and scaled with every size in it to fit, so a tablet shows the phone's page larger
  */
 object WelcomeMetrics {
+  /** The notification step: the bell's ring and glyph, its title, the gaps under them, the later button's height */
+  val bellRing = 112.dp
+  val bell = 34.dp
+  val notifyTitle = 28.sp
+  val notifyTitleLine = 34.sp
+  val notifyTitleGap = 36.dp
+  val notifyDescGap = 10.dp
+  val laterHeight = 36.dp
+  /** The edge light's resting outline, and the light's stroke unit against a dp */
+  const val edgeOutlineAlpha = 0.14f
+  const val edgeUnit = 1.2f
   val portraitW = 402.dp
   val portraitH = 778.dp
   val landscapeW = 750.dp

@@ -37,6 +37,12 @@ class MainActivity : ComponentActivity() {
   private var model by mutableStateOf<AppModel?>(null)
   /** Paired remote access; null for a development engine, a demo launch, or a build without acpira-mobile */
   private var pairing: PairingModel? = null
+  /** Notices from the followed computer's list (store/Attention.kt) */
+  private val attention by lazy { cc.hotic.acpira.store.Attention(applicationContext) }
+  /** The activity is on screen: the chat it shows notifies nothing */
+  private var inFront = false
+  /** The running-turn service holds the wire while the app is away; the background grace starts once it lets go */
+  private var holding = false
 
   override fun onCreate(savedInstanceState: Bundle?) {
     val options = LaunchOptions.from(intent)
@@ -67,6 +73,8 @@ class MainActivity : ComponentActivity() {
       pairing.load()
       openLink(intent)
     }
+    followAttention()
+    openNotice(intent)
     setContent {
       val app = model ?: return@setContent
       // A theme pick restyles the bars too; a language pick rebuilds every screen in the new table (the model keeps
@@ -95,11 +103,92 @@ class MainActivity : ComponentActivity() {
     }
     model = next
     previous?.close()
+    pendingOpen?.let { id ->
+      pendingOpen = null
+      if (next.path.lastOrNull() != cc.hotic.acpira.store.Screen.Chat(id)) next.open(cc.hotic.acpira.store.Screen.Chat(id))
+    }
   }
 
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     openLink(intent)
+    openNotice(intent)
+  }
+
+  /**
+   * Every list the followed model brings goes past [attention]; while the service holds the wire for running turns,
+   * the count keeps its notice current, and once nothing runs the service lets go and the background grace starts
+   */
+  private fun followAttention() {
+    val ask = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    lifecycleScope.launch {
+      snapshotFlow { model?.let { Triple(it, it.summaries, it.connection) } }.collect { now ->
+        val (app, list, connection) = now ?: return@collect
+        val shown = if (inFront) (app.path.lastOrNull { it is cc.hotic.acpira.store.Screen.Chat } as cc.hotic.acpira.store.Screen.Chat?)?.id else null
+        attention.update(app, list, shown)
+        shown?.let(attention::clear)
+        // The first live wire asks once for notifications (iOS asks on its first wire too)
+        if (connection == cc.hotic.acpira.store.Connection.Live) askNotifications(ask)
+        if (holding) {
+          val running = running(app)
+          if (running == 0) letGo() else cc.hotic.acpira.store.AttentionService.start(this@MainActivity, running, pairing?.selected?.name)
+        }
+      }
+    }
+  }
+
+  private fun running(app: AppModel) = app.summaries.count { it.state == cc.hotic.acpira.model.SessionState.working }
+
+  private fun askNotifications(ask: androidx.activity.result.ActivityResultLauncher<String>) {
+    if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) return
+    val prefs = getSharedPreferences(NOTIFY_PREFS, MODE_PRIVATE)
+    // The first-run flow asks in its own step (ui/Welcome.kt), after the wire that pairing brings up
+    if (pairing?.onboarding == true) return
+    if (prefs.getBoolean(NOTIFY_ASKED, false) || cc.hotic.acpira.store.Attention.allowed(this)) return
+    prefs.edit().putBoolean(NOTIFY_ASKED, true).apply()
+    ask.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+  }
+
+  /** The service ends; the wire gets the grace a plain trip to the background gives it */
+  private fun letGo() {
+    if (!holding) return
+    holding = false
+    cc.hotic.acpira.store.AttentionService.stop(this)
+    if (!inFront) pairing?.service?.enterBackground()
+  }
+
+  /** A tapped notice: its chat over whatever the screens hold (apps/ios RootView `followPairing`) */
+  private fun openNotice(intent: Intent?) {
+    if (intent?.action != cc.hotic.acpira.store.Attention.ACTION_OPEN) return
+    val id = intent.getStringExtra(cc.hotic.acpira.store.Attention.EXTRA_SESSION) ?: return
+    val app = model
+    // A paired build before its first wire: the computer's model opens it once adopted
+    if (app == null || (pairing != null && app.computer == null)) {
+      pendingOpen = id
+      return
+    }
+    if (app.path.lastOrNull() != cc.hotic.acpira.store.Screen.Chat(id)) app.open(cc.hotic.acpira.store.Screen.Chat(id))
+  }
+
+  /** A tapped notice that came before the computer's wire */
+  private var pendingOpen: String? = null
+
+  override fun onPause() {
+    super.onPause()
+    // Still visible here, where a foreground service may start: turns still running keep the wire up until they end
+    val app = model ?: return
+    val running = running(app)
+    if (running > 0 && cc.hotic.acpira.store.Attention.allowed(this)) {
+      holding = cc.hotic.acpira.store.AttentionService.start(this, running, pairing?.selected?.name)
+    }
+  }
+
+  override fun onResume() {
+    super.onResume()
+    if (holding) {
+      holding = false
+      cc.hotic.acpira.store.AttentionService.stop(this)
+    }
   }
 
   /** `acpira://pair/…` opened from outside: the add-computer sheet confirms it */
@@ -110,6 +199,7 @@ class MainActivity : ComponentActivity() {
 
   override fun onStart() {
     super.onStart()
+    inFront = true
     model?.setAway(false)
     val pairing = pairing ?: return
     pairing.service.enterForeground()
@@ -119,8 +209,10 @@ class MainActivity : ComponentActivity() {
 
   override fun onStop() {
     // The running clock stands from here until the engine's view comes again (AppModel `clockHeld`)
+    inFront = false
     model?.setAway(true)
-    pairing?.service?.enterBackground()
+    // While the running-turn service holds the wire, the grace starts only once it lets go
+    if (!holding) pairing?.service?.enterBackground()
     super.onStop()
   }
 
@@ -140,8 +232,16 @@ class MainActivity : ComponentActivity() {
     else -> null
   }
 
+  private companion object {
+    const val NOTIFY_PREFS = "notify"
+    const val NOTIFY_ASKED = "asked"
+  }
+
   override fun onDestroy() {
-    if (isFinishing) model?.close()
+    if (isFinishing) {
+      cc.hotic.acpira.store.AttentionService.stop(this)
+      model?.close()
+    }
     super.onDestroy()
   }
 }

@@ -24,6 +24,14 @@
 - The developer overlay (`design/PerfHud.kt`) is a window of its own, not a Compose layer: every dialog, bottom sheet and focusable popup is a newer app window that covers anything older, so the overlay is added again each time the activity's window loses focus.
 - Pages run under the gesture bar: a scrolling page pads `navigationBars` inside its scroll, never on the Scaffold, or the bar's strip shows as a black band.
 
+## Wide windows
+
+- `ui/Root.kt` splits a window at least `Metrics.splitMinW` wide and `splitMinH` tall (tablets, an unfolded foldable) into the list and a detail column: the path's first page is the column's root, the rest stack over it, so a rotation or fold keeps the page (apps/ios RootView `shell`). A phone held sideways is wide but short and keeps the stack.
+- In the split, list picks go through `AppModel.open` (replace the root, deselect the chat left) rather than `push`; `listInSidebar` says which. The sidebar stands beside the detail only while the detail keeps the reading column, else it slides over from the root page's leading button: a page bar's leading button is `LeadButton`, never a bare back button.
+- Pages hold to the reading column (`design/Layout.kt`): a scrolling list pads its sides (`readablePadding`) instead of narrowing itself, so a drag beside the column still scrolls it.
+- The activity is not recreated on rotation or fold (`configChanges`): state survives, and a layout reads its size from `BoxWithConstraints`, not the configuration.
+- Emulators: `acpira_tablet` and `acpira_fold` (`cmd device_state state 0|2` folds it; two displays, so `screencap -d <id>` from `dumpsys SurfaceFlinger --display-id`). With several devices up, scripts need `ANDROID_SERIAL`.
+
 ## Composer
 
 - Ported from the iOS `Chat/Composer.swift`, `Design/Goo.swift` and `Logic/ModelCatalog.swift` (Fusion and sidekick are not ported). The pickers' layer (`GooLayer`) sits over the whole Scaffold, the composer included: under the bar a card grown round a long prompt or attachments covered the lowest beans and took their taps. The layer handles the chip's own tap (one level back) itself.
@@ -41,9 +49,15 @@
 - Android 17 (target 37): LAN dials and NSD need the runtime `ACCESS_LOCAL_NETWORK`; without it NSD raises the system's device picker and only the relay is left. Asked when the add sheet opens, and on launch once a computer is paired.
 - A sheet or menu is a window of its own: its test tags need `testTagsAsResourceId` again.
 - Emulator: it reaches the computer only as 10.0.2.2 (its loopback), not its LAN addresses or Bonjour, so iroh's first dial spends its deadline on the LAN addresses. Behind a proxy TUN the gateway binds IPv4 on the physical address only (`tun::detect`), out of the emulator's reach: the test `gateway.sh` sets `ACPIRA_NET_BYPASS=0` for the wildcard socket. Debug builds take `nearby=ID@10.0.2.2:PORT` to list the gateway in the sheet; a code pairing stores the address it reached first.
-- First run (`ui/Welcome.kt`, the iOS flow's rules: a bare launch with no computer paired, until it finishes once): its pairing step is the add sheet's own `PairFlow` in place, so `PairingModel.onboarding` keeps the sheet down meanwhile. No notification step: the app has no push channel. A fresh install opens on it, so scripts that pair go through `welcome.start`.
+- First run (`ui/Welcome.kt`, the iOS flow's rules: a bare launch with no computer paired, until it finishes once): its pairing step is the add sheet's own `PairFlow` in place, so `PairingModel.onboarding` keeps the sheet down meanwhile. Its notification step asks once (the `notify` prefs' `asked`), so a wire asks only on installs that never saw it. A fresh install opens on it, so scripts that pair go through `welcome.start`.
 - Compose's `PathParser` misreads arc flags run together with the next number (`0 01-4.45`, as the minified lobehub marks write them); `IconStore.mark` spells them out first.
 - Open: the camera scan, NSD on a real network, background grace under Doze.
+
+## Notifications
+
+- No push channel: APNs has no Android twin without a Firebase project, and phones sold without Google services have none anyway. Notices come from the followed wire's list instead (`store/Attention.kt`): a session turning to waiting, or ending unread, posts the desktop's `host.attention.*` text. A model's first list is only a baseline.
+- Unread needs the engine to see the chat as unwatched: `setAway(true)` deselects the chat on screen, as iOS does.
+- `store/AttentionService.kt` (foreground service, type `remoteMessaging`) holds the process while a turn still runs as the app leaves, started in `onPause` (still visible: a background start is refused); the pairing grace (`enterBackground`) starts only once it lets go. With nothing running the app leaves as before. Open: Doze and vendor task killers (HyperOS) on a real phone.
 
 ## Wire traps
 
