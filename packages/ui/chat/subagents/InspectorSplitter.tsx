@@ -35,6 +35,18 @@ export function fitPaneBounds(element: HTMLElement | null, bounds: PaneBounds, c
   return { ...bounds, min, max: Math.max(min, Math.min(cap, Number.isFinite(cssMax) ? cssMax : Infinity, room)) };
 }
 
+// A pane whose dragged edge borders the chat may only widen by what the chat can give. Beside a shown tool panel the chat
+// holds its flex basis and the panel shrinks first (flex-shrink 1000, panel.css), so past that basis the drag narrowed
+// the panel: the panel's far edge moved while the edge under the pointer stayed put. The pane's current width always
+// stays reachable, so a drag that starts in a squeezed layout does not jump
+export function capToChat(bounds: PaneBounds, pane: HTMLElement | null, chat: HTMLElement | null): PaneBounds {
+  if (!pane || !chat || !pane.parentElement?.querySelector(':scope > [data-tool-panel-wrap][data-shown]')) return bounds;
+  const style = getComputedStyle(chat);
+  const floor = Math.max(Number.parseFloat(style.minWidth) || 0, Number.parseFloat(style.flexBasis) || 0);
+  const cap = pane.offsetWidth + Math.max(0, chat.offsetWidth - floor);
+  return { ...bounds, max: Math.max(bounds.min, Math.min(bounds.max, cap)) };
+}
+
 // The user's chosen width (undefined = the token default); the shell clamps it to the room it has right now,
 // so a narrow window squeezes the pane without forgetting the choice.
 export function usePreferredPaneWidth(key = 'subagentPaneW') {
@@ -55,13 +67,15 @@ interface SplitterProps {
   onDrag: (width: number) => void;
   onCommit: (width: number) => void;
   onReset: () => void;
+  // Before a drag or a nudge reads the layout (Shell: a squeezed tool panel keeps the width it shows)
+  onStart?: () => void;
   // The pane's side of the shell: on the right its left edge drags (leftwards widens), on the left its right edge
   side?: 'left' | 'right';
 }
 
 // Arrow keys nudge, double-click restores the default width. Memoized: the session column's edge is mounted for good
 // beside a shell that renders on every stream chunk, and its bounds read computed styles
-export const InspectorSplitter = memo(function InspectorSplitter({ width: chosen, bounds, onDrag, onCommit, onReset, side = 'right' }: SplitterProps) {
+export const InspectorSplitter = memo(function InspectorSplitter({ width: chosen, bounds, onDrag, onCommit, onReset, onStart, side = 'right' }: SplitterProps) {
   // memo keeps a row from rendering again; the locale context still reaches it after a language change
   useLocale();
   const dir = side === 'right' ? 1 : -1;
@@ -71,6 +85,7 @@ export const InspectorSplitter = memo(function InspectorSplitter({ width: chosen
   const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
     e.preventDefault();
+    onStart?.();
     const target = e.currentTarget;
     // Capture keeps the drag alive over iframes / outside the pane; a synthetic pointer has nothing to capture
     try { target.setPointerCapture(e.pointerId); } catch { /* keep the listeners */ }
@@ -112,6 +127,7 @@ export const InspectorSplitter = memo(function InspectorSplitter({ width: chosen
     const delta = (e.key === 'ArrowLeft' ? STEP : e.key === 'ArrowRight' ? -STEP : 0) * dir;
     if (!delta) return;
     e.preventDefault();
+    onStart?.();
     const b = bounds();
     onCommit(clamp(width + delta, b.min, b.max));
   };

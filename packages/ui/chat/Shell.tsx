@@ -67,8 +67,8 @@ import { skillDescriptions } from './slashCommands';
 import { TurnActionsContext } from './TurnActions';
 import { ForkBoundary } from './ForkBoundary';
 import { SubagentInspector } from './subagents/SubagentInspector';
-import { InspectorSplitter, clamp, fitPaneBounds, usePreferredPaneWidth, type PaneBounds } from './subagents/InspectorSplitter';
-import { ToolPanelDock, MOVE_MS, openPlanInPanel, projectPath } from '../panel/ToolPanel';
+import { InspectorSplitter, capToChat, clamp, fitPaneBounds, usePreferredPaneWidth, type PaneBounds } from './subagents/InspectorSplitter';
+import { ToolPanelDock, MOVE_MS, holdToolPanelWidth, openPlanInPanel, projectPath } from '../panel/ToolPanel';
 import { preferMarkdownPreview } from '../panel/FileViewer';
 import { markShellResize } from '../panel/api';
 import { FilesLayout } from '../panel/FilesLayout';
@@ -478,9 +478,18 @@ export function Shell(p: ShellProps) {
     const styles = getComputedStyle(mainColumn.current ?? document.documentElement);
     const px = (name: string) => Number.parseFloat(styles.getPropertyValue(name));
     const room = (mainColumn.current?.clientWidth ?? 0) + (inspectorPane.current?.offsetWidth ?? 0);
-    return fitPaneBounds(inspectorPane.current, { min: px('--subagent-pane-min'), max: room - px('--subagent-main-min'), initial: px('--subagent-pane-w') });
+    const bounds = fitPaneBounds(inspectorPane.current, { min: px('--subagent-pane-min'), max: room - px('--subagent-main-min'), initial: px('--subagent-pane-w') });
+    // Its left edge borders the chat: widening takes from the chat, never from the tool panel right of it
+    return capToChat(bounds, inspectorPane.current, mainColumn.current);
   }, []);
   const paneWidth = draggedPane ?? preferredPane;
+  // The session column's drag, on the left of the conversation layout: its right edge borders the chat, so widening takes
+  // from the chat as well (unfolding keeps sideBounds, the column may squeeze the tool panel to open at its width)
+  const sideDragBounds = useCallback(
+    (): PaneBounds => files || position === 'right' ? sideBounds() : capToChat(sideBounds(), sessionPanel.current, mainColumn.current),
+    [sideBounds, files, position]);
+  // Both edges that border the chat start their drag with the tool panel at the width it shows (panel/ToolPanel.tsx)
+  const holdTools = useCallback(() => holdToolPanelWidth(root.current), []);
   // Desktop, files layout: the chat's width is the user's (drag its left edge, over the stage's rim), kept with the tool
   // panel's state; the stage keeps --stage-min of the room the two share
   const chatW = usePanelValue(s => s.chatW);
@@ -1131,8 +1140,8 @@ export function Shell(p: ShellProps) {
                   folderOver && 'ring-1 ring-inset ring-fg-1/70',
                 )}>
                 {canDock && (
-                  <InspectorSplitter side={position === 'right' || files ? 'right' : 'left'} bounds={sideBounds} width={sideWidth}
-                    onDrag={setDraggedSide} onCommit={commitSide} onReset={resetSide} />
+                  <InspectorSplitter side={position === 'right' || files ? 'right' : 'left'} bounds={sideDragBounds} width={sideWidth}
+                    onStart={files || position === 'right' ? undefined : holdTools} onDrag={setDraggedSide} onCommit={commitSide} onReset={resetSide} />
                 )}
                 {desktop && <TitleSpace />}
                 {!desktop && (!nav || !canDock) && (
@@ -1325,7 +1334,7 @@ export function Shell(p: ShellProps) {
             // Desktop: its card (beside the sheet) or its place on the canvas (files layout) comes from desktop.css
             <aside ref={inspectorPane} data-subagent-panel="docked" className={cn('relative flex w-subagent-pane shrink-0 flex-col', !desktop && 'border-l border-line bg-bg-0', files ? 'order-4' : 'order-last')}
               style={paneWidth !== undefined ? { width: `clamp(var(--subagent-pane-min), ${paneWidth}px, calc(100% - var(--subagent-main-min)))` } : undefined}>
-              <InspectorSplitter width={paneWidth ?? paneBounds().initial} bounds={paneBounds}
+              <InspectorSplitter width={paneWidth ?? paneBounds().initial} bounds={paneBounds} onStart={holdTools}
                 onDrag={setDraggedPane}
                 onCommit={w => { setDraggedPane(undefined); setPreferredPane(w); }}
                 onReset={() => { setDraggedPane(undefined); setPreferredPane(undefined); }} />

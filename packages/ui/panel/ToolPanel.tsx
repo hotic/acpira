@@ -95,6 +95,17 @@ export interface ToolPanelDockProps {
 const panelWidth = (w: number) => `clamp(var(--tool-panel-min), ${w}px, calc(100% - var(--tool-main-min)))`;
 const commitWidth = (w: number) => panel.setWidth(w);
 
+// Before a drag of a pane beside the chat: a docked panel squeezed under its chosen width (flex-shrink 1000, panel.css)
+// takes back any room that drag frees ahead of the chat, so its far edge moved while the dragged edge stayed. Keeping the
+// width it shows as its choice leaves the chat the only side that gives and takes
+export function holdToolPanelWidth(shell: Element | null) {
+  const wrap = shell?.querySelector<HTMLElement>(':scope > [data-tool-panel-wrap][data-shown]:not([data-moving])');
+  if (!wrap) return;
+  const shown = Math.round(wrap.getBoundingClientRect().width);
+  const chosen = panelState().width ?? Number.parseFloat(getComputedStyle(wrap).getPropertyValue('--tool-panel-w'));
+  if (shown < chosen - 1) panel.setWidth(shown);
+}
+
 // The panel beside the sheet and its toggle pinned at the window's top-right corner
 export const ToolPanelDock = memo(function ToolPanelDock(p: ToolPanelDockProps) {
   // Memo / a cached parent can skip this on a language switch: subscribe so the strings follow the new locale
