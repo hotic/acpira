@@ -28,6 +28,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.BoxWithConstraints
+import cc.hotic.acpira.design.readablePadding
+import cc.hotic.acpira.design.readableWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -191,11 +194,12 @@ fun SessionListScreen(model: AppModel) {
       onSwiped = { swiped = it }, onMore = { cwd, n -> moreShown = if (n == null) moreShown - cwd else moreShown + (cwd to n) },
       onRename = { renaming = it }, onAddFolder = { movingTo = it },
     )
-    Box(Modifier.fillMaxSize()) {
+    // A phone held sideways reads the list in the centred column, its bounds still full width so a drag anywhere scrolls
+    BoxWithConstraints(Modifier.fillMaxSize()) {
       LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize().testTag("list.sessions"),
-        contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding() + Metrics.msgGap),
+        contentPadding = readablePadding(maxWidth, top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding() + Metrics.msgGap),
       ) { scene.content(this) }
       ListDragLayer(drag)
     }
@@ -1003,7 +1007,7 @@ private fun ListBottomBar(query: String, onQuery: (String) -> Unit, onNew: () ->
   Row(
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(Metrics.gap),
-    modifier = Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = Metrics.pad, vertical = Metrics.s2),
+    modifier = Modifier.readableWidth().navigationBarsPadding().imePadding().padding(horizontal = Metrics.pad, vertical = Metrics.s2),
   ) {
     Surface(
       color = Palette.bg1, shape = RoundedCornerShape(percent = 50), shadowElevation = Metrics.barShadow,
