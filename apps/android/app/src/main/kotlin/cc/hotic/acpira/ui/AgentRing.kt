@@ -22,6 +22,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
@@ -149,16 +150,22 @@ fun AgentRing(
           .clip(CircleShape)
           .background(Palette.bg1)
           .border(Metrics.hairline, Palette.conversationLine, CircleShape)
-          .clickable(enabled = open && landing == null) { pick(i) }
+          // An agent that is not installed stays on the ring, dimmed, and takes no pick
+          .clickable(enabled = open && landing == null && a.available != false) { pick(i) }
           .testTag("ring:${a.id}"),
         contentAlignment = Alignment.Center,
       ) {
         // A picked bubble flies as an empty drop: its mark leaves at once for the flown copy over the centre
-        if (!flying) VendorMark(a.id, a.name, Palette.fg1, size = Metrics.ringMark, fit = true)
+        if (!flying) {
+          VendorMark(
+            a.id, a.name, Palette.fg1, size = Metrics.ringMark, fit = true,
+            modifier = if (a.available == false) Modifier.alpha(MISSING_INK) else Modifier,
+          )
+        }
       }
       // Its name under it, in the hero name's style: in after the bubble, out first
       Text(
-        a.name, color = Palette.fgStrong, fontSize = Type.field, lineHeight = Type.fieldLine, fontWeight = FontWeight.SemiBold,
+        a.name, color = if (a.available == false) Palette.fg3 else Palette.fgStrong, fontSize = Type.field, lineHeight = Type.fieldLine, fontWeight = FontWeight.SemiBold,
         maxLines = 1, softWrap = false, overflow = TextOverflow.Visible,
         modifier = Modifier.wrapContentWidth(unbounded = true).graphicsLayer {
           val p = out[i].value
@@ -207,6 +214,8 @@ fun AgentRing(
   }
 }
 
+/** A missing agent's mark, faded as a disabled row's (RingGeometry.missingInk) */
+private const val MISSING_INK = 0.35f
 /** A bubble leaves the drop at this share of its size (Metrics.gooSeed) */
 private const val SEED = 0.35f
 /** Each bubble's lag behind the one before, spread over at most the max (Motion.ringStagger) */

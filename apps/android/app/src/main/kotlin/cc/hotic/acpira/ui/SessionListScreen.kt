@@ -142,6 +142,9 @@ fun SessionListScreen(model: AppModel) {
   val covered = pairing != null && covers(pairing, model)
   // Listed folders alone keep the filter too: from another view its menu is the way back to them
   val filter = !covered && terms.isEmpty() && !(model.summaries.isEmpty() && lists.listedProjects.isEmpty())
+  // Standing in a wide window's sidebar (ui/Root.kt Split), and how to put it away there
+  val inSidebar = model.listInSidebar
+  val hide = LocalSidebarHide.current
 
   // The conversation search goes out once typing pauses (SessionList.tsx SEARCH_DEBOUNCE)
   LaunchedEffect(query) {
@@ -154,9 +157,12 @@ fun SessionListScreen(model: AppModel) {
   Scaffold(
     containerColor = Palette.bg0,
     topBar = {
+      Column {
       CenterAlignedTopAppBar(
         title = {
-          if (pairing != null) ListBarTitle(pairing)
+          // In the sidebar the computer moves to the foot (SidebarFoot) and the bar holds no title, as on iPadOS
+          if (inSidebar) Unit
+          else if (pairing != null) ListBarTitle(pairing)
           else Text(t("mobile.home"), fontWeight = FontWeight.SemiBold, fontSize = Type.barTitle)
         },
         navigationIcon = {
@@ -171,17 +177,31 @@ fun SessionListScreen(model: AppModel) {
           }
         },
         actions = {
-          IconButton(onClick = { model.push(Screen.Settings) }, modifier = Modifier.testTag("list.settings")) {
-            Lucide("settings", Palette.fg1, size = Metrics.iconCtl, contentDescription = t("session.settings"))
+          // In the sidebar settings sit in the foot, and the bar's end puts the sidebar away
+          if (hide != null) {
+            IconButton(onClick = hide, modifier = Modifier.testTag("split.hide")) {
+              Lucide("panelLeft", Palette.fg1, size = Metrics.iconCtl, contentDescription = t("desktop.hideSidebar"))
+            }
+          } else if (!inSidebar) {
+            IconButton(onClick = { model.push(Screen.Settings) }, modifier = Modifier.testTag("list.settings")) {
+              Lucide("settings", Palette.fg1, size = Metrics.iconCtl, contentDescription = t("session.settings"))
+            }
           }
         },
         colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Palette.bg0, scrolledContainerColor = Palette.bg0),
       )
+      // In the sidebar the search stands under the bar, as the desktop's column has it (apps/ios SystemListBar)
+      if (inSidebar && !covered) {
+        SearchPill(query, { query = it }, Modifier.padding(horizontal = Metrics.pad).padding(bottom = Metrics.s2))
+      }
+      }
     },
     bottomBar = {
       if (!covered) {
+        // In the sidebar the foot holds settings and the computer; new sessions come from the page beside it
+        if (inSidebar) SidebarFoot(model, pairing)
         // A new session starts in the latest project, as the iOS list's button does
-        ListBottomBar(query, { query = it }) { model.open(Screen.New(cwd = lists.projects.firstOrNull())) }
+        else ListBottomBar(query, { query = it }) { model.open(Screen.New(cwd = lists.projects.firstOrNull())) }
       }
     },
   ) { padding ->
@@ -198,7 +218,9 @@ fun SessionListScreen(model: AppModel) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
       LazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxSize().testTag("list.sessions"),
+        modifier = Modifier.fillMaxSize().testTag("list.sessions")
+          // A drag held near the top or bottom scrolls the list under it
+          .listDragAutoScroll(drag, listState, padding.calculateTopPadding(), padding.calculateBottomPadding()),
         contentPadding = readablePadding(maxWidth, top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding() + Metrics.msgGap),
       ) { scene.content(this) }
       ListDragLayer(drag)
@@ -934,14 +956,18 @@ private fun PinRule() {
  */
 @Composable
 fun StateMark(state: SessionState, unread: Boolean) {
-  val motion = LocalMotion.current
+  // While the connection is down (or a new wire has not synced yet) a live state may be stale: the marks that move stop
+  // on their resting frame and breathe instead, as the remote dot does (apps/ios StateMark `held`)
+  val held = LocalSyncing.current && (state == SessionState.working || state == SessionState.waiting || state == SessionState.background)
+  val motion = LocalMotion.current && !held
   val loop = rememberInfiniteTransition(label = "state")
+  Breathing(held) {
   Box(Modifier.size(Metrics.stateSlot), contentAlignment = Alignment.Center) {
     when (state) {
       SessionState.working -> {
-        // animate-spin: one turn a second, linear
+        // animate-spin: one turn a second, linear; it turns with motion off too, not while held
         val turn by loop.animateFloat(0f, FULL_TURN, infiniteRepeatable(tween(SPIN_MS, easing = LinearEasing)), label = "spin")
-        Lucide("loaderCircle", Palette.fg2, Modifier.rotate(turn), size = Metrics.stateRing)
+        Lucide("loaderCircle", Palette.fg2, Modifier.rotate(if (held) 0f else turn), size = Metrics.stateRing)
       }
       SessionState.waiting -> {
         // acp-mark-beat: 0 / 100% 1, 20% 1.5, 40% 1.1, 55% 1.35, 75% 1, eased between keys
@@ -996,7 +1022,11 @@ fun StateMark(state: SessionState, unread: Boolean) {
       SessionState.unknown -> {}
     }
   }
+  }
 }
+
+/** The screens show what may be stale: the wire is down, or a new one has not synced yet (AppModel `current`) */
+val LocalSyncing = androidx.compose.runtime.compositionLocalOf { false }
 
 /** Where the orbiting dot's top sits in the ring's box: centred on the circle's line, r 10 of a 24-unit box */
 private fun orbitTop(ring: Dp, dot: Dp): Dp = ring / 2 - ring * ORBIT_R / LUCIDE_BOX - dot / 2
@@ -1009,30 +1039,7 @@ private fun ListBottomBar(query: String, onQuery: (String) -> Unit, onNew: () ->
     horizontalArrangement = Arrangement.spacedBy(Metrics.gap),
     modifier = Modifier.readableWidth().navigationBarsPadding().imePadding().padding(horizontal = Metrics.pad, vertical = Metrics.s2),
   ) {
-    Surface(
-      color = Palette.bg1, shape = RoundedCornerShape(percent = 50), shadowElevation = Metrics.barShadow,
-      modifier = Modifier.weight(1f).height(Metrics.barCtl),
-    ) {
-      Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = Metrics.pad)) {
-        Lucide("search", Palette.fg1, size = Metrics.iconCtl)
-        Spacer(Modifier.width(Metrics.s2 + Metrics.s1))
-        Box(Modifier.weight(1f)) {
-          if (query.isEmpty()) Text(t("session.searchContent"), color = Palette.fg3, fontSize = Type.text1, maxLines = 1)
-          BasicTextField(
-            value = query, onValueChange = onQuery, singleLine = true,
-            textStyle = TextStyle(color = Palette.fg1, fontSize = Type.text1),
-            cursorBrush = SolidColor(Palette.fg1),
-            modifier = Modifier.fillMaxWidth().testTag("list.search"),
-          )
-        }
-        if (query.isNotEmpty()) {
-          Box(
-            Modifier.size(Metrics.lead).clip(CircleShape).clickable { onQuery("") }.testTag("list.search.clear"),
-            contentAlignment = Alignment.Center,
-          ) { Lucide("x", Palette.fg3, size = Metrics.icon, contentDescription = t("panel.clear")) }
-        }
-      }
-    }
+    SearchPill(query, onQuery, Modifier.weight(1f))
     FloatingActionButton(
       onClick = onNew,
       containerColor = Palette.bg1, contentColor = Palette.fg1, shape = CircleShape,
@@ -1044,7 +1051,92 @@ private fun ListBottomBar(query: String, onQuery: (String) -> Unit, onNew: () ->
   }
 }
 
+/** The list's search field: a capsule with the glass bar's lift, the engine searching the conversations too */
+@Composable
+private fun SearchPill(query: String, onQuery: (String) -> Unit, modifier: Modifier = Modifier) {
+  Surface(
+    color = Palette.bg1, shape = RoundedCornerShape(percent = 50), shadowElevation = Metrics.barShadow,
+    modifier = modifier.height(Metrics.barCtl),
+  ) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = Metrics.pad)) {
+      Lucide("search", Palette.fg1, size = Metrics.iconCtl)
+      Spacer(Modifier.width(Metrics.s2 + Metrics.s1))
+      Box(Modifier.weight(1f)) {
+        if (query.isEmpty()) Text(t("session.searchContent"), color = Palette.fg3, fontSize = Type.text1, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        BasicTextField(
+          value = query, onValueChange = onQuery, singleLine = true,
+          textStyle = TextStyle(color = Palette.fg1, fontSize = Type.text1),
+          cursorBrush = SolidColor(Palette.fg1),
+          modifier = Modifier.fillMaxWidth().testTag("list.search"),
+        )
+      }
+      if (query.isNotEmpty()) {
+        Box(
+          Modifier.size(Metrics.lead).clip(CircleShape).clickable { onQuery("") }.testTag("list.search.clear"),
+          contentAlignment = Alignment.Center,
+        ) { Lucide("x", Palette.fg3, size = Metrics.icon, contentDescription = t("panel.clear")) }
+      }
+    }
+  }
+}
+
+/**
+ * The sidebar's foot in a wide window, as the desktop's session column ends (apps/ios Sessions/SidebarFoot.swift):
+ * settings, then the followed computer with its menu (switch computers, add one). On the phone both sit in the list's
+ * top bar instead. The page colour fades up under it into the list
+ */
+@Composable
+private fun SidebarFoot(model: AppModel, pairing: cc.hotic.acpira.store.PairingModel?) {
+  val fade = Brush.verticalGradient(
+    0f to Palette.bg0.copy(alpha = 0f), FOOT_FADE_HALF_AT to Palette.bg0.copy(alpha = FOOT_FADE_HALF), FOOT_FADE_FULL_AT to Palette.bg0, 1f to Palette.bg0,
+  )
+  Row(
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(Metrics.gap),
+    modifier = Modifier.fillMaxWidth().background(fade).navigationBarsPadding()
+      .padding(horizontal = Metrics.pad).padding(top = Metrics.s2, bottom = Metrics.s2),
+  ) {
+    FloatingActionButton(
+      onClick = { model.push(Screen.Settings) },
+      containerColor = Palette.bg1, contentColor = Palette.fg1, shape = CircleShape,
+      elevation = FloatingActionButtonDefaults.elevation(defaultElevation = Metrics.barShadow),
+      modifier = Modifier.size(Metrics.barCtl).testTag("list.settings"),
+    ) { Lucide("settings", Palette.fg1, size = Metrics.iconCtl, contentDescription = t("session.settings")) }
+    val current = pairing?.selected
+    if (pairing != null && current != null) {
+      var open by remember { mutableStateOf(false) }
+      val online = pairing.link is cc.hotic.acpira.store.PairLink.Online
+      Box(Modifier.weight(1f)) {
+        Surface(
+          color = Palette.bg1, shape = RoundedCornerShape(percent = 50), shadowElevation = Metrics.barShadow,
+          modifier = Modifier.fillMaxWidth().height(Metrics.barCtl).clip(RoundedCornerShape(percent = 50))
+            .clickable { open = true }.testTag("list.computer"),
+        ) {
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Metrics.s2),
+            modifier = Modifier.padding(horizontal = Metrics.pad),
+          ) {
+            Lucide(computerIcon(current.model), Palette.fg2, size = Metrics.iconCtl)
+            Text(
+              current.name, color = Palette.fg1, fontSize = Type.text2, maxLines = 1, overflow = TextOverflow.Ellipsis,
+              modifier = Modifier.weight(1f),
+            )
+            // Lit while its wire is up
+            Box(Modifier.size(Metrics.hostDot).background(if (online) Palette.ok else Palette.fg3, CircleShape))
+          }
+        }
+        ComputerMenu(pairing, open, onDismiss = { open = false })
+      }
+    }
+  }
+}
+
 private const val SEARCH_DEBOUNCE_MS = 180L
+/** The sidebar foot's fade: half strength this far down, full from here (FootFade's stops) */
+private const val FOOT_FADE_HALF_AT = 0.2f
+private const val FOOT_FADE_HALF = 0.5f
+private const val FOOT_FADE_FULL_AT = 0.5f
 /** The project menu's sections level */
 private const val SECTIONS = "sections"
 private const val MORE_MARKS = 3

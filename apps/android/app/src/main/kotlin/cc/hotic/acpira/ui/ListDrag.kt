@@ -16,6 +16,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.ui.layout.LocalPinnableContainer
+import androidx.compose.ui.layout.PinnableContainer
+import androidx.compose.ui.unit.Dp
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,8 +60,9 @@ import kotlin.math.roundToInt
 // a long press lifts the row into its menu, and moving the finger turns the lift into a drag (the menu goes). A session
 // drops on another project (its header or its rows) to move there; a project drops above or below another project, or
 // on a section's caption, to take that place, in that section or out of one. Pinned sessions do not drag.
-// Rows register their bounds as zones while composed; the drag reads the zone under the finger. A row scrolled out of
-// the lazy list takes its zone and, for the held row, its gesture with it, so the list does not scroll on its own.
+// Rows register their bounds as zones while composed; the drag reads the zone under the finger. Near the list's top or
+// bottom edge the list scrolls under the finger (`listDragAutoScroll`), as the system drag does on iOS; the held row
+// is pinned in the lazy list meanwhile, so scrolling it out of view keeps its gesture alive.
 
 /** What a drag in the list holds: a session by id, a project by folder */
 sealed interface ListDragItem {
@@ -88,9 +96,19 @@ class ListDrag {
   internal class Zone(var bounds: Rect, var resolve: (ListDragItem, Float, Float) -> ListDropTarget?)
   internal val zones = HashMap<Any, Zone>()
 
-  internal fun lift(item: ListDragItem, card: @Composable () -> Unit) {
+  /** The held row kept composed in the lazy list while it scrolls out of view, or its gesture would end with it */
+  private var pin: PinnableContainer.PinnedHandle? = null
+
+  internal fun lift(item: ListDragItem, pinned: PinnableContainer.PinnedHandle?, card: @Composable () -> Unit) {
     held = item
     preview = card
+    pin?.release()
+    pin = pinned
+  }
+
+  /** The list moved under a still finger (the auto-scroll): the target under it is read again */
+  internal fun refresh() {
+    if (finger != Offset.Unspecified) move(finger)
   }
 
   internal fun move(root: Offset) {
@@ -108,6 +126,8 @@ class ListDrag {
     over = null
     preview = null
     finger = Offset.Unspecified
+    pin?.release()
+    pin = null
     if (perform != null && item != null && target != null) perform(item, target)
   }
 }
@@ -144,6 +164,8 @@ fun Modifier.listDrag(
   val lift by rememberUpdatedState(onLift)
   val drop by rememberUpdatedState(onDrop)
   val card by rememberUpdatedState(preview)
+  // The lazy list's item this row is (null outside one): pinned while it is held
+  val pinnable = LocalPinnableContainer.current
   onGloballyPositioned { coords = it }.pointerInput(drag, item) {
     var travelled = Offset.Zero
     detectDragGesturesAfterLongPress(
@@ -158,7 +180,7 @@ fun Modifier.listDrag(
         val dragged = item ?: return@detectDragGesturesAfterLongPress
         if (drag.held == null && travelled.getDistance() > viewConfiguration.touchSlop) {
           lift()
-          drag.lift(dragged) { card() }
+          drag.lift(dragged, pinnable?.pin()) { card() }
         }
         val at = coords ?: return@detectDragGesturesAfterLongPress
         if (drag.held != null) drag.move(at.localToRoot(change.position))
@@ -168,6 +190,45 @@ fun Modifier.listDrag(
     )
   }
 }
+
+/**
+ * The list's own edges during a drag: a finger within [Metrics.dragEdge] of the visible list's top or bottom scrolls it
+ * that way, faster the closer it gets ([Metrics.dragScrollMax] at the edge). [insetTop] / [insetBottom] are the bars laid
+ * over the list, so the band starts where the rows show
+ */
+fun Modifier.listDragAutoScroll(drag: ListDrag, state: LazyListState, insetTop: Dp, insetBottom: Dp): Modifier = composed {
+  var bounds by remember { mutableStateOf(Rect.Zero) }
+  val density = LocalDensity.current
+  val holding = drag.held != null
+  LaunchedEffect(holding) {
+    if (!holding) return@LaunchedEffect
+    val band = with(density) { Metrics.dragEdge.toPx() }
+    val top = with(density) { insetTop.toPx() }
+    val bottom = with(density) { insetBottom.toPx() }
+    val max = with(density) { Metrics.dragScrollMax.toPx() }
+    var last = withFrameNanos { it }
+    while (drag.held != null) {
+      val now = withFrameNanos { it }
+      val dt = (now - last) / NANOS_PER_SECOND
+      last = now
+      // The rows moved last frame: what lies under the finger now
+      drag.refresh()
+      val y = drag.finger.takeIf { it != Offset.Unspecified }?.y ?: continue
+      val upper = bounds.top + top
+      val lower = bounds.bottom - bottom
+      // How deep into the band the finger is, 0 at its inner line and 1 at the edge (or past it)
+      val depth = when {
+        y < upper + band -> -((upper + band - y) / band).coerceIn(0f, 1f)
+        y > lower - band -> ((y - (lower - band)) / band).coerceIn(0f, 1f)
+        else -> 0f
+      }
+      if (depth != 0f) state.scrollBy(depth * kotlin.math.abs(depth) * max * dt)
+    }
+  }
+  onGloballyPositioned { bounds = it.boundsInRoot() }
+}
+
+private const val NANOS_PER_SECOND = 1_000_000_000f
 
 /**
  * The drop marks of a list row: a fill while a session would move into it, a line on the edge a project would land

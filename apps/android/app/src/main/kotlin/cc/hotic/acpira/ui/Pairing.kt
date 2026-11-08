@@ -50,6 +50,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -82,8 +83,19 @@ import java.util.Locale
 /** The pairing model; null while the app has no pairing service (a development engine, a demo, a build without it) */
 val LocalPairing = staticCompositionLocalOf<PairingModel?> { null }
 
-/** A computer's glyph from its `hw.model`: a Mac laptop, else a display (lucide has no desktop Mac) */
-fun computerIcon(@Suppress("UNUSED_PARAMETER") model: String?): String = "laptop"
+/**
+ * A computer's glyph from its `hw.model` (apps/ios computerSymbol): a MacBook (or another Mac) a laptop, a Mac mini, an
+ * iMac a display, a Mac Pro a tower; unknown or not a Mac, a display
+ */
+fun computerIcon(model: String?): String = when {
+  model == null -> "monitor"
+  model.startsWith("MacBook") -> "laptop"
+  model.startsWith("Macmini") -> "macMini"
+  model.startsWith("iMac") -> "monitor"
+  model.startsWith("MacPro") -> "pcCase"
+  model.startsWith("Mac") -> "laptop"
+  else -> "monitor"
+}
 
 /**
  * The pairing screens' one centre piece, laid out as an empty state is: a computer's glyph, its name, one sentence and
@@ -102,12 +114,19 @@ fun PairHero(
   action: String? = null,
   secondary: String? = null,
   dim: Boolean = false,
+  code: List<String>? = null,
   onAction: () -> Unit = {},
   onSecondary: () -> Unit = {},
 ) {
   Column(modifier.fillMaxWidth().padding(horizontal = Metrics.page), horizontalAlignment = Alignment.CenterHorizontally) {
-    Box(Modifier.height(Metrics.pairGlyphBox), contentAlignment = Alignment.Center) {
-      PairGlyph(icon, ink = if (paired) Palette.fg1 else if (dim) Palette.fg3 else Palette.fg2, checked = paired)
+    // The code being paired with, drawn where the glyph goes (the sheet, after a scan or a link): the glyph shows in its
+    // centre once paired (ui/PairCode.kt)
+    if (code != null) {
+      PairCodeFrame(code, icon, paired = paired, dim = dim, motion = cc.hotic.acpira.design.LocalMotion.current)
+    } else {
+      Box(Modifier.height(Metrics.pairGlyphBox), contentAlignment = Alignment.Center) {
+        PairGlyph(icon, ink = if (paired) Palette.fg1 else if (dim) Palette.fg3 else Palette.fg2, checked = paired)
+      }
     }
     Spacer(Modifier.height(Metrics.page))
     if (name != null) {
@@ -144,14 +163,23 @@ fun PairHero(
   }
 }
 
-/** The computer's glyph; paired, a check on its corner */
+/**
+ * The computer's glyph; paired, a check on its corner. [check] lands it (0 away, 1 in place, a spring's overshoot
+ * passing through), for the code frame's paired moment; without it the check simply shows while [checked]
+ */
 @Composable
-private fun PairGlyph(icon: String, ink: androidx.compose.ui.graphics.Color, checked: Boolean) {
+fun PairGlyph(icon: String, ink: androidx.compose.ui.graphics.Color, checked: Boolean, check: (() -> Float)? = null) {
   Box {
     Lucide(icon, ink, size = Metrics.pairGlyph)
-    if (checked) {
+    if (checked || check != null) {
       Box(
         Modifier.align(Alignment.BottomEnd).offset(x = Metrics.s2, y = Metrics.s1)
+          .graphicsLayer {
+            val p = check?.invoke() ?: 1f
+            alpha = p.coerceIn(0f, 1f)
+            scaleX = CHECK_FROM + (1 - CHECK_FROM) * p
+            scaleY = scaleX
+          }
           .size(Metrics.lead).background(Palette.bg0, CircleShape).padding(Metrics.s0_5).background(Palette.ok, CircleShape),
         contentAlignment = Alignment.Center,
         // The tick stays white on the green disc in either theme
@@ -257,25 +285,32 @@ fun ListBarTitle(pairing: PairingModel) {
       Text(current.name, fontWeight = FontWeight.SemiBold, fontSize = Type.barTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
       Lucide("chevronDown", Palette.fg3, size = Metrics.icon)
     }
-    AppMenu(expanded = open, onDismiss = { open = false }) {
-      for (c in pairing.computers) {
-        AppMenuItem(
-          c.name,
-          onClick = { open = false; pairing.select(c.id) },
-          subtitle = pairing.status(c),
-          checked = c.id == current.id,
-          icon = { MenuGlyph(computerIcon(c.model)) },
-          modifier = Modifier.testTag("list.computer:${c.id}"),
-        )
-      }
-      AppMenuGap()
+    ComputerMenu(pairing, open, onDismiss = { open = false })
+  }
+}
+
+/** The followed computer's menu: every paired computer with how it is reached, the followed one ticked, then add another */
+@Composable
+fun ComputerMenu(pairing: PairingModel, open: Boolean, onDismiss: () -> Unit) {
+  val current = pairing.selected
+  AppMenu(expanded = open, onDismiss = onDismiss) {
+    for (c in pairing.computers) {
       AppMenuItem(
-        t("mobile.pair.add"),
-        onClick = { open = false; pairing.addOpen = true },
-        icon = { MenuGlyph("plus") },
-        modifier = Modifier.testTag("list.computer.add"),
+        c.name,
+        onClick = { onDismiss(); pairing.select(c.id) },
+        subtitle = pairing.status(c),
+        checked = c.id == current?.id,
+        icon = { MenuGlyph(computerIcon(c.model)) },
+        modifier = Modifier.testTag("list.computer:${c.id}"),
       )
     }
+    AppMenuGap()
+    AppMenuItem(
+      t("mobile.pair.add"),
+      onClick = { onDismiss(); pairing.addOpen = true },
+      icon = { MenuGlyph("plus") },
+      modifier = Modifier.testTag("list.computer.add"),
+    )
   }
 }
 
@@ -378,3 +413,6 @@ fun ComputerScreen(model: AppModel, pairing: PairingModel, id: String) {
 /** A digit box's outline, lit for the box the next digit goes in */
 fun Modifier.codeBox(lit: Boolean, line: androidx.compose.ui.graphics.Color, fill: androidx.compose.ui.graphics.Color, litLine: androidx.compose.ui.graphics.Color) =
   this.background(fill, RoundedCornerShape(Metrics.rLg)).border(Metrics.pairCodeLine, if (lit) litLine else line, RoundedCornerShape(Metrics.rLg))
+
+/** The paired check lands from this share of its size (Motion.pairCheckFrom) */
+private const val CHECK_FROM = 0.35f

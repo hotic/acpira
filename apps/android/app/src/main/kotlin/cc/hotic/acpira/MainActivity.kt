@@ -72,6 +72,11 @@ class MainActivity : ComponentActivity() {
         pairing.pinnedNearby = cc.hotic.acpira.sync.NearbyComputer(id = id, name = addr, addrs = listOf(addr))
       }
       pairing.load()
+      // A notice tapped before the paired computers were read follows its computer once they are
+      lifecycleScope.launch {
+        snapshotFlow { pairing.loaded }.first { it }
+        openNotified()
+      }
     }
     followAttention()
     openNotice(intent)
@@ -104,9 +109,10 @@ class MainActivity : ComponentActivity() {
     }
     model = next
     previous?.close()
-    pendingOpen?.let { id ->
+    // A tapped notice from this computer opens its chat on the new wire; one from another computer keeps waiting
+    pendingOpen?.takeIf { it.computer == null || it.computer == computer.id }?.let { open ->
       pendingOpen = null
-      if (next.path.lastOrNull() != cc.hotic.acpira.store.Screen.Chat(id)) next.open(cc.hotic.acpira.store.Screen.Chat(id))
+      if (next.path.lastOrNull() != cc.hotic.acpira.store.Screen.Chat(open.session)) next.open(cc.hotic.acpira.store.Screen.Chat(open.session))
     }
   }
 
@@ -158,21 +164,41 @@ class MainActivity : ComponentActivity() {
     if (!inFront) pairing?.service?.enterBackground()
   }
 
-  /** A tapped notice: its chat over whatever the screens hold (apps/ios RootView `followPairing`) */
+  /** A tapped notice: the session it names on the computer it came from */
   private fun openNotice(intent: Intent?) {
     if (intent?.action != cc.hotic.acpira.store.Attention.ACTION_OPEN) return
     val id = intent.getStringExtra(cc.hotic.acpira.store.Attention.EXTRA_SESSION) ?: return
-    val app = model
-    // A paired build before its first wire: the computer's model opens it once adopted
-    if (app == null || (pairing != null && app.computer == null)) {
-      pendingOpen = id
-      return
-    }
-    if (app.path.lastOrNull() != cc.hotic.acpira.store.Screen.Chat(id)) app.open(cc.hotic.acpira.store.Screen.Chat(id))
+    pendingOpen = Notice(intent.getStringExtra(cc.hotic.acpira.store.Attention.EXTRA_COMPUTER), id)
+    openNotified()
   }
 
-  /** A tapped notice that came before the computer's wire */
-  private var pendingOpen: String? = null
+  /**
+   * A tapped notice (apps/ios RootView `openNotified`): its chat at once when its computer is on screen, else follow that
+   * computer and let the new wire open it (`adopt`). One from a computer no longer paired is dropped
+   */
+  private fun openNotified() {
+    val open = pendingOpen ?: return
+    val app = model ?: return
+    val pairing = pairing
+    // A development engine has no pairing: the session is that engine's
+    if (pairing == null || (app.computer != null && app.computer == open.computer)) {
+      pendingOpen = null
+      if (app.path.lastOrNull() != cc.hotic.acpira.store.Screen.Chat(open.session)) app.open(cc.hotic.acpira.store.Screen.Chat(open.session))
+      return
+    }
+    // Until the paired computers are read, it waits (onCreate calls again once they are)
+    if (!pairing.loaded) return
+    if (pairing.computers.none { it.id == open.computer }) {
+      pendingOpen = null
+      return
+    }
+    open.computer?.let { if (pairing.selected?.id != it) pairing.select(it) }
+  }
+
+  /** A tapped notice waiting for its computer's wire: the computer (null: a development engine) and the session */
+  private data class Notice(val computer: String?, val session: String)
+
+  private var pendingOpen: Notice? = null
 
   override fun onPause() {
     super.onPause()

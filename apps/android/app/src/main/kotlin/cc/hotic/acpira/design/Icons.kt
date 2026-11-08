@@ -50,6 +50,17 @@ private data class IconSet(
   data class Marks(val paths: Map<String, List<String>>, val alias: Map<String, String>)
 }
 
+/**
+ * Glyphs the phone needs that the webview does not import, in lucide's 24-unit box and stroke: the computer kinds the
+ * iOS app draws with SF Symbols (Pairing/PairingModel.swift computerSymbol). `monitor` and `pcCase` are lucide's own;
+ * `macMini` is drawn in its style (lucide has none)
+ */
+private val LOCAL_GLYPHS = mapOf(
+  "monitor" to listOf("M4 3h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z", "M8 21h8", "M12 17v4"),
+  "pcCase" to listOf("M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z", "M15 14h.01", "M9 6h6", "M9 10h6"),
+  "macMini" to listOf("M4 8h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2z", "M7 16v2h10v-2", "M6 12h.01"),
+)
+
 object IconStore {
   @Volatile private var set: IconSet? = null
   private val vectors = HashMap<String, ImageVector>()
@@ -65,7 +76,7 @@ object IconStore {
   /** A lucide icon as a stroked 24-unit vector (round caps and joins, stroke 2, as lucide-react draws it) */
   fun lucide(context: Context, name: String): ImageVector? = synchronized(vectors) {
     vectors[name] ?: run {
-      val data = load(context).lucide[name] ?: return@synchronized null
+      val data = load(context).lucide[name] ?: LOCAL_GLYPHS[name] ?: return@synchronized null
       ImageVector.Builder(name, 24.dp, 24.dp, 24f, 24f).apply {
         for (d in data) {
           addPath(
