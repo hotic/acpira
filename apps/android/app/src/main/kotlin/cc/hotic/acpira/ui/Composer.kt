@@ -1099,6 +1099,17 @@ fun Modifier.gooRecede(goo: Goo, motion: Boolean): Modifier = composed {
   (if (radius > Metrics.s0) blur(radius) else this).then(dimmed)
 }
 
+/**
+ * A surface floating over the receded page (the docked to-do card) steps back the way the composer's own face does:
+ * faint and soft, without a second dim, which would print its box as a darker band
+ */
+fun Modifier.gooAside(goo: Goo, motion: Boolean): Modifier = composed {
+  val open = goo.open != null
+  val radius by animateDpAsState(if (open) Metrics.s1 else Metrics.s0, if (motion) spring() else snap(), label = "aside")
+  val alpha by animateFloatAsState(if (open) GOO_RECEDE else 1f, if (motion) spring() else snap(), label = "asideAlpha")
+  (if (radius > Metrics.s0) blur(radius) else this).alpha(alpha)
+}
+
 /** A bean's panel: its rows up to [Metrics.gooPanelRows], no taller than the room above the chip */
 private fun panelHeight(rows: Int, room: Float, density: androidx.compose.ui.unit.Density): Float = with(density) {
   val pad = (Metrics.s1_5 * 2).toPx()
