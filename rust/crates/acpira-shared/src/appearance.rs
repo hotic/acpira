@@ -23,8 +23,8 @@ pub const AXES: [(&str, &[&str]); 17] = [
   ("reportLink", &["on", "off"]),
 ];
 
-/// Baseline combo code 20111020030210010 decoded
-const BASE: &str = "20111020030210010";
+/// Baseline combo code 20111020030210011 decoded
+const BASE: &str = "20111020030210011";
 
 pub type Appearance = Map<String, Value>;
 
@@ -62,6 +62,6 @@ mod tests {
     assert_eq!(a["accent"], "agent");
     assert_eq!(a["fold"], "codex");
     assert_eq!(a["autoExpand"], "off");
-    assert_eq!(a["reportLink"], "on");
+    assert_eq!(a["reportLink"], "off");
   }
 }

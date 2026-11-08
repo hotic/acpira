@@ -244,11 +244,15 @@
     transition: opacity var(--dur-open), background-color var(--dur-open), box-shadow var(--dur-open);
   }
   [data-ctx-dim] { opacity: .35 !important; }
+  /* The band reaches out sideways by the hit area, the way a row's hover does, and keeps the row's own height:
+     a spread on all sides ran into the rows above and below. Two offset copies widen it without growing it */
   [data-ctx-lit] {
     border-radius: var(--r-md);
     background-color: var(--hover);
-    box-shadow: 0 0 0 var(--spacing-hit) var(--hover);
+    box-shadow: calc(var(--spacing-hit) * -1) 0 0 0 var(--hover), var(--spacing-hit) 0 0 0 var(--hover);
   }
+  /* A closed fold's head (its trigger) already spans the hit area, and the process fold clips around it: no spread */
+  [data-ctx-lit][aria-expanded] { box-shadow: none; }
 
   /* Model panel's lead / sidekick switch (chat/SidekickPair.tsx). The side being edited grows and spells out its model;
      the other folds to its mark and short level. Width moves through flex-grow and the name's grid track (0fr → 1fr), so

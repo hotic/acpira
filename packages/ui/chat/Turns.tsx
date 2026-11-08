@@ -575,7 +575,9 @@ function FoldRow({ icon, children, body, open, onToggle }: { icon: ReactNode; ch
   );
 }
 
-// Cursor mode: all read → "read N files", all search → "searched N times", mixed → "explored N places"
+// Cursor mode: all read → "read N files", all search → "searched N times", mixed → "explored N places".
+// Its calls' ids ride on a box-less wrapper: a closed fold mounts none of its rows, and the context report then lights
+// the fold's head for any of them (chat/reportLink.ts)
 function CursorFold({ blocks }: { blocks: ToolCallBlock[] }) {
   const kinds = new Set(blocks.map(b => b.kind));
   const only = kinds.size === 1 ? blocks[0]!.kind : undefined;
@@ -583,9 +585,9 @@ function CursorFold({ blocks }: { blocks: ToolCallBlock[] }) {
   const label = only === 'read' ? t('turns.readFiles', { n: files }) : only === 'search' ? t('turns.searched', { n: blocks.length }) : t('turns.explored', { n: blocks.length });
   const Icon = only ? TOOL_ICON[only] : Compass;
   return (
-    <FoldRow icon={<Icon className="size-icon" strokeWidth={1.5} />} body={<ProcessBlocks blocks={blocks} />}>
+    <div data-calls={blocks.map(b => b.id).join(' ')} className="contents"><FoldRow icon={<Icon className="size-icon" strokeWidth={1.5} />} body={<ProcessBlocks blocks={blocks} />}>
       <span>{label}</span>
-    </FoldRow>
+    </FoldRow></div>
   );
 }
 
