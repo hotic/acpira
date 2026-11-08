@@ -226,7 +226,7 @@ fun AgentMessage(
       CodexFold(turn, split.process, running, hasTools, key, now)
       for (n in split.notices) NoticeRow(n)
       for (reply in split.reply) {
-        if (reply.markdown.isNotBlank()) Prose(reply.markdown, Modifier.testTag("reply"))
+        if (reply.markdown.isNotBlank()) StreamProse(reply, Modifier.testTag("reply"))
       }
       // Later milestones (paused, met, cleared …) close the reply they followed
       for (goal in split.goals) GoalRow(goal)

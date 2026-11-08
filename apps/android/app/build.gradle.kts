@@ -16,7 +16,12 @@ val withNet = net.resolve("stamp").exists()
 val syncSharedAssets by tasks.registering(Sync::class) {
   into(sharedAssets)
   from(ios.resolve("AcpiraUI/Resources/i18n")) { into("i18n") }
-  from(ios.resolve("AcpiraDesign/Fonts")) { include("InterVariable*.ttf"); into("fonts") }
+  from(ios.resolve("AcpiraDesign/Fonts")) { include("InterVariable*.ttf", "KaTeX_*.ttf"); into("fonts") }
+  // Transcript text: KaTeX's metric tables (read from the generated Swift source), shiki's grammars and themes, and
+  // the browser mermaid for the diagrams the native flowchart does not read
+  from(ios.resolve("AcpiraDesign")) { include("KaTeXMetrics.generated.swift"); into("katex") }
+  from(ios.resolve("AcpiraUI/Resources/shiki")) { into("shiki") }
+  from(ios.resolve("AcpiraUI/Resources/web")) { include("mermaid.min.js"); into("web") }
   from(ios.resolve("AcpiraFixtures/synthetic")) { into("fixtures") }
 }
 
@@ -81,5 +86,8 @@ dependencies {
   implementation(libs.camera.lifecycle)
   implementation(libs.camera.view)
   implementation(libs.zxing.core)
+  implementation(libs.javascriptengine)
+  testImplementation(libs.junit)
+  testImplementation(libs.kotlin.test)
   debugImplementation(libs.compose.ui.tooling)
 }

@@ -114,7 +114,7 @@ fun ProcessItemView(item: ProcessItem) {
     is ProcessItem.Group -> ToolGroupView(item.kind, item.blocks)
     is ProcessItem.Block -> when (val b = item.block) {
       is ToolCallBlock -> ToolCallView(b, grouped = true)
-      is TextBlock -> if (b.markdown.isNotBlank()) Prose(b.markdown.trimEnd())
+      is TextBlock -> if (b.markdown.isNotBlank()) StreamProse(b.copy(markdown = b.markdown.trimEnd()))
       else -> LineBlockView(b)
     }
   }
@@ -249,7 +249,7 @@ fun ThoughtView(block: ThoughtBlock) {
           }
           .verticalScroll(scroll),
       ) {
-        Prose(block.text.trimEnd(), color = Palette.fg2)
+        StreamProse(block.text.trimEnd(), streaming = live, tone = ProseTone.Thought)
       }
     }
   }
