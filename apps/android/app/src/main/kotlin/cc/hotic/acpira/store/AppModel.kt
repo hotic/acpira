@@ -102,6 +102,13 @@ class AppModel(
       agentList = value
     }
   var summaries by mutableStateOf<List<SessionSummary>>(emptyList())
+  /**
+   * The list exactly as the engine last sent it, the base its next `sessionsPatch` applies to ([summaries] carries
+   * local feedback on top), and its revision: 0 for a whole list, null after a patch that did not fit until the whole
+   * list asked for lands, so the patches in flight meanwhile neither apply nor ask again (apps/ios engineSummaries)
+   */
+  private var engineSummaries: List<SessionSummary> = emptyList()
+  private var engineListRev: Int? = 0
   var settings by mutableStateOf(SettingsView())
   /** The views the screens show, by session id */
   val views = mutableStateMapOf<String, SessionView>()
@@ -549,7 +556,8 @@ class AppModel(
     )
     val c = EngineClient(transport, hello)
     client = c
-    c.post(WebviewMsg.Ready(patches = true))
+    // listPatches: the whole list is hundreds of KB and changes whenever any session starts, waits or ends
+    c.post(WebviewMsg.Ready(patches = true, listPatches = true))
     scope.launch(Dispatchers.Main) { c.events.collect { receive(it) } }
     // The wire is read and decoded off the main thread (a long session's init is megabytes); pushes land on it
     c.start(CoroutineScope(scope.coroutineContext + Dispatchers.Default))
@@ -592,6 +600,8 @@ class AppModel(
         val s = message.state
         agents = s.agents
         settings = s.settings
+        engineSummaries = s.sessions
+        engineListRev = 0
         summaries = lists.shown(s.sessions, fresh = resumed)
         lists.init(s)
         chatRoot = s.chats
@@ -605,7 +615,23 @@ class AppModel(
         if (options.start && path.none { it is Screen.Chat }) start(options.agent, null, options.prompt.orEmpty())
       }
       is HostMsg.Agents -> agents = message.agents
-      is HostMsg.Sessions -> summaries = lists.shown(message.sessions)
+      is HostMsg.Sessions -> {
+        engineSummaries = message.sessions
+        engineListRev = 0
+        summaries = lists.shown(message.sessions)
+      }
+      is HostMsg.ListPatch -> engineListRev?.let { rev ->
+        // A patch that does not fit the held list (one before it failed to decode) asks for the whole list, once
+        val list = message.patch.apply(engineSummaries, rev)
+        if (list == null) {
+          engineListRev = null
+          post(WebviewMsg.ResyncSessions)
+        } else {
+          engineSummaries = list
+          engineListRev = message.patch.rev
+          summaries = lists.shown(list)
+        }
+      }
       is HostMsg.Categories -> { message.categories.projects?.let { projectOrder = it }; lists.follow(message.categories) }
       is HostMsg.Settings -> settings = message.settings
       is HostMsg.Controls -> {
