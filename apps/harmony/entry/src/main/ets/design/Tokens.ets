@@ -165,3 +165,115 @@ export class WelcomeMetrics {
   static readonly factAt: number = 950;
   static readonly actionsAt: number = 1350;
 }
+
+/**
+ * composer: the composer's and the dock's sizes (apps/ios AcpiraDesign Tokens.swift barCtl, goo*, dock*, question*,
+ * plan*; apps/android design/Tokens.kt stagedTile, usageCardW)
+ */
+export class Cmp {
+  /** The bar's height, its chips' and send's slot; the glyphs on it */
+  static readonly bar: number = 48;
+  static readonly barIcon: number = 22;
+  /** The model chip's × and ‹ in place of the mark */
+  static readonly gooBack: number = 26;
+  /** The field: TypeScale.field (17 on 24), its card cap and the lines from which the whole-screen editor is offered */
+  static readonly field: number = 17;
+  static readonly fieldLine: number = 24;
+  static readonly maxLines: number = 8;
+  static readonly expandLines: number = 3;
+  static readonly ctlSm: number = 36;
+  static readonly chevron: number = 14;
+  static readonly s0_5: number = 2;
+  static readonly s1_5: number = 6;
+  static readonly s2_5: number = 10;
+  static readonly s3: number = 12;
+  /** A bar's shadow under the composer and the dock cards */
+  static readonly shadow: number = 6;
+  /** The gap between the surfaces under the thread (question, alert, editing bar, composer) and above it (plan card) */
+  static readonly dockGap: number = 8;
+  static readonly rCard: number = 20;
+  /** The beans: their column gap, a panel's row, width, rows shown and corners, a caption's room */
+  static readonly gooGap: number = 12;
+  static readonly gooRow: number = 40;
+  static readonly gooPanelW: number = 232;
+  static readonly gooPanelRows: number = 6.5;
+  static readonly rGooPanel: number = 22;
+  static readonly gooAside: number = 240;
+  static readonly gooPadX: number = 14;
+  /** The card's text under an open picker, and the page's blur there */
+  static readonly gooRecede: number = 0.35;
+  static readonly gooBlur: number = 16;
+  /** A bean leaves the chip at this share of its size */
+  static readonly gooSeed: number = 0.35;
+  /** The staged strip: a tile, a file pill's widest, the ✕ on a tile */
+  static readonly stagedTile: number = 56;
+  static readonly stagedFileW: number = 200;
+  static readonly stagedRemove: number = 20;
+  /** The sidekick's badge on its mark, and the ring cut round it */
+  static readonly sidekickBadge: number = 10;
+  static readonly sidekickNotch: number = 2;
+  /** The context ring's card and the quotes' card */
+  static readonly usageCardW: number = 260;
+  static readonly popLg: number = 300;
+  /** How faint a queued prompt's bubble stands until it goes, and the lines it shows */
+  static readonly queuedBubble: number = 0.55;
+  static readonly queuedLines: number = 3;
+  /** The question card: section gap, top inset, an option's bleed and a label's description gap, its body cap */
+  static readonly questionSectionGap: number = 6;
+  static readonly questionTopPad: number = 12;
+  static readonly questionOptionPad: number = 4;
+  static readonly questionDescriptionGap: number = 2;
+  static readonly questionBody: number = 320;
+  static readonly optionKey: number = 11;
+  /** The docked to-do card: vertical inset, head gap, an entry's padding, a dense row and the height cap (7 rows) */
+  static readonly planPadY: number = 6;
+  static readonly planSectionGap: number = 4;
+  static readonly planEntryPadY: number = 2;
+  static readonly rowDense: number = 32;
+  static readonly planMax: number = 224;
+  static readonly planDot: number = 8;
+  /** A disabled row in a panel (a Fusion sidekick the lead does not pair with) */
+  static readonly dimmed: number = 0.4;
+  /** `+` turns into × by this many degrees */
+  static readonly plusTurn: number = 45;
+  /** The dock cards' line heights (WebType text2 / text3) */
+  static readonly text2Line: number = 22;
+  static readonly text3Line: number = 20;
+  /** A bean panel grows from this share of its size */
+  static readonly panelSeed: number = 0.2;
+  /** The ring: its stroke and inset are this part of the glyph box, its track this share of the ink, a stale fill this */
+  static readonly ringParts: number = 8;
+  static readonly ringTrack: number = 0.25;
+  static readonly ringStale: number = 0.5;
+  /** The threshold's figure on an unsupported card */
+  static readonly ringNoteFaint: number = 0.6;
+  /** The quote card shows this many lines of each quote; its comment field grows to this many */
+  static readonly quoteLines: number = 5;
+  static readonly quoteCommentLines: number = 4;
+  /** The thread's own controls: a queued bubble's text inset */
+  static readonly queuedPadX: number = 14;
+  /** Picked photos: at most this many at once, the longest side cut to this many px, the JPEG quality */
+  static readonly maxPhotos: number = 4;
+  static readonly imageSide: number = 1024;
+  static readonly jpegQuality: number = 80;
+  /** Motion: the beans' spring (response s, damping), each bean's lag (ms), a panel's and the card's spring */
+  static readonly gooResponse: number = 0.42;
+  static readonly gooDamping: number = 0.78;
+  static readonly gooLagMs: number = 24;
+  static readonly morphResponse: number = 0.36;
+  static readonly morphDamping: number = 0.86;
+  static readonly quickMs: number = 160;
+  /** Mention.tsx's wait before a query goes out (ms) */
+  static readonly mentionDebounceMs: number = 60;
+  /** How much of the screen a docked question may take */
+  static readonly questionShare: number = 0.35;
+  /** Half a turn, for a caret that folds */
+  static readonly halfTurn: number = 180;
+  /** The web scale's pill sizes (WebMetrics icon / ctlSm / chevron), for the attachment pills */
+  static readonly webIcon: number = 14;
+  static readonly webCtlSm: number = 26;
+  static readonly webChevron: number = 12;
+  static readonly webLead: number = 20;
+  /** A plan dot's ring */
+  static readonly planRing: number = 1.5;
+}

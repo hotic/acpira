@@ -1,3 +1,4 @@
+import { PathShape } from '@kit.ArkUI';
 import { LUCIDE, MARKS } from '../design/Icons';
 import { Metrics, Type } from '../design/Tokens';
 
@@ -123,30 +124,16 @@ export struct AgentMark {
   @Param tint: ResourceColor = $r('app.color.fg2');
   @Param extent: number = Metrics.rowMark;
 
-  /** A path's fill takes a resolved colour: a resource there stayed black in the Previewer */
-  ink(): ResourceColor {
-    const tint = this.tint;
-    if (typeof tint === 'object') {
-      try {
-        const argb = getContext(this).resourceManager.getColorSync((tint as Resource).id);
-        return `#${(argb >>> 0).toString(16).padStart(8, '0')}`;
-      } catch (e) {
-        return tint;
-      }
-    }
-    return tint;
-  }
-
   build() {
     if (MARKS.has(this.agent)) {
       Stack() {
         ForEach(pathsAt(MARKS, this.agent, this.extent), (d: string) => {
-          Path()
-            .commands(d)
-            .fill(this.ink())
-            .antiAlias(true)
+          // The tint fills a box clipped to the mark: a Path's own fill came out black for a resource colour
+          Column()
             .width(this.extent)
             .height(this.extent)
+            .backgroundColor(this.tint)
+            .clipShape(new PathShape({ commands: d }))
             .position({ x: 0, y: 0 })
         }, (d: string, i: number) => `${i}`)
       }

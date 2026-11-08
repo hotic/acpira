@@ -4,6 +4,7 @@
     "pages/Preview",
     "pages/PreviewShell",
     "pages/PreviewForms",
-    "pages/PreviewSplit"
+    "pages/PreviewSplit",
+    "pages/PreviewComposer"
   ]
 }

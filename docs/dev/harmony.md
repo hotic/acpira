@@ -8,7 +8,7 @@
 - hvigor and its OHOS plugin come from the Huawei npm registry (`https://repo.harmonyos.com/npm/`, `@ohos/hvigor`, `@ohos/hvigor-ohos-plugin`, same version). `scripts/build.sh` links that install's `node_modules` into the project (`hvigorfile.ts` imports the plugin by name) and writes `local.properties`.
 - From the Mac, both hosts above can crawl at a few KB/s while the PC fetches them fast; a single slow connection is common, ranged parallel requests are not slowed.
 - The public SDK knows no `phone` device type (`ets/api/device-define`): `module.json5` says `default`.
-- ArkTS refuses constructor parameter properties, implicit return types on arrow callbacks and untyped object literals; `@Param` names must not shadow component attributes (`size`, `id`, `enabled`); a `@Builder` call takes no attributes (wrap it in a container), and an `@Entry` build's root must be a container.
+- ArkTS refuses constructor parameter properties, implicit return types on arrow callbacks and untyped object literals; `@Param` names must not shadow component attributes (`size`, `id`, `enabled`); a `@Builder` call takes no attributes (wrap it in a container), and an `@Entry` build's root must be a container. `@Builder` methods must not share a name with a component member (`key`); `@Extend` cannot be exported (shared styles are `AttributeModifier` classes, `components/composer/ComposerBits.ets` `DOCK_CARD`); `@Monitor` on an optional `@Param` warns, so watched params take defaults.
 
 ## Previewer
 
@@ -16,7 +16,8 @@
 - `previewer/common/bin/Previewer` runs the app's `modules.abc` (unpacked from the HAP) without DevEco: `-j` the abc folder, `-arp` the build's `intermediates/res/default`, `-ljPath` its `loader.json`, `-url` the page, `-or`/`-cr` the resolution, `-sd` the density, `-cm` the colour mode, `-lws` a port. Frames stream on that port as WebSocket binary messages with a JPEG inside (from the first `FF D8 FF`). hvigor's `PreviewBuild` only works when DevEco drives it.
 - It runs no ability (state set up in `EntryAbility` is missing: pages initialise themselves), takes no want parameters and no input, has no `net.webSocket` module (the live wire needs an emulator or device), and rawfile reads come back empty, hence the dictionaries and fixtures compiled into `ets/generated/` by `scripts/build.sh`. `pages/Preview` opens chat fixtures directly for it; `pages/PreviewShell` / `PreviewForms` lay the list, menus, settings, new session and first run out as phone-wide frames side by side, `pages/PreviewSplit` is the frame without the first run (`pages/Index` always shows it there, having no prefs).
 - Its resolution is capped at 3840 px a side: several frames at once need a lower density.
-- `Path.commands` are px and a `Shape` viewport did not scale them: `components/Glyphs.ets` scales each path to the icon's px size. A path's `fill` given a colour resource stays black there; it takes the colour resolved from the resource manager, which in the Previewer resolves the light table under `-cm dark` too (marks come out dark on dark).
+- `pages/PreviewComposer` sets each composer / dock state (beans and panels open, staged, quotes, edit, slash, question, alert, plan) up from its fixture without input, one phone frame each: `preview.sh out.jpg 3780 3510 dark pages/PreviewComposer 240 10` gives the 7 x 3 grid.
+- `Path.commands` are px and a `Shape` viewport did not scale them: `components/Glyphs.ets` scales each path to the icon's px size. A path's `fill` given a colour resource stays black there and a resolved one came out empty or in the light table under `-cm dark`: filled glyphs are a box in the tint clipped to the path (`clipShape(new PathShape(...))`, `AgentMark`, `FilledGlyph`).
 
 ## Signing and running
 
@@ -35,4 +36,5 @@
 - A `bindContextMenu` builder closes itself through `getUIContext().getContextMenuController().close()`; it has no `isShow` binding like `bindMenu`.
 - `EntryAbility` sets the keyboard to resize the page; the default lifts the whole page, bar included, off screen.
 - `scripts/build.sh` with `DEV_ENGINE=host:port:token` (and `DEV_PROMPT`) compiles a default engine in, since nothing passes launch parameters to the Previewer; `apps/ios/scripts/engine.sh` takes `TOKEN` to match.
+- A field added to `SessionView` must be copied in `viewWithTurns` (`wire/Wire.ets`) too, or the next patch drops it.
 - Turn rows key on the patch's `keep`: rows of kept turns keep their keys, so only the changed tail renders again.

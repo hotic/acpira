@@ -51,6 +51,14 @@ export interface AgentBlock {
   command?: string;
   description?: string;
   options?: PermissionOption[];
+  // composer: the dock reads these (question, plan, plan approval, todo tool)
+  planId?: string;
+  message?: string;
+  questions?: Question[];
+  outcome?: string;
+  entries?: PlanEntry[];
+  verbKey?: string;
+  todoEntries?: PlanEntry[];
 }
 
 /** A user or agent turn (transcript.ts Turn): `role` says which */
@@ -65,6 +73,11 @@ export interface Turn {
   /** Epoch ms: the turn's start and end, for the fold's duration */
   startedAt?: number;
   endedAt?: number;
+  // composer: a prompt's attachments and selections, and why an agent turn stopped short
+  attachments?: Attachment[];
+  settings?: TurnSettings;
+  auto?: boolean;
+  error?: TurnError;
 }
 
 export interface SessionView {
@@ -76,6 +89,14 @@ export interface SessionView {
   turns: Turn[];
   running: boolean;
   rev?: number;
+  // composer: what the composer's pickers, ring and dock read
+  controls?: SessionControls;
+  usage?: Usage;
+  commands?: SlashCommand[];
+  queued?: QueuedPrompt[];
+  canSteer?: boolean;
+  goal?: SessionGoal;
+  goalActions?: string[];
 }
 
 /** sessionPatch.ts SessionPatch: turns[0..keep) of the view at rev `base` stay, `turns` follow them */
@@ -154,15 +175,12 @@ export function applySessionPatch(current: SessionView | undefined, p: SessionPa
       return undefined;
     }
     const merged: Turn = {
-      role: head.role, id: head.id, stop: head.stop, startedAt: head.startedAt, endedAt: head.endedAt, blocks: kept.slice(0, p.keepBlocks).concat(p.blocks ?? [])
+      role: head.role, id: head.id, stop: head.stop, startedAt: head.startedAt, endedAt: head.endedAt, error: head.error,
+      blocks: kept.slice(0, p.keepBlocks).concat(p.blocks ?? [])
     };
     tail[0] = merged;
   }
-  const view: SessionView = {
-    id: p.view.id, agent: p.view.agent, title: p.view.title, cwd: p.view.cwd, status: p.view.status,
-    running: p.view.running, rev: p.view.rev, turns: current.turns.slice(0, p.keep).concat(tail)
-  };
-  return view;
+  return viewWithTurns(p.view, current.turns.slice(0, p.keep).concat(tail));
 }
 
 /** `held` (at revision `heldRev`) with the patch applied; undefined when it does not fit (then ask for the whole list) */
@@ -239,4 +257,208 @@ export interface ListHostMsg {
   hits?: SessionHit[];
   markdown?: string;
   error?: string;
+}
+
+// composer: the shapes the composer and the dock under the thread read (transcript.ts SessionControls, Usage,
+// SlashCommand, Attachment, QueuedPrompt, Question, PlanEntry, SessionGoal; protocol.ts Draft, FileHit,
+// EditTurnRequest), and the view copy every patch and local change goes through
+
+export interface OptionRef {
+  id: string;
+  name: string;
+}
+
+export interface OptionSource {
+  id: string;
+  name: string;
+  /** `official` / `custom` */
+  kind: string;
+}
+
+export interface SessionOption {
+  id: string;
+  name: string;
+  description?: string;
+  group?: OptionRef;
+  source?: OptionSource;
+  /** The agent's own classification (`full_access`, `auto_review`); display only */
+  kind?: string;
+}
+
+export interface ConfigControl {
+  id: string;
+  name: string;
+  /** model / thought_level / model_config / collaboration_mode / _permission_mode / _sidekick… */
+  category?: string;
+  /** `boolean` for an ACP boolean option; its options are the synthetic Off / On pair */
+  type?: string;
+  options: SessionOption[];
+  value?: string;
+}
+
+export interface SessionControls {
+  modes: SessionOption[];
+  modeId?: string;
+  modeConfigId?: string;
+  options: ConfigControl[];
+}
+
+export interface Usage {
+  used: number;
+  size: number;
+  cost?: number;
+  /** A compaction finished and the agent has not reported since: `used` predates it, this is that figure */
+  compactedFrom?: number;
+}
+
+export interface SlashCommandInput {
+  hint: string;
+}
+
+export interface SlashCommand {
+  name: string;
+  description: string;
+  input?: SlashCommandInput;
+}
+
+export interface TextContext {
+  sourceId: string;
+  sourceName: string;
+  uri?: string;
+  comment?: string;
+}
+
+/**
+ * An attachment in every shape (transcript.ts Attachment, `kind` says which). In the composer an image's or a pasted
+ * text's `blob` holds its base64 until the engine stores it and names the blob (`<hash>.<ext>`, which base64 never
+ * holds); a file picked on the phone keeps its bytes in `data` (base64), since its path means nothing on the computer
+ */
+export interface Attachment {
+  kind: string;
+  blob?: string;
+  mimeType?: string;
+  name?: string;
+  uri?: string;
+  startLine?: number;
+  endLine?: number;
+  text?: string;
+  comment?: string;
+  context?: TextContext;
+  /** The phone's own copy of a picked file, base64 (composer only, never on the wire as an Attachment) */
+  data?: string;
+  /** A picked photo's local file, for its thumbnail in the strip (composer only) */
+  thumb?: string;
+}
+
+/** What the composer hands the engine with a prompt (protocol.ts Draft): images and texts carry their payload */
+export interface Draft {
+  kind: string;
+  mimeType?: string;
+  data?: string;
+  name?: string;
+  text?: string;
+  uri?: string;
+  startLine?: number;
+  endLine?: number;
+  comment?: string;
+  context?: TextContext;
+}
+
+export interface QueuedPrompt {
+  id: string;
+  text: string;
+  attachments?: Attachment[];
+  sending?: boolean;
+}
+
+export interface TurnSettings {
+  modeId?: string;
+  config: Record<string, string>;
+}
+
+export interface TurnError {
+  message: string;
+  code?: number;
+  kind?: string;
+  retryable?: boolean;
+  /** retry / login / new_session: the remedies an AIR failure declared */
+  actions?: string[];
+}
+
+export interface QuestionOption {
+  id: string;
+  label: string;
+  description?: string;
+}
+
+export interface Question {
+  id: string;
+  title?: string;
+  text: string;
+  /** single / multiple / text */
+  kind: string;
+  options: QuestionOption[];
+  other?: boolean;
+  numeric?: boolean;
+  required?: boolean;
+}
+
+export type QuestionAnswer = string | string[];
+
+export interface PlanEntry {
+  title: string;
+  /** pending / in_progress / completed */
+  status: string;
+  priority?: string;
+}
+
+export interface SessionGoal {
+  objective: string;
+  /** active / paused / blocked / limited / complete */
+  status: string;
+  iterations?: number;
+  tokenBudget?: number;
+  tokensUsed?: number;
+  timeUsedSeconds?: number;
+}
+
+export interface FileHit {
+  uri: string;
+  path: string;
+}
+
+export interface EditTurnRequest {
+  sessionId: string;
+  turnIndex: number;
+  turnCount: number;
+  originalText: string;
+  turnId?: string;
+  text: string;
+  retainedAttachments: number[];
+  attachments: Draft[];
+  settings: TurnSettings;
+}
+
+/** The composer's HostMsg replies: `files` (searchFiles) and `editTurnResult` (editTurn) */
+export interface ComposerHostMsg {
+  type: string;
+  seq?: number;
+  files?: FileHit[];
+  requestId?: string;
+  error?: string;
+  /** `controls`: what a new session of `agent` offers (in `cwd` on a remote host) */
+  agent?: string;
+  controls?: ConfigControl[];
+  commands?: SlashCommand[];
+  cwd?: string;
+}
+
+/** `view` with `turns` in place of its own, every other field kept (ArkTS has no object spread) */
+export function viewWithTurns(view: SessionView, turns: Turn[]): SessionView {
+  const out: SessionView = {
+    id: view.id, agent: view.agent, title: view.title, cwd: view.cwd, status: view.status, running: view.running,
+    rev: view.rev, turns: turns, controls: view.controls, usage: view.usage, commands: view.commands, queued: view.queued,
+    canSteer: view.canSteer, goal: view.goal, goalActions: view.goalActions
+  };
+  return out;
 }

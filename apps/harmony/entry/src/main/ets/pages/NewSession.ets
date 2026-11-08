@@ -9,6 +9,11 @@ import { Composer } from '../components/Composer';
 import { Lead, LeadButton } from '../components/ChatBar';
 import { MenuBack, MenuCard, MenuGap, MenuRow, menuOptions } from '../components/Menu';
 import { openTextPrompt, PromptArgs } from '../components/Dialogs';
+import { Attachment } from '../wire/Wire';
+import { Cmp } from '../design/Tokens';
+import { ModelChoices } from '../logic/ModelCatalog';
+import { attachBeans, Bean, modelBeans } from '../components/composer/Beans';
+import { GooLayer } from '../components/composer/GooLayer';
 
 // A new session (apps/ios Sessions/NewSessionScreen.swift, apps/android ui/NewSessionScreen.kt): the agent's mark in
 // the middle with its name and the folder it starts in, both pickable; the first prompt from the composer starts it. A
@@ -51,6 +56,22 @@ export struct NewSession {
         this.ring = true;
       }, 0);
     }
+  }
+
+  /** composer: the open chip's beans, acting on the picks the session will start with */
+  beans(): Bean[] {
+    const goo = this.model.newGoo;
+    const agent = this.agent();
+    const model = this.model;
+    if (goo.last === 'attach') {
+      return attachBeans(goo, false, [], () => {});
+    }
+    const choices = new ModelChoices(model.controlsFor(agent), model.hiddenModels,
+      (id: string, value: string) => model.setNewConfig(agent, id, value));
+    return modelBeans(choices, goo, {
+      setMode: (mode: string) => model.setNewMode(agent, mode),
+      setConfig: (id: string, value: string) => model.setNewConfig(agent, id, value)
+    });
   }
 
   /** The asked agent, else the newest session's while it can still start, else the first that can, else the default */
@@ -185,16 +206,46 @@ export struct NewSession {
         .justifyContent(FlexAlign.Center)
         .layoutWeight(1)
         .width('100%')
+        // composer: the hero steps aside while the composer's beans are out
+        .opacity(this.model.newGoo.open !== undefined ? 0 : 1)
+        .animation({ duration: Cmp.quickMs })
 
         Row() {
+          // composer: the agent's model, effort and modes as the composer's beans, set on the session it starts
           Composer({
+            draft: this.model.newDraft,
             placeholder: t('mobile.new.placeholder'),
-            onSend: (text: string) => this.onStart(this.agent(), this.cwd(), text)
+            controls: this.model.controlsFor(this.agent()),
+            hidden: this.model.hiddenModels,
+            commands: this.model.commandsFor(this.agent()),
+            personas: this.model.personas,
+            goo: this.model.newGoo,
+            onSend: (text: string, staged: Attachment[]) => {
+              this.model.prepareStart(this.agent(), staged);
+              this.onStart(this.agent(), this.cwd(), text);
+            }
           })
         }
         .justifyContent(FlexAlign.Center)
-        .padding({ left: Metrics.gap, right: Metrics.gap, top: Metrics.s2, bottom: Metrics.s2 })
+        .padding({ left: Metrics.pad, right: Metrics.pad, top: Metrics.s2, bottom: Metrics.s2 })
         .width('100%')
+        .zIndex(2)
+
+        // composer: the picker's backdrop under the composer, and its beans over everything
+        Column()
+          .position({ x: 0, y: 0 })
+          .width('100%')
+          .height('100%')
+          .backgroundColor($r('app.color.goo_dim'))
+          .opacity(this.model.newGoo.open !== undefined ? 1 : 0)
+          .animation({ curve: Curve.Friction, duration: Cmp.quickMs * 2 })
+          .hitTestBehavior(HitTestMode.None)
+          .zIndex(1)
+        GooLayer({ goo: this.model.newGoo, beans: this.beans() })
+          .position({ x: 0, y: 0 })
+          .width('100%')
+          .height('100%')
+          .zIndex(3)
       }
       // The page dims under an open ring; a tap on it folds the ring
       if (this.ring) {
