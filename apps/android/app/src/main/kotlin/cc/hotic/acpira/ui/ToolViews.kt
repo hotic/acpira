@@ -87,6 +87,7 @@ import cc.hotic.acpira.design.Type
 import cc.hotic.acpira.design.WebMetrics
 import cc.hotic.acpira.design.WebType
 import cc.hotic.acpira.i18n.t
+import cc.hotic.acpira.logic.CodeToken
 import cc.hotic.acpira.logic.GroupKind
 import cc.hotic.acpira.logic.commandDuration
 import cc.hotic.acpira.logic.fileName
@@ -107,6 +108,8 @@ import cc.hotic.acpira.model.ToolCallBlock
 import cc.hotic.acpira.model.ToolContent
 import cc.hotic.acpira.model.ToolKind
 import cc.hotic.acpira.model.ToolStatus
+import cc.hotic.acpira.ui.prose.codeRuns
+import cc.hotic.acpira.ui.prose.rememberDiffTokens
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -819,12 +822,13 @@ private fun ToolOutput(text: String) {
 
 /**
  * DiffBlock: line numbers and signs in a gutter, tinted add / del rows, `···` between hunks. The rows fill at least the
- * card's width, so a tint runs edge to edge however short its line is. The phone colours no syntax here yet
+ * card's width, so a tint runs edge to edge however short its line is. Code is coloured by the file's grammar
  */
 @Composable
 private fun DiffBlockView(lines: List<DiffLine>, title: String, source: DiffSource?) {
   val sheet = LocalCodeSheet.current
   val display = remember(lines, sheet) { if (sheet) lines else diffPreview(lines) }
+  val tokens = rememberDiffTokens(display, source?.path ?: title, sheet)
   val copy = remember(lines, source) { diffCopyText(lines, source) }
   CodeFrame(title, copy, t("code.copyVisible"), full = { DiffBlockView(lines, title, source) }) {
     CodeCap {
@@ -832,7 +836,7 @@ private fun DiffBlockView(lines: List<DiffLine>, title: String, source: DiffSour
         val viewport = maxWidth
         Box(Modifier.horizontalScroll(rememberScrollState())) {
           Column(Modifier.width(IntrinsicSize.Max).widthIn(min = viewport).padding(vertical = Metrics.gapHalf)) {
-            DiffRows(display)
+            DiffRows(display, tokens)
           }
         }
       }
@@ -841,7 +845,7 @@ private fun DiffBlockView(lines: List<DiffLine>, title: String, source: DiffSour
 }
 
 @Composable
-private fun DiffRows(display: List<DiffLine>) {
+private fun DiffRows(display: List<DiffLine>, tokens: List<List<CodeToken>?>? = null) {
   val density = LocalDensity.current
   val ch = with(density) { (WebType.mono.fontSize.toPx() * WebType.ch).toDp() }
   val number = ch * NUMBER_CH
@@ -881,8 +885,10 @@ private fun DiffRows(display: List<DiffLine>) {
           color = when (d.kind) { DiffLine.Kind.add -> Palette.ok; DiffLine.Kind.del -> Palette.danger; else -> Palette.fg3 },
           style = WebType.codeOutput, textAlign = TextAlign.Center, maxLines = 1, modifier = Modifier.width(sign),
         )
+        val runs = tokens?.getOrNull(i)
         Text(
-          diffCode(d).ifEmpty { "​" }, color = Palette.fg1, style = WebType.codeOutput, maxLines = 1, softWrap = false,
+          if (runs != null && diffCode(d).isNotEmpty()) codeRuns(runs) else AnnotatedString(diffCode(d).ifEmpty { "​" }),
+          color = Palette.fg1, style = WebType.codeOutput, maxLines = 1, softWrap = false,
           modifier = Modifier.padding(end = Metrics.pad),
         )
       }
