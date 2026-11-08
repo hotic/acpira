@@ -89,6 +89,7 @@ dependencies {
   implementation(libs.camera.view)
   implementation(libs.zxing.core)
   implementation(libs.javascriptengine)
+  implementation(libs.termlib)
   testImplementation(libs.junit)
   testImplementation(libs.kotlin.test)
   debugImplementation(libs.compose.ui.tooling)

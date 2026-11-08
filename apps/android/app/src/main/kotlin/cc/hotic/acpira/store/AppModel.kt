@@ -61,6 +61,14 @@ sealed interface Screen {
   data class AddModels(val id: String) : Screen
   /** A project file downloaded to the phone and opened there (ui/MediaDownload.kt) */
   data class Download(val sessionId: String, val path: String) : Screen
+  /** The files a session changed, and one file of its project, read-only with its changes marked (ui/files) */
+  data class Changes(val session: String) : Screen
+  data class File(val session: String, val path: String, val line: Int? = null) : Screen
+  /** A project's terminal on the engine's computer (ui/terminal) */
+  data class Terminal(val cwd: String) : Screen
+  /** One delegated child's transcript, read-only, and a session's subagents as a tree (ui/subagents) */
+  data class Subagent(val session: String, val id: String) : Screen
+  data class Subagents(val session: String) : Screen
 }
 
 /** The wire to the engine as the screens show it */
@@ -140,6 +148,12 @@ class AppModel(
   val path = mutableStateListOf<Screen>()
   /** The session list's state and the session actions (store/SessionLists.kt) */
   val lists = SessionLists(this, context, scope)
+  /** The observed subagents' transcripts and the one the phone follows (store/Subagents.kt) */
+  val subagents = SubagentStore(this, context, scope)
+  /** The project reads the file pages await (store/Files.kt) */
+  val files = FileReads(this)
+  /** The engine's terminals the phone opened, one per project (store/Terminals.kt) */
+  val terminals = TerminalHub(::post)
   /** The demo's clock: the fixtures' now, running from launch */
   val now: () -> Instant
   /** The paired computer this model's wire leads to (null: the development engine or the demo) */
@@ -290,7 +304,11 @@ class AppModel(
     if (background) {
       holdClock()
       if (connection == Connection.Live) onScreenChat()?.let { post(WebviewMsg.DeselectSession(it)) }
-    } else if (connection == Connection.Live) onScreenChat()?.let { select(it) }
+    } else if (connection == Connection.Live) onScreenChat()?.let {
+      select(it)
+      // The engine drops the observed child with its session: the inspector on screen follows it again
+      subagents.renew(it)
+    }
   }
 
   private fun holdClock() {
@@ -298,6 +316,12 @@ class AppModel(
   }
 
   private fun onScreenChat(): String? = (path.lastOrNull { it is Screen.Chat } as Screen.Chat?)?.id
+
+  /**
+   * The session's view came on this wire: a view carried over from the wire before waits for the engine to show it again
+   * (an observe sent before that is never answered)
+   */
+  fun shown(id: String): Boolean = views[id] != null && (!live || id in feed.views.kept)
 
   private fun select(id: String) {
     if (!live) return
@@ -351,6 +375,8 @@ class AppModel(
 
   fun permission(sessionId: String, blockId: String, optionId: String) {
     if (post(WebviewMsg.Permission(sessionId, blockId, optionId))) return
+    // A child's card leaves the child; the parent's turn runs on
+    if (subagents.settleChildCard(sessionId, blockId)) return
     // The demo answers by dropping the card and finishing the turn
     val view = views[sessionId] ?: return
     views[sessionId] = view.copy(running = false, turns = view.turns.map { turn ->
@@ -506,9 +532,17 @@ class AppModel(
     chatRoot = "/Users/dev/.acpira/chats"
     when (options.screen) {
       "chat" -> path.add(Screen.Chat(fixtureId(options.fixture)))
+      // The review pages over the fixture's chat; `file` opens its first changed file
+      "changes", "file" -> {
+        val id = fixtureId(options.fixture)
+        path.add(Screen.Chat(id))
+        path.add(Screen.Changes(id))
+        if (options.screen == "file") FileReads.demoChanges(views[id]).firstOrNull()?.let { path.add(Screen.File(id, it.path)) }
+      }
       "new" -> path.add(Screen.New())
       "settings" -> path.add(Screen.Settings)
     }
+    subagentRoute()?.let { path.add(it) }
   }
 
   /** The session a fixture name opens */
@@ -623,7 +657,13 @@ class AppModel(
         synced = true
         if (resumed) reopen()
         // The launch asks: a session to open, or one to start
-        options.session?.let { if (path.none { p -> p is Screen.Chat }) push(Screen.Chat(it)) }
+        options.session?.let {
+          if (path.none { p -> p is Screen.Chat }) {
+            push(Screen.Chat(it))
+            subagentRoute()?.let { route -> path.add(route) }
+          }
+        }
+        options.terminal?.let { if (path.none { p -> p is Screen.Terminal }) openTerminal(it) }
         if (options.start && path.none { it is Screen.Chat }) start(options.agent, null, options.prompt.orEmpty())
       }
       is HostMsg.Agents -> agents = message.agents
@@ -659,6 +699,9 @@ class AppModel(
       is HostMsg.Accounts -> chat.accounts = message.accounts
       is HostMsg.EditTurnResult -> editAnswered(message.requestId, message.error)
       is HostMsg.ImageBlob, is HostMsg.StagedFile -> media.receive(message)
+      is HostMsg.Subagent -> subagents.receive(message)
+      is HostMsg.ProjectFile, is HostMsg.SessionChanges -> files.receive(message)
+      is HostMsg.TerminalOutput, is HostMsg.TerminalState -> terminals.receive(message)
       else -> lists.receive(message)
     }
   }

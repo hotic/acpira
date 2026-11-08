@@ -42,6 +42,12 @@
 - The quote card and the expanded editor are their own windows (`Popup` / `Dialog`): each sets `testTagsAsResourceId` again and the dialog its own status-bar ink.
 - Launch extras `draft` and `popup` (`model`, `model.N`, `attach`, `quotes`) open a chat with text typed or a picker out, for screenshots against the demo.
 
+## Tool pages
+
+- Subagent pages, the sidekick relay, the terminal and the file / changes pages are ported from the iOS `Subagents/`, `Terminal/` and `Files/` folders; a file the page cannot show as text downloads through the media layer's `FileDownload`.
+- The terminal is ConnectBot's termlib (libvterm over JNI under a Compose canvas, Apache-2.0), the counterpart of SwiftTerm; no WebView. The key bar's sticky Ctrl is a termlib `ModifierManager`, which is how it reaches the soft keyboard's characters as well as the bar's keys. termlib's own scrollback is fixed at 1000 lines.
+- `apps/ios/scripts/engine.sh` (`acpira --ws`) makes one engine per WebSocket connection, so a relaunched app meets a new shell; the replay is only seen by leaving and reopening the page on one connection.
+
 ## Paired remote access
 
 - Ported from the iOS app's `AcpiraRemote` / `Pairing/` (ios.md "Pairing"): `PairingService` and the models in `:sync`, `store/PairingModel.kt` (dials, redials, presence), `MainActivity.adopt` (one `AppModel` per wire, `resume` keeps the screens on a new wire to the same computer and replays `EngineClient.unsent()`).

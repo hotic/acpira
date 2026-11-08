@@ -7,7 +7,7 @@ import android.content.Intent
  * app's LaunchOptions under the same names, so scripts drive both apps alike (.agents/skills/touch-sim)
  */
 data class LaunchOptions(
-  /** `list | chat | new | settings`: the screen on launch */
+  /** `list | chat | new | settings | changes | file`: the screen on launch (`changes` / `file` over the fixture's chat) */
   val screen: String = "list",
   /** The demo session a chat opens on (a fixture name: showcase, running, streaming …) */
   val fixture: String = "showcase",
@@ -40,6 +40,10 @@ data class LaunchOptions(
    * the intro already drawn (screenshots)
    */
   val welcome: String? = null,
+  /** `ID | tree`: that child's inspector, or the session's subagent graph, pushed over the launch chat */
+  val subagent: String? = null,
+  /** With an engine: that project folder's terminal opens on launch */
+  val terminal: String? = null,
   /** The launch asked for the demo's fixtures (`screen`, `fixture` or `demo`): no pairing, the synthetic sessions */
   val demo: Boolean = false,
 ) {
@@ -61,6 +65,8 @@ data class LaunchOptions(
         popup = s("popup"),
         nearby = s("nearby"),
         welcome = s("welcome"),
+        subagent = s("subagent"),
+        terminal = s("terminal"),
         demo = s("screen") != null || s("fixture") != null || s("demo") != null || s("popup") != null || s("draft") != null,
       )
     }

@@ -206,21 +206,28 @@ fun AgentMessage(
   settings: TurnSettings? = null,
   controls: SessionControls = SessionControls(),
   actions: TurnHandlers? = null,
+  /** The subagents announced during this turn (`nodesByTurn`) */
+  subagents: List<cc.hotic.acpira.model.SubagentSummary> = emptyList(),
 ) {
   // A call whose observation was lost reads as settled before anything groups or draws it
   val split = remember(turn) { splitCodexBlocks(turn.blocks.map(::observedBlock)) }
   // Content already there when the turn comes into view stays still: only what arrives afterwards enters. A new turn
   // is first composed with at most its first block, which keeps its entrance
   remember(key) { if (turn.blocks.size > 1) seedEntrances(turn, split.process, key) }
+  // Subagent rows sit where they were delegated: a placed delegation row stays in the turn's process, and its node with
+  // that node's same-turn descendants renders at that point. The others follow the turn's process (AgentMessage.swift)
+  val placed = remember(turn, subagents) { cc.hotic.acpira.logic.delegatedIds(turn.blocks, subagents) }
+  val placement = remember(subagents, placed) { cc.hotic.acpira.logic.placeNodes(subagents, placed) }
   CompositionLocalProvider(
     LocalRowHeight provides WebMetrics.chatRow,
     LocalEntranceScope provides EntranceScope(live = running, scope = key),
     LocalClock provides now,
+    cc.hotic.acpira.ui.subagents.LocalDelegations provides placement.byId,
   ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = Metrics.pad + Metrics.threadInset), verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
       // A saved plan cuts the turn: its card stands between the stretch before it and the continuation after it
       // (AgentMessage.swift, planSections.ts)
-      val sections = remember(turn) { splitPlanSections(turn.blocks) }
+      val sections = remember(turn, placed) { splitPlanSections(turn.blocks, placed) }
       val outcome = turnOutcome(turn) != null
       val handlers = LocalChatHandlers.current
       sections.forEachIndexed { i, section ->
@@ -230,9 +237,13 @@ fun AgentMessage(
           // row to show: the fold head there would say "awaiting approval" under the card that already asks
           val visible = section.blocks.any { it !is PermissionBlock || it.planId == null }
           val planWait = section.blocks.any { it is PermissionBlock && it.planId != null }
-          if (visible || (lastSection && ((running && !planWait) || outcome))) {
+          // A child row that never renders anywhere would be worse than a turn with nothing else to show
+          if (visible || (lastSection && ((running && !planWait) || outcome || placement.rest.isNotEmpty()))) {
             val part = remember(turn, section) { sectionTurn(turn, section, lastSection, sections.size > 1) }
-            CodexMessage(part, if (sections.size > 1 && i > 0) "$key/${section.key}" else key, lastSection && running, now, onPermission)
+            CodexMessage(
+              part, if (sections.size > 1 && i > 0) "$key/${section.key}" else key, lastSection && running, now, onPermission,
+              subagents = if (lastSection) placement.rest else emptyList(),
+            )
           }
           section.plan?.let { plan ->
             PlanDocumentCard(
@@ -244,7 +255,10 @@ fun AgentMessage(
           }
         }
       }
-      if (showsTurnActions(turn, running)) TurnActions(turn, index, retry, settings, controls, actions)
+      // A child's transcript offers no action row: fork there would act on the parent session
+      if (showsTurnActions(turn, running) && !cc.hotic.acpira.ui.subagents.LocalSubagentTranscript.current) {
+        TurnActions(turn, index, retry, settings, controls, actions)
+      }
     }
   }
 }
@@ -254,13 +268,21 @@ fun AgentMessage(
  * permission cards (a plan's approval renders on the plan card) and the outcome row
  */
 @Composable
-private fun CodexMessage(turn: AgentTurn, key: String, running: Boolean, now: () -> Long, onPermission: (blockId: String, optionId: String) -> Unit) {
+private fun CodexMessage(
+  turn: AgentTurn, key: String, running: Boolean, now: () -> Long, onPermission: (blockId: String, optionId: String) -> Unit,
+  /** The turn's children with no delegation row to sit at: they follow the process, before the reply */
+  subagents: List<cc.hotic.acpira.model.SubagentSummary> = emptyList(),
+) {
   val split = remember(turn) { splitCodexBlocks(turn.blocks.map(::observedBlock)) }
   val hasTools = remember(turn) { turn.blocks.any { it is ToolCallBlock } }
   // Goal milestones before anything else open the turn above the fold
   for (goal in split.goalsLead) GoalMilestone(goal)
   CodexFold(turn, split.process, running, hasTools, key, now)
   for (n in split.notices) NoticeRow(n)
+  if (subagents.isNotEmpty()) {
+    cc.hotic.acpira.ui.subagents.SubagentGroup(subagents)
+    cc.hotic.acpira.ui.subagents.ChildPermissions(subagents)
+  }
   for (reply in split.reply) {
     // A selection in the reply quotes into the chat's composer (ui/Quotes.kt)
     if (reply.markdown.isNotBlank()) {
@@ -552,7 +574,7 @@ private fun CodexFold(turn: AgentTurn, blocks: List<AgentBlock>, running: Boolea
   val open = retired || (manual ?: running)
   val items = remember(blocks) { groupProcess(blocks) }
   val parts = remember(items) { processParts(items) }
-  // Only items fold; a process of nothing but steered prompts has no chevron
+  // Only items fold; a process of nothing but steered prompts or delegations has no chevron
   val foldable = parts.any { it is FoldPart.Items }
   Column(Modifier.fillMaxWidth()) {
     if (!retired) EntranceOnce("fold-head") { FoldHead(turn, running, open, foldable, now) { manual = !open } }
@@ -563,6 +585,9 @@ private fun CodexFold(turn: AgentTurn, blocks: List<AgentBlock>, running: Boolea
           is FoldPart.Steer -> EntranceOnce(itemEntrance(part.id)) {
             Box(Modifier.padding(top = Metrics.processProseGap)) { SteeredMessage(part.block) }
           }
+          // The rows of a delegation stay in view: in the stream while the parts show, under the head once they have
+          // folded away, never a fold of their own
+          is FoldPart.Subagents -> cc.hotic.acpira.ui.subagents.DelegatedSubagents(part.ids, Modifier.padding(top = Metrics.processProseGap))
           is FoldPart.Items -> Reveal(open) {
             ProcessHistory(
               part.items,
@@ -618,29 +643,41 @@ private fun FoldHead(turn: AgentTurn, running: Boolean, open: Boolean, foldable:
 private const val HALF_SECOND_MS = 500
 
 /**
- * The turn's process cut where something has to stay in view while the parts around it fold: a steered prompt. Runs
- * of items fold. A part is keyed by its first item, so content arriving later leaves the earlier parts in place
+ * The turn's process cut where something has to stay in view while the parts around it fold: a steered prompt and
+ * subagent rows. Runs of items fold. A part is keyed by its first item, so content arriving later leaves the earlier
+ * parts in place
  */
 private sealed interface FoldPart {
   val id: String
   data class Items(override val id: String, val items: List<ProcessItem>) : FoldPart
   data class Steer(override val id: String, val block: SteerBlock) : FoldPart
   data class Media(override val id: String, val block: ToolCallBlock) : FoldPart
+  /** Back-to-back delegations (a parallel launch) share one part */
+  data class Subagents(override val id: String, val ids: List<String>) : FoldPart
 }
 
 private fun processParts(items: List<ProcessItem>): List<FoldPart> {
   val out = ArrayList<FoldPart>()
   var rows = ArrayList<ProcessItem>()
+  var children = ArrayList<String>()
   var runId = ""
   fun close() {
     if (rows.isNotEmpty()) { out += FoldPart.Items(runId, rows); rows = ArrayList() }
+    if (children.isNotEmpty()) { out += FoldPart.Subagents(runId, children); children = ArrayList() }
   }
   for (item in items) {
-    val steer = (item as? ProcessItem.Block)?.block as? SteerBlock
+    val block = (item as? ProcessItem.Block)?.block
+    val steer = block as? SteerBlock
+    val child = (block as? ToolCallBlock)?.subagentId
     if (steer != null) {
       close()
       out += FoldPart.Steer(item.id, steer)
+    } else if (child != null) {
+      if (rows.isNotEmpty()) close()
+      if (children.isEmpty()) runId = item.id
+      children += child
     } else {
+      if (children.isNotEmpty()) close()
       if (rows.isEmpty()) runId = item.id
       rows += item
       val call = (item as? ProcessItem.Block)?.block as? ToolCallBlock

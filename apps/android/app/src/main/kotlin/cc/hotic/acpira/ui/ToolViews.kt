@@ -219,7 +219,7 @@ private fun RowScope.ToolLabel(verb: String, shimmer: Boolean, command: String?,
 
 /** Commands end with ✓ / ✗ and their run time; other rows show their diff stat; a background task its state */
 @Composable
-private fun RowScope.ToolTrailing(block: ToolCallBlock, execute: Boolean) {
+internal fun RowScope.ToolTrailing(block: ToolCallBlock, execute: Boolean) {
   val task = block.asyncTask
   when {
     execute && task != null -> TaskTag(task)
@@ -275,7 +275,7 @@ private val OUTCOME_STIFFNESS = (2 * Math.PI / (RowMotion.outcomeDraw / 1000.0))
  * draws its glyph with a small pop and fades its final time in; one already ended when the row was composed stays still
  */
 @Composable
-private fun RowScope.CommandOutcome(status: ToolStatus, duration: String?, since: Double?) {
+internal fun RowScope.CommandOutcome(status: ToolStatus, duration: String?, since: Double?) {
   val done = status == ToolStatus.completed || status == ToolStatus.failed
   val motion = LocalMotion.current
   val live = remember { mutableStateOf(!done) }

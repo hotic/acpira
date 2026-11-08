@@ -162,6 +162,11 @@ private fun Page(model: AppModel, pairing: cc.hotic.acpira.store.PairingModel?, 
     is Screen.ProviderForm -> ProviderFormScreen(model, screen.id, screen.error)
     is Screen.AddModels -> AddModelsScreen(model, screen.id)
     is Screen.Download -> DownloadScreen(model, screen.sessionId, screen.path)
+    is Screen.Changes -> cc.hotic.acpira.ui.files.ChangesScreen(model, screen.session)
+    is Screen.File -> cc.hotic.acpira.ui.files.FileScreen(model, screen.session, screen.path, screen.line)
+    is Screen.Terminal -> cc.hotic.acpira.ui.terminal.TerminalPage(model, screen.cwd)
+    is Screen.Subagent -> cc.hotic.acpira.ui.subagents.SubagentInspector(model, screen.session, screen.id)
+    is Screen.Subagents -> cc.hotic.acpira.ui.subagents.SubagentTreePage(model, screen.session)
   }
 }
 
@@ -285,4 +290,9 @@ private fun key(screen: Screen): String = when (screen) {
   is Screen.ProviderForm -> "provider:${screen.id}"
   is Screen.AddModels -> "addModels:${screen.id}"
   is Screen.Download -> "download:${screen.sessionId}:${screen.path}"
+  is Screen.Changes -> "changes:${screen.session}"
+  is Screen.File -> "file:${screen.session}:${screen.path}"
+  is Screen.Terminal -> "terminal:${screen.cwd}"
+  is Screen.Subagent -> "subagent:${screen.session}:${screen.id}"
+  is Screen.Subagents -> "subagents:${screen.session}"
 }
