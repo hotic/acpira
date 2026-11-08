@@ -7,7 +7,7 @@ import { NewArgs, NewSession } from './NewSession';
 import { AgentSettingsPage, ComingPage, DeveloperPage, SettingsPage, SettingsRoutes } from './Settings';
 import { WelcomeFlow } from './Welcome';
 import { ChatBarActions, Lead } from '../components/ChatBar';
-import { ToastLayer } from '../components/Chrome';
+import { ToastLayer, toastHitTest } from '../components/Chrome';
 import { ComputerPage, ComputersPage, covers, PairConnect } from './Pairing';
 import { PairSheet } from './PairSheet';
 
@@ -338,6 +338,8 @@ export struct Root {
         })
       }, (language: string) => language)
       ToastLayer({ model: this.model })
+        // The component's own wrapper node is hit-testable by default (docs/dev/harmony.md)
+        .hitTestBehavior(toastHitTest(this.model))
       // Adding a computer, from the connect frame, the computers page, settings or a pairing link; the first run pairs
       // in place instead
       Column()

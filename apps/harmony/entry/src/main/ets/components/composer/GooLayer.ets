@@ -94,12 +94,14 @@ export struct GooLayer {
       this.originY = now.globalPosition.y as number;
     })
     .onClick((e: ClickEvent) => {
-      // On the open chip one level back (its × or ‹), anywhere else everything closes
-      const left = this.goo.open === 'attach' ? this.goo.attachLeft : this.goo.modelLeft;
-      const onChip = e.windowX >= left && e.windowX <= left + Cmp.bar && e.windowY >= this.goo.chipTop &&
-        e.windowY <= this.goo.chipTop + Cmp.bar;
-      if (onChip) {
+      // On the open chip one level back (its × or ‹), on the other chip that one opens, anywhere else everything closes
+      const onChip = (left: number): boolean => e.windowX >= left && e.windowX <= left + Cmp.bar &&
+        e.windowY >= this.goo.chipTop && e.windowY <= this.goo.chipTop + Cmp.bar;
+      const other = this.goo.open === 'attach' ? 'model' : 'attach';
+      if (onChip(this.goo.open === 'attach' ? this.goo.attachLeft : this.goo.modelLeft)) {
         this.goo.back();
+      } else if (other === 'attach' ? onChip(this.goo.attachLeft) : this.goo.modelChip && onChip(this.goo.modelLeft)) {
+        this.goo.toggle(other);
       } else {
         this.goo.close();
       }

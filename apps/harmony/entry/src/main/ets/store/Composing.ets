@@ -116,6 +116,8 @@ export class Goo {
   @Trace attachLeft: number = 0;
   @Trace modelLeft: number = 0;
   @Trace chipTop: number = 0;
+  /** The model chip is in the row (an agent with no models has none), so a tap at its place switches to it */
+  modelChip: boolean = false;
   /** The chip opened last, which a closing picker goes home into */
   @Trace last: string = 'model';
   /** The source a bean asked for, picked up by the composer's pickers */
