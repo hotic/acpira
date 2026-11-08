@@ -234,6 +234,29 @@ export interface SettingsView {
   accountSwitch: string;
   steerQueued: boolean;
   planAutoApprove: string[];
+  /** agent → control id → hidden model family keys, kept out of the composer menus (settings.ts HiddenMap) */
+  hiddenOptions?: Record<string, Record<string, string[]>>;
+  /** Cross-harness subagents and their groups, which `@` summons (subagents.ts) */
+  subagents?: SubagentPersona[];
+  subagentGroups?: SubagentGroup[];
+}
+
+/** subagents.ts SubagentPersona: only what the `@` list shows */
+export interface SubagentPersona {
+  id: string;
+  name: string;
+  agent: string;
+  model?: string;
+  effort?: string;
+  enabled: boolean;
+}
+
+/** subagents.ts SubagentGroup: only what the `@` list shows */
+export interface SubagentGroup {
+  id: string;
+  name: string;
+  members: string[];
+  enabled: boolean;
 }
 
 export function defaultSettings(): SettingsView {

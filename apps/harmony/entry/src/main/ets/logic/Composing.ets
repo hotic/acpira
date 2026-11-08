@@ -152,7 +152,7 @@ export interface TurnEdit {
   keptStaged: Attachment[];
 }
 
-function isModelControl(c: ConfigControl): boolean {
+export function isModelControl(c: ConfigControl): boolean {
   return c.category === 'model' || (c.category === undefined && c.id === 'model');
 }
 

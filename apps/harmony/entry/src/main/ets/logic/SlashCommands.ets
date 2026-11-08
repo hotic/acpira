@@ -1,4 +1,6 @@
-import { FileHit, SlashCommand } from '../wire/Wire';
+import { AgentInfo, FileHit, SettingsView, SlashCommand, SubagentGroup, SubagentPersona } from '../wire/Wire';
+import { ComposerControls } from './ModelCatalog';
+import { t } from '../store/L10n';
 
 // apps/ios Logic/SlashCommands.swift (slashCommands.ts, Mention.tsx, personaHits.ts): the `/` command and `@` mention
 // tokens under the caret, the command list's ranking, completion and input hint, and the summonable personas offered
@@ -27,6 +29,28 @@ export interface MentionPersona {
   model?: string;
   effort?: string;
   group: boolean;
+}
+
+/** MentionPersona.from (SlashCommands.swift): the enabled personas, then the enabled groups with an enabled member */
+export function personasOf(settings: SettingsView, agents: AgentInfo[]): MentionPersona[] {
+  const on = (settings.subagents ?? []).filter((p: SubagentPersona) => p.enabled);
+  const personas = on.map((p: SubagentPersona): MentionPersona => {
+    const out: MentionPersona = {
+      id: p.id, name: p.name, agent: p.agent, cli: agents.find((a: AgentInfo) => a.id === p.agent)?.name ?? p.agent,
+      model: p.model, effort: p.effort !== undefined ? ComposerControls.effortLabel({ id: p.effort, name: p.effort }) : undefined,
+      group: false
+    };
+    return out;
+  });
+  const groups: MentionPersona[] = [];
+  for (const g of settings.subagentGroups ?? []) {
+    const names = g.members.map((m: string) => on.find((p: SubagentPersona) => p.id === m)?.name)
+      .filter((n: string | undefined) => n !== undefined) as string[];
+    if (g.enabled && names.length > 0) {
+      groups.push({ id: g.id, name: g.name, agent: '', cli: names.join(t('common.listSep')), group: true });
+    }
+  }
+  return personas.concat(groups);
 }
 
 /** A persona's hit travels as a FileHit with this scheme */
