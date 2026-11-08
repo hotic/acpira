@@ -58,7 +58,7 @@ if [ "${SKIP_BUILD:-0}" != 1 ]; then
 fi
 # A fresh start: no paired computer, and the prompts a person answers once granted up front
 adb shell pm clear "$package" >/dev/null
-for p in CAMERA ACCESS_LOCAL_NETWORK; do adb shell pm grant "$package" "android.permission.$p" 2>/dev/null || true; done
+for p in CAMERA ACCESS_LOCAL_NETWORK POST_NOTIFICATIONS; do adb shell pm grant "$package" "android.permission.$p" 2>/dev/null || true; done
 # The cleared app's old task is torn down a beat later, and that teardown kills a process started meanwhile, leaving
 # the splash up for good (and `am start -W` waiting on it); the screens' own waits stand in for -W
 sleep 2

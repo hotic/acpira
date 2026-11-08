@@ -51,6 +51,8 @@ if [ "${SKIP_BUILD:-0}" != 1 ]; then
 fi
 
 step "launch on the engine"
+# Granted up front: the first live wire would otherwise ask for notifications over the screens the run drives
+adb shell pm grant "$package" android.permission.POST_NOTIFICATIONS 2>/dev/null || true
 adb shell am start -W -S -n "$package/.MainActivity" --es engine "$address" --es locale en --es motion none >/dev/null
 # Connected: the engine's empty list replaces "Connecting" (agents and settings have landed with init)
 ui wait "No sessions yet" 30
