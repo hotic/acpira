@@ -19,6 +19,8 @@ mod os;
 mod page;
 mod serve;
 mod smoke;
+#[cfg(target_os = "macos")]
+mod touch;
 #[cfg(windows)]
 mod win;
 
@@ -92,6 +94,7 @@ fn main() {
       commands::acpira_clipboard,
       commands::acpira_copy_image,
       commands::acpira_drag_paths,
+      commands::acpira_touch_regions,
       smoke::acpira_smoke_result
     ])
     .on_window_event(|window, event| {

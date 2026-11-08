@@ -1,5 +1,5 @@
 //! What the pages call (src/init.js): attach a document's channel, post a batch of page messages, move the window from a
-//! title bar region, read the clipboard, put a GIF on it and read a Finder drag's paths
+//! title bar region (by finger too), zoom it on a pinch, read the clipboard, put a GIF on it and read a Finder drag's paths
 
 use serde_json::value::RawValue;
 use tauri::ipc::{Channel, InvokeBody, InvokeResponseBody, Request};
@@ -61,7 +61,21 @@ pub fn acpira_window(webview: Webview, op: String) {
       }
       crate::os::TitleDoubleClick::Nothing => {}
     },
+    // A pinch: one step of the View menu's zoom
+    "zoomIn" => crate::menu::zoom_window(&window, 1),
+    "zoomOut" => crate::menu::zoom_window(&window, -1),
     _ => {}
+  }
+}
+
+/// The page's title-bar regions and the controls inside them, in CSS pixels of a viewport `width` wide: on macOS a
+/// finger moves the window from them (touch.rs); elsewhere touch already reaches the page's own drag
+#[tauri::command]
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables, reason = "only macOS needs the regions"))]
+pub fn acpira_touch_regions(webview: Webview, width: f64, regions: Vec<[f64; 4]>, holes: Vec<[f64; 4]>) {
+  #[cfg(target_os = "macos")]
+  if let Some(window) = webview.app_handle().get_webview_window(webview.label()) {
+    crate::touch::set_regions(&window, width, regions, holes);
   }
 }
 

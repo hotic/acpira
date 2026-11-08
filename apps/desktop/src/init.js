@@ -173,4 +173,128 @@
     addEventListener('mousemove', move, true);
     addEventListener('mouseup', stop, true);
   }, true);
+
+  // A pinch on a touch display: one View menu zoom step per quarter of scale, and the page under the fingers does not
+  // scroll meanwhile. WebKit lets the fingers press the page first (pointerdown, then pointercancel) and a trackpad pinch
+  // never does, so a trackpad keeps WebKit's own behaviour
+  let pressedAt = -1e9;
+  let pinch = null;
+  addEventListener('pointerdown', e => { pressedAt = e.timeStamp; }, { capture: true, passive: true });
+  addEventListener('gesturestart', e => {
+    if (e.timeStamp - pressedAt > 500) return;
+    e.preventDefault();
+    pinch = 1;
+  });
+  addEventListener('gesturechange', e => {
+    if (pinch === null) return;
+    e.preventDefault();
+    const step = e.scale / pinch;
+    if (step < 1.25 && step > 0.8) return;
+    pinch = e.scale;
+    T.invoke('acpira_window', { op: step > 1 ? 'zoomIn' : 'zoomOut' });
+  });
+  addEventListener('gestureend', () => { pinch = null; });
+  addEventListener('wheel', e => { if (pinch !== null) e.preventDefault(); }, { capture: true, passive: false });
+
+  // macOS touch displays: a finger cannot start the drag above (it scrolls, and WebKit takes the touch), so the shell
+  // lays a native view over the title-bar regions that moves the window by finger (touch.rs). It needs their rectangles
+  // with holes wherever a touch belongs to the page: a control inside a region, or anything laid over one (a menu). The
+  // holes come from hit-testing a grid over each region, which catches whatever sits on top
+  if (webview2 || linux) return;
+  const STEP = 12;
+  const rectOf = r => [r.left, r.top, r.width, r.height];
+  const clip = (r, to) => {
+    const left = Math.max(r.left, to.left), top = Math.max(r.top, to.top);
+    const right = Math.min(r.right, to.right), bottom = Math.min(r.bottom, to.bottom);
+    return right > left && bottom > top ? [left, top, right - left, bottom - top] : null;
+  };
+  // Each region: its element and rectangle (a data-drag-top sheet's region is its top title-bar band)
+  const regionsNow = () => {
+    const out = [];
+    for (const el of document.querySelectorAll('[data-drag-region]')) {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) out.push({ el, r });
+    }
+    for (const el of document.querySelectorAll('[data-drag-top]')) {
+      const s = el.getBoundingClientRect();
+      const hdr = parseFloat(getComputedStyle(el).getPropertyValue('--hdr')) || 0;
+      if (s.width > 0 && hdr > 0) out.push({ el, r: new DOMRect(s.left, s.top, s.width, Math.min(hdr, s.height)) });
+    }
+    return out;
+  };
+  let sent = '';
+  let pending = 0;
+  const report = () => {
+    pending = 0;
+    const regions = [];
+    const holes = [];
+    const holed = new Set();
+    const all = regionsNow();
+    for (const { el, r } of all) {
+      regions.push(rectOf(r));
+      for (const fy of [0.3, 0.7]) {
+        for (let x = r.left + STEP / 2; x < r.right; x += STEP) {
+          const hit = document.elementFromPoint(x, r.top + r.height * fy);
+          if (!hit || holed.has(hit)) continue;
+          let hole = null;
+          const owner = el.contains(hit) ? el : all.find(o => o.el.contains(hit))?.el;
+          if (!owner) {
+            // Laid over the region: the outermost ancestor of the hit that does not hold the region
+            let layer = hit;
+            while (layer.parentElement && !layer.parentElement.contains(el)) layer = layer.parentElement;
+            hole = layer;
+          } else {
+            // Another region laid over this one (the title row over a sheet's header) is still a title bar
+            const control = hit.closest(CONTROLS);
+            if (control && owner.contains(control)) hole = control;
+          }
+          if (!hole || holed.has(hole)) continue;
+          holed.add(hit).add(hole);
+          const c = clip(hole.getBoundingClientRect(), r);
+          if (c) holes.push(c);
+        }
+      }
+    }
+    const msg = JSON.stringify([innerWidth, regions, holes]);
+    if (msg === sent) return;
+    sent = msg;
+    T.invoke('acpira_touch_regions', { width: innerWidth, regions, holes }).catch(() => {});
+  };
+  const schedule = () => { if (!pending) pending = requestAnimationFrame(report); };
+  // A transition or animation that can move a region or something over one: on, in or around a region, or a layer at
+  // the top of the document; a row's hover fade elsewhere does not count
+  const near = e => {
+    const t = e.target;
+    if (!(t instanceof Element)) return;
+    if (t.parentElement === document.body || [...watched].some(el => el.contains(t) || t.contains(el))) schedule();
+  };
+  // When the regions can change: the window resizes, a region resizes, something changes inside a region or arrives at
+  // the top of the document (menus and dialogs mount there), a transition ends. A transcript streaming below changes
+  // none of these
+  const sized = new ResizeObserver(schedule);
+  let watched = new Set();
+  const watch = () => {
+    const now = new Set(regionsNow().map(x => x.el));
+    for (const el of watched) if (!now.has(el)) sized.unobserve(el);
+    for (const el of now) if (!watched.has(el)) sized.observe(el);
+    watched = now;
+  };
+  new MutationObserver(records => {
+    for (const rec of records) {
+      const t = rec.target;
+      if (t === document.body || t.parentElement === document.body || [...watched].some(el => el.contains(t))
+        || (rec.type === 'attributes' && t instanceof Element && (t.hasAttribute('data-drag-region') || t.hasAttribute('data-drag-top')))
+        || [...rec.addedNodes, ...rec.removedNodes].some(n => n instanceof Element && (n.matches('[data-drag-region], [data-drag-top]') || n.querySelector('[data-drag-region], [data-drag-top]')))) {
+        watch();
+        schedule();
+        return;
+      }
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-drag-region', 'data-drag-top', 'class', 'style', 'hidden'] });
+  addEventListener('resize', schedule);
+  addEventListener('transitionend', near, true);
+  addEventListener('animationend', near, true);
+  addEventListener('DOMContentLoaded', () => { watch(); schedule(); });
+  watch();
+  schedule();
 })();

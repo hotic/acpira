@@ -114,6 +114,12 @@ const ZOOM_STEPS: [f64; 15] = [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 
 
 fn zoom(h: &AppHandle, how: i32) {
   let Some(w) = focused_webview(h) else { return };
+  zoom_window(&w, how);
+}
+
+/// One zoom step of a window's page: 0 back to actual size, positive in, negative out (the View menu, a pinch on a
+/// touch display or trackpad: init.js)
+pub fn zoom_window(w: &tauri::WebviewWindow, how: i32) {
   let mut zoom = ZOOM.lock();
   let map = zoom.get_or_insert_with(HashMap::new);
   let cur = *map.get(w.label()).unwrap_or(&1.0);

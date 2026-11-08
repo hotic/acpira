@@ -25,8 +25,12 @@ function launch(localStorage: StorageApi, sessionStorage = storage(), profile = 
     window, localStorage, sessionStorage, TextEncoder,
     location: { protocol: 'acpira-app:', host: 'localhost' },
     navigator: { platform: 'MacIntel' },
-    document: { addEventListener() {} },
+    // The macOS touch-region watcher (init.js) only needs these to exist here
+    document: { addEventListener() {}, querySelectorAll: () => [], documentElement: {} },
     addEventListener() {},
+    requestAnimationFrame: () => 0,
+    ResizeObserver: class { observe() {} unobserve() {} },
+    MutationObserver: class { observe() {} },
   });
   return window.__acpiraApi!;
 }
