@@ -262,7 +262,10 @@ private fun CodexMessage(turn: AgentTurn, key: String, running: Boolean, now: ()
   CodexFold(turn, split.process, running, hasTools, key, now)
   for (n in split.notices) NoticeRow(n)
   for (reply in split.reply) {
-    if (reply.markdown.isNotBlank()) CompositionLocalProvider(LocalMarkdownImages provides reply.images) { StreamProse(reply, Modifier.testTag("reply")) }
+    // A selection in the reply quotes into the chat's composer (ui/Quotes.kt)
+    if (reply.markdown.isNotBlank()) {
+      CompositionLocalProvider(LocalMarkdownImages provides reply.images) { StreamProse(reply, Modifier.testTag("reply"), onQuote = LocalQuote.current) }
+    }
   }
   // Later milestones (paused, met, cleared …) close the reply they followed
   for (goal in split.goals) GoalMilestone(goal)

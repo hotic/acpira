@@ -84,6 +84,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -197,6 +198,8 @@ fun Composer(
   onSetConfig: (String, String) -> Unit,
   onToast: (String) -> Unit,
   modifier: Modifier = Modifier,
+  /** The `/` commands, the `@` personas and file search (ui/Suggestions.kt) */
+  assist: ComposerAssist = ComposerAssist(),
 ) {
   val context = LocalContext.current
   val filled = text.isNotBlank() || staged.isNotEmpty()
@@ -204,9 +207,18 @@ fun Composer(
   val expanded = focused || filled
   val focus = remember { FocusRequester() }
   val keyboard = LocalSoftwareKeyboardController.current
+  // The field's text with its caret, the `/` and `@` tokens under it, and the lists they raise (ui/ComposerTokens.kt)
+  val prompt = rememberPromptState(text, onText)
+  val longPaste = rememberLongPaste(staged, onStaged, onToast)
+  val tokens = rememberTokens(prompt, assist, staged, onStaged) { focus.requestFocus(); keyboard?.show() }
+  // The whole-screen editor is open (ExpandedComposer), and the field's laid-out lines, from which it is offered
+  var fullEditor by remember { mutableStateOf(false) }
+  var lines by remember { mutableIntStateOf(1) }
+  var stripHeight by remember { mutableIntStateOf(0) }
+  val offersExpand = expanded && lines >= EXPAND_LINES
   val choices = rememberChoices(controls, LocalHiddenModels.current[agentMark].orEmpty(), onSetConfig)
   val modelBeans = modelBeans(choices, onSetMode, onSetConfig, goo)
-  val attach = attachBeans(staged, onStaged, goo, onToast, paste = rememberPasteReady())
+  val attach = attachBeans(staged, onStaged, goo, onToast, paste = rememberPasteReady()) + summonBeans(assist.personas, goo, tokens::summon)
   // The open chip's beans, for the screen's layer; a closing picker keeps the beans it goes home with
   val open = goo.open
   SideEffect {
@@ -224,8 +236,9 @@ fun Composer(
   val corner by animateDpAsState(if (expanded) Metrics.rComposer else Metrics.barCtl / 2, anim(), label = "corner")
   val padStart by animateDpAsState(if (expanded) Metrics.s3 + Metrics.s1 * 2 else lead + Metrics.s1, anim(), label = "start")
   val ring = usage?.takeIf { it.size > 0 }
+  // In the card the text stops short of the expand corner's column, so its arrival never rewraps the text
   val padEnd by animateDpAsState(
-    if (expanded) Metrics.s3 + Metrics.s1 else Metrics.barCtl + Metrics.s1 + (if (ring != null) Metrics.ctlSm else Metrics.s0), anim(), label = "end",
+    if (expanded) Metrics.s3 + Metrics.icon + Metrics.s1 else Metrics.barCtl + Metrics.s1 + (if (ring != null) Metrics.ctlSm else Metrics.s0), anim(), label = "end",
   )
   val padBottom by animateDpAsState(if (expanded) Metrics.s1 + Metrics.barCtl + Metrics.s1 else line, anim(), label = "bottom")
   val springInset by animateDpAsState(if (expanded) Metrics.s1 else Metrics.s0, anim(), label = "inset")
@@ -233,7 +246,7 @@ fun Composer(
   val inset = springInset.coerceAtLeast(Metrics.s0)
   val shape = RoundedCornerShape(corner)
 
-  Box(modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = Metrics.pad, vertical = Metrics.s2)) {
+  ComposerColumn(modifier, suggestions = { Suggestions(tokens, assist, motion) }) {
     Surface(
       color = Palette.bg1,
       shape = shape,
@@ -249,7 +262,7 @@ fun Composer(
           },
       ) {
         Column(Modifier.fillMaxWidth().alpha(if (goo.open != null) GOO_RECEDE else 1f).blur(if (goo.open != null) Metrics.s1 else Metrics.s0)) {
-          if (staged.isNotEmpty()) StagedStrip(staged, onStaged, Modifier.padding(start = Metrics.s3 + Metrics.s1, top = Metrics.s2))
+          if (staged.isNotEmpty()) StagedStrip(staged, onStaged, Modifier.padding(start = Metrics.s3 + Metrics.s1, top = Metrics.s2).onSizeChanged { stripHeight = it.height })
           Box(Modifier.fillMaxWidth().padding(start = padStart, end = padEnd, top = if (staged.isEmpty()) line else Metrics.s2, bottom = padBottom)) {
             if (text.isEmpty()) {
               // The one hint for the bar and the card, so opening the card only carries it up with the card's top
@@ -258,16 +271,15 @@ fun Composer(
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
               )
             }
-            BasicTextField(
-              value = text,
-              onValueChange = onText,
-              textStyle = TextStyle(color = Palette.fgStrong, fontSize = Type.field, lineHeight = Type.fieldLine),
-              cursorBrush = SolidColor(Palette.fgStrong),
-              maxLines = if (expanded) MAX_LINES else 1,
-              keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-              modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = FIELD_LINE)
+            // The card's cap in lines, fewer where the keyboard leaves little room (LayoutRoom.lines)
+            PromptField(
+              prompt,
+              commands = assist.commands.map { it.name }, summons = assist.personas.map { it.name },
+              onLongPaste = longPaste,
+              maxLines = if (expanded) composerLines(MAX_LINES) else 1,
+              below = tokens.commandHint,
+              onLines = { lines = it },
+              fieldModifier = Modifier
                 .focusRequester(focus)
                 .onFocusChanged { focused = it.isFocused }
                 .testTag("composer.field"),
@@ -285,6 +297,13 @@ fun Composer(
             }
           }
         }
+        // The expand corner at the card's top trailing side, centred on the first line under the strip
+        if (offersExpand) {
+          ExpandCorner(
+            Modifier.align(Alignment.TopEnd).padding(top = with(LocalDensity.current) { stripHeight.toDp() } + (if (staged.isEmpty()) line else Metrics.s2))
+              .alpha(if (goo.open != null) GOO_RECEDE else 1f),
+          ) { fullEditor = true }
+        }
         Row(
           Modifier.align(Alignment.BottomEnd).padding(end = inset, bottom = inset).alpha(if (goo.open != null) GOO_RECEDE else 1f),
           verticalAlignment = Alignment.CenterVertically,
@@ -300,6 +319,15 @@ fun Composer(
     }
   }
   AttachPickers(goo, onStaged, staged, onToast, context)
+  if (fullEditor) {
+    ExpandedComposer(
+      text, onText, staged, onStaged, assist, motion,
+      onSend = { fullEditor = false; onSend() },
+      // Collapsing gives the card its focus back
+      onCollapse = { fullEditor = false; focus.requestFocus() },
+      onToast = onToast,
+    )
+  }
 }
 
 /** A liquid chip: the bar-tall slot its glyph sits in; a tap opens its beans, or steps back one level */
@@ -574,6 +602,7 @@ private fun draftBytes(d: Draft): Int = when (d) {
   is Draft.Image -> d.data.length
   is Draft.Text -> d.text.length
   is Draft.File -> d.data?.length ?: 0
+  is Draft.Quote -> d.text.length
 }
 
 private fun displayName(context: Context, uri: Uri): String? =
@@ -606,7 +635,7 @@ private suspend fun stageFile(context: Context, uri: Uri): Staged? = withContext
 
 /** The staged attachments inside the card over the text: image thumbnails and file chips, each with its remove mark */
 @Composable
-private fun StagedStrip(staged: List<Staged>, onStaged: (List<Staged>) -> Unit, modifier: Modifier) {
+internal fun StagedStrip(staged: List<Staged>, onStaged: (List<Staged>) -> Unit, modifier: Modifier) {
   val context = LocalContext.current
   val media = LocalMedia.current
   var playing by remember { mutableStateOf<Pair<File, String>?>(null) }
@@ -615,7 +644,10 @@ private fun StagedStrip(staged: List<Staged>, onStaged: (List<Staged>) -> Unit, 
     modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(end = Metrics.s3),
     horizontalArrangement = Arrangement.spacedBy(Metrics.s2),
   ) {
+    // Quotes from the transcript lead as one annotations chip (ui/Quotes.kt)
+    QuoteChip(staged, onStaged)
     staged.forEachIndexed { i, s ->
+      if (s.draft is Draft.Quote) return@forEachIndexed
       Box {
         val thumb = s.thumb
         // A video is a tile like a photo's from the moment it is picked: while it compresses, the original's first frame
@@ -664,7 +696,7 @@ private fun StagedStrip(staged: List<Staged>, onStaged: (List<Staged>) -> Unit, 
  * run to stop, a quiet chip fill otherwise. The bar-tall slot keeps the bar's layout
  */
 @Composable
-private fun SendButton(running: Boolean, filled: Boolean, motion: Boolean, action: () -> Unit) {
+internal fun SendButton(running: Boolean, filled: Boolean, motion: Boolean, action: () -> Unit) {
   val on = running || filled
   val fill by animateColorAsState(if (on) Palette.btn1Bg else Palette.chip, if (motion) spring() else snap(), label = "send")
   val ink = if (on) Palette.btn1Fg else Palette.sendInk
@@ -866,7 +898,7 @@ private fun panelHeight(rows: Int, room: Float, density: androidx.compose.ui.uni
 
 /** A bean's panel: its rows in a scroll that opens on the current one */
 @Composable
-private fun GooList(current: Int, content: @Composable () -> Unit) {
+internal fun GooList(current: Int, content: @Composable () -> Unit) {
   val scroll = rememberScrollState()
   val density = LocalDensity.current
   LaunchedEffect(Unit) {
@@ -877,7 +909,7 @@ private fun GooList(current: Int, content: @Composable () -> Unit) {
 
 /** One choice in a bean's panel: glyph, name, and the check (or a trailing control such as Thinking's switch) */
 @Composable
-private fun GooRow(
+internal fun GooRow(
   name: String,
   checked: Boolean,
   glyph: (@Composable () -> Unit)? = null,
@@ -948,6 +980,8 @@ private val PANEL_SHAPE = RoundedCornerShape(Metrics.rGooPanel)
 /** The field's line box (TypeScale.field), as a Dp for the bar's arithmetic */
 private val FIELD_LINE = 24.dp
 private const val MAX_LINES = 8
+/** The lines from which the card offers the whole-screen editor (ChatGPT's expand corner) */
+private const val EXPAND_LINES = 3
 /** `+` turns into × by this many degrees */
 private const val PLUS_TURN = 45f
 /** The card's text under an open picker */

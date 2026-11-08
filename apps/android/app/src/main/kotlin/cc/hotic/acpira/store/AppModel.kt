@@ -436,6 +436,12 @@ class AppModel(
    */
   val hostControls = mutableStateMapOf<String, List<ConfigControl>>()
 
+  /** The slash commands the same answers carry (by agent, or by [hostControlsKey]): a new session's `/` list */
+  val agentCommands = mutableStateMapOf<String, List<cc.hotic.acpira.model.SlashCommand>>()
+
+  /** The composer's `@` file search, answered by the engine's `files` (store/FileSearch.kt) */
+  val fileSearch = FileSearch { query, seq -> post(WebviewMsg.SearchFiles(query, seq)) }
+
   /** What a new session of [agent] in [cwd] offers before it runs: a host folder's own answer, else the agent's */
   fun newSessionControls(agent: String, cwd: String?): List<ConfigControl> =
     hostControlsKey(agent, cwd)?.let { hostControls[it].orEmpty() } ?: agentControls[agent].orEmpty()
@@ -643,7 +649,9 @@ class AppModel(
       is HostMsg.Controls -> {
         val key = hostControlsKey(message.agent, message.cwd)
         if (key != null) hostControls[key] = message.controls else agentControls[message.agent] = message.controls
+        agentCommands[key ?: message.agent] = message.commands
       }
+      is HostMsg.Files -> fileSearch.receive(message.seq, message.files)
       is HostMsg.Session, is HostMsg.Patch, HostMsg.NoSession -> present(message)
       is HostMsg.LocalDir -> folders.receive(message)
       is HostMsg.Providers -> sources.receive(message)

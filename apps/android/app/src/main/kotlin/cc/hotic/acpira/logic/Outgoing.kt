@@ -114,4 +114,5 @@ fun shownAttachment(draft: Draft): Attachment = when (draft) {
   is Draft.Image -> Attachment.Image(blob = draft.data, mimeType = draft.mimeType, name = draft.name)
   is Draft.Text -> Attachment.Text(name = draft.name, context = draft.context)
   is Draft.File -> Attachment.File(uri = draft.uri, name = draft.name)
+  is Draft.Quote -> Attachment.Quote(text = draft.text, comment = draft.comment)
 }

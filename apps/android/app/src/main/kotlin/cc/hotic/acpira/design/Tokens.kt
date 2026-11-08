@@ -63,6 +63,8 @@ object Swatches {
   val danger = Swatch(hex(0xf85149), hex(0xcf222e))
   val brand = Swatch(hex(0xe6a63e), hex(0xb7791f))
   val command = Swatch(hex(0x6ea8fe), hex(0x2f6fe0))
+  /** A summoned persona's mark in a prompt (--summon) */
+  val summon = Swatch(hex(0xd2a8ff), hex(0x8250df))
   val shimmerBase = Swatch(hex(0x9a9a9a), hex(0x707070))
   val diffAdd = ok.mix(bgCode, 0.06f)
   val diffDel = danger.mix(bgCode, 0.08f)
@@ -117,6 +119,7 @@ object Palette {
   val danger @Composable @ReadOnlyComposable get() = of(Swatches.danger)
   val brand @Composable @ReadOnlyComposable get() = of(Swatches.brand)
   val command @Composable @ReadOnlyComposable get() = of(Swatches.command)
+  val summon @Composable @ReadOnlyComposable get() = of(Swatches.summon)
   val shimmerBase @Composable @ReadOnlyComposable get() = of(Swatches.shimmerBase)
   val diffAdd @Composable @ReadOnlyComposable get() = of(Swatches.diffAdd)
   val diffDel @Composable @ReadOnlyComposable get() = of(Swatches.diffDel)
@@ -212,6 +215,13 @@ object Metrics {
   val codeOutputMax = 176.dp
   /** A wide popover card (a reply's statistics): three timing tiles at the phone's reading size fit in it */
   val popWide = 336.dp
+  /** The quotes' card (popLg) */
+  val popLg = 300.dp
+  /** The composer's share of the height the keyboard leaves: its card grows to its most lines only where that fits */
+  const val composerShare = 0.45f
+  /** A prompt mark's pill: its reach past the name's glyphs at most, the clearance kept from a neighbour, its pad */
+  val markOverhang = 4.dp
+  val markClear = 1.5.dp
   /** The floating bar pieces' and the toast's shadows */
   val barShadow = 3.dp
   val toastShadow = 6.dp
