@@ -272,7 +272,12 @@ export struct NewSession {
               this.ring = false;
             }
           })
-          .position({ x: this.dropX - this.pageX, y: this.dropY - this.pageY })
+          .position({
+            x: this.dropX - this.pageX - (ringSpan(this.others().length) - RingMetrics.heroTile) / 2,
+            y: this.dropY - this.pageY - (ringSpan(this.others().length) - RingMetrics.heroTile) / 2
+          })
+          // The component's own wrapper node covers the ring's span too (docs/dev/harmony.md)
+          .hitTestBehavior(HitTestMode.Transparent)
       }
     }
     .alignContent(Alignment.TopStart)
@@ -356,7 +361,7 @@ struct AgentRing {
   }
 
   radius(): number {
-    return Math.max(RingMetrics.radiusMin, RingMetrics.pitch * this.others.length / (2 * Math.PI));
+    return ringRadius(this.others.length);
   }
 
   spotX(i: number): number {
@@ -417,7 +422,20 @@ struct AgentRing {
       .shadow({ radius: ListMetrics.barShadow, color: $r('app.color.line'), offsetY: Metrics.s1 / 2 })
       .onClick(() => this.onOpen(!this.open))
     }
-    .width(RingMetrics.heroTile)
-    .height(RingMetrics.heroTile)
+    // A touch outside a parent's bounds never reaches its children, and `translate` leaves the bounds where they were:
+    // the floating copy spans the whole ring, centred on the drop, and lets taps between the bubbles reach the dim
+    .width(this.floating ? ringSpan(this.others.length) : RingMetrics.heroTile)
+    .height(this.floating ? ringSpan(this.others.length) : RingMetrics.heroTile)
+    .hitTestBehavior(this.floating ? HitTestMode.Transparent : HitTestMode.Default)
   }
+}
+
+/** The ring the bubbles sit on: one pitch apart, never tighter than the minimum */
+function ringRadius(count: number): number {
+  return Math.max(RingMetrics.radiusMin, RingMetrics.pitch * count / (2 * Math.PI));
+}
+
+/** The floating ring's side: the ring's diameter plus a bubble and its name each way */
+function ringSpan(count: number): number {
+  return 2 * (ringRadius(count) + RingMetrics.pitch);
 }

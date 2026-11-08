@@ -120,15 +120,23 @@ export struct ToastLayer {
         .backgroundColor($r('app.color.glass_bg'))
         .border({ width: Metrics.hairline, color: $r('app.color.glass_line') })
         .shadow({ radius: ListMetrics.toastShadow, color: $r('app.color.scrim'), offsetY: Metrics.s1 })
-        .margin({ top: Metrics.barCtl + Metrics.s2, left: Metrics.page, right: Metrics.page })
+        .margin({ left: Metrics.page, right: Metrics.page })
         .transition(TransitionEffect.OPACITY.combine(TransitionEffect.move(TransitionEdge.TOP))
           .animation({ duration: this.model.motion ? ListMetrics.motionMs : 0 }))
       }
     }
-    .width('100%')
+    // Only as wide as the capsule, and clear of the bar by a margin (outside the hit area): an undo toast blocks touches
+    // on itself alone, never on the bar's buttons
+    .constraintSize({ maxWidth: '100%' })
+    .margin({ top: Metrics.barCtl + Metrics.s2 })
     .alignItems(HorizontalAlign.Center)
-    .hitTestBehavior(this.model.lists.toastAction !== undefined ? HitTestMode.Default : HitTestMode.Transparent)
+    .hitTestBehavior(toastHitTest(this.model))
   }
+}
+
+/** An undo action takes taps on the capsule; a plain toast lets every touch through. The call site sets it too */
+export function toastHitTest(model: AppModel): HitTestMode {
+  return model.toast !== undefined && model.lists.toastAction !== undefined ? HitTestMode.Default : HitTestMode.Transparent;
 }
 
 /**

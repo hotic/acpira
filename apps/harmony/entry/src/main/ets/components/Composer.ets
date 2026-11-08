@@ -329,6 +329,7 @@ export struct Composer {
         .onAreaChange((_: Area, now: Area) => {
           this.goo.attachLeft = now.globalPosition.x as number;
           this.goo.modelLeft = (now.globalPosition.x as number) + Cmp.bar;
+          this.goo.modelChip = this.showsModel();
           this.goo.chipTop = now.globalPosition.y as number;
         })
         // Ring and send at the end
