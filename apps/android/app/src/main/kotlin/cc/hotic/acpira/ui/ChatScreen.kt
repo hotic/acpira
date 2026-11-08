@@ -177,8 +177,9 @@ fun ChatScreen(model: AppModel, id: String) {
   val context = androidx.compose.ui.platform.LocalContext.current
   val sidekickModels = remember(held?.controls) { held?.controls?.let { SidekickModels.of(context, it) } ?: SidekickModels() }
   val inspect = remember(id, model) { { child: String -> model.push(Screen.Subagent(id, child)) } }
-  // A diff whose view left its files out asks the engine for them (a demo has none to ask)
-  val diffSource = remember<(suspend (DiffLocation) -> cc.hotic.acpira.model.FullDiffSource?)?>(id, model.live) {
+  // A diff whose view left its files out asks the engine for them (a demo has none to ask). Keyed on the model too: a
+  // paired reconnect brings a new one for the same session, and the old one's client is closed
+  val diffSource = remember<(suspend (DiffLocation) -> cc.hotic.acpira.model.FullDiffSource?)?>(id, model, model.live) {
     if (!model.live) null else { at: DiffLocation -> model.files.diffSource(id, at.toolCallId, at.nth) }
   }
 

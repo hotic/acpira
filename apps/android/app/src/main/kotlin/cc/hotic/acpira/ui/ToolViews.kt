@@ -536,7 +536,7 @@ private fun ToolBody(block: ToolCallBlock, items: List<ToolContent>) {
   Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
     for (item in items) {
       when (item) {
-        is ToolContent.Diff -> DiffBlockView(item.lines, block.target.orEmpty(), item.source, diffLocation(block, item.lines))
+        is ToolContent.Diff -> DiffBlockView(item.lines, block.target.orEmpty(), item.source, diffLocation(block, item))
         is ToolContent.ListItems -> ResultList(item.items, block.kind)
         is ToolContent.Text -> ToolOutput(item.text)
         is ToolContent.Image -> if (!cc.hotic.acpira.store.isWidget(item.mimeType)) AgentImageView(item.blob, item.uri)
@@ -753,7 +753,7 @@ private fun EditEntry(blocks: List<ToolCallBlock>) {
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
       for ((block, item) in diffs) {
         when (item) {
-          is ToolContent.Diff -> DiffBlockView(item.lines, name, item.source, diffLocation(block, item.lines))
+          is ToolContent.Diff -> DiffBlockView(item.lines, name, item.source, diffLocation(block, item))
           is ToolContent.Text -> ToolOutput(item.text)
           else -> {}
         }
@@ -1114,10 +1114,13 @@ private fun diffPreview(lines: List<DiffLine>): List<DiffLine> {
 /** Where a diff sits in the session: its tool call and which of the call's diffs (CodeBlock.tsx DiffLocation) */
 data class DiffLocation(val toolCallId: String, val nth: Int)
 
-/** The location of the diff with these lines, counted among the call's diffs (`contents`, or `content` alone) */
-private fun diffLocation(block: ToolCallBlock, lines: List<DiffLine>): DiffLocation? {
+/**
+ * The location of this diff, counted among the call's diffs (`contents`, or `content` alone). Found by identity first:
+ * two files given identical hunks compare equal by their lines, and the second would ask for the first one's source
+ */
+private fun diffLocation(block: ToolCallBlock, diff: ToolContent.Diff): DiffLocation? {
   val diffs = (block.contents ?: listOfNotNull(block.content)).filterIsInstance<ToolContent.Diff>()
-  val at = diffs.indexOfFirst { it.lines == lines }
+  val at = diffs.indexOfFirst { it === diff }.takeIf { it >= 0 } ?: diffs.indexOfFirst { it == diff }
   return if (at < 0) null else DiffLocation(block.id, at)
 }
 

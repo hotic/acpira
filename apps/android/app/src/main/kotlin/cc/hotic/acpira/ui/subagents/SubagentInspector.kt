@@ -92,7 +92,8 @@ fun SubagentInspector(model: AppModel, session: String, id: String) {
       buildPlan = { _, _, _ -> }, editPrompt = {}, goal = { _, _ -> }, sendQueued = {}, editQueued = {}, removeQueued = {},
     )
   }
-  val diffSource = remember<(suspend (cc.hotic.acpira.ui.DiffLocation) -> cc.hotic.acpira.model.FullDiffSource?)?>(session, id, model.live) {
+  // Keyed on the model too: a paired reconnect brings a new one whose client is the live one
+  val diffSource = remember<(suspend (cc.hotic.acpira.ui.DiffLocation) -> cc.hotic.acpira.model.FullDiffSource?)?>(session, id, model, model.live) {
     if (!model.live) null else { at: cc.hotic.acpira.ui.DiffLocation -> model.files.diffSource(session, at.toolCallId, at.nth, subagentId = id) }
   }
   Scaffold(
