@@ -22,7 +22,7 @@ pub const RELEASE_URL: &str = "https://github.com/hotic/acpira/releases/latest";
 /// (`acpira-update-pack keygen`, 2026-10-26) is the `DESKTOP_UPDATE_KEY` secret; a build without a key never checks
 pub const PUBLIC_KEYS: &[&str] = &["c9893c9f2fc9ad1dde40dcc1d527e6547fc56f96ffe2aff46f9c9b1b8d179f8f"];
 /// The Developer ID team the running and the staged macOS bundle must be signed by (Developer ID Application: YE SHAO).
-/// Windows does not use it (stage.rs)
+/// Windows does not use it (stage.rs). acpira-host's `machine_engine::launcher::TEAM_ID` names the same team
 pub const TEAM_ID: &str = "2DUQS6323W";
 
 impl Config {

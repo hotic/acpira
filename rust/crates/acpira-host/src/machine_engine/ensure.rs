@@ -311,13 +311,18 @@ fn spawn_detached(exe: &Path, socket: &Path, home: &Path, serve_args: &[String],
   // Not the window's workspace: the engine serves every window, and nothing in it reads its own working directory
   let cwd = crate::store::data_dir::home_dir();
   #[cfg(target_os = "macos")]
-  if let Some(program) = super::launcher::ensure(home, exe) {
+  {
     let mut args: Vec<std::ffi::OsString> = vec![super::launcher::COMMAND.into(), exe.into(), "serve".into(), "--socket".into()];
     args.extend([socket.into(), "--home".into(), home.into()]);
     args.extend(serve_args.iter().map(Into::into));
-    match super::launcher::spawn_disclaimed(&program, &args, &cwd, log) {
-      Ok(pid) => return Ok(Spawned::Pid(pid)),
-      Err(e) => append(log, &format!("starting under {} failed, starting the engine itself: {e}", program.display())),
+    // The app's launcher, then the frozen one, then the engine itself
+    let preferred = super::launcher::ensure(home, exe);
+    let fallback = preferred.as_deref().filter(|p| super::launcher::in_app(p)).and_then(|_| super::launcher::frozen(home, exe));
+    for program in preferred.into_iter().chain(fallback) {
+      match super::launcher::spawn_disclaimed(&program, &args, &cwd, log) {
+        Ok(pid) => return Ok(Spawned::Pid(pid)),
+        Err(e) => append(log, &format!("starting under {} failed: {e}", program.display())),
+      }
     }
   }
   let out = std::fs::OpenOptions::new().create(true).append(true).open(log)?;
