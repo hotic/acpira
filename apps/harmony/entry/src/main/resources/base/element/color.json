@@ -199,6 +199,86 @@
     {
       "name": "pair_check_ink",
       "value": "#FFFFFFFF"
+    },
+    {
+      "name": "shimmer_base",
+      "value": "#FF707070"
+    },
+    {
+      "name": "diff_add",
+      "value": "#FFE3E8E6"
+    },
+    {
+      "name": "diff_del",
+      "value": "#FFECDFE0"
+    },
+    {
+      "name": "rail_color",
+      "value": "#FFA6A6A6"
+    },
+    {
+      "name": "rail_action",
+      "value": "#FFB4B4B4"
+    },
+    {
+      "name": "command_pill",
+      "value": "#262F6FE0"
+    },
+    {
+      "name": "summon_pill",
+      "value": "#268250DF"
+    },
+    {
+      "name": "syn_plain",
+      "value": "#FF000000"
+    },
+    {
+      "name": "syn_keyword",
+      "value": "#FF0000FF"
+    },
+    {
+      "name": "syn_control",
+      "value": "#FFAF00DB"
+    },
+    {
+      "name": "syn_string",
+      "value": "#FFA31515"
+    },
+    {
+      "name": "syn_number",
+      "value": "#FF098658"
+    },
+    {
+      "name": "syn_comment",
+      "value": "#FF008000"
+    },
+    {
+      "name": "syn_function",
+      "value": "#FF795E26"
+    },
+    {
+      "name": "syn_type",
+      "value": "#FF267F99"
+    },
+    {
+      "name": "syn_variable",
+      "value": "#FF001080"
+    },
+    {
+      "name": "syn_tag",
+      "value": "#FF800000"
+    },
+    {
+      "name": "syn_attr",
+      "value": "#FFE50000"
+    },
+    {
+      "name": "syn_regex",
+      "value": "#FF811F3F"
+    },
+    {
+      "name": "syn_punct",
+      "value": "#FF800000"
     }
   ]
 }

@@ -287,6 +287,24 @@ export class AppModel implements ListHost {
     }
   }
 
+  // Transcript (transcript agent): what the turn's cards do beyond a permission pick
+
+  /** A saved plan's Build: the approval option it answers (if any) and the execution model picked on the card */
+  buildPlan(planId: string, optionId: string, configId: string, value: string): void {
+    const view = this.view;
+    if (view === undefined) {
+      return;
+    }
+    const message: WebviewMsg = { type: 'buildPlan', sessionId: view.id, planId: planId };
+    if (optionId.length > 0) {
+      message.optionId = optionId;
+    }
+    if (configId.length > 0 && value.length > 0) {
+      message.model = { configId: configId, value: value };
+    }
+    this.post(message);
+  }
+
   private post(message: WebviewMsg): void {
     this.client?.post(message);
   }

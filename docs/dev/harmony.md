@@ -36,8 +36,11 @@
 - A `bindContextMenu` builder closes itself through `getUIContext().getContextMenuController().close()`; it has no `isShow` binding like `bindMenu`.
 - `EntryAbility` sets the keyboard to resize the page; the default lifts the whole page, bar included, off screen.
 - `scripts/build.sh` with `DEV_ENGINE=host:port:token` (and `DEV_PROMPT`) compiles a default engine in, since nothing passes launch parameters to the Previewer; `apps/ios/scripts/engine.sh` takes `TOKEN` to match.
-- A field added to `SessionView` must be copied in `viewWithTurns` (`wire/Wire.ets`) too, or the next patch drops it.
+- A field added to `SessionView` must be copied in `viewWithTurns` (`wire/Wire.ets`) too, or the app's own edits (send, stop, edit, fork) drop it; `applySessionPatch` completes the parsed patch in place, so a patch keeps every field the wire sent.
 - Turn rows key on the patch's `keep`: rows of kept turns keep their keys, so only the changed tail renders again.
+- The live turn renders again on every patch (its key carries the revision), so nothing a row must keep lives in its own state: fold choices sit in `components/Rows.ets` `folds` keyed by session and block, and clocks, the shimmer and the Orb run off the shared `ticker` / one epoch.
+- `maxLines(0)` shows no line at all (`WebMetrics.allLines` lifts the cap), and a custom component's `flexShrink` does not reach the Text inside it: a row label that must not give way is a plain `Text`.
+- Code is coloured by the regex tokenizer in `logic/Syntax.ets` (`syn_*` colours); iOS runs shiki. `PREVIEW_FIXTURE=name` / `PREVIEW_OPEN=1` for `scripts/build.sh` give `pages/Preview` one fixture at full height / with every fold open.
 
 ## Paired remote
 

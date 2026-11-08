@@ -97,6 +97,8 @@ export interface SessionView {
   canSteer?: boolean;
   goal?: SessionGoal;
   goalActions?: string[];
+  // Transcript (transcript agent): the subagent tree, typed in wire/Blocks.ets SessionViewX
+  subagents?: Object[];
 }
 
 /** sessionPatch.ts SessionPatch: turns[0..keep) of the view at rev `base` stay, `turns` follow them */
@@ -174,13 +176,13 @@ export function applySessionPatch(current: SessionView | undefined, p: SessionPa
     if (kept.length < p.keepBlocks) {
       return undefined;
     }
-    const merged: Turn = {
-      role: head.role, id: head.id, stop: head.stop, startedAt: head.startedAt, endedAt: head.endedAt, error: head.error,
-      blocks: kept.slice(0, p.keepBlocks).concat(p.blocks ?? [])
-    };
-    tail[0] = merged;
+    // The parsed head and view are this patch's own objects: completed in place, so every field the wire sent (error,
+    // usage, the view's commands and subagents …) reaches the transcript, not only the ones declared here
+    head.blocks = kept.slice(0, p.keepBlocks).concat(p.blocks ?? []);
   }
-  return viewWithTurns(p.view, current.turns.slice(0, p.keep).concat(tail));
+  const view: SessionView = p.view;
+  view.turns = current.turns.slice(0, p.keep).concat(tail);
+  return view;
 }
 
 /** `held` (at revision `heldRev`) with the patch applied; undefined when it does not fit (then ask for the whole list) */
@@ -458,7 +460,7 @@ export function viewWithTurns(view: SessionView, turns: Turn[]): SessionView {
   const out: SessionView = {
     id: view.id, agent: view.agent, title: view.title, cwd: view.cwd, status: view.status, running: view.running,
     rev: view.rev, turns: turns, controls: view.controls, usage: view.usage, commands: view.commands, queued: view.queued,
-    canSteer: view.canSteer, goal: view.goal, goalActions: view.goalActions
+    canSteer: view.canSteer, goal: view.goal, goalActions: view.goalActions, subagents: view.subagents
   };
   return out;
 }

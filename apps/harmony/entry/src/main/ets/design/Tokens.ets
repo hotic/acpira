@@ -340,3 +340,126 @@ export class PairType {
   /** A digit in a code box */
   static readonly digit: number = 28;
 }
+
+// The transcript's measures (apps/ios AcpiraDesign WebScale.swift WebType / WebMetrics and the transcript part of
+// Tokens.swift Metrics, apps/android design/WebScale.kt): process rows, folds, code cards and prose read these, the chrome
+// keeps Metrics / Type above.
+
+/** The webview's type steps at the phone's ui 17 / code 15, with their CSS line boxes */
+export class WebType {
+  /** --text-1: prose, the prompt bubble */
+  static readonly text1: number = 17;
+  static readonly text1Line: number = 26;
+  /** --text-2: rows */
+  static readonly text2: number = 17;
+  static readonly text2Line: number = 22;
+  /** --text-3: captions, trailing meta */
+  static readonly text3: number = 16;
+  static readonly text3Line: number = 20;
+  /** --text-4 */
+  static readonly text4: number = 15;
+  static readonly text4Line: number = 19;
+  /** --text-mono, and code output lines at --code-output-line-height */
+  static readonly mono: number = 15;
+  static readonly monoLine: number = 21;
+  static readonly codeOutputLine: number = 22;
+  /** prose.css heading scale over --text-1 (h1, h2, h3); deeper headings stay at body size */
+  static readonly h1: number = 23;
+  static readonly h2: number = 21;
+  static readonly h3: number = 20;
+  /** A plan entry's / question option's key letter */
+  static readonly optionKey: number = 11;
+}
+
+/** The webview's measures under density airy, plus the phone's fold, card and prose spacing */
+export class WebMetrics {
+  static readonly row: number = 32;
+  static readonly rowDense: number = 28;
+  static readonly chatRow: number = 30;
+  static readonly processRow: number = 24;
+  static readonly processRowGap: number = 2;
+  static readonly processProseGap: number = 12;
+  static readonly lead: number = 20;
+  static readonly icon: number = 14;
+  /** Tailwind size-3: the fold chevron, the run's ✓ / ✗, the plan's status dot */
+  static readonly chevron: number = 12;
+  static readonly ctl: number = 40;
+  static readonly ctlSm: number = 26;
+  /** The label column: the lead slot and the gap after it */
+  static readonly indent: number = 32;
+  /** A tappable row's press fill reaches this far past the text column */
+  static readonly hit: number = 6;
+  static readonly railWidth: number = 1;
+  static readonly railDot: number = 4;
+  static readonly scrollFade: number = 28;
+  /** --code-output-max: the transcript's cut of a code card */
+  static readonly codeOutputMax: number = 350;
+  /** The command card's insets (pad − gap / 2, gap × 0.75) */
+  static readonly commandX: number = 10;
+  static readonly commandY: number = 9;
+  /** An open code card sits this far below its row */
+  static readonly codeCardGap: number = 6;
+  static readonly commandPromptLines: number = 3;
+  static readonly diffHunk: number = 15;
+  /** The diff gutter: line numbers and the sign column */
+  static readonly diffNumber: number = 34;
+  static readonly diffSign: number = 20;
+  /** A done plan entry's check, the in-progress dot and the ring around it */
+  static readonly planCheck: number = 8;
+  static readonly planDot: number = 6;
+  static readonly planRing: number = 1.5;
+  /** --thought-body-max: this many process rows */
+  static readonly thoughtRows: number = 8;
+  /** Lucide strokes in 24-unit space: row icons, fold marks, the run's ✓ / ✗, a done plan entry's check */
+  static readonly strokeIcon: number = 1.5;
+  static readonly strokeChevron: number = 1.75;
+  static readonly strokeOutcome: number = 2;
+  static readonly strokePlanCheck: number = 3;
+  /** The Orb's frame period (ms) and ring speed */
+  static readonly orbFrame: number = 50;
+  static readonly orbSpeed: number = 3.78;
+  /** The live label's shimmer period (ms) */
+  static readonly shimmerCycle: number = 2000;
+  /** A fold's open / close (SwiftUI's `.smooth(duration: 0.38)`), the ✓ / ✗ pop, the rail's fade-in length */
+  static readonly foldMs: number = 380;
+  static readonly outcomeMs: number = 420;
+  static readonly railFade: number = 14;
+  /** The live clock's tick (ms) */
+  static readonly clockTick: number = 1000;
+  /** The thread's inset beside the pad (Metrics.threadInset) */
+  static readonly threadInset: number = 4;
+  /** The quote's rail and the list marker column (1.2 em of the body) */
+  static readonly quoteRail: number = 2;
+  static readonly listIndent: number = 20;
+  static readonly markerSpace: number = 5;
+  static readonly disc: number = 5;
+  /** A code block's header row */
+  static readonly codeHead: number = 34;
+  /** A plan document's opening before its fade (Metrics.planBody), the dock cards' corners */
+  static readonly planBody: number = 280;
+  static readonly rCard: number = 20;
+  /** The share of the window a docked card's body may take, and the question body's rows */
+  static readonly questionRows: number = 8;
+  static readonly questionOptionPad: number = 4;
+  static readonly questionSectionGap: number = 6;
+  /** Blocks or list items a prose stack draws before it asks for more */
+  static readonly prosePage: number = 200;
+  /** An image in the prose: its largest height */
+  static readonly imageMax: number = 320;
+  static readonly s0_5: number = 2;
+  static readonly s1_5: number = 6;
+  static readonly s2_5: number = 10;
+  static readonly s3_5: number = 14;
+  /** A prompt's image thumbnail, an agent image's placeholder height */
+  static readonly thumb: number = 56;
+  static readonly agentImage: number = 240;
+  /** The statistics popover's width and its shadow */
+  static readonly popWide: number = 336;
+  static readonly popShadow: number = 6;
+  /** Room an open code card leaves under it (codeCardGap − processRowGap) */
+  static readonly codeCardAfter: number = 4;
+  /** A text's line cap when it may wrap freely (ArkUI's maxLines(0) shows no line at all) */
+  static readonly allLines: number = Number.MAX_SAFE_INTEGER;
+  /** How long a copy button shows its tick (ms) */
+  static readonly copiedMs: number = 1500;
+}
