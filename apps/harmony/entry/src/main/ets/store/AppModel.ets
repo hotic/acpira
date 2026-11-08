@@ -53,7 +53,7 @@ export class AppModel implements ListHost {
   @Trace view: SessionView | undefined = undefined;
   /** The session the chat page shows; its view may still be on its way */
   @Trace openId: string | undefined = undefined;
-  /** What the chat's rows read from the view beyond their own turn, kept in step with `view` */
+  /** What the chat's rows read from the view beyond their own turn; the chat page keeps it in step with `view` */
   readonly thread: ThreadContext = new ThreadContext();
   @Trace toast: string | undefined = undefined;
   @Trace home: string = '';
@@ -87,11 +87,6 @@ export class AppModel implements ListHost {
     this.home = '/Users/demo';
     this.demoClock = demoNow();
     this.listDemo();
-  }
-
-  @Monitor('view')
-  onView(): void {
-    this.thread.follow(this.view);
   }
 
   /** The time rows are dated against */

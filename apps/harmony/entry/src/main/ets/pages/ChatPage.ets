@@ -36,8 +36,13 @@ export struct ChatPage {
   private scroller: Scroller = new Scroller();
   private atEnd: boolean = true;
 
+  aboutToAppear(): void {
+    this.model.thread.follow(this.model.view);
+  }
+
   @Monitor('model.view')
   onView(): void {
+    this.model.thread.follow(this.model.view);
     // A new or longer thread keeps its end in view, unless the reader scrolled up
     if (this.atEnd) {
       setTimeout(() => {
