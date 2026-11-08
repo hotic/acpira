@@ -1,5 +1,7 @@
 import { i18n } from '@kit.LocalizationKit';
+import { emitter } from '@kit.BasicServicesKit';
 import { AppModel, appModel } from '../store/AppModel';
+import { PAIR_LINK_EVENT } from '../store/PairingModel';
 import { initL10n } from '../store/L10n';
 import { Root } from './Root';
 import { welcomeDue } from './Welcome';
@@ -33,11 +35,22 @@ struct Index {
     if (!this.model.startPairing()) {
       this.model.demo();
     }
-    // `pair`: an `acpira://pair/…` link to confirm in the add sheet (`aa start … --ps pair <link>`)
+    // A link opened later (EntryAbility `onNewWant`) goes to the add sheet the same way, over the first run if it is up
+    emitter.on(PAIR_LINK_EVENT, (event: emitter.EventData) => {
+      const later = event.data?.['link'] as string | undefined;
+      if (later !== undefined && this.model.pairing !== undefined && this.model.pairing.open(later)) {
+        this.welcome = false;
+      }
+    });
+    // `pair`: an `acpira://pair/…` link to confirm in the add sheet (opened from outside, or `aa start … --ps pair <link>`)
     const link = launch['pair'] as string | undefined;
     const opened = link !== undefined && this.model.pairing !== undefined && this.model.pairing.open(link);
     // The first run, while nothing is followed and it never finished
     this.welcome = !opened && !this.model.paired && welcomeDue();
+  }
+
+  aboutToDisappear(): void {
+    emitter.off(PAIR_LINK_EVENT);
   }
 
   onPageShow(): void {

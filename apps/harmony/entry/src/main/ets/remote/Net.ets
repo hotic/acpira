@@ -22,7 +22,9 @@ export function net(): Module | undefined {
   }
   tried = true;
   try {
-    const m = loadNativeModule('libacpira_mobile_ohos.so') as Module;
+    // By OHM URL: a bare `libacpira_mobile_ohos.so` must be a dependency in oh-package.json5 (which needs ohpm) or the
+    // runtime refuses the name. This form names the HAP's own libs/<abi> library whatever the bundle
+    const m = loadNativeModule('@normalized:Y&&&libacpira_mobile_ohos.so&') as Module;
     if (m !== undefined && m !== null && typeof m.startNode === 'function') {
       loaded = m;
     }
