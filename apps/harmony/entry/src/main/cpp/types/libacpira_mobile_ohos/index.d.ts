@@ -81,6 +81,9 @@ export interface Module {
   /** Throws `InvalidLink` */
   decodeLink(link: string): NamedComputer;
   startNode(secret: string, relays: Relays): Promise<Node>;
-  /** The text of the first QR code in a greyscale frame (a camera's Y plane, `stride` bytes per row), or null */
-  decodeQr(grey: Uint8Array, width: number, height: number, stride: number): string | null;
+  /**
+   * The text of the first QR code in a greyscale frame (a camera's Y plane, `stride` bytes per row), or null; read off
+   * the ArkTS thread, the frame copied before this returns
+   */
+  decodeQr(grey: Uint8Array, width: number, height: number, stride: number): Promise<string | null>;
 }
