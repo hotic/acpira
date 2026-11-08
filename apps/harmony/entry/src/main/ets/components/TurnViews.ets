@@ -7,6 +7,7 @@ import {
 } from '../logic/Folding';
 import { delegatedIds, Placement, placeNodes } from '../logic/Subagents';
 import { t } from '../store/L10n';
+import { ThreadContext } from '../store/Thread';
 import { Bubble } from './Bubble';
 import { PermissionCard, PlanDocumentCard, showsTurnActions, TurnActions } from './Cards';
 import { Prose } from './Prose';
@@ -26,8 +27,8 @@ export struct UserBubble {
   @Param text: string = '';
   /** The whole turn, when the chat has it: attachments, the recorded command, `auto` */
   @Param turn: Turn | undefined = undefined;
-  /** The agent's advertised command names, and the personas it can summon */
-  @Param commands: string[] = [];
+  /** The agent's advertised command names (observed: a kept row keeps its params), and the personas it can summon */
+  @Param thread: ThreadContext | undefined = undefined;
   @Param summons: string[] = [];
 
   attachments(): Attachment[] {
@@ -37,7 +38,8 @@ export struct UserBubble {
   /** A recorded command keeps its pill even after the agent stops advertising it */
   names(): string[] {
     const recorded = this.turn !== undefined ? asTurn(this.turn).command : undefined;
-    return typeof recorded === 'string' && recorded.length > 0 ? this.commands.concat([recorded]) : this.commands;
+    const commands = this.thread?.commands ?? [];
+    return typeof recorded === 'string' && recorded.length > 0 ? commands.concat([recorded]) : commands;
   }
 
   build() {
@@ -81,19 +83,17 @@ function sectionSig(s: PlanSection): string {
 @ComponentV2
 export struct AgentMessage {
   @Param turn: Turn = { role: 'agent' };
-  @Param running: boolean = false;
   /** The turn's place in the session (fork from here) and the scope its fold choices are kept under */
   @Param index: number = 0;
   @Param scope: string = '';
-  /** The view's subagents: every node, for counts and provenance; this turn's are those announced in it */
-  @Param subagents: SubagentSummary[] = [];
-  /** The view's controls (the plan card's model) and agent (its mark) */
-  @Param controls: Object | undefined = undefined;
-  @Param agent: string = '';
+  /**
+   * What the turn reads from the view (subagents, controls, agent, which turn runs, which one Retry answers): observed,
+   * since a row whose turn did not change keeps the params it was built with
+   */
+  @Param thread: ThreadContext = new ThreadContext();
   @Param now: () => number = () => Date.now();
-  /** Fork and retry are offered when the chat wires them; `retry`: the reply failed in a way Retry answers */
+  /** Fork and retry are offered when the chat wires them */
   @Param actions: boolean = false;
-  @Param retry: boolean = false;
   @Event onPermission: (blockId: string, optionId: string) => void = (blockId: string, optionId: string) => {};
   @Event onBuild: (planId: string, optionId: string, configId: string, value: string) => void =
     (planId: string, optionId: string, configId: string, value: string) => {};
@@ -102,6 +102,16 @@ export struct AgentMessage {
 
   turnX(): TurnX {
     return asTurn(this.turn);
+  }
+
+  /** This turn is the one running */
+  get running(): boolean {
+    return this.thread.live === this.index;
+  }
+
+  /** The view's subagents: every node, for counts and provenance; this turn's are those announced in it */
+  get subagents(): SubagentSummary[] {
+    return this.thread.subagents;
   }
 
   blocks(): Block[] {
@@ -160,8 +170,8 @@ export struct AgentMessage {
           }
           if (section.plan !== undefined) {
             PlanDocumentCard({
-              block: section.plan, permission: this.approval(section.plan), running: this.running, controls: this.controls,
-              agent: this.agent,
+              block: section.plan, permission: this.approval(section.plan), running: this.running,
+              controls: this.thread.controls, agent: this.thread.agent,
               onBuild: (optionId: string, configId: string, value: string) =>
                 this.onBuild(section.plan?.id ?? '', optionId, configId, value),
               onPermission: this.onPermission
@@ -172,7 +182,7 @@ export struct AgentMessage {
       }, (section: PlanSection) => sectionSig(section))
       if (showsTurnActions(this.turnX(), this.running)) {
         TurnActions({
-          turn: this.turnX(), retry: this.retry, actions: this.actions, onRetry: () => this.onRetry(),
+          turn: this.turnX(), retry: this.thread.retry === this.index, actions: this.actions, onRetry: () => this.onRetry(),
           onFork: () => this.onFork(this.index)
         })
       }

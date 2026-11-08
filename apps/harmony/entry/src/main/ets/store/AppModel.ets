@@ -23,6 +23,7 @@ import { fixtureView } from './Demo';
 import { util } from '@kit.ArkTS';
 
 import { PairingModel } from './PairingModel';
+import { ThreadContext } from './Thread';
 import { PairingService } from '../remote/PairingService';
 import { PairedTransport } from '../remote/PairedTransport';
 import { PairedComputer } from '../remote/Stores';
@@ -52,8 +53,8 @@ export class AppModel implements ListHost {
   @Trace view: SessionView | undefined = undefined;
   /** The session the chat page shows; its view may still be on its way */
   @Trace openId: string | undefined = undefined;
-  /** Turns before this index are the same objects as in the previous view (a patch's `keep`): their rows stay */
-  @Trace stableTurns: number = 0;
+  /** What the chat's rows read from the view beyond their own turn, kept in step with `view` */
+  readonly thread: ThreadContext = new ThreadContext();
   @Trace toast: string | undefined = undefined;
   @Trace home: string = '';
 
@@ -77,6 +78,11 @@ export class AppModel implements ListHost {
     this.home = '/Users/demo';
     this.demoClock = demoNow();
     this.listDemo();
+  }
+
+  @Monitor('view')
+  onView(): void {
+    this.thread.follow(this.view);
   }
 
   /** The time rows are dated against */
@@ -211,7 +217,6 @@ export class AppModel implements ListHost {
   /** The chat page opens on session `id` */
   open(id: string): void {
     this.openId = id;
-    this.stableTurns = 0;
     if (this.live) {
       this.view = undefined;
       this.post({ type: 'selectSession', id: id });
@@ -246,7 +251,6 @@ export class AppModel implements ListHost {
     // The demo answers in place
     const user: Turn = { role: 'user', text: body, attachments: attachments.length > 0 ? attachments : undefined };
     const agent: Turn = { role: 'agent', blocks: [{ type: 'text', markdown: 'Demo reply: the engine is not connected.' }] };
-    this.stableTurns = view.turns.length;
     const next = viewWithTurns(view, view.turns.concat([user, agent]));
     next.running = false;
     next.rev = (view.rev ?? 0) + 1;
@@ -362,7 +366,6 @@ export class AppModel implements ListHost {
           const prompt = this.awaiting;
           this.awaiting = undefined;
           this.openId = view.id;
-          this.stableTurns = 0;
           this.view = view;
           const extras = this.awaitingExtras;
           this.awaitingExtras = undefined;
@@ -373,7 +376,6 @@ export class AppModel implements ListHost {
           return;
         }
         if (view.id === this.openId) {
-          this.stableTurns = 0;
           this.view = view;
         }
         break;
@@ -388,7 +390,6 @@ export class AppModel implements ListHost {
           this.post({ type: 'resync' });
           return;
         }
-        this.stableTurns = patch.keep;
         this.view = next;
         break;
       }
@@ -618,7 +619,6 @@ export class AppModel implements ListHost {
     const s: SessionSummary = { id: id, title: title, agent: agent, cwd: folder, updatedAt: now };
     this.summaries = [s].concat(this.summaries);
     this.openId = id;
-    this.stableTurns = 0;
     this.view = {
       id: id, agent: agent, title: title, cwd: folder, status: 'ready', running: false, rev: 0, turns: [],
       controls: extras?.controls ?? this.controlsFor(agent)
@@ -1256,7 +1256,6 @@ export class AppModel implements ListHost {
     const summary: SessionSummary = { id: id, title: title, agent: view.agent, cwd: view.cwd, updatedAt: new Date().toISOString() };
     this.summaries = [summary].concat(this.summaries);
     this.openId = id;
-    this.stableTurns = 0;
     this.view = fork;
     this.toast = t('mobile.forked');
   }

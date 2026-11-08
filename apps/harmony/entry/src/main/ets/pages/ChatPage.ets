@@ -12,12 +12,7 @@ import { AlertCard, EditingBar, PlanDock, QuestionCard, QueueBubble } from '../c
 import { attachBeans, Bean, modelBeans } from '../components/composer/Beans';
 import { GooLayer } from '../components/composer/GooLayer';
 import { ChatBar, ChatBarActions } from '../components/ChatBar';
-import { asView, SubagentSummary } from '../wire/Blocks';
-
-/** The view's controls as the plan card reads them */
-interface ViewControls {
-  controls?: Object;
-}
+import { turnKey } from '../store/Thread';
 
 // The chat (apps/ios Chat/ChatView.swift): the bar with back and the title, the thread in the reading column, the
 // dock under it (Chat/Dock.swift: question, alert, the prompt being edited, the composer), the to-do card floating over
@@ -34,8 +29,10 @@ export struct ChatPage {
   @Event onBack: () => void = () => {};
   /** Where the bar's entries lead (list agent) */
   @Param actions: ChatBarActions = new ChatBarActions();
-  /** The alert card's ✕ hides it for this many turns (the transcript row stays) */
-  @Local dismissedAlert: number = -1;
+  /** The alert card's ✕ hides it for this stop (alertKey; the transcript row stays) */
+  @Local dismissedAlert: string = '';
+  /** The to-do card's height over the thread's foot, so the last turn can scroll clear of it */
+  @Local planHeight: number = 0;
   private scroller: Scroller = new Scroller();
   private atEnd: boolean = true;
 
@@ -47,11 +44,6 @@ export struct ChatPage {
         this.scroller.scrollEdge(Edge.Bottom);
       }, 0);
     }
-  }
-
-  /** Rows of turns a patch kept are the same objects: their keys stay, so only the changed tail draws again */
-  turnKey(turn: Turn, i: number): string {
-    return i < this.model.stableTurns ? `${i}` : `${i}@${this.model.view?.rev ?? 0}:${turn.blocks?.length ?? 0}`;
   }
 
   /** The composer's pickers act on a rewritten prompt's own selections while one is edited */
@@ -108,27 +100,19 @@ export struct ChatPage {
     return this.model.view !== undefined ? shortStop(this.model.view) : undefined;
   }
 
+  /** Which stop the alert card speaks for: a retry that fails again leaves as many turns, but a new turn */
+  private alertKey(turn: Turn): string {
+    return `${this.model.view?.turns.length ?? 0}:${turn.id ?? ''}:${turn.startedAt ?? ''}:${turn.endedAt ?? ''}`;
+  }
+
+  /** The to-do card shows (a plan or a goal): only then does its height push the thread's end up */
+  private planShown(): boolean {
+    const view = this.model.view;
+    return view !== undefined && (dockPlan(view.turns, view.running) !== undefined || view.goal !== undefined);
+  }
+
   private receded(): boolean {
     return this.model.goo.open !== undefined;
-  }
-
-  // Transcript (transcript agent): what the turns read from the view beyond their own turn
-
-  /** The agent's advertised command names: the prompt bubbles tint them */
-  commandNames(): string[] {
-    const view = this.model.view;
-    return view === undefined ? [] : (view.commands ?? []).map((c: SlashCommand) => c.name);
-  }
-
-  subagents(): SubagentSummary[] {
-    const view = this.model.view;
-    return view === undefined ? [] : (asView(view).subagents ?? []);
-  }
-
-  /** The session's controls (the plan card's execution model), read loosely */
-  planControls(): Object | undefined {
-    const view = this.model.view;
-    return view === undefined ? undefined : (view as Object as ViewControls).controls;
   }
 
   build() {
@@ -157,6 +141,9 @@ export struct ChatPage {
             // A definite width under the cap: the card's own 100% resolves against this, not the whole Stack
             .width('100%')
             .constraintSize({ maxWidth: Metrics.contentW + Metrics.pad * 2 })
+            .onAreaChange((_: Area, now: Area) => {
+              this.planHeight = Number(now.height);
+            })
         }
         .layoutWeight(1)
         .blur(this.receded() ? Cmp.gooBlur : 0)
@@ -218,21 +205,19 @@ export struct ChatPage {
       ForEach(this.model.view?.turns ?? [], (turn: Turn, i: number) => {
         ListItem() {
           if (turn.role === 'user') {
-            UserBubble({ text: turn.text ?? '', turn: turn, commands: this.commandNames() })
+            UserBubble({ text: turn.text ?? '', turn: turn, thread: this.model.thread })
               .bindContextMenu(this.promptMenu(i, turn), ResponseType.LongPress)
           } else {
             AgentMessage({
               turn: turn,
-              running: (this.model.view?.running ?? false) && i === (this.model.view?.turns.length ?? 0) - 1,
               onPermission: (blockId: string, optionId: string) => this.model.permission(blockId, optionId),
               index: i,
               scope: this.model.view?.id ?? '',
-              subagents: this.subagents(),
-              controls: this.planControls(),
-              agent: this.model.view?.agent ?? '',
+              thread: this.model.thread,
               now: (): number => this.model.now(),
               actions: true,
               onFork: (turnIndex: number) => this.model.fork(turnIndex),
+              onRetry: () => this.model.retry(),
               onBuild: (planId: string, optionId: string, configId: string, value: string) =>
                 this.model.buildPlan(planId, optionId, configId, value)
             })
@@ -241,7 +226,7 @@ export struct ChatPage {
         }
         .constraintSize({ maxWidth: Metrics.contentW })
         .width('100%')
-      }, (turn: Turn, i: number) => this.turnKey(turn, i))
+      }, (turn: Turn, i: number) => turnKey(turn, i))
       // Queued prompts are faint bubbles at the end of the thread, in send order
       if ((this.model.view?.queued ?? []).length > 0) {
         ListItem() {
@@ -262,7 +247,11 @@ export struct ChatPage {
     }
     .id('chat.thread')
     .alignListItem(ListItemAlign.Center)
-    .padding({ left: Metrics.pad + Metrics.s1, right: Metrics.pad + Metrics.s1, top: Metrics.gap, bottom: Metrics.gap })
+    .padding({
+      left: Metrics.pad + Metrics.s1, right: Metrics.pad + Metrics.s1, top: Metrics.gap,
+      // The to-do card floats over the thread's foot: the end stops above it
+      bottom: Metrics.gap + (this.planShown() ? this.planHeight : 0)
+    })
     .scrollBar(BarState.Off)
     .edgeEffect(EdgeEffect.Spring)
     .onReachEnd(() => {
@@ -288,12 +277,13 @@ export struct ChatPage {
           .id(`question:${this.question()?.id ?? ''}`)
       }
       if (this.model.view !== undefined && this.alertTurn() !== undefined &&
-        this.dismissedAlert !== this.model.view.turns.length) {
+        this.dismissedAlert !== this.alertKey(this.alertTurn() as Turn)) {
         AlertCard({
           turn: this.alertTurn() as Turn,
           canCompact: (this.model.view.commands ?? []).some((c: SlashCommand) => c.name === 'compact'),
           onDismiss: () => {
-            this.dismissedAlert = this.model.view?.turns.length ?? -1;
+            const turn = this.alertTurn();
+            this.dismissedAlert = turn !== undefined ? this.alertKey(turn) : '';
           },
           onRetry: () => this.model.retry(),
           onContinue: () => this.model.carryOn(),
