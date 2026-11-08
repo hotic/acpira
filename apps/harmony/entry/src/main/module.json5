@@ -18,7 +18,10 @@
         "startWindowIcon": "$media:app_icon",
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
-        "skills": [{ "entities": ["entity.system.home"], "actions": ["ohos.want.action.home"] }]
+        "skills": [
+          { "entities": ["entity.system.home"], "actions": ["ohos.want.action.home"] },
+          { "actions": ["ohos.want.action.viewData"], "uris": [{ "scheme": "acpira", "host": "pair" }] }
+        ]
       }
     ],
     "requestPermissions": [

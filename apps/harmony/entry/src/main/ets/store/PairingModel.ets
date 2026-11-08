@@ -4,6 +4,9 @@ import { ConnectionError, PairedTransport } from '../remote/PairedTransport';
 import { isPairingLink, PairingService, Presence } from '../remote/PairingService';
 import { NearbyComputer, PairedComputer } from '../remote/Stores';
 
+/** The emitter event an `acpira://pair/…` link opened while the app runs travels on (EntryAbility `onNewWant` → pages/Index) */
+export const PAIR_LINK_EVENT: string = 'acpira.pairLink';
+
 // The phone's paired computers as the screens see them (apps/ios Pairing/PairingModel.swift, apps/android
 // store/PairingModel.kt): the list, the one the session list follows, every computer's state, and the add-computer
 // sheet. Everything goes through PairingService; the followed computer's wire goes to the app through `onConnection`,
