@@ -54,10 +54,13 @@ struct Index {
   }
 
   onPageShow(): void {
+    this.model.setAway(false);
     this.model.pairing?.enterForeground();
   }
 
   onPageHide(): void {
+    // The chat on screen is no longer watched: a turn ending meanwhile keeps its unread mark (docs/dev/ios.md)
+    this.model.setAway(true);
     this.model.pairing?.enterBackground();
   }
 
