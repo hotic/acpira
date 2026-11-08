@@ -290,6 +290,14 @@ object Metrics {
   val stagedRemove = 20.dp
   /** The context ring's card */
   val usageCardW = 260.dp
+  // Media (apps/ios Tokens.swift `thumb`, `agentImage`, `widgetPlaceholder`, `widgetMax`)
+  /** A prompt's image thumbnail and a video tile */
+  val thumb = 56.dp
+  /** Every transcript image card's height (the card's width follows the picture) */
+  val agentImage = 240.dp
+  /** An HTML widget (tokens.css --widget-placeholder / --widget-max): the room held before its page reports a height, and its cap */
+  val widgetPlaceholder = 120.dp
+  val widgetMax = 900.dp
 }
 
 /** The phone type scale: ui 16 / code 13, as the iOS app and the web reference page */

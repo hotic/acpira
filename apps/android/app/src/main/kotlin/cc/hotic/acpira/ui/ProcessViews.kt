@@ -114,7 +114,7 @@ fun ProcessItemView(item: ProcessItem) {
     is ProcessItem.Group -> ToolGroupView(item.kind, item.blocks)
     is ProcessItem.Block -> when (val b = item.block) {
       is ToolCallBlock -> ToolCallView(b, grouped = true)
-      is TextBlock -> if (b.markdown.isNotBlank()) StreamProse(b.copy(markdown = b.markdown.trimEnd()))
+      is TextBlock -> if (b.markdown.isNotBlank()) CompositionLocalProvider(LocalMarkdownImages provides b.images) { StreamProse(b.copy(markdown = b.markdown.trimEnd())) }
       else -> LineBlockView(b)
     }
   }
@@ -124,12 +124,13 @@ fun ProcessItemView(item: ProcessItem) {
 fun LineBlockView(block: AgentBlock) {
   when (block) {
     is NoticeBlock -> NoticeRow(block)
-    is GoalBlock -> GoalRow(block)
+    is GoalBlock -> GoalMilestone(block)
     is ThoughtBlock -> ThoughtView(block)
     is PlanBlock -> PlanDetails(block.entries, label = { RowLabel(t("plan.title")) })
     is ToolCallBlock -> ToolCallView(block)
     is CompactionBlock -> CompactionRow(block)
     is SteerBlock -> SteeredMessage(block)
+    is cc.hotic.acpira.model.ImageBlock -> AgentImageView(block.blob, block.uri)
     // The open card waits for an answer elsewhere; only a resolved one has a place in the message
     is QuestionBlock -> if (block.outcome != null) QuestionRecord(block)
     is UnknownBlock -> UnknownBlockRow(block.type)
@@ -518,11 +519,3 @@ fun OutcomeRow(turn: AgentTurn, outcome: String) {
   }
 }
 
-/** A goal milestone: its status glyph, the event and the objective's first line */
-@Composable
-fun GoalRow(block: GoalBlock) {
-  AcpRow(icon = "goal") {
-    RowLabel(t("goal.event.${block.event.name}"))
-    block.objective?.lineSequence()?.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() }?.let { RowTarget(it) }
-  }
-}

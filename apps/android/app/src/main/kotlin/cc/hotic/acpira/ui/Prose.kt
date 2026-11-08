@@ -42,6 +42,7 @@ import cc.hotic.acpira.design.Type
 import cc.hotic.acpira.design.WebType
 import cc.hotic.acpira.i18n.t
 import cc.hotic.acpira.logic.Markdown
+import cc.hotic.acpira.logic.MdInline
 import cc.hotic.acpira.logic.MarkdownStream
 import cc.hotic.acpira.logic.MdBlock
 import cc.hotic.acpira.logic.Remend
@@ -269,7 +270,18 @@ private fun ProseMore(rest: Int, modifier: Modifier = Modifier, onClick: () -> U
 @Composable
 private fun ProseBlock(block: MdBlock, style: ProseStyle, first: Boolean, fade: StreamFade?) {
   when (block) {
-    is MdBlock.Paragraph -> InlineText(block.inlines, style.body, style.inks, fade = fade)
+    is MdBlock.Paragraph -> if (block.inlines.none { it is MdInline.Image }) {
+      InlineText(block.inlines, style.body, style.inks, fade = fade)
+    } else {
+      // A paragraph holding an image turns into a block (MediaViews.swift ImageParagraph, Prose.tsx): the text runs
+      // between images stand as paragraphs of their own, each image as an agent image card between them
+      Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
+        for (run in imageRuns(block.inlines)) {
+          val image = run.singleOrNull() as? MdInline.Image
+          if (image != null) MarkdownImage(image.url, image.alt) else InlineText(run, style.body, style.inks, fade = fade)
+        }
+      }
+    }
     is MdBlock.Heading -> {
       val ink = if (style.tone == ProseTone.Reply) Palette.fgStrong else style.strongInk
       InlineText(
@@ -359,3 +371,18 @@ private fun ProseQuote(blocks: List<MdBlock>, style: ProseStyle, fade: StreamFad
 
 /** The quote's rail: 2 px (prose.css `border-left: 2px`) */
 private val QUOTE_RAIL = 2.dp
+
+/** A paragraph's inlines cut at its images: each image alone, the text between as runs, blank runs dropped */
+private fun imageRuns(inlines: List<MdInline>): List<List<MdInline>> {
+  val out = ArrayList<List<MdInline>>()
+  var run = ArrayList<MdInline>()
+  fun flush() {
+    if (Markdown.plain(run).isNotBlank()) out += run
+    run = ArrayList()
+  }
+  for (inline in inlines) {
+    if (inline is MdInline.Image) { flush(); out += listOf(inline) } else run += inline
+  }
+  flush()
+  return out
+}

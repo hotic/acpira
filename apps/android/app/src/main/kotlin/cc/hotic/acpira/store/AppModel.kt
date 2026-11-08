@@ -59,6 +59,8 @@ sealed interface Screen {
   data object Providers : Screen
   data class ProviderForm(val id: String?, val error: String? = null) : Screen
   data class AddModels(val id: String) : Screen
+  /** A project file downloaded to the phone and opened there (ui/MediaDownload.kt) */
+  data class Download(val sessionId: String, val path: String) : Screen
 }
 
 /** The wire to the engine as the screens show it */
@@ -129,6 +131,8 @@ class AppModel(
   val folders = LocalFolders(::post)
   /** The built-in agent's model sources; a saved change asks for fresh controls so the composer's model menu has it */
   val sources = ModelSources(::post) { post(WebviewMsg.Controls(BUILTIN_AGENT, fresh = true)) }
+  /** The chats' images, videos and downloads over this wire (store/MediaLink.kt) */
+  val media = MediaLink(context, wire, ::post)
   var connection by mutableStateOf<Connection>(Connection.Demo)
   /** The latest toast, until it times out */
   var toast by mutableStateOf<String?>(null)
@@ -322,6 +326,7 @@ class AppModel(
       outgoing[sessionId] = outgoing[sessionId].orEmpty() + Outgoing.after(view, body, attachments.map(::shownAttachment), steer)
     }
     if (live && view != null && !view.running) lists.sending(view, body)
+    if (live) media.adopt(sessionId, attachments)
     if (post(WebviewMsg.Send(sessionId, body, attachments.takeIf { it.isNotEmpty() }, steer = if (steer) true else null))) return
     demoSend(sessionId, body)
   }
@@ -607,6 +612,7 @@ class AppModel(
         chatRoot = s.chats
         home = s.home
         s.categories?.projects?.let { projectOrder = it }
+        media.init(s)
         present(message)
         synced = true
         if (resumed) reopen()
@@ -644,6 +650,7 @@ class AppModel(
       is HostMsg.ProviderProbed -> sources.receive(message)
       is HostMsg.Accounts -> chat.accounts = message.accounts
       is HostMsg.EditTurnResult -> editAnswered(message.requestId, message.error)
+      is HostMsg.ImageBlob, is HostMsg.StagedFile -> media.receive(message)
       else -> lists.receive(message)
     }
   }
