@@ -22,6 +22,7 @@ import android.view.ViewConfiguration
 import android.view.ViewTreeObserver
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.annotation.RequiresApi
 import androidx.core.graphics.ColorUtils
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -39,9 +40,12 @@ import kotlin.math.roundToInt
  * activity's window loses focus to a new one the overlay is added again above it. A drag moves it, a tap clears its
  * counters.
  *
- * Timing comes from one Choreographer frame callback; the expected interval from the display's refresh rate. A frame
- * counts as a hitch when it came more than half a frame late (interval over 1.5x expected), and its hitch time is how
- * late it came. Each hitch is logged (tag `AcpiraHitch`) and set on a trace counter, so Perfetto lines it up with the
+ * Timing comes from one Choreographer callback per frame. The expected interval is the frame's own (apps/ios
+ * `targetTimestamp - timestamp`): on Android 13 and later the spacing of the frame's presentation timelines, which
+ * follows the app's actual frame rate (a lowered rate, a 120 Hz panel running the app at 60) rather than the panel's
+ * nominal one; before that the display's refresh rate. The switches can also be set for one launch with the extras
+ * `hud.fps` / `hud.hitches` (`YES` / `NO`, like the iOS app's `-acpira.hud.fps YES`). A frame counts as a hitch
+ * when it came more than half a frame late (interval over 1.5x expected), and its hitch time is how late it came. Each hitch is logged (tag `AcpiraHitch`) and set on a trace counter, so Perfetto lines it up with the
  * rest of a trace. The overlay is a plain View: it never touches the app's composition, and redraws a few times a
  * second plus on each hitch.
  */
@@ -55,9 +59,26 @@ class PerfHud private constructor(private val activity: ComponentActivity) :
     const val HITCHES = "hud.hitches"
     private const val TAG = "AcpiraHitch"
 
+    /** The launch extras' values, over the stored switches for this process until a switch is flipped */
+    private val launched = mutableMapOf<String, Boolean>()
+    /** The overlays alive, told when a switch flips without changing its stored value */
+    private val huds = mutableSetOf<PerfHud>()
+
     /** Follows the two switches and the activity's lifecycle. Call once from the activity's onCreate */
-    fun install(activity: ComponentActivity) {
+    fun install(activity: ComponentActivity, fps: Boolean? = null, hitches: Boolean? = null) {
+      fps?.let { launched[FPS] = it }
+      hitches?.let { launched[HITCHES] = it }
       activity.lifecycle.addObserver(PerfHud(activity))
+    }
+
+    /** A switch as it stands: the launch extra's value, else the stored one */
+    fun isOn(prefs: SharedPreferences, key: String): Boolean = launched[key] ?: prefs.getBoolean(key, false)
+
+    /** Flips a switch: stored, and the launch extra's value for it dropped */
+    fun set(prefs: SharedPreferences, key: String, on: Boolean) {
+      launched.remove(key)
+      prefs.edit().putBoolean(key, on).apply()
+      huds.forEach { it.sync() }
     }
   }
 
@@ -117,6 +138,7 @@ class PerfHud private constructor(private val activity: ComponentActivity) :
   private var lastHitchLate = 0L
 
   override fun onCreate(owner: LifecycleOwner) {
+    huds += this
     prefs.registerOnSharedPreferenceChangeListener(prefsListener)
   }
 
@@ -135,13 +157,14 @@ class PerfHud private constructor(private val activity: ComponentActivity) :
   }
 
   override fun onDestroy(owner: LifecycleOwner) {
+    huds -= this
     prefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
     stop()
   }
 
   private fun sync() {
-    val fps = prefs.getBoolean(FPS, false)
-    val hitches = prefs.getBoolean(HITCHES, false)
+    val fps = isOn(prefs, FPS)
+    val hitches = isOn(prefs, HITCHES)
     val changed = fps != showFps || hitches != showHitches
     showFps = fps
     showHitches = hitches
@@ -160,13 +183,16 @@ class PerfHud private constructor(private val activity: ComponentActivity) :
     }
     if (!running) {
       running = true
-      Choreographer.getInstance().postFrameCallback(this)
+      post()
     }
     clear()
   }
 
   private fun stop() {
-    if (running) Choreographer.getInstance().removeFrameCallback(this)
+    if (running) {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) (vsync as? Choreographer.VsyncCallback)?.let { Choreographer.getInstance().removeVsyncCallback(it) }
+      Choreographer.getInstance().removeFrameCallback(this)
+    }
     running = false
     view?.let { if (added) wm.removeViewImmediate(it) }
     added = false
@@ -191,10 +217,39 @@ class PerfHud private constructor(private val activity: ComponentActivity) :
     paint(System.nanoTime())
   }
 
+  /** Android 13 and later: the frame's data, its timelines included */
+  private val vsync: Any? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) Vsync() else null
+
+  @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+  private inner class Vsync : Choreographer.VsyncCallback {
+    override fun onVsync(data: Choreographer.FrameData) {
+      if (!running) return
+      Choreographer.getInstance().postVsyncCallback(this)
+      // Successive timelines lie one of the app's frames apart
+      val lines = data.frameTimelines
+      if (lines.size > 1) measured = lines[1].expectedPresentationTimeNanos - lines[0].expectedPresentationTimeNanos
+      frame(data.frameTimeNanos)
+    }
+  }
+
+  /** The frame interval read off the last frame's timelines (ns); 0 until one came */
+  private var measured = 0L
+
+  private fun post() {
+    val v = vsync
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && v is Choreographer.VsyncCallback) Choreographer.getInstance().postVsyncCallback(v)
+    else Choreographer.getInstance().postFrameCallback(this)
+  }
+
   override fun doFrame(frameTimeNanos: Long) {
     if (!running) return
     Choreographer.getInstance().postFrameCallback(this)
+    frame(frameTimeNanos)
+  }
+
+  private fun frame(frameTimeNanos: Long) {
     val now = frameTimeNanos
+    if (measured > 0) expected = measured.coerceAtLeast(HudLayout.MIN_INTERVAL)
     // The rate: frame times within the last second
     stamps[(stampHead + stampCount) % HudLayout.STAMPS] = now
     if (stampCount < HudLayout.STAMPS) stampCount++ else stampHead = (stampHead + 1) % HudLayout.STAMPS
@@ -231,7 +286,7 @@ class PerfHud private constructor(private val activity: ComponentActivity) :
   private fun paint(now: Long) {
     lastPaint = now
     val v = view ?: return
-    expected = expectedInterval()
+    if (measured == 0L) expected = expectedInterval()
     placeIfResized()
     val span = if (stampCount > 1) stamps[(stampHead + stampCount - 1) % HudLayout.STAMPS] - stamps[stampHead] else 0L
     val fps = if (span > 0) ((stampCount - 1) * 1e9 / span).roundToInt() else 0
@@ -241,7 +296,7 @@ class PerfHud private constructor(private val activity: ComponentActivity) :
     v.update(fps, (1e9 / expected).roundToInt(), recent, recentHitch, recentHead, recentCount, expected, hitchCount, ratio, lastMs)
   }
 
-  /** One frame at the display's current refresh rate */
+  /** One frame at the display's current refresh rate: the expected interval where the frames carry no timelines */
   @Suppress("DEPRECATION")
   private fun expectedInterval(): Long {
     val display = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) activity.display else wm.defaultDisplay
@@ -320,6 +375,8 @@ private object HudLayout {
   /** Room left for the top app bar under the status bar, so the panel never covers back or the bar's actions (dp) */
   const val BAR_CLEARANCE = 56f
   const val HITCH_FACTOR = 1.5
+  /** The shortest expected frame interval taken from a frame's timelines: a 240 Hz frame (ns) */
+  const val MIN_INTERVAL = 1_000_000_000L / 240
   const val SECOND = 1_000_000_000L
   const val PAINT_EVERY = 200_000_000L
   const val RATIO_WINDOW = 5_000_000_000L

@@ -75,6 +75,8 @@ fun Root(model: AppModel, pairing: cc.hotic.acpira.store.PairingModel? = null) {
     LocalSyncing provides !model.current,
     // Session links in replies open their chat in the app (ui/Links.kt)
     androidx.compose.ui.platform.LocalUriHandler provides rememberLinkHandler(model),
+    // The list's bottom bar and a composer handed over as one bar across a push or pop (ui/BarHandoff.kt)
+    LocalBarHandoff provides remember { BarHandoff() },
   ) { Stack(model, pairing) }
 }
 
@@ -91,6 +93,7 @@ private fun Stack(model: AppModel, pairing: cc.hotic.acpira.store.PairingModel?)
     else {
       BackHandler(enabled = model.path.isNotEmpty()) { model.pop() }
       Pages(model, pairing, model.path.toList(), root = null)
+      BarHandoffLayer(model)
     }
     // The add-computer sheet, also for an `acpira://pair/…` link opened from outside; the first-run flow pairs in place
     if (pairing != null && pairing.addOpen && !pairing.onboarding) PairSheet(pairing)
@@ -143,9 +146,11 @@ private fun Pages(model: AppModel, pairing: cc.hotic.acpira.store.PairingModel?,
     contentKey = { (screen, _) -> screen?.let { key(it) } ?: "list" },
     label = "stack",
   ) { (screen, d) ->
-    Surface(color = Palette.bg0, modifier = Modifier.fillMaxSize()) {
-      CompositionLocalProvider(LocalNavLead provides if (d == 0 && root != null) rootLead else NavLead.Back) {
-        Page(model, pairing, screen)
+    HandoffPage(screen, overList = root == null && d <= 1, motion = model.motion) {
+      Surface(color = Palette.bg0, modifier = Modifier.fillMaxSize()) {
+        CompositionLocalProvider(LocalNavLead provides if (d == 0 && root != null) rootLead else NavLead.Back) {
+          Page(model, pairing, screen)
+        }
       }
     }
   }

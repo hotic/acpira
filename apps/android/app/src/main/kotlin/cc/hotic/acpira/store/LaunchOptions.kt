@@ -44,6 +44,10 @@ data class LaunchOptions(
   val subagent: String? = null,
   /** With an engine: that project folder's terminal opens on launch */
   val terminal: String? = null,
+  /** `hud.fps` / `hud.hitches` = `YES | NO`: Settings → Developer's overlay switches for this launch, not stored
+   *  (the iOS app's `-acpira.hud.fps YES`) */
+  val hudFps: Boolean? = null,
+  val hudHitches: Boolean? = null,
   /** The launch asked for the demo's fixtures (`screen`, `fixture` or `demo`): no pairing, the synthetic sessions */
   val demo: Boolean = false,
 ) {
@@ -67,10 +71,19 @@ data class LaunchOptions(
         welcome = s("welcome"),
         subagent = s("subagent"),
         terminal = s("terminal"),
+        hudFps = flag(s("hud.fps")),
+        hudHitches = flag(s("hud.hitches")),
         demo = s("screen") != null || s("fixture") != null || s("demo") != null || s("popup") != null || s("draft") != null,
       )
     }
   }
+}
+
+/** A launch switch's value: `YES` / `true` / `1` on, `NO` / `false` / `0` off, anything else unset */
+internal fun flag(value: String?): Boolean? = when (value?.lowercase()) {
+  "yes", "true", "1" -> true
+  "no", "false", "0" -> false
+  else -> null
 }
 
 /** Where the development engine listens: `PORT:TOKEN`, as apps/ios/scripts/engine.sh prints it */

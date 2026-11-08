@@ -311,10 +311,12 @@ fun Composer(
       color = Palette.bg1,
       shape = shape,
       shadowElevation = Metrics.barShadow,
-      modifier = Modifier.fillMaxWidth().border(Metrics.hairline, Palette.line, shape),
+      // Handed over to the list's bar across a push or pop while it rests as the bar (ui/BarHandoff.kt)
+      modifier = Modifier.handoffComposer(atRest = !expanded).fillMaxWidth().border(Metrics.hairline, Palette.line, shape),
     ) {
       Box(
         Modifier
+          .handoffFace(HandoffPart.Composer)
           .fillMaxWidth()
           .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
             focus.requestFocus()
