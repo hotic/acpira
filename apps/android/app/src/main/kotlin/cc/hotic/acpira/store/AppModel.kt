@@ -710,7 +710,7 @@ class AppModel(
       is HostMsg.EditTurnResult -> editAnswered(message.requestId, message.error)
       is HostMsg.ImageBlob, is HostMsg.StagedFile -> media.receive(message)
       is HostMsg.Subagent -> subagents.receive(message)
-      is HostMsg.ProjectFile, is HostMsg.SessionChanges -> files.receive(message)
+      is HostMsg.ProjectFile, is HostMsg.SessionChanges, is HostMsg.DiffSource -> files.receive(message)
       is HostMsg.TerminalOutput, is HostMsg.TerminalState -> terminals.receive(message)
       else -> lists.receive(message)
     }

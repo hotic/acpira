@@ -84,8 +84,8 @@ private fun tailwindRuntime(context: Context): String? = tailwindSource ?: runCa
 }.getOrNull()?.also { tailwindSource = it }
 
 /**
- * The WebView: scripts on, the network blocked, nothing stored, every navigation but the first load refused, the height
- * through a JavaScript interface
+ * The WebView: scripts on, the network blocked, nothing stored, every navigation but the first load and in-page anchors
+ * refused, the height through a JavaScript interface
  */
 @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
 @Composable
@@ -108,8 +108,9 @@ private fun WidgetWebView(html: String, dark: Boolean, scrolls: Boolean, onHeigh
         isHorizontalScrollBarEnabled = false
         addJavascriptInterface(holder.bridge, WidgetDoc.BRIDGE)
         webViewClient = object : WebViewClient() {
-          // Links, forms and scripts stay on the page
-          override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = true
+          // Links, forms and scripts stay on the page; an in-page anchor moves within it (WidgetView.swift)
+          override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
+            !request.url.toString().startsWith(IN_PAGE)
           override fun onPageFinished(view: WebView, url: String?) {
             // The theme the page should show, in case the switch came first
             view.evaluateJavascript(WidgetDoc.theme(holder.dark), null)
@@ -162,6 +163,8 @@ private class WidgetState {
   }
 }
 
+/** The page loads from a string with no base URL, so an `#anchor` link resolves against about:blank */
+private const val IN_PAGE = "about:blank#"
 private const val LOAD_TRIES = 5
 private const val LOAD_BACKOFF_MS = 250L
 /** CSS px stay dp whatever the system font scale (the page reads the app's own type size) */

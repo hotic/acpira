@@ -8,6 +8,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -44,6 +45,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import cc.hotic.acpira.design.IconStore
 import cc.hotic.acpira.design.IconStroke
@@ -59,6 +61,7 @@ import cc.hotic.acpira.model.AgentBlock
 import cc.hotic.acpira.model.AgentTurn
 import cc.hotic.acpira.model.CompactionBlock
 import cc.hotic.acpira.model.CompactionStatus
+import cc.hotic.acpira.model.FailureAction
 import cc.hotic.acpira.model.GoalBlock
 import cc.hotic.acpira.model.NoticeBlock
 import cc.hotic.acpira.model.PlanBlock
@@ -465,25 +468,60 @@ private fun noticeGlyph(block: NoticeBlock, error: Boolean) = when {
 }
 
 /**
+ * Which notice rows of a turn may offer the adapter's remedies (the session's last turn, settled), the notice the turn's
+ * own error card already explains ([suppressId], never drawn twice), and the error notices its closing row carries
+ * instead (`absorbedNotices`)
+ */
+class NoticeScope(val showActions: Boolean = false, val suppressId: String? = null, val absorbed: List<NoticeBlock> = emptyList())
+
+val LocalNoticeScope = androidx.compose.runtime.compositionLocalOf { NoticeScope() }
+
+/**
  * One row per failure (Turns.tsx NoticeRow). A notice with details folds like a thought, the title alone on the row and
  * the details on the rail once open; an error opens by default and marks only its glyph with the warn tone. An info
- * notice only informs, without the triangle
+ * notice only informs, without the triangle. The adapter's remedies (retry, continue in a new session) follow as small
+ * buttons at the label column; sign-in is left to the session card, which says where it happens
  */
 @Composable
 fun NoticeRow(block: NoticeBlock) {
   block.retry?.let { RetryRow(block.id, it); return }
+  val scope = LocalNoticeScope.current
+  if (block.id == scope.suppressId || scope.absorbed.any { it.id == block.id }) return
   val error = block.severity == "error"
   val tint = if (error) Palette.warn else Palette.fg3
   val details = block.details?.takeIf { it.isNotBlank() }
-  if (details != null) {
-    val scope = LocalEntranceScope.current
-    val fold = rememberFold("${scope.scope}:notice:${block.id}", error)
-    Disclosure(fold.open, fold::toggle, icon = noticeGlyph(block, error), iconTint = tint, label = { RowLabel(block.title) }) {
-      NoticeDetails(details)
+  val handlers = LocalChatHandlers.current
+  val buttons = if (error && scope.showActions && handlers != null) {
+    block.actions.orEmpty().filter { it == FailureAction.retry || it == FailureAction.new_session }
+  } else emptyList()
+  Column(verticalArrangement = Arrangement.spacedBy(Metrics.s0_5)) {
+    if (details != null) {
+      val entrance = LocalEntranceScope.current
+      val fold = rememberFold("${entrance.scope}:notice:${block.id}", error)
+      Disclosure(fold.open, fold::toggle, icon = noticeGlyph(block, error), iconTint = tint, label = { RowLabel(block.title) }) {
+        NoticeDetails(details)
+      }
+    } else {
+      AcpRow(icon = noticeGlyph(block, error), iconTint = tint) {
+        Text(block.title, color = if (error) Palette.fg2 else Palette.fg3)
+      }
     }
-  } else {
-    AcpRow(icon = noticeGlyph(block, error), iconTint = tint) {
-      Text(block.title, color = if (error) Palette.fg2 else Palette.fg3)
+    if (buttons.isNotEmpty()) {
+      FlowRow(
+        Modifier.padding(start = WebMetrics.indent, top = Metrics.s1),
+        horizontalArrangement = Arrangement.spacedBy(Metrics.gap),
+        verticalArrangement = Arrangement.spacedBy(Metrics.gap),
+      ) {
+        for (action in buttons) {
+          val retry = action == FailureAction.retry
+          PillButton(
+            t(if (retry) "common.retry" else "notice.continueNew"),
+            onClick = { handlers?.failureAction?.invoke(action) },
+            modifier = Modifier.testTag(if (retry) "notice.row.retry" else "notice.row.new"),
+            compact = true,
+          )
+        }
+      }
     }
   }
 }
@@ -508,14 +546,26 @@ private fun NoticeDetails(text: String) {
 
 private val NOTICE_PATH = Regex("""\s*-\s+(\S+)""")
 
-/** One faint row closing the message: how the turn ended, the error's own words as the target */
+/**
+ * One faint row closing the message: how the turn ended, the error's own words as the target. Error notices the outcome
+ * absorbed follow as quiet detail lines at the label column
+ */
 @Composable
 fun OutcomeRow(turn: AgentTurn, outcome: String) {
+  val absorbed = LocalNoticeScope.current.absorbed
   // A warning glyph for the short stops, none for "stopped" / "no reply"
   val warn = turn.stop != TurnStop.cancelled && turn.stop != TurnStop.end_turn
-  AcpRow(icon = if (warn) "triangleAlert" else null) {
-    RowLabel(outcome)
-    if (turn.stop == TurnStop.error) turn.error?.message?.takeIf { it.isNotBlank() }?.let { RowTarget(it, ink = Palette.fg3) }
+  Column(verticalArrangement = Arrangement.spacedBy(Metrics.s0_5)) {
+    AcpRow(icon = if (warn) "triangleAlert" else null) {
+      RowLabel(outcome)
+      if (turn.stop == TurnStop.error) turn.error?.message?.takeIf { it.isNotBlank() }?.let { RowTarget(it, ink = Palette.fg3) }
+    }
+    for (notice in absorbed) {
+      Text(
+        listOfNotNull(notice.title, notice.details).joinToString("\n"), color = Palette.fg3, style = WebType.text3,
+        modifier = Modifier.padding(start = if (warn) WebMetrics.indent else Metrics.s0),
+      )
+    }
   }
 }
 

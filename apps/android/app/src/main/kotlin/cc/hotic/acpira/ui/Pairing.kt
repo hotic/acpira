@@ -51,6 +51,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -162,7 +164,10 @@ private fun PairGlyph(icon: String, ink: androidx.compose.ui.graphics.Color, che
 @Composable
 fun PairPathTag(path: PathKind) {
   Box(
-    Modifier.height(Metrics.pairPathH).background(Palette.active, RoundedCornerShape(Metrics.rXs)).padding(horizontal = Metrics.pairPathX).testTag("pair.path"),
+    Modifier.height(Metrics.pairPathH).background(Palette.active, RoundedCornerShape(Metrics.rXs)).padding(horizontal = Metrics.pairPathX)
+      .testTag("pair.path")
+      // Read out after "Connected", which the tag stands for
+      .clearAndSetSemantics { contentDescription = listOf(t("mobile.pair.connected"), pathLabel(path)).joinToString(t("common.metaSep")) },
     contentAlignment = Alignment.Center,
   ) { Text(pathLabel(path), color = Palette.fg2, fontSize = Type.text4, maxLines = 1) }
 }

@@ -1,9 +1,13 @@
 package cc.hotic.acpira.ui
 
+import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.provider.MediaStore
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.text.format.Formatter
@@ -66,6 +70,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
 import cc.hotic.acpira.design.LocalDark
 import cc.hotic.acpira.design.Lucide
@@ -462,10 +467,15 @@ fun downloadLine(context: Context, transfer: VideoCache.Transfer): String? {
 
 /**
  * The phone's player over everything (iOS opens Quick Look): the platform's VideoView with its own controls, over black,
- * playing at once; ✕ or back closes it
+ * playing at once; ✕ or back closes it. Save and share sit at the bar's end as on the Lightbox: save puts the video in
+ * the phone's Movies, share hands it to the system share sheet (Quick Look's share button on iOS)
  */
 @Composable
 fun VideoPlayer(file: File, name: String, onClose: () -> Unit) {
+  val context = LocalContext.current
+  val scope = rememberCoroutineScope()
+  var saved by remember { mutableStateOf(false) }
+  LaunchedEffect(saved) { if (saved) { kotlinx.coroutines.delay(SAVED_MS); saved = false } }
   Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
     val window = (LocalView.current.parent as? DialogWindowProvider)?.window
     val view = LocalView.current
@@ -493,13 +503,56 @@ fun VideoPlayer(file: File, name: String, onClose: () -> Unit) {
           }
           Text(
             name, color = Palette.fg1, fontSize = Type.text1, fontWeight = FontWeight.SemiBold, maxLines = 1,
-            overflow = TextOverflow.MiddleEllipsis, textAlign = TextAlign.Center, modifier = Modifier.weight(1f).padding(end = Metrics.barCtl),
+            overflow = TextOverflow.MiddleEllipsis, textAlign = TextAlign.Center, modifier = Modifier.weight(1f),
           )
+          IconButton(
+            onClick = { scope.launch { if (saveVideo(context, file, name)) saved = true } },
+            modifier = Modifier.testTag("media.player.save"),
+          ) { Lucide(if (saved) "check" else "download", Palette.fg1, size = Metrics.iconCtl, contentDescription = t("mobile.save")) }
+          IconButton(onClick = { shareVideo(context, file, name) }, modifier = Modifier.testTag("media.player.share")) {
+            androidx.compose.material3.Icon(shareGlyph, t("mobile.share"), Modifier.padding(Metrics.s0_5), tint = Palette.fg1)
+          }
         }
       }
     }
   }
 }
+
+/** A video file's type from its extension, the player's usual MP4 when the extension says nothing */
+private fun videoMime(file: File): String =
+  android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase())?.takeIf { it.startsWith("video/") } ?: "video/mp4"
+
+/** The file name the video goes out under: its own name when it has a video extension, else the cached file's */
+private fun videoFileName(file: File, name: String): String =
+  name.takeIf { isVideoName(it) }?.replace(Regex("[/\\\\:]"), "_") ?: file.name
+
+/** The system share sheet with the video (FileProvider hands out the cached or picked copy) */
+private fun shareVideo(context: Context, file: File, name: String) {
+  val uri = runCatching { FileProvider.getUriForFile(context, "${context.packageName}.files", file) }.getOrNull() ?: return
+  val send = Intent(Intent.ACTION_SEND).setType(videoMime(file)).putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+  send.clipData = android.content.ClipData.newUri(context.contentResolver, videoFileName(file, name), uri)
+  context.startActivity(Intent.createChooser(send, name).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+}
+
+/** The video into the phone's Movies/Acpira (MediaStore, no permission from Android 10 on); false when it failed */
+private suspend fun saveVideo(context: Context, file: File, name: String): Boolean = withContext(Dispatchers.IO) {
+  runCatching {
+    val resolver = context.contentResolver
+    val values = ContentValues().apply {
+      put(MediaStore.Video.Media.DISPLAY_NAME, videoFileName(file, name))
+      put(MediaStore.Video.Media.MIME_TYPE, videoMime(file))
+      put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/Acpira")
+      put(MediaStore.Video.Media.IS_PENDING, 1)
+    }
+    val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: return@runCatching false
+    resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } }
+    resolver.update(uri, ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }, null, null)
+    true
+  }.getOrDefault(false)
+}
+
+/** How long save's tick stands before the glyph returns (the Lightbox's) */
+private const val SAVED_MS = 1_500L
 
 /** The ring's stroke and inset are an eighth of its box, the track a quarter of the ink (ContextUsage.swift) */
 private const val RING_PARTS = 8

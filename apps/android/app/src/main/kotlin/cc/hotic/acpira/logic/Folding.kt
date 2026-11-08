@@ -149,6 +149,13 @@ fun visibleToolContents(block: ToolCallBlock): List<ToolContent> {
 private val explicitPath = Regex("""^(?:\.{0,2}/|[A-Za-z]:[\\/])""")
 private val barePath = Regex("""[^\s:]+[.][\w-]+""")
 private val hitLine = Regex("""^(.+?):(\d+)(?::\d+)?(?::.*)?$""")
+private val lineSuffix = Regex("""^(.+?):(\d+)(?:[–-]\d+)?(?::\d+)?$""")
+
+/** fileReference: a file hit's path and the line it points at, if any (`a.ts:12`, `a.ts:3–9`) */
+fun fileReference(hit: String): Pair<String, Int?> {
+  val m = lineSuffix.find(hit) ?: return hit to null
+  return m.groupValues[1] to m.groupValues[2].toIntOrNull()
+}
 
 private fun fileHit(raw: String): String? {
   val text = raw.removePrefix("file://")

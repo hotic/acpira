@@ -9,10 +9,12 @@ import cc.hotic.acpira.logic.openTurnControls
 import cc.hotic.acpira.logic.pendingPlanReview
 import cc.hotic.acpira.logic.reviseOption
 import cc.hotic.acpira.model.AgentTurn
+import cc.hotic.acpira.model.AsyncTaskInfo
 import cc.hotic.acpira.model.Attachment
 import cc.hotic.acpira.model.CompactionBlock
 import cc.hotic.acpira.model.CompactionStatus
 import cc.hotic.acpira.model.Draft
+import cc.hotic.acpira.model.FailureAction
 import cc.hotic.acpira.model.GoalAction
 import cc.hotic.acpira.model.GoalBlock
 import cc.hotic.acpira.model.GoalEvent
@@ -226,6 +228,47 @@ fun AppModel.continueNew(id: String) {
   val view = views[id] ?: return
   push(Screen.New(agent = view.agent, cwd = view.cwd.takeUnless { isChat(it) }))
 }
+
+/**
+ * An AIR failure notice's remedy: a real turn retries its prompt, a session-scoped failure (no turn started) restarts
+ * the session; sign-in belongs to the session card
+ */
+fun AppModel.failureAction(id: String, action: FailureAction) {
+  when (action) {
+    FailureAction.retry -> if ((views[id]?.turns?.lastOrNull() as? AgentTurn)?.startedAt != null) retryTurn(id) else restart(id)
+    FailureAction.new_session -> continueNew(id)
+    FailureAction.login, FailureAction.unknown -> {}
+  }
+}
+
+// Background tasks
+
+/**
+ * Stop on a background task's row. The engine marks the stop asked at once and the adapter's state update settles the
+ * row; a refusal comes back as the engine's error toast with the row live again. The demo stops it a beat later
+ */
+fun AppModel.stopTask(id: String, task: String) {
+  if (post(WebviewMsg.StopAsyncTask(id, task))) return
+  updateTask(id, task) { it.copy(stopRequested = true) }
+  chat.scope.launch {
+    // Long enough to read "Stopping…"
+    delay(DEMO_STOP_MS)
+    updateTask(id, task) { it.copy(stopRequested = null, state = "stopped") }
+  }
+}
+
+/** Rewrites the task on every row that carries it */
+private fun AppModel.updateTask(id: String, task: String, change: (AsyncTaskInfo) -> AsyncTaskInfo) = edit(id) { v ->
+  v.copy(turns = v.turns.map { turn ->
+    if (turn !is AgentTurn) turn
+    else turn.copy(blocks = turn.blocks.map { b ->
+      val info = (b as? ToolCallBlock)?.asyncTask
+      if (info != null && info.id == task) b.copy(asyncTask = change(info)) else b
+    })
+  })
+}
+
+private const val DEMO_STOP_MS = 1_000L
 
 /** Demo: whatever held the session back is resolved */
 private fun AppModel.settleStatus(id: String) = edit(id) { it.copy(status = SessionStatus.ready, error = null, authMethods = null, canTakeOver = null) }

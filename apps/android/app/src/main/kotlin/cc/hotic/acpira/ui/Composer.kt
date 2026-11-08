@@ -89,6 +89,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -784,7 +786,13 @@ private fun ContextRing(usage: Usage, motion: Boolean) {
   )
   var open by remember { mutableStateOf(false) }
   val ink = Palette.fg2
-  Box(Modifier.width(Metrics.ctlSm).height(Metrics.barCtl).clip(CircleShape).clickable { open = !open }.testTag("composer.context"), contentAlignment = Alignment.Center) {
+  val pct = if (usage.size > 0) (min(1f, usage.used.toFloat() / usage.size) * 100).toInt() else 0
+  val aria = if (stale) t("usage.compactedStale") else t("usage.usedPct", "pct" to pct)
+  Box(
+    Modifier.width(Metrics.ctlSm).height(Metrics.barCtl).clip(CircleShape).clickable { open = !open }
+      .semantics { contentDescription = aria }.testTag("composer.context"),
+    contentAlignment = Alignment.Center,
+  ) {
     Canvas(Modifier.size(Metrics.icon).padding(Metrics.icon / RING_PARTS)) {
       val stroke = (Metrics.icon / RING_PARTS).toPx()
       drawCircle(ink.copy(alpha = ink.alpha * RING_TRACK), style = Stroke(stroke))
