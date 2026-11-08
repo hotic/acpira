@@ -39,7 +39,13 @@ import kotlinx.serialization.json.Json
 // writes it from lucide-react and chat/marks.tsx): the same geometry the webview and the iOS app draw.
 
 @Serializable
-private data class IconSet(val lucide: Map<String, List<String>>, val marks: Marks, val brands: List<List<String>> = emptyList()) {
+private data class IconSet(
+  val lucide: Map<String, List<String>>,
+  val marks: Marks,
+  val brands: List<List<String>> = emptyList(),
+  /** A vendor's own colour by brand key, six hex digits (shared/models.ts BRAND_COLOR) */
+  val colors: Map<String, String> = emptyMap(),
+) {
   @Serializable
   data class Marks(val paths: Map<String, List<String>>, val alias: Map<String, String>)
 }
@@ -88,6 +94,13 @@ object IconStore {
     val lower = model.lowercase()
     return rules.firstOrNull { it.first.containsMatchIn(lower) }?.second
   }
+
+  /**
+   * A vendor's own colour (the sidekick's live dot); null for a brand without one, which keeps the neutral ink, never an
+   * app colour in the vendor's place (ui-conventions.md)
+   */
+  fun color(context: Context, brand: String?): Color? =
+    brand?.let { load(context).colors[it] }?.toLongOrNull(16)?.let { Color(0xff000000 or it) }
 
   /** Marks the engine sent with its agents (AgentInfo.mark: plugin and agents.json agents), by agent id */
   private val adopted = HashMap<String, List<String>>()

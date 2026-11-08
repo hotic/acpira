@@ -114,9 +114,7 @@ object ModelVisibility {
 
 /** The settings' models page data (Settings/EngineSettings.swift ModelSettings, AgentPage.tsx ModelsSection) */
 object ModelSettings {
-  private const val sidekick = "_sidekick"
-  private const val sidekickEffort = "_sidekick_effort"
-  private const val sidekickFast = "_sidekick_fast"
+  private val sidekick = setOf(ComposerControls.sidekickCategory, ComposerControls.sidekickEffortCategory, ComposerControls.sidekickFastCategory)
 
   data class Catalog(val control: ConfigControl, val families: List<ModelFamily>)
   data class Group(val control: ConfigControl, val key: String, val title: String, val rows: List<ModelFamily>, val sources: List<String>)
@@ -124,7 +122,7 @@ object ModelSettings {
   /** The controls whose options are models (no reasoning levels, no switches, not the built-in agent's sidekick pick,
    *  its levels and its Fast), their families newest first; null before the engine answered */
   fun catalogs(controls: List<ConfigControl>?): List<Catalog>? =
-    controls?.filter { !ComposerControls.isReasoning(it) && it.type != "boolean" && it.category !in setOf(sidekick, sidekickEffort, sidekickFast) }
+    controls?.filter { !ComposerControls.isReasoning(it) && it.type != "boolean" && it.category !in sidekick }
       ?.map { Catalog(it, ModelVisibility.prioritize(ModelCatalog.group(it.options) { null })) }
 
   /** Families shown and listed over every catalog */
@@ -161,11 +159,14 @@ object ModelSettings {
     if (f.variants.size == 1) {
       val v = f.variants.first()
       if (v.name == f.name) return null
+      if (v.lead != null) return ModelCatalog.fusionLabel(v)
       val parts = listOf(v.effort, if (v.fast) "Fast" else "", if (v.long) "1M" else "").filter { it.isNotEmpty() }
       return if (parts.isEmpty()) t("composer.standard") else parts.joinToString(" ")
     }
+    val fusion = f.fusion?.let { t("composer.fusionSummary", "leads" to it.leads.size, "sidekicks" to it.sidekicks.size) }
     val levels = f.efforts.filter { it.isNotEmpty() }
     val parts = listOfNotNull(
+      fusion,
       if (levels.isEmpty()) null else "${t("settings.providers.model.thinking")} ${levels.joinToString(" / ")}",
       if (f.hasFast) "Fast" else null,
       if (f.hasLong) t("settings.providers.model.ctx", "n" to "1M") else null,

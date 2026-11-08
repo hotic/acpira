@@ -1,11 +1,12 @@
 // Writes the lucide icons the webview imports and the vendor marks as one JSON asset for the Android app:
 // `pnpm exec tsx scripts/export/android-icons.ts`. Every element becomes SVG path data in lucide's 24-unit box, which
-// the app parses with Compose's PathParser (stroked for lucide, filled even-odd for marks); `brands` maps a model name to its mark, so icons match the webview
+// the app parses with Compose's PathParser (stroked for lucide, filled even-odd for marks); `brands` maps a model name to its mark and `colors` a brand to
+// its own colour, so icons match the webview
 // and the iOS app. test/android-icons.test.ts fails when the committed file drifts from the imports.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type Attrs, type IconNode, brandRules, lucideNodes, vendorMarks } from './ios-icons';
+import { type Attrs, type IconNode, brandColors, brandRules, lucideNodes, vendorMarks } from './ios-icons';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
 export const ANDROID_ICONS_FILE = join(root, 'apps/android/app/src/main/assets/icons.json');
@@ -48,7 +49,7 @@ const camel = (pascal: string) => pascal[0]!.toLowerCase() + pascal.slice(1);
 export async function androidIconsJson(): Promise<string> {
   const lucide: Record<string, string[]> = {};
   for (const [name, node] of await lucideNodes() as [string, IconNode][]) lucide[camel(name)] = node.map(pathData);
-  return `${JSON.stringify({ lucide, marks: vendorMarks(), brands: brandRules() }, null, 1)}\n`;
+  return `${JSON.stringify({ lucide, marks: vendorMarks(), brands: brandRules(), colors: brandColors() }, null, 1)}\n`;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

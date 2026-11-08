@@ -9,11 +9,24 @@ import kotlinx.serialization.json.JsonPrimitive
 
 // apps/ios Logic/ModelCatalog.swift (shared/models.ts + shared/composerControls.ts): the model list rebuilt from flat
 // option names (Devin flattens model × effort × Fast × 1M into one select), the native reasoning / Fast controls. The
-// wire ids stay untouched; only the presentation is derived. Fusion pairs and the built-in agent's sidekick are not
-// ported: their families still list and pick, without the lead / sidekick beans
+// wire ids stay untouched; only the presentation is derived.
 
-/** One option of a family: the wire id plus the dimensions parsed from its name */
-data class ModelVariant(val id: String, val name: String, val effort: String, val fast: Boolean, val long: Boolean)
+/**
+ * One option of a family: the wire id plus the dimensions parsed from its name. Fusion only: [lead] is the lead family
+ * (effort / fast describe it) and [sidekick] the sidekick's label ("SWE-2 High")
+ */
+data class ModelVariant(
+  val id: String,
+  val name: String,
+  val effort: String,
+  val fast: Boolean,
+  val long: Boolean,
+  val lead: String? = null,
+  val sidekick: String? = null,
+)
+
+/** A Fusion family's lead families and sidekick labels, in first-seen order */
+data class Fusion(val leads: List<String>, val sidekicks: List<String>)
 
 /** A model family: one row of the model panel, its variants the params underneath */
 data class ModelFamily(
@@ -29,9 +42,13 @@ data class ModelFamily(
   val source: String? = null,
   /** `official` / `custom`, from the agent adapter's source metadata */
   val sourceKind: String? = null,
+  /** Fusion only: its pairs' leads and sidekicks */
+  val fusion: Fusion? = null,
 )
 
 object ModelCatalog {
+  const val fusion = "Fusion"
+  private val fusionName = Regex("""^Fusion\s*\((.+?)\s+\+\s+(.+)\)$""", RegexOption.IGNORE_CASE)
   private val levels = mapOf(
     "none" to "None", "minimal" to "Minimal", "low" to "Low", "medium" to "Medium", "high" to "High",
     "xhigh" to "XHigh", "x-high" to "XHigh", "max" to "Max",
@@ -39,7 +56,28 @@ object ModelCatalog {
   private val effortOrder = listOf("", "Thinking", "None", "Minimal", "Low", "Medium", "High", "XHigh", "Max")
   fun rank(effort: String): Int = effortOrder.indexOf(effort).takeIf { it >= 0 } ?: effortOrder.size
 
-  data class Parsed(val family: String, val effort: String, val fast: Boolean, val long: Boolean)
+  data class Parsed(
+    val family: String,
+    val effort: String,
+    val fast: Boolean,
+    val long: Boolean,
+    val lead: String? = null,
+    val sidekick: String? = null,
+  )
+
+  /**
+   * "Fusion (GPT-6 Astra High Thinking Fast + GPT-5.6 Luna High Thinking Fast)": lead GPT-6 Astra at High, sidekick
+   * "GPT-5.6 Luna High", Fast from either side (one pair-level switch on the wire)
+   */
+  fun parseFusion(name: String): Parsed? {
+    val m = fusionName.find(name.trim()) ?: return null
+    val lead = parse(m.groupValues[1])
+    val sk = parse(m.groupValues[2])
+    return Parsed(
+      fusion, lead.effort, lead.fast || sk.fast, lead.long, lead = lead.family,
+      sidekick = listOf(sk.family, sk.effort).filter { it.isNotEmpty() }.joinToString(" "),
+    )
+  }
 
   private fun effortTokens(tokens: List<String>): Pair<List<String>, String> {
     val w = tokens.toMutableList()
@@ -60,6 +98,7 @@ object ModelCatalog {
 
   /** `<family> [effort] [Thinking] [Fast] [1M]`, the effort also in parentheses */
   fun parse(name: String): Parsed {
+    parseFusion(name)?.let { return it }
     val t = name.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }.toMutableList()
     var fast = false
     var long = false
@@ -106,14 +145,16 @@ object ModelCatalog {
 
   /** Options grouped into families in first-seen order, variants sorted by effort, Fast, 1M */
   fun group(options: List<SessionOption>, brandOf: (SessionOption) -> String?): List<ModelFamily> {
-    data class Tuple(val ns: String?, val family: String, val effort: String, val fast: Boolean, val long: Boolean)
+    data class Tuple(
+      val ns: String?, val family: String, val effort: String, val fast: Boolean, val long: Boolean, val lead: String?, val sidekick: String?,
+    )
     // With no provider metadata, equal parameter tuples are ambiguous, not interchangeable
     val tuples = HashSet<Tuple>()
     val ambiguous = HashSet<Pair<String?, String>>()
     for (o in options) {
       val p = parse(o.name)
       val ns = o.source?.id ?: o.group?.id
-      val tuple = Tuple(ns, p.family, p.effort, p.fast, p.long)
+      val tuple = Tuple(ns, p.family, p.effort, p.fast, p.long, p.lead, p.sidekick)
       if (!tuples.add(tuple)) ambiguous.add(ns to p.family)
     }
     val order = mutableListOf<String>()
@@ -121,6 +162,8 @@ object ModelCatalog {
     val brands = HashMap<String, String?>()
     val sources = HashMap<String, Pair<String?, String?>>()
     val variants = HashMap<String, MutableList<ModelVariant>>()
+    val leads = HashMap<String, MutableList<String>>()
+    val sidekicks = HashMap<String, MutableList<String>>()
     for (o in options) {
       val p = parse(o.name)
       val ns = o.source?.id ?: o.group?.id
@@ -133,11 +176,24 @@ object ModelCatalog {
         sources[key] = (o.source?.name ?: o.group?.name ?: if (separate) o.id else null) to o.source?.kind
         variants[key] = mutableListOf()
       }
-      if (brands[key] == null) brands[key] = brandOf(o)
-      variants.getValue(key).add(ModelVariant(o.id, o.name, p.effort, p.fast, p.long))
+      // Fusion pairs are Devin's own routing, like Adaptive
+      if (brands[key] == null) brands[key] = if (p.lead != null) "devin" else brandOf(o)
+      p.lead?.let { lead ->
+        val ls = leads.getOrPut(key) { mutableListOf() }
+        if (lead !in ls) ls.add(lead)
+        val ss = sidekicks.getOrPut(key) { mutableListOf() }
+        p.sidekick?.let { if (it !in ss) ss.add(it) }
+      }
+      variants.getValue(key).add(ModelVariant(o.id, o.name, p.effort, p.fast, p.long, p.lead, if (p.lead != null) p.sidekick else null))
     }
     return order.map { key ->
-      val vs = variants.getValue(key).sortedWith(compareBy<ModelVariant> { rank(it.effort) }.thenBy { it.fast }.thenBy { it.long })
+      val fusion = leads[key]?.let { Fusion(it, sidekicks[key].orEmpty()) }
+      // Pairs sort by lead, effort, sidekick, then Fast and 1M
+      val leadRank = { v: ModelVariant -> fusion?.leads?.indexOf(v.lead.orEmpty())?.coerceAtLeast(0) ?: 0 }
+      val skRank = { v: ModelVariant -> fusion?.sidekicks?.indexOf(v.sidekick.orEmpty())?.coerceAtLeast(0) ?: 0 }
+      val vs = variants.getValue(key).sortedWith(
+        compareBy<ModelVariant> { leadRank(it) }.thenBy { rank(it.effort) }.thenBy { skRank(it) }.thenBy { it.fast }.thenBy { it.long },
+      )
       ModelFamily(
         key = key,
         name = names.getValue(key),
@@ -148,6 +204,7 @@ object ModelCatalog {
         hasLong = vs.any { it.long },
         source = sources[key]?.first,
         sourceKind = sources[key]?.second,
+        fusion = fusion,
       )
     }
   }
@@ -161,6 +218,32 @@ object ModelCatalog {
     return hit(fast, long) ?: hit(fast, false) ?: hit(false, long) ?: hit(false, false) ?: f.variants.firstOrNull { it.effort == effort }
   }
 
+  /** The offered Fusion pair nearest to lead × effort × sidekick × fast */
+  fun findFusionVariant(f: ModelFamily, lead: String, effort: String, sidekick: String?, fast: Boolean): ModelVariant? {
+    val ofLead = f.variants.filter { it.lead == lead }
+    val pool = ofLead.ifEmpty { f.variants }
+    fun hit(e: String, sk: String?, fa: Boolean) = pool.firstOrNull { it.effort == e && (sk == null || it.sidekick == sk) && it.fast == fa }
+    fun at(e: String) = hit(e, sidekick, fast) ?: hit(e, sidekick, false) ?: hit(e, null, fast) ?: hit(e, null, false)
+    // The other levels, nearest first, the stronger of two equally near
+    val nearest = pool.map { it.effort }.filter { it != effort }.distinct().sortedWith(
+      compareBy<String> { kotlin.math.abs(rank(it) - rank(effort)) }.thenByDescending { rank(it) },
+    )
+    return at(effort) ?: nearest.firstNotNullOfOrNull { at(it) } ?: pool.firstOrNull()
+  }
+
+  /** "GPT-6 Astra High + SWE-2 High Fast" */
+  fun fusionLabel(v: ModelVariant): String {
+    val lead = listOf(v.lead.orEmpty(), v.effort).filter { it.isNotEmpty() }.joinToString(" ")
+    val sk = listOf(v.sidekick.orEmpty(), if (v.fast) "Fast" else "").filter { it.isNotEmpty() }.joinToString(" ")
+    return listOf(lead, sk).filter { it.isNotEmpty() }.joinToString(" + ")
+  }
+
+  /** The levels the pair's lead is offered at */
+  fun fusionEfforts(f: ModelFamily, v: ModelVariant): List<String> {
+    val lead = v.lead ?: f.fusion?.leads?.firstOrNull().orEmpty()
+    return f.efforts.filter { e -> f.variants.any { it.lead == lead && it.effort == e } }
+  }
+
   /** A Standard / Thinking pair is a Thinking switch rather than two levels */
   fun thinkingOnly(f: ModelFamily) = f.efforts.size == 2 && "" in f.efforts && "Thinking" in f.efforts
   fun variantScale(f: ModelFamily) = f.efforts.size > 1 && !thinkingOnly(f)
@@ -170,6 +253,12 @@ object ModelCatalog {
 object ComposerControls {
   private val levels = listOf("None", "Minimal", "Low", "Medium", "High", "XHigh", "Max", "Ultra", "Thinking")
   const val permissionCategory = "_permission_mode"
+  /** The built-in agent's sidekick select (custom category), its level and its Fast, the model chip's last bean */
+  const val sidekickCategory = "_sidekick"
+  const val sidekickEffortCategory = "_sidekick_effort"
+  const val sidekickFastCategory = "_sidekick_fast"
+  /** The sidekick's value for none */
+  const val noSidekick = "none"
 
   private fun compact(value: String) =
     value.lowercase().replace(Regex("reasoning|thinking|effort|level"), "").replace(Regex("[\\s_-]"), "")
@@ -233,10 +322,12 @@ object ComposerControls {
   fun fastOn(c: ConfigControl) = c.value == (if (c.type == "boolean") "true" else "fast")
   fun fastValue(c: ConfigControl, on: Boolean) = if (c.type == "boolean") on.toString() else if (on) "fast" else "standard"
 
-  /** The toolbar's split; the controls left in `other` have no place on the phone */
+  /** The toolbar's split; the controls that fit nowhere have no place on the phone */
   data class Split(
     val models: List<ConfigControl>, val reasoning: List<ConfigControl>, val modelConfig: List<ConfigControl>,
     val collaboration: List<ConfigControl>, val permission: List<ConfigControl>,
+    val sidekick: List<ConfigControl> = emptyList(), val sidekickEffort: List<ConfigControl> = emptyList(),
+    val sidekickFast: List<ConfigControl> = emptyList(),
   )
 
   fun split(options: List<ConfigControl>, brandOf: (SessionOption) -> String?): Split {
@@ -245,17 +336,23 @@ object ComposerControls {
     val modelConfig = mutableListOf<ConfigControl>()
     val collaboration = mutableListOf<ConfigControl>()
     val permission = mutableListOf<ConfigControl>()
+    val sidekick = mutableListOf<ConfigControl>()
+    val sidekickEffort = mutableListOf<ConfigControl>()
+    val sidekickFast = mutableListOf<ConfigControl>()
     for (c in options) {
       when {
         isReasoning(c) -> reasoning.add(c)
         c.category == "collaboration_mode" && c.type != "boolean" -> collaboration.add(c)
         c.category == permissionCategory && c.type != "boolean" -> permission.add(c)
+        c.category == sidekickCategory && c.type != "boolean" -> sidekick.add(c)
+        c.category == sidekickEffortCategory && c.type != "boolean" -> sidekickEffort.add(c)
+        c.category == sidekickFastCategory -> sidekickFast.add(c)
         c.category == "model_config" -> modelConfig.add(c)
         c.type != "boolean" && (c.category == "model" ||
           (c.category == null && (c.id == "model" || ModelCatalog.group(c.options, brandOf).size < c.options.size))) -> models.add(c)
       }
     }
-    return Split(models, reasoning, modelConfig, collaboration, permission)
+    return Split(models, reasoning, modelConfig, collaboration, permission, sidekick, sidekickEffort, sidekickFast)
   }
 }
 
@@ -268,8 +365,8 @@ class Effort(val levels: List<Pair<String, String>>, val value: String, val pick
 
 /**
  * What the composer's model chip offers, read from the session's controls (Goo.swift ModelChoices): the model
- * families, the reasoning levels with Fast, the modes, the working mode and the approval level. [standard] names the
- * level-less variant (composer.standard)
+ * families, the reasoning levels with Fast, the modes, the working mode, the approval level, a Fusion pair's lead and
+ * sidekick, and the built-in agent's sidekick. [standard] names the level-less variant (composer.standard)
  */
 class ModelChoices(
   controls: SessionControls,
@@ -286,6 +383,10 @@ class ModelChoices(
   val modes: List<SessionOption>
   val collaboration: ConfigControl?
   val access: ConfigControl?
+  /** The built-in agent's sidekick select, its level and its Fast (the last bean opens them as beans of their own) */
+  val sidekick: ConfigControl?
+  val sidekickEffort: ConfigControl?
+  val sidekickFast: Toggle?
   private val nativeFast: Toggle?
 
   init {
@@ -301,6 +402,9 @@ class ModelChoices(
     modes = if (controls.modes.size > 1) controls.modes else emptyList()
     collaboration = split.collaboration.firstOrNull { it.options.size > 1 }
     access = split.permission.firstOrNull { it.options.size > 1 }
+    sidekick = split.sidekick.firstOrNull()
+    sidekickEffort = split.sidekickEffort.firstOrNull()
+    sidekickFast = split.sidekickFast.firstOrNull()?.let { nativeToggle(it) }
   }
 
   /** Devin's Standard / Fast select or an adapter boolean as one switch */
@@ -314,7 +418,21 @@ class ModelChoices(
     val f = cur
     val v = curVar
     val id = modelId
-    if (f != null && v != null && id != null && (ModelCatalog.variantScale(f) || ModelCatalog.thinkingOnly(f))) {
+    var fusionFast: Toggle? = null
+    if (f?.fusion != null && v != null && id != null) {
+      // A pair's level and Fast are the pair's own: each pick writes the offered pair nearest to it
+      val pick = { e: String, fast: Boolean ->
+        ModelCatalog.findFusionVariant(f, v.lead.orEmpty(), e, v.sidekick, fast)?.let { onSetConfig(id, it.id) }; Unit
+      }
+      if (f.hasFast) {
+        // No Fast for this exact pair: never jump to another sidekick just to offer it
+        val can = f.variants.any { it.lead == v.lead && it.effort == v.effort && it.sidekick == v.sidekick && it.fast != v.fast }
+        fusionFast = Toggle(v.fast, !can) { pick(v.effort, it) }
+      }
+      val levels = ModelCatalog.fusionEfforts(f, v)
+      if (levels.size > 1) return Effort(levels.map { it to it.ifEmpty { standard } }, v.effort, { pick(it, v.fast) }, fusionFast ?: nativeFast, null)
+    }
+    if (f != null && v != null && id != null && f.fusion == null && (ModelCatalog.variantScale(f) || ModelCatalog.thinkingOnly(f))) {
       val fast = if (f.hasFast) {
         fun at(long: Boolean) = f.variants.firstOrNull { it.effort == v.effort && it.fast == !v.fast && it.long == long }
         val hit = at(false) ?: at(v.long)
@@ -330,13 +448,17 @@ class ModelChoices(
       }
       return Effort(f.efforts.map { it to it.ifEmpty { standard } }, v.effort, pick, fast, null)
     }
-    val c = split.reasoning.firstOrNull { ComposerControls.reasoningVisible(it) } ?: return null
-    val p = ComposerControls.presentReasoning(c)
-    // Turned back on at High, else the first level, else the agent's own "on"
-    val turnOn = p.efforts.firstOrNull { it.id == "high" }?.id ?: p.efforts.firstOrNull()?.id ?: p.onId
-    val thinking = p.offId?.let { off -> Toggle(!p.off, false) { on -> if (!on) onSetConfig(c.id, off) else turnOn?.let { onSetConfig(c.id, it) } } }
-    if (p.efforts.size <= 1 && thinking == null) return null
-    return Effort(p.efforts.map { it.id to it.name }, if (p.off) "" else p.value.orEmpty(), { onSetConfig(c.id, it) }, nativeFast, thinking)
+    val c = split.reasoning.firstOrNull { ComposerControls.reasoningVisible(it) }
+    if (c != null) {
+      val p = ComposerControls.presentReasoning(c)
+      // Turned back on at High, else the first level, else the agent's own "on"
+      val turnOn = p.efforts.firstOrNull { it.id == "high" }?.id ?: p.efforts.firstOrNull()?.id ?: p.onId
+      val thinking = p.offId?.let { off -> Toggle(!p.off, false) { on -> if (!on) onSetConfig(c.id, off) else turnOn?.let { onSetConfig(c.id, it) } } }
+      if (p.efforts.size <= 1 && thinking == null) return null
+      return Effort(p.efforts.map { it.id to it.name }, if (p.off) "" else p.value.orEmpty(), { onSetConfig(c.id, it) }, fusionFast ?: nativeFast, thinking)
+    }
+    // A fixed lead level can still have pair-level Fast, without a reasoning bean to own it
+    return fusionFast?.let { Effort(emptyList(), v?.effort.orEmpty(), {}, it, null) }
   }
 
   val hasModel get() = cur != null && modelId != null
@@ -345,10 +467,40 @@ class ModelChoices(
   /** Fast, when the model in use can switch it at the level in force, or while it is on */
   val fast: Toggle? get() = (effort?.fast ?: nativeFast)?.takeUnless { it.disabled && !it.on }
 
-  /** ModelPanel.pickFamily: the effort and Fast in force carry over where the family offers them */
+  /** The Fusion family's leads and sidekicks while a pair is in use */
+  val fusion: Fusion? get() = cur?.fusion
+
+  /** Keeps the lead's effort and the other side where possible; the shared resolver picks the nearest offered pair */
+  fun pickFusion(lead: String? = null, effort: String? = null, sidekick: String? = null, fast: Boolean? = null) {
+    val f = cur ?: return
+    val v = curVar ?: return
+    val id = modelId ?: return
+    if (f.fusion == null) return
+    val hit = ModelCatalog.findFusionVariant(f, lead ?: v.lead.orEmpty(), effort ?: v.effort, sidekick ?: v.sidekick, fast ?: v.fast) ?: return
+    onSetConfig(id, hit.id)
+  }
+
+  /** Whether a pair with this sidekick exists for the lead at its level (the rest stay listed, disabled) */
+  fun offersSidekick(name: String): Boolean {
+    val f = cur ?: return false
+    val v = curVar ?: return false
+    return f.variants.any { it.lead == v.lead && it.effort == v.effort && it.sidekick == name }
+  }
+
+  /** ModelPanel.pickFamily: into Fusion the model in use becomes the lead; out of it the lead's effort carries over */
   fun pickFamily(f: ModelFamily) {
     val id = modelId ?: return
-    val next = curVar?.let { ModelCatalog.findVariant(f, it.effort, it.fast, false) } ?: f.variants.firstOrNull()
-    next?.let { onSetConfig(id, it.id) }
+    val v = curVar
+    val next = if (f.fusion != null) {
+      ModelCatalog.findFusionVariant(f, v?.lead ?: cur?.name.orEmpty(), v?.effort.orEmpty(), v?.sidekick, v?.fast ?: false)
+    } else v?.let { ModelCatalog.findVariant(f, it.effort, it.fast, false) }
+    (next ?: f.variants.firstOrNull())?.let { onSetConfig(id, it.id) }
   }
+
+  /** The sidekick picked, null while the select reads None */
+  val sidekickPicked: SessionOption?
+    get() = sidekick?.let { sk ->
+      val current = sk.value ?: ComposerControls.noSidekick
+      sk.options.firstOrNull { it.id == current && it.id != ComposerControls.noSidekick }
+    }
 }

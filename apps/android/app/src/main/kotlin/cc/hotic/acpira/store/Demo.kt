@@ -27,7 +27,7 @@ object Fixtures {
   val sessionNames = listOf(
     "showcase", "running", "streaming", "question", "queued", "stopped", "empty", "diagrams", "media", "plan", "notices",
     "records", "context", "failure", "login", "readonly", "closed", "error", "connecting", "goal", "subagents",
-    "builtin",
+    "builtin", "fusion",
   )
 
   private fun read(context: Context, name: String): String? =

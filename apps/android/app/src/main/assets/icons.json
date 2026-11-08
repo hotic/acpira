@@ -1362,5 +1362,27 @@
    "\\bllama(?![a-z])",
    "llama"
   ]
- ]
+ ],
+ "colors": {
+  "claude": "d97757",
+  "openai": "10a37f",
+  "gemini": "3186ff",
+  "zhipu": "3859ff",
+  "nvidia": "74b71b",
+  "perplexity": "22b8cd",
+  "deepseek": "4d6bfe",
+  "qwen": "615ced",
+  "mistral": "fa520f",
+  "minimax": "f23f5d",
+  "cloudflare": "f38020",
+  "ai21": "e91e63",
+  "microsoft": "00a4ef",
+  "wenxin": "167adf",
+  "stepfun": "005aff",
+  "baichuan": "ff6933",
+  "ibm": "0f62fe",
+  "arcee": "008c8c",
+  "upstage": "908af9",
+  "dbrx": "ee3d2c"
+ }
 }

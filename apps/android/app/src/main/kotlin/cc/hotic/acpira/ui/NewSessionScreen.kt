@@ -47,6 +47,8 @@ import cc.hotic.acpira.design.Palette
 import cc.hotic.acpira.design.Type
 import cc.hotic.acpira.design.VendorMark
 import cc.hotic.acpira.i18n.t
+import cc.hotic.acpira.logic.ComposerControls
+import cc.hotic.acpira.logic.editTurnConfig
 import cc.hotic.acpira.store.AppModel
 import cc.hotic.acpira.store.Screen
 import cc.hotic.acpira.store.commands
@@ -139,7 +141,13 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
         },
         onStop = {},
         onSetMode = {},
-        onSetConfig = { id, value -> picks = options.map { if (it.id == id) it.copy(value = value) else it } },
+        onSetConfig = { id, value ->
+          // No session answers a sidekick pick here: its level select comes from the picked model's remembered shape
+          picks = if (options.any { it.id == id && it.category == ComposerControls.sidekickCategory }) {
+            val draft = SessionControls(options = options)
+            editTurnConfig(draft, draft, id, value, model.newSessionShapes(agent, cwd)).options
+          } else options.map { if (it.id == id) it.copy(value = value) else it }
+        },
         onToast = model::showToast,
         // The agent's newest session's commands give the draft its `/` list, since the CLI only starts with the first
         // prompt; no session yet to search files in

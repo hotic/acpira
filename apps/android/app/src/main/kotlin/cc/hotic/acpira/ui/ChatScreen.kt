@@ -56,6 +56,7 @@ import cc.hotic.acpira.model.GoalAction
 import cc.hotic.acpira.model.SessionControls
 import cc.hotic.acpira.model.SessionStatus
 import cc.hotic.acpira.model.SessionView
+import cc.hotic.acpira.model.SubagentState
 import cc.hotic.acpira.store.AppModel
 import cc.hotic.acpira.store.Screen
 import cc.hotic.acpira.store.beginEdit
@@ -124,6 +125,8 @@ fun ChatScreen(model: AppModel, id: String) {
     val parts = popup.split('.')
     goo.open = parts[0]
     goo.stage = parts.getOrNull(1)?.toIntOrNull() ?: 0
+    // `model.0.sidekick`: the sidekick's own beans, `model.N.sidekick` one of their panels
+    goo.deeper = parts.getOrNull(2)
   }
   // A prompt the session holds back (starting, replaying remembered controls) shows as sent, and so does the phone's
   // own prompt still on its way to the engine; the working row says which stage holds it (HeldPrompt.kt)
@@ -283,6 +286,7 @@ fun ChatScreen(model: AppModel, id: String) {
           },
           onToast = model::showToast,
           assist = ComposerAssist(composing.commands, personas, model.fileSearch),
+          sidekickLive = dockView.subagents.orEmpty().any { isSidekick(it) && it.state == SubagentState.running },
         )
       }
       }
