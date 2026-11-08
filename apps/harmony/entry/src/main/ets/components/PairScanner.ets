@@ -75,6 +75,8 @@ export struct PairCameraCard {
   private frameW: number = 0;
   private frameH: number = 0;
   private surface: string | undefined = undefined;
+  /** Bumped by every stop: a start still awaiting the camera finds it moved on and lets go of what it opened */
+  private run: number = 0;
 
   aboutToAppear(): void {
     this.resolve();
@@ -121,7 +123,8 @@ export struct PairCameraCard {
   }
 
   private async startCamera(surface: string): Promise<void> {
-    if (this.session !== undefined || !this.active) {
+    // A start under way holds the input already
+    if (this.session !== undefined || this.input !== undefined || !this.active) {
       return;
     }
     const context = this.getUIContext().getHostContext();
@@ -144,17 +147,35 @@ export struct PairCameraCard {
         const receiver = image.createImageReceiver(profile.size, image.ImageFormat.JPEG, RECEIVER_CAPACITY);
         receiver.on('imageArrival', () => this.frame(receiver));
         this.receiver = receiver;
+        // Held before the first await, so a stop meanwhile (the sheet closing) releases it; each await then checks
+        const run = this.run;
         const input = manager.createCameraInput(device);
-        await input.open();
         this.input = input;
+        await input.open();
+        if (run !== this.run) {
+          // The stop closed it before it was open
+          input.close().catch((e: BusinessError) => {});
+          return;
+        }
+        const receiving = await receiver.getReceivingSurfaceId();
+        if (run !== this.run) {
+          return;
+        }
         const session = manager.createSession(camera.SceneMode.NORMAL_PHOTO) as camera.PhotoSession;
+        this.session = session;
         session.beginConfig();
         session.addInput(input);
         session.addOutput(manager.createPreviewOutput(profile, surface));
-        session.addOutput(manager.createPreviewOutput(profile, await receiver.getReceivingSurfaceId()));
+        session.addOutput(manager.createPreviewOutput(profile, receiving));
         await session.commitConfig();
+        if (run !== this.run) {
+          return;
+        }
         await session.start();
-        this.session = session;
+        if (run !== this.run) {
+          // The stop ran while it started: stop it again now that it runs
+          session.stop().catch((e: BusinessError) => {}).then(() => session.release()).catch((e: BusinessError) => {});
+        }
       } catch (e) {
         hilog.warn(DOMAIN, TAG, 'camera start failed: %{public}s', `${e}`);
         this.stopCamera();
@@ -164,12 +185,14 @@ export struct PairCameraCard {
   }
 
   private stopCamera(): void {
+    this.run++;
     const session = this.session;
     this.session = undefined;
     const input = this.input;
     this.input = undefined;
     if (canIUse('SystemCapability.Multimedia.Camera.Core')) {
-      session?.stop().then(() => session.release()).catch((e: BusinessError) => {});
+      // A session stopped mid-start may refuse stop(): it is released either way
+      session?.stop().catch((e: BusinessError) => {}).then(() => session.release()).catch((e: BusinessError) => {});
       input?.close().catch((e: BusinessError) => {});
     }
     this.receiver?.release().catch((e: BusinessError) => {});
@@ -186,17 +209,24 @@ export struct PairCameraCard {
       }
       this.decoding = true;
       this.lastDecode = now;
+      let released = false;
       img.getComponent(image.ComponentType.JPEG).then((c: image.Component) => {
-        // A preview frame is NV21 behind the JPEG component: its first plane is the luma, `rowStride` bytes a row
-        const text = net()?.decodeQr(new Uint8Array(c.byteBuffer), this.frameW, this.frameH,
-          c.rowStride > 0 ? c.rowStride : this.frameW) ?? null;
+        // A preview frame is NV21 behind the JPEG component: its first plane is the luma, `rowStride` bytes a row. The
+        // library copies it before answering and decodes off the UI thread
+        const decoded = net()?.decodeQr(new Uint8Array(c.byteBuffer), this.frameW, this.frameH,
+          c.rowStride > 0 ? c.rowStride : this.frameW) ?? Promise.resolve<string | null>(null);
+        released = true;
         img.release();
+        return decoded;
+      }).then((text: string | null) => {
         this.decoding = false;
         if (text !== null && isPairingLink(text) && this.active) {
           this.onLink(text.trim());
         }
       }).catch(() => {
-        img.release();
+        if (!released) {
+          img.release();
+        }
         this.decoding = false;
       });
     }).catch(() => {});

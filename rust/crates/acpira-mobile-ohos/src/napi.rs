@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use acpira_mobile as m;
 use napi_derive_ohos::napi;
-use napi_ohos::bindgen_prelude::Uint8Array;
-use napi_ohos::{Error, Result, Status};
+use napi_ohos::bindgen_prelude::{AsyncTask, Uint8Array};
+use napi_ohos::{Env, Error, Result, Status, Task};
 
 use crate::bridge::{self, Computer, Greeting, LinkEvent, NamedComputer, Relays, call};
 
@@ -41,10 +41,33 @@ pub fn decode_link(link: String) -> Result<NamedComputer> {
   told(call::decode_link(link))
 }
 
-/// The text of the first QR code in a greyscale frame (a camera's Y plane, `stride` bytes per row), or null
+/// A frame's luma copied off the camera buffer, read on libuv's thread pool: rqrr takes tens of milliseconds a frame,
+/// too long for the ArkTS thread, and the tokio worker carries the links
+pub struct DecodeQr {
+  grey: Vec<u8>,
+  width: usize,
+  height: usize,
+  stride: usize,
+}
+
+impl Task for DecodeQr {
+  type Output = Option<String>;
+  type JsValue = Option<String>;
+
+  fn compute(&mut self) -> Result<Self::Output> {
+    Ok(bridge::decode_qr(&self.grey, self.width, self.height, self.stride))
+  }
+
+  fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
+    Ok(output)
+  }
+}
+
+/// The text of the first QR code in a greyscale frame (a camera's Y plane, `stride` bytes per row), or null. The frame
+/// is copied before this returns, so the caller may release its image at once
 #[napi]
-pub fn decode_qr(grey: Uint8Array, width: u32, height: u32, stride: u32) -> Option<String> {
-  bridge::decode_qr(&grey, width as usize, height as usize, stride as usize)
+pub fn decode_qr(grey: Uint8Array, width: u32, height: u32, stride: u32) -> AsyncTask<DecodeQr> {
+  AsyncTask::new(DecodeQr { grey: grey.to_vec(), width: width as usize, height: height as usize, stride: stride as usize })
 }
 
 /// Binds a node with the device's identity (hex). It answers nothing: a device only dials
