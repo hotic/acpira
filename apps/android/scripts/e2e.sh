@@ -3,6 +3,7 @@
 # home whose only agent is the fake one, so no model call is spent), driven through its own screens with uiautomator.
 #   1. a new chat from the start page: type, send, the fake agent's streamed reply shows
 #   2. a tool turn in the same chat: the approval card shows, Allow runs it, the reply shows and the card goes
+#   3. back on the list, the chat's row shows: the engine's first list was empty, so it came as a sessionsPatch
 # Needs a booted emulator or device (adb devices). SKIP_BUILD=1 reuses the installed build; PORT picks the engine's.
 # Usage: apps/android/scripts/e2e.sh
 set -euo pipefail
@@ -79,5 +80,12 @@ ui wait permission.allow 30
 ui tap permission.allow
 ui gone permission 30
 ui wait "tests passed" 30
+
+step "back on the list: the chat's row arrived through the engine's list patches"
+ui tap chat.back
+ui gone chat.thread 15
+ui wait list.sessions 15
+# The fake agent names its session (session_info_update), so the row carries that title
+ui wait "Fake title" 15
 
 step "passed"
