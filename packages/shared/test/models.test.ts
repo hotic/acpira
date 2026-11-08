@@ -65,6 +65,8 @@ describe('model name parsing', () => {
     // Lightning is not an effort word, it's another family (Devin groups it the same way)
     expect(parseModelName('SWE-1.7 Lightning Medium')).toEqual({ family: 'SWE-1.7 Lightning', effort: 'Medium', fast: false, long: false });
     expect(parseModelName('SWE-1.6 Fast')).toEqual({ family: 'SWE-1.6', effort: '', fast: true, long: false });
+    // Droid: Fast spelled as a two-word suffix
+    expect(parseModelName('Opus 5.5 Fast Mode')).toEqual({ family: 'Opus 5.5', effort: '', fast: true, long: false });
     // a single-word name must not be split away as pure suffix
     expect(parseModelName('Adaptive')).toEqual({ family: 'Adaptive', effort: '', fast: false, long: false });
     expect(parseModelName('Max')).toEqual({ family: 'Max', effort: '', fast: false, long: false });

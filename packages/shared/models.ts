@@ -85,6 +85,8 @@ export function parseModelName(name: string): Omit<ModelVariant, 'id' | 'name'> 
     for (;;) {
       const last = t[t.length - 1]?.toLowerCase();
       if (t.length > 1 && last === 'fast') { fast = true; t.pop(); }
+      // Droid spells it "Opus 5.5 Fast Mode"
+      else if (t.length > 2 && last === 'mode' && t[t.length - 2]!.toLowerCase() === 'fast') { fast = true; t.splice(-2); }
       else if (t.length > 1 && last === '1m') { long = true; t.pop(); }
       else break;
     }
