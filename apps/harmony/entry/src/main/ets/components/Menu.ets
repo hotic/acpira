@@ -135,7 +135,8 @@ function menuCardLook() {
   .shadow({ radius: MenuMetrics.shadow, color: $r('app.color.scrim'), offsetY: Metrics.s1 })
   .clip(true)
   .padding({ top: Metrics.s1, bottom: Metrics.s1 })
-  .constraintSize({ minWidth: MenuMetrics.minW, maxHeight: MenuMetrics.row * MenuMetrics.maxRows })
+  .width(MenuMetrics.w)
+  .constraintSize({ maxHeight: MenuMetrics.row * MenuMetrics.maxRows })
 }
 
 /** The card a menu's rows sit on */
@@ -149,7 +150,9 @@ export struct MenuCard {
         Column() {
           this.content()
         }
+        .width('100%')
       }
+      .width('100%')
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.None)
     }
