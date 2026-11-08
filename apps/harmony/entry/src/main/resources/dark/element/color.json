@@ -107,6 +107,46 @@
     {
       "name": "start_window_background",
       "value": "#FF111111"
+    },
+    {
+      "name": "form_page",
+      "value": "#FF111111"
+    },
+    {
+      "name": "form_row",
+      "value": "#FF242424"
+    },
+    {
+      "name": "menu_bg",
+      "value": "#FF2A2A2A"
+    },
+    {
+      "name": "menu_line",
+      "value": "#14FFFFFF"
+    },
+    {
+      "name": "menu_gap",
+      "value": "#38000000"
+    },
+    {
+      "name": "swipe_delete",
+      "value": "#FFFF453A"
+    },
+    {
+      "name": "goo_dim",
+      "value": "#9E000000"
+    },
+    {
+      "name": "switch_on",
+      "value": "#FF30D158"
+    },
+    {
+      "name": "glass_bg",
+      "value": "#FF2A2A2A"
+    },
+    {
+      "name": "glass_line",
+      "value": "#1FFFFFFF"
     }
   ]
 }

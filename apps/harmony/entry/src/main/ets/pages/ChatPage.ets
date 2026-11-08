@@ -5,6 +5,7 @@ import { t } from '../store/L10n';
 import { Lucide } from '../components/Glyphs';
 import { AgentMessage, UserBubble } from '../components/TurnViews';
 import { Composer } from '../components/Composer';
+import { ChatBar, ChatBarActions } from '../components/ChatBar';
 
 // The chat (apps/ios Chat/ChatView.swift): the bar with back and the title, the thread in the reading column, the
 // composer under it. The thread follows new output while it is at its end.
@@ -15,6 +16,8 @@ export struct ChatPage {
   /** False at the detail column's root beside an open sidebar: nothing to go back to */
   @Param showBack: boolean = true;
   @Event onBack: () => void = () => {};
+  /** Where the bar's entries lead (list agent) */
+  @Param actions: ChatBarActions = new ChatBarActions();
   private scroller: Scroller = new Scroller();
   private atEnd: boolean = true;
 
@@ -35,32 +38,8 @@ export struct ChatPage {
 
   build() {
     Column() {
-      Row({ space: Metrics.s2 }) {
-        if (this.showBack) {
-          Stack() {
-            Lucide({ name: 'arrowLeft', tint: $r('app.color.fg1'), extent: Metrics.iconCtl })
-          }
-          .id('chat.back')
-          .width(Metrics.ctl)
-          .height(Metrics.ctl)
-          .onClick(() => this.onBack())
-        }
-        Text(this.model.view?.title ?? '')
-          .fontSize(Type.text1)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.fg1'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
-        Stack() {
-          Lucide({ name: 'ellipsis', tint: $r('app.color.fg1'), extent: Metrics.iconCtl })
-        }
-        .width(Metrics.ctl)
-        .height(Metrics.ctl)
-      }
-      .padding({ left: this.showBack ? Metrics.s1 : Metrics.pad, right: Metrics.s1 })
-      .height(Metrics.barCtl + Metrics.s2)
-      .width('100%')
+      // The bar and its "…" menu (components/ChatBar.ets)
+      ChatBar({ model: this.model, actions: this.actions })
 
       if (this.model.view === undefined) {
         LoadingProgress()
