@@ -5,7 +5,7 @@
 ## Layout
 
 - One Gradle build (AGP with built-in Kotlin, JDK 21, target 17): `:model` and `:sync` are plain JVM modules so their tests run without a device, `:app` is the Compose app.
-  - `:model`: kotlinx.serialization mirrors of `packages/shared/transcript.ts`, `protocol.ts` and `sidecar.ts`. Decoding is tolerant (unknown enum value or block type → placeholder, never a failed view). They cover the same messages and fields as the iOS `AcpiraModels` (a feature ported from iOS needs no protocol change), except `selection` / `quote` drafts: `ui/Composer.kt` switches exhaustively over `Draft`. `ContractTest` pins the mirrors to the TypeScript sources (a small TS reader: each action sample must encode exactly its union member's fields, so a new action needs a sample setting every field), decodes the iOS `ContractSamples` and every iOS fixture.
+  - `:model`: kotlinx.serialization mirrors of `packages/shared/transcript.ts`, `protocol.ts` and `sidecar.ts`. Decoding is tolerant (unknown enum value or block type → placeholder, never a failed view). They cover the same messages and fields as the iOS `AcpiraModels` (a feature ported from iOS needs no protocol change), except `selection` drafts: `ui/Composer.kt` switches exhaustively over `Draft`. `ContractTest` pins the mirrors to the TypeScript sources (a small TS reader: each action sample must encode exactly its union member's fields, so a new action needs a sample setting every field), decodes the iOS `ContractSamples` and every iOS fixture.
   - `:sync`: transport, envelope client and session patches (`sessionPatch.ts` / `sessionViews.ts` are the reference, as for iOS). `SessionPatchTest` replays `test/fixtures/engine-patches.json`.
   - `:app`: `design/` tokens, fonts, icons; `logic/` pure ports of the iOS `Logic/` files; `store/` the app model and launch options; `ui/` the screens.
 - Shared with the iOS app, not copied: fonts, i18n tables and synthetic fixtures are synced from `apps/ios/Packages/AcpiraKit/Sources` into the build by the `syncSharedAssets` task. `app/src/main/assets/icons.json` (lucide, vendor marks, model brand rules) is written by `scripts/export/android-icons.ts`, drift test `test/android-icons.test.ts`.
@@ -38,7 +38,9 @@
 - Model family keys are the TS ones verbatim (JSON-array strings from `models.ts`): the settings' `hiddenOptions` stores them and the desktop and iOS read the same lists, so `ModelCatalog.group` must not invent its own key format.
 - A new session's chips come from a `controls {agent}` request; the page's picks are applied with `setConfig` once `session/new` answers, before the first prompt.
 - The camera writes through the `FileProvider` (`res/xml/shared_files.xml`). Because the manifest declares `CAMERA` (for the pairing scan), `ACTION_IMAGE_CAPTURE` throws until that permission is granted, so it is asked first.
-- Launch extras `draft` and `popup` (`model`, `model.N`, `attach`) open a chat with text typed or a picker out, for screenshots against the demo.
+- The field runs on `TextFieldState` (`ui/PromptField.kt`): the `/` and `@` lists need the caret, and a long paste is caught by its `InputTransformation`, which only sees user input, so a restored draft is never turned into an attachment. Drafts live in `ChatState` for the process only, as on iOS and in the webview.
+- The quote card and the expanded editor are their own windows (`Popup` / `Dialog`): each sets `testTagsAsResourceId` again and the dialog its own status-bar ink.
+- Launch extras `draft` and `popup` (`model`, `model.N`, `attach`, `quotes`) open a chat with text typed or a picker out, for screenshots against the demo.
 
 ## Paired remote access
 

@@ -64,6 +64,9 @@ import cc.hotic.acpira.store.buildPlan
 import cc.hotic.acpira.store.editQueued
 import cc.hotic.acpira.store.goal
 import cc.hotic.acpira.store.openAccount
+import cc.hotic.acpira.store.personas
+import cc.hotic.acpira.store.quote
+import cc.hotic.acpira.store.seedQuotes
 import cc.hotic.acpira.store.refreshQuota
 import cc.hotic.acpira.store.removeAccount
 import cc.hotic.acpira.store.selectAccount
@@ -104,6 +107,7 @@ fun ChatScreen(model: AppModel, id: String) {
     when (popup) {
       "account" -> return@LaunchedEffect model.openAccount(id)
       "edit" -> return@LaunchedEffect model.beginEditLast(id)
+      "quotes" -> return@LaunchedEffect model.seedQuotes(id)
     }
     val parts = popup.split('.')
     goo.open = parts[0]
@@ -137,6 +141,9 @@ fun ChatScreen(model: AppModel, id: String) {
   // The settled turns' actions (retry, fork, toasts) and the one turn Retry is offered on
   val turnActions = remember(id) { TurnHandlers(retry = { model.retryTurn(id) }, fork = { model.fork(id, it) }, toast = model::showToast) }
   val retryAt = remember(held) { held?.let(::retryableTurn) }
+  // Selected reply text quotes into this chat's composer; `@` offers the personas and the engine's file search
+  val quote = remember(id, model) { { text: String -> model.quote(id, text) } }
+  val personas = remember(model.settings, model.agents) { model.personas }
 
   // Follow the end while the reader is there: a new exchange or a growing last turn keeps it in view
   var following by remember { mutableStateOf(true) }
@@ -245,6 +252,7 @@ fun ChatScreen(model: AppModel, id: String) {
             else model.setConfig(id, config, value)
           },
           onToast = model::showToast,
+          assist = ComposerAssist(composing.commands, personas, model.fileSearch),
         )
       }
       }
@@ -260,6 +268,7 @@ fun ChatScreen(model: AppModel, id: String) {
       LocalChatHandlers provides handlers,
       LocalPlanContext provides PlanContext(held.controls, held.running, held.status == SessionStatus.ready),
       LocalLiveStage provides stage,
+      LocalQuote provides quote,
     ) {
     LazyColumn(
       state = thread,

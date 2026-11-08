@@ -555,14 +555,16 @@ sealed interface HostMsg {
 
 /**
  * An attachment as the composer sends it (protocol.ts Draft); the phone sends images, pasted text and files it picked,
- * a file's bytes in `data` (the engine stages them and links the staged path). Not mirrored yet: `selection` and `quote`
- * (an exhaustive `when` in ui/Composer.kt would need a branch for each)
+ * a file's bytes in `data` (the engine stages them and links the staged path), and text quoted from the transcript with
+ * its optional comment (the engine writes the quotes into the prompt). Not mirrored yet: `selection`
  */
 sealed interface Draft {
   data class Image(val mimeType: String, val data: String, val name: String? = null) : Draft
   /** context: where a shared text came from */
   data class Text(val name: String, val text: String, val context: TextContext? = null) : Draft
   data class File(val uri: String, val name: String, val data: String? = null) : Draft
+  /** Text quoted from the conversation, with the user's optional remark on it */
+  data class Quote(val text: String, val comment: String? = null) : Draft
 
   fun toJson(): JsonObject = when (this) {
     is Image -> buildJsonObject { put("kind", "image"); put("mimeType", mimeType); put("data", data); name?.let { put("name", it) } }
@@ -571,11 +573,12 @@ sealed interface Draft {
       context?.let { put("context", WireJson.encodeToJsonElement(TextContext.serializer(), it)) }
     }
     is File -> buildJsonObject { put("kind", "file"); put("uri", uri); put("name", name); data?.let { put("data", it) } }
+    is Quote -> buildJsonObject { put("kind", "quote"); put("text", text); comment?.let { put("comment", it) } }
   }
 
   companion object {
     /** The `kind` literals this build sends */
-    val kinds = listOf("image", "text", "file")
+    val kinds = listOf("image", "text", "file", "quote")
   }
 }
 

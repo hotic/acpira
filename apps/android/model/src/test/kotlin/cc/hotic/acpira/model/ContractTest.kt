@@ -343,6 +343,7 @@ private object Samples {
     Draft.Image("image/png", "iVBORw0KGgo=", "shot.png"),
     Draft.Text("notes.txt", "hi", TextContext("browser", "Browser", "http://localhost:3000", "this")),
     Draft.File("file:///w/a.pdf", "a.pdf", "JVBERi0="),
+    Draft.Quote("the reply's words", "why this"),
   )
 
   private val provider = Provider(WireJson.parseToJsonElement(

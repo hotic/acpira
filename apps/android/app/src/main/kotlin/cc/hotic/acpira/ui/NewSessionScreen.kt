@@ -49,6 +49,7 @@ import cc.hotic.acpira.design.VendorMark
 import cc.hotic.acpira.i18n.t
 import cc.hotic.acpira.store.AppModel
 import cc.hotic.acpira.store.Screen
+import cc.hotic.acpira.store.commands
 
 /**
  * A new session (apps/ios Sessions/NewSessionScreen.swift): the agent's mark in the middle with its name and the folder
@@ -140,6 +141,9 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
         onSetMode = {},
         onSetConfig = { id, value -> picks = options.map { if (it.id == id) it.copy(value = value) else it } },
         onToast = model::showToast,
+        // The agent's newest session's commands give the draft its `/` list, since the CLI only starts with the first
+        // prompt; no session yet to search files in
+        assist = ComposerAssist(commands = model.commands(agent, cwd)),
       )
       }
     },
