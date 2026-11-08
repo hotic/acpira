@@ -27,6 +27,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -91,6 +92,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -108,16 +110,20 @@ import cc.hotic.acpira.design.IconStore
 import cc.hotic.acpira.design.Lucide
 import cc.hotic.acpira.design.Metrics
 import cc.hotic.acpira.design.Palette
+import cc.hotic.acpira.design.popFg3
 import cc.hotic.acpira.design.Type
 import cc.hotic.acpira.design.VendorMark
 import cc.hotic.acpira.i18n.t
 import cc.hotic.acpira.logic.ComposerControls
 import cc.hotic.acpira.logic.ModelChoices
 import cc.hotic.acpira.logic.ModelVisibility
+import cc.hotic.acpira.logic.UsageBreakdown
+import cc.hotic.acpira.model.Attachment
 import cc.hotic.acpira.model.Draft
 import cc.hotic.acpira.model.SessionControls
 import cc.hotic.acpira.model.SessionOption
 import cc.hotic.acpira.model.Usage
+import cc.hotic.acpira.store.MediaSource
 import java.io.ByteArrayOutputStream
 import java.io.File
 import kotlin.math.max
@@ -129,8 +135,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** An attachment waiting in the composer: what goes on the wire, its name, and a thumbnail for an image */
-class Staged(val draft: Draft, val name: String, val thumb: ImageBitmap? = null)
+/**
+ * An attachment waiting in the composer: what goes on the wire, its name, and a thumbnail for an image. [source] is the
+ * sent prompt's own attachment an edit took back in: it is drawn and opened from that (a stored photo, a stored text,
+ * a selection), while the edit sends it back by its index
+ */
+class Staged(val draft: Draft, val name: String, val thumb: ImageBitmap? = null, val source: Attachment? = null)
 
 /**
  * The open liquid picker over the composer (apps/ios Design/Goo.swift): which chip's beans are out (`attach` or
@@ -243,6 +253,10 @@ fun Composer(
   assist: ComposerAssist = ComposerAssist(),
   /** The built-in agent's sidekick is working a round: its colour breathes on the model chip */
   sidekickLive: Boolean = false,
+  /** The context ring's card: the auto-compact threshold it marks, and compaction when the agent offers `/compact` */
+  usageCard: UsageCardActions = UsageCardActions(),
+  /** The link is resyncing: stop rests unlit, as the run it would stop may be over (Composer.swift SendButton) */
+  syncing: Boolean = false,
 ) {
   val context = LocalContext.current
   val filled = text.isNotBlank() || staged.isNotEmpty()
@@ -354,10 +368,10 @@ fun Composer(
           Modifier.align(Alignment.BottomEnd).padding(end = inset, bottom = inset).alpha(if (goo.open != null) GOO_RECEDE else 1f),
           verticalAlignment = Alignment.CenterVertically,
         ) {
-          if (ring != null) ContextRing(ring, motion)
+          if (ring != null) ContextRing(ring, motion, usageCard, running)
           // A staged video still compressing holds the draft back, and the button does not stop the turn meanwhile
           val waiting = VideoJobs.pending(staged)
-          SendButton(running = running && !waiting, filled = filled && !waiting, motion = motion) {
+          SendButton(running = running && !waiting, filled = filled && !waiting, motion = motion, syncing = syncing) {
             if (!waiting) { if (running && !filled) onStop() else onSend() }
           }
         }
@@ -695,13 +709,21 @@ private suspend fun stageFile(context: Context, uri: Uri): Staged? = withContext
   }.getOrNull()
 }
 
-/** The staged attachments inside the card over the text: image thumbnails and file chips, each with its remove mark */
+/**
+ * The staged attachments inside the card over the text (Composer.swift StagedAttachments): image tiles, video tiles and
+ * file chips, each with its remove mark. A tile opens its picture in the Lightbox, a video plays, a pasted text shows
+ * whole, a file picked on the phone opens in the phone's viewer and a file on the computer in the chat's file page.
+ * [onNavigate] runs before any of them opens (the whole-screen editor gets out of the way)
+ */
 @Composable
-internal fun StagedStrip(staged: List<Staged>, onStaged: (List<Staged>) -> Unit, modifier: Modifier) {
+internal fun StagedStrip(staged: List<Staged>, onStaged: (List<Staged>) -> Unit, modifier: Modifier, onNavigate: (() -> Unit)? = null) {
   val context = LocalContext.current
   val media = LocalMedia.current
   var playing by remember { mutableStateOf<Pair<File, String>?>(null) }
+  var reading by remember { mutableStateOf<Staged?>(null) }
   playing?.let { (file, name) -> VideoPlayer(file, name) { playing = null } }
+  reading?.let { s -> StagedText(s) { reading = null } }
+  val opener = rememberFileOpener(onNavigate)
   Row(
     modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(end = Metrics.s3),
     horizontalArrangement = Arrangement.spacedBy(Metrics.s2),
@@ -712,32 +734,70 @@ internal fun StagedStrip(staged: List<Staged>, onStaged: (List<Staged>) -> Unit,
       if (s.draft is Draft.Quote) return@forEachIndexed
       Box {
         val thumb = s.thumb
+        val tile = Modifier.size(Metrics.stagedTile).clip(RoundedCornerShape(Metrics.rLg)).border(Metrics.hairline, Palette.line, RoundedCornerShape(Metrics.rLg))
+        // A sent prompt's own photo, taken in for editing, still lives in the engine's store
+        val stored = (s.source as? Attachment.Image)?.let { MediaSource.stored(it.blob, media.session) }
         // A video is a tile like a photo's from the moment it is picked: while it compresses, the original's first frame
         // waits under a spinner, one view throughout (Composer.swift staged strip)
         val file = s.draft as? Draft.File
         val progress = file?.let { VideoJobs.progress[it.uri] }
-        val video = file?.let {
+        val video = file?.takeIf { s.source !is Attachment.Selection }?.let {
           if (progress != null) Uri.parse(it.uri).path?.let { path -> VideoSource.Local(File(path)) }
           else VideoSource.of(context, it.uri, s.name, media.session, media.loader)
         }
         if (video != null) {
           VideoAttachmentTile(video, s.name, side = Metrics.stagedTile, progress = progress, still = VideoJobs.stills[file.uri], corner = Metrics.rLg) {
+            onNavigate?.invoke()
             playing = it to s.name
           }
         } else if (thumb != null) {
+          val image = s.draft as? Draft.Image
           Image(
             thumb, s.name, contentScale = ContentScale.Crop,
-            modifier = Modifier.size(Metrics.stagedTile).clip(RoundedCornerShape(Metrics.rLg)).border(Metrics.hairline, Palette.line, RoundedCornerShape(Metrics.rLg)),
+            modifier = tile.clickable {
+              // The photo's own pixels, decoded once: the Lightbox shows it alone, as it is not in the session yet
+              val source = image?.let { MediaSource.Inline(it.data) }
+              val pixels = source?.let { media.loader.peek(it) } ?: return@clickable
+              onNavigate?.invoke()
+              media.lightbox?.open(LightboxItem(pixels, s.name, source))
+            }.testTag("composer.staged.image"),
+          )
+        } else if (stored != null) {
+          val glyph = @Composable {
+            Box(Modifier.size(Metrics.stagedTile).background(Palette.chip, RoundedCornerShape(Metrics.rLg)), contentAlignment = Alignment.Center) {
+              Lucide("image", Palette.fg3, size = Metrics.icon)
+            }
+          }
+          MediaImage(
+            stored,
+            content = { pixels ->
+              Picture(
+                pixels,
+                tile.clickable { onNavigate?.invoke(); media.lightbox?.open(LightboxItem(pixels, s.name, stored)) }.testTag("composer.staged.image"),
+                contentScale = ContentScale.Crop,
+                description = t("common.previewImage", "name" to s.name.ifEmpty { t("common.image") }),
+              )
+            },
+            placeholder = glyph,
+            failure = glyph,
           )
         } else {
+          val open: (() -> Unit)? = when {
+            s.draft is Draft.Text || s.source is Attachment.Text -> ({ reading = s })
+            s.source is Attachment.Selection -> (s.source as Attachment.Selection).let { sel -> opener(sel.uri, sel.startLine) }
+            file != null -> opener(file.uri, null)
+            else -> null
+          }
           Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(Metrics.s1_5),
             modifier = Modifier.height(Metrics.stagedTile).widthIn(max = Metrics.stagedFileW)
-              .background(Palette.chip, RoundedCornerShape(Metrics.rLg)).padding(horizontal = Metrics.s3),
+              .background(Palette.chip, RoundedCornerShape(Metrics.rLg)).clip(RoundedCornerShape(Metrics.rLg))
+              .then(if (open != null) Modifier.clickable(onClick = open) else Modifier)
+              .padding(horizontal = Metrics.s3).testTag("composer.staged.file"),
           ) {
-            Lucide("fileText", Palette.fg2, size = Metrics.icon)
-            Text(s.name, color = Palette.fg1, fontSize = Type.text3, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Lucide(if (s.source is Attachment.Selection) "textSelect" else "fileText", Palette.fg2, size = Metrics.icon)
+            Text(stagedLabel(s), color = Palette.fg1, fontSize = Type.text3, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
           }
         }
         Box(
@@ -753,13 +813,27 @@ internal fun StagedStrip(staged: List<Staged>, onStaged: (List<Staged>) -> Unit,
   }
 }
 
+/** A chip's name: a selection taken back from a sent prompt names its lines, as the transcript's pill does */
+private fun stagedLabel(s: Staged): String = when (val a = s.source) {
+  is Attachment.Selection -> "${a.name} ${if (a.startLine == a.endLine) "L${a.startLine}" else "L${a.startLine}-${a.endLine}"}"
+  else -> s.name
+}
+
+/** A staged text's whole contents: the draft's own text, or a sent prompt's stored text read back */
+@Composable
+private fun StagedText(s: Staged, onDismiss: () -> Unit) {
+  val draft = s.draft as? Draft.Text
+  val source = s.source as? Attachment.Text
+  TextAttachmentSheet(s.name, text = draft?.takeIf { source == null }?.text, blob = source?.blob, onDismiss = onDismiss)
+}
+
 /**
  * Send / stop in one: a solid circle set into the bar's end, lit (the btn-1 fill) once there is something to send or a
  * run to stop, a quiet chip fill otherwise. The bar-tall slot keeps the bar's layout
  */
 @Composable
-internal fun SendButton(running: Boolean, filled: Boolean, motion: Boolean, action: () -> Unit) {
-  val on = running || filled
+internal fun SendButton(running: Boolean, filled: Boolean, motion: Boolean, syncing: Boolean = false, action: () -> Unit) {
+  val on = (running && !syncing) || filled
   val fill by animateColorAsState(if (on) Palette.btn1Bg else Palette.chip, if (motion) spring() else snap(), label = "send")
   val ink = if (on) Palette.btn1Fg else Palette.sendInk
   val stop = running && !filled
@@ -774,16 +848,23 @@ internal fun SendButton(running: Boolean, filled: Boolean, motion: Boolean, acti
   }
 }
 
+/** What the ring's card offers beyond the figures (ContextUsage.swift): the threshold it marks, and compaction */
+class UsageCardActions(
+  /** The auto-compact threshold in tokens (settings `compactAtTokens` while auto-compact is on), null for none */
+  val compactAt: Int? = null,
+  /** The agent advertises `/compact` */
+  val canCompact: Boolean = false,
+  val onCompact: () -> Unit = {},
+)
+
 /**
- * The context window ring beside send (Chat/ContextUsage.swift): how much of the window the conversation fills; a tap
- * opens the card with the share and the figures
+ * The context window ring beside send (Chat/ContextUsage.swift): how much of the window the conversation fills, a dim
+ * sliver once a compaction left the figure stale; a tap opens the card with the share, the figures and the threshold
  */
 @Composable
-private fun ContextRing(usage: Usage, motion: Boolean) {
+private fun ContextRing(usage: Usage, motion: Boolean, actions: UsageCardActions, running: Boolean) {
   val stale = usage.compactedFrom != null
-  val fill by animateFloatAsState(
-    if (stale) STALE_FILL else min(1f, usage.used.toFloat() / usage.size), if (motion) spring() else snap(), label = "ring",
-  )
+  val fill by animateFloatAsState(UsageBreakdown.fill(usage), if (motion) spring() else snap(), label = "ring")
   var open by remember { mutableStateOf(false) }
   val ink = Palette.fg2
   val pct = if (usage.size > 0) (min(1f, usage.used.toFloat() / usage.size) * 100).toInt() else 0
@@ -796,7 +877,7 @@ private fun ContextRing(usage: Usage, motion: Boolean) {
     Canvas(Modifier.size(Metrics.icon).padding(Metrics.icon / RING_PARTS)) {
       val stroke = (Metrics.icon / RING_PARTS).toPx()
       drawCircle(ink.copy(alpha = ink.alpha * RING_TRACK), style = Stroke(stroke))
-      drawArc(ink.copy(alpha = if (stale) ink.alpha * STALE_FILL else ink.alpha), -90f, 360f * fill, false, style = Stroke(stroke, cap = StrokeCap.Round))
+      drawArc(ink.copy(alpha = if (stale) ink.alpha * STALE_DIM else ink.alpha), -90f, 360f * fill, false, style = Stroke(stroke, cap = StrokeCap.Round))
     }
     if (open) {
       Popup(
@@ -804,36 +885,92 @@ private fun ContextRing(usage: Usage, motion: Boolean) {
         offset = with(LocalDensity.current) { IntOffset(0, -(Metrics.barCtl + Metrics.s2).roundToPx()) },
         onDismissRequest = { open = false },
         properties = PopupProperties(focusable = true),
-      ) { UsageCard(usage) }
+      ) { UsageCard(usage, actions, running) { open = false } }
     }
   }
 }
 
-/** The ring's card: the title, the share used and the figures, and the bar */
+/**
+ * The ring's card (UsagePanel): the title, the share used and the figures, the bar with the threshold's tick and number
+ * in its tone, the line saying what that tone means (or that a compaction left the figure stale), and compaction, held
+ * while a turn runs
+ */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
-private fun UsageCard(usage: Usage) {
+private fun UsageCard(usage: Usage, actions: UsageCardActions, running: Boolean, onClose: () -> Unit) {
   val stale = usage.compactedFrom != null
+  val fill = UsageBreakdown.fill(usage)
   val pct = if (usage.size > 0) (min(1f, usage.used.toFloat() / usage.size) * 100).toInt() else 0
+  val compactAt = actions.compactAt
+  val panel = UsageBreakdown.panel(usage, compactAt, actions.canCompact, running)
+  val tabular = TextStyle(fontFeatureSettings = "tnum")
   Column(
-    Modifier.width(Metrics.usageCardW).background(Palette.menuBg, RoundedCornerShape(Metrics.rGooPanel))
-      .border(Metrics.hairline, Palette.menuLine, RoundedCornerShape(Metrics.rGooPanel)).padding(Metrics.pad),
+    Modifier.width(Metrics.popLg).background(Palette.menuBg, RoundedCornerShape(Metrics.rGooPanel))
+      .border(Metrics.hairline, Palette.menuLine, RoundedCornerShape(Metrics.rGooPanel)).padding(Metrics.s3)
+      // A popup is a window of its own: its test tags need the resource-id switch again
+      .semantics { testTagsAsResourceId = true }
+      .testTag("usage.card"),
     verticalArrangement = Arrangement.spacedBy(Metrics.s2),
   ) {
     Text(t("usage.title"), color = Palette.fg1, fontSize = Type.text2, fontWeight = FontWeight.Medium)
     Row(verticalAlignment = Alignment.CenterVertically) {
-      Text(if (stale) t("usage.compactedStale") else t("usage.usedPctShort", "pct" to pct), color = Palette.fg2, fontSize = Type.text3, modifier = Modifier.weight(1f))
+      Text(if (stale) t("usage.compactedStale") else t("usage.usedPctShort", "pct" to pct), color = Palette.fg2, fontSize = Type.text3, style = tabular, modifier = Modifier.weight(1f))
       Text(
         if (stale) t("usage.beforeCompact", "n" to number(usage.compactedFrom ?: 0)) else "${number(usage.used)} / ${number(usage.size)}",
-        color = Palette.fg3, fontSize = Type.text3,
+        color = Palette.fg3, fontSize = Type.text3, style = tabular,
       )
     }
-    Box(Modifier.fillMaxWidth().height(Metrics.s1_5).background(Palette.active, CircleShape)) {
-      Box(Modifier.fillMaxWidth(if (stale) STALE_FILL else pct / 100f).height(Metrics.s1_5).background(Palette.fg2, CircleShape))
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Metrics.s2)) {
+      BoxWithConstraints(Modifier.weight(1f).height(Metrics.s1_5).clip(CircleShape).background(Palette.active)) {
+        Box(Modifier.fillMaxWidth(fill).height(Metrics.s1_5).clip(CircleShape).background(Palette.fg2.copy(alpha = if (stale) STALE_DIM else 1f)))
+        if (compactAt != null && usage.size > 0) {
+          // The threshold's tick, kept inside the bar's end
+          val at = maxWidth * min(compactAt.toFloat() / usage.size, TICK_MAX)
+          Box(Modifier.padding(start = at).width(Metrics.s0_5).height(Metrics.s1_5).background(tickInk(panel.tone)).testTag("usage.tick"))
+        }
+      }
+      if (compactAt != null) {
+        val budget = t("usage.budget", "n" to number(compactAt))
+        Text(
+          number(compactAt), color = numberInk(panel.tone), fontSize = Type.text3, style = tabular,
+          modifier = Modifier.alpha(if (panel.tone == UsageBreakdown.Tone.Unsupported) UNSUPPORTED_DIM else 1f)
+            .semantics { contentDescription = budget }.testTag("usage.budget"),
+        )
+      }
+    }
+    val note = if (stale) "usage.compactedStaleHint" else panel.note
+    if (note != null) Text(t(note), color = Palette.fg3, fontSize = Type.text3, lineHeight = Type.text3Line, modifier = Modifier.testTag("usage.note"))
+    if (actions.canCompact) {
+      CardButton(
+        t("usage.compact"), primary = false, enabled = !running,
+        modifier = Modifier.padding(top = Metrics.s1).testTag("usage.compact"),
+        onClick = { actions.onCompact(); onClose() },
+        lead = { Lucide("shrink", if (running) Palette.popFg3 else Palette.fg1, size = Metrics.icon) },
+      )
     }
   }
 }
 
-private fun number(n: Int): String = java.text.NumberFormat.getIntegerInstance().format(n)
+/** The threshold's tick: plain while it holds, the accent once it will compact, warn when the window limits it */
+@Composable
+private fun tickInk(tone: UsageBreakdown.Tone) = when (tone) {
+  UsageBreakdown.Tone.Ok -> Palette.fg1
+  UsageBreakdown.Tone.Pending -> Palette.brand
+  UsageBreakdown.Tone.Limited -> Palette.warn
+  UsageBreakdown.Tone.Unsupported -> Palette.fg3
+}
+
+/** The threshold's number beside the bar, in the same tone */
+@Composable
+private fun numberInk(tone: UsageBreakdown.Tone) = when (tone) {
+  UsageBreakdown.Tone.Ok, UsageBreakdown.Tone.Unsupported -> Palette.fg3
+  UsageBreakdown.Tone.Pending -> Palette.brand
+  UsageBreakdown.Tone.Limited -> Palette.warn
+}
+
+/** Numbers in the app's language, as the webview's Intl.NumberFormat(locale) */
+private fun number(n: Int): String =
+  java.text.NumberFormat.getIntegerInstance(java.util.Locale.forLanguageTag(cc.hotic.acpira.i18n.L10n.locale)).format(n)
 
 /**
  * What the screen draws over an open picker (Goo.swift gooLayer): the beans rising out of their chip with their values
@@ -1082,8 +1219,11 @@ private const val CAPTION_OUT = 0.1f
 /** The ring: its stroke and inset are an eighth of the glyph box, the track a quarter of the ink */
 private const val RING_PARTS = 8
 private const val RING_TRACK = 0.25f
-/** A compacted window's ring (UsageBreakdown.staleFill) */
-private const val STALE_FILL = 0.5f
+/** A compacted window's sliver and bar are dimmed to this */
+private const val STALE_DIM = 0.5f
+/** The threshold's tick stays inside the bar's end; its number dims while the agent cannot compact */
+private const val TICK_MAX = 0.99f
+private const val UNSUPPORTED_DIM = 0.6f
 private const val MAX_PHOTOS = 4
 /** AttachmentImage.thumbnail: the longest side and the JPEG quality */
 private const val IMAGE_SIDE = 1024

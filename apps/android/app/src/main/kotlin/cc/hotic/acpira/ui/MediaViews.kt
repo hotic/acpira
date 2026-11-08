@@ -34,6 +34,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.RememberObserver
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -463,6 +464,7 @@ fun TurnAttachments(attachments: List<Attachment>) {
   val media = LocalMedia.current
   val context = LocalContext.current
   var playing by remember { mutableStateOf<Pair<java.io.File, String>?>(null) }
+  val opener = rememberFileOpener()
   FlowRow(
     horizontalArrangement = Arrangement.spacedBy(Metrics.gap, Alignment.End),
     verticalArrangement = Arrangement.spacedBy(Metrics.gap),
@@ -474,12 +476,12 @@ fun TurnAttachments(attachments: List<Attachment>) {
         is Attachment.File -> {
           val video = remember(item.uri, item.name, media.session) { VideoSource.of(context, item.uri, item.name, media.session, media.loader) }
           if (video != null) VideoAttachmentTile(video, item.name) { playing = it to item.name }
-          else AttachmentPill(item.name, if (isVideoName(item.name)) "fileVideo" else "fileText", onOpen = fileOpener(item.uri))
+          else AttachmentPill(item.name, if (isVideoName(item.name)) "fileVideo" else "fileText", onOpen = opener(item.uri, null))
         }
-        is Attachment.Text -> AttachmentPill(item.name, "fileText")
+        is Attachment.Text -> TextAttachmentPill(item.blob, item.name)
         is Attachment.Selection -> AttachmentPill(
           "${item.name} ${if (item.startLine == item.endLine) "L${item.startLine}" else "L${item.startLine}-${item.endLine}"}",
-          "textSelect", onOpen = fileOpener(item.uri),
+          "textSelect", onOpen = opener(item.uri, item.startLine),
         )
         is Attachment.Quote -> AttachmentPill(item.text.take(QUOTE_PILL), "messageSquareText")
         is Attachment.Unknown -> {}
@@ -490,17 +492,40 @@ fun TurnAttachments(attachments: List<Attachment>) {
 }
 
 /**
- * What a tap on an attached file opens (Composer.swift FileOpener): a file on the computer in its download page. null
- * when nothing can: no live session to stage it from, or no path
+ * What a tap on an attached file opens, wherever its pill is (the composer's strip, the whole-screen editor, a sent
+ * prompt; Composer.swift FileOpener): a file picked on the phone in the phone's own viewer, a file on the computer in
+ * the chat's file page at its line. The opener answers null when neither applies: no path, or a chat whose view this
+ * wire does not hold. [leave] runs before a page opens (a screen covering the chat gets out of its way)
  */
 @Composable
-private fun fileOpener(uri: String): (() -> Unit)? {
+fun rememberFileOpener(leave: (() -> Unit)? = null): (uri: String, line: Int?) -> (() -> Unit)? {
   val media = LocalMedia.current
-  val model = media.model ?: return null
-  val session = media.session ?: return null
-  if (!model.live) return null
-  val path = runCatching { java.net.URI(uri) }.getOrNull()?.takeIf { it.scheme == "file" }?.path ?: uri.takeIf { MediaSource.isFilePath(it) } ?: return null
-  return { model.push(Screen.Download(session, path)) }
+  val context = LocalContext.current
+  val away by rememberUpdatedState(leave)
+  return remember(media, context) {
+    opener@{ uri, line ->
+      // A content: URI is the phone's own pick: the system finds an app for it, reading through the grant
+      if (uri.startsWith("content:")) {
+        return@opener {
+          away?.invoke()
+          val parsed = android.net.Uri.parse(uri)
+          val view = android.content.Intent(android.content.Intent.ACTION_VIEW)
+            .setDataAndType(parsed, context.contentResolver.getType(parsed) ?: "*/*")
+            .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+          runCatching { context.startActivity(android.content.Intent.createChooser(view, null)) }
+        }
+      }
+      val model = media.model ?: return@opener null
+      val session = media.session ?: return@opener null
+      val path = runCatching { java.net.URI(uri) }.getOrNull()?.takeIf { it.scheme == "file" }?.path
+        ?: uri.takeIf { MediaSource.isFilePath(it) } ?: return@opener null
+      if (!model.shown(session)) return@opener null
+      ({
+        away?.invoke()
+        model.push(Screen.File(session, path, line))
+      })
+    }
+  }
 }
 
 /** Motion.quick: a picture fading in over its placeholder */

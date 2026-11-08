@@ -215,8 +215,10 @@ object Metrics {
   val codeOutputMax = 176.dp
   /** A wide popover card (a reply's statistics): three timing tiles at the phone's reading size fit in it */
   val popWide = 336.dp
-  /** The quotes' card (popLg) */
+  /** The quotes' and the context ring's cards (popLg) */
   val popLg = 300.dp
+  /** A reply block's preview over its long-press menu keeps this many lines */
+  const val messagePreviewLines = 6
   /** The composer's share of the height the keyboard leaves: its card grows to its most lines only where that fits */
   const val composerShare = 0.45f
   /** A prompt mark's pill: its reach past the name's glyphs at most, the clearance kept from a neighbour, its pad */
@@ -298,8 +300,6 @@ object Metrics {
   val stagedTile = 56.dp
   val stagedFileW = 200.dp
   val stagedRemove = 20.dp
-  /** The context ring's card */
-  val usageCardW = 260.dp
   // Media (apps/ios Tokens.swift `thumb`, `agentImage`, `widgetPlaceholder`, `widgetMax`)
   /** A prompt's image thumbnail and a video tile */
   val thumb = 56.dp

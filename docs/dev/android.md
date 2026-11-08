@@ -22,6 +22,7 @@
 - A `clickable` on a shaped background clips to that shape first, or the press lights a square.
 - The launcher foreground is the iOS `AppIcon.png`'s glyph alone, scaled so the whole iOS icon maps onto the launcher's visible 72 of 108 dp; the full icon as the foreground reads oversized next to other apps.
 - The developer overlay (`design/PerfHud.kt`) is a window of its own, not a Compose layer: every dialog, bottom sheet and focusable popup is a newer app window that covers anything older, so the overlay is added again each time the activity's window loses focus.
+- A `SelectionContainer` keeps its selection on a tap outside it, and `SelectionState.selectedTexts` is not snapshot state (`snapshotFlow` never fires): Select text on a block or a sent prompt goes through `SelectAllWhile` in `ui/prose/TextSelection.kt`, which polls the selection and clears it on the thread's taps (`ThreadTaps`).
 - Pages run under the gesture bar: a scrolling page pads `navigationBars` inside its scroll, never on the Scaffold, or the bar's strip shows as a black band.
 
 ## Wide windows

@@ -1,5 +1,6 @@
 package cc.hotic.acpira.store
 
+import android.util.Base64
 import cc.hotic.acpira.i18n.t
 import cc.hotic.acpira.logic.TurnEdit
 import cc.hotic.acpira.logic.attachmentName
@@ -36,7 +37,11 @@ import cc.hotic.acpira.model.TurnStop
 import cc.hotic.acpira.model.UserTurn
 import cc.hotic.acpira.model.WebviewMsg
 import cc.hotic.acpira.ui.Staged
+import cc.hotic.acpira.logic.PastedText
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonElement
 import java.util.UUID
@@ -155,19 +160,52 @@ fun AppModel.sendQueued(id: String, item: String) {
 
 /**
  * Edit: takes a prompt out of the queue and back into the composer, ahead of whatever is being typed there rather than
- * over it. The engine's queue row names the blobs it stored, which a send cannot hand back, so a prompt holding one
- * stays queued and a toast says so (iOS reads the bytes back first; the phone's blob reader is not ported)
+ * over it. The engine's queue row names the blobs it stored, which a send cannot hand back, so they are read back first
+ * (AppModel.swift `editQueued`); while one cannot be read the prompt stays queued and a toast says so
  */
 fun AppModel.editQueued(id: String, item: String) {
   val prompt = views[id]?.queued?.firstOrNull { it.id == item } ?: return
-  val stored = prompt.attachments.orEmpty().firstOrNull { storedBlob(it) != null }
-  if (stored != null) {
-    showToast(t("attach.loadFailed", "name" to attachmentName(stored).ifEmpty { t("common.image") }))
-    return
+  chat.scope.launch {
+    val staged = try {
+      localCopies(id, prompt.attachments.orEmpty())
+    } catch (e: CancellationException) {
+      throw e
+    } catch (_: Exception) {
+      val stored = prompt.attachments.orEmpty().firstOrNull { storedBlob(it) != null }
+      showToast(t("attach.loadFailed", "name" to (stored?.let(::attachmentName)?.ifEmpty { null } ?: t("common.image"))))
+      return@launch
+    }
+    // Nothing to edit when the prompt went out during the read
+    takeQueued(id, item) ?: return@launch
+    val draft = chat.draft(id)
+    draft.text = if (draft.text.isBlank()) prompt.text else prompt.text + "\n\n" + draft.text
+    draft.staged = staged + draft.staged
   }
-  takeQueued(id, item) ?: return
-  val draft = chat.draft(id)
-  draft.text = if (draft.text.isBlank()) prompt.text else prompt.text + "\n\n" + draft.text
+}
+
+/**
+ * A queued prompt's attachments as the composer stages them: every stored photo or text read back into its bytes,
+ * base64 like a fresh pick or paste; files stay the links they are, quotes as they are. A selection has no draft on
+ * this side and is left out, as a send leaves it out (AppModel.swift `drafts`)
+ */
+private suspend fun AppModel.localCopies(id: String, attachments: List<Attachment>): List<Staged> = attachments.mapNotNull { a ->
+  when (a) {
+    is Attachment.Image -> {
+      val blob = a.blob ?: return@mapNotNull null
+      val bytes = if (storedBlob(a) != null) media.loader.bytes(id, blob) else Base64.decode(blob, Base64.DEFAULT)
+      val thumb = withContext(Dispatchers.Default) { MediaLoader.decodeNow(bytes)?.image }
+      val name = a.name ?: t("common.image")
+      Staged(Draft.Image(a.mimeType, if (storedBlob(a) != null) Base64.encodeToString(bytes, Base64.NO_WRAP) else blob, a.name), name, thumb)
+    }
+    is Attachment.Text -> {
+      val text = PastedText.inline(a.blob) ?: a.blob?.takeIf { storedBlob(a) != null }?.let { media.loader.bytes(id, it).decodeToString() }
+        ?: return@mapNotNull null
+      Staged(Draft.Text(a.name, text, a.context), a.name)
+    }
+    is Attachment.File -> Staged(Draft.File(a.uri, a.name), a.name)
+    is Attachment.Quote -> Staged(Draft.Quote(a.text, a.comment), "")
+    is Attachment.Selection, is Attachment.Unknown -> null
+  }
 }
 
 /** A blob the engine stored is named `<hash>.<ext>`; base64 never holds a dot */
@@ -339,10 +377,9 @@ fun AppModel.beginEdit(id: String, index: Int) {
   val draft = chat.draft(id)
   // Taking in another prompt keeps the draft from before the first
   val kept = draft.edit?.let { it.keptText to it.keptStaged } ?: (draft.text to draft.staged)
-  // The prompt's own attachments stand in the composer as chips; each keeps its index for the retained list
-  val originals = prompt.attachments.orEmpty().mapIndexed { i, a ->
-    Staged(Draft.File(uri = "", name = attachmentName(a)), attachmentName(a)) to i
-  }
+  // The prompt's own attachments stand in the composer as they were sent (a stored photo's tile, a text that opens, a
+  // file that opens); each keeps its index for the retained list (AppModel+Turns.swift `beginEdit`)
+  val originals = prompt.attachments.orEmpty().mapIndexed { i, a -> Staged(standIn(a), attachmentName(a), source = a) to i }
   draft.edit = TurnEdit(
     turnIndex = index, turnCount = view.turns.size, original = prompt,
     controls = openTurnControls(view.controls, prompt.settings, view.modelShapes),
@@ -350,6 +387,19 @@ fun AppModel.beginEdit(id: String, index: Int) {
   )
   draft.text = prompt.text
   draft.staged = originals.map { it.first }
+}
+
+/**
+ * What a sent attachment taken in for editing carries as a draft. An edit sends it back by index, never as this draft,
+ * which only tells the strip its kind: a photo by its blob, a text by its inline contents, a file or selection by its uri
+ */
+private fun standIn(a: Attachment): Draft = when (a) {
+  is Attachment.Image -> Draft.Image(a.mimeType, a.blob.orEmpty(), a.name)
+  is Attachment.Text -> Draft.Text(a.name, PastedText.inline(a.blob).orEmpty(), a.context)
+  is Attachment.File -> Draft.File(a.uri, a.name)
+  is Attachment.Selection -> Draft.File(a.uri, a.name)
+  is Attachment.Quote -> Draft.Quote(a.text, a.comment)
+  is Attachment.Unknown -> Draft.File("", a.kind)
 }
 
 /** `popup=edit`: the newest prompt the user typed, taken in for editing (screenshots) */
@@ -391,7 +441,8 @@ fun AppModel.sendEdit(id: String) {
   if (edit.turnIndex > view.turns.size) return
   // The engine applies the edit's selections to the live session before the prompt goes out
   views[id] = view.copy(turns = view.turns.take(edit.turnIndex), controls = edit.controls)
-  send(id, text, staged.filter { s -> edit.originals.none { it.first === s } }.map { it.draft })
+  // The kept originals go again too: their stand-ins name the same blobs, which the demo's bubble reads
+  send(id, text, staged.map { it.draft })
   restoreKept(id, edit)
 }
 

@@ -323,6 +323,18 @@ class AppModel(
    */
   fun shown(id: String): Boolean = views[id] != null && (!live || id in feed.views.kept)
 
+  /**
+   * What the screens show follows this wire: the demo, or a wire still up that is not waiting on its init after taking
+   * over the screens of the one before (apps/ios AppModel `current`)
+   */
+  val current: Boolean get() = !live || (connection !is Connection.Closed && (!resumed || synced))
+
+  /** The chat's view may be stale: the wire is not current, or it has not shown this session again yet (`\.syncing`) */
+  fun syncing(id: String): Boolean = !current || !shown(id)
+
+  /** The auto-compact threshold the context ring marks (App.tsx compactAt); 0 follows the model's window, no mark */
+  val compactAt: Int? get() = settings.compactAtTokens.takeIf { settings.autoCompact && it > 0 }
+
   private fun select(id: String) {
     if (!live) return
     feed.select(id)?.let { views[id] = it }
