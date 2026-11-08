@@ -23,6 +23,14 @@ struct Index {
     // `engine`: `host:port:token` of the development engine (apps/ios/scripts/engine.sh), or the one a development
     // build compiled in (scripts/build.sh DEV_ENGINE), or the one the app was set to follow; then the paired computers
     // (when the build carries the remote access library); without any the demo shows
+    // A link opened later (EntryAbility `onNewWant`) goes to the add sheet the same way; the first run's pairing step
+    // takes it while that is up. Listened to whatever is followed now: forgetting the engine hands over to pairing
+    emitter.on(PAIR_LINK_EVENT, (event: emitter.EventData) => {
+      const later = event.data?.['link'] as string | undefined;
+      if (later !== undefined) {
+        this.model.pairing?.open(later);
+      }
+    });
     const launch = AppStorage.get<Record<string, Object>>('launch') ?? {};
     const asked = (launch['engine'] as string | undefined) ?? (DEV_ENGINE.length > 0 ? DEV_ENGINE : undefined);
     const engine = asked ?? this.model.storedEngine();
@@ -35,13 +43,6 @@ struct Index {
     if (!this.model.startPairing()) {
       this.model.demo();
     }
-    // A link opened later (EntryAbility `onNewWant`) goes to the add sheet the same way, over the first run if it is up
-    emitter.on(PAIR_LINK_EVENT, (event: emitter.EventData) => {
-      const later = event.data?.['link'] as string | undefined;
-      if (later !== undefined && this.model.pairing !== undefined && this.model.pairing.open(later)) {
-        this.welcome = false;
-      }
-    });
     // `pair`: an `acpira://pair/…` link to confirm in the add sheet (opened from outside, or `aa start … --ps pair <link>`)
     const link = launch['pair'] as string | undefined;
     const opened = link !== undefined && this.model.pairing !== undefined && this.model.pairing.open(link);

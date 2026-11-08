@@ -39,6 +39,8 @@ export struct WelcomeFlow {
   @Require @Param model: AppModel;
   /** The step to open on (screenshots): intro, pair, engine or notify */
   @Param start: string = 'intro';
+  /** A pairing link waiting for the add sheet (PairingModel.pendingLink), empty for none */
+  @Param link: string = '';
   @Event onDone: () => void = () => {};
   @Local step: Step = Step.Intro;
   /** The intro's copy has come in */
@@ -49,6 +51,7 @@ export struct WelcomeFlow {
   aboutToAppear(): void {
     this.step = this.start === 'engine' ? Step.Engine : this.start === 'notify' ? Step.Notify :
       this.start === 'pair' ? this.connectStep() : Step.Intro;
+    this.linkOpened();
     if (this.start !== 'intro' || !this.model.motion) {
       this.shown = true;
       return;
@@ -56,6 +59,14 @@ export struct WelcomeFlow {
     setTimeout(() => {
       this.shown = true;
     }, START_DELAY_MS);
+  }
+
+  /** A pairing link opened from outside goes to the pairing step, which takes it (PairSheet takePending) */
+  @Monitor('link')
+  linkOpened(): void {
+    if (this.link.length > 0 && this.step === Step.Intro) {
+      this.step = this.connectStep();
+    }
   }
 
   finish(): void {
