@@ -1,5 +1,11 @@
 package cc.hotic.acpira.ui
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Spacer
+import cc.hotic.acpira.design.Lucide
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
 import android.graphics.BlurMaskFilter
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.CubicBezierEasing
@@ -101,7 +107,7 @@ import kotlin.math.pow
 // add-computer sheet's own form and stages, PairFlow), and the screens. The iOS flow's notification step has no
 // counterpart: this app has no push channel, so there is nothing to ask permission for.
 
-private enum class WelcomeStep { Intro, Pair }
+private enum class WelcomeStep { Intro, Pair, Notify }
 
 /** One dock's light: running sense, start and lap time in seconds */
 private class Arm(val dir: Float, val delay: Float, val period: Float)
@@ -410,7 +416,14 @@ private fun rememberClock(still: Boolean, from: Float?): State<Float> {
  */
 @Composable
 fun WelcomeFlow(pairing: PairingModel, start: String?, motion: Boolean, onDone: () -> Unit) {
-  var step by remember { mutableStateOf(if (start == "pair") WelcomeStep.Pair else WelcomeStep.Intro) }
+  var step by remember {
+    mutableStateOf(when (start) { "pair" -> WelcomeStep.Pair; "notify" -> WelcomeStep.Notify; else -> WelcomeStep.Intro })
+  }
+  val context = androidx.compose.ui.platform.LocalContext.current
+  // Paired and the wire up: notifications next while the system has not been asked, else the screens
+  val paired = {
+    if (notifyPending(context)) step = WelcomeStep.Notify else onDone()
+  }
   val clock = rememberClock(still = !motion, from = if (start != null && start != "play") WL.settled else null)
   val copyIn by remember { derivedStateOf { clock.value >= 0f } }
   // A pairing link opened from outside goes to the pairing step, which takes it (PairFlow)
@@ -440,12 +453,108 @@ fun WelcomeFlow(pairing: PairingModel, start: String?, motion: Boolean, onDone: 
     ) {
       Box(Modifier.fillMaxSize().background(Palette.formPage).statusBarsPadding(), contentAlignment = Alignment.TopCenter) {
         Box(Modifier.widthIn(max = WelcomeMetrics.column).fillMaxHeight()) {
-          PairFlow(pairing, PairInline(onBack = { step = WelcomeStep.Intro }, onDone = onDone))
+          PairFlow(pairing, PairInline(onBack = { step = WelcomeStep.Intro }, onDone = paired))
         }
+      }
+    }
+    AnimatedVisibility(
+      visible = step == WelcomeStep.Notify,
+      enter = fadeIn(tween(swap, easing = WL.swapCurve)) + slideInVertically(tween(swap, easing = WL.swapCurve)) { drop },
+      exit = fadeOut(tween(swap, easing = WL.swapCurve)) + slideOutVertically(tween(swap, easing = WL.swapCurve)) { drop },
+    ) {
+      NotifyStep(motion, onDone)
+    }
+  }
+}
+
+/** Notifications can still be asked for: Android 13+, not granted, and neither the flow nor a wire asked before */
+private fun notifyPending(context: android.content.Context): Boolean =
+  android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
+    !cc.hotic.acpira.store.Attention.allowed(context) &&
+    !context.getSharedPreferences("notify", android.content.Context.MODE_PRIVATE).getBoolean("asked", false)
+
+/**
+ * The notification step (apps/ios WelcomeFlow `notify`): the bell in a ring a light runs round, what notices are for,
+ * then ask or later. Either way the question is spent: a wire does not ask again (MainActivity `askNotifications`)
+ */
+@Composable
+private fun NotifyStep(motion: Boolean, onDone: () -> Unit) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  val spend = { context.getSharedPreferences("notify", android.content.Context.MODE_PRIVATE).edit().putBoolean("asked", true).apply() }
+  val ask = androidx.activity.compose.rememberLauncherForActivityResult(
+    androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+  ) { onDone() }
+  Box(Modifier.fillMaxSize().background(Palette.bg0).safeDrawingPadding().testTag("welcome.notify"), contentAlignment = Alignment.TopCenter) {
+    Column(
+      Modifier.widthIn(max = WelcomeMetrics.column).fillMaxHeight().padding(horizontal = Metrics.page),
+      horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+      Spacer(Modifier.weight(1f))
+      Box(Modifier.size(WelcomeMetrics.bellRing), contentAlignment = Alignment.Center) {
+        EdgeLight(still = !motion, modifier = Modifier.fillMaxSize())
+        Lucide("bell", Palette.fg1, size = WelcomeMetrics.bell)
+      }
+      Text(
+        t("mobile.welcome.notify.title"), color = Palette.fgStrong, fontSize = WelcomeMetrics.notifyTitle,
+        lineHeight = WelcomeMetrics.notifyTitleLine, fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.padding(top = WelcomeMetrics.notifyTitleGap),
+      )
+      Text(
+        t("mobile.welcome.notify.desc"), color = Palette.fg2, fontSize = Type.text1, textAlign = TextAlign.Center,
+        modifier = Modifier.padding(top = WelcomeMetrics.notifyDescGap),
+      )
+      Spacer(Modifier.weight(1f))
+      Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Metrics.s3), modifier = Modifier.padding(bottom = Metrics.s2)) {
+        PrimaryPill(t("mobile.notify.ask"), onClick = {
+          spend()
+          ask.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }, modifier = Modifier.fillMaxWidth().testTag("welcome.notify.ask"))
+        Box(
+          Modifier.height(WelcomeMetrics.laterHeight).clip(RoundedCornerShape(percent = 50)).clickable { spend(); onDone() }
+            .padding(horizontal = Metrics.pad).testTag("welcome.notify.later"),
+          contentAlignment = Alignment.Center,
+        ) { Text(t("mobile.welcome.later"), color = Palette.fg3, fontSize = Type.text2) }
       }
     }
   }
 }
+
+/** A light running round a circle's edge (apps/ios WelcomeFlow `EdgeLight`): the splash's light once more, two laps apart */
+@Composable
+private fun EdgeLight(still: Boolean, modifier: Modifier = Modifier) {
+  val ink = Palette.fg1
+  val clock = remember { mutableFloatStateOf(EDGE_STILL) }
+  LaunchedEffect(still) {
+    if (still) {
+      clock.floatValue = EDGE_STILL
+      return@LaunchedEffect
+    }
+    val start = withFrameNanos { it }
+    while (true) {
+      val now = withFrameNanos { it }
+      clock.floatValue = (now - start) / 1e9f / EDGE_PERIOD_S
+    }
+  }
+  val scratch = remember { Path() }
+  val density = LocalDensity.current.density
+  androidx.compose.foundation.Canvas(modifier) {
+    val r = size.minDimension / 2
+    val c = center
+    drawCircle(ink.copy(alpha = WelcomeMetrics.edgeOutlineAlpha), radius = r, style = Stroke(width = density))
+    // Clockwise from the top, as SwiftUI's Circle path runs
+    val xs = FloatArray(EDGE_SAMPLES) { c.x + r * kotlin.math.cos(2 * Math.PI * it / EDGE_SAMPLES - Math.PI / 2).toFloat() }
+    val ys = FloatArray(EDGE_SAMPLES) { c.y + r * kotlin.math.sin(2 * Math.PI * it / EDGE_SAMPLES - Math.PI / 2).toFloat() }
+    val t = clock.floatValue
+    for (lap in floatArrayOf(t, t + 0.5f)) {
+      paintLight(scratch, xs, ys, head = lap % 1f, dir = 1f, len = EDGE_LEN, boost = 0f, unit = WelcomeMetrics.edgeUnit * density, ink = ink, fade = 1f)
+    }
+  }
+}
+
+private const val EDGE_STILL = 0.3f
+private const val EDGE_PERIOD_S = 5f
+private const val EDGE_SAMPLES = 800
+private const val EDGE_LEN = 0.16f
 
 /** The intro, one composition at one proportion on every screen: laid out on a phone's page and scaled to fit */
 @Composable

@@ -99,6 +99,8 @@ fun SettingsScreen(model: AppModel) {
       // Paired remote access: the computers in place of the engine row
       val pairing = LocalPairing.current
       if (pairing != null) PairComputersSection(pairing) { model.push(cc.hotic.acpira.store.Screen.Computer(it.id)) }
+      // Notices come from a live wire's list (store/Attention.kt): none for the demo
+      if (pairing != null || model.live) NotificationsSection()
       // One fact: the state, with its dot; what it means goes in the footnote
       else FormSection(t("mobile.engine"), footer = if (model.live) null else t("mobile.engine.desc")) {
         val live = model.connection == cc.hotic.acpira.store.Connection.Live
@@ -124,6 +126,54 @@ fun SettingsScreen(model: AppModel) {
       }
     }
   }
+}
+
+/**
+ * Notifications from the followed computer (apps/ios NotificationsSection): the system's word on them, one tap to ask
+ * or to change it in the system's settings. Sound, banners and Do Not Disturb are the system's, so the app keeps no
+ * switches of its own
+ */
+@Composable
+private fun NotificationsSection() {
+  val context = LocalContext.current
+  val prefs = remember { context.getSharedPreferences("notify", android.content.Context.MODE_PRIVATE) }
+  var state by remember { mutableStateOf(notifyState(context, prefs)) }
+  val ask = androidx.activity.compose.rememberLauncherForActivityResult(
+    androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+  ) { state = notifyState(context, prefs) }
+  // Back from the system's settings, where it may have changed
+  val owner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+  androidx.compose.runtime.DisposableEffect(owner) {
+    val watch = androidx.lifecycle.LifecycleEventObserver { _, event ->
+      if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) state = notifyState(context, prefs)
+    }
+    owner.lifecycle.addObserver(watch)
+    onDispose { owner.lifecycle.removeObserver(watch) }
+  }
+  FormSection(null, footer = t("mobile.notify.desc")) {
+    FormRow(
+      t("mobile.notify"),
+      Modifier.clickable {
+        if (state == "mobile.notify.ask" && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+          prefs.edit().putBoolean("asked", true).apply()
+          ask.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+          val open = android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+            .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+          runCatching { context.startActivity(open) }
+        }
+      }.testTag("settings.notify"),
+    ) {
+      Text(t(state), color = Palette.fg2, fontSize = Type.text1)
+    }
+  }
+}
+
+/** On, off (refused, or switched off in the system's settings), or not asked yet */
+private fun notifyState(context: android.content.Context, prefs: android.content.SharedPreferences): String = when {
+  cc.hotic.acpira.store.Attention.allowed(context) -> "mobile.notify.on"
+  android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU && !prefs.getBoolean("asked", false) -> "mobile.notify.ask"
+  else -> "mobile.notify.off"
 }
 
 /** Developer (apps/ios DeveloperSettingsPage): the on-screen frame-rate and hitch overlay's switches ([PerfHud]) */
