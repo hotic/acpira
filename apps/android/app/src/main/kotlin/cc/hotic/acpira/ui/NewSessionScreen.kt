@@ -32,7 +32,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import cc.hotic.acpira.model.SessionControls
-import cc.hotic.acpira.model.ConfigControl
+import androidx.compose.runtime.mutableStateMapOf
+import cc.hotic.acpira.logic.editTurnConfig
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -47,8 +48,6 @@ import cc.hotic.acpira.design.Palette
 import cc.hotic.acpira.design.Type
 import cc.hotic.acpira.design.VendorMark
 import cc.hotic.acpira.i18n.t
-import cc.hotic.acpira.logic.ComposerControls
-import cc.hotic.acpira.logic.editTurnConfig
 import cc.hotic.acpira.store.AppModel
 import cc.hotic.acpira.store.Screen
 import cc.hotic.acpira.store.commands
@@ -60,24 +59,26 @@ import cc.hotic.acpira.store.commands
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NewSessionScreen(model: AppModel, screen: Screen.New) {
-  val agents = model.startable
+  // The ring offers every launchable agent, the ones not installed dimmed; only an installed one starts by default
+  val agents = model.launchable
+  val startable = model.startable
   // As the iOS app picks it (RootView destination): the asked agent, else the newest session's, else the first that can start
   // Until the user picks one the default follows the engine: the split's detail column opens this page before init
   // brings the agents and sessions, and the built-in fallback it had then cannot start anything
   var pickedAgent by rememberSaveable { mutableStateOf<String?>(null) }
   // The newest session's agent only while it can still start (it may have been switched off since)
   val agent = pickedAgent
-    ?: screen.agent ?: model.summaries.filter { s -> agents.any { it.id == s.agent } }.maxByOrNull { it.updatedAt }?.agent
-    ?: agents.firstOrNull()?.id ?: model.settings.defaultAgent
-  // The latest project unless asked otherwise; a chat when the computer has none. Folders added by hand lead
-  val projects = remember(model.summaries, model.projectOrder, model.addedProjects) {
-    (model.addedProjects + model.projectOrder + model.summaries.sortedByDescending { it.updatedAt }.map { it.cwd }).filter { it.isNotEmpty() && !model.isChat(it) }.distinct()
-  }
+    ?: screen.agent ?: model.summaries.filter { s -> startable.any { it.id == s.agent } }.maxByOrNull { it.updatedAt }?.agent
+    ?: startable.firstOrNull()?.id ?: model.settings.defaultAgent
+  // Every known project, the latest first, those taken off the list left out (apps/ios AppModel `projects`)
+  val projects = model.lists.projects
   // Until a pick the folder follows the list; a blank folder asks for a chat (the list's "new chat", as apps/ios
   // `.new(cwd: "")`), and a picked chat is null too, hence the separate flag
   var picked by rememberSaveable { mutableStateOf(false) }
   var pickedCwd by rememberSaveable { mutableStateOf<String?>(null) }
   val cwd = if (picked) pickedCwd else if (screen.cwd == "") null else screen.cwd ?: projects.firstOrNull()
+  // The capsule and the menu's tick read a chat where the engine keeps chats (apps/ios AppModel `startsChat`)
+  val chat = model.startsChat(cwd)
   var draft by rememberSaveable { mutableStateOf("") }
   var staged by remember { mutableStateOf<List<Staged>>(emptyList()) }
   val goo = remember { Goo() }
@@ -95,14 +96,27 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
     }
   }
   val dim by animateFloatAsState(if (ring) 1f else 0f, if (model.motion) tween(HERO_AWAY_MS) else snap(), label = "ringDim")
-  // The agent's new-session controls (asked again on every wire, whose answer a lost one never brings), and this page's
-  // picks over them; a pick is never replaced by a later answer. A folder on an SSH host may mean the host's engine and
-  // its CLI's models, so picks stay with the machine they were made from
-  LaunchedEffect(agent, cwd, model.connection) { model.loadControls(agent, cwd) }
-  var picks by remember(agent, cwd?.let(::remoteHost)) { mutableStateOf<List<ConfigControl>?>(null) }
+  // The agent's new-session controls (asked again on every wire, whose answer a lost one never brings), and the ring's
+  // other agents' too, so a switch finds their models in hand rather than dropping the model chip meanwhile
+  LaunchedEffect(model, model.connection, agent, cwd) { model.loadControls(agent, cwd) }
+  val ringIds = agents.map { it.id }
+  LaunchedEffect(model, model.connection, ringIds, cwd) { model.prefetchControls(ringIds, cwd) }
+  // An agent the engine knows no models for gets one fresh probe on this wire
+  val known = model.knownControls(agent, cwd)
+  LaunchedEffect(model, known, agent, cwd) { model.probeUnknownControls(agent, cwd) }
+  // This page's picks, each agent its own (models and modes differ per CLI); a pick is never replaced by a later answer,
+  // also after switching away and back (apps/ios NewSessionScreen `picks`)
+  val picks = remember { mutableStateMapOf<String, SessionControls>() }
+  // Another folder may mean another machine (an SSH host's engine runs the agent with its own models): picks made from
+  // one machine's list do not carry over to the other's
+  var pickedOn by remember { mutableStateOf(cwd) }
+  if (pickedOn != cwd) {
+    if (remoteHost(pickedOn.orEmpty()) != null || remoteHost(cwd.orEmpty()) != null) picks.clear()
+    pickedOn = cwd
+  }
   // The folder menu's "Add folder" is open
   var adding by remember { mutableStateOf(false) }
-  val options = picks ?: model.newSessionControls(agent, cwd)
+  val controls = picks[agent] ?: model.controlsFor(agent, cwd)
 
   Box(Modifier.fillMaxSize()) {
   Scaffold(
@@ -124,7 +138,7 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
         onText = { draft = it },
         staged = staged,
         onStaged = { staged = it },
-        controls = SessionControls(options = options),
+        controls = controls,
         agentMark = agent,
         agentName = info.name,
         running = false,
@@ -137,16 +151,17 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
           val attachments = staged.map { it.draft }
           draft = ""
           staged = emptyList()
-          model.start(agent, cwd, text, attachments, picks.orEmpty())
+          model.start(agent, cwd, text, attachments, controls)
         },
         onStop = {},
-        onSetMode = {},
+        onSetMode = { picks[agent] = controls.copy(modeId = it) },
         onSetConfig = { id, value ->
-          // No session answers a sidekick pick here: its level select comes from the picked model's remembered shape
-          picks = if (options.any { it.id == id && it.category == ComposerControls.sidekickCategory }) {
-            val draft = SessionControls(options = options)
-            editTurnConfig(draft, draft, id, value, model.newSessionShapes(agent, cwd)).options
-          } else options.map { if (it.id == id) it.copy(value = value) else it }
+          // No session answers set_config_option here, so a model pick brings that model's own parameters and a
+          // sidekick pick its level select from the remembered shapes (logic/TurnEdit.kt): a model without Fast loses
+          // the previous model's Fast
+          if (controls.options.any { it.id == id }) {
+            picks[agent] = editTurnConfig(controls, controls, id, value, model.newSessionShapes(agent, cwd))
+          }
         },
         onToast = model::showToast,
         // The agent's newest session's commands give the draft its `/` list, since the CLI only starts with the first
@@ -208,12 +223,16 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
             .padding(horizontal = Metrics.pad, vertical = Metrics.s2)
             .testTag("new.folder"),
         ) {
-          Lucide(if (cwd == null) "messageSquare" else "folder", Palette.fg2, size = Metrics.icon)
-          Text(cwd?.let { model.placeName(it) } ?: t("session.group.chats"), color = Palette.fg2, fontSize = Type.text1)
+          val asChat = chat || cwd == null
+          Lucide(if (asChat) "messagesSquare" else "folder", Palette.fg2, size = Metrics.icon)
+          Text(if (asChat) t("session.group.chats") else model.placeName(cwd!!), color = Palette.fg2, fontSize = Type.text1)
         }
         FolderMenu(
           open = pickFolder,
           cwd = cwd,
+          chat = chat,
+          // An empty folder is a chat; offered where the engine keeps chats
+          chats = model.chatRoot != null,
           projects = projects,
           name = model::placeName,
           onDismiss = { pickFolder = false },
@@ -240,6 +259,8 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
 private fun FolderMenu(
   open: Boolean,
   cwd: String?,
+  chat: Boolean,
+  chats: Boolean,
   projects: List<String>,
   name: (String) -> String,
   onDismiss: () -> Unit,
@@ -248,9 +269,13 @@ private fun FolderMenu(
 ) {
   // null: the top level; "" this computer's projects; a host alias: that host's
   var level by remember { mutableStateOf<String?>(null) }
-  val local = projects.filter { remoteHost(it) == null }
-  val remote = projects.filter { remoteHost(it) != null }
+  // The draft's own folder first, then the known ones, each once (NativeProjectMenu.places); a chat's folder is no project
+  val folders = ((if (chat || cwd == null) emptyList() else listOf(cwd)) + projects).filter { it.isNotEmpty() }.distinct()
+  val local = folders.filter { remoteHost(it) == null }
+  val remote = folders.filter { remoteHost(it) != null }
   val hosts = remote.mapNotNull(::remoteHost).distinct()
+  // A folder ticks only while the draft is not a chat
+  val folder = cwd.takeUnless { chat }
   AppMenu(
     expanded = open,
     onDismiss = { onDismiss(); level = null },
@@ -258,17 +283,23 @@ private fun FolderMenu(
   ) {
     when (val at = level) {
       null -> {
-        AppMenuItem(t("session.group.chats"), onClick = { onPick(null); level = null }, checked = cwd == null, icon = { MenuGlyph("messagesSquare") })
-        AppMenuGap()
+        // Where the engine keeps no chats there is no chat to start
+        if (chats) {
+          AppMenuItem(
+            t("session.group.chats"), onClick = { onPick(null); level = null }, checked = chat,
+            icon = { MenuGlyph("messagesSquare") }, modifier = Modifier.testTag("folder.chats"),
+          )
+          AppMenuGap()
+        }
         if (local.isNotEmpty()) {
           AppMenuItem(
-            t("mobile.projects.local"), onClick = { level = "" }, checked = cwd != null && remoteHost(cwd) == null,
+            t("mobile.projects.local"), onClick = { level = "" }, checked = folder != null && remoteHost(folder) == null,
             icon = { MenuGlyph("chevronRight") }, modifier = Modifier.testTag("folder.local"),
           )
         }
         for (h in hosts) {
           AppMenuItem(
-            h, subtitle = t("mobile.projects.remote"), onClick = { level = h }, checked = cwd?.let(::remoteHost) == h,
+            h, subtitle = t("mobile.projects.remote"), onClick = { level = h }, checked = folder?.let(::remoteHost) == h,
             icon = { MenuGlyph("chevronRight") },
           )
         }
@@ -284,7 +315,7 @@ private fun FolderMenu(
         AppMenuGap()
         for (p in if (at.isEmpty()) local else remote.filter { remoteHost(it) == at }) {
           AppMenuItem(
-            name(p), subtitle = parentOf(p), onClick = { onPick(p); level = null }, checked = p == cwd,
+            name(p), subtitle = parentOf(p), onClick = { onPick(p); level = null }, checked = p == folder,
             icon = { MenuGlyph(if (at.isEmpty()) "folder" else "globe") },
           )
         }

@@ -58,8 +58,11 @@ import cc.hotic.acpira.i18n.t
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.BinaryBitmap
 import com.google.zxing.DecodeHintType
-import com.google.zxing.MultiFormatReader
-import com.google.zxing.NotFoundException
+import com.google.zxing.LuminanceSource
+import com.google.zxing.qrcode.decoder.Decoder
+import com.google.zxing.qrcode.decoder.QRCodeDecoderMetaData
+import com.google.zxing.qrcode.detector.Detector
+import cc.hotic.acpira.logic.PairCodeRows
 import com.google.zxing.PlanarYUVLuminanceSource
 import com.google.zxing.common.HybridBinarizer
 import java.util.concurrent.Executors
@@ -71,7 +74,7 @@ import java.util.concurrent.Executors
 private enum class CameraSource { Live, Unavailable, Denied }
 
 @Composable
-fun PairCameraCard(onLink: (String) -> Unit) {
+fun PairCameraCard(onLink: (String, List<String>?) -> Unit) {
   val context = LocalContext.current
   val lifecycle = LocalLifecycleOwner.current
   fun granted() = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
@@ -120,7 +123,7 @@ fun PairCameraCard(onLink: (String) -> Unit) {
 
 /** The back camera's preview with a QR reader on its frames; a code read once is not handed over again */
 @Composable
-private fun CameraFeed(onLink: (String) -> Unit) {
+private fun CameraFeed(onLink: (String, List<String>?) -> Unit) {
   val context = LocalContext.current
   val lifecycle = LocalLifecycleOwner.current
   val latest by rememberUpdatedState(onLink)
@@ -137,11 +140,11 @@ private fun CameraFeed(onLink: (String) -> Unit) {
       val analysis = ImageAnalysis.Builder().setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST).build()
       val reader = QrReader()
       analysis.setAnalyzer(executor) { image ->
-        val text = reader.read(image)
+        val read = reader.read(image)
         image.close()
-        if (text != null && text != last) {
-          last = text
-          ContextCompat.getMainExecutor(context).execute { latest(text) }
+        if (read != null && read.first != last) {
+          last = read.first
+          ContextCompat.getMainExecutor(context).execute { latest(read.first, read.second) }
         }
       }
       runCatching {
@@ -157,27 +160,36 @@ private fun CameraFeed(onLink: (String) -> Unit) {
   AndroidView(factory = { preview }, modifier = Modifier.fillMaxSize())
 }
 
-/** ZXing on a frame's luminance plane: QR only, light-on-dark too (a dark-theme pairing card) */
+/**
+ * ZXing on a frame's luminance plane: QR only, light-on-dark too (a dark-theme pairing card). Detected and decoded in
+ * two steps rather than through a reader, so the sampled module grid comes along with the text: the sheet draws the
+ * card's very modules (logic/PairCode.kt)
+ */
 private class QrReader {
-  private val reader = MultiFormatReader().apply {
-    setHints(mapOf(DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE), DecodeHintType.ALSO_INVERTED to true))
-  }
+  private val hints = mapOf(DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE))
+  private val decoder = Decoder()
 
-  fun read(image: ImageProxy): String? {
+  /** The text and the code's rows, or null when no code is read in the frame */
+  fun read(image: ImageProxy): Pair<String, List<String>?>? {
     val plane = image.planes.firstOrNull() ?: return null
     val buffer = plane.buffer
     val stride = plane.rowStride
     val data = ByteArray(buffer.remaining()).also { buffer.get(it) }
     val source = PlanarYUVLuminanceSource(data, stride, image.height, 0, 0, image.width, image.height, false)
-    return try {
-      reader.decodeWithState(BinaryBitmap(HybridBinarizer(source))).text
-    } catch (_: NotFoundException) {
-      null
-    } catch (_: Exception) {
-      null
-    } finally {
-      reader.reset()
-    }
+    return read(source) ?: read(source.invert())
+  }
+
+  private fun read(source: LuminanceSource): Pair<String, List<String>?>? = try {
+    val found = Detector(BinaryBitmap(HybridBinarizer(source)).blackMatrix).detect(hints)
+    // Decoding unmasks the grid in place: the rows are taken from a copy first
+    val grid = found.bits.clone()
+    val result = decoder.decode(found.bits, hints)
+    // Read mirrored (a front camera): the grid as the card shows it is the transpose
+    val mirrored = (result.other as? QRCodeDecoderMetaData)?.isMirrored == true
+    val rows = PairCodeRows.of(grid)?.let { r -> if (mirrored) r.indices.map { x -> String(CharArray(r.size) { y -> r[y][x] }) } else r }
+    result.text to rows
+  } catch (_: Exception) {
+    null
   }
 }
 

@@ -13,6 +13,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -60,15 +61,18 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import cc.hotic.acpira.design.Lucide
 import cc.hotic.acpira.design.Metrics
 import cc.hotic.acpira.design.Palette
 import cc.hotic.acpira.design.Type
 import cc.hotic.acpira.i18n.t
+import cc.hotic.acpira.logic.PairCodeRows
 import cc.hotic.acpira.store.PairLink
 import cc.hotic.acpira.store.PairingModel
 import cc.hotic.acpira.sync.NearbyComputer
@@ -98,6 +102,9 @@ private sealed interface PairPhase {
   /** Refused or unanswered, with the way on: the same link again (unanswered), else back to the form */
   data class Failed(val name: String?, val message: String, val retryLink: String?) : PairPhase
 }
+
+/** The connect frame's one content key across its phases (PairFlow's AnimatedContent) */
+private object PairStageKey
 
 /** Android 17's local network permission: LAN dials and NSD browsing (a runtime grant from that release on) */
 const val LOCAL_NETWORK = "android.permission.ACCESS_LOCAL_NETWORK"
@@ -142,20 +149,30 @@ fun PairFlow(pairing: PairingModel, inline: PairInline?, onClose: () -> Unit = {
   var phase by remember { mutableStateOf<PairPhase>(PairPhase.Choose) }
   var nearby by remember { mutableStateOf<List<NearbyComputer>>(emptyList()) }
   var browsing by remember { mutableStateOf(true) }
+  // The code being paired with and its link: the very modules a scan read, else made from the link
+  var code by remember { mutableStateOf<Pair<String, List<String>>?>(null) }
+
+  /** The code to draw for a link: the rows a scan read, else the ones already shown for it, else made from its text */
+  fun show(link: String, scanned: List<String>? = null) {
+    if (scanned != null) code = link to scanned
+    else if (code?.first != link) code = PairCodeRows.make(link)?.let { link to it }
+  }
 
   /** Paired and done: the sheet goes, or the flow it stands in moves on */
   fun finish() {
     if (inline != null) inline.onDone() else onClose()
   }
 
-  /** Pairs through a scanned, pasted or confirmed link */
-  fun pair(link: String) {
+  /** Pairs through a scanned, pasted or confirmed link; a scan hands over the modules it read */
+  fun pair(link: String, scanned: List<String>? = null) {
     val name = try {
       pairing.service.computerName(link)
     } catch (e: Exception) {
+      code = null
       phase = PairPhase.Failed(null, message(e, null), null)
       return
     }
+    show(link, scanned)
     val asked = PairPhase.Pairing(link, name)
     phase = asked
     scope.launch {
@@ -180,8 +197,9 @@ fun PairFlow(pairing: PairingModel, inline: PairInline?, onClose: () -> Unit = {
     val link = pairing.pendingLink ?: return@LaunchedEffect
     pairing.pendingLink = null
     phase = try {
-      PairPhase.Confirm(link, pairing.service.computerName(link))
+      PairPhase.Confirm(link, pairing.service.computerName(link)).also { show(link) }
     } catch (e: Exception) {
+      code = null
       PairPhase.Failed(null, message(e, null), null)
     }
   }
@@ -227,7 +245,9 @@ fun PairFlow(pairing: PairingModel, inline: PairInline?, onClose: () -> Unit = {
     )
     AnimatedContent(
       targetState = phase,
-      contentKey = { it::class },
+      // The connect frame stays one view through confirm, pairing, paired and a failure, so its code dissolves and its
+      // lines swap in place rather than the whole frame cross-fading at every phase
+      contentKey = { if (it is PairPhase.Choose || it is PairPhase.Code) it::class else PairStageKey },
       transitionSpec = { fadeIn(tween(Motion.fade)) togetherWith fadeOut(tween(Motion.fade)) },
       label = "pairPhase",
       modifier = Modifier.weight(1f),
@@ -236,11 +256,12 @@ fun PairFlow(pairing: PairingModel, inline: PairInline?, onClose: () -> Unit = {
         PairPhase.Choose -> PairAddForm(
           nearby = nearby, browsing = browsing,
           lead = if (inline != null) t("mobile.pair.connectTitle") to t("mobile.pair.connectHint") else null,
-          onLink = ::pair,
-          onNearby = { phase = PairPhase.Code(it) },
+          onLink = { link, rows -> pair(link, rows) },
+          // A code typed from a nearby computer's card has no picture to draw
+          onNearby = { code = null; phase = PairPhase.Code(it) },
         )
         is PairPhase.Code -> PairCodePage(pairing, p.computer, onJoined = { phase = PairPhase.Joined(it) })
-        else -> PairStage(pairing, p, onFinish = ::finish, onConnect = { (p as? PairPhase.Confirm)?.let { pair(it.link) } },
+        else -> PairStage(pairing, p, code = code?.second, onFinish = ::finish, onConnect = { (p as? PairPhase.Confirm)?.let { pair(it.link) } },
           onRetry = { (p as? PairPhase.Failed)?.retryLink?.let { pair(it) } ?: run { phase = PairPhase.Choose } },
           onRescan = { phase = PairPhase.Choose })
       }
@@ -276,7 +297,7 @@ private fun PairAddForm(
   nearby: List<NearbyComputer>,
   browsing: Boolean,
   lead: Pair<String, String>? = null,
-  onLink: (String) -> Unit,
+  onLink: (String, List<String>?) -> Unit,
   onNearby: (NearbyComputer) -> Unit,
 ) {
   val context = LocalContext.current
@@ -295,7 +316,7 @@ private fun PairAddForm(
     }
     FormCard {
       Box(Modifier.fillMaxWidth().height(Metrics.pairScanCard).clip(RoundedCornerShape(Metrics.rCardRound))) {
-        PairCameraCard(onLink = { link -> if (isPairingLink(link)) onLink(link) })
+        PairCameraCard(onLink = { link, rows -> if (isPairingLink(link)) onLink(link, rows) })
       }
     }
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.s2)) {
@@ -323,7 +344,7 @@ private fun PairAddForm(
           onClick = {
             val text = clipboardText(context).trim()
             if (isPairingLink(text)) {
-              onLink(text)
+              onLink(text, null)
             } else {
               // Not a pairing link: the row says so for a moment, in place
               val gen = ++noticeGen
@@ -357,6 +378,7 @@ private fun clipboardText(context: Context): String {
 private fun PairStage(
   pairing: PairingModel,
   phase: PairPhase,
+  code: List<String>?,
   onFinish: () -> Unit,
   onConnect: () -> Unit = {},
   onRetry: () -> Unit = {},
@@ -395,7 +417,7 @@ private fun PairStage(
     is PairPhase.Failed -> if (phase.retryLink != null) t("mobile.pair.retry") else t("mobile.pair.scan.again")
     else -> null
   }
-  PairHeroPlacement {
+  PairHeroPlacement(box = if (code == null) Metrics.pairGlyphBox else Metrics.pairCode) {
     PairHero(
       icon = computerIcon(joined?.model),
       line = line,
@@ -406,6 +428,7 @@ private fun PairStage(
       action = action,
       secondary = if (phase is PairPhase.Failed && phase.retryLink != null) t("mobile.pair.scan.again") else null,
       dim = phase is PairPhase.Failed,
+      code = code,
       onAction = { if (phase is PairPhase.Confirm) onConnect() else onRetry() },
       onSecondary = onRescan,
     )
@@ -459,11 +482,12 @@ private fun PairCodePage(pairing: PairingModel, computer: NearbyComputer, onJoin
     Spacer(Modifier.height(Metrics.page))
     Box(contentAlignment = Alignment.Center) {
       BasicTextField(
-        value = code,
+        // The cursor pinned to the end: a pasted code then takes the next typed digit after it, not in front
+        value = TextFieldValue(code, TextRange(code.length)),
         onValueChange = { typed ->
           // Typed while a code is checked: dropped, so the keyboard stays put
           if (checking) return@BasicTextField
-          val digits = typed.filter { it.isDigit() }.take(CODE_LENGTH)
+          val digits = typed.text.filter { it.isDigit() }.take(CODE_LENGTH)
           code = digits
           if (digits.isNotEmpty()) error = null
           if (digits.length == CODE_LENGTH) submit(digits)
@@ -495,6 +519,26 @@ private fun PairCodePage(pairing: PairingModel, computer: NearbyComputer, onJoin
     Box(Modifier.fillMaxWidth().heightIn(min = Metrics.pairStatusSlot).padding(top = Metrics.gap), contentAlignment = Alignment.TopCenter) {
       if (checking) CircularProgressIndicator(Modifier.size(Metrics.icon), color = Palette.fg2, strokeWidth = Metrics.pairCodeLine)
       else error?.let { Text(it, color = Palette.danger, fontSize = Type.text3, lineHeight = Type.text3Line, textAlign = TextAlign.Center, modifier = Modifier.testTag("pair.code.error")) }
+    }
+    // A paste fills every box, the sixth digit sending the code as typing does (apps/ios PairCodePage's PasteButton): a
+    // quiet capsule in the code boxes' fill
+    val context = LocalContext.current
+    Row(
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(Metrics.s2),
+      modifier = Modifier.padding(top = Metrics.s2).height(Metrics.ctlSm)
+        .clip(RoundedCornerShape(percent = 50)).background(Palette.formRow)
+        .clickable(enabled = !checking) {
+          val digits = clipboardText(context).filter { it.isDigit() }.take(CODE_LENGTH)
+          if (digits.isEmpty() || checking) return@clickable
+          code = digits
+          error = null
+          if (digits.length == CODE_LENGTH) submit(digits)
+        }
+        .padding(horizontal = Metrics.pad).testTag("pair.code.paste"),
+    ) {
+      Lucide("clipboardPaste", Palette.fg1, size = Metrics.icon)
+      Text(t("desktop.menu.paste"), color = Palette.fg1, fontSize = Type.text2, fontWeight = FontWeight.Medium)
     }
   }
 }

@@ -6,6 +6,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -69,6 +71,8 @@ fun Root(model: AppModel, pairing: cc.hotic.acpira.store.PairingModel? = null) {
     LocalHiddenModels provides model.settings.hiddenOptions,
     // The transcript's folds, rails and entrances read the motion switch (the webview's motion axis)
     cc.hotic.acpira.design.LocalMotion provides model.motion,
+    // The list's live marks hold still while what they show may be stale (StateMark)
+    LocalSyncing provides !model.current,
     // Session links in replies open their chat in the app (ui/Links.kt)
     androidx.compose.ui.platform.LocalUriHandler provides rememberLinkHandler(model),
   ) { Stack(model, pairing) }
@@ -180,6 +184,10 @@ private fun Page(model: AppModel, pairing: cc.hotic.acpira.store.PairingModel?, 
 private fun Split(model: AppModel, roomy: Boolean) {
   val pairing = LocalPairing.current
   var sliding by rememberSaveable { mutableStateOf(false) }
+  // Roomy, the sidebar can still be put away for the detail alone and brought back from its bar (the split view's own
+  // toggle on iPadOS, apps/ios RootView `columns`)
+  var hidden by rememberSaveable { mutableStateOf(false) }
+  val docked = roomy && !hidden
   // Nothing picked yet: a new session, as the desktop opens on its composer
   val root = model.path.firstOrNull() ?: Screen.New()
   val over = model.path.drop(1)
@@ -187,17 +195,27 @@ private fun Split(model: AppModel, roomy: Boolean) {
   BackHandler(enabled = over.isNotEmpty() && !(sliding && !roomy)) { model.pop() }
   // A pick in the sliding sidebar lands its page and folds the sidebar away
   LaunchedEffect(model.path.firstOrNull()) { sliding = false }
-  val sidebar = @Composable {
-    Box(Modifier.width(Metrics.sidebarW).fillMaxHeight().testTag("split.sidebar")) { SessionListScreen(model) }
+  val sidebar = @Composable { hide: () -> Unit ->
+    Box(Modifier.width(Metrics.sidebarW).fillMaxHeight().testTag("split.sidebar")) {
+      CompositionLocalProvider(LocalSidebarHide provides hide) { SessionListScreen(model) }
+    }
   }
   Row(Modifier.fillMaxSize()) {
-    if (roomy) {
-      sidebar()
-      Box(Modifier.width(Metrics.hairline).fillMaxHeight().background(Palette.line))
+    val fade = if (model.motion) Motion.push else 0
+    // The docked sidebar slides away to the start and back, the detail widening into its room
+    AnimatedVisibility(
+      visible = docked,
+      enter = expandHorizontally(tween(fade), expandFrom = Alignment.Start) + fadeIn(tween(fade)),
+      exit = shrinkHorizontally(tween(fade), shrinkTowards = Alignment.Start) + fadeOut(tween(fade)),
+    ) {
+      Row {
+        sidebar { hidden = true }
+        Box(Modifier.width(Metrics.hairline).fillMaxHeight().background(Palette.line))
+      }
     }
     Box(Modifier.weight(1f).fillMaxHeight().testTag("split.detail")) {
-      CompositionLocalProvider(LocalSidebar provides { sliding = true }) {
-        Pages(model, pairing, over, root = root, rootLead = if (roomy) NavLead.None else NavLead.Sidebar)
+      CompositionLocalProvider(LocalSidebar provides { if (roomy) hidden = false else sliding = true }) {
+        Pages(model, pairing, over, root = root, rootLead = if (docked) NavLead.None else NavLead.Sidebar)
       }
     }
   }
@@ -211,13 +229,16 @@ private fun Split(model: AppModel, roomy: Boolean) {
       enter = slideInHorizontally(tween(fade)) { -it },
       exit = slideOutHorizontally(tween(fade)) { -it },
     ) {
-      Surface(color = Palette.bg0, shadowElevation = Metrics.toastShadow) { sidebar() }
+      Surface(color = Palette.bg0, shadowElevation = Metrics.toastShadow) { sidebar { sliding = false } }
     }
   }
 }
 
 /** Opens the sliding sidebar, for the detail column root's leading button; null outside the split */
 val LocalSidebar = androidx.compose.runtime.compositionLocalOf<(() -> Unit)?> { null }
+
+/** Puts the sidebar away, for the list's bar while it stands in the sidebar; null outside it */
+val LocalSidebarHide = androidx.compose.runtime.compositionLocalOf<(() -> Unit)?> { null }
 
 /**
  * A page bar's leading button: back on a stacked page, the sidebar at the detail column's root while it slides over,

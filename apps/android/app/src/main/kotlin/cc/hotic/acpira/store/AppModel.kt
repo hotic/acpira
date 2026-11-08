@@ -12,11 +12,14 @@ import cc.hotic.acpira.i18n.L10n
 import cc.hotic.acpira.i18n.t
 import cc.hotic.acpira.logic.Outgoing
 import cc.hotic.acpira.logic.left
+import cc.hotic.acpira.logic.replayPicks
 import cc.hotic.acpira.logic.shownAttachment
 import cc.hotic.acpira.model.AgentInfo
 import cc.hotic.acpira.model.AgentTurn
 import cc.hotic.acpira.model.ClientInfo
 import cc.hotic.acpira.model.ConfigControl
+import cc.hotic.acpira.model.ModelShapes
+import cc.hotic.acpira.model.SessionControls
 import cc.hotic.acpira.model.Draft
 import cc.hotic.acpira.model.Hello
 import cc.hotic.acpira.model.HostMsg
@@ -245,18 +248,32 @@ class AppModel(
 
   fun agent(id: String): AgentInfo = agents.firstOrNull { it.id == id } ?: AgentInfo(id, id)
 
-  /** Agents a new session can start on, in the user's order */
-  val startable: List<AgentInfo>
+  /**
+   * The agents a new session can offer, in the user's order (agentOrder.ts launchable): the switched-off ones left out,
+   * the ones not installed kept, so the agent ring shows them dimmed (apps/ios `launchable`)
+   */
+  val launchable: List<AgentInfo>
     get() {
       val order = settings.agentOrder
-      return agents.filter { it.disabled != true && it.id !in settings.disabledAgents && it.available != false }
+      return agents.filter { it.disabled != true && it.id !in settings.disabledAgents }
         .sortedBy { a -> order.indexOf(a.id).let { if (it < 0) Int.MAX_VALUE else it } }
     }
 
+  /** Agents a new session can start on right now: [launchable] and installed */
+  val startable: List<AgentInfo> get() = launchable.filter { it.available != false }
+
+  /** A chat's folder: directly inside [chatRoot], in either separator (sessionTree.ts isChatFolder) */
   fun isChat(cwd: String): Boolean {
-    val root = chatRoot ?: return false
-    return cwd.startsWith("$root/") && !cwd.removePrefix("$root/").contains('/')
+    val root = chatRoot?.takeIf { it.isNotEmpty() } ?: return false
+    val cut = cwd.indexOfLast { it == '/' || it == '\\' }
+    return cut > 0 && cut < cwd.length - 1 && cwd.substring(0, cut) == root
   }
+
+  /**
+   * A new session in [cwd] starts as a chat: no folder picked (null), or one picked from a chat (Shell.tsx `newIn`).
+   * Only where the engine says where chats live (apps/ios AppModel `startsChat`)
+   */
+  fun startsChat(cwd: String?): Boolean = chatRoot != null && (cwd.isNullOrEmpty() || isChat(cwd))
 
   fun placeName(cwd: String): String = if (isChat(cwd)) t("session.group.chats") else cwd.split('/', '\\').lastOrNull { it.isNotEmpty() } ?: cwd
 
@@ -433,27 +450,29 @@ class AppModel(
     opened(id)
   }
 
-  /** Starts a session of [agent] in [cwd] (a chat when null) and sends [text] once the engine has opened it */
   /**
-   * A new session from the new-session page: [picked] are the page's model / effort / mode picks, applied where they
-   * differ from what the engine started it with (apps/ios AppModel+Engine.swift apply), before the first prompt goes
+   * Starts a session of [agent] in [cwd] (a chat when null) and sends [text] once the engine has opened it. [picked] are
+   * the new-session page's controls, replayed over what the engine started it with before the first prompt goes
+   * (logic/DraftPicks.kt, apps/ios AppModel+Engine.swift `apply`)
    */
-  fun start(agent: String?, cwd: String?, text: String, attachments: List<Draft> = emptyList(), picked: List<ConfigControl> = emptyList()) {
+  fun start(agent: String?, cwd: String?, text: String, attachments: List<Draft> = emptyList(), picked: SessionControls? = null) {
     val body = text.trim()
     val replace: (String) -> Unit = { id ->
       val at = path.indexOfLast { it is Screen.New }
       if (at >= 0) path[at] = Screen.Chat(id) else path.add(Screen.Chat(id))
-      val made = views[id]?.controls?.options.orEmpty()
-      for (option in picked) {
-        val value = option.value ?: continue
-        val now = made.firstOrNull { it.id == option.id } ?: continue
-        if (now.value != value) setConfig(id, option.id, value)
+      val made = views[id]?.controls
+      if (picked != null && made != null) {
+        val replay = replayPicks(picked, made)
+        replay.mode?.let { setMode(id, it) }
+        for ((option, value) in replay.config) setConfig(id, option, value)
       }
       if (body.isNotEmpty() || attachments.isNotEmpty()) send(id, body, attachments)
     }
     if (live) {
       awaiting = feed.views.current?.id to replace
-      post(WebviewMsg.NewSession(agent = agent, cwd = cwd, chat = if (cwd == null) true else null))
+      // A chat gets a fresh folder of its own from the engine; an engine that is no project shell ignores the flag
+      val chat = startsChat(cwd)
+      post(WebviewMsg.NewSession(agent = agent, cwd = if (chat) null else cwd, chat = if (chat) true else null))
       return
     }
     val id = "demo-${++demoSeq}"
@@ -477,6 +496,9 @@ class AppModel(
   /** The slash commands the same answers carry (by agent, or by [hostControlsKey]): a new session's `/` list */
   val agentCommands = mutableStateMapOf<String, List<cc.hotic.acpira.model.SlashCommand>>()
 
+  /** Agents (or [hostControlsKey]s) given their one fresh probe on this wire (store/Composing.kt `probeUnknownControls`) */
+  internal val probedControls = HashSet<String>()
+
   /** The composer's `@` file search, answered by the engine's `files` (store/FileSearch.kt) */
   val fileSearch = FileSearch { query, seq -> post(WebviewMsg.SearchFiles(query, seq)) }
 
@@ -486,18 +508,75 @@ class AppModel(
    */
   val agentShapes = mutableStateMapOf<String, cc.hotic.acpira.model.ModelShapes>()
 
-  fun newSessionShapes(agent: String, cwd: String?): cc.hotic.acpira.model.ModelShapes? = agentShapes[hostControlsKey(agent, cwd) ?: agent]
-
   /** What a new session of [agent] in [cwd] offers before it runs: a host folder's own answer, else the agent's */
   fun newSessionControls(agent: String, cwd: String?): List<ConfigControl> =
     hostControlsKey(agent, cwd)?.let { hostControls[it].orEmpty() } ?: agentControls[agent].orEmpty()
 
   /**
+   * The controls a new session of [agent] in [cwd] starts with (apps/ios AppModel `controls(for:)`): those of its latest
+   * session while a view of it is kept (modes included, which only a session brings), else the engine's answer
+   * ([loadControls]), else in the demo a fixture of the agent's or the showcase's. A host folder reads a kept session
+   * there or that folder's answer, never another machine's list
+   */
+  fun controlsFor(agent: String, cwd: String?): SessionControls {
+    hostControlsKey(agent, cwd)?.let { key ->
+      val kept = summaries.filter { it.agent == agent && it.cwd == cwd }.maxByOrNull { it.updatedAt }?.let { views[it.id]?.controls }
+      if (kept != null && kept.options.isNotEmpty()) return kept
+      return SessionControls(options = hostControls[key].orEmpty())
+    }
+    val latest = summaries.filter { it.agent == agent }.maxByOrNull { it.updatedAt }?.let { views[it.id]?.controls }
+    if (latest != null && latest.options.isNotEmpty()) return latest
+    agentControls[agent]?.takeIf { it.isNotEmpty() }?.let { return SessionControls(options = it) }
+    val fallback = if (live) null else {
+      views.values.filter { it.agent == agent && it.id.startsWith("fx-") && it.controls.options.isNotEmpty() }.minByOrNull { it.id }?.controls
+        ?: demoShowcase
+    }
+    return latest ?: fallback ?: SessionControls()
+  }
+
+  /** The demo's showcase fixture's controls, the new session page's last resort without an engine */
+  private val demoShowcase: SessionControls? by lazy { Fixtures.session(context, "showcase")?.controls }
+
+  /**
+   * The per-model parameters a model pick on the new session page reshapes with (apps/ios `shapes(for:)`): the engine's
+   * answer, else those a kept view of the agent carries
+   */
+  fun newSessionShapes(agent: String, cwd: String?): ModelShapes? {
+    hostControlsKey(agent, cwd)?.let { return agentShapes[it] }
+    return agentShapes[agent] ?: views.values.firstOrNull { it.agent == agent && it.modelShapes != null }?.modelShapes
+  }
+
+  /** The engine's last answer for a new session of [agent] in [cwd], null before one came */
+  fun knownControls(agent: String, cwd: String?): List<ConfigControl>? {
+    val key = hostControlsKey(agent, cwd) ?: return agentControls[agent]
+    return hostControls[key]
+  }
+
+  /**
+   * Asks for every agent not answered yet, so a switch on the new session page finds the agent's models at once instead
+   * of dropping the model chip for the round trip (apps/ios `prefetchControls`)
+   */
+  fun prefetchControls(agents: List<String>, cwd: String?) {
+    for (agent in agents) if (knownControls(agent, cwd) == null) loadControls(agent, cwd)
+  }
+
+  /**
+   * An agent the engine knows no models for yet (never run on that computer, no probe) gets one fresh probe on this wire:
+   * the phone only starts its CLI with the first prompt (apps/ios `probeUnknownControls`)
+   */
+  fun probeUnknownControls(agent: String, cwd: String?) {
+    val key = hostControlsKey(agent, cwd) ?: agent
+    if (!live || knownControls(agent, cwd)?.isEmpty() != true || key in probedControls) return
+    probedControls += key
+    loadControls(agent, cwd, fresh = true)
+  }
+
+  /**
    * Asks the engine for an agent's new-session controls, for [cwd] when it is on an SSH host; the demo reads them off one
    * of the agent's views
    */
-  fun loadControls(agent: String, cwd: String? = null) {
-    if (post(WebviewMsg.Controls(agent, cwd = cwd?.takeIf { hostControlsKey(agent, it) != null }))) return
+  fun loadControls(agent: String, cwd: String? = null, fresh: Boolean = false) {
+    if (post(WebviewMsg.Controls(agent, fresh = if (fresh) true else null, cwd = cwd?.takeIf { hostControlsKey(agent, it) != null }))) return
     if (agentControls[agent] == null) {
       agentControls[agent] = views.values.firstOrNull { it.agent == agent && it.controls.options.isNotEmpty() }?.controls?.options.orEmpty()
     }

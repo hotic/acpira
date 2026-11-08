@@ -52,8 +52,8 @@ class Attention(private val context: Context) {
       if (s.id == shown) continue
       val agent = model.agent(s.agent).name
       when {
-        now.waiting && !was.waiting -> post(s, t("host.attention.waiting", "agent" to agent))
-        now.unread && !was.unread -> post(s, t("host.attention.done", "agent" to agent))
+        now.waiting && !was.waiting -> post(s, model.computer, t("host.attention.waiting", "agent" to agent))
+        now.unread && !was.unread -> post(s, model.computer, t("host.attention.done", "agent" to agent))
       }
     }
   }
@@ -61,13 +61,15 @@ class Attention(private val context: Context) {
   /** A notice gone stale: the session was opened, so its card in the shade says nothing new */
   fun clear(session: String) = NotificationManagerCompat.from(context).cancel(session, NOTICE)
 
-  private fun post(s: SessionSummary, text: String) {
+  /** [computer]: the paired computer the session lives on, so a tap follows that computer first (null: a development engine) */
+  private fun post(s: SessionSummary, computer: String?, text: String) {
     channels(context)
     val open = Intent(context, MainActivity::class.java)
       .setAction(ACTION_OPEN)
       .putExtra(EXTRA_SESSION, s.id)
+      .putExtra(EXTRA_COMPUTER, computer)
       .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-    val tap = PendingIntent.getActivity(context, s.id.hashCode(), open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+    val tap = PendingIntent.getActivity(context, "$computer/${s.id}".hashCode(), open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     val notice = NotificationCompat.Builder(context, CHANNEL_ATTENTION)
       .setSmallIcon(R.drawable.ic_notify)
       .setContentTitle(s.title)
@@ -83,6 +85,7 @@ class Attention(private val context: Context) {
   companion object {
     const val ACTION_OPEN = "cc.hotic.acpira.OPEN_SESSION"
     const val EXTRA_SESSION = "session"
+    const val EXTRA_COMPUTER = "computer"
     private const val NOTICE = 1
     const val CHANNEL_ATTENTION = "attention"
     const val CHANNEL_LINK = "link"

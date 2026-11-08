@@ -200,6 +200,9 @@ object Metrics {
   val moreMark = 14.dp
   /** A dragged row's card under the finger: its widest */
   val dragPreview = 260.dp
+  /** A drag near the list's top or bottom edge scrolls it: the band it starts in, and the speed at the very edge per second */
+  val dragEdge = 72.dp
+  val dragScrollMax = 1200.dp
   /** A host folder's alias at the header's end, and its connection dot */
   val hostAlias = 120.dp
   val hostDot = 7.dp
@@ -275,6 +278,14 @@ object Metrics {
   /** The path the wire travels, in the sentence's place once it is up (ui/Button ChipTag) */
   val pairPathX = 6.dp
   val pairPathH = 22.dp
+  /** The scanned code's box, quiet zone included, its track's corner and stroke (pairGeometry.ts QR_BOX, RING_R, RING_STROKE) */
+  val pairCode = 228.dp
+  val pairCodeRadius = 16.dp
+  val pairCodeTrack = 1.5.dp
+  /** The paired moment's blurs: the rings dissolving, the mark leaving, the computer arriving (PairingTokens Motion) */
+  val pairBandBlur = 1.6.dp
+  val pairMarkBlur = 3.dp
+  val pairGlyphBlur = 3.dp
   /** The connect frame's glyph centre sits this far down the page: its optical centre, a little above the middle */
   const val heroRise = 0.42f
   /** A menu: its corner, row, narrowest width, shadow and the gap band between sections (AppMenu) */
