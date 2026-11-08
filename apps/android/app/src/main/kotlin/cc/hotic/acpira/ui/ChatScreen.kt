@@ -407,7 +407,8 @@ fun ChatScreen(model: AppModel, id: String) {
         val end = maxOf(total - 1, 0)
         scope.launch { if (model.motion) thread.animateScrollToItem(end, Int.MAX_VALUE / 2) else thread.scrollToItem(end, Int.MAX_VALUE / 2) }
       }
-      Box(Modifier.fillMaxWidth().onSizeChanged { planDockH = it.height }) { PlanDock(held) { handlers.goal(it, null) } }
+      // It steps back under an open picker, or its words read through the beans' captions
+      Box(Modifier.fillMaxWidth().onSizeChanged { planDockH = it.height }.gooAside(goo, model.motion)) { PlanDock(held) { handlers.goal(it, null) } }
     }
     }
   }
