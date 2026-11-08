@@ -61,6 +61,22 @@ export struct QuestionCard {
   @Event onAnswer: (answers: Record<string, QuestionAnswer>, skipped: boolean) => void = () => {};
   @Local page: number = 0;
   @Local picks: Map<string, QPick> = new Map<string, QPick>();
+  /** The question the page and picks belong to: the dock keeps this card when another question takes its place */
+  private shownId: string | undefined = undefined;
+
+  aboutToAppear(): void {
+    this.shownId = this.block.id;
+  }
+
+  @Monitor('block')
+  blockChanged(): void {
+    // A new question starts on its first page with nothing picked (QuestionCard.swift `.id(question.id)`)
+    if (this.block.id !== this.shownId) {
+      this.shownId = this.block.id;
+      this.page = 0;
+      this.picks = new Map<string, QPick>();
+    }
+  }
 
   private questions(): Question[] {
     return this.block.questions ?? [];
