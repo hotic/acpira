@@ -52,6 +52,7 @@ import cc.hotic.acpira.design.Palette
 import cc.hotic.acpira.store.AppModel
 import cc.hotic.acpira.store.Screen
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.exp
 import kotlin.math.max
@@ -104,6 +105,8 @@ class BarHandoff {
    */
   internal fun resolve() {
     if (run != null || !motion) return
+    // A layer that left (the window grew to the split) leaves a cancelled scope behind: nothing could end a run there
+    val frames = scope?.takeIf { it.isActive } ?: return
     val list = listPage ?: return
     val page = composerPage ?: return
     if (!list.moving || !page.moving || !listIdle || !composerAtRest) return
@@ -113,8 +116,13 @@ class BarHandoff {
     val r = Run(start)
     run = r
     progress = start
-    scope?.launch {
-      while (run === r) withFrameNanos { tick(r, it) }
+    frames.launch {
+      try {
+        while (run === r) withFrameNanos { tick(r, it) }
+      } finally {
+        // Cancelled with the layer mid-move: the real bars must not stay hidden under a stand-in no one draws
+        if (run === r) end()
+      }
     }
   }
 

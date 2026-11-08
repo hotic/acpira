@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -37,6 +38,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -715,7 +717,8 @@ private suspend fun stageFile(context: Context, uri: Uri): Staged? = withContext
  * The staged attachments inside the card over the text (Composer.swift StagedAttachments): image tiles, video tiles and
  * file chips, each with its remove mark. A tile opens its picture in the Lightbox, a video plays, a pasted text shows
  * whole, a file picked on the phone opens in the phone's viewer and a file on the computer in the chat's file page.
- * [onNavigate] runs before any of them opens (the whole-screen editor gets out of the way)
+ * [onNavigate] runs before a picture or a file opens (the whole-screen editor gets out of the way); a video and a
+ * pasted text open in dialogs over it
  */
 @Composable
 internal fun StagedStrip(staged: List<Staged>, onStaged: (List<Staged>) -> Unit, modifier: Modifier, onNavigate: (() -> Unit)? = null) {
@@ -748,8 +751,9 @@ internal fun StagedStrip(staged: List<Staged>, onStaged: (List<Staged>) -> Unit,
           else VideoSource.of(context, it.uri, s.name, media.session, media.loader)
         }
         if (video != null) {
+          // The player is a dialog of its own over the editor, so the editor stays (iOS leaves only for the file page):
+          // collapsing it first took this strip, and the player with it, out of composition
           VideoAttachmentTile(video, s.name, side = Metrics.stagedTile, progress = progress, still = VideoJobs.stills[file.uri], corner = Metrics.rLg) {
-            onNavigate?.invoke()
             playing = it to s.name
           }
         } else if (thumb != null) {
@@ -1010,6 +1014,11 @@ fun GooLayer(goo: Goo, motion: Boolean) {
     val bottom = chip.top - origin.y - with(density) { Metrics.gooGap.toPx() }
     val step = with(density) { (Metrics.barCtl + Metrics.gooGap).toPx() }
     val room = bottom - with(density) { (Metrics.barCtl * 2).toPx() }
+    // A short window (a phone on its side) has no room for a tall column: the beans that would rise past the safe top
+    // start another column beside the first, clear of its captions
+    val ceiling = max(0f, WindowInsets.safeDrawing.getTop(density) - origin.y) + with(density) { Metrics.gooGap.toPx() }
+    val perColumn = max(1, ((bottom - ceiling - with(density) { Metrics.barCtl.toPx() }) / step).toInt() + 1)
+    val columnW = with(density) { (Metrics.barCtl + Metrics.s2 + Metrics.gooAside + Metrics.s1 * 2 + Metrics.gooGap).toPx() }
     val n = beans.size
     val span = min(STAGGER * max(0, n - 1), STAGGER_MAX)
     val panels = beans.mapIndexed { i, _ -> animateFloatAsState(if (goo.open != null && goo.stage == i + 1) 1f else 0f, spec(), label = "panel$i") }
@@ -1017,7 +1026,8 @@ fun GooLayer(goo: Goo, motion: Boolean) {
     beans.forEachIndexed { i, bean ->
       val lag = if (n > 1) span * i / (n - 1) else 0f
       val t = ((main.coerceAtMost(1f) - lag) / (1 - span)).coerceIn(0f, 1f) + max(0f, main - 1)
-      val rest = bottom - step * i
+      val rest = bottom - step * (i % perColumn)
+      val x = left + columnW * (i / perColumn) * t
       val y = chip.center.y - origin.y + (rest - with(density) { Metrics.barCtl.toPx() } / 2 - (chip.center.y - origin.y)) * t
       val beanLive = t > ARRIVED && opened < UNCOVERED
       // Every bean goes into an open panel, its own too: a see-through panel would show it under the rows
@@ -1026,7 +1036,7 @@ fun GooLayer(goo: Goo, motion: Boolean) {
       Row(
         Modifier.layout { m, c ->
           val p = m.measure(c.copy(minWidth = 0, minHeight = 0))
-          layout(c.maxWidth, c.maxHeight) { p.place(left.toInt(), (y - p.height / 2).toInt()) }
+          layout(c.maxWidth, c.maxHeight) { p.place(x.toInt(), (y - p.height / 2).toInt()) }
         }.graphicsLayer {
           val s = BEAN_SEED + (1 - BEAN_SEED) * t
           scaleX = s * (1 - swallowed); scaleY = s * (1 - swallowed)
