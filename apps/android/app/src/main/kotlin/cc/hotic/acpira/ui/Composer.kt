@@ -228,7 +228,9 @@ fun Composer(
     if (expanded) Metrics.s3 + Metrics.s1 else Metrics.barCtl + Metrics.s1 + (if (ring != null) Metrics.ctlSm else Metrics.s0), anim(), label = "end",
   )
   val padBottom by animateDpAsState(if (expanded) Metrics.s1 + Metrics.barCtl + Metrics.s1 else line, anim(), label = "bottom")
-  val inset by animateDpAsState(if (expanded) Metrics.s1 else Metrics.s0, anim(), label = "inset")
+  val springInset by animateDpAsState(if (expanded) Metrics.s1 else Metrics.s0, anim(), label = "inset")
+  // The spring overshoots below zero on its way back to s0, which padding refuses
+  val inset = springInset.coerceAtLeast(Metrics.s0)
   val shape = RoundedCornerShape(corner)
 
   Box(modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = Metrics.pad, vertical = Metrics.s2)) {

@@ -244,11 +244,13 @@ private fun QuotaBar(window: QuotaWindow, now: Instant, size: TextUnit, ink: Col
   Column(verticalArrangement = Arrangement.spacedBy(Metrics.s1), modifier = Modifier.testTag("quota:${window.id}")) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Metrics.s2)) {
       Text(QuotaTime.windowLabel(window.id), color = ink, fontSize = size, maxLines = 1, softWrap = false)
-      Text(
-        reset, color = ink, fontSize = size, maxLines = 1, overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.weight(1f, fill = false).background(Palette.popActive, RoundedCornerShape(Metrics.rSm)).padding(horizontal = Metrics.s1),
-      )
-      Spacer(Modifier.weight(1f))
+      // The badge takes the line's room and truncates in it, what is left stays flush right
+      Box(Modifier.weight(1f)) {
+        Text(
+          reset, color = ink, fontSize = size, maxLines = 1, overflow = TextOverflow.Ellipsis,
+          modifier = Modifier.background(Palette.popActive, RoundedCornerShape(Metrics.rSm)).padding(horizontal = Metrics.s1),
+        )
+      }
       Text(t("quota.left", "pct" to pct), color = ink, fontSize = size, maxLines = 1, softWrap = false, textAlign = TextAlign.End)
     }
     Box(Modifier.fillMaxWidth().height(Metrics.quotaTrack).clip(CircleShape).background(Palette.popActive)) {
