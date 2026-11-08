@@ -21,6 +21,14 @@
         "skills": [{ "entities": ["entity.system.home"], "actions": ["ohos.want.action.home"] }]
       }
     ],
-    "requestPermissions": [{ "name": "ohos.permission.INTERNET" }]
+    "requestPermissions": [
+      { "name": "ohos.permission.INTERNET" },
+      { "name": "ohos.permission.GET_NETWORK_INFO" },
+      {
+        "name": "ohos.permission.CAMERA",
+        "reason": "$string:camera_reason",
+        "usedScene": { "abilities": ["EntryAbility"], "when": "inuse" }
+      }
+    ]
   }
 }

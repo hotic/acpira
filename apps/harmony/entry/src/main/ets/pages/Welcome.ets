@@ -7,14 +7,17 @@ import { t } from '../store/L10n';
 import { PrefKey, prefs } from '../store/Prefs';
 import { AgentMark, Lucide } from '../components/Glyphs';
 import { GlassButton } from '../components/Chrome';
+import { PairSheet } from './PairSheet';
 
 // The first run (apps/ios Welcome/WelcomeFlow.swift, apps/android ui/Welcome.kt), over every screen while the app
 // follows no engine and the flow never finished: the intro (the mark, the headline written in, the agents it works with,
-// Start), then the engine to follow in place of the iOS pairing step (this app dials an engine by address and token,
-// with no pairing service), then notifications. Not now on the engine step leaves the demo showing.
+// Start), then pairing a computer in place (pages/PairSheet.ets inline), with an engine by address and token as its
+// fallback and the only step in a build without the remote access library, then notifications. Not now leaves the demo
+// showing.
 
 enum Step {
   Intro,
+  Pair,
   Engine,
   Notify
 }
@@ -34,7 +37,7 @@ export function welcomeDue(): boolean {
 @ComponentV2
 export struct WelcomeFlow {
   @Require @Param model: AppModel;
-  /** The step to open on (screenshots): intro, engine or notify */
+  /** The step to open on (screenshots): intro, pair, engine or notify */
   @Param start: string = 'intro';
   @Event onDone: () => void = () => {};
   @Local step: Step = Step.Intro;
@@ -44,7 +47,8 @@ export struct WelcomeFlow {
   @Local token: string = '';
 
   aboutToAppear(): void {
-    this.step = this.start === 'engine' ? Step.Engine : this.start === 'notify' ? Step.Notify : Step.Intro;
+    this.step = this.start === 'engine' ? Step.Engine : this.start === 'notify' ? Step.Notify :
+      this.start === 'pair' ? this.connectStep() : Step.Intro;
     if (this.start !== 'intro' || !this.model.motion) {
       this.shown = true;
       return;
@@ -74,6 +78,11 @@ export struct WelcomeFlow {
     }
   }
 
+  /** Pairing when the build carries it, else the engine by address */
+  connectStep(): Step {
+    return this.model.pairing !== undefined ? Step.Pair : Step.Engine;
+  }
+
   connect(): void {
     const a = this.address.trim();
     if (a.split(':').length !== 2 || this.token.trim().length === 0) {
@@ -92,6 +101,20 @@ export struct WelcomeFlow {
     Stack() {
       if (this.step === Step.Intro) {
         this.intro()
+      } else if (this.step === Step.Pair && this.model.pairing !== undefined) {
+        PairSheet({
+          pairing: this.model.pairing,
+          inline: true,
+          onClose: () => this.connected(),
+          onBack: () => {
+            this.step = Step.Intro;
+          },
+          onAddress: () => {
+            this.step = Step.Engine;
+          },
+          onLater: () => this.finish()
+        })
+          .transition(this.swap())
       } else if (this.step === Step.Engine) {
         this.engine()
       } else {
@@ -176,7 +199,7 @@ export struct WelcomeFlow {
         .translate({ y: this.shown ? 0 : WelcomeMetrics.rise })
         .animation(this.rise(WelcomeMetrics.actionsAt))
         .onClick(() => {
-          this.step = Step.Engine;
+          this.step = this.connectStep();
         })
     }
     .constraintSize({ maxWidth: WelcomeMetrics.column })
@@ -206,7 +229,7 @@ export struct WelcomeFlow {
   engine() {
     Column() {
       Row() {
-        GlassButton({ icon: 'arrowLeft', tag: 'welcome.back', onTap: () => { this.step = Step.Intro; } })
+        GlassButton({ icon: 'arrowLeft', tag: 'welcome.back', onTap: () => { this.step = this.model.pairing !== undefined ? Step.Pair : Step.Intro; } })
         Blank()
       }
       .height(Metrics.barCtl + Metrics.gap)

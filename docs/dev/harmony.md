@@ -38,3 +38,12 @@
 - `scripts/build.sh` with `DEV_ENGINE=host:port:token` (and `DEV_PROMPT`) compiles a default engine in, since nothing passes launch parameters to the Previewer; `apps/ios/scripts/engine.sh` takes `TOKEN` to match.
 - A field added to `SessionView` must be copied in `viewWithTurns` (`wire/Wire.ets`) too, or the next patch drops it.
 - Turn rows key on the patch's `keep`: rows of kept turns keep their keys, so only the changed tail renders again.
+
+## Paired remote
+
+- The library is `rust/crates/acpira-mobile-ohos`: napi-ohos over `acpira-mobile`, the UniFFI binding's surface. Its crate type stays `lib` and `scripts/build-net.sh` links the cdylib with `cargo rustc --crate-type cdylib` per OHOS target, so workspace builds and clippy on macOS / Windows never link the N-API symbols. Its work dir is `rust/target/ohos`: hvigor wipes `apps/harmony/build` at the start of every build.
+- No ohpm in this toolchain: `remote/Net.ets` loads the `.so` with `loadNativeModule` (API 12+) and types it from `cpp/types/libacpira_mobile_ohos/index.d.ts` by relative path. Without `entry/libs/` (git-ignored) `net()` is undefined, and the app keeps the demo and the engine by address.
+- The public SDK has no ScanKit: camera preview frames go through an `ImageReceiver`, whose JPEG component holds NV21, and the luma plane is decoded by the library (rqrr). Camera calls must sit lexically inside `if (canIUse('SystemCapability.Multimedia.Camera.Core'))`, or the SysCap check warns for `2in1`; `syscap.json` cannot list `2in1`.
+- The link is QUIC (UDP), so `hdc rport` and SSH `-L` tunnels cannot carry it. QEMU's user network NATs outbound UDP, so an emulator reaches a gateway with relays off (`apps/ios/scripts/gateway.sh`) at the Mac's LAN address. mDNS does not cross that NAT: `scripts/build.sh DEV_NEARBY=<id>@<host:port>` pins the computer in the add sheet.
+- The launch parameter `pair` (`aa start … --ps pair <link>`) opens the add sheet on a pairing link.
+- `PasteButton` grants the clipboard read for its tap; the "READ_PASTEBOARD" warning on that read is static and expected.

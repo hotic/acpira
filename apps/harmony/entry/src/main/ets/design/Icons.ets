@@ -157,3 +157,6 @@ const SHELL_ICONS: [string, string[]][] = [
   ['refreshCw', ["M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8", "M21 3v5h-5", "M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16", "M8 16H3v5"]],
 ];
 SHELL_ICONS.forEach((e: [string, string[]]) => LUCIDE.set(e[0], e[1]));
+
+// Paired remote access (components/PairScanner.ets): the lucide set's own paths
+LUCIDE.set('camera', ["M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z", "M9 13a3 3 0 1 0 6 0a3 3 0 1 0 -6 0z"]);

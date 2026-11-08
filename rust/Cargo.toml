@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/acpira-shared", "crates/acpira-rpc", "crates/acpira-agent", "crates/acpira-host", "crates/acpira-desktop", "crates/acpira-net", "crates/acpira-gateway", "crates/acpira-mobile"]
+members = ["crates/acpira-shared", "crates/acpira-rpc", "crates/acpira-agent", "crates/acpira-host", "crates/acpira-desktop", "crates/acpira-net", "crates/acpira-gateway", "crates/acpira-mobile", "crates/acpira-mobile-ohos"]
 
 [workspace.package]
 version = "2.0.10"

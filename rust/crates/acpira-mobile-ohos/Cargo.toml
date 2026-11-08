@@ -1,0 +1,39 @@
+[package]
+name = "acpira-mobile-ohos"
+description = "acpira-mobile exported to ArkTS through N-API for the HarmonyOS app: pairing and the link to a computer's gateway"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# The shared library apps/harmony/scripts/build-net.sh builds with `cargo rustc --crate-type cdylib` (as the Android
+# script does): a cdylib listed here would be linked by every workspace build on every host. Off OpenHarmony only the
+# `bridge` module builds (what the N-API layer hands across, tested on the host); the N-API layer and its crates are
+# OpenHarmony-only, so the workspace gate on macOS / Linux / Windows never compiles or links them
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+acpira-mobile = { path = "../acpira-mobile" }
+# The pairing QR code read from camera frames: the public OpenHarmony SDK has no barcode scanner (ScanKit is
+# HarmonyOS-only), and the library already ships with the app, so the decoder lives here rather than in ArkTS
+rqrr = { version = "0.11", default-features = false }
+
+[target.'cfg(target_env = "ohos")'.dependencies]
+# ohos-rs: napi-rs for ArkTS, linked against the SDK's libace_napi.z.so (build.rs). `async` turns an
+# `async fn` into a Promise run on napi's own tokio runtime (one worker, set up at module load)
+napi-ohos = { version = "1.2", default-features = false, features = ["napi4", "async"] }
+napi-derive-ohos = "1.2"
+tokio.workspace = true
+
+[dev-dependencies]
+acpira-gateway = { path = "../acpira-gateway" }
+acpira-host = { path = "../acpira-host" }
+acpira-net = { path = "../acpira-net", default-features = false }
+qrcode.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

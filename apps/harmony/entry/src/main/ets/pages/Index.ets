@@ -19,7 +19,8 @@ struct Index {
     initL10n(language);
     this.model.attach(this.getUIContext().getHostContext(), language);
     // `engine`: `host:port:token` of the development engine (apps/ios/scripts/engine.sh), or the one a development
-    // build compiled in (scripts/build.sh DEV_ENGINE), or the one the app was set to follow; without one the demo shows
+    // build compiled in (scripts/build.sh DEV_ENGINE), or the one the app was set to follow; then the paired computers
+    // (when the build carries the remote access library); without any the demo shows
     const launch = AppStorage.get<Record<string, Object>>('launch') ?? {};
     const asked = (launch['engine'] as string | undefined) ?? (DEV_ENGINE.length > 0 ? DEV_ENGINE : undefined);
     const engine = asked ?? this.model.storedEngine();
@@ -27,11 +28,24 @@ struct Index {
     if (parts.length === 3) {
       this.model.startOnConnect = DEV_PROMPT.length > 0 ? DEV_PROMPT : undefined;
       this.model.follow(`${parts[0]}:${parts[1]}`, parts[2], false);
-    } else {
-      this.model.demo();
-      // The first run, while no engine is followed and it never finished
-      this.welcome = welcomeDue();
+      return;
     }
+    if (!this.model.startPairing()) {
+      this.model.demo();
+    }
+    // `pair`: an `acpira://pair/…` link to confirm in the add sheet (`aa start … --ps pair <link>`)
+    const link = launch['pair'] as string | undefined;
+    const opened = link !== undefined && this.model.pairing !== undefined && this.model.pairing.open(link);
+    // The first run, while nothing is followed and it never finished
+    this.welcome = !opened && !this.model.paired && welcomeDue();
+  }
+
+  onPageShow(): void {
+    this.model.pairing?.enterForeground();
+  }
+
+  onPageHide(): void {
+    this.model.pairing?.enterBackground();
   }
 
   build() {

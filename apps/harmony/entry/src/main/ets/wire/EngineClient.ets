@@ -97,55 +97,112 @@ export interface EngineListener {
   closed: (reason: string | undefined) => void;
 }
 
-export class EngineClient {
+/** What a transport tells the client: the wire is up, a frame of envelopes came in, the wire ended */
+export interface TransportHandlers {
+  opened: () => void;
+  frame: (text: string) => void;
+  /** reason: undefined for a clean end */
+  closed: (reason: string | undefined) => void;
+}
+
+/**
+ * One wire to an engine carrying text frames of envelopes (apps/android sync/EngineTransport.kt): the development
+ * WebSocket below, or a paired computer's link (remote/PairedTransport.ets)
+ */
+export interface EngineTransport {
+  start(handlers: TransportHandlers): void;
+  send(text: string): void;
+  close(): void;
+}
+
+/**
+ * `acpira --ws` (apps/ios/scripts/engine.sh): the token rides in the query and the engine drops a handshake whose
+ * Origin is not its own loopback port
+ */
+export class WebSocketTransport implements EngineTransport {
   private ws: webSocket.WebSocket = webSocket.createWebSocket();
-  private readonly viewId: string = 'harmony';
-  private attached: boolean = false;
-  private outbox: WebviewMsg[] = [];
-  private ended: boolean = false;
   private address: string;
   private token: string;
-  private language: string;
-  private listener: EngineListener;
 
-  constructor(address: string, token: string, language: string, listener: EngineListener) {
+  constructor(address: string, token: string) {
     this.address = address;
     this.token = token;
-    this.language = language;
-    this.listener = listener;
   }
 
-  start(): void {
+  start(handlers: TransportHandlers): void {
     this.ws.on('open', () => {
       hilog.info(DOMAIN, TAG, 'open %{public}s', this.address);
-      this.write(this.hello());
+      handlers.opened();
     });
     this.ws.on('message', (err: BusinessError, value: string | ArrayBuffer) => {
-      if (typeof value !== 'string') {
-        return;
-      }
-      // Envelopes end at "\n" alone; JSON leaves U+2028 / U+2029 unescaped inside strings, so never split on them
-      for (const line of value.split('\n')) {
-        if (line.trim().length > 0) {
-          this.receive(line);
-        }
+      if (typeof value === 'string') {
+        handlers.frame(value);
       }
     });
     this.ws.on('close', () => {
       hilog.info(DOMAIN, TAG, 'close');
-      this.end(undefined);
+      handlers.closed(undefined);
     });
     this.ws.on('error', (err: BusinessError) => {
       hilog.warn(DOMAIN, TAG, 'error %{public}d %{public}s', err.code, err.message);
-      this.end(err.message);
+      handlers.closed(err.message);
     });
     const origin = `http://${this.address}`;
     const options: webSocket.WebSocketRequestOptions = { header: { 'Origin': origin } };
     this.ws.connect(`ws://${this.address}/ws?token=${this.token}`, options, (err: BusinessError) => {
       if (err) {
         hilog.warn(DOMAIN, TAG, 'connect failed %{public}d %{public}s', err.code, err.message);
-        this.end(err.message);
+        handlers.closed(err.message);
       }
+    });
+  }
+
+  send(text: string): void {
+    try {
+      this.ws.send(text);
+    } catch (e) {
+      // A socket already gone: its close event reports the end
+      hilog.warn(DOMAIN, TAG, 'send failed %{public}s', `${e}`);
+    }
+  }
+
+  close(): void {
+    try {
+      this.ws.close();
+    } catch (e) {
+      hilog.warn(DOMAIN, TAG, 'close failed %{public}s', `${e}`);
+    }
+  }
+}
+
+export class EngineClient {
+  private transport: EngineTransport;
+  private readonly viewId: string = 'harmony';
+  private attached: boolean = false;
+  private outbox: WebviewMsg[] = [];
+  private ended: boolean = false;
+  private language: string;
+  private listener: EngineListener;
+
+  /** `transport`: a wire other than the development WebSocket to `address` with `token` (a paired computer's link) */
+  constructor(address: string, token: string, language: string, listener: EngineListener, transport?: EngineTransport) {
+    this.transport = transport ?? new WebSocketTransport(address, token);
+    this.language = language;
+    this.listener = listener;
+  }
+
+  start(): void {
+    this.transport.start({
+      opened: () => this.write(this.hello()),
+      frame: (value: string) => {
+        // Envelopes end at "\n" alone; JSON leaves U+2028 / U+2029 unescaped inside strings, so never split on them
+        for (const line of value.split('\n')) {
+          if (line.trim().length > 0) {
+            this.receive(line);
+          }
+        }
+      },
+      closed: (reason: string | undefined) => this.end(reason)
     });
   }
 
@@ -164,7 +221,7 @@ export class EngineClient {
 
   stop(): void {
     this.ended = true;
-    this.ws.close();
+    this.transport.close();
   }
 
   private hello(): HelloEnvelope {
@@ -207,7 +264,7 @@ export class EngineClient {
       case 'helloReject':
         hilog.warn(DOMAIN, TAG, 'helloReject %{public}s', message.reason ?? '');
         this.end(message.reason ?? 'The engine rejected this app');
-        this.ws.close();
+        this.transport.close();
         break;
       case 'hostMessage':
         if (message.viewId === this.viewId && message.message !== undefined) {
@@ -220,7 +277,7 @@ export class EngineClient {
   }
 
   private write(envelope: HelloEnvelope | AttachEnvelope | MessageEnvelope): void {
-    this.ws.send(JSON.stringify(envelope));
+    this.transport.send(JSON.stringify(envelope));
   }
 
   private end(reason: string | undefined): void {
