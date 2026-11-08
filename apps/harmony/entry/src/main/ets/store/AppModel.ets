@@ -2,7 +2,7 @@ import {
   AgentInfo, applySessionPatch, applySessionsPatch, HostMsg, SessionPatchMsg, SessionsPatchMsg, SessionSummary,
   SessionView, Turn
 } from '../wire/Wire';
-import { EngineClient, EngineTransport, WebviewMsg } from '../wire/EngineClient';
+import { EngineClient, EngineTransport, replayable, WebviewMsg } from '../wire/EngineClient';
 import { demoAgents, demoNow, demoSessions, demoView } from './Demo';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
 import { defaultSettings, InitState, ListHostMsg, SessionCategories, SettingsView } from '../wire/Wire';
@@ -66,6 +66,15 @@ export class AppModel implements ListHost {
   private engineListRev: number | undefined = 0;
   /** A new session's first prompt, sent once the engine shows the session it made */
   private awaiting: string | undefined = undefined;
+  /** The session on screen when that new session was asked for: a late push of it is not the new one */
+  private awaitingFrom: string | undefined = undefined;
+  /**
+   * Session actions for a paired computer held until its wire's init: those posted while no wire was synced and those
+   * the lost wire may not have delivered (`reopen` sends them)
+   */
+  private replay: WebviewMsg[] = [];
+  /** The app is in the background: the chat on screen is not watched (no unread mark would show for it) */
+  private away: boolean = false;
   private demoSeq: number = 0;
   /** The fixtures' "now" while the demo shows: their timestamps are written relative to it */
   private demoClock: number | undefined = undefined;
@@ -171,14 +180,20 @@ export class AppModel implements ListHost {
    * computer already on screen keeps the screens and selects the open chat again; another computer starts empty
    */
   connectPaired(computer: string, transport: EngineTransport, language: string): void {
-    this.client?.stop();
+    const previous = this.client;
+    previous?.stop();
     const resumed = this.computer === computer;
-    if (!resumed) {
+    if (resumed) {
+      // What the lost wire may not have delivered goes again once this one's init is in (the engine runs a stamped
+      // action once)
+      this.replay = this.replay.concat(previous?.unsent() ?? []);
+    } else {
       this.agents = [];
       this.summaries = [];
       this.view = undefined;
       this.openId = undefined;
       this.takeList([]);
+      this.replay = [];
     }
     this.computer = computer;
     this.synced = false;
@@ -194,20 +209,64 @@ export class AppModel implements ListHost {
           this.receive(message);
         }
       },
-      // The pairing model hears the end from the transport and dials again; the screens keep what they showed
+      // The pairing model hears the end from the transport and dials again; the screens keep what they showed, and
+      // session actions wait for the next wire's init
       closed: () => {
         if (this.client === client) {
           this.connection = Connection.Closed;
+          this.synced = false;
         }
       }
     }, transport);
     this.client = client;
+    // The open chat is selected again once init is in (`reopen`): the engine refuses actions before it
     client.post({ type: 'ready', patches: true, listPatches: true });
-    const open = this.openId;
-    if (resumed && open !== undefined) {
+    client.start();
+  }
+
+  /** A paired computer's wire is down or not synced yet: session actions wait for its init */
+  private get holding(): boolean {
+    return this.computer !== undefined && !this.synced;
+  }
+
+  /**
+   * After a paired wire's init (apps/android AppModel.kt `reopen`): its view starts on no session, so the chat on screen
+   * is selected again (unless the app is away), then the held actions go out in order. The engine refuses an action for
+   * a session its view does not show, so one for another session switches the view to it first and back after
+   */
+  private reopen(): void {
+    const open = this.away ? undefined : this.openId;
+    if (open !== undefined) {
       this.post({ type: 'selectSession', id: open });
     }
-    client.start();
+    const held = this.replay;
+    this.replay = [];
+    let shown = open;
+    for (const action of held) {
+      const target = action.sessionId;
+      if (target !== undefined && target !== shown) {
+        this.post({ type: 'selectSession', id: target });
+        shown = target;
+      }
+      this.post(action);
+    }
+    if (open !== undefined && shown !== open) {
+      this.post({ type: 'selectSession', id: open });
+    } else if (open === undefined && shown !== undefined) {
+      this.post({ type: 'deselectSession', id: shown });
+    }
+  }
+
+  /** The app went to the background (true) or came back: the chat on screen stops or starts being watched */
+  setAway(away: boolean): void {
+    if (away === this.away) {
+      return;
+    }
+    this.away = away;
+    const open = this.openId;
+    if (open !== undefined && this.live && !this.holding) {
+      this.post({ type: away ? 'deselectSession' : 'selectSession', id: open });
+    }
   }
 
   agentName(id: string): string {
@@ -219,7 +278,10 @@ export class AppModel implements ListHost {
     this.openId = id;
     if (this.live) {
       this.view = undefined;
-      this.post({ type: 'selectSession', id: id });
+      // A paired wire not synced yet selects it with its init
+      if (!this.holding) {
+        this.post({ type: 'selectSession', id: id });
+      }
     } else {
       this.view = demoView(id, this.summaries.find((s: SessionSummary) => s.id === id)?.title ?? '');
     }
@@ -229,7 +291,7 @@ export class AppModel implements ListHost {
   close(): void {
     const id = this.openId;
     this.openId = undefined;
-    if (id !== undefined && this.live) {
+    if (id !== undefined && this.live && !this.holding) {
       this.post({ type: 'deselectSession', id: id });
     }
   }
@@ -262,6 +324,7 @@ export class AppModel implements ListHost {
     const cwd = this.summaries.length > 0 ? this.summaries[0].cwd : undefined;
     if (this.live) {
       this.awaiting = text.trim();
+      this.awaitingFrom = this.openId ?? this.view?.id;
       this.openId = undefined;
       this.view = undefined;
       this.post({ type: 'newSession', cwd: cwd, chat: cwd === undefined ? true : undefined });
@@ -310,6 +373,11 @@ export class AppModel implements ListHost {
   }
 
   private post(message: WebviewMsg): void {
+    // A paired computer's session actions wait for its wire's init (`reopen`), so a send during a redial is not lost
+    if (this.holding && replayable(message)) {
+      this.replay.push(message);
+      return;
+    }
     this.client?.post(message);
   }
 
@@ -325,6 +393,9 @@ export class AppModel implements ListHost {
         this.home = state.home;
         this.takeList(state.sessions);
         this.takeInit(state);
+        if (this.computer !== undefined) {
+          this.reopen();
+        }
         if (this.startOnConnect !== undefined) {
           const prompt = this.startOnConnect;
           this.startOnConnect = undefined;
@@ -361,8 +432,9 @@ export class AppModel implements ListHost {
         if (view === undefined) {
           return;
         }
-        // A session made for a new prompt: the chat opens on it and the prompt goes
-        if (this.awaiting !== undefined && this.openId === undefined) {
+        // A session made for a new prompt: the chat opens on it and the prompt goes. A late push of the session on
+        // screen before is not it (AppModel+Engine.swift `awaiting.from`)
+        if (this.awaiting !== undefined && this.openId === undefined && view.id !== this.awaitingFrom) {
           const prompt = this.awaiting;
           this.awaiting = undefined;
           this.openId = view.id;
@@ -607,6 +679,7 @@ export class AppModel implements ListHost {
     if (this.live) {
       this.awaitingExtras = extras;
       this.awaiting = text.trim();
+      this.awaitingFrom = this.openId ?? this.view?.id;
       this.openId = undefined;
       this.view = undefined;
       this.post({ type: 'newSession', agent: agent, cwd: cwd, chat: cwd === undefined ? true : undefined });
@@ -1241,6 +1314,7 @@ export class AppModel implements ListHost {
     if (this.live) {
       // The engine shows the fork it made: the chat opens on it (`session`, as a new session's)
       this.awaiting = '';
+      this.awaitingFrom = view.id;
       this.openId = undefined;
       this.view = undefined;
       this.post({ type: 'forkSession', sessionId: view.id, turnIndex: turnIndex });

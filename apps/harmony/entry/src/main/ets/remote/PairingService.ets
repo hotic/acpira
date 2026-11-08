@@ -312,6 +312,13 @@ export class PairingService {
       this.probeLive();
       return;
     }
+    // A fresh node reaches the computer over the relay first and finds the LAN path only after, so the next dial waits
+    // for the relay rather than the short LAN guess
+    for (const id of Array.from(this.lastPath.keys())) {
+      if (this.lastPath.get(id) === 'lan') {
+        this.lastPath.delete(id);
+      }
+    }
     const wanted = this.rebuild || n !== undefined;
     this.dropNode(false);
     if (wanted) {

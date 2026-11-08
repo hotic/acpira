@@ -1,6 +1,7 @@
 import { webSocket } from '@kit.NetworkKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { util } from '@kit.ArkTS';
 import { HostMsg, SIDECAR_PROTOCOL_VERSION, SidecarMsg } from './Wire';
 import { Draft, EditTurnRequest, QuestionAnswer } from './Wire';
 
@@ -55,6 +56,29 @@ export interface WebviewMsg {
   // Transcript (transcript agent): a saved plan's Build with its execution model
   planId?: string;
   model?: PlanModelPick;
+  /** Set on actions the engine runs once per id (STAMPED), so a resend on the next wire changes nothing */
+  clientId?: string;
+}
+
+/** Actions a paired device stamps with a clientId (protocol.ts WebviewMsg): the engine runs each id once */
+const STAMPED: string[] = ['send', 'stop', 'permission', 'answer', 'steerQueued'];
+/**
+ * Worth sending again on the next wire (apps/android Protocol.kt `replayable`): what the user did to a session. Reads,
+ * seq requests and view switches belong to the wire that asked
+ */
+const REPLAYABLE: string[] = STAMPED.concat(['sendQueued', 'setMode', 'setConfig']);
+/** How long before a wire's end a written action may still have been lost with it */
+const UNSURE_WINDOW_MS = 45000;
+const WRITTEN_KEPT = 64;
+
+export function replayable(message: WebviewMsg): boolean {
+  return REPLAYABLE.includes(message.type);
+}
+
+/** A stamped action written to the wire, and when */
+interface Written {
+  at: number;
+  message: WebviewMsg;
 }
 
 /** buildPlan's execution model (protocol.ts `model: { configId, value }`) */
@@ -190,6 +214,10 @@ export class EngineClient {
   private attached: boolean = false;
   private outbox: WebviewMsg[] = [];
   private ended: boolean = false;
+  /** What this wire may not have delivered (`unsent`): stamped actions written lately, and actions posted after its end */
+  private written: Written[] = [];
+  private late: WebviewMsg[] = [];
+  private endedAt: number | undefined = undefined;
   private language: string;
   private listener: EngineListener;
 
@@ -215,22 +243,43 @@ export class EngineClient {
     });
   }
 
-  /** Sends an action now, or once the view is attached */
+  /** Sends an action now, or once the view is attached; an action that drives a session gets its clientId here */
   post(message: WebviewMsg): void {
+    if (STAMPED.includes(message.type) && message.clientId === undefined) {
+      message.clientId = util.generateRandomUUID();
+    }
     if (this.ended) {
+      this.late.push(message);
       return;
     }
     if (!this.attached) {
       this.outbox.push(message);
       return;
     }
+    if (message.clientId !== undefined) {
+      this.written.push({ at: Date.now(), message: message });
+      if (this.written.length > WRITTEN_KEPT) {
+        this.written.shift();
+      }
+    }
     const envelope: MessageEnvelope = { type: 'webviewMessage', viewId: this.viewId, message: message };
     this.write(envelope);
   }
 
   stop(): void {
-    this.ended = true;
+    this.markEnded();
     this.transport.close();
+  }
+
+  /**
+   * Once the wire ended, what it may not have delivered and is worth sending on the next one, oldest first: stamped
+   * actions written shortly before the end, actions still queued, actions posted after it (EngineClient.kt `unsent`)
+   */
+  unsent(): WebviewMsg[] {
+    const end = this.endedAt;
+    const unsure = end === undefined ? [] :
+      this.written.filter((w: Written) => end - w.at <= UNSURE_WINDOW_MS).map((w: Written) => w.message);
+    return unsure.concat(this.outbox, this.late).filter((m: WebviewMsg) => replayable(m));
   }
 
   private hello(): HelloEnvelope {
@@ -293,7 +342,14 @@ export class EngineClient {
     if (this.ended && reason === undefined) {
       return;
     }
-    this.ended = true;
+    this.markEnded();
     this.listener.closed(reason);
+  }
+
+  private markEnded(): void {
+    if (!this.ended) {
+      this.ended = true;
+      this.endedAt = Date.now();
+    }
   }
 }

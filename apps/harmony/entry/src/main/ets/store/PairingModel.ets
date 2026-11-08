@@ -70,6 +70,8 @@ export class PairingModel {
   private reconnecting: boolean = false;
   /** When the current wire came up */
   private wiredAt: number | undefined = undefined;
+  /** The app is in the background, where the service closes the wire after a grace */
+  private away: boolean = false;
 
   constructor(service: PairingService) {
     this.service = service;
@@ -119,14 +121,19 @@ export class PairingModel {
 
   /** The app went to the background: the service closes its node after a grace */
   enterBackground(): void {
+    this.away = true;
     this.service.enterBackground();
   }
 
-  /** Back in front: a wire the background closed (Suspended) dials again */
+  /**
+   * Back in front: a wire the background closed dials again (RootView.swift). Its Suspended end settles through the
+   * library's recv() promise, so it may come after this: `ended` dials then
+   */
   enterForeground(): void {
+    this.away = false;
     this.service.enterForeground();
-    if (this.loaded && this.link.kind === 'idle' && this.selected !== undefined) {
-      this.connectSelected();
+    if (this.loaded && this.connection === undefined && this.selected !== undefined && this.link.kind !== 'connecting') {
+      this.connectSelected(true);
     }
   }
 
@@ -151,10 +158,16 @@ export class PairingModel {
     this.connectSelected();
   }
 
-  /** Dials the followed computer, dropping any wire to the previous one */
-  connectSelected(): void {
+  /**
+   * Dials the followed computer, dropping any wire to the previous one. resuming: back from the background, where the
+   * service closed a wire that was up, so a dial that fails now gets the quick dials of a lost wire rather than the
+   * offline page of a computer that never answered
+   */
+  connectSelected(resuming: boolean = false): void {
     this.failures = 0;
-    this.reconnecting = false;
+    if (!resuming) {
+      this.reconnecting = false;
+    }
     this.dial(false);
   }
 
@@ -220,10 +233,14 @@ export class PairingModel {
       }
     }
     this.wiredAt = undefined;
-    // The app's own background close: coming back dials again, so nothing failed
+    // The app's own background close: coming back dials again, so nothing failed and the screens wait as for a dial.
+    // `reconnecting` stays as set above, for that dial: the first one on a fresh node often outlasts its deadline
     if (error.kind === 'Suspended') {
-      this.reconnecting = false;
       this.link = new PairLink('idle');
+      // Ended after the app came back (the close settles asynchronously, or a dial lost the race with the return)
+      if (!this.away && this.selected?.id === id) {
+        this.connectSelected(true);
+      }
       return;
     }
     // A lost wire is dialed again at once, then with growing waits, and the screens keep what they showed. A computer
