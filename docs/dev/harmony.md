@@ -12,6 +12,7 @@
 
 ## Previewer
 
+- `scripts/preview.sh` screenshots a page from the tree's last build (own temp folder and port, so worktrees can run it at once).
 - `previewer/common/bin/Previewer` runs the app's `modules.abc` (unpacked from the HAP) without DevEco: `-j` the abc folder, `-arp` the build's `intermediates/res/default`, `-ljPath` its `loader.json`, `-url` the page, `-or`/`-cr` the resolution, `-sd` the density, `-cm` the colour mode, `-lws` a port. Frames stream on that port as WebSocket binary messages with a JPEG inside (from the first `FF D8 FF`). hvigor's `PreviewBuild` only works when DevEco drives it.
 - It runs no ability (state set up in `EntryAbility` is missing: pages initialise themselves), takes no want parameters and no input, has no `net.webSocket` module (the live wire needs an emulator or device), and rawfile reads come back empty, hence the dictionaries and fixtures compiled into `ets/generated/` by `scripts/build.sh`. `pages/Preview` opens chat fixtures directly for it.
 - `Path.commands` are px and a `Shape` viewport did not scale them: `components/Glyphs.ets` scales each path to the icon's px size. A path's `fill` given a colour resource stays black there; it takes the colour resolved from the resource manager.
