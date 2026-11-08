@@ -37,6 +37,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.font.FontWeight
@@ -241,7 +243,12 @@ private fun QuotaBar(window: QuotaWindow, now: Instant, size: TextUnit, ink: Col
     window.remaining <= WARN_SHARE -> Palette.quotaWarn
     else -> Palette.quotaOk
   }
-  Column(verticalArrangement = Arrangement.spacedBy(Metrics.s1), modifier = Modifier.testTag("quota:${window.id}")) {
+  // Read out as one sentence (the window and what is left), not its parts
+  val aria = t("quota.aria", "window" to QuotaTime.windowLabel(window.id), "pct" to pct)
+  Column(
+    verticalArrangement = Arrangement.spacedBy(Metrics.s1),
+    modifier = Modifier.testTag("quota:${window.id}").clearAndSetSemantics { contentDescription = aria },
+  ) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Metrics.s2)) {
       Text(QuotaTime.windowLabel(window.id), color = ink, fontSize = size, maxLines = 1, softWrap = false)
       // The badge takes the line's room and truncates in it, what is left stays flush right

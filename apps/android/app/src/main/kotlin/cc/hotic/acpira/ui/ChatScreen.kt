@@ -63,6 +63,8 @@ import cc.hotic.acpira.store.beginEdit
 import cc.hotic.acpira.store.beginEditLast
 import cc.hotic.acpira.store.buildPlan
 import cc.hotic.acpira.store.editQueued
+import cc.hotic.acpira.store.failureAction
+import cc.hotic.acpira.store.stopTask
 import cc.hotic.acpira.store.goal
 import cc.hotic.acpira.store.openAccount
 import cc.hotic.acpira.store.personas
@@ -151,6 +153,8 @@ fun ChatScreen(model: AppModel, id: String) {
       sendQueued = { model.sendQueued(id, it) },
       editQueued = { model.editQueued(id, it) },
       removeQueued = { model.takeQueued(id, it) },
+      failureAction = { model.failureAction(id, it) },
+      stopTask = { model.stopTask(id, it) },
     )
   }
   // The settled turns' actions (retry, fork, toasts) and the one turn Retry is offered on
@@ -167,6 +171,10 @@ fun ChatScreen(model: AppModel, id: String) {
   val context = androidx.compose.ui.platform.LocalContext.current
   val sidekickModels = remember(held?.controls) { held?.controls?.let { SidekickModels.of(context, it) } ?: SidekickModels() }
   val inspect = remember(id, model) { { child: String -> model.push(Screen.Subagent(id, child)) } }
+  // A diff whose view left its files out asks the engine for them (a demo has none to ask)
+  val diffSource = remember<(suspend (DiffLocation) -> cc.hotic.acpira.model.FullDiffSource?)?>(id, model.live) {
+    if (!model.live) null else { at: DiffLocation -> model.files.diffSource(id, at.toolCallId, at.nth) }
+  }
 
   // Follow the end while the reader is there: a new exchange or a growing last turn keeps it in view
   var following by remember { mutableStateOf(true) }
@@ -308,6 +316,8 @@ fun ChatScreen(model: AppModel, id: String) {
       LocalAllSubagents provides allNodes,
       LocalSidekickModels provides sidekickModels,
       LocalAgentNames provides { a: String -> model.agent(a).name },
+      LocalSessionSummaries provides model.summaries,
+      LocalDiffSource provides diffSource,
     ) {
     LazyColumn(
       state = thread,
@@ -345,6 +355,7 @@ fun ChatScreen(model: AppModel, id: String) {
                 controls = held.controls,
                 actions = turnActions,
                 subagents = nodes[index].orEmpty(),
+                last = last,
               )
             }
           }

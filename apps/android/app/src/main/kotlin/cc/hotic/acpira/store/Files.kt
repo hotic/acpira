@@ -3,6 +3,7 @@ package cc.hotic.acpira.store
 import cc.hotic.acpira.i18n.t
 import cc.hotic.acpira.model.AgentTurn
 import cc.hotic.acpira.model.DiffLine
+import cc.hotic.acpira.model.FullDiffSource
 import cc.hotic.acpira.model.HostMsg
 import cc.hotic.acpira.model.ProjectBase
 import cc.hotic.acpira.model.ProjectChange
@@ -45,11 +46,19 @@ class FileReads(private val model: AppModel) {
     val n = when (message) {
       is HostMsg.ProjectFile -> message.seq
       is HostMsg.SessionChanges -> message.seq
+      is HostMsg.DiffSource -> message.seq
       else -> return false
     }
     asking.remove(n)?.complete(message)
     return true
   }
+
+  /**
+   * The whole files behind one diff of a tool call ([nth] among the call's diffs), for a view that left them out; null
+   * when the engine no longer has the call. [subagentId]: the subagent transcript the diff was shown in
+   */
+  suspend fun diffSource(sessionId: String, toolCallId: String, nth: Int, subagentId: String? = null): FullDiffSource? =
+    (ask { WebviewMsg.DiffSource(sessionId, toolCallId, nth, it, subagentId) } as? HostMsg.DiffSource)?.source
 
   /** The files the session's edits left changed, in the order it first edited them; null: no answer */
   suspend fun changes(sessionId: String): List<ProjectChange>? {

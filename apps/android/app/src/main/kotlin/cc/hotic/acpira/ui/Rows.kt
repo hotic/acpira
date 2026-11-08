@@ -315,6 +315,8 @@ fun AcpRow(
   iconStroke: Float = IconStroke.icon,
   lead: (@Composable () -> Unit)? = null,
   trailing: (@Composable RowScope.() -> Unit)? = null,
+  /** Drawn over the lead slot's icon (a spinner while the row's file loads); the icon keeps the rail's anchor */
+  iconOverlay: (@Composable () -> Unit)? = null,
   content: @Composable RowScope.() -> Unit,
 ) {
   val height = if (dense) LocalRowDenseHeight.current else LocalRowHeight.current
@@ -361,6 +363,7 @@ fun AcpRow(
           ) {
             CompositionLocalProvider(LocalContentColor provides leadInk) {
               if (icon != null) Glyph(icon, iconTint ?: leadInk, iconSize, iconStroke) else lead?.invoke()
+              iconOverlay?.invoke()
             }
           }
           Spacer(Modifier.width(Metrics.gap))

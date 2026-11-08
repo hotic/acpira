@@ -110,6 +110,28 @@ import cc.hotic.acpira.model.ToolKind
 import cc.hotic.acpira.model.ToolStatus
 import cc.hotic.acpira.ui.prose.codeRuns
 import cc.hotic.acpira.ui.prose.rememberDiffTokens
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import cc.hotic.acpira.logic.SessionLinks
+import cc.hotic.acpira.logic.TaskRowState
+import cc.hotic.acpira.logic.fileReference
+import cc.hotic.acpira.logic.taskRowState
+import cc.hotic.acpira.logic.taskUsage
+import cc.hotic.acpira.model.FullDiffSource
+import cc.hotic.acpira.model.ImageRef
+import cc.hotic.acpira.store.MediaSource
+import cc.hotic.acpira.store.imageMimeOf
+import cc.hotic.acpira.store.toolImages
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -149,7 +171,7 @@ private fun ToolRows(block: ToolCallBlock, grouped: Boolean) {
   val verb = toolVerb(block)
   val shownTarget = if (block.kind == ToolKind.read && files.isNotEmpty()) null else block.target
   val label: @Composable RowScope.() -> Unit = {
-    ToolLabel(verb, running, command, shownTarget, block.targetMono == true, span)
+    ToolLabel(verb, running, command, shownTarget, block.targetMono == true, span, block.takeIf(SessionLinks::isTool))
   }
   val trailing: @Composable RowScope.() -> Unit = { ToolTrailing(block, execute) }
   val icon = toolIcon(block)
@@ -168,10 +190,13 @@ private fun ToolRows(block: ToolCallBlock, grouped: Boolean) {
       Disclosure(fold.open, fold::toggle, icon = icon, indent = false, rail = RailMode.rows, label = label, trailing = trailing) {
         CompositionLocalProvider(LocalRowEnterDelay provides RowMotion.rowEnterFile) { ResultList(files, block.kind) }
       }
-    files.size == 1 && block.kind == ToolKind.read -> FileRow(files[0], icon = icon, label = label, trailing = trailing)
+    files.size == 1 && block.kind == ToolKind.read ->
+      FileRow(files[0], image = remember(block) { toolImages(block).firstOrNull() }, icon = icon, label = label, trailing = trailing)
     files.isNotEmpty() -> RailColumn(enabled = true, endAtLastRow = true) {
       AcpRow(tone = RowTone.action, icon = icon, trailing = trailing, content = label)
-      EntranceOnce("${block.id}:files") { ResultList(files, block.kind) }
+      EntranceOnce("${block.id}:files") {
+        ResultList(files, block.kind, images = if (block.kind == ToolKind.read) remember(block) { toolImages(block) } else emptyList())
+      }
     }
     block.kind == ToolKind.read || block.kind == ToolKind.search ||
       (block.kind == ToolKind.edit && visible.isEmpty() && block.asyncTask == null) ||
@@ -207,13 +232,34 @@ private fun foldAfter(open: Boolean, room: Dp): Dp {
   return shown
 }
 
-/** Verb, then the command or target (with an edit's line span) */
+/** Verb, then the command or target (with an edit's line span); a session tool names the session by its title */
 @Composable
-private fun RowScope.ToolLabel(verb: String, shimmer: Boolean, command: String?, target: String?, mono: Boolean, span: String?) {
+private fun RowScope.ToolLabel(
+  verb: String, shimmer: Boolean, command: String?, target: String?, mono: Boolean, span: String?, sessionTool: ToolCallBlock? = null,
+) {
   RowLabel(verb, shimmer)
   when {
     command != null -> RowTarget(command, mono = true)
+    sessionTool != null -> SessionToolTarget(sessionTool)
     !target.isNullOrEmpty() -> TargetWithAside(target, span, mono)
+  }
+}
+
+/** The app's session list, for rows that name a session by its title (read / search session tools) */
+val LocalSessionSummaries = compositionLocalOf<List<cc.hotic.acpira.model.SessionSummary>> { emptyList() }
+
+/**
+ * A read / search session row's target (SessionToolTarget): the session's title in place of its link, then the turns
+ * read or the query. Only these rows read the list, in the chat and the child inspector alike
+ */
+@Composable
+private fun RowScope.SessionToolTarget(block: ToolCallBlock) {
+  val (id, rest) = SessionLinks.splitTarget(block.target)
+  val aside = if (block.verbKey == "verb.readSession") SessionLinks.readLabel(rest) else rest
+  if (id != null) {
+    TargetWithAside(SessionLinks.title(id, LocalSessionSummaries.current), aside)
+  } else if (aside != null) {
+    RowTarget(aside)
   }
 }
 
@@ -239,29 +285,58 @@ internal fun RowScope.ToolTrailing(block: ToolCallBlock, execute: Boolean) {
   }
 }
 
-/** An async task's state on its row: done in the ok tone, failed in danger */
+/**
+ * An AIR async task on its row: the state ("Stopping…" once a stop is asked; done in the ok tone, failed in danger),
+ * then Stop while the task runs and the adapter can stop it. A refusal comes back as the engine's error toast, and the
+ * row is live again with its Stop
+ */
 @Composable
-private fun TaskTag(task: AsyncTaskInfo) {
-  val key = when (task.state) {
-    "paused" -> "asyncTask.paused"
-    "completed" -> "asyncTask.completed"
-    "failed" -> "asyncTask.failed"
-    "stopped" -> "asyncTask.stopped"
-    else -> "asyncTask.running"
+private fun RowScope.TaskTag(task: AsyncTaskInfo) {
+  val state = taskRowState(task)
+  val tone = when (state.tone) {
+    TaskRowState.Tone.danger -> Palette.danger
+    TaskRowState.Tone.ok -> Palette.ok
+    TaskRowState.Tone.quiet -> Palette.fg3
   }
-  val tone = when (task.state) {
-    "failed" -> Palette.danger
-    "completed" -> Palette.ok
-    else -> Palette.fg3
+  Text(state.tag, color = tone, maxLines = 1, softWrap = false)
+  val stop = LocalChatHandlers.current?.stopTask
+  if (state.stoppable && stop != null) {
+    // Small enough to sit in a process row without growing it, as the webview's sm button with a size-3 glyph: the
+    // button's box overhangs the row by a step above, below and after
+    val bleed = with(LocalDensity.current) { Metrics.s1.roundToPx() }
+    Box(
+      Modifier
+        .layout { measurable, constraints ->
+          val p = measurable.measure(constraints.copy(minWidth = 0, minHeight = 0, maxHeight = Constraints.Infinity))
+          layout(maxOf(p.width - bleed, 0), maxOf(p.height - bleed * 2, 0)) { p.place(0, -bleed) }
+        }
+        .size(WebMetrics.ctlSm)
+        .clip(CircleShape)
+        .clickable { stop(task.id) }
+        .semantics { contentDescription = t("asyncTask.stop"); role = Role.Button }
+        .testTag("task.stop"),
+      contentAlignment = Alignment.Center,
+    ) {
+      Glyph("square", Palette.fg2, WebMetrics.chevron, IconStroke.icon)
+    }
   }
-  Text(t(key), color = tone, maxLines = 1, softWrap = false)
 }
 
-/** TaskMeta: the task's own latest summary under its row */
+/**
+ * TaskMeta: the task's own report under its row, its latest summary, the tool it was last on and its usage. The output
+ * file stays hidden: the card already shows the command
+ */
 @Composable
 private fun TaskMeta(task: AsyncTaskInfo?) {
-  val summary = task?.summary?.takeIf { it.isNotBlank() } ?: return
-  Text(summary, color = Palette.fg3, style = WebType.text3, modifier = Modifier.fillMaxWidth())
+  task ?: return
+  val usage = taskUsage(task)
+  // A workflow's last tool is whichever of its agents reported last, which says nothing on its own
+  val tool = if (task.taskType == "workflow") null else task.lastToolName?.takeIf { it.isNotBlank() }
+  val summary = task.summary?.takeIf { it.isNotBlank() }
+  if (summary == null && tool == null && usage == null) return
+  Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Metrics.s1)) {
+    for (line in listOfNotNull(summary, tool, usage)) Text(line, color = Palette.fg3, style = WebType.text3)
+  }
 }
 
 private val EaseOut = CubicBezierEasing(0f, 0f, 0.58f, 1f)
@@ -461,7 +536,7 @@ private fun ToolBody(block: ToolCallBlock, items: List<ToolContent>) {
   Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
     for (item in items) {
       when (item) {
-        is ToolContent.Diff -> DiffBlockView(item.lines, block.target.orEmpty(), item.source)
+        is ToolContent.Diff -> DiffBlockView(item.lines, block.target.orEmpty(), item.source, diffLocation(block, item.lines))
         is ToolContent.ListItems -> ResultList(item.items, block.kind)
         is ToolContent.Text -> ToolOutput(item.text)
         is ToolContent.Image -> if (!cc.hotic.acpira.store.isWidget(item.mimeType)) AgentImageView(item.blob, item.uri)
@@ -473,14 +548,17 @@ private fun ToolBody(block: ToolCallBlock, items: List<ToolContent>) {
 
 // Result list
 
-/** File / hit rows under a read or search: dense action rows, the name in mono fg-2 and the line as a faint note */
+/**
+ * File / hit rows under a read or search: dense action rows, the name in mono fg-2 and the line as a faint note.
+ * [images]: a read's saved images, which its file rows open
+ */
 @Composable
-private fun ResultList(items: List<String>, kind: ToolKind) {
+private fun ResultList(items: List<String>, kind: ToolKind, images: List<ImageRef> = emptyList()) {
   val icon = if (kind == ToolKind.fetch) "globe" else "fileText"
   Column {
-    for (item in items) {
+    for ((i, item) in items.withIndex()) {
       if (kind == ToolKind.read || kind == ToolKind.search) {
-        FileRow(item, dense = true, icon = icon)
+        FileRow(item, image = rowImage(item, i, items, images), dense = true, icon = icon)
       } else {
         val hit = splitHit(item)
         AcpRow(
@@ -494,21 +572,112 @@ private fun ResultList(items: List<String>, kind: ToolKind) {
   }
 }
 
-/** A read or search row's file: its name in mono fg-2 and the line as a faint note */
+/**
+ * ResultList's pairing of a file row with the call's saved images: the one image of a lone row, else the image whose uri
+ * names the row's file, else the image at the row's place when there is one per row
+ */
+private fun rowImage(item: String, index: Int, items: List<String>, images: List<ImageRef>): ImageRef? {
+  if (images.isEmpty()) return null
+  if (items.size == 1 && images.size == 1) return images[0]
+  val main = splitHit(item).first
+  val named = images.firstOrNull { image ->
+    val uri = image.uri ?: return@firstOrNull false
+    uri == item || (main.isNotEmpty() && uri.endsWith("/$main"))
+  }
+  return named ?: if (images.size == items.size) images[index] else null
+}
+
+/**
+ * What a file row opens in the Lightbox (ToolCall.tsx FileRef): the call's saved copy of the image, else the file itself
+ * where the link can stage it. null for a line reference and any other file: the row stays plain, since the phone opens
+ * nothing else from a process row
+ */
+private fun fileRowImage(hit: String, image: ImageRef?, session: String?, canStage: Boolean): MediaSource? {
+  val (path, line) = fileReference(hit)
+  if (line != null || session == null) return null
+  MediaSource.stored(image?.blob, session)?.let { return it }
+  if (!canStage || imageMimeOf(path) == null) return null
+  return MediaSource.HostFile(session, path)
+}
+
+/**
+ * A read or search row's file (FileResultRow / FileRef): its name in mono fg-2 and the line as a faint note. A file with
+ * an image to show (`fileRowImage`) is underlined, as the desktop underlines it under the pointer (a phone has no hover),
+ * and the whole row opens it in the Lightbox. Its pixels may still have to come over the link: the file glyph then turns
+ * into the desktop's spinner until they land, and a picture that cannot load says so in a toast
+ */
 @Composable
 private fun FileRow(
   hit: String,
+  image: ImageRef? = null,
   dense: Boolean = false,
   icon: String = "fileText",
   label: (@Composable RowScope.() -> Unit)? = null,
   trailing: (@Composable RowScope.() -> Unit)? = null,
 ) {
   val split = splitHit(hit)
-  AcpRow(tone = RowTone.action, dense = dense, icon = icon, trailing = trailing) {
+  val media = LocalMedia.current
+  val motion = LocalMotion.current
+  val source = remember(hit, image, media) { fileRowImage(hit, image, media.session, media.loader.canStage) }
+  // The tap's load while the pixels are on their way; the scope ends with the row, so a row that left the screen
+  // meanwhile opens nothing (the load still fills the cache)
+  val scope = rememberCoroutineScope()
+  var pending by remember { mutableStateOf<Job?>(null) }
+  val open: (MediaSource) -> Unit = open@{ s ->
+    val lightbox = media.lightbox ?: return@open
+    if (pending != null) return@open
+    media.loader.peek(s)?.let { lightbox.open(LightboxItem(it, split.first, s)); return@open }
+    pending = scope.launch {
+      val picture = runCatching { media.loader.image(s) }.getOrNull()
+      pending = null
+      if (picture != null) lightbox.open(LightboxItem(picture, split.first, s))
+      else media.model?.showToast(t("attach.loadFailed", "name" to split.first))
+    }
+  }
+  // The `popup` launch extra `readimage` taps the first file row with an image, for screenshots
+  LaunchedEffect(source) {
+    if (source == null || media.model?.options?.popup != "readimage" || ReadImageProbe.claimed) return@LaunchedEffect
+    ReadImageProbe.claimed = true
+    delay(PROBE_DELAY_MS)
+    open(source)
+  }
+  val loading by animateFloatAsState(if (pending != null) 1f else 0f, tween(if (motion) QUICK_MS else 0), label = "fileLoad")
+  val ink = Palette.actionFg
+  AcpRow(
+    if (source == null) Modifier else Modifier.clickable(remember { MutableInteractionSource() }, indication = null, role = Role.Button) { open(source) },
+    tone = RowTone.action, dense = dense, icon = icon, trailing = trailing,
+    // The glyph stays in place, hidden, so the rail keeps measuring the file icon under the spinner
+    iconTint = if (loading > 0f) ink.copy(alpha = ink.alpha * (1 - loading)) else null,
+    iconOverlay = if (loading > 0f) ({ LoadingGlyph(WebMetrics.icon, Modifier.alpha(loading)) }) else null,
+  ) {
     label?.invoke(this)
-    TargetWithAside(split.first, split.second, mono = true, ink = Palette.fg2)
+    TargetWithAside(split.first, split.second, mono = true, ink = Palette.fg2, underline = source != null)
   }
 }
+
+/** `popup readimage` opens once per launch */
+private object ReadImageProbe {
+  var claimed = false
+}
+
+private const val PROBE_DELAY_MS = 1_000L
+
+/**
+ * The desktop's loading glyph (Loader2 under animate-spin: one turn a second, linear) at a row icon's size and stroke.
+ * It keeps turning with motion off, as the list's working ring does: a still one reads as stuck
+ */
+@Composable
+private fun LoadingGlyph(size: Dp, modifier: Modifier = Modifier) {
+  val turn = rememberInfiniteTransition(label = "loading")
+  val angle by turn.animateFloat(0f, FULL_TURN, infiniteRepeatable(tween(SPIN_MS, easing = LinearEasing)), label = "spin")
+  Glyph(
+    "loaderCircle", LocalContentColor.current, size, IconStroke.icon,
+    modifier.graphicsLayer { rotationZ = angle }.semantics { contentDescription = t("attach.loading") },
+  )
+}
+
+private const val FULL_TURN = 360f
+private const val SPIN_MS = 1_000
 
 // Groups
 
@@ -548,7 +717,7 @@ fun ToolGroupView(kind: GroupKind, blocks: List<ToolCallBlock>) {
 private fun ReadEntry(block: ToolCallBlock) {
   val files = remember(block) { toolFiles(block) }
   if (files.isNotEmpty()) {
-    ResultList(files, ToolKind.read)
+    ResultList(files, ToolKind.read, images = remember(block) { toolImages(block) })
   } else {
     AcpRow(tone = RowTone.action, dense = true, icon = "fileText") {
       Shimmer(
@@ -564,7 +733,8 @@ private fun ReadEntry(block: ToolCallBlock) {
 private fun EditEntry(blocks: List<ToolCallBlock>) {
   val stat = diffStatOf(blocks)
   val span = editSpan(blocks)
-  val diffs = blocks.flatMap { b -> visibleToolContents(b).filter { it is ToolContent.Diff || it is ToolContent.Text } }
+  // Each item with its call, which locates a diff for the engine
+  val diffs = blocks.flatMap { b -> visibleToolContents(b).filter { it is ToolContent.Diff || it is ToolContent.Text }.map { b to it } }
   val name = fileName(blocks[0])
   val label: @Composable RowScope.() -> Unit = { TargetWithAside(name, span, mono = true, ink = Palette.fg2) }
   val trailing: (@Composable RowScope.() -> Unit)? = stat?.let { s -> { DiffStatText(s.add, s.del) } }
@@ -581,9 +751,9 @@ private fun EditEntry(blocks: List<ToolCallBlock>) {
     dense = true, icon = "pencil", root = false, bodyTop = WebMetrics.codeCardGap, label = label, trailing = trailing,
   ) {
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
-      for (item in diffs) {
+      for ((block, item) in diffs) {
         when (item) {
-          is ToolContent.Diff -> DiffBlockView(item.lines, name, item.source)
+          is ToolContent.Diff -> DiffBlockView(item.lines, name, item.source, diffLocation(block, item.lines))
           is ToolContent.Text -> ToolOutput(item.text)
           else -> {}
         }
@@ -599,7 +769,15 @@ private fun EditEntry(blocks: List<ToolCallBlock>) {
  * sheet on a tap; inside the sheet the card stays as it is
  */
 @Composable
-private fun CodeFrame(title: String, copy: String, copyLabel: String, full: @Composable () -> Unit, content: @Composable () -> Unit) {
+private fun CodeFrame(
+  title: String,
+  copy: String,
+  copyLabel: String,
+  full: @Composable () -> Unit,
+  /** The text copy takes when it has to be fetched first (a diff's whole file); [copy] until then */
+  read: (suspend () -> String)? = null,
+  content: @Composable () -> Unit,
+) {
   val sheet = LocalCodeSheet.current
   var shown by remember { mutableStateOf(false) }
   val shape = RoundedCornerShape(Metrics.rMd)
@@ -607,15 +785,23 @@ private fun CodeFrame(title: String, copy: String, copyLabel: String, full: @Com
     Modifier.fillMaxWidth().clip(shape).background(Palette.bgCode).border(Metrics.hairline, Palette.line, shape).padding(Metrics.hairline)
       .then(if (sheet) Modifier else Modifier.clickable(remember { MutableInteractionSource() }, indication = null) { shown = true }),
   ) { content() }
-  if (shown) CodeSheet(title, copy, copyLabel, onDismiss = { shown = false }) { full() }
+  if (shown) CodeSheet(title, copy, copyLabel, onDismiss = { shown = false }, read = read) { full() }
 }
 
 /** The code sheet: one card whole, both ways scrollable, under a title naming it, with copy and close in its bar */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun CodeSheet(title: String, copy: String, copyLabel: String, onDismiss: () -> Unit, content: @Composable () -> Unit) {
+internal fun CodeSheet(
+  title: String,
+  copy: String,
+  copyLabel: String,
+  onDismiss: () -> Unit,
+  read: (suspend () -> String)? = null,
+  content: @Composable () -> Unit,
+) {
   val state = rememberModalBottomSheetState(skipPartiallyExpanded = false)
   val context = LocalContext.current
+  val scope = rememberCoroutineScope()
   var copied by remember { mutableIntStateOf(0) }
   LaunchedEffect(copied) {
     if (copied > 0) { delay(COPIED_MS); copied = 0 }
@@ -634,7 +820,10 @@ internal fun CodeSheet(title: String, copy: String, copyLabel: String, onDismiss
           overflow = TextOverflow.MiddleEllipsis, textAlign = TextAlign.Center, modifier = Modifier.weight(1f),
         )
         IconButton(
-          onClick = { copyText(context, copy); copied += 1 },
+          onClick = {
+            if (read == null) { copyText(context, copy); copied += 1 }
+            else scope.launch { copyText(context, read()); copied += 1 }
+          },
           modifier = Modifier.size(Metrics.barCtl).testTag("code.copy"),
         ) {
           Lucide(if (copied > 0) "check" else "copy", Palette.fg1, size = Metrics.iconCtl, contentDescription = if (copied > 0) t("code.copied") else copyLabel)
@@ -825,15 +1014,25 @@ private fun ToolOutput(text: String) {
 
 /**
  * DiffBlock: line numbers and signs in a gutter, tinted add / del rows, `···` between hunks. The rows fill at least the
- * card's width, so a tint runs edge to edge however short its line is. Code is coloured by the file's grammar
+ * card's width, so a tint runs edge to edge however short its line is. Code is coloured by the file's grammar (the
+ * visible segments, as on iOS). Copy takes the new file (CodeBlock.tsx): the one the diff carries, else asked of the
+ * engine when the view left the files out ([locate] says where the diff sits), else the visible new code
  */
 @Composable
-private fun DiffBlockView(lines: List<DiffLine>, title: String, source: DiffSource?) {
+private fun DiffBlockView(lines: List<DiffLine>, title: String, source: DiffSource?, locate: DiffLocation? = null) {
   val sheet = LocalCodeSheet.current
   val display = remember(lines, sheet) { if (sheet) lines else diffPreview(lines) }
   val tokens = rememberDiffTokens(display, source?.path ?: title, sheet)
   val copy = remember(lines, source) { diffCopyText(lines, source) }
-  CodeFrame(title, copy, t("code.copyVisible"), full = { DiffBlockView(lines, title, source) }) {
+  val fetch = LocalDiffSource.current
+  val fetchable = source?.omitted == true && locate != null && fetch != null
+  val full = source != null && source.omitted != true && source.newText != null
+  // The new file from the engine; the visible code when it no longer has the call
+  val read: (suspend () -> String)? = if (fetchable) ({ fetch!!(locate!!)?.newText ?: copy }) else null
+  CodeFrame(
+    title, copy, t(if (full || fetchable) "code.copySource" else "code.copyVisible"),
+    full = { DiffBlockView(lines, title, source, locate) }, read = read,
+  ) {
     CodeCap {
       BoxWithConstraints(Modifier.fillMaxWidth()) {
         val viewport = maxWidth
@@ -911,6 +1110,19 @@ private fun diffPreview(lines: List<DiffLine>): List<DiffLine> {
   val limit = ceil(WebMetrics.codeOutputMax.value / shortest).toInt() + 1
   return lines.take(limit + if (lines.firstOrNull()?.kind == DiffLine.Kind.hunk) 1 else 0)
 }
+
+/** Where a diff sits in the session: its tool call and which of the call's diffs (CodeBlock.tsx DiffLocation) */
+data class DiffLocation(val toolCallId: String, val nth: Int)
+
+/** The location of the diff with these lines, counted among the call's diffs (`contents`, or `content` alone) */
+private fun diffLocation(block: ToolCallBlock, lines: List<DiffLine>): DiffLocation? {
+  val diffs = (block.contents ?: listOfNotNull(block.content)).filterIsInstance<ToolContent.Diff>()
+  val at = diffs.indexOfFirst { it.lines == lines }
+  return if (at < 0) null else DiffLocation(block.id, at)
+}
+
+/** Asks the engine for a diff's whole files in the transcript's session (null: no engine to ask) */
+val LocalDiffSource = compositionLocalOf<(suspend (DiffLocation) -> FullDiffSource?)?> { null }
 
 /** codeDiff.ts diffCopyText: the new file when the diff carries it, else the visible new code without signs */
 private fun diffCopyText(lines: List<DiffLine>, source: DiffSource?): String {

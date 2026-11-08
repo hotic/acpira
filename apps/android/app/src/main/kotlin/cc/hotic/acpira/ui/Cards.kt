@@ -57,6 +57,8 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -670,7 +672,7 @@ private fun ExecutorMenu(
   val family = executor.family
   CardButton(
     family?.name ?: executor.label ?: t("plan.approvals"), primary = false,
-    modifier = Modifier.testTag("plan.executor"),
+    modifier = Modifier.semantics { contentDescription = t("plan.approvalsAria") }.testTag("plan.executor"),
     onClick = { level = null; menu = true },
     lead = family?.let { f -> { VendorMark(f.brand, f.name, Palette.fg1, size = Metrics.icon) } },
     trailing = executor.meta?.let { meta -> {

@@ -40,6 +40,8 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
+import cc.hotic.acpira.logic.absorbedNotices
+import cc.hotic.acpira.logic.displayTurn
 import cc.hotic.acpira.logic.hasTurnContent
 import cc.hotic.acpira.logic.modelLabel
 import cc.hotic.acpira.logic.showsTurnActions
@@ -77,6 +79,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -208,27 +212,34 @@ fun AgentMessage(
   actions: TurnHandlers? = null,
   /** The subagents announced during this turn (`nodesByTurn`) */
   subagents: List<cc.hotic.acpira.model.SubagentSummary> = emptyList(),
+  /** The session's newest turn: only there, once settled, do failure notices offer their remedies */
+  last: Boolean = false,
 ) {
+  // A Revise end reads as settled, and error notices the closing row absorbs leave the blocks (TurnOutcome.swift)
+  val absorbed = remember(turn) { absorbedNotices(turn) }
+  val shown = remember(turn, absorbed) { displayTurn(turn, absorbed) }
   // A call whose observation was lost reads as settled before anything groups or draws it
-  val split = remember(turn) { splitCodexBlocks(turn.blocks.map(::observedBlock)) }
+  val split = remember(shown) { splitCodexBlocks(shown.blocks.map(::observedBlock)) }
   // Content already there when the turn comes into view stays still: only what arrives afterwards enters. A new turn
   // is first composed with at most its first block, which keeps its entrance
-  remember(key) { if (turn.blocks.size > 1) seedEntrances(turn, split.process, key) }
+  remember(key) { if (shown.blocks.size > 1) seedEntrances(shown, split.process, key) }
   // Subagent rows sit where they were delegated: a placed delegation row stays in the turn's process, and its node with
   // that node's same-turn descendants renders at that point. The others follow the turn's process (AgentMessage.swift)
-  val placed = remember(turn, subagents) { cc.hotic.acpira.logic.delegatedIds(turn.blocks, subagents) }
+  val placed = remember(shown, subagents) { cc.hotic.acpira.logic.delegatedIds(shown.blocks, subagents) }
   val placement = remember(subagents, placed) { cc.hotic.acpira.logic.placeNodes(subagents, placed) }
+  val readOnly = cc.hotic.acpira.ui.subagents.LocalSubagentTranscript.current
   CompositionLocalProvider(
     LocalRowHeight provides WebMetrics.chatRow,
     LocalEntranceScope provides EntranceScope(live = running, scope = key),
     LocalClock provides now,
     cc.hotic.acpira.ui.subagents.LocalDelegations provides placement.byId,
+    LocalNoticeScope provides NoticeScope(showActions = last && !running && !readOnly, suppressId = turn.error?.failureId, absorbed = absorbed),
   ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = Metrics.pad + Metrics.threadInset), verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
       // A saved plan cuts the turn: its card stands between the stretch before it and the continuation after it
       // (AgentMessage.swift, planSections.ts)
-      val sections = remember(turn, placed) { splitPlanSections(turn.blocks, placed) }
-      val outcome = turnOutcome(turn) != null
+      val sections = remember(shown, placed) { splitPlanSections(shown.blocks, placed) }
+      val outcome = turnOutcome(shown) != null
       val handlers = LocalChatHandlers.current
       sections.forEachIndexed { i, section ->
         androidx.compose.runtime.key(section.key) {
@@ -239,7 +250,7 @@ fun AgentMessage(
           val planWait = section.blocks.any { it is PermissionBlock && it.planId != null }
           // A child row that never renders anywhere would be worse than a turn with nothing else to show
           if (visible || (lastSection && ((running && !planWait) || outcome || placement.rest.isNotEmpty()))) {
-            val part = remember(turn, section) { sectionTurn(turn, section, lastSection, sections.size > 1) }
+            val part = remember(shown, section) { sectionTurn(shown, section, lastSection, sections.size > 1) }
             CodexMessage(
               part, if (sections.size > 1 && i > 0) "$key/${section.key}" else key, lastSection && running, now, onPermission,
               subagents = if (lastSection) placement.rest else emptyList(),
@@ -248,7 +259,7 @@ fun AgentMessage(
           section.plan?.let { plan ->
             PlanDocumentCard(
               plan,
-              permission = turn.blocks.firstOrNull { it is PermissionBlock && it.planId == plan.id } as PermissionBlock?,
+              permission = shown.blocks.firstOrNull { it is PermissionBlock && it.planId == plan.id } as PermissionBlock?,
               onBuild = { option, model -> handlers?.buildPlan?.invoke(plan.id, option, model) },
               onPermission = onPermission,
             )
@@ -256,7 +267,7 @@ fun AgentMessage(
         }
       }
       // A child's transcript offers no action row: fork there would act on the parent session
-      if (showsTurnActions(turn, running) && !cc.hotic.acpira.ui.subagents.LocalSubagentTranscript.current) {
+      if (showsTurnActions(turn, running) && !readOnly) {
         TurnActions(turn, index, retry, settings, controls, actions)
       }
     }
@@ -374,7 +385,7 @@ private fun TurnActions(
     },
     horizontalArrangement = Arrangement.spacedBy(Metrics.s0_5, Alignment.End),
   ) {
-    if (retry && actions != null) ActionButton("rotateCcw", t("common.retry"), "turn.retry") { actions.retry() }
+    if (retry && actions != null) ActionButton("rotateCcw", t("common.retry"), "turn.retry", hint = t("alert.retryHint")) { actions.retry() }
     if (reply.isNotEmpty()) {
       ActionButton(if (copied) "check" else "copy", t(if (copied) "code.copied" else "turn.copy"), "turn.copy") {
         if (copyText(context, reply)) actions?.toast?.invoke(t("code.copied"))
@@ -391,13 +402,16 @@ private fun TurnActions(
   }
 }
 
-/** One glyph of the action row; `open` marks the one whose card is showing */
+/**
+ * One glyph of the action row; `open` marks the one whose card is showing. [hint] says what the tap does beyond the
+ * label (TalkBack reads it as the action, as VoiceOver reads iOS's `accessibilityHint`)
+ */
 @Composable
-private fun ActionButton(icon: String, label: String, tag: String, open: Boolean = false, onClick: () -> Unit) {
-  IconButton(
-    onClick = onClick,
-    colors = IconButtonDefaults.iconButtonColors(containerColor = if (open) Palette.active else Color.Transparent),
-    modifier = Modifier.size(Metrics.ctlSm).testTag(tag),
+private fun ActionButton(icon: String, label: String, tag: String, open: Boolean = false, hint: String? = null, onClick: () -> Unit) {
+  Box(
+    Modifier.size(Metrics.ctlSm).clip(CircleShape).background(if (open) Palette.active else Color.Transparent)
+      .clickable(onClickLabel = hint, role = androidx.compose.ui.semantics.Role.Button, onClick = onClick).testTag(tag),
+    contentAlignment = Alignment.Center,
   ) {
     Lucide(icon, if (open) Palette.fg1 else Palette.fg2, size = Metrics.chevron, contentDescription = label)
   }
@@ -756,7 +770,8 @@ fun PermissionCard(block: PermissionBlock, onPick: (String) -> Unit) {
 
 /**
  * Components/Buttons.swift AcpButtonStyle: a capsule with a hairline, text-2; the primary answer takes the active fill
- * and the strong ink. [oneLine]: a menu trigger, exactly --ctl tall; otherwise the answer form, whose label may wrap
+ * and the strong ink. [oneLine]: a menu trigger, exactly --ctl tall; otherwise the answer form, whose label may wrap.
+ * [compact]: the small form (--ctl-sm, narrower sides) for remedies inside the transcript, at that height in layout too
  */
 @Composable
 fun PillButton(
@@ -765,8 +780,14 @@ fun PillButton(
   modifier: Modifier = Modifier,
   primary: Boolean = false,
   oneLine: Boolean = false,
+  compact: Boolean = false,
   trailing: (@Composable () -> Unit)? = null,
 ) {
+  // Material pads a button to its touch target in layout; the compact form keeps the iOS row's height
+  CompositionLocalProvider(
+    androidx.compose.material3.LocalMinimumInteractiveComponentSize provides
+      if (compact) androidx.compose.ui.unit.Dp.Unspecified else androidx.compose.material3.LocalMinimumInteractiveComponentSize.current,
+  ) {
   OutlinedButton(
     onClick = onClick,
     shape = CircleShape,
@@ -775,14 +796,18 @@ fun PillButton(
       containerColor = if (primary) Palette.active else Color.Transparent,
       contentColor = if (primary) Palette.fgStrong else Palette.fg2,
     ),
-    contentPadding = PaddingValues(horizontal = Metrics.s3 + Metrics.hairline, vertical = if (oneLine) Metrics.s0 else Metrics.gapHalf + Metrics.hairline),
-    modifier = modifier.heightIn(min = Metrics.ctl),
+    contentPadding = PaddingValues(
+      horizontal = (if (compact) Metrics.s2 else Metrics.s3) + Metrics.hairline,
+      vertical = if (oneLine || compact) Metrics.s0 else Metrics.gapHalf + Metrics.hairline,
+    ),
+    modifier = modifier.heightIn(min = if (compact) Metrics.ctlSm else Metrics.ctl),
   ) {
     Text(
       label, fontSize = Type.text2, fontWeight = if (primary) FontWeight.Medium else FontWeight.Normal,
       maxLines = if (oneLine) 1 else Int.MAX_VALUE, softWrap = !oneLine,
     )
     trailing?.let { Spacer(Modifier.width(Metrics.s1_5)); it() }
+  }
   }
 }
 

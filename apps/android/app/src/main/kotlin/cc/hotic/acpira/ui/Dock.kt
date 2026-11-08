@@ -118,6 +118,10 @@ class ChatHandlers(
   val sendQueued: (String) -> Unit,
   val editQueued: (String) -> Unit,
   val removeQueued: (String) -> Unit,
+  /** A failure notice's remedy (null: the transcript offers none, as a subagent's) */
+  val failureAction: ((cc.hotic.acpira.model.FailureAction) -> Unit)? = null,
+  /** Stop on a background task's row, by task id (null: no Stop, as in a subagent's transcript) */
+  val stopTask: ((String) -> Unit)? = null,
 )
 
 val LocalChatHandlers = androidx.compose.runtime.compositionLocalOf<ChatHandlers?> { null }

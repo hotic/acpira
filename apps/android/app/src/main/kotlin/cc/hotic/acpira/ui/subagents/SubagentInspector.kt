@@ -92,6 +92,9 @@ fun SubagentInspector(model: AppModel, session: String, id: String) {
       buildPlan = { _, _, _ -> }, editPrompt = {}, goal = { _, _ -> }, sendQueued = {}, editQueued = {}, removeQueued = {},
     )
   }
+  val diffSource = remember<(suspend (cc.hotic.acpira.ui.DiffLocation) -> cc.hotic.acpira.model.FullDiffSource?)?>(session, id, model.live) {
+    if (!model.live) null else { at: cc.hotic.acpira.ui.DiffLocation -> model.files.diffSource(session, at.toolCallId, at.nth, subagentId = id) }
+  }
   Scaffold(
     containerColor = Palette.bg0,
     topBar = {
@@ -130,6 +133,9 @@ fun SubagentInspector(model: AppModel, session: String, id: String) {
       // Read-only: a selection here must not quote into the parent chat's composer
       cc.hotic.acpira.ui.LocalQuote provides null,
       LocalAgentNames provides { a: String -> model.agent(a).name },
+      cc.hotic.acpira.ui.LocalSessionSummaries provides model.summaries,
+      // A diff's whole files come through the parent session, naming the child it was shown in
+      cc.hotic.acpira.ui.LocalDiffSource provides diffSource,
     ) {
       InspectorThread(model, session, childView(root, node, transcript), node, loaded = transcript != null, padding)
     }

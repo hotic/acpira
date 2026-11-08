@@ -4,6 +4,7 @@ import android.icu.text.CompactDecimalFormat
 import android.icu.util.ULocale
 import cc.hotic.acpira.i18n.L10n
 import cc.hotic.acpira.i18n.t
+import cc.hotic.acpira.model.AsyncTaskInfo
 import cc.hotic.acpira.model.GoalAction
 import cc.hotic.acpira.model.GoalBlock
 import cc.hotic.acpira.model.GoalEvent
@@ -33,6 +34,46 @@ fun compactTokens(n: Int): String {
   val format = CompactDecimalFormat.getInstance(ULocale.forLanguageTag(L10n.locale), CompactDecimalFormat.CompactStyle.SHORT)
   format.maximumFractionDigits = 1
   return format.format(n.toLong())
+}
+
+/** An async task's row state: its tag, the tag's tone, whether the task still owns its row and whether Stop shows */
+data class TaskRowState(val tag: String, val tone: Tone, val live: Boolean, val stoppable: Boolean) {
+  enum class Tone { quiet, ok, danger }
+}
+
+/**
+ * ToolCall.tsx: the state tag stands in for the status glyph; "Stopping…" once a stop is asked; Stop only for a live
+ * task the adapter can stop and no stop on its way
+ */
+fun taskRowState(task: AsyncTaskInfo): TaskRowState {
+  val live = task.state == "running" || task.state == "paused"
+  val key = when (task.state) {
+    "paused" -> "asyncTask.paused"
+    "completed" -> "asyncTask.completed"
+    "failed" -> "asyncTask.failed"
+    "stopped" -> "asyncTask.stopped"
+    else -> "asyncTask.running"
+  }
+  val tone = when (task.state) {
+    "failed" -> TaskRowState.Tone.danger
+    "completed" -> TaskRowState.Tone.ok
+    else -> TaskRowState.Tone.quiet
+  }
+  return TaskRowState(
+    t(if (task.stopRequested == true) "asyncTask.stopping" else key), tone, live,
+    stoppable = live && task.canStop == true && task.stopRequested != true,
+  )
+}
+
+/** taskUsage: one line, a zero count left out while a run starts (joined by the locale's meta separator) */
+fun taskUsage(task: AsyncTaskInfo): String? {
+  val u = task.usage ?: return null
+  val parts = listOfNotNull(
+    u.totalTokens?.takeIf { it > 0 }?.let { t("asyncTask.tokens", "n" to compactTokens(it)) },
+    u.toolUses?.takeIf { it > 0 }?.let { t("asyncTask.toolUses", "n" to it) },
+    u.durationMs?.let { commandDuration(it) },
+  )
+  return parts.takeIf { it.isNotEmpty() }?.joinToString(t("common.metaSep"))
 }
 
 /** goalSpend: the tokens spent, against the budget when the agent set one ("184K / 500K tokens") */

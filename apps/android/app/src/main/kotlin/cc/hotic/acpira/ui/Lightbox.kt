@@ -413,7 +413,7 @@ private fun ZoomPage(image: DecodedImage, motion: Boolean, onZoom: (Boolean) -> 
 private enum class Gesture { Undecided, Transform, Pull, Pass }
 
 /** The system share sheet's glyph (lucide share-2; the webview imports no share icon, so it is not in icons.json) */
-private val shareGlyph: ImageVector by lazy {
+internal val shareGlyph: ImageVector by lazy {
   ImageVector.Builder("share2", 24.dp, 24.dp, 24f, 24f).apply {
     for (d in SHARE_PATHS) {
       addPath(
