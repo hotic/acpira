@@ -8,6 +8,10 @@ export const SIDECAR_PROTOCOL_VERSION: number = 1;
 export interface AgentInfo {
   id: string;
   name: string;
+  /** The CLI was found (false greys it out); undefined: not probed yet */
+  available?: boolean;
+  /** Switched off in the settings: no new sessions start on it */
+  disabled?: boolean;
 }
 
 export interface SessionSummary {
@@ -98,6 +102,10 @@ export interface InitState {
   sessions: SessionSummary[];
   active?: SessionView;
   home: string;
+  categories?: SessionCategories;
+  settings?: SettingsView;
+  /** Where chats' folders live: a session whose cwd is directly inside is a chat, not a project */
+  chats?: string;
 }
 
 /** Every HostMsg in one shape: `type` says which fields carry it */
@@ -178,4 +186,57 @@ export function applySessionsPatch(held: SessionSummary[], heldRev: number, p: S
     }
   }
   return out;
+}
+
+// Session list, settings, prefs (list agent): the categories, the engine settings and the list's answers
+
+/** One of the desktop app's sections (transcript.ts SessionSection) */
+export interface SessionSection {
+  id: string;
+  name: string;
+  projects: string[];
+}
+
+/** transcript.ts SessionCategories: only the project shell's parts the phone reads */
+export interface SessionCategories {
+  projects?: string[];
+  removedProjects?: string[];
+  sections?: SessionSection[];
+}
+
+/** settings.ts SettingsView: the fields the settings pages show */
+export interface SettingsView {
+  defaultAgent: string;
+  agentOrder: string[];
+  disabledAgents: string[];
+  autoCompact: boolean;
+  compactAtTokens: number;
+  accountSwitch: string;
+  steerQueued: boolean;
+  planAutoApprove: string[];
+}
+
+export function defaultSettings(): SettingsView {
+  return {
+    defaultAgent: 'acpira', agentOrder: [], disabledAgents: [], autoCompact: true, compactAtTokens: 300000,
+    accountSwitch: 'off', steerQueued: false, planAutoApprove: []
+  };
+}
+
+/** protocol.ts SessionHit: a content match and the text around it */
+export interface SessionHit {
+  id: string;
+  snippet: string;
+  summary?: SessionSummary;
+}
+
+/** The list's HostMsgs: `categories`, `settings`, `sessionHits`, `sessionMarkdown` */
+export interface ListHostMsg {
+  type: string;
+  categories?: SessionCategories;
+  settings?: SettingsView;
+  seq?: number;
+  hits?: SessionHit[];
+  markdown?: string;
+  error?: string;
 }

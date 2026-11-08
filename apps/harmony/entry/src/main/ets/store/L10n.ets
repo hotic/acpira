@@ -24,3 +24,31 @@ export function t(key: string, params?: Map<string, string>): string {
   });
   return text;
 }
+
+// Session list, settings, prefs (list agent): the language picked in the settings
+
+/** The dictionaries a language pick offers, as the iOS app's L10n.locales */
+export const LOCALES: string[] = ['en', 'zh-CN', 'zh-TW', 'ja', 'ko', 'de', 'fr', 'es', 'ru'];
+
+let current: string = 'en';
+
+/** The dictionary a system language tag selects: its own when the app has it, else English */
+export function preferredLocale(language: string): string {
+  if (language.startsWith('zh')) {
+    return language.includes('Hant') || language.endsWith('TW') || language.endsWith('HK') ? 'zh-TW' : 'zh-CN';
+  }
+  const base = language.split('-')[0];
+  return LOCALES.includes(base) ? base : 'en';
+}
+
+/** Switches the table: `auto` follows the system language */
+export function setLocale(id: string, systemLanguage: string): void {
+  current = id === 'auto' || !LOCALES.includes(id) ? preferredLocale(systemLanguage) : id;
+  english = load('en');
+  table = current === 'en' ? english : load(current);
+}
+
+/** The dictionary in use */
+export function currentLocale(): string {
+  return current;
+}

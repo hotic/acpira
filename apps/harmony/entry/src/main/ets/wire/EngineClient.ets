@@ -25,6 +25,20 @@ export interface WebviewMsg {
   agent?: string;
   cwd?: string;
   chat?: boolean;
+  // Session list, settings, prefs (list agent): session actions, the search, exports, settings and category ops
+  title?: string;
+  pinned?: boolean;
+  archived?: boolean;
+  unread?: boolean;
+  query?: string;
+  seq?: number;
+  format?: string;
+  key?: string;
+  value?: Object;
+  op?: string;
+  before?: string;
+  section?: string;
+  fresh?: boolean;
 }
 
 interface ClientInfo {
