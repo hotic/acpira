@@ -57,17 +57,20 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
     // WebKit scrolls in whole CSS pixels while content heights are fractional. Held at the bottom, every fractional
     // change above the tail (a history slice prepending on a session switch, an image landing) moved the tail by that
     // fraction, which a 2x screen showed as a one-pixel jolt up and back. A sub-pixel pad above the content puts the
-    // content's end on a whole pixel, so the pinned tail lands on the same pixel whatever the history adds up to
+    // content's end on a whole pixel, so the pinned tail lands on the same pixel whatever the history adds up to.
+    // Only a held tail is aligned: a new pad moves every row by the fraction, so a reader parked above the tail (a fold
+    // opened by hand, a scroll up) saw the whole thread twitch a device pixel with every growth below them
     let lead = 0;
     const align = () => {
       const body = content.current;
-      if (!body || !scrollerUsable(el)) return;
+      if (!body || !scrollerUsable(el)) return false;
       const end = body.getBoundingClientRect().bottom - el.getBoundingClientRect().top - el.clientTop + el.scrollTop - lead;
       const frac = end - Math.floor(end);
       const next = frac < 0.01 || frac > 0.99 ? 0 : Math.round((1 - frac) * 100) / 100;
-      if (next === lead) return;
+      if (next === lead) return false;
       lead = next;
       el.style.paddingTop = next ? `${next}px` : '';
+      return true;
     };
     const pin = () => {
       if (!scrollerUsable(el) || !pinned.current) return;
@@ -148,8 +151,8 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
     // an opened fold that now overflows below shows the bottom fade (and is not yanked to the bottom by the next
     // streamed chunk), and closing it back into the viewport restores the follow.
     const grew = () => {
-      align();
       if (untouched.current) {
+        if (pinned.current) align();
         pin();
         return;
       }
@@ -164,6 +167,9 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
         pinned.current = atBottom;
         follow.set(atBottom);
       }
+      // Measured after the growth, so the frame a hand-opened fold first pushes the tail out already leaves the pad.
+      // A new pad moves the end by under a pixel; re-pin so a held tail stays flush instead of waiting for the next chunk
+      if (atBottom && align()) pin();
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     el.addEventListener('pointerdown', pressed, { passive: true });
