@@ -568,4 +568,3 @@ fun OutcomeRow(turn: AgentTurn, outcome: String) {
     }
   }
 }
-
