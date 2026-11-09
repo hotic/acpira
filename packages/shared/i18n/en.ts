@@ -1005,6 +1005,7 @@ export const en = {
   'settings.openFilesWith.system': 'System default',
   'settings.about.releaseNotes': 'Release notes',
   'settings.about.source': 'Source code',
+  'settings.about.website': 'Website',
   'settings.update.version': 'Acpira {version}',
   'settings.update.idle': 'Not checked yet',
   'settings.update.checking': 'Checking for updates…',

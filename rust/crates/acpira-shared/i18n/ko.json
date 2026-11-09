@@ -957,6 +957,7 @@
   "settings.openFilesWith.system": "시스템 기본 앱",
   "settings.about.releaseNotes": "릴리스 노트",
   "settings.about.source": "소스 코드",
+  "settings.about.website": "웹사이트",
   "settings.update.version": "Acpira {version}",
   "settings.update.idle": "아직 확인하지 않음",
   "settings.update.checking": "업데이트 확인 중…",

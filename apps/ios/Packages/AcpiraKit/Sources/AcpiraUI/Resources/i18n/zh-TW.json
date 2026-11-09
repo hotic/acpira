@@ -962,6 +962,7 @@
   "settings.openFilesWith.system": "系統預設程式",
   "settings.about.releaseNotes": "更新日誌",
   "settings.about.source": "原始碼",
+  "settings.about.website": "官網",
   "settings.update.version": "Acpira {version}",
   "settings.update.idle": "尚未檢查",
   "settings.update.checking": "正在檢查更新…",

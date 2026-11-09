@@ -985,6 +985,7 @@ export const de = {
   'settings.openFilesWith.system': 'Systemstandard',
   'settings.about.releaseNotes': 'Versionshinweise',
   'settings.about.source': 'Quellcode',
+  'settings.about.website': 'Website',
   'settings.update.version': 'Acpira {version}',
   'settings.update.idle': 'Noch nicht geprüft',
   'settings.update.checking': 'Suche nach Updates…',

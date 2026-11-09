@@ -986,6 +986,7 @@ export const fr = {
   'settings.openFilesWith.system': 'Application par défaut',
   'settings.about.releaseNotes': 'Notes de version',
   'settings.about.source': 'Code source',
+  'settings.about.website': 'Site web',
   'settings.update.version': 'Acpira {version}',
   'settings.update.idle': 'Pas encore vérifié',
   'settings.update.checking': 'Recherche de mises à jour…',

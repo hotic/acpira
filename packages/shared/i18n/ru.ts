@@ -1008,6 +1008,7 @@ export const ru = {
   'settings.openFilesWith.system': 'Системное приложение',
   'settings.about.releaseNotes': 'Список изменений',
   'settings.about.source': 'Исходный код',
+  'settings.about.website': 'Сайт',
   'settings.update.version': 'Acpira {version}',
   'settings.update.idle': 'Ещё не проверялось',
   'settings.update.checking': 'Проверка обновлений…',
