@@ -68,6 +68,9 @@ impl SessionManager {
   }
 
   pub async fn edit_turn(&self, edit: EditTurnRequest) -> Result<()> {
+    if let Some(result) = self.edit_on_host(&edit).await {
+      return result;
+    }
     if let Some(s) = self.live(&edit.session_id) {
       return s.edit_turn(edit).await;
     }

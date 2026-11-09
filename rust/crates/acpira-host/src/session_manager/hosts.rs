@@ -18,7 +18,7 @@ use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use acpira_shared::protocol::{HostMsg, RawJson, SessionHit, WebviewMsg};
+use acpira_shared::protocol::{EditTurnRequest, HostMsg, RawJson, SessionHit, WebviewMsg};
 use acpira_shared::remote::{ConnectionView, format_remote_folder, parse_remote_folder};
 use acpira_shared::session_patch::{LastTurnParts, ViewParts};
 use acpira_shared::sidecar::SessionListScope;
@@ -152,6 +152,31 @@ impl HostRun {
     let _pending = HostRequest { run: self, key };
     send();
     tokio::time::timeout(QUERY_WAIT, rx).await.ok().and_then(Result::ok)
+  }
+
+  /// An edit answers only after the host accepted or rejected it. A lost link cannot tell whether it ran.
+  async fn edit(&self, edit: EditTurnRequest) -> Result<()> {
+    let key = format!("edit-{}", self.next_view_id());
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let _pending = HostRequest { run: self, key: key.clone() };
+    let unreachable = || anyhow!(crate::i18n::tp("host.remoteUnreachable", &[("host", &self.alias)]));
+    {
+      // Register before sending, while the driver cannot clear the connection and its pending requests.
+      let out = self.out.lock();
+      let Some(out) = out.as_ref() else { return Err(unreachable()) };
+      self.requests.lock().insert(key.clone(), tx);
+      let msg = json!({ "type": "editTurn", "requestId": key, "edit": edit });
+      if out.send(json!({ "type": "webviewMessage", "viewId": LIST_VIEW, "message": msg })).is_err() {
+        self.requests.lock().remove(&key);
+        return Err(unreachable());
+      }
+    }
+    let msg = rx.await.map_err(|_| anyhow!("{}: {}", self.alias, crate::i18n::t("subagents.disconnectedNote")))?;
+    match msg.get("error") {
+      None | Some(Value::Null) => Ok(()),
+      Some(Value::String(error)) => Err(anyhow!(error.clone())),
+      _ => Err(anyhow!("invalid edit result from {}", self.alias)),
+    }
   }
 
   async fn lookup(&self, id: &str) -> bool {
@@ -337,6 +362,8 @@ impl SessionManager {
       if let Some(t) = run.task.lock().take() {
         t.abort();
       }
+      *run.out.lock() = None;
+      run.requests.lock().clear();
     }
   }
 
@@ -403,6 +430,8 @@ impl SessionManager {
           if let Some(t) = run.task.lock().take() {
             t.abort();
           }
+          *run.out.lock() = None;
+          run.requests.lock().clear();
           changed = true;
         }
         keep
@@ -477,6 +506,12 @@ impl SessionManager {
       || st.index.iter().any(|s| s.id == id)
       || st.elsewhere.values().flatten().any(|s| s.id == id)
       || st.trash.contains_key(id)
+  }
+
+  /// None means the session belongs here; otherwise the host's actual edit result is returned to the page.
+  pub(super) async fn edit_on_host(&self, edit: &EditTurnRequest) -> Option<Result<()>> {
+    let run = self.host_of(&edit.session_id)?;
+    Some(run.edit(edit.clone()).await)
   }
 
   fn host_of(&self, id: &str) -> Option<Arc<HostRun>> {
@@ -785,6 +820,7 @@ impl SessionManager {
           Some("init") if view_id.starts_with("lookup-") => Some(view_id.clone()),
           Some("sessionHits") => msg.get("seq").and_then(Value::as_u64).map(|seq| format!("search-{seq}")),
           Some("controls") if view_id == LIST_VIEW => msg.get("agent").and_then(Value::as_str).map(|a| format!("controls-{a}")),
+          Some("editTurnResult") if view_id == LIST_VIEW => msg.get("requestId").and_then(Value::as_str).map(str::to_owned),
           _ => None,
         };
         if let Some(key) = key {
