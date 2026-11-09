@@ -79,6 +79,17 @@ pub fn resolve(root: &Path, rel: &str) -> Result<PathBuf, ProjectError> {
   }
 }
 
+/// The file the viewer reads for `rel`: a path inside the project as `resolve` takes it, or an explicit absolute path
+/// without `..` (a plan or a session-edited file outside the project) as written. Local folders and SSH hosts share it,
+/// so a file the session edited elsewhere opens on either
+pub fn resolve_read(root: &Path, rel: &str) -> Result<PathBuf, ProjectError> {
+  let p = Path::new(rel);
+  if p.is_absolute() && !p.components().any(|c| matches!(c, Component::ParentDir)) {
+    return Ok(p.to_path_buf());
+  }
+  resolve(root, rel)
+}
+
 /// One folder: folders first, then files, each by name without case (as an editor's explorer orders them)
 pub async fn list_dir(root: &Path, rel: &str) -> Result<Vec<ProjectEntry>, ProjectError> {
   let dir = resolve(root, rel)?;
@@ -350,6 +361,10 @@ mod tests {
     assert_eq!(resolve(&root, "../secret"), Err(ProjectError::Outside));
     assert_eq!(resolve(&root, "/etc/hosts"), Err(ProjectError::Outside));
     assert_eq!(resolve(&root, "src/none.rs"), Err(ProjectError::Missing));
+    // The viewer's read takes an explicit absolute path outside the project, never a relative one climbing out
+    let secret = tmp.path().join("secret");
+    assert_eq!(resolve_read(&root, &secret.to_string_lossy()), Ok(secret));
+    assert_eq!(resolve_read(&root, "../secret"), Err(ProjectError::Outside));
     #[cfg(unix)]
     {
       std::os::unix::fs::symlink(tmp.path().join("secret"), root.join("link")).unwrap();

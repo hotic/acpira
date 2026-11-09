@@ -205,7 +205,7 @@ pub(super) async fn project(a: &Value) -> Result<Value, WireError> {
   let out = match a.get("op").and_then(Value::as_str).unwrap_or("") {
     "listDir" => pf::list_dir(&root, &rel).await.map_or_else(failed, |entries| json!({ "entries": entries })),
     "gitMarks" => json!({ "marks": pf::git_marks(&root).await }),
-    "readText" => match pf::resolve(&root, &rel) {
+    "readText" => match pf::resolve_read(&root, &rel) {
       Ok(file) => pf::read_text(&file).await.map_or_else(failed, |text| json!({ "text": text })),
       Err(e) => failed(e),
     },
