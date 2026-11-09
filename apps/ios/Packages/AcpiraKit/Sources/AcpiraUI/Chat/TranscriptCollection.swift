@@ -18,7 +18,19 @@ import UIKit
 /// What the thread hands the collection view's owner: the jump back to the end, the fold hold, and the flags the
 /// SwiftUI side observes
 @MainActor final class TranscriptControl {
-  weak var view: TranscriptCollectionView?
+  weak var view: TranscriptCollectionView? {
+    didSet { view?.safeFrame = safeFrame }
+  }
+  private var safeFrame = CGRect.zero
+
+  /// Viewport animation changes clearance, not row content. Keep it off the cell reconfiguration path.
+  func updateViewport(_ safe: CGRect, animated: Bool) {
+    guard safeFrame != safe else { return }
+    safeFrame = safe
+    view?.safeFrame = safe
+    view?.dockGlides = animated
+    view?.setNeedsLayout()
+  }
   /// More than half the room above the end (`ScrollToLatest`)
   let far = ObservedFlag()
   /// The thread follows its end (`threadFollowing`)
@@ -45,11 +57,26 @@ import UIKit
   }
 }
 
-/// The thread's rows in a collection view laid out under the given insets (the bars and docks it scrolls behind)
+/// A separate bridge for the bars' and docks' clearance. Animated safe-area changes must not reconfigure hosted rows.
+struct TranscriptViewport: UIViewRepresentable {
+  let safe: CGRect
+  let control: TranscriptControl
+
+  func makeUIView(context: Context) -> UIView {
+    let view = UIView()
+    view.isUserInteractionEnabled = false
+    return view
+  }
+
+  func updateUIView(_ view: UIView, context: Context) {
+    // Preserve the transaction so an animated dock glides, while a typed line still moves at once.
+    control.updateViewport(safe, animated: context.transaction.animation != nil && !context.transaction.disablesAnimations)
+  }
+}
+
+/// The thread's rows, updated only by content or environment changes, independently of viewport animation.
 struct TranscriptCollection: UIViewRepresentable {
   let items: [ThreadItem]
-  /// The safe area's frame in the window; the content insets to it (`TranscriptCollectionView.safeFrame`)
-  let safe: CGRect
   let control: TranscriptControl
   var running: Bool
   var motion: Bool
@@ -88,15 +115,6 @@ struct TranscriptCollection: UIViewRepresentable {
     control.view = view
     control.running = running
     view.motion = motion
-    if view.safeFrame != safe {
-      view.safeFrame = safe
-      // A dock that moves in an animated transaction (the composer's bar opening into its card and back) is followed
-      // with the glide, which runs on the main thread like the card's own animation and so keeps pace with it. A
-      // Core Animation curve ran on through the stall while the keyboard comes up and left the card behind; a snap
-      // jumped the card's whole growth ahead of it. A dock that moves at once (a line typed into the card) still snaps
-      view.dockGlides = context.transaction.animation != nil && !context.transaction.disablesAnimations
-      view.setNeedsLayout()
-    }
     context.coordinator.update(items: items, environment: values, in: view)
   }
 
