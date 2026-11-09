@@ -28,9 +28,8 @@ interface Frame {
   token: string;
 }
 
-// How long after the frame's load event the picker's hello may still arrive (it is posted at DOMContentLoaded, so normally
-// before load; the two travel separately)
-const HELLO_GRACE_MS = 400;
+// How long after the frame's load event the picker may take to answer the panel's ping
+const PONG_GRACE_MS = 400;
 
 // A proxied address as the page it stands for: same path on the target's origin. A page that left the proxy (a link to
 // another port) is shown as it is
@@ -138,8 +137,9 @@ export function BrowserPanel() {
   const loaded = frameKey !== undefined && loadedSrc === frameKey;
   const iframe = useRef<HTMLIFrameElement>(null);
   const root = useRef<HTMLDivElement>(null);
-  const hellos = useRef(0);
-  const checkedHellos = useRef(0);
+  // The last ping sent after a load, and the last one the picker answered
+  const pings = useRef(0);
+  const ponged = useRef(0);
   const pickingRef = useRef(picking);
   pickingRef.current = picking;
 
@@ -188,7 +188,6 @@ export function BrowserPanel() {
     const onPicker = (msg: PickerMsg) => {
       switch (msg.type) {
         case 'hello':
-          hellos.current++;
           setPickable(true);
           setPicked([]);
           setRects([]);
@@ -197,6 +196,10 @@ export function BrowserPanel() {
           moved(msg.url, msg.title);
           break;
         case 'location': moved(msg.url, msg.title); break;
+        // An answer to an earlier load's ping is left to that load's check
+        case 'pong':
+          if (msg.id === pings.current) { ponged.current = msg.id; setPickable(true); }
+          break;
         case 'picked':
           setCommenting(false);
           setPicked(msg.elements);
@@ -246,13 +249,18 @@ export function BrowserPanel() {
     if (normalizePreviewUrl(shown)) api.setState?.({ acpiraBrowserUrl: shown });
   }, [shown]);
 
-  // A page without the picker (another site, a non-HTML response) never says hello: picking and history are off there
+  // A load does not always bring a new document: WebKit (the desktop app's WKWebView, macOS 27.2) also fires it for a
+  // same-document hash navigation (a footnote link, location.hash; not pushState), which sends no hello. So every load asks
+  // the frame's current document whether the picker is there. A page without it (another site, a non-HTML response) never
+  // answers: picking and history are off there
   const onLoad = () => {
     if (frameKey) setLoadedSrc(frameKey);
+    const id = ++pings.current;
+    toPicker({ type: 'ping', id });
     window.setTimeout(() => {
-      setPickable(hellos.current !== checkedHellos.current);
-      checkedHellos.current = hellos.current;
-    }, HELLO_GRACE_MS);
+      // A later load has asked again and decides instead
+      if (pings.current === id && ponged.current !== id) setPickable(false);
+    }, PONG_GRACE_MS);
   };
 
   const open = (raw: string) => {
