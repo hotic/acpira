@@ -226,6 +226,13 @@
     box-shadow: 0 0 0 1.5px var(--cmp-bg, var(--bg-1));
   }
   .sidekick-tail[data-live] .sidekick-pulse { display: block; animation: acp-pulse 1.6s ease-in-out infinite; }
+  /* The trail's body clips for its fold (.chip-trail > span), and the dot with its ring sits past the mark's corner: without
+     the name the body is only as tall as the level tag (or ends at the mark), which cut the dot flat. Room on those sides,
+     cancelled by margins so the chip keeps its size */
+  .sidekick-tail > span {
+    padding-block: var(--spacing); margin-block: calc(var(--spacing) * -1);
+    padding-inline-end: var(--spacing); margin-inline-end: calc(var(--spacing) * -1);
+  }
 
   /* Handoff: the mark flips from the lead to the sidekick, the light crosses, then the words and the clock land */
   .sidekick-head[data-enter] .sidekick-flip-inner { animation: sidekick-flip 720ms 80ms var(--sidekick-spring) backwards; }
