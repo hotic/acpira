@@ -34,6 +34,8 @@ export type PickerMsg =
   | { type: 'escape' }
   | { type: 'add' }
   | { type: 'comment' }
+  // The answer to `ping`: the picker is in the frame's current document
+  | { type: 'pong'; id: number }
   // The page called window.acpira.context.set / add (docs/context-api.md, "Web pages"). The payload is the page's own,
   // untrusted until the shell parses it; `id` pairs the answer
   | { type: 'context'; id: string; op: PageContextOp; payload: unknown };
@@ -45,6 +47,8 @@ export type PanelMsg =
   | { type: 'clear' }
   | { type: 'history'; go: -1 | 1 }
   | { type: 'reload' }
+  // Asked after every load of the frame, which does not always bring a new document (BrowserPanel onLoad)
+  | { type: 'ping'; id: number }
   // The shell's answer to `context`: `error` is what the page's promise rejects with, `shown` what `set` resolves to
   | { type: 'contextDone'; id: string; error?: string; shown?: boolean };
 

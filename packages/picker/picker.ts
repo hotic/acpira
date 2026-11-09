@@ -308,6 +308,7 @@ const CONTEXT_ANSWER_MS = 10_000;
       case 'clear': setPicked([]); break;
       case 'history': history.go(msg.go); break;
       case 'reload': location.reload(); break;
+      case 'ping': send({ type: 'pong', id: msg.id }); break;
       case 'contextDone': {
         const pending = waiting.get(msg.id);
         if (!pending) break;
