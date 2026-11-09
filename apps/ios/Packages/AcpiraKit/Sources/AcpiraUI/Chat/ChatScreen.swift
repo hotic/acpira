@@ -341,13 +341,13 @@ struct Thread: View {
     let quiet = gate.isQuiet(session: session, catchingUp: false, liveStream: stream)
     let control = control
     let session = session
-    // The collection view spans the bars and docks and scrolls behind their glass; how far it reaches past the safe
-    // area on each side (the bars above, the docks below) is its content inset
-    // The reader keeps to the safe frame (SwiftUI reports a view that ignores the safe area at its safe frame while its
-    // platform view still spans the bars). Read in the reader's body rather than copied into state, so the collection
-    // view gets it in the transaction that moved it and can tell an animated dock from one that moves at once
+    // Only the viewport bridge reads animated geometry. Putting the collection in that reader reconfigured every
+    // visible hosted turn on every frame of a dock fold, including an entire open process history.
     GeometryReader { proxy in
-      TranscriptCollection(items: threadItems(session, preOpen: preOpen), safe: proxy.frame(in: .global), control: control,
+      TranscriptViewport(safe: proxy.frame(in: .global), control: control)
+    }
+    .background {
+      TranscriptCollection(items: threadItems(session, preOpen: preOpen), control: control,
                            running: session.running, motion: motion) { values in
         values.applyThread(session, quiet: quiet)
         values.holdScroll = control.holdScroll
@@ -355,6 +355,7 @@ struct Thread: View {
         values.threadFollowing = control.following
         values.foldMemory = control.folds
       }
+      // Keep drawing behind the bars and docks; their clearance is a content inset, not a smaller collection frame.
       .ignoresSafeArea(.container)
     }
     // Another session is another thread: its rows, offset and follow start afresh

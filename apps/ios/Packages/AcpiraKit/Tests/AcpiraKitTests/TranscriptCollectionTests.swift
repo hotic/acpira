@@ -6,6 +6,50 @@ import UIKit
 @testable import AcpiraUI
 
 @MainActor @Suite(.serialized) struct TranscriptCollectionTests {
+  /// A dock may be measured before the collection is mounted. Attaching content must keep that clearance, and later
+  /// viewport updates must neither replace the hosted cells nor change their measured heights.
+  @Test func dockViewportKeepsHostedContentAndReadingPosition() async throws {
+    let control = TranscriptControl()
+    let initialSafe = CGRect(x: 0, y: 100, width: 402, height: 574)
+    control.updateViewport(initialSafe, animated: false)
+    let items = (0..<12).map { index in
+      ThreadItem(id: "u\(index)", kind: .user(UserTurn(text: "A measured prompt"), index: index, editable: false, goal: false),
+                 exchange: index)
+    }
+    let host = UIHostingController(rootView: TranscriptCollection(items: items, control: control,
+      running: false, motion: false) { _ in })
+    host.safeAreaRegions = []
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
+    window.rootViewController = host
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    host.view.layoutIfNeeded()
+    try await Task.sleep(for: .milliseconds(200))
+    let view = try #require(control.view)
+    view.layoutIfNeeded()
+    #expect(view.safeFrame == initialSafe)
+    #expect(abs(view.contentInset.bottom - 200) <= 0.5)
+    let cell = try #require(view.visibleCells.first)
+    let height = cell.frame.height
+    let contentHeight = view.contentSize.height
+    view.maintainsBottomAnchor = false
+    let offset = view.contentOffset.y
+
+    control.updateViewport(CGRect(x: 0, y: 100, width: 402, height: 474), animated: true)
+    #expect(view.dockGlides)
+    view.layoutIfNeeded()
+    #expect(abs(view.contentInset.bottom - 300) <= 0.5)
+    #expect(view.visibleCells.contains { $0 === cell })
+    #expect(abs(cell.frame.height - height) <= 0.5)
+    #expect(abs(view.contentSize.height - contentHeight) <= 0.5)
+    #expect(abs(view.contentOffset.y - offset) <= 0.5)
+
+    control.updateViewport(initialSafe, animated: false)
+    #expect(!view.dockGlides)
+    view.layoutIfNeeded()
+    #expect(abs(view.contentInset.bottom - 200) <= 0.5)
+  }
+
   /// A process closing removes height from the same visible cell. Its former offset is outside the new content,
   /// not a reading anchor to restore: UIScrollView clamps it on its next pass and used to fight the restoration.
   @Test func shrinkingFollowedRowNeverRestoresPastTheNewBottom() throws {
@@ -154,7 +198,7 @@ import UIKit
     let turn = AgentTurn(blocks: [.text(TextBlock(markdown: markdown)), .notice(notice)])
     let items = [ThreadItem(id: "a1", kind: .agent(turn, index: 1, scope: "layout:1", running: false, last: true,
                                                  settings: nil, retry: false, subagents: []), exchange: 0)]
-    let host = UIHostingController(rootView: TranscriptCollection(items: items, safe: .zero, control: control,
+    let host = UIHostingController(rootView: TranscriptCollection(items: items, control: control,
       running: false, motion: false) { _ in })
     host.safeAreaRegions = []
     let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 874))
