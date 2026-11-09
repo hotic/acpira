@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>com.github.hotic.acpira</id>
     <name>Acpira</name>
-    <vendor url="https://github.com/hotic/acpira">hotic</vendor>
+    <vendor url="https://acpira.com">hotic</vendor>
     <description><![CDATA[
         <p><b>Native harnesses. One considered interface.</b></p>
         <p>Bring Grok Build, Kimi Code, Devin and any other <a href="https://agentclientprotocol.com">ACP</a> agent CLI into a tool window

@@ -1015,6 +1015,7 @@ export const zhCN = {
   'settings.openFilesWith.system': '系统默认程序',
   'settings.about.releaseNotes': '更新日志',
   'settings.about.source': '源代码',
+  'settings.about.website': '官网',
   'settings.update.version': 'Acpira {version}',
   'settings.update.idle': '尚未检查',
   'settings.update.checking': '正在检查更新…',

@@ -15,6 +15,7 @@
     "targets": ["app", "dmg"],
     "category": "DeveloperTool",
     "copyright": "hotic",
+    "homepage": "https://acpira.com",
     "shortDescription": "Chat with coding agent CLIs over ACP",
     "longDescription": "Native harnesses, one considered interface: Grok Build, Kimi Code, Devin, Codex, Claude and any ACP agent CLI with execution history, inline approvals and shared sessions",
     "icon": ["icons/icon.icns", "icons/icon.ico", "icons/icon.png", "icons/128x128.png", "icons/256x256.png", "icons/512x512.png"],

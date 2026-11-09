@@ -983,6 +983,7 @@ export const es = {
   'settings.openFilesWith.system': 'Predeterminado del sistema',
   'settings.about.releaseNotes': 'Notas de la versión',
   'settings.about.source': 'Código fuente',
+  'settings.about.website': 'Sitio web',
   'settings.update.version': 'Acpira {version}',
   'settings.update.idle': 'Aún no se ha comprobado',
   'settings.update.checking': 'Buscando actualizaciones…',

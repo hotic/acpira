@@ -10,7 +10,7 @@
 
 Acpira 用 Rust 写成，通过 [ACP](https://agentclientprotocol.com) 让 Claude Code、Codex 用你自己的登录跑在各自的原生 Harness 上，也可以用自带的 Agent 对接任意模型 API。同一套引擎驱动原生桌面应用、VS Code、Cursor 和 IntelliJ IDEA 的扩展，以及配对使用的 iPhone 应用。
 
-[English](README.md) ｜ **简体中文**
+[English](README.md) ｜ **简体中文** ｜ [官网](https://acpira.com)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/hotic/acpira/main/media/readme/hero-dark.png">

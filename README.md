@@ -10,7 +10,7 @@
 
 Acpira is built on [ACP](https://agentclientprotocol.com) with a Rust core. It runs Claude Code and Codex on your own login and their own harness, or its built-in agent on any model API. The same engine powers a native desktop app, extensions for VS Code, Cursor, and IntelliJ IDEA, and a paired iPhone app.
 
-**English** ｜ [简体中文](README.zh.md)
+**English** ｜ [简体中文](README.zh.md) ｜ [Website](https://acpira.com)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/hotic/acpira/main/media/readme/hero-dark.png">

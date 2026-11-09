@@ -13,7 +13,7 @@ import { exeName } from './sidecar-targets.mjs';
 // 6-digit code) by hand. Without them the files stay unsigned, as local builds do.
 
 const DESCRIPTION = 'Acpira';
-const URL_INFO = 'https://github.com/hotic/acpira';
+const URL_INFO = 'https://acpira.com';
 // Parallel CI jobs share one seed, so two logins can land on the same 6-digit code; a retry after one TOTP period
 // gets a fresh one
 const ATTEMPTS = 3;

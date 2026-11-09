@@ -982,6 +982,7 @@ export const ja = {
   'settings.openFilesWith.system': 'システムの既定',
   'settings.about.releaseNotes': 'リリースノート',
   'settings.about.source': 'ソースコード',
+  'settings.about.website': '公式サイト',
   'settings.update.version': 'Acpira {version}',
   'settings.update.idle': 'まだ確認していません',
   'settings.update.checking': 'アップデートを確認しています…',

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { CodeXml, Download, MessagesSquare, RefreshCw, RotateCcw, Tag } from 'lucide-react';
+import { CodeXml, Download, Globe, MessagesSquare, RefreshCw, RotateCcw, Tag } from 'lucide-react';
 import type { UpdateState } from '@acpira/shared/protocol';
 import { t } from '../i18n';
 import { Shimmer } from '../ui/Shimmer';
@@ -14,6 +14,7 @@ export interface UpdateHandlers {
   openExternal: (url: string) => void;
 }
 
+const SITE_URL = 'https://acpira.com';
 const REPO_URL = 'https://github.com/hotic/acpira';
 const HELP_URL = `${REPO_URL}/issues`;
 const RELEASES_URL = `${REPO_URL}/releases`;
@@ -25,12 +26,13 @@ const BUSY = new Set<UpdateState['phase']>(['checking', 'downloading', 'staging'
 // stand (HostMsg updateState, rust/crates/acpira-desktop/src/update/) as the second line with the one next step as the
 // head's action, then the automatic download switch. An install that cannot replace itself (a dmg, App Translocation,
 // a folder it cannot write, a development build) says why and links to the release page instead. Getting started replays
-// the interface tour. The last card links out to the repository: help, release notes, source
+// the interface tour. The last card links out: the website, then the repository's help, release notes and source
 export function AboutPage({ state, on, onTour }: { state: UpdateState | undefined; on: UpdateHandlers; onTour?: () => void }) {
   return <>
     {state && <VersionCard state={state} on={on} />}
     {onTour && <TourSection onStart={onTour} />}
     <Section title={t('settings.nav.about')}>
+      <ItemRow lead={<Globe />} title={t('settings.about.website')} desc="acpira.com" onOpen={() => on.openExternal(SITE_URL)} />
       <ItemRow lead={<MessagesSquare />} title={t('desktop.help')} desc="Issues" onOpen={() => on.openExternal(HELP_URL)} />
       <ItemRow lead={<Tag />} title={t('settings.about.releaseNotes')} desc="Releases" onOpen={() => on.openExternal(RELEASES_URL)} />
       <ItemRow lead={<CodeXml />} title={t('settings.about.source')} desc={t('settings.about.sourceDesc')} onOpen={() => on.openExternal(REPO_URL)} />
