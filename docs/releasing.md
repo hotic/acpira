@@ -13,6 +13,7 @@ Add these repository secrets under [Settings → Secrets and variables → Actio
 | `VSCE_PAT` | Azure DevOps personal access token for the Microsoft account that owns the `hotic` Marketplace publisher; Marketplace → Manage permission, with the organization selection required by the [VS Code publishing documentation](https://code.visualstudio.com/api/working-with-extensions/publishing-extension). |
 | `OVSX_PAT` | [Open VSX access token](https://open-vsx.org/user-settings/tokens) for the account that signed the publisher agreement and can publish under `hotic`. |
 | `JETBRAINS_MARKETPLACE_TOKEN` | [JetBrains Marketplace permanent token](https://plugins.jetbrains.com/author/me/tokens) of the account that owns plugin `com.github.hotic.acpira`. |
+| `VERCEL_DEPLOY_HOOK` | Deploy Hook URL of the acpira.com Vercel project (Settings → Git → Deploy Hooks, branch `main`). The `website` job calls it after `release-sums`, and the site's build picks up the newest stable Release that carries every installer. Optional: without it the site keeps its version until its next deploy. |
 
 Tokens expire or can be revoked. Update the corresponding secret when rotating one. Microsoft currently documents retirement of global Azure DevOps PATs on December 1, 2026; migrate the Marketplace job to Microsoft Entra ID before that date. The current workflow uses PATs, not Entra ID or Open VSX trusted publishing.
 

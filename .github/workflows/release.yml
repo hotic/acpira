@@ -745,6 +745,25 @@ jobs:
         if: needs.release-asset.result == 'success'
         run: node scripts/release/packages-release.mjs prune 10
 
+  # Rebuilds acpira.com once the version's downloads are all attached: its build reads the newest stable Release that
+  # carries every installer (acpira-web scripts/release.mjs), so a desktop job that failed leaves the site on the version
+  # before. Without the VERCEL_DEPLOY_HOOK secret it only notes the skip
+  website:
+    needs: [release-sums]
+    if: always() && needs.release-sums.result == 'success' && (github.event_name == 'release' || inputs.publish)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger the website build
+        env:
+          HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo '::notice::No VERCEL_DEPLOY_HOOK secret: acpira.com keeps its version until it is rebuilt.'
+            exit 0
+          fi
+          curl --fail --silent --show-error --retry 3 -X POST "$HOOK" > /dev/null
+
   jetbrains-marketplace:
     needs: [build, build-idea]
     if: github.event_name == 'release' || inputs.publish
