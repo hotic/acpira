@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Agents no longer fail with `Operation not permitted` after a desktop update on macOS.** Swapping the app bundle took the privacy grants away from the engine still running under the old one, so Claude Code, Droid and the built-in agent could not read external volumes or protected folders until the engine restarted. The engine now notices its launcher was replaced and, once nothing is running, hands over to a fresh engine under the new bundle.
+
 ### Planned
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.

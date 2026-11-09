@@ -358,6 +358,56 @@ fn wait_forwarding(pid: libc::pid_t) -> i32 {
   }
 }
 
+/// How often a served engine checks that its launcher is still where it started from
+#[cfg(target_os = "macos")]
+const WATCH_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Where a process's executable is now: the kernel follows a rename of it (or of a folder above it), and answers
+/// nothing once it is deleted
+#[cfg(target_os = "macos")]
+fn image_path(pid: libc::pid_t) -> Option<PathBuf> {
+  use std::os::unix::ffi::OsStrExt;
+  let mut buf = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+  // SAFETY: the buffer is as long as the size passed
+  let len = unsafe { libc::proc_pidpath(pid, buf.as_mut_ptr().cast(), buf.len() as u32) };
+  let len = usize::try_from(len).ok().filter(|l| *l > 0)?;
+  Some(PathBuf::from(std::ffi::OsStr::from_bytes(&buf[..len])))
+}
+
+/// An engine started under the app's launcher loses every privacy grant once an update swaps the bundle away under it:
+/// macOS can no longer place the launcher (`Failed to create Attribution Chain`), so protected folders and removable
+/// volumes answer EPERM to everything the engine runs, while the engine itself, being the same version, is never taken
+/// over. This watches the parent's executable and, once it no longer sits at the path it started from and nothing is
+/// running, retires the engine (`Engine::retire`): the next shell starts a fresh one under the new bundle
+#[cfg(target_os = "macos")]
+pub fn watch(engine: &std::sync::Arc<crate::sidecar::server::Engine>) {
+  // SAFETY: getppid has no preconditions
+  let parent = unsafe { libc::getppid() };
+  let Some(started) = image_path(parent).filter(|p| in_app(p)) else { return };
+  let weak = std::sync::Arc::downgrade(engine);
+  tokio::spawn(async move {
+    loop {
+      tokio::time::sleep(WATCH_EVERY).await;
+      let Some(engine) = weak.upgrade() else { return };
+      if engine.draining() {
+        return;
+      }
+      if image_path(parent).as_deref() == Some(started.as_path()) {
+        continue;
+      }
+      // Waits for running work: retiring hands the endpoint over at once, a turn mid-way would be split from its window
+      if engine.busy() || engine.runtime().is_some_and(|rt| rt.manager.in_flight()) {
+        continue;
+      }
+      engine.retire(&format!("its launcher {} was replaced; a fresh engine takes over", started.display()));
+      return;
+    }
+  });
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn watch(_engine: &std::sync::Arc<crate::sidecar::server::Engine>) {}
+
 /// Starts `program args` in a session of its own with responsibility disclaimed, so macOS charges what it and its
 /// children do to it rather than to the app that started it. Output goes to `log`, from `cwd`. Returns the pid
 #[cfg(target_os = "macos")]
