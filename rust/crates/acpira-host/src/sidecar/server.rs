@@ -415,6 +415,19 @@ impl Engine {
     Ok(())
   }
 
+  /// Gives the machine up with no successor in sight (its launcher is gone, `machine_engine::launcher::watch`): the
+  /// endpoint and every wire go now, so each shell reconnects and starts a fresh engine, and this one ends once its
+  /// work has (`idle`)
+  pub fn retire(&self, reason: &str) {
+    if !self.persistent || self.draining.swap(true, Ordering::AcqRel) {
+      return;
+    }
+    self.log(&format!("draining: {reason}"));
+    self.release_endpoint();
+    self.wires_released.send_replace(true);
+    self.changed.notify_waiters();
+  }
+
   /// Tear everything down once: pending platform RPCs fail, sessions flush and their agents end, `ack` gets shutdownOk
   async fn finish(&self, reason: &str, code: i32, ack: Option<WireOut>, views: &mut HashMap<String, Arc<BridgeCore>>) -> i32 {
     // A hello creating the runtime right now finishes first, so the runtime it creates is the one disposed below

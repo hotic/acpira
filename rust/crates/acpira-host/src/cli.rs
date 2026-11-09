@@ -504,6 +504,10 @@ async fn serve(args: &[String], home: PathBuf, exe: Option<String>) -> i32 {
   let engine =
     Engine::persistent(ServerOpts { version: VERSION.into(), home: home.clone(), log: Arc::new(stderr), ignore_client_agents: false, bridge_exe: exe });
   engine.watch_for_wedge();
+  // The machine's engine under the app's launcher: an update swapping the bundle away takes its privacy grants along
+  if socket == crate::machine_engine::ensure::socket_path(&home) {
+    crate::machine_engine::launcher::watch(&engine);
+  }
   let host = hosts.then(|| crate::devices::host::Host::start(&engine, &home, forced, Arc::new(stderr)));
   let accept_engine = engine.clone();
   let accept = tokio::spawn(async move {

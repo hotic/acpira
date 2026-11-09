@@ -48,6 +48,7 @@
 - `assets/` ship zstd-packed except `main.js` / `main.css`, which change every release; compressed they would differ whole in every update delta.
 - Ad hoc signing runs only on the build machine; local builds sign with the release team too: macOS keys privacy grants (App Management) on the signature. `Entitlements.plist` is empty on purpose: WKWebView's JIT runs in WebKit's own process.
 - The dmg is re-signed and notarized itself: Tauri notarizes only the app, Apple wants the outermost container.
+- `minimumSystemVersion` is also the shell binary's deployment target. The real floor is the system WebKit (15.0 ships Safari 18): page features newer than that must degrade.
 
 ## Smoke
 
