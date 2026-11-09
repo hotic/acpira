@@ -240,7 +240,8 @@ fn handoff_lead(lead: &str, fork: Option<&ForkedFrom>, all: &[Turn], rounds: &[u
     ));
   }
   let tail = usize::try_from(fork.turn_index).ok().filter(|i| i + 1 == all.len()).and_then(|i| all[i].as_agent());
-  if let Some(a) = tail.filter(|a| a.stop == Some(TurnStop::Error) || a.error.is_some()) {
+  // A refusal (a provider's safety filter) stopped the reply short just like a failure
+  if let Some(a) = tail.filter(|a| matches!(a.stop, Some(TurnStop::Error | TurnStop::Refusal)) || a.error.is_some()) {
     let answered = a.blocks.iter().any(|b| match b {
       AgentBlock::Text(x) => !x.markdown.trim().is_empty(),
       AgentBlock::Notice(_) | AgentBlock::Goal(_) => false,

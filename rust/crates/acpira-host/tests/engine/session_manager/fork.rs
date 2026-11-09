@@ -175,14 +175,16 @@ async fn forking_a_failed_reply_hands_its_request_over_and_says_how_far_it_got()
   let agents = merged(&[("fake", agent_setting(&fake, "fake", json!({}))), ("fake2", agent_setting(&fake, "fake2", json!({ "name": "Fake 2" })))]);
   let m = Mgr::new(dir.path(), Opts::with_agents(agents, "fake"));
   m.init().await;
-  for (prompt, note) in [
-    ("please fail", "Its last message got no reply, the agent failed before answering"),
-    ("please fail-after-output", "Its last reply failed partway through: check the actions it lists"),
+  // A refusal (a provider's safety filter) is handed over like a failure
+  for (prompt, stop, note) in [
+    ("please fail", "error", "Its last message got no reply, the agent failed before answering"),
+    ("please fail-after-output", "error", "Its last reply failed partway through: check the actions it lists"),
+    ("please refuse", "refusal", "Its last message got no reply, the agent failed before answering"),
   ] {
     m.new_session(Some("fake")).await;
     let src = m.active_id().unwrap();
     m.handle(json!({ "type": "send", "text": prompt })).await;
-    assert_eq!(last_turn(&m.active().unwrap())["stop"], "error");
+    assert_eq!(last_turn(&m.active().unwrap())["stop"], stop);
     m.handle(json!({ "type": "forkSession", "sessionId": src, "turnIndex": 1, "agent": "fake2" })).await;
     assert_ne!(m.active_id().unwrap(), src);
     // Nothing goes out on its own: the first message is the user's to send

@@ -911,6 +911,10 @@ async fn summarize(http: ureq::Agent, endpoint: Endpoint, request: Request) -> R
       if stop == StopReason::MaxTokens {
         return Err(LlmError::Protocol("the summary was cut off at the output limit".into()));
       }
+      // A refused summary (a gateway's filter notice included) is no summary: the next writer tries
+      if stop == StopReason::Refusal {
+        return Err(LlmError::Api("the provider refused to write the summary".into()));
+      }
       return Ok((summary_text(&reply.text), usage));
     }
   }
