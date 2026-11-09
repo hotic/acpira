@@ -7,15 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Planned
+
+- An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
+
+## [2.0.11] - 2026-11-09
+
+### Added
+
+- **The desktop app follows a finger on macOS touch displays.** Dragging the title bar with a finger moves the window, and a finger pinch steps the View menu zoom. A trackpad pinch behaves as before.
+- Settings' About page opens acpira.com first. The READMEs, the VS Code and JetBrains listings, the desktop app and the Windows signature now point to acpira.com instead of the repository.
+
+### Changed
+
+- The Appearance switch that links the context report to the transcript is now off by default.
+
 ### Fixed
 
 - **On macOS, Acpira holds privacy grants as one app.** With the desktop app installed in Applications, the engine, remote access and every command an agent runs are charged to Acpira.app. App Management, Screen Recording and the other lists show Acpira once, and updates keep the grants. The switch happens when the engine next starts, such as after this update. Without the desktop app, the engine stays under the `Acpira Engine` launcher, which now shows the Acpira icon. A grant given only to `Acpira Engine` is asked once more for Acpira.app. Leftover rows from earlier versions (`acpira`, `acpira-gateway`, `Acpira Engine`) are no longer used and can be removed with "−" in System Settings.
 - Replacing the desktop app, by its own update or a local install, no longer drops the grants of an engine still running from the old copy. The old copy is moved aside and deleted once nothing runs from it.
 - Remote access still starts at login after the desktop app is moved or deleted.
-
-### Planned
-
-- An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
+- With the context report linked to the transcript, a call under a closed fold lights only that fold's head row instead of half the thread. Hovering a call whose row is off screen leaves the thread in place, picking one scrolls to it even under a pinned prompt, and a dimmed pinned prompt no longer shows rows through it.
+- In a session on an SSH host, editing an earlier message runs on the host, and a stale edit or the finished turn reaches the page that asked. Plans and other files outside the project open in the viewer on the host too.
+- A refused reply counts as a failure in summaries and forks. The built-in agent's compaction no longer keeps a filter notice as the summary, and forking a session whose last reply was refused hands its request over like a failed reply.
+- Dragging the edge of the subagent pane or the session column moves only that edge. Before, the tool panel's far edge moved instead.
+- Following an in-page link in the browser panel, such as a footnote, no longer turns off element picking and history for that page.
+- Reading above the end of a streaming reply no longer twitches the thread by a pixel as content grows below.
+- Droid's Fast Mode models read as the fast variant. Droid's autonomy levels and Hermes's edit modes show the access they actually grant.
+- The reply and prompt action rows leave room around their buttons, and the session moved toast shows a plain folder icon.
 
 ## [2.0.10] - 2026-11-08
 
