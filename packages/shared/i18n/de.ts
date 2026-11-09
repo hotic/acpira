@@ -567,6 +567,7 @@ export const de = {
   'turns.explored': '{n} Stellen erkundet',
   'turns.explored#one': '{n} Stelle erkundet',
   'turns.done': 'Fertig',
+  'turns.earlierSteps': '{n} frühere Schritte',
   'turns.groupFiles': '{names} und weitere ({n} Dateien)',
   'turns.groupTurns': '{title} ({n} Runden)',
   'turns.groupTurns#one': '{title} ({n} Runde)',

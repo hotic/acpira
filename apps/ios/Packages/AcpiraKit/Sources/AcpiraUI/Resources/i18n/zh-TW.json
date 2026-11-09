@@ -553,6 +553,7 @@
   "turns.searched": "搜尋 {n} 次",
   "turns.explored": "探索了 {n} 處",
   "turns.done": "已完成",
+  "turns.earlierSteps": "更早的 {n} 步",
   "turns.nameSep": "、",
   "turns.groupFiles": "{names} 等 {n} 個檔案",
   "turns.groupTurns": "{title} 中的 {n} 段對話",

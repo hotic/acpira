@@ -73,6 +73,8 @@ extension EnvironmentValues {
 /// tap; nil outside a thread
 final class FoldMemory: @unchecked Sendable {
   private var states: [String: Bool] = [:]
+  /// Pages of older steps a process fold was asked to draw (`ProcessCap`), by the fold's key
+  var pages: [String: Int] = [:]
   subscript(key: String) -> Bool? {
     get { states[key] }
     set { states[key] = newValue }
