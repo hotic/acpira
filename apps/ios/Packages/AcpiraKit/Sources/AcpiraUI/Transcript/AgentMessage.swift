@@ -133,10 +133,14 @@ struct CodexFold: View {
   /// The hand-set state, kept by the thread too so a reused cell builds the fold as the reader left it
   private var fold: Binding<Bool?> { rememberedFold($manual, folds, "\(entrance.scope):process") }
   @State private var hold = FoldHold()
+  @State private var window = ProcessWindowHold()
+  /// Pages of older steps the reader asked for, kept by the thread too (`FoldMemory.pages`)
+  @State private var pages: Int?
   @Environment(\.threadFollowing) private var following
   @Environment(\.motionEnabled) private var motion
   @Environment(\.holdScroll) private var holdScroll
   @Environment(\.preOpen) private var preOpen
+  @Environment(\.snapshot) private var snapshot
   /// The view came from a wire that ended: the head's motion rests until the engine's own state is back
   @Environment(\.syncing) private var syncing
   /// Sending or starting, while the reply is the thread's stand-in for a held prompt (`heldStage`)
@@ -148,9 +152,13 @@ struct CodexFold: View {
     let auto = hold.next(running: running, following: following?.value ?? true) || preOpen.contains(.fold)
     let open = retired || (fold.wrappedValue ?? auto)
     let items = groupProcess(blocks)
-    let parts = processParts(items)
+    let all = processParts(items)
     // Only items fold; a process of nothing but delegations has no chevron
-    let foldable = parts.contains { if case .items = $0 { true } else { false } }
+    let foldable = all.contains { if case .items = $0 { true } else { false } }
+    // An open fold draws its newest steps only (`ProcessCap`); a render of the whole transcript draws every step
+    let total = snapshot ? 0 : processSteps(all)
+    let cut = windowParts(all, hiding: window.hidden(total: total, pages: loadedPages, following: following?.value ?? true))
+    let parts = cut.parts
     if !(retired && blocks.isEmpty) {
       VStack(alignment: .leading, spacing: 0) {
         if !retired {
@@ -160,6 +168,13 @@ struct CodexFold: View {
         }
         if !blocks.isEmpty {
           VStack(alignment: .leading, spacing: 0) {
+            if cut.hidden > 0 {
+              // Folds with the rows it stands for
+              EarlierSteps(count: cut.hidden) { loadEarlier() }
+                .padding(.top, retired ? 0 : Metrics.s1)
+                .reveal(open)
+                .animation(foldAnimation(opening: open, motion: motion), value: open)
+            }
             ForEach(Array(parts.enumerated()), id: \.element.id) { i, part in
               switch part {
               case .steer(_, let block):
@@ -173,7 +188,9 @@ struct CodexFold: View {
                   .padding(.top, Metrics.processProseGap)
               case .items(_, let items):
                 ProcessHistory(items: items)
-                  .padding(.top, retired ? 0 : (i == 0 ? Metrics.s1 : Metrics.processProseGap))
+                  // Under the earlier-steps row the rows run on at the process's own row gap
+                  .padding(.top, retired ? 0
+                           : i == 0 ? (cut.hidden > 0 ? Metrics.processRowGap : Metrics.s1) : Metrics.processProseGap)
                   .padding(.bottom, !retired && i == parts.count - 1 ? Metrics.s1_5 : 0)
                   .reveal(open)
                   // An automatic close has no button transaction. Collapse over the fold curve, not in a single
@@ -200,6 +217,18 @@ struct CodexFold: View {
     let next = !open
     holdScroll()
     withAnimation(foldAnimation(opening: next, motion: motion)) { fold.wrappedValue = next }
+  }
+
+  private var pagesKey: String { "\(entrance.scope):process" }
+  private var loadedPages: Int { pages ?? folds?.pages[pagesKey] ?? 1 }
+
+  /// One more page of older steps above the rows shown. The thread lets go of its end first, so the tapped row stays
+  /// where it is and the page opens below it
+  private func loadEarlier() {
+    holdScroll()
+    let next = loadedPages + 1
+    pages = next
+    folds?.pages[pagesKey] = next
   }
 
   @ViewBuilder
@@ -269,6 +298,91 @@ final class FoldHold {
   func next(running: Bool, following: Bool) -> Bool {
     open = running || (!following && open)
     return open
+  }
+}
+
+/// How many steps an open process fold draws. The thread lays a whole turn out in one hosted cell, where the process
+/// measures plainly (`ProcessHistory`): a turn some 900 steps long froze the phone for about a second and a half on
+/// opening the chat or the fold, slowed every frame of the fold's reveal, and re-measured every row on each streamed
+/// patch. The fold draws its newest steps and the older ones wait behind a row that draws another page per tap, as
+/// `ProseCap` does for a runaway reply
+enum ProcessCap {
+  static let page = 50
+  /// Fewer older steps than this are drawn rather than put behind a row
+  static let slack = 25
+}
+
+/// The steps an item stands for: a group counts its calls
+func processSteps(_ item: ProcessItem) -> Int {
+  if case .group(_, _, let calls) = item { calls.count } else { 1 }
+}
+
+/// Every step in the parts' runs of rows
+func processSteps(_ parts: [FoldPart]) -> Int {
+  parts.reduce(0) { n, part in
+    if case .items(_, let items) = part { n + items.reduce(0) { $0 + processSteps($1) } } else { n }
+  }
+}
+
+/// The parts an open fold draws with its first `target` steps left out, and how many steps were. Only rows are left
+/// out, whole items at a time (a group across the cut stays whole); a shortened run keeps its id so the rows left keep
+/// their views. Steered prompts, delegations and media stay in place, as they stay when the fold is closed
+func windowParts(_ parts: [FoldPart], hiding target: Int) -> (parts: [FoldPart], hidden: Int) {
+  guard target > 0 else { return (parts, 0) }
+  var hidden = 0
+  var cutting = true
+  var out: [FoldPart] = []
+  for part in parts {
+    guard cutting, case .items(let id, let items) = part else {
+      out.append(part)
+      continue
+    }
+    var first = 0
+    while first < items.count, hidden + processSteps(items[first]) <= target {
+      hidden += processSteps(items[first])
+      first += 1
+    }
+    if first < items.count {
+      out.append(.items(id: id, items: Array(items[first...])))
+      // The cut is made: everything after it is drawn
+      cutting = false
+    }
+  }
+  return (out, hidden)
+}
+
+/// Where an open fold's drawn steps start, across redraws. While the thread follows its end the fold draws its newest
+/// pages and the start moves with the stream; while the reader is elsewhere the start holds, so a streamed step adds a
+/// row at the end instead of taking one away above what they read. A class written from the body, like FoldHold
+final class ProcessWindowHold {
+  private var held: Int?
+
+  /// Steps to leave out of `total` with `pages` pages drawn
+  func hidden(total: Int, pages: Int, following: Bool) -> Int {
+    let tail = total - ProcessCap.page * max(1, pages)
+    let newest = tail > ProcessCap.slack ? tail : 0
+    // A page asked for moves the start back even while held
+    let next = following ? newest : min(held ?? newest, newest)
+    held = next
+    return next
+  }
+}
+
+/// The open fold's first row while its oldest steps are left out: a tap draws another page of them
+struct EarlierSteps: View {
+  let count: Int
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      Row {
+        Icon(.chevronUp)
+      } content: {
+        RowLabel(t("turns.earlierSteps", ["n": String(count)])).foregroundStyle(Palette.fg3)
+      }
+    }
+    .buttonStyle(RowButtonStyle())
+    .environment(\.rowHeight, WebMetrics.processRow)
   }
 }
 

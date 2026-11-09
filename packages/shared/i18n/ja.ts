@@ -566,6 +566,7 @@ export const ja = {
   'turns.searched': '{n} 回検索',
   'turns.explored': '{n} か所を調査',
   'turns.done': '完了',
+  'turns.earlierSteps': '以前の {n} ステップ',
   'turns.nameSep': '、',
   'turns.groupFiles': '{names} など（{n} 個のファイル）',
   'turns.groupTurns': '{title} の {n} ターン',

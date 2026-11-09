@@ -565,6 +565,7 @@ export const en = {
   'turns.searched': 'Searched {n} times',
   'turns.explored': 'Explored {n} places',
   'turns.done': 'Done',
+  'turns.earlierSteps': '{n} earlier steps',
   'turns.nameSep': ', ',
   'turns.groupFiles': '{names} and more ({n} files)',
   'turns.groupTurns': '{title} ({n} turns)',

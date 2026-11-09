@@ -564,6 +564,7 @@
   "turns.explored#one": "Изучено {n} место",
   "turns.explored#few": "Изучено {n} места",
   "turns.done": "Готово",
+  "turns.earlierSteps": "Предыдущих шагов: {n}",
   "turns.groupFiles": "{names} и другие (файлов: {n})",
   "turns.groupTurns": "{title} ({n} ходов)",
   "turns.groupTurns#one": "{title} ({n} ход)",

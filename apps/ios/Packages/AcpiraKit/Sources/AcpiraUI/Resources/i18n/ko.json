@@ -554,6 +554,7 @@
   "turns.searched": "{n}회 검색",
   "turns.explored": "{n}곳 탐색",
   "turns.done": "완료",
+  "turns.earlierSteps": "이전 {n}단계",
   "turns.groupFiles": "{names} 외 (파일 {n}개)",
   "turns.groupTurns": "{title}의 {n}턴",
   "turns.retrying": "다시 시도 중",

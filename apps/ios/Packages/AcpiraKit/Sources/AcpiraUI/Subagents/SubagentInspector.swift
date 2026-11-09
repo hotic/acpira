@@ -110,6 +110,8 @@ private struct InspectorThread: View {
   var loaded: Bool
   @State private var position = ScrollPosition(edge: .bottom)
   @State private var follow = true
+  /// `follow` for the folds (`threadFollowing`): a process fold's window and automatic close hold while the reader is away
+  @State private var following = ObservedFlag(true)
   @State private var dragging = false
   /// Rows mounting while the reader scrolls skip their entrance (`ScrollGesture`)
   @State private var gesture = ScrollGesture()
@@ -127,6 +129,7 @@ private struct InspectorThread: View {
         ThreadContent(session: view, catchingUp: !loaded, liveStream: loaded)
           .environment(\.holdScroll, hold)
           .environment(\.scrollGesture, gesture)
+          .environment(\.threadFollowing, following)
         if receipt || loading || result != nil || node.state == .disconnected {
           VStack(alignment: .leading, spacing: WebMetrics.msgGap) {
             if receipt {
@@ -173,6 +176,7 @@ private struct InspectorThread: View {
       position.scrollTo(edge: .bottom)
     }
     .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { _, y in offset.y = y }
+    .onChange(of: follow) { _, now in following.value = now }
   }
 
   /// A fold about to move keeps the tapped row in place unless the thread follows a streaming child (`TranscriptControl.hold`)

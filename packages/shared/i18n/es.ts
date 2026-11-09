@@ -563,6 +563,7 @@ export const es = {
   'turns.explored': 'Exploró {n} lugares',
   'turns.explored#one': 'Exploró {n} lugar',
   'turns.done': 'Hecho',
+  'turns.earlierSteps': '{n} pasos anteriores',
   'turns.groupFiles': '{names} y más ({n} archivos)',
   'turns.groupTurns': '{title} ({n} turnos)',
   'turns.groupTurns#one': '{title} ({n} turno)',

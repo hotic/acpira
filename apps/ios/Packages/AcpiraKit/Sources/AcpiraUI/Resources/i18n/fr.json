@@ -554,6 +554,7 @@
   "turns.explored": "{n} emplacements explorés",
   "turns.explored#one": "{n} emplacement exploré",
   "turns.done": "Terminé",
+  "turns.earlierSteps": "{n} étapes précédentes",
   "turns.groupFiles": "{names} et d’autres ({n} fichiers)",
   "turns.groupTurns": "{title} ({n} tours)",
   "turns.groupTurns#one": "{title} ({n} tour)",

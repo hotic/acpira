@@ -66,6 +66,46 @@ private let command = block(#"{"type":"tool_call","id":"x","kind":"execute","ver
     #expect(call.id == "image")
   }
 
+  @Test func anOpenFoldLeavesOutWholeOldItemsAndKeepsWhatAlwaysShows() {
+    let group = ProcessItem.group(id: "g", kind: .read, blocks: [read("r1", "/a.ts"), read("r2", "/b.ts"), read("r3", "/c.ts")].map(call))
+    let steps = (0..<4).map { ProcessItem.block(id: "a\($0)", block: thought) }
+    let later = (0..<3).map { ProcessItem.block(id: "b\($0)", block: thought) }
+    let parts: [FoldPart] = [.items(id: "g", items: [group] + steps), .subagents(id: "d", ids: ["child"]), .items(id: "b0", items: later)]
+    func shape(_ parts: [FoldPart]) -> [String] {
+      parts.map { part in
+        switch part {
+        case .items(let id, let items): "items \(id) \(items.map(\.id).joined(separator: ","))"
+        case .subagents(let id, _): "subagents \(id)"
+        default: part.id
+        }
+      }
+    }
+    #expect(processSteps(parts) == 10)
+    // The cut never splits a group
+    #expect(windowParts(parts, hiding: 2).hidden == 0)
+    // A shortened run keeps its id; the delegation stays where it was
+    let cut = windowParts(parts, hiding: 5)
+    #expect(cut.hidden == 5)
+    #expect(shape(cut.parts) == ["items g a2,a3", "subagents d", "items b0 b0,b1,b2"])
+    let deep = windowParts(parts, hiding: 8)
+    #expect(deep.hidden == 8)
+    #expect(shape(deep.parts) == ["subagents d", "items b0 b1,b2"])
+  }
+
+  @Test func theFoldWindowMovesWithTheStreamOnlyWhileTheThreadFollows() {
+    let hold = ProcessWindowHold()
+    let page = ProcessCap.page
+    // A page and its slack draw whole
+    #expect(hold.hidden(total: page + ProcessCap.slack, pages: 1, following: true) == 0)
+    #expect(hold.hidden(total: 200, pages: 1, following: true) == 200 - page)
+    // A reader away from the end: new steps add rows below rather than taking one away above
+    #expect(hold.hidden(total: 210, pages: 1, following: false) == 200 - page)
+    // A page asked for still moves the start back
+    #expect(hold.hidden(total: 210, pages: 2, following: false) == 210 - 2 * page)
+    // Back at the end, the start catches up with the stream
+    #expect(hold.hidden(total: 230, pages: 2, following: true) == 230 - 2 * page)
+  }
+
   @Test func editsOfOneFileShareAnEntry() {
     let blocks = [edit("e1", "/src/Turns.tsx"), edit("e2", "/src/prompt.rs"), edit("e3", "/src/Turns.tsx")].map(call)
     #expect(editEntries(blocks).map { "\($0.key) \($0.blocks.map(\.id))" } == [#"/src/Turns.tsx ["e1", "e3"]"#, #"/src/prompt.rs ["e2"]"#])
