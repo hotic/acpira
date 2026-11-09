@@ -359,6 +359,22 @@ async fn a_cli_agent_in_a_host_folder_runs_in_the_hosts_engine_and_lists_here() 
   assert_eq!(view["cwd"], folder.as_str());
   assert!(!m.logs().iter().any(|l| l.contains("out of step")), "every patch from the host applied: {:?}", m.logs());
 
+  // Editing the first message must run on the host too, including its stale-edit errors and its completion.
+  let turn = &view["turns"][0];
+  let edit: acpira_shared::protocol::EditTurnRequest = serde_json::from_value(json!({
+    "sessionId": id, "turnIndex": 0, "turnCount": view["turns"].as_array().unwrap().len(),
+    "originalText": turn["text"], "turnId": turn["id"], "text": "hello from here", "settings": turn["settings"]
+  })).unwrap();
+  let mut stale = edit.clone();
+  stale.original_text = "out of date".into();
+  let error = m.m.edit_turn(stale).await.expect_err("the host must reject a stale edit");
+  assert_eq!(error.to_string(), acpira_host::i18n::t("history.stale"));
+  assert_eq!(m.active().unwrap()["turns"][0]["text"], "hello from here");
+  m.m.edit_turn(edit.clone()).await.expect("an unchanged first message can be resent");
+  wait(&m, "the resent first message", 30_000, || {
+    m.active().is_some_and(|v| v["turns"][0]["text"] == "hello from here" && v["turns"][0]["edited"] == true && v["running"] == false)
+  }).await;
+
   // Another page (a paired phone) opens the cached host view. Selecting it must read the host's mark too, even when
   // a desktop page keeps that view alive and the mark was explicitly kept while it was on screen.
   m.handle(json!({ "type": "setSessionUnread", "id": id, "unread": true })).await;
@@ -392,6 +408,8 @@ async fn a_cli_agent_in_a_host_folder_runs_in_the_hosts_engine_and_lists_here() 
   }
   wait(&m, "the host's engine to go", 15_000, || m.m.host_engines().is_empty()).await;
   assert!(m.sessions().iter().any(|s| s["id"] == id.as_str() && s["title"] == "On the host"), "the cached list stays");
+  let error = m.m.edit_turn(edit).await.expect_err("an offline host must reject an edit");
+  assert_eq!(error.to_string(), acpira_host::i18n::tp("host.remoteUnreachable", &[("host", "gen1")]));
   m.dispose().await;
   for (_, pid) in engines {
     // SAFETY: SIGTERM to the host engine this test started
@@ -404,6 +422,47 @@ async fn a_cli_agent_in_a_host_folder_runs_in_the_hosts_engine_and_lists_here() 
     };
     tokio::time::timeout(Duration::from_secs(10), gone).await.expect("the host's engine ended on SIGTERM");
   }
+  connections.dispose();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_host_edit_lost_in_flight_reports_an_unknown_outcome() {
+  let fake = crate::fake_or_skip!();
+  let lab = Lab::new();
+  let _stop = StopEngines::for_lab(&lab);
+  let home = lab.host_home().join(".acpira");
+  std::fs::create_dir_all(&home).unwrap();
+  std::fs::write(home.join("agents.json"), serde_json::to_vec(&fake.setting(json!({ "env": { "FAKE_NEW_DELAY_MS": "5000" } }))).unwrap()).unwrap();
+  let work = lab.path().join("hostfs/work");
+  std::fs::create_dir_all(&work).unwrap();
+  let folder = format!("ssh://gen1{}", work.display());
+  let dir = tempfile::tempdir().unwrap();
+  let connections = lab.engine("engine");
+  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  let mut opts = crate::session_manager::Opts::fake(&fake).projects();
+  opts.remote = Some(connections.clone());
+  let m = crate::session_manager::Mgr::new(dir.path(), opts);
+  m.init().await;
+  m.handle(json!({ "type": "newSession", "agent": "fake", "cwd": folder })).await;
+  wait(&m, "the host session ready", 30_000, || m.active().is_some_and(|v| v["cwd"] == folder && v["status"] == "ready")).await;
+  let id = m.active_id().unwrap();
+  m.handle(json!({ "type": "send", "sessionId": id, "text": "first" })).await;
+  wait(&m, "the completed reply", 30_000, || {
+    m.active().is_some_and(|v| v["turns"].as_array().is_some_and(|t| t.len() == 2) && v["running"] == false)
+  }).await;
+  let view = m.active().unwrap();
+  let turn = &view["turns"][0];
+  let edit: acpira_shared::protocol::EditTurnRequest = serde_json::from_value(json!({
+    "sessionId": id, "turnIndex": 0, "turnCount": 2, "originalText": turn["text"], "turnId": turn["id"],
+    "text": "changed", "settings": turn["settings"]
+  })).unwrap();
+  let manager = m.m.clone();
+  let pending = tokio::spawn(async move { manager.edit_turn(edit).await });
+  wait(&m, "the host accepting the edit", 15_000, || m.active().is_some_and(|v| v["running"] == true)).await;
+  connections.op(ConnectionOp::Disconnect { alias: "gen1".into() }).await.unwrap();
+  let error = tokio::time::timeout(Duration::from_secs(15), pending).await.unwrap().unwrap().expect_err("the receipt was lost");
+  assert!(error.to_string().contains(&acpira_host::i18n::t("subagents.disconnectedNote")), "{error}");
+  m.dispose().await;
   connections.dispose();
 }
 
