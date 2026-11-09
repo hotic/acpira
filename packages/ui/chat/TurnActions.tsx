@@ -23,7 +23,7 @@ export const TurnActionsContext = createContext<{
 // The row under a finished agent reply (Cursor's trio): copy the reply · fork the session from this turn onto an agent
 // picked from a menu (the session's own first) · open the response statistics card. Hidden until the turn is hovered / focused (the last reply included), always shown without hover (touch).
 // The row keeps its height (hover must not shift the transcript) but stands in for the spacing around it: it hugs the reply
-// (`-mt-gap` cancels the turn's row gap, the buttons' own padding is the air) and the exchange below it starts one row gap
+// (`-mt-gap` cancels the turn's row gap, with padding around the buttons) and the exchange below it starts one row gap
 // after it instead of a message gap (`Thread` in Shell.tsx keys that off `data-turn-actions`)
 export function TurnActions({ turn, turnIndex, settings }: { turn: AgentTurn; turnIndex: number; settings?: TurnSettings }) {
   const ctx = useContext(TurnActionsContext);
@@ -40,7 +40,7 @@ export function TurnActions({ turn, turnIndex, settings }: { turn: AgentTurn; tu
     <div
       data-open={statsOpen || forkOpen || undefined}
       data-turn-actions
-      className="-mt-gap flex h-ctl-sm items-center justify-end gap-0.5 opacity-0 transition-opacity duration-(--code-copy-duration) ease-out group-hover/turn:opacity-100 group-focus-within/turn:opacity-100 [@media(hover:none)]:opacity-100 motion-reduce:transition-none data-[open]:opacity-100 data-[landing]:opacity-100"
+      className="-mt-gap box-content flex h-ctl-sm items-center justify-end gap-0.5 py-1 opacity-0 transition-opacity duration-(--code-copy-duration) ease-out group-hover/turn:opacity-100 group-focus-within/turn:opacity-100 [@media(hover:none)]:opacity-100 motion-reduce:transition-none data-[open]:opacity-100 data-[landing]:opacity-100"
     >
       {ctx && reply && <PluginActions session={ctx.sessionId} turn={turnIndex} text={reply} />}
       {reply && (
