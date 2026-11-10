@@ -56,16 +56,33 @@ pub trait ClientHandlers: Send + Sync + 'static {
 
 /// The executable would not spawn at all (ENOENT, EACCES): distinct from a process that started and then failed the handshake
 #[derive(Debug)]
-pub struct AgentSpawnError(pub std::io::Error);
+pub struct AgentSpawnError {
+  err: std::io::Error,
+  /// The folder the process was to start in, when that is what cannot be entered: the OS reports it with the same
+  /// error as a missing or non-executable binary
+  folder: Option<String>,
+}
+
+impl AgentSpawnError {
+  fn new(err: std::io::Error, cwd: &str) -> Self {
+    // Entering a folder needs what reading its `.` needs: that it is a folder, and search permission on it
+    let closed = std::fs::metadata(std::path::Path::new(cwd).join(".")).is_err();
+    AgentSpawnError { err, folder: closed.then(|| cwd.to_owned()) }
+  }
+}
 
 impl std::fmt::Display for AgentSpawnError {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    let code = match self.0.kind() {
+    let code = match self.err.kind() {
       std::io::ErrorKind::NotFound => "ENOENT",
       std::io::ErrorKind::PermissionDenied => "EACCES",
       _ => "",
     };
-    if code.is_empty() { write!(f, "spawn failed: {}", self.0) } else { write!(f, "spawn {code}") }
+    if code.is_empty() { write!(f, "spawn failed: {}", self.err) } else { write!(f, "spawn {code}") }?;
+    match &self.folder {
+      Some(folder) => write!(f, ": the folder {folder} cannot be opened"),
+      None => Ok(()),
+    }
   }
 }
 
@@ -224,9 +241,9 @@ impl AgentProcess {
       cmd.env(k, v);
     }
     #[cfg(windows)]
-    let (mut child, job) = crate::platform::windows_process::spawn(&mut cmd).await.map_err(|e| anyhow::Error::new(AgentSpawnError(e)))?;
+    let (mut child, job) = crate::platform::windows_process::spawn(&mut cmd).await.map_err(|e| anyhow::Error::new(AgentSpawnError::new(e, cwd)))?;
     #[cfg(not(windows))]
-    let mut child = cmd.spawn().map_err(|e| anyhow::Error::new(AgentSpawnError(e)))?;
+    let mut child = cmd.spawn().map_err(|e| anyhow::Error::new(AgentSpawnError::new(e, cwd)))?;
     let pid = child.id();
     let signals = pid.map(|_pid| Signals {
       #[cfg(unix)]

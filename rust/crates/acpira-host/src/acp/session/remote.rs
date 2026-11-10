@@ -66,7 +66,7 @@ impl AcpSession {
   /// for a folder on an SSH host this machine's home; Claude Code there gets its stand-in folder (`remote_claude.rs`)
   pub(crate) fn process_cwd(&self) -> String {
     if let Some(stand) = self.claude_stand() {
-      let _ = std::fs::create_dir_all(&stand.local);
+      self.make_claude_stand(&stand);
       return stand.local.to_string_lossy().into_owned();
     }
     crate::workspace::process_folder(self.cwd.clone())

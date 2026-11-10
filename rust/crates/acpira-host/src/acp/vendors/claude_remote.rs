@@ -59,6 +59,38 @@ impl Stand {
     Stand { alias: alias.to_owned(), host: host.to_owned(), local }
   }
 
+  /// Makes the stand-in. A folder on the way that its owner cannot enter or write (a stray `chmod` on `<data root>/remote`
+  /// left every session there failing with `spawn EACCES`) is opened to its owner and the stand-in made again:
+  /// everything from `<data root>/remote` down is the engine's own
+  pub fn make(&self, data_root: &Path) -> std::io::Result<()> {
+    match std::fs::create_dir_all(&self.local) {
+      Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+        self.open_to_owner(data_root);
+        std::fs::create_dir_all(&self.local)
+      }
+      made => made,
+    }
+  }
+
+  /// Top down, so a folder closed inside a closed one is reached once its parent is open
+  #[cfg(unix)]
+  fn open_to_owner(&self, data_root: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let Ok(rest) = self.local.strip_prefix(data_root) else { return };
+    let mut dir = data_root.to_path_buf();
+    for part in rest.components() {
+      dir.push(part);
+      let Ok(meta) = std::fs::symlink_metadata(&dir) else { return };
+      let mode = meta.permissions().mode();
+      if meta.is_dir() && mode & 0o700 != 0o700 {
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(mode | 0o700));
+      }
+    }
+  }
+
+  #[cfg(not(unix))]
+  fn open_to_owner(&self, _data_root: &Path) {}
+
   /// A path the model wrote, as the host knows it: under the stand-in it moves to the host folder, a relative one is
   /// read against the host folder, anything else is the host's already
   pub fn host_path(&self, p: &str) -> String {
@@ -389,6 +421,20 @@ mod tests {
 
   fn stand() -> Stand {
     Stand::new("gen1", "/home/u/proj/", Path::new("/Users/me/.acpira"))
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn a_closed_folder_on_the_way_is_opened_for_the_stand_in() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let remote = root.path().join("remote");
+    std::fs::create_dir_all(remote.join("hosts")).unwrap();
+    std::fs::set_permissions(&remote, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let s = Stand::new("gen1", "/mnt/proj", root.path());
+    s.make(root.path()).unwrap();
+    assert!(s.local.is_dir());
+    assert_eq!(std::fs::metadata(&remote).unwrap().permissions().mode() & 0o777, 0o700);
   }
 
   #[test]
