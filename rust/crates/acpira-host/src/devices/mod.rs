@@ -11,6 +11,7 @@ pub mod launch_agent;
 mod schtask;
 pub mod service;
 pub mod stage;
+pub mod tunnel;
 #[cfg(unix)]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code, reason = "a Linux unit; its text is tested on every Unix"))]
 mod systemd;

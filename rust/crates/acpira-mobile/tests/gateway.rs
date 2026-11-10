@@ -52,6 +52,7 @@ impl Desk {
       engine: link,
       relays: Some(Relays::Off),
       bind: Some(LOOPBACK.parse().unwrap()),
+      ssh: None,
       log: Arc::new(|l: &str| eprintln!("gateway: {l}")),
     })
     .await

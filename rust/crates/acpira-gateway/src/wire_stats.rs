@@ -8,6 +8,7 @@
 //! - The link part (`link_line`) is the honest signal for a slow path: quinn's `write_all` returns as soon as the send
 //!   window has room, so a relay's backlog sits inside QUIC (cwnd, losses, congestion events), not in the bridge.
 //! - Blob streams (images) are not counted per type: they share the connection, so only the link part includes them.
+//!   Tunnel streams (`tunnel.rs`) likewise; their own totals go in the device's disconnect line.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -314,7 +315,7 @@ fn parsed_type(body: &[u8]) -> Option<String> {
   }
 }
 
-fn size(n: u64) -> String {
+pub(crate) fn size(n: u64) -> String {
   let f = n as f64;
   if n < 1 << 10 {
     format!("{n} B")

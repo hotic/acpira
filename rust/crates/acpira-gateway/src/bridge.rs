@@ -61,7 +61,12 @@ pub async fn run(
   on_push: OnPush,
   stats: Arc<WireStats>,
 ) -> Ended {
-  let welcome = Control::Welcome { name: who.computer.clone(), version: who.version.clone(), protocol: SIDECAR_PROTOCOL_VERSION };
+  let welcome = Control::Welcome {
+    name: who.computer.clone(),
+    version: who.version.clone(),
+    protocol: SIDECAR_PROTOCOL_VERSION,
+    features: vec![acpira_net::tunnel::FEATURE.to_owned()],
+  };
   if tx.send(FrameKind::Control, &link::control(&welcome)).await.is_err() {
     return Ended::Device;
   }

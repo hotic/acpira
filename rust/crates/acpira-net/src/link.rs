@@ -1,6 +1,6 @@
 //! The link between a paired device and a computer's gateway (ALPN `acpira/link/1`). The device opens one envelope
-//! stream for the sidecar envelopes plus the link's own control frames, and one short stream per blob, so an image never
-//! holds up a patch. Every stream starts with a byte naming its kind.
+//! stream for the sidecar envelopes plus the link's own control frames, one short stream per blob, so an image never
+//! holds up a patch, and one per tunnelled connection (`tunnel.rs`). Every stream starts with a byte naming its kind.
 
 use std::time::Duration;
 
@@ -13,6 +13,9 @@ use crate::frame::{Codec, FrameKind, FrameReader, FrameWriter};
 
 pub const STREAM_ENVELOPES: u8 = b'E';
 pub const STREAM_BLOB: u8 = b'B';
+/// A connection to a loopback port on a project folder's machine (`tunnel.rs`); only gateways that list
+/// `tunnel::FEATURE` in `Welcome` take it
+pub const STREAM_TCP: u8 = b'T';
 /// A blob larger than this is refused: transcripts hold screenshots and pasted images, not files
 pub const MAX_BLOB: u64 = 64 << 20;
 
@@ -22,7 +25,14 @@ pub const MAX_BLOB: u64 = 64 << 20;
 pub enum Control {
   /// The gateway's first frame once the device is admitted. `protocol` is the engine's `SIDECAR_PROTOCOL_VERSION`:
   /// a device on another one says "update Acpira" instead of sending envelopes the engine would misread
-  Welcome { name: String, version: String, protocol: i64 },
+  Welcome {
+    name: String,
+    version: String,
+    protocol: i64,
+    /// What this gateway takes beyond the envelope and blob streams (`tunnel::FEATURE`); none from one that predates it
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    features: Vec<String>,
+  },
   /// Either side probes the other; the answer echoes `n`
   Ping { n: u64 },
   Pong { n: u64 },
@@ -78,6 +88,10 @@ pub async fn open_envelopes(conn: &Connection) -> Result<(EnvelopeTx, EnvelopeRx
 pub enum Incoming {
   Envelopes(EnvelopeTx, EnvelopeRx),
   Blob(BlobRequest, SendStream),
+  /// A tunnel stream, its request still unread (`tunnel::read_request`)
+  Tcp(SendStream, RecvStream),
+  /// A kind this build does not know: the stream is dropped, the link goes on
+  Unknown(u8),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -118,7 +132,8 @@ pub async fn accept(conn: &Connection) -> Result<Incoming> {
       let (_, payload) = rx.next().await?.ok_or_else(|| anyhow!("blob stream without a request"))?;
       Ok(Incoming::Blob(serde_json::from_slice(&payload)?, send))
     }
-    k => bail!("unknown stream kind {k}"),
+    STREAM_TCP => Ok(Incoming::Tcp(send, recv)),
+    k => Ok(Incoming::Unknown(k)),
   }
 }
 

@@ -13,4 +13,5 @@ pub mod hosted;
 pub mod presence;
 pub mod push;
 pub mod store;
+pub mod tunnel;
 pub mod wire_stats;
