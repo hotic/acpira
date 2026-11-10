@@ -129,6 +129,8 @@ struct ChatScreen: View {
     // A view carried over from the wire before stays syncing until this wire sends the session again
     .environment(\.syncing, syncing || !model.shown(id))
     .environment(\.sessionActions, actionsMemo(memoKey) { sessionActions })
+    // Outside the memoised actions: the capability arrives with the agent process
+    .environment(\.canStopCommands, session.canStopCommands == true)
     // A subagent row pushes that child's inspector
     .environment(\.inspectSubagent, SubagentInspect(session: id) { model.path.append(.subagent(session: id, id: $0)) })
     .modifier(MediaLayer(session: id, loader: model.media))
@@ -247,7 +249,8 @@ struct ChatScreen: View {
       sendEdit: { model.sendEdit(id, text: $0, attachments: $1) },
       cancelEdit: { model.cancelEdit(id) },
       goal: { model.goal(id, $0, objective: $1) },
-      stopTask: { model.stopTask(id, task: $0) })
+      stopTask: { model.stopTask(id, task: $0) },
+      stopCommand: { model.stopCommand(id, toolCallId: $0) })
   }
 }
 

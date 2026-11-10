@@ -1073,6 +1073,8 @@ public struct SessionView: Codable, Hashable, Sendable, Identifiable {
   public var commands: [SlashCommand]
   public var queued: [QueuedPrompt]?
   public var canSteer: Bool?
+  /// A running command row can be stopped on its own (`stopCommand`)
+  public var canStopCommands: Bool?
   /// The agent's current goal; a completed one stays only until its turn ends
   public var goal: SessionGoal?
   /// The goal controls the running agent advertises; absent without goal support (or no process yet)
@@ -1104,6 +1106,7 @@ public struct SessionView: Codable, Hashable, Sendable, Identifiable {
     commands = try c.decodeIfPresent([SlashCommand].self, forKey: .commands) ?? []
     queued = try c.decodeIfPresent([QueuedPrompt].self, forKey: .queued)
     canSteer = try c.decodeIfPresent(Bool.self, forKey: .canSteer)
+    canStopCommands = try c.decodeIfPresent(Bool.self, forKey: .canStopCommands)
     goal = try c.decodeIfPresent(SessionGoal.self, forKey: .goal)
     goalActions = try c.decodeIfPresent([GoalAction].self, forKey: .goalActions)
     subagents = try c.decodeIfPresent([SubagentSummary].self, forKey: .subagents)

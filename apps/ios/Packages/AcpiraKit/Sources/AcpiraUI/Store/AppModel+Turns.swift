@@ -3,7 +3,8 @@ import AcpiraModels
 import Foundation
 
 // What the transcript's own actions do: rewriting a sent prompt (HistoryMessage.tsx and App.tsx `editTurn`), the
-// session goal's controls (Goal.tsx, `goal`) and stopping a background task (ToolCall.tsx, `stopAsyncTask`). With an
+// session goal's controls (Goal.tsx, `goal`), stopping a background task or a running command (ToolCall.tsx,
+// `stopAsyncTask` / `stopCommand`). With an
 // engine each posts its message; the demo plays the engine's answer locally.
 
 extension AppModel {
@@ -139,6 +140,25 @@ extension AppModel {
         info.state = "stopped"
       }
     }
+  }
+
+  /// Stop on a running command's row: the engine ends that command's process and the agent's own update settles the
+  /// row as failed, the turn going on; nothing found comes back as the engine's error toast. The demo fails it at once
+  func stopCommand(_ id: String, toolCallId: String) {
+    if post(.stopCommand(sessionId: id, toolCallId: toolCallId)) { return }
+    guard var view = views[id] else { return }
+    let end = now.timeIntervalSince1970 * 1000
+    view.turns = view.turns.map { turn in
+      guard case .agent(var agent) = turn else { return turn }
+      agent.blocks = agent.blocks.map { block in
+        guard case .toolCall(var call) = block, call.id == toolCallId, call.status == .in_progress else { return block }
+        call.status = .failed
+        call.endedAt = end
+        return .toolCall(call)
+      }
+      return .agent(agent)
+    }
+    views[id] = view
   }
 
   /// Rewrites the task on every row that carries it; a stopped task's row reads cancelled

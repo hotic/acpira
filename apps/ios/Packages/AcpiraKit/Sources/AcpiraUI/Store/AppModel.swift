@@ -1138,6 +1138,8 @@ struct SessionActions {
   var goal: (GoalAction, String?) -> Void = { _, _ in }
   /// Asks the agent to stop a background task by its id
   var stopTask: (String) -> Void = { _ in }
+  /// Ends one running command by its row's id; rows offer it under `canStopCommands`
+  var stopCommand: (String) -> Void = { _ in }
 }
 
 extension EnvironmentValues {
