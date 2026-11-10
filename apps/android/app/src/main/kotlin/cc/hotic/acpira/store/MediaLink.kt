@@ -37,7 +37,7 @@ class MediaLink(context: Context, wire: Wire, private val post: (WebviewMsg) -> 
   val loader: MediaLoader = when (wire) {
     is Wire.Engine, is Wire.Paired -> MediaLoader(
       fetch = paired?.let { p -> { s: String, n: String -> p.blob(s, n) } } ?: HttpBlobs.fetch { blobBase },
-      stage = { s, p -> stage(s, p) },
+      stage = { s, p, shown -> stage(s, p, shown) },
       download = paired?.let { p -> { s, n, to, progress -> p.download(s, n, to, progress) } },
     )
     else -> MediaLoader.demo(app)
@@ -64,10 +64,11 @@ class MediaLink(context: Context, wire: Wire, private val post: (WebviewMsg) -> 
   }
 
   /**
-   * Stages a file on the engine's machine into the session's blob store (App.tsx imageBlob) and answers its blob name;
-   * null when the engine could not read it or never answered
+   * Stages a file on the engine's machine into the session's blob store (App.tsx imageBlob, or stageFile over a paired
+   * link when the user opens a file not shown inline) and answers its blob name; null when unreadable or unanswered
    */
-  suspend fun stage(session: String, path: String): String? {
+  suspend fun stage(session: String, path: String, shown: Boolean = true): String? {
+    if (paired != null && !shown) return (stageFile(session, path) as? StagedFile.Staged)?.blob
     val answer = CompletableDeferred<String?>()
     val n = synchronized(lock) { (++seq).also { staging[it] = answer } }
     if (!post(WebviewMsg.ImageBlob(session, path, n, shown = paired != null))) {

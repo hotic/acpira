@@ -14,9 +14,9 @@ import ImageIO
 nonisolated enum MediaSource: Hashable, Sendable {
   /// A file in the session's blob store, fetched through the store's connection
   case blob(session: String, name: String)
-  /// A file on the engine's machine that a Markdown image names: the engine stages it into the blob store first
-  /// (`imageBlob`)
-  case file(session: String, path: String)
+  /// A file on the engine's machine: one the transcript shows (`shown`, staged with `imageBlob`) or a file row / video
+  /// attachment the user opened (`shown: false`, staged with `stageFile` over a paired link)
+  case file(session: String, path: String, shown: Bool = true)
   /// A web image, loaded straight from the network
   case web(URL)
   /// Base64 pixels the transcript carries itself: photos the phone staged, fixtures
@@ -133,7 +133,7 @@ nonisolated struct DecodedImage: @unchecked Sendable, Equatable {
 /// in place. Views ask by `MediaSource`; nothing here knows how the store reaches the engine
 final class MediaLoader {
   /// Stages a file on the engine's machine into the session's blob store, answering its blob name (nil: unreadable)
-  typealias Stage = @Sendable (_ session: String, _ path: String) async -> String?
+  typealias Stage = @Sendable (_ session: String, _ path: String, _ shown: Bool) async -> String?
   typealias WebFetch = @Sendable (URL) async throws -> Data
   /// Writes a session blob into a file, resuming after what the file holds, reporting the bytes held and the total;
   /// answers the blob's size (`PairedBlobs.download`)
@@ -215,14 +215,14 @@ final class MediaLoader {
   func image(_ source: MediaSource) async throws -> DecodedImage {
     // A file is staged every time: the engine answers the blob it already read while the file is unchanged (a stat,
     // no transfer), and a new one once it changed, so a rewritten file shown again is not the old picture
-    if case .file(let session, let path) = source {
-      guard let stage, let name = await stage(session, path) else { throw Failure.notStaged }
+    if case let .file(session, path, shown) = source {
+      guard let stage, let name = await stage(session, path, shown) else { throw Failure.notStaged }
       let blob = MediaSource.blob(session: session, name: name)
       stagedAs[source] = blob
       return try await image(blob)
     }
     if let image = peek(source) { return image }
-    let (fetch, stage, web) = (fetch, stage, web)
+    let (fetch, web) = (fetch, web)
     return try await cache.load(source) {
       let data: Data
       switch source {
@@ -241,10 +241,10 @@ final class MediaLoader {
 
   /// The blob a video or widget plays from: its saved copy, else its file on the engine's side (the host's for a session
   /// on an SSH host) staged now. nil: nothing to play
-  func blobName(session: String, blob: String?, uri: String?) async -> String? {
+  func blobName(session: String, blob: String?, uri: String?, shown: Bool = true) async -> String? {
     if let blob { return blob }
     guard let uri, MediaSource.isFilePath(uri), let stage else { return nil }
-    return await stage(session, uri)
+    return await stage(session, uri, shown)
   }
 
   /// A video or a downloaded file, fetched only after a tap into `to` (never decoded into the image cache): streamed

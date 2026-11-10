@@ -36,8 +36,11 @@ import kotlin.math.max
 sealed interface MediaSource {
   /** A file in the session's blob store, fetched through the store's connection */
   data class Blob(val session: String, val name: String) : MediaSource
-  /** A file on the engine's machine that a Markdown image or a file row names: the engine stages it first (`imageBlob`) */
-  data class HostFile(val session: String, val path: String) : MediaSource
+  /**
+   * A file on the engine's machine: one the transcript shows (`shown`, staged with `imageBlob`) or a file row / video
+   * attachment the user opened (`shown = false`, staged with `stageFile` over a paired link)
+   */
+  data class HostFile(val session: String, val path: String, val shown: Boolean = true) : MediaSource
   /** A web image, loaded straight from the network */
   data class Web(val url: String) : MediaSource
   /** Base64 pixels the transcript carries itself: photos the phone staged, fixtures */
@@ -126,7 +129,7 @@ class DecodedImage(val bitmap: Bitmap, val animation: ByteArray? = null) {
 class MediaLoader(
   private val fetch: BlobFetch,
   /** Stages a file on the engine's machine into the session's blob store, answering its blob name (null: unreadable) */
-  private val stage: (suspend (session: String, path: String) -> String?)? = null,
+  private val stage: (suspend (session: String, path: String, shown: Boolean) -> String?)? = null,
   private val web: suspend (String) -> ByteArray = { HttpBlobs.get(it) },
   /**
    * Writes a session blob into a file, resuming after what the file holds, reporting the bytes held and the total;
@@ -176,7 +179,7 @@ class MediaLoader(
     // A file is staged every time: the engine answers the blob it already read while the file is unchanged (a stat, no
     // transfer), and a new one once it changed, so a rewritten file shown again is not the old picture
     if (source is MediaSource.HostFile) {
-      val name = stage?.invoke(source.session, source.path) ?: throw Failure("not staged")
+      val name = stage?.invoke(source.session, source.path, source.shown) ?: throw Failure("not staged")
       val blob = MediaSource.Blob(source.session, name)
       stagedAs[source] = blob
       return image(blob)
@@ -194,10 +197,10 @@ class MediaLoader(
   }
 
   /** The blob a video or widget plays from: its saved copy, else its file on the engine's side staged now. null: nothing */
-  suspend fun blobName(session: String, blob: String?, uri: String?): String? {
+  suspend fun blobName(session: String, blob: String?, uri: String?, shown: Boolean = true): String? {
     if (blob != null) return blob
     if (uri == null || !MediaSource.isFilePath(uri)) return null
-    return stage?.invoke(session, uri)
+    return stage?.invoke(session, uri, shown)
   }
 
   /**

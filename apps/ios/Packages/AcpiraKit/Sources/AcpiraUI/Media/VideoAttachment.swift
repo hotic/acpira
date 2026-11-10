@@ -16,8 +16,8 @@ nonisolated enum VideoSource: Hashable, Sendable {
   case local(URL)
   /// A file in the session's blob store
   case blob(session: String, name: String)
-  /// Any other file on the computer, staged by the engine on demand (not over a paired link: `canStage`)
-  case staged(session: String, path: String)
+  /// Any other file on the computer, staged by the engine on demand (`shown: false` stages via `stageFile` over a paired link)
+  case staged(session: String, path: String, shown: Bool = true)
 
   /// The source for a `.file` attachment, nil when it is no video or nothing here can read it (it stays a pill)
   @MainActor static func of(uri: String, name: String, session: String?, loader: MediaLoader) -> VideoSource? {
@@ -27,7 +27,7 @@ nonisolated enum VideoSource: Hashable, Sendable {
     }
     guard let session else { return nil }
     if VideoCache.isBlobName(url.lastPathComponent) { return .blob(session: session, name: url.lastPathComponent) }
-    return loader.canStage ? .staged(session: session, path: url.path) : nil
+    return loader.canStage ? .staged(session: session, path: url.path, shown: false) : nil
   }
 }
 
@@ -113,8 +113,8 @@ final class VideoCache {
       switch source {
       case .local(let url): return url
       case .blob(let s, let n): (session, name) = (s, n)
-      case .staged(let s, let path):
-        guard let n = await loader.blobName(session: s, blob: nil, uri: path) else { throw Failure.unreadable }
+      case let .staged(s, path, shown):
+        guard let n = await loader.blobName(session: s, blob: nil, uri: path, shown: shown) else { throw Failure.unreadable }
         (session, name) = (s, n)
       }
       let target = Self.folder.appendingPathComponent(name)

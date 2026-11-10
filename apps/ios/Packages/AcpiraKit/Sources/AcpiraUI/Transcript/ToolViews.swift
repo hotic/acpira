@@ -494,7 +494,7 @@ func fileRowImage(_ hit: String, image: ImageRef?, session: String?, canStage: B
   guard file.line == nil, let session else { return nil }
   if let stored = MediaSource.stored(image?.blob, session: session) { return stored }
   guard canStage, imageMimeOf(file.path) != nil else { return nil }
-  return .file(session: session, path: file.path)
+  return .file(session: session, path: file.path, shown: false)
 }
 
 /// attachments.ts imageMimeOf: the image types the engine stages (`image_mime_of`), by extension

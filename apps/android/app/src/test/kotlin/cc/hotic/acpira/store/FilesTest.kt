@@ -53,4 +53,13 @@ class FilesTest {
     assertEquals(link, FileLinks.parse(url))
     assertNull(FileLinks.decode("https://example.com/a.ts"))
   }
+
+  @Test fun mixedReadRowsPairWithTheirImages() {
+    val refs = listOf(cc.hotic.acpira.model.ImageRef(blob = "x1.png", mimeType = "image/png"), cc.hotic.acpira.model.ImageRef(blob = "x2.png", mimeType = "image/png"))
+    val mixed = listOf("/w/marks.tsx:180", "/w/SidekickRelay.tsx", "/w/.acpira/tmp/a.png", "/w/.acpira/tmp/b.png")
+    assertNull(cc.hotic.acpira.ui.rowImage(mixed[0], 0, mixed, refs))
+    assertEquals(refs[0], cc.hotic.acpira.ui.rowImage(mixed[2], 2, mixed, refs))
+    assertEquals(refs[1], cc.hotic.acpira.ui.rowImage(mixed[3], 3, mixed, refs))
+    assertEquals(MediaSource.HostFile("s", "/w/b.png", shown = false), cc.hotic.acpira.ui.fileRowImage("/w/b.png", null, "s", canStage = true))
+  }
 }

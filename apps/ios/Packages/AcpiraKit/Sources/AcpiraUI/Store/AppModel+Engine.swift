@@ -136,9 +136,10 @@ extension AppModel {
       guard seq == searchSeq else { break }
       hits = SessionHits(query: searchQuery, snippets: Dictionary(list.map { ($0.id, $0.snippet) }, uniquingKeysWith: { a, _ in a }), summaries: list.compactMap(\.summary))
     case let .projectFile(seq, _, _, _), let .sessionChanges(seq, _), let .diffSource(seq, _), let .sessionMarkdown(seq, _, _),
-         let .stagedFile(seq, _, _, _),
          let .localDir(seq, _, _, _, _):
       answer(seq, message)
+    case let .stagedFile(seq, _, _, _):
+      link.stagedFile(seq, message)
     case let .providers(view, error):
       receiveProviders(view, error: error)
     case let .providerProbed(id, outcome):
