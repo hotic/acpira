@@ -19,6 +19,8 @@ struct SwipeToDelete: ViewModifier {
   @State private var offset: CGFloat = 0
   /// The offset the current drag started from
   @State private var origin: CGFloat = 0
+  /// The row's stop as a detent the drag feels
+  @State private var detent = Detent()
 
   func body(content: Content) -> some View {
     #if os(iOS)
@@ -70,6 +72,7 @@ struct SwipeToDelete: ViewModifier {
 
   private func began() {
     origin = offset
+    detent = Detent(past: offset <= -Metrics.swipeAction)
     // Starting this row's swipe puts any other open row back
     open = id
   }
@@ -79,6 +82,7 @@ struct SwipeToDelete: ViewModifier {
     let stop = Metrics.swipeAction
     // Past its stop the row resists, as UIKit's swipe actions do: the extra drag eases towards one more stop's width
     offset = raw < -stop ? -stop - Self.resist(-raw - stop, over: stop) : raw
+    if detent.cross(raw <= -stop) { Haptics.play(.detent) }
   }
 
   private func ended(_ velocity: CGFloat) {

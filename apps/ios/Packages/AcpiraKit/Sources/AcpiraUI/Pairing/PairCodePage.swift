@@ -151,6 +151,7 @@ struct PairCodePage: View {
         await pairing.paired(paired)
       } catch {
         checking = false
+        Haptics.play(.failed)
         self.error = Self.message(error, name: computer.name)
         code = ""
       }

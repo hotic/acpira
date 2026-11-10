@@ -99,6 +99,7 @@ struct PlanDocumentCard: View {
         menu(executor, extra: extra, canBuild: canBuild)
       }
       Button(web: primary.map { permissionOption($0, plan: true).label } ?? t("plan.build")) {
+        Haptics.play(.approve)
         actions.buildPlan(block.id, primary?.id, executor.pick)
       }
       .modifier(CardButton(primary: true))

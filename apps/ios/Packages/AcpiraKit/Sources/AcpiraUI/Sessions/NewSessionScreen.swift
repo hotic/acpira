@@ -410,6 +410,7 @@ struct AgentRing: View {
   /// name and folder rise back; once landed the flown mark leaves in the frame the centre's own mark shows, so it stays
   private func pick(_ a: AgentInfo, from spot: CGSize) {
     guard picking == nil else { return }
+    Haptics.play(.pick)
     guard motion else {
       onSelect(a.id)
       open = false

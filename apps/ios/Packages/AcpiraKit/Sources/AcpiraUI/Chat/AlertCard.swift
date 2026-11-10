@@ -157,7 +157,10 @@ struct CardActions<Ways: View>: View {
   }
 
   private func copyButton(_ label: String) -> some View {
-    Button(action: onCopy) { Text(web: label) }
+    Button {
+      Haptics.play(.copy)
+      onCopy()
+    } label: { Text(web: label) }
       .modifier(CardButton(primary: false))
   }
 }

@@ -323,7 +323,12 @@ struct PairStage: View {
                secondary: secondary, dim: dim, onAction: act, onSecondary: onRescan)
     }
     .background(Palette.formPage)
-    .onChange(of: paired, initial: true) { _, now in pairedAt = now ? .now : nil }
+    .onChange(of: paired, initial: true) { _, now in
+      pairedAt = now ? .now : nil
+      // With the computer's card celebrating the same answer
+      if now { Haptics.play(.paired) }
+    }
+    .onChange(of: refused, initial: true) { _, now in if now { Haptics.play(.failed) } }
     // Connected: the sheet goes once the paired moment has held as long as the card holds it, so both screens move on
     // together, and a beat after a wire that came up later. A wire that fails right after pairing leaves the sheet
     // too, and the list says what happened
@@ -341,6 +346,12 @@ struct PairStage: View {
 
   private var paired: Bool {
     if case .joined = phase { return true }
+    return false
+  }
+
+  /// The link was refused or went unanswered
+  private var refused: Bool {
+    if case .failed = phase { return true }
     return false
   }
 
