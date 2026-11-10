@@ -1,5 +1,5 @@
 //! A link to a paired computer (acpira-net `link`, ALPN `acpira/link/1`): one envelope stream read by a task of its own,
-//! one short stream per blob, and the connection's path changes. The gateway admits the device by its key before reading
+//! one short stream per blob, tunnels to a project folder's machine (`tunnel.rs`), and the connection's path changes. The gateway admits the device by its key before reading
 //! anything and greets it with `Welcome`; it tells why it closed a link in the QUIC close code (`link::close`), which
 //! becomes the `LinkFailure` Swift shows.
 
@@ -14,9 +14,10 @@ use acpira_net::iroh::endpoint::{Connection, ConnectionError};
 use acpira_net::link::{self, BlobRequest, Control, EnvelopeRx, EnvelopeTx, close};
 use acpira_net::{Endpoint, EndpointAddr};
 use acpira_shared::devices::PushTarget;
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{Mutex, Semaphore, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
+use crate::tunnel::{self, Tunnel};
 use crate::{LinkFailure, LinkPath, Welcome, ms, on_runtime};
 
 /// Frames read ahead of Swift. Bounded, so a reader that falls behind backs up into QUIC flow control and the gateway's
@@ -72,6 +73,10 @@ pub struct Link {
   ping_seq: AtomicU64,
   closed_here: Arc<AtomicBool>,
   tasks: Vec<JoinHandle<()>>,
+  /// The gateway takes tunnel streams (`Welcome.features`)
+  tunnels: bool,
+  /// Tunnel streams this link may hold open, shared by its tunnels
+  tunnel_slots: Arc<Semaphore>,
 }
 
 /// Dials, opens the envelope stream and waits for the gateway's `Welcome`, all within `within`. Runs on the runtime
@@ -84,14 +89,15 @@ pub(crate) async fn open(ep: Endpoint, addr: EndpointAddr, protocol_version: i64
     loop {
       let (kind, body) = rx.next().await.ok()??;
       if kind == FrameKind::Control
-        && let Ok(Control::Welcome { name, version, protocol }) = serde_json::from_slice(&body)
+        && let Ok(Control::Welcome { name, version, protocol, features }) = serde_json::from_slice(&body)
       {
-        return Some((tx, rx, Welcome { name, version, protocol_version: protocol }));
+        let tunnels = features.iter().any(|f| f == acpira_net::tunnel::FEATURE);
+        return Some((tx, rx, Welcome { name, version, protocol_version: protocol }, tunnels));
       }
     }
   })
   .await;
-  let (tx, rx, welcome) = match greeted {
+  let (tx, rx, welcome, tunnels) = match greeted {
     Ok(Some(g)) => g,
     // The gateway closes a device it does not admit right after the handshake: read why
     Ok(None) => {
@@ -109,7 +115,7 @@ pub(crate) async fn open(ep: Endpoint, addr: EndpointAddr, protocol_version: i64
     let side = if welcome.protocol_version > protocol_version { "update this app" } else { "update Acpira on the computer" };
     return Err(LinkFailure::Incompatible { message: format!("the computer speaks protocol {}, this app {protocol_version}: {side}", welcome.protocol_version) });
   }
-  Ok(Link::start(conn, tx, rx, welcome))
+  Ok(Link::start(conn, tx, rx, welcome, tunnels))
 }
 
 /// Why a link ended, from the connection's close: `None` when this side closed it
@@ -140,7 +146,7 @@ async fn ended(conn: &Connection) -> Option<LinkFailure> {
 
 impl Link {
   /// Starts the reader and the path watcher. Runs on the runtime (both spawn)
-  fn start(conn: Connection, tx: EnvelopeTx, rx: EnvelopeRx, welcome: Welcome) -> Link {
+  fn start(conn: Connection, tx: EnvelopeTx, rx: EnvelopeRx, welcome: Welcome, tunnels: bool) -> Link {
     let tx = Arc::new(Mutex::new(tx));
     let (events_tx, events) = mpsc::channel(READ_AHEAD);
     let (paths_tx, paths) = mpsc::unbounded_channel();
@@ -170,6 +176,8 @@ impl Link {
       ping_seq: AtomicU64::new(1),
       closed_here,
       tasks: vec![reader],
+      tunnels,
+      tunnel_slots: Arc::new(Semaphore::new(acpira_net::tunnel::MAX_STREAMS)),
     }
   }
 
@@ -295,6 +303,26 @@ impl Link {
     match sent {
       Ok(Ok(())) => Ok(()),
       _ => Err(self.failure_now("the write failed")),
+    }
+  }
+
+  /// A tunnel to the machine `folder` lives on (a local path on the computer, or `ssh://<alias>/<path>`), for a webview
+  /// to show a dev server there through its SOCKS proxy or a forward. The computer checks first that it can reach that
+  /// machine: an SSH host it is not connected to fails here with its words. A computer whose Acpira predates tunnels
+  /// fails as `Incompatible`, without asking it anything (it would drop the whole link on the unknown stream)
+  pub async fn open_tunnel(&self, folder: String) -> Result<Arc<Tunnel>, LinkFailure> {
+    if !self.tunnels {
+      return Err(LinkFailure::Incompatible { message: "the computer's Acpira cannot open its pages here: update Acpira on the computer".into() });
+    }
+    let (conn, slots) = (self.conn.clone(), self.tunnel_slots.clone());
+    let opened = on_runtime(tunnel::open(conn, folder, slots)).await.map_err(|message| LinkFailure::Other { message })?;
+    match opened {
+      Ok(t) => Ok(Arc::new(t)),
+      Err(tunnel::OpenFailure::Refused(message)) => Err(LinkFailure::Other { message }),
+      Err(tunnel::OpenFailure::Link(message)) => Err(match self.end.get() {
+        Some(Some(f)) => f.clone(),
+        _ => LinkFailure::Other { message },
+      }),
     }
   }
 
