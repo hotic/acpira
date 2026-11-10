@@ -45,7 +45,8 @@ pub trait Platform: Send + Sync {
   /// "Open in new window" (the engine's openInEditor): a chat window of its own on that session
   fn open_window(&self, session_id: Option<String>);
   /// An agent's open_browser: a loopback page in the browser panel, any other http(s) page in the system browser
-  fn open_browser(&self, url: &str, folder: Option<&str>) -> Result<BrowserOpened, String>;
+  /// `session`: the id and folder of the session whose agent asked, whose tabs the page joins
+  fn open_browser(&self, url: &str, folder: Option<&str>, session: Option<(&str, &str)>) -> Result<BrowserOpened, String>;
   fn terminal(&self, r: TerminalRequest);
   /// "Open files with" an editor: false when its command line is not there
   fn open_in_editor(&self, editor: Editor, target: &FileTarget) -> bool;
@@ -81,8 +82,8 @@ pub fn handle_request(r: PlatformRequest, p: &dyn Platform) -> Result<Value, Str
       p.open_window(session_id);
       Ok(Value::Null)
     }
-    PlatformRequest::OpenBrowser { url, folder } => {
-      p.open_browser(&url, folder.as_deref()).and_then(|o| serde_json::to_value(o).map_err(|e| e.to_string()))
+    PlatformRequest::OpenBrowser { url, folder, session_id, cwd } => {
+      p.open_browser(&url, folder.as_deref(), session_id.as_deref().zip(cwd.as_deref())).and_then(|o| serde_json::to_value(o).map_err(|e| e.to_string()))
     }
     PlatformRequest::RunInTerminal { title, command, args, env } => {
       p.terminal(TerminalRequest { title, command, args, env });
@@ -371,7 +372,7 @@ mod tests {
     fn open_window(&self, session_id: Option<String>) {
       self.did(format!("window {session_id:?}"));
     }
-    fn open_browser(&self, url: &str, _: Option<&str>) -> Result<BrowserOpened, String> {
+    fn open_browser(&self, url: &str, _: Option<&str>, _: Option<(&str, &str)>) -> Result<BrowserOpened, String> {
       Ok(BrowserOpened { url: url.into(), reused: None })
     }
     fn terminal(&self, r: TerminalRequest) {

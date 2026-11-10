@@ -23,7 +23,9 @@ export type PlatformRequest =
   // opens it; it answers with the URL the user's side loaded, or fails with the reason
   // `folder`: the session folder on an SSH host (ssh://alias/path); a loopback page is that host's dev server, which the
   // engine has found listening there and reaches through its preview proxy for the host
-  | { method: 'openBrowser'; url: string; folder?: string }
+  // `sessionId` / `cwd`: the session whose agent asked and its folder, so a shell that keeps browser tabs per project or
+  // per session puts the page with that session's, not with whatever is on screen
+  | { method: 'openBrowser'; url: string; folder?: string; sessionId?: string; cwd?: string }
   | { method: 'openInEditor'; sessionId?: string }
   | { method: 'runInTerminal'; title: string; command: string; args: string[]; env?: Record<string, string | null> }
   // `open` adds an Open button for a file (label already localized); the shell opens it only when clicked

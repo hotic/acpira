@@ -41,16 +41,17 @@ pub trait HostBrowser: Send + Sync {
   /// Whether the serving shell can show a page inside the editor
   fn available(&self) -> bool;
   /// Show the page; where the user's side shows it (a forwarded port has its own address) and whether an earlier tab
-  /// was reused, or why it did not open. `folder`: the session folder on an SSH host whose loopback the page is on
-  fn open<'a>(&'a self, url: &'a str, folder: Option<&'a str>) -> Pin<Box<dyn Future<Output = Result<BrowserOpened>> + Send + 'a>>;
+  /// was reused, or why it did not open. `folder`: the session folder on an SSH host whose loopback the page is on.
+  /// `session`: the id and folder of the session whose agent asked
+  fn open<'a>(&'a self, url: &'a str, folder: Option<&'a str>, session: Option<(&'a str, &'a str)>) -> Pin<Box<dyn Future<Output = Result<BrowserOpened>> + Send + 'a>>;
 }
 
 impl HostBrowser for crate::sidecar::platform::SidecarPlatform {
   fn available(&self) -> bool {
     self.can_open_browser()
   }
-  fn open<'a>(&'a self, url: &'a str, folder: Option<&'a str>) -> Pin<Box<dyn Future<Output = Result<BrowserOpened>> + Send + 'a>> {
-    Box::pin(self.open_browser(url, folder))
+  fn open<'a>(&'a self, url: &'a str, folder: Option<&'a str>, session: Option<(&'a str, &'a str)>) -> Pin<Box<dyn Future<Output = Result<BrowserOpened>> + Send + 'a>> {
+    Box::pin(self.open_browser(url, folder, session))
   }
 }
 
@@ -378,7 +379,7 @@ impl RelayHub {
       }
     }
     let folder = remote.map(|s| s.cwd.clone());
-    match browser.open(url, folder.as_deref()).await {
+    match browser.open(url, folder.as_deref(), session.as_ref().map(|s| (s.id.as_str(), s.cwd.as_str()))).await {
       Ok(opened) => {
         let what = match opened.reused {
           Some(BrowserReuse::Revealed) => format!("{url} was already open in a browser tab in the user's editor; brought that tab to the front without reloading it."),

@@ -42,6 +42,8 @@ export const sameView = (a: PanelView, b: PanelView) => (a === 'review' ? b === 
 export interface PanelSlot {
   tabs: PanelTab[];
   tab: string;
+  // A page arrived while the slot was off screen (`openBrowserFor`): the panel opens when the slot is next shown
+  reveal?: boolean;
 }
 
 export interface PanelModules {
@@ -334,10 +336,10 @@ export const panel = {
       state = { ...s, sessionId, root, slots };
       return;
     }
-    const existing = slots[nextKey];
+    const existing: PanelSlot | undefined = slots[nextKey];
     const nextSlot = existing ? normalizeSlot(existing, s) : (firstBind ? { tabs: s.tabs, tab: s.tab } : normalizeSlot({ tabs: [], tab: '' }, s));
     slots[nextKey] = nextSlot;
-    state = { ...s, sessionId, root, tabs: nextSlot.tabs, tab: nextSlot.tab, slots };
+    state = { ...s, sessionId, root, tabs: nextSlot.tabs, tab: nextSlot.tab, slots, ...(existing?.reveal ? { open: true } : {}) };
     persist(state);
     for (const l of listeners) l();
   },
@@ -518,6 +520,29 @@ export const panel = {
     const tabs = replace ? s.tabs.map(t => (t.id === replace ? tab : t)) : [...s.tabs, tab];
     update({ open: true, tabs, tab: tab.id });
     return tab.id;
+  },
+  // open_browser from the session `sessionId` in `root`: the page joins that session's slot. On screen it comes forward
+  // like any tab (`tab`: the one the shell already navigated). In another project or session the slot takes it in the
+  // background and the panel opens when the slot is next shown, so nothing moves under the session being read. Whether
+  // the slot is the one on screen
+  openBrowserFor(sessionId: string | undefined, root: string | undefined, url: string, tab?: string): boolean {
+    const s = current();
+    const key = sessionId || root ? slotKeyOf(s.scope, sessionId, root) : undefined;
+    if (!key || key === slotKeyOf(s.scope, s.sessionId, s.root)) {
+      if (!(tab && panel.showBrowser(tab, url))) panel.openBrowser(url);
+      return true;
+    }
+    const slot = normalizeSlot(s.slots[key] ?? { tabs: [], tab: '' }, s);
+    const origin = originOf(url);
+    const at = slot.tabs.find(t => t.kind === 'browser' && (t.id === tab || (!!origin && originOf(t.url) === origin)));
+    // The shell navigated `tab` itself; any other tab on the site is asked to (`nav`)
+    const next: PanelTab = at?.kind === 'browser'
+      ? { ...at, url, ...(at.id === tab ? {} : { nav: (at.nav ?? 0) + 1 }) }
+      : { id: nextId('browser'), kind: 'browser', url, nav: 1 };
+    const lone = slot.tabs.length === 1 && slot.tabs[0]!.kind === 'new';
+    const tabs = at ? slot.tabs.map(t => (t.id === at.id ? next : t)) : lone ? [next] : [...slot.tabs, next];
+    update({ slots: { ...s.slots, [key]: { tabs, tab: next.id, reveal: true } } });
+    return false;
   },
   // A terminal in `cwd`, as a new tab or in place of the new-tab page `replace`. The id of the tab
   openTerminal(cwd: string, replace?: string): string {

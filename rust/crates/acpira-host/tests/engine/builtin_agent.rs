@@ -1033,7 +1033,7 @@ rl.on('line', l => {
     fn available(&self) -> bool {
       true
     }
-    fn open<'a>(&'a self, url: &'a str, folder: Option<&'a str>) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<acpira_shared::sidecar::BrowserOpened>> + Send + 'a>> {
+    fn open<'a>(&'a self, url: &'a str, folder: Option<&'a str>, _: Option<(&'a str, &'a str)>) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<acpira_shared::sidecar::BrowserOpened>> + Send + 'a>> {
       self.opened.lock().push(format!("{url} in {}", folder.unwrap_or("this machine")));
       Box::pin(async move { Ok(acpira_shared::sidecar::BrowserOpened { url: url.to_owned(), reused: None }) })
     }

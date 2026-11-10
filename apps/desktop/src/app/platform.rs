@@ -105,8 +105,8 @@ impl Platform for App {
     app().open(initial, ChatWindowOpen::default());
   }
 
-  fn open_browser(&self, url: &str, folder: Option<&str>) -> Result<BrowserOpened, String> {
-    app().open_browser(url, folder)
+  fn open_browser(&self, url: &str, folder: Option<&str>, session: Option<(&str, &str)>) -> Result<BrowserOpened, String> {
+    app().open_browser(url, folder, session)
   }
 
   fn terminal(&self, r: TerminalRequest) {

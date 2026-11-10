@@ -333,14 +333,17 @@ async fn the_built_in_agents_sidekick_is_listed_first_for_the_root_and_keeps_one
 struct FakeBrowser {
   can: bool,
   opened: parking_lot::Mutex<Vec<String>>,
+  /// The asking session (id, folder) of each request
+  sessions: parking_lot::Mutex<Vec<(String, String)>>,
 }
 
 impl HostBrowser for FakeBrowser {
   fn available(&self) -> bool {
     self.can
   }
-  fn open<'a>(&'a self, url: &'a str, folder: Option<&'a str>) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<BrowserOpened>> + Send + 'a>> {
+  fn open<'a>(&'a self, url: &'a str, folder: Option<&'a str>, session: Option<(&'a str, &'a str)>) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<BrowserOpened>> + Send + 'a>> {
     Box::pin(async move {
+      self.sessions.lock().extend(session.map(|(id, cwd)| (id.to_owned(), cwd.to_owned())));
       // The second request for one URL finds the tab the first one opened; a folder on an SSH host is noted after it
       let shown = folder.map_or_else(|| url.to_owned(), |f| format!("{url} in {f}"));
       let reused = self.opened.lock().contains(&shown).then_some(BrowserReuse::Revealed);
@@ -380,7 +383,7 @@ async fn open_browser_goes_through_the_hub_to_the_shell_once_the_page_is_served_
   let HubReply::Error(text) = ask(HubOp::OpenBrowser { url: "https://example.com/".into() }).await.unwrap() else { panic!() };
   assert!(text.contains("cannot show web pages"), "{text}");
 
-  let browser = Arc::new(FakeBrowser { can: true, opened: Default::default() });
+  let browser = Arc::new(FakeBrowser { can: true, opened: Default::default(), sessions: Default::default() });
   hub.set_browser(browser.clone());
   let HubReply::Features(f) = ask(HubOp::Features).await.unwrap() else { panic!() };
   assert!(f.browser);
@@ -396,6 +399,8 @@ async fn open_browser_goes_through_the_hub_to_the_shell_once_the_page_is_served_
   let url = format!("http://127.0.0.1:{port}/:1/");
   let HubReply::Done(text) = ask(HubOp::OpenBrowser { url: url.clone() }).await.unwrap() else { panic!() };
   assert!(text.contains(&format!("loads it as http://127.0.0.1:{port}/:2/")), "{text}");
+  // The shell is told which session asked, to put the page with that session's tabs
+  assert_eq!(*browser.sessions.lock(), [(s.0.id.clone(), "/tmp".to_owned())]);
   // Asked again for the same page: the tab is brought back, and the model is told it was not reloaded
   let HubReply::Done(text) = ask(HubOp::OpenBrowser { url: url.clone() }).await.unwrap() else { panic!() };
   assert!(text.contains("without reloading"), "{text}");
