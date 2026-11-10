@@ -3,6 +3,7 @@ import AcpiraDesign
 import AcpiraModels
 import SwiftUI
 import UIKit
+import WebKit
 
 // The thread's scrolling on a UICollectionView, one hosted SwiftUI row per cell. A SwiftUI ScrollView over a
 // LazyVStack shifts its offset whenever off-screen rows trade estimated heights for real ones, and the offset rules
@@ -137,6 +138,8 @@ struct TranscriptCollection: UIViewRepresentable {
     private var dataSource: UICollectionViewDiffableDataSource<Int, String>?
     private var items: [String: ThreadItem] = [:]
     private var ids: [String] = []
+    private var lastPromptID: String?
+    private var queuedCount = 0
     /// The environment the rows read. Hosted cells do not inherit the SwiftUI environment across the representable,
     /// so it is copied in whole and handed to every cell a pass configures
     private var environment = EnvironmentValues()
@@ -190,6 +193,17 @@ struct TranscriptCollection: UIViewRepresentable {
         items[row.id] = row
       }
       let initial = ids.isEmpty
+      let promptID = rows.last { $0.id.hasPrefix("u") }?.id
+      let nowQueued: Int = if case .queue(let q, _) = rows.last?.kind { q.count } else { 0 }
+      // A newly sent or queued user prompt brings the reader back to the tail (useBottomFollow.ts `lastPrompt`),
+      // including after tapping a widget button higher up; automatic goal turns carry no `u` row and stay put
+      let sentNow = !initial && ((promptID != nil && promptID != lastPromptID && !old.contains(promptID!)) || nowQueued > queuedCount)
+      lastPromptID = promptID
+      queuedCount = nowQueued
+      if sentNow {
+        view.releaseReaderAnchor()
+        view.maintainsBottomAnchor = true
+      }
       let structure = next != ids
       if structure {
         for id in old.subtracting(next) { items[id] = nil }
@@ -204,7 +218,7 @@ struct TranscriptCollection: UIViewRepresentable {
       if !refresh.isEmpty { snapshot.reconfigureItems(Array(refresh)) }
       // Rows the reader can see stay put through rows arriving, leaving or growing; reaching new output is the
       // follow's job
-      let visible = initial ? nil : view.firstVisibleItem()
+      let visible = initial || sentNow ? nil : view.firstVisibleItem()
       dataSource.apply(snapshot, animatingDifferences: false) { [weak view] in
         DispatchQueue.main.async {
           guard let view, view.maintainsBottomAnchor, !view.isTracking, !view.isDragging, !view.isDecelerating else { return }
@@ -220,10 +234,10 @@ struct TranscriptCollection: UIViewRepresentable {
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-      // The selectable transcript text owns taps, including its double-tap selection and handle gestures.
+      // The selectable transcript text and embedded HTML widgets own their taps and focus.
       var target = touch.view
       while let view = target {
-        if view is SelectionTextView { return false }
+        if view is SelectionTextView || view is WKWebView { return false }
         target = view.superview
       }
       return true

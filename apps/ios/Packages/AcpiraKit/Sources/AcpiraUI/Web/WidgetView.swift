@@ -9,11 +9,33 @@ import WebKit
 // network, no storage that outlives it and no way to navigate, sized to the height the page reports. The page loads
 // once the row nears the screen; a theme switch is applied by script, so the widget keeps its state.
 
+/// Filters and rate-limits `acpira.sendPrompt` messages arriving from a widget web view (AgentWidget.tsx)
+struct WidgetPromptGate {
+  private var lastAt: ContinuousClock.Instant?
+
+  mutating func accept(_ raw: String, now: ContinuousClock.Instant = .now) -> String? {
+    guard raw.utf16.count <= WidgetDoc.promptMax else { return nil }
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    if let lastAt, now - lastAt < WidgetDoc.promptGap { return nil }
+    lastAt = now
+    return trimmed
+  }
+}
+
+extension EnvironmentValues {
+  /// The thread's session can take a message now (`status` ready or starting, Shell.tsx `canSend`); false in an
+  /// inspector or a session that is not up, where widgets stay one-way
+  @Entry var widgetCanSend = false
+}
+
 /// The widget of a completed show_widget row: its HTML read through `load` (the session's blob store)
 struct WidgetBlock: View {
   /// The blob's HTML; the caller knows where blobs come from (a development engine's HTTP, a paired computer's wire)
   let load: () async throws -> String
   @Environment(\.colorScheme) private var scheme
+  @Environment(\.widgetCanSend) private var canSend
+  @Environment(\.sessionActions) private var actions
   /// The page as built, in the scheme it first loaded in
   @State private var page: String?
   @State private var failed = false
@@ -25,7 +47,8 @@ struct WidgetBlock: View {
       #if canImport(UIKit)
       if let page {
         // Capped like the desktop's frame: a taller page scrolls inside itself
-        WidgetWebView(html: page, dark: scheme == .dark, height: $height, scrolls: height > Metrics.widgetMax)
+        WidgetWebView(html: page, dark: scheme == .dark, height: $height, scrolls: height > Metrics.widgetMax,
+                      onPrompt: canSend ? { Haptics.play(.send); actions.send($0, []) } : nil)
           .frame(height: min(height, Metrics.widgetMax))
       } else if failed {
         Text(web: t("widget.failed"), paragraph: false).textStyle(TypeScale.text2).foregroundStyle(Palette.fg3)
@@ -61,6 +84,7 @@ struct WidgetWebView: UIViewRepresentable {
   var dark: Bool
   @Binding var height: CGFloat
   var scrolls = false
+  var onPrompt: ((String) -> Void)?
 
   func makeCoordinator() -> Coordinator { Coordinator(height: $height) }
 
@@ -73,7 +97,8 @@ struct WidgetWebView: UIViewRepresentable {
     if let tailwind = WebRuntime.script("tailwind") {
       scripts.addUserScript(WKUserScript(source: tailwind, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
     }
-    scripts.addUserScript(WKUserScript(source: WidgetDoc.bootstrap, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+    scripts.addUserScript(WKUserScript(source: WidgetDoc.bootstrap(token: context.coordinator.token),
+                                       injectionTime: .atDocumentStart, forMainFrameOnly: true))
     scripts.add(context.coordinator, name: "acpiraWidget")
     let web = WKWebView(frame: .zero, configuration: config)
     web.navigationDelegate = context.coordinator
@@ -88,12 +113,14 @@ struct WidgetWebView: UIViewRepresentable {
     #endif
     context.coordinator.loaded = html
     context.coordinator.dark = dark
+    context.coordinator.onPrompt = onPrompt
     web.loadHTMLString(html, baseURL: nil)
     return web
   }
 
   func updateUIView(_ web: WKWebView, context: Context) {
     web.scrollView.isScrollEnabled = scrolls
+    context.coordinator.onPrompt = onPrompt
     if context.coordinator.dark != dark {
       context.coordinator.dark = dark
       web.evaluateJavaScript(WidgetDoc.theme(dark: dark))
@@ -109,17 +136,26 @@ struct WidgetWebView: UIViewRepresentable {
   }
 
   final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+    let token = UUID().uuidString
     var height: Binding<CGFloat>
+    var onPrompt: ((String) -> Void)?
     var loaded: String?
     /// The theme the page should show; applied again once it loads, in case the switch came first
     var dark = false
     /// The document's own load went through; anything after it is the page trying to leave
     var started = false
+    private var gate = WidgetPromptGate()
 
     init(height: Binding<CGFloat>) { self.height = height }
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-      guard let h = message.body as? Double, h > 0 else { return }
+      guard let body = message.body as? [String: Any], body["token"] as? String == token else { return }
+      if let raw = body["prompt"] as? String {
+        guard let onPrompt, let text = gate.accept(raw) else { return }
+        onPrompt(text)
+        return
+      }
+      guard let h = body["height"] as? Double, h > 0 else { return }
       height.wrappedValue = CGFloat(h)
     }
 

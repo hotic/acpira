@@ -131,8 +131,9 @@ fun SubagentInspector(model: AppModel, session: String, id: String) {
     CompositionLocalProvider(
       LocalSubagentTranscript provides true,
       LocalChatHandlers provides handlers,
-      // Read-only: a selection here must not quote into the parent chat's composer
+      // Read-only: a selection or widget here must not send into the parent chat
       cc.hotic.acpira.ui.LocalQuote provides null,
+      cc.hotic.acpira.ui.LocalWidgetPrompt provides null,
       LocalAgentNames provides { a: String -> model.agent(a).name },
       cc.hotic.acpira.ui.LocalSessionSummaries provides model.summaries,
       // A diff's whole files come through the parent session, naming the child it was shown in

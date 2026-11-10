@@ -39,6 +39,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.Lifecycle
+import cc.hotic.acpira.design.Haptic
 import cc.hotic.acpira.design.Lucide
 import cc.hotic.acpira.design.Metrics
 import cc.hotic.acpira.design.Palette
@@ -345,12 +346,21 @@ fun ChatScreen(model: AppModel, id: String) {
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
     val planDock = with(LocalDensity.current) { planDockH.toDp() }
+    val canSend = held.status == SessionStatus.ready || held.status == SessionStatus.starting
+    val widgetPrompt = remember(id, model, canSend, haptics) {
+      if (!canSend) null else { text: String ->
+        haptics.play(Haptic.Send)
+        model.send(id, text)
+        following = true
+      }
+    }
     CompositionLocalProvider(
       LocalChatHandlers provides handlers,
       LocalCanStopCommands provides (held.canStopCommands == true),
       LocalPlanContext provides PlanContext(held.controls, held.running, held.status == SessionStatus.ready),
       LocalLiveStage provides stage,
       LocalQuote provides quote,
+      LocalWidgetPrompt provides widgetPrompt,
       // A subagent row pushes that child's inspector
       LocalInspectSubagent provides inspect,
       LocalAllSubagents provides allNodes,
