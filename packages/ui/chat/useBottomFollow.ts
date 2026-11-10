@@ -66,7 +66,11 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
       if (!body || !scrollerUsable(el)) return false;
       const end = body.getBoundingClientRect().bottom - el.getBoundingClientRect().top - el.clientTop + el.scrollTop - lead;
       const frac = end - Math.floor(end);
-      const next = frac < 0.01 || frac > 0.99 ? 0 : Math.round((1 - frac) * 100) / 100;
+      // A thread that fits its viewport has no tail to hold: its top is what stays put, and a pad following the height
+      // of a fold animating open or shut moved every row a device pixel back and forth per frame. The pad itself can
+      // be the only overflow, hence the pixel of slack while one is set
+      const fits = el.scrollHeight - el.clientHeight <= (lead ? 1 : 0);
+      const next = fits || frac < 0.01 || frac > 0.99 ? 0 : Math.round((1 - frac) * 100) / 100;
       if (next === lead) return false;
       lead = next;
       el.style.paddingTop = next ? `${next}px` : '';
@@ -113,7 +117,17 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
     // a layout change counts. A wheel, touch or key drops it
     let anchor: { node: Element; at: number } | undefined;
     const offset = (node: Element) => node.getBoundingClientRect().top;
-    const touched = () => { untouched.current = false; intentAt = holding.current = performance.now(); };
+    // Whether the browser has clamped the offset since the reader's last input: content above a held tail shrank (a
+    // fold closing over it), so the tail is what stays put and the pad follows every frame. A fold closing back to
+    // where it opened from never clamps: there the top stays put, and re-padding in its last frames twitched it
+    let clamping = false;
+    let seenTop = el.scrollTop;
+    const touched = () => {
+      untouched.current = false;
+      intentAt = holding.current = performance.now();
+      clamping = false;
+      seenTop = el.scrollTop;
+    };
     follow.release = () => { touched(); pinned.current = false; follow.set(false); };
     const pressed = (event: PointerEvent) => {
       pointerDown = holdingDown.current = true;
@@ -169,7 +183,9 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
       }
       // Measured after the growth, so the frame a hand-opened fold first pushes the tail out already leaves the pad.
       // A new pad moves the end by under a pixel; re-pin so a held tail stays flush instead of waiting for the next chunk
-      if (atBottom && align()) pin();
+      if (el.scrollTop < seenTop - 0.5) clamping = true;
+      if (atBottom && clamping && align()) pin();
+      seenTop = el.scrollTop;
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     el.addEventListener('pointerdown', pressed, { passive: true });
