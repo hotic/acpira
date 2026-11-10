@@ -103,6 +103,24 @@ pub fn acpira_copy_image(request: Request<'_>) -> Result<(), String> {
   crate::os::clipboard_write_gif(&path, data)
 }
 
+fn clean_png_name(raw: Option<&str>) -> String {
+  let base = raw.and_then(|n| n.rsplit(['/', '\\']).next()).map(str::trim).filter(|n| !n.is_empty() && *n != "." && *n != "..").unwrap_or("screenshot.png");
+  if base.rsplit_once('.').is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("png")) { base.to_owned() } else { format!("{base}.png") }
+}
+
+/// Saves a PNG screenshot through the native file dialog; resolves `false` when dismissed
+#[tauri::command]
+pub async fn acpira_save_image(webview: Webview, name: String, data: Vec<u8>) -> Result<bool, String> {
+  let Some(window) = webview.app_handle().get_webview_window(webview.label()) else {
+    return Err("window closed".into());
+  };
+  let file_name = clean_png_name(Some(&name));
+  let dialog = rfd::AsyncFileDialog::new().set_parent(&window).set_file_name(&file_name).add_filter("PNG", &["png"]);
+  let Some(picked) = dialog.save_file().await else { return Ok(false) };
+  tokio::fs::write(picked.path(), data).await.map_err(|e| e.to_string())?;
+  Ok(true)
+}
+
 /// The paths of a drag from the OS, read when it enters the page: macOS's `pathForFile` matches them to the dropped files
 /// by name, Linux's page takes them as they are (init.js's dragPaths, linux.rs). Main thread
 #[tauri::command]

@@ -1,4 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import * as vscode from 'vscode';
 import { appearanceFromSettings } from '@acpira/shared/appearance';
 import type { BrowserHostMsg, BrowserLook, BrowserMsg, BrowserPage, ContextItem, HostMsg, WebviewHost, WebviewMsg } from '@acpira/shared/protocol';
@@ -80,6 +82,7 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
       if (m.type === 'viewFocus') { opts.onFocus?.(this); return; }
       if (m.type === 'probeResult') { this.probes.get(m.id)?.({ ok: m.ok, error: m.error }); return; }
       if (m.type === 'copyImage') { this.copyImage(m); return; }
+      if (m.type === 'saveImage') { this.saveImage(m); return; }
       // The first-run flow and the tour are the shell's: the first runs before any engine, the tour never needs one. VS
       // Code's first run shows only the consent card, so the agent row's question (detectAgents) goes unanswered
       if (m.type === 'createDataHome') {
@@ -153,6 +156,7 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
       ...(home === undefined ? {} : { firstRun: { home, locale: this.opts.locale() } }),
       ...(this.opts.openTour ? { opensTour: true } : {}),
       ...(imageClipboardSupported(vscode.env.remoteName !== undefined) ? { imageCopy: true } : {}),
+      imageSave: true,
     });
   }
 
@@ -165,6 +169,29 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
       const error = e instanceof Error ? e.message : String(e);
       this.opts.log?.(`copyImage failed: ${error}`);
       this.outbox.push({ type: 'copiedImage', id, error });
+    });
+  }
+
+  private saveImage({ id, data, name }: Extract<WebviewMsg, { type: 'saveImage' }>) {
+    const bytes = data instanceof Uint8Array ? data : undefined;
+    if (!bytes) {
+      this.outbox.push({ type: 'savedImage', id, error: 'saveImage carried no image bytes' });
+      return;
+    }
+    const clean = name.split(/[\\/]/).pop()?.trim() || 'screenshot.png';
+    const fileName = /\.png$/i.test(clean) ? clean : `${clean}.png`;
+    const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
+    const defaultUri = folder ? vscode.Uri.joinPath(folder, fileName) : vscode.Uri.file(join(homedir(), fileName));
+    Promise.resolve(vscode.window.showSaveDialog({ defaultUri, filters: { PNG: ['png'] } })).then(
+      async uri => {
+        if (!uri) { this.outbox.push({ type: 'savedImage', id, saved: false }); return; }
+        await vscode.workspace.fs.writeFile(uri, bytes);
+        this.outbox.push({ type: 'savedImage', id, saved: true });
+      },
+    ).catch((e: unknown) => {
+      const error = e instanceof Error ? e.message : String(e);
+      this.opts.log?.(`saveImage failed: ${error}`);
+      this.outbox.push({ type: 'savedImage', id, error });
     });
   }
 

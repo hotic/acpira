@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
-import { MessageSquarePlus } from 'lucide-react';
+import { MessageSquarePlus, Share } from 'lucide-react';
 import type { Draft } from '@acpira/shared/transcript';
 import { t } from '../i18n';
 import { cn } from '../ui/cn';
@@ -38,7 +38,7 @@ function pickIn(root: HTMLElement | null): Picked | undefined {
 // Selecting text in the transcript raises a small toolbar over it (Codex's "Add to chat"): the quote goes into the main composer
 // as an annotation at once, and the toolbar turns into an optional comment field for it. Enter keeps the comment, Escape / clicking
 // away leaves the quote without one. `root` is the transcript content; selections elsewhere (composer, cards) are ignored
-export function QuoteToolbar({ root }: { root: RefObject<HTMLElement | null> }) {
+export function QuoteToolbar({ root, onShare }: { root: RefObject<HTMLElement | null>; onShare?: (range: Range) => void }) {
   const [picked, setPicked] = useState<Picked>();
   const [added, setAdded] = useState<QuoteDraft>();
   const addedRef = useRef(added);
@@ -168,6 +168,13 @@ export function QuoteToolbar({ root }: { root: RefObject<HTMLElement | null> }) 
     paint(picked.range);
     setAdded(quote);
   };
+  const share = () => {
+    if (!picked || !onShare) return;
+    const selectedRange = picked.range.cloneRange();
+    document.getSelection()?.removeAllRanges();
+    close();
+    onShare(selectedRange);
+  };
   // Pasted screenshots join the prompt as ordinary image attachments, right after the quote they were pasted on
   const comment = (value: string, images: Draft[]) => {
     const quote = added;
@@ -191,14 +198,30 @@ export function QuoteToolbar({ root }: { root: RefObject<HTMLElement | null> }) 
               <Popover.Popup ref={morph} data-quote-toolbar>
                 {added
                   ? <CommentEditor className="w-full bg-transparent" acceptImages submit={t('quote.saveComment')} onSave={comment} onCancel={() => { document.getSelection()?.removeAllRanges(); close(); }} />
-                  : <button type="button"
-                      // Pressing the button must not collapse the selection it acts on
-                      onMouseDown={e => e.preventDefault()}
-                      onClick={add}
-                      className="inline-flex h-ctl-sm items-center gap-1 rounded-sm px-2 text-3 font-medium text-fg-1 outline-none transition-colors hover:bg-active focus-visible:bg-active [&_svg]:size-icon [&_svg]:text-fg-3">
-                      <MessageSquarePlus strokeWidth={1.5} />
-                      {t('quote.add')}
-                    </button>}
+                  : <div className="flex items-center">
+                      <button type="button"
+                        data-part="quote-add"
+                        // Pressing the button must not collapse the selection it acts on
+                        onMouseDown={e => e.preventDefault()}
+                        onClick={add}
+                        className="inline-flex h-ctl-sm items-center gap-1 rounded-sm px-2 text-3 font-medium text-fg-1 outline-none transition-colors hover:bg-active focus-visible:bg-active [&_svg]:size-icon [&_svg]:text-fg-3">
+                        <MessageSquarePlus strokeWidth={1.5} />
+                        {t('quote.add')}
+                      </button>
+                      {onShare && (
+                        <>
+                          <span className="my-gap-half w-px self-stretch bg-line" aria-hidden />
+                          <button type="button"
+                            data-part="quote-share"
+                            onMouseDown={e => e.preventDefault()}
+                            onClick={share}
+                            className="inline-flex h-ctl-sm items-center gap-1 rounded-sm px-2 text-3 font-medium text-fg-1 outline-none transition-colors hover:bg-active focus-visible:bg-active [&_svg]:size-icon [&_svg]:text-fg-3">
+                            <Share strokeWidth={1.5} />
+                            {t('turn.share')}
+                          </button>
+                        </>
+                      )}
+                    </div>}
               </Popover.Popup>
             </Popover.Positioner>
           </Popover.Portal>

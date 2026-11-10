@@ -1,6 +1,8 @@
 import type { AgentId, AgentInfo, AgentTurn, SessionControls, TurnSettings, TurnUsage } from '@acpira/shared/transcript';
 import { launchable } from '@acpira/shared/agentOrder';
-import { FUSION, parseModelName } from '@acpira/shared/models';
+import { FUSION, modelBrand, optionBrand, parseModelName } from '@acpira/shared/models';
+import { isModelControl, type ModelShapes } from '@acpira/shared/modelShapes';
+import { openTurnControls } from '@acpira/shared/turnSettings';
 import { commandDuration } from './commandDuration';
 import { splitCodexBlocks } from './folding';
 
@@ -126,4 +128,49 @@ export function forkTargets(agents: AgentInfo[], current: AgentId): AgentInfo[] 
   const open = launchable(agents);
   const own = open.find(a => a.id === current) ?? agents.find(a => a.id === current);
   return own ? [own, ...open.filter(a => a.id !== current)] : open;
+}
+
+export interface ShareMeta {
+  sessionTitle: string;
+  agentId: AgentId;
+  agentName: string;
+  model?: string;
+  brand?: string;
+}
+
+// Metadata for the screenshot watermark footer: session title and the model family + vendor mark resolved from the turn's
+// captured settings (with learned model shapes) or the live session controls
+export function turnShareMeta(opts: {
+  sessionTitle: string;
+  agent: Pick<AgentInfo, 'id' | 'name'>;
+  controls: SessionControls;
+  usage?: TurnUsage;
+  settings?: TurnSettings;
+  shapes?: ModelShapes;
+}): ShareMeta {
+  const { sessionTitle, agent, controls, usage, settings, shapes } = opts;
+  const resolved = openTurnControls(controls, settings, shapes);
+  const modelControl = resolved.options.find(isModelControl);
+  const modelId = usage?.model ?? (modelControl ? (settings?.config[modelControl.id] ?? modelControl.value) : undefined);
+  const option = modelId ? modelControl?.options.find(o => o.id === modelId) : undefined;
+
+  let model: string | undefined;
+  let brand: string | undefined;
+
+  if (option) {
+    const parsed = parseModelName(option.name);
+    model = parsed.family === FUSION ? option.name : parsed.family;
+    brand = optionBrand(option);
+  } else if (modelId) {
+    model = modelId;
+    brand = modelBrand(modelId);
+  }
+
+  return {
+    sessionTitle,
+    agentId: agent.id,
+    agentName: agent.name,
+    ...(model ? { model } : {}),
+    ...(brand ? { brand } : {}),
+  };
 }

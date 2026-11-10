@@ -57,7 +57,8 @@ declare global {
   // `tourPage`: VS Code's tab of the interface tour (openTour), which has no engine view at all
   // `opensTour`: the shell plays the tour in a tab of its own when the General page asks (VS Code)
   // `imageCopy`: the shell answers copyImage with copiedImage, putting an image on the system clipboard (VS Code, local)
-  interface Window { __acpira?: { host: 'sidebar' | 'editor' | 'browser'; font?: Appearance['font']; sessionLinkBase?: string; shell?: 'desktop'; platform?: 'mac' | 'win' | 'linux'; tab?: string; remote?: boolean; fileBase?: string; firstRun?: { home?: string; locale: string }; tourPage?: { locale: string }; opensTour?: boolean; imageCopy?: boolean } }
+  // `imageSave`: the shell answers saveImage with savedImage via the host's save dialog (VS Code)
+  interface Window { __acpira?: { host: 'sidebar' | 'editor' | 'browser'; font?: Appearance['font']; sessionLinkBase?: string; shell?: 'desktop'; platform?: 'mac' | 'win' | 'linux'; tab?: string; remote?: boolean; fileBase?: string; firstRun?: { home?: string; locale: string }; tourPage?: { locale: string }; opensTour?: boolean; imageCopy?: boolean; imageSave?: boolean } }
 }
 
 // Always through the memo: acquireVsCodeApi() throws when called twice, and other components (Link) reach the api via vscodeApi()

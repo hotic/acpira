@@ -116,6 +116,8 @@
     readClipboard: () => T.invoke('acpira_clipboard'),
     // A GIF on the system clipboard as a file, which the web clipboard would flatten to one PNG frame (commands.rs)
     copyImage: (data, name) => T.invoke('acpira_copy_image', data, { headers: { 'x-acpira-name': encodeURIComponent(name) } }),
+    // Native file save dialog for a rendered PNG screenshot (commands.rs)
+    saveImage: (data, name) => T.invoke('acpira_save_image', { name, data: Array.from(data) }),
     // A dropped file's path: WKWebView gives the page its name and bytes only, so the paths of a Finder drag are read
     // from the system's drag pasteboard as it enters the page and matched by name at the drop; WebView2 answers through
     // the shell, a promise (packages/ui Shell's folder drop takes both)
