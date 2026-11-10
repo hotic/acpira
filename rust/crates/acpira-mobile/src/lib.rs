@@ -1,7 +1,8 @@
 //! acpira-mobile: the phone's side of paired remote access, exported to Swift through UniFFI (the XCFramework and the
 //! bindings come from apps/ios/scripts/build-net.sh; `AcpiraRemote` in apps/ios wraps them). Only Acpira's own protocol
 //! crosses the boundary: a node started from the identity key Swift keeps in the Keychain, pairing by link or by code,
-//! and a link to a paired computer's gateway carrying envelope lines, blobs and path changes. Nothing iroh-shaped is
+//! and a link to a paired computer's gateway carrying envelope lines, blobs, tunnels to a project folder's machine and
+//! path changes. Nothing iroh-shaped is
 //! exported, so an iroh upgrade stays inside acpira-net and this crate.
 //!
 //! Every call runs on this library's own small tokio runtime and hands its result back through a join handle or a
@@ -21,8 +22,11 @@ use acpira_net::ticket::PairTicket;
 use acpira_net::{Endpoint, EndpointAddr, EndpointId, RelayUrl, SecretKey};
 
 mod link;
+mod socks;
+mod tunnel;
 
 pub use link::{BlobProgress, Link, LinkEvent};
+pub use tunnel::Tunnel;
 
 uniffi::setup_scaffolding!();
 
