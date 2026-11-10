@@ -799,7 +799,7 @@ struct StagedAttachments: View {
             case .image(let blob, _, let name):
               AttachmentThumbnail(blob: blob, name: name)
                 .overlay(alignment: .topTrailing) {
-                  RemoveBadge(label: t("common.remove")) { items.remove(at: i) }
+                  RemoveBadge(label: t("common.remove")) { remove(item, at: i) }
                 }
             // A pill is lower than the badge, which covered the end of its name: its ✕ sits inside it, after the name
             case .file(let uri, let name):
@@ -816,22 +816,22 @@ struct StagedAttachments: View {
                 .overlay(alignment: .topTrailing) {
                   RemoveBadge(label: t("common.remove")) {
                     VideoJobs.shared.cancel(uri)
-                    items.remove(at: i)
+                    remove(item, at: i)
                   }
                 }
               } else {
                 AttachmentPill(name: name, icon: Attachment.isVideo(name: name) ? .fileVideo : .fileText,
                                onOpen: opener.open(uri: uri)) {
-                  items.remove(at: i)
+                  remove(item, at: i)
                 }
               }
             case .text(let blob, let name, _):
-              TextAttachmentChip(blob: blob, name: name) { items.remove(at: i) }
+              TextAttachmentChip(blob: blob, name: name) { remove(item, at: i) }
             // Only a sent prompt taken in for editing brings a selection back
             case .selection(let uri, let name, let start, let end, _):
               AttachmentPill(name: "\(name) \(start == end ? "L\(start)" : "L\(start)-\(end)")", icon: .textSelect,
                              onOpen: opener.open(uri: uri, line: start)) {
-                items.remove(at: i)
+                remove(item, at: i)
               }
             default:
               EmptyView()
@@ -848,6 +848,14 @@ struct StagedAttachments: View {
   }
 
   private static func quote(_ item: Attachment) -> Bool { if case .quote = item { true } else { false } }
+
+  /// Drops the attachment a ✕ was drawn for. `i` is its place in that render, and the list can change before the tap
+  /// lands (a second quick tap, a failed video unstaging itself), so a stale place falls back to the attachment itself
+  /// instead of trapping or taking a neighbour
+  private func remove(_ item: Attachment, at i: Int) {
+    if items.indices.contains(i), items[i] == item { items.remove(at: i) }
+    else if let at = items.firstIndex(of: item) { items.remove(at: at) }
+  }
 }
 
 /// A staged chip's ✕, riding its top-right corner
