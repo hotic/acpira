@@ -26,7 +26,7 @@ import { ToolLabel } from './ToolLabel';
 import { AsyncTaskStopContext, CommandStopContext, OpenToolFileContext, SessionTitleContext, SkillDescriptionContext, ToolFileActionsContext, WorkflowProgressContext } from './fileLinks';
 import { isSessionTool, splitSessionTarget } from '@acpira/shared/sessionLinks';
 import { compactTokens } from './goalText';
-import { diffIndex, fileReference, toolFiles, visibleToolContents } from './toolDetails';
+import { diffIndex, fileReference, rowImage, splitHit, toolFiles, visibleToolContents } from './toolDetails';
 import { useToolSeconds } from './useToolSeconds';
 import { CommandOutcome } from './CommandOutcome';
 import { commandDuration } from './commandDuration';
@@ -336,10 +336,7 @@ export function ResultList({ items, kind, rail = true, images }: { items: string
         const lead = <Icon className="size-icon" strokeWidth={1.5} />;
         const target = <RowTarget mono={kind !== 'fetch'} className="text-fg-2">{main}</RowTarget>;
         if (kind === 'read' || kind === 'search') {
-          const image = images?.length
-            ? (items.length === 1 && images.length === 1 ? images[0] : images.find(img => img.uri === it || (img.uri && main && img.uri.endsWith(`/${main}`))) ?? (images.length === items.length ? images[i] : undefined))
-            : undefined;
-          return <FileResultRow key={it} hit={it} lead={lead} aside={aside} image={image}>{target}</FileResultRow>;
+          return <FileResultRow key={it} hit={it} lead={lead} aside={aside} image={rowImage(it, i, items, images)}>{target}</FileResultRow>;
         }
         return (
           <Row tone="action" key={it} dense lead={lead} trailing={aside} title={it}>
@@ -413,14 +410,4 @@ export function Aside({ children }: { children: ReactNode }) {
 export function DiffStat({ add, del }: { add: number; del: number }) {
   if (!add && !del) return null;
   return <span className="inline-flex gap-1">{add > 0 && <span className="text-ok">+{add}</span>}{del > 0 && <span className="text-danger/80">−{del}</span>}</span>;
-}
-
-function splitHit(hit: string): { main: string; aside?: string } {
-  const line = /^(.+?):(\d+(?:[–-]\d+)?)(?::\d+)?$/.exec(hit);
-  if (line) return { main: line[1]!.split(/[\\/]/).pop()!, aside: `L${line[2]}` };
-  if (/^(?:\.{0,2}\/|[A-Za-z]:[\\/])/.test(hit)) return { main: hit.split(/[\\/]/).pop()! };
-  try {
-    const u = new URL(hit);
-    return { main: u.pathname === '/' ? u.host : `${u.host}${u.pathname}`, aside: u.host };
-  } catch { return { main: hit }; }
 }

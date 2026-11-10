@@ -131,7 +131,7 @@ async fn reading_an_image_file_shows_the_model_the_picture_when_it_takes_images(
     }
     // The card shows the picture either way, without the agent's own marks
     let done = h.updates().into_iter().find(|u| u["toolCallId"] == "call-1" && u["status"] == "completed").unwrap();
-    assert_eq!(done["content"], json!([{ "type": "content", "content": { "type": "image", "data": data, "mimeType": "image/png" } }]));
+    assert_eq!(done["content"], json!([{ "type": "content", "content": { "type": "image", "data": data, "mimeType": "image/png", "uri": h.cwd().join("frame.png") } }]));
   }
 }
 

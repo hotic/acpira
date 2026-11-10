@@ -185,6 +185,46 @@ pub(super) fn attach_saved_images(b: &mut ToolCallBlock, u: &Value, ctx: Option<
   b.contents = if list.len() > 1 { Some(list) } else { None };
 }
 
+/// A `read` call whose returned images omit `uri` (an adapter sending raw base64 payloads alongside text locations):
+/// pair them in order with the call's image locations so file rows and `shows_file` know which file each image came from
+pub(super) fn attach_read_image_uris(b: &mut ToolCallBlock) {
+  let Some(locs) = b.locations.as_deref().filter(|l| !l.is_empty()) else { return };
+  let is_img = |c: &ToolContent| matches!(c, ToolContent::Image(i) if i.mime_type.starts_with("image/"));
+  let has_uri = |c: &ToolContent| matches!(c, ToolContent::Image(i) if i.mime_type.starts_with("image/") && i.uri.is_some());
+  let items = b.contents.as_deref().unwrap_or(b.content.as_slice());
+  let count = items.iter().filter(|c| is_img(c)).count();
+  if count == 0 || items.iter().any(has_uri) {
+    return;
+  }
+  let whole: Vec<&str> = locs.iter().filter(|l| l.line.is_none_or(|n| n <= 1) && !l.path.is_empty()).map(|l| l.path.as_str()).collect();
+  let paths: Vec<String> = if whole.len() == count {
+    whole.into_iter().map(str::to_owned).collect()
+  } else {
+    let imgs: Vec<&str> = whole.into_iter().filter(|p| image_mime_of(p).is_some()).collect();
+    if imgs.len() != count {
+      return;
+    }
+    imgs.into_iter().map(str::to_owned).collect()
+  };
+  let mut it = paths.into_iter();
+  if let Some(list) = b.contents.as_mut() {
+    for c in list.iter_mut() {
+      if let ToolContent::Image(img) = c
+        && img.mime_type.starts_with("image/")
+      {
+        img.uri = it.next();
+      }
+    }
+    if matches!(b.content, Some(ToolContent::Image(_))) {
+      b.content = list.first().cloned();
+    }
+  } else if let Some(ToolContent::Image(img)) = b.content.as_mut()
+    && img.mime_type.starts_with("image/")
+  {
+    img.uri = it.next();
+  }
+}
+
 pub(super) fn append_exit_code(prev: &str, code: &str) -> String {
   let base = prev.trim_end_matches('\n');
   if base.is_empty() { format!("exit code {code}") } else { format!("{base}\nexit code {code}") }
