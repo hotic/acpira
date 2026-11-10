@@ -412,6 +412,7 @@
   "quota.window.5h": "5 時間",
   "quota.window.weeklyOpus": "週間 Opus",
   "quota.window.weeklySonnet": "週間 Sonnet",
+  "quota.window.weeklyFable": "週間 Fable",
   "quota.reset": "{time}後にリセット",
   "quota.resetUnknown": "リセット時刻は不明",
   "quota.resetIdle": "未開始",

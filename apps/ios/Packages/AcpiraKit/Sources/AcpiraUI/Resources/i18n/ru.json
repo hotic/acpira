@@ -410,6 +410,7 @@
   "quota.window.5h": "5 часов",
   "quota.window.weeklyOpus": "Opus за неделю",
   "quota.window.weeklySonnet": "Sonnet за неделю",
+  "quota.window.weeklyFable": "Fable за неделю",
   "quota.reset": "Сброс через {time}",
   "quota.resetUnknown": "Время сброса неизвестно",
   "quota.resetIdle": "Не начато",

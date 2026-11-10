@@ -412,6 +412,7 @@
   "quota.window.5h": "5 小时",
   "quota.window.weeklyOpus": "每周 Opus",
   "quota.window.weeklySonnet": "每周 Sonnet",
+  "quota.window.weeklyFable": "每周 Fable",
   "quota.reset": "{time}后重置",
   "quota.resetUnknown": "重置时间未知",
   "quota.resetIdle": "未开始",

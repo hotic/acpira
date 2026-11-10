@@ -422,6 +422,7 @@ export const zhTW = {
   'quota.window.5h': '5 小時',
   'quota.window.weeklyOpus': '每週 Opus',
   'quota.window.weeklySonnet': '每週 Sonnet',
+  'quota.window.weeklyFable': '每週 Fable',
   'quota.reset': '{time}後重置',
   'quota.resetUnknown': '重置時間未知',
   'quota.resetIdle': '未開始',

@@ -417,6 +417,7 @@ export const ko = {
   'quota.window.5h': '5시간',
   'quota.window.weeklyOpus': '주간 Opus',
   'quota.window.weeklySonnet': '주간 Sonnet',
+  'quota.window.weeklyFable': '주간 Fable',
   'quota.reset': '{time} 후 초기화',
   'quota.resetUnknown': '초기화 시각 알 수 없음',
   'quota.resetIdle': '시작 안 됨',

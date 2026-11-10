@@ -413,6 +413,7 @@ export const fr = {
   'quota.window.5h': '5 heures',
   'quota.window.weeklyOpus': 'Opus hebdomadaire',
   'quota.window.weeklySonnet': 'Sonnet hebdomadaire',
+  'quota.window.weeklyFable': 'Fable hebdomadaire',
   'quota.reset': 'Réinitialisé dans {time}',
   'quota.resetUnknown': 'Heure de réinitialisation indisponible',
   'quota.resetIdle': 'Non démarré',
