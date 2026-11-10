@@ -63,13 +63,19 @@ impl AcpSession {
     Some(Stand::new(&f.alias, &f.path, &self.data_root()))
   }
 
+  /// Makes the stand-in folder if it is missing (`Stand::make`). A failure is only logged: the process that then cannot
+  /// start there names the folder itself (`AgentSpawnError`)
+  pub(crate) fn make_claude_stand(&self, stand: &Stand) {
+    if let Err(e) = stand.make(&self.data_root()) {
+      self.log(&format!("remote: the stand-in folder {} could not be made: {e}", stand.local.display()));
+    }
+  }
+
   /// The session request of such a session (`claude_remote::with_stand`), with the host's instructions read now; the
   /// stand-in folder is made if it is missing
   pub(crate) async fn with_claude_stand(&self, req: Value) -> Value {
     let Some(stand) = self.claude_stand() else { return req };
-    if let Err(e) = std::fs::create_dir_all(&stand.local) {
-      self.log(&format!("remote: the stand-in folder {} could not be made: {e}", stand.local.display()));
-    }
+    self.make_claude_stand(&stand);
     let places = req.pointer(&format!("/_meta/{}/places", crate::acp::session::remote::META.replace('/', "~1"))).cloned();
     let instructions = self.host_instructions(&stand, places.as_ref()).await;
     let files: Vec<String> = instructions.iter().map(|(p, t)| format!("{p} ({} bytes)", t.len())).collect();
