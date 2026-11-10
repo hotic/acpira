@@ -751,6 +751,11 @@ impl AcpSession {
   }
 
   /// The card was closed: only answered questions travel; skip tells the agent to go on with what it has
+  /// Whether the question card `block_id` still waits for its answer
+  pub fn question_open(&self, block_id: &str) -> bool {
+    self.core.lock().questions.pending.iter().any(|p| p.block_id == block_id)
+  }
+
   pub fn answer_questions(&self, block_id: &str, answers: &QuestionAnswers, skip: bool) {
     self.answer_questions_with(block_id, answers, None, skip);
   }

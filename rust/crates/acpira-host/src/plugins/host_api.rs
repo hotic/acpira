@@ -1,8 +1,8 @@
 //! What a plugin's resident process may ask of the engine beyond its store (docs/dev/plugins.md, Session API): read
 //! sessions, act on them the way a page does, show a toast, and make one model call from the built-in agent's model
-//! sources. A process acts through a viewer of its own, so its actions take the path a click takes; answering a
-//! permission or question card, plugin, account and setting changes are not on its list, so a plugin cannot approve
-//! on the user's behalf
+//! sources. A process acts through a viewer of its own, so its actions take the path a click takes. It may answer a
+//! question card; answering a permission card, plugin, account and setting changes are not on its list, so a plugin
+//! cannot approve on the user's behalf
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -20,6 +20,7 @@ use crate::session_manager::{SessionManager, Viewer};
 pub const ACTIONS: &[&str] = &[
   "send",
   "stop",
+  "answer",
   "setMode",
   "setConfig",
   "selectSession",
@@ -128,6 +129,12 @@ impl Api {
           && s.grants_full_access(config, value)
         {
           return Err(bad(format!("`{value}` gives the agent full access; only the user may pick it")));
+        }
+        // An answer to a card already settled would be dropped in silence: the process is told instead
+        if let WebviewMsg::Answer { session_id, block_id, .. } = &msg
+          && !m.live_session(session_id).is_some_and(|s| s.question_open(block_id))
+        {
+          return Err(bad(format!("no question card `{block_id}` is open in session {session_id}")));
         }
         m.handle_for(&v, msg).await;
         Ok(json!({ "active": v.active_id() }))

@@ -279,6 +279,13 @@ rl.on('line', async line => {
   out.yolo = await ask('session/act', { message: { type: 'setMode', sessionId: session, id: 'yolo' } });
   out.toast = await ask('ui/toast', { text: 'hello from a plugin', level: 'warning' });
   out.ask = await ask('ui/ask', { session, message: 'Release now?', questions: [{ id: 'ship', text: 'Ship it?', kind: 'single', options: [{ id: 'yes', label: 'Yes' }, { id: 'no', label: 'No' }] }] });
+  // A second card, answered by the process itself through `session/act`
+  const second = ask('ui/ask', { session, questions: [{ id: 'again', text: 'Again?', kind: 'single', options: [{ id: 'yes', label: 'Yes' }, { id: 'no', label: 'No' }] }] });
+  let card;
+  while (!card) card = (await ask('session/get', { session })).session.turns.flatMap(t => t.blocks ?? []).find(b => b.type === 'question' && !b.outcome);
+  out.gone = await ask('session/act', { message: { type: 'answer', sessionId: session, blockId: 'gone', answers: {} } });
+  out.answer = await ask('session/act', { message: { type: 'answer', sessionId: session, blockId: card.id, answers: { again: 'no' } } });
+  out.second = await second;
   writeFileSync(data + '/results.json', JSON.stringify(out));
 });
 "#;
@@ -321,6 +328,10 @@ async fn a_plugin_reads_and_acts_on_sessions_through_the_engine_but_cannot_appro
   assert!(r["yolo"]["error"].as_str().unwrap().contains("gives the agent full access"), "{r}");
   assert_eq!(toasts.lock().unwrap().as_slice(), ["warning: hello from a plugin"]);
   assert_eq!(r["ask"]["answers"]["ship"], "yes", "{r}");
+  // A question card it may answer itself, though not one that is no longer open
+  assert!(r["gone"]["error"].as_str().unwrap().contains("no question card `gone` is open"), "{r}");
+  assert!(r["answer"]["error"].is_null(), "{r}");
+  assert_eq!(r["second"]["answers"]["again"], "no", "{r}");
   until(|| m.m.sessions().iter().any(|s| s.id == id && s.title == "From a plugin"), 5000).await;
   m.dispose().await;
   rt.stop_all().await;
