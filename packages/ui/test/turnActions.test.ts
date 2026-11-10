@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentInfo, AgentTurn, SessionControls, ToolCallBlock } from '@acpira/shared/transcript';
-import { forkTargets, modelLabel, replyMarkdown, turnOutputTps, turnTtft } from '../chat/turnActionHelpers';
+import { forkTargets, modelLabel, replyMarkdown, turnOutputTps, turnShareMeta, turnTtft } from '../chat/turnActionHelpers';
 
 const text = (markdown: string) => ({ type: 'text' as const, markdown });
 const read: ToolCallBlock = { type: 'tool_call', id: 'r1', kind: 'read', verb: 'Read', target: 'a.ts', status: 'completed' };
@@ -186,5 +186,57 @@ describe('forkTargets', () => {
 
   it('still offers a switched-off session agent first, but no other switched-off agent', () => {
     expect(forkTargets(agents, 'kimi').map(a => a.id)).toEqual(['kimi', 'claude', 'codex', 'devin']);
+  });
+});
+
+describe('turnShareMeta', () => {
+  it('resolves model family and vendor brand for a turn while stripping effort/tier suffixes', () => {
+    const controls: SessionControls = {
+      modes: [],
+      options: [
+        { id: 'model', name: 'Model', category: 'model', value: 'gpt-6.1-sol', options: [
+          { id: 'claude-opus-4-7', name: 'Claude Opus 4.7' },
+          { id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol' },
+        ] },
+        { id: 'reasoning_effort', name: 'Reasoning', category: 'thought_level', value: 'medium', options: [
+          { id: 'medium', name: 'Medium' },
+          { id: 'xhigh', name: 'Extra High' },
+        ] },
+      ],
+    };
+    expect(turnShareMeta({
+      sessionTitle: 'Refactor auth middleware',
+      agent: { id: 'acpira', name: 'Acpira' },
+      controls,
+      settings: { config: { model: 'claude-opus-4-7', reasoning_effort: 'xhigh' } },
+    })).toEqual({
+      sessionTitle: 'Refactor auth middleware',
+      agentId: 'acpira',
+      agentName: 'Acpira',
+      model: 'Claude Opus 4.7',
+      brand: 'claude',
+    });
+  });
+
+  it('strips embedded effort and Fast suffixes from compound model names and falls back to live controls', () => {
+    const controls: SessionControls = {
+      modes: [],
+      options: [
+        { id: 'model', name: 'Model', category: 'model', value: 'astra-h-fast', options: [
+          { id: 'astra-h-fast', name: 'GPT-6 Astra High Thinking Fast' },
+        ] },
+      ],
+    };
+    expect(turnShareMeta({
+      sessionTitle: 'Perf audit',
+      agent: { id: 'devin', name: 'Devin' },
+      controls,
+    })).toEqual({
+      sessionTitle: 'Perf audit',
+      agentId: 'devin',
+      agentName: 'Devin',
+      model: 'GPT-6 Astra',
+      brand: 'openai',
+    });
   });
 });

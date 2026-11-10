@@ -151,6 +151,7 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case server
   case settings
   case settings2
+  case share
   case shieldAlert
   case shieldOff
   case shieldX
@@ -341,6 +342,7 @@ extension LucideIcon {
     case .server: [.rect(x: 2, y: 2, width: 20, height: 8, rx: 2), .rect(x: 2, y: 14, width: 20, height: 8, rx: 2), .line(x1: 6, y1: 6, x2: 6.01, y2: 6), .line(x1: 6, y1: 18, x2: 6.01, y2: 18)]
     case .settings: [.path("M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"), .circle(cx: 12, cy: 12, r: 3)]
     case .settings2: [.path("M14 17H5"), .path("M19 7h-9"), .circle(cx: 17, cy: 17, r: 3), .circle(cx: 7, cy: 7, r: 3)]
+    case .share: [.path("M12 2v13"), .path("m16 6-4-4-4 4"), .path("M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8")]
     case .shieldAlert: [.path("M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"), .path("M12 8v4"), .path("M12 16h.01")]
     case .shieldOff: [.path("m2 2 20 20"), .path("M5 5a1 1 0 0 0-1 1v7c0 5 3.5 7.5 7.67 8.94a1 1 0 0 0 .67.01c2.35-.82 4.48-1.97 5.9-3.71"), .path("M9.309 3.652A12.252 12.252 0 0 0 11.24 2.28a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1v7a9.784 9.784 0 0 1-.08 1.264")]
     case .shieldX: [.path("M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"), .path("m14.5 9.5-5 5"), .path("m9.5 9.5 5 5")]

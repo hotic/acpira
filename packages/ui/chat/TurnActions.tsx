@@ -1,5 +1,5 @@
 import { createContext, Fragment, useContext, useState, type ReactNode } from 'react';
-import { ChartNoAxesColumn, Check, Copy, GitBranch } from 'lucide-react';
+import { ChartNoAxesColumn, Check, Copy, GitBranch, Share } from 'lucide-react';
 import type { AgentId, AgentInfo, AgentTurn, SessionControls, TurnSettings } from '@acpira/shared/transcript';
 import { t, useLocale } from '../i18n';
 import { IconButton } from '../ui/Button';
@@ -10,7 +10,7 @@ import { useCopied } from '../ui/useCopied';
 import { AgentMark } from './AgentMark';
 import { elapsedDuration } from './folding';
 import { forkTargets, modelLabel, replyMarkdown, turnOutputTps, turnTtft } from './turnActionHelpers';
-import { hasTurnStats } from './turnOutcome';
+import { hasTurnContent, hasTurnStats } from './turnOutcome';
 import { PluginActions } from '../plugins/MessageActions';
 
 // What the turn action row needs from the shell: the session it belongs to, the control list for resolving the model
@@ -18,6 +18,7 @@ import { PluginActions } from '../plugins/MessageActions';
 export const TurnActionsContext = createContext<{
   sessionId: string; controls: SessionControls;
   fork?: (turnIndex: number, agent: AgentId) => void; agents?: AgentInfo[]; agentId?: AgentId;
+  share?: (turnIndex: number, messageEl: HTMLElement) => void;
 } | undefined>(undefined);
 
 // The row under a finished agent reply (Cursor's trio): copy the reply · fork the session from this turn onto an agent
@@ -34,8 +35,9 @@ export function TurnActions({ turn, turnIndex, settings }: { turn: AgentTurn; tu
   // A failed reply with nothing in it offers the fork alone: there is nothing to copy or measure. A stopped one keeps
   // its stats even when nothing streamed (`hasTurnStats`)
   const stats = hasTurnStats(turn);
+  const canShare = Boolean(ctx?.share && hasTurnContent(turn));
   const copyLabel = copyState.state === 'copied' ? t('code.copied') : copyState.state === 'failed' ? t('code.copyFailed') : t('turn.copy');
-  if (!stats && !ctx?.fork) return null;
+  if (!stats && !ctx?.fork && !canShare) return null;
   return (
     <div
       data-open={statsOpen || forkOpen || undefined}
@@ -71,6 +73,20 @@ export function TurnActions({ turn, turnIndex, settings }: { turn: AgentTurn; tu
             )}
           </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
         </DropdownMenu.Root>
+      )}
+      {canShare && (
+        <IconButton
+          size="sm"
+          data-part="turn-share"
+          title={t('turn.share')}
+          aria-label={t('turn.share')}
+          onClick={e => {
+            const msg = e.currentTarget.closest<HTMLElement>('[data-part="agent-message"]');
+            if (msg) ctx?.share?.(turnIndex, msg);
+          }}
+        >
+          <Share strokeWidth={1.5} />
+        </IconButton>
       )}
       {stats && <Popover.Root open={statsOpen} onOpenChange={setStatsOpen}>
         <Popover.Trigger render={

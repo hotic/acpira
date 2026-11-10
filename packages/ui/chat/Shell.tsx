@@ -65,6 +65,9 @@ import { Lightbox } from './Lightbox';
 import { OpenToolFileContext, AsyncTaskStopContext, CommandStopContext, BlobUrlContext, WidgetPromptContext, DiffSourceContext, FileStagerContext, OpenBlobContext, OpenSessionContext, SessionTitleContext, SkillDescriptionContext, ToolFileActionsContext, resolveSessionPath, type FileStager, type ToolFileActions } from './fileLinks';
 import { skillDescriptions } from './slashCommands';
 import { TurnActionsContext } from './TurnActions';
+import { SharePreviewDialog, type SharePayload } from './SharePreview';
+import { cloneMessageContent, cloneSelectionContent, turnIndexOfNode } from './shareCapture';
+import { turnShareMeta } from './turnActionHelpers';
 import { ForkBoundary } from './ForkBoundary';
 import { SubagentInspector } from './subagents/SubagentInspector';
 import { InspectorSplitter, capToChat, clamp, fitPaneBounds, usePreferredPaneWidth, type PaneBounds } from './subagents/InspectorSplitter';
@@ -1061,12 +1064,44 @@ export function Shell(p: ShellProps) {
   const onPermission = useCallback((blockId: string, optionId: string) => {
     if (p.activeSessionId) on.permission(p.activeSessionId, blockId, optionId);
   }, [p.activeSessionId, on.permission]);
-  // Per-turn actions (copy / fork / stats): memoized like the other contexts so a stream push does not re-render consumers
+  // Per-turn actions (copy / fork / share / stats): memoized like the other contexts so a stream push does not re-render consumers
+  const [sharePayload, setSharePayload] = useState<SharePayload>();
+  useEffect(() => setSharePayload(undefined), [p.activeSessionId]);
+  const shareInputRef = useRef({ title: p.title, agent: p.agent, controls: p.controls, turns: held.turns, shapes: p.modelShapes });
+  shareInputRef.current = { title: p.title, agent: p.agent, controls: p.controls, turns: held.turns, shapes: p.modelShapes };
+
+  const shareMetaAt = useCallback((turnIndex?: number) => {
+    const { title, agent, controls, turns, shapes } = shareInputRef.current;
+    const turn = turnIndex !== undefined ? turns[turnIndex] : undefined;
+    let usage = turn?.role === 'agent' ? turn.usage : undefined;
+    let settings = turn?.role === 'user' ? turn.settings : undefined;
+    if (turn?.role === 'agent' && turnIndex !== undefined) {
+      for (let i = turnIndex - 1; i >= 0; i--) {
+        const prev = turns[i];
+        if (prev?.role === 'user' && !isContinue(prev)) { settings = prev.settings; break; }
+      }
+    } else if (turn?.role === 'user' && turnIndex !== undefined) {
+      const next = turns[turnIndex + 1];
+      if (next?.role === 'agent') usage = next.usage;
+    }
+    return turnShareMeta({ sessionTitle: title, agent, controls, usage, settings, shapes });
+  }, []);
+
+  const shareTurn = useCallback((turnIndex: number, messageEl: HTMLElement) => {
+    setSharePayload({ meta: shareMetaAt(turnIndex), node: cloneMessageContent(messageEl) });
+  }, [shareMetaAt]);
+
+  const shareSelection = useCallback((range: Range) => {
+    const turnIndex = turnIndexOfNode(range.startContainer) ?? turnIndexOfNode(range.commonAncestorContainer);
+    setSharePayload({ meta: shareMetaAt(turnIndex), node: cloneSelectionContent(range) });
+  }, [shareMetaAt]);
+
   const turnActions = useMemo(() => p.activeSessionId ? {
     sessionId: p.activeSessionId, controls: p.controls, agents: p.agents, agentId: p.agent.id,
     fork: on.forkSession
       ? (turnIndex: number, agent: AgentId) => on.forkSession!(p.activeSessionId!, turnIndex, agent === p.agent.id ? undefined : agent) : undefined,
-  } : undefined, [p.activeSessionId, p.controls, p.agents, p.agent.id, on.forkSession]);
+    share: shareTurn,
+  } : undefined, [p.activeSessionId, p.controls, p.agents, p.agent.id, on.forkSession, shareTurn]);
 
   return (
     <DesktopContext.Provider value={desktop}>
@@ -1220,7 +1255,7 @@ export function Shell(p: ShellProps) {
               {/* The overlay inspector replaces this block visually; it stays mounted (scroll + draft survive) but inert */}
               <div inert={overlayInspect || undefined} aria-hidden={overlayInspect || undefined} className={cn('flex min-h-0 flex-1 flex-col', desktop && p.noProject && 'hidden')}>
                 <div className="relative flex min-h-0 flex-1 flex-col">
-                  <QuoteToolbar root={threadContent} />
+                  <QuoteToolbar root={threadContent} onShare={shareSelection} />
                   <PlanDocumentContext.Provider value={planDoc}>
                     <HistoryContext.Provider value={history}>
                     <HistoryComposerContext.Provider value={history?.editing !== undefined ? composerProps : undefined}>
@@ -1381,6 +1416,9 @@ export function Shell(p: ShellProps) {
             openInEditor={openInEditor ? () => openInEditor(filePreview.path) : undefined}
             onClose={() => setFilePreview(null)}
           />
+        )}
+        {sharePayload && (
+          <SharePreviewDialog payload={sharePayload} onClose={() => setSharePayload(undefined)} />
         )}
         {remotePick && <RemoteFolderDialog alias={remotePick} onClose={() => setRemotePick(undefined)}
           onAdd={folder => { setRemotePick(undefined); openProject(folder); }} />}

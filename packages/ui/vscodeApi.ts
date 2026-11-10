@@ -16,6 +16,8 @@ export interface VsCodeApi {
   // An image the web clipboard would flatten (an animated GIF keeps only its first frame as PNG): the shell writes the
   // bytes to a temporary file named `name` and puts that file, with the raw image data, on the system clipboard
   copyImage?(data: Uint8Array, name: string): Promise<void>;
+  // Save a PNG image through the native save dialog; resolves false when the user dismisses the dialog
+  saveImage?(data: Uint8Array, name: string): Promise<boolean>;
 }
 
 declare global {
@@ -83,6 +85,26 @@ export function hostImageCopy(): ((data: Uint8Array, name: string) => Promise<vo
     };
     window.addEventListener('message', settle);
     api.postMessage({ type: 'copyImage', id, data, name });
+  });
+}
+
+// The shell's native save dialog for a PNG screenshot (desktop init.js or VS Code saveImage); undefined where a browser
+// download link handles it instead
+export function hostImageSave(): ((data: Uint8Array, name: string) => Promise<boolean>) | undefined {
+  const api = host();
+  if (api?.saveImage) return (data, name) => api.saveImage!(data, name);
+  if (!api || typeof window === 'undefined' || !window.__acpira?.imageSave) return undefined;
+  return (data, name) => new Promise<boolean>((resolve, reject) => {
+    const id = `save:${++imageCopySeq}`;
+    const settle = (e: MessageEvent) => {
+      const m = e.data as { type?: string; id?: string; saved?: boolean; error?: string } | undefined;
+      if (m?.type !== 'savedImage' || m.id !== id) return;
+      window.removeEventListener('message', settle);
+      if (m.error) reject(new Error(m.error));
+      else resolve(m.saved === true);
+    };
+    window.addEventListener('message', settle);
+    api.postMessage({ type: 'saveImage', id, data, name });
   });
 }
 
