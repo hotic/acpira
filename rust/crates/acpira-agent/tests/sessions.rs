@@ -327,3 +327,36 @@ async fn a_resumed_session_reports_its_context_before_its_next_call() {
   assert!(cats.contains(&"system") && cats.contains(&"chat"), "{cats:?}");
   assert_eq!(server.requests().len(), 1, "no model call is made for it");
 }
+
+#[tokio::test]
+async fn moving_a_session_to_another_folder_recomposes_its_system_prompt_for_that_folder() {
+  let h = Harness::start().await;
+  let server = MockModel::start();
+  h.providers(&server.base_url(), json!([{ "id": "m1" }]));
+  let old_dir = h.cwd().to_path_buf();
+  std::fs::write(old_dir.join("AGENTS.md"), "Old repo rule.\n").unwrap();
+  let sid = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
+  server.push(mock::text("in old"));
+  prompt(&h, &sid, "where are we?").await;
+  let sys0 = server.requests()[0].body["messages"][0]["content"].as_str().unwrap().to_owned();
+  assert!(sys0.contains(&format!("Session folder: {}", old_dir.display())) && sys0.contains("Old repo rule."), "{sys0}");
+
+  // Reopened in another project folder (`moveSession`), the system prompt drops the old folder and its AGENTS.md
+  let new_dir = tempfile::tempdir().unwrap();
+  std::fs::write(new_dir.path().join("AGENTS.md"), "New repo rule.\n").unwrap();
+  h.conn.request("session/resume", json!({ "sessionId": sid, "cwd": new_dir.path(), "mcpServers": [] })).await.unwrap();
+  server.push(mock::text("in new"));
+  prompt(&h, &sid, "and now?").await;
+  let sys1 = server.requests()[1].body["messages"][0]["content"].as_str().unwrap().to_owned();
+  assert!(sys1.contains(&format!("Session folder: {}", new_dir.path().display())) && sys1.contains("New repo rule."), "{sys1}");
+  assert!(!sys1.contains(&old_dir.display().to_string()) && !sys1.contains("Old repo rule."), "{sys1}");
+
+  // A later reopen in that same destination folder keeps the newly recorded prompt without recomposing again
+  let prompts_before = events(&h, &sid).into_iter().filter(|e| e["type"] == "prompt").count();
+  let h = reopen(h).await;
+  h.conn.request("session/resume", json!({ "sessionId": sid, "cwd": new_dir.path(), "mcpServers": [] })).await.unwrap();
+  server.push(mock::text("still new"));
+  prompt(&h, &sid, "still here?").await;
+  let prompts_after = events(&h, &sid).into_iter().filter(|e| e["type"] == "prompt").count();
+  assert_eq!(prompts_after, prompts_before);
+}

@@ -196,7 +196,7 @@ impl Session {
   /// Record a newly composed system prompt
   pub fn save_prompt(&self, p: &crate::prompt::Composed) {
     self.store.append(json!({
-      "type": "prompt", "variant": p.variant, "version": p.version, "digest": p.digest, "text": p.text,
+      "type": "prompt", "cwd": self.cwd, "variant": p.variant, "version": p.version, "digest": p.digest, "text": p.text,
       "sampling": p.sampling, "thinking": p.thinking, "overrides": p.overrides, "sections": p.sections,
     }));
   }
@@ -500,7 +500,21 @@ impl Server {
     let id = str_param(params, "sessionId")?;
     let gone = || RpcError::new(-32002, format!("Session not found: {id}"));
     let path = self.session_file(id);
-    let open = self.sessions.lock().get(id).cloned();
+    let want_cwd = params.get("cwd").and_then(Value::as_str).filter(|c| !c.is_empty()).map(PathBuf::from);
+    let open = {
+      let mut sessions = self.sessions.lock();
+      match sessions.get(id).cloned() {
+        Some(s) if want_cwd.as_ref().is_some_and(|c| c != &s.cwd) => {
+          if s.state.lock().turn.is_some() {
+            return Err(RpcError::new(-32603, "A turn is already running in this session"));
+          }
+          s.store.flush();
+          sessions.remove(id);
+          None
+        }
+        other => other,
+      }
+    };
     let (session, updates) = match open {
       Some(s) => {
         s.store.flush();
@@ -512,9 +526,9 @@ impl Server {
         if loaded.id != id {
           return Err(gone());
         }
-        let cwd = params.get("cwd").and_then(Value::as_str).filter(|c| !c.is_empty()).map(PathBuf::from).unwrap_or(loaded.cwd.clone());
+        let cwd = want_cwd.unwrap_or_else(|| loaded.cwd.clone());
         let mut revived = self.revive(id, cwd, &loaded, path, params.get("mcpServers").unwrap_or(&Value::Null), crate::remote::Remote::of(params));
-        // The recorded prompt stays as it was; these apply when a model switch composes it again
+        // A session reopened in the same folder keeps its recorded prompt; moving it to another folder drops it so the next turn recomposes it
         revived.layers = layers_of(params);
         revived.prompts = Arc::new(crate::prompt::Library::load(&self.places_of(&revived.cwd, revived.remote.as_deref(), revived.layers.clone())));
         let session = Arc::new(revived);
@@ -576,23 +590,29 @@ impl Server {
     // The servers list their tools as the session reopens, with the sidekick the engine holds for it: this one
     st.sidekick_told = sidekick_of(&config, &st);
     if let Some(p) = &loaded.prompt {
-      let ps = |k: &str| p.get(k).and_then(Value::as_str).unwrap_or("").to_owned();
-      st.prompt = crate::prompt::Composed {
-        text: ps("text"),
-        variant: ps("variant"),
-        version: ps("version"),
-        digest: ps("digest"),
-        sampling: p.get("sampling").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default(),
-        thinking: p.get("thinking").cloned().and_then(|v| serde_json::from_value(v).ok()),
-        overrides: p.get("overrides").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default(),
-        sections: p.get("sections").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default(),
-      };
+      let prompt_cwd = p.get("cwd").and_then(Value::as_str).map(PathBuf::from).unwrap_or_else(|| loaded.cwd.clone());
+      if prompt_cwd == cwd {
+        let ps = |k: &str| p.get(k).and_then(Value::as_str).unwrap_or("").to_owned();
+        st.prompt = crate::prompt::Composed {
+          text: ps("text"),
+          variant: ps("variant"),
+          version: ps("version"),
+          digest: ps("digest"),
+          sampling: p.get("sampling").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default(),
+          thinking: p.get("thinking").cloned().and_then(|v| serde_json::from_value(v).ok()),
+          overrides: p.get("overrides").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default(),
+          sections: p.get("sections").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default(),
+        };
+      }
     }
     // A turn cut off by a crash leaves calls without results; the next request must be well formed
     let before = st.items.len();
     crate::turn::settle(&mut st);
     let store = Store::new(path, id, &cwd);
     store.set_items_logged(loaded.logged);
+    if loaded.cwd != cwd {
+      store.prelude(json!({ "type": "session", "id": id, "cwd": cwd, "format": store::FORMAT }));
+    }
     for item in &st.items[before..] {
       store.item(item);
     }
@@ -607,7 +627,7 @@ impl Server {
       .max()
       .unwrap_or(0);
     let mcp = crate::mcp::Hub::start(mcp_servers, &self.process_dir(&cwd, remote.is_some()));
-    // Its commands use the folder from now on; the recorded prompt names it only once a model switch composes it again
+    // Reopened in another folder (`moveSession`), both commands and the next turn's recomposed prompt use the new folder
     let scratch = self.scratch_of(&cwd, id, remote.is_some(), &config);
     Session { id: id.to_owned(), cwd, state: parking_lot::Mutex::new(st), store, tool_seq: AtomicU64::new(seq), jobs: Default::default(), mcp, remote, layers: Layers::default(), prompts: Default::default(), permissions_changed: Default::default(), scratch }
   }
