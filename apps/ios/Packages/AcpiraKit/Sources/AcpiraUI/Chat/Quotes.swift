@@ -113,9 +113,10 @@ enum QuoteText {
 }
 
 /// The staged quotes as one chip (Quotes.tsx QuoteChip): a tap opens their card, where each one shows its text and
-/// takes a comment or leaves
+/// takes a comment or leaves. Read-only on a sent or queued prompt: the card is a receipt of the quotes and comments
 struct QuoteChip: View {
   @Binding var items: [Attachment]
+  var readOnly = false
   @State private var open = false
   @Environment(\.initialPopup) private var initialPopup
 
@@ -138,12 +139,12 @@ struct QuoteChip: View {
     }
     .buttonStyle(.plain)
     .popover(isPresented: $open) {
-      QuoteCard(items: $items, places: quotes) { open = false }
+      QuoteCard(items: $items, readOnly: readOnly) { open = false }
         .presentationCompactAdaptation(.popover)
     }
     .onAppear {
-      // `-popup quotes`: the card open on launch (screenshots)
-      if initialPopup == "quotes" { open = true }
+      // `-popup quotes`: the composer's card open on launch (screenshots)
+      if initialPopup == "quotes" && !readOnly { open = true }
     }
   }
 }
@@ -151,14 +152,18 @@ struct QuoteChip: View {
 /// The quotes' card: numbered entries, each its text (five lines at most), a comment field and its removal
 private struct QuoteCard: View {
   @Binding var items: [Attachment]
-  let places: [Int]
+  var readOnly = false
   var onEmpty: () -> Void
+
+  /// The quotes' places, read from the live items: a snapshot from the chip goes stale once a removal shortens
+  /// the array, and the next pass would index past its end
+  private var places: [Int] { items.indices.filter { if case .quote = items[$0] { true } else { false } } }
 
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: Metrics.s3) {
         ForEach(Array(places.enumerated()), id: \.element) { n, at in
-          if case .quote(let text, _) = items[at] {
+          if items.indices.contains(at), case .quote(let text, let note) = items[at] {
             HStack(alignment: .firstTextBaseline, spacing: Metrics.gapHalf) {
               Text(web: "\(n + 1).", paragraph: false).textStyle(TypeScale.text3).foregroundStyle(Palette.fg3).monospacedDigit()
               VStack(alignment: .leading, spacing: Metrics.s0_5) {
@@ -168,18 +173,32 @@ private struct QuoteCard: View {
                   .foregroundStyle(Palette.fg1)
                   .lineLimit(5)
                   .fixedSize(horizontal: false, vertical: true)
-                TextField(text: comment(at), axis: .vertical) {
-                  Text(web: t("quote.commentPlaceholder")).foregroundStyle(Palette.fg3)
+                if readOnly {
+                  // A sent quote shows its comment under a caption, as the desktop's receipt does
+                  if let note {
+                    Text(web: t("quote.comment"), paragraph: false).textStyle(TypeScale.text3).foregroundStyle(Palette.fg3)
+                      .padding(.top, Metrics.s2)
+                    Text(web: note)
+                      .textStyle(TypeScale.text2)
+                      .foregroundStyle(Palette.fg1)
+                      .fixedSize(horizontal: false, vertical: true)
+                  }
+                } else {
+                  TextField(text: comment(at), axis: .vertical) {
+                    Text(web: t("quote.commentPlaceholder")).foregroundStyle(Palette.fg3)
+                  }
+                  .textStyle(TypeScale.text2)
+                  .foregroundStyle(Palette.fgStrong)
+                  .lineLimit(1...4)
+                  .accessibilityLabel(Text(web: t("quote.comment")))
+                  .padding(.top, Metrics.s1)
                 }
-                .textStyle(TypeScale.text2)
-                .foregroundStyle(Palette.fgStrong)
-                .lineLimit(1...4)
-                .accessibilityLabel(Text(web: t("quote.comment")))
-                .padding(.top, Metrics.s1)
               }
               .frame(maxWidth: .infinity, alignment: .leading)
-              IconButton(.trash2, size: .sm, label: t("quote.remove")) { remove(at) }
-                .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] }
+              if !readOnly {
+                IconButton(.trash2, size: .sm, label: t("quote.remove")) { remove(at) }
+                  .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] }
+              }
             }
           }
         }

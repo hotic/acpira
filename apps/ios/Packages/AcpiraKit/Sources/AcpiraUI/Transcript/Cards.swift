@@ -143,7 +143,7 @@ struct SteeredMessage: View {
   }
 }
 
-/// Attachment pills and image tiles, wrapping
+/// Attachment pills and image tiles, wrapping; quotes ride one annotations chip ahead of them
 struct TurnAttachments: View {
   let attachments: [Attachment]
   @State private var preview: URL?
@@ -153,6 +153,10 @@ struct TurnAttachments: View {
   var body: some View {
     let opener = FileOpener(model: model, session: media.session) { preview = $0 }
     FlowLayout(spacing: Metrics.gap, alignment: .trailing) {
+      // The prompt's quotes lead as one read-only annotations chip (Attachments.tsx TurnAttachments)
+      if attachments.contains(where: { if case .quote = $0 { true } else { false } }) {
+        QuoteChip(items: .constant(attachments), readOnly: true)
+      }
       ForEach(Array(attachments.enumerated()), id: \.offset) { _, item in
         switch item {
         case .image(let blob, _, let name):
