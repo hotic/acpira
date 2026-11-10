@@ -181,13 +181,14 @@ class SessionLists(private val model: AppModel, private val context: Context, pr
   fun sending(view: SessionView, text: String) {
     if (pending[view.id]?.working == true) return
     val existing = model.summaries.firstOrNull { it.id == view.id }
+    val remote = if (model.live) model.engineSummaries.firstOrNull { it.id == view.id } else existing
     val original = existing?.title ?: view.title
     val untitled = original.isEmpty() || original == t("session.untitled")
     pending[view.id] = PendingSummary(
       originalTitle = original,
       title = if (view.turns.isEmpty() && view.queued.isNullOrEmpty() && untitled && text.isNotEmpty()) titleFrom(text) else null,
       turns = view.turns.size,
-      updatedAt = maxOf(existing?.updatedAt.orEmpty(), view.updatedAt),
+      updatedAt = maxOf(remote?.updatedAt.orEmpty(), view.updatedAt),
     )
     val stamp = model.now().toString()
     // The session push can precede its first list push: it must already show when the chat is left
