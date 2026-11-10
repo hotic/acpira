@@ -25,14 +25,17 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import cc.hotic.acpira.design.GooMotion
+import cc.hotic.acpira.design.Haptic
 import cc.hotic.acpira.design.IconStore
 import cc.hotic.acpira.design.Lucide
 import cc.hotic.acpira.design.Metrics
 import cc.hotic.acpira.design.Palette
 import cc.hotic.acpira.design.VendorMark
+import cc.hotic.acpira.design.play
 import cc.hotic.acpira.design.sidekickBadge
 import cc.hotic.acpira.design.sidekickNotch
 import cc.hotic.acpira.design.sidekickPulse
@@ -106,7 +109,7 @@ internal fun sidekickBean(c: ModelChoices, enter: () -> Unit): Bean? {
  * model has levels, and its Fast while the model has a fast tier, flipped on a tap. A Fusion pair's level is its
  * sidekick list alone
  */
-internal fun sidekickBeans(c: ModelChoices, onSetConfig: (String, String) -> Unit, fold: () -> Unit): List<Bean> {
+internal fun sidekickBeans(c: ModelChoices, onSetConfig: (String, String) -> Unit, fold: () -> Unit, haptics: HapticFeedback): List<Bean> {
   if (c.fusion != null) return listOf(fusionModelBean(c, sidekick = true, fold))
   val sk = c.sidekick ?: return emptyList()
   val current = sk.value ?: ComposerControls.noSidekick
@@ -147,7 +150,9 @@ internal fun sidekickBeans(c: ModelChoices, onSetConfig: (String, String) -> Uni
   }
   val fast = c.sidekickFast
   if (picked != null && fast != null) {
-    out += Bean("sidekick.fast", "Fast", "Fast", glyph = { FastGlyph(fast.on, Metrics.barIcon) }, tap = { if (!fast.disabled) fast.set(!fast.on) })
+    out += Bean("sidekick.fast", "Fast", "Fast", glyph = { FastGlyph(fast.on, Metrics.barIcon) }, tap = {
+      if (!fast.disabled) { haptics.play(Haptic.Pick); fast.set(!fast.on) }
+    })
   }
   return out
 }

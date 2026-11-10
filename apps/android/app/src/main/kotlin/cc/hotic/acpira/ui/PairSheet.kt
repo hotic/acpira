@@ -58,6 +58,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
@@ -67,10 +68,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
+import cc.hotic.acpira.design.Haptic
 import cc.hotic.acpira.design.Lucide
 import cc.hotic.acpira.design.Metrics
 import cc.hotic.acpira.design.Palette
 import cc.hotic.acpira.design.Type
+import cc.hotic.acpira.design.play
 import cc.hotic.acpira.i18n.t
 import cc.hotic.acpira.logic.PairCodeRows
 import cc.hotic.acpira.store.PairLink
@@ -388,6 +391,10 @@ private fun PairStage(
   val followed = joined != null && pairing.selected?.id == joined.id
   val link = if (followed) pairing.link else null
   val pairedAt = remember(joined) { if (joined != null) System.nanoTime() else null }
+  // The paired moment, with the computer's card celebrating the same answer; a refused or unanswered link
+  val haptics = LocalHapticFeedback.current
+  LaunchedEffect(joined != null) { if (joined != null) haptics.play(Haptic.Paired) }
+  LaunchedEffect(phase is PairPhase.Failed) { if (phase is PairPhase.Failed) haptics.play(Haptic.Failed) }
   // Connected: the sheet goes once the paired moment has held as long as the card holds it; a wire that fails right
   // after pairing leaves the sheet too, and the list says what happened
   LaunchedEffect(joined, link is PairLink.Online, link is PairLink.Failed) {
@@ -443,6 +450,7 @@ private fun PairStage(
 @Composable
 private fun PairCodePage(pairing: PairingModel, computer: NearbyComputer, onJoined: (PairedComputer) -> Unit) {
   val scope = rememberCoroutineScope()
+  val haptics = LocalHapticFeedback.current
   val focus = remember { FocusRequester() }
   var code by remember { mutableStateOf("") }
   var checking by remember { mutableStateOf(false) }
@@ -463,6 +471,7 @@ private fun PairCodePage(pairing: PairingModel, computer: NearbyComputer, onJoin
         throw e
       } catch (e: Exception) {
         checking = false
+        haptics.play(Haptic.Failed)
         error = codeMessage(e, computer.name)
         code = ""
       }

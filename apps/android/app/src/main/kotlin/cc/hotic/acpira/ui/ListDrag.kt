@@ -51,9 +51,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import cc.hotic.acpira.design.Haptic
 import cc.hotic.acpira.design.Metrics
 import cc.hotic.acpira.design.Palette
 import cc.hotic.acpira.design.Type
+import cc.hotic.acpira.design.play
 import kotlin.math.roundToInt
 
 // Drag and drop in the by-project list (apps/ios Sessions/ListDrag.swift, the desktop list's drags in SessionList.tsx):
@@ -185,7 +187,12 @@ fun Modifier.listDrag(
         val at = coords ?: return@detectDragGesturesAfterLongPress
         if (drag.held != null) drag.move(at.localToRoot(change.position))
       },
-      onDragEnd = { drag.end(drop) },
+      onDragEnd = {
+        drag.end { item, target ->
+          haptics.play(Haptic.Drop)
+          drop(item, target)
+        }
+      },
       onDragCancel = { drag.end(null) },
     )
   }

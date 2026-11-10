@@ -27,15 +27,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import cc.hotic.acpira.design.Haptic
 import cc.hotic.acpira.design.Metrics
 import cc.hotic.acpira.design.Palette
 import cc.hotic.acpira.design.Type
 import cc.hotic.acpira.design.VendorMark
+import cc.hotic.acpira.design.play
 import cc.hotic.acpira.model.AgentInfo
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -65,6 +68,7 @@ fun AgentRing(
   modifier: Modifier = Modifier,
 ) {
   val density = LocalDensity.current
+  val haptics = LocalHapticFeedback.current
   val n = others.size
   val radius = with(density) { max(Metrics.ringRadiusMin.toPx(), Metrics.ringPitch.toPx() * n / (2 * PI.toFloat())) }
   fun spot(i: Int): Offset {
@@ -111,6 +115,7 @@ fun AgentRing(
   fun pick(i: Int) {
     if (landing != null) return
     val a = others[i]
+    haptics.play(Haptic.Pick)
     if (!motion) {
       onSelect(a.id)
       onOpen(false)
