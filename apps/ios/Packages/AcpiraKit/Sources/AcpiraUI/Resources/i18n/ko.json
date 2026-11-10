@@ -1848,6 +1848,8 @@
   "connections.identityValue": "키 {path}",
   "connections.projectsDesc": "이 호스트에서 작업할 폴더",
   "connections.noProjects": "아직 폴더가 없음",
+  "connections.models": "모델 소스 가져가기",
+  "connections.modelsDesc": "모델 소스와 키가 이 호스트에 복사됩니다",
   "storage.cleanup.desc": "모든 정리는 실행 전에 확인함",
   "storage.residue.entryShort": "더 이상 쓰이지 않음",
   "storage.open": "열기",
