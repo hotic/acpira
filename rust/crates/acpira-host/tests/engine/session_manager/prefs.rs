@@ -206,9 +206,16 @@ async fn picks_made_while_a_new_session_starts_win_over_the_remembered_ones() {
   m.handle(json!({ "type": "setMode", "id": "plan" })).await;
   // shown at once, before the agent is up
   let shown = m.active().unwrap();
+  let second = shown["id"].as_str().unwrap().to_owned();
   assert_eq!(shown["status"], "starting");
   assert_eq!(option_values(&shown)[1], json!("high"));
+  assert_eq!(m.m.sessions().into_iter().find(|s| s.id == second).and_then(|s| s.state), None);
   m.handle(json!({ "type": "send", "text": "inspect-history" })).await;
+  // A prompt sent while the session is still starting already counts as working in the list
+  assert_eq!(
+    m.m.sessions().into_iter().find(|s| s.id == second).and_then(|s| s.state),
+    Some(acpira_shared::transcript::SummaryState::Working)
+  );
   opening.await.unwrap();
   until(|| m.active().is_some_and(|a| a["running"] == false && turns_len(Some(a.clone())) == 2), 5000).await;
 
