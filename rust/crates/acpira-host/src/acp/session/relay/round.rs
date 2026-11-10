@@ -73,7 +73,7 @@ impl AcpSession {
     let (edits, anywhere) = round_edits(self.core.lock().tree.relay_turns(&r.node).unwrap_or(&[]));
     let changed = match &before {
       Some(b) if anywhere => match &host {
-        Some(h) => Some(h.snapshot(&watch).await.changed_since(b)),
+        Some(h) => Some(h.changes(&watch, b).await.1),
         None => Some(vec![]),
       },
       Some(_) => Some(vec![]),

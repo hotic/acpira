@@ -498,7 +498,14 @@ async fn dispatch(op: &str, a: Value, id: u64, out: &Out, stdin: Option<mpsc::Un
       for w in a.get("watch").and_then(Value::as_array).into_iter().flatten() {
         watch.push(host_path(w.as_str().unwrap_or(""))?);
       }
-      Ok(unmapped(crate::hooks::snapshot::Snapshot::take(&watch).await.to_json()))
+      let now = crate::hooks::snapshot::Snapshot::take(&watch).await;
+      let mut out = now.to_json();
+      // With the snapshot an earlier call answered: what changed since, compared here where the files are
+      if let Some(before) = a.get("before") {
+        let before = crate::hooks::snapshot::Snapshot::from_json(&mapped(before.clone()));
+        out["changed"] = json!(now.changed_since(&before).await);
+      }
+      Ok(unmapped(out))
     }
     // This host's session store, for the engines that keep one history per host (`host_store.rs`)
     "storeStat" | "storePut" | "storeBlob" | "storeRemove" => super::host_store::serve(op, &a, stdin).await,

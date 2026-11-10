@@ -688,14 +688,18 @@ impl AcpSession {
       self.gate_decided(&cfg, reasons).await;
       return;
     };
-    let after = if cfg.tracks_changes() { Some(host.snapshot(&cfg.watch).await) } else { None };
+    let (after, seen) = match &before {
+      _ if !cfg.tracks_changes() => (None, vec![]),
+      Some(b) => {
+        let (after, seen) = host.changes(&cfg.watch, b).await;
+        (Some(after), seen)
+      }
+      None => (Some(host.snapshot(&cfg.watch).await), vec![]),
+    };
     // What the span changed: the work trees' own account when one of its tools could have changed any file (a span of
     // reads or of edits naming their files leaves whatever else changed to whoever else shares the trees), plus the edit
     // tool calls (files outside the watched trees too)
-    let mut turn: Vec<(PathBuf, Source)> = match (&before, &after) {
-      (Some(b), Some(a)) if tools.reach == Reach::Any => a.changed_since(b).into_iter().map(|p| (p, Source::Snapshot)).collect(),
-      _ => vec![],
-    };
+    let mut turn: Vec<(PathBuf, Source)> = if tools.reach == Reach::Any { seen.into_iter().map(|p| (p, Source::Snapshot)).collect() } else { vec![] };
     self.core.lock().hooks.settled = after;
     let asked: Vec<PathBuf> = tools.asked.iter().map(|p| self.absolute(p)).collect();
     let unasked: Vec<PathBuf> = tools.unasked.iter().map(|p| self.absolute(p)).collect();
