@@ -120,7 +120,7 @@ class AppModel(
    * local feedback on top), and its revision: 0 for a whole list, null after a patch that did not fit until the whole
    * list asked for lands, so the patches in flight meanwhile neither apply nor ask again (apps/ios engineSummaries)
    */
-  private var engineSummaries: List<SessionSummary> = emptyList()
+  internal var engineSummaries: List<SessionSummary> = emptyList()
   private var engineListRev: Int? = 0
   var settings by mutableStateOf(SettingsView())
   /** The views the screens show, by session id */

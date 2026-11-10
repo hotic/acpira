@@ -16,12 +16,13 @@ extension AppModel {
   func sendingSummary(_ view: SessionView, text: String) {
     guard pendingSummaries[view.id]?.working != true else { return }
     let existing = summaries.first { $0.id == view.id }
+    let remote = link != nil ? engineSummaries.first { $0.id == view.id } : existing
     let original = existing?.title ?? view.title
     let untitled = original.isEmpty || original == t("session.untitled")
     pendingSummaries[view.id] = PendingSummary(
       originalTitle: original,
       title: view.turns.isEmpty && view.queued?.isEmpty != false && untitled && !text.isEmpty ? title(from: text) : nil,
-      turns: view.turns.count, updatedAt: max(existing?.updatedAt ?? "", view.updatedAt))
+      turns: view.turns.count, updatedAt: max(remote?.updatedAt ?? "", view.updatedAt))
     // The session push can precede its first list push. It must already be visible when the chat is swiped away.
     if existing == nil {
       summaries.insert(SessionSummary(id: view.id, title: original, agent: view.agent, cwd: view.cwd,
