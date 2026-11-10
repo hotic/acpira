@@ -1903,6 +1903,8 @@ export const ru = {
   'connections.identityValue': 'Ключ {path}',
   'connections.projectsDesc': 'Папки на этом хосте для работы',
   'connections.noProjects': 'Папок пока нет',
+  'connections.models': 'Переносить источники моделей',
+  'connections.modelsDesc': 'Источники моделей и их ключи копируются на этот хост',
   'storage.cleanup.desc': 'Каждая очистка проверяется перед запуском',
   'storage.residue.entryShort': 'Больше ничем не используется',
   'storage.open': 'Открыть',

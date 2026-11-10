@@ -73,6 +73,9 @@ struct Saved {
   /// What the first connection found behind the alias (`/etc/machine-id`, the Mac's hardware UUID)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   machine_id: Option<String>,
+  /// This machine's model sources stay off the host (`host_models.rs`)
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  models_off: bool,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -197,6 +200,7 @@ impl Connections {
       .map(|e| ConnectionView {
         alias: e.saved.alias.clone(),
         disabled: e.saved.disabled,
+        models_off: e.saved.models_off,
         state: e.live.state,
         step: e.live.step,
         detail: e.live.detail.clone(),
@@ -340,7 +344,7 @@ impl Connections {
         self
           .edit(move |hosts| match hosts.iter_mut().find(|h| h.alias == a) {
             Some(h) => h.disabled = false,
-            None => hosts.push(Saved { alias: a, disabled: false, machine_id: None }),
+            None => hosts.push(Saved { alias: a, disabled: false, machine_id: None, models_off: false }),
           })
           .await?;
         self.connect(&alias, false);
@@ -356,6 +360,10 @@ impl Connections {
         }
         let a = alias.clone();
         self.edit(move |hosts| hosts.iter_mut().filter(|h| h.alias == a).for_each(|h| h.disabled = disabled)).await?;
+      }
+      ConnectionOp::SetModels { alias, on } => {
+        let a = alias.clone();
+        self.edit(move |hosts| hosts.iter_mut().filter(|h| h.alias == a).for_each(|h| h.models_off = !on)).await?;
       }
       ConnectionOp::Connect { alias, accept_new_machine } => {
         let disabled = self.hosts.lock().iter().find(|e| e.saved.alias == alias).map(|e| e.saved.disabled);

@@ -68,6 +68,8 @@ export interface ConnectionError { kind: ConnectFailure; step: ConnectStep; mess
 export interface ConnectionView {
   alias: string;
   disabled?: boolean;
+  /** This machine's model sources are not carried to the host */
+  modelsOff?: boolean;
   state: ConnectionState;
   /** While connecting: the step, and the newest line of what it does */
   step?: ConnectStep;
@@ -93,6 +95,8 @@ export type ConnectionOp =
   // Forget the host here; nothing on the host is touched
   | { op: 'remove'; alias: string }
   | { op: 'setDisabled'; alias: string; disabled: boolean }
+  // Whether this machine's model sources go to the host; off takes back what was brought
+  | { op: 'setModels'; alias: string; on: boolean }
   // acceptNewMachine: the alias now leads to another machine and the user confirmed it is the right one
   | { op: 'connect'; alias: string; acceptNewMachine?: boolean }
   | { op: 'disconnect'; alias: string }

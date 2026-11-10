@@ -1838,6 +1838,8 @@ export const de = {
   'connections.identityValue': 'Schlüssel {path}',
   'connections.projectsDesc': 'Ordner auf diesem Host, in denen gearbeitet wird',
   'connections.noProjects': 'Noch keine Ordner',
+  'connections.models': 'Modellquellen mitnehmen',
+  'connections.modelsDesc': 'Modellquellen und ihre Schlüssel werden auf diesen Host kopiert',
   'storage.cleanup.desc': 'Jede Bereinigung wird vor der Ausführung geprüft',
   'storage.residue.entryShort': 'Wird nicht mehr verwendet',
   'storage.open': 'Öffnen',

@@ -1847,6 +1847,8 @@
   "connections.identityValue": "Clave {path}",
   "connections.projectsDesc": "Carpetas de este host en las que trabajar",
   "connections.noProjects": "Aún no hay carpetas",
+  "connections.models": "Llevar las fuentes de modelos",
+  "connections.modelsDesc": "Las fuentes de modelos y sus claves se copian a este host",
   "storage.cleanup.desc": "Cada limpieza se revisa antes de ejecutarse",
   "storage.residue.entryShort": "Ya nada lo usa",
   "storage.open": "Abrir",

@@ -19,14 +19,34 @@ use acpira_shared::providers::{
 use crate::accounts::account_store::FileVault;
 use crate::store::file_lock::{with_file_lock, write_atomic};
 
+/// Told after every edit made through the store
+pub type ProvidersChanged = Arc<dyn Fn() + Send + Sync>;
+
 pub struct ProviderStore {
   file: PathBuf,
   vault: Arc<FileVault>,
+  on_change: parking_lot::RwLock<Option<ProvidersChanged>>,
 }
 
 impl ProviderStore {
   pub fn new(root: &Path, vault: Arc<FileVault>) -> Self {
-    ProviderStore { file: root.join(PROVIDERS_FILE), vault }
+    ProviderStore { file: root.join(PROVIDERS_FILE), vault, on_change: Default::default() }
+  }
+
+  pub fn set_change_hook(&self, hook: ProvidersChanged) {
+    *self.on_change.write() = Some(hook);
+  }
+
+  /// The sources that go to this machine's SSH hosts, with their keys (`remote/host_models.rs`)
+  pub async fn carried(&self) -> Result<crate::remote::host_models::Carried, String> {
+    let providers: Vec<Provider> = self.read().await?.providers.into_iter().filter(crate::remote::host_models::travels).collect();
+    let mut keys = std::collections::BTreeMap::new();
+    for p in &providers {
+      if let Some(k) = self.vault.get(&provider_secret_key(&p.id)).await.ok().flatten().filter(|k| !k.is_empty()) {
+        keys.insert(p.id.clone(), k);
+      }
+    }
+    Ok(crate::remote::host_models::Carried { providers, keys })
   }
 
   /// An absent file reads as no sources; Err carries why an existing one cannot be used
@@ -127,6 +147,16 @@ impl ProviderStore {
   }
 
   pub async fn apply(&self, action: ProviderAction) -> Result<()> {
+    let done = self.apply_action(action).await;
+    // Told even after a failure: a save may have written the entry before its key was refused
+    let hook = self.on_change.read().clone();
+    if let Some(f) = hook {
+      f();
+    }
+    done
+  }
+
+  async fn apply_action(&self, action: ProviderAction) -> Result<()> {
     match action {
       ProviderAction::Save { provider, key } => {
         let id = self.edit(|file| save(file, provider)).await?;
