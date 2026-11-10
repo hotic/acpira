@@ -190,9 +190,9 @@ struct ProseStyle {
   }
 }
 
-/// How many blocks, or items of one list, a prose stack draws before it asks for more. A model looping until its output
-/// limit wrote tens of thousands of paragraphs into one reply, and the thread lays a whole turn out in one cell, so
-/// drawing them all froze the app or got it killed
+/// How many blocks, items of one list or rows of one table a prose stack draws before it asks for more. A model
+/// looping until its output limit wrote tens of thousands of paragraphs into one reply, and the thread lays a whole
+/// turn out in one cell, so drawing them all froze the app or got it killed
 enum ProseCap {
   static let page = 200
 }
@@ -432,9 +432,20 @@ struct ProseTable: View {
   let rows: [[[MDInline]]]
   let style: ProseStyle
   @State private var width: CGFloat = 0
+  @State private var shown = ProseCap.page
 
   var body: some View {
-    Scroller(.horizontal) {
+    VStack(alignment: .leading, spacing: Metrics.gap) {
+      grid
+      if rows.count > shown {
+        ProseMore(rest: rows.count - shown) { shown += ProseCap.page }
+      }
+    }
+  }
+
+  private var grid: some View {
+    let drawn = rows.prefix(shown)
+    return Scroller(.horizontal) {
       Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
         GridRow {
           ForEach(Array(header.enumerated()), id: \.offset) { i, cell in
@@ -442,10 +453,10 @@ struct ProseTable: View {
           }
         }
         .background(Palette.hover)
-        ForEach(Array(rows.enumerated()), id: \.offset) { r, row in
+        ForEach(Array(drawn.enumerated()), id: \.offset) { r, row in
           GridRow {
             ForEach(Array(row.enumerated()), id: \.offset) { i, cell in
-              cellView(cell, column: i, head: false, last: r == rows.count - 1)
+              cellView(cell, column: i, head: false, last: r == drawn.count - 1)
             }
           }
         }
