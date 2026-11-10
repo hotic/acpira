@@ -759,7 +759,7 @@ struct TerminalOutput: View {
         parts.append(Text(web: line + end, paragraph: false))
       }
     }
-    return parts.reduce(Text(web: "")) { Text("\($0)\($1)") }
+    return Text.joined(parts)
   }
 }
 

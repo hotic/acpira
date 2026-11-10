@@ -97,4 +97,18 @@ extension Text {
   public init(web string: String, size: CGFloat = TypeScale.text1.size, paragraph: Bool = true) {
     self.init(CJKWidth.attributed(string, size: size, paragraph: paragraph))
   }
+
+  /// `parts` as one text, joined pairwise. Each interpolation nests its operands a level deeper and resolving a text
+  /// recurses through every level, so a left fold over one part per line (a long command's output) overflowed the
+  /// phone's 1 MB main-thread stack at a few hundred lines; pairwise the depth is log2 of the count
+  public static func joined(_ parts: [Text]) -> Text {
+    guard !parts.isEmpty else { return Text(web: "") }
+    var level = parts
+    while level.count > 1 {
+      level = stride(from: 0, to: level.count, by: 2).map { i in
+        i + 1 < level.count ? Text("\(level[i])\(level[i + 1])") : level[i]
+      }
+    }
+    return level[0]
+  }
 }

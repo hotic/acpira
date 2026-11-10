@@ -194,7 +194,7 @@ struct InlineBuilder {
   }
 
   func join(_ parts: [Text]) -> Text {
-    parts.reduce(Text(web: "")) { Text("\($0)\($1)") }
+    Text.joined(parts)
   }
 
   func piece(_ inline: MDInline, _ marks: Marks) -> Text {

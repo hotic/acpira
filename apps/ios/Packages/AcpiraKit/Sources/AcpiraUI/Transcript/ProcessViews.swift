@@ -638,13 +638,12 @@ private struct RetryOutput: View {
       let parts = a.text.components(separatedBy: "\n")
       return [(head, parts.first ?? "")] + parts.dropFirst().map { ("", $0) }
     }
-    let text = lines.enumerated().reduce(Text(web: "")) { acc, item in
-      let (i, line) = item
+    let text = Text.joined(lines.enumerated().map { i, line in
       let end = i < lines.count - 1 ? "\n" : ""
       let head = line.head.isEmpty ? Text(web: "  ", paragraph: false)
         : Text("\(Text(web: line.head, paragraph: false).foregroundStyle(Palette.fg3))\(Text(web: "  ", paragraph: false))")
-      return Text("\(acc)\(head)\(Text(web: (line.text.isEmpty ? " " : line.text) + end, paragraph: false))")
-    }
+      return Text("\(head)\(Text(web: (line.text.isEmpty ? " " : line.text) + end, paragraph: false))")
+    })
     OutputPane(top: Metrics.commandY) { text }
       .modifier(CodeOutputFrame())
   }
