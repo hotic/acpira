@@ -302,7 +302,11 @@ struct CommandStop: View {
 
   var body: some View {
     if !asked {
-      Button { asked = true; actions.stopCommand(id) } label: {
+      Button {
+        Haptics.play(.stop)
+        asked = true
+        actions.stopCommand(id)
+      } label: {
         Icon(.square, size: WebMetrics.chevron, strokeWidth: 1.5)
       }
       .buttonStyle(IconButtonStyle(side: WebMetrics.ctlSm))
