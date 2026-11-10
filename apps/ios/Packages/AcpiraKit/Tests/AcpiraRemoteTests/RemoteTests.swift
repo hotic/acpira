@@ -41,10 +41,10 @@ import Testing
   defer { try? FileManager.default.removeItem(at: dir) }
   let store = ComputerStore(directory: dir)
   let a = PairedComputer(id: "a", name: "Studio", relay: "https://relay.example./", addrs: ["192.168.1.2:5"], pairedAt: Date(timeIntervalSince1970: 1_000))
-  let b = PairedComputer(id: "b", name: "Air", pairedAt: Date(timeIntervalSince1970: 2_000))
+  let b = PairedComputer(id: "b", name: "Air", pairedAt: Date(timeIntervalSince1970: 2_000), version: "2.0.11")
   try store.save([a, b])
   let service = RemotePairingService(directory: dir, keys: MemoryIdentityStore(), relays: .off, observesLifecycle: false)
-  #expect(await service.computers().map(\.id) == ["b", "a"], "most recently paired first")
+  #expect(await service.computers() == [b, a], "versions survive a relaunch; older entries need none")
   #expect(throws: PairingError.invalidLink) { try service.computerName(link: "acpira://pair/nope") }
   await service.remove("b")
   #expect(store.load() == [a])
@@ -82,7 +82,14 @@ func pairsWithALocalGatewayAndReachesItsEngine() async throws {
   #expect(await service.computers() == [computer])
   #expect(!computer.addrs.isEmpty)
   await #expect(throws: PairingError.closed) { _ = try await service.pair(link: link) }
-  #expect(await service.presence(of: computer) == .online(.lan), "probed without an engine wire")
+  let presence = await service.presence(of: computer)
+  guard case .online = presence else {
+    Issue.record("the gateway did not answer the presence probe: \(String(describing: presence))")
+    return
+  }
+  let probedVersion = try #require(await service.computers().first?.version)
+  #expect(!probedVersion.isEmpty)
+  #expect(ComputerStore(directory: dir).load().first?.version == probedVersion)
 
   let connection = try await service.connect(computer)
   let hello = Hello(requestId: "swift-test", client: ClientInfo(name: "acpira-ios", version: "0", capabilities: EngineClient.capabilities),
@@ -109,10 +116,13 @@ func pairsWithALocalGatewayAndReachesItsEngine() async throws {
   }
   watchdog.cancel()
   #expect(connected?.protocolVersion == SidecarProtocol.version)
+  #expect(connected?.sidecar.version == probedVersion, "the reported version belongs to the remote engine, not this app")
+  #expect(await service.computers().first?.version == probedVersion)
   #expect(listed, "the view's init arrived through the gateway")
 
   var paths = connection.paths().makeAsyncIterator()
-  #expect(await paths.next() == .lan, "a gateway on this Mac is on the LAN")
+  // A local gateway may select public IPv6 or Tailscale rather than a private LAN address.
+  #expect(await paths.next() != nil, "the connection reports its actual path")
   let rtt = try await #require(connection as? RemoteConnection).probe(withinMs: 3_000)
   #expect(rtt < .seconds(3))
   client.stop()
