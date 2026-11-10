@@ -626,6 +626,8 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   case cancelSubagent(sessionId: String, subagentId: String)
   /// Ask the adapter to stop one AIR async task
   case stopAsyncTask(sessionId: String, taskId: String)
+  /// End one running command (SessionView.canStopCommands); the turn goes on
+  case stopCommand(sessionId: String, toolCallId: String)
   /// A goal control (SessionView.goalActions): turn-starting ones go out as a `/goal …` prompt, which queues behind a
   /// running turn like any prompt
   case goal(sessionId: String, action: GoalAction, objective: String? = nil)
@@ -684,7 +686,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     "forkSession", "selectAccount", "refreshQuota", "compact", "retry", "takeOverSession", "dequeue", "sendQueued",
     "steerQueued", "editQueued", "categoryOp", "moveSession", "sessionMarkdown", "addAccount", "removeAccount",
     "unlockCredentials", "login", "reconnect", "retryTurn", "editTurn", "observeSubagent", "unobserveSubagent",
-    "cancelSubagent", "stopAsyncTask", "goal", "searchFiles", "setSetting", "controls", "projectDir", "projectStatus",
+    "cancelSubagent", "stopAsyncTask", "stopCommand", "goal", "searchFiles", "setSetting", "controls", "projectDir", "projectStatus",
     "projectFile", "sessionChanges", "diffSource", "imageBlob", "stageFile", "openPlan", "terminalOpen", "terminalInput",
     "terminalResize", "terminalAck", "terminalClose", "terminalKill", "connections", "localDir", "providers", "providerAction",
     "providerProbe",
@@ -743,6 +745,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case .unobserveSubagent: "unobserveSubagent"
     case .cancelSubagent: "cancelSubagent"
     case .stopAsyncTask: "stopAsyncTask"
+    case .stopCommand: "stopCommand"
     case .goal: "goal"
     case .searchFiles: "searchFiles"
     case .setSetting: "setSetting"
@@ -842,6 +845,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case "unobserveSubagent": self = .unobserveSubagent(sessionId: try str(.sessionId), subagentId: try str(.subagentId))
     case "cancelSubagent": self = .cancelSubagent(sessionId: try str(.sessionId), subagentId: try str(.subagentId))
     case "stopAsyncTask": self = .stopAsyncTask(sessionId: try str(.sessionId), taskId: try str(.taskId))
+    case "stopCommand": self = .stopCommand(sessionId: try str(.sessionId), toolCallId: try str(.toolCallId))
     case "goal":
       self = .goal(sessionId: try str(.sessionId), action: try c.decode(GoalAction.self, forKey: .action), objective: try opt(.objective))
     case "searchFiles": self = .searchFiles(query: try str(.query), seq: try int(.seq))
@@ -995,6 +999,9 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case let .stopAsyncTask(sessionId, taskId):
       try c.encode(sessionId, forKey: .sessionId)
       try c.encode(taskId, forKey: .taskId)
+    case let .stopCommand(sessionId, toolCallId):
+      try c.encode(sessionId, forKey: .sessionId)
+      try c.encode(toolCallId, forKey: .toolCallId)
     case let .goal(sessionId, action, objective):
       try c.encode(sessionId, forKey: .sessionId)
       try c.encode(action, forKey: .action)

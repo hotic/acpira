@@ -166,15 +166,18 @@ struct SessionToolTarget: View {
 
 /// Commands end with ✓ / ✗ and their run time; other rows show their diff stat. A background task's state tag (and its
 /// Stop while it runs) stands in for the glyph and, unlike the webview, for the run time too: the tag is long, a row's
-/// trailing never truncates, and the command it names must keep room on a phone
+/// trailing never truncates, and the command it names must keep room on a phone. A running command the session can
+/// stop on its own leads with Stop
 struct ToolTrailing: View {
   let block: ToolCallBlock
   let execute: Bool
+  @Environment(\.canStopCommands) private var canStop
 
   var body: some View {
     if execute, let task = block.asyncTask {
       TaskTag(task: task)
     } else if execute {
+      if canStop && commandStoppable(block) { CommandStop(id: block.id) }
       let duration = block.startedAt.flatMap { start in block.endedAt.map { commandDuration(ms: $0 - start) } }
       CommandOutcome(status: block.status, duration: duration,
                      since: block.kind == .execute && block.status == .in_progress ? block.startedAt : nil)
@@ -276,6 +279,37 @@ private struct OutcomeGlyph: View {
       .trim(from: 0, to: draw)
       .stroke(style: StrokeStyle(lineWidth: 2 * WebMetrics.chevron / 24, lineCap: .round, lineJoin: .round))
       .foregroundStyle(ok ? Palette.ok : Palette.danger)
+  }
+}
+
+extension EnvironmentValues {
+  /// The session on screen can stop a running command on its own (SessionView.canStopCommands)
+  @Entry var canStopCommands = false
+}
+
+/// A command the agent handed over verbatim and still running: the only rows whose process the engine can find
+func commandStoppable(_ block: ToolCallBlock) -> Bool {
+  block.kind == .execute && block.status == .in_progress && block.observation != .unknown && block.targetMono == true
+    && block.verbKey == nil && !(block.target ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+}
+
+/// Stop on a running command's row, the same square as a background task's: ends that command's process and the turn
+/// goes on. Gone once tapped, so a second tap has nothing to land on while the process dies
+struct CommandStop: View {
+  let id: String
+  @Environment(\.sessionActions) private var actions
+  @State private var asked = false
+
+  var body: some View {
+    if !asked {
+      Button { asked = true; actions.stopCommand(id) } label: {
+        Icon(.square, size: WebMetrics.chevron, strokeWidth: 1.5)
+      }
+      .buttonStyle(IconButtonStyle(side: WebMetrics.ctlSm))
+      .padding(.vertical, -Metrics.s1)
+      .padding(.trailing, -Metrics.s1)
+      .accessibilityLabel(Text(web: t("command.stop")))
+    }
   }
 }
 
