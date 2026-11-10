@@ -295,6 +295,23 @@ fun AppModel.stopTask(id: String, task: String) {
   }
 }
 
+/**
+ * Stop on a running command's row: the engine ends that command's process and the agent's own update settles the row
+ * as failed, the turn going on; nothing found comes back as the engine's error toast. The demo fails it at once
+ */
+fun AppModel.stopCommand(id: String, toolCallId: String) {
+  if (post(WebviewMsg.StopCommand(id, toolCallId))) return
+  val end = now().toEpochMilli().toDouble()
+  edit(id) { v ->
+    v.copy(turns = v.turns.map { turn ->
+      if (turn !is AgentTurn) turn
+      else turn.copy(blocks = turn.blocks.map { b ->
+        if (b is ToolCallBlock && b.id == toolCallId && b.status == ToolStatus.in_progress) b.copy(status = ToolStatus.failed, endedAt = end) else b
+      })
+    })
+  }
+}
+
 /** Rewrites the task on every row that carries it */
 private fun AppModel.updateTask(id: String, task: String, change: (AsyncTaskInfo) -> AsyncTaskInfo) = edit(id) { v ->
   v.copy(turns = v.turns.map { turn ->
