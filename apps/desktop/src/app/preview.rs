@@ -81,14 +81,14 @@ impl App {
 
   /// open_browser: a loopback http page in a browser tab of the chat used last (its tool panel opens on it), or a window
   /// of its own with no chat open, where elements can be picked into the chat; any other http(s) page in the system
-  /// browser, which the proxy cannot reach
-  pub fn open_browser(self: &Arc<Self>, url: &str, folder: Option<&str>) -> Result<BrowserOpened, String> {
+  /// browser, which the proxy cannot reach. `session`: the asking session's id and folder, by which the page files the tab
+  pub fn open_browser(self: &Arc<Self>, url: &str, folder: Option<&str>, session: Option<(&str, &str)>) -> Result<BrowserOpened, String> {
     let page = normalize_preview_url(url);
     let w = self.focused_window();
     if let (Some(page), Some(w)) = (&page, &w)
       && w.ready()
     {
-      let reused = w.show_in_panel(page, folder).map(|r| if r == "revealed" { BrowserReuse::Revealed } else { BrowserReuse::Navigated });
+      let reused = w.show_in_panel(page, folder, session).map(|r| if r == "revealed" { BrowserReuse::Revealed } else { BrowserReuse::Navigated });
       return Ok(BrowserOpened { url: page.clone(), reused });
     }
     if let Some(page) = page {

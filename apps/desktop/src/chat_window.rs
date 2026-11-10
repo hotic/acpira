@@ -199,8 +199,10 @@ impl ChatWindow {
   }
 
   /// open_browser in this window's tool panel: the tab already on that site navigates (the page brings it forward), else
-  /// the page opens a tab on it. What happened, as the engine reports it
-  pub fn show_in_panel(&self, url: &str, folder: Option<&str>) -> Option<&'static str> {
+  /// the page opens a tab on it. What happened, as the engine reports it. The page files the tab under `session` (id and
+  /// folder), which need not be the one on screen
+  pub fn show_in_panel(&self, url: &str, folder: Option<&str>, session: Option<(&str, &str)>) -> Option<&'static str> {
+    let (session_id, cwd) = session.unzip();
     let origin = origin_of(url);
     let at = self
       .tabs
@@ -209,14 +211,14 @@ impl ChatWindow {
       .find(|(_, r)| r.target().and_then(|t| origin_of(&t)) == origin && r.folder().as_deref() == folder)
       .map(|(k, r)| (k.clone(), r.clone()));
     let Some((tab, relay)) = at else {
-      self.post(json!({ "type": "panelOpenBrowser", "url": url }));
+      self.post(json!({ "type": "panelOpenBrowser", "url": url, "sessionId": session_id, "cwd": cwd }));
       return None;
     };
     let same = relay.target().as_deref() == Some(url);
     if !same {
       relay.navigate(url.to_owned());
     }
-    self.post(json!({ "type": "panelOpenBrowser", "url": url, "tab": tab }));
+    self.post(json!({ "type": "panelOpenBrowser", "url": url, "tab": tab, "sessionId": session_id, "cwd": cwd }));
     Some(if same { "revealed" } else { "navigated" })
   }
 

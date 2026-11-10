@@ -402,9 +402,9 @@ export function App() {
         case 'panelBrowser': deliverToBrowserTab(m.tab, m.msg); break;
         case 'panelHistory': setRecentPages({ pages: m.pages, running: m.running }); break;
         case 'panelOpenBrowser':
-          setView('chat');
           if (!panelState().browser) { if (m.url) post({ type: 'openExternal', url: m.url }); break; }
-          if (!(m.tab && panel.showBrowser(m.tab, m.url))) panel.openBrowser(m.url);
+          // The page joins the asking session's tabs; only one that is on screen brings the chat view forward
+          if (panel.openBrowserFor(m.sessionId ?? undefined, m.cwd ?? undefined, m.url, m.tab)) setView('chat');
           break;
         case 'sessionMarkdown': markdownRequests.settle(m.seq, { markdown: m.markdown, error: m.error }); break;
         case 'editorSelection': setEditorSelection(m.selection); break;

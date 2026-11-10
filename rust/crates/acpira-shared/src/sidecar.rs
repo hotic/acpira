@@ -56,6 +56,12 @@ pub enum PlatformRequest {
     /// the engine's preview proxy for it, and the engine has already found it listening there
     #[serde(default, skip_serializing_if = "Option::is_none")]
     folder: Option<String>,
+    /// The session whose agent asked and its folder: a shell that keeps browser tabs per project or per session puts
+    /// the page with that session's, not with whatever is on screen
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cwd: Option<String>,
   },
   OpenInEditor {
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -178,3 +178,32 @@ describe('file viewer tab close and tree toggle', () => {
     panel.close(browserId);
   });
 });
+
+describe('open_browser from a session that is not on screen', () => {
+  it('files the page under the asking session\'s project and opens the panel once that project is shown', () => {
+    panel.setScope('project');
+    panel.setContext('s-a', '/proj-a');
+    panel.setContext('s-b', '/proj-b');
+    panel.toggle(false);
+    const before = panelState().tabs;
+
+    // Project A's agent asks while project B is on screen: nothing moves here
+    expect(panel.openBrowserFor('s-a', '/proj-a', 'http://localhost:4300/')).toBe(false);
+    expect(panelState().open).toBe(false);
+    expect(panelState().tabs).toBe(before);
+
+    // Back in project A the page is the selected tab and the panel is open; asked again there, the same tab takes it
+    panel.setContext('s-a2', '/proj-a');
+    const shown = panelState();
+    expect(shown.open).toBe(true);
+    expect(shown.tabs.find(t => t.id === shown.tab)).toMatchObject({ kind: 'browser', url: 'http://localhost:4300/' });
+    expect(panel.openBrowserFor('s-a', '/proj-a', 'http://localhost:4300/app')).toBe(true);
+    expect(panelState().tabs.filter(t => t.kind === 'browser' && t.url?.startsWith('http://localhost:4300/'))).toHaveLength(1);
+
+    // Per session, a sibling session of the same project is another slot
+    panel.setScope('session');
+    expect(panel.openBrowserFor('s-a', '/proj-a', 'http://localhost:4301/')).toBe(false);
+    expect(panelState().tabs.some(t => t.kind === 'browser' && t.url === 'http://localhost:4301/')).toBe(false);
+    panel.setScope('project');
+  });
+});

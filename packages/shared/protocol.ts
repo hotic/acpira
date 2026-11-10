@@ -258,10 +258,11 @@ export type HostMsg =
   | { type: 'firstRunError'; error: string }
   // The desktop tool panel's browser tabs, never sent by the sidecar: a message for the page in tab `tab`, the address bar's
   // history for the new-tab page (`running`: the ones whose server answered just now), and open_browser (`tab` names a tab
-  // of this window the shell navigated; absent, the page opens a tab on `url`)
+  // of this window the shell navigated; absent, the page opens a tab on `url`; `sessionId` / `cwd`: the asking session and
+  // its folder, whose tabs the page joins)
   | { type: 'panelBrowser'; tab: string; msg: BrowserHostMsg }
   | { type: 'panelHistory'; pages: BrowserPage[]; running: string[] }
-  | { type: 'panelOpenBrowser'; url: string; tab?: string }
+  | { type: 'panelOpenBrowser'; url: string; tab?: string; sessionId?: string | null; cwd?: string | null }
   // The next five come from the IDE shell itself, not the sidecar: editor state is UI, and the engine never sees it until a prompt carries it.
   // The editor's current selection, on every change; absent when nothing (or no file: document) is selected
   | { type: 'editorSelection'; selection?: EditorSelection }

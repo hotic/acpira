@@ -87,7 +87,7 @@ describe('sidecar runtime', () => {
     expect(opened.tools).toContain('open_browser');
     expect(opened.result.isError).toBe(false);
     expect(opened.result.content[0]!.text).toContain('loads it as http://localhost:40001/app');
-    expect(s.requests.filter(r => r.request.method === 'openBrowser').map(r => r.request)).toEqual([{ method: 'openBrowser', url: `http://127.0.0.1:${port}/app` }]);
+    expect(s.requests.filter(r => r.request.method === 'openBrowser').map(r => r.request)).toEqual([{ method: 'openBrowser', url: `http://127.0.0.1:${port}/app`, sessionId, cwd: init.state.active!.cwd }]);
 
     const closed = await new Promise<number>(r => { const c = createServer(); c.listen(0, '127.0.0.1', () => { const p = (c.address() as AddressInfo).port; c.close(() => r(p)); }); });
     const refused = await reply(s, sessionId, `mcp-call:open_browser {"url":"http://localhost:${closed}/"}`);

@@ -525,11 +525,17 @@ impl SidecarPlatform {
   }
 
   /// Show an http(s) page in the editor; where the user's side shows it, or the shell's reason it did not open
-  pub async fn open_browser(&self, url: &str, folder: Option<&str>) -> Result<BrowserOpened> {
+  pub async fn open_browser(&self, url: &str, folder: Option<&str>, session: Option<(&str, &str)>) -> Result<BrowserOpened> {
     if !self.has_cap("openBrowser") {
       return Err(anyhow!("this editor cannot show web pages inside it"));
     }
-    let r = self.rpc(PlatformRequest::OpenBrowser { url: url.to_owned(), folder: folder.map(str::to_owned) }).await?;
+    let request = PlatformRequest::OpenBrowser {
+      url: url.to_owned(),
+      folder: folder.map(str::to_owned),
+      session_id: session.map(|(id, _)| id.to_owned()),
+      cwd: session.map(|(_, cwd)| cwd.to_owned()),
+    };
+    let r = self.rpc(request).await?;
     let mut opened: BrowserOpened = serde_json::from_value(r).unwrap_or_default();
     if opened.url.is_empty() {
       opened.url = url.to_owned();
