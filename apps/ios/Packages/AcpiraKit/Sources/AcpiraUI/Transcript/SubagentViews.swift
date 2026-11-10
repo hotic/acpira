@@ -115,6 +115,9 @@ struct SubagentRow: View {
     }
     // A row's breathing room above and below, so the pressed fill does not hug the title and the detail line
     .padding(.vertical, Metrics.gapHalf)
+    // Row's min-height frame can be squeezed back to one line: a hosted cell still at its earlier height took the
+    // shortfall out of these rows, and each detail line drew over the next row's title
+    .fixedSize(horizontal: false, vertical: true)
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(Text(web: ([title, node.harness != nil ? node.role : nil, status, detail].compactMap { $0 })
       .joined(separator: t("common.listSep"))))
