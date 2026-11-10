@@ -365,6 +365,15 @@ impl Call {
     e
   }
 
+  /// `next` for a poll-based reader (`remote/tcp.rs`)
+  pub fn poll_next(&mut self, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Event>> {
+    let e = std::task::ready!(self.rx.poll_recv(cx));
+    if matches!(e, Some(Event::Done(_)) | None) {
+      self.done.store(true, Ordering::Relaxed);
+    }
+    std::task::Poll::Ready(e)
+  }
+
   /// Bytes for an exec's stdin
   pub fn stdin(&self, bytes: &[u8]) {
     send(&self.client.inner, &Frame::Stdin { id: self.id, b: wire::b64(bytes), eof: false });

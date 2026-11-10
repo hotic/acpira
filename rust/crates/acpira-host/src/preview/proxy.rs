@@ -49,42 +49,9 @@ impl Dial {
         Ok(Box::new(s))
       }
       Dial::Remote { connections, alias } => {
-        use crate::remote::client::Event;
         let client = connections.ensure(alias, REMOTE_CONNECT).await.map_err(|e| io::Error::other(format!("{alias}: {e:#}")))?;
-        let mut call = client.request("tcp", serde_json::json!({ "host": host, "port": port }));
-        match call.next().await {
-          Some(Event::Chunk { stream, .. }) if stream == "open" => {}
-          Some(Event::Done(Err(e))) => return Err(io::Error::other(format!("on {alias}: {e}"))),
-          _ => return Err(io::Error::other(format!("{alias} closed the connection"))),
-        }
-        // The proxy reads and writes one end; this task carries the other over the helper call
-        let (near, far) = tokio::io::duplex(64 * 1024);
-        tokio::spawn(async move {
-          let (mut fr, mut fw) = tokio::io::split(far);
-          let mut buf = vec![0u8; 16 * 1024];
-          let mut reading = true;
-          loop {
-            tokio::select! {
-              n = fr.read(&mut buf), if reading => match n {
-                Ok(0) | Err(_) => {
-                  call.stdin_eof();
-                  reading = false;
-                }
-                Ok(n) => call.stdin(&buf[..n]),
-              },
-              ev = call.next() => match ev {
-                Some(Event::Chunk { bytes, .. }) => {
-                  if fw.write_all(&bytes).await.is_err() {
-                    break;
-                  }
-                }
-                _ => break,
-              },
-            }
-          }
-          let _ = fw.shutdown().await;
-        });
-        Ok(Box::new(near))
+        let s = crate::remote::tcp::connect(&client, host, port).await.map_err(|e| io::Error::other(format!("on {alias}: {e}")))?;
+        Ok(Box::new(s))
       }
     }
   }

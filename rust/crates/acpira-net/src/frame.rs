@@ -171,6 +171,11 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
     &mut self.r
   }
 
+  /// The stream back, dropping whatever the reader holds past the last frame (`take_buffered` it first)
+  pub fn into_inner(self) -> R {
+    self.r
+  }
+
   /// Bytes read from the stream so far (codec byte included, still compressed when the codec is)
   pub fn read_bytes(&self) -> u64 {
     self.read

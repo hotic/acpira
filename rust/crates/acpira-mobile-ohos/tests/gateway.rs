@@ -61,6 +61,7 @@ fn pairs_and_talks_to_the_engine_through_the_binding() {
       engine: Arc::new(move || e.link()),
       relays: Some(GatewayRelays::Off),
       bind: Some("127.0.0.1:0".parse().unwrap()),
+      ssh: None,
       log: Arc::new(|l: &str| eprintln!("gateway: {l}")),
     })
     .await

@@ -1,6 +1,6 @@
 //! The gateway: the part of the engine facing the network. It admits paired devices by EndpointId before reading
 //! anything from them, pairs new ones while a pairing window is open, bridges each device's envelope stream to the
-//! engine it runs in, serves its blob requests, and reports who is online on which path.
+//! engine it runs in, serves its blob requests and tunnel streams (`tunnel.rs`), and reports who is online on which path.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -21,7 +21,7 @@ use acpira_net::iroh::endpoint::Connection;
 use crate::bridge::{self, Who};
 use crate::engine::{Link, Log};
 use crate::store::{Config, Device, Devices, Paths, now_ms};
-use crate::wire_stats;
+use crate::{tunnel, wire_stats};
 
 pub struct Opts {
   pub home: PathBuf,
@@ -31,6 +31,8 @@ pub struct Opts {
   pub relays: Option<Relays>,
   /// Tests: IPv4 on this address only, and its bound sockets go into tickets (loopback is never worth one otherwise)
   pub bind: Option<SocketAddr>,
+  /// The engine's SSH hosts, for tunnel streams to a folder on one; none: local folders only
+  pub ssh: Option<Arc<dyn tunnel::SshDial>>,
   pub log: Log,
 }
 
@@ -61,6 +63,7 @@ pub struct Gateway {
   changed: tokio::sync::watch::Sender<u64>,
   /// The devices' notification registrations and the APNs sender
   push: Arc<crate::push::Push>,
+  ssh: Option<Arc<dyn tunnel::SshDial>>,
   log: Log,
 }
 
@@ -108,6 +111,7 @@ impl Gateway {
       live: Default::default(),
       changed: tokio::sync::watch::channel(0).0,
       push: crate::push::Push::load(&o.home, o.log.clone()),
+      ssh: o.ssh,
       log: o.log,
     });
     (g.log)(&format!("gateway {} listening as {}", VERSION, g.ep.id()));
@@ -388,6 +392,9 @@ async fn serve_device(g: Arc<Gateway>, conn: Connection, device: Device) {
   let sessions_dir = Arc::new(parking_lot::Mutex::new(None::<PathBuf>));
   let who = Who { id: id.clone(), device: device.name.clone(), kind: device.kind, computer: g.name(), version: VERSION.to_owned() };
   let mut current: Option<tokio::task::JoinHandle<()>> = None;
+  // The device's tunnel streams: dropped with this function, so a link that goes ends every one of them
+  let mut tunnels = tokio::task::JoinSet::new();
+  let tally = Arc::new(tunnel::Tally::default());
   loop {
     let incoming = tokio::select! {
       r = link::accept(&conn) => r,
@@ -422,8 +429,25 @@ async fn serve_device(g: Arc<Gateway>, conn: Connection, device: Device) {
           let _ = link::send_blob(send, data, req.offset).await;
         });
       }
+      Ok(Incoming::Tcp(send, recv)) => {
+        // Reaped here rather than in the select above, which would cancel an accept halfway through a stream's kind byte
+        while tunnels.try_join_next().is_some() {}
+        if tunnels.len() >= acpira_net::tunnel::MAX_STREAMS {
+          tunnel::busy(send).await;
+          continue;
+        }
+        tunnels.spawn(tunnel::serve(send, recv, g.ssh.clone(), tally.clone(), g.log.clone(), device.name.clone()));
+      }
+      // A kind from a newer device: that stream goes unanswered, the link stays
+      Ok(Incoming::Unknown(_)) => {}
+      // A stream that failed before naming its kind; the connection's own end breaks the loop
+      Err(_) if conn.close_reason().is_none() => {}
       Err(_) => break,
     }
+  }
+  tunnels.abort_all();
+  if let Some(line) = tally.line() {
+    (g.log)(&format!("{}: {line}", device.name));
   }
   if let Some(t) = current.take() {
     t.abort();

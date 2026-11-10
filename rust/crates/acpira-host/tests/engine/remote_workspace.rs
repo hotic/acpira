@@ -160,3 +160,56 @@ async fn a_preview_of_a_dev_server_on_the_host_goes_through_it() {
   previews.close(1, "local");
   connections.dispose();
 }
+
+/// A paired device's tunnel stream to a dev server on the host (acpira-gateway `tunnel.rs`) goes through the host's
+/// helper `tcp` while its connection is up; a host that is off is never connected for it, and a dropped pipe cancels
+/// the helper's connection at once
+#[tokio::test(flavor = "multi_thread")]
+async fn a_device_tunnel_reaches_the_hosts_loopback_while_it_is_connected() {
+  use acpira_gateway::tunnel::{SshDial, TcpCode};
+  use std::sync::atomic::{AtomicUsize, Ordering};
+  use tokio::io::{AsyncReadExt, AsyncWriteExt};
+  let lab = Lab::new();
+  let connections = lab.engine("engine");
+  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  let hosts = {
+    let c = connections.clone();
+    acpira_host::devices::tunnel::SshHosts::new(move || Some(c.clone()))
+  };
+  assert_eq!(hosts.dial("nowhere", "localhost".into(), 1).await.err().unwrap().code, TcpCode::Offline);
+  connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
+  assert!(hosts.up("gen1") && !hosts.up("nowhere"));
+
+  // The fake host is this machine, so its loopback is this one's: an echo server that counts what it holds
+  let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+  let port = listener.local_addr().unwrap().port();
+  let open = std::sync::Arc::new(AtomicUsize::new(0));
+  let held = open.clone();
+  tokio::spawn(async move {
+    while let Ok((mut s, _)) = listener.accept().await {
+      held.fetch_add(1, Ordering::SeqCst);
+      let held = held.clone();
+      tokio::spawn(async move {
+        let (mut r, mut w) = s.split();
+        let _ = tokio::io::copy(&mut r, &mut w).await;
+        held.fetch_sub(1, Ordering::SeqCst);
+      });
+    }
+  });
+  let mut pipe = hosts.dial("gen1", "localhost".into(), port).await.ok().unwrap();
+  let data: Vec<u8> = (0..200_000).map(|i| (i % 249) as u8).collect();
+  pipe.write_all(&data).await.unwrap();
+  let mut got = vec![0u8; data.len()];
+  tokio::time::timeout(Duration::from_secs(20), pipe.read_exact(&mut got)).await.unwrap().unwrap();
+  assert!(got == data, "the bytes came back as sent");
+  assert_eq!(open.load(Ordering::SeqCst), 1);
+  // Dropped without an end of its own: the helper's connection goes with the cancelled call
+  drop(pipe);
+  crate::support::until(|| open.load(Ordering::SeqCst) == 0, 10_000).await;
+
+  let denied = hosts.dial("gen1", "10.255.0.1".into(), 80).await.err().unwrap();
+  assert_eq!(denied.code, TcpCode::Denied, "{denied}");
+  let closed = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap().local_addr().unwrap().port();
+  assert_eq!(hosts.dial("gen1", "localhost".into(), closed).await.err().unwrap().code, TcpCode::Refused);
+  connections.dispose();
+}

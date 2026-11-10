@@ -153,8 +153,11 @@ impl Host {
       Some(e) => e.link(),
       None => (acpira_gateway::engine::none())(),
     });
+    let engine = self.engine.clone();
+    let ssh = super::tunnel::SshHosts::new(move || engine.upgrade().and_then(|e| e.runtime()).map(|rt| rt.connections.clone()));
     let log = self.log.clone();
-    let opts = Opts { home: self.root.clone(), engine: link, relays: None, bind: None, log: Arc::new(move |l: &str| log(&format!("[gateway] {l}"))) };
+    let opts =
+      Opts { home: self.root.clone(), engine: link, relays: None, bind: None, ssh: Some(ssh), log: Arc::new(move |l: &str| log(&format!("[gateway] {l}"))) };
     match Hosted::start(opts, listener, on_tx.clone()).await {
       Ok(h) => Some(h),
       Err(e) => {

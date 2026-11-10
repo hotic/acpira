@@ -193,6 +193,7 @@ fn a_phone_pairs_drives_a_session_and_is_revoked() {
       engine: link(&engine),
       relays: Some(Relays::Off),
       bind: Some("127.0.0.1:0".parse().unwrap()),
+      ssh: None,
       log: Arc::new(|l: &str| eprintln!("gateway: {l}")),
     })
     .await
@@ -397,6 +398,7 @@ printf '\037'
       engine: link(&engine),
       relays: Some(Relays::Off),
       bind: Some("127.0.0.1:0".parse().unwrap()),
+      ssh: None,
       log: Arc::new(|l: &str| eprintln!("gateway: {l}")),
     })
     .await
@@ -483,6 +485,7 @@ fn the_settings_page_follows_the_gateway() {
       engine: acpira_gateway::engine::none(),
       relays: Some(Relays::Off),
       bind: Some("127.0.0.1:0".parse().unwrap()),
+      ssh: None,
       log: Arc::new(|l: &str| eprintln!("gateway: {l}")),
     })
     .await
@@ -758,6 +761,7 @@ fn a_phone_on_the_network_pairs_with_the_code() {
       engine: acpira_gateway::engine::none(),
       relays: Some(Relays::Off),
       bind: Some("127.0.0.1:0".parse().unwrap()),
+      ssh: None,
       log: Arc::new(|_: &str| {}),
     })
     .await

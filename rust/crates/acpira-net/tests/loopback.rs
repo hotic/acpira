@@ -105,7 +105,7 @@ async fn a_device_pairs_once_then_talks_over_the_link() {
             match link::accept(&conn).await {
               Ok(Incoming::Envelopes(mut tx, mut rx)) => {
                 tokio::spawn(async move {
-                  tx.send(FrameKind::Control, &link::control(&Control::Welcome { name: "mini".into(), version: "t".into(), protocol: 1 })).await.unwrap();
+                  tx.send(FrameKind::Control, &link::control(&Control::Welcome { name: "mini".into(), version: "t".into(), protocol: 1, features: vec![] })).await.unwrap();
                   // Echo envelopes back, answer pings
                   while let Ok(Some((kind, body))) = rx.next().await {
                     let reply = match kind {
@@ -129,6 +129,7 @@ async fn a_device_pairs_once_then_talks_over_the_link() {
                 let offset = if req.name == "old.mp4" { None } else { req.offset };
                 link::send_blob(send, data, offset).await.unwrap();
               }
+              Ok(Incoming::Tcp(..) | Incoming::Unknown(_)) => {}
               Err(_) => return,
             }
           }
