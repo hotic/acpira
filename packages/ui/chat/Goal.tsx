@@ -141,10 +141,12 @@ export function GoalRow({ block }: { block: GoalBlock }) {
 // itself is hovered / focused; touch screens without hover always show it.
 // `goalRoom` keeps the button's height without the button: a stored session reopening on an agent that offered the
 // button last time holds the strip at its final height while the CLI starts, so the reply below does not shift when
-// the agent's goal capability arrives
+// the agent's goal capability arrives.
+// As the exchange's last child (the reply has rendered nothing yet) there is no gap below to cancel: a negative bottom
+// margin would push the strip past the exchange's paint containment and clip the button, so `last:mb-0` keeps it inside
 export function PromptFooter({ sentAt, onSetGoal, goalRoom }: { sentAt?: number; onSetGoal?: () => void; goalRoom?: boolean }) {
   return (
-    <div data-set-goal={onSetGoal ? '' : undefined} className={cn('-my-msg flex items-center justify-end gap-0.5 opacity-0 transition-opacity duration-(--code-copy-duration) ease-out peer-hover/prompt:opacity-100 peer-focus-within/prompt:opacity-100 hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100 motion-reduce:transition-none',
+    <div data-set-goal={onSetGoal ? '' : undefined} className={cn('-my-msg last:mb-0 flex items-center justify-end gap-0.5 opacity-0 transition-opacity duration-(--code-copy-duration) ease-out peer-hover/prompt:opacity-100 peer-focus-within/prompt:opacity-100 hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100 motion-reduce:transition-none',
       onSetGoal || goalRoom ? 'h-ctl-sm box-content py-1' : 'h-msg')}>
       {sentAt !== undefined && <SentTime at={sentAt} />}
       {onSetGoal && (
