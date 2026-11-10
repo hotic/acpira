@@ -244,17 +244,34 @@ fn ms_of_offset_iso(s: &str) -> Option<i64> {
 }
 
 /// oauth/usage → windows: `five_hour`, `seven_day` and the model-specific weekly ones, each `{ utilization: 0..100,
-/// resets_at: ISO }` or null when the plan has no such window
+/// resets_at: ISO }` or null when the plan has no such window. A per-model allowance without a key of its own (Fable)
+/// only appears in `limits` as a `weekly_scoped` row; its window id is `weekly<Model>`
 pub fn parse_claude_usage(v: &Value) -> Option<AccountQuota> {
-  let windows: Vec<QuotaWindow> = [("five_hour", "5h"), ("seven_day", "weekly"), ("seven_day_opus", "weeklyOpus"), ("seven_day_sonnet", "weeklySonnet")]
+  let window = |id: String, used: f64, resets_at: Option<&Value>| QuotaWindow {
+    id,
+    remaining: Num((1.0 - used / 100.0).clamp(0.0, 1.0)),
+    resets_at: resets_at.and_then(Value::as_str).and_then(ms_of_offset_iso).map(iso_of_ms),
+  };
+  let mut windows: Vec<QuotaWindow> = [("five_hour", "5h"), ("seven_day", "weekly"), ("seven_day_opus", "weeklyOpus"), ("seven_day_sonnet", "weeklySonnet")]
     .iter()
     .filter_map(|(key, id)| {
       let w = v.get(*key).filter(|w| w.is_object())?;
-      let used = w.get("utilization").and_then(Value::as_f64)?;
-      let resets_at = w.get("resets_at").and_then(Value::as_str).and_then(ms_of_offset_iso).map(iso_of_ms);
-      Some(QuotaWindow { id: (*id).into(), remaining: Num((1.0 - used / 100.0).clamp(0.0, 1.0)), resets_at })
+      Some(window((*id).into(), w.get("utilization").and_then(Value::as_f64)?, w.get("resets_at")))
     })
     .collect();
+  for limit in v.get("limits").and_then(Value::as_array).into_iter().flatten() {
+    if limit.get("kind").and_then(Value::as_str) != Some("weekly_scoped") {
+      continue;
+    }
+    let model = limit.pointer("/scope/model/display_name").and_then(Value::as_str).map(str::trim).filter(|m| !m.is_empty());
+    let (Some(model), Some(used)) = (model, limit.get("percent").and_then(Value::as_f64)) else { continue };
+    let id = format!("weekly{model}");
+    if !windows.iter().any(|w| w.id == id) {
+      // Above the weekly window it is carved out of, the order Claude Code lists them in
+      let at = windows.iter().position(|w| w.id == "weekly").unwrap_or(windows.len());
+      windows.insert(at, window(id, used, limit.get("resets_at")));
+    }
+  }
   (!windows.is_empty()).then(|| AccountQuota { windows, on_demand_balance_usd: None, fetched_at: now_iso() })
 }
 
@@ -285,6 +302,20 @@ mod tests {
     assert_eq!(live.windows.iter().map(|w| (w.id.as_str(), w.remaining.0)).collect::<Vec<_>>(), [("5h", 0.76), ("weekly", 0.71)]);
     assert_eq!(live.windows[0].resets_at.as_deref(), Some("2026-09-27T13:00:00.424Z"));
     assert_eq!(live.windows[1].resets_at.as_deref(), Some("2026-09-30T21:00:00.424Z"));
+    // The shape of a live Ultra reply (Claude Code 2.1.299): no session window, the Fable allowance only as a scoped limit
+    let scoped = parse_claude_usage(&json!({
+      "five_hour": null,
+      "seven_day": { "utilization": 73.0, "resets_at": "2026-11-11T21:00:00.100965+00:00" },
+      "seven_day_opus": null, "seven_day_sonnet": null,
+      "limits": [
+        { "kind": "weekly_all", "group": "weekly", "percent": 73, "resets_at": "2026-11-11T21:00:00.100965+00:00", "scope": null, "is_active": true },
+        { "kind": "weekly_scoped", "group": "weekly", "percent": 25, "resets_at": "2026-11-11T21:00:00.101108+00:00",
+          "scope": { "model": { "id": null, "display_name": "Fable" }, "surface": null }, "is_active": false }
+      ]
+    }))
+    .unwrap();
+    assert_eq!(scoped.windows.iter().map(|w| (w.id.as_str(), w.remaining.0)).collect::<Vec<_>>(), [("weeklyFable", 0.75), ("weekly", 0.27)]);
+    assert_eq!(scoped.windows[0].resets_at.as_deref(), Some("2026-11-11T21:00:00.101Z"));
     assert_eq!(ms_of_offset_iso("2026-09-26T20:00:00.5+02:00"), ms_of_iso("2026-09-26T18:00:00.500Z"));
     assert_eq!(keychain_service(None), "Claude Code-credentials");
     assert_eq!(keychain_service(Some("abc")), "Claude Code-credentials-ba7816bf");

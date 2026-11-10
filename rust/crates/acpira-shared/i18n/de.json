@@ -408,6 +408,7 @@
   "quota.window.5h": "5 Stunden",
   "quota.window.weeklyOpus": "Opus wöchentlich",
   "quota.window.weeklySonnet": "Sonnet wöchentlich",
+  "quota.window.weeklyFable": "Fable wöchentlich",
   "quota.reset": "Zurückgesetzt in {time}",
   "quota.resetUnknown": "Zeitpunkt der Zurücksetzung unbekannt",
   "quota.resetIdle": "Nicht gestartet",
