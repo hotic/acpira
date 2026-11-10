@@ -1,6 +1,11 @@
 import AcpiraModels
 import Foundation
+import JavaScriptCore
+import SwiftUI
 import Testing
+#if canImport(UIKit)
+import WebKit
+#endif
 @testable import AcpiraUI
 
 // The engine settings the phone edits: the model menus' hidden families (cases from packages/shared/test/modelCatalog.test.ts
@@ -151,6 +156,89 @@ import Testing
     // Every variable the page head declares is set again
     for (name, _) in WidgetDoc.vars(dark: false) { #expect(light.contains("\"\(name)\"")) }
   }
+
+  @Test func bootstrapExposesSendPromptBehindActivationAndToken() {
+    let ctx = JSContext()!
+    ctx.evaluateScript("""
+      var posted = [], active = false;
+      var window = this, navigator = { userActivation: { get isActive() { return active; } } };
+      var document = { addEventListener: function () {}, documentElement: { getBoundingClientRect: function () { return { height: 0 }; } } };
+      function addEventListener() {}
+      window.webkit = { messageHandlers: { acpiraWidget: { postMessage: function (m) { posted.push(m); } } } };
+      """)
+    ctx.evaluateScript(WidgetDoc.bootstrap(token: "tok-1"))
+    #expect(ctx.exception == nil)
+
+    // Without user activation (a script running at load), sendPrompt throws and posts nothing
+    ctx.evaluateScript("var err = ''; try { window.acpira.sendPrompt('hi'); } catch (e) { err = e.message; }")
+    #expect(ctx.evaluateScript("err")?.toString().contains("click or key") == true)
+    #expect(ctx.evaluateScript("posted.length")?.toInt32() == 0)
+
+    // Activated: validates input, then posts with the bootstrap's private token
+    ctx.evaluateScript("active = true;")
+    ctx.evaluateScript("err = ''; try { window.acpira.sendPrompt('   '); } catch (e) { err = e.name; }")
+    #expect(ctx.evaluateScript("err")?.toString() == "TypeError")
+    ctx.evaluateScript("err = ''; try { window.acpira.sendPrompt('x'.repeat(20001)); } catch (e) { err = e.name; }")
+    #expect(ctx.evaluateScript("err")?.toString() == "RangeError")
+    ctx.evaluateScript("window.acpira.sendPrompt('  Picked D  ');")
+    #expect(ctx.evaluateScript("posted.length")?.toInt32() == 1)
+    #expect(ctx.evaluateScript("posted[0].token")?.toString() == "tok-1")
+    #expect(ctx.evaluateScript("posted[0].prompt")?.toString() == "  Picked D  ")
+  }
+
+  @Test func promptGateTrimsCapsAndThrottlesAndRespectsThreadRole() {
+    var gate = WidgetPromptGate()
+    let t0 = ContinuousClock.now
+    #expect(gate.accept("   ", now: t0) == nil)
+    #expect(gate.accept(String(repeating: "a", count: WidgetDoc.promptMax + 1), now: t0) == nil)
+    #expect(gate.accept("  Picked D \n", now: t0) == "Picked D")
+    // A second tap inside the gap drops; after the gap it goes through
+    #expect(gate.accept("Again", now: t0 + .milliseconds(400)) == nil)
+    #expect(gate.accept("Again", now: t0 + .milliseconds(1100)) == "Again")
+
+    var main = EnvironmentValues()
+    main.applyThread(SessionView(id: "s", agent: "claude", title: "", cwd: "", status: .ready), quiet: false)
+    #expect(main.widgetCanSend)
+    main.applyThread(SessionView(id: "s", agent: "claude", title: "", cwd: "", status: .readonly), quiet: false)
+    #expect(!main.widgetCanSend)
+
+    var inspector = EnvironmentValues()
+    inspector.subagentTranscript = true
+    inspector.applyThread(SessionView(id: "s", agent: "claude", title: "", cwd: "", status: .ready), quiet: false)
+    #expect(!inspector.widgetCanSend)
+  }
+
+  #if canImport(UIKit)
+  @Test func webViewReportsHeightAndBlocksUnactivatedOrForgedPrompts() async {
+    var reported: CGFloat = 0
+    var prompts: [String] = []
+    let binding = Binding(get: { reported }, set: { reported = $0 })
+    let html = WidgetDoc.build("""
+      <div style="height: 48px">pick</div>
+      <script>
+        try { window.acpira.sendPrompt('auto'); } catch (_) {}
+        window.webkit.messageHandlers.acpiraWidget.postMessage({ token: 'forged', prompt: 'forged' });
+      </script>
+      """, dark: true)
+    let representable = WidgetWebView(html: html, dark: true, height: binding, onPrompt: { prompts.append($0) })
+    let coordinator = representable.makeCoordinator()
+    let config = WKWebViewConfiguration()
+    config.websiteDataStore = .nonPersistent()
+    config.userContentController.addUserScript(
+      WKUserScript(source: WidgetDoc.bootstrap(token: coordinator.token), injectionTime: .atDocumentStart, forMainFrameOnly: true))
+    config.userContentController.add(coordinator, name: "acpiraWidget")
+    let web = WKWebView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), configuration: config)
+    web.navigationDelegate = coordinator
+    coordinator.onPrompt = { prompts.append($0) }
+    web.loadHTMLString(html, baseURL: nil)
+    for _ in 0..<40 where reported == 0 {
+      try? await Task.sleep(for: .milliseconds(50))
+    }
+    WidgetWebView.dismantleUIView(web, coordinator: coordinator)
+    #expect(reported >= 48)
+    #expect(prompts.isEmpty)
+  }
+  #endif
 }
 
 // Session links read the same as in TypeScript and Rust: every case of test/fixtures/session-links.json

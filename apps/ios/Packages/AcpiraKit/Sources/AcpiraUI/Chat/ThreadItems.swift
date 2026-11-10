@@ -133,6 +133,7 @@ extension EnvironmentValues {
   mutating func applyThread(_ session: SessionView, quiet: Bool) {
     quietEntrance = quiet
     planContext = PlanContext(controls: session.controls, running: session.running, ready: session.status == .ready)
+    widgetCanSend = !subagentTranscript && (session.status == .ready || session.status == .starting)
     allSubagents = (session.subagents ?? []).map(\.linkOnly)
     sidekickModels = SidekickModels(session.controls)
   }

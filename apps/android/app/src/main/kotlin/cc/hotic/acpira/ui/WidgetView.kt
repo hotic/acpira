@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,6 +33,7 @@ import cc.hotic.acpira.design.Metrics
 import cc.hotic.acpira.design.Palette
 import cc.hotic.acpira.design.Type
 import cc.hotic.acpira.i18n.t
+import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -40,11 +42,19 @@ import kotlinx.coroutines.withContext
 // WebView of its own, with no network, no storage that outlives it and no way to navigate, sized to the height the page
 // reports. A theme switch is applied by script, so the widget keeps its state.
 
+/**
+ * A show_widget widget's `acpira.sendPrompt` (WidgetPromptContext): sends as the next message in the main thread; null
+ * in an inspector or a session that cannot take messages, where widgets stay one-way
+ */
+val LocalWidgetPrompt = compositionLocalOf<((String) -> Unit)?> { null }
+
 /** The widget of a completed show_widget row: its HTML read through [load] (the session's blob store) */
 @Composable
 fun WidgetBlock(load: suspend () -> String) {
   val dark = LocalDark.current
+  val onPrompt = LocalWidgetPrompt.current
   val context = androidx.compose.ui.platform.LocalContext.current
+  val token = remember { UUID.randomUUID().toString() }
   /** The page as built, in the scheme it first loaded in */
   var page by remember { mutableStateOf<String?>(null) }
   var failed by remember { mutableStateOf(false) }
@@ -57,7 +67,7 @@ fun WidgetBlock(load: suspend () -> String) {
       val text = runCatching { load() }.getOrNull()
       if (text != null) {
         val tailwind = withContext(Dispatchers.IO) { tailwindRuntime(context) }
-        page = WidgetDoc.build(text, dark, tailwind)
+        page = WidgetDoc.build(text, dark, tailwind, token)
         return@LaunchedEffect
       }
       delay(LOAD_BACKOFF_MS * (attempt + 1))
@@ -69,7 +79,11 @@ fun WidgetBlock(load: suspend () -> String) {
     shown != null -> {
       // Capped like the desktop's frame: a taller page scrolls inside itself
       val capped = minOf(height, Metrics.widgetMax.value)
-      WidgetWebView(shown, dark, scrolls = height > Metrics.widgetMax.value, onHeight = { height = it }, modifier = Modifier.fillMaxWidth().height(capped.dp).testTag("widget"))
+      WidgetWebView(
+        shown, dark, token, scrolls = height > Metrics.widgetMax.value,
+        onHeight = { height = it }, onPrompt = onPrompt,
+        modifier = Modifier.fillMaxWidth().height(capped.dp).testTag("widget"),
+      )
     }
     failed -> Text(t("widget.failed"), fontSize = Type.text2, color = Palette.fg3, modifier = Modifier.fillMaxWidth())
     else -> Box(Modifier.fillMaxWidth().height(height.dp).background(Palette.chip, RoundedCornerShape(Metrics.rMd)))
@@ -89,9 +103,19 @@ private fun tailwindRuntime(context: Context): String? = tailwindSource ?: runCa
  */
 @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
 @Composable
-private fun WidgetWebView(html: String, dark: Boolean, scrolls: Boolean, onHeight: (Float) -> Unit, modifier: Modifier) {
+private fun WidgetWebView(
+  html: String,
+  dark: Boolean,
+  token: String,
+  scrolls: Boolean,
+  onHeight: (Float) -> Unit,
+  onPrompt: ((String) -> Unit)?,
+  modifier: Modifier,
+) {
   val holder = remember { WidgetState() }
+  holder.token = token
   holder.onHeight = onHeight
+  holder.onPrompt = onPrompt
   holder.dark = dark
   AndroidView(
     factory = { ctx ->
@@ -145,20 +169,33 @@ private fun WidgetWebView(html: String, dark: Boolean, scrolls: Boolean, onHeigh
   )
 }
 
-/** What the WebView's callbacks read: the latest height handler, the theme, whether the page scrolls itself */
+/** What the WebView's callbacks read: the latest height and prompt handlers, the theme, whether the page scrolls itself */
 private class WidgetState {
+  @Volatile var token = ""
   var onHeight: (Float) -> Unit = {}
+  var onPrompt: ((String) -> Unit)? = null
   @Volatile var dark = false
   var applied = false
   var loaded: String? = null
   var scrolls = false
   private val main = Handler(Looper.getMainLooper())
+  private val gate = WidgetPromptGate()
 
   /** Called by the page's bootstrap on the WebView's own thread */
   val bridge = object {
     @JavascriptInterface
-    fun height(h: Double) {
-      if (h > 0) main.post { onHeight(h.toFloat()) }
+    fun height(t: String, h: Double) {
+      if (t == token && h > 0) main.post { onHeight(h.toFloat()) }
+    }
+
+    @JavascriptInterface
+    fun prompt(t: String, raw: String) {
+      if (t != token) return
+      main.post {
+        val send = onPrompt ?: return@post
+        val text = gate.accept(raw) ?: return@post
+        send(text)
+      }
     }
   }
 }
