@@ -15,6 +15,15 @@ import Testing
     #expect(text.runs.count == 2) // One kerned passage and the unchanged paragraph-end marker.
   }
 
+  /// Folded one part at a time, every part nested the text a level deeper and resolving it recursed through each
+  /// level: a command output of a few hundred lines overflowed the phone's 1 MB main-thread stack, and this many parts
+  /// overflow a Mac's 8 MB one. `Text.joined` keeps the depth at log2 of the count
+  @Test func joinedTextOfManyPartsRenders() throws {
+    let text = Text.joined((0..<10_000).map { Text(web: "\($0)\n", paragraph: false) })
+    let image = try #require(ImageRenderer(content: text.fixedSize()).cgImage)
+    #expect(image.height > 0)
+  }
+
   /// Coalescing a zero-width break is safe only when it leaves glyph positions, wrapping and Latin advances intact.
   /// Compare with the original per-character kern assignment, including punctuation, supplementary Han and kana.
   @Test(arguments: [
