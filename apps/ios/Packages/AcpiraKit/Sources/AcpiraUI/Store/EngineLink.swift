@@ -29,15 +29,14 @@ final class EngineLink {
   /// The paired wire's own blob streams; nil on the development engine's WebSocket
   private let pairedBlobs: (any PairedBlobs)?
   /// The chat's images: blobs over the paired link (the computer's HTTP route is loopback only, out of the phone's
-  /// reach) or the development engine's HTTP route, files on the computer staged with imageBlob first. A paired wire
-  /// stages only files the session shows (`shown`; the gateway refuses any other path, the engine checks the transcript
-  /// names it), so a file row the session does not show stays plain there
+  /// reach) or the development engine's HTTP route, files on the computer staged first: `imageBlob` with `shown` for
+  /// files the session shows, `stageFile` when a paired device opens a file row or attachment not in `shows_file`
   lazy var media = MediaLoader(fetch: blobFetch, stage: stager, download: pairedBlobs.map { wire in
     { @Sendable session, name, to, progress in try await wire.download(session: session, name: name, to: to, progress: progress) }
   })
 
   private var stager: MediaLoader.Stage {
-    { [weak self] session, path in await self?.stage(session, path) }
+    { [weak self] session, path, shown in await self?.stage(session, path, shown: shown) }
   }
 
   private var blobFetch: BlobFetch {
@@ -46,11 +45,13 @@ final class EngineLink {
     }
     return HTTPBlobs.fetch(base: { [weak self] in await self?.blobBase })
   }
-  /// imageBlob requests waiting on their answer, by seq
+  /// imageBlob and stageFile requests waiting on their answer, by seq
   private var staging: [Int: CheckedContinuation<String?, Never>] = [:]
+  private var stagingFiles: [Int: CheckedContinuation<HostMsg?, Never>] = [:]
   private var stagingSeq = 0
   /// App.tsx IMAGE_BLOB_TIMEOUT: an answer that never comes reads as an unreadable file
   static let stageTimeout: Duration = .seconds(10)
+  static let askTimeout: Duration = .seconds(20)
   static let log = Logger(subsystem: "cc.hotic.acpira", category: "engine")
 
   convenience init(address: EngineAddress, language: String) {
@@ -68,9 +69,13 @@ final class EngineLink {
     pairedBlobs = transport as? any PairedBlobs
   }
 
-  /// Stages a file on the engine's machine into the session's blob store (App.tsx imageBlob) and answers its blob
-  /// name; nil when the engine could not read it or never answered
-  func stage(_ session: String, _ path: String) async -> String? {
+  /// Stages a file on the engine's machine into the session's blob store (App.tsx imageBlob, or stageFile over a paired
+  /// link when the user opens a file not shown inline) and answers its blob name; nil when unreadable or unanswered
+  func stage(_ session: String, _ path: String, shown: Bool = true) async -> String? {
+    if pairedBlobs != nil, !shown {
+      if case let .staged(blob, _) = await stageFile(session, path: path) { return blob }
+      return nil
+    }
     stagingSeq += 1
     let seq = stagingSeq
     return await withCheckedContinuation { continuation in
@@ -83,8 +88,33 @@ final class EngineLink {
     }
   }
 
+  /// A file staged on the computer for the phone to download or preview, whatever its type (`FileDownload`)
+  func stageFile(_ session: String, path: String) async -> StagedFile {
+    stagingSeq += 1
+    let seq = stagingSeq
+    let got = await withCheckedContinuation { continuation in
+      stagingFiles[seq] = continuation
+      client.post(.stageFile(sessionId: session, path: path, seq: seq))
+      Task { [weak self] in
+        try? await Task.sleep(for: Self.askTimeout)
+        self?.stagedFile(seq, nil)
+      }
+    }
+    switch got {
+    case let .stagedFile(_, blob?, size, _)?: return .staged(blob: blob, size: size ?? 0)
+    case let .stagedFile(_, _, _, error?)?: return .failed(error)
+    // No answer: an engine from before stageFile (its gateway drops the request) or a lost wire
+    default: return .failed(.message(t("mobile.engineNeeded")))
+    }
+  }
+
   /// The engine's imageBlob answer (or the timeout's): settles the request once
   func staged(_ seq: Int, blob: String?) {
     staging.removeValue(forKey: seq)?.resume(returning: blob)
+  }
+
+  /// The engine's stagedFile answer (or the timeout's): settles the request once
+  func stagedFile(_ seq: Int, _ message: HostMsg?) {
+    stagingFiles.removeValue(forKey: seq)?.resume(returning: message)
   }
 }

@@ -117,13 +117,18 @@ struct MediaSourceTests {
     #expect(fileRowImage("/w/a.png", image: refs[0], session: "s", canStage: false) == .blob(session: "s", name: "a1.png"))
     // A paired wire stages nothing, so a row without a saved copy stays plain there
     #expect(fileRowImage("/w/b.png", image: nil, session: "s", canStage: false) == nil)
-    #expect(fileRowImage("/w/b.png", image: nil, session: "s", canStage: true) == .file(session: "s", path: "/w/b.png"))
+    #expect(fileRowImage("/w/b.png", image: nil, session: "s", canStage: true) == .file(session: "s", path: "/w/b.png", shown: false))
     #expect(fileRowImage("/w/notes.md", image: nil, session: "s", canStage: true) == nil)
     #expect(fileRowImage("/w/a.png:12", image: refs[0], session: "s", canStage: true) == nil)
-    // Rows pair with images by the uri's file, else by place when there is one per row
+    // Rows pair with images by the uri's file, else by place when there is one per row or per image row
     #expect(rowImage("/w/x/a.png", at: 1, of: ["/w/b.png", "/w/x/a.png"], images: refs) == refs[0])
     #expect(rowImage("/w/b.png", at: 0, of: ["/w/b.png", "/w/c.png"], images: refs) == refs[0])
     #expect(rowImage("/w/c.png", at: 1, of: ["/w/b.png", "/w/c.png", "/w/d.png"], images: refs) == nil)
+    let uriLess = try JSONDecoder().decode([ImageRef].self, from: Data(#"[{"blob":"x1.png","mimeType":"image/png"},{"blob":"x2.png","mimeType":"image/png"}]"#.utf8))
+    let mixed = ["/w/marks.tsx:180", "/w/SidekickRelay.tsx", "/w/.acpira/tmp/a.png", "/w/.acpira/tmp/b.png"]
+    #expect(rowImage(mixed[0], at: 0, of: mixed, images: uriLess) == nil)
+    #expect(rowImage(mixed[2], at: 2, of: mixed, images: uriLess) == uriLess[0])
+    #expect(rowImage(mixed[3], at: 3, of: mixed, images: uriLess) == uriLess[1])
   }
 
   @Test func aWidgetsHTMLIsItsPageNotAnImage() throws {
@@ -229,7 +234,7 @@ struct MediaLoaderTests {
       await calls.add("fetch \(session)/\(name)")
       try await Task.sleep(for: .milliseconds(10))
       return Data(base64Encoded: dotPNG)!
-    }, stage: { session, path in
+    }, stage: { session, path, _ in
       await calls.add("stage \(session) \(path)")
       return path.hasSuffix("missing.png") ? nil : "staged.png"
     })
@@ -420,8 +425,16 @@ struct EngineMediaTests {
     let image = try await link.media.image(.blob(session: "s1", name: "dot.png"))
     #expect(image.width == 1)
     #expect(wire.asked.withLock { $0 } == ["s1/dot.png"])
-    // Files the session shows are staged over it too (imageBlob with `shown`, which the gateway lets through)
+    // Files the session shows go as `imageBlob` with `shown`; file rows not in `shows_file` go as `stageFile`
     #expect(link.media.canStage)
+    await link.client.start()
+    wire.feed.yield(EngineClientTests.helloOk)
+    let engine = EngineModelTests()
+    let row = Task { await link.stage("s1", "/w/search-hit.png", shown: false) }
+    try await engine.until { wire.sent.withLock { $0.last?.contains("stageFile") == true } }
+    #expect(wire.sent.withLock { $0.last?.contains("stageFile") == true })
+    link.stagedFile(1, .stagedFile(seq: 1, blob: "hit.png", size: 42))
+    #expect(await row.value == "hit.png")
   }
 
   @Test func initNamesTheBlobBase() async throws {
@@ -437,8 +450,12 @@ struct EngineMediaTests {
 /// A paired wire that answers blobs only: the 1×1 dot for any name
 final class BlobWire: EngineTransport, PairedBlobs {
   let asked = Mutex<[String]>([])
-  func frames() -> AsyncThrowingStream<String, Error> { AsyncThrowingStream { _ in } }
-  func send(_ text: String) async throws {}
+  let sent = Mutex<[String]>([])
+  private let stream: AsyncThrowingStream<String, Error>
+  let feed: AsyncThrowingStream<String, Error>.Continuation
+  init() { (stream, feed) = AsyncThrowingStream.makeStream() }
+  func frames() -> AsyncThrowingStream<String, Error> { stream }
+  func send(_ text: String) async throws { sent.withLock { $0.append(text) } }
   func close() {}
   func blob(session: String, name: String) async throws -> Data {
     asked.withLock { $0.append("\(session)/\(name)") }

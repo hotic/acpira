@@ -633,12 +633,12 @@ internal fun rowImage(item: String, index: Int, items: List<String>, images: Lis
  * where the link can stage it. null for a line reference and any other file: the row stays plain, since the phone opens
  * nothing else from a process row
  */
-private fun fileRowImage(hit: String, image: ImageRef?, session: String?, canStage: Boolean): MediaSource? {
+internal fun fileRowImage(hit: String, image: ImageRef?, session: String?, canStage: Boolean): MediaSource? {
   val (path, line) = fileReference(hit)
   if (line != null || session == null) return null
   MediaSource.stored(image?.blob, session)?.let { return it }
   if (!canStage || imageMimeOf(path) == null) return null
-  return MediaSource.HostFile(session, path)
+  return MediaSource.HostFile(session, path, shown = false)
 }
 
 /**

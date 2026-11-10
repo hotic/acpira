@@ -108,7 +108,7 @@ sealed interface VideoSource {
   /** A file in the session's blob store */
   data class Blob(val session: String, val name: String) : VideoSource
   /** Any other file on the computer, staged by the engine on demand */
-  data class Staged(val session: String, val path: String) : VideoSource
+  data class Staged(val session: String, val path: String, val shown: Boolean = true) : VideoSource
 
   companion object {
     /** The source for a `file` attachment, null when it is no video or nothing here can read it (it stays a pill) */
@@ -121,7 +121,7 @@ sealed interface VideoSource {
       session ?: return null
       val last = path.substringAfterLast('/')
       if (BlobNames.isBlobName(last)) return Blob(session, last)
-      return if (loader.canStage) Staged(session, path) else null
+      return if (loader.canStage) Staged(session, path, shown = false) else null
     }
   }
 }
@@ -199,7 +199,7 @@ object VideoCache {
     val job = scope.async {
       val (session, name) = when (source) {
         is VideoSource.Blob -> source.session to source.name
-        is VideoSource.Staged -> source.session to (loader.blobName(source.session, null, source.path) ?: throw Failure.Unreadable())
+        is VideoSource.Staged -> source.session to (loader.blobName(source.session, null, source.path, source.shown) ?: throw Failure.Unreadable())
         is VideoSource.Local -> return@async source.file
       }
       val target = File(folder, name)
