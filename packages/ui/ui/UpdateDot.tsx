@@ -8,7 +8,7 @@ export function UpdateDot({ className }: { className?: string }) {
   return <span aria-hidden className={cn('size-unread-dot shrink-0 rounded-full bg-fg-strong unread-halo', className)} />;
 }
 
-// An agent in use (not off, not another extension's) whose adapter is older than the version Acpira pins (AgentInfo.update)
+// An agent in use (not off, not another extension's) whose adapter has a newer version to update to (AgentInfo.update)
 export const agentUpdates = (agents: AgentInfo[]) => agents.some(a => a.update && !a.disabled);
 
 // The desktop app has a newer version to download or one waiting for a restart

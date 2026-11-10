@@ -28,7 +28,8 @@ export interface AgentInfo {
   searched?: string[];
   // How to get the CLI when none was found: the vendor's one-line install for this platform and its docs page
   install?: AgentInstall;
-  // The adapter version this release pins, when the installed adapter is older; the in-app install (installAgent) updates it
+  // The adapter version to update to (npm's latest, never below the version this release pins), when the installed adapter
+  // is older; the in-app install (installAgent) updates it
   update?: string;
   // Who makes the CLI, for an agent the page knows no vendor of (an agents.json entry or a plugin's)
   vendor?: string;

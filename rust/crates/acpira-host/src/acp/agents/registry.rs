@@ -281,6 +281,7 @@ pub fn builtin_agents() -> Vec<AgentDef> {
         "npm install -g @deepseek-ai/dsh",
         "https://deepseekdocs.com/en/docs/guides/acp-automation-server",
       ),
+      adapter: Some(AdapterDef { package: s("@deepseek-ai/dsh"), engine: None }),
       ..base("dsh", "DSH", "dsh", &["--profile", "acp"], &["~/.local/bin/dsh", "/opt/homebrew/bin/dsh", "/usr/local/bin/dsh"])
     },
     antigravity(native_release::current_platform().as_deref().unwrap_or("")),
@@ -292,6 +293,16 @@ pub fn builtin_agents() -> Vec<AgentDef> {
         "npm install -g --ignore-scripts @earendil-works/pi-coding-agent pi-acp",
         "https://github.com/svkozak/pi-acp",
       ),
+      // pi-acp runs the global `pi` the same line installs; its models come from that package, so both are tracked
+      adapter: Some(AdapterDef {
+        package: s("pi-acp"),
+        engine: Some(AdapterEngine {
+          package: s("@earendil-works/pi-coding-agent"),
+          name: s("Pi"),
+          override_env: s("PI_ACP_PI_COMMAND"),
+          native: None,
+        }),
+      }),
       // pi-acp duplicates its thinking levels as modes and as the thought_level option
       ignore_modes: true,
       ..base("pi", "Pi", "pi-acp", &[], &["~/.local/bin/pi-acp", "/opt/homebrew/bin/pi-acp", "/usr/local/bin/pi-acp"])
@@ -424,6 +435,54 @@ pub struct AgentRegistry {
   next_listener: std::sync::atomic::AtomicU64,
 }
 
+/// A built-in definition with an agents.json entry for the same launcher laid over it: fields the entry sets win, env
+/// merges key by key. An install line naming the built-in's own adapter package is a stale copy of the pin (IDE settings
+/// seeded agents.json with it, then the pin moved on), so the built-in line wins over it
+fn overlay(mut b: AgentDef, c: CustomAgentSetting, login: Vec<String>, install: Option<String>, docs: Option<String>) -> AgentDef {
+  if let Some(name) = c.name {
+    b.name = name;
+  }
+  if let Some(args) = c.args {
+    b.args = args;
+  }
+  if let Some((cmd, rest)) = login.split_first() {
+    b.login = Some(LoginDef { command: cmd.clone(), args: rest.to_vec() });
+  }
+  let own_package = |line: &str| b.adapter.as_ref().is_some_and(|a| line.contains(a.package.as_str()));
+  if let Some(line) = install.filter(|l| !own_package(l)) {
+    let docs = docs.or_else(|| b.install.as_ref().and_then(|i| i.docs.clone()));
+    b.install = Some(InstallDef { posix: Some(line.clone()), windows: Some(line), docs });
+  }
+  if let Some(env) = c.env {
+    b.env.get_or_insert_with(Default::default).extend(env);
+  }
+  if c.modes.is_some() {
+    b.modes = c.modes;
+  }
+  if let Some(v) = c.prompt.and_then(|p| p.images_regardless) {
+    b.images_regardless = v;
+  }
+  if let Some(r) = c.requires {
+    b.requires = r;
+  }
+  if let Some(v) = c.ignore_modes {
+    b.ignore_modes = v;
+  }
+  if let Some(v) = c.subagents {
+    b.subagents = v;
+  }
+  if let Some(v) = c.terminal_auth {
+    b.terminal_auth = v;
+  }
+  if let Some(v) = c.vendor.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty()) {
+    b.vendor = Some(v);
+  }
+  if let Some(m) = c.mark.as_ref().and_then(|m| mark_paths(m).ok()) {
+    b.mark = Some(m);
+  }
+  b
+}
+
 impl AgentRegistry {
   /// `custom` is the agents.json object; entries without a command are skipped
   pub fn new(custom: &Value) -> Self {
@@ -445,6 +504,13 @@ impl AgentRegistry {
       let login: Vec<String> = c.login.as_deref().map(|l| l.split_whitespace().map(str::to_owned).collect()).unwrap_or_default();
       let command = c.install.as_ref().and_then(|i| i.command.as_deref()).map(str::trim).filter(|x| !x.is_empty()).map(str::to_owned);
       let docs = c.install.as_ref().and_then(|i| i.docs.as_deref()).map(str::trim).filter(|x| !x.is_empty()).map(str::to_owned);
+      // Same id and launcher as a built-in: the entry only tunes it (env, args, flags), so the built-in's adapter,
+      // lookup paths and pinned install line survive and an update stays offered
+      if let Some(b) = defs.get(id).filter(|b| b.command == c.command.trim()).cloned() {
+        let def = overlay(b, c, login, command, docs);
+        defs.insert(id.clone(), def);
+        continue;
+      }
       let def = AgentDef {
         id: id.clone(),
         name: c.name.unwrap_or_else(|| id.clone()),
@@ -547,6 +613,9 @@ impl AgentRegistry {
       }
       None => def.posix.clone(),
     };
+    // A newer adapter on npm than the pin: install (and update to) that one
+    let targets: Vec<(&str, semver::Version)> = tracked(agent).into_iter().filter_map(|p| Some((p, target_for(agent, p)?))).collect();
+    let command = command.map(|l| retarget(&l, &targets));
     if command.is_none() && def.docs.is_none() {
       return None;
     }
@@ -573,6 +642,10 @@ impl AgentRegistry {
   pub async fn probe_all(&self) -> bool {
     let first = !self.probed.load(Ordering::Acquire);
     let before = self.snapshot();
+    // Ask npm in the background what each adapter's latest is; this pass offers what earlier lookups found
+    for package in self.order.iter().filter_map(|id| self.defs.get(id)).flat_map(tracked) {
+      super::npm_latest::kick(package, self.os);
+    }
     let futs: Vec<_> = self.order.iter().map(|id| self.locate(id)).collect();
     for f in futs {
       f.await;
@@ -678,18 +751,69 @@ impl AgentRegistry {
   }
 }
 
-/// The adapter version an install line pins (`<package>@<version>` among its words); None when it installs the latest
-fn pinned_version(line: &str, package: &str) -> Option<semver::Version> {
+/// How `line` names `package`: None when it does not install it, Some(None) unpinned (`pkg` installs npm's latest),
+/// Some(Some(v)) pinned at `pkg@v`
+fn line_version(line: &str, package: &str) -> Option<Option<semver::Version>> {
   let prefix = format!("{package}@");
-  line.split_whitespace().find_map(|w| w.strip_prefix(&prefix)).and_then(|v| semver::Version::parse(v).ok())
+  line.split_whitespace().find_map(|w| {
+    if w == package {
+      Some(None)
+    } else {
+      w.strip_prefix(&prefix).map(|v| semver::Version::parse(v).ok())
+    }
+  })
 }
 
-/// The pinned version when the adapter found next to `binary` is older; a version that cannot be read offers nothing
+/// The npm packages an update covers: the adapter, plus its engine when the install line installs that too (Pi)
+fn tracked(def: &AgentDef) -> Vec<&str> {
+  let Some(a) = def.adapter.as_ref() else { return vec![] };
+  let line = def.install.as_ref().and_then(|i| i.posix.as_deref()).unwrap_or_default();
+  let mut out = vec![a.package.as_str()];
+  out.extend(a.engine.as_ref().map(|e| e.package.as_str()).filter(|p| line_version(line, p).is_some()));
+  out
+}
+
+/// The version an install or update of `package` goes to: npm's latest when newer than the pin, else the pin. An
+/// unpinned line has only npm's latest; None until it is known, or when the line does not install `package`
+fn target_for(def: &AgentDef, package: &str) -> Option<semver::Version> {
+  let pinned = line_version(def.install.as_ref()?.posix.as_deref()?, package)?;
+  let latest = super::npm_latest::cached(package);
+  match (pinned, latest) {
+    (Some(p), Some(l)) => Some(if l > p { l } else { p }),
+    (p, l) => p.or(l),
+  }
+}
+
+/// `line` with each of `targets` (package, version) pinned at that version, whether it named a version before or not
+fn retarget(line: &str, targets: &[(&str, semver::Version)]) -> String {
+  let word = |w: &str| {
+    for (package, version) in targets {
+      if w == *package || w.strip_prefix(*package).is_some_and(|r| r.starts_with('@')) {
+        return format!("{package}@{version}");
+      }
+    }
+    w.to_owned()
+  };
+  line.split(' ').map(word).collect::<Vec<_>>().join(" ")
+}
+
+/// The version to offer when a tracked package found next to `binary` is older than its target (the adapter's first);
+/// a version that cannot be read offers nothing
 async fn update_for(def: &AgentDef, binary: &str) -> Option<String> {
-  let package = &def.adapter.as_ref()?.package;
-  let pinned = pinned_version(def.install.as_ref()?.posix.as_deref()?, package)?;
-  let installed = semver::Version::parse(&super::adapter_info::installed_version(binary, package).await?).ok()?;
-  (installed < pinned).then(|| pinned.to_string())
+  let adapter = def.adapter.as_ref()?;
+  for package in tracked(def) {
+    let Some(target) = target_for(def, package) else { continue };
+    let installed = if package == adapter.package {
+      super::adapter_info::installed_version(binary, package).await
+    } else {
+      super::adapter_info::read_adapter_info(binary, def).await.and_then(|i| i.engine?.version)
+    };
+    let Some(installed) = installed.and_then(|v| semver::Version::parse(&v).ok()) else { continue };
+    if installed < target {
+      return Some(target.to_string());
+    }
+  }
+  None
 }
 
 /// Global bin directories package managers use outside the usual PATH entries, tried last: an npm prefix set up to avoid
@@ -784,6 +908,68 @@ mod tests {
     assert!(r.list()[0].available.is_none(), "not probed yet");
   }
 
+  #[tokio::test]
+  async fn a_newer_adapter_on_npm_is_offered_and_installed_over_the_pin() {
+    let mut def = builtin_agents().into_iter().find(|d| d.id == "claude").unwrap();
+    let package = "@acpira-test/npm-latest-adapter";
+    def.adapter.as_mut().unwrap().package = package.into();
+    let line = format!("npm install -g --include=optional {package}@1.2.0");
+    def.install = Some(InstallDef { posix: Some(line.clone()), windows: Some(line), docs: None });
+    assert_eq!(target_for(&def, package).unwrap().to_string(), "1.2.0", "nothing looked up: the pin");
+    super::super::npm_latest::seed(package, "1.1.0");
+    assert_eq!(target_for(&def, package).unwrap().to_string(), "1.2.0", "an older latest never undercuts the pin");
+    super::super::npm_latest::seed(package, "1.5.0");
+    let target = target_for(&def, package).unwrap();
+    assert_eq!(target.to_string(), "1.5.0");
+    let t = tempfile::tempdir().unwrap();
+    let dir = t.path().join("node_modules").join(package);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("package.json"), format!(r#"{{"name":"{package}","version":"1.2.0"}}"#)).unwrap();
+    let shim = t.path().join("claude-agent-acp.cmd");
+    std::fs::write(&shim, "").unwrap();
+    assert_eq!(update_for(&def, shim.to_str().unwrap()).await.as_deref(), Some("1.5.0"));
+    assert_eq!(
+      retarget("npm install -g --include=optional @acpira-test/npm-latest-adapter@1.2.0", &[(package, target)]),
+      "npm install -g --include=optional @acpira-test/npm-latest-adapter@1.5.0"
+    );
+  }
+
+  #[test]
+  fn an_unpinned_line_follows_npm_and_pi_tracks_its_engine_too() {
+    let r = AgentRegistry::with_os(&json!({}), Os::Posix);
+    let pi = r.get("pi").unwrap();
+    assert_eq!(tracked(pi), vec!["pi-acp", "@earendil-works/pi-coding-agent"]);
+    assert_eq!(tracked(r.get("claude").unwrap()), vec!["@agentclientprotocol/claude-agent-acp"], "the SDK is not on claude's line");
+    assert_eq!(target_for(pi, "pi-acp"), None, "unpinned and nothing looked up yet");
+    let v = |s: &str| semver::Version::parse(s).unwrap();
+    assert_eq!(
+      retarget("npm install -g --ignore-scripts @earendil-works/pi-coding-agent pi-acp", &[("pi-acp", v("0.0.35")), ("@earendil-works/pi-coding-agent", v("1.5.1"))]),
+      "npm install -g --ignore-scripts @earendil-works/pi-coding-agent@1.5.1 pi-acp@0.0.35"
+    );
+    assert!(v("0.2.0-rc.2") < v("0.2.2-rc.1"), "DSH ships release candidates as latest");
+  }
+
+  #[test]
+  fn an_entry_for_a_built_in_launcher_tunes_it_and_keeps_the_pin() {
+    let stale = "npm install -g --include=optional @agentclientprotocol/claude-agent-acp@0.1.0";
+    let r = AgentRegistry::with_os(
+      &json!({
+        "claude": { "command": "claude-agent-acp", "args": [], "install": { "command": stale }, "env": { "TZ": "Asia/Tokyo" } },
+        "codex": { "command": "my-codex", "install": { "command": "make install" } },
+      }),
+      Os::Posix,
+    );
+    let builtin = builtin_agents().into_iter().find(|d| d.id == "claude").unwrap();
+    let claude = r.get("claude").unwrap();
+    assert_eq!(claude.install, builtin.install, "a stale copy of the pinned line loses to the pin");
+    assert!(claude.adapter.is_some() && claude.candidates == builtin.candidates && claude.login == builtin.login);
+    assert_eq!(claude.env.as_ref().and_then(|e| e.get("TZ")).map(String::as_str), Some("Asia/Tokyo"));
+    // Another launcher under a built-in id replaces the definition outright
+    let codex = r.get("codex").unwrap();
+    assert!(codex.adapter.is_none() && codex.candidates.is_empty());
+    assert_eq!(r.install("codex").unwrap().command.as_deref(), Some("make install"));
+  }
+
   #[test]
   fn a_custom_agent_carries_its_vendor_and_a_valid_mark_only() {
     let r = AgentRegistry::with_os(
@@ -801,8 +987,8 @@ mod tests {
     let defs = builtin_agents();
     let claude = defs.iter().find(|d| d.id == "claude").unwrap();
     let package = &claude.adapter.as_ref().unwrap().package;
-    let pinned = pinned_version(claude.install.as_ref().unwrap().posix.as_deref().unwrap(), package).expect("claude pins its adapter");
-    assert!(pinned_version("npm install -g @deepseek-ai/dsh", "@deepseek-ai/dsh").is_none(), "an unpinned line offers nothing");
+    let pinned = line_version(claude.install.as_ref().unwrap().posix.as_deref().unwrap(), package).flatten().expect("claude pins its adapter");
+    assert_eq!(line_version("npm install -g @deepseek-ai/dsh", "@deepseek-ai/dsh"), Some(None), "an unpinned line");
     // A global npm layout read through a .cmd shim (the lookup branches on the extension, not the platform)
     let t = tempfile::tempdir().unwrap();
     let dir = t.path().join("node_modules").join(package);
