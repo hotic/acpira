@@ -626,6 +626,15 @@ impl AcpSession {
     c.proc.as_ref().is_some_and(|p| crate::acp::vendors::steering::supported(&p.init))
   }
 
+  /// A running command row can be stopped on its own (`stop_command`): Claude Code's project tools on an SSH host are
+  /// the engine's own calls, any other command is found under the agent's process, which needs a Unix process table
+  pub(crate) fn can_stop_commands_of(&self, c: &Core) -> bool {
+    if self.remote_folder().is_some() {
+      return self.vendor == Vendor::Claude;
+    }
+    cfg!(unix) && c.proc.as_ref().is_some_and(|p| p.pid.is_some())
+  }
+
   /// The goal controls the running agent advertises (`vendors::goal::actions`)
   pub(crate) fn goal_actions_of(c: &Core) -> Option<Vec<GoalAction>> {
     c.proc.as_ref().and_then(|p| crate::acp::vendors::goal::actions(&p.init))

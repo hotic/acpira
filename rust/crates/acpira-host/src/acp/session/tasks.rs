@@ -1,4 +1,4 @@
-//! Stopping one AIR background task or one delegated subagent
+//! Stopping one AIR background task, one running command or one delegated subagent
 
 use std::sync::Arc;
 
@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 
 use acpira_shared::transcript::*;
 
+use crate::acp::session::view::visible_turns;
 use crate::acp::session::{AcpSession, Core};
 use crate::acp::transcript::normalize::set_stop_requested;
 use crate::i18n::t;
@@ -56,6 +57,45 @@ impl AcpSession {
       Ok(_) if refused => Err(anyhow!(t("asyncTask.stopRefused"))),
       Ok(_) => Ok(()),
     }
+  }
+
+  /// The user's stop of one running command row; the turn goes on, the agent reads the command as failed. Claude Code's
+  /// project tools on an SSH host are the engine's own calls, any other command is found by its text among the
+  /// processes under the agent's (`platform::process_tree`). An error when nothing running that command was found
+  pub async fn stop_command(self: &Arc<Self>, tool_call_id: &str) -> Result<()> {
+    if self.stop_remote_call(tool_call_id) {
+      self.log(&format!("stopCommand {tool_call_id}: remote call cancelled"));
+      return Ok(());
+    }
+    let (command, pid) = {
+      let c = self.core.lock();
+      let command = visible_turns(&c).chain(c.tree.all_turns()).filter_map(Turn::as_agent).flat_map(|t| t.blocks.iter()).find_map(|b| match b {
+        AgentBlock::ToolCall(tool)
+          if tool.id == tool_call_id
+            && tool.kind == ToolKind::Execute
+            && matches!(tool.status, ToolStatus::Pending | ToolStatus::InProgress)
+            && tool.target_mono == Some(true) =>
+        {
+          tool.target.clone()
+        }
+        _ => None,
+      });
+      let pid = c.proc.as_ref().filter(|p| p.alive()).and_then(|p| p.pid);
+      (command, pid)
+    };
+    let (Some(command), Some(pid)) = (command, pid) else {
+      self.log(&format!("stopCommand {tool_call_id}: no running command row"));
+      return Ok(());
+    };
+    #[cfg(unix)]
+    let found = tokio::task::spawn_blocking(move || crate::platform::process_tree::stop_command(pid, &command)).await.unwrap_or(false);
+    #[cfg(not(unix))]
+    let found = {
+      let _ = (pid, command);
+      false
+    };
+    self.log(&format!("stopCommand {tool_call_id}: {}", if found { "signalled" } else { "no process found" }));
+    if found { Ok(()) } else { Err(anyhow!(t("command.stopNotFound"))) }
   }
 
   fn mark_stop(&self, c: &mut Core, peer: &str, task_id: &str, on: bool) {

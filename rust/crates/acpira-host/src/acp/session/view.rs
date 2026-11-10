@@ -193,6 +193,7 @@ impl AcpSession {
       commands: merged.as_deref().unwrap_or(&c.state.commands),
       queued,
       can_steer: self.can_steer_of(&c),
+      can_stop_commands: self.can_stop_commands_of(&c),
       goal: c.state.goal.as_ref(),
       goal_actions: Self::goal_actions_of(&c),
       subagents: subagents.as_deref(),
@@ -368,6 +369,8 @@ struct ViewRef<'a> {
   queued: Option<Vec<QueuedPrompt>>,
   #[serde(skip_serializing_if = "std::ops::Not::not")]
   can_steer: bool,
+  #[serde(skip_serializing_if = "std::ops::Not::not")]
+  can_stop_commands: bool,
   #[serde(skip_serializing_if = "Option::is_none")]
   goal: Option<&'a SessionGoal>,
   #[serde(skip_serializing_if = "Option::is_none")]

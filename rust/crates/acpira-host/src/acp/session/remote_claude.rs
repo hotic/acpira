@@ -333,6 +333,11 @@ impl AcpSession {
     }
   }
 
+  /// The user's stop of one remote call's row; false when the call is not one of them
+  pub(crate) fn stop_remote_call(&self, tool_call_id: &str) -> bool {
+    self.remote_calls.lock().get(tool_call_id).map(|c| c.stop.cancel()).is_some()
+  }
+
   /// A permission request's toolCall of a remote tool, rewritten like its row
   pub(crate) fn nativize_permission(&self, req: &mut Value) {
     let Some(tc) = req.get_mut("toolCall") else { return };

@@ -1068,6 +1068,11 @@ pub enum WebviewMsg {
     session_id: String,
     task_id: String,
   },
+  /// End one running command (a live execute row, SessionView.canStopCommands); the turn goes on
+  StopCommand {
+    session_id: String,
+    tool_call_id: String,
+  },
   /// A goal control (SessionView.goalActions): the engine sends turn-starting ones as a `/goal …` prompt, the rest as `_session/goal`
   Goal {
     session_id: String,

@@ -906,6 +906,8 @@
   "asyncTask.stopping": "Stopping…",
   "asyncTask.stop": "Stop task",
   "asyncTask.stopRefused": "The agent could not stop that task",
+  "command.stop": "Stop command",
+  "command.stopNotFound": "Could not find this command’s process to stop it",
   "asyncTask.script": "Script",
   "asyncTask.output": "Output",
   "asyncTask.tokens": "{n} tokens",

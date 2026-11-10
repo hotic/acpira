@@ -39,6 +39,7 @@ pub const ACTIONS: &[&str] = &[
   "editQueued",
   "cancelSubagent",
   "stopAsyncTask",
+  "stopCommand",
   "reconnect",
 ];
 

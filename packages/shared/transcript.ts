@@ -835,6 +835,9 @@ export interface SessionView {
   queued?: QueuedPrompt[];
   // The agent takes `_session/steering` and honours its idle fallback: a queued prompt can join the running turn
   canSteer?: boolean;
+  // A running command row can be stopped on its own (`stopCommand`), the turn going on: the engine finds the command's
+  // process under the agent's (macOS / Linux) or cancels the remote call (an SSH workspace)
+  canStopCommands?: boolean;
   // The agent's current goal; a completed one stays only until its turn ends
   goal?: SessionGoal;
   // The goal controls the running agent advertises; absent when it has no goal support (or no process yet)

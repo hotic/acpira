@@ -1,5 +1,5 @@
 import { FileText, Globe, Square } from 'lucide-react';
-import { memo, useContext, type ReactNode } from 'react';
+import { memo, useContext, useState, type ReactNode } from 'react';
 import type { AsyncTaskInfo, AsyncTaskState, ImageRef, ToolCallBlock } from '@acpira/shared/transcript';
 import type { MsgKey } from '@acpira/shared/i18n/core';
 import { imageMimeOf } from '@acpira/shared/attachments';
@@ -23,7 +23,7 @@ import { ShownVideos } from './AgentVideo';
 import { TerminalOutput, ToolOutput } from './Terminal';
 import { isSkillTool, isWorkflowRun, toolTarget } from './folding';
 import { ToolLabel } from './ToolLabel';
-import { AsyncTaskStopContext, OpenToolFileContext, SessionTitleContext, SkillDescriptionContext, ToolFileActionsContext, WorkflowProgressContext } from './fileLinks';
+import { AsyncTaskStopContext, CommandStopContext, OpenToolFileContext, SessionTitleContext, SkillDescriptionContext, ToolFileActionsContext, WorkflowProgressContext } from './fileLinks';
 import { isSessionTool, splitSessionTarget } from '@acpira/shared/sessionLinks';
 import { compactTokens } from './goalText';
 import { diffIndex, fileReference, toolFiles, visibleToolContents } from './toolDetails';
@@ -93,6 +93,22 @@ function ToolCallRows({ block, grouped, continuing }: { block: ToolCallBlock; gr
     </IconButton>
   );
 
+  // A command still running gets the same stop square: it ends that command's process and the turn goes on. Hidden
+  // once pressed, until the row settles, so a second press has nothing to land on
+  const stopCommand = useContext(CommandStopContext);
+  const [commandStopped, setCommandStopped] = useState(false);
+  const commandStop = command && running && !task && stopCommand !== undefined && !commandStopped && (
+    <IconButton
+      size="sm"
+      aria-label={t('command.stop')}
+      title={t('command.stop')}
+      className="-mr-1 [&_svg]:size-3"
+      onClick={e => { e.stopPropagation(); setCommandStopped(true); stopCommand(block.id); }}
+    >
+      <Square strokeWidth={1.5} />
+    </IconButton>
+  );
+
   // The diff stat is not decoration — every harness shows it — so it escapes the toolLine axis; 'rich' adds the rest of the meta
   const stat = block.diffStat && <DiffStat {...block.diffStat} />;
   // Commands always end their row with the outcome and run time; an async task's state tag stands in for the glyph.
@@ -105,6 +121,7 @@ function ToolCallRows({ block, grouped, continuing }: { block: ToolCallBlock; gr
         {toolLine === 'rich' && block.meta && <span>{block.meta}</span>}
         {taskTag}
         {taskStop}
+        {commandStop}
         <CommandOutcome status={block.status} duration={duration} glyph={!task} />
       </>
     : toolLine === 'rich'
