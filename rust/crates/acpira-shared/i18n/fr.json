@@ -901,6 +901,8 @@
   "asyncTask.stopping": "Arrêt…",
   "asyncTask.stop": "Arrêter la tâche",
   "asyncTask.stopRefused": "L’agent n’a pas pu arrêter cette tâche",
+  "command.stop": "Arrêter la commande",
+  "command.stopNotFound": "Processus de cette commande introuvable, impossible de l’arrêter seule",
   "asyncTask.script": "Script",
   "asyncTask.output": "Sortie",
   "asyncTask.toolUses": "{n} appels d’outils",

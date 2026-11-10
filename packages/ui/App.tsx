@@ -544,6 +544,7 @@ export function App() {
     unobserveSubagent: (sessionId, subagentId) => post({ type: 'unobserveSubagent', sessionId, subagentId }),
     cancelSubagent: (sessionId, subagentId) => post({ type: 'cancelSubagent', sessionId, subagentId }),
     stopAsyncTask: (sessionId, taskId) => post({ type: 'stopAsyncTask', sessionId, taskId }),
+    stopCommand: (sessionId, toolCallId) => post({ type: 'stopCommand', sessionId, toolCallId }),
     goal: (sessionId, action, objective) => post({ type: 'goal', sessionId, action, ...(objective !== undefined ? { objective } : {}) }),
     // A directory's openPath reveals it in the OS file manager (every shell has revealInOS); `reveal` does so for a file too
     revealPath: (path, reveal) => post({ type: 'openPath', path, ...(reveal ? { reveal } : {}) }),
@@ -726,6 +727,7 @@ export function App() {
       queued={session?.queued}
       goal={session?.goal}
       goalActions={session?.goalActions}
+      canStopCommands={session?.canStopCommands}
       forkedFrom={session?.forkedFrom}
       controls={session?.controls ?? EMPTY_CONTROLS}
       modelShapes={session?.modelShapes}

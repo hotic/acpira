@@ -39,6 +39,7 @@ pub(super) fn is_execution(m: &WebviewMsg) -> bool {
       | W::EditQueued { .. }
       | W::Login { .. }
       | W::StopAsyncTask { .. }
+      | W::StopCommand { .. }
       | W::Goal { .. }
   )
 }
@@ -377,6 +378,13 @@ impl SessionManager {
           && let Some(s) = self.live(&session_id)
         {
           s.stop_async_task(&task_id).await?;
+        }
+      }
+      W::StopCommand { session_id, tool_call_id } => {
+        if valid(&session_id)
+          && let Some(s) = self.live(&session_id)
+        {
+          s.stop_command(&tool_call_id).await?;
         }
       }
       W::Goal { session_id, action, objective } => {

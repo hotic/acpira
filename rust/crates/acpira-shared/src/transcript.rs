@@ -1769,6 +1769,10 @@ pub struct SessionView {
   /// The agent takes `_session/steering` and honours its idle fallback: a queued prompt can join the running turn
   #[serde(default, skip_serializing_if = "is_false")]
   pub can_steer: bool,
+  /// A running command row can be stopped on its own (`stopCommand`): its process under the agent's on macOS / Linux,
+  /// or the remote call in an SSH workspace
+  #[serde(default, skip_serializing_if = "is_false")]
+  pub can_stop_commands: bool,
   /// The agent's current goal (AIR goal extension); a completed one stays only until its turn ends
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub goal: Option<SessionGoal>,

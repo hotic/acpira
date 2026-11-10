@@ -917,6 +917,8 @@ export const es = {
   'asyncTask.stopping': 'Deteniendo…',
   'asyncTask.stop': 'Detener tarea',
   'asyncTask.stopRefused': 'El agente no pudo detener esa tarea',
+  'command.stop': 'Detener comando',
+  'command.stopNotFound': 'No se encontró el proceso de este comando, no se puede detener por separado',
   'asyncTask.script': 'Script',
   'asyncTask.output': 'Salida',
   'asyncTask.toolUses': '{n} llamadas a herramientas',

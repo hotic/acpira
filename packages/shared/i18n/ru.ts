@@ -935,6 +935,8 @@ export const ru = {
   'asyncTask.stopping': 'Остановка…',
   'asyncTask.stop': 'Остановить задачу',
   'asyncTask.stopRefused': 'Агент не смог остановить эту задачу',
+  'command.stop': 'Остановить команду',
+  'command.stopNotFound': 'Процесс этой команды не найден, остановить её отдельно нельзя',
   'asyncTask.script': 'Скрипт',
   'asyncTask.output': 'Вывод',
   'asyncTask.tokens': '{n} токенов',

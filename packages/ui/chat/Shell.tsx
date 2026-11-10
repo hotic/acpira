@@ -62,7 +62,7 @@ import { ProjectPick, StartPicker, usePresence } from './StartPage';
 import { AppMenu, NoProject, ShellToastItems, ShellToasts, TitleRow, TitleSpace, useSessionHistory, type QuickSettings } from './DesktopFrame';
 import type { SettingsPage } from '../settings/Nav';
 import { Lightbox } from './Lightbox';
-import { OpenToolFileContext, AsyncTaskStopContext, BlobUrlContext, WidgetPromptContext, DiffSourceContext, FileStagerContext, OpenBlobContext, OpenSessionContext, SessionTitleContext, SkillDescriptionContext, ToolFileActionsContext, resolveSessionPath, type FileStager, type ToolFileActions } from './fileLinks';
+import { OpenToolFileContext, AsyncTaskStopContext, CommandStopContext, BlobUrlContext, WidgetPromptContext, DiffSourceContext, FileStagerContext, OpenBlobContext, OpenSessionContext, SessionTitleContext, SkillDescriptionContext, ToolFileActionsContext, resolveSessionPath, type FileStager, type ToolFileActions } from './fileLinks';
 import { skillDescriptions } from './slashCommands';
 import { TurnActionsContext } from './TurnActions';
 import { ForkBoundary } from './ForkBoundary';
@@ -181,6 +181,8 @@ export interface ShellHandlers {
   cancelSubagent?: (sessionId: string, subagentId: string) => void;
   // Ask the adapter to stop one AIR async task on this session (host resolves the owning peer session)
   stopAsyncTask?: (sessionId: string, taskId: string) => void;
+  // End one running command and leave the turn running (SessionView.canStopCommands)
+  stopCommand?: (sessionId: string, toolCallId: string) => void;
   // Goal extension controls (SessionView.goalActions); `set` carries the objective
   goal?: (sessionId: string, action: GoalAction, objective?: string) => void;
   // The desktop app: the system folder dialog (the folder picked, undefined when dismissed), a folder shown in the OS file
@@ -220,6 +222,8 @@ export interface ShellProps {
   // The session goal and the controls the agent advertised for it (SessionView.goal / goalActions)
   goal?: SessionGoal;
   goalActions?: GoalAction[];
+  // A running command row can be stopped on its own (SessionView.canStopCommands)
+  canStopCommands?: boolean;
   controls: SessionControls;
   // Remembered per-model parameters, so a model switch in the history editor shows that model's own
   modelShapes?: ModelShapes;
@@ -1036,6 +1040,8 @@ export function Shell(p: ShellProps) {
   const goalRoom = !setGoal && p.status === 'starting' && !!on.goal && !p.goal && goalSetByAgent.get(p.agent.id) === true;
   const stopAsyncTask = useMemo(() => p.activeSessionId && on.stopAsyncTask
     ? (taskId: string) => on.stopAsyncTask!(p.activeSessionId!, taskId) : undefined, [p.activeSessionId, on.stopAsyncTask]);
+  const stopCommand = useMemo(() => p.activeSessionId && p.canStopCommands && on.stopCommand
+    ? (toolCallId: string) => on.stopCommand!(p.activeSessionId!, toolCallId) : undefined, [p.activeSessionId, p.canStopCommands, on.stopCommand]);
   // Diff sources of the session on screen; the inspector's diffs are looked up in the inspected subagent's transcript,
   // since a child may reuse its parent's tool call ids
   const fetchDiffSource = useMemo(() => p.activeSessionId && on.diffSource
@@ -1075,6 +1081,7 @@ export function Shell(p: ShellProps) {
       <FileStagerContext.Provider value={fileStager}>
       <ToolFileActionsContext.Provider value={toolFileActions}>
       <AsyncTaskStopContext.Provider value={stopAsyncTask}>
+      <CommandStopContext.Provider value={stopCommand}>
       <DiffSourceContext.Provider value={fetchDiffSource}>
         <div
           ref={root}
@@ -1381,6 +1388,7 @@ export function Shell(p: ShellProps) {
           onPickFolder={on.pickFolder} onSave={op => on.categoryOp?.(op)} onRemove={() => on.categoryOp?.({ op: 'removeProject', cwd: editingProject })}
           onClose={() => setEditingProject(undefined)} />}
       </DiffSourceContext.Provider>
+      </CommandStopContext.Provider>
       </AsyncTaskStopContext.Provider>
       </ToolFileActionsContext.Provider>
       </FileStagerContext.Provider>

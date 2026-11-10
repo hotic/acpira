@@ -919,6 +919,8 @@ export const ja = {
   'asyncTask.stopping': '停止中…',
   'asyncTask.stop': 'タスクを停止',
   'asyncTask.stopRefused': 'エージェントはこのタスクを停止できませんでした',
+  'command.stop': 'コマンドを停止',
+  'command.stopNotFound': 'このコマンドのプロセスが見つからず、停止できません',
   'asyncTask.script': 'スクリプト',
   'asyncTask.output': '出力',
   'asyncTask.tokens': '{n} トークン',

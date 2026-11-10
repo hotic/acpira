@@ -75,6 +75,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["preserve_order", "raw_value"] }
 sha2 = "0.10"
+shlex = "2.0"
 # The 6-digit pairing code (PAKE); the pre-release shares curve25519-dalek 5, sha2 0.11 and rand_core 0.10 with iroh
 spake2 = { version = "0.5.0-pre.0", features = ["getrandom"] }
 # The desktop app's update packages: the full bundle and the delta's container

@@ -706,6 +706,7 @@ fn session_id_of(m: &WebviewMsg) -> Option<String> {
     | W::UnobserveSubagent { session_id, .. }
     | W::CancelSubagent { session_id, .. }
     | W::StopAsyncTask { session_id, .. }
+    | W::StopCommand { session_id, .. }
     | W::Goal { session_id, .. }
     | W::Dequeue { session_id, .. }
     | W::SendQueued { session_id, .. }

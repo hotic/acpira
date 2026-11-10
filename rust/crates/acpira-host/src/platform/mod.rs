@@ -6,6 +6,8 @@ pub mod environment;
 pub mod file_url;
 pub mod files;
 pub mod paths;
+#[cfg(unix)]
+pub mod process_tree;
 pub mod terminal;
 #[cfg(windows)]
 pub mod windows_process;

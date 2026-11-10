@@ -941,6 +941,8 @@ export const zhCN = {
   'asyncTask.stopping': '正在停止…',
   'asyncTask.stop': '停止任务',
   'asyncTask.stopRefused': 'agent 无法停止该任务',
+  'command.stop': '停止命令',
+  'command.stopNotFound': '没找到这条命令的进程，无法单独停止',
   'asyncTask.script': '脚本',
   'asyncTask.output': '输出',
   'asyncTask.tokens': '{n} tokens',

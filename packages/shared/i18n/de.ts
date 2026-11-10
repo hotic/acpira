@@ -918,6 +918,8 @@ export const de = {
   'asyncTask.stopping': 'Wird gestoppt…',
   'asyncTask.stop': 'Aufgabe stoppen',
   'asyncTask.stopRefused': 'Der Agent konnte diese Aufgabe nicht stoppen',
+  'command.stop': 'Befehl stoppen',
+  'command.stopNotFound': 'Der Prozess dieses Befehls wurde nicht gefunden, er lässt sich nicht einzeln stoppen',
   'asyncTask.script': 'Skript',
   'asyncTask.output': 'Ausgabe',
   'asyncTask.toolUses': '{n} Tool-Aufrufe',

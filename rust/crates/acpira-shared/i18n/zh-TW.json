@@ -900,6 +900,8 @@
   "asyncTask.stopping": "正在停止…",
   "asyncTask.stop": "停止任務",
   "asyncTask.stopRefused": "agent 無法停止該任務",
+  "command.stop": "停止命令",
+  "command.stopNotFound": "找不到這條命令的行程，無法單獨停止",
   "asyncTask.script": "腳本",
   "asyncTask.output": "輸出",
   "asyncTask.tokens": "{n} tokens",

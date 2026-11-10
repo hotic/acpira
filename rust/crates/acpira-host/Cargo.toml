@@ -42,6 +42,8 @@ chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+# A command the shell exec'd in place, matched by its words (platform/process_tree.rs)
+shlex.workspace = true
 similar.workspace = true
 tokio.workspace = true
 toml.workspace = true

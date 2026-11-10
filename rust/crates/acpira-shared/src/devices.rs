@@ -57,6 +57,7 @@ pub fn device_allowed(m: &WebviewMsg) -> bool {
     | W::SteerQueued { .. }
     | W::EditQueued { .. }
     | W::StopAsyncTask { .. }
+    | W::StopCommand { .. }
     | W::Goal { .. }
     | W::ObserveSubagent { .. }
     | W::UnobserveSubagent { .. }

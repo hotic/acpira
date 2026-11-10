@@ -913,6 +913,8 @@ export const ko = {
   'asyncTask.stopping': '중지 중…',
   'asyncTask.stop': '작업 중지',
   'asyncTask.stopRefused': '에이전트가 이 작업을 중지하지 못했습니다',
+  'command.stop': '명령 중지',
+  'command.stopNotFound': '이 명령의 프로세스를 찾지 못해 중지할 수 없습니다',
   'asyncTask.script': '스크립트',
   'asyncTask.output': '출력',
   'asyncTask.tokens': '{n} 토큰',

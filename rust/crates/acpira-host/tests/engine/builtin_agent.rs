@@ -1468,3 +1468,32 @@ async fn a_plugins_specialised_agent_runs_its_own_prompt_tools_and_guard_and_lea
   assert!(tool_results(&reqs[reqs.len() - 1].body).join("\n").contains("the vault code"));
   rt.stop_all().await;
 }
+
+/// A stop of one running command ends that command's process alone: its row settles, the model gets the failed call
+/// and answers, and the turn ends normally rather than cancelled
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn stopping_a_running_command_ends_it_and_the_turn_goes_on() {
+  let env = Env::new();
+  let s = env.session().await;
+  s.set_config("approval".into(), "full".into()).await.unwrap();
+  env.server.push(mock::tools(&[("c1", "bash", json!({ "command": "sleep 30 # stop me" }))]));
+  env.server.push(mock::text("Stopped."));
+  let task = spawn_prompt(&s, "go");
+  // The row's id is the agent's own, not the model's call id
+  let row = |s: &AcpSession| agent_blocks(&view(s)).into_iter().find(|b| b["kind"] == "execute");
+  until(|| row(&s).is_some_and(|b| b["status"] == "in_progress"), 5000).await;
+  assert_eq!(view(&s)["canStopCommands"], true);
+  let id = row(&s).unwrap()["id"].as_str().unwrap().to_owned();
+  let t0 = Instant::now();
+  s.stop_command(&id).await.unwrap();
+  until(|| task.is_finished(), 10_000).await;
+  task.await.unwrap();
+  assert!(t0.elapsed() < Duration::from_secs(10), "the command ran on");
+  assert_ne!(row(&s).unwrap()["status"], "in_progress");
+  let last = last_turn(&view(&s));
+  assert_eq!(last["stop"], "end_turn", "{last}");
+  assert!(agent_blocks(&view(&s)).iter().any(|b| b["type"] == "text" && b["markdown"] == "Stopped."));
+  // The row has settled: a second stop finds nothing to end
+  assert!(s.stop_command(&id).await.is_ok());
+}
