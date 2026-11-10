@@ -503,8 +503,9 @@ impl SubagentTree {
     }
   }
 
-  /// End of the connection / turn
-  pub fn settle(&mut self, reason: &str) {
+  /// End of the connection / turn. `native_outlive`: the prompt ended on its own under an agent that streams a native
+  /// child past its parent's prompt and reports the child's end itself (`Vendor::children_outlive_prompt`)
+  pub fn settle(&mut self, reason: &str, native_outlive: bool) {
     let prompt_returned = reason == "prompt-returned";
     for n in &mut self.nodes {
       if n.status != SubagentState::Running {
@@ -515,6 +516,10 @@ impl SubagentTree {
       // session ends it explicitly (`relay.rs`)
       // A resumed run nothing on the wire speaks for ends with its log (`log_run_ended`), whenever the prompt returns
       if prompt_returned && (n.dialect == Some(Dialect::Workflow) || n.harness.is_some() || n.log_ends) {
+        continue;
+      }
+      // Sealing it here would drop the rest of its stream and leave a late terminal word on a cut transcript
+      if prompt_returned && native_outlive && n.visibility == SubagentVisibility::Session && n.peer.session_id.is_some() {
         continue;
       }
       if prompt_returned

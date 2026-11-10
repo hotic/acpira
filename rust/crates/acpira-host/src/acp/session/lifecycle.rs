@@ -811,7 +811,7 @@ impl AcpSession {
       c.status = SessionStatus::Closed;
       c.queue = PromptQueue::default();
       c.peer = PeerTurn::default();
-      c.tree.settle("disposed");
+      c.tree.settle("disposed", false);
       self.drain_terminal(&mut c);
       if c.phase.running {
         self.settle(&mut c, TurnStop::Cancelled, None);
