@@ -699,3 +699,18 @@ private let fusionOptions: [SessionOption] = [
     #expect(PreOpen.folds("every").contains(.results))
   }
 }
+
+struct DetentTests {
+  @Test func playsOncePerCrossingOutwards() {
+    var detent = Detent()
+    // Up to the stop, past it (plays), further past (silent), back inside, past again (plays again)
+    let plays = [false, true, true, false, true].map { detent.cross($0) }
+    #expect(plays == [false, true, false, false, true])
+  }
+
+  @Test func aDragStartingPastItIsSilentUntilItReturns() {
+    var open = Detent(past: true)
+    let plays = [true, false, true].map { open.cross($0) }
+    #expect(plays == [false, false, true])
+  }
+}

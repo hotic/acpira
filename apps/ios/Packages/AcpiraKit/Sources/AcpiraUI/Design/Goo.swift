@@ -744,7 +744,7 @@ struct LiquidControls: View {
       out.append(GooBean(key: "fast", title: "Fast",
                          glyph: AnyView(FastGlyph(on: fast.on, size: Metrics.barIcon)),
                          caption: AnyView(GooCaption(text: "Fast")),
-                         tap: { if !fast.disabled { withAnimation(motion ? Motion.quick : nil) { fast.set(!fast.on) } } }))
+                         tap: { if !fast.disabled { Haptics.play(.pick); withAnimation(motion ? Motion.quick : nil) { fast.set(!fast.on) } } }))
     }
     if let work = c.collaboration {
       let current = work.options.first { $0.id == work.value } ?? work.options.first
@@ -902,7 +902,7 @@ struct LiquidControls: View {
       out.append(GooBean(key: "sidekick.fast", title: "Fast",
                          glyph: AnyView(FastGlyph(on: fast.on, size: Metrics.barIcon)),
                          caption: AnyView(GooCaption(text: "Fast")),
-                         tap: { if !fast.disabled { withAnimation(motion ? Motion.quick : nil) { fast.set(!fast.on) } } }))
+                         tap: { if !fast.disabled { Haptics.play(.pick); withAnimation(motion ? Motion.quick : nil) { fast.set(!fast.on) } } }))
     }
     return out
   }
@@ -1262,7 +1262,11 @@ struct GooRow<Glyph: View, Trailing: View>: View {
   var action: () -> Void
 
   var body: some View {
-    Button(action: action) {
+    // Every row is a choice (a Thinking row's own switch plays the system's feedback instead)
+    Button {
+      Haptics.play(.pick)
+      action()
+    } label: {
       HStack(spacing: Metrics.s2) {
         glyph()
         Text(web: name, paragraph: false)

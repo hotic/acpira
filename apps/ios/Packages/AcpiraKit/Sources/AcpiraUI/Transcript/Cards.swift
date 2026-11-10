@@ -410,7 +410,7 @@ struct PermissionCard: View {
       if flat {
         FlowLayout(spacing: Metrics.gap) {
           ForEach(options) { o in
-            Button(web: o.label) { onChoose(o.id) }
+            Button(web: o.label) { choose(o) }
               .modifier(CardButton(primary: false, fixed: false))
               .fixedSize(horizontal: false, vertical: true)
           }
@@ -438,12 +438,12 @@ struct PermissionCard: View {
           // Keep short choices side by side; external labels wrap whole buttons without hiding permission text.
           FlowLayout(spacing: Metrics.gap, alignment: .trailing) {
             if let reject {
-              Button(web: reject.label) { onChoose(reject.id) }
+              Button(web: reject.label) { choose(reject) }
                 .modifier(CardButton(primary: block.defaultToNo == true, fixed: false))
                 .fixedSize(horizontal: false, vertical: true)
             }
             if let allow {
-              Button(web: allow.label) { onChoose(allow.id) }
+              Button(web: allow.label) { choose(allow) }
                 .modifier(CardButton(primary: block.defaultToNo != true, fixed: false))
                 .fixedSize(horizontal: false, vertical: true)
             }
@@ -455,6 +455,16 @@ struct PermissionCard: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     // The dock cards' glass: an approval asks for an answer as the question card does
     .modifier(CardSurface())
+  }
+
+  /// An answer from the card's own buttons; the extra grants are system menu items, left as the system plays them
+  private func choose(_ option: DisplayOption) {
+    switch option.kind {
+    case .allow_once, .allow_always: Haptics.play(.approve)
+    case .reject_once, .reject_always: Haptics.play(.reject)
+    case .unknown: break
+    }
+    onChoose(option.id)
   }
 }
 
@@ -488,6 +498,7 @@ struct TurnActions: View {
       if !reply.isEmpty {
         IconButton(copied ? .check : .copy, size: .web, label: copied ? t("code.copied") : t("turn.copy")) {
           UIPasteboardBridge.copy(reply)
+          Haptics.play(.copy)
           copied = true
           sessionActions.toast(t("code.copied"), .copy)
         }
@@ -653,6 +664,7 @@ struct TurnStats: View {
           .frame(maxWidth: .infinity, alignment: .leading)
         IconButton(copied ? .check : .copy, size: .web, label: label) {
           UIPasteboardBridge.copy(requestId)
+          Haptics.play(.copy)
           copied = true
         }
       }

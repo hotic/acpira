@@ -123,6 +123,17 @@ func shortStop(_ session: SessionView) -> AgentTurn? {
   return turn
 }
 
+/// What the end of the last turn plays (AppModel `present`): finished, failed for the short stops the alert card
+/// reports, nothing for a turn that was stopped (its stop button already played)
+func turnEndHaptic(_ session: SessionView) -> Haptic? {
+  guard case .agent(let turn)? = session.turns.last, let stop = turn.stop else { return nil }
+  return switch stop {
+  case .end_turn: .finished
+  case .max_tokens, .max_turn_requests, .refusal, .error: .failed
+  case .cancelled, .unknown: nil
+  }
+}
+
 // MARK: - Plan dock
 
 /// dockPlan: open entries stay docked across turns; a finished list stays only while its own turn still runs.

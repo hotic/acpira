@@ -63,7 +63,12 @@ struct QuestionCard: View {
               .modifier(CardButton(primary: false))
           }
           Button(web: t(last ? "question.submit" : "question.next")) {
-            if last { onAnswer(answers, false) } else { page = index + 1 }
+            if last {
+              Haptics.play(.send)
+              onAnswer(answers, false)
+            } else {
+              page = index + 1
+            }
           }
           .modifier(CardButton(primary: true))
           .disabled(!canAdvance)
@@ -153,6 +158,7 @@ struct QuestionCard: View {
   }
 
   private func choose(_ q: Question, _ id: String) {
+    Haptics.play(.pick)
     var p = picks[q.id] ?? Pick()
     if q.kind == .multiple {
       if let at = p.options.firstIndex(of: id) { p.options.remove(at: at) } else { p.options.append(id) }

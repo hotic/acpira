@@ -91,7 +91,11 @@ struct ListDropZone: ViewModifier {
       nonisolated(unsafe) let perform = zone.perform
       _ = provider.loadDataRepresentation(for: .utf8PlainText) { data, _ in
         guard let data, String(decoding: data, as: UTF8.self) == held.payload else { return }
-        Task { @MainActor in perform(held, at) }
+        Task { @MainActor in
+          // The lift was the system's (the long press); the landing is the list's own
+          Haptics.play(.drop)
+          perform(held, at)
+        }
       }
       return true
     }

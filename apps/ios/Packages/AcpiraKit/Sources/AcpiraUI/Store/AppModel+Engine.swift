@@ -196,6 +196,12 @@ extension AppModel {
       }
       let keep = carried.isEmpty ? kept : kept.union(carried)
       if views.keys.contains(where: { !keep.contains($0) }) { views = views.filter { keep.contains($0.key) } }
+      // A turn ending live in the chat on top of the screen, the app in front. A quiet view (init, a first or caught-up
+      // view on this wire) only reports how a turn ended before
+      if !isQuiet, !away, path.last == .chat(view.id), views[view.id]?.running == true, !view.running,
+         let haptic = turnEndHaptic(view) {
+        Haptics.play(haptic)
+      }
       views[view.id] = view
       // The engine's view of the chat on screen, back in the foreground: the counters run on the engine's times again
       if clockHeld != nil, !away, view.id == watching { clockHeld = nil }

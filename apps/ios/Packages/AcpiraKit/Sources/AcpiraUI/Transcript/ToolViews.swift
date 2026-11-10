@@ -327,7 +327,10 @@ struct TaskTag: View {
       .lineLimit(1)
     if state.stoppable {
       // Small enough to sit in a process row without growing it, as the webview's sm button with a size-3 glyph
-      Button { actions.stopTask(task.id) } label: {
+      Button {
+        Haptics.play(.stop)
+        actions.stopTask(task.id)
+      } label: {
         Icon(.square, size: WebMetrics.chevron, strokeWidth: 1.5)
       }
       .buttonStyle(IconButtonStyle(side: WebMetrics.ctlSm))
@@ -1223,11 +1226,13 @@ struct CodeSheet<Content: View>: View {
           Button {
             guard let read else {
               UIPasteboardBridge.copy(copy)
+              Haptics.play(.copy)
               copied = true
               return
             }
             Task {
               UIPasteboardBridge.copy(await read())
+              Haptics.play(.copy)
               copied = true
             }
           } label: {

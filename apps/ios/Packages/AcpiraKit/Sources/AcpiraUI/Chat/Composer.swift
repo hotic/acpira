@@ -211,8 +211,10 @@ struct Composer: View {
   private var send: some View {
     SendButton(running: session.running, filled: filled, waiting: VideoJobs.shared.pending(staged)) {
       if session.running && !filled {
+        Haptics.play(.stop)
         onStop()
       } else if fitsOneMessage() {
+        Haptics.play(.send)
         onSend(text, staged)
         text = ""
         staged = []
@@ -346,6 +348,7 @@ struct Composer: View {
     .modifier(FullEditorCover(open: $fullEditor, onDismiss: { if leftEditor { leftEditor = false } else { focused = true } }) {
       ExpandedComposer(text: $text, staged: $staged, filled: filled, commands: markCommands, summons: markSummons, onSend: {
         guard fitsOneMessage() else { return }
+        Haptics.play(.send)
         onSend(text, staged)
         text = ""
         staged = []
