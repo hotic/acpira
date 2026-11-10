@@ -65,7 +65,11 @@ impl AcpSession {
     if permission || question {
       return (Some(SummaryState::Waiting), !permission);
     }
-    if c.phase.running {
+    if c.phase.running
+      || c.pending_prompt.is_some()
+      || c.hooks.gating
+      || (matches!(c.status, SessionStatus::Starting | SessionStatus::Ready) && !c.queue.entries.is_empty())
+    {
       return (Some(SummaryState::Working), false);
     }
     let state = match visible_turns(&c).last() {
