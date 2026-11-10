@@ -1,6 +1,6 @@
 # Host architecture
 
-What a change to the engine (`rust/`) or its shells cannot learn quickly from the code. Agent registry, launching, installs, cross-harness subagents, the handoff pack and shared config: `host-agents.md`.
+What a change to the engine (`rust/`) or its shells cannot learn quickly from the code. Agents and shared config: `host-agents.md`.
 
 ## Engine and composition root
 
@@ -35,7 +35,7 @@ What a change to the engine (`rust/`) or its shells cannot learn quickly from th
 
 ## Engine push bus
 
-- `bus.rs`, modeled on Codex (openai.chatgpt 26.917: one app-server per client joined through `~/.codex/ipc/ipc.sock`; the owner pushes, followers forward actions), over Acpira's leases instead of one engine for every window.
+- `bus.rs`, modeled on Codex's `~/.codex/ipc/ipc.sock` (openai.chatgpt 26.917: the owner pushes, followers forward actions), over Acpira's leases.
 - Whoever locks `run/bus.lock` serves `run/bus.sock`; every engine, the router's included, connects as a client and re-announces state after a re-election. Windows: a per-user pipe, trusted only when the server runs as the same user.
 - Frames are flat ndjson objects, not a tagged enum (which would buffer the raw JSON views); unknown kinds and fields are skipped.
 - A record copy's subagent transcript is used only when nothing is pushed: restored from a record it shows running work as cancelled.
@@ -64,7 +64,7 @@ What a change to the engine (`rust/`) or its shells cannot learn quickly from th
 ## Host MCP server and Open browser
 
 - `acpira mcp` (`host_mcp.rs`): an agent that fails a start carrying it is retried without it, remembered per agent. A shared server named `acpira` is dropped, because the built-in agent keeps the first of two same-named servers and would auto-approve the impostor under its `acpira/*` rule.
-- `open_browser`: a loopback URL must accept a TCP connection on the engine's machine, then VS Code probes the `asExternalUri` address from a chat webview, since the webview runs on the user's machine even when the extension host is remote. One tab per site (some pages re-take a session on every load); a bare origin matches no tab, so the filter is `<origin>/**`.
+- `open_browser`: a loopback URL must accept a TCP connection on the engine's machine, then VS Code probes the `asExternalUri` address from a chat webview, which runs on the user's machine. One tab per site (some pages re-take a session on every load); a bare origin matches no tab, so the filter is `<origin>/**`.
 - VS Code 1.141.1: both browser commands ignore `viewColumn`; `simpleBrowser.api.open` is absent from `getCommands` before activation; no-cors fetches reject at once on closed loopback ports; with `workbench.browser.enableRemoteProxy` the URL opens unprobed. Unverified: Remote SSH.
 
 ## Browser panel and preview proxy
@@ -98,16 +98,17 @@ What a change to the engine (`rust/`) or its shells cannot learn quickly from th
   - macOS 27.0: `bootout` returns while the job is still listed; a `bootstrap` then (or of a disabled job) fails with `5: Input/output error`: wait for `launchctl print` to fail; a 5 with the label loaded is success.
 - macOS grants follow the responsible process: a bare binary is keyed by path, an app by its signature (`sign-mac.mjs`; ad hoc loses them). The engine's launcher (`machine_engine/launcher.rs`) is the app's bundled engine, else a frozen copy; never delete a bundle it runs from.
 - Start contract: opening the desktop card starts remote access; only the settings switch turns it off. The control channel answers before the relay is up, and a start returns once it answers, so a page never reads a starting gateway as stopped.
-- Trust: a device's grant drives sessions and full shells under the computer's OS account, so pairing trusts it with command execution. Allow-list: `devices::device_allowed`, `DEVICE_SETTINGS`. Terminal ids are prefixed with the authenticated EndpointId; client-provided names grant nothing.
-- Push: the APNs key is the user's own file under `<ACPIRA_HOME>/apns/`, never in the repository. Unverified: KDE idle time units (`presence.rs`); whether GNOME's automatic suspend honours an `idle` inhibitor alone (`awake.rs`).
-- Device addresses drop virtual adapters by name (`virtual_ips`), else WSL, VM bridges or a proxy TUN crowd out the Wi-Fi one. A Windows Bonjour entry outlives a killed gateway: `<name>(1)` on a dead port.
+- Trust: a device drives sessions and full shells under the computer's OS account, so pairing trusts it with command execution. Allow-list: `devices::device_allowed`, `DEVICE_SETTINGS`. Terminal ids are prefixed with the authenticated EndpointId; client names grant nothing.
+- Tunnel streams (`acpira_net::tunnel`) reach dev servers on a folder's machine (here or a connected SSH host). Grant: `acpira-gateway` `tunnel.rs`, loopback only, not `device_allowed`. Older gateways drop the link on an unknown kind: devices check `Welcome.features`.
+- Push: the APNs key is the user's own file under `<ACPIRA_HOME>/apns/`, never in the repo. Unverified: KDE idle time units (`presence.rs`); whether GNOME's automatic suspend honours an `idle` inhibitor alone (`awake.rs`).
+- Device addresses drop virtual adapters by name (`virtual_ips`), else WSL, VM bridges or a TUN crowd out the Wi-Fi. A Windows Bonjour entry outlives a killed gateway: `<name>(1)` on a dead port.
 - Proxy TUN (`acpira_net::tun`; VPNs left alone): a macOS / Windows gateway binds IPv4 past it on the physical interface and resolves over DoT, as its DNS gives fake addresses. Bound sockets never follow the network: a changed detection restarts the gateway. Not on Linux (why there).
 - Windows Firewall (`firewall.rs`): a missed first-listen prompt leaves block rules that beat allow rules; its default answer covers private networks, a new Wi-Fi is public. Only the relay gets in then. `allowLan` fixes it through UAC. Unverified on Windows (UAC focus too).
 
 ## Host probes
 
-Only a prompt-less `pnpm probe` (or one with only `--mcp`) spends no model calls. Give a CLI a temp store (`DSH_HOME`, `PI_CODING_AGENT_DIR`) where it has one. Flags are in each script's header.
+Only a prompt-less `pnpm probe` (or one with only `--mcp`) spends no model calls. Give a CLI a temp store (`DSH_HOME`, `PI_CODING_AGENT_DIR`) where it has one. Flags: script headers.
 
 - `pnpm probe <agent>` (`scripts/probe/acp.ts`): raw `initialize` + `session/new` (+ one prompt), launched as the engine does; use first for protocol issues. `--wait` keeps listening for `available_commands_update`: Grok / Kimi send it after `session/new` returns, Devin during.
-- `scripts/probe/*-host.ts` drive the webview's path through the sidecar (`agent-host` is the generic smoke; `remote-claude-host` needs a local-run SSH host, `remote.md`). Raw-wire variants: `subagents.ts`, `steering.ts`.
+- `scripts/probe/*-host.ts` drive the webview's path through the sidecar (`agent-host`: generic smoke; `remote-claude-host` needs a local-run SSH host). Raw-wire variants: `subagents.ts`, `steering.ts`.
 - OpenCode retries a 503 silently: if a prompt never returns, curl the gateway and pass `--model`.

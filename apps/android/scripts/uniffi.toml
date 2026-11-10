@@ -9,3 +9,4 @@
 "PairFailure.Other.message" = "detail"
 "Link.close" = "end"
 "Node.close" = "shutdown"
+"Tunnel.close" = "end"

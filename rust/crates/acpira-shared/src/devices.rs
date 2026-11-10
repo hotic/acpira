@@ -28,7 +28,8 @@ pub const DEVICE_SETTINGS: &[&str] = &[
 /// SSH hosts; the built-in agent's model sources are the exception, so a model can be added from the phone), what puts
 /// something on the computer's screen (every `open…`, exports), and reads of arbitrary local files (folder names for
 /// the add-project picker are allowed). Device terminals use the same control grant; the gateway isolates their ids by authenticated device, and
-/// their working directory is not a filesystem sandbox. Exhaustive on purpose: a new message needs a decision here.
+/// their working directory is not a filesystem sandbox. Tunnel streams to a dev server (acpira-net `tunnel`) carry no
+/// message and are granted in acpira-gateway `tunnel.rs`, loopback targets only. Exhaustive on purpose: a new message needs a decision here.
 pub fn device_allowed(m: &WebviewMsg) -> bool {
   use WebviewMsg as W;
   match m {
