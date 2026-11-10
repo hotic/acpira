@@ -411,10 +411,12 @@ final class MediaLoader {
     // shortest delay, a longer frame repeated for its share
     let beat = max(minFrameDelay, delays.min() ?? defaultFrameDelay)
     var timeline: [CGImage] = []
+    // Checked per frame: a file's delays run to minutes, so a few thousand long frames over one short one would build
+    // a timeline of millions of beats before a check after the loop turned it down
     for (frame, delay) in zip(frames, delays) {
       timeline.append(contentsOf: repeatElement(frame, count: max(1, Int((delay / beat).rounded()))))
+      guard timeline.count <= animationMaxBeats else { return nil }
     }
-    guard timeline.count <= animationMaxBeats else { return nil }
     return DecodedImage(frames: timeline, frameDuration: beat, cost: cost)
   }
 
