@@ -69,7 +69,7 @@ struct SessionListScreen: View {
 
   /// Opens a page from the list: pushed over it on the phone, beside it in place of the open one in the sidebar
   private func show(_ route: Route) {
-    if inSidebar { model.path = [route] } else { model.path.append(route) }
+    if inSidebar { model.path = [route] } else { model.push(route) }
   }
 
   @ViewBuilder private var list: some View {
