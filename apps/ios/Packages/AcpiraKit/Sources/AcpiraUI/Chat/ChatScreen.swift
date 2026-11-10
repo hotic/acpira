@@ -132,7 +132,7 @@ struct ChatScreen: View {
     // Outside the memoised actions: the capability arrives with the agent process
     .environment(\.canStopCommands, session.canStopCommands == true)
     // A subagent row pushes that child's inspector
-    .environment(\.inspectSubagent, SubagentInspect(session: id) { model.path.append(.subagent(session: id, id: $0)) })
+    .environment(\.inspectSubagent, SubagentInspect(session: id) { model.push(.subagent(session: id, id: $0)) })
     .modifier(MediaLayer(session: id, loader: model.media))
     .environment(\.mentionPersonas, model.personas)
     .environment(\.promptCommands, session.commands.map(\.name))
@@ -187,7 +187,7 @@ struct ChatScreen: View {
       back: { if !model.path.isEmpty { model.path.removeLast() } },
       new: {
         guard let session = model.views[id] else { return }
-        model.path.append(.new(agent: session.agent, cwd: session.cwd))
+        model.push(.new(agent: session.agent, cwd: session.cwd))
       },
       account: { accountOpen = true },
       pin: { model.togglePin(id) },
@@ -200,10 +200,10 @@ struct ChatScreen: View {
       rename: { newTitle = model.views[id]?.title ?? ""; renaming = true },
       export: { model.export(id, format: $0) },
       terminal: { if let cwd = model.views[id]?.cwd { model.openTerminal(cwd) } },
-      subagents: { model.path.append(.subagents(session: id)) },
+      subagents: { model.push(.subagents(session: id)) },
       settings: { model.settingsOpen = true },
       delete: { deleting = true },
-      changes: { model.path.append(.changes(id)) },
+      changes: { model.push(.changes(id)) },
       copy: { kind in Task { await model.copy(id, kind) } },
       move: { model.move(id, to: $0) },
       addFolder: { addingFolder = true })

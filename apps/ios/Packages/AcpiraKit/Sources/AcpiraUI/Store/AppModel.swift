@@ -919,10 +919,18 @@ final class AppModel {
     settleStatus(id)
   }
 
+  /// Pushes a screen onto the stack unless it (or any new-session screen) already sits on top, so a double-tap during
+  /// the push transition never opens two pages
+  func push(_ route: Route) {
+    if path.last == route { return }
+    if case .new = route, case .new? = path.last { return }
+    path.append(route)
+  }
+
   /// "Continue in a new session": the new-session screen preset to this agent and project, as the bar's new button
   func continueNew(_ id: String) {
     guard let view = views[id] else { return }
-    path.append(.new(agent: view.agent, cwd: view.cwd))
+    push(.new(agent: view.agent, cwd: view.cwd))
   }
 
   /// An AIR failure notice's remedy: a real turn retries its prompt, a session-scoped failure (no turn started)

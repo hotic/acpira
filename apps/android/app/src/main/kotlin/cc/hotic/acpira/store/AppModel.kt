@@ -280,6 +280,7 @@ class AppModel(
   // Navigation
 
   fun push(screen: Screen) {
+    if (path.lastOrNull() == screen || (screen is Screen.New && path.lastOrNull() is Screen.New)) return
     path.add(screen)
     if (screen is Screen.Chat) select(screen.id)
   }

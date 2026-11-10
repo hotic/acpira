@@ -165,4 +165,14 @@ import Testing
     #expect(md.contains("### Devin"))
     #expect(SessionExport.fileName("a/b: c") == "a-b- c")
   }
+
+  @Test func rapidNewSessionTapsPushOnePage() {
+    let m = model("list")
+    m.push(.new(agent: nil, cwd: "/tmp/a"))
+    m.push(.new(agent: "claude", cwd: "/tmp/b"))
+    #expect(m.path == [.new(agent: nil, cwd: "/tmp/a")])
+    m.push(.chat("s1"))
+    m.push(.chat("s1"))
+    #expect(m.path == [.new(agent: nil, cwd: "/tmp/a"), .chat("s1")])
+  }
 }
