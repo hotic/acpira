@@ -64,6 +64,7 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
@@ -76,6 +77,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
+import cc.hotic.acpira.design.Haptic
 import cc.hotic.acpira.design.IconStore
 import cc.hotic.acpira.design.IconStroke
 import cc.hotic.acpira.design.LocalMotion
@@ -86,6 +88,7 @@ import cc.hotic.acpira.design.RowMotion
 import cc.hotic.acpira.design.Type
 import cc.hotic.acpira.design.WebMetrics
 import cc.hotic.acpira.design.WebType
+import cc.hotic.acpira.design.play
 import cc.hotic.acpira.i18n.t
 import cc.hotic.acpira.logic.CodeToken
 import cc.hotic.acpira.logic.GroupKind
@@ -311,6 +314,7 @@ private fun CommandStop(id: String, stop: (String) -> Unit) {
 @Composable
 private fun StopSquare(label: String, tag: String, onClick: () -> Unit) {
   val bleed = with(LocalDensity.current) { Metrics.s1.roundToPx() }
+  val haptics = LocalHapticFeedback.current
   Box(
     Modifier
       .layout { measurable, constraints ->
@@ -319,7 +323,7 @@ private fun StopSquare(label: String, tag: String, onClick: () -> Unit) {
       }
       .size(WebMetrics.ctlSm)
       .clip(CircleShape)
-      .clickable(onClick = onClick)
+      .clickable { haptics.play(Haptic.Stop); onClick() }
       .semantics { contentDescription = label; role = Role.Button }
       .testTag(tag),
     contentAlignment = Alignment.Center,
@@ -827,6 +831,7 @@ internal fun CodeSheet(
   val state = rememberModalBottomSheetState(skipPartiallyExpanded = false)
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
+  val haptics = LocalHapticFeedback.current
   var copied by remember { mutableIntStateOf(0) }
   LaunchedEffect(copied) {
     if (copied > 0) { delay(COPIED_MS); copied = 0 }
@@ -846,8 +851,8 @@ internal fun CodeSheet(
         )
         IconButton(
           onClick = {
-            if (read == null) { copyText(context, copy); copied += 1 }
-            else scope.launch { copyText(context, read()); copied += 1 }
+            if (read == null) { copyText(context, copy); haptics.play(Haptic.Copy); copied += 1 }
+            else scope.launch { copyText(context, read()); haptics.play(Haptic.Copy); copied += 1 }
           },
           modifier = Modifier.size(Metrics.barCtl).testTag("code.copy"),
         ) {

@@ -29,15 +29,19 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
+import cc.hotic.acpira.design.Detent
+import cc.hotic.acpira.design.Haptic
 import cc.hotic.acpira.design.Metrics
 import cc.hotic.acpira.design.Palette
 import cc.hotic.acpira.design.Type
+import cc.hotic.acpira.design.play
 import cc.hotic.acpira.i18n.t
 import kotlinx.coroutines.launch
 import kotlin.math.min
@@ -68,12 +72,16 @@ fun SwipeToDelete(
   val isOpen by rememberUpdatedState(open == id)
   // The drag's own position before resistance, so the row eases past its stop rather than tracking the finger
   var raw by remember { mutableFloatStateOf(0f) }
+  // The row's stop as a detent the drag feels
+  val haptics = LocalHapticFeedback.current
+  val detent = remember { arrayOf(Detent()) }
   // Another row's swipe, a tap or a scroll put this one back
   LaunchedEffect(open) { if (open != id && offset.value != 0f) offset.animateTo(0f, tween(SWIPE_MS)) }
   val drag = rememberDraggableState { delta ->
     raw = min(0f, raw + delta)
     // Past its stop the row resists, as UIKit's swipe actions do: the extra drag eases towards one more stop's width
     val next = if (raw < -stop) -stop - resist(-raw - stop, stop) else raw
+    if (detent[0].cross(raw <= -stop)) haptics.play(Haptic.Detent)
     scope.launch { offset.snapTo(next) }
   }
   val deleteLabel = t("common.delete")
@@ -83,6 +91,7 @@ fun SwipeToDelete(
         drag, Orientation.Horizontal,
         onDragStarted = {
           raw = offset.value
+          detent[0] = Detent(past = raw <= -stop)
           // Starting this row's swipe puts any other open row back
           onOpen(id)
         },

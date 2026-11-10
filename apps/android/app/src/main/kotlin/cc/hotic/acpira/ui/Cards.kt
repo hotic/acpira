@@ -56,6 +56,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -64,6 +65,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
+import cc.hotic.acpira.design.Haptic
 import cc.hotic.acpira.design.IconStore
 import cc.hotic.acpira.design.Lucide
 import cc.hotic.acpira.design.Metrics
@@ -73,6 +75,7 @@ import cc.hotic.acpira.design.VendorMark
 import cc.hotic.acpira.design.WebMetrics
 import cc.hotic.acpira.design.dockGap
 import cc.hotic.acpira.design.optionKey
+import cc.hotic.acpira.design.play
 import cc.hotic.acpira.design.optionKeyLine
 import cc.hotic.acpira.design.planBody
 import cc.hotic.acpira.design.popActive
@@ -243,11 +246,12 @@ private fun CardHead(icon: String, ink: androidx.compose.ui.graphics.Color, titl
 /** "Copied" for a moment after a copy */
 @Composable
 private fun rememberCopied(): Pair<Boolean, () -> Unit> {
+  val haptics = LocalHapticFeedback.current
   var copied by remember { mutableIntStateOf(0) }
   LaunchedEffect(copied) {
     if (copied > 0) { delay(COPIED_MS); copied = 0 }
   }
-  return (copied > 0) to { copied += 1 }
+  return (copied > 0) to { haptics.play(Haptic.Copy); copied += 1 }
 }
 
 // Question
@@ -260,6 +264,7 @@ private fun rememberCopied(): Pair<Boolean, () -> Unit> {
 fun QuestionCard(block: QuestionBlock, onAnswer: (Map<String, JsonElement>, Boolean) -> Unit) {
   val qs = block.questions
   if (qs.isEmpty()) return
+  val haptics = LocalHapticFeedback.current
   val picks = remember(block.id) { mutableStateMapOf<String, Pick>() }
   var page by remember(block.id) { mutableIntStateOf(0) }
   val index = page.coerceIn(0, qs.size - 1)
@@ -296,7 +301,7 @@ fun QuestionCard(block: QuestionBlock, onAnswer: (Map<String, JsonElement>, Bool
       CardButton(
         t(if (last) "question.submit" else "question.next"), primary = true, enabled = canAdvance,
         modifier = Modifier.testTag(if (last) "question.submit" else "question.next"),
-        onClick = { if (last) onAnswer(answers, false) else page = index + 1 },
+        onClick = { if (last) { haptics.play(Haptic.Send); onAnswer(answers, false) } else page = index + 1 },
       )
     }
   }
@@ -310,6 +315,7 @@ private val KEYS = ('A'..'Z').map { it.toString() }
 @Composable
 private fun QuestionOptions(q: Question, picks: MutableMap<String, Pick>) {
   val pick = picks[q.id] ?: Pick()
+  val haptics = LocalHapticFeedback.current
   Column {
     if (q.kind == QuestionKind.multiple) {
       Text(t("question.multiple"), color = Palette.popFg2, fontSize = Type.text3, lineHeight = Type.text3Line, modifier = Modifier.padding(bottom = Metrics.questionSectionGap))
@@ -317,6 +323,7 @@ private fun QuestionOptions(q: Question, picks: MutableMap<String, Pick>) {
     q.options.forEachIndexed { i, option ->
       val selected = option.id in pick.options
       OptionRow(KEYS.getOrElse(i) { "${i + 1}" }, selected, Modifier.testTag("question.option:$i"), onClick = {
+        haptics.play(Haptic.Pick)
         picks[q.id] = if (q.kind == QuestionKind.multiple) {
           pick.copy(options = if (selected) pick.options - option.id else pick.options + option.id)
         } else pick.copy(other = false, options = listOf(option.id))
@@ -633,6 +640,7 @@ private fun PlanBar(block: PlanDocumentBlock, permission: PermissionBlock?, onBu
   val primary = permission?.options?.firstOrNull { it.kind == PermissionKind.allow_once }
   val revise = permission?.let(::reviseOption)
   val extra = permission?.options.orEmpty().filter { it.id != primary?.id && it.id != revise?.id }
+  val haptics = LocalHapticFeedback.current
   Row(
     Modifier.fillMaxWidth().padding(start = Metrics.pad, end = Metrics.pad, bottom = Metrics.pad),
     horizontalArrangement = Arrangement.spacedBy(Metrics.gap, Alignment.End),
@@ -648,7 +656,7 @@ private fun PlanBar(block: PlanDocumentBlock, permission: PermissionBlock?, onBu
     }
     CardButton(
       primary?.let { permissionOption(it, plan = true).label } ?: t("plan.build"), primary = true, enabled = canBuild,
-      modifier = Modifier.testTag("plan.build"), onClick = { onBuild(primary?.id, executor.pick) },
+      modifier = Modifier.testTag("plan.build"), onClick = { haptics.play(Haptic.Approve); onBuild(primary?.id, executor.pick) },
     )
   }
 }

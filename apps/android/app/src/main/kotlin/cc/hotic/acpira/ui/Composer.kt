@@ -90,6 +90,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -108,6 +109,7 @@ import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import cc.hotic.acpira.design.GooMotion
+import cc.hotic.acpira.design.Haptic
 import cc.hotic.acpira.design.IconStore
 import cc.hotic.acpira.design.Lucide
 import cc.hotic.acpira.design.Metrics
@@ -115,6 +117,7 @@ import cc.hotic.acpira.design.Palette
 import cc.hotic.acpira.design.popFg3
 import cc.hotic.acpira.design.Type
 import cc.hotic.acpira.design.VendorMark
+import cc.hotic.acpira.design.play
 import cc.hotic.acpira.i18n.t
 import cc.hotic.acpira.logic.ComposerControls
 import cc.hotic.acpira.logic.ModelChoices
@@ -261,6 +264,7 @@ fun Composer(
   syncing: Boolean = false,
 ) {
   val context = LocalContext.current
+  val haptics = LocalHapticFeedback.current
   val filled = text.isNotBlank() || staged.isNotEmpty()
   var focused by remember { mutableStateOf(false) }
   val expanded = focused || filled
@@ -376,7 +380,9 @@ fun Composer(
           // A staged video still compressing holds the draft back, and the button does not stop the turn meanwhile
           val waiting = VideoJobs.pending(staged)
           SendButton(running = running && !waiting, filled = filled && !waiting, motion = motion, syncing = syncing) {
-            if (!waiting) { if (running && !filled) onStop() else onSend() }
+            if (!waiting) {
+              if (running && !filled) { haptics.play(Haptic.Stop); onStop() } else { haptics.play(Haptic.Send); onSend() }
+            }
           }
         }
       }
@@ -386,7 +392,7 @@ fun Composer(
   if (fullEditor) {
     ExpandedComposer(
       text, onText, staged, onStaged, assist, motion,
-      onSend = { fullEditor = false; onSend() },
+      onSend = { fullEditor = false; haptics.play(Haptic.Send); onSend() },
       // Collapsing gives the card its focus back
       onCollapse = { fullEditor = false; focus.requestFocus() },
       onToast = onToast,
@@ -483,7 +489,8 @@ internal fun brandOf(context: Context, o: SessionOption): String? = IconStore.br
 @Composable
 private fun modelBeans(c: ModelChoices, onSetMode: (String) -> Unit, onSetConfig: (String, String) -> Unit, goo: Goo): List<Bean> {
   val fold = { goo.stage = 0 }
-  if (goo.deeper == SIDEKICK_LEVEL && (c.fusion != null || c.sidekick != null)) return sidekickBeans(c, onSetConfig, fold)
+  val haptics = LocalHapticFeedback.current
+  if (goo.deeper == SIDEKICK_LEVEL && (c.fusion != null || c.sidekick != null)) return sidekickBeans(c, onSetConfig, fold, haptics)
   val out = mutableListOf<Bean>()
   val cur = c.cur
   if (c.hasModel && cur != null) {
@@ -528,7 +535,9 @@ private fun modelBeans(c: ModelChoices, onSetMode: (String) -> Unit, onSetConfig
   }
   c.fast?.let { fast ->
     // Every agent's Fast reads the same: the bolt and its name, lit on a tap, no panel
-    out += Bean("fast", "Fast", "Fast", glyph = { FastGlyph(fast.on, Metrics.barIcon) }, tap = { if (!fast.disabled) fast.set(!fast.on) })
+    out += Bean("fast", "Fast", "Fast", glyph = { FastGlyph(fast.on, Metrics.barIcon) }, tap = {
+      if (!fast.disabled) { haptics.play(Haptic.Pick); fast.set(!fast.on) }
+    })
   }
   c.collaboration?.let { work ->
     val current = work.options.firstOrNull { it.id == work.value } ?: work.options.firstOrNull()
@@ -1150,11 +1159,13 @@ internal fun GooRow(
   enabled: Boolean = true,
   action: () -> Unit,
 ) {
+  val haptics = LocalHapticFeedback.current
   Row(
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(Metrics.s2),
     modifier = Modifier.fillMaxWidth().height(Metrics.gooRow).alpha(if (enabled) 1f else GooMotion.unavailable)
-      .clickable(enabled = enabled, onClick = action).padding(horizontal = Metrics.gooPadX),
+      // Every row is a choice (a Thinking row's own switch plays the platform's feedback instead)
+      .clickable(enabled = enabled) { haptics.play(Haptic.Pick); action() }.padding(horizontal = Metrics.gooPadX),
   ) {
     glyph?.invoke()
     Text(

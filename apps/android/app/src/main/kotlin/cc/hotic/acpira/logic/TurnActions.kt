@@ -1,5 +1,6 @@
 package cc.hotic.acpira.logic
 
+import cc.hotic.acpira.design.Haptic
 import cc.hotic.acpira.model.AgentTurn
 import cc.hotic.acpira.model.CompactionBlock
 import cc.hotic.acpira.model.FailureAction
@@ -63,6 +64,16 @@ fun shortStop(session: SessionView): AgentTurn? {
   val turn = session.turns.lastOrNull() as? AgentTurn ?: return null
   val stop = turn.stop ?: return null
   return if (stop == TurnStop.end_turn || stop == TurnStop.cancelled) null else turn
+}
+
+/**
+ * What the end of the last turn plays (ui/ChatScreen.kt): finished, failed for the short stops the alert card reports,
+ * nothing for a turn that was stopped (its stop button already played)
+ */
+fun turnEndHaptic(session: SessionView): Haptic? = when ((session.turns.lastOrNull() as? AgentTurn)?.stop) {
+  TurnStop.end_turn -> Haptic.Finished
+  TurnStop.max_tokens, TurnStop.max_turn_requests, TurnStop.refusal, TurnStop.error -> Haptic.Failed
+  else -> null
 }
 
 private val contextLengthKinds = setOf("context_length_exceeded", "context_window_exceeded", "prompt_too_long")

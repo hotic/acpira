@@ -33,13 +33,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.Lifecycle
 import cc.hotic.acpira.design.Lucide
 import cc.hotic.acpira.design.Metrics
 import cc.hotic.acpira.design.Palette
 import cc.hotic.acpira.design.Type
+import cc.hotic.acpira.design.play
 import cc.hotic.acpira.i18n.t
 import cc.hotic.acpira.logic.canEditPrompts
 import cc.hotic.acpira.logic.canSetGoal
@@ -52,6 +56,7 @@ import cc.hotic.acpira.logic.lastTypedPrompt
 import cc.hotic.acpira.logic.pendingPlanReview
 import cc.hotic.acpira.logic.retryableTurn
 import cc.hotic.acpira.logic.reviseOption
+import cc.hotic.acpira.logic.turnEndHaptic
 import cc.hotic.acpira.model.GoalAction
 import cc.hotic.acpira.model.SessionControls
 import cc.hotic.acpira.model.SessionStatus
@@ -142,6 +147,18 @@ fun ChatScreen(model: AppModel, id: String) {
   val held = remember(view, pending) { view?.let { heldPrompt(it, pending) } }
   val stage = remember(view, pending, agentName) { view?.let { heldStage(it, pending, agentName) } }
   val running = held?.running == true
+  // A turn ending live in this chat, the app in front (AppModel+Engine.swift `present`); a view this wire has not shown
+  // yet (syncing) only reports how a turn ended before
+  val haptics = LocalHapticFeedback.current
+  val lifecycle = LocalLifecycleOwner.current.lifecycle
+  val live = view?.running == true
+  val wasLive = remember(id, model) { booleanArrayOf(live) }
+  LaunchedEffect(live) {
+    if (wasLive[0] && !live && !model.syncing(id) && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+      view?.let(::turnEndHaptic)?.let { haptics.play(it) }
+    }
+    wasLive[0] = live
+  }
   val thread = rememberLazyListState()
   val items = remember(held?.turns) { held?.let { exchanges(it.turns) }.orEmpty() }
   val queued = held?.queued.orEmpty()

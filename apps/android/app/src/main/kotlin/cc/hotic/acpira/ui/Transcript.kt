@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.graphics.Color
+import cc.hotic.acpira.logic.DisplayOption
 import cc.hotic.acpira.logic.permissionOption
 import cc.hotic.acpira.logic.planApprovalTitle
 import android.content.ClipData
@@ -90,10 +91,12 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import cc.hotic.acpira.design.Haptic
 import cc.hotic.acpira.design.Lucide
 import cc.hotic.acpira.design.Metrics
 import cc.hotic.acpira.design.Palette
 import cc.hotic.acpira.design.Type
+import cc.hotic.acpira.design.play
 import cc.hotic.acpira.i18n.t
 import cc.hotic.acpira.logic.LiveActivity
 import cc.hotic.acpira.logic.ProcessItem
@@ -437,6 +440,7 @@ private fun TurnActions(
   val content = remember(turn) { hasTurnContent(turn) }
   if (actions == null && reply.isEmpty() && !content) return
   val context = LocalContext.current
+  val haptics = LocalHapticFeedback.current
   var copied by remember { mutableStateOf(false) }
   var stats by remember { mutableStateOf(false) }
   LaunchedEffect(copied) {
@@ -455,6 +459,7 @@ private fun TurnActions(
     if (reply.isNotEmpty()) {
       ActionButton(if (copied) "check" else "copy", t(if (copied) "code.copied" else "turn.copy"), "turn.copy") {
         if (copyText(context, reply)) actions?.toast?.invoke(t("code.copied"))
+        haptics.play(Haptic.Copy)
         copied = true
       }
     }
@@ -609,6 +614,7 @@ private fun StatRow(label: String, value: AnnotatedString, chip: String?) {
 @Composable
 private fun RequestIdFooter(requestId: String) {
   val context = LocalContext.current
+  val haptics = LocalHapticFeedback.current
   var copied by remember { mutableStateOf(false) }
   LaunchedEffect(copied) {
     if (copied) { delay(COPIED_MS); copied = false }
@@ -622,6 +628,7 @@ private fun RequestIdFooter(requestId: String) {
       )
       ActionButton(if (copied) "check" else "copy", t(if (copied) "stats.requestIdCopied" else "stats.copyRequestId"), "stats.copyRequestId") {
         copyText(context, requestId)
+        haptics.play(Haptic.Copy)
         copied = true
       }
     }
@@ -787,6 +794,16 @@ fun PermissionCard(block: PermissionBlock, onPick: (String) -> Unit) {
   val more = if (flat) emptyList() else options.filter { it.id != once?.id && it.id != reject?.id }
   val title = if (block.command != null) t("permission.run") else planApprovalTitle(block.title)
   val noFirst = block.defaultToNo == true
+  val haptics = LocalHapticFeedback.current
+  // An answer from the card's own buttons; the extra grants in the menu stay quiet, as menu items do
+  val answer = { o: DisplayOption ->
+    when (o.kind) {
+      PermissionKind.allow_once, PermissionKind.allow_always -> haptics.play(Haptic.Approve)
+      PermissionKind.reject_once, PermissionKind.reject_always -> haptics.play(Haptic.Reject)
+      PermissionKind.unknown -> {}
+    }
+    onPick(o.id)
+  }
   Column(
     Modifier.fillMaxWidth()
       .background(Palette.bg1, RoundedCornerShape(Metrics.rLg))
@@ -803,7 +820,7 @@ fun PermissionCard(block: PermissionBlock, onPick: (String) -> Unit) {
     block.description?.takeIf { it.isNotBlank() }?.let { Text(it, color = Palette.fg2, fontSize = Type.text3, lineHeight = Type.text3Line) }
     if (flat) {
       FlowRow(horizontalArrangement = Arrangement.spacedBy(Metrics.gap), verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
-        for (o in options) PillButton(o.label, onClick = { onPick(o.id) })
+        for (o in options) PillButton(o.label, onClick = { answer(o) })
       }
     } else {
       // The extra grants left, the answers pushed right, one gap between them at the least
@@ -826,8 +843,8 @@ fun PermissionCard(block: PermissionBlock, onPick: (String) -> Unit) {
         }
         Spacer(Modifier.weight(1f).widthIn(min = if (more.isEmpty()) Metrics.s0 else Metrics.gap))
         Row(horizontalArrangement = Arrangement.spacedBy(Metrics.gap)) {
-          reject?.let { PillButton(it.label, primary = noFirst, onClick = { onPick(it.id) }, modifier = Modifier.testTag("permission.reject")) }
-          once?.let { PillButton(it.label, primary = !noFirst, onClick = { onPick(it.id) }, modifier = Modifier.testTag("permission.allow")) }
+          reject?.let { PillButton(it.label, primary = noFirst, onClick = { answer(it) }, modifier = Modifier.testTag("permission.reject")) }
+          once?.let { PillButton(it.label, primary = !noFirst, onClick = { answer(it) }, modifier = Modifier.testTag("permission.allow")) }
         }
       }
     }
