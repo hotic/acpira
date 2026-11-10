@@ -595,6 +595,15 @@ impl SessionManager {
     // background; until then `available` is unknown, which pages treat as available. With no shell to wait for (turned
     // off, or already run in this process) the first pass is cheap and still lands before init returns
     login_path::start();
+    // A background npm lookup that finds a newer adapter: probe again so the update is offered at once
+    let me = self.me.clone();
+    tokio::spawn(async move {
+      let mut found = crate::acp::agents::npm_latest::found_newer();
+      while found.changed().await.is_ok() {
+        let Some(m) = me.upgrade() else { return };
+        m.reprobe().await;
+      }
+    });
     if login_path::is_ready() {
       self.log_login_path();
       self.registry().probe_all().await;

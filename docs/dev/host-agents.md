@@ -5,6 +5,7 @@ The engine side of agent CLIs: registry, launching, installs, cross-harness suba
 ## Registry and launching
 
 - `acp/agents/`: user definitions live in `$ACPIRA_HOME/agents.json` (`store/agent_config.rs`), shared by every sidecar. IDE definitions seed it only when the file is missing; an existing file, `{}` included, wins; malformed edits keep the last good registry.
+  - An entry under a built-in id with the built-in's own command overlays it (`registry.rs` `overlay`), so adapter, lookup paths and the install line survive; an install line naming that adapter package is treated as a stale seeded copy and loses to the built-in one. A different command replaces the built-in outright and drops its update offer.
   - VS Code Remote windows omit the legacy Agent setting: merged values cannot say which machine supplied them (a local Windows path reached a Linux remote; Devin 3000.11.3).
 - Disabled agents are flagged, never dropped, so their sessions stay reachable (`shared/agentOrder.ts`, mirrored by `SessionManager::default_agent`).
 - `launch.rs`: on win32 an extensionless npm POSIX shim must not hide its `.cmd` sibling (error 193). `%LOCALAPPDATA%/devin/cli/bin` is a Devin fallback (installer 3000.11.3).
@@ -19,7 +20,7 @@ The engine side of agent CLIs: registry, launching, installs, cross-harness suba
 
 - Native release agents (`native_release.rs`, Antigravity, `acpira install-agent`): pinned per-asset SHA-256 because the ACP Registry has none; https and listed hosts only; hostile zip entries refused; `install.lock` is never deleted, so two installers never lock different inodes.
   - Spawned by real path: Antigravity finds `localharness_external` next to `argv[0]`.
-- Adapter updates (`AgentInfo.update`, `registry.rs` `update_for`): offered only when the installed adapter is older than the version its install line pins, the version Acpira was verified against, never npm's latest; the in-app install of that line is the update. Unpinned lines (DSH, Pi, curl installers) never offer one.
+- Adapter updates (`AgentInfo.update`, `registry.rs` `target_for`, `npm_latest.rs`): a new model reaches Claude / Codex's list only through a newer adapter, so the offer and the in-app install follow npm's `latest` (asked through the machine's own `npm view`, honouring its mirror and proxy) when it is newer than the pin; the pin is the floor and what a machine without npm gets. An unpinned npm line (DSH, Pi) follows `latest` alone; Pi tracks `pi-coding-agent` too, since pi-acp runs the global `pi` and the models come from it. Lookups run in the background off probe passes, never on a session's start path. Curl installers and native releases never offer one.
 - In-app installs (`installer.rs`) run on the engine's machine; an unwritable npm prefix redirects to `~/.local`. Unverified: never run on Windows.
 - Windows install blocks use the same encoded PowerShell transport as terminal auth (`platform/terminal.rs`), since Bash-style quoting broke the Antigravity installer. Devin's `install.ps1` (3000.11.3) overwrites a running `devin.exe`, hence `install-devin.ps1`. Unverified: real OAuth, TTY interaction, a live Devin update.
 - Network proxy (`net_proxy.rs`): running sessions keep their spawn env. Unverified: whether each CLI's model requests honour it.
