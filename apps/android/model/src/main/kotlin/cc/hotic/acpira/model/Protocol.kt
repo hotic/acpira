@@ -679,6 +679,8 @@ sealed interface WebviewMsg {
   data class CancelSubagent(val sessionId: String, val subagentId: String) : WebviewMsg
   /** Ask the adapter to stop one AIR async task */
   data class StopAsyncTask(val sessionId: String, val taskId: String) : WebviewMsg
+  /** End one running command (SessionView.canStopCommands); the turn goes on */
+  data class StopCommand(val sessionId: String, val toolCallId: String) : WebviewMsg
   /** A goal control (SessionView.goalActions); turn-starting ones go out as a `/goal …` prompt */
   data class Goal(val sessionId: String, val action: GoalAction, val objective: String? = null) : WebviewMsg
   /** @ mention: fuzzy search over the workspace's files, answered with `files` echoing seq */
@@ -779,6 +781,7 @@ sealed interface WebviewMsg {
       is UnobserveSubagent -> "unobserveSubagent"
       is CancelSubagent -> "cancelSubagent"
       is StopAsyncTask -> "stopAsyncTask"
+      is StopCommand -> "stopCommand"
       is Goal -> "goal"
       is SearchFiles -> "searchFiles"
       is SetSetting -> "setSetting"
@@ -888,6 +891,7 @@ sealed interface WebviewMsg {
       is UnobserveSubagent -> { put("sessionId", m.sessionId); put("subagentId", m.subagentId) }
       is CancelSubagent -> { put("sessionId", m.sessionId); put("subagentId", m.subagentId) }
       is StopAsyncTask -> { put("sessionId", m.sessionId); put("taskId", m.taskId) }
+      is StopCommand -> { put("sessionId", m.sessionId); put("toolCallId", m.toolCallId) }
       is Goal -> { put("sessionId", m.sessionId); put("action", m.action.name); opt("objective", m.objective) }
       is SearchFiles -> { put("query", m.query); put("seq", m.seq) }
       is SetSetting -> { put("key", m.key); put("value", m.value) }
@@ -922,7 +926,7 @@ sealed interface WebviewMsg {
       "archiveSession", "setSessionUnread", "markAllRead", "searchSessions", "forkSession", "selectAccount", "refreshQuota",
       "compact", "retry", "takeOverSession", "dequeue", "sendQueued", "steerQueued", "editQueued", "categoryOp",
       "moveSession", "sessionMarkdown", "addAccount", "removeAccount", "unlockCredentials", "login", "reconnect",
-      "retryTurn", "editTurn", "observeSubagent", "unobserveSubagent", "cancelSubagent", "stopAsyncTask", "goal",
+      "retryTurn", "editTurn", "observeSubagent", "unobserveSubagent", "cancelSubagent", "stopAsyncTask", "stopCommand", "goal",
       "searchFiles", "setSetting", "controls", "projectDir", "projectStatus", "projectFile", "sessionChanges", "diffSource",
       "imageBlob", "stageFile", "openPlan", "terminalOpen", "terminalInput", "terminalResize", "terminalAck",
       "terminalClose", "terminalKill", "connections", "localDir", "providers", "providerAction", "providerProbe",

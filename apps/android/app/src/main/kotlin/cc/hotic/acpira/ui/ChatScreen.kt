@@ -65,6 +65,7 @@ import cc.hotic.acpira.store.buildPlan
 import cc.hotic.acpira.store.compact
 import cc.hotic.acpira.store.editQueued
 import cc.hotic.acpira.store.failureAction
+import cc.hotic.acpira.store.stopCommand
 import cc.hotic.acpira.store.stopTask
 import cc.hotic.acpira.store.goal
 import cc.hotic.acpira.store.openAccount
@@ -159,6 +160,7 @@ fun ChatScreen(model: AppModel, id: String) {
       removeQueued = { model.takeQueued(id, it) },
       failureAction = { model.failureAction(id, it) },
       stopTask = { model.stopTask(id, it) },
+      stopCommand = { model.stopCommand(id, it) },
     )
   }
   // The settled turns' actions (retry, fork, toasts) and the one turn Retry is offered on
@@ -328,6 +330,7 @@ fun ChatScreen(model: AppModel, id: String) {
     val planDock = with(LocalDensity.current) { planDockH.toDp() }
     CompositionLocalProvider(
       LocalChatHandlers provides handlers,
+      LocalCanStopCommands provides (held.canStopCommands == true),
       LocalPlanContext provides PlanContext(held.controls, held.running, held.status == SessionStatus.ready),
       LocalLiveStage provides stage,
       LocalQuote provides quote,

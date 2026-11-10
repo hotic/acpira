@@ -814,6 +814,8 @@ data class SessionView(
   val commands: List<SlashCommand> = emptyList(),
   val queued: List<QueuedPrompt>? = null,
   val canSteer: Boolean? = null,
+  /** A running command row can be stopped on its own (`stopCommand`) */
+  val canStopCommands: Boolean? = null,
   val goal: SessionGoal? = null,
   val subagents: List<SubagentSummary>? = null,
   val forkedFrom: ForkOrigin? = null,

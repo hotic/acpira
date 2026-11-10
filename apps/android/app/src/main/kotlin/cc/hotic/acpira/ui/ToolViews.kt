@@ -263,13 +263,18 @@ private fun RowScope.SessionToolTarget(block: ToolCallBlock) {
   }
 }
 
-/** Commands end with ✓ / ✗ and their run time; other rows show their diff stat; a background task its state */
+/**
+ * Commands end with ✓ / ✗ and their run time; other rows show their diff stat; a background task its state. A running
+ * command the session can stop on its own leads with Stop
+ */
 @Composable
 internal fun RowScope.ToolTrailing(block: ToolCallBlock, execute: Boolean) {
   val task = block.asyncTask
   when {
     execute && task != null -> TaskTag(task)
     execute -> {
+      val stop = LocalChatHandlers.current?.stopCommand
+      if (stop != null && LocalCanStopCommands.current && commandStoppable(block)) CommandStop(block.id, stop)
       val start = block.startedAt
       val end = block.endedAt
       CommandOutcome(
@@ -282,6 +287,44 @@ internal fun RowScope.ToolTrailing(block: ToolCallBlock, execute: Boolean) {
       block.diffStat?.let { DiffStatText(it.add, it.del) }
       task?.let { TaskTag(it) }
     }
+  }
+}
+
+/** A command the agent handed over verbatim and still running: the only rows whose process the engine can find */
+internal fun commandStoppable(block: ToolCallBlock): Boolean =
+  block.kind == ToolKind.execute && block.status == ToolStatus.in_progress && block.observation != "unknown" &&
+    block.targetMono == true && block.verbKey == null && !block.target.isNullOrBlank()
+
+/**
+ * Stop on a running command's row, the same square as a background task's: ends that command's process and the turn
+ * goes on. Gone once tapped, so a second tap has nothing to land on while the process dies
+ */
+@Composable
+private fun CommandStop(id: String, stop: (String) -> Unit) {
+  var asked by remember(id) { mutableStateOf(false) }
+  if (asked) return
+  StopSquare(t("command.stop"), "command.stop") { asked = true; stop(id) }
+}
+
+/** The small stop square of a process row, as the webview's sm button with a size-3 glyph: the button's box overhangs
+ *  the row by a step above, below and after */
+@Composable
+private fun StopSquare(label: String, tag: String, onClick: () -> Unit) {
+  val bleed = with(LocalDensity.current) { Metrics.s1.roundToPx() }
+  Box(
+    Modifier
+      .layout { measurable, constraints ->
+        val p = measurable.measure(constraints.copy(minWidth = 0, minHeight = 0, maxHeight = Constraints.Infinity))
+        layout(maxOf(p.width - bleed, 0), maxOf(p.height - bleed * 2, 0)) { p.place(0, -bleed) }
+      }
+      .size(WebMetrics.ctlSm)
+      .clip(CircleShape)
+      .clickable(onClick = onClick)
+      .semantics { contentDescription = label; role = Role.Button }
+      .testTag(tag),
+    contentAlignment = Alignment.Center,
+  ) {
+    Glyph("square", Palette.fg2, WebMetrics.chevron, IconStroke.icon)
   }
 }
 
@@ -300,26 +343,8 @@ private fun RowScope.TaskTag(task: AsyncTaskInfo) {
   }
   Text(state.tag, color = tone, maxLines = 1, softWrap = false)
   val stop = LocalChatHandlers.current?.stopTask
-  if (state.stoppable && stop != null) {
-    // Small enough to sit in a process row without growing it, as the webview's sm button with a size-3 glyph: the
-    // button's box overhangs the row by a step above, below and after
-    val bleed = with(LocalDensity.current) { Metrics.s1.roundToPx() }
-    Box(
-      Modifier
-        .layout { measurable, constraints ->
-          val p = measurable.measure(constraints.copy(minWidth = 0, minHeight = 0, maxHeight = Constraints.Infinity))
-          layout(maxOf(p.width - bleed, 0), maxOf(p.height - bleed * 2, 0)) { p.place(0, -bleed) }
-        }
-        .size(WebMetrics.ctlSm)
-        .clip(CircleShape)
-        .clickable { stop(task.id) }
-        .semantics { contentDescription = t("asyncTask.stop"); role = Role.Button }
-        .testTag("task.stop"),
-      contentAlignment = Alignment.Center,
-    ) {
-      Glyph("square", Palette.fg2, WebMetrics.chevron, IconStroke.icon)
-    }
-  }
+  // Small enough to sit in a process row without growing it
+  if (state.stoppable && stop != null) StopSquare(t("asyncTask.stop"), "task.stop") { stop(task.id) }
 }
 
 /**

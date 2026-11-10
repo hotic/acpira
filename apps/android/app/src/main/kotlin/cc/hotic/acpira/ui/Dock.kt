@@ -123,9 +123,15 @@ class ChatHandlers(
   val failureAction: ((cc.hotic.acpira.model.FailureAction) -> Unit)? = null,
   /** Stop on a background task's row, by task id (null: no Stop, as in a subagent's transcript) */
   val stopTask: ((String) -> Unit)? = null,
+  /** Stop on a running command's row, by its id; offered under [LocalCanStopCommands] */
+  val stopCommand: ((String) -> Unit)? = null,
 )
 
 val LocalChatHandlers = androidx.compose.runtime.compositionLocalOf<ChatHandlers?> { null }
+
+/** The session on screen can stop a running command on its own (SessionView.canStopCommands); outside the handlers,
+ *  which are made once per session while the capability arrives with the agent process */
+val LocalCanStopCommands = androidx.compose.runtime.compositionLocalOf { false }
 
 /**
  * The surfaces under the thread, top to bottom; [composer] is the chat's composer, handed the placeholder the dock
