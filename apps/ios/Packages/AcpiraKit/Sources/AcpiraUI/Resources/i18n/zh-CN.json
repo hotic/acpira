@@ -1895,6 +1895,8 @@
   "connections.identityValue": "密钥 {path}",
   "connections.projectsDesc": "在主机上的这些文件夹里工作",
   "connections.noProjects": "还没有文件夹",
+  "connections.models": "带上模型来源",
+  "connections.modelsDesc": "模型来源和密钥会复制到这台主机",
   "storage.cleanup.desc": "清理前都会先列出来给你确认",
   "storage.residue.entryShort": "没有地方再用到的文件",
   "storage.open": "打开",
