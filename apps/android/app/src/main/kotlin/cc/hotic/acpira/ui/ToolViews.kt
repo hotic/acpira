@@ -603,17 +603,29 @@ private fun ResultList(items: List<String>, kind: ToolKind, images: List<ImageRe
 
 /**
  * ResultList's pairing of a file row with the call's saved images: the one image of a lone row, else the image whose uri
- * names the row's file, else the image at the row's place when there is one per row
+ * names the row's file, else the image at the row's place when there is one per row or per image row
  */
-private fun rowImage(item: String, index: Int, items: List<String>, images: List<ImageRef>): ImageRef? {
+internal fun rowImage(item: String, index: Int, items: List<String>, images: List<ImageRef>): ImageRef? {
   if (images.isEmpty()) return null
   if (items.size == 1 && images.size == 1) return images[0]
   val main = splitHit(item).first
   val named = images.firstOrNull { image ->
     val uri = image.uri ?: return@firstOrNull false
-    uri == item || (main.isNotEmpty() && uri.endsWith("/$main"))
+    val path = cc.hotic.acpira.store.fileOfUri(uri) ?: uri
+    uri == item || path == item || (main.isNotEmpty() && (path.endsWith("/$main") || path.endsWith("\\$main")))
   }
-  return named ?: if (images.size == items.size) images[index] else null
+  if (named != null) return named
+  if (images.size == items.size) return images[index]
+  var imageIndex = -1
+  var imageCount = 0
+  for ((j, hit) in items.withIndex()) {
+    val (p, line) = fileReference(hit)
+    if (line == null && imageMimeOf(p) != null) {
+      if (j == index) imageIndex = imageCount
+      imageCount++
+    }
+  }
+  return if (imageIndex >= 0 && imageCount == images.size) images[imageIndex] else null
 }
 
 /**

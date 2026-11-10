@@ -1483,3 +1483,37 @@ fn a_scheduled_wakeup_names_the_time_the_session_resumes() {
   expect_match(block(&s, 0, 1), json!({ "verbKey": "verb.wakeupStop" }));
   expect_absent(block(&s, 0, 1), "target");
 }
+
+#[test]
+fn a_mixed_read_attaches_image_locations_to_uri_less_image_results() {
+  let mut s = state();
+  s.ctx.save_image = saver(|_, _| Some("blob-a.png".into()));
+  apply(&mut s, json!({
+    "sessionUpdate": "tool_call",
+    "toolCallId": "r-mix",
+    "kind": "read",
+    "title": "Read marks.tsx",
+    "status": "in_progress",
+    "locations": [
+      { "path": "/repo/marks.tsx", "line": 180 },
+      { "path": "/repo/SidekickRelay.tsx" },
+      { "path": "/repo/.acpira/tmp/a.png" },
+      { "path": "/repo/.acpira/tmp/b.png" }
+    ]
+  }));
+  apply(&mut s, json!({
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "r-mix",
+    "status": "completed",
+    "content": [
+      { "type": "content", "content": { "type": "image", "data": PNG, "mimeType": "image/png" } },
+      { "type": "content", "content": { "type": "image", "data": PNG, "mimeType": "image/png" } }
+    ]
+  }));
+  expect_match(block(&s, 0, 0), json!({
+    "contents": [
+      { "type": "image", "blob": "blob-a.png", "uri": "/repo/.acpira/tmp/a.png" },
+      { "type": "image", "blob": "blob-a.png", "uri": "/repo/.acpira/tmp/b.png" }
+    ]
+  }));
+}

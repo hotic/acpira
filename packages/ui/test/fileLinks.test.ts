@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { decodeFileHref, decodeLocalImageSrc, decodeSessionHref, encodeFileHref, parseCodeSessionLink, parseFileLink, parseLinkTarget, parseWrappedLink, resolveSessionPath, rewriteFileHrefs, sameImageSource, toFileHref } from '../chat/fileLinks';
+import { rowImage } from '../chat/toolDetails';
 
 describe('parseFileLink', () => {
   it('keeps an encoded line-like filename literal and accepts UNC directories', () => {
@@ -152,5 +153,25 @@ describe('session links in replies', () => {
     expect(resolveSessionPath('./src/a.ts', '/repo/', '/Users/spark')).toBe('/repo/src/a.ts');
     expect(resolveSessionPath('~/.agents/plans/p.md', '/repo', '/Users/spark')).toBe('/Users/spark/.agents/plans/p.md');
     expect(resolveSessionPath('/tmp/abs.png', '/repo', '/Users/spark')).toBe('/tmp/abs.png');
+  });
+});
+
+describe('rowImage', () => {
+  const refs = [
+    { blob: 'a1.png', mimeType: 'image/png' },
+    { blob: 'b1.png', mimeType: 'image/png' },
+  ];
+
+  it('pairs uri-less images with the image rows of a mixed text + image read', () => {
+    const mixed = ['/w/marks.tsx:180', '/w/SidekickRelay.tsx', '/w/.acpira/tmp/a.png', '/w/.acpira/tmp/b.png'];
+    expect(rowImage(mixed[0]!, 0, mixed, refs)).toBeUndefined();
+    expect(rowImage(mixed[1]!, 1, mixed, refs)).toBeUndefined();
+    expect(rowImage(mixed[2]!, 2, mixed, refs)).toEqual(refs[0]);
+    expect(rowImage(mixed[3]!, 3, mixed, refs)).toEqual(refs[1]);
+    // Ambiguous count stays unpaired rather than guessing the wrong picture
+    expect(rowImage('/w/c.png', 1, ['/w/b.png', '/w/c.png', '/w/d.png'], refs)).toBeUndefined();
+    // Percent-encoded file:// URIs match plain file paths
+    const withUri = [{ blob: 'u1.png', mimeType: 'image/png', uri: 'file:///w/my%20shot.png' }];
+    expect(rowImage('/w/my shot.png', 1, ['/w/a.ts', '/w/my shot.png'], withUri)).toEqual(withUri[0]);
   });
 });

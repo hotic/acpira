@@ -380,7 +380,7 @@ fn picture(path: &Path, bytes: &[u8], mime: &str, images: bool, left: &mut usize
   };
   let mut content = vec![];
   if fits {
-    content.push(json!({ "type": "content", "content": { "type": "image", "data": data, "mimeType": mime } }));
+    content.push(json!({ "type": "content", "content": { "type": "image", "data": data, "mimeType": mime, "uri": path } }));
   }
   let model = match withheld {
     None => {
@@ -607,6 +607,7 @@ mod tests {
     assert!(!seen.is_error && seen.model.contains("PNG image, 640x480 pixels") && seen.model.contains("attached"), "{}", seen.model);
     let block = image_of(&seen).expect("the picture is on the card");
     assert_eq!(block["content"]["mimeType"], "image/png");
+    assert_eq!(block["content"]["uri"], shot.to_string_lossy().as_ref());
     assert_eq!(super::super::mcp::model_images(&seen.content).len(), 1, "and goes to the model");
 
     let text_only = run(&file(&shot), false, &ctx(dir.path()));

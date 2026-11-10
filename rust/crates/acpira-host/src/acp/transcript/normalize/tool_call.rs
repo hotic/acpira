@@ -16,7 +16,8 @@ use crate::util::{js_num, now_ms};
 
 use super::ToolCtx;
 use super::content::{
-  append_exit_code, attach_saved_images, attach_shown_images, attach_shown_video, attach_shown_widget, formatted_output, show_image_paths, tool_contents,
+  append_exit_code, attach_read_image_uris, attach_saved_images, attach_shown_images, attach_shown_video, attach_shown_widget, formatted_output,
+  show_image_paths, tool_contents,
 };
 use super::tool_kind::{
   ASK_TITLE, IMAGE_GEN, IMAGE_GEN_TITLE, IMAGE_GEN_VERB, READ_SESSION_VERB, SEARCH_SESSIONS_VERB, SHOW_IMAGE_VERB, SHOW_VIDEO_VERB, SHOW_WIDGET_VERB,
@@ -381,6 +382,9 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
       b.target = Some(paths.iter().map(|p| crate::json::basename(p)).collect::<Vec<_>>().join(", "));
       b.target_mono = Some(false);
     }
+  }
+  if b.kind == ToolKind::Read {
+    attach_read_image_uris(b);
   }
   if b.verb_key.as_deref() == Some(IMAGE_GEN_VERB) && !b.status.is_open() {
     attach_saved_images(b, u, ctx.as_deref());

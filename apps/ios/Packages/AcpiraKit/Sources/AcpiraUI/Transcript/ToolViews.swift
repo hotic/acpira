@@ -462,16 +462,28 @@ struct ResultList: View {
 }
 
 /// ResultList's pairing of a file row with the call's saved images: the one image of a lone row, else the image whose
-/// uri names the row's file, else the image at the row's place when there is one per row
+/// uri names the row's file, else the image at the row's place when there is one per row or per image row
 func rowImage(_ item: String, at index: Int, of items: [String], images: [ImageRef]) -> ImageRef? {
   guard !images.isEmpty else { return nil }
   if items.count == 1 && images.count == 1 { return images[0] }
   let main = splitHit(item).main
   let named = images.first { image in
     guard let uri = image.uri else { return false }
-    return uri == item || (!main.isEmpty && uri.hasSuffix("/\(main)"))
+    let path = fileOfURI(uri) ?? uri
+    return uri == item || path == item || (!main.isEmpty && (path.hasSuffix("/\(main)") || path.hasSuffix("\\\(main)")))
   }
-  return named ?? (images.count == items.count ? images[index] : nil)
+  if let named { return named }
+  if images.count == items.count { return images[index] }
+  var imageIndex: Int?
+  var imageCount = 0
+  for (j, hit) in items.enumerated() {
+    let f = fileReference(hit)
+    if f.line == nil, imageMimeOf(f.path) != nil {
+      if j == index { imageIndex = imageCount }
+      imageCount += 1
+    }
+  }
+  return imageIndex.flatMap { imageCount == images.count ? images[$0] : nil }
 }
 
 /// What a file row opens in the Lightbox (ToolCall.tsx FileRef): the call's saved copy of the image, else the file

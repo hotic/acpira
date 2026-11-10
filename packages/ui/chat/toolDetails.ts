@@ -1,4 +1,6 @@
-import type { ToolCallBlock, ToolContent } from '@acpira/shared/transcript';
+import { imageMimeOf } from '@acpira/shared/attachments';
+import type { ImageRef, ToolCallBlock, ToolContent } from '@acpira/shared/transcript';
+import { parseFileLink } from './fileLinks';
 
 const EDIT_SUCCESS_RECEIPTS = new Set(['Edit applied successfully.', 'Wrote file successfully.']);
 
@@ -66,4 +68,39 @@ export function toolFiles(block: ToolCallBlock): string[] {
 
 export function isLineCount(block: ToolCallBlock): boolean {
   return block.kind === 'read' && block.content?.type === 'text' && /^\s*\d+\s+lines?\s*$/i.test(block.content.text);
+}
+
+export function splitHit(hit: string): { main: string; aside?: string } {
+  const line = /^(.+?):(\d+(?:[–-]\d+)?)(?::\d+)?$/.exec(hit);
+  if (line) return { main: line[1]!.split(/[\\/]/).pop()!, aside: `L${line[2]}` };
+  if (/^(?:\.{0,2}\/|[A-Za-z]:[\\/])/.test(hit)) return { main: hit.split(/[\\/]/).pop()! };
+  try {
+    const u = new URL(hit);
+    return { main: u.pathname === '/' ? u.host : `${u.host}${u.pathname}`, aside: u.host };
+  } catch { return { main: hit }; }
+}
+
+// Pair a file row with the call's saved images: the lone image of a lone row, the image whose uri names the row's file,
+// the image at the row's place when there is one per row, or the image at its place among the image rows of a mixed read.
+export function rowImage(item: string, index: number, items: string[], images?: ImageRef[]): ImageRef | undefined {
+  if (!images?.length) return undefined;
+  if (items.length === 1 && images.length === 1) return images[0];
+  const { main } = splitHit(item);
+  const named = images.find(img => {
+    if (!img.uri) return false;
+    const path = parseFileLink(img.uri)?.path ?? img.uri;
+    return img.uri === item || path === item || (Boolean(main) && (path.endsWith(`/${main}`) || path.endsWith(`\\${main}`)));
+  });
+  if (named) return named;
+  if (images.length === items.length) return images[index];
+  let imageIndex = -1;
+  let imageCount = 0;
+  for (let j = 0; j < items.length; j++) {
+    const f = fileReference(items[j]!);
+    if (f.line === undefined && imageMimeOf(f.path)) {
+      if (j === index) imageIndex = imageCount;
+      imageCount++;
+    }
+  }
+  return imageIndex >= 0 && imageCount === images.length ? images[imageIndex] : undefined;
 }
