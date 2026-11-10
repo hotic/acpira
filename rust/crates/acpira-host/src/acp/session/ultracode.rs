@@ -73,6 +73,8 @@ impl AcpSession {
     }
     let available = self.ultracode_available(c);
     let Core { ultracode, state, .. } = c;
+    // claude-agent-acp 0.97.0+ publishes its own `ultracode` boolean; the Ultra level stands for it, so it is not shown twice
+    state.controls.options.retain(|o| o.id != uc::SETTINGS_KEY);
     uc::place(&mut state.controls.options, available, ultracode.on, ultracode.level.as_deref(), &mut ultracode.wire);
   }
 
