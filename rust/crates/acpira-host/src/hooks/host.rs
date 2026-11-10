@@ -69,6 +69,24 @@ impl HookHost {
     }
   }
 
+  /// The watched work trees now, and the files whose content changed since `before` was taken
+  pub async fn changes(&self, watch: &[PathBuf], before: &Snapshot) -> (Snapshot, Vec<PathBuf>) {
+    match self {
+      HookHost::Local => {
+        let after = Snapshot::take(watch).await;
+        let changed = after.changed_since(before).await;
+        (after, changed)
+      }
+      HookHost::Remote(client) => match client.call("snapshot", json!({ "watch": watch, "before": before.to_json() })).await {
+        Ok(r) => {
+          let changed = r.value.get("changed").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(PathBuf::from).collect();
+          (Snapshot::from_json(&r.value), changed)
+        }
+        Err(_) => (Snapshot::default(), vec![]),
+      },
+    }
+  }
+
   pub async fn in_work_tree(&self, dir: &Path) -> bool {
     match self {
       HookHost::Local => super::snapshot::in_work_tree(dir).await,
