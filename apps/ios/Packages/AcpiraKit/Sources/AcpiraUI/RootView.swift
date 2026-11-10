@@ -204,8 +204,21 @@ public struct RootView: View {
       }
     }
     pairing.onConnection = { computer, wire in adopt(computer, wire) }
+    pairing.onDemo = { enterDemo() }
     // Dialled before this view appeared
     if let wire = pairing.connection, let computer = pairing.selected { adopt(computer, wire) }
+  }
+
+  private func enterDemo() {
+    var demoOptions = options
+    demoOptions.demo = true
+    demoOptions.screen = "list"
+    welcomed = true
+    welcoming = false
+    pairing?.onboarding = false
+    pairing?.addOpen = false
+    pairing = nil
+    model = AppModel(options: demoOptions)
   }
 
   /// An opened notification: its chat at once when its computer is on screen, else follow that computer and let the

@@ -45,6 +45,7 @@ final class PairingModel {
   /// end with `connectionEnded`
   @ObservationIgnored private(set) var connection: (any PairedConnection)?
   @ObservationIgnored var onConnection: ((PairedComputer, any PairedConnection) -> Void)?
+  @ObservationIgnored var onDemo: (() -> Void)?
   @ObservationIgnored private var dialing: Task<Void, Never>?
   @ObservationIgnored private var watching: Task<Void, Never>?
   /// The next dial after a wire that ended on its own (`ended`)
@@ -265,10 +266,18 @@ final class PairingModel {
   /// False for any other link
   @discardableResult
   func open(_ url: URL) -> Bool {
+    if Self.isDemoLink(url.absoluteString) {
+      onDemo?()
+      return true
+    }
     guard Self.isPairingLink(url.absoluteString) else { return false }
     pendingLink = url.absoluteString
     addOpen = true
     return true
+  }
+
+  static func isDemoLink(_ text: String) -> Bool {
+    text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("acpira://pair/demo")
   }
 
   static func isPairingLink(_ text: String) -> Bool {

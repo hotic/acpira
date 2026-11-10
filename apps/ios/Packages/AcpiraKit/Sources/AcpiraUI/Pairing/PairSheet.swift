@@ -162,6 +162,10 @@ struct PairSheet: View {
   /// Pairs through a scanned, pasted or confirmed link; a scan hands over the modules it read
   private func pair(_ link: String, scanned: [String]? = nil) {
     guard let pairing else { return }
+    if PairingModel.isDemoLink(link) {
+      pairing.onDemo?()
+      return
+    }
     let name: String
     do { name = try pairing.service.computerName(link: link) } catch {
       code = nil
