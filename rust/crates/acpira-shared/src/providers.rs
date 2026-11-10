@@ -34,6 +34,11 @@ pub fn plugin_providers_path(home: &std::path::Path) -> std::path::PathBuf {
   home.join("plugins").join(PROVIDERS_FILE)
 }
 
+/// A source's field naming the machine that brought it to this one over SSH (`{ machine, name, kept? }`, `kept` being
+/// this machine's own source under the same id): the engine's `remote/host_models.rs` writes it, and only that machine
+/// replaces or removes the entry
+pub const SYNCED_FROM_FIELD: &str = "syncedFrom";
+
 /// A plugin source's field naming the plugin it came from
 pub const PLUGIN_FIELD: &str = "plugin";
 

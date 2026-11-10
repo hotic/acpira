@@ -1842,6 +1842,8 @@ export const fr = {
   'connections.identityValue': 'Clé {path}',
   'connections.projectsDesc': 'Dossiers de cet hôte où travailler',
   'connections.noProjects': 'Aucun dossier pour l’instant',
+  'connections.models': 'Emporter les sources de modèles',
+  'connections.modelsDesc': 'Les sources de modèles et leurs clés sont copiées sur cet hôte',
   'storage.cleanup.desc': 'Chaque nettoyage est vérifié avant d’être lancé',
   'storage.residue.entryShort': 'Plus rien ne l’utilise',
   'storage.open': 'Ouvrir',

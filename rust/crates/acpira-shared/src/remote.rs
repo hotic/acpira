@@ -138,6 +138,9 @@ pub struct ConnectionView {
   pub alias: String,
   #[serde(default, skip_serializing_if = "std::ops::Not::not")]
   pub disabled: bool,
+  /// This machine's model sources are not carried to the host
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub models_off: bool,
   pub state: ConnectionState,
   /// While connecting: the step, and the newest line of what it does (an upload's progress)
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -192,6 +195,8 @@ pub enum ConnectionOp {
   /// Forget the host here; nothing on the host is touched
   Remove { alias: String },
   SetDisabled { alias: String, disabled: bool },
+  /// Whether this machine's model sources go to the host; off takes back what was brought
+  SetModels { alias: String, on: bool },
   /// `accept_new_machine`: the alias now leads to another machine and the user confirmed it is the right one
   Connect {
     alias: String,

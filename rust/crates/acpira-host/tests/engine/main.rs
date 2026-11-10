@@ -34,6 +34,7 @@ mod remote_connections;
 mod remote_peer;
 mod remote_workspace;
 mod remote_helper;
+mod remote_models;
 mod remote_store;
 mod session_library;
 mod session_manager;

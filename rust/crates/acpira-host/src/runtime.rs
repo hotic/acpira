@@ -49,6 +49,7 @@ pub struct HostRuntime {
   pub connections: Arc<crate::remote::connections::Connections>,
   /// Copies of this engine's records in host folders, in the hosts' stores (`remote::host_store`)
   host_mirror: Arc<crate::remote::host_store::HostMirror>,
+  model_mirror: Arc<crate::remote::host_models::ModelMirror>,
   /// The user's plugins (docs/dev/plugins.md)
   pub plugins: Arc<crate::plugins::host::PluginHost>,
   /// Remote access: the paired-devices gateway (docs/dev/host-architecture.md, Remote access gateway)
@@ -156,6 +157,8 @@ impl HostRuntime {
     store.set_agent_home(root.clone());
     // One session history per host: this engine's records in host folders get a copy in the host's own store
     let host_mirror = crate::remote::host_store::HostMirror::new(connections.clone(), store.clone(), &root, log.clone());
+    // The model sources follow the user: a session a host runs reads the host's own providers.json
+    let model_mirror = crate::remote::host_models::ModelMirror::new(connections.clone(), providers.clone(), log.clone());
     // Cross-harness subagents: the persona file and the loopback hub `ask_agent` calls come back through
     let roster = Arc::new(crate::relay::roster::Roster::new(&root));
     let hub = match crate::relay::hub::RelayHub::start(roster.clone(), log.clone()).await {
@@ -325,6 +328,7 @@ impl HostRuntime {
       terminals: crate::terminal::TerminalHub::new(),
       connections,
       host_mirror,
+      model_mirror,
       plugins,
       remote_access,
     });
@@ -336,6 +340,7 @@ impl HostRuntime {
       }
     }));
     runtime.host_mirror.start();
+    runtime.model_mirror.start();
     let ra = runtime.remote_access.clone();
     tokio::spawn(async move { ra.refresh_installed().await });
     // A host's folders are the `ssh://` entries of the project list
@@ -555,6 +560,7 @@ impl HostRuntime {
     }
     self.terminals.dispose();
     self.host_mirror.stop();
+    self.model_mirror.stop();
     self.connections.dispose();
     self.remote_access.dispose();
     self.manager.dispose().await;

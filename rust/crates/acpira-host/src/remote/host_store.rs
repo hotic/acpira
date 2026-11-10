@@ -45,7 +45,7 @@ pub fn this_machine() -> &'static (String, String) {
 const MAX_BODY: usize = 512 * 1024 * 1024;
 
 /// A request's body: its `stdin` frames up to their end (a line holds at most `wire::MAX_LINE`, a record can be more)
-async fn body(stdin: Option<mpsc::UnboundedReceiver<Option<Vec<u8>>>>) -> Result<Vec<u8>, WireError> {
+pub(super) async fn body(stdin: Option<mpsc::UnboundedReceiver<Option<Vec<u8>>>>) -> Result<Vec<u8>, WireError> {
   let Some(mut rx) = stdin else { return Err(WireError::new("invalid", "no body")) };
   let mut buf = vec![];
   while let Some(Some(chunk)) = rx.recv().await {
@@ -58,7 +58,7 @@ async fn body(stdin: Option<mpsc::UnboundedReceiver<Option<Vec<u8>>>>) -> Result
 }
 
 /// Send `bytes` as a request's body and wait for its answer
-async fn call_with_body(client: &RemoteClient, op: &str, a: Value, bytes: &[u8]) -> Result<Value> {
+pub(super) async fn call_with_body(client: &RemoteClient, op: &str, a: Value, bytes: &[u8]) -> Result<Value> {
   let call = client.request(op, a);
   for chunk in bytes.chunks(wire::CHUNK) {
     call.stdin(chunk);

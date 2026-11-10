@@ -1897,6 +1897,8 @@ export const zhTW = {
   'connections.identityValue': '金鑰 {path}',
   'connections.projectsDesc': '在主機上的這些資料夾裡工作',
   'connections.noProjects': '還沒有資料夾',
+  'connections.models': '帶上模型來源',
+  'connections.modelsDesc': '模型來源和金鑰會複製到這台主機',
   'storage.cleanup.desc': '每項清理都先過目再執行',
   'storage.residue.entryShort': '已經沒有任何地方在用',
   'storage.open': '開啟',

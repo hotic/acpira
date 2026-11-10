@@ -14,7 +14,7 @@ import { Collapsible } from '../ui/Collapsible';
 import { usePresence } from '../ui/usePresence';
 import {
   blockItem, blockList, DangerAction, DialogBody, Dot, FooterNote, Group, ItemRow, Note, PickContent, Section, SectionAction,
-  SettingsDialog, Status, shortPath, useSettingRow,
+  SettingsDialog, Status, shortPath, Switch, useSettingRow,
 } from './controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 
@@ -181,6 +181,11 @@ function HostDialog({ view, env, projects, on, fresh, onClose }: { view: Connect
           <Collapsible.Section open={hasConnectStatus(view)}>
             <StatusRow view={view} onOpenConfig={() => on.openPath(`${env.home}/.ssh/config`)} />
           </Collapsible.Section>
+        </Section>
+        {/* Sessions the host runs read the host's own model sources: this computer's are kept there unless turned off */}
+        <Section>
+          <ItemRow title={t('connections.models')} desc={t('connections.modelsDesc')}
+            trailing={<Switch checked={!view.modelsOff} label={t('connections.models')} onChange={on => connectionOp({ op: 'setModels', alias, on })} />} />
         </Section>
         <Section title={t('connections.projects')} count={folders.length} desc={t('connections.projectsDesc')}
           action={<SectionAction icon={<Plus />} disabled={!live} title={live ? undefined : t('connections.connectFirst')} onClick={() => setPicking(true)}>{t('connections.addFolder')}</SectionAction>}>

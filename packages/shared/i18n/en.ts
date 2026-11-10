@@ -1924,6 +1924,8 @@ export const en = {
   'connections.identityValue': 'Key {path}',
   'connections.projectsDesc': 'Folders on this host to work in',
   'connections.noProjects': 'No folders yet',
+  'connections.models': 'Carry model sources',
+  'connections.modelsDesc': 'Model sources and their keys are copied to this host',
   'storage.cleanup.desc': 'Each cleanup is reviewed before it runs',
   'storage.residue.entryShort': 'Nothing uses these any more',
   'storage.open': 'Open',

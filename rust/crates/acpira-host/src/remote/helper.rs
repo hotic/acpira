@@ -283,7 +283,7 @@ where
         }
       }
       Frame::Req { id, op, a } => {
-        let (stdin_tx, stdin_rx) = if matches!(op.as_str(), "exec" | "pty" | "tcp" | "engine" | "storePut" | "storeBlob") { let (t, r) = mpsc::unbounded_channel(); (Some(t), Some(r)) } else { (None, None) };
+        let (stdin_tx, stdin_rx) = if matches!(op.as_str(), "exec" | "pty" | "tcp" | "engine" | "storePut" | "storeBlob" | super::host_models::PUT_OP) { let (t, r) = mpsc::unbounded_channel(); (Some(t), Some(r)) } else { (None, None) };
         let out2 = out.clone();
         let running2 = running.clone();
         // Registered before it can finish, so a fast request never leaves a stale entry behind
@@ -509,6 +509,8 @@ async fn dispatch(op: &str, a: Value, id: u64, out: &Out, stdin: Option<mpsc::Un
     }
     // This host's session store, for the engines that keep one history per host (`host_store.rs`)
     "storeStat" | "storePut" | "storeBlob" | "storeRemove" => super::host_store::serve(op, &a, stdin).await,
+    // A machine's model sources, for the sessions this host runs for it (`host_models.rs`)
+    super::host_models::PUT_OP => super::host_models::serve(&a, stdin).await,
     // One blob of a host session, for an engine showing that session (`session_manager/hosts.rs`)
     // Read and sent in pieces, so a large one never sits whole in memory. `offset` resumes a fetch cut off before;
     // `max` skips a blob larger than that (answered with its size, no data)

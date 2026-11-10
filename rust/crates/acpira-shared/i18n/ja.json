@@ -1850,6 +1850,8 @@
   "connections.identityValue": "鍵 {path}",
   "connections.projectsDesc": "このホストで作業するフォルダー",
   "connections.noProjects": "フォルダーはまだありません",
+  "connections.models": "モデルソースを持ち込む",
+  "connections.modelsDesc": "モデルソースとそのキーをこのホストにコピーします",
   "storage.cleanup.desc": "どの整理も実行前に確認します",
   "storage.residue.entryShort": "もう使われていません",
   "storage.open": "開く",
