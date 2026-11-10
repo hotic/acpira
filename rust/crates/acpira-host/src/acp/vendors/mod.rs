@@ -129,6 +129,13 @@ impl Vendor {
     self == Vendor::Claude
   }
 
+  /// A native subagent still running when its parent's prompt returns keeps streaming under its own session id and ends
+  /// with the adapter's own state update: the next prompt's hand-off settles a held turn early, and a child launched in
+  /// an autonomous cycle holds nothing (`agent-quirks-claude.md`)
+  pub fn children_outlive_prompt(self) -> bool {
+    self == Vendor::Claude
+  }
+
   /// A `SendMessage` resume of a finished native subagent arrives as an announced run with no content of its own: the
   /// adapter drops it, so the run is read from the child's sidechain log (`SubagentTree` `resumed_task`)
   pub fn resumed_child_logs(self) -> bool {

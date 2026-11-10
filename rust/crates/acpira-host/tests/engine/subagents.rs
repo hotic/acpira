@@ -343,6 +343,21 @@ async fn a_claude_child_without_a_launch_row_gets_a_delegation_row_where_it_was_
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_claude_native_child_outlives_a_prompt_that_ended_on_its_own() {
+  let fake = fake_or_skip!();
+  let config = tempfile::tempdir().unwrap();
+  let h = Harness::for_agent(&fake, "claude", json!({ "env": { "CLAUDE_CONFIG_DIR": config.path().to_string_lossy() } }));
+  let s = session(&h).await;
+  prompt(&s, "subagents-claude-outlive").await;
+  let k1 = sub_id(&s, "sessionId", "k1");
+  // the rest of its stream and its own terminal word still land
+  until(|| sub(&s, "sessionId", "k1").is_some_and(|n| n["state"] == "completed"), 8000).await;
+  expect_match(sub(&s, "sessionId", "k1").unwrap(), json!({ "stateSource": "agent", "result": "k1 verdict" }));
+  expect_match(&child_turns(&s, &k1)[0], json!({ "stop": "end_turn" }));
+  assert_eq!(child_blocks(&s, &k1).into_iter().find(|b| b["type"] == "tool_call").unwrap()["status"], "completed");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_claude_async_child_without_a_terminal_update_disconnects_when_the_root_turn_ends() {
   let fake = fake_or_skip!();
   let h = Harness::new(&fake, json!({}));

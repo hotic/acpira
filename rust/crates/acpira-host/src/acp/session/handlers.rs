@@ -195,7 +195,7 @@ impl ClientHandlers for SessionHandlers {
       let why = code.map(|x| x.to_string()).or(signal).unwrap_or_else(|| "?".into());
       c.error = Some(tp("host.exited", &[("agent", &def.name), ("code", &why)]));
     }
-    c.tree.settle("connection-lost");
+    c.tree.settle("connection-lost", false);
     s.drain_terminal(&mut c);
     s.disconnect_tasks(&mut c);
     c.peer = PeerTurn::default();

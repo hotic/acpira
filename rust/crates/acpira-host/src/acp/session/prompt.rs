@@ -812,8 +812,10 @@ impl AcpSession {
     c.queue.steer_after_compaction.clear();
     // The turn's steers are its own from here on: a later stop has none of them to give back
     c.queue.steered.clear();
-    // The parent prompt returned: children still reported running are disconnected, never failed
-    c.tree.settle("prompt-returned");
+    // The parent prompt returned: children still reported running are disconnected, never failed. A stopped or failed
+    // turn keeps the cut: the interrupt may have killed them with no word on the wire
+    let native_outlive = error.is_none() && stop == TurnStop::EndTurn && self.vendor.children_outlive_prompt();
+    c.tree.settle("prompt-returned", native_outlive);
     self.drain_terminal(c);
     let failed = error.is_some();
     let ended = !failed && stop == TurnStop::EndTurn;

@@ -1438,6 +1438,22 @@ const app = acp.agent({ name: 'fake-agent' })
         return { stopReason: 'end_turn' };
       }
 
+      if (text === 'subagents-claude-outlive') {
+        await sendExt({ sessionUpdate: 'subagent_spawned', subagentSessionId: 'k1', name: 'Judge', task: 'grade it', capabilities: {} });
+        await sendTo('k1', { sessionUpdate: 'tool_call', toolCallId: 'k1-t1', title: 'Glob', kind: 'search', status: 'in_progress' });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'root done' } });
+        // The prompt returns first (the next prompt's hand-off, a launch in an autonomous cycle); the child streams on
+        // and the adapter reports its end
+        setTimeout(() => {
+          void (async () => {
+            await sendTo('k1', { sessionUpdate: 'tool_call_update', toolCallId: 'k1-t1', status: 'completed' });
+            await sendTo('k1', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'k1 verdict' } });
+            await sendExt({ sessionUpdate: 'subagent_state_update', subagentSessionId: 'k1', state: 'completed' });
+          })();
+        }, 80);
+        return { stopReason: 'end_turn' };
+      }
+
       if (text === 'subagents-claude-resume' || text === 'subagents-claude-resume-wire') {
         await sendExt({ sessionUpdate: 'subagent_spawned', subagentSessionId: 'k1', name: 'Build LAB', task: 'build it', capabilities: {} });
         await sendTo('k1', { sessionUpdate: 'tool_call', toolCallId: 'k1-t1', title: 'Glob', kind: 'search', status: 'completed',
