@@ -66,6 +66,7 @@ struct PairComputerDetail: View {
             ProgressView().controlSize(.small)
           }
         }
+        LabeledContent(t("connections.remoteVersion"), value: pairing.computers.first { $0.id == computer.id }?.version ?? "—")
         LabeledContent(t("mobile.pair.pairedAt"), value: pairedAt)
       }
       Section {

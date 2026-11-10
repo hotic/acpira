@@ -16,14 +16,17 @@ public struct PairedComputer: Codable, Hashable, Identifiable, Sendable {
   public var relay: String?
   public var addrs: [String]
   public var pairedAt: Date
+  /// The remote Acpira version last reported by the computer's gateway
+  public var version: String?
 
-  public init(id: String, name: String, model: String? = nil, relay: String? = nil, addrs: [String] = [], pairedAt: Date = .now) {
+  public init(id: String, name: String, model: String? = nil, relay: String? = nil, addrs: [String] = [], pairedAt: Date = .now, version: String? = nil) {
     self.id = id
     self.name = name
     self.model = model
     self.relay = relay
     self.addrs = addrs
     self.pairedAt = pairedAt
+    self.version = version
   }
 }
 

@@ -31,15 +31,24 @@ final class ScriptedService: PairingService, @unchecked Sendable {
   let computer = PairedComputer(id: "mac", name: "Mac")
   private let script: Mutex<[ConnectionError?]>
   let wires = Mutex<[ScriptedWire]>([])
+  private let reportedVersion: String?
+  private let cachedVersion = Mutex<String?>(nil)
 
-  init(_ outcomes: [ConnectionError?]) { script = Mutex(outcomes) }
+  init(_ outcomes: [ConnectionError?], version: String? = nil) {
+    script = Mutex(outcomes)
+    reportedVersion = version
+  }
 
   var dials: Int { wires.withLock { $0.count } + failed.withLock { $0 } }
   /// Outcomes for the dials after the ones scripted so far
   func then(_ outcomes: [ConnectionError?]) { script.withLock { $0 += outcomes } }
   private let failed = Mutex(0)
 
-  func computers() async -> [PairedComputer] { [computer] }
+  func computers() async -> [PairedComputer] {
+    var current = computer
+    current.version = cachedVersion.withLock { $0 }
+    return [current]
+  }
   func computerName(link: String) throws -> String { "Mac" }
   func pair(link: String) async throws -> PairedComputer { computer }
   func pair(nearby: NearbyComputer, code: String) async throws -> PairedComputer { computer }
@@ -51,6 +60,7 @@ final class ScriptedService: PairingService, @unchecked Sendable {
       failed.withLock { $0 += 1 }
       throw next
     }
+    cachedVersion.withLock { $0 = reportedVersion }
     let wire = ScriptedWire()
     wires.withLock { $0.append(wire) }
     return wire
@@ -61,6 +71,18 @@ final class ScriptedService: PairingService, @unchecked Sendable {
 struct PairingModelTests {
   func until(_ done: () -> Bool) async throws {
     for _ in 0..<400 where !done() { try await Task.sleep(for: .milliseconds(5)) }
+  }
+
+  @Test func aConnectionRefreshesTheComputerVersionAndKeepsItOffline() async throws {
+    let service = ScriptedService([], version: "2.0.11")
+    let pairing = PairingModel(service: service, remembers: false)
+    await pairing.load()
+    try await until { pairing.link == .online(.relay) }
+    #expect(service.computer.version == nil, "the original navigation value predates the handshake")
+    #expect(pairing.computers.first?.version == "2.0.11")
+    service.wires.withLock { $0[0] }.end(.revoked)
+    try await until { pairing.link == .failed(.revoked) }
+    #expect(pairing.computers.first?.version == "2.0.11")
   }
 
   /// A wire lost to a network switch is dialed again on its own, and the link reads as connecting meanwhile (the screens

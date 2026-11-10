@@ -161,7 +161,7 @@ public actor RemotePairingService: PairingService {
     )
     let connection = RemoteConnection(link: link, computerId: id, hooks: hooks)
     live[key] = connection
-    if known.name != connection.computerName { renamed(id, connection.computerName) }
+    greeted(id, link.welcome())
     return connection
   }
 
@@ -178,6 +178,7 @@ public actor RemotePairingService: PairingService {
     do {
       let link = try await node.connect(computer: at, protocolVersion: Int64(SidecarProtocol.version), withinMs: probeMs(computer.id))
       defer { link.close() }
+      greeted(computer.id, link.welcome())
       var path = link.path()
       if path == nil {
         // iroh names the selected path right after the handshake
@@ -311,9 +312,12 @@ public actor RemotePairingService: PairingService {
     return computer
   }
 
-  private func renamed(_ id: String, _ name: String) {
+  private func greeted(_ id: String, _ welcome: Welcome) {
     guard let i = list.firstIndex(where: { $0.id == id }) else { return }
-    list[i].name = name
+    let version = welcome.version.isEmpty ? nil : welcome.version
+    guard list[i].name != welcome.name || list[i].version != version else { return }
+    list[i].name = welcome.name
+    list[i].version = version
     try? store.save(list)
   }
 

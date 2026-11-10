@@ -21,7 +21,7 @@ nonisolated final class PreviewPairingService: PairingService {
   static let link = "acpira://pair/preview?n=Mac%20mini&m=Macmini9,1"
   static let expiredLink = "acpira://pair/preview?n=Mac%20mini&m=Macmini9,1&expired=1"
 
-  static let mini = PairedComputer(id: "preview-mini", name: "Mac mini", model: "Macmini9,1", addrs: ["192.168.1.20:41641"])
+  static let mini = PairedComputer(id: "preview-mini", name: "Mac mini", model: "Macmini9,1", addrs: ["192.168.1.20:41641"], version: "2.0.11")
   static let air = PairedComputer(id: "preview-air", name: "MacBook Air", model: "MacBookAir10,1")
   static let imac = PairedComputer(id: "preview-imac", name: "办公室 iMac", model: "iMac21,1")
   static let pc = PairedComputer(id: "preview-pc", name: "asgard-pc")

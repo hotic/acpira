@@ -103,6 +103,7 @@ final class PairingModel {
       return out
     }
     for (id, state) in probed where !(id == selected?.id && link != .idle && link != .connecting) { presence[id] = state }
+    computers = await service.computers()
   }
 
   /// The followed computer is being dialed or its wire is up
@@ -147,10 +148,12 @@ final class PairingModel {
     dialing = Task {
       do {
         let wire = try await service.connect(computer)
+        let updated = await service.computers()
         guard !Task.isCancelled, selected?.id == computer.id else {
           wire.close()
           return
         }
+        computers = updated
         connection = wire
         wiredAt = .now
         onConnection?(computer, wire)
