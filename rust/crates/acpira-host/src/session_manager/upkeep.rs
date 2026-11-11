@@ -176,6 +176,9 @@ impl SessionManager {
   /// One run, without the once-a-day gate (tests call it directly)
   pub async fn run_upkeep(self: &Arc<Self>, now: SystemTime) -> UpkeepReport {
     let mut report = UpkeepReport::default();
+    if let Err(error) = self.deps.store.maintain_database().await {
+      self.log(&format!("storage upkeep: SQLite maintenance failed ({error:#})"));
+    }
     let sessions = self.deps.store.dir().to_path_buf();
     let dir = sessions.clone();
     report.shared = tokio::task::spawn_blocking(move || share_blobs(&dir)).await.unwrap_or(0);

@@ -82,7 +82,10 @@ What a change to the engine (`rust/`) or its shells cannot learn quickly from th
 
 - `migrateOnce` runs once per source, because VS Code and Cursor have separate `globalStorage` but share `~/.acpira`; nothing in the destination is overwritten.
 - File lock: Rust `store/file_lock.rs` and `apps/vscode/src/store/fileLock.ts` speak one protocol.
-- `index.json` is a cache; `sync_index` waits for chained record writes, else a fresh session's first write is mid-rename and another window takes it for deleted.
+- The session catalogue and migrated bodies live in `sessions.db`; `index.json` is only the file backend's cache and the catalogue's initial import. Record-file stamps reconcile writes by older engines, and turns one appends after a migration placeholder are spliced back on the next read.
+- A leased save imports a session lazily. The body transaction commits first, then its pre-migration archive, then the compatibility stub; no crash ordering exposes the stub without a complete body behind it.
+- WAL or schema-open failure keeps the file backend. Upkeep checks integrity and reclaims free pages; a failed check quarantines the database and uses files. `ACPIRA_STORE=files` skips SQLite entirely, and `acpira store revert ID` writes one current body back to JSON before deleting its rows.
+- `sync_index` waits for chained record writes, else a fresh session's first write is mid-rename and another window takes it for deleted.
 - Storage tab: files are placed by what records reference, never by name (UUID guessing misfiles live chats, as in openai/codex#52842); deletes go through `delete_session`, so leases and undo apply.
 
 ## Accounts and quota

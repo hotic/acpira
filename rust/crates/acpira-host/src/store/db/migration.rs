@@ -17,6 +17,33 @@ pub fn maybe_stub(raw: &[u8]) -> bool {
   raw.windows(MARK.len()).any(|window| window == MARK.as_bytes())
 }
 
+/// Merge a compatibility stub with the current database body. Turns and subagents an older engine added after the
+/// placeholder win over their archived counterparts, matching cold-pack splicing.
+pub fn splice(mut stub: SessionRecord, archived: SessionRecord) -> Result<SessionRecord> {
+  let Some(at) = stub.turns.iter().position(is_placeholder) else { return Ok(stub) };
+  if archived.id != stub.id {
+    return Err(anyhow!("database body holds session {}", archived.id));
+  }
+  let later = stub.turns.split_off(at + 1);
+  stub.turns.truncate(at);
+  stub.turns.extend(archived.turns);
+  stub.turns.extend(later);
+  let mut subagents = archived.subagents.unwrap_or_default();
+  for subagent in stub.subagents.take().unwrap_or_default() {
+    subagents.retain(|other| other.core.id != subagent.core.id);
+    subagents.push(subagent);
+  }
+  stub.subagents = (!subagents.is_empty()).then_some(subagents);
+  Ok(stub)
+}
+
+/// Expand a migration stub while SQLite is disabled or quarantined. A missing archive is an error, never an empty history.
+pub fn splice_archive(stub: SessionRecord, archive: &[u8]) -> Result<SessionRecord> {
+  let raw = zstd::stream::decode_all(archive)?;
+  let archived: SessionRecord = serde_json::from_slice(&raw)?;
+  splice(stub, archived)
+}
+
 /// Build the small legacy record without cloning the full turns and subagents. The current summary fields stay readable
 /// to older engines, while its one block names the archive and all blobs that the Storage tab must retain.
 pub fn stub(record: &SessionRecord, names: &[String]) -> Result<Vec<u8>> {
