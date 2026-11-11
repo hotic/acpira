@@ -21,6 +21,7 @@ use std::time::{Duration, SystemTime};
 
 use acpira_shared::transcript::{AgentBlock, AgentTurn, TextBlock, Turn};
 
+use super::db::migration;
 use super::file_lock::temp_writer_pid;
 use super::record::SessionRecord;
 use crate::i18n::t;
@@ -125,6 +126,9 @@ pub fn pack(dir: &Path, id: &str, now: SystemTime) -> std::io::Result<Result<u64
     return Ok(Err(Kept::NotCold));
   }
   let raw = fs::read(&path)?;
+  if migration::maybe_stub(&raw) {
+    return Ok(Err(Kept::NotCold));
+  }
   let Ok(record) = serde_json::from_slice::<SessionRecord>(&raw) else { return Ok(Err(Kept::NotCold)) };
   if record.id != id
     || record.turns.iter().any(is_placeholder)

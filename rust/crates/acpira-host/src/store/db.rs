@@ -12,6 +12,7 @@ use acpira_shared::transcript::SessionSummary;
 use super::record::SessionRecord;
 
 mod body;
+pub(crate) mod migration;
 pub use body::SaveStats;
 
 pub const DB_FILE: &str = "sessions.db";
