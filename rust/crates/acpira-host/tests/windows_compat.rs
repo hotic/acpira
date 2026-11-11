@@ -61,7 +61,8 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
     dir.path().to_str().unwrap(),
     IdleHandlers::new(Arc::new(|_| {}), None),
     None,
-    Some(Duration::from_secs(5)),
+    // A cold node on a busy CI runner can take longer than 5 s to answer; the wait is not what this test measures
+    Some(Duration::from_secs(30)),
   )
   .await
   .unwrap();
