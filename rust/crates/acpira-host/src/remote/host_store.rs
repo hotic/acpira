@@ -420,17 +420,9 @@ impl HostMirror {
   /// One record's copy and the blobs the host lacks. The folder becomes the host's own path; the category stays here
   /// (categories are this machine's list)
   async fn push(&self, client: &RemoteClient, alias: &str, id: &str) -> Result<()> {
-    let raw = match tokio::fs::read(self.store.dir().join(format!("{id}.json"))).await {
-      Ok(raw) => raw,
-      // Deleted meanwhile: its removal is on its way
-      Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-      Err(e) => return Err(e.into()),
-    };
-    // A packed record's stub sends its archived turns along: the archive is no blob and stays here, so a bare stub
-    // would land on the host with its history gone
-    let dir = self.store.dir().to_path_buf();
-    let raw = tokio::task::spawn_blocking(move || crate::store::pack::expand_raw(&dir, raw)).await?;
-    let mut record: Value = serde_json::from_slice(&raw)?;
+    // The wire format stays a complete record whether the local body is a file, a packed archive or SQLite rows.
+    let Some(record) = self.store.load(id).await else { return Ok(()) };
+    let mut record: Value = serde_json::to_value(record)?;
     let Some(folder) = record.get("cwd").and_then(Value::as_str).and_then(parse_remote_folder) else { return Ok(()) };
     if folder.alias != alias {
       return Ok(());

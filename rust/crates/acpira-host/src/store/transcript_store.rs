@@ -172,6 +172,10 @@ fn file_modified_ns(time: Option<SystemTime>) -> Option<i64> {
   i64::try_from(nanos).ok()
 }
 
+fn timestamp_ms(time: SystemTime) -> Option<i64> {
+  i64::try_from(time.duration_since(SystemTime::UNIX_EPOCH).ok()?.as_millis()).ok()
+}
+
 pub struct TranscriptStore {
   dir: PathBuf,
   log: LogFn,
@@ -211,8 +215,6 @@ pub type ChangeHook = Arc<dyn Fn(&str, RecordChange) + Send + Sync>;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Stamped {
-  #[serde(default)]
-  updated_at: String,
   #[serde(default)]
   cwd: String,
 }
@@ -331,13 +333,17 @@ impl TranscriptStore {
     if fs::metadata(self.dir.join(TRASH_DIR).join(format!("{id}.json"))).await.is_ok() {
       return Ok(false);
     }
-    if let Ok(raw) = fs::read(&path).await
-      && let Ok(here) = serde_json::from_slice::<Stamped>(&raw)
+    if let Ok(here) = self.load_detailed(id).await
       && here.updated_at > record.updated_at
     {
       return Ok(false);
     }
     write_atomic(&path, &serde_json::to_vec(record)?, None).await?;
+    if self.database().is_some() {
+      // Remote copies stay whole JSON on disk; replacing a migrated local copy first makes the file complete.
+      let marked = Arc::new(record.clone());
+      let _ = self.db_call(move |db| db.mark_file(&marked)).await?;
+    }
     let summary = record.summary();
     if self.database().is_some() {
       self.sync_catalog(std::slice::from_ref(&summary), &HashSet::from([id.clone()])).await?;
@@ -358,9 +364,11 @@ impl TranscriptStore {
   pub async fn copy_stamps(&self, ids: &[String]) -> HashMap<String, CopyStamp> {
     let mut out = HashMap::new();
     for id in ids.iter().filter(|id| is_session_id(id)) {
-      let Ok(raw) = fs::read(self.dir.join(format!("{id}.json"))).await else { continue };
-      let Ok(s) = serde_json::from_slice::<Stamped>(&raw) else { continue };
-      out.insert(id.clone(), CopyStamp { updated_at: s.updated_at, blobs: self.blob_names(id).await });
+      if fs::metadata(self.dir.join(TRASH_DIR).join(format!("{id}.json"))).await.is_ok() {
+        continue;
+      }
+      let Ok(record) = self.load_detailed(id).await else { continue };
+      out.insert(id.clone(), CopyStamp { updated_at: record.updated_at, blobs: self.blob_names(id).await });
     }
     out
   }
@@ -514,7 +522,7 @@ impl TranscriptStore {
         .read_index()
         .await
         .into_iter()
-        .map(|summary| CatalogEntry { summary, body: BodyLocation::File, file_size: None, file_modified_ns: None })
+        .map(|summary| CatalogEntry { summary, body: BodyLocation::File, file_size: None, file_modified_ns: None, trashed_at: None })
         .collect();
       if !entries.is_empty() {
         let seeds = entries.clone();
@@ -552,13 +560,19 @@ impl TranscriptStore {
       if summary.model.is_none() {
         summary.model = self.cached_model(&id).await;
       }
-      desired.push(CatalogEntry { summary: summary.clone(), body: entry.map_or(BodyLocation::File, |entry| entry.body), file_size, file_modified_ns: modified_ns });
+      desired.push(CatalogEntry { summary: summary.clone(), body: entry.map_or(BodyLocation::File, |entry| entry.body), file_size, file_modified_ns: modified_ns, trashed_at: None });
       out.push(summary);
     }
-    // A migrated body stays listed even if its compatibility stub temporarily disappears during a crash or another write.
-    for entry in stored.values().filter(|entry| entry.body == BodyLocation::Database && !seen.contains(&entry.summary.id)) {
-      desired.push(entry.clone());
-      out.push(entry.summary.clone());
+    // No live record: a stub in the trash keeps the catalogue row hidden for undo; no stub anywhere means an older engine
+    // deleted the session. A crash between the DB commit and the first stub still has the original full file, handled above.
+    for entry in stored.values().filter(|entry| !seen.contains(&entry.summary.id)) {
+      let trashed_file = self.dir.join(TRASH_DIR).join(format!("{}.json", entry.summary.id));
+      let trashed_at = fs::metadata(trashed_file).await.ok().and_then(|meta| meta.modified().ok()).and_then(timestamp_ms).or(entry.trashed_at);
+      if let Some(trashed_at) = trashed_at {
+        let mut entry = entry.clone();
+        entry.trashed_at = Some(trashed_at);
+        desired.push(entry);
+      }
     }
     sort_index(&mut out);
     let _ = self.db_call(move |db| db.apply_catalog(&desired)).await?;
@@ -597,6 +611,12 @@ impl TranscriptStore {
     base.category = fresh.category;
     base.model = fresh.model;
     Some(base)
+  }
+
+  async fn set_trashed(&self, id: &str, trashed_at: Option<i64>) -> Result<()> {
+    let id = id.to_owned();
+    let _ = self.db_call(move |db| db.set_trashed(&id, trashed_at)).await?;
+    Ok(())
   }
 
   async fn read_db_record(&self, id: &str) -> Result<Option<SessionRecord>, RecordLoadError> {
@@ -941,6 +961,10 @@ impl TranscriptStore {
       rm_confined(&dir, &format!("{id}.json"), false).await;
       rm_confined(&dir, id, true).await;
     }
+    let db_id = id.to_owned();
+    if let Err(error) = self.db_call(move |db| db.delete_session(&db_id)).await {
+      (self.log)(&format!("session {id}: SQLite row not removed ({error:#})"));
+    }
     if let Some(acp) = log {
       self.remove_agent_log(id, &acp).await;
     }
@@ -1006,20 +1030,28 @@ impl TranscriptStore {
     let trash = self.dir.join(TRASH_DIR);
     fs::create_dir_all(&trash).await?;
     let file = format!("{id}.json");
-    // The record leaves first: an entry left behind by a failed undo is then a stray blob folder, not a listed session
+    let now = SystemTime::now();
+    self.set_trashed(id, timestamp_ms(now)).await?;
+    // The record leaves first: an entry left behind by a failed undo is then a stray blob folder, not a listed session.
     let moved = async {
       real_dir(&trash).await?;
       move_entries(&self.dir, &trash, [file.as_str(), id]).await
     }
-    .await
-    .map_err(|e| anyhow!("session {id}: not moved to the trash ({e:#})"))?;
+    .await;
+    let moved = match moved {
+      Ok(moved) => moved,
+      Err(error) => {
+        let _ = self.set_trashed(id, None).await;
+        return Err(anyhow!("session {id}: not moved to the trash ({error:#})"));
+      }
+    };
     // rename keeps the mtime; stamp the moment it was trashed (a regular file only, so a symlink's target is not touched)
     let stamped = trash.join(&file);
     if moved.contains(&file.as_str())
       && fs::symlink_metadata(&stamped).await.is_ok_and(|m| m.file_type().is_file())
       && let Ok(f) = std::fs::File::options().write(true).open(&stamped)
     {
-      let _ = f.set_modified(SystemTime::now());
+      let _ = f.set_modified(now);
     }
     if self.on_change.read().is_some() {
       let cwd = cwd_of(&stamped).await;
@@ -1046,6 +1078,7 @@ impl TranscriptStore {
     }
     .await
     .map_err(|e| anyhow!("session {id}: not restored from the trash ({e:#})"))?;
+    self.set_trashed(id, None).await?;
     if self.on_change.read().is_some() {
       let cwd = cwd_of(&self.dir.join(&file)).await;
       self.changed(id, RecordChange::Restored { cwd: &cwd });
@@ -1071,6 +1104,10 @@ impl TranscriptStore {
       let log = builtin_session_of(&e.path()).await;
       rm_confined(&trash, &f, false).await;
       rm_confined(&trash, id, true).await;
+      let db_id = id.to_owned();
+      if let Err(error) = self.db_call(move |db| db.delete_session(&db_id)).await {
+        (self.log)(&format!("session {id}: SQLite row not removed ({error:#})"));
+      }
       if let Some(acp) = log {
         self.remove_agent_log(id, &acp).await;
       }
@@ -1493,10 +1530,27 @@ mod tests {
     ]))
     .unwrap();
     s.database().unwrap().save_record(&stored).unwrap();
+    std::fs::write(dir.path().join("database.json"), migration::stub(&stored, &[]).unwrap()).unwrap();
     assert_eq!(s.load("database").await.unwrap(), stored);
     assert_eq!(s.load_controls("database").await.unwrap(), stored.controls);
     assert_eq!(s.load_commands("database").await.unwrap(), stored.commands);
     assert_eq!(s.load_index().await.unwrap().iter().map(|summary| summary.id.as_str()).collect::<Vec<_>>(), ["database"]);
+  }
+
+  #[tokio::test]
+  async fn migrated_sessions_keep_their_undo_window_in_the_catalogue() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = store(dir.path());
+    s.flush(Arc::new(record("undo", "2026-01-01T00:00:00.000Z"))).await.unwrap();
+    s.trash("undo").await.unwrap();
+    assert!(s.load_index().await.unwrap().is_empty());
+    assert!(s.database().unwrap().catalog().unwrap()[0].trashed_at.is_some());
+    s.restore("undo").await.unwrap();
+    assert_eq!(s.load_index().await.unwrap()[0].id, "undo");
+    assert_eq!(s.database().unwrap().catalog().unwrap()[0].trashed_at, None);
+    s.trash("undo").await.unwrap();
+    s.sweep_trash(Duration::ZERO).await;
+    assert!(s.database().unwrap().catalog().unwrap().is_empty());
   }
 
   #[tokio::test]

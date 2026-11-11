@@ -132,6 +132,7 @@ pub fn pack(dir: &Path, id: &str, now: SystemTime) -> std::io::Result<Result<u64
   let Ok(record) = serde_json::from_slice::<SessionRecord>(&raw) else { return Ok(Err(Kept::NotCold)) };
   if record.id != id
     || record.turns.iter().any(is_placeholder)
+    || record.turns.iter().any(migration::is_placeholder)
     || record.copy_of.is_some()
     || record.history_pending
     || record.import_pending

@@ -11,7 +11,7 @@
 //! answers with (`tool_hits`); the history list ignores it.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
@@ -20,7 +20,7 @@ use serde::Deserialize;
 use acpira_shared::protocol::SessionHit;
 
 use crate::store::session_digest::TurnCounter;
-use crate::store::transcript_store::is_session_id;
+use crate::store::transcript_store::TranscriptStore;
 
 /// Context kept before the first match, in display columns (a CJK character counts two), and the whole snippet's length
 /// in characters. The history row shows about forty columns and truncates the rest, so the lead stays short enough for
@@ -202,20 +202,22 @@ pub fn terms_of(query: &str) -> Vec<String> {
 #[derive(Default)]
 pub struct SessionSearch {
   cache: Arc<Mutex<HashMap<String, Entry>>>,
+  refresh: tokio::sync::Mutex<()>,
 }
 
 impl SessionSearch {
-  /// Search the records under `dir`. File reads and parsing run on the blocking pool; concurrent searches take turns
-  /// on the cache, so a burst of keystrokes never parses the same record twice
-  pub async fn search(&self, dir: PathBuf, query: &str) -> Vec<SessionHit> {
+  /// Search through the store's unified read path. Concurrent refreshes take turns, so a burst of keystrokes never
+  /// parses the same record twice.
+  pub async fn search(&self, store: Arc<TranscriptStore>, query: &str) -> Vec<SessionHit> {
     let terms = terms_of(query);
     if terms.is_empty() {
       return vec![];
     }
+    let _refresh = self.refresh.lock().await;
+    self.refresh(&store).await;
     let cache = self.cache.clone();
     tokio::task::spawn_blocking(move || {
-      let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
-      refresh(&mut cache, &dir);
+      let cache = cache.lock().unwrap_or_else(|e| e.into_inner());
       let mut hits: Vec<(Option<SystemTime>, SessionHit)> =
         cache.iter().filter_map(|(id, e)| hit_of(id, e, &terms).map(|h| (e.stamp.0, h))).collect();
       hits.sort_by_key(|h| std::cmp::Reverse(h.0));
@@ -230,15 +232,16 @@ impl SessionSearch {
 impl SessionSearch {
   /// The conversation hits among `ids` (every record when None) for an agent's `search_sessions`: id → (turn, snippet).
   /// Same matching as the history list; a session whose terms all sit in its title is the caller's to add
-  pub async fn tool_hits(&self, dir: PathBuf, query: &str, ids: Option<HashSet<String>>) -> HashMap<String, (u32, String)> {
+  pub async fn tool_hits(&self, store: Arc<TranscriptStore>, query: &str, ids: Option<HashSet<String>>) -> HashMap<String, (u32, String)> {
     let terms = terms_of(query);
     if terms.is_empty() {
       return HashMap::new();
     }
+    let _refresh = self.refresh.lock().await;
+    self.refresh(&store).await;
     let cache = self.cache.clone();
     tokio::task::spawn_blocking(move || {
-      let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
-      refresh(&mut cache, &dir);
+      let cache = cache.lock().unwrap_or_else(|e| e.into_inner());
       cache
         .iter()
         .filter(|(id, _)| ids.as_ref().is_none_or(|ids| ids.contains(*id)))
@@ -250,31 +253,26 @@ impl SessionSearch {
   }
 }
 
-/// Bring the cache in line with the directory: new or changed records are read, vanished ones dropped
-fn refresh(cache: &mut HashMap<String, Entry>, dir: &Path) {
-  let Ok(rd) = std::fs::read_dir(dir) else {
-    cache.clear();
-    return;
-  };
-  let mut present = HashSet::new();
-  for e in rd.flatten() {
-    let name = e.file_name().to_string_lossy().into_owned();
-    let Some(id) = name.strip_suffix(".json").filter(|id| is_session_id(id)) else { continue };
-    let Ok(meta) = e.metadata() else { continue };
-    if !meta.is_file() {
-      continue;
+impl SessionSearch {
+  /// Revalidate against both the compatibility file stamp and `updatedAt`: a missing stub cannot freeze a database body.
+  async fn refresh(&self, store: &TranscriptStore) {
+    let summaries = store.load_index().await.unwrap_or_default();
+    let mut present = HashSet::new();
+    for summary in summaries {
+      let id = summary.id;
+      present.insert(id.clone());
+      let mut version = std::collections::hash_map::DefaultHasher::new();
+      summary.updated_at.hash(&mut version);
+      let version = version.finish();
+      let stamp = std::fs::metadata(store.dir().join(format!("{id}.json"))).map_or((None, version), |meta| (meta.modified().ok(), meta.len() ^ version));
+      if self.cache.lock().unwrap_or_else(|e| e.into_inner()).get(&id).is_some_and(|entry| entry.stamp == stamp) {
+        continue;
+      }
+      let raw = store.load_detailed(&id).await.ok().and_then(|record| serde_json::to_vec(&record).ok()).unwrap_or_default();
+      self.cache.lock().unwrap_or_else(|e| e.into_inner()).insert(id, entry_of(stamp, &raw));
     }
-    let stamp = (meta.modified().ok(), meta.len());
-    present.insert(id.to_owned());
-    if cache.get(id).is_some_and(|c| c.stamp == stamp) {
-      continue;
-    }
-    let Ok(raw) = std::fs::read(e.path()) else { continue };
-    // A packed record is searched whole (`pack`)
-    let raw = super::pack::expand_raw(dir, raw);
-    cache.insert(id.to_owned(), entry_of(stamp, &raw));
+    self.cache.lock().unwrap_or_else(|e| e.into_inner()).retain(|id, _| present.contains(id));
   }
-  cache.retain(|id, _| present.contains(id));
 }
 
 #[cfg(test)]
@@ -349,6 +347,21 @@ mod tests {
     assert_eq!(e.turns, vec![1, 2, 2, 2, 2, 3, 3]);
     assert_eq!(numbered_hit("a", &e, &terms_of("more")).unwrap().0, 2);
     assert_eq!(numbered_hit("a", &e, &terms_of("wait")).unwrap().0, 3);
+  }
+
+  #[tokio::test]
+  async fn sqlite_backed_records_are_searched_whole() {
+    let root = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::new(root.path().to_path_buf(), Arc::new(|_| {}), None);
+    let record: crate::store::record::SessionRecord = serde_json::from_value(serde_json::json!({
+      "id": "searchable", "agent": "claude", "cwd": "/w", "title": "SQLite", "updatedAt": "1",
+      "turns": [{ "role": "user", "text": "needle in the database" }]
+    }))
+    .unwrap();
+    store.flush(Arc::new(record)).await.unwrap();
+    let hits = SessionSearch::default().search(store, "needle").await;
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].snippet, "needle in the database");
   }
 
   #[test]
