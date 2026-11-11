@@ -599,6 +599,15 @@ impl TranscriptStore {
     Some(base)
   }
 
+  async fn read_db_record(&self, id: &str) -> Result<Option<SessionRecord>, RecordLoadError> {
+    let id = id.to_owned();
+    self
+      .db_call(move |db| db.load_record(&id))
+      .await
+      .map(|record| record.flatten())
+      .map_err(|error| RecordLoadError::Corrupt { reason: format!("SQLite: {error:#}") })
+  }
+
   async fn db_call<T>(&self, f: impl FnOnce(&SessionDb) -> Result<T> + Send + 'static) -> Result<Option<T>>
   where
     T: Send + 'static,
@@ -663,6 +672,11 @@ impl TranscriptStore {
     if let Some(src) = pending {
       return Ok(src.record());
     }
+    if let Some(mut record) = self.read_db_record(id).await? {
+      self.state.lock().known.insert(id.to_owned());
+      record.fold_turn_usage();
+      return Ok(record);
+    }
     let path = confined(&self.dir, &format!("{id}.json")).await.ok_or(RecordLoadError::StoreUnavailable)?;
     let raw = match fs::read(&path).await {
       Ok(raw) => raw,
@@ -709,6 +723,9 @@ impl TranscriptStore {
     if let Some(src) = pending {
       return Some(src.record().controls);
     }
+    if let Some(record) = self.read_db_record(id).await.ok().flatten() {
+      return Some(record.controls);
+    }
     let path = confined(&self.dir, &format!("{id}.json")).await?;
     let raw = fs::read(&path).await.ok()?;
     serde_json::from_slice::<ControlsOnly>(&raw).ok().filter(|r| r.id == id).map(|r| r.controls)
@@ -728,6 +745,9 @@ impl TranscriptStore {
     let pending = self.state.lock().pending.get(id).map(|p| p.source.clone());
     if let Some(src) = pending {
       return Some(src.record().commands);
+    }
+    if let Some(record) = self.read_db_record(id).await.ok().flatten() {
+      return Some(record.commands);
     }
     let path = confined(&self.dir, &format!("{id}.json")).await?;
     let raw = fs::read(&path).await.ok()?;
@@ -1412,6 +1432,23 @@ mod tests {
     std::fs::remove_file(dir.path().join("b.json")).unwrap();
     s.flush(Arc::new(record("b", "2026-01-03T00:00:00.000Z"))).await.unwrap();
     assert!(!dir.path().join("b.json").exists());
+  }
+
+  #[tokio::test]
+  async fn database_bodies_share_the_normal_record_read_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = store(dir.path());
+    let mut stored = record("database", "2026-01-01T00:00:00.000Z");
+    stored.turns = serde_json::from_value(serde_json::json!([
+      { "role": "user", "text": "hello" },
+      { "role": "agent", "blocks": [{ "type": "text", "markdown": "from SQLite" }] }
+    ]))
+    .unwrap();
+    s.database().unwrap().save_record(&stored).unwrap();
+    assert_eq!(s.load("database").await.unwrap(), stored);
+    assert_eq!(s.load_controls("database").await.unwrap(), stored.controls);
+    assert_eq!(s.load_commands("database").await.unwrap(), stored.commands);
+    assert_eq!(s.load_index().await.unwrap().iter().map(|summary| summary.id.as_str()).collect::<Vec<_>>(), ["database"]);
   }
 
   #[tokio::test]

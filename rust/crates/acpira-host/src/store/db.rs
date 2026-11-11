@@ -5,12 +5,17 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use anyhow::{Result, anyhow};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use acpira_shared::transcript::SessionSummary;
 
+use super::record::SessionRecord;
+
+mod body;
+pub use body::SaveStats;
+
 pub const DB_FILE: &str = "sessions.db";
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 
 /// Where the complete record lives. The other location still carries a compatibility stub after body migration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +67,19 @@ impl SessionDb {
     }
     migrate(&mut connection)?;
     Ok(Self { connection: parking_lot::Mutex::new(connection) })
+  }
+
+  /// Import or incrementally save a complete record and mark its body as database-backed.
+  pub fn save_record(&self, record: &SessionRecord) -> Result<SaveStats> {
+    let mut connection = self.connection.lock();
+    body::save(&mut connection, record)
+  }
+
+  /// Read a body only when the catalogue names SQLite as its source. File-backed sessions return `Ok(None)`.
+  pub fn load_record(&self, id: &str) -> Result<Option<SessionRecord>> {
+    let connection = self.connection.lock();
+    let body = connection.query_row("SELECT body FROM session WHERE id = ?1", params![id], |row| row.get::<_, String>(0)).optional()?;
+    if body.as_deref() == Some("db") { body::load(&connection, id).map(Some) } else { Ok(None) }
   }
 
   pub fn catalog(&self) -> Result<Vec<CatalogEntry>> {
@@ -145,6 +163,20 @@ fn migrate(connection: &mut Connection) -> Result<()> {
       );",
     )?;
   }
+  if version < 3 {
+    tx.execute_batch(
+      "CREATE TABLE IF NOT EXISTS item (
+        session_id TEXT NOT NULL REFERENCES session(id) ON DELETE CASCADE,
+        subagent INTEGER NOT NULL,
+        turn INTEGER NOT NULL,
+        block INTEGER NOT NULL,
+        codec INTEGER NOT NULL,
+        payload BLOB NOT NULL,
+        hash BLOB NOT NULL,
+        PRIMARY KEY(session_id, subagent, turn, block)
+      ) WITHOUT ROWID;",
+    )?;
+  }
   tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
   tx.commit()?;
   Ok(())
@@ -153,7 +185,9 @@ fn migrate(connection: &mut Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use serde_json::json;
+  use std::path::PathBuf;
+
+  use serde_json::{Value, json};
 
   #[test]
   fn opens_wal_and_stamps_the_schema() {
@@ -190,6 +224,48 @@ mod tests {
     let connection = db.connection.lock();
     let tables: i64 = connection.query_row("SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('legacy_marker', 'session')", [], |row| row.get(0)).unwrap();
     assert_eq!(tables, 2);
+  }
+
+  #[test]
+  fn engine_fixture_records_round_trip_through_body_rows() {
+    let root = tempfile::tempdir().unwrap();
+    let db = SessionDb::open(root.path()).unwrap();
+    let fixtures: Value = serde_json::from_str(include_str!("../../../../../test/fixtures/engine-patches.json")).unwrap();
+    let mut checked = 0;
+    for case in fixtures.as_array().unwrap() {
+      for key in ["first", "second"] {
+        let Ok(record) = serde_json::from_value::<SessionRecord>(case[key].clone()) else { continue };
+        db.save_record(&record).unwrap();
+        assert_eq!(db.load_record(&record.id).unwrap().unwrap(), record, "{} / {key}", case["name"]);
+        checked += 1;
+      }
+    }
+    assert!(checked >= 10, "the fixtures exercised {checked} records");
+  }
+
+  /// Opt-in acceptance against a real session directory; the directory is only read and every import lands in a temp DB.
+  #[test]
+  #[ignore]
+  fn local_session_records_round_trip_through_body_rows() {
+    let dir = std::env::var_os("ACPIRA_SESSIONS_FIXTURE_DIR").map(PathBuf::from).unwrap_or_else(|| crate::store::data_dir::acpira_home().join("sessions"));
+    let root = tempfile::tempdir().unwrap();
+    let db = SessionDb::open(root.path()).unwrap();
+    let mut checked = 0;
+    for entry in std::fs::read_dir(&dir).unwrap() {
+      let entry = entry.unwrap();
+      let name = entry.file_name().to_string_lossy().into_owned();
+      let Some(id) = name.strip_suffix(".json") else { continue };
+      if !crate::store::transcript_store::is_session_id(id) {
+        continue;
+      }
+      let raw = crate::store::pack::expand_raw(&dir, std::fs::read(entry.path()).unwrap());
+      let Ok(record) = serde_json::from_slice::<SessionRecord>(&raw) else { continue };
+      db.save_record(&record).unwrap();
+      assert_eq!(db.load_record(id).unwrap().unwrap(), record, "{}", entry.path().display());
+      checked += 1;
+    }
+    assert!(checked > 0, "no records found under {}", dir.display());
+    eprintln!("round-tripped {checked} records from {}", dir.display());
   }
 
   #[test]
