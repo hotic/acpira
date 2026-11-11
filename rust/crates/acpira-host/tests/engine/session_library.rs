@@ -60,8 +60,9 @@ async fn agents_search_and_read_sessions_through_the_hub_within_their_grant() {
     ids.push(m.active_id().unwrap());
   }
   let (a, b, c) = (ids[0].clone(), ids[1].clone(), ids[2].clone());
-  // Wait for the debounced saves; the search itself reads complete bodies through the store, not the compatibility stubs.
-  until(|| ids.iter().all(|id| dir.path().join(format!("{id}.json")).exists()), 5000).await;
+  // The search reads stored bodies: wait until each one holds its prompt. The compatibility stub appears with the
+  // session, before the turn is saved, so its presence proves nothing.
+  until(|| ids.iter().all(|id| m.store.body_text(id, true).is_some_and(|b| String::from_utf8_lossy(&b).contains("question"))), 5000).await;
 
   let hub = RelayHub::start(Arc::new(Roster::new(dir.path())), Arc::new(|_: &str| {})).await.unwrap();
   let library: Weak<dyn SessionLibrary> = Arc::downgrade(&m.m) as _;
