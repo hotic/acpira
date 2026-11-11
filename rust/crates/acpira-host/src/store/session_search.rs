@@ -11,7 +11,6 @@
 //! answers with (`tool_hits`); the history list ignores it.
 
 use std::collections::{HashMap, HashSet};
-use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
@@ -254,24 +253,27 @@ impl SessionSearch {
 }
 
 impl SessionSearch {
-  /// Revalidate against both the compatibility file stamp and `updatedAt`: a missing stub cannot freeze a database body.
-  async fn refresh(&self, store: &TranscriptStore) {
-    let summaries = store.load_index().await.unwrap_or_default();
-    let mut present = HashSet::new();
-    for summary in summaries {
-      let id = summary.id;
-      present.insert(id.clone());
-      let mut version = std::collections::hash_map::DefaultHasher::new();
-      summary.updated_at.hash(&mut version);
-      let version = version.finish();
-      let stamp = std::fs::metadata(store.dir().join(format!("{id}.json"))).map_or((None, version), |meta| (meta.modified().ok(), meta.len() ^ version));
-      if self.cache.lock().unwrap_or_else(|e| e.into_inner()).get(&id).is_some_and(|entry| entry.stamp == stamp) {
-        continue;
+  /// Bring the cache in line with the store: new or changed records are read, vanished ones dropped. The record files
+  /// are listed and stamped as they are (no catalogue reconcile per keystroke); a database body goes by its `updatedAt`
+  /// and is read from its rows without building the record
+  async fn refresh(&self, store: &Arc<TranscriptStore>) {
+    let sources = store.search_sources().await;
+    let (cache, store) = (self.cache.clone(), store.clone());
+    let _ = tokio::task::spawn_blocking(move || {
+      let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
+      let mut present = HashSet::new();
+      for source in sources {
+        present.insert(source.id.clone());
+        if cache.get(&source.id).is_some_and(|entry| entry.stamp == source.stamp) {
+          continue;
+        }
+        let raw = if source.in_database { store.body_text(&source.id, true) } else { store.file_text(&source.id) };
+        let Some(raw) = raw else { continue };
+        cache.insert(source.id, entry_of(source.stamp, &raw));
       }
-      let raw = store.load_detailed(&id).await.ok().and_then(|record| serde_json::to_vec(&record).ok()).unwrap_or_default();
-      self.cache.lock().unwrap_or_else(|e| e.into_inner()).insert(id, entry_of(stamp, &raw));
-    }
-    self.cache.lock().unwrap_or_else(|e| e.into_inner()).retain(|id, _| present.contains(id));
+      cache.retain(|id, _| present.contains(id));
+    })
+    .await;
   }
 }
 

@@ -86,6 +86,7 @@ dependencies = [
  "acpira-shared",
  "anyhow",
  "base64 0.22.1",
+ "blake3",
  "chrono",
  "flate2",
  "junction",

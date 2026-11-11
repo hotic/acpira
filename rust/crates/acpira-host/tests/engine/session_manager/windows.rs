@@ -168,7 +168,8 @@ async fn deleting_a_mirrored_running_session_stops_its_owner_and_restores_its_la
   until(|| a.view_of(&id).is_none() && b.view_of(&id).is_none(), 5000).await;
   assert_ne!(a.active_id().as_deref(), Some(id.as_str()));
   assert_ne!(b.active_id().as_deref(), Some(id.as_str()));
-  let record: Value = serde_json::to_value(b.store.load(&id).await.unwrap()).unwrap();
+  // In the trash the session reads as gone; its body is still what the owner last wrote
+  let record: Value = serde_json::from_slice(&b.store.body_text(&id, false).unwrap()).unwrap();
   assert_eq!(record["title"], "Latest title");
   assert_eq!(turns_in(&record), 4);
   assert_eq!(last_turn(&record)["stop"], "cancelled");

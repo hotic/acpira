@@ -23,6 +23,7 @@ use crate::acp::transcript::normalize::{
 };
 use crate::acp::vendors::claude_workflow_log::LogWindow;
 use crate::i18n::t;
+use crate::store::record::{SubagentPart, turn_parts};
 use crate::util::{ms_of_iso, now_iso, now_ms, random_uuid};
 
 mod child_stream;
@@ -689,6 +690,24 @@ impl SubagentTree {
   pub fn record_refs(&self) -> Vec<RecordRef<'_>> {
     self.nodes.iter().map(|n| RecordRef { core: Self::core_of(n), turns: &n.state.turns, rev: n.rev }).collect()
   }
+
+  /// The records in the pieces the row store keeps (`store::record::RecordParts`). A child whose transcript the store
+  /// already holds (`known` has its stamp) comes without its turns unless `full`: a finished child is then not
+  /// serialized again on every save of its parent. The stamp follows `rev`, which every change to a child bumps for the
+  /// viewers' sake, and the transcript's shape as a second witness
+  pub fn record_parts(&mut self, known: &HashMap<String, u64>, full: bool) -> Vec<SubagentPart> {
+    self
+      .nodes
+      .iter_mut()
+      .map(|n| {
+        let last = n.state.turns.last().and_then(Turn::as_agent).map_or(0, |turn| turn.blocks.len() as u64);
+        let stamp = ((n.rev as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ ((n.state.turns.len() as u64) << 32) ^ last).max(1);
+        let head = serde_json::to_vec(&RecordRef { core: Self::core_of(n), turns: &[], rev: n.rev }).unwrap_or_default();
+        let turns = (full || known.get(&n.id) != Some(&stamp)).then(|| turn_parts(&mut n.state.turns));
+        SubagentPart { id: n.id.clone(), stamp, head, turns }
+      })
+      .collect()
+  }
 }
 
 /// The agent a resumed native run continues: its sidechain id (a workflow agent's is its own log, never a thread)
@@ -775,7 +794,29 @@ fn result_text(u: &Value, block: &ToolCallBlock) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-  use super::resumed_task;
+  use std::sync::Arc;
+
+  use super::*;
+
+  #[test]
+  fn a_child_the_store_already_holds_is_handed_over_without_its_turns() {
+    let record: SubagentRecord = serde_json::from_value(serde_json::json!({
+      "id": "child", "turnIndex": 0, "visibility": "session", "state": "completed", "stateSource": "agent", "announcedAt": 1, "rev": 3,
+      "turns": [{ "role": "agent", "blocks": [{ "type": "text", "markdown": "done" }] }]
+    }))
+    .unwrap();
+    let mut tree = SubagentTree::new(Arc::new(|_: &str| {}), ToolCtx::default(), Some(vec![record]), None, false);
+    let first = tree.record_parts(&HashMap::new(), false);
+    assert_eq!(first[0].turns.as_ref().map(|turns| turns[0].blocks.len()), Some(1));
+    let known = HashMap::from([(first[0].id.clone(), first[0].stamp)]);
+    assert!(tree.record_parts(&known, false)[0].turns.is_none(), "unchanged and known: only the head");
+    assert!(tree.record_parts(&known, true)[0].turns.is_some(), "a full save takes everything");
+    // Any change to the child (every one bumps `rev` for its viewers) brings the turns back
+    tree.bump("child");
+    assert!(tree.record_parts(&known, false)[0].turns.is_some());
+    // Encoding the pieces leaves the transcript as it was
+    assert_eq!(tree.to_records()[0].turns[0].as_agent().map(|turn| turn.blocks.len()), Some(1));
+  }
 
   #[test]
   fn only_a_later_generation_names_a_resumed_task() {

@@ -8,6 +8,9 @@ use std::sync::{Arc, LazyLock};
 use std::time::SystemTime;
 
 use anyhow::Result;
+use serde::Deserialize;
+use serde::de::IgnoredAny;
+
 use acpira_shared::storage::{StorageAction, StorageBlock, StorageDetail, StorageOutcome, StorageSession, StorageSkip, StorageView};
 
 use super::SessionManager;
@@ -42,8 +45,8 @@ fn stamp(path: &Path) -> Option<Stamp> {
 }
 
 /// The record's subagent count (the transcript is tokenized, not built) and, when `slim`, what dropping its diff
-/// texts would free: the record as it is minus the record written the way a page gets it
-async fn facts(store: &Arc<TranscriptStore>, id: &str, slim: bool) -> Facts {
+/// texts would free: the record as it is minus the record written the way a page gets it. Blocking
+fn facts(store: &TranscriptStore, id: &str, slim: bool) -> Facts {
   let path = store.dir().join(format!("{id}.json"));
   let Some(stamp) = stamp(&path) else { return Facts::default() };
   if let Some((s, f)) = FACTS.lock().get(&path).copied()
@@ -52,18 +55,22 @@ async fn facts(store: &Arc<TranscriptStore>, id: &str, slim: bool) -> Facts {
   {
     return f;
   }
-  // A packed record is compressed already; a SQLite record is slimmed through the same row writer as any other save.
-  let packed = tokio::fs::read(&path).await.is_ok_and(|raw| crate::store::pack::maybe_stub(&raw));
-  let Some(record) = store.load(id).await else { return Facts::default() };
-  let subagents = record.subagents.as_ref().map_or(0, |subagents| subagents.len() as u32);
-  let slim = if !slim {
-    None
-  } else if packed {
-    Some(0)
+  // A database body answers from its rows; its compatibility file's stamp follows it closely enough for this cache
+  let f = if let Some(subagents) = store.body_subagents(id) {
+    Facts { subagents, slim: slim.then(|| store.body_text(id, false).and_then(|raw| slim_gain(&raw))).flatten() }
   } else {
-    serde_json::to_vec(&record).ok().and_then(|raw| slim_gain(&raw))
+    let Ok(raw) = std::fs::read(&path) else { return Facts::default() };
+    // A packed record's stub counts what its archive holds; slimming passes it over (`slim_record`)
+    let packed = crate::store::pack::maybe_stub(&raw);
+    let raw = if packed { crate::store::pack::expand_raw(store.dir(), raw) } else { raw };
+    #[derive(Deserialize)]
+    struct Subagents {
+      #[serde(default)]
+      subagents: Option<Vec<IgnoredAny>>,
+    }
+    let subagents = serde_json::from_slice::<Subagents>(&raw).ok().and_then(|s| s.subagents).map_or(0, |s| s.len() as u32);
+    Facts { subagents, slim: slim.then(|| if packed { Some(0) } else { slim_gain(&raw) }).flatten() }
   };
-  let f = Facts { subagents, slim };
   FACTS.lock().insert(path, (stamp, f));
   f
 }
@@ -90,21 +97,15 @@ impl SessionManager {
       all.extend(self.host_summaries(&all));
       all
     };
-    let mut records = HashMap::new();
-    for session in &sessions {
-      let path = self.deps.store.dir().join(format!("{}.json", session.id));
-      if tokio::fs::read(path).await.is_ok_and(|raw| crate::store::db::migration::maybe_stub(&raw))
-        && let Some(record) = self.deps.store.load(&session.id).await
-        && let Ok(raw) = serde_json::to_vec(&record)
-      {
-        records.insert(session.id.clone(), raw);
-      }
-    }
-    let input = ScanInput { root: self.data_root(), sessions_dir: self.deps.store.dir().to_path_buf(), sessions, records, now: SystemTime::now() };
+    // A database body is read while its blob folder is placed, one session at a time, never all of them at once
+    let store = self.deps.store.clone();
+    let body: crate::store::storage::BodyText = Arc::new(move |id| store.body_text(id, false));
+    let body_sizes = self.deps.store.body_sizes().await;
+    let input = ScanInput { root: self.data_root(), sessions_dir: self.deps.store.dir().to_path_buf(), sessions, body: Some(body), body_sizes, now: SystemTime::now() };
     let fallback = (input.root.clone(), input.sessions_dir.clone());
     tokio::task::spawn_blocking(move || scan(&input))
       .await
-      .unwrap_or_else(|_| scan(&ScanInput { root: fallback.0, sessions_dir: fallback.1, sessions: vec![], records: HashMap::new(), now: SystemTime::now() }))
+      .unwrap_or_else(|_| scan(&ScanInput { root: fallback.0, sessions_dir: fallback.1, sessions: vec![], body: None, body_sizes: HashMap::new(), now: SystemTime::now() }))
   }
 
   /// Why this session cannot be picked right now
@@ -126,13 +127,11 @@ impl SessionManager {
       let index: Vec<_> = self.state.lock().index.clone();
       let slim = detail.contains(&StorageDetail::Slim);
       let ids: Vec<String> = index.iter().map(|s| s.id.clone()).collect();
-      let mut fact_rows = Vec::with_capacity(ids.len());
-      for id in &ids {
-        fact_rows.push(facts(&self.deps.store, id, slim).await);
-      }
+      let store = self.deps.store.clone();
+      let facts: Vec<Facts> = tokio::task::spawn_blocking(move || ids.iter().map(|id| facts(&store, id, slim)).collect()).await.unwrap_or_default();
       let rows = index
         .into_iter()
-        .zip(fact_rows.into_iter().chain(std::iter::repeat(Facts::default())))
+        .zip(facts.into_iter().chain(std::iter::repeat(Facts::default())))
         .map(|(s, f)| StorageSession {
           bytes: usage.get(&s.id).map(|u| u.total()).unwrap_or(0),
           subagents: (f.subagents > 0).then_some(f.subagents),
@@ -301,13 +300,20 @@ impl SessionManager {
     let before = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
     let record = self.deps.store.load_detailed(id).await.map_err(|e| anyhow::anyhow!(e.detail()))?;
     let slim = acpira_shared::transcript::encode_for_view(|| serde_json::to_vec(&record))?;
+    let whole = serde_json::to_vec(&record)?.len();
     // Nothing to drop: leave the file (and its stamp) as it is
-    if slim.len() >= serde_json::to_vec(&record)?.len() {
+    if slim.len() >= whole {
       return Ok(0);
     }
     // Read back, every source is `omitted` and serializes as such from now on
     let slimmed: crate::store::record::SessionRecord = serde_json::from_slice(&slim)?;
     self.deps.store.flush(Arc::new(slimmed)).await?;
+    // A database body's file is its small stub: what went is the text itself
+    let store = self.deps.store.clone();
+    let key = id.to_owned();
+    if tokio::task::spawn_blocking(move || store.body_subagents(&key)).await.ok().flatten().is_some() {
+      return Ok(whole.saturating_sub(slim.len()) as u64);
+    }
     let after = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(before);
     Ok(before.saturating_sub(after))
   }

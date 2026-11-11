@@ -1,5 +1,7 @@
 //! The persisted session record: view fields plus what resuming needs
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 use acpira_shared::model_shapes::session_model;
@@ -137,6 +139,73 @@ impl SessionRecord {
   }
 }
 
+/// One turn in the pieces the row store keeps: a user turn whole, an agent turn as its head (`blocks` emptied) and each
+/// block on its own, so a streaming reply rewrites only the blocks that changed
+pub struct TurnPart {
+  pub head: Vec<u8>,
+  pub blocks: Vec<Vec<u8>>,
+}
+
+/// One subagent: its record without turns, and the turns unless the caller already holds them (`stamp` unchanged)
+pub struct SubagentPart {
+  pub id: String,
+  /// Changes whenever the subagent's transcript may have; 0 never matches a stored one
+  pub stamp: u64,
+  pub head: Vec<u8>,
+  pub turns: Option<Vec<TurnPart>>,
+}
+
+/// A record serialized piecewise for the row store (`store/db/body.rs`)
+pub struct RecordParts {
+  pub summary: SessionSummary,
+  /// The record with `turns` (and `subagents`, when it has any) emptied
+  pub head: Vec<u8>,
+  pub turns: Vec<TurnPart>,
+  pub subagents: Vec<SubagentPart>,
+}
+
+/// Encode turns one by one. An agent turn's blocks are taken out for its head encoding and handed back, so nothing is
+/// cloned; a value that cannot serialize comes back empty and the row store refuses the save
+pub fn turn_parts(turns: &mut [Turn]) -> Vec<TurnPart> {
+  turns
+    .iter_mut()
+    .map(|turn| match turn {
+      Turn::User(_) => TurnPart { head: serde_json::to_vec(turn).unwrap_or_default(), blocks: vec![] },
+      Turn::Agent(agent) => {
+        let blocks = std::mem::take(&mut agent.blocks);
+        let head = serde_json::to_vec(turn).unwrap_or_default();
+        let parts = blocks.iter().map(|b| serde_json::to_vec(b).unwrap_or_default()).collect();
+        if let Turn::Agent(agent) = turn {
+          agent.blocks = blocks;
+        }
+        TurnPart { head, blocks: parts }
+      }
+    })
+    .collect()
+}
+
+impl RecordParts {
+  /// A plain record split whole: nothing is skipped
+  pub fn of(mut record: SessionRecord) -> Self {
+    let summary = record.summary();
+    let mut turns = std::mem::take(&mut record.turns);
+    let mut subagents = record.subagents.take();
+    if subagents.is_some() {
+      record.subagents = Some(vec![]);
+    }
+    let head = serde_json::to_vec(&record).unwrap_or_default();
+    let subagents = subagents
+      .iter_mut()
+      .flatten()
+      .map(|sub| {
+        let mut turns = std::mem::take(&mut sub.turns);
+        SubagentPart { id: sub.core.id.clone(), stamp: 0, head: serde_json::to_vec(sub).unwrap_or_default(), turns: Some(turn_parts(&mut turns)) }
+      })
+      .collect();
+    RecordParts { summary, head, turns: turn_parts(&mut turns), subagents }
+  }
+}
+
 /// Something the store can persist: a live session serializes itself at write time (no snapshot clone per save),
 /// a plain record is its own source
 pub trait RecordSource: Send + Sync {
@@ -146,6 +215,12 @@ pub trait RecordSource: Send + Sync {
   /// The session's folder, without serializing the rest
   fn record_cwd(&self) -> String {
     self.record().cwd
+  }
+  /// The record in the pieces the row store writes. `known` maps a subagent id to the stamp of the transcript the store
+  /// already holds: unless `full`, such a subagent comes back without its turns, so finished children cost nothing
+  fn record_parts(&self, known: &HashMap<String, u64>, full: bool) -> RecordParts {
+    let _ = (known, full);
+    RecordParts::of(self.record())
   }
 }
 

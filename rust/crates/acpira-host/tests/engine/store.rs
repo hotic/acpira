@@ -301,7 +301,6 @@ async fn trash_and_restore_move_symlinks_as_links_and_refuse_a_trash_outside_the
   std::fs::write(outside.path().join("secret.txt"), "secret").unwrap();
   // A blob folder linked out of the store moves as the link, there and back
   store.flush(record("l", "L")).await.unwrap();
-  std::fs::remove_dir_all(d.join("l")).unwrap();
   symlink(outside.path(), d.join("l")).unwrap();
   store.trash("l").await.unwrap();
   assert!(is_link(&d.join("trash/l")) && !d.join("l").exists());
@@ -311,7 +310,6 @@ async fn trash_and_restore_move_symlinks_as_links_and_refuse_a_trash_outside_the
   // One linked to another session's blobs never takes them along
   store.flush(record("a", "A")).await.unwrap();
   store.save_blob("b", ".png", &[1]).await.unwrap();
-  std::fs::remove_dir_all(d.join("a")).unwrap();
   symlink(d.join("b"), d.join("a")).unwrap();
   store.trash("a").await.unwrap();
   assert!(is_link(&d.join("trash/a")));
