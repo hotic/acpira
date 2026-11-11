@@ -19,7 +19,7 @@ use acpira_shared::model_shapes::{ModelShapes, session_model};
 use acpira_shared::transcript::{AgentId, CategoryOp, DiffSource, collect_text_blobs, SessionCategories, SessionControls, SessionModel, SessionSummary, SlashCommand, TurnSettings};
 
 use super::blob_pool;
-use super::db::SessionDb;
+use super::db::{BodyLocation, CatalogEntry, SessionDb};
 use super::diff_texts;
 use super::pack;
 use super::file_lock::{with_file_lock, write_atomic};
@@ -155,10 +155,21 @@ struct State {
   models: HashMap<String, (FileStamp, Option<SessionModel>)>,
 }
 
+#[derive(Default)]
+struct DatabaseState {
+  attempted: bool,
+  db: Option<Arc<SessionDb>>,
+}
+
 type FileStamp = (u64, Option<SystemTime>);
 
 async fn file_stamp(path: &Path) -> Option<FileStamp> {
   fs::metadata(path).await.ok().map(|m| (m.len(), m.modified().ok()))
+}
+
+fn file_modified_ns(time: Option<SystemTime>) -> Option<i64> {
+  let nanos = time?.duration_since(SystemTime::UNIX_EPOCH).ok()?.as_nanos();
+  i64::try_from(nanos).ok()
 }
 
 pub struct TranscriptStore {
@@ -178,8 +189,8 @@ pub struct TranscriptStore {
   on_change: parking_lot::RwLock<Option<ChangeHook>>,
   /// Per session, the diff text blobs (`diff_texts`) its folder is known to hold, so a record write hands back only new ones
   texts: parking_lot::Mutex<HashMap<String, Arc<parking_lot::Mutex<HashSet<String>>>>>,
-  // None keeps every operation on the legacy JSON backend (an unavailable or newer database is not fatal)
-  _db: Option<SessionDb>,
+  // Opened on first use: constructing a store must not create its sessions directory. Failure keeps the JSON backend.
+  db: parking_lot::Mutex<DatabaseState>,
   me: Weak<TranscriptStore>,
 }
 
@@ -245,7 +256,6 @@ impl TranscriptStore {
   }
 
   pub fn with_timing(dir: PathBuf, log: LogFn, on_save_error: Option<SaveErrorHook>, debounce: Duration, max_wait: Duration) -> Arc<Self> {
-    let db = SessionDb::open(&dir).inspect_err(|e| log(&format!("sessions: SQLite unavailable, using record files ({e:#})"))).ok();
     Arc::new_cyclic(|me| TranscriptStore {
       dir,
       log,
@@ -258,13 +268,26 @@ impl TranscriptStore {
       agent_home: Default::default(),
       on_change: Default::default(),
       texts: Default::default(),
-      _db: db,
+      db: Default::default(),
       me: me.clone(),
     })
   }
 
   pub fn dir(&self) -> &Path {
     &self.dir
+  }
+
+  fn database(&self) -> Option<Arc<SessionDb>> {
+    let mut state = self.db.lock();
+    if !state.attempted {
+      // A read of a missing store stays side-effect free. `ensure` creates the directory before writes and list syncs.
+      if !self.dir.is_dir() {
+        return None;
+      }
+      state.attempted = true;
+      state.db = SessionDb::open(&self.dir).inspect_err(|e| (self.log)(&format!("sessions: SQLite unavailable, using record files ({e:#})"))).ok().map(Arc::new);
+    }
+    state.db.clone()
   }
 
   /// Install the check every record write passes first
@@ -315,15 +338,19 @@ impl TranscriptStore {
       return Ok(false);
     }
     write_atomic(&path, &serde_json::to_vec(record)?, None).await?;
-    // The engines here prefer an index entry to the record for a session they do not drive: the entry goes too
-    let mut index = self.read_index().await;
     let summary = record.summary();
-    match index.iter_mut().find(|s| s.id == *id) {
-      Some(entry) => *entry = summary,
-      None => index.push(summary),
+    if self.database().is_some() {
+      self.sync_catalog(std::slice::from_ref(&summary), &HashSet::from([id.clone()])).await?;
+    } else {
+      // The file backend's index entry goes with the record for engines that do not drive this copy.
+      let mut index = self.read_index().await;
+      match index.iter_mut().find(|s| s.id == *id) {
+        Some(entry) => *entry = summary,
+        None => index.push(summary),
+      }
+      sort_index(&mut index);
+      write_atomic(&self.dir.join("index.json"), serde_json::to_string_pretty(&index)?.as_bytes(), None).await?;
     }
-    sort_index(&mut index);
-    write_atomic(&self.dir.join("index.json"), serde_json::to_string_pretty(&index)?.as_bytes(), None).await?;
     Ok(true)
   }
 
@@ -442,10 +469,14 @@ impl TranscriptStore {
   }
 
   /// Merge this host's view of the list with what is on disk, write the result and return it. The record files are the
-  /// truth; where both have an entry, `mine` wins only for ids in `own`. Debounced records are written first
+  /// truth for unmigrated bodies; where both have an entry, `mine` wins only for ids in `own`. Debounced records flush first.
   pub async fn sync_index(&self, mine: &[SessionSummary], own: &HashSet<String>) -> Result<Vec<SessionSummary>> {
     self.ensure().await?;
     self.flush_pending().await;
+    if self.database().is_some() { self.sync_catalog(mine, own).await } else { self.sync_index_files(mine, own).await }
+  }
+
+  async fn sync_index_files(&self, mine: &[SessionSummary], own: &HashSet<String>) -> Result<Vec<SessionSummary>> {
     let disk: HashMap<String, SessionSummary> = self.read_index().await.into_iter().map(|s| (s.id.clone(), s)).collect();
     let local: HashMap<&str, &SessionSummary> = mine.iter().map(|s| (s.id.as_str(), s)).collect();
     let mut out = vec![];
@@ -459,37 +490,8 @@ impl TranscriptStore {
         Some(s) if !s.cwd.is_empty() => s.clone(),
         other => {
           let stamp = file_stamp(&self.dir.join(format!("{id}.json"))).await;
-          if stamp.is_some() && self.state.lock().unreadable.get(&id) == stamp.as_ref() {
-            continue;
-          }
-          let r = match self.load_detailed(&id).await {
-            Ok(r) => r,
-            Err(error) => {
-              if !error.is_missing() {
-                (self.log)(&format!("session {id}: record unreadable ({})", error.detail()));
-              }
-              // Only a file whose content is wrong is passed over: an I/O failure (permissions) may clear without the file changing
-              if let (Some(stamp), RecordLoadError::Corrupt { .. } | RecordLoadError::IdMismatch { .. }) = (stamp, &error) {
-                self.state.lock().unreadable.insert(id.clone(), stamp);
-              }
-              continue;
-            }
-          };
-          let mut base = other.cloned().unwrap_or_else(|| r.summary());
-          let fresh = r.summary();
-          base.id = fresh.id;
-          base.title = fresh.title;
-          base.agent = fresh.agent;
-          base.account_id = fresh.account_id;
-          base.acp_session_id = fresh.acp_session_id;
-          base.cwd = fresh.cwd;
-          base.updated_at = fresh.updated_at;
-          base.completed_at = fresh.completed_at;
-          base.pinned = fresh.pinned;
-          base.archived = fresh.archived;
-          base.category = fresh.category;
-          base.model = fresh.model;
-          base
+          let Some(summary) = self.load_summary(&id, other.cloned(), stamp).await else { continue };
+          summary
         }
       };
       let mut s = s;
@@ -503,6 +505,108 @@ impl TranscriptStore {
     Ok(out)
   }
 
+  /// Reconcile the SQLite catalogue with record files at startup and on the bus's index event. The initial index import
+  /// has no stamp and is trusted once; a later stamp change means an older engine rewrote the file and forces a fresh read.
+  async fn sync_catalog(&self, mine: &[SessionSummary], own: &HashSet<String>) -> Result<Vec<SessionSummary>> {
+    let mut entries = self.db_call(SessionDb::catalog).await?.unwrap_or_default();
+    if entries.is_empty() {
+      entries = self
+        .read_index()
+        .await
+        .into_iter()
+        .map(|summary| CatalogEntry { summary, body: BodyLocation::File, file_size: None, file_modified_ns: None })
+        .collect();
+      if !entries.is_empty() {
+        let seeds = entries.clone();
+        let _ = self.db_call(move |db| db.apply_catalog(&seeds)).await?;
+      }
+    }
+    let stored: HashMap<String, CatalogEntry> = entries.into_iter().map(|entry| (entry.summary.id.clone(), entry)).collect();
+    let local: HashMap<&str, &SessionSummary> = mine.iter().map(|s| (s.id.as_str(), s)).collect();
+    let mut seen = HashSet::new();
+    let mut desired = vec![];
+    let mut out = vec![];
+    for id in self.record_ids().await? {
+      seen.insert(id.clone());
+      let stamp = file_stamp(&self.dir.join(format!("{id}.json"))).await;
+      let (file_size, modified_ns) = stamp.map_or((None, None), |(size, modified)| (Some(size), file_modified_ns(modified)));
+      let entry = stored.get(&id);
+      let stored_summary = entry.map(|entry| &entry.summary);
+      let other = stored_summary.or_else(|| local.get(id.as_str()).copied());
+      let unchanged = entry.is_some_and(|entry| entry.file_size == file_size && entry.file_modified_ns == modified_ns);
+      let initial_import = entry.is_some_and(|entry| entry.file_size.is_none());
+      let pick = if own.contains(&id) {
+        local.get(id.as_str()).copied().or(stored_summary)
+      } else if unchanged || initial_import {
+        stored_summary.or_else(|| local.get(id.as_str()).copied())
+      } else {
+        None
+      };
+      let mut summary = match pick {
+        Some(summary) if stamp.is_some() && !summary.cwd.is_empty() => summary.clone(),
+        _ => {
+          let Some(summary) = self.load_summary(&id, other.cloned(), stamp).await else { continue };
+          summary
+        }
+      };
+      if summary.model.is_none() {
+        summary.model = self.cached_model(&id).await;
+      }
+      desired.push(CatalogEntry { summary: summary.clone(), body: entry.map_or(BodyLocation::File, |entry| entry.body), file_size, file_modified_ns: modified_ns });
+      out.push(summary);
+    }
+    // A migrated body stays listed even if its compatibility stub temporarily disappears during a crash or another write.
+    for entry in stored.values().filter(|entry| entry.body == BodyLocation::Database && !seen.contains(&entry.summary.id)) {
+      desired.push(entry.clone());
+      out.push(entry.summary.clone());
+    }
+    sort_index(&mut out);
+    let _ = self.db_call(move |db| db.apply_catalog(&desired)).await?;
+    Ok(out)
+  }
+
+  async fn load_summary(&self, id: &str, other: Option<SessionSummary>, stamp: Option<FileStamp>) -> Option<SessionSummary> {
+    if stamp.is_some() && self.state.lock().unreadable.get(id) == stamp.as_ref() {
+      return None;
+    }
+    let record = match self.load_detailed(id).await {
+      Ok(record) => record,
+      Err(error) => {
+        if !error.is_missing() {
+          (self.log)(&format!("session {id}: record unreadable ({})", error.detail()));
+        }
+        // Only wrong content is cached: an I/O failure may clear without the file changing.
+        if let (Some(stamp), RecordLoadError::Corrupt { .. } | RecordLoadError::IdMismatch { .. }) = (stamp, &error) {
+          self.state.lock().unreadable.insert(id.to_owned(), stamp);
+        }
+        return None;
+      }
+    };
+    let mut base = other.unwrap_or_else(|| record.summary());
+    let fresh = record.summary();
+    base.id = fresh.id;
+    base.title = fresh.title;
+    base.agent = fresh.agent;
+    base.account_id = fresh.account_id;
+    base.acp_session_id = fresh.acp_session_id;
+    base.cwd = fresh.cwd;
+    base.updated_at = fresh.updated_at;
+    base.completed_at = fresh.completed_at;
+    base.pinned = fresh.pinned;
+    base.archived = fresh.archived;
+    base.category = fresh.category;
+    base.model = fresh.model;
+    Some(base)
+  }
+
+  async fn db_call<T>(&self, f: impl FnOnce(&SessionDb) -> Result<T> + Send + 'static) -> Result<Option<T>>
+  where
+    T: Send + 'static,
+  {
+    let Some(db) = self.database() else { return Ok(None) };
+    Ok(Some(tokio::task::spawn_blocking(move || f(&db)).await??))
+  }
+
   /// A model `read_models` found for this record, while the file is still the one it read
   async fn cached_model(&self, id: &str) -> Option<SessionModel> {
     // A record with no model control costs no stat
@@ -511,7 +615,7 @@ impl TranscriptStore {
   }
 
   /// Read the current model of each record not read yet (its controls only, the transcript skipped by the parser), for
-  /// index entries that have none. True when one was found, so a sync then writes them into the index
+  /// index entries that have none. True when one was found, so a sync then writes them into the catalogue
   pub async fn read_models(&self, ids: &[String]) -> bool {
     let mut found = false;
     for id in ids {
@@ -812,7 +916,13 @@ impl TranscriptStore {
   /// still in its own undo window) drives the same agent session, e.g. a session imported twice
   async fn remove_agent_log(&self, removed: &str, acp: &str) {
     let Some(home) = self.agent_home.read().clone() else { return };
-    let listed = self.read_index().await.into_iter().any(|s| s.id != removed && s.agent == SELF_AGENT_ID && s.acp_session_id.as_deref() == Some(acp));
+    let listed = match self.load_index().await {
+      Ok(index) => index.into_iter().any(|s| s.id != removed && s.agent == SELF_AGENT_ID && s.acp_session_id.as_deref() == Some(acp)),
+      Err(error) => {
+        (self.log)(&format!("session {removed}: catalogue unreadable, built-in agent log kept ({error})"));
+        return;
+      }
+    };
     if listed {
       return;
     }
@@ -1274,9 +1384,11 @@ mod tests {
       Duration::from_millis(20),
       Duration::from_millis(60),
     );
-    assert!(s._db.is_none());
+    assert!(s.database().is_none());
     s.flush(Arc::new(record("files", "2026-01-01T00:00:00.000Z"))).await.unwrap();
     assert_eq!(s.load("files").await.unwrap().id, "files");
+    s.load_index().await.unwrap();
+    assert!(dir.path().join("index.json").exists(), "the fallback still maintains the legacy index");
     assert!(messages.lock().iter().any(|message| message.contains("using record files")));
   }
 
@@ -1291,6 +1403,7 @@ mod tests {
     assert!(dir.path().join("a.json").exists());
     let idx = s.load_index().await.unwrap();
     assert_eq!(idx.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(), ["b", "a"]);
+    assert!(!dir.path().join("index.json").exists(), "the SQLite catalogue replaces index.json");
     s.trash("a").await.unwrap();
     assert_eq!(s.load_index().await.unwrap().len(), 1);
     s.restore("a").await.unwrap();
@@ -1299,6 +1412,36 @@ mod tests {
     std::fs::remove_file(dir.path().join("b.json")).unwrap();
     s.flush(Arc::new(record("b", "2026-01-03T00:00:00.000Z"))).await.unwrap();
     assert!(!dir.path().join("b.json").exists());
+  }
+
+  #[tokio::test]
+  async fn the_catalogue_reconciles_records_written_by_an_older_engine() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = record("a", "2026-01-01T00:00:00.000Z");
+    std::fs::write(dir.path().join("a.json"), serde_json::to_vec(&original).unwrap()).unwrap();
+    std::fs::write(dir.path().join("index.json"), serde_json::to_string_pretty(&[original.summary()]).unwrap()).unwrap();
+    let s = store(dir.path());
+    assert_eq!(s.load_index().await.unwrap()[0].title, "t");
+    let legacy_index = std::fs::read(dir.path().join("index.json")).unwrap();
+
+    let mut changed = record("a", "2026-01-03T00:00:00.000Z");
+    changed.title = "written by an old engine".into();
+    std::fs::write(dir.path().join("a.json"), serde_json::to_vec(&changed).unwrap()).unwrap();
+    assert_eq!(s.load_index().await.unwrap()[0].title, "written by an old engine");
+    assert_eq!(std::fs::read(dir.path().join("index.json")).unwrap(), legacy_index, "the old cache is not rewritten");
+
+    std::fs::write(dir.path().join("b.json"), serde_json::to_vec(&record("b", "2026-01-02T00:00:00.000Z")).unwrap()).unwrap();
+    let listed = s.load_index().await.unwrap();
+    assert_eq!(listed.iter().map(|summary| summary.id.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+
+    // A second engine can use the stamps and summaries already in SQLite without trusting the stale legacy index.
+    let next = store(dir.path());
+    let listed = next.load_index().await.unwrap();
+    assert_eq!(listed.iter().find(|summary| summary.id == "a").unwrap().title, "written by an old engine");
+    assert!(listed.iter().any(|summary| summary.id == "b"));
+    let catalogue = next.database().unwrap().catalog().unwrap();
+    assert!(catalogue.iter().all(|entry| entry.body == BodyLocation::File && entry.file_size.is_some()));
+    assert_eq!(std::fs::read(dir.path().join("index.json")).unwrap(), legacy_index);
   }
 
   #[tokio::test]
