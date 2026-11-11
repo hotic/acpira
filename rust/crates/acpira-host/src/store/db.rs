@@ -5,18 +5,18 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use anyhow::{Result, anyhow};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use acpira_shared::transcript::SessionSummary;
 
 use super::record::SessionRecord;
 
 mod body;
-pub(crate) mod migration;
+pub mod migration;
 pub use body::SaveStats;
 
 pub const DB_FILE: &str = "sessions.db";
-const SCHEMA_VERSION: u32 = 3;
+const SCHEMA_VERSION: u32 = 4;
 
 /// Where the complete record lives. The other location still carries a compatibility stub after body migration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +46,7 @@ pub struct CatalogEntry {
   pub body: BodyLocation,
   pub file_size: Option<u64>,
   pub file_modified_ns: Option<i64>,
+  pub trashed_at: Option<i64>,
 }
 
 /// One database per session store. `parking_lot::Mutex` makes the connection shareable by the store; database operations
@@ -76,6 +77,20 @@ impl SessionDb {
     body::save(&mut connection, record)
   }
 
+  /// Keep a full remote copy file-backed. Writing the complete file first makes the transition crash-safe.
+  pub fn mark_file(&self, record: &SessionRecord) -> Result<()> {
+    let mut connection = self.connection.lock();
+    let tx = connection.transaction()?;
+    tx.execute("DELETE FROM item WHERE session_id = ?1", params![record.id])?;
+    tx.execute(
+      "INSERT INTO session (id, summary, body) VALUES (?1, ?2, 'file')
+       ON CONFLICT(id) DO UPDATE SET summary = excluded.summary, body = 'file'",
+      params![record.id, serde_json::to_string(&record.summary())?],
+    )?;
+    tx.commit()?;
+    Ok(())
+  }
+
   /// Read a body only when the catalogue names SQLite as its source. File-backed sessions return `Ok(None)`.
   pub fn load_record(&self, id: &str) -> Result<Option<SessionRecord>> {
     let connection = self.connection.lock();
@@ -83,22 +98,34 @@ impl SessionDb {
     if body.as_deref() == Some("db") { body::load(&connection, id).map(Some) } else { Ok(None) }
   }
 
+  pub fn set_trashed(&self, id: &str, trashed_at: Option<i64>) -> Result<()> {
+    let connection = self.connection.lock();
+    connection.execute("UPDATE session SET trashed_at = ?2 WHERE id = ?1", params![id, trashed_at])?;
+    Ok(())
+  }
+
+  pub fn delete_session(&self, id: &str) -> Result<()> {
+    let connection = self.connection.lock();
+    connection.execute("DELETE FROM session WHERE id = ?1", params![id])?;
+    Ok(())
+  }
+
   pub fn catalog(&self) -> Result<Vec<CatalogEntry>> {
     let connection = self.connection.lock();
-    let mut statement = connection.prepare("SELECT id, summary, body, file_size, file_modified_ns FROM session")?;
+    let mut statement = connection.prepare("SELECT id, summary, body, file_size, file_modified_ns, trashed_at FROM session")?;
     let rows = statement
       .query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<i64>>(3)?, row.get::<_, Option<i64>>(4)?))
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<i64>>(3)?, row.get::<_, Option<i64>>(4)?, row.get::<_, Option<i64>>(5)?))
       })?
       .collect::<rusqlite::Result<Vec<_>>>()?;
     rows
       .into_iter()
-      .map(|(id, raw, body, file_size, file_modified_ns)| {
+      .map(|(id, raw, body, file_size, file_modified_ns, trashed_at)| {
         let summary: SessionSummary = serde_json::from_str(&raw)?;
         if summary.id != id {
           return Err(anyhow!("catalogue row {id} holds session {}", summary.id));
         }
-        Ok(CatalogEntry { summary, body: BodyLocation::of(&body), file_size: file_size.and_then(|v| u64::try_from(v).ok()), file_modified_ns })
+        Ok(CatalogEntry { summary, body: BodyLocation::of(&body), file_size: file_size.and_then(|v| u64::try_from(v).ok()), file_modified_ns, trashed_at })
       })
       .collect()
   }
@@ -108,30 +135,30 @@ impl SessionDb {
     let mut connection = self.connection.lock();
     let tx = connection.transaction()?;
     let existing = {
-      let mut statement = tx.prepare("SELECT id, summary, body, file_size, file_modified_ns FROM session")?;
+      let mut statement = tx.prepare("SELECT id, summary, body, file_size, file_modified_ns, trashed_at FROM session")?;
       statement
         .query_map([], |row| {
-          Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<i64>>(3)?, row.get::<_, Option<i64>>(4)?))
+          Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<i64>>(3)?, row.get::<_, Option<i64>>(4)?, row.get::<_, Option<i64>>(5)?))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?
         .into_iter()
-        .map(|(id, summary, body, file_size, file_modified_ns)| (id, (summary, body, file_size, file_modified_ns)))
+        .map(|(id, summary, body, file_size, file_modified_ns, trashed_at)| (id, (summary, body, file_size, file_modified_ns, trashed_at)))
         .collect::<HashMap<_, _>>()
     };
     for entry in entries {
       let summary = serde_json::to_string(&entry.summary)?;
       let body = entry.body.as_str();
       let file_size = entry.file_size.map(|v| i64::try_from(v).unwrap_or(i64::MAX));
-      let unchanged = existing.get(&entry.summary.id).is_some_and(|(old_summary, old_body, old_size, old_modified)| {
-        *old_summary == summary && *old_body == body && *old_size == file_size && *old_modified == entry.file_modified_ns
+      let unchanged = existing.get(&entry.summary.id).is_some_and(|(old_summary, old_body, old_size, old_modified, old_trashed)| {
+        *old_summary == summary && *old_body == body && *old_size == file_size && *old_modified == entry.file_modified_ns && *old_trashed == entry.trashed_at
       });
       if unchanged {
         continue;
       }
       tx.execute(
-        "INSERT INTO session (id, summary, body, file_size, file_modified_ns) VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT(id) DO UPDATE SET summary = excluded.summary, body = excluded.body, file_size = excluded.file_size, file_modified_ns = excluded.file_modified_ns",
-        params![entry.summary.id, summary, body, file_size, entry.file_modified_ns],
+        "INSERT INTO session (id, summary, body, file_size, file_modified_ns, trashed_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(id) DO UPDATE SET summary = excluded.summary, body = excluded.body, file_size = excluded.file_size, file_modified_ns = excluded.file_modified_ns, trashed_at = excluded.trashed_at",
+        params![entry.summary.id, summary, body, file_size, entry.file_modified_ns, entry.trashed_at],
       )?;
     }
     let wanted: HashSet<&str> = entries.iter().map(|entry| entry.summary.id.as_str()).collect();
@@ -151,7 +178,16 @@ fn migrate(connection: &mut Connection) -> Result<()> {
   if version == SCHEMA_VERSION {
     return Ok(());
   }
-  let tx = connection.transaction()?;
+  // Serialize migrations, then re-read the version: another engine may have just applied the same additive steps.
+  let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+  let version: u32 = tx.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+  if version > SCHEMA_VERSION {
+    return Err(anyhow!("database schema {version} became newer than supported schema {SCHEMA_VERSION}"));
+  }
+  if version == SCHEMA_VERSION {
+    tx.commit()?;
+    return Ok(());
+  }
   if version < 2 {
     // Concurrent first runs may both have read the old version; IF NOT EXISTS makes the additive migration idempotent.
     tx.execute_batch(
@@ -160,7 +196,8 @@ fn migrate(connection: &mut Connection) -> Result<()> {
         summary TEXT NOT NULL,
         body TEXT NOT NULL DEFAULT 'file' CHECK(body IN ('file', 'db')),
         file_size INTEGER,
-        file_modified_ns INTEGER
+        file_modified_ns INTEGER,
+        trashed_at INTEGER
       );",
     )?;
   }
@@ -177,6 +214,9 @@ fn migrate(connection: &mut Connection) -> Result<()> {
         PRIMARY KEY(session_id, subagent, turn, block)
       ) WITHOUT ROWID;",
     )?;
+  }
+  if version >= 2 && version < 4 {
+    tx.execute_batch("ALTER TABLE session ADD COLUMN trashed_at INTEGER;")?;
   }
   tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
   tx.commit()?;
@@ -274,7 +314,7 @@ mod tests {
     let root = tempfile::tempdir().unwrap();
     let db = SessionDb::open(root.path()).unwrap();
     let summary: SessionSummary = serde_json::from_value(json!({ "id": "a", "cwd": "/w", "title": "one", "updatedAt": "1" })).unwrap();
-    db.apply_catalog(&[CatalogEntry { summary, body: BodyLocation::File, file_size: Some(12), file_modified_ns: Some(34) }]).unwrap();
+    db.apply_catalog(&[CatalogEntry { summary, body: BodyLocation::File, file_size: Some(12), file_modified_ns: Some(34), trashed_at: None }]).unwrap();
     let mut entry = db.catalog().unwrap().remove(0);
     assert_eq!((entry.summary.title.as_str(), entry.body, entry.file_size, entry.file_modified_ns), ("one", BodyLocation::File, Some(12), Some(34)));
     let changes = db.connection.lock().total_changes();

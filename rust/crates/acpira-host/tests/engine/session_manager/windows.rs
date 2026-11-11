@@ -168,7 +168,7 @@ async fn deleting_a_mirrored_running_session_stops_its_owner_and_restores_its_la
   until(|| a.view_of(&id).is_none() && b.view_of(&id).is_none(), 5000).await;
   assert_ne!(a.active_id().as_deref(), Some(id.as_str()));
   assert_ne!(b.active_id().as_deref(), Some(id.as_str()));
-  let record: Value = serde_json::from_slice(&std::fs::read(dir.path().join("trash").join(format!("{id}.json"))).unwrap()).unwrap();
+  let record: Value = serde_json::to_value(b.store.load(&id).await.unwrap()).unwrap();
   assert_eq!(record["title"], "Latest title");
   assert_eq!(turns_in(&record), 4);
   assert_eq!(last_turn(&record)["stop"], "cancelled");
@@ -1001,7 +1001,7 @@ async fn storage_slim_drops_diff_texts_and_leaves_open_sessions_alone() {
   assert!(out.freed >= 40_000, "{out:?}");
   assert_eq!(out.skipped.len(), 1);
   assert!(out.skipped[0].reason.contains("Open in this window"), "{:?}", out.skipped);
-  let back: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.path().join("stored.json")).unwrap()).unwrap();
+  let back: serde_json::Value = serde_json::to_value(a.store.load("stored").await.unwrap()).unwrap();
   let content = &back["turns"][0]["blocks"][0]["content"];
   assert_eq!(content["lines"], lines);
   assert_eq!(content["source"], json!({ "path": "/w/a.ts", "omitted": true }));

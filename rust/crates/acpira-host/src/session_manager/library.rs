@@ -62,7 +62,7 @@ impl SessionLibrary for SessionManager {
         return Ok(render_list("That reference is this session:", &[session_entry(s, None, &caller.cwd, &names)], 1, ""));
       }
       let ids: HashSet<String> = cands.iter().map(|s| s.id.clone()).collect();
-      let body = self.search.tool_hits(self.deps.store.dir().to_path_buf(), &query, Some(ids)).await;
+      let body = self.search.tool_hits(self.deps.store.clone(), &query, Some(ids)).await;
       let found = matches(&cands, &query, &body);
       let entries: Vec<String> = found.iter().take(limit).map(|s| session_entry(s, body.get(&s.id), &caller.cwd, &names)).collect();
       let empty = if all { "No sessions match.".to_owned() } else { "No sessions in this project match; scope: \"all\" searches every project.".to_owned() };
@@ -135,7 +135,7 @@ impl SessionManager {
   /// Sessions whose saved conversation contains every term of `query`. Records reach the disk within the save debounce,
   /// so a reply still streaming is found a moment later
   pub async fn search_sessions(&self, query: &str) -> Vec<SessionHit> {
-    self.search.search(self.deps.store.dir().to_path_buf(), query).await
+    self.search.search(self.deps.store.clone(), query).await
   }
 
   /// Peer searches stop at this machine. Their bounded results carry the summaries a narrowed list does not have.

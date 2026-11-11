@@ -196,13 +196,13 @@ async fn trash_moves_record_and_blobs_out_and_back_and_sweep_honours_the_window(
   store.trash("t").await.unwrap();
   assert!(!d.join("t.json").exists());
   assert!(d.join("trash/t.json").exists());
-  assert_eq!(std::fs::read_dir(d.join("trash/t")).unwrap().count(), 1);
+  assert_eq!(blob_count(&d.join("trash/t")), 1);
   assert!(store.load_index().await.unwrap().is_empty());
   store.sweep_trash(Duration::from_secs(60)).await;
   assert!(d.join("trash/t.json").exists());
   store.restore("t").await.unwrap();
   assert!(d.join("t.json").exists());
-  assert_eq!(std::fs::read_dir(d.join("t")).unwrap().count(), 1);
+  assert_eq!(blob_count(&d.join("t")), 1);
   assert_eq!(ids(&store.load_index().await.unwrap()), ["t"]);
   store.trash("t").await.unwrap();
   store.sweep_trash(Duration::ZERO).await;
@@ -212,7 +212,7 @@ async fn trash_moves_record_and_blobs_out_and_back_and_sweep_honours_the_window(
 }
 
 fn blob_count(dir: &Path) -> usize {
-  std::fs::read_dir(dir).unwrap().count()
+  std::fs::read_dir(dir).unwrap().filter(|entry| entry.as_ref().is_ok_and(|entry| entry.file_name() != acpira_host::store::db::migration::MIGRATED_FILE)).count()
 }
 
 // A move that fails used to be ignored: the delete reported success while the record stayed listed, or the record went
@@ -301,6 +301,7 @@ async fn trash_and_restore_move_symlinks_as_links_and_refuse_a_trash_outside_the
   std::fs::write(outside.path().join("secret.txt"), "secret").unwrap();
   // A blob folder linked out of the store moves as the link, there and back
   store.flush(record("l", "L")).await.unwrap();
+  std::fs::remove_dir_all(d.join("l")).unwrap();
   symlink(outside.path(), d.join("l")).unwrap();
   store.trash("l").await.unwrap();
   assert!(is_link(&d.join("trash/l")) && !d.join("l").exists());
@@ -310,6 +311,7 @@ async fn trash_and_restore_move_symlinks_as_links_and_refuse_a_trash_outside_the
   // One linked to another session's blobs never takes them along
   store.flush(record("a", "A")).await.unwrap();
   store.save_blob("b", ".png", &[1]).await.unwrap();
+  std::fs::remove_dir_all(d.join("a")).unwrap();
   symlink(d.join("b"), d.join("a")).unwrap();
   store.trash("a").await.unwrap();
   assert!(is_link(&d.join("trash/a")));
@@ -503,19 +505,19 @@ async fn history_search_reads_saved_conversations_and_follows_later_writes() {
   let search = SessionSearch::default();
   let hit_ids = |hits: &[acpira_shared::protocol::SessionHit]| sorted(hits.iter().map(|h| h.id.clone()).collect());
 
-  let hits = search.search(dir.path().to_path_buf(), "NEEDLE").await;
+  let hits = search.search(store.clone(), "NEEDLE").await;
   assert_eq!(hit_ids(&hits), vec!["a"]);
   assert_eq!(hits[0].snippet, "…is the needle");
-  assert!(search.search(dir.path().to_path_buf(), "reasoning").await.is_empty(), "thoughts stay out of the index");
-  assert_eq!(hit_ids(&search.search(dir.path().to_path_buf(), "parser haystack").await), vec!["a"]);
+  assert!(search.search(store.clone(), "reasoning").await.is_empty(), "thoughts stay out of the index");
+  assert_eq!(hit_ids(&search.search(store.clone(), "parser haystack").await), vec!["a"]);
 
   // A record rewritten after the first search is read again; a removed one drops out
   store.save_after(conversation("b", "Other", "unrelated", "a needle after all, with a longer reply"), Duration::ZERO);
   store.sync_index(&[], &HashSet::new()).await.unwrap();
-  assert_eq!(hit_ids(&search.search(dir.path().to_path_buf(), "needle").await), vec!["a", "b"]);
+  assert_eq!(hit_ids(&search.search(store.clone(), "needle").await), vec!["a", "b"]);
   std::fs::remove_file(dir.path().join("a.json")).unwrap();
-  assert_eq!(hit_ids(&search.search(dir.path().to_path_buf(), "needle").await), vec!["b"]);
-  assert!(search.search(dir.path().to_path_buf(), "   ").await.is_empty());
+  assert_eq!(hit_ids(&search.search(store.clone(), "needle").await), vec!["b"]);
+  assert!(search.search(store.clone(), "   ").await.is_empty());
 }
 
 // A session another engine is driving (store::session_lease): this store's copy of it is never written over that engine's

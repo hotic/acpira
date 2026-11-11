@@ -34,6 +34,8 @@ pub struct ScanInput {
   pub sessions_dir: PathBuf,
   /// The reconciled session list
   pub sessions: Vec<SessionSummary>,
+  /// Full records for database-backed sessions, read before the blocking filesystem scan.
+  pub records: HashMap<String, Vec<u8>>,
   pub now: SystemTime,
 }
 
@@ -227,7 +229,7 @@ pub fn scan(input: &ScanInput) -> Scan {
       continue;
     }
     if has_record.contains(name) {
-      let raw = std::fs::read(sessions_dir.join(format!("{name}.json"))).unwrap_or_default();
+      let raw = input.records.get(name).cloned().unwrap_or_else(|| std::fs::read(sessions_dir.join(format!("{name}.json"))).unwrap_or_default());
       let text = String::from_utf8_lossy(&raw);
       let mut kept = 0;
       let (mut orphan, mut targets) = (Du::default(), vec![]);
@@ -648,7 +650,7 @@ mod tests {
     put(&not_ours.join("f"), 1, true);
     fs::write(root.join(".migrated"), serde_json::to_vec(&serde_json::json!({ "sources": [legacy, not_ours, root] })).unwrap()).unwrap();
 
-    let scan = scan(&ScanInput { root: root.to_path_buf(), sessions_dir: s.clone(), sessions: vec![a, b], now: SystemTime::now() });
+    let scan = scan(&ScanInput { root: root.to_path_buf(), sessions_dir: s.clone(), sessions: vec![a, b], records: HashMap::new(), now: SystemTime::now() });
     assert_eq!(seg(&scan, K::Sessions), (ra + rb, 2));
     assert_eq!(seg(&scan, K::Attachments), (107, 1));
     // b's log, plus the fresh one no record names yet
