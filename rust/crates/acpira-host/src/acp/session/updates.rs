@@ -9,7 +9,7 @@ use acpira_shared::transcript::*;
 
 use crate::acp::session::failure::failure_of;
 use crate::acp::session::{AcpSession, Core};
-use crate::acp::transcript::normalize::{WAKEUP_VERBS, activity_of, apply_async_task, apply_goal, apply_update, find_tool};
+use crate::acp::transcript::normalize::{WAKEUP_VERBS, activity_of, apply_async_task, apply_goal, apply_update, find_tool, mark_responded};
 use crate::acp::transcript::plans::{capture_plan, plan_documents};
 use crate::acp::transcript::subagent_tree::{Route, RouteCtx};
 use crate::acp::transport::wire::{ExtensionUpdate, extension_of};
@@ -52,6 +52,7 @@ impl AcpSession {
             if !changed {
               return;
             }
+            mark_responded(&mut c.state);
             self.drain_terminal(&mut c);
           }
         }
@@ -60,6 +61,9 @@ impl AcpSession {
           let turn_index = current_turn_index(&c);
           let Core { tree, state, .. } = &mut *c;
           tree.lifecycle(&session_id, root.as_deref(), l, &mut RouteCtx { turn_index, root_turns: &mut state.turns });
+          if !c.replaying {
+            mark_responded(&mut c.state);
+          }
           self.drain_terminal(&mut c);
           // A resumed native run is read from its sidechain log (`workflow_logs.rs`)
           self.schedule_workflow_logs(&mut c);

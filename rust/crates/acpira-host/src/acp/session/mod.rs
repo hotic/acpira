@@ -65,7 +65,7 @@ use crate::acp::session::usage::UsageTracker;
 use crate::acp::session::failure::SessionFailure;
 use crate::acp::session::images::{file_image_saver, image_saver};
 use crate::acp::session::restore_turns::restore_interrupted_turns;
-use crate::acp::transcript::normalize::{NormalizeState, ToolCtx, runtime_info_of};
+use crate::acp::transcript::normalize::{NormalizeState, ToolCtx, runtime_info_of, sync_idle};
 use crate::acp::transcript::plan_snapshots::restore_plan_snapshots;
 use crate::acp::transcript::subagent_tree::SubagentTree;
 use crate::acp::transport::process::AgentProcess;
@@ -539,6 +539,10 @@ impl AcpSession {
 
   /// Publish state, leaving updatedAt alone (streamed chunks must not reorder the list)
   pub(crate) fn touch(&self, c: &mut Core) {
+    if !c.replaying {
+      let bg = c.tree.any_running() || Self::relay_background(c) || c.wake.pending(crate::util::now_ms()).is_some();
+      sync_idle(&mut c.state, bg);
+    }
     self.refine_controls(c);
     c.rev += 1;
     c.cached_view = None;

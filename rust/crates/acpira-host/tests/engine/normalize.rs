@@ -272,6 +272,52 @@ fn counts_the_wait_on_background_work_past_the_grace_period() {
 }
 
 #[test]
+fn counts_subagent_waits_compaction_pauses_and_detached_continuations() {
+  let mut s = state();
+  let clock = Clock::at(1000);
+  s.turns.push(turn(json!({ "role": "agent", "blocks": [], "startedAt": 1000 })));
+  // Pre-existing session background before the turn's first block belongs to TTFT, never idleMs
+  sync_idle(&mut s, true);
+  clock.set(30_000);
+  apply(&mut s, json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "dispatching" } }));
+  expect_absent(&s.turns[0], "idleMs");
+  // Native subagent runs for 120 s; child updates call sync_idle without resetting the 20 s grace window
+  clock.set(70_000);
+  sync_idle(&mut s, true);
+  clock.set(150_000);
+  // Mid-turn compaction interrupts the background wait (120 s - 20 s = 100 s) and counts its own 12 s in full
+  apply(&mut s, json!({ "sessionUpdate": "compaction_update", "compactionId": "c1", "status": "in_progress" }));
+  clock.set(162_000);
+  apply(&mut s, json!({ "sessionUpdate": "compaction_update", "compactionId": "c1", "status": "completed" }));
+  // Subagent finishes 50 s later (50 s - 20 s = 30 s), then the root writes its closing reply over 3 s
+  clock.set(212_000);
+  sync_idle(&mut s, false);
+  clock.set(215_000);
+  apply(&mut s, json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "all merged" } }));
+  end_turn(&mut s, TurnStop::EndTurn);
+  // Active decode so far: (215_000 - 30_000) - (100_000 + 12_000 + 30_000) = 43_000 -> 142_000 idleMs
+  expect_match(&s.turns[0], json!({ "respondedAt": 30_000, "endedAt": 215_000, "idleMs": 142_000 }));
+
+  // 60 s later an autonomous cycle reopens the turn, runs a 5 s foreground tool and 4 s of uncounted prose
+  clock.set(275_000);
+  reopen_idle(&mut s);
+  if let Some(Turn::Agent(t)) = s.turns.last_mut() {
+    t.stop = None;
+    t.ended_at = None;
+  }
+  clock.set(276_000);
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "chk", "kind": "execute", "status": "in_progress" }));
+  clock.set(281_000);
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "chk", "status": "completed" }));
+  clock.set(284_000);
+  apply(&mut s, json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "followup" } }));
+  end_turn(&mut s, TurnStop::EndTurn);
+  // Detached span is 284_000 - 215_000 = 69_000, minus 5_000 foreground tool = 64_000 added -> 206_000 idleMs,
+  // preserving the exact 43_000 ms active decode window: (284_000 - 30_000) - 5_000 - 206_000 = 43_000
+  expect_match(&s.turns[0], json!({ "endedAt": 284_000, "idleMs": 206_000 }));
+}
+
+#[test]
 fn freezes_outstanding_tool_timers_when_the_turn_ends() {
   for (stop, status) in [(TurnStop::Cancelled, "cancelled"), (TurnStop::EndTurn, "failed")] {
     let mut s = state();

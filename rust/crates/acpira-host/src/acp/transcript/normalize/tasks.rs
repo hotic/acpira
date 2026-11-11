@@ -49,6 +49,11 @@ pub fn has_live_async_task(s: &NormalizeState) -> bool {
   s.turns.iter().filter_map(Turn::as_agent).any(|t| t.blocks.iter().any(|b| matches!(b, AgentBlock::ToolCall(tc) if async_task_live(tc))))
 }
 
+/// An unlinked task (`showInTranscript: false`, or parked before its tool row arrived) is still running on this process
+pub(super) fn has_unlinked_live_task(s: &NormalizeState) -> bool {
+  s.tasks.tasks.iter().any(|(id, a)| !s.tasks.linked.contains(id) && !task_terminal(a.state))
+}
+
 fn block_by_task(turns: &[Turn], task_id: &str) -> Option<(usize, usize)> {
   for (ti, t) in turns.iter().enumerate() {
     let Turn::Agent(a) = t else { continue };
@@ -147,6 +152,9 @@ pub(super) fn time_tool_at(s: &mut NormalizeState, current: usize, loc: (usize, 
 /// One asyncTasks event on the owning session's transcript; returns whether the transcript changed
 pub fn apply_async_task(s: &mut NormalizeState, e: &AsyncTaskEvent) -> bool {
   let changed = apply_task_event(s, e);
+  if changed {
+    super::mark_responded(s);
+  }
   // A task starting or ending opens or closes a background wait
   super::idle::tick(s, false);
   changed
@@ -293,4 +301,6 @@ pub fn disconnect_async_tasks(s: &mut NormalizeState) {
       info.stop_requested = false;
     }
   }
+  s.tasks.by_tool.clear();
+  s.tasks.tasks.retain(|id, _| s.tasks.linked.contains(id));
 }
