@@ -280,6 +280,9 @@ impl TranscriptStore {
   }
 
   fn database(&self) -> Option<Arc<SessionDb>> {
+    if std::env::var("ACPIRA_STORE").is_ok_and(|value| value.eq_ignore_ascii_case("files")) {
+      return None;
+    }
     let mut state = self.db.lock();
     if !state.attempted {
       // A read of a missing store stays side-effect free. `ensure` creates the directory before writes and list syncs.
@@ -317,6 +320,60 @@ impl TranscriptStore {
 
   async fn ensure(&self) -> Result<()> {
     fs::create_dir_all(&self.dir).await?;
+    Ok(())
+  }
+
+  /// Write the current database body back to a complete legacy record, then remove its rows. The file comes first so a
+  /// crash can only leave the old database body authoritative, never a stub with no database behind it.
+  pub async fn revert_to_file(&self, id: &str) -> Result<bool> {
+    if !is_session_id(id) {
+      return Err(anyhow!("{id} is not a session id"));
+    }
+    self.ensure().await?;
+    let location = {
+      let id = id.to_owned();
+      self.db_call(move |db| db.body_location(&id)).await?.flatten()
+    };
+    if location != Some(BodyLocation::Database) {
+      return Ok(false);
+    }
+    let record = self.load_detailed(id).await.map_err(|error| anyhow!(error.detail()))?;
+    let path = confined(&self.dir, &format!("{id}.json")).await.ok_or_else(|| anyhow!("session {id}: outside the store"))?;
+    write_atomic(&path, &serde_json::to_vec(&record)?, None).await?;
+    let record = Arc::new(record);
+    let _ = self.db_call(move |db| db.mark_file(&record)).await?;
+    Ok(true)
+  }
+
+  /// Run SQLite's routine checks. Any failure closes this store's handle, preserves the files under a quarantine name and
+  /// leaves this store on its file backend for the rest of its life.
+  pub async fn maintain_database(&self) -> Result<()> {
+    if self.database().is_none() {
+      return Ok(());
+    }
+    if let Err(error) = self.db_call(SessionDb::maintain).await {
+      if let Err(quarantine) = self.quarantine_database().await {
+        (self.log)(&format!("sessions: SQLite quarantine failed ({quarantine:#})"));
+      }
+      return Err(error);
+    }
+    Ok(())
+  }
+
+  async fn quarantine_database(&self) -> Result<()> {
+    let _ = self.db.lock().db.take();
+    let stamp = timestamp_ms(SystemTime::now()).unwrap_or_default();
+    let mut kept = vec![];
+    for suffix in ["", "-wal", "-shm"] {
+      let source = self.dir.join(format!("{}{suffix}", super::db::DB_FILE));
+      if fs::metadata(&source).await.is_err() {
+        continue;
+      }
+      let target = self.dir.join(format!("{}{suffix}.corrupt-{stamp}", super::db::DB_FILE));
+      fs::rename(&source, &target).await?;
+      kept.push(target.display().to_string());
+    }
+    (self.log)(&format!("sessions: SQLite failed, using record files; kept {}", kept.join(", ")));
     Ok(())
   }
 
@@ -693,6 +750,13 @@ impl TranscriptStore {
       return Ok(src.record());
     }
     if let Some(mut record) = self.read_db_record(id).await? {
+      if let Some(path) = confined(&self.dir, &format!("{id}.json")).await
+        && let Ok(raw) = fs::read(path).await
+        && let Ok(stub) = serde_json::from_slice::<SessionRecord>(&raw)
+        && stub.turns.iter().any(migration::is_placeholder)
+      {
+        record = migration::splice(stub, record).map_err(|error| RecordLoadError::Corrupt { reason: error.to_string() })?;
+      }
       self.state.lock().known.insert(id.to_owned());
       record.fold_turn_usage();
       return Ok(record);
@@ -705,8 +769,14 @@ impl TranscriptStore {
     };
     match serde_json::from_slice::<SessionRecord>(&raw) {
       Ok(r) if r.id == id && is_session_id(&r.id) => {
-        // A packed record's stub (`pack`): its turns come back from the archive beside it
-        let mut r = if r.turns.iter().any(pack::is_placeholder) {
+        // Database and cold-pack stubs both keep their archived body beside the compatibility file.
+        let mut r = if r.turns.iter().any(migration::is_placeholder) {
+          let archive = match fs::read(self.dir.join(id).join(migration::MIGRATED_FILE)).await {
+            Ok(bytes) => bytes,
+            Err(error) => return Err(RecordLoadError::Unreadable { reason: format!("{}: {error}", migration::MIGRATED_FILE) }),
+          };
+          migration::splice_archive(r, &archive).map_err(|error| RecordLoadError::Corrupt { reason: error.to_string() })?
+        } else if r.turns.iter().any(pack::is_placeholder) {
           // Only a missing archive means there is none; one that cannot be read now must not load as a record without
           // its history, or the next write would make that loss permanent
           let archive = match fs::read(self.dir.join(id).join(pack::PACKED_FILE)).await {
@@ -1486,6 +1556,58 @@ mod tests {
     std::fs::remove_file(dir.path().join("b.json")).unwrap();
     s.flush(Arc::new(record("b", "2026-01-03T00:00:00.000Z"))).await.unwrap();
     assert!(!dir.path().join("b.json").exists());
+  }
+
+  #[tokio::test]
+  async fn turns_an_older_engine_added_to_a_migration_stub_are_recovered() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = store(dir.path());
+    let mut stored = record("legacy", "2026-01-01T00:00:00.000Z");
+    stored.turns = serde_json::from_value(serde_json::json!([{ "role": "user", "text": "before migration" }])).unwrap();
+    s.flush(Arc::new(stored.clone())).await.unwrap();
+    let path = dir.path().join("legacy.json");
+    let mut stub: SessionRecord = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    stub.turns.push(serde_json::from_value(serde_json::json!({ "role": "user", "text": "added by old engine" })).unwrap());
+    stub.subagents = Some(vec![serde_json::from_value(serde_json::json!({ "id": "old-child", "turnIndex": 1, "visibility": "session", "state": "completed", "stateSource": "agent", "announcedAt": 1, "turns": [] })).unwrap()]);
+    std::fs::write(&path, serde_json::to_vec(&stub).unwrap()).unwrap();
+
+    let recovered = s.load("legacy").await.unwrap();
+    assert_eq!(recovered.turns.len(), 2);
+    assert_eq!(recovered.turns[1].as_user().unwrap().text, "added by old engine");
+    assert_eq!(recovered.subagents.as_ref().unwrap()[0].core.id, "old-child");
+    s.flush(Arc::new(recovered.clone())).await.unwrap();
+    assert_eq!(s.database().unwrap().load_record("legacy").unwrap().unwrap().turns, recovered.turns);
+    let stub: SessionRecord = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(stub.turns.len(), 1, "the next save puts the compatibility placeholder back");
+  }
+
+  #[tokio::test]
+  async fn reverting_writes_a_complete_file_before_dropping_database_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = store(dir.path());
+    let mut stored = record("revert", "2026-01-01T00:00:00.000Z");
+    stored.turns = serde_json::from_value(serde_json::json!([{ "role": "user", "text": "complete on disk" }])).unwrap();
+    s.flush(Arc::new(stored.clone())).await.unwrap();
+    assert!(s.revert_to_file("revert").await.unwrap());
+    let file: SessionRecord = serde_json::from_slice(&std::fs::read(dir.path().join("revert.json")).unwrap()).unwrap();
+    assert_eq!(file, stored);
+    assert_eq!(s.database().unwrap().body_location("revert").unwrap(), Some(BodyLocation::File));
+    assert_eq!(s.load("revert").await.unwrap(), stored);
+    assert!(!s.revert_to_file("revert").await.unwrap());
+  }
+
+  #[tokio::test]
+  async fn a_quarantined_database_falls_back_to_the_migration_archive() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = store(dir.path());
+    let mut stored = record("quarantine", "2026-01-01T00:00:00.000Z");
+    stored.turns = serde_json::from_value(serde_json::json!([{ "role": "user", "text": "archived" }])).unwrap();
+    s.flush(Arc::new(stored.clone())).await.unwrap();
+    s.maintain_database().await.unwrap();
+    s.quarantine_database().await.unwrap();
+    assert!(s.database().is_none());
+    assert!(std::fs::read_dir(dir.path()).unwrap().any(|entry| entry.unwrap().file_name().to_string_lossy().starts_with("sessions.db.corrupt-")));
+    assert_eq!(s.load("quarantine").await.unwrap(), stored);
   }
 
   #[tokio::test]

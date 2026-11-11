@@ -20,6 +20,7 @@
 //!                                                the handoff pack of a work tree (diff with whole functions, small files,
 //!                                                optional references), as a summoned agent would get it
 //!   acpira quota [--json] [codex|claude|devin…]  the quota windows of each CLI's own login, read without storing anything
+//!   acpira store revert ID [--home DIR]          write a SQLite-backed session back to a complete legacy JSON record
 //!   acpira install-agent <id> [--force] [--archive FILE]
 //!                                                download (or take FILE), verify and unpack an agent shipped as a native archive
 //!   acpira pdf-pages FIRST LIMIT MAX_BYTES        the built-in agent's PDF parser in a child process (the PDF on stdin,
@@ -76,6 +77,7 @@ pub fn is_engine_command(first: Option<&str>) -> bool {
         | "model-catalog"
         | "handoff-pack"
         | "quota"
+        | "store"
         | "pdf-pages"
         | "plugin"
         | "safe-mode"
@@ -146,6 +148,9 @@ pub fn run(args: Vec<String>) -> i32 {
       return crate::accounts::quota_cli::cli(&args[1..]).await;
     }
     let explicit_home = flag(&args, "--home").filter(|h| !h.is_empty()).map(|h| absolute(&PathBuf::from(h)));
+    if args.first().map(String::as_str) == Some("store") {
+      return store_cli(&args[1..], explicit_home.unwrap_or_else(acpira_home)).await;
+    }
     if args.first().map(String::as_str) == Some("plugin") {
       return crate::plugins::cli::plugin(&args[1..], &explicit_home.unwrap_or_else(acpira_home)).await;
     }
@@ -286,6 +291,28 @@ async fn shutdown_signal() {
   #[cfg(not(unix))]
   {
     let _ = tokio::signal::ctrl_c().await;
+  }
+}
+
+async fn store_cli(args: &[String], home: PathBuf) -> i32 {
+  let Some(id) = (args.first().map(String::as_str) == Some("revert")).then(|| args.get(1)).flatten() else {
+    stderr("usage: acpira store revert ID [--home DIR]");
+    return 2;
+  };
+  let store = crate::store::transcript_store::TranscriptStore::new(home.join("sessions"), Arc::new(|line| stderr(line)), None);
+  match store.revert_to_file(id).await {
+    Ok(true) => {
+      println!("{}", home.join("sessions").join(format!("{id}.json")).display());
+      0
+    }
+    Ok(false) => {
+      stderr(&format!("session {id}: not SQLite-backed"));
+      1
+    }
+    Err(error) => {
+      stderr(&format!("session {id}: revert failed ({error:#})"));
+      1
+    }
   }
 }
 

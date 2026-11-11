@@ -62,7 +62,7 @@ impl SessionDb {
   pub fn open(dir: &Path) -> Result<Self> {
     std::fs::create_dir_all(dir)?;
     let mut connection = Connection::open(dir.join(DB_FILE))?;
-    connection.execute_batch("PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA synchronous = NORMAL;")?;
+    connection.execute_batch("PRAGMA auto_vacuum = INCREMENTAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA synchronous = NORMAL;")?;
     let journal_mode: String = connection.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))?;
     if !journal_mode.eq_ignore_ascii_case("wal") {
       return Err(anyhow!("{}: WAL unavailable (journal mode {journal_mode})", dir.join(DB_FILE).display()));
@@ -96,6 +96,23 @@ impl SessionDb {
     let connection = self.connection.lock();
     let body = connection.query_row("SELECT body FROM session WHERE id = ?1", params![id], |row| row.get::<_, String>(0)).optional()?;
     if body.as_deref() == Some("db") { body::load(&connection, id).map(Some) } else { Ok(None) }
+  }
+
+  pub fn body_location(&self, id: &str) -> Result<Option<BodyLocation>> {
+    let connection = self.connection.lock();
+    let body = connection.query_row("SELECT body FROM session WHERE id = ?1", params![id], |row| row.get::<_, String>(0)).optional()?;
+    Ok(body.map(|body| BodyLocation::of(&body)))
+  }
+
+  /// Routine integrity and space maintenance. A failed quick check is quarantined by `TranscriptStore`.
+  pub fn maintain(&self) -> Result<()> {
+    let connection = self.connection.lock();
+    let result: String = connection.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
+    if !result.eq_ignore_ascii_case("ok") {
+      return Err(anyhow!("SQLite quick_check: {result}"));
+    }
+    connection.execute_batch("PRAGMA incremental_vacuum;")?;
+    Ok(())
   }
 
   pub fn set_trashed(&self, id: &str, trashed_at: Option<i64>) -> Result<()> {
