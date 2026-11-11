@@ -11,7 +11,7 @@ use crate::acp::session::attachments::{PreparedPrompt, prepare_prompt, restore_d
 use crate::acp::session::compaction::CompactionCompletion;
 use crate::acp::session::prompt::{Origin, Staged};
 use crate::acp::session::{AcpSession, Core};
-use crate::acp::transcript::normalize::push_steer;
+use crate::acp::transcript::normalize::{push_steer, reopen_idle};
 use crate::acp::vendors::{claude_autonomous, steering};
 use crate::i18n::{t, tp};
 use crate::util::random_uuid;
@@ -341,6 +341,7 @@ impl AcpSession {
       return;
     }
     c.phase.running = true;
+    reopen_idle(&mut c.state);
     if let Some(Turn::Agent(t)) = c.state.turns.last_mut() {
       t.stop = None;
       t.ended_at = None;

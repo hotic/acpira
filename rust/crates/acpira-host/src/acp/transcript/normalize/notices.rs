@@ -244,6 +244,7 @@ pub fn report_retry(s: &mut NormalizeState, r: RetryReport) -> bool {
   }
   n.category = if log.reconnect { FailureCategory::Connection } else { FailureCategory::Service };
   n.details = log.attempts.last().map(|x| x.text.clone()).filter(|d| !d.is_empty());
+  super::idle::tick(s, false);
   true
 }
 

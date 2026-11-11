@@ -33,6 +33,7 @@ mod tool_target;
 
 use self::content::{image_content, resolve_markdown_images};
 pub use self::controls::{apply_config_options, config_option_set_value, init_controls};
+pub use self::idle::{IdleState, reopen_idle, sync_idle};
 use self::notices::{apply_compaction_markers, apply_notice, apply_retry_marker, clear_retry, find_compaction, settle_retry};
 pub use self::notices::{RetryReport, RetryText, apply_goal, apply_session_failure, refine_retry, report_retry};
 pub use self::tasks::{
@@ -88,8 +89,8 @@ pub struct NormalizeState {
   /// Tool call id → when a pending call last got its input, the start of a call that never reports `in_progress`
   /// (`tool_call::time_tool`)
   pub pending_input: HashMap<String, i64>,
-  /// Since when the live turn has had only background work open with the model silent (`idle.rs`)
-  pub quiet_since: Option<i64>,
+  /// Non-generation stretches of the live turn (`idle.rs`)
+  pub idle: IdleState,
 }
 
 impl NormalizeState {
@@ -194,13 +195,13 @@ pub fn apply_update(s: &mut NormalizeState, u: &Value) -> bool {
 /// Stamp the live prompt's first output: the first update that leaves a block in the turn (a thought, text, tool,
 /// plan …). Usage, command and config updates add no block and keep the clock waiting; replayed turns have no
 /// `started_at` and are never stamped
-fn mark_responded(s: &mut NormalizeState) {
+pub fn mark_responded(s: &mut NormalizeState) {
   if let Some(Turn::Agent(t)) = s.turns.last_mut()
     && t.started_at.is_some()
     && t.responded_at.is_none()
     && t.stop.is_none()
     && t.ended_at.is_none()
-    && !t.blocks.is_empty()
+    && t.blocks.iter().any(|b| !matches!(b, AgentBlock::Steer(_)))
   {
     t.responded_at = Some(now_ms());
   }
@@ -468,29 +469,33 @@ fn apply_update_kind(s: &mut NormalizeState, u: &Value) -> bool {
 
 /// Turn ended: seal streaming blocks, record how it ended; tools still running are marked per stop reason
 pub fn end_turn(s: &mut NormalizeState, stop: TurnStop) {
-  idle::close(s);
+  let now = now_ms();
+  idle::close_before_seal(s, now);
   // Content after a retry row closes it as recovered, so one still open when the turn ends never got through
   settle_retry(s, if stop == TurnStop::Cancelled { ToolStatus::Cancelled } else { ToolStatus::Failed });
   clear_retry(s);
-  let NormalizeState { turns, thought_started_at, pending_input, .. } = s;
-  let Some(Turn::Agent(t)) = turns.last_mut() else { return };
-  seal_streaming(thought_started_at, t);
-  // Replay-only turns have no live start time; never invent a duration for them
-  if t.started_at.is_some() && t.ended_at.is_none() {
-    t.ended_at = Some(now_ms());
-  }
-  t.activity = None;
-  t.stop = Some(stop);
-  for b in &mut t.blocks {
-    if let AgentBlock::ToolCall(tc) = b
-      && !async_task_live(tc)
-      && tc.status.is_open()
-    {
-      tc.status = if stop == TurnStop::Cancelled { ToolStatus::Cancelled } else { ToolStatus::Failed };
-      time_tool(tc, false, false, pending_input);
+  {
+    let NormalizeState { turns, thought_started_at, pending_input, .. } = s;
+    let Some(Turn::Agent(t)) = turns.last_mut() else { return };
+    seal_streaming(thought_started_at, t);
+    // Replay-only turns have no live start time; never invent a duration for them
+    if t.started_at.is_some() && t.ended_at.is_none() {
+      t.ended_at = Some(now);
     }
+    t.activity = None;
+    t.stop = Some(stop);
+    for b in &mut t.blocks {
+      if let AgentBlock::ToolCall(tc) = b
+        && !async_task_live(tc)
+        && tc.status.is_open()
+      {
+        tc.status = if stop == TurnStop::Cancelled { ToolStatus::Cancelled } else { ToolStatus::Failed };
+        time_tool(tc, false, false, pending_input);
+      }
+    }
+    pending_input.clear();
   }
-  pending_input.clear();
+  idle::close_after_seal(s);
 }
 
 /// session/prompt itself failed: wrap up like a cancellation and keep the error on the turn
