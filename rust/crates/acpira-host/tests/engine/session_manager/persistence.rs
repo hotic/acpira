@@ -75,7 +75,8 @@ async fn a_corrupt_record_stays_listed_and_reports_a_diagnostic_error() {
   let second = Mgr::new(dir.path(), Opts::fake(&fake));
   second.init().await;
   assert!(second.session_ids().contains(&id));
-  std::fs::write(dir.path().join(format!("{id}.json")), "{ broken").unwrap();
+  // The body is in the database: a row that no longer matches its hash is what a damaged record looks like there
+  rusqlite::Connection::open(dir.path().join("sessions.db")).unwrap().execute("UPDATE item SET hash = zeroblob(16) WHERE session_id = ?1", [&id]).unwrap();
   second.m.select_session_for(&second.v, &id).await;
   assert!(second.session_ids().contains(&id));
   assert!(second.toasts().iter().any(|text| text.contains("SESSION_RECORD_CORRUPT")), "{:?}", second.toasts());
@@ -188,9 +189,11 @@ async fn a_stale_index_summary_gains_its_acp_session_id_and_the_index_file_is_up
   let m = Mgr::new(&sessions, Opts::with_agents(fake.setting(json!({ "env": { "FAKE_SESSION_DIR": native } })), "fake"));
   m.init().await;
   m.m.list_native_sessions("fake", m.m.folder_for(None, None)).await.unwrap();
+  // The catalogue is the list every engine reads now; the legacy index is only its first import
   let index = || -> Option<String> {
-    let list: Value = serde_json::from_str(&std::fs::read_to_string(sessions.join("index.json")).ok()?).ok()?;
-    list.as_array()?.iter().find(|s| s["id"] == record.id.as_str())?["acpSessionId"].as_str().map(str::to_owned)
+    let db = rusqlite::Connection::open(sessions.join("sessions.db")).ok()?;
+    let summary: String = db.query_row("SELECT summary FROM session WHERE id = ?1", [record.id.as_str()], |row| row.get(0)).ok()?;
+    serde_json::from_str::<Value>(&summary).ok()?["acpSessionId"].as_str().map(str::to_owned)
   };
   until(|| index().as_deref() == Some(acp_id.as_str()), 5000).await;
   m.dispose().await;
@@ -274,14 +277,15 @@ async fn upkeep_packs_a_cold_record_and_diff_texts_come_back_from_blobs() {
   until(|| m.active().is_some_and(|v| v["id"] == "cold" && turns_in(&v) == 2), 5000).await;
   let src = m.m.diff_source("cold", "t2", 0, None).await.unwrap();
   assert_eq!((src.old_text.len(), src.new_text == c), (b.len(), true));
-  // A write of the reopened session: the whole record again, its diff texts as three blobs (b is shared by both edits)
+  // A write of the reopened session moves it into the database: the whole record again, its diff texts as three blobs
+  // (b is shared by both edits), the file a small stub with the new title
   m.handle(json!({ "type": "renameSession", "id": "cold", "title": "renamed" })).await;
-  until(|| std::fs::read_to_string(&path).is_ok_and(|t| t.contains("renamed") && t.contains("oldBlob")), 5000).await;
-  let raw = std::fs::read_to_string(&path).unwrap();
-  assert!(raw.len() < 10_000 && !raw.contains("acpira-packed:"), "{} bytes", raw.len());
+  until(|| std::fs::read_to_string(&path).is_ok_and(|t| t.contains("renamed") && t.contains("acpira-sqlite:")), 5000).await;
+  let raw = String::from_utf8(m.store.body_text("cold", false).unwrap()).unwrap();
+  assert!(raw.contains("oldBlob") && raw.len() < 10_000 && !raw.contains("acpira-packed:"), "{} bytes", raw.len());
   let texts = std::fs::read_dir(dir.path().join("cold")).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().ends_with(".zst")).count();
-  // Plus the archive, kept (stale and unused) until the session is packed again
-  assert_eq!(texts, 4);
+  // Plus the cold-pack archive (stale and unused from here on) and the pre-migration one
+  assert_eq!(texts, 5);
   assert!(dir.path().join("cold/record.json.zst").exists());
   m.dispose().await;
 

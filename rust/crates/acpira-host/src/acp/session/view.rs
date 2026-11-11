@@ -16,15 +16,19 @@ use crate::acp::session::queue::queue_snapshot;
 use crate::util::now_ms;
 use crate::acp::transcript::normalize::has_live_async_task;
 use crate::acp::session::{AcpSession, Core};
-use crate::store::record::{ForkedFrom, ImportedFrom, RecordSource, SessionRecord};
+use crate::store::record::{ForkedFrom, ImportedFrom, RecordParts, RecordSource, SessionRecord, turn_parts};
 
 impl AcpSession {
   /// The list entry of this session
   pub fn summary(&self) -> SessionSummary {
-    let c = self.core.lock();
+    self.summary_of(&self.core.lock())
+  }
+
+  /// `summary` with the core already held
+  pub(crate) fn summary_of(&self, c: &Core) -> SessionSummary {
     SessionSummary {
       id: self.id.clone(),
-      title: Self::title_of(&c),
+      title: Self::title_of(c),
       agent: self.agent.clone(),
       account_id: c.account_id.clone(),
       acp_session_id: c.acp_session_id.clone(),
@@ -38,7 +42,7 @@ impl AcpSession {
       unread: None,
       question: None,
       wake_at: None,
-      completed_at: completed_at(visible_turns(&c)),
+      completed_at: completed_at(visible_turns(c)),
       model: session_model(&c.state.controls),
     }
   }
@@ -431,27 +435,19 @@ struct RecordRef<'a> {
   plugin_menus: &'a crate::store::record::PluginMenus,
 }
 
-impl RecordSource for AcpSession {
-  fn record_id(&self) -> String {
-    self.id.clone()
-  }
-
-  fn record_cwd(&self) -> String {
-    self.cwd.clone()
-  }
-
-  fn record_json(&self) -> Vec<u8> {
-    let c = self.core.lock();
-    let r = RecordRef {
+impl AcpSession {
+  /// The record as borrowed fields, with the turns and subagents the caller wants in it
+  fn record_ref<'a>(&'a self, c: &'a Core, turns: TurnsRef<'a>, subagents: Option<Vec<crate::acp::transcript::subagent_tree::RecordRef<'a>>>) -> RecordRef<'a> {
+    RecordRef {
       id: &self.id,
       agent: &self.agent,
       account_id: c.account_id.as_deref(),
       acp_session_id: c.acp_session_id.as_deref(),
       cwd: &self.cwd,
-      title: Self::title_of(&c),
+      title: Self::title_of(c),
       created_at: &self.created_at,
       updated_at: &c.updated_at,
-      turns: TurnsRef { turns: &c.state.turns, pending: c.pending_prompt.as_ref() },
+      turns,
       controls: &c.state.controls,
       usage: c.state.usage.as_ref(),
       commands: &c.state.commands,
@@ -463,12 +459,41 @@ impl RecordSource for AcpSession {
       forked_from: c.lineage.forked_from.as_ref(),
       import_pending: c.lineage.import_pending,
       imported_from: c.lineage.imported_from.as_ref(),
-      subagents: (!c.tree.is_empty()).then(|| c.tree.record_refs()),
+      subagents,
       goal: c.state.goal.as_ref(),
       client_ids: self.client_ids.lock().iter().cloned().collect(),
       plugin_menus: &c.plugin_state.menus,
-    };
-    serde_json::to_vec(&r).unwrap_or_default()
+    }
+  }
+}
+
+impl RecordSource for AcpSession {
+  fn record_id(&self) -> String {
+    self.id.clone()
+  }
+
+  fn record_cwd(&self) -> String {
+    self.cwd.clone()
+  }
+
+  fn record_json(&self) -> Vec<u8> {
+    let c = self.core.lock();
+    let turns = TurnsRef { turns: &c.state.turns, pending: c.pending_prompt.as_ref() };
+    serde_json::to_vec(&self.record_ref(&c, turns, (!c.tree.is_empty()).then(|| c.tree.record_refs()))).unwrap_or_default()
+  }
+
+  fn record_parts(&self, known: &std::collections::HashMap<String, u64>, full: bool) -> RecordParts {
+    let mut guard = self.core.lock();
+    let c = &mut *guard;
+    // The same record `record_json` writes, cut at the row store's boundaries: the head keeps empty lists where the
+    // turns and subagents go
+    let head = serde_json::to_vec(&self.record_ref(c, TurnsRef { turns: &[], pending: None }, (!c.tree.is_empty()).then(Vec::new))).unwrap_or_default();
+    let summary = self.summary_of(c);
+    let mut turns = turn_parts(&mut c.state.turns);
+    if let Some(pending) = c.pending_prompt.as_mut() {
+      turns.extend(turn_parts(std::slice::from_mut(pending)));
+    }
+    RecordParts { summary, head, turns, subagents: c.tree.record_parts(known, full) }
   }
 
   fn record(&self) -> SessionRecord {

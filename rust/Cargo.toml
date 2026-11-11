@@ -30,6 +30,8 @@ acpira-rpc = { path = "crates/acpira-rpc" }
 acpira-agent = { path = "crates/acpira-agent" }
 anyhow = "1.0.100"
 base64 = "0.22"
+# Row hashes of the session store (store/db/body.rs); already in the tree through iroh
+blake3 = "1.8"
 flate2 = "1.1"
 # Animated GIFs sent to models as a sheet of frames (acpira-agent frames.rs): `gif` reads frame timing without decoding
 # pixels, `image` composites the frames, scales them and writes the PNG
@@ -111,6 +113,10 @@ panic = "abort"
 # Debug builds hash their own binary (~150 MB) when they land as the machine's engine (machine_engine/stage.rs) and when
 # they deploy to an SSH host: unoptimized sha2 takes seconds for it, optimized a fraction of one
 [profile.dev.package.sha2]
+opt-level = 3
+
+# Every session save hashes the rows it is handed (store/db/body.rs)
+[profile.dev.package.blake3]
 opt-level = 3
 
 # Shipped engines (scripts/release/build-sidecar.mjs in CI, with --all or --dist): whole-program LTO in one codegen unit

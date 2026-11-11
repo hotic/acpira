@@ -299,7 +299,7 @@ async fn store_cli(args: &[String], home: PathBuf) -> i32 {
     stderr("usage: acpira store revert ID [--home DIR]");
     return 2;
   };
-  let store = crate::store::transcript_store::TranscriptStore::new(home.join("sessions"), Arc::new(|line| stderr(line)), None);
+  let store = crate::store::transcript_store::TranscriptStore::new(home.join("sessions"), Arc::new(stderr), None);
   match store.revert_to_file(id).await {
     Ok(true) => {
       println!("{}", home.join("sessions").join(format!("{id}.json")).display());

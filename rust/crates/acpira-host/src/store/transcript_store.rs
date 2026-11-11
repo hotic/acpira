@@ -19,11 +19,11 @@ use acpira_shared::model_shapes::{ModelShapes, session_model};
 use acpira_shared::transcript::{AgentId, CategoryOp, DiffSource, collect_text_blobs, SessionCategories, SessionControls, SessionModel, SessionSummary, SlashCommand, TurnSettings};
 
 use super::blob_pool;
-use super::db::{BodyLocation, CatalogEntry, SessionDb, migration};
+use super::db::{BodyLocation, CatalogEntry, Health, SaveCache, Saved, SessionDb, migration};
 use super::diff_texts;
 use super::pack;
 use super::file_lock::{with_file_lock, write_atomic};
-use super::record::{RecordSource, SessionRecord};
+use super::record::{RecordParts, RecordSource, SessionRecord};
 use crate::acp::agents::registry::SELF_AGENT_ID;
 use crate::i18n::tp;
 
@@ -35,6 +35,13 @@ const META_FILES: [&str; 3] = ["index.json", "prefs.json", "categories.json"];
 const TRASH_DIR: &str = "trash";
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(400);
 const SAVE_MAX_WAIT: Duration = Duration::from_millis(2000);
+/// How stale the compatibility stub of a database-backed session may run while only its head changes (a title, the
+/// update time): an older engine's list reads it, nothing else does. A flush, new blobs or a foreign write refresh it at once
+const STUB_REFRESH: Duration = Duration::from_secs(30);
+/// How long a database body whose compatibility file vanished (an older engine deleted the session) is kept
+const LOST_BODY_KEPT: Duration = Duration::from_secs(30 * 24 * 3600);
+/// The pre-migration archive is written once per session and read only when SQLite is unavailable
+const ARCHIVE_LEVEL: i32 = 3;
 
 /// Session ids name files and directories under the store root: plain tokens only (the rule session links parse by)
 pub use acpira_shared::session_links::is_session_id;
@@ -153,12 +160,36 @@ struct State {
   /// Models read from records whose index entry has none (written before the field existed, or by an older engine that
   /// drops it), by the file stamp they were read at: the index sync fills them in while the record is unchanged
   models: HashMap<String, (FileStamp, Option<SessionModel>)>,
+  /// Sessions loaded from their pre-migration archive because the database holding their body could not be opened:
+  /// what this store has of them is old, and writing it would bury the newer body
+  stale: HashSet<String>,
+  /// Record files the file backend has checked to be whole records, not compatibility stubs
+  plain: HashSet<String>,
 }
 
 #[derive(Default)]
 struct DatabaseState {
   attempted: bool,
   db: Option<Arc<SessionDb>>,
+  /// The database was found damaged and set aside: its bodies are gone for this store, the files are all there is
+  quarantined: bool,
+}
+
+/// The compatibility stub of a database-backed session as this store last wrote it
+struct StubState {
+  /// The record head it shows, by its row hash
+  head: Option<[u8; 16]>,
+  at: Instant,
+  /// The file afterwards: another stamp means another engine wrote it
+  stamp: Option<FileStamp>,
+}
+
+/// What the search needs to know of a record to tell whether its cached text is current
+pub struct SearchSource {
+  pub id: String,
+  /// The record file's stamp, or for a database body its revision
+  pub stamp: (Option<SystemTime>, u64),
+  pub in_database: bool,
 }
 
 type FileStamp = (u64, Option<SystemTime>);
@@ -195,6 +226,12 @@ pub struct TranscriptStore {
   texts: parking_lot::Mutex<HashMap<String, Arc<parking_lot::Mutex<HashSet<String>>>>>,
   // Opened on first use: constructing a store must not create its sessions directory. Failure keeps the JSON backend.
   db: parking_lot::Mutex<DatabaseState>,
+  /// Per session, what the row store was last handed (`db::SaveCache`). A save takes it out (leaving None) and puts it
+  /// back only if the entry is still there: `forget_saved` in between means the rows changed behind that save
+  saves: parking_lot::Mutex<HashMap<String, Option<SaveCache>>>,
+  stubs: parking_lot::Mutex<HashMap<String, StubState>>,
+  /// Sessions whose folder gained a blob since their stub was written: the next save names it there
+  stub_stale: parking_lot::Mutex<HashSet<String>>,
   me: Weak<TranscriptStore>,
 }
 
@@ -215,6 +252,8 @@ pub type ChangeHook = Arc<dyn Fn(&str, RecordChange) + Send + Sync>;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Stamped {
+  #[serde(default)]
+  updated_at: String,
   #[serde(default)]
   cwd: String,
 }
@@ -264,13 +303,16 @@ impl TranscriptStore {
       on_save_error,
       debounce,
       max_wait,
-      state: parking_lot::Mutex::new(State { pending: HashMap::new(), known: HashSet::new(), unreadable: HashMap::new(), models: HashMap::new() }),
+      state: parking_lot::Mutex::new(State { pending: HashMap::new(), known: HashSet::new(), unreadable: HashMap::new(), models: HashMap::new(), stale: HashSet::new(), plain: HashSet::new() }),
       inflight: Default::default(),
       write_guard: Default::default(),
       agent_home: Default::default(),
       on_change: Default::default(),
       texts: Default::default(),
       db: Default::default(),
+      saves: Default::default(),
+      stubs: Default::default(),
+      stub_stale: Default::default(),
       me: me.clone(),
     })
   }
@@ -279,10 +321,13 @@ impl TranscriptStore {
     &self.dir
   }
 
+  /// `ACPIRA_STORE=files`: bodies are written as whole record files again. The database is still read, so a migrated
+  /// session opens with everything it has and moves back to its file on its next save
+  fn files_mode() -> bool {
+    std::env::var("ACPIRA_STORE").is_ok_and(|value| value.eq_ignore_ascii_case("files"))
+  }
+
   fn database(&self) -> Option<Arc<SessionDb>> {
-    if std::env::var("ACPIRA_STORE").is_ok_and(|value| value.eq_ignore_ascii_case("files")) {
-      return None;
-    }
     let mut state = self.db.lock();
     if !state.attempted {
       // A read of a missing store stays side-effect free. `ensure` creates the directory before writes and list syncs.
@@ -293,6 +338,12 @@ impl TranscriptStore {
       state.db = SessionDb::open(&self.dir).inspect_err(|e| (self.log)(&format!("sessions: SQLite unavailable, using record files ({e:#})"))).ok().map(Arc::new);
     }
     state.db.clone()
+  }
+
+  /// Forget what this store remembers of a session's rows and stub: they changed behind the save path
+  fn forget_saved(&self, id: &str) {
+    self.saves.lock().remove(id);
+    self.stubs.lock().remove(id);
   }
 
   /// Install the check every record write passes first
@@ -330,6 +381,8 @@ impl TranscriptStore {
       return Err(anyhow!("{id} is not a session id"));
     }
     self.ensure().await?;
+    let chain = self.chain(id);
+    let _g = chain.lock().await;
     let location = {
       let id = id.to_owned();
       self.db_call(move |db| db.body_location(&id)).await?.flatten()
@@ -338,30 +391,72 @@ impl TranscriptStore {
       return Ok(false);
     }
     let record = self.load_detailed(id).await.map_err(|error| anyhow!(error.detail()))?;
-    let path = confined(&self.dir, &format!("{id}.json")).await.ok_or_else(|| anyhow!("session {id}: outside the store"))?;
-    write_atomic(&path, &serde_json::to_vec(&record)?, None).await?;
-    let record = Arc::new(record);
-    let _ = self.db_call(move |db| db.mark_file(&record)).await?;
+    self.write_whole(id, &serde_json::to_vec(&record)?, record.summary()).await?;
     Ok(true)
   }
 
-  /// Run SQLite's routine checks. Any failure closes this store's handle, preserves the files under a quarantine name and
-  /// leaves this store on its file backend for the rest of its life.
-  pub async fn maintain_database(&self) -> Result<()> {
-    if self.database().is_none() {
-      return Ok(());
-    }
-    if let Err(error) = self.db_call(SessionDb::maintain).await {
-      if let Err(quarantine) = self.quarantine_database().await {
-        (self.log)(&format!("sessions: SQLite quarantine failed ({quarantine:#})"));
-      }
-      return Err(error);
-    }
+  /// A complete record file in place of whatever the session had, the catalogue following: the rows a database body
+  /// had go once the file is there
+  async fn write_whole(&self, id: &str, bytes: &[u8], summary: SessionSummary) -> Result<()> {
+    let path = confined(&self.dir, &format!("{id}.json")).await.ok_or_else(|| anyhow!("session {id}: outside the store"))?;
+    write_atomic(&path, bytes, None).await?;
+    self.forget_saved(id);
+    self.state.lock().plain.insert(id.to_owned());
+    let stamp = file_stamp(&path).await.map(|(size, modified)| (size, file_modified_ns(modified)));
+    let _ = self.db_call(move |db| db.mark_file(&summary, stamp)).await?;
     Ok(())
   }
 
+  /// Run SQLite's routine checks. Only a database found damaged is set aside under a quarantine name, this store
+  /// carrying on with record files; a lock another engine holds or a disk hiccup is an error to log, and the database
+  /// stays where it is
+  pub async fn maintain_database(&self) -> Result<()> {
+    match self.db_call(SessionDb::maintain).await? {
+      Some(Health::Corrupt(why)) => {
+        if let Err(quarantine) = self.quarantine_database().await {
+          (self.log)(&format!("sessions: SQLite quarantine failed ({quarantine:#})"));
+        }
+        Err(anyhow!("SQLite check failed: {why}"))
+      }
+      Some(Health::Sound) => {
+        self.purge_lost_bodies().await;
+        Ok(())
+      }
+      None => Ok(()),
+    }
+  }
+
+  /// Database bodies whose compatibility file has been gone from both the list and the trash for `LOST_BODY_KEPT`: an
+  /// older engine deleted those sessions. Until then a reconcile only hides them, so a file that is missing for any
+  /// other reason costs nothing
+  async fn purge_lost_bodies(&self) {
+    let Ok(Some(entries)) = self.db_call(SessionDb::catalog).await else { return };
+    let cutoff = SystemTime::now().checked_sub(LOST_BODY_KEPT).and_then(timestamp_ms).unwrap_or(0);
+    for entry in entries {
+      let id = entry.summary.id;
+      if entry.body != BodyLocation::Database || entry.trashed_at.is_none_or(|at| at > cutoff) {
+        continue;
+      }
+      let file = format!("{id}.json");
+      if fs::metadata(self.dir.join(&file)).await.is_ok() || fs::metadata(self.dir.join(TRASH_DIR).join(&file)).await.is_ok() {
+        continue;
+      }
+      self.forget_saved(&id);
+      let gone = id.clone();
+      if let Err(error) = self.db_call(move |db| db.delete_session(&gone)).await {
+        (self.log)(&format!("session {id}: SQLite row not removed ({error:#})"));
+      }
+    }
+  }
+
   async fn quarantine_database(&self) -> Result<()> {
-    let _ = self.db.lock().db.take();
+    {
+      let mut state = self.db.lock();
+      state.db = None;
+      state.quarantined = true;
+    }
+    self.saves.lock().clear();
+    self.stubs.lock().clear();
     let stamp = timestamp_ms(SystemTime::now()).unwrap_or_default();
     let mut kept = vec![];
     for suffix in ["", "-wal", "-shm"] {
@@ -390,21 +485,15 @@ impl TranscriptStore {
     if fs::metadata(self.dir.join(TRASH_DIR).join(format!("{id}.json"))).await.is_ok() {
       return Ok(false);
     }
-    if let Ok(here) = self.load_detailed(id).await
-      && here.updated_at > record.updated_at
-    {
+    if self.updated_at_of(id).await.is_some_and(|here| here > record.updated_at) {
       return Ok(false);
-    }
-    write_atomic(&path, &serde_json::to_vec(record)?, None).await?;
-    if self.database().is_some() {
-      // Remote copies stay whole JSON on disk; replacing a migrated local copy first makes the file complete.
-      let marked = Arc::new(record.clone());
-      let _ = self.db_call(move |db| db.mark_file(&marked)).await?;
     }
     let summary = record.summary();
     if self.database().is_some() {
-      self.sync_catalog(std::slice::from_ref(&summary), &HashSet::from([id.clone()])).await?;
+      // Remote copies stay whole JSON on disk; a migrated local copy gives its rows up once the file is complete
+      self.write_whole(id, &serde_json::to_vec(record)?, summary).await?;
     } else {
+      write_atomic(&path, &serde_json::to_vec(record)?, None).await?;
       // The file backend's index entry goes with the record for engines that do not drive this copy.
       let mut index = self.read_index().await;
       match index.iter_mut().find(|s| s.id == *id) {
@@ -417,6 +506,22 @@ impl TranscriptStore {
     Ok(true)
   }
 
+  /// A stored record's `updatedAt` without building it: the head row of a database body, else the file with its
+  /// transcript skipped over
+  async fn updated_at_of(&self, id: &str) -> Option<String> {
+    let raw = match self.db_head(id).await {
+      Some(head) => head,
+      None => fs::read(self.dir.join(format!("{id}.json"))).await.ok()?,
+    };
+    serde_json::from_slice::<Stamped>(&raw).ok().map(|stamped| stamped.updated_at)
+  }
+
+  /// The record head of a database body (`SessionDb::load_head`); None for a file-backed session
+  async fn db_head(&self, id: &str) -> Option<Vec<u8>> {
+    let id = id.to_owned();
+    self.db_call(move |db| db.load_head(&id)).await.ok().flatten().flatten()
+  }
+
   /// For each of `ids` with a record here (not in the trash): its `updatedAt` and the blobs it has
   pub async fn copy_stamps(&self, ids: &[String]) -> HashMap<String, CopyStamp> {
     let mut out = HashMap::new();
@@ -424,10 +529,51 @@ impl TranscriptStore {
       if fs::metadata(self.dir.join(TRASH_DIR).join(format!("{id}.json"))).await.is_ok() {
         continue;
       }
-      let Ok(record) = self.load_detailed(id).await else { continue };
-      out.insert(id.clone(), CopyStamp { updated_at: record.updated_at, blobs: self.blob_names(id).await });
+      let Some(updated_at) = self.updated_at_of(id).await else { continue };
+      out.insert(id.clone(), CopyStamp { updated_at, blobs: self.blob_names(id).await });
     }
     out
+  }
+
+  /// What the search checks its cache against: every listed record with the stamp its text goes by
+  pub async fn search_sources(&self) -> Vec<SearchSource> {
+    let files = self.record_files().await.unwrap_or_default();
+    let bodies: HashMap<String, u64> = self.db_call(SessionDb::body_revisions).await.ok().flatten().unwrap_or_default().into_iter().collect();
+    files
+      .into_iter()
+      .map(|(id, (len, modified))| match bodies.get(&id) {
+        Some(revision) => SearchSource { id, stamp: (None, *revision), in_database: true },
+        None => SearchSource { id, stamp: (modified, len), in_database: false },
+      })
+      .collect()
+  }
+
+  /// A database body as record JSON, not parsed; None for a file-backed session. `main_only` leaves the subagents'
+  /// transcripts out. Blocking
+  pub fn body_text(&self, id: &str, main_only: bool) -> Option<Vec<u8>> {
+    self.database()?.load_raw(id, main_only).inspect_err(|error| (self.log)(&format!("session {id}: body unreadable ({error:#})"))).ok().flatten()
+  }
+
+  /// Stored bytes per database body, for the Storage tab
+  pub async fn body_sizes(&self) -> HashMap<String, u64> {
+    self.db_call(SessionDb::body_sizes).await.ok().flatten().unwrap_or_default().into_iter().collect()
+  }
+
+  /// How many subagents a database body holds; None for a file-backed session. Blocking
+  pub fn body_subagents(&self, id: &str) -> Option<u32> {
+    let db = self.database()?;
+    (db.body_location(id).ok().flatten() == Some(BodyLocation::Database)).then(|| db.subagent_count(id).unwrap_or(0))
+  }
+
+  /// A record file as the whole record's JSON: a packed one expanded, a compatibility stub whose database is out of
+  /// reach as its pre-migration archive. Blocking
+  pub fn file_text(&self, id: &str) -> Option<Vec<u8>> {
+    let raw = std::fs::read(self.dir.join(format!("{id}.json"))).ok()?;
+    if migration::is_stub(&raw) {
+      let archive = std::fs::read(self.dir.join(id).join(migration::MIGRATED_FILE)).ok();
+      return Some(archive.and_then(|bytes| zstd::stream::decode_all(bytes.as_slice()).ok()).unwrap_or(raw));
+    }
+    Some(pack::expand_raw(&self.dir, raw))
   }
 
   /// The blobs a session has here, by name
@@ -570,31 +716,31 @@ impl TranscriptStore {
     Ok(out)
   }
 
-  /// Reconcile the SQLite catalogue with record files at startup and on the bus's index event. The initial index import
-  /// has no stamp and is trusted once; a later stamp change means an older engine rewrote the file and forces a fresh read.
+  /// Reconcile the SQLite catalogue with record files at startup and on the bus's index event, writing only the entries
+  /// that differ. The initial index import has no stamp and is trusted once; a later stamp change means another engine
+  /// rewrote the file and forces a fresh read. A database body is never dropped here: a session whose compatibility
+  /// file is missing is hidden like a trashed one (`purge_lost_bodies` removes it much later), and one that cannot be
+  /// read right now keeps the entry it has
   async fn sync_catalog(&self, mine: &[SessionSummary], own: &HashSet<String>) -> Result<Vec<SessionSummary>> {
     let mut entries = self.db_call(SessionDb::catalog).await?.unwrap_or_default();
-    if entries.is_empty() {
+    // An empty catalogue starts from the legacy index: nothing of it is stored until its record file is seen below
+    let seeded = entries.is_empty();
+    if seeded {
       entries = self
         .read_index()
         .await
         .into_iter()
         .map(|summary| CatalogEntry { summary, body: BodyLocation::File, file_size: None, file_modified_ns: None, trashed_at: None })
         .collect();
-      if !entries.is_empty() {
-        let seeds = entries.clone();
-        let _ = self.db_call(move |db| db.apply_catalog(&seeds)).await?;
-      }
     }
     let stored: HashMap<String, CatalogEntry> = entries.into_iter().map(|entry| (entry.summary.id.clone(), entry)).collect();
     let local: HashMap<&str, &SessionSummary> = mine.iter().map(|s| (s.id.as_str(), s)).collect();
     let mut seen = HashSet::new();
-    let mut desired = vec![];
+    let (mut changed, mut gone) = (vec![], vec![]);
     let mut out = vec![];
-    for id in self.record_ids().await? {
+    for (id, stamp) in self.record_files().await? {
       seen.insert(id.clone());
-      let stamp = file_stamp(&self.dir.join(format!("{id}.json"))).await;
-      let (file_size, modified_ns) = stamp.map_or((None, None), |(size, modified)| (Some(size), file_modified_ns(modified)));
+      let (file_size, modified_ns) = (Some(stamp.0), file_modified_ns(stamp.1));
       let entry = stored.get(&id);
       let stored_summary = entry.map(|entry| &entry.summary);
       let other = stored_summary.or_else(|| local.get(id.as_str()).copied());
@@ -608,31 +754,54 @@ impl TranscriptStore {
         None
       };
       let mut summary = match pick {
-        Some(summary) if stamp.is_some() && !summary.cwd.is_empty() => summary.clone(),
-        _ => {
-          let Some(summary) = self.load_summary(&id, other.cloned(), stamp).await else { continue };
-          summary
-        }
+        Some(summary) if !summary.cwd.is_empty() => summary.clone(),
+        _ => match self.load_summary(&id, other.cloned(), Some(stamp)).await {
+          Some(summary) => summary,
+          // A database body that does not read now (a lock, a damaged row) stays listed as the catalogue has it: opening
+          // it reports why, and nothing is lost meanwhile. An unreadable file is left out, its entry untouched
+          None => match entry.filter(|entry| entry.body == BodyLocation::Database && !entry.summary.cwd.is_empty()) {
+            Some(entry) => {
+              out.push(entry.summary.clone());
+              continue;
+            }
+            None => continue,
+          },
+        },
       };
       if summary.model.is_none() {
         summary.model = self.cached_model(&id).await;
       }
-      desired.push(CatalogEntry { summary: summary.clone(), body: entry.map_or(BodyLocation::File, |entry| entry.body), file_size, file_modified_ns: modified_ns, trashed_at: None });
+      let desired = CatalogEntry { summary: stored_form(&summary), body: entry.map_or(BodyLocation::File, |entry| entry.body), file_size, file_modified_ns: modified_ns, trashed_at: None };
+      if seeded || entry != Some(&desired) {
+        changed.push(desired);
+      }
       out.push(summary);
     }
-    // No live record: a stub in the trash keeps the catalogue row hidden for undo; no stub anywhere means an older engine
-    // deleted the session. A crash between the DB commit and the first stub still has the original full file, handled above.
-    for entry in stored.values().filter(|entry| !seen.contains(&entry.summary.id)) {
-      let trashed_file = self.dir.join(TRASH_DIR).join(format!("{}.json", entry.summary.id));
-      let trashed_at = fs::metadata(trashed_file).await.ok().and_then(|meta| meta.modified().ok()).and_then(timestamp_ms).or(entry.trashed_at);
-      if let Some(trashed_at) = trashed_at {
-        let mut entry = entry.clone();
-        entry.trashed_at = Some(trashed_at);
-        desired.push(entry);
+    // No live record. A file in the trash keeps the entry for undo. Without one, a file-backed entry has nothing left and
+    // goes; a database body stays, hidden, in case the file is only missing (a crash before the first stub, a restore
+    // from a backup): only an explicit removal or `purge_lost_bodies` takes a body
+    if !seeded {
+      let now = timestamp_ms(SystemTime::now());
+      for entry in stored.values().filter(|entry| !seen.contains(&entry.summary.id)) {
+        let trashed_file = self.dir.join(TRASH_DIR).join(format!("{}.json", entry.summary.id));
+        let in_trash = fs::metadata(trashed_file).await.ok().and_then(|meta| meta.modified().ok()).and_then(timestamp_ms);
+        let trashed_at = match (in_trash, entry.body) {
+          (Some(at), _) => Some(at),
+          (None, BodyLocation::Database) => entry.trashed_at.or(now),
+          (None, BodyLocation::File) => {
+            gone.push(entry.summary.id.clone());
+            continue;
+          }
+        };
+        if entry.trashed_at != trashed_at {
+          changed.push(CatalogEntry { trashed_at, ..entry.clone() });
+        }
       }
     }
     sort_index(&mut out);
-    let _ = self.db_call(move |db| db.apply_catalog(&desired)).await?;
+    if !changed.is_empty() || !gone.is_empty() {
+      let _ = self.db_call(move |db| db.apply_catalog(&changed, &gone)).await?;
+    }
     Ok(out)
   }
 
@@ -722,6 +891,28 @@ impl TranscriptStore {
     items.into_iter().filter(|v| v.get("id").is_some_and(Value::is_string)).filter_map(|v| serde_json::from_value(v).ok()).collect()
   }
 
+  /// Every record file in the live directory with its stamp, read in one blocking pass (a stat per file through the
+  /// async runtime would cost a thread hop each)
+  async fn record_files(&self) -> Result<Vec<(String, FileStamp)>> {
+    let dir = self.dir.clone();
+    tokio::task::spawn_blocking(move || {
+      let mut files = vec![];
+      for entry in std::fs::read_dir(&dir)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if META_FILES.contains(&name.as_str()) {
+          continue;
+        }
+        let Some(id) = name.strip_suffix(".json").filter(|id| is_session_id(id)) else { continue };
+        // The directory entry's own metadata costs nothing on Windows; only a link is followed to the record itself
+        let Ok(meta) = entry.metadata().and_then(|meta| if meta.file_type().is_symlink() { std::fs::metadata(entry.path()) } else { Ok(meta) }) else { continue };
+        files.push((id.to_owned(), (meta.len(), meta.modified().ok())));
+      }
+      Ok(files)
+    })
+    .await?
+  }
+
   /// Ids with a record file in the live directory (not the trash)
   async fn record_ids(&self) -> Result<Vec<String>> {
     let mut rd = fs::read_dir(&self.dir).await?;
@@ -749,19 +940,43 @@ impl TranscriptStore {
     if let Some(src) = pending {
       return Ok(src.record());
     }
-    if let Some(mut record) = self.read_db_record(id).await? {
-      if let Some(path) = confined(&self.dir, &format!("{id}.json")).await
-        && let Ok(raw) = fs::read(path).await
-        && let Ok(stub) = serde_json::from_slice::<SessionRecord>(&raw)
-        && stub.turns.iter().any(migration::is_placeholder)
-      {
-        record = migration::splice(stub, record).map_err(|error| RecordLoadError::Corrupt { reason: error.to_string() })?;
-      }
-      self.state.lock().known.insert(id.to_owned());
-      record.fold_turn_usage();
-      return Ok(record);
+    // A session is here while its file is in the live directory, wherever its body is kept: one moved to the trash or
+    // deleted by another window is gone for every reader, as it was when the file was the record
+    let path = confined(&self.dir, &format!("{id}.json")).await;
+    let stamp = match &path {
+      Some(path) => file_stamp(path).await,
+      None => None,
+    };
+    if path.is_some() && stamp.is_none() {
+      return Err(RecordLoadError::Missing);
     }
-    let path = confined(&self.dir, &format!("{id}.json")).await.ok_or(RecordLoadError::StoreUnavailable)?;
+    let mut file_wins = false;
+    if let Some(mut record) = self.read_db_record(id).await? {
+      // The compatibility file is read only when it is not the stub this store wrote: an older engine may have added
+      // to it, or a file backend may have written the whole record over it while the database could not be opened
+      let ours = stamp.is_some() && self.stubs.lock().get(id).is_some_and(|stub| stub.stamp == stamp);
+      if !ours
+        && let Some(path) = &path
+        && let Ok(raw) = fs::read(path).await
+      {
+        if migration::is_stub(&raw) {
+          if let Ok(stub) = serde_json::from_slice::<SessionRecord>(&raw) {
+            record = migration::merge(record, stub).map_err(|error| RecordLoadError::Corrupt { reason: error.to_string() })?;
+          }
+        } else {
+          file_wins = serde_json::from_slice::<Stamped>(&raw).is_ok_and(|file| file.updated_at > record.updated_at);
+        }
+      }
+      if !file_wins {
+        self.state.lock().known.insert(id.to_owned());
+        record.fold_turn_usage();
+        return Ok(record);
+      }
+      // A whole record newer than the database body: the file is the session now, and the rows give way to it
+      (self.log)(&format!("session {id}: its record file is newer than its database body, the file is kept"));
+      self.forget_saved(id);
+    }
+    let path = path.ok_or(RecordLoadError::StoreUnavailable)?;
     let raw = match fs::read(&path).await {
       Ok(raw) => raw,
       Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(RecordLoadError::Missing),
@@ -771,10 +986,14 @@ impl TranscriptStore {
       Ok(r) if r.id == id && is_session_id(&r.id) => {
         // Database and cold-pack stubs both keep their archived body beside the compatibility file.
         let mut r = if r.turns.iter().any(migration::is_placeholder) {
+          // The body is in a database this store cannot read: the archive has the session as it was when it moved there
           let archive = match fs::read(self.dir.join(id).join(migration::MIGRATED_FILE)).await {
             Ok(bytes) => bytes,
-            Err(error) => return Err(RecordLoadError::Unreadable { reason: format!("{}: {error}", migration::MIGRATED_FILE) }),
+            Err(error) => return Err(RecordLoadError::Unreadable { reason: format!("the session is kept in {}, which is unavailable, and {} cannot be read ({error})", super::db::DB_FILE, migration::MIGRATED_FILE) }),
           };
+          if !self.db.lock().quarantined {
+            self.state.lock().stale.insert(id.to_owned());
+          }
           migration::splice_archive(r, &archive).map_err(|error| RecordLoadError::Corrupt { reason: error.to_string() })?
         } else if r.turns.iter().any(pack::is_placeholder) {
           // Only a missing archive means there is none; one that cannot be read now must not load as a record without
@@ -788,6 +1007,12 @@ impl TranscriptStore {
         } else {
           r
         };
+        if file_wins {
+          let (summary, stamp) = (r.summary(), file_stamp(&path).await.map(|(size, modified)| (size, file_modified_ns(modified))));
+          if let Err(error) = self.db_call(move |db| db.mark_file(&summary, stamp)).await {
+            (self.log)(&format!("session {id}: catalogue not updated ({error:#})"));
+          }
+        }
         self.state.lock().known.insert(id.to_owned());
         r.fold_turn_usage();
         Ok(r)
@@ -813,11 +1038,10 @@ impl TranscriptStore {
     if let Some(src) = pending {
       return Some(src.record().controls);
     }
-    if let Some(record) = self.read_db_record(id).await.ok().flatten() {
-      return Some(record.controls);
-    }
-    let path = confined(&self.dir, &format!("{id}.json")).await?;
-    let raw = fs::read(&path).await.ok()?;
+    let raw = match self.db_head(id).await {
+      Some(head) => head,
+      None => fs::read(confined(&self.dir, &format!("{id}.json")).await?).await.ok()?,
+    };
     serde_json::from_slice::<ControlsOnly>(&raw).ok().filter(|r| r.id == id).map(|r| r.controls)
   }
 
@@ -836,11 +1060,10 @@ impl TranscriptStore {
     if let Some(src) = pending {
       return Some(src.record().commands);
     }
-    if let Some(record) = self.read_db_record(id).await.ok().flatten() {
-      return Some(record.commands);
-    }
-    let path = confined(&self.dir, &format!("{id}.json")).await?;
-    let raw = fs::read(&path).await.ok()?;
+    let raw = match self.db_head(id).await {
+      Some(head) => head,
+      None => fs::read(confined(&self.dir, &format!("{id}.json")).await?).await.ok()?,
+    };
     serde_json::from_slice::<CommandsOnly>(&raw).ok().filter(|r| r.id == id).map(|r| r.commands)
   }
 
@@ -897,7 +1120,7 @@ impl TranscriptStore {
       let chain = self.chain(&id);
       let _g = chain.lock().await;
       let Some(p) = self.state.lock().pending.remove(&id) else { return };
-      if let Err(e) = self.write_locked(p.source).await {
+      if let Err(e) = self.write_locked(p.source, false).await {
         self.report(&id, &e);
       }
       return;
@@ -917,7 +1140,9 @@ impl TranscriptStore {
       return Ok(());
     }
     self.state.lock().pending.remove(&id);
-    self.write(source).await
+    // An explicit flush hands the row store every piece again: whatever an incremental save may have passed over
+    // (`RecordSource::record_parts`) is settled here
+    self.write(source, true).await
   }
 
   /// Whether this store has had the record on disk
@@ -948,14 +1173,15 @@ impl TranscriptStore {
 
   /// Creates the file or replaces it while it is still there; a record this store once had on disk that is gone now was
   /// deleted by another window, and writing it back would undo that
-  async fn write(&self, source: Arc<dyn RecordSource>) -> Result<()> {
+  async fn write(&self, source: Arc<dyn RecordSource>, full: bool) -> Result<()> {
     let chain = self.chain(&source.record_id());
     let _g = chain.lock().await;
-    self.write_locked(source).await
+    self.write_locked(source, full).await
   }
 
-  /// `write` with the record's chain already held
-  async fn write_locked(&self, source: Arc<dyn RecordSource>) -> Result<()> {
+  /// `write` with the record's chain already held. `full` asks the source for every piece of the record; without it a
+  /// database save may skip what the store is known to hold
+  async fn write_locked(&self, source: Arc<dyn RecordSource>, full: bool) -> Result<()> {
     let id = source.record_id();
     if !is_session_id(&id) {
       return Ok(());
@@ -969,41 +1195,129 @@ impl TranscriptStore {
       (self.log)(&format!("session {id}: another engine holds it, not written"));
       return Ok(());
     }
-    if self.knew(&id) && fs::metadata(&path).await.is_err() {
+    let on_disk = file_stamp(&path).await;
+    if self.knew(&id) && on_disk.is_none() {
       (self.log)(&format!("session {id}: deleted by another window, not written back"));
       return Ok(());
     }
-    // Big diff texts go to the session's blob folder first, so the record never names a blob that is not there
-    let known = self.texts.lock().entry(id.clone()).or_default().clone();
-    let (bytes, texts) = collect_text_blobs(diff_texts::sink(known.clone(), self.dir.join(&id)), || source.record_json());
-    if !texts.is_empty() {
-      fs::create_dir_all(self.dir.join(&id)).await?;
-      let dir = confined(&self.dir, &id).await.ok_or_else(|| anyhow!("session {id}: blob folder outside the store"))?;
-      let pool = self.dir.join(blob_pool::POOL_DIR);
-      let texts = tokio::task::spawn_blocking(move || diff_texts::store(&pool, &dir, &texts).map(|_| texts)).await??;
-      known.lock().extend(texts.into_iter().map(|(name, _)| name));
-    }
-    if self.database().is_some() {
-      let record = Arc::new(serde_json::from_slice::<SessionRecord>(&bytes)?);
-      let text = String::from_utf8_lossy(&bytes);
-      let names: Vec<String> = self.blob_names(&id).await.into_iter().filter(|name| text.contains(name.as_str())).collect();
-      let saving = record.clone();
-      let _ = self.db_call(move |db| db.save_record(&saving)).await?.ok_or_else(|| anyhow!("session {id}: SQLite is unavailable"))?;
-      // Commit the body first. A failure after this point leaves the complete legacy file in place for a safe retry.
-      let folder = self.dir.join(&id);
-      fs::create_dir_all(&folder).await?;
-      let archive = confined(&folder, migration::MIGRATED_FILE).await.ok_or_else(|| anyhow!("session {id}: migration archive outside the store"))?;
-      if fs::metadata(&archive).await.is_err() {
-        let packed = tokio::task::spawn_blocking(move || zstd::bulk::compress(&bytes, 12)).await??;
-        write_atomic(&archive, &packed, None).await?;
-      }
-      write_atomic(&path, &migration::stub(&record, &names)?, None).await?;
-    } else {
-      write_atomic(&path, &bytes, None).await?;
+    match self.database().filter(|_| !Self::files_mode()) {
+      Some(db) => self.write_rows(db, &id, &path, on_disk, &source, full).await?,
+      None => self.write_file(&id, &path, on_disk.is_some(), &source).await?,
     }
     self.state.lock().known.insert(id.clone());
     if self.on_change.read().is_some() {
       self.changed(&id, RecordChange::Written { cwd: &source.record_cwd() });
+    }
+    Ok(())
+  }
+
+  /// Big diff texts go to the session's blob folder before the record that names them is written, so it never names a
+  /// blob that is not there
+  async fn store_texts(&self, id: &str, known: &Arc<parking_lot::Mutex<HashSet<String>>>, texts: Vec<(String, String)>) -> Result<()> {
+    if texts.is_empty() {
+      return Ok(());
+    }
+    fs::create_dir_all(self.dir.join(id)).await?;
+    let dir = confined(&self.dir, id).await.ok_or_else(|| anyhow!("session {id}: blob folder outside the store"))?;
+    let pool = self.dir.join(blob_pool::POOL_DIR);
+    let texts = tokio::task::spawn_blocking(move || diff_texts::store(&pool, &dir, &texts).map(|_| texts)).await??;
+    known.lock().extend(texts.into_iter().map(|(name, _)| name));
+    self.stub_stale.lock().insert(id.to_owned());
+    Ok(())
+  }
+
+  /// The whole record as one file: the backend of a store without a database, and of `ACPIRA_STORE=files`
+  async fn write_file(&self, id: &str, path: &Path, exists: bool, source: &Arc<dyn RecordSource>) -> Result<()> {
+    if self.state.lock().stale.contains(id) {
+      return Err(anyhow!("session {id}: its transcript is kept in {}, which could not be opened; not written, so the newer transcript there is not replaced", super::db::DB_FILE));
+    }
+    // A stub this store never loaded (a record handed in from elsewhere) has its body in the database too
+    if exists && self.database().is_none() && !self.db.lock().quarantined && !self.state.lock().plain.contains(id) {
+      if fs::read(path).await.is_ok_and(|raw| migration::is_stub(&raw)) {
+        return Err(anyhow!("session {id}: its transcript is kept in {}, which could not be opened; not written", super::db::DB_FILE));
+      }
+      self.state.lock().plain.insert(id.to_owned());
+    }
+    let known = self.texts.lock().entry(id.to_owned()).or_default().clone();
+    let (bytes, texts) = collect_text_blobs(diff_texts::sink(known.clone(), self.dir.join(id)), || source.record_json());
+    self.store_texts(id, &known, texts).await?;
+    // `ACPIRA_STORE=files` with the database open: a body it holds moves back to its file with this write
+    let key = id.to_owned();
+    if self.db_call(move |db| db.body_location(&key)).await?.flatten() == Some(BodyLocation::Database) {
+      let summary = serde_json::from_slice::<SessionRecord>(&bytes)?.summary();
+      return self.write_whole(id, &bytes, summary).await;
+    }
+    write_atomic(path, &bytes, None).await
+  }
+
+  /// A database save: the pieces that changed go to their rows in one transaction, then the compatibility stub follows
+  /// when it is due. The body is committed first, so a failure afterwards leaves a complete file or a stale stub, both
+  /// of which the next save repairs
+  async fn write_rows(&self, db: Arc<SessionDb>, id: &str, path: &Path, on_disk: Option<FileStamp>, source: &Arc<dyn RecordSource>, full: bool) -> Result<()> {
+    let known = self.texts.lock().entry(id.to_owned()).or_default().clone();
+    // Out of its slot while the save runs: a failure leaves the slot empty, and the next save reads the stored hashes again
+    let mut cache = self.saves.lock().insert(id.to_owned(), None).flatten().unwrap_or_default();
+    let mut full = full;
+    let parts = loop {
+      let skip = if full { HashMap::new() } else { cache.known() };
+      let (parts, texts) = collect_text_blobs(diff_texts::sink(known.clone(), self.dir.join(id)), || source.record_parts(&skip, full));
+      self.store_texts(id, &known, texts).await?;
+      let (saving, key) = (db.clone(), id.to_owned());
+      let (saved, parts, back) = tokio::task::spawn_blocking(move || {
+        let saved = saving.save_parts(&key, &parts, &mut cache);
+        (saved, parts, cache)
+      })
+      .await?;
+      cache = back;
+      match saved? {
+        Saved::Done(_) => break parts,
+        Saved::NeedsFull if !full => full = true,
+        Saved::NeedsFull => return Err(anyhow!("session {id}: the row store asked for more than the whole record")),
+      }
+    };
+    let head = cache.head();
+    if let Some(slot) = self.saves.lock().get_mut(id) {
+      *slot = Some(cache);
+    }
+    self.state.lock().stale.remove(id);
+    let grown = self.stub_stale.lock().remove(id);
+    let due = match self.stubs.lock().get(id) {
+      None => true,
+      Some(stub) => stub.stamp != on_disk || grown || (stub.head != head && (full || stub.at.elapsed() >= STUB_REFRESH)),
+    };
+    if due {
+      self.write_stub(&db, id, path, on_disk.is_some(), &parts, head).await.inspect_err(|_| {
+        // Whatever the stub had to tell is still owed
+        self.stubs.lock().remove(id);
+      })?;
+    }
+    Ok(())
+  }
+
+  /// The small record an older engine reads in place of a database body (`migration::stub`). The first one this store
+  /// writes over a whole legacy record archives that record beside the blobs, once: it is what a store without the
+  /// database falls back to
+  async fn write_stub(&self, db: &Arc<SessionDb>, id: &str, path: &Path, exists: bool, parts: &RecordParts, head: Option<[u8; 16]>) -> Result<()> {
+    let folder = self.dir.join(id);
+    if exists && !self.stubs.lock().contains_key(id) && fs::metadata(folder.join(migration::MIGRATED_FILE)).await.is_err() {
+      let raw = fs::read(path).await?;
+      if !migration::is_stub(&raw) {
+        fs::create_dir_all(&folder).await?;
+        let archive = confined(&folder, migration::MIGRATED_FILE).await.ok_or_else(|| anyhow!("session {id}: migration archive outside the store"))?;
+        let dir = self.dir.clone();
+        // A cold-packed record is archived whole, like any other
+        let packed = tokio::task::spawn_blocking(move || zstd::bulk::compress(&pack::expand_raw(&dir, raw), ARCHIVE_LEVEL)).await??;
+        write_atomic(&archive, &packed, None).await?;
+      }
+    }
+    let names = self.blob_names(id).await;
+    write_atomic(path, &migration::stub(&parts.head, &names)?, None).await?;
+    let stamp = file_stamp(path).await;
+    self.stubs.lock().insert(id.to_owned(), StubState { head, at: Instant::now(), stamp });
+    if let Some((size, modified)) = stamp {
+      // The catalogue learns the stub's stamp, so the next reconcile does not read the record to see what changed
+      let (db, key) = (db.clone(), id.to_owned());
+      tokio::task::spawn_blocking(move || db.set_file_stamp(&key, size, file_modified_ns(modified))).await??;
     }
     Ok(())
   }
@@ -1015,8 +1329,14 @@ impl TranscriptStore {
     }
     self.state.lock().pending.remove(id);
     self.settle_inflight(id).await;
-    self.state.lock().known.remove(id);
+    {
+      let mut state = self.state.lock();
+      state.known.remove(id);
+      state.stale.remove(id);
+      state.plain.remove(id);
+    }
     self.texts.lock().remove(id);
+    self.forget_saved(id);
     let mut log = None;
     let mut cwd = String::new();
     let hooked = self.on_change.read().is_some();
@@ -1097,6 +1417,7 @@ impl TranscriptStore {
     }
     self.state.lock().pending.remove(id);
     self.settle_inflight(id).await;
+    self.forget_saved(id);
     let trash = self.dir.join(TRASH_DIR);
     fs::create_dir_all(&trash).await?;
     let file = format!("{id}.json");
@@ -1186,13 +1507,18 @@ impl TranscriptStore {
 
   /// Writes whatever is still debounced
   pub async fn dispose(&self) {
-    self.flush_pending().await;
+    self.flush_queued(true).await;
   }
 
+  /// The debounced saves brought forward, as they would have been written
   async fn flush_pending(&self) {
+    self.flush_queued(false).await;
+  }
+
+  async fn flush_queued(&self, full: bool) {
     let queued: Vec<(String, Arc<dyn RecordSource>)> = self.state.lock().pending.drain().map(|(k, p)| (k, p.source)).collect();
     for (id, src) in queued {
-      if let Err(e) = self.write(src).await {
+      if let Err(e) = self.write(src, full).await {
         self.report(&id, &e);
       }
     }
@@ -1214,6 +1540,7 @@ impl TranscriptStore {
     // Shared with every session holding the same content (`blob_pool`); a file already there is never rewritten
     let (pool, owned, file) = (self.dir.join(blob_pool::POOL_DIR), bytes.to_vec(), name.clone());
     let path = tokio::task::spawn_blocking(move || blob_pool::place(&pool, &dir, &file, &owned)).await??;
+    self.stub_stale.lock().insert(session_id.to_owned());
     Ok((name, path))
   }
 
@@ -1234,6 +1561,7 @@ impl TranscriptStore {
     let dir = confined(&self.dir, id).await.ok_or_else(illegal)?;
     let (pool, file) = (self.dir.join(blob_pool::POOL_DIR), name.to_owned());
     tokio::task::spawn_blocking(move || blob_pool::place(&pool, &dir, &file, &bytes)).await??;
+    self.stub_stale.lock().insert(id.to_owned());
     Ok(())
   }
 
@@ -1288,7 +1616,9 @@ impl TranscriptStore {
     fs::create_dir_all(self.dir.join(id)).await?;
     let dir = confined(&self.dir, id).await.ok_or_else(illegal)?;
     let (pool, file) = (self.dir.join(blob_pool::POOL_DIR), name.to_owned());
-    Ok(tokio::task::spawn_blocking(move || blob_pool::adopt(&pool, &dir, &file, &src)).await??)
+    let path = tokio::task::spawn_blocking(move || blob_pool::adopt(&pool, &dir, &file, &src)).await??;
+    self.stub_stale.lock().insert(id.to_owned());
+    Ok(path)
   }
 
   /// A finished export lands next to the sessions dir (~/.acpira/exports)
@@ -1305,6 +1635,12 @@ impl TranscriptStore {
     // ordinary drive / UNC spelling
     Ok(crate::platform::paths::for_cli(path))
   }
+}
+
+/// A summary as the catalogue keeps it: what a session is, without the marks of what it is doing right now (those
+/// belong to the engine driving it, and would rewrite the row on every state change)
+fn stored_form(summary: &SessionSummary) -> SessionSummary {
+  SessionSummary { state: None, unread: None, question: None, wake_at: None, ..summary.clone() }
 }
 
 /// Pinned first, then newest first
@@ -1543,7 +1879,13 @@ mod tests {
     s.save(Arc::new(record("a", "2026-01-01T00:00:00.000Z")));
     s.save(Arc::new(record("b", "2026-01-02T00:00:00.000Z")));
     assert!(s.load("a").await.is_some(), "pending record is served from memory");
-    tokio::time::sleep(Duration::from_millis(80)).await;
+    // The debounce is 20 ms; the first save also opens the database, which a loaded machine takes its time over
+    for _ in 0..200 {
+      if dir.path().join("a.json").exists() && dir.path().join("b.json").exists() {
+        break;
+      }
+      tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     assert!(dir.path().join("a.json").exists());
     let idx = s.load_index().await.unwrap();
     assert_eq!(idx.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(), ["b", "a"]);
@@ -1602,6 +1944,8 @@ mod tests {
     let s = store(dir.path());
     let mut stored = record("quarantine", "2026-01-01T00:00:00.000Z");
     stored.turns = serde_json::from_value(serde_json::json!([{ "role": "user", "text": "archived" }])).unwrap();
+    // A record from before the database: its first save here archives it
+    std::fs::write(dir.path().join("quarantine.json"), serde_json::to_vec(&stored).unwrap()).unwrap();
     s.flush(Arc::new(stored.clone())).await.unwrap();
     s.maintain_database().await.unwrap();
     s.quarantine_database().await.unwrap();
@@ -1620,9 +1964,10 @@ mod tests {
       { "role": "agent", "blocks": [{ "type": "text", "markdown": "kept in SQLite" }] }
     ]))
     .unwrap();
+    let path = dir.path().join("migrate.json");
+    std::fs::write(&path, serde_json::to_vec(&stored).unwrap()).unwrap();
     s.flush(Arc::new(stored.clone())).await.unwrap();
 
-    let path = dir.path().join("migrate.json");
     let stub: SessionRecord = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert!(stub.turns.iter().any(migration::is_placeholder));
     let archive = dir.path().join("migrate").join(migration::MIGRATED_FILE);
@@ -1652,7 +1997,7 @@ mod tests {
     ]))
     .unwrap();
     s.database().unwrap().save_record(&stored).unwrap();
-    std::fs::write(dir.path().join("database.json"), migration::stub(&stored, &[]).unwrap()).unwrap();
+    std::fs::write(dir.path().join("database.json"), migration::stub(&RecordParts::of(stored.clone()).head, &[]).unwrap()).unwrap();
     assert_eq!(s.load("database").await.unwrap(), stored);
     assert_eq!(s.load_controls("database").await.unwrap(), stored.controls);
     assert_eq!(s.load_commands("database").await.unwrap(), stored.commands);
@@ -1845,5 +2190,142 @@ mod tests {
     assert_eq!(s.read_blob("s1", &name).await.unwrap(), b"abc");
     assert!(s.save_blob("../x", ".png", b"a").await.is_err());
     assert!(s.blob_path("s1", "../../etc").is_none());
+  }
+  fn turns(texts: &[&str]) -> Vec<acpira_shared::transcript::Turn> {
+    serde_json::from_value(texts.iter().map(|text| serde_json::json!({ "role": "user", "text": text })).collect()).unwrap()
+  }
+
+  fn item_rows(s: &TranscriptStore, id: &str) -> i64 {
+    let db = rusqlite::Connection::open(s.dir().join(crate::store::db::DB_FILE)).unwrap();
+    db.query_row("SELECT count(*) FROM item WHERE session_id = ?1", [id], |row| row.get(0)).unwrap()
+  }
+
+  #[tokio::test]
+  async fn a_reconcile_never_takes_a_database_body() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = store(dir.path());
+    let mut stored = record("kept", "2026-01-01T00:00:00.000Z");
+    stored.turns = turns(&["one", "two"]);
+    s.flush(Arc::new(stored.clone())).await.unwrap();
+    let rows = item_rows(&s, "kept");
+    assert!(rows >= 3);
+
+    // The compatibility file is gone (an older engine deleted it, or it never made it to disk): the session leaves the
+    // list, its body stays
+    let path = dir.path().join("kept.json");
+    let stub = std::fs::read(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let next = store(dir.path());
+    assert!(next.load_index().await.unwrap().is_empty());
+    assert_eq!(item_rows(&next, "kept"), rows);
+    assert!(next.database().unwrap().entry("kept").unwrap().unwrap().trashed_at.is_some());
+    // Routine upkeep keeps it too while it is not long gone
+    next.maintain_database().await.unwrap();
+    assert_eq!(item_rows(&next, "kept"), rows);
+    // Back again: listed and whole
+    std::fs::write(&path, &stub).unwrap();
+    assert_eq!(next.load_index().await.unwrap()[0].id, "kept");
+    assert_eq!(next.load("kept").await.unwrap(), stored);
+
+    // A row that does not read back (a hash that no longer fits) with the stub touched: still listed, nothing dropped
+    rusqlite::Connection::open(dir.path().join(crate::store::db::DB_FILE)).unwrap().execute("UPDATE item SET hash = zeroblob(16) WHERE session_id = 'kept' AND turn = 0", []).unwrap();
+    std::fs::write(&path, [stub.as_slice(), b" "].concat()).unwrap();
+    let third = store(dir.path());
+    assert!(third.load_detailed("kept").await.is_err());
+    assert_eq!(third.load_index().await.unwrap()[0].id, "kept");
+    assert_eq!(item_rows(&third, "kept"), rows);
+  }
+
+  #[tokio::test]
+  async fn a_store_without_the_database_never_buries_a_database_body() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("forked.json");
+    let mut stored = record("forked", "2026-01-01T00:00:00.000Z");
+    stored.turns = turns(&["before the database"]);
+    std::fs::write(&path, serde_json::to_vec(&stored).unwrap()).unwrap();
+    {
+      let s = store(dir.path());
+      let mut live = s.load("forked").await.unwrap();
+      live.turns.extend(turns(&["after the database"]));
+      live.updated_at = "2026-01-02T00:00:00.000Z".into();
+      s.flush(Arc::new(live)).await.unwrap();
+    }
+    // The database cannot be opened this time
+    let db = dir.path().join(crate::store::db::DB_FILE);
+    let aside = dir.path().join("aside");
+    std::fs::create_dir(&aside).unwrap();
+    for suffix in ["", "-wal", "-shm"] {
+      let _ = std::fs::rename(dir.path().join(format!("sessions.db{suffix}")), aside.join(format!("sessions.db{suffix}")));
+    }
+    std::fs::create_dir(&db).unwrap();
+    let stub = std::fs::read(&path).unwrap();
+    {
+      let s = store(dir.path());
+      assert!(s.database().is_none());
+      // What it can show is the session as it was archived; writing that back is refused, the stub stays
+      let mut old = s.load("forked").await.unwrap();
+      assert_eq!(old.turns.len(), 1);
+      old.turns.extend(turns(&["typed without the database"]));
+      old.updated_at = "2026-01-03T00:00:00.000Z".into();
+      assert!(s.flush(Arc::new(old)).await.is_err());
+      assert_eq!(std::fs::read(&path).unwrap(), stub);
+    }
+    std::fs::remove_dir(&db).unwrap();
+    for suffix in ["", "-wal", "-shm"] {
+      let _ = std::fs::rename(aside.join(format!("sessions.db{suffix}")), dir.path().join(format!("sessions.db{suffix}")));
+    }
+    let s = store(dir.path());
+    let back = s.load("forked").await.unwrap();
+    assert_eq!(back.turns.len(), 2);
+    assert_eq!(back.turns[1].as_user().unwrap().text, "after the database");
+  }
+
+  #[tokio::test]
+  async fn a_whole_record_file_newer_than_the_database_body_wins() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = store(dir.path());
+    let mut stored = record("newer", "2026-01-01T00:00:00.000Z");
+    stored.turns = turns(&["in the database"]);
+    s.flush(Arc::new(stored.clone())).await.unwrap();
+    // A file backend wrote the whole session over the stub later on
+    let mut whole = stored.clone();
+    whole.turns.extend(turns(&["written as a file"]));
+    whole.updated_at = "2026-01-02T00:00:00.000Z".into();
+    std::fs::write(dir.path().join("newer.json"), serde_json::to_vec(&whole).unwrap()).unwrap();
+    let next = store(dir.path());
+    assert_eq!(next.load("newer").await.unwrap(), whole);
+    assert_eq!(next.database().unwrap().body_location("newer").unwrap(), Some(BodyLocation::File));
+    assert_eq!(item_rows(&next, "newer"), 0);
+  }
+
+  #[tokio::test]
+  async fn the_stub_follows_lazily_and_the_body_never_reads_stale() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = TranscriptStore::with_timing(dir.path().to_path_buf(), Arc::new(|_| {}), None, Duration::from_millis(5), Duration::from_millis(20));
+    let path = dir.path().join("lazy.json");
+    let mut stored = record("lazy", "2026-01-01T00:00:00.000Z");
+    s.flush(Arc::new(stored.clone())).await.unwrap();
+    let first = std::fs::read(&path).unwrap();
+    // A debounced save right after: the body has the new title, the stub is left as it is for now
+    stored.title = "renamed".into();
+    stored.updated_at = "2026-01-02T00:00:00.000Z".into();
+    s.save(Arc::new(stored.clone()));
+    for _ in 0..200 {
+      if s.database().unwrap().entry("lazy").unwrap().is_some_and(|entry| entry.summary.title == "renamed") {
+        break;
+      }
+      tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    s.flush_pending().await;
+    assert_eq!(std::fs::read(&path).unwrap(), first);
+    assert_eq!(s.load("lazy").await.unwrap(), stored);
+    assert_eq!(store(dir.path()).load("lazy").await.unwrap(), stored, "another store reads the body, not the old stub");
+    assert_eq!(s.load_index().await.unwrap()[0].title, "renamed");
+    // A blob joining the folder is named by the very next save: an older engine's cleanup goes by the stub
+    let (blob, _) = s.save_blob("lazy", ".png", b"image").await.unwrap();
+    s.save(Arc::new(stored.clone()));
+    s.flush_pending().await;
+    let text = String::from_utf8(std::fs::read(&path).unwrap()).unwrap();
+    assert!(text.contains(&blob) && text.contains("renamed"));
   }
 }

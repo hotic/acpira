@@ -16,6 +16,7 @@ use acpira_shared::storage::{StorageEntry, StorageResidue, StorageResidueKind, S
 use acpira_shared::transcript::SessionSummary;
 
 use super::blob_pool;
+use super::db::{DB_FILE, migration};
 use super::record::SessionRecord;
 use super::transcript_store::is_session_id;
 use crate::acp::agents::registry::SELF_AGENT_ID;
@@ -28,14 +29,20 @@ pub const BACKUP_AGE: Duration = Duration::from_secs(30 * 24 * 3600);
 /// The extension's globalStorage folder name (`publisher.name`), the only legacy folder ever removed
 const LEGACY_DIR: &str = "hotic.acpira";
 
+/// Reads a database-backed session's record text; None when the session's record file is the record
+pub type BodyText = std::sync::Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>;
+
 pub struct ScanInput {
   pub root: PathBuf,
   /// The transcript store's directory, `<root>/sessions` outside tests
   pub sessions_dir: PathBuf,
   /// The reconciled session list
   pub sessions: Vec<SessionSummary>,
-  /// Full records for database-backed sessions, read before the blocking filesystem scan.
-  pub records: HashMap<String, Vec<u8>>,
+  /// A database-backed session's record text (`TranscriptStore::body_text`), read one session at a time while its
+  /// blob folder is placed; None for a session whose record file is the record
+  pub body: Option<BodyText>,
+  /// Bytes each database body takes in `sessions.db` (`TranscriptStore::body_sizes`)
+  pub body_sizes: HashMap<String, u64>,
   pub now: SystemTime,
 }
 
@@ -197,7 +204,8 @@ pub fn scan(input: &ScanInput) -> Scan {
       || std::fs::read(path).ok().is_none_or(|raw| serde_json::from_slice::<SessionRecord>(&raw).is_ok_and(|r| r.id == id));
     if readable {
       has_record.insert(id.to_owned());
-      usage.entry(id.to_owned()).or_default().record = size.bytes;
+      // A database body counts with its session; the database file itself is added to the segment below
+      usage.entry(id.to_owned()).or_default().record = size.bytes + input.body_sizes.get(id).copied().unwrap_or(0);
       t.seg(StorageSegmentKind::Sessions, size.bytes, 1);
     } else {
       unreadable.insert(id.to_owned());
@@ -223,13 +231,18 @@ pub fn scan(input: &ScanInput) -> Scan {
       // Links to the sessions' own blobs, counted with them; what only the index holds is counted below
       continue;
     }
+    if !is_dir(path) && name.strip_prefix(DB_FILE).is_some_and(|rest| matches!(rest, "" | "-wal" | "-shm")) {
+      // The session bodies: sessions, not "other"
+      t.seg(StorageSegmentKind::Sessions, du(path).bytes, 0);
+      continue;
+    }
     if !is_dir(path) || !is_session_id(name) {
       // index.json, prefs.json, categories.json, trash/, temp and lock files
       t.other("sessions", sessions_dir, du(path).bytes);
       continue;
     }
     if has_record.contains(name) {
-      let raw = input.records.get(name).cloned().unwrap_or_else(|| std::fs::read(sessions_dir.join(format!("{name}.json"))).unwrap_or_default());
+      let raw = input.body.as_ref().and_then(|body| body(name)).unwrap_or_else(|| std::fs::read(sessions_dir.join(format!("{name}.json"))).unwrap_or_default());
       let text = String::from_utf8_lossy(&raw);
       let mut kept = 0;
       let (mut orphan, mut targets) = (Du::default(), vec![]);
@@ -242,7 +255,8 @@ pub fn scan(input: &ScanInput) -> Scan {
           d.bytes = 0;
         }
         // Any mention keeps it: a blob is named by its content hash, so its name in the record is the reference
-        if is_dir(&file) || !older(&d, now, FRESH) || text.contains(blob.as_str()) {
+        // The pre-migration archive is no blob a record names: it stays for a store that cannot open the database
+        if is_dir(&file) || !older(&d, now, FRESH) || blob == migration::MIGRATED_FILE || text.contains(blob.as_str()) {
           kept += d.bytes;
         } else {
           orphan.add(d);
@@ -650,7 +664,7 @@ mod tests {
     put(&not_ours.join("f"), 1, true);
     fs::write(root.join(".migrated"), serde_json::to_vec(&serde_json::json!({ "sources": [legacy, not_ours, root] })).unwrap()).unwrap();
 
-    let scan = scan(&ScanInput { root: root.to_path_buf(), sessions_dir: s.clone(), sessions: vec![a, b], records: HashMap::new(), now: SystemTime::now() });
+    let scan = scan(&ScanInput { root: root.to_path_buf(), sessions_dir: s.clone(), sessions: vec![a, b], body: None, body_sizes: HashMap::new(), now: SystemTime::now() });
     assert_eq!(seg(&scan, K::Sessions), (ra + rb, 2));
     assert_eq!(seg(&scan, K::Attachments), (107, 1));
     // b's log, plus the fresh one no record names yet

@@ -126,7 +126,7 @@ pub fn pack(dir: &Path, id: &str, now: SystemTime) -> std::io::Result<Result<u64
     return Ok(Err(Kept::NotCold));
   }
   let raw = fs::read(&path)?;
-  if migration::maybe_stub(&raw) {
+  if migration::is_stub(&raw) {
     return Ok(Err(Kept::NotCold));
   }
   let Ok(record) = serde_json::from_slice::<SessionRecord>(&raw) else { return Ok(Err(Kept::NotCold)) };
