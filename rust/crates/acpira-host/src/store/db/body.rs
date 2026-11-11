@@ -251,6 +251,23 @@ mod tests {
   }
 
   #[test]
+  fn a_small_change_to_a_21_mb_record_writes_less_than_1_mb() {
+    let root = tempfile::tempdir().unwrap();
+    let db = SessionDb::open(root.path()).unwrap();
+    let mut record = record("large");
+    if let acpira_shared::transcript::Turn::Agent(turn) = &mut record.turns[1]
+      && let acpira_shared::transcript::AgentBlock::Text(text) = &mut turn.blocks[0]
+    {
+      text.markdown = "x".repeat(21 * 1024 * 1024);
+    }
+    db.save_record(&record).unwrap();
+    record.title = "one changed header".into();
+    let saved = db.save_record(&record).unwrap();
+    assert_eq!(saved.changed, 1);
+    assert!(saved.payload_bytes < 1024 * 1024, "{saved:?}");
+  }
+
+  #[test]
   fn bodies_round_trip_compress_and_save_only_changed_rows() {
     let root = tempfile::tempdir().unwrap();
     let db = SessionDb::open(root.path()).unwrap();

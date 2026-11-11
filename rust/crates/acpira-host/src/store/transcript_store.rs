@@ -19,7 +19,7 @@ use acpira_shared::model_shapes::{ModelShapes, session_model};
 use acpira_shared::transcript::{AgentId, CategoryOp, DiffSource, collect_text_blobs, SessionCategories, SessionControls, SessionModel, SessionSummary, SlashCommand, TurnSettings};
 
 use super::blob_pool;
-use super::db::{BodyLocation, CatalogEntry, SessionDb};
+use super::db::{BodyLocation, CatalogEntry, SessionDb, migration};
 use super::diff_texts;
 use super::pack;
 use super::file_lock::{with_file_lock, write_atomic};
@@ -893,7 +893,24 @@ impl TranscriptStore {
       let texts = tokio::task::spawn_blocking(move || diff_texts::store(&pool, &dir, &texts).map(|_| texts)).await??;
       known.lock().extend(texts.into_iter().map(|(name, _)| name));
     }
-    write_atomic(&path, &bytes, None).await?;
+    if self.database().is_some() {
+      let record = Arc::new(serde_json::from_slice::<SessionRecord>(&bytes)?);
+      let text = String::from_utf8_lossy(&bytes);
+      let names: Vec<String> = self.blob_names(&id).await.into_iter().filter(|name| text.contains(name.as_str())).collect();
+      let saving = record.clone();
+      let _ = self.db_call(move |db| db.save_record(&saving)).await?.ok_or_else(|| anyhow!("session {id}: SQLite is unavailable"))?;
+      // Commit the body first. A failure after this point leaves the complete legacy file in place for a safe retry.
+      let folder = self.dir.join(&id);
+      fs::create_dir_all(&folder).await?;
+      let archive = confined(&folder, migration::MIGRATED_FILE).await.ok_or_else(|| anyhow!("session {id}: migration archive outside the store"))?;
+      if fs::metadata(&archive).await.is_err() {
+        let packed = tokio::task::spawn_blocking(move || zstd::bulk::compress(&bytes, 12)).await??;
+        write_atomic(&archive, &packed, None).await?;
+      }
+      write_atomic(&path, &migration::stub(&record, &names)?, None).await?;
+    } else {
+      write_atomic(&path, &bytes, None).await?;
+    }
     self.state.lock().known.insert(id.clone());
     if self.on_change.read().is_some() {
       self.changed(&id, RecordChange::Written { cwd: &source.record_cwd() });
@@ -1432,6 +1449,37 @@ mod tests {
     std::fs::remove_file(dir.path().join("b.json")).unwrap();
     s.flush(Arc::new(record("b", "2026-01-03T00:00:00.000Z"))).await.unwrap();
     assert!(!dir.path().join("b.json").exists());
+  }
+
+  #[tokio::test]
+  async fn saving_migrates_then_only_refreshes_the_small_compatibility_stub() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = store(dir.path());
+    let mut stored = record("migrate", "2026-01-01T00:00:00.000Z");
+    stored.turns = serde_json::from_value(serde_json::json!([
+      { "role": "user", "text": "hello" },
+      { "role": "agent", "blocks": [{ "type": "text", "markdown": "kept in SQLite" }] }
+    ]))
+    .unwrap();
+    s.flush(Arc::new(stored.clone())).await.unwrap();
+
+    let path = dir.path().join("migrate.json");
+    let stub: SessionRecord = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert!(stub.turns.iter().any(migration::is_placeholder));
+    let archive = dir.path().join("migrate").join(migration::MIGRATED_FILE);
+    let archived = zstd::stream::decode_all(std::fs::File::open(&archive).unwrap()).unwrap();
+    assert_eq!(serde_json::from_slice::<SessionRecord>(&archived).unwrap(), stored);
+    assert_eq!(s.load("migrate").await.unwrap(), stored);
+    assert!(s.database().unwrap().catalog().unwrap().iter().any(|entry| entry.summary.id == "migrate" && entry.body == BodyLocation::Database));
+
+    let archive_before = std::fs::read(&archive).unwrap();
+    stored.title = "new title".into();
+    stored.updated_at = "2026-01-02T00:00:00.000Z".into();
+    s.flush(Arc::new(stored.clone())).await.unwrap();
+    assert_eq!(std::fs::read(&archive).unwrap(), archive_before, "later saves never rewrite the pre-migration archive");
+    let stub: SessionRecord = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(stub.title, "new title");
+    assert!(stub.turns.iter().any(migration::is_placeholder));
   }
 
   #[tokio::test]
