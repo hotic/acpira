@@ -67,7 +67,7 @@
 - Launch arguments, including every `-popup` name, are parsed by `LaunchOptions` in `AcpiraUI/RootView.swift`; popup names are matched where each popup opens (grep `popup`). Debug-only `menu:X,Y` uses UIKit's private `_presentMenuAtLocation:`.
 - `simctl` takes no taps and the repo has no UI-test target. A scratch UI-test bundle can drive the app by bundle id, but XCTest waits for idle before every event (no mid-animation taps, a streaming chat stalls): take frame timings from the app itself.
 - Scripts default `DEVELOPER_DIR` to Xcode: the Command Line Tools have no iOS SDK.
-- CI (`.github/workflows/ios.yml`, `xcode-27` image) runs `check.sh` with `ACPIRA_NET=0`. Signing and TestFlight stay local, so CI holds no signing secrets.
+- CI (`.github/workflows/ios.yml`, `xcode-27` image) runs `check.sh` with `ACPIRA_NET=0`. Signing and TestFlight stay local, so CI holds no signing secrets. After an upload, `scripts/testflight-public.mjs <build>` waits for processing, adds the build to the public external group and submits it for beta review (credentials only under `~/.appstoreconnect`); a new build of an already approved marketing version normally clears review within minutes.
 
 ## Simulator
 
