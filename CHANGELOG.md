@@ -7,13 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- **Agents no longer fail with `Operation not permitted` after a desktop update on macOS.** Swapping the app bundle took the privacy grants away from the engine still running under the old one, so Claude Code, Droid and the built-in agent could not read external volumes or protected folders until the engine restarted. The engine now notices its launcher was replaced and, once nothing is running, hands over to a fresh engine under the new bundle.
-
 ### Planned
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
+
+## [2.0.12] - 2026-11-11
+
+### Added
+
+- **A running command can be stopped on its own.** A command row that is still running shows a stop square. Stopping it ends that command alone: the agent reads a failed call and the turn goes on. It is offered on macOS and Linux while the agent's process is alive, and in Claude sessions on an SSH host, where it cancels the remote call. The phone apps stop a command from its row too. Windows has no such stop yet.
+- **A reply or a selection can be shared as a screenshot.** Share on an agent's reply and in the selection toolbar renders the text into a card footed by the session title, the model family and its vendor mark. The preview copies the image or saves it as a PNG through the save dialog of the desktop app or VS Code.
+- **Model sources follow this computer to its SSH hosts.** A session an SSH host runs reads the host's own model sources, which no settings page here could edit. This computer's sources and their keys are now copied to every connected host, on connect and after each edit. This is on by default, so after this update the keys reach a host the next time it connects. "Carry model sources" in a host's Connections page turns it off and takes back what was brought. A source the host already had under the same id is kept and comes back, and loopback addresses and local-server presets never travel.
+- Account quota shows Claude's weekly Fable allowance.
+- Adapter updates for Claude and Codex are offered up to npm's latest version, not only the version Acpira pins, since new models reach the model list only through a newer adapter. The pinned version stays the floor and is what a machine without npm gets.
+- In the desktop app, a page an agent opens lands in the tool panel of the session that asked for it, in the background when that session is off screen.
+- A plugin can answer an open question card through `session/act`. Permission answers stay refused, and an answer to a card that is no longer open is an error.
+- The phone apps play haptics on send and stop, permission and plan answers, question picks, copy buttons, pairing results and a turn ending in the open chat. Widgets shown by `show_widget` can send prompts from the phone, as they do on the computer.
+- On iOS, a paired computer shows its Acpira version, a sent prompt shows its quotes as a read-only chip, and an `acpira://pair/demo` link enters the demo.
+
+### Changed
+
+- The macOS desktop app declares macOS 15 as its minimum system version instead of macOS 26. The system WebKit is the real floor.
+- The Linux desktop packages (deb, rpm and AppImage) remain a preview. GNOME and Plasma on Wayland, NVIDIA drivers, input methods and fractional scaling are not checked yet.
+
+### Fixed
+
+- **Agents no longer fail with `Operation not permitted` after a desktop update on macOS.** Swapping the app bundle took the privacy grants away from the engine still running under the old one, so Claude Code, Droid and the built-in agent could not read external volumes or protected folders until the engine restarted. The engine now notices its launcher was replaced and, once nothing is running, hands over to a fresh engine under the new bundle.
+- A Claude subagent that keeps running after its parent's turn ended on its own is no longer marked disconnected. The rest of its stream and its final state still arrive. A stopped or failed turn still cuts it.
+- Workspace hooks no longer count a commit made or undone during a turn, such as by another session, as that turn's file changes. This holds on an SSH host too.
+- Moving a built-in agent session to another folder recomposes its system prompt, so the next turn names the new folder and its `AGENTS.md` instead of the old ones.
+- A read that mixes text and image files shows each picture on its own file row, also when the adapter leaves out the image's path.
+- A turn's output speed leaves out the time it spent waiting: compaction, an API retry, an unanswered permission or question card, running subagents and a pending wakeup.
+- A session shows as working while its first prompt waits to start.
+- Claude sessions on an SSH host no longer all fail with `spawn EACCES` when a folder under the data root's `remote` cannot be entered by its owner. The folder is reopened, and a start error names the start folder when that is what cannot be entered.
+- Claude's own ultracode switch no longer shows beside the Ultra effort level.
+- An `agents.json` entry that reuses a built-in agent's id and command keeps the built-in's install line and update offer.
+- A fold animating in a thread that fits its viewport no longer twitches every row, the goal strip's button stays inside the exchange when it comes last, and the sidekick chip's live dot is no longer clipped flat.
+- On the phone, file rows and video attachments open over a paired link, tapping a navigation twice opens one page, and a live session's list row takes its date from the computer.
+- On iOS, opening a chat or a fold with hundreds of steps no longer freezes the phone: an open fold draws its newest steps under an "earlier steps" row. Long tables draw a page of rows at a time, a very large command output no longer crashes the app, an oversized animation is turned down, the tapped attachment is the one removed, and a subagent row's detail lines no longer draw over the next row.
 
 ## [2.0.11] - 2026-11-09
 
