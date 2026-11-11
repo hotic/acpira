@@ -36,6 +36,7 @@ oxc_transformer_plugins.workspace = true
 parking_lot.workspace = true
 portable-pty.workspace = true
 regex.workspace = true
+rusqlite.workspace = true
 same-file.workspace = true
 semver.workspace = true
 chrono.workspace = true

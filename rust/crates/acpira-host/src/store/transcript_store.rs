@@ -19,6 +19,7 @@ use acpira_shared::model_shapes::{ModelShapes, session_model};
 use acpira_shared::transcript::{AgentId, CategoryOp, DiffSource, collect_text_blobs, SessionCategories, SessionControls, SessionModel, SessionSummary, SlashCommand, TurnSettings};
 
 use super::blob_pool;
+use super::db::SessionDb;
 use super::diff_texts;
 use super::pack;
 use super::file_lock::{with_file_lock, write_atomic};
@@ -177,6 +178,8 @@ pub struct TranscriptStore {
   on_change: parking_lot::RwLock<Option<ChangeHook>>,
   /// Per session, the diff text blobs (`diff_texts`) its folder is known to hold, so a record write hands back only new ones
   texts: parking_lot::Mutex<HashMap<String, Arc<parking_lot::Mutex<HashSet<String>>>>>,
+  // None keeps every operation on the legacy JSON backend (an unavailable or newer database is not fatal)
+  _db: Option<SessionDb>,
   me: Weak<TranscriptStore>,
 }
 
@@ -242,6 +245,7 @@ impl TranscriptStore {
   }
 
   pub fn with_timing(dir: PathBuf, log: LogFn, on_save_error: Option<SaveErrorHook>, debounce: Duration, max_wait: Duration) -> Arc<Self> {
+    let db = SessionDb::open(&dir).inspect_err(|e| log(&format!("sessions: SQLite unavailable, using record files ({e:#})"))).ok();
     Arc::new_cyclic(|me| TranscriptStore {
       dir,
       log,
@@ -254,6 +258,7 @@ impl TranscriptStore {
       agent_home: Default::default(),
       on_change: Default::default(),
       texts: Default::default(),
+      _db: db,
       me: me.clone(),
     })
   }
@@ -1254,6 +1259,25 @@ mod tests {
 
   fn store(dir: &Path) -> Arc<TranscriptStore> {
     TranscriptStore::with_timing(dir.to_path_buf(), Arc::new(|_| {}), None, Duration::from_millis(20), Duration::from_millis(60))
+  }
+
+  #[tokio::test]
+  async fn an_unavailable_database_keeps_the_file_backend_usable() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(crate::store::db::DB_FILE)).unwrap();
+    let messages = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let logged = messages.clone();
+    let s = TranscriptStore::with_timing(
+      dir.path().to_path_buf(),
+      Arc::new(move |message| logged.lock().push(message.to_owned())),
+      None,
+      Duration::from_millis(20),
+      Duration::from_millis(60),
+    );
+    assert!(s._db.is_none());
+    s.flush(Arc::new(record("files", "2026-01-01T00:00:00.000Z"))).await.unwrap();
+    assert_eq!(s.load("files").await.unwrap().id, "files");
+    assert!(messages.lock().iter().any(|message| message.contains("using record files")));
   }
 
   #[tokio::test]

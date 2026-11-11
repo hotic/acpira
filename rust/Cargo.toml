@@ -67,6 +67,8 @@ portable-pty = "0.9"
 regex = "1.12"
 # The desktop app's update manifest: Ed25519 signatures (already in the tree through rustls)
 ring = "0.17"
+# Session catalogue and body rows (acpira-host store/db.rs); bundled keeps release targets independent of a system SQLite
+rusqlite = { version = "0.42", default-features = false, features = ["bundled"] }
 same-file = "1.0"
 # Plugin dependency ranges (`dependencies` in plugin.json): npm's caret / tilde ranges, already in the tree
 semver = "1.0"
