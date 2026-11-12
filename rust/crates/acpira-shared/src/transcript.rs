@@ -1728,6 +1728,9 @@ pub struct QueuedPrompt {
 #[serde(rename_all = "camelCase")]
 pub struct RemoteAuth {
   pub agent: AgentInfo,
+  /// The host's CLI availability for new sessions in this folder; absent on older peers.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub agents: Option<Vec<AgentInfo>>,
   pub accounts: Vec<AccountInfo>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub action: Option<crate::protocol::AccountAction>,

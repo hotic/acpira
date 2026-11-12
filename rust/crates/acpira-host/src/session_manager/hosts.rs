@@ -1192,6 +1192,10 @@ fn remote_auth(auth: &Value, agent: &str) -> Value {
   let action = auth.get("actions").and_then(Value::as_array).into_iter().flatten()
     .find(|a| a.get("agent").and_then(Value::as_str) == Some(agent));
   let mut out = json!({ "agent": info, "accounts": accounts });
+  // The start picker needs this host's CLI availability, not the viewing machine's installation state.
+  if let Some(agents) = auth.get("agents").filter(|a| a.is_array()) {
+    out["agents"] = agents.clone();
+  }
   if let Some(action) = action {
     out["action"] = action.clone();
   }

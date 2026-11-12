@@ -1,4 +1,5 @@
 import type { AgentId, AgentInfo } from './transcript';
+import { parseRemoteFolder } from './remote';
 
 // acpira.agentOrder / acpira.disabledAgents: the order every agent list follows and the agents kept out of the new-session entry points
 export interface AgentPrefs {
@@ -20,6 +21,17 @@ export function arrangeAgents<A extends AgentInfo>(list: A[], prefs: AgentPrefs)
 
 // Agents a new-session entry point offers (the plus menu, the default agent picker)
 export const launchable = (agents: AgentInfo[]) => agents.filter(a => !a.disabled);
+
+// Keep this machine's order and enabled choices, but probe availability where a new session would actually run.
+// Older peers omit their agent list: unknown stays selectable instead of inheriting a missing local CLI.
+export function agentsForFolder(agents: AgentInfo[], cwd: string | undefined, host: AgentInfo[] | undefined, localOnSsh: readonly AgentId[] = []): AgentInfo[] {
+  if (!cwd || !parseRemoteFolder(cwd)) return agents;
+  return agents.map(a => {
+    if (localOnSsh.includes(a.id)) return a;
+    const remote = host?.find(r => r.id === a.id);
+    return remote ? { ...remote, disabled: a.disabled } : { ...a, available: host ? false : undefined };
+  });
+}
 
 // The configured default unless it was switched off or its CLI is missing; then the first enabled installed agent
 // (the built-in one leads the registry, so a fresh install lands there). A missing default with nothing installed to
