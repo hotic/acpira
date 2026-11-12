@@ -579,8 +579,22 @@ async fn serve(args: &[String], home: PathBuf, exe: Option<String>) -> i32 {
       }
     }),
   );
-  let code = run_until_idle(engine, grace).await;
+  let code = run_until_idle(engine.clone(), grace).await;
   drop(host);
+  // Retired with its launcher's bundle swapped away while it ran the gateway: the app may have quit to install, so no
+  // shell is left to start a successor and paired devices would find nobody. Under the login service a failure exit
+  // has it start again (a clean one does not); an engine a shell started has the service take over
+  if engine.left_devices() {
+    if service {
+      return 1;
+    }
+    let login = crate::devices::service::Service::new(&home, &crate::store::data_dir::home_dir());
+    if login.installed()
+      && let Err(e) = login.start().await
+    {
+      stderr(&format!("remote access: the login service did not start: {e:#}"));
+    }
+  }
   code
 }
 
