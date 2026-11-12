@@ -107,7 +107,7 @@ struct FileDownload: View {
   private static func message(_ error: ProjectError) -> String {
     switch error {
     case .tooLarge: t("mobile.download.tooLarge", ["mb": stagedFileMaxMB])
-    case .missing, .outside, .binary: t("mobile.download.unreadable")
+    case .missing, .outside, .exists, .binary: t("mobile.download.unreadable")
     case .noProject: t("panel.error.other", ["error": "no project"])
     case .message(let text): text
     }

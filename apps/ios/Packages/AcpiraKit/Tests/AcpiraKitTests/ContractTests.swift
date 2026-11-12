@@ -596,7 +596,7 @@ enum ContractSamples {
     .unobserveSubagent(sessionId: "s1", subagentId: "n1"),
     .cancelSubagent(sessionId: "s1", subagentId: "n1"),
     .stopAsyncTask(sessionId: "s1", taskId: "t1"),
-    .stopCommand(sessionId: "s1", toolCallId: "c1"),
+    .stopCommand(sessionId: "s1", toolCallId: "c1", subagentId: "n1"),
     .goal(sessionId: "s1", action: .set, objective: "ship it"),
     .searchFiles(query: "app", seq: 5),
     .setSetting(key: "theme", value: "dark"),

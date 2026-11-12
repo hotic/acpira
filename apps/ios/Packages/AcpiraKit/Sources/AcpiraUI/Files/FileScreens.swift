@@ -250,6 +250,8 @@ struct FileScreen: View {
     case .tooLarge: t("panel.error.tooLarge")
     case .outside: t("panel.error.outside")
     case .noProject: t("panel.error.other", ["error": "no project"])
+    // Only a file tree edit hears it, which a phone never sends
+    case .exists: t("panel.error.other", ["error": "exists"])
     case .message(let text): t("panel.error.other", ["error": text])
     }
   }
