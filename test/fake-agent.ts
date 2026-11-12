@@ -120,6 +120,7 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // FAKE_SLOW_STEP_MS → the pause between the 50 chunks of a "slow" turn (default 40 ms, so 2 s in all)
 // FAKE_META_LOG → append `{ method, meta, cwd, dirs }` (the request's `_meta`, cwd and additionalDirectories) for every
 // session/new, resume and load
+// FAKE_NO_RESTORE → advertise neither session/resume nor session/load, even though the fake implements them
 // FAKE_EXTRA_DIRS → advertise sessionCapabilities.additionalDirectories
 // FAKE_REBUILD → claude-agent-acp 0.87.0's getOrCreateSession: a resume of a live session whose
 // `_meta.claudeCode.options.settings` changed recreates it (a session/new starts there too), which resets model / effort / Fast to the defaults and keeps
@@ -282,8 +283,8 @@ const app = acp.agent({ name: 'fake-agent' })
       protocolVersion: acp.PROTOCOL_VERSION,
       agentInfo: { name: 'fake', version: process.env.FAKE_AGENT_VERSION ?? '0.0.0' },
       agentCapabilities: {
-        loadSession: true,
-        sessionCapabilities: process.env.FAKE_LOAD_ONLY ? {} : { resume: {}, ...(process.env.FAKE_CLOSE_LOG ? { close: {} } : {}), ...(sessionDir ? { list: {} } : {}), ...(process.env.FAKE_EXTRA_DIRS ? { additionalDirectories: {} } : {}) },
+        loadSession: !process.env.FAKE_NO_RESTORE,
+        sessionCapabilities: process.env.FAKE_LOAD_ONLY || process.env.FAKE_NO_RESTORE ? {} : { resume: {}, ...(process.env.FAKE_CLOSE_LOG ? { close: {} } : {}), ...(sessionDir ? { list: {} } : {}), ...(process.env.FAKE_EXTRA_DIRS ? { additionalDirectories: {} } : {}) },
         promptCapabilities: process.env.FAKE_PROMPT_CAPS === 'strict' ? { embeddedContext: false, image: false } : { embeddedContext: true },
         // FAKE_MCP_TRACE: http but not sse, so a test sees the client filter client-provided servers by transport
         ...(process.env.FAKE_MCP_TRACE ? { mcpCapabilities: { http: true, sse: false } } : {}),

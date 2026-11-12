@@ -73,20 +73,35 @@ async fn opening_an_older_session_filters_repeated_completed_plan_snapshots() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_resume_unknown_to_the_new_process_leaves_the_history_read_only() {
+async fn a_resume_unknown_to_the_new_process_rebinds_and_hands_over_history_without_replacing_its_title() {
   let fake = fake_or_skip!();
   let h = Harness::new(&fake, json!({}));
-  let record = ran_once(&h, "/tmp").await;
-  // new process answers invalidParams "unknown session" — the peer doesn't know the id, the same conclusion as session_not_found:
-  // the transcript already ran, so it stays read-only instead of silently continuing on a fresh native context
+  let mut record = ran_once(&h, "/tmp").await;
+  record.title = "Existing conversation".into();
+  record.acp_session_id = Some("previous-native".into());
   let s2 = reopened(&h, record.clone()).await;
+  expect_match(view(&s2), json!({ "status": "ready", "commands": [], "title": record.title }));
+  assert_eq!(turn_count(&s2), 2);
+  assert_eq!(s2.id, record.id);
+  assert_ne!(s2.to_record().acp_session_id, record.acp_session_id);
+  assert!(s2.to_record().history_pending);
+  assert_eq!(s2.to_record().updated_at, record.updated_at);
+  prompt(&s2, "now").await;
   let vw = view(&s2);
-  assert_eq!(vw["status"], "readonly");
-  assert!(vw["error"].as_str().unwrap().contains("no longer has this session"));
-  assert_eq!(turns_in(&vw), 2);
-  assert_eq!(s2.to_record().acp_session_id, record.acp_session_id);
-  // No fresh native session was opened, so the persisted command list stays until a peer replaces it
-  expect_eq(&vw["commands"], json!([{ "name": "compact", "description": "compact it" }]));
+  assert_eq!(json!(vw["turns"].as_array().unwrap()[..2]), v(&record.turns));
+  let reply = agent_text(&last_turn(&vw));
+  assert!(reply.contains("resource:acpira://history/") && reply.contains("hi"), "{reply}");
+  assert!(!s2.to_record().history_pending);
+  assert!(s2.to_record().history_context);
+  assert_eq!(vw["title"], record.title);
+  // The replacement peer's later auto-title and another adapter restart cannot rename the local conversation either.
+  prompt(&s2, "again").await;
+  assert_eq!(view(&s2)["title"], record.title);
+  let saved = s2.to_record();
+  s2.dispose();
+  let s3 = reopened(&h, saved).await;
+  prompt(&s3, "after reopening").await;
+  assert_eq!(view(&s3)["title"], record.title);
 }
 
 // DeepSeek Harness reports every restore problem as a bare invalidParams; the reason only survives in the message text
@@ -96,17 +111,27 @@ async fn dsh_restore_failures_are_told_apart_by_their_message() {
   for (tag, status, error) in [
     ("dsh-active", "error", "held by another"),
     ("dsh-cwd", "error", "Could not restore"),
-    ("dsh-unresumable", "readonly", "cannot resume this session"),
+    ("dsh-unresumable", "ready", ""),
     ("dsh-mcp", "error", "Could not restore"),
   ] {
     let dir = tempfile::Builder::new().prefix(&format!("acpira-{tag}-")).tempdir().unwrap();
     let h = Harness::new(&fake, json!({}));
-    let record = ran_once(&h, dir.path().to_str().unwrap()).await;
-    let s2 = reopened(&h, record).await;
+    let mut record = ran_once(&h, dir.path().to_str().unwrap()).await;
+    record.acp_session_id = Some("previous-native".into());
+    let s2 = reopened(&h, record.clone()).await;
     let vw = view(&s2);
     assert_eq!(vw["status"], status, "{tag}");
     assert!(vw["error"].as_str().unwrap_or("").contains(error), "{tag}: {}", vw["error"]);
     assert_eq!(turns_in(&vw), 2);
+    if status == "ready" {
+      assert_ne!(s2.to_record().acp_session_id, record.acp_session_id);
+      assert!(s2.to_record().history_pending);
+      prompt(&s2, "now").await;
+      assert!(agent_text(&last_turn(&view(&s2))).contains("resource:acpira://history/"));
+    } else {
+      assert_eq!(s2.to_record().acp_session_id, record.acp_session_id);
+      assert!(!s2.to_record().history_pending);
+    }
   }
 }
 
@@ -156,6 +181,8 @@ async fn a_failed_restore_attempt_lands_on_the_error_state_and_retry_reconnects(
   let s2 = reopened(&h, record.clone()).await;
   assert_eq!(view(&s2)["status"], "error");
   assert!(view(&s2)["error"].as_str().unwrap().contains("transient restore failure"));
+  assert_eq!(s2.to_record().acp_session_id, record.acp_session_id);
+  assert!(!s2.to_record().history_pending);
   std::fs::remove_file(dir.path().join("resume.lock")).unwrap();
   s2.retry().await.unwrap();
   assert_eq!(view(&s2)["status"], "ready");
@@ -169,8 +196,10 @@ async fn a_typed_session_locked_is_reported_as_held_elsewhere() {
   let dir = tempfile::Builder::new().prefix("acpira-locked-").tempdir().unwrap();
   let h = Harness::new(&fake, json!({}));
   let record = ran_once(&h, dir.path().to_str().unwrap()).await;
-  let s2 = reopened(&h, record).await;
+  let s2 = reopened(&h, record.clone()).await;
   assert_eq!(view(&s2)["status"], "error");
+  assert_eq!(s2.to_record().acp_session_id, record.acp_session_id);
+  assert!(!s2.to_record().history_pending);
   assert!(view(&s2)["error"].as_str().unwrap().contains("held by another"));
   assert_eq!(turn_count(&s2), 2);
   assert!(view(&s2)["canTakeOver"].is_null());
@@ -231,19 +260,19 @@ async fn a_lock_held_by_another_sidecars_agent_can_be_taken_over() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn session_not_found_replaces_a_session_that_never_talked_and_keeps_history_read_only() {
+async fn session_not_found_rebinds_both_recorded_and_empty_sessions() {
   let fake = fake_or_skip!();
   std::fs::create_dir_all("/tmp/acpira-gone").unwrap();
   let h = Harness::new(&fake, json!({}));
-  let record = ran_once(&h, "/tmp/acpira-gone").await;
-  // The transcript already ran: swapping in a fresh native session would keep the old conversation on an empty
-  // context (compaction included). Read-only, history kept, the native id retained so a later open can retry
+  let mut record = ran_once(&h, "/tmp/acpira-gone").await;
+  record.acp_session_id = Some("previous-native".into());
   let s2 = reopened(&h, record.clone()).await;
-  assert_eq!(view(&s2)["status"], "readonly");
+  assert_eq!(view(&s2)["status"], "ready");
   assert_eq!(turn_count(&s2), 2);
-  assert_eq!(s2.to_record().acp_session_id, record.acp_session_id);
+  assert_ne!(s2.to_record().acp_session_id, record.acp_session_id);
+  assert!(s2.to_record().history_pending);
   let new_ok = || h.logs().iter().filter(|l| l.contains("session/new ok")).count();
-  assert_eq!(new_ok(), 1);
+  assert_eq!(new_ok(), 2);
   s2.dispose();
   // An empty session (Devin sweeps exactly those when its process exits) is replaced transparently — nothing visible lost its context
   let empty = started(&h, "/tmp/acpira-gone").await;
@@ -252,7 +281,8 @@ async fn session_not_found_replaces_a_session_that_never_talked_and_keeps_histor
   let s3 = reopened(&h, empty_record).await;
   assert_eq!(view(&s3)["status"], "ready");
   assert_eq!(turn_count(&s3), 0);
-  assert_eq!(new_ok(), 3);
+  assert_eq!(new_ok(), 4);
+  assert!(!s3.to_record().history_pending);
   // The replacement native session advertised nothing: the old connection's slash commands do not carry over
   assert_eq!(view(&s3)["commands"], json!([]));
 }
@@ -267,10 +297,11 @@ async fn a_prompt_answered_session_not_found_leaves_ready_and_retry_reconnects()
   expect_match(last_turn(&view(&s)), json!({ "role": "agent", "stop": "error" }));
   // the native session is gone — resending over this connection could only fail the same way
   assert_eq!(view(&s)["status"], "error");
-  // Retry = reconnect + resume; the fresh process doesn't know the id either → read-only history, still no silent context swap
+  // Retry reconnects and rebinds the gone peer, carrying the retained transcript on the next prompt.
   s.retry().await.ok();
-  assert_eq!(view(&s)["status"], "readonly");
+  assert_eq!(view(&s)["status"], "ready");
   assert_eq!(turn_count(&s), 4);
+  assert!(s.to_record().history_pending);
 }
 
 #[tokio::test(flavor = "multi_thread")]

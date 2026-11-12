@@ -240,6 +240,7 @@ impl SessionManager {
       category: None,
       renamed: false,
       history_pending: false,
+      history_context: false,
       forked_from: None,
       import_pending: true,
       imported_from: Some(ImportedFrom { session_id: session_id.to_owned() }),

@@ -443,7 +443,7 @@ impl AcpSession {
 
   /// The never-prompted native session a session/new rebuild replaced still holds a query (and its `claude` process)
   /// in the adapter: closed when the agent advertises session/close, best effort
-  async fn close_replaced(&self, proc: &AgentProcess, sid: &str) {
+  pub(super) async fn close_replaced(&self, proc: &AgentProcess, sid: &str) {
     if !crate::json::truthy(proc.caps().get("sessionCapabilities").and_then(|s| s.get("close"))) {
       return;
     }

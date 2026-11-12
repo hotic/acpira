@@ -170,7 +170,7 @@ impl AcpSession {
         compact_first
       }
     };
-    let mut staging = self.stage_turn(&text, &drafts, staged, auto).await;
+    let mut staging = self.stage_turn(&text, &drafts, staged, origin).await;
     // The workspace hooks: `beforePrompt` may block the prompt or add context behind it, the snapshot is taken before
     // anything reaches the agent, and a first prompt carries the context files in front
     let context = match self.hooks_before_turn(origin, &text, &staging.prepared.attachments).await {
@@ -357,7 +357,7 @@ impl AcpSession {
   }
 
   /// The payload, staged now unless the queue or an edit already did; a fork's first prompt also builds its history
-  async fn stage_turn(&self, text: &str, drafts: &[Draft], staged: Option<Staged>, auto: bool) -> Staging {
+  async fn stage_turn(&self, text: &str, drafts: &[Draft], staged: Option<Staged>, origin: Origin) -> Staging {
     let edited_staged = staged.as_ref().is_some_and(|s| s.edited);
     let queued_id = staged.as_ref().and_then(|s| s.id.clone());
     let prepared = match staged {
@@ -367,17 +367,17 @@ impl AcpSession {
         prepare_prompt(&self.id, text, drafts, &self.deps.blobs, &self.file_reader(Some(drafts)).await, Some(caps)).await
       }
     };
-    // A fork's copied transcript has never reached the peer: its first prompt carries it as retained context
+    // A fork or rebound peer receives the retained transcript once, on its next prompt.
     let (proc, caps, turns_copy, fork, cwd) = {
       let c = self.core.lock();
-      let copy = if !auto && c.lineage.history_pending { Some(c.state.turns.clone()) } else { None };
+      let copy = if origin != Origin::Compact && c.lineage.history_pending { Some(c.state.turns.clone()) } else { None };
       (c.proc.clone(), self.caps(&c), copy, c.lineage.forked_from.clone(), self.cwd.clone())
     };
     let mut fork_history = None;
     let mut fork_error = None;
     if let (Some(turns), Some(proc)) = (turns_copy, proc.as_ref()) {
       let lead = self.prompts().text("fork/history", acpira_agent::prompt::BASE);
-      let spec = Handoff { lead: &lead, fork: fork.as_ref(), cwd: &cwd, trim: true, readable: fork.is_some() && self.reads_itself() };
+      let spec = Handoff { lead: &lead, fork: fork.as_ref(), cwd: &cwd, trim: true, readable: self.reads_itself() };
       match history_context(&self.id, &turns, proc, &self.deps.blobs, &self.file_reader(None).await, caps, spec).await {
         Ok(h) => fork_history = h,
         Err(e) => {
@@ -405,10 +405,11 @@ impl AcpSession {
       self.flush_queue();
       return None;
     }
-    if c.lineage.history_pending {
+    if origin != Origin::Compact && c.lineage.history_pending {
       c.lineage.history_pending = false;
       match &fork_history {
         Some(h) => {
+          c.lineage.history_context = true;
           let mut blocks = h.blocks.clone();
           blocks.append(&mut prepared.blocks);
           prepared.blocks = blocks;
@@ -503,7 +504,7 @@ impl AcpSession {
   /// Record the user turn, title an untitled session after it and open the agent turn the answer streams into
   fn open_turn(&self, text: &str, origin: Origin, plan_id: Option<&str>, accepted: &mut Accepted) -> OpenTurn {
     let mut c = self.core.lock();
-    c.lineage.agent_title_muted = c.lineage.forked_from.is_some() || accepted.forked || accepted.edited_staged;
+    c.lineage.agent_title_muted = c.lineage.history_context || c.lineage.forked_from.is_some() || accepted.forked || accepted.edited_staged || (c.unprompted && c.lineage.agent_title_muted);
     c.compaction.completion = Some(CompactionCompletion::new(accepted.compacting.then_some(self.agent.as_str())));
     c.turn_failure = None;
     c.state.turns.push(Turn::User(std::mem::take(&mut accepted.user_turn)));

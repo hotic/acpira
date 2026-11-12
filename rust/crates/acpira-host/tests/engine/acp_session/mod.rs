@@ -24,6 +24,7 @@ mod steer;
 mod goal;
 mod compaction;
 mod lifecycle;
+mod continuity;
 mod auth;
 mod fork;
 mod edit;

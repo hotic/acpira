@@ -188,8 +188,10 @@ pub(crate) struct Phase {
 /// first restore, and the agent's own titles being ignored
 #[derive(Default)]
 pub(crate) struct Lineage {
-  /// A fork's copied transcript has never reached the peer: its first prompt carries it as retained context
+  /// The retained transcript has not reached the peer: its next prompt carries it as context.
   pub history_pending: bool,
+  /// The peer lacks the full recorded history even after the handoff; keep self-read and the existing title.
+  pub history_context: bool,
   pub forked_from: Option<ForkedFrom>,
   /// An imported native session not restored yet: the first restore prefers session/load and seals the replay
   pub import_pending: bool,
@@ -203,6 +205,9 @@ impl Lineage {
   /// The transcript was cut back to `len` turns: a fork's copied prefix shrinks with it (-1 when none of it is left).
   /// The origin itself stays, since it still mutes the agent's titles
   pub fn truncated(&mut self, len: usize) {
+    if len == 0 {
+      self.history_pending = false;
+    }
     if let Some(f) = self.forked_from.as_mut()
       && f.turn_index >= len as i64
     {
@@ -437,7 +442,8 @@ impl AcpSession {
           picks: ControlPicks::default(),
           lineage: Lineage {
             history_pending: record.history_pending,
-            agent_title_muted: record.forked_from.is_some(),
+            history_context: record.history_context || record.history_pending,
+            agent_title_muted: record.forked_from.is_some() || record.history_context || record.history_pending,
             renamed: record.renamed,
             forked_from: record.forked_from,
             import_pending: record.import_pending,
@@ -504,6 +510,7 @@ impl AcpSession {
         category: None,
         renamed: false,
         history_pending: false,
+        history_context: false,
         forked_from: None,
         import_pending: false,
         imported_from: None,
