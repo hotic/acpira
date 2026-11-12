@@ -401,9 +401,26 @@ impl BridgeCore {
           Ok(normalize(&resolve_open_path(&cwd, &path)).to_string_lossy().into_owned())
         };
         match resolved {
-          Ok(p) => {
+          Ok(mut p) => {
+            let missing = |p: &str| {
+              let p = p.to_owned();
+              async move { tokio::fs::metadata(&p).await.is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) }
+            };
+            // The session folder wins. A name missing there may be relative to another folder of the project, or lead
+            // with a folder further up (`acpira-web/out/x.mp4` said from `acpira/rust`): the first that exists opens
+            if missing(&p).await {
+              let roots: Vec<String> = std::iter::once(cwd.clone())
+                .chain(manager.categories().other_folders(&cwd).into_iter().filter(|f| !crate::workspace::is_remote(f)).map(|f| crate::workspace::folder_path(&f).to_string_lossy().into_owned()))
+                .collect();
+              for cand in fallback_open_paths(&roots, &path) {
+                if !missing(&cand).await {
+                  p = cand;
+                  break;
+                }
+              }
+            }
             // Localize a missing link before the OS opener returns its own untranslated error.
-            if tokio::fs::metadata(&p).await.is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+            if missing(&p).await {
               platform.toast("error", &tp("host.fileMissing", &[("path", &p)]));
               return Ok(());
             }
@@ -1200,11 +1217,47 @@ fn resolve_open_path(cwd: &str, path: &str) -> std::path::PathBuf {
   Path::new(cwd).join(path)
 }
 
+/// Where else a relative name may live, in order: under each other folder of the project, then under each folder above
+/// the roots (nearest first, never the filesystem root). Only a plain relative name qualifies: absolute, `~` and
+/// explicitly anchored (`./`, `../`) paths mean exactly what they say. `roots[0]` is the session folder, already tried
+fn fallback_open_paths(roots: &[String], path: &str) -> Vec<String> {
+  let rel = Path::new(path);
+  let plain = matches!(rel.components().next(), Some(std::path::Component::Normal(_)));
+  // Path::components drops a leading `./`, so check the text itself
+  if !plain || path.starts_with('~') || path.starts_with("./") || (cfg!(windows) && path.starts_with(".\\")) {
+    return vec![];
+  }
+  let under_roots = roots.iter().skip(1).map(|r| Path::new(r).to_path_buf());
+  let above_roots = roots.iter().flat_map(|r| Path::new(r).ancestors().skip(1).filter(|a| a.parent().is_some()).map(Path::to_path_buf));
+  let mut out: Vec<String> = Vec::new();
+  for base in under_roots.chain(above_roots) {
+    let cand = normalize(&base.join(rel)).to_string_lossy().into_owned();
+    if !out.contains(&cand) {
+      out.push(cand);
+    }
+  }
+  out
+}
+
 #[cfg(test)]
 mod tests {
   use std::path::Path;
 
-  use super::remote_copy_path;
+  use super::{fallback_open_paths, remote_copy_path};
+
+  #[cfg(unix)]
+  #[test]
+  fn fallback_tries_other_folders_then_folders_above() {
+    let roots = ["/p/acpira/rust".to_string(), "/p/acpira-web".to_string()];
+    let got = fallback_open_paths(&roots, "out/a.mp4");
+    assert_eq!(got, ["/p/acpira-web/out/a.mp4", "/p/acpira/out/a.mp4", "/p/out/a.mp4"]);
+    // A sibling project's name leading the path is found two levels up a nested session folder
+    assert!(fallback_open_paths(&roots[..1], "acpira-web/out/a.mp4").contains(&"/p/acpira-web/out/a.mp4".to_string()));
+    for anchored in ["./a.md", "../a.md", "/abs/a.md", "~/a.md", "~"] {
+      assert!(fallback_open_paths(&roots, anchored).is_empty(), "{anchored}");
+    }
+    assert!(fallback_open_paths(&["/".to_string()], "a.md").is_empty());
+  }
 
   #[test]
   fn remote_copy_stays_in_the_cache() {
